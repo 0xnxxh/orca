@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcSuccess } from '../transport/types'
+import type { AgentJournalSubmission } from '../../../src/shared/agent-session-journal-types'
 import {
   loadMobileStructuredOutbox,
   saveMobileStructuredOutbox
@@ -61,14 +62,17 @@ describe('useMobileStructuredSessionWrites', () => {
     sendRequest,
     getState: () => 'connected' as const
   } as RpcClient
+  let connected = true
+  let fence = 3
+  let submissions: AgentJournalSubmission[] = []
 
   function Probe(): null {
     api = useMobileStructuredSessionWrites({
       client,
+      connected,
       sessionId: 'mobile_1',
-      fence: 3,
-      items: [],
-      submissions: []
+      fence,
+      submissions
     })
     return null
   }
@@ -78,6 +82,9 @@ describe('useMobileStructuredSessionWrites', () => {
     vi.mocked(loadMobileStructuredOutbox).mockReset().mockResolvedValue([])
     vi.mocked(saveMobileStructuredOutbox).mockReset().mockResolvedValue(undefined)
     sendRequest.mockReset()
+    connected = true
+    fence = 3
+    submissions = []
     const crypto = await import('expo-crypto')
     vi.mocked(crypto.randomUUID)
       .mockReset()
@@ -121,26 +128,27 @@ describe('useMobileStructuredSessionWrites', () => {
     expect(sendRequest).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps unknown delivery visible and retries with the same client message id', async () => {
-    sendRequest
-      .mockResolvedValueOnce({
-        ...accepted('unused'),
-        result: {
-          ...(accepted('unused').result as object),
-          value: {
-            ...(accepted('unused').result as { value: object }).value,
-            submission: {
-              ...(accepted('unused').result as { value: { submission: object } }).value.submission,
-              dispatchState: 'unknown'
+  it('retries a durable unknown by the same id before dispatching later messages', async () => {
+    sendRequest.mockImplementation(async (_method, params) => {
+      const id = (params as { envelope: { clientOperationId: string } }).envelope.clientOperationId
+      if (sendRequest.mock.calls.length === 1) {
+        const response = accepted(id)
+        return {
+          ...response,
+          result: {
+            ...(response.result as object),
+            value: {
+              ...(response.result as { value: object }).value,
+              submission: {
+                ...(response.result as { value: { submission: object } }).value.submission,
+                dispatchState: 'unknown'
+              }
             }
           }
         }
-      })
-      .mockImplementationOnce(async (_method, params) => {
-        const id = (params as { envelope: { clientOperationId: string } }).envelope
-          .clientOperationId
-        return accepted(id)
-      })
+      }
+      return accepted(id)
+    })
 
     await act(async () => {
       await api!.send('possibly delivered')
@@ -149,6 +157,25 @@ describe('useMobileStructuredSessionWrites', () => {
     })
     expect(api!.outbox[0]?.state).toBe('unconfirmed')
     const firstId = api!.outbox[0]!.clientMessageId
+    submissions = [
+      {
+        clientMessageId: firstId,
+        fence: 3,
+        payloadFingerprint: 'a'.repeat(64),
+        dispatchState: 'unknown',
+        providerItemId: null,
+        reason: 'reply lost',
+        submittedAt: 11,
+        resolvedAt: 12
+      }
+    ]
+
+    await act(async () => {
+      renderer!.update(createElement(Probe))
+      await api!.send('later')
+      await Promise.resolve()
+    })
+    expect(sendRequest).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       await api!.retry(firstId)
@@ -159,6 +186,117 @@ describe('useMobileStructuredSessionWrites', () => {
     const retryId = (sendRequest.mock.calls[1]![1] as { envelope: { clientOperationId: string } })
       .envelope.clientOperationId
     expect(retryId).toBe(firstId)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(sendRequest).toHaveBeenCalledTimes(3)
+  })
+
+  it('unblocks a refused queued head when the runtime fence advances', async () => {
+    sendRequest
+      .mockResolvedValueOnce({
+        ...accepted('refused'),
+        result: {
+          ok: false,
+          refusal: { code: 'agent_session_fence_stale', message: 'stale fence', retryable: true }
+        }
+      })
+      .mockImplementationOnce(async (_method, params) => {
+        const id = (params as { envelope: { clientOperationId: string } }).envelope
+          .clientOperationId
+        return accepted(id)
+      })
+
+    await act(async () => {
+      await api!.send('retry after reconnect')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(api!.outbox[0]?.state).toBe('queued')
+
+    fence = 4
+    await act(async () => {
+      renderer!.update(createElement(Probe))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+    expect(
+      (sendRequest.mock.calls[1]![1] as { envelope: { expectedRuntimeFence: number } }).envelope
+        .expectedRuntimeFence
+    ).toBe(4)
+  })
+
+  it('requeues an in-flight stale-fence response under the replacement fence', async () => {
+    const oldResponse = deferred<RpcSuccess>()
+    sendRequest
+      .mockImplementationOnce(() => oldResponse.promise)
+      .mockImplementationOnce(async (_method, params) => {
+        const id = (params as { envelope: { clientOperationId: string } }).envelope
+          .clientOperationId
+        return accepted(id)
+      })
+
+    await act(async () => {
+      await api!.send('survive reattach')
+      await Promise.resolve()
+    })
+    fence = 4
+    await act(async () => {
+      renderer!.update(createElement(Probe))
+      oldResponse.resolve({
+        ...accepted('stale'),
+        result: {
+          ok: false,
+          refusal: { code: 'agent_session_fence_stale', message: 'stale fence', retryable: true }
+        }
+      })
+      await oldResponse.promise
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+    expect(
+      (sendRequest.mock.calls[1]![1] as { envelope: { expectedRuntimeFence: number } }).envelope
+        .expectedRuntimeFence
+    ).toBe(4)
+  })
+
+  it('retries an unresolved dispatch after a same-fence reconnect', async () => {
+    const oldResponse = deferred<RpcSuccess>()
+    sendRequest
+      .mockImplementationOnce(() => oldResponse.promise)
+      .mockImplementationOnce(async (_method, params) => {
+        const id = (params as { envelope: { clientOperationId: string } }).envelope
+          .clientOperationId
+        return accepted(id)
+      })
+
+    await act(async () => {
+      await api!.send('survive reconnect')
+      await Promise.resolve()
+    })
+    connected = false
+    act(() => renderer!.update(createElement(Probe)))
+    connected = true
+    await act(async () => {
+      renderer!.update(createElement(Probe))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+    expect(api!.outbox).toEqual([])
+
+    await act(async () => {
+      oldResponse.resolve(accepted('stale'))
+      await oldResponse.promise
+    })
+    expect(api!.outbox).toEqual([])
   })
 
   it('answers a durable approval with its expected revision compare-and-set', async () => {
@@ -215,5 +353,22 @@ describe('useMobileStructuredSessionWrites', () => {
         envelope: expect.objectContaining({ expectedRuntimeFence: 3 })
       })
     )
+  })
+
+  it('turns an RPC failure response into a handled mutation error', async () => {
+    sendRequest.mockResolvedValue({
+      id: 'set-option',
+      ok: false,
+      _meta: { runtimeId: 'runtime-1' },
+      error: { code: 'forbidden', message: 'not allowed' }
+    })
+
+    let applied!: boolean
+    await act(async () => {
+      applied = await api!.setOption('model', 'gpt-5.6-sol')
+    })
+
+    expect(applied).toBe(false)
+    expect(api!.error).toBe('not allowed')
   })
 })

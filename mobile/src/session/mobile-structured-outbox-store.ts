@@ -11,10 +11,11 @@ export type MobileStructuredOutboxEntry = {
   state: MobileStructuredOutboxState
   queuedAt: number
   lastAttemptAt: number | null
+  retryAfterUnknownSubmittedAt: number | null
 }
 
 const STORAGE_PREFIX = 'orca:structuredAgentSessionOutbox:v1:'
-const MAX_OUTBOX_ENTRIES = 64
+export const MAX_MOBILE_STRUCTURED_OUTBOX_ENTRIES = 64
 
 function storageKey(sessionId: string): string {
   return STORAGE_PREFIX + encodeURIComponent(sessionId)
@@ -47,7 +48,11 @@ function parseEntry(value: unknown, sessionId: string): MobileStructuredOutboxEn
     previewUris: entry.previewUris,
     state: entry.state as MobileStructuredOutboxState,
     queuedAt: entry.queuedAt,
-    lastAttemptAt: typeof entry.lastAttemptAt === 'number' ? entry.lastAttemptAt : null
+    lastAttemptAt: typeof entry.lastAttemptAt === 'number' ? entry.lastAttemptAt : null,
+    retryAfterUnknownSubmittedAt:
+      typeof entry.retryAfterUnknownSubmittedAt === 'number'
+        ? entry.retryAfterUnknownSubmittedAt
+        : null
   }
 }
 
@@ -60,7 +65,7 @@ export async function loadMobileStructuredOutbox(
       return []
     }
     return parsed
-      .slice(-MAX_OUTBOX_ENTRIES)
+      .slice(-MAX_MOBILE_STRUCTURED_OUTBOX_ENTRIES)
       .map((entry) => parseEntry(entry, sessionId))
       .filter((entry): entry is MobileStructuredOutboxEntry => entry !== null)
       .map((entry) =>
@@ -76,9 +81,10 @@ export async function saveMobileStructuredOutbox(
   sessionId: string,
   entries: readonly MobileStructuredOutboxEntry[]
 ): Promise<void> {
-  const bounded = entries
-    .filter((entry) => entry.sessionId === sessionId)
-    .slice(-MAX_OUTBOX_ENTRIES)
+  const bounded = entries.filter((entry) => entry.sessionId === sessionId)
+  if (bounded.length > MAX_MOBILE_STRUCTURED_OUTBOX_ENTRIES) {
+    throw new Error(`Structured outbox is full (${MAX_MOBILE_STRUCTURED_OUTBOX_ENTRIES} messages)`)
+  }
   if (bounded.length === 0) {
     await AsyncStorage.removeItem(storageKey(sessionId))
     return

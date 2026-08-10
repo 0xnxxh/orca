@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AgentJournalRenderItem } from '../../../src/shared/agent-session-journal-types'
 import {
   buildMobileStructuredTimeline,
-  latestMobileStructuredTurnId,
+  activeMobileStructuredTurnId,
   restoreMobileStructuredAttachments
 } from './mobile-structured-session-timeline'
 import type { MobileStructuredOutboxEntry } from './mobile-structured-outbox-store'
@@ -35,7 +35,8 @@ const OUTBOX: MobileStructuredOutboxEntry = {
   previewUris: ['file:///preview.png'],
   state: 'unconfirmed',
   queuedAt: 3,
-  lastAttemptAt: 4
+  lastAttemptAt: 4,
+  retryAfterUnknownSubmittedAt: null
 }
 
 describe('mobile structured session timeline', () => {
@@ -61,12 +62,33 @@ describe('mobile structured session timeline', () => {
     ])
   })
 
-  it('derives the cancellable turn from the latest Codex item identity', () => {
+  it('shows cancellation only while the durable root-turn lifecycle is running', () => {
+    const lifecycle: AgentJournalRenderItem = {
+      itemId: 'legacy:codex:mobile_1:turn-lifecycle%3Aturn-7',
+      revision: 1,
+      sequence: 5,
+      observedAt: 1,
+      body: {
+        kind: 'status',
+        text: '',
+        turnLifecycle: { turnId: 'turn-7', state: 'running' }
+      }
+    }
+    expect(activeMobileStructuredTurnId([APPROVAL, lifecycle])).toBe('turn-7')
     expect(
-      latestMobileStructuredTurnId([
+      activeMobileStructuredTurnId([
         APPROVAL,
-        { ...APPROVAL, itemId: 'codex:thread-1:turn-7:1', sequence: 5 }
+        {
+          ...lifecycle,
+          revision: 2,
+          body: {
+            kind: 'status',
+            text: '',
+            turnLifecycle: { turnId: 'turn-7', state: 'completed' }
+          }
+        }
       ])
-    ).toBe('turn-7')
+    ).toBeNull()
+    expect(buildMobileStructuredTimeline([lifecycle], [])).toEqual([])
   })
 })

@@ -20,12 +20,13 @@ type Row = { key: string; body: AgentJournalItemBody }
 
 function recorder() {
   const rows: Row[] = []
+  const tombstones: string[] = []
   const bound: [string, string, string][] = []
   let publishes = 0
   const sink: StructuredAgentSessionEventSink = {
     appendItem: (identity: AgentJournalItemIdentity, body) =>
       rows.push({ key: agentJournalItemKey(identity), body }),
-    appendTombstone: () => {},
+    appendTombstone: (identity) => tombstones.push(agentJournalItemKey(identity)),
     publish: () => {
       publishes += 1
     }
@@ -33,6 +34,7 @@ function recorder() {
   return {
     sink,
     rows,
+    tombstones,
     bound,
     publishes: () => publishes,
     bindPromptItemId: (journalItemId: string, threadId: string, promptKey: string) =>
@@ -75,6 +77,29 @@ function translatorWith(tap = recorder(), window = manualWindow()) {
 }
 
 describe('codex journal translation', () => {
+  it('durably opens and closes the primary turn cancellation lifecycle', () => {
+    const tap = recorder()
+    const translator = createCodexJournalTranslator({
+      sink: tap.sink,
+      primaryThreadId: () => THREAD_ID
+    })
+
+    translator.handle(TURN_STARTED)
+    translator.handle(notification('turn/completed', { turn: { id: TURN_ID } }))
+
+    expect(tap.rows).toEqual([
+      {
+        key: 'legacy:codex:session-1:turn-lifecycle%3Aturn-1',
+        body: {
+          kind: 'status',
+          text: 'Codex is working…',
+          turnLifecycle: { turnId: TURN_ID, state: 'running' }
+        }
+      }
+    ])
+    expect(tap.tombstones).toEqual(['legacy:codex:session-1:turn-lifecycle%3Aturn-1'])
+  })
+
   it('journals a user turn and the assistant answer under durable codex keys', () => {
     const { translator, tap } = translatorWith()
 

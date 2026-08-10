@@ -19,13 +19,18 @@ export function useMobileStructuredSessionOptions(args: {
 }): MobileNativeChatSessionOptionsController {
   const { sessionId, setOption: dispatchOption } = args
   const [version, setVersion] = useState(0)
-  const [pendingId, setPendingId] = useState<string | null>(null)
+  const [pending, setPending] = useState<{
+    sessionId: string
+    id: string
+    record: ReturnType<typeof createNativeChatSessionOptionRecord>
+  } | null>(null)
   const recordRef = useRef(createNativeChatSessionOptionRecord('codex'))
   const sessionRef = useRef(sessionId)
   if (sessionRef.current !== sessionId) {
     sessionRef.current = sessionId
     recordRef.current = createNativeChatSessionOptionRecord('codex')
   }
+  const pendingId = pending?.record === recordRef.current ? pending.id : null
 
   const snapshot = useMemo(() => {
     void version
@@ -46,22 +51,30 @@ export function useMobileStructuredSessionOptions(args: {
       if (!CODEX_CATALOG || !sessionId || typeof value !== 'string' || pendingId !== null) {
         return false
       }
-      setPendingId(id)
+      const targetSessionId = sessionId
+      const targetRecord = recordRef.current
+      setPending({ sessionId: targetSessionId, id, record: targetRecord })
       try {
         const applied = await dispatchOption(id, value)
-        if (!applied) {
+        if (
+          !applied ||
+          sessionRef.current !== targetSessionId ||
+          recordRef.current !== targetRecord
+        ) {
           return false
         }
         const effectiveModel = resolveEffectiveNativeChatModelId(
           CODEX_CATALOG,
           CODEX_CATALOG.models,
-          recordRef.current
+          targetRecord
         )
-        setTrackedSessionOption(recordRef.current, id, value, 'dispatched', effectiveModel)
+        setTrackedSessionOption(targetRecord, id, value, 'dispatched', effectiveModel)
         setVersion((current) => current + 1)
         return true
       } finally {
-        setPendingId(null)
+        setPending((current) =>
+          current?.record === targetRecord && current.id === id ? null : current
+        )
       }
     },
     [dispatchOption, pendingId, sessionId]

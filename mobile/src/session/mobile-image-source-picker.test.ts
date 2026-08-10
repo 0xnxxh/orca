@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ImageManipulator } from 'expo-image-manipulator'
 import { CLIPBOARD_IMAGE_MAX_SOURCE_BYTES } from '../../../src/shared/clipboard-image'
 
 vi.mock('expo-image-picker', () => ({
@@ -20,6 +21,8 @@ import {
   ImageLibraryPermissionError,
   pickMobileImage,
   pickMobileImages,
+  MOBILE_IMAGE_DOWNSAMPLE_TARGET_BASE64,
+  prepareMobileImageForUpload,
   shouldDownsampleMobileImage,
   type PickedMobileImage
 } from './mobile-image-source-picker'
@@ -241,5 +244,56 @@ describe('pickMobileImage', () => {
       width: 4000,
       height: 3000
     })
+  })
+
+  it('never guesses a resize that can upscale an image with unknown dimensions', async () => {
+    const resize = vi.fn()
+    const release = vi.fn()
+    vi.mocked(ImageManipulator.manipulate).mockReturnValue({
+      resize,
+      renderAsync: vi.fn().mockResolvedValue({
+        saveAsync: vi.fn().mockResolvedValue({ base64: 'AAAA', uri: 'file:///compressed.png' }),
+        release
+      }),
+      release
+    } as never)
+
+    await prepareMobileImageForUpload({
+      uri: 'file:///unknown.png',
+      fileSize: 5 * 1024 * 1024
+    })
+
+    expect(resize).not.toHaveBeenCalled()
+  })
+
+  it('keeps the final quality-rung preview file while deleting superseded rungs', async () => {
+    const oversized = 'A'.repeat(MOBILE_IMAGE_DOWNSAMPLE_TARGET_BASE64 + 1)
+    let attempt = 0
+    vi.mocked(ImageManipulator.manipulate).mockImplementation(() => {
+      const uri = `file:///quality-${++attempt}.png`
+      const release = vi.fn()
+      return {
+        resize: vi.fn(),
+        renderAsync: vi.fn().mockResolvedValue({
+          saveAsync: vi.fn().mockResolvedValue({ base64: oversized, uri }),
+          release
+        }),
+        release
+      } as never
+    })
+    const deleted: string[] = []
+
+    const result = await prepareMobileImageForUpload(
+      {
+        uri: 'file:///large.png',
+        fileSize: 5 * 1024 * 1024,
+        width: 4000,
+        height: 3000
+      },
+      (uri) => deleted.push(uri)
+    )
+
+    expect(result?.uri).toBe('file:///quality-3.png')
+    expect(deleted).toEqual(['file:///quality-1.png', 'file:///quality-2.png'])
   })
 })

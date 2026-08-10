@@ -68,12 +68,15 @@ export function shouldDownsampleMobileImage(input: {
   )
 }
 
-async function downsampleMobileImage(input: {
-  uri: string
-  fileSize?: number
-  width?: number
-  height?: number
-}): Promise<PreparedMobileImage | null> {
+export async function prepareMobileImageForUpload(
+  input: {
+    uri: string
+    fileSize?: number
+    width?: number
+    height?: number
+  },
+  deletePreparedFile: (uri: string) => void = (uri) => new FsFile(uri).delete()
+): Promise<PreparedMobileImage | null> {
   if (!shouldDownsampleMobileImage(input)) {
     return null
   }
@@ -90,8 +93,6 @@ async function downsampleMobileImage(input: {
         width: Math.max(1, Math.round(sourceWidth * edgeScale)),
         height: Math.max(1, Math.round(sourceHeight * edgeScale))
       })
-    } else {
-      context.resize({ width, height: null })
     }
     const rendered = await context.renderAsync()
     try {
@@ -103,14 +104,16 @@ async function downsampleMobileImage(input: {
       if (!result.base64) {
         throw new Error('Failed to encode resized image')
       }
+      if (last) {
+        try {
+          deletePreparedFile(last.uri)
+        } catch {
+          // Cache cleanup is best effort; the OS reclaims it independently.
+        }
+      }
       last = { base64: result.base64, uri: result.uri }
       if (result.base64.length <= MOBILE_IMAGE_DOWNSAMPLE_TARGET_BASE64) {
         return last
-      }
-      try {
-        new FsFile(result.uri).delete()
-      } catch {
-        // Cache cleanup is best effort; the OS reclaims it independently.
       }
     } finally {
       rendered.release()
@@ -167,7 +170,7 @@ async function* pickFromLibrary(
   requestPermission: typeof ImagePicker.requestMediaLibraryPermissionsAsync = ImagePicker.requestMediaLibraryPermissionsAsync,
   launch: typeof ImagePicker.launchImageLibraryAsync = ImagePicker.launchImageLibraryAsync,
   createFile: MobileImageFileFactory = defaultMobileImageFileFactory,
-  prepareImage: PrepareMobileImage = downsampleMobileImage
+  prepareImage: PrepareMobileImage = prepareMobileImageForUpload
 ): AsyncGenerator<PickedMobileImage> {
   const permission = await requestPermission()
   // Why: `granted` covers full + limited iOS access; only a hard denial blocks us.
@@ -206,7 +209,7 @@ async function* pickFromFiles(
   multiple: boolean,
   launch: typeof DocumentPicker.getDocumentAsync = DocumentPicker.getDocumentAsync,
   createFile: MobileImageFileFactory = defaultMobileImageFileFactory,
-  prepareImage: PrepareMobileImage = downsampleMobileImage
+  prepareImage: PrepareMobileImage = prepareMobileImageForUpload
 ): AsyncGenerator<PickedMobileImage> {
   const result = await launch({
     type: 'image/*',

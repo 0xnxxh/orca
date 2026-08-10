@@ -34,6 +34,7 @@ export type CodexJournalTranslatorDeps = {
   sink: StructuredAgentSessionEventSink
   /** Points an answered journal item back at the live Codex request. */
   bindPromptItemId?: (journalItemId: string, threadId: string, promptKey: string) => void
+  primaryThreadId?: () => string | null
   coalesceMs?: number
   schedule?: AgentSessionDeltaCoalescerDeps['schedule']
 }
@@ -65,6 +66,33 @@ export function createCodexJournalTranslator(
   const currentTurnIds = new Map<string, string>()
   const latestStreamText = new Map<string, string>()
   const checkpointLengths = new Map<string, number>()
+
+  const publishTurnLifecycle = (
+    sessionId: string,
+    threadId: string,
+    turnId: string,
+    state: 'running' | 'completed'
+  ): void => {
+    if (deps.primaryThreadId?.() !== threadId) {
+      return
+    }
+    const identity = {
+      provider: 'legacy' as const,
+      agent: 'codex' as const,
+      sessionId,
+      recordId: `turn-lifecycle:${turnId}`
+    }
+    if (state === 'completed') {
+      deps.sink.appendTombstone(identity)
+    } else {
+      deps.sink.appendItem(identity, {
+        kind: 'status',
+        text: 'Codex is working…',
+        turnLifecycle: { turnId, state }
+      })
+    }
+    deps.sink.publish()
+  }
 
   const itemKey = (threadId: string, codexItemId: string): string =>
     `${encodeURIComponent(threadId)}:${encodeURIComponent(codexItemId)}`
@@ -192,6 +220,10 @@ export function createCodexJournalTranslator(
     handle: (event) => {
       if (event.type === 'ended') {
         flushStreams()
+        for (const [threadId, turnId] of currentTurnIds) {
+          publishTurnLifecycle(event.sessionId, threadId, turnId, 'completed')
+        }
+        currentTurnIds.clear()
         return
       }
       if (event.type === 'notification' && event.method === AGENT_MESSAGE_DELTA_METHOD) {
@@ -213,10 +245,15 @@ export function createCodexJournalTranslator(
         const turnId = readCodexTurnId(event.params)
         if (turnId) {
           currentTurnIds.set(event.threadId, turnId)
+          publishTurnLifecycle(event.sessionId, event.threadId, turnId, 'running')
         }
         return
       }
       if (event.method === 'turn/completed') {
+        const turnId = readCodexTurnId(event.params) ?? currentTurnIds.get(event.threadId)
+        if (turnId) {
+          publishTurnLifecycle(event.sessionId, event.threadId, turnId, 'completed')
+        }
         // A later item with no turn of its own belongs to no turn, not to the
         // one that just ended.
         currentTurnIds.delete(event.threadId)

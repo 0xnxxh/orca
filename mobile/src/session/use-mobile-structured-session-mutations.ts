@@ -71,7 +71,8 @@ export function useMobileStructuredSessionMutations(args: {
         return null
       }
       if (!response.ok) {
-        throw new Error(response.error.message)
+        onRefusal(response.error.message)
+        return null
       }
       const result = response.result as AgentSessionMutationResult<TValue>
       if (!result.ok) {

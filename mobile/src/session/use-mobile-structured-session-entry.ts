@@ -42,9 +42,9 @@ export function useMobileStructuredSessionEntry(args: {
   })
   const writes = useMobileStructuredSessionWrites({
     client,
+    connected,
     sessionId,
     fence: session.fence,
-    items: session.items,
     submissions: session.submissions
   })
   const sessionOptions = useMobileStructuredSessionOptions({

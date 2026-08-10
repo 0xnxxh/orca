@@ -44,6 +44,7 @@ export function MobileStructuredPromptCard(props: {
   return (
     <MobileNativeChatQuestion
       question={question}
+      allowFreeText={Boolean(questionBody.freeTextQuestionId)}
       onAnswer={(answer) => {
         const offered = questionBody.options.find((option) => option.label === answer)
         const optionId =

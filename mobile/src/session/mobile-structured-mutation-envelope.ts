@@ -1,4 +1,5 @@
 import { sha256 } from '@noble/hashes/sha256'
+import type { MobileStructuredOutboxEntry } from './mobile-structured-outbox-store'
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== 'object') {
@@ -32,4 +33,24 @@ export function createMobileStructuredOperationId(
   now: number = Date.now()
 ): string {
   return `${prefix}:${now.toString(36)}:${randomUuid()}`
+}
+
+export function mobileStructuredSendRequest(
+  entry: MobileStructuredOutboxEntry,
+  expectedRuntimeFence: number
+): Record<string, unknown> {
+  const fields = { body: entry.body }
+  return {
+    envelope: {
+      sessionId: entry.sessionId,
+      clientOperationId: entry.clientMessageId,
+      expectedRuntimeFence,
+      payloadFingerprint: mobileStructuredPayloadFingerprint({
+        method: 'agentSession.send',
+        sessionId: entry.sessionId,
+        fields
+      })
+    },
+    ...fields
+  }
 }

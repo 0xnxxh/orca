@@ -1,4 +1,7 @@
-import type { AgentJournalMessageItem } from '../../../src/shared/agent-session-journal-types'
+import type {
+  AgentJournalMessageItem,
+  AgentJournalSubmission
+} from '../../../src/shared/agent-session-journal-types'
 import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
@@ -29,6 +32,46 @@ export function updateMobileStructuredOutboxEntry(
     }
     const next = update(entry)
     return next ? [next] : []
+  })
+}
+
+export function createMobileStructuredOutboxEntry(args: {
+  clientMessageId: string
+  sessionId: string
+  text: string
+  attachments: readonly PendingNativeChatImage[]
+  queuedAt: number
+}): MobileStructuredOutboxEntry {
+  return {
+    clientMessageId: args.clientMessageId,
+    sessionId: args.sessionId,
+    body: mobileStructuredSendBody(args.text, args.attachments),
+    previewUris: args.attachments.map((attachment) => attachment.previewUri),
+    state: 'queued',
+    queuedAt: args.queuedAt,
+    lastAttemptAt: null,
+    retryAfterUnknownSubmittedAt: null
+  }
+}
+
+export function reconcileMobileStructuredOutbox(
+  entries: readonly MobileStructuredOutboxEntry[],
+  submissions: readonly AgentJournalSubmission[]
+): MobileStructuredOutboxEntry[] {
+  const settled = new Map(submissions.map((entry) => [entry.clientMessageId, entry]))
+  return entries.flatMap((entry) => {
+    const submission = settled.get(entry.clientMessageId)
+    if (submission?.dispatchState === 'accepted') {
+      return []
+    }
+    if (
+      submission?.dispatchState === 'unknown' &&
+      entry.retryAfterUnknownSubmittedAt !== -1 &&
+      entry.retryAfterUnknownSubmittedAt !== submission.submittedAt
+    ) {
+      return [{ ...entry, state: 'unconfirmed' as const }]
+    }
+    return [entry]
   })
 }
 

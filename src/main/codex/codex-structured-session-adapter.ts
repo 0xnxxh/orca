@@ -69,11 +69,14 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     const launch = await this.deps.resolveLaunch({ identity: input.identity })
     const attempt = createCodexAcquisitionAttempt()
     const acquisition = attempt.window
+    let primaryThreadId =
+      input.identity.providerHandle.kind === 'codex' ? input.identity.providerHandle.threadId : null
     // Registered before the spawn, because the handshake itself can emit.
     this.acquiring.set(sessionId, attempt)
     const translator = input.events
       ? createCodexJournalTranslator({
           sink: input.events,
+          primaryThreadId: () => primaryThreadId,
           bindPromptItemId: (journalItemId, threadId, promptKey) =>
             acquisition.prompts.bindJournalItemId(journalItemId, threadId, promptKey)
         })
@@ -104,6 +107,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
       )
       acquisition.connection = connection
       const opened = await openCodexThread(connection, launch, this.requestTimeoutMs)
+      primaryThreadId = opened.threadId
       const acquired: AgentSessionAcquisition = {
         process: await codexProcessIdentity(
           { ...input, pid: connection.pid },

@@ -1,5 +1,4 @@
 import type { AgentJournalRenderItem } from '../../../src/shared/agent-session-journal-types'
-import { parseAgentJournalItemKey } from '../../../src/shared/agent-session-journal-item-key'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import type { MobileStructuredPromptItem } from './MobileStructuredPromptCard'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
@@ -63,13 +62,13 @@ export function buildMobileStructuredTimeline(
   ]
 }
 
-export function latestMobileStructuredTurnId(
+export function activeMobileStructuredTurnId(
   items: readonly AgentJournalRenderItem[]
 ): string | null {
   for (let index = items.length - 1; index >= 0; index -= 1) {
-    const identity = parseAgentJournalItemKey(items[index]?.itemId ?? '')
-    if (identity?.provider === 'codex') {
-      return identity.turnId
+    const body = items[index]?.body
+    if (body?.kind === 'status' && body.turnLifecycle?.state === 'running') {
+      return body.turnLifecycle.turnId
     }
   }
   return null

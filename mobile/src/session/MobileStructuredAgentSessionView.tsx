@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 import {
   ActivityIndicator,
   FlatList,
@@ -23,7 +23,7 @@ import type { PendingNativeChatImage } from './mobile-native-chat-image-attachme
 import type { MobileStructuredOutboxEntry } from './mobile-structured-outbox-store'
 import {
   buildMobileStructuredTimeline,
-  latestMobileStructuredTurnId,
+  activeMobileStructuredTurnId,
   mobileStructuredOutboxText,
   restoreMobileStructuredAttachments,
   type MobileStructuredTimelineRow
@@ -36,6 +36,7 @@ import {
   settleStructuredOlderPage
 } from './mobile-structured-history-pagination'
 import { styles } from './mobile-structured-agent-session-view-styles'
+import { useMobileStructuredComposerState } from './use-mobile-structured-composer-state'
 
 type Props = {
   items: AgentJournalRenderItem[]
@@ -64,9 +65,9 @@ export function MobileStructuredAgentSessionView(props: Props): React.JSX.Elemen
   const paginationRef = useRef(createMobileStructuredPaginationState())
   const priorContentHeightRef = useRef(0)
   const androidAnchorOffsetRef = useRef(0)
-  const [composerText, setComposerText] = useState('')
-  const [restored, setRestored] = useState<PendingNativeChatImage[]>([])
-  const turnId = latestMobileStructuredTurnId(props.items)
+  const { composerText, setComposerText, restored, setRestored } =
+    useMobileStructuredComposerState()
+  const turnId = activeMobileStructuredTurnId(props.items)
   const allAttachments = [...restored, ...props.attachments]
   const rows = useMemo(
     () => buildMobileStructuredTimeline(props.items, props.outbox),
@@ -157,7 +158,6 @@ export function MobileStructuredAgentSessionView(props: Props): React.JSX.Elemen
           if (Platform.OS !== 'android' || priorHeight === 0 || height <= priorHeight) {
             return
           }
-          paginationRef.current.programmaticMomentum = true
           listRef.current?.scrollToOffset({
             offset: androidAnchorOffsetRef.current + height - priorHeight,
             animated: false

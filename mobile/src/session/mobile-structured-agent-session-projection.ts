@@ -59,6 +59,9 @@ function itemBlocks(item: AgentJournalRenderItem): {
       blocks: [{ type: 'text', text: `${body.question}\n${choices}`.trim() }]
     }
   }
+  if (body.turnLifecycle) {
+    return null
+  }
   return { role: 'system', blocks: [{ type: 'text', text: body.text }] }
 }
 

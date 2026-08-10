@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import {
   ImageLibraryPermissionError,
@@ -23,15 +23,21 @@ export function useMobileStructuredAttachments(args: {
   remove: (id: string) => void
   clear: () => void
 } {
-  const [attachments, setAttachments] = useState<PendingNativeChatImage[]>([])
-  const [attaching, setAttaching] = useState(false)
+  const [state, setState] = useState<{
+    sessionId: string | null
+    attachments: PendingNativeChatImage[]
+    attaching: boolean
+  }>({ sessionId: args.sessionId, attachments: [], attaching: false })
   const sessionRef = useRef(args.sessionId)
+  const generationRef = useRef(0)
   const idCounterRef = useRef(0)
   const { client, getConnectionId, onError, sessionId } = args
-  sessionRef.current = sessionId
-  useEffect(() => {
-    setAttachments([])
-  }, [sessionId])
+  if (sessionRef.current !== sessionId) {
+    sessionRef.current = sessionId
+    generationRef.current += 1
+  }
+  const attachments = state.sessionId === sessionId ? state.attachments : []
+  const attaching = state.sessionId === sessionId && state.attaching
 
   const attach = useCallback(
     async (source: MobileImageSource): Promise<void> => {
@@ -39,28 +45,59 @@ export function useMobileStructuredAttachments(args: {
         return
       }
       const targetSession = sessionId
+      const targetGeneration = generationRef.current
       try {
-        const uploaded = await uploadMobileNativeChatImages(source, {
+        await uploadMobileNativeChatImages(source, {
           client,
           getConnectionId,
           pickImages: pickMobileImages,
-          onUploadStart: () => setAttaching(true)
+          onUploadStart: () => {
+            if (
+              generationRef.current === targetGeneration &&
+              sessionRef.current === targetSession
+            ) {
+              setState((current) => ({
+                sessionId: targetSession,
+                attachments: current.sessionId === targetSession ? current.attachments : [],
+                attaching: true
+              }))
+            }
+          },
+          onImageUploaded: (uploaded) => {
+            if (
+              generationRef.current === targetGeneration &&
+              sessionRef.current === targetSession
+            ) {
+              setState((current) => ({
+                sessionId: targetSession,
+                attachments: appendPendingNativeChatImages(
+                  current.sessionId === targetSession ? current.attachments : [],
+                  [uploaded],
+                  idCounterRef
+                ),
+                attaching: true
+              }))
+            }
+          }
         })
-        if (sessionRef.current === targetSession && uploaded.length > 0) {
-          setAttachments((current) =>
-            appendPendingNativeChatImages(current, uploaded, idCounterRef)
+      } catch (error) {
+        if (generationRef.current === targetGeneration && sessionRef.current === targetSession) {
+          onError(
+            error instanceof ImageLibraryPermissionError
+              ? 'Photo permission denied'
+              : error instanceof Error && error.message === 'Clipboard image is too large'
+                ? 'Image too large to attach'
+                : 'Attach failed'
           )
         }
-      } catch (error) {
-        onError(
-          error instanceof ImageLibraryPermissionError
-            ? 'Photo permission denied'
-            : error instanceof Error && error.message === 'Clipboard image is too large'
-              ? 'Image too large to attach'
-              : 'Attach failed'
-        )
       } finally {
-        setAttaching(false)
+        if (generationRef.current === targetGeneration && sessionRef.current === targetSession) {
+          setState((current) => ({
+            sessionId: targetSession,
+            attachments: current.sessionId === targetSession ? current.attachments : [],
+            attaching: false
+          }))
+        }
       }
     },
     [attaching, client, getConnectionId, onError, sessionId]
@@ -70,7 +107,18 @@ export function useMobileStructuredAttachments(args: {
     attachments,
     attaching,
     attach,
-    remove: (id) => setAttachments((current) => current.filter((entry) => entry.id !== id)),
-    clear: () => setAttachments([])
+    remove: (id) =>
+      setState((current) => ({
+        sessionId,
+        attachments:
+          current.sessionId === sessionId
+            ? current.attachments.filter((entry) => entry.id !== id)
+            : [],
+        attaching: current.sessionId === sessionId && current.attaching
+      })),
+    clear: () => {
+      generationRef.current += 1
+      setState({ sessionId, attachments: [], attaching: false })
+    }
   }
 }

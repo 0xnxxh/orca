@@ -4634,6 +4634,7 @@ export default function SessionScreen() {
               </View>
             ) : activeStructuredTab ? (
               <MobileStructuredAgentSessionView
+                key={activeStructuredTab.sessionId}
                 items={structuredSessionEntry.session.items}
                 status={structuredSessionEntry.session.status}
                 error={structuredSessionEntry.session.error}

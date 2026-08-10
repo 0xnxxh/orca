@@ -1,9 +1,6 @@
 import * as ExpoCrypto from 'expo-crypto'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type {
-  AgentJournalRenderItem,
-  AgentJournalSubmission
-} from '../../../src/shared/agent-session-journal-types'
+import type { AgentJournalSubmission } from '../../../src/shared/agent-session-journal-types'
 import type {
   AgentSessionMutationResult,
   AgentSessionSendResult
@@ -11,41 +8,33 @@ import type {
 import type { RpcClient } from '../transport/rpc-client'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
 import {
+  createMobileStructuredOutboxEntry,
   isMobileStructuredDeliveryUnknown,
-  mobileStructuredSendBody,
+  reconcileMobileStructuredOutbox,
   updateMobileStructuredOutboxEntry
 } from './mobile-structured-outbox-entry'
 import {
   createMobileStructuredOperationId,
-  mobileStructuredPayloadFingerprint
+  mobileStructuredSendRequest
 } from './mobile-structured-mutation-envelope'
 import {
   loadMobileStructuredOutbox,
   saveMobileStructuredOutbox,
   type MobileStructuredOutboxEntry
 } from './mobile-structured-outbox-store'
-import {
-  useMobileStructuredSessionMutations,
-  type MobileStructuredSessionMutations
-} from './use-mobile-structured-session-mutations'
+import { useMobileStructuredSessionMutations } from './use-mobile-structured-session-mutations'
+import type { MobileStructuredSessionWrites } from './mobile-structured-session-write-types'
 
-export type MobileStructuredSessionWrites = MobileStructuredSessionMutations & {
-  outbox: MobileStructuredOutboxEntry[]
-  hydrated: boolean
-  error: string | null
-  send: (text: string, attachments?: readonly PendingNativeChatImage[]) => Promise<boolean>
-  takeQueuedForEdit: (clientMessageId: string) => Promise<MobileStructuredOutboxEntry | null>
-  retry: (clientMessageId: string) => Promise<void>
-}
+export type { MobileStructuredSessionWrites }
 
 export function useMobileStructuredSessionWrites(args: {
   client: RpcClient | null
+  connected: boolean
   sessionId: string | null
   fence: number | null
-  items: readonly AgentJournalRenderItem[]
   submissions: readonly AgentJournalSubmission[]
 }): MobileStructuredSessionWrites {
-  const { client, sessionId, fence, submissions } = args
+  const { client, connected, sessionId, fence, submissions } = args
   const [outbox, setOutbox] = useState<MobileStructuredOutboxEntry[]>([])
   const [hydrated, setHydrated] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -54,9 +43,12 @@ export function useMobileStructuredSessionWrites(args: {
   outboxRef.current = outbox
   const persistTailRef = useRef<Promise<void>>(Promise.resolve())
   const dispatchingRef = useRef(false)
+  const dispatchGenerationRef = useRef(0)
   const blockedIdRef = useRef<string | null>(null)
   const activeSessionRef = useRef(sessionId)
   activeSessionRef.current = sessionId
+  const activeFenceRef = useRef(fence)
+  activeFenceRef.current = fence
   const mutations = useMobileStructuredSessionMutations({
     client,
     sessionId,
@@ -73,7 +65,10 @@ export function useMobileStructuredSessionWrites(args: {
   }, [])
 
   useEffect(() => {
+    dispatchGenerationRef.current += 1
+    dispatchingRef.current = false
     setOutbox([])
+    outboxRef.current = []
     setHydrated(false)
     setError(null)
     blockedIdRef.current = null
@@ -97,19 +92,7 @@ export function useMobileStructuredSessionWrites(args: {
     if (!sessionId || submissions.length === 0 || outboxRef.current.length === 0) {
       return
     }
-    const settled = new Map(
-      submissions.map((submission) => [submission.clientMessageId, submission])
-    )
-    const next = outboxRef.current.flatMap((entry) => {
-      const submission = settled.get(entry.clientMessageId)
-      if (submission?.dispatchState === 'accepted') {
-        return []
-      }
-      if (submission?.dispatchState === 'unknown') {
-        return [{ ...entry, state: 'unconfirmed' as const }]
-      }
-      return [entry]
-    })
+    const next = reconcileMobileStructuredOutbox(outboxRef.current, submissions)
     if (
       next.length !== outboxRef.current.length ||
       next.some((entry, index) => entry !== outboxRef.current[index])
@@ -119,6 +102,26 @@ export function useMobileStructuredSessionWrites(args: {
       void persist(sessionId, next)
     }
   }, [persist, sessionId, submissions])
+
+  useEffect(() => {
+    dispatchGenerationRef.current += 1
+    dispatchingRef.current = false
+    blockedIdRef.current = null
+    if (sessionId) {
+      const current = outboxRef.current
+      const next = current.map((entry) =>
+        entry.state === 'dispatching' ? { ...entry, state: 'queued' as const } : entry
+      )
+      if (next.some((entry, index) => entry !== current[index])) {
+        outboxRef.current = next
+        setOutbox(next)
+        void persist(sessionId, next)
+      }
+    }
+    if (connected) {
+      setDispatchVersion((current) => current + 1)
+    }
+  }, [connected, fence, persist, sessionId])
 
   const replaceEntry = useCallback(
     async (
@@ -137,9 +140,11 @@ export function useMobileStructuredSessionWrites(args: {
   )
 
   useEffect(() => {
-    const next = outbox.find((entry) => entry.state === 'queued')
+    const head = outbox[0]
+    const next = head?.state === 'queued' ? head : null
     if (
       !client ||
+      !connected ||
       !sessionId ||
       fence === null ||
       !hydrated ||
@@ -151,7 +156,9 @@ export function useMobileStructuredSessionWrites(args: {
       return
     }
     dispatchingRef.current = true
+    const targetGeneration = dispatchGenerationRef.current
     const targetSessionId = sessionId
+    const targetFence = fence
     void (async () => {
       try {
         await replaceEntry(next.clientMessageId, (entry) => ({
@@ -159,21 +166,18 @@ export function useMobileStructuredSessionWrites(args: {
           state: 'dispatching',
           lastAttemptAt: Date.now()
         }))
-        const fields = { body: next.body }
-        const response = await client.sendRequest('agentSession.send', {
-          envelope: {
-            sessionId,
-            clientOperationId: next.clientMessageId,
-            expectedRuntimeFence: fence,
-            payloadFingerprint: mobileStructuredPayloadFingerprint({
-              method: 'agentSession.send',
-              sessionId,
-              fields
-            })
-          },
-          ...fields
-        })
+        const response = await client.sendRequest(
+          'agentSession.send',
+          mobileStructuredSendRequest(next, fence)
+        )
         if (activeSessionRef.current !== targetSessionId) {
+          return
+        }
+        if (dispatchGenerationRef.current !== targetGeneration) {
+          return
+        }
+        if (activeFenceRef.current !== targetFence) {
+          await replaceEntry(next.clientMessageId, (entry) => ({ ...entry, state: 'queued' }))
           return
         }
         if (!response.ok) {
@@ -187,7 +191,11 @@ export function useMobileStructuredSessionWrites(args: {
           return
         }
         if (result.value.submission.dispatchState === 'unknown') {
-          await replaceEntry(next.clientMessageId, (entry) => ({ ...entry, state: 'unconfirmed' }))
+          await replaceEntry(next.clientMessageId, (entry) => ({
+            ...entry,
+            state: 'unconfirmed',
+            retryAfterUnknownSubmittedAt: null
+          }))
           return
         }
         if (result.value.submission.dispatchState === 'rejected') {
@@ -202,36 +210,47 @@ export function useMobileStructuredSessionWrites(args: {
         if (activeSessionRef.current !== targetSessionId) {
           return
         }
+        if (dispatchGenerationRef.current !== targetGeneration) {
+          return
+        }
+        if (activeFenceRef.current !== targetFence) {
+          await replaceEntry(next.clientMessageId, (entry) => ({ ...entry, state: 'queued' }))
+          return
+        }
         if (isMobileStructuredDeliveryUnknown(caught)) {
-          await replaceEntry(next.clientMessageId, (entry) => ({ ...entry, state: 'unconfirmed' }))
+          await replaceEntry(next.clientMessageId, (entry) => ({
+            ...entry,
+            state: 'unconfirmed',
+            retryAfterUnknownSubmittedAt: null
+          }))
         } else {
           blockedIdRef.current = next.clientMessageId
           setError(caught instanceof Error ? caught.message : 'Message was not sent')
           await replaceEntry(next.clientMessageId, (entry) => ({ ...entry, state: 'queued' }))
         }
       } finally {
-        dispatchingRef.current = false
-        setDispatchVersion((current) => current + 1)
+        if (dispatchGenerationRef.current === targetGeneration) {
+          dispatchingRef.current = false
+          setDispatchVersion((current) => current + 1)
+        }
       }
     })()
-  }, [client, dispatchVersion, fence, hydrated, outbox, replaceEntry, sessionId])
+  }, [client, connected, dispatchVersion, fence, hydrated, outbox, replaceEntry, sessionId])
 
   const send = useCallback(
     async (text: string, attachments: readonly PendingNativeChatImage[] = []): Promise<boolean> => {
       if (!sessionId || (!text.trim() && attachments.length === 0)) {
         return false
       }
-      const entry: MobileStructuredOutboxEntry = {
+      const entry = createMobileStructuredOutboxEntry({
         clientMessageId: createMobileStructuredOperationId('mobile-send', () =>
           ExpoCrypto.randomUUID()
         ),
         sessionId,
-        body: mobileStructuredSendBody(text, attachments),
-        previewUris: attachments.map((attachment) => attachment.previewUri),
-        state: 'queued',
-        queuedAt: Date.now(),
-        lastAttemptAt: null
-      }
+        text,
+        attachments,
+        queuedAt: Date.now()
+      })
       const next = [...outboxRef.current, entry]
       try {
         await persist(sessionId, next)
@@ -264,9 +283,17 @@ export function useMobileStructuredSessionWrites(args: {
     async (clientMessageId: string): Promise<void> => {
       blockedIdRef.current = null
       setError(null)
-      await replaceEntry(clientMessageId, (entry) => ({ ...entry, state: 'queued' }))
+      const unknown = submissions.find(
+        (submission) =>
+          submission.clientMessageId === clientMessageId && submission.dispatchState === 'unknown'
+      )
+      await replaceEntry(clientMessageId, (entry) => ({
+        ...entry,
+        state: 'queued',
+        retryAfterUnknownSubmittedAt: unknown?.submittedAt ?? -1
+      }))
     },
-    [replaceEntry]
+    [replaceEntry, submissions]
   )
 
   return useMemo(

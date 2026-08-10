@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   loadMobileStructuredOutbox,
+  MAX_MOBILE_STRUCTURED_OUTBOX_ENTRIES,
   saveMobileStructuredOutbox,
   type MobileStructuredOutboxEntry
 } from './mobile-structured-outbox-store'
@@ -17,7 +18,8 @@ const ENTRY: MobileStructuredOutboxEntry = {
   previewUris: [],
   state: 'queued',
   queuedAt: 1,
-  lastAttemptAt: null
+  lastAttemptAt: null,
+  retryAfterUnknownSubmittedAt: null
 }
 
 describe('mobile structured outbox store', () => {
@@ -47,5 +49,19 @@ describe('mobile structured outbox store', () => {
     )
 
     await expect(loadMobileStructuredOutbox('mobile_1')).resolves.toEqual([ENTRY])
+  })
+
+  it('rejects overflow instead of silently deleting older queued messages', async () => {
+    const entries = Array.from(
+      { length: MAX_MOBILE_STRUCTURED_OUTBOX_ENTRIES + 1 },
+      (_, index) => ({
+        ...ENTRY,
+        clientMessageId: `mobile-send:${index}:id`,
+        queuedAt: index
+      })
+    )
+
+    await expect(saveMobileStructuredOutbox('mobile_1', entries)).rejects.toThrow('outbox is full')
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled()
   })
 })
