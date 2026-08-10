@@ -54,20 +54,24 @@ export async function walkSessionFiles(
     // rootDir, so pruned subtrees are never stat'd or parsed.
     directoryPredicate?: (name: string, depth: number) => boolean
     readDirectory?: (dirPath: string) => Promise<Dirent[]>
+    signal?: AbortSignal
   },
   depth = 0
 ): Promise<string[]> {
+  options.signal?.throwIfAborted()
   let entries
   try {
     entries = options.readDirectory
       ? await options.readDirectory(dirPath)
       : await readdir(dirPath, { withFileTypes: true })
   } catch {
+    options.signal?.throwIfAborted()
     return []
   }
 
   const files: string[] = []
   for (const entry of entries) {
+    options.signal?.throwIfAborted()
     const fullPath = join(dirPath, entry.name)
     if (entry.isDirectory()) {
       // Skip whole subtrees an agent never wants (e.g. subagent transcripts),

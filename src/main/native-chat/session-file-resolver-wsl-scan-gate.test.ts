@@ -5,7 +5,6 @@ const LOCAL_SESSIONS_DIR = 'C:\\Users\\ada\\.codex\\sessions'
 
 const mocks = vi.hoisted(() => ({
   gate: vi.fn(async () => []),
-  share: vi.fn(async (_key: string, task: () => Promise<string[]>) => task()),
   walk: vi.fn(
     async (
       dir: string,
@@ -20,8 +19,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('./wsl-transcript-fs-gate', () => ({
-  runWslTranscriptFsTask: mocks.gate,
-  shareWslTranscriptFsTask: mocks.share
+  runWslTranscriptFsTask: mocks.gate
 }))
 vi.mock('../ai-vault/session-scanner-discovery', () => ({
   walkSessionFiles: mocks.walk
@@ -31,7 +29,6 @@ import { resolveSessionFilePath } from './session-file-resolver'
 
 beforeEach(() => {
   mocks.gate.mockClear()
-  mocks.share.mockClear()
   mocks.walk.mockClear()
 })
 
@@ -41,12 +38,8 @@ describe('Codex WSL scan gate', () => {
       codexSessionsDirs: [WSL_SESSIONS_DIR]
     })
 
-    expect(mocks.share).toHaveBeenCalledWith(
-      expect.stringContaining('"codex-scan"'),
-      expect.any(Function)
-    )
     expect(mocks.gate).toHaveBeenCalledWith(
-      expect.stringContaining('"codex-readdir"'),
+      expect.objectContaining({ operation: 'readdir', priority: 'scan' }),
       expect.any(Function)
     )
     expect(mocks.walk).toHaveBeenCalledWith(WSL_SESSIONS_DIR, 'codex', [], expect.any(Object))
@@ -57,7 +50,6 @@ describe('Codex WSL scan gate', () => {
       codexSessionsDirs: [LOCAL_SESSIONS_DIR]
     })
 
-    expect(mocks.share).not.toHaveBeenCalled()
     expect(mocks.gate).not.toHaveBeenCalled()
     expect(mocks.walk).toHaveBeenCalledTimes(1)
   })

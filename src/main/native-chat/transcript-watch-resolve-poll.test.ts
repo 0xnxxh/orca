@@ -124,4 +124,28 @@ describe('native chat transcript resolve polling', () => {
     expect(mocks.resolve.mock.calls.length).toBeGreaterThan(1)
     subscription.unsubscribe()
   })
+
+  it('cancels queued WSL resolution when the subscription closes', async () => {
+    setPlatform('win32')
+    let receivedSignal: AbortSignal | undefined
+    mocks.toHostReadable.mockImplementation(
+      (_path: string, deps: { signal?: AbortSignal }) =>
+        new Promise<null>((_resolve, reject) => {
+          receivedSignal = deps.signal
+          deps.signal?.addEventListener('abort', () => reject(deps.signal?.reason), { once: true })
+        })
+    )
+    const subscription = await subscribeNativeChatTranscript({
+      agent: 'codex',
+      sessionId: 'session-id',
+      transcriptPath: '/home/ada/.codex/sessions/rollout-session-id.jsonl',
+      resolvePollIntervalMs: 10,
+      onAppend: () => {}
+    })
+
+    await vi.advanceTimersByTimeAsync(10)
+    expect(receivedSignal?.aborted).toBe(false)
+    subscription.unsubscribe()
+    expect(receivedSignal?.aborted).toBe(true)
+  })
 })

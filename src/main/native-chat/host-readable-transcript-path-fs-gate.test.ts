@@ -89,10 +89,11 @@ describe('WSL transcript filesystem gate', () => {
     const wslProbe = toHostReadableTranscriptPath(firstGuestPath, wslDeps())
     await vi.waitFor(() => expect(fsMocks.access).toHaveBeenCalledWith(firstUncPath))
 
-    const localPath = 'C:\\Users\\ada\\rollout.jsonl'
-    await expect(toHostReadableTranscriptPath(localPath, { platform: 'win32' })).resolves.toBe(
-      localPath
-    )
+    const localPath = import.meta.filename
+    await expect(
+      toHostReadableTranscriptPath(localPath, { platform: process.platform })
+    ).resolves.toBe(localPath)
+    expect(fsMocks.access).toHaveBeenCalledTimes(1)
     releaseWsl?.()
     await expect(wslProbe).resolves.toBe(firstUncPath)
   })

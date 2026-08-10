@@ -1,11 +1,7 @@
+import { existsSync } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
-import {
-  foldWslUncPathCaseInsensitiveParts,
-  isWslUncPath,
-  parseWslUncPath,
-  toWindowsWslPath
-} from '../../shared/wsl-paths'
+import { isWslUncPath, parseWslUncPath, toWindowsWslPath } from '../../shared/wsl-paths'
 import { WSL_CODEX_RUNTIME_HOME_SEGMENTS } from '../pty/codex-home-wsl-env'
 import { getWslHomeAsync, listWslDistrosAsync } from '../wsl'
 import { runWslTranscriptFsTask } from './wsl-transcript-fs-gate'
@@ -37,6 +33,7 @@ export function needsWslHostTranslation(
 export type HostReadableTranscriptPathDeps = {
   platform?: NodeJS.Platform
   pathExists?: (path: string) => Promise<boolean>
+  signal?: AbortSignal
   /** Each installed WSL distro's `$HOME` as a Windows UNC path. */
   listWslHomeDirs?: () => Promise<string[]>
 }
@@ -44,7 +41,11 @@ export type HostReadableTranscriptPathDeps = {
 // Why: candidates are `\\wsl.localhost` UNC paths served over 9P. A sync probe
 // against a stopped or unreachable distro would stall the Electron main thread
 // instead of falling through to the next candidate, so keep this off the loop.
-async function pathExistsAsync(path: string): Promise<boolean> {
+async function pathExistsAsync(path: string, signal?: AbortSignal): Promise<boolean> {
+  signal?.throwIfAborted()
+  if (!isWslUncPath(path)) {
+    return existsSync(path)
+  }
   const probe = async (): Promise<boolean> => {
     try {
       await access(path)
@@ -53,11 +54,7 @@ async function pathExistsAsync(path: string): Promise<boolean> {
       return false
     }
   }
-  if (!isWslUncPath(path)) {
-    return probe()
-  }
-  const identity = foldWslUncPathCaseInsensitiveParts(path) ?? path
-  return runWslTranscriptFsTask(JSON.stringify(['access', identity]), probe)
+  return runWslTranscriptFsTask({ operation: 'access', path, priority: 'exact', signal }, probe)
 }
 
 // Why: resolveSessionFilePath runs on a 500ms–5s poll loop. listWslDistrosAsync
@@ -125,7 +122,9 @@ export async function toHostReadableTranscriptPath(
   if (!path) {
     return null
   }
-  const pathExists = deps.pathExists ?? pathExistsAsync
+  deps.signal?.throwIfAborted()
+  const pathExists =
+    deps.pathExists ?? ((candidate: string) => pathExistsAsync(candidate, deps.signal))
   const platform = deps.platform ?? process.platform
   // Why: classify BEFORE probing — Win32 resolves a bare `/home/…` against the
   // current drive (`C:\home\…`), so a probe first could bind chat to a local

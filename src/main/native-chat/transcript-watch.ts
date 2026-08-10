@@ -23,9 +23,11 @@ export type {
  *  is unresolved; native-watch failure degrades to reconciliation-only mode. */
 async function attemptInstall(
   args: SubscribeNativeChatTranscriptArgs,
-  decode: (line: string, fallbackId: string) => NativeChatMessage | null
+  decode: (line: string, fallbackId: string) => NativeChatMessage | null,
+  signal?: AbortSignal
 ): Promise<NativeChatTranscriptSubscription | null> {
-  const filePath = args.filePath ?? (await resolveSessionFilePath(args.agent, args.sessionId, args))
+  const filePath =
+    args.filePath ?? (await resolveSessionFilePath(args.agent, args.sessionId, args, signal))
   if (!filePath) {
     return null
   }
@@ -69,6 +71,7 @@ function subscribeViaResolvePoll(
   // the exact-path install doesn't wait on the slower id-glob (#10326).
   let hostReadableExactPath: string | null = null
   let lastWslTranslateAt = 0
+  const resolveController = new AbortController()
 
   function scheduleAttempt(): void {
     if (closed) {
@@ -112,18 +115,24 @@ function subscribeViaResolvePoll(
           // guest path is never installed on Windows — it would resolve against
           // the current drive (`C:\home\…`) and bind chat to a look-alike file.
           lastWslTranslateAt = Date.now()
-          hostReadableExactPath = await toHostReadableTranscriptPath(exactPath)
+          hostReadableExactPath = await toHostReadableTranscriptPath(exactPath, {
+            signal: resolveController.signal
+          })
         }
       }
       result = hostReadableExactPath
-        ? await attemptInstall({ ...args, filePath: hostReadableExactPath }, decode)
+        ? await attemptInstall(
+            { ...args, filePath: hostReadableExactPath },
+            decode,
+            resolveController.signal
+          )
         : null
       if (
         !result &&
         (!exactPath || Date.now() - lastFallbackResolveAt >= FALLBACK_RESOLVE_POLL_MS)
       ) {
         lastFallbackResolveAt = Date.now()
-        result = await attemptInstall(args, decode)
+        result = await attemptInstall(args, decode, resolveController.signal)
       }
     } catch {
       // Why: a transient resolve failure (EACCES/EIO during the glob) must not
@@ -151,6 +160,7 @@ function subscribeViaResolvePoll(
         return
       }
       closed = true
+      resolveController.abort()
       if (pollTimer) {
         clearTimeout(pollTimer)
         pollTimer = null
