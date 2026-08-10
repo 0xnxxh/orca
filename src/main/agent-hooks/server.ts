@@ -1231,14 +1231,30 @@ export class AgentHookServer {
             ...rootContextPreservingPayload,
             payload: {
               ...rootContextPreservingPayload.payload,
-              agentType: identity.agentType,
-              // Why: a nested child CLI inherits the pane key; its model must not
-              // relabel the fenced parent identity (`claude` running `codex exec`
-              // would otherwise show the codex model on the Claude row for good).
-              ...(identity.inheritedFromActivePane ? { model: previous?.payload.model } : {})
+              agentType: identity.agentType
             }
           }
-    const effectivePayload = attachClaudePermissionToolUseId(previous, identityResolvedPayload)
+    // Why: child hooks can report their own model, while later parent completion hooks may omit it.
+    const modelPreservingPayload = identity.inheritedFromActivePane
+      ? {
+          ...identityResolvedPayload,
+          payload: {
+            ...identityResolvedPayload.payload,
+            model: previous?.payload.model
+          }
+        }
+      : identityResolvedPayload.payload.model === undefined &&
+          previous?.payload.agentType === identity.agentType &&
+          previous.payload.model !== undefined
+        ? {
+            ...identityResolvedPayload,
+            payload: {
+              ...identityResolvedPayload.payload,
+              model: previous.payload.model
+            }
+          }
+        : identityResolvedPayload
+    const effectivePayload = attachClaudePermissionToolUseId(previous, modelPreservingPayload)
     if (previous && shouldKeepClaudePermissionVisible(previous, effectivePayload)) {
       return previous
     }
