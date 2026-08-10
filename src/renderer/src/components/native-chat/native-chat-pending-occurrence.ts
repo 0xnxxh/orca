@@ -13,6 +13,8 @@ export type NativeChatPendingOccurrence = {
   afterMessageTimestamp?: number | null
   matchingOccurrence?: number
   matchingAfterTimestamp?: number
+  afterTranscriptGeneration?: number
+  afterTranscriptHighWater?: number
 }
 
 export function normalizeNativeChatPendingText(text: string): string {
@@ -200,7 +202,8 @@ export function selectPendingIndicesRepresentedByUserTexts(
 }
 
 export function nativeChatPendingMatchKey(pending: NativeChatPendingOccurrence): string {
-  return `${String(pending.afterMessageId)}\0${nativeChatPendingContentKey(pending)}`
+  const transcriptBoundary = `${String(pending.afterTranscriptGeneration)}:${String(pending.afterTranscriptHighWater)}`
+  return `${String(pending.afterMessageId)}\0${transcriptBoundary}\0${nativeChatPendingContentKey(pending)}`
 }
 
 export function assignNativeChatPendingOccurrence<T extends NativeChatPendingOccurrence>(

@@ -18,6 +18,7 @@ import {
   nativeChatPendingOccurrence,
   selectPendingIndicesRepresentedByUserTexts
 } from './native-chat-pending-occurrence'
+import type { NativeChatTranscriptOrder } from './native-chat-transcript-order'
 
 /** An optimistic, not-yet-confirmed composer send. */
 export type NativeChatPendingSend = {
@@ -38,6 +39,9 @@ export type NativeChatPendingSend = {
   matchingOccurrence?: number
   /** Shared host-domain time bound when the message id boundary is paged out. */
   matchingAfterTimestamp?: number
+  /** Renderer-local live-stream position captured when no transcript row exists. */
+  afterTranscriptGeneration?: number
+  afterTranscriptHighWater?: number
 }
 
 export type NativeChatPendingSendScope = {
@@ -90,13 +94,26 @@ export function clearPendingSendCacheForTests(): void {
 
 function messagesAfterPendingBoundary(
   messages: readonly NativeChatMessage[],
-  pending: NativeChatPendingSend
+  pending: NativeChatPendingSend,
+  transcriptOrder?: NativeChatTranscriptOrder
 ): readonly NativeChatMessage[] {
   if (pending.afterMessageId === undefined) {
     return messages
   }
   if (pending.afterMessageId === null) {
-    return messages.filter((message) => messageIsAfterPendingTimestamp(message, pending))
+    if (
+      transcriptOrder === undefined ||
+      pending.afterTranscriptGeneration === undefined ||
+      pending.afterTranscriptHighWater === undefined ||
+      transcriptOrder.generation !== pending.afterTranscriptGeneration
+    ) {
+      return []
+    }
+    return messages.filter(
+      (message) =>
+        (transcriptOrder.messageSequenceById.get(message.id) ?? 0) >
+        pending.afterTranscriptHighWater!
+    )
   }
   const boundaryIndex = messages.findIndex((message) => message.id === pending.afterMessageId)
   if (boundaryIndex >= 0) {
@@ -140,7 +157,8 @@ function messageIsAfterPendingTimestamp(
  */
 export function prunePendingSends(
   pending: NativeChatPendingSend[],
-  messages: NativeChatMessage[]
+  messages: NativeChatMessage[],
+  transcriptOrder?: NativeChatTranscriptOrder
 ): NativeChatPendingSend[] {
   if (pending.length === 0) {
     return pending
@@ -150,9 +168,9 @@ export function prunePendingSends(
     const contentKey = nativeChatPendingContentKey(entry)
     const key = nativeChatPendingMatchKey(entry)
     const available =
-      advancedNativeChatUserContentCounts(messagesAfterPendingBoundary(messages, entry)).get(
-        contentKey
-      ) ?? 0
+      advancedNativeChatUserContentCounts(
+        messagesAfterPendingBoundary(messages, entry, transcriptOrder)
+      ).get(contentKey) ?? 0
     const used = consumed.get(key) ?? 0
     const occurrence = nativeChatPendingOccurrence(entry, used)
     consumed.set(key, Math.max(used, occurrence))
@@ -184,7 +202,8 @@ export function prunePendingSends(
  */
 export function pendingSendsAsMessages(
   pending: NativeChatPendingSend[],
-  existingMessages: NativeChatMessage[] = []
+  existingMessages: NativeChatMessage[] = [],
+  transcriptOrder?: NativeChatTranscriptOrder
 ): NativeChatMessage[] {
   if (pending.length === 0) {
     return []
@@ -195,7 +214,7 @@ export function pendingSendsAsMessages(
     const key = nativeChatPendingMatchKey(entry)
     const represented =
       matchingNativeChatUserContentCounts(
-        messagesAfterPendingBoundary(existingMessages, entry)
+        messagesAfterPendingBoundary(existingMessages, entry, transcriptOrder)
       ).get(contentKey) ?? 0
     const used = consumed.get(key) ?? 0
     const occurrence = nativeChatPendingOccurrence(entry, used)
