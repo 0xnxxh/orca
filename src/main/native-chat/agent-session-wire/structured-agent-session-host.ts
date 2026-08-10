@@ -59,6 +59,7 @@ import {
 } from './structured-agent-session-subscribers'
 import { StructuredAgentSessionTaskQueue } from './structured-agent-session-task-queue'
 import { restoreStructuredAgentSessionsOnRestart } from './structured-agent-session-restart-restore'
+import * as providerRouting from './structured-agent-session-provider-routing'
 
 export type StructuredAgentSessionCaller = {
   /** Stable per-client identity; scopes the operation ledger and records who
@@ -109,18 +110,14 @@ export class StructuredAgentSessionHost {
   }
 
   supportsCreate(location: AgentSessionExecutionLocation, agent: string): boolean {
-    return agent === 'codex' && (this.deps.adapter.supportsLocation?.(location) ?? false)
+    return providerRouting.adapterSupportsAgentSessionCreate(this.deps.adapter, location, agent)
   }
 
-  listSessionTabs(): {
-    sessionId: string
-    workspaceId: string
-    agent: 'codex'
-  }[] {
+  listSessionTabs(): providerRouting.StructuredAgentSessionTab[] {
     return [...this.sessions.entries()].map(([sessionId, session]) => ({
       sessionId,
       workspaceId: session.params.location.workspaceId,
-      agent: 'codex' as const
+      agent: providerRouting.structuredAgentSessionTabAgent(session.params.agent)
     }))
   }
 
@@ -128,7 +125,11 @@ export class StructuredAgentSessionHost {
     await restoreStructuredAgentSessionsOnRestart({
       store: this.deps.store,
       journalRoot: this.deps.journalRoot,
-      records: this.deps.store.listRecords().filter((record) => record.provider === 'codex'),
+      records: this.deps.store
+        .listRecords()
+        .filter((record) =>
+          providerRouting.adapterSupportsAgentSessionRecord(this.deps.adapter, record)
+        ),
       reconcile: this.reconcileLeases,
       operationId: () =>
         `${Math.trunc(this.now()).toString().padStart(13, '0')}-${randomUUID().replaceAll('-', '')}`,

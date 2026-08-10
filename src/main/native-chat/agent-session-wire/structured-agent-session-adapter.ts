@@ -34,6 +34,8 @@ export type AgentSessionDispatchOutcome =
   | { state: 'unknown'; reason: string }
 
 export type StructuredAgentSessionAdapter = {
+  /** Provider-aware capability check for hosts that route more than one adapter. */
+  supportsCreate?(location: AgentSessionExecutionLocation, agent: string): boolean
   /** Provider/runtime support, kept here so remote enablement changes adapter data, not UI logic. */
   supportsLocation?(location: AgentSessionExecutionLocation): boolean
   /** Makes the reservation real. Called once per reservation, with the spawn
