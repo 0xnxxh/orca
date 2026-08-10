@@ -1,4 +1,4 @@
-import { lstat, readdir, realpath } from 'node:fs/promises'
+import { realpath } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AiVaultScanIssue } from '../../shared/ai-vault-types'
 import {
@@ -7,16 +7,9 @@ import {
   cursorSessionActivityMtimeMs,
   cursorScopeCwdCandidates,
   cursorStorageContextKey,
-  isSafeCursorSessionBasename,
   resolveCursorLocalRoots
 } from './session-scanner-cursor-paths'
-import {
-  cursorLocalFileMetadata,
-  discoverLocalCursorSidecars,
-  isMissingCursorPathError,
-  localCursorRootRealPath,
-  validateLocalCursorSidecars
-} from './session-scanner-cursor-local-files'
+import { discoverLocalCursorSidecarsBounded } from './session-scanner-cursor-local-files'
 import { discoverFiles } from './session-scanner-discovery'
 import type {
   AiVaultScanOptions,
@@ -24,8 +17,10 @@ import type {
   FileWithMtime,
   SessionFileDiscovery
 } from './session-scanner-types'
+import { createAiVaultScanCancelledError } from './ai-vault-scan-cancellation'
 import { errorMessage } from './session-scanner-values'
 
+// Matches the shared owning-host scope cap; conversion work stays bounded too.
 const CURSOR_SCOPE_PATH_LIMIT = 64
 
 type CursorRootPair = {
@@ -75,8 +70,35 @@ async function discoverCursorSidecars(args: {
   limit: number
   issues: AiVaultScanIssue[]
 }): Promise<SessionFileDiscovery> {
-  const expectedRootRealPath = await localCursorRootRealPath(args.roots.chatsDir, args.issues)
-  if (!expectedRootRealPath) {
+  const startedAt = Date.now()
+  const rawScopePaths = args.options.scopePaths ?? []
+  // Detect truncation on the raw caller list before any conversion work/cap.
+  const scopePathsTruncated = rawScopePaths.length > CURSOR_SCOPE_PATH_LIMIT
+  const scopePaths = await localScopeCandidates({
+    ...args,
+    options: {
+      ...args.options,
+      scopePaths: rawScopePaths.slice(0, CURSOR_SCOPE_PATH_LIMIT)
+    }
+  })
+  let discovery
+  try {
+    discovery = await discoverLocalCursorSidecarsBounded({
+      chatsDir: args.roots.chatsDir,
+      scopePaths,
+      issues: args.issues,
+      signal: args.options.signal,
+      pathPlatform: args.roots.targetPlatform
+    })
+  } catch (error) {
+    if ((error as Error).message === 'cursor_sidecar_scan_cancelled') {
+      throw createAiVaultScanCancelledError()
+    }
+    args.issues.push({
+      agent: 'cursor',
+      path: args.roots.chatsDir,
+      message: errorMessage(error)
+    })
     return {
       agent: 'cursor',
       rootDir: args.roots.chatsDir,
@@ -85,15 +107,38 @@ async function discoverCursorSidecars(args: {
       cursorStorageContextKey: args.roots.storageContextKey
     }
   }
-  const discovered = await discoverLocalCursorSidecars(args.roots.chatsDir, args.issues)
-  const evidenceByPath = new Map<string, CursorCwdEvidence>()
-  const scopedFiles = await discoverScopedSidecars(args, evidenceByPath)
-  const files = await validateLocalCursorSidecars(
-    dedupeFiles([...scopedFiles, ...discovered]),
-    args.issues
-  )
-  const rankedFiles = dedupeFiles(files)
-  const scopedPaths = new Set(evidenceByPath.keys())
+
+  const counters = {
+    ...discovery.counters,
+    elapsedMs: Math.max(0, Date.now() - startedAt)
+  }
+  const truncated = {
+    ...discovery.truncated,
+    scopePaths: discovery.truncated.scopePaths || scopePathsTruncated
+  }
+  if (scopePathsTruncated && !discovery.truncated.scopePaths) {
+    args.issues.push({
+      agent: 'cursor',
+      path: 'cursor sidecar scan',
+      message: 'Cursor sidecar scan truncated by the scope paths limit.'
+    })
+  }
+  if (!discovery.rootRealPath) {
+    return {
+      agent: 'cursor',
+      rootDir: args.roots.chatsDir,
+      files: [],
+      cursorLayout: 'sidecar',
+      cursorStorageContextKey: args.roots.storageContextKey,
+      cursorDiscoveryCounters: counters,
+      cursorDiscoveryTruncated: truncated
+    }
+  }
+
+  const rankedFiles = dedupeFiles(discovery.files)
+  const scopedPaths = new Set(discovery.evidenceByPath.keys())
+  // Scope buckets stay outside the unscoped retention window; unscoped entries
+  // still honor the per-agent discovery limit used by the rest of AI Vault.
   const retained = dedupeFiles([
     ...rankedFiles.filter((file) => scopedPaths.has(file.path)),
     ...rankedFiles.filter((file) => !scopedPaths.has(file.path)).slice(0, args.limit)
@@ -104,8 +149,10 @@ async function discoverCursorSidecars(args: {
     files: retained,
     cursorLayout: 'sidecar',
     cursorStorageContextKey: args.roots.storageContextKey,
-    cursorCwdEvidenceByPath: evidenceByPath,
-    cursorExpectedRootRealPath: expectedRootRealPath
+    cursorCwdEvidenceByPath: discovery.evidenceByPath,
+    cursorExpectedRootRealPath: discovery.rootRealPath,
+    cursorDiscoveryCounters: counters,
+    cursorDiscoveryTruncated: truncated
   }
 }
 
@@ -156,57 +203,12 @@ async function discoverCursorLegacy(args: {
   }
 }
 
-async function discoverScopedSidecars(
-  args: {
-    roots: CursorRootPair
-    options: AiVaultScanOptions
-    limit: number
-    issues: AiVaultScanIssue[]
-  },
-  evidenceByPath: Map<string, CursorCwdEvidence>
-): Promise<FileWithMtime[]> {
-  const files: FileWithMtime[] = []
-  for (const cwd of await localScopeCandidates(args)) {
-    const bucket = cursorBucketForCwd(cwd, args.roots.targetPlatform)
-    const bucketDir = join(args.roots.chatsDir, bucket)
-    let entries
-    try {
-      const bucketStat = await lstat(bucketDir)
-      if (!bucketStat.isDirectory() || bucketStat.isSymbolicLink()) {
-        continue
-      }
-      entries = await readdir(bucketDir, { withFileTypes: true })
-    } catch (error) {
-      if (!isMissingCursorPathError(error)) {
-        args.issues.push({ agent: 'cursor', path: bucketDir, message: errorMessage(error) })
-      }
-      continue
-    }
-    for (const entry of entries) {
-      if (
-        !entry.isDirectory() ||
-        entry.isSymbolicLink() ||
-        !isSafeCursorSessionBasename(entry.name)
-      ) {
-        continue
-      }
-      const metaPath = join(bucketDir, entry.name, 'meta.json')
-      const file = await cursorLocalFileMetadata(metaPath)
-      if (file) {
-        evidenceByPath.set(metaPath, { kind: 'scope-bucket', cwd, bucket })
-        files.push(file)
-      }
-    }
-  }
-  return files
-}
-
 async function localScopeCandidates(args: {
   roots: CursorRootPair
   options: AiVaultScanOptions
 }): Promise<string[]> {
   const candidates = new Set<string>()
-  for (const scopePath of (args.options.scopePaths ?? []).slice(0, CURSOR_SCOPE_PATH_LIMIT)) {
+  for (const scopePath of args.options.scopePaths ?? []) {
     for (const cwd of cursorScopeCwdCandidates({
       scopePath,
       platform: args.roots.targetPlatform,

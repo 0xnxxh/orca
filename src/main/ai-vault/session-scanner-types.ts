@@ -82,6 +82,22 @@ export type SessionFileDiscovery = {
   cursorStorageContextKey?: string
   cursorCwdEvidenceByPath?: ReadonlyMap<string, CursorCwdEvidence>
   cursorExpectedRootRealPath?: string
+  // Path-free ingress telemetry for local/WSL Cursor chats discovery.
+  cursorDiscoveryCounters?: {
+    rootReaddir: number
+    bucketReaddir: number
+    fileLstat: number
+    boundedReads: number
+    scopeRealpath: number
+    returnedBytes: number
+    elapsedMs: number
+  }
+  cursorDiscoveryTruncated?: {
+    scopePaths: boolean
+    buckets: boolean
+    sessionDirs: boolean
+    sidecarBytes: boolean
+  }
 }
 
 export type CursorLayout = 'sidecar' | 'legacy'

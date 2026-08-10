@@ -17,8 +17,9 @@ import type { RequestContext } from './dispatcher'
 import {
   discoverCursorSidecarCandidates,
   type CursorSidecarScanCandidate,
-  type CursorSidecarScanCaps
-} from './cursor-sidecar-scan-discovery'
+  type CursorSidecarScanCaps,
+  type CursorSidecarScanCancellation
+} from '../shared/cursor-sidecar-scan-discovery'
 
 export async function scanCursorSidecars(
   input: unknown,
@@ -32,7 +33,7 @@ export async function scanCursorSidecars(
     request,
     caps,
     response,
-    context
+    cancellation: cancellationFromContext(context)
   })
   if (!discovery) {
     return finish(response, startedAt)
@@ -150,8 +151,16 @@ function isMissing(error: unknown): boolean {
   return code === 'ENOENT' || code === 'ENOTDIR'
 }
 
-function throwIfCancelled(context: RequestContext): void {
-  if (context.isStale() || context.signal?.aborted) {
-    throw new Error('cursor_sidecar_scan_cancelled')
+function cancellationFromContext(context: RequestContext): CursorSidecarScanCancellation {
+  return {
+    throwIfCancelled: () => {
+      if (context.isStale() || context.signal?.aborted) {
+        throw new Error('cursor_sidecar_scan_cancelled')
+      }
+    }
   }
+}
+
+function throwIfCancelled(context: RequestContext): void {
+  cancellationFromContext(context).throwIfCancelled()
 }

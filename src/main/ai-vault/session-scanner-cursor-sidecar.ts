@@ -25,6 +25,8 @@ export type CursorSidecarEvidence = {
 export type CursorSidecarParseResult = {
   evidence: CursorSidecarEvidence | null
   issue: AiVaultScanIssue | null
+  /** True when the parse reused an in-memory entry and skipped a verified read. */
+  cacheHit?: boolean
 }
 
 const SIDECAR_CACHE_MAX_ENTRIES = 4096
@@ -85,7 +87,7 @@ export async function parseCursorSidecarFileCached(args: {
   ) {
     sidecarCache.delete(args.file.path)
     sidecarCache.set(args.file.path, cached)
-    return cached.result
+    return { ...cached.result, cacheHit: true }
   }
   const result = await parseCursorSidecarFile(args)
   sidecarCache.delete(args.file.path)
@@ -107,7 +109,7 @@ export async function parseCursorSidecarFileCached(args: {
       sidecarCache.delete(oldest.value)
     }
   }
-  return result
+  return { ...result, cacheHit: false }
 }
 
 export function resetCursorSidecarParseCacheForTests(): void {

@@ -70,10 +70,12 @@ describe('scanCursorSidecars', () => {
     expect(result.counters).toMatchObject({
       rootReaddir: 1,
       bucketReaddir: 1,
-      fileLstat: 2,
       boundedReads: 1,
       scopeRealpath: 1
     })
+    // Scope-bucket existence lstat(s) plus meta/store lstats; macOS realpath may
+    // add a second scope variant whose missing bucket is still counted.
+    expect(result.counters.fileLstat).toBeGreaterThanOrEqual(3)
     expect(result.truncated).toEqual({
       scopePaths: false,
       buckets: false,
