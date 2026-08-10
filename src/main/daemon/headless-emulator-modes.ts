@@ -1,5 +1,7 @@
 import type { Terminal } from '@xterm/headless'
 import type { TerminalMouseModeMirror } from './terminal-mouse-mode-mirror'
+import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
+import { shiftOscLinkRangesForTrimmedRows } from './headless-osc-link-ranges'
 import type { TerminalModes } from './types'
 
 type TerminalWithKittyKeyboard = Terminal & {
@@ -29,4 +31,28 @@ export function readTerminalModes(
     alternateScreen: buffer.type === 'alternate',
     kittyKeyboardFlags: readKittyKeyboardFlags(terminal)
   }
+}
+
+/** Lower retained scrollback in place; xterm trims the normal buffer on assignment, so rows free
+ *  immediately. Returns the restored OSC links shifted for whatever the trim removed. */
+export function applyRetainedScrollbackRows(
+  terminal: Terminal,
+  restoredOscLinks: readonly TerminalOscLinkRange[],
+  rows: number
+): TerminalOscLinkRange[] {
+  if (!Number.isFinite(rows) || rows < 0) {
+    return [...restoredOscLinks]
+  }
+  const next = Math.floor(rows)
+  if (terminal.options.scrollback === next) {
+    return [...restoredOscLinks]
+  }
+  const normalBufferWasActive = terminal.buffer.active.type === 'normal'
+  const previousNormalLength = terminal.buffer.normal.length
+  terminal.options.scrollback = next
+  const trimmedRows = previousNormalLength - terminal.buffer.normal.length
+  if (!normalBufferWasActive) {
+    return [...restoredOscLinks]
+  }
+  return shiftOscLinkRangesForTrimmedRows(restoredOscLinks, trimmedRows)
 }
