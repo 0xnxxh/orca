@@ -1,5 +1,7 @@
+import * as ExpoCrypto from 'expo-crypto'
 import { useCallback, useEffect, useState, type MutableRefObject } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
+import { createMobileStructuredOperationId } from './mobile-structured-mutation-envelope'
 import { mobileStructuredCreateFingerprint } from './mobile-structured-session-create'
 import { useMobileStructuredAgentSession } from './use-mobile-structured-agent-session'
 import { useMobileStructuredAttachments } from './use-mobile-structured-attachments'
@@ -97,18 +99,19 @@ export function useMobileStructuredSessionEntry(args: {
       const response = await client.sendRequest('agentSession.create', {
         envelope: {
           sessionId,
-          clientOperationId: `mobile-structured:${nonce}`,
+          clientOperationId: createMobileStructuredOperationId(() => ExpoCrypto.randomUUID()),
           expectedRuntimeFence: null,
           payloadFingerprint: mobileStructuredCreateFingerprint({ sessionId, worktree })
         },
         worktree,
         agent: 'codex'
       })
-      const result = response.ok
-        ? (response.result as { ok?: boolean; refusal?: { message?: string } })
-        : null
-      if (!response.ok || result?.ok !== true) {
-        throw new Error(result?.refusal?.message ?? 'Failed to create chat session')
+      if (!response.ok) {
+        throw new Error(response.error.message)
+      }
+      const result = response.result as { ok?: boolean; refusal?: { message?: string } }
+      if (result.ok !== true) {
+        throw new Error(result.refusal?.message ?? 'Failed to create chat session')
       }
       closeDrawer()
       onCreated(`agent-session:${sessionId}`)

@@ -24,9 +24,21 @@ describe('mobile structured mutation envelope', () => {
     )
   })
 
-  it('mints timestamped operation ids', () => {
-    expect(createMobileStructuredOperationId('mobile-send', () => 'uuid', 1_700_000_000_000)).toBe(
-      'mobile-send:loyw3v28:uuid'
+  it('mints durable host-compatible operation ids', () => {
+    expect(
+      createMobileStructuredOperationId(
+        () => '00000000-0000-4000-8000-000000000001',
+        1_700_000_000_000
+      )
+    ).toBe('1700000000000-00000000000040008000000000000001')
+  })
+
+  it('rejects entropy or timestamps the durable host cannot admit', () => {
+    expect(() => createMobileStructuredOperationId(() => 'uuid', 1_700_000_000_000)).toThrow(
+      'Unable to create a durable operation id'
     )
+    expect(() =>
+      createMobileStructuredOperationId(() => '00000000-0000-4000-8000-000000000001', 1_700_000_000)
+    ).toThrow('Unable to create a durable operation id')
   })
 })

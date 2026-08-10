@@ -243,9 +243,7 @@ export function useMobileStructuredSessionWrites(args: {
         return false
       }
       const entry = createMobileStructuredOutboxEntry({
-        clientMessageId: createMobileStructuredOperationId('mobile-send', () =>
-          ExpoCrypto.randomUUID()
-        ),
+        clientMessageId: createMobileStructuredOperationId(() => ExpoCrypto.randomUUID()),
         sessionId,
         text,
         attachments,

@@ -51,7 +51,7 @@ export function useMobileStructuredSessionMutations(args: {
       const mutationKey = `${sessionId}:${fingerprintMethod}:${JSON.stringify(fields)}`
       const clientOperationId =
         operationIdsRef.current.get(mutationKey) ??
-        createMobileStructuredOperationId('mobile-mutation', () => ExpoCrypto.randomUUID())
+        createMobileStructuredOperationId(() => ExpoCrypto.randomUUID())
       operationIdsRef.current.set(mutationKey, clientOperationId)
       let response
       try {

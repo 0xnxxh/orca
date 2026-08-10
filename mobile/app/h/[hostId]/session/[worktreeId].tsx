@@ -227,6 +227,7 @@ import {
 import { TerminalPaneView } from '../../../../src/session/TerminalPaneView'
 import { MobileNativeChatOverlay } from '../../../../src/session/MobileNativeChatOverlay'
 import { MobileStructuredAgentSessionView } from '../../../../src/session/MobileStructuredAgentSessionView'
+import { MobileStructuredSessionCreateError } from '../../../../src/session/MobileStructuredSessionCreateError'
 import { useMobileStructuredSessionEntry } from '../../../../src/session/use-mobile-structured-session-entry'
 import { showMobileStructuredChatChoice } from '../../../../src/session/mobile-structured-session-create'
 import { MobileBrowserTabActionSheet } from '../../../../src/session/MobileBrowserTabActionSheet'
@@ -4543,6 +4544,11 @@ export default function SessionScreen() {
               </View>
             ) : null}
 
+            <MobileStructuredSessionCreateError
+              message={createError}
+              onDismiss={() => setCreateError('')}
+            />
+
             {showLoadingState ? (
               <View style={styles.emptyState}>
                 <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -4550,7 +4556,6 @@ export default function SessionScreen() {
             ) : showEmptyState ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyText}>No tabs in this session</Text>
-                {createError ? <Text style={styles.createError}>{createError}</Text> : null}
                 <View style={styles.emptyActions}>
                   <Pressable
                     style={[

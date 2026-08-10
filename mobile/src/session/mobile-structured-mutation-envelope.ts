@@ -28,11 +28,15 @@ export function mobileStructuredPayloadFingerprint(input: {
 }
 
 export function createMobileStructuredOperationId(
-  prefix: string,
   randomUuid: () => string,
   now: number = Date.now()
 ): string {
-  return `${prefix}:${now.toString(36)}:${randomUuid()}`
+  const timestamp = Math.trunc(now).toString()
+  const entropy = randomUuid().replaceAll('-', '').toLowerCase()
+  if (!/^\d{13}$/.test(timestamp) || !/^[0-9a-f]{32}$/.test(entropy)) {
+    throw new Error('Unable to create a durable operation id')
+  }
+  return `${timestamp}-${entropy}`
 }
 
 export function mobileStructuredSendRequest(
