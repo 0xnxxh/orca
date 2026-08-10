@@ -1,5 +1,11 @@
 import { sha256 } from '@noble/hashes/sha256'
 
+export type MobileStructuredAgent = 'claude' | 'codex'
+
+export function isMobileStructuredAgent(agent: string): agent is MobileStructuredAgent {
+  return agent === 'claude' || agent === 'codex'
+}
+
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value ?? null)
@@ -17,12 +23,13 @@ function canonicalize(value: unknown): string {
 export function mobileStructuredCreateFingerprint(input: {
   sessionId: string
   worktree: string
+  agent: MobileStructuredAgent
 }): string {
   const bytes = new TextEncoder().encode(
     canonicalize({
       method: 'agentSession.create',
       sessionId: input.sessionId,
-      fields: { worktree: input.worktree, agent: 'codex' }
+      fields: { worktree: input.worktree, agent: input.agent }
     })
   )
   return Array.from(sha256(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('')
@@ -33,5 +40,5 @@ export function showMobileStructuredChatChoice(input: {
   workspaceSupport: boolean
   agent: string
 }): boolean {
-  return input.hostCapability && input.workspaceSupport && input.agent === 'codex'
+  return input.hostCapability && input.workspaceSupport && isMobileStructuredAgent(input.agent)
 }

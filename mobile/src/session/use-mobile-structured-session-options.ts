@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getAgentSessionOptionCatalog } from '../../../src/shared/agent-session-option-catalog'
+import {
+  getAgentSessionOptionCatalog,
+  type AgentSessionOptionCatalog
+} from '../../../src/shared/agent-session-option-catalog'
 import {
   buildNativeChatSessionOptionSnapshot,
   resolveEffectiveNativeChatModelId
@@ -13,26 +16,29 @@ import type { SessionOptionValue } from '../../../src/shared/native-chat-session
 import type { AgentSessionOptionsResult } from '../../../src/shared/agent-session-wire'
 import type { RpcClient } from '../transport/rpc-client'
 import { mobileStructuredOptionCatalog } from './mobile-structured-session-option-catalog'
+import type { MobileStructuredAgent } from './mobile-structured-session-create'
 import type { MobileNativeChatSessionOptionsController } from './use-mobile-native-chat-session-options'
-
-const CODEX_CATALOG = getAgentSessionOptionCatalog('codex')
 
 export function useMobileStructuredSessionOptions(args: {
   client: RpcClient | null
   connected: boolean
   sessionId: string | null
+  agent: MobileStructuredAgent | null
   setOption: (key: string, value: string) => Promise<boolean>
 }): MobileNativeChatSessionOptionsController {
-  const { client, connected, sessionId, setOption: dispatchOption } = args
+  const { client, connected, sessionId, agent, setOption: dispatchOption } = args
   const [version, setVersion] = useState(0)
-  const [catalog, setCatalog] = useState<typeof CODEX_CATALOG>(null)
+  const [catalog, setCatalog] = useState<AgentSessionOptionCatalog | null>(null)
   const [pickerRequest, setPickerRequest] = useState<{ id: string; token: number } | null>(null)
   const [pending, setPending] = useState<{
     sessionId: string
     id: string
     record: ReturnType<typeof createNativeChatSessionOptionRecord>
   } | null>(null)
-  const record = useMemo(() => createNativeChatSessionOptionRecord('codex'), [sessionId])
+  const record = useMemo(
+    () => createNativeChatSessionOptionRecord(agent ?? 'codex'),
+    [agent, sessionId]
+  )
   const activeRecordRef = useRef(record)
   useEffect(() => {
     activeRecordRef.current = record
@@ -42,7 +48,8 @@ export function useMobileStructuredSessionOptions(args: {
   useEffect(() => {
     setCatalog(null)
     setPickerRequest(null)
-    if (!client || !connected || !sessionId || !CODEX_CATALOG) {
+    const seed = agent ? getAgentSessionOptionCatalog(agent) : null
+    if (!client || !connected || !sessionId || !seed) {
       return
     }
     let stale = false
@@ -53,7 +60,7 @@ export function useMobileStructuredSessionOptions(args: {
           return
         }
         const result = response.result as AgentSessionOptionsResult
-        const live = mobileStructuredOptionCatalog(CODEX_CATALOG, result)
+        const live = mobileStructuredOptionCatalog(seed, result)
         applyNativeChatReportedSessionOptions(record, {
           model: result.current.model,
           ...(result.current.effort ? { effort: result.current.effort } : {})
@@ -65,7 +72,7 @@ export function useMobileStructuredSessionOptions(args: {
     return () => {
       stale = true
     }
-  }, [client, connected, record, sessionId])
+  }, [agent, client, connected, record, sessionId])
 
   const snapshot = useMemo(() => {
     void version

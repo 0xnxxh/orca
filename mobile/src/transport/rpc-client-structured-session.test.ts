@@ -235,7 +235,11 @@ describe('structured session RPC transport', () => {
             () => '00000000-0000-4000-8000-000000000001'
           ),
           expectedRuntimeFence: null,
-          payloadFingerprint: mobileStructuredCreateFingerprint({ sessionId, worktree })
+          payloadFingerprint: mobileStructuredCreateFingerprint({
+            sessionId,
+            worktree,
+            agent: 'codex'
+          })
         },
         worktree,
         agent: 'codex'

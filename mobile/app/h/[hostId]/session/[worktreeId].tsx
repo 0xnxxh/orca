@@ -229,7 +229,10 @@ import { MobileNativeChatOverlay } from '../../../../src/session/MobileNativeCha
 import { MobileStructuredAgentSessionView } from '../../../../src/session/MobileStructuredAgentSessionView'
 import { MobileStructuredSessionCreateError } from '../../../../src/session/MobileStructuredSessionCreateError'
 import { useMobileStructuredSessionEntry } from '../../../../src/session/use-mobile-structured-session-entry'
-import { showMobileStructuredChatChoice } from '../../../../src/session/mobile-structured-session-create'
+import {
+  isMobileStructuredAgent,
+  showMobileStructuredChatChoice
+} from '../../../../src/session/mobile-structured-session-create'
 import { MobileBrowserTabActionSheet } from '../../../../src/session/MobileBrowserTabActionSheet'
 import { useMobileNativeChatController } from '../../../../src/session/use-mobile-native-chat-controller'
 import { useMobileNativeChatReadability } from '../../../../src/session/use-mobile-native-chat-readability'
@@ -2326,6 +2329,7 @@ export default function SessionScreen() {
     hostSupported: structuredAgentSessionSupported,
     worktreeId,
     sessionId: activeSessionTab?.type === 'agent-session' ? activeSessionTab.sessionId : null,
+    sessionAgent: activeSessionTab?.type === 'agent-session' ? activeSessionTab.agent : null,
     creationGuardRef: creatingTerminalRef,
     setCreating,
     setCreateError,
@@ -4246,20 +4250,27 @@ export default function SessionScreen() {
                 }
               ]
             : []
-  const structuredChatAction = showMobileStructuredChatChoice({
-    hostCapability: structuredAgentSessionSupported,
-    workspaceSupport: structuredSessionEntry.createSupported,
-    agent: createTabAgentOptions.some((option) => option.agent === 'codex') ? 'codex' : ''
+  const structuredChatAction = createTabAgentOptions.flatMap((option) => {
+    const agent = option.agent
+    if (
+      !isMobileStructuredAgent(agent) ||
+      !showMobileStructuredChatChoice({
+        hostCapability: structuredAgentSessionSupported,
+        workspaceSupport: structuredSessionEntry.createSupported[agent],
+        agent
+      })
+    ) {
+      return []
+    }
+    return [
+      {
+        label: `${agent === 'claude' ? 'Claude' : 'Codex'} Chat`,
+        hint: 'Structured chat',
+        icon: MessageSquare,
+        onPress: () => structuredSessionEntry.create(agent)
+      }
+    ]
   })
-    ? [
-        {
-          label: 'Chat session',
-          hint: 'Codex · structured chat',
-          icon: MessageSquare,
-          onPress: structuredSessionEntry.create
-        }
-      ]
-    : []
   const sendDiffNotesAgentActions =
     pendingDiffNotesDelivery === null
       ? []
