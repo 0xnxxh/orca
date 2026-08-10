@@ -92,6 +92,10 @@ import { normalizeTerminalCustomThemes } from '../../../shared/terminal-custom-t
 import { normalizeUiLanguage } from '../../../shared/ui-language'
 import { normalizeUsagePercentageDisplay } from '../../../shared/usage-percentage-display'
 import { normalizeStatusBarUsageMode } from '../../../shared/status-bar-usage-mode'
+import {
+  computerAwakeSettingsForMode,
+  normalizeComputerAwakeMode
+} from '../../../shared/computer-awake-mode'
 import type { RateLimitState } from '../../../shared/rate-limit-types'
 import type { RuntimeStatus, RuntimeSyncWindowGraph } from '../../../shared/runtime-types'
 import { assertFileMutationOwnershipCapability } from '../../../shared/file-mutation-ownership'
@@ -680,6 +684,24 @@ function createWebPreloadApi(): Partial<PreloadApi> {
       set: async (updates) => {
         const sanitizedUpdates = { ...updates }
         delete sanitizedUpdates.activeRuntimeEnvironmentId
+        if ('computerAwakeMode' in sanitizedUpdates) {
+          Object.assign(
+            sanitizedUpdates,
+            computerAwakeSettingsForMode(
+              normalizeComputerAwakeMode(
+                sanitizedUpdates.computerAwakeMode,
+                sanitizedUpdates.keepComputerAwakeWhileAgentsRun
+              )
+            )
+          )
+        } else if ('keepComputerAwakeWhileAgentsRun' in sanitizedUpdates) {
+          Object.assign(
+            sanitizedUpdates,
+            computerAwakeSettingsForMode(
+              sanitizedUpdates.keepComputerAwakeWhileAgentsRun ? 'auto' : 'off'
+            )
+          )
+        }
         if ('autoRenameBranchFromWorkDefaultedOn' in sanitizedUpdates) {
           sanitizedUpdates.autoRenameBranchFromWorkDefaultedOn = true
         }
@@ -704,6 +726,19 @@ function createWebPreloadApi(): Partial<PreloadApi> {
       listFonts: () => Promise.resolve([]),
       onChanged: () => noopUnsubscribe
     } satisfies Partial<WebSettingsApi> as unknown as WebSettingsApi,
+    agentAwake: {
+      getStatus: async () => {
+        const settings = getStoredSettings()
+        return {
+          mode: normalizeComputerAwakeMode(
+            settings.computerAwakeMode,
+            settings.keepComputerAwakeWhileAgentsRun
+          ),
+          active: false
+        }
+      },
+      onChanged: () => noopUnsubscribe
+    },
     keybindings: createWebKeybindingsApi(),
     ui: createWebUiApi(),
     crashReports: {
