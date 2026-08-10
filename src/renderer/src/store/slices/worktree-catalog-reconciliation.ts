@@ -63,5 +63,8 @@ export function catalogRowsEqual<T extends CatalogRow>(
   current: readonly T[] | undefined,
   incoming: readonly T[]
 ): boolean {
+  if (current === incoming) {
+    return true
+  }
   return reuseEqualCatalogRows(current, incoming) === current
 }

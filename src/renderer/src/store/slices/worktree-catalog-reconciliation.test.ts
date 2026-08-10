@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest'
 import { catalogRowsEqual, reuseEqualCatalogRows } from './worktree-catalog-reconciliation'
 
 describe('reuseEqualCatalogRows', () => {
+  it('does not traverse a catalog already reconciled by identity', () => {
+    const current = [
+      {
+        get id(): string {
+          throw new Error('catalog row was traversed')
+        }
+      }
+    ]
+
+    expect(catalogRowsEqual(current, current)).toBe(true)
+  })
+
   it('reuses rows with equivalent nested catalog data', () => {
     const current = [
       { id: 'a', nested: { labels: ['one', 'two'] }, optional: undefined },
