@@ -1717,7 +1717,8 @@ describe('createIpcPtyTransport', () => {
       launchAgent: 'droid',
       snapshot: 'snapshot data',
       snapshotCols: 132,
-      snapshotRows: 43
+      snapshotRows: 43,
+      snapshotFrameStart: 17
     })
 
     ;(globalThis as { window: typeof window }).window = {
@@ -1757,6 +1758,7 @@ describe('createIpcPtyTransport', () => {
       snapshot: 'snapshot data',
       snapshotCols: 132,
       snapshotRows: 43,
+      snapshotFrameStart: 17,
       isAlternateScreen: undefined,
       coldRestore: undefined,
       replay: undefined,
@@ -1781,6 +1783,7 @@ describe('createIpcPtyTransport', () => {
       snapshot: undefined,
       snapshotCols: undefined,
       snapshotRows: undefined,
+      snapshotFrameStart: undefined,
       isAlternateScreen: undefined,
       sessionExpired: undefined,
       coldRestore: undefined,
