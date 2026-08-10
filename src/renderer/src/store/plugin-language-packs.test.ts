@@ -13,7 +13,7 @@ afterEach(() => {
 })
 
 describe('plugin language pack loading', () => {
-  it('rejects malformed persisted language-pack results at the renderer ingress', async () => {
+  it('rejects malformed runtime IPC language-pack results at the renderer ingress', async () => {
     vi.stubGlobal('window', {
       api: {
         plugins: {
