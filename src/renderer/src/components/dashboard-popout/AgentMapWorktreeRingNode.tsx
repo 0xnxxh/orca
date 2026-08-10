@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type MutableRefObject } from 'react'
+import { memo, useState, type MutableRefObject } from 'react'
 import { Plus } from 'lucide-react'
 import { AgentStateDot, agentStateLabel } from '@/components/AgentStateDot'
 import { Button } from '@/components/ui/button'
@@ -199,14 +199,8 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
   const aggregate = !selected && shouldAggregateAgentMapWorktree(worktree, zoom, allowAggregation)
   const agentsByPaneKey = new Map(worktree.agents.map((agent) => [agent.card.paneKey, agent]))
 
-  useEffect(() => {
-    if (exiting) {
-      setDetailsOpen(false)
-    }
-  }, [exiting])
-
   return (
-    <Popover open={detailsOpen} onOpenChange={setDetailsOpen}>
+    <Popover open={detailsOpen && !exiting} onOpenChange={setDetailsOpen}>
       <g
         className={`agent-map-worktree-group${worktree.motionState ? ` is-${worktree.motionState}` : ''}`}
         onPointerEnter={() => onLabelActiveChange(worktree.id, true)}
