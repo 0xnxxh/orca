@@ -21,7 +21,7 @@ const SCHEMA_VERSION = OPENCODE_USAGE_SCHEMA_VERSION
 
 let _openCodeUsageFile: string | null = null
 
-function getDefaultState(): OpenCodeUsagePersistedState {
+function getDefaultState(enabled = false): OpenCodeUsagePersistedState {
   return {
     schemaVersion: SCHEMA_VERSION,
     worktreeFingerprint: null,
@@ -29,7 +29,7 @@ function getDefaultState(): OpenCodeUsagePersistedState {
     sessions: [],
     dailyAggregates: [],
     scanState: {
-      enabled: false,
+      enabled,
       lastScanStartedAt: null,
       lastScanCompletedAt: null,
       lastScanError: null
@@ -41,7 +41,8 @@ export function normalizePersistedState(
   state: OpenCodeUsagePersistedState
 ): OpenCodeUsagePersistedState {
   if (state.schemaVersion !== SCHEMA_VERSION) {
-    return getDefaultState()
+    // Preserve opt-in so the invalidating scan can repopulate usage.
+    return getDefaultState(state.scanState?.enabled)
   }
   return {
     ...state,

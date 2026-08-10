@@ -23,6 +23,7 @@ vi.mock('./scanner', () => ({
 }))
 
 import { OpenCodeUsageStore, initOpenCodeUsagePath, normalizePersistedState } from './store'
+import { OPENCODE_USAGE_SCHEMA_VERSION } from './opencode-usage-provider'
 import { scanOpenCodeUsageDatabases } from './scanner'
 
 function createEmptyScanResult() {
@@ -33,15 +34,15 @@ function createEmptyScanResult() {
   }
 }
 
-function getDefaultState(): OpenCodeUsagePersistedState {
+function getDefaultState(enabled = false): OpenCodeUsagePersistedState {
   return {
-    schemaVersion: 2,
+    schemaVersion: OPENCODE_USAGE_SCHEMA_VERSION,
     worktreeFingerprint: null,
     processedDatabases: [],
     sessions: [],
     dailyAggregates: [],
     scanState: {
-      enabled: false,
+      enabled,
       lastScanStartedAt: null,
       lastScanCompletedAt: null,
       lastScanError: null
@@ -317,7 +318,8 @@ describe('OpenCodeUsageStore', () => {
     expect(
       normalizePersistedState({
         ...getDefaultState(),
-        schemaVersion: 0,
+        schemaVersion: OPENCODE_USAGE_SCHEMA_VERSION - 1,
+        scanState: { ...getDefaultState().scanState, enabled: true },
         processedDatabases: [
           {
             path: '/tmp/opencode.db',
@@ -332,7 +334,7 @@ describe('OpenCodeUsageStore', () => {
         sessions: [makeSession()],
         dailyAggregates: [makeDaily()]
       })
-    ).toEqual(getDefaultState())
+    ).toEqual(getDefaultState(true))
 
     expect(
       normalizePersistedState({

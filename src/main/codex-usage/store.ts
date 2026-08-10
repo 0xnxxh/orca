@@ -114,7 +114,7 @@ const MODEL_PRICING: Record<string, CodexModelPricing> = {
 
 const REASONING_TIER_SUFFIXES = ['minimal', 'low', 'medium', 'high', 'xhigh', 'auto', 'none']
 
-function getDefaultState(): CodexUsagePersistedState {
+function getDefaultState(enabled = false): CodexUsagePersistedState {
   return {
     schemaVersion: SCHEMA_VERSION,
     worktreeFingerprint: null,
@@ -122,7 +122,7 @@ function getDefaultState(): CodexUsagePersistedState {
     sessions: [],
     dailyAggregates: [],
     scanState: {
-      enabled: false,
+      enabled,
       lastScanStartedAt: null,
       lastScanCompletedAt: null,
       lastScanError: null
@@ -132,20 +132,8 @@ function getDefaultState(): CodexUsagePersistedState {
 
 export function normalizePersistedState(state: CodexUsagePersistedState): CodexUsagePersistedState {
   if (state.schemaVersion !== SCHEMA_VERSION) {
-    // Why: Orca-scoped Codex projections now depend on locationModelBreakdown.
-    // Reusing an older cache would silently serve wrong model/session rows
-    // until the next forced rescan, so schema changes must invalidate stale
-    // persisted analytics instead of best-effort patching partial data.
-    // Preserve scanState.enabled so existing users keep tracking on across
-    // schema bumps; the next refresh will repopulate the analytics.
-    const defaults = getDefaultState()
-    return {
-      ...defaults,
-      scanState: {
-        ...defaults.scanState,
-        enabled: state.scanState?.enabled ?? defaults.scanState.enabled
-      }
-    }
+    // Preserve opt-in so the invalidating scan can repopulate usage.
+    return getDefaultState(state.scanState?.enabled)
   }
   return {
     ...state,

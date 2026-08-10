@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import Database from '../sqlite/sync-database'
 import {
-  attributeOpenCodeUsageEvent,
   listOpenCodeDatabases,
   parseOpenCodeUsageDatabase,
   parseOpenCodeUsageRow,
@@ -78,21 +77,6 @@ function insertSessionTotalsRow(
   )
 }
 
-function usageEvent(cwd: string) {
-  return {
-    sessionId: 'session-1',
-    timestamp: '2026-04-09T10:00:00.000Z',
-    cwd,
-    model: 'anthropic/claude-sonnet-4-5',
-    estimatedCostUsd: 0.012,
-    inputTokens: 100,
-    cachedInputTokens: 10,
-    outputTokens: 25,
-    reasoningOutputTokens: 10,
-    totalTokens: 125
-  }
-}
-
 describe('parseOpenCodeUsageRow', () => {
   it('reads assistant message tokens, cost, model, cwd, and timestamp', () => {
     const parsed = parseOpenCodeUsageRow({
@@ -134,44 +118,6 @@ describe('parseOpenCodeUsageRow', () => {
       reasoningOutputTokens: 100,
       totalTokens: 1350
     })
-  })
-})
-
-describe('attributeOpenCodeUsageEvent', () => {
-  it('attributes cwd paths under dotdot-prefixed child directories to the worktree', async () => {
-    const attributed = await attributeOpenCodeUsageEvent(
-      usageEvent(`${WORKTREE}/..fixtures/session`),
-      worktrees()
-    )
-
-    expect(attributed?.projectKey).toBe('worktree:repo-1::/workspace/repo')
-    expect(attributed?.projectLabel).toBe('Repo')
-    expect(attributed?.worktreeId).toBe('repo-1::/workspace/repo')
-  })
-
-  it('does not attribute true parent-directory escapes to the worktree', async () => {
-    const attributed = await attributeOpenCodeUsageEvent(
-      usageEvent(`${WORKTREE}/../other/session`),
-      worktrees()
-    )
-
-    expect(attributed?.projectKey).toBe('cwd:/workspace/repo/../other/session')
-    expect(attributed?.worktreeId).toBeNull()
-  })
-
-  it('does not treat different Windows drives as containing paths', async () => {
-    const attributed = await attributeOpenCodeUsageEvent(usageEvent('D:\\other\\repo'), [
-      {
-        repoId: 'repo-1',
-        worktreeId: 'repo-1::C:\\repo',
-        path: 'C:\\repo',
-        displayName: 'Repo',
-        canonicalPath: 'C:\\repo'
-      }
-    ])
-
-    expect(attributed?.projectKey).toBe('cwd:d:/other/repo')
-    expect(attributed?.worktreeId).toBeNull()
   })
 })
 

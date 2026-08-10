@@ -1,19 +1,18 @@
-/* eslint-disable max-lines -- Why: Codex discovery, incremental parsing, attribution, and aggregation all depend on the same event-normalization rules. Keeping them together makes the duplicate-snapshot logic easier to audit when usage totals look wrong. */
-import { basename, join, win32, posix } from 'node:path'
+/* eslint-disable max-lines -- Why: Codex discovery, incremental parsing, copied-event ownership, and cache reconciliation form one stateful pipeline. */
+import { basename, join } from 'node:path'
 import { createReadStream, existsSync } from 'node:fs'
-import { realpath, readdir, stat } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
-import { areWorktreePathsEqual } from '../ipc/worktree-logic'
 import { getOrcaManagedCodexHomePath, getSystemCodexHomePath } from '../codex/codex-home-paths'
 import { getCodexAccountHomeSessionDirectories } from '../codex/codex-account-home-discovery'
 import { getLegacyCopiedCodexSessionBridgeScanPreference } from '../codex/codex-session-bridge'
-import { canonicalizeUsageWorktreePaths } from '../usage-worktree-canonicalizer'
 import { createUsageEventAggregation } from '../usage/usage-event-aggregation'
 import {
-  looksLikeWindowsPath,
-  normalizeComparablePath,
-  normalizeFsPath
-} from '../usage/usage-path-comparison'
+  attributeUsageEvent,
+  canonicalizeUsageAttributionWorktrees,
+  type UsageAttributionWorktree
+} from '../usage/usage-event-attribution'
+import { canonicalizeUsagePath } from '../usage/usage-path-comparison'
 import { ensureNumber, extractString } from '../usage/usage-record-coercion'
 import type { UsageScanWorktreeRef } from '../usage/usage-provider-contract'
 import type {
@@ -56,15 +55,6 @@ type CodexUsageDeltaResolution =
 
 const YIELD_EVERY_FILES = 10
 const YIELD_EVERY_DISCOVERY_ENTRIES = 100
-
-async function canonicalizePath(pathValue: string): Promise<string> {
-  try {
-    const resolved = await realpath(pathValue)
-    return normalizeFsPath(resolved)
-  } catch {
-    return normalizeFsPath(pathValue)
-  }
-}
 
 async function yieldToEventLoop(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve))
@@ -192,7 +182,7 @@ async function getPhysicalFileAliasKey(filePath: string): Promise<string> {
       return `${fileStat.dev}:${fileStat.ino}`
     }
   } catch {}
-  return `path:${await canonicalizePath(filePath)}`
+  return `path:${await canonicalizeUsagePath(filePath)}`
 }
 
 function getLegacySourceSkipBytesByPath(
@@ -429,114 +419,6 @@ function extractModel(value: unknown): string | null {
   return null
 }
 
-function getDefaultProjectLabel(cwd: string | null): string {
-  if (!cwd) {
-    return 'Unknown location'
-  }
-  const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean)
-  if (parts.length >= 2) {
-    return parts.slice(-2).join('/')
-  }
-  return parts.at(-1) ?? cwd
-}
-
-function localDayFromTimestamp(timestamp: string): string | null {
-  const parsed = new Date(timestamp)
-  if (Number.isNaN(parsed.getTime())) {
-    return null
-  }
-  const year = parsed.getFullYear()
-  const month = String(parsed.getMonth() + 1).padStart(2, '0')
-  const day = String(parsed.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-async function buildWorktreesWithCanonicalPaths(
-  worktrees: CodexUsageWorktreeRef[]
-): Promise<(CodexUsageWorktreeRef & { canonicalPath: string })[]> {
-  return canonicalizeUsageWorktreePaths(worktrees, canonicalizePath)
-}
-
-function isContainingPath(candidatePath: string, targetPath: string): boolean {
-  const useWin32 = looksLikeWindowsPath(candidatePath) || looksLikeWindowsPath(targetPath)
-  const relativePath = useWin32
-    ? win32.relative(candidatePath, targetPath)
-    : posix.relative(candidatePath, targetPath)
-  if (!relativePath) {
-    return true
-  }
-  // Why: on Windows, `path.relative('C:\\repo', 'D:\\other')` returns an
-  // absolute `D:\\other` path instead of a `..`-prefixed relative. Treating
-  // that as "contained" would attribute off-drive Codex usage to the wrong
-  // Orca worktree.
-  const isAbsoluteRelative = useWin32
-    ? win32.isAbsolute(relativePath)
-    : posix.isAbsolute(relativePath)
-  const parentPrefix = useWin32 ? `..${win32.sep}` : `..${posix.sep}`
-  // Why: `..name` is a valid child path; only `..` and `../...` escape.
-  return (
-    !isAbsoluteRelative &&
-    relativePath !== '..' &&
-    !relativePath.startsWith(parentPrefix) &&
-    relativePath !== '.'
-  )
-}
-
-function findContainingWorktree(
-  cwd: string,
-  worktrees: (CodexUsageWorktreeRef & { canonicalPath: string })[]
-): CodexUsageWorktreeRef | null {
-  const normalizedCwd = normalizeFsPath(cwd)
-  for (const worktree of worktrees) {
-    if (areWorktreePathsEqual(worktree.canonicalPath, normalizedCwd)) {
-      return worktree
-    }
-    if (isContainingPath(worktree.canonicalPath, normalizedCwd)) {
-      return worktree
-    }
-  }
-  return null
-}
-
-export async function attributeCodexUsageEvent(
-  event: CodexUsageParsedEvent,
-  worktrees: (CodexUsageWorktreeRef & { canonicalPath: string })[]
-): Promise<CodexUsageAttributedEvent | null> {
-  const day = localDayFromTimestamp(event.timestamp)
-  if (!day) {
-    return null
-  }
-
-  let repoId: string | null = null
-  let worktreeId: string | null = null
-  let projectKey = 'unscoped'
-  let projectLabel = getDefaultProjectLabel(event.cwd)
-
-  if (event.cwd) {
-    const worktree = findContainingWorktree(event.cwd, worktrees)
-    if (worktree) {
-      repoId = worktree.repoId
-      worktreeId = worktree.worktreeId
-      projectKey = `worktree:${worktree.worktreeId}`
-      projectLabel = worktree.displayName
-    } else {
-      // Why: all-local mode should still collapse repeated off-Orca sessions by
-      // location, but those keys must normalize slash/case differences so the
-      // same folder does not fragment into multiple "projects" across platforms.
-      projectKey = `cwd:${normalizeComparablePath(event.cwd)}`
-    }
-  }
-
-  return {
-    ...event,
-    day,
-    projectKey,
-    projectLabel,
-    repoId,
-    worktreeId
-  }
-}
-
 type CodexUsageMetric = { hasInferredPricing: boolean }
 
 const codexUsageAggregation = createUsageEventAggregation<
@@ -663,7 +545,7 @@ export function parseCodexUsageRecord(
 
 export async function parseCodexUsageFile(
   filePath: string,
-  worktrees: (CodexUsageWorktreeRef & { canonicalPath: string })[],
+  worktrees: UsageAttributionWorktree[],
   options: { skipInitialBytes?: number; claimEventKey?: (eventKey: string) => boolean } = {}
 ): Promise<CodexUsagePersistedFile> {
   const processedFile = await getProcessedFileInfo(filePath)
@@ -701,7 +583,7 @@ export async function parseCodexUsageFile(
       continue
     }
     ownedEventKeys.add(parsed.eventKey)
-    const attributed = await attributeCodexUsageEvent(parsed, worktrees)
+    const attributed = attributeUsageEvent(parsed, worktrees)
     if (attributed) {
       events.push(attributed)
     }
@@ -725,7 +607,7 @@ export async function scanCodexUsageFiles(
 }> {
   const files = await listCodexSessionFiles()
   const previousByPath = new Map(previousProcessedFiles.map((file) => [file.path, file]))
-  const worktreesWithCanonicalPaths = await buildWorktreesWithCanonicalPaths(worktrees)
+  const worktreesWithCanonicalPaths = await canonicalizeUsageAttributionWorktrees(worktrees)
   const legacySourceSkipBytesByPath = getLegacySourceSkipBytesByPath(files)
 
   const currentPaths = new Set(files)

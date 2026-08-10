@@ -1,97 +1,25 @@
+import type { UsageDailyAggregate, UsageSession } from '../usage/usage-rollup-records'
+import type { UsageEventAttribution } from '../usage/usage-event-attribution'
+
 export type OpenCodeUsageProcessedDatabase = {
   path: string
   mtimeMs: number
   size: number
 }
 
-export type OpenCodeUsageLocationBreakdown = {
-  locationKey: string
-  projectLabel: string
-  repoId: string | null
-  worktreeId: string | null
-  eventCount: number
-  inputTokens: number
-  cachedInputTokens: number
-  outputTokens: number
-  reasoningOutputTokens: number
-  totalTokens: number
+type OpenCodeUsageMetric = {
   estimatedCostUsd: number | null
 }
 
-export type OpenCodeUsageModelBreakdown = {
-  modelKey: string
-  modelLabel: string
-  estimatedCostUsd: number | null
-  eventCount: number
-  inputTokens: number
-  cachedInputTokens: number
-  outputTokens: number
-  reasoningOutputTokens: number
-  totalTokens: number
-}
-
-export type OpenCodeUsageLocationModelBreakdown = {
-  locationKey: string
-  modelKey: string
-  modelLabel: string
-  repoId: string | null
-  worktreeId: string | null
-  eventCount: number
-  inputTokens: number
-  cachedInputTokens: number
-  outputTokens: number
-  reasoningOutputTokens: number
-  totalTokens: number
-  estimatedCostUsd: number | null
-}
-
-export type OpenCodeUsageSession = {
-  sessionId: string
-  firstTimestamp: string
-  lastTimestamp: string
-  primaryModel: string | null
-  hasMixedModels: boolean
-  primaryProjectLabel: string
-  hasMixedLocations: boolean
-  primaryWorktreeId: string | null
-  primaryRepoId: string | null
-  eventCount: number
-  totalInputTokens: number
-  totalCachedInputTokens: number
-  totalOutputTokens: number
-  totalReasoningOutputTokens: number
-  totalTokens: number
-  estimatedCostUsd: number | null
-  locationBreakdown: OpenCodeUsageLocationBreakdown[]
-  modelBreakdown: OpenCodeUsageModelBreakdown[]
-  locationModelBreakdown: OpenCodeUsageLocationModelBreakdown[]
-}
-
-export type OpenCodeUsageDailyAggregate = {
-  day: string
-  model: string | null
-  projectKey: string
-  projectLabel: string
-  repoId: string | null
-  worktreeId: string | null
-  eventCount: number
-  inputTokens: number
-  cachedInputTokens: number
-  outputTokens: number
-  reasoningOutputTokens: number
-  totalTokens: number
-  estimatedCostUsd: number | null
-}
+export type OpenCodeUsageSession = UsageSession<OpenCodeUsageMetric>
+export type OpenCodeUsageDailyAggregate = UsageDailyAggregate<OpenCodeUsageMetric>
 
 export type OpenCodeUsagePersistedDatabase = OpenCodeUsageProcessedDatabase & {
   sessions: OpenCodeUsageSession[]
   dailyAggregates: OpenCodeUsageDailyAggregate[]
-  /** Session ids this database counted. Sibling copies (opencode-backup.db)
-   *  duplicate sessions; ownership keeps each session counted by exactly one
-   *  cached database across incremental scans. */
+  /** Session IDs counted by this database for sibling-copy dedupe. */
   ownedSessionIds: string[]
-  /** True when this database saw sessions already claimed by another database.
-   *  When that owner disappears, only deferred databases need reparse. */
+  /** Whether this database skipped sessions owned by another database. */
   hasDeferredClaims: boolean
 }
 
@@ -122,10 +50,4 @@ export type OpenCodeUsageParsedEvent = {
   totalTokens: number
 }
 
-export type OpenCodeUsageAttributedEvent = OpenCodeUsageParsedEvent & {
-  day: string
-  projectKey: string
-  projectLabel: string
-  repoId: string | null
-  worktreeId: string | null
-}
+export type OpenCodeUsageAttributedEvent = OpenCodeUsageParsedEvent & UsageEventAttribution

@@ -20,6 +20,7 @@ vi.mock('./scanner', () => ({
 }))
 
 import { CodexUsageStore, initCodexUsagePath, normalizePersistedState } from './store'
+import { CODEX_USAGE_SCHEMA_VERSION } from './codex-usage-provider'
 import { scanCodexUsageFiles } from './scanner'
 
 function createEmptyScanResult() {
@@ -37,7 +38,7 @@ function createStoreWithState(state: Partial<CodexUsagePersistedState>): CodexUs
   })
 
   ;(store as unknown as { state: CodexUsagePersistedState }).state = {
-    schemaVersion: 1,
+    schemaVersion: CODEX_USAGE_SCHEMA_VERSION,
     worktreeFingerprint: null,
     processedFiles: [],
     sessions: [],
@@ -74,7 +75,7 @@ describe('CodexUsageStore', () => {
 
   it('adapts Codex scans to compact cache persistence', async () => {
     const store = createStoreWithState({
-      schemaVersion: 5,
+      schemaVersion: CODEX_USAGE_SCHEMA_VERSION,
       scanState: {
         enabled: true,
         lastScanStartedAt: null,
@@ -744,10 +745,20 @@ describe('CodexUsageStore', () => {
     expect(recentSessions[0]?.model).toBe('gpt-5')
   })
 
-  it('drops persisted caches from older schemas that lack scoped model breakdown data', () => {
+  it('drops previous-schema projections while preserving opt-in', () => {
     const normalized = normalizePersistedState({
-      schemaVersion: 1,
-      processedFiles: [],
+      schemaVersion: CODEX_USAGE_SCHEMA_VERSION - 1,
+      processedFiles: [
+        {
+          path: '/tmp/legacy.jsonl',
+          mtimeMs: 1,
+          size: 2,
+          sessions: [],
+          dailyAggregates: [],
+          ownedEventKeys: ['legacy-event'],
+          hasDeferredClaims: false
+        }
+      ],
       sessions: [
         {
           sessionId: 'legacy',
@@ -780,7 +791,7 @@ describe('CodexUsageStore', () => {
     } as unknown as CodexUsagePersistedState)
 
     expect(normalized).toEqual({
-      schemaVersion: 5,
+      schemaVersion: CODEX_USAGE_SCHEMA_VERSION,
       worktreeFingerprint: null,
       processedFiles: [],
       sessions: [],
