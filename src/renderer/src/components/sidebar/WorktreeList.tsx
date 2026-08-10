@@ -299,6 +299,7 @@ import {
 } from '../../../../shared/folder-workspace-path-status'
 import {
   getFolderWorkspaceRevealGroupKeys,
+  getFolderWorkspaceSidebarRowKey,
   getKnownSidebarWorktreeById,
   sidebarWorkspaceStillExists
 } from './worktree-list-folder-reveal'
@@ -313,6 +314,7 @@ import { getRenderedWorktreesInSidebarOrder } from './worktree-sidebar-row-prefe
 import { getCyclableWorktreeIds, resolveCycledWorktreeId } from './worktree-keyboard-cycle'
 import {
   buildProjectGroupSidebarIndex,
+  getAmbiguousFolderWorkspaceSidebarIds,
   getProjectGroupMutationSelector,
   getProjectGroupSidebarIdentity,
   getSingleProjectGroupMutationOwner,
@@ -455,7 +457,10 @@ function getMountedWorktreeOptions(worktreeId: string, root?: ParentNode | null)
 
 function markSidebarWorktreeActiveImmediately(worktreeId: string, primaryRowKey?: string): void {
   const sidebar = document.querySelector<HTMLElement>('[data-worktree-sidebar]')
-  const nextOptions = getMountedWorktreeOptions(worktreeId, sidebar)
+  const matchingOptions = getMountedWorktreeOptions(worktreeId, sidebar)
+  const nextOptions = primaryRowKey?.startsWith('folder-workspace:')
+    ? matchingOptions.filter((option) => option.dataset.worktreeRowKey === primaryRowKey)
+    : matchingOptions
   const nextOption = nextOptions[0]
   if (!nextOption) {
     return
@@ -526,7 +531,7 @@ function getRenderRowSidebarKey(row: RenderRow): string | null {
     return row.rowKey
   }
   if (row.type === 'folder-workspace') {
-    return folderWorkspaceKey(row.folderWorkspace.id)
+    return getFolderWorkspaceSidebarRowKey(row.folderWorkspace.id, row.key)
   }
   if (row.type === 'pending-creation') {
     return `pending:${row.creationId}`
@@ -1085,12 +1090,20 @@ function isWorktreeItemRow(row: HostSectionRow): row is WorktreeItemRow {
   return row.type === 'item'
 }
 
-export function renderRowContainsWorktree(row: RenderRow, worktreeId: string | null): boolean {
+export function renderRowContainsWorktree(
+  row: RenderRow,
+  worktreeId: string | null,
+  ownerHostId?: ExecutionHostId
+): boolean {
   if (worktreeId === null) {
     return false
   }
   if (row.type === 'folder-workspace') {
-    return folderWorkspaceKey(row.folderWorkspace.id) === worktreeId
+    return (
+      folderWorkspaceKey(row.folderWorkspace.id) === worktreeId &&
+      (!ownerHostId ||
+        getProjectGroupMutationSelector(row.projectGroup).ownerHostId === ownerHostId)
+    )
   }
   if (row.type === 'lineage-group') {
     return row.rows.some((item) => item.worktree.id === worktreeId)
@@ -1124,13 +1137,14 @@ function getRenderRowOptionId(
     return getWorktreeOptionId(row.rowKey)
   }
   if (row.type === 'folder-workspace') {
-    return getWorktreeOptionId(folderWorkspaceKey(row.folderWorkspace.id))
+    return getWorktreeOptionId(getFolderWorkspaceSidebarRowKey(row.folderWorkspace.id, row.key))
   }
   return undefined
 }
 
 function getActiveDescendantOptionId(args: {
   activeWorktreeId: string | null
+  activeWorkspaceExecutionHostId?: ExecutionHostId | null
   primaryActiveRowKey?: string
   pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy
   renderRows: readonly RenderRow[]
@@ -1151,7 +1165,14 @@ function getActiveDescendantOptionId(args: {
   let fallbackOptionId: string | undefined
   for (const item of args.virtualItems) {
     const row = args.renderRows[item.index]
-    if (row && renderRowContainsWorktree(row, args.activeWorktreeId)) {
+    if (
+      row &&
+      renderRowContainsWorktree(
+        row,
+        args.activeWorktreeId,
+        args.activeWorkspaceExecutionHostId ?? undefined
+      )
+    ) {
       const optionId = getRenderRowOptionId(row, args.activeWorktreeId)
       if (!optionId) {
         continue
@@ -1173,12 +1194,13 @@ function getActiveDescendantOptionId(args: {
 function findPreferredRenderRowIndexForWorktree(
   renderRows: readonly RenderRow[],
   worktreeId: string,
-  pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy
+  pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy,
+  ownerHostId?: ExecutionHostId
 ): number {
   let fallbackIndex = -1
   for (let index = 0; index < renderRows.length; index++) {
     const row = renderRows[index]
-    if (!renderRowContainsWorktree(row, worktreeId)) {
+    if (!renderRowContainsWorktree(row, worktreeId, ownerHostId)) {
       continue
     }
     if (fallbackIndex === -1) {
@@ -1405,6 +1427,15 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   scrollOffsetRef,
   scrollAnchorRef
 }: VirtualizedWorktreeViewportProps) {
+  const activeWorkspaceExecutionHostId = useAppStore((s) => s.activeWorkspaceExecutionHostId)
+  const ambiguousFolderWorkspaceIds = useMemo(
+    () =>
+      getAmbiguousFolderWorkspaceSidebarIds(
+        buildProjectGroupSidebarIndex(projectGroups),
+        folderWorkspaces
+      ),
+    [folderWorkspaces, projectGroups]
+  )
   const scrollRef = useRef<HTMLDivElement>(null)
   const suppressMeasurementAdjustmentUntilRef = useRef(0)
   const directScrollInputUntilRef = useRef(0)
@@ -2187,7 +2218,8 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       const folderGroupKeys = getFolderWorkspaceRevealGroupKeys(
         pendingRevealWorktree.worktreeId,
         folderWorkspaces,
-        projectGroups
+        projectGroups,
+        pendingRevealWorktree.ownerHostId
       )
       if (folderGroupKeys.length > 0) {
         for (const groupKey of folderGroupKeys) {
@@ -2249,12 +2281,15 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       const targetWorktreeStillExists = sidebarWorkspaceStillExists(
         pendingRevealWorktree.worktreeId,
         worktrees,
-        folderWorkspaces
+        folderWorkspaces,
+        projectGroups,
+        pendingRevealWorktree.ownerHostId
       )
       const targetIndex = findPreferredRenderRowIndexForWorktree(
         renderRows,
         pendingRevealWorktree.worktreeId,
-        pinnedDisplayPolicy
+        pinnedDisplayPolicy,
+        pendingRevealWorktree.ownerHostId
       )
       const outcome = resolvePendingSidebarReveal({ targetIndex, targetWorktreeStillExists })
       if (outcome === 'scroll-and-clear') {
@@ -3857,6 +3892,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
 
   const activeDescendantId = getActiveDescendantOptionId({
     activeWorktreeId,
+    activeWorkspaceExecutionHostId,
     primaryActiveRowKey:
       primaryActiveWorktreeRow?.worktreeId === activeWorktreeId
         ? primaryActiveWorktreeRow.rowKey
@@ -5128,12 +5164,26 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
 
             if (row.type === 'folder-workspace') {
               const folderWorkspaceRow = row as FolderWorkspaceItemRow
-              const folderWorktree = folderWorkspaceToWorktree(folderWorkspaceRow.folderWorkspace)
+              const folderOwnerHostId = getProjectGroupMutationSelector(
+                folderWorkspaceRow.projectGroup
+              ).ownerHostId
+              const folderWorktree = {
+                ...folderWorkspaceToWorktree(folderWorkspaceRow.folderWorkspace),
+                hostId: folderOwnerHostId
+              }
+              const folderSidebarRowKey = getFolderWorkspaceSidebarRowKey(
+                folderWorkspaceRow.folderWorkspace.id,
+                folderWorkspaceRow.key
+              )
+              const isFolderWorkspaceActive =
+                activeWorktreeId === folderWorktree.id &&
+                (activeWorkspaceExecutionHostId
+                  ? activeWorkspaceExecutionHostId === folderOwnerHostId
+                  : !ambiguousFolderWorkspaceIds.has(folderWorkspaceRow.folderWorkspace.id))
               const folderWorkspacePathStatus = getCachedFolderWorkspacePathStatus({
                 scope: 'folder-workspace',
                 folderWorkspaceId: folderWorkspaceRow.folderWorkspace.id,
-                ownerHostId: getProjectGroupMutationSelector(folderWorkspaceRow.projectGroup)
-                  .ownerHostId
+                ownerHostId: folderOwnerHostId
               })
               const folderWorkspaceActivationDisabled =
                 folderWorkspacePathStatus?.exists === false &&
@@ -5161,12 +5211,12 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
               return (
                 <div
                   key={vItem.key}
-                  id={getWorktreeOptionId(folderWorktree.id)}
+                  id={getWorktreeOptionId(folderSidebarRowKey)}
                   role="option"
                   aria-selected={selectedWorktreeIds.has(folderWorktree.id)}
-                  aria-current={activeWorktreeId === folderWorktree.id ? 'page' : undefined}
+                  aria-current={isFolderWorkspaceActive ? 'page' : undefined}
                   data-worktree-id={folderWorktree.id}
-                  data-worktree-row-key={folderWorktree.id}
+                  data-worktree-row-key={folderSidebarRowKey}
                   data-worktree-virtual-row
                   data-worktree-virtual-row-key={String(vItem.key)}
                   data-worktree-virtual-row-start={vItem.start}
@@ -5176,7 +5226,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                   style={{ transform: getVirtualRowTransform(vItem.start) }}
                   onClickCapture={handleWorktreeRowClickCapture}
                   onPointerDown={(event) =>
-                    handleWorktreeRowPointerDown(event, folderWorktree.id, folderWorktree.id)
+                    handleWorktreeRowPointerDown(event, folderWorktree.id, folderSidebarRowKey)
                   }
                 >
                   <div
@@ -5186,8 +5236,10 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                     <WorktreeCard
                       worktree={folderWorktree}
                       repo={undefined}
-                      isActive={activeWorktreeId === folderWorktree.id}
-                      isCurrentWorktree={currentWorktreeId === folderWorktree.id}
+                      isActive={isFolderWorkspaceActive}
+                      isCurrentWorktree={
+                        currentWorktreeId === folderWorktree.id && isFolderWorkspaceActive
+                      }
                       contentIndent={cardContentIndent}
                       flushSurface
                       nativeDragEnabled={false}
@@ -5196,7 +5248,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                           ? undefined
                           : handleImmediateWorktreeRowActivate
                       }
-                      activationRowKey={folderWorktree.id}
+                      activationRowKey={folderSidebarRowKey}
                       onSelectionGesture={onSelectionGesture}
                       onContextMenuSelect={onContextMenuSelect}
                       statusPrDisplay={folderPrDisplay}
@@ -5289,6 +5341,7 @@ const WorktreeList = React.memo(function WorktreeList({
   const detectedWorktreesByRepo = useAppStore((s) => s.detectedWorktreesByRepo)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
   const activeWorkspaceKey = useAppStore((s) => s.activeWorkspaceKey)
+  const activeWorkspaceExecutionHostId = useAppStore((s) => s.activeWorkspaceExecutionHostId)
   const currentSidebarWorktreeId = useMemo(
     () => getActiveSidebarWorkspaceId(activeWorkspaceKey, activeWorktreeId),
     [activeWorkspaceKey, activeWorktreeId]
@@ -5719,6 +5772,14 @@ const WorktreeList = React.memo(function WorktreeList({
     () => buildProjectGroupSidebarIndex(projectGroups).ambiguousIds,
     [projectGroups]
   )
+  const ownerQualifiedFolderWorkspaceIds = useMemo(
+    () =>
+      getAmbiguousFolderWorkspaceSidebarIds(
+        buildProjectGroupSidebarIndex(projectGroups),
+        folderWorkspaces
+      ),
+    [folderWorkspaces, projectGroups]
+  )
   const visibleFolderWorkspacesForRows = useMemo(
     () =>
       filterFolderWorkspacesForVisibleHosts(
@@ -5843,7 +5904,8 @@ const WorktreeList = React.memo(function WorktreeList({
         hostLabelById,
         defaultHostId,
         pinnedDisplayPolicy,
-        ownerQualifiedProjectGroupIds
+        ownerQualifiedProjectGroupIds,
+        ownerQualifiedFolderWorkspaceIds
       ),
     [
       groupBy,
@@ -5867,7 +5929,8 @@ const WorktreeList = React.memo(function WorktreeList({
       pendingCreations,
       hostLabelById,
       pinnedDisplayPolicy,
-      ownerQualifiedProjectGroupIds
+      ownerQualifiedProjectGroupIds,
+      ownerQualifiedFolderWorkspaceIds
     ]
   )
   const orderedHostOptions = useMemo(
@@ -5925,7 +5988,7 @@ const WorktreeList = React.memo(function WorktreeList({
       } else if (row.type === 'item') {
         keys.add(row.rowKey)
       } else if (row.type === 'folder-workspace') {
-        keys.add(folderWorkspaceKey(row.folderWorkspace.id))
+        keys.add(getFolderWorkspaceSidebarRowKey(row.folderWorkspace.id, row.key))
       } else if (row.type === 'pending-creation') {
         keys.add(`pending:${row.creationId}`)
       } else if (row.type === 'imported-worktrees-card') {
@@ -6728,7 +6791,9 @@ const WorktreeList = React.memo(function WorktreeList({
       const activeWorktree = getKnownSidebarWorktreeById(
         currentSidebarWorktreeId,
         worktreeMap,
-        folderWorkspaces
+        folderWorkspaces,
+        projectGroups,
+        activeWorkspaceExecutionHostId ?? undefined
       )
       if (!activeWorktree || activeWorktree.isArchived) {
         return
@@ -6739,14 +6804,17 @@ const WorktreeList = React.memo(function WorktreeList({
       }
       revealWorktreeInSidebar(currentSidebarWorktreeId, {
         behavior: 'smooth',
+        ...(activeWorkspaceExecutionHostId ? { ownerHostId: activeWorkspaceExecutionHostId } : {}),
         highlight: true,
         beginRename: (detail as { beginRename?: boolean } | undefined)?.beginRename === true
       })
     },
     [
       clearFilters,
+      activeWorkspaceExecutionHostId,
       currentSidebarWorktreeId,
       folderWorkspaces,
+      projectGroups,
       revealSidebarRow,
       renderedWorktreeIds,
       revealWorktreeInSidebar,

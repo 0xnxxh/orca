@@ -166,4 +166,19 @@ describe('selectProjectGroupRemovalTargets', () => {
     ])
     expect(result.folderWorkspaceIdentities).toEqual(new Set(['["runtime:env-1","same-folder"]']))
   })
+
+  it('removes a legacy SSH folder associated with one unstamped group', () => {
+    const legacyGroup = { ...rootGroup, connectionId: undefined }
+    const legacyFolder = {
+      ...makeFolderWorkspace('legacy-folder', legacyGroup.id, 'local'),
+      executionHostId: undefined,
+      connectionId: 'builder'
+    }
+
+    const result = selectProjectGroupRemovalTargets([legacyGroup], [], legacyGroup.id, 'local', [
+      legacyFolder
+    ])
+
+    expect(result.folderWorkspaceIdentities).toEqual(new Set(['["local","legacy-folder"]']))
+  })
 })

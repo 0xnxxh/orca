@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ProjectGroup, Repo } from '../../../../shared/types'
+import type { FolderWorkspace, ProjectGroup, Repo } from '../../../../shared/types'
+import { normalizeExecutionHostId } from '../../../../shared/execution-host'
 import { createTestStore } from './store-test-helpers'
 
 function group(index: number): ProjectGroup {
@@ -54,5 +55,49 @@ describe('project-group path-status catalog cache', () => {
     expect(readsAfterFirstSnapshot).toBeGreaterThan(0)
     expect(pathReads).toBe(readsAfterFirstSnapshot)
     expect(getPathStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('indexes a large same-id folder catalog once per status read', () => {
+    let groupIdReads = 0
+    const projectGroups: ProjectGroup[] = Array.from(
+      { length: 512 },
+      (_, index): ProjectGroup => ({
+        ...group(index),
+        get id() {
+          groupIdReads += 1
+          return `group-${index}`
+        }
+      })
+    )
+    const folderWorkspaces = projectGroups.map(
+      (projectGroup, index) =>
+        ({
+          id: 'same-folder',
+          projectGroupId: projectGroup.id,
+          name: `Folder ${index}`,
+          folderPath: `/workspace/${index}`,
+          executionHostId: normalizeExecutionHostId(projectGroup.executionHostId),
+          linkedTask: null,
+          comment: '',
+          isArchived: false,
+          isUnread: false,
+          isPinned: false,
+          sortOrder: index,
+          lastActivityAt: 1,
+          createdAt: 1,
+          updatedAt: 1
+        }) satisfies FolderWorkspace
+    )
+    groupIdReads = 0
+    const store = createTestStore()
+    store.setState({ projectGroups, folderWorkspaces })
+
+    store.getState().getFreshFolderWorkspacePathStatus({
+      scope: 'folder-workspace',
+      folderWorkspaceId: 'same-folder',
+      ownerHostId: 'runtime:env-1'
+    })
+
+    expect(groupIdReads).toBeLessThan(4_096)
   })
 })

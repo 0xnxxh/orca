@@ -3,6 +3,7 @@ import type { FolderWorkspace, ProjectGroup } from '../../../../shared/types'
 import { addHostSectionRows } from './host-section-rows'
 import type { Row } from './worktree-list-groups'
 import {
+  filterFolderWorkspacesForVisibleHosts,
   getFolderPathStatusRouteOptionsForRows,
   getFolderWorkspaceExecutionHostIdForRows,
   getProjectGroupExecutionHostIdForRows,
@@ -81,6 +82,30 @@ describe('WorktreeList host filtering ownership', () => {
     expect(getRuntimeEnvironmentIdForFolderPathStatusHost('runtime:env-1')).toBe('env-1')
     expect(getRuntimeEnvironmentIdForFolderPathStatusHost('ssh:ssh-builder')).toBeNull()
     expect(getRuntimeEnvironmentIdForFolderPathStatusHost('local')).toBeNull()
+  })
+
+  it('filters same-id legacy folders through their exact project-group owner', () => {
+    const localGroup = group({ id: 'same-group', executionHostId: 'local' })
+    const runtimeGroup = group({ id: 'same-group', executionHostId: 'runtime:env-1' })
+    const localFolder = folderWorkspace({
+      id: 'same-folder',
+      projectGroupId: localGroup.id,
+      connectionId: null
+    })
+    const runtimeFolder = folderWorkspace({
+      id: 'same-folder',
+      projectGroupId: runtimeGroup.id,
+      executionHostId: 'runtime:env-1'
+    })
+
+    expect(
+      filterFolderWorkspacesForVisibleHosts(
+        [localFolder, runtimeFolder],
+        [localGroup, runtimeGroup],
+        new Set(['local']),
+        'local'
+      )
+    ).toEqual([localFolder])
   })
 
   it('routes project-group path status through the owning runtime', () => {

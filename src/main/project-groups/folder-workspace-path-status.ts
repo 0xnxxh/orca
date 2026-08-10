@@ -15,7 +15,7 @@ import {
 import { getRepoExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
 import type { FolderWorkspace, ProjectGroup, Repo } from '../../shared/types'
 import {
-  resolveFolderWorkspaceCatalogOwnerHostId,
+  resolveFolderWorkspaceCatalogOwnerHostIdFromIndex,
   resolveLegacySshFolderWorkspaceProjectGroup
 } from '../../shared/folder-workspaces'
 import type { IFilesystemProvider } from '../providers/types'
@@ -202,7 +202,8 @@ export function resolveFolderWorkspaceStatusPath(args: {
     (entry) =>
       entry.id === request.folderWorkspaceId &&
       (!request.ownerHostId ||
-        resolveFolderWorkspaceCatalogOwnerHostId(entry, projectGroups) === request.ownerHostId)
+        resolveFolderWorkspaceCatalogOwnerHostIdFromIndex(entry, projectGroupIndex) ===
+          request.ownerHostId)
   )
   const workspace = matches.length === 1 ? matches[0] : null
   if (!workspace) {

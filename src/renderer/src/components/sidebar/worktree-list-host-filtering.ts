@@ -8,6 +8,10 @@ import {
 } from '../../../../shared/execution-host'
 import type { FolderWorkspacePathStatusRequest } from '../../../../shared/folder-workspace-path-status'
 import type { FolderWorkspace, ProjectGroup } from '../../../../shared/types'
+import {
+  buildProjectGroupSidebarIndex,
+  findProjectGroupForFolderWorkspace
+} from './project-group-sidebar-identity'
 
 /** null means "no host filter" — every host is visible. */
 export function getVisibleSidebarHostIdSet(
@@ -44,12 +48,12 @@ export function filterFolderWorkspacesForVisibleHosts(
   if (!visibleHostIdSet) {
     return folderWorkspaces
   }
-  const projectGroupById = new Map(projectGroups.map((group) => [group.id, group]))
+  const projectGroupIndex = buildProjectGroupSidebarIndex(projectGroups)
   return folderWorkspaces.filter((folderWorkspace) =>
     visibleHostIdSet.has(
       getFolderWorkspaceExecutionHostIdForRows({
         folderWorkspace,
-        projectGroup: projectGroupById.get(folderWorkspace.projectGroupId),
+        projectGroup: findProjectGroupForFolderWorkspace(projectGroupIndex, folderWorkspace),
         defaultHostId
       })
     )

@@ -38,6 +38,16 @@ describe('Project Group header drag DOM source', () => {
     expect(source).toContain('ownerHostId: getProjectGroupMutationSelector(group).ownerHostId')
   })
 
+  it('routes folder DOM identity and active styling through the exact owner row', () => {
+    const source = readWorktreeListSource()
+
+    expect(source).toContain('id={getWorktreeOptionId(folderSidebarRowKey)}')
+    expect(source).toContain('data-worktree-row-key={folderSidebarRowKey}')
+    expect(source).toContain('activationRowKey={folderSidebarRowKey}')
+    expect(source).toContain('aria-current={isFolderWorkspaceActive')
+    expect(source).toContain('activeWorkspaceExecutionHostId === folderOwnerHostId')
+  })
+
   it('keeps grab cursor on the title surface and dual handle attrs on row + surface', () => {
     // Why: lock the cursor/hit-test split so a cleanup does not put grab back on the whole row
     // or drop row-level handle attrs that arm drag from indent/padding.
@@ -173,7 +183,7 @@ function ownerHeaderGroup(ownerHostId: ExecutionHostId): ProjectGroup {
   return {
     id: 'same-id',
     name: `${ownerHostId} group`,
-    parentPath: null,
+    parentPath: `/${ownerHostId}`,
     executionHostId: ownerHostId,
     parentGroupId: null,
     createdFrom: 'manual',
@@ -225,7 +235,9 @@ function ownerHeaderWorktree(id: string, repoId: string): Worktree {
 function buildOwnerRows(
   owners: readonly ExecutionHostId[],
   collapsed = new Set<string>(),
-  ownerQualifiedProjectGroupIds = new Set(['same-id'])
+  ownerQualifiedProjectGroupIds = new Set(['same-id']),
+  folderWorkspaces: readonly FolderWorkspace[] = [],
+  ownerQualifiedFolderWorkspaceIds = new Set<string>()
 ) {
   const groups = owners.map(ownerHeaderGroup)
   const repos = owners.map((owner, index) => ownerHeaderRepo(`repo-${index}`, owner))
@@ -248,11 +260,12 @@ function buildOwnerRows(
     new Map(),
     [],
     undefined,
-    [],
+    folderWorkspaces,
     undefined,
     'local',
     undefined,
-    ownerQualifiedProjectGroupIds
+    ownerQualifiedProjectGroupIds,
+    ownerQualifiedFolderWorkspaceIds
   )
 }
 
@@ -293,5 +306,35 @@ describe('duplicate project-group header identity (#12532)', () => {
     expect(projectGroupHeaderKeys(rows)).toEqual(['project-group:runtime%3Aenv-1:same-id'])
     const renderKeys = rows.map(getRenderRowKey)
     expect(new Set(renderKeys).size).toBe(renderKeys.length)
+  })
+
+  it('keeps a collision-qualified folder key after filtering to one owner', () => {
+    const runtimeFolder: FolderWorkspace = {
+      id: 'same-folder',
+      projectGroupId: 'same-id',
+      name: 'Runtime folder',
+      folderPath: '/runtime/folder',
+      executionHostId: 'runtime:env-1',
+      linkedTask: null,
+      comment: '',
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 0,
+      lastActivityAt: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const rows = buildOwnerRows(
+      ['runtime:env-1'],
+      new Set(),
+      new Set(['same-id']),
+      [runtimeFolder],
+      new Set(['same-folder'])
+    )
+
+    expect(rows.find((row) => row.type === 'folder-workspace')?.key).toBe(
+      'folder-workspace:runtime%3Aenv-1:same-folder'
+    )
   })
 })

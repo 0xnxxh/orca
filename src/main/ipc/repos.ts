@@ -109,9 +109,9 @@ import {
   buildProjectGroupOwnerIndex,
   getFolderWorkspaceProjectGroupOwnerHostId,
   getProjectGroupOwnerHostId,
-  resolveFolderWorkspaceProjectGroup,
   resolveProjectGroupOwner
 } from '../../shared/project-groups'
+import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from '../../shared/folder-workspace-project-group-resolution'
 import { joinRemotePath } from '../ssh/ssh-remote-platform'
 import {
   assertFolderWorkspacePathUsable,
@@ -1571,7 +1571,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         }
         const projectGroups = store.getProjectGroups()
         const projectGroupIndex = buildProjectGroupOwnerIndex(projectGroups)
-        const group = resolveFolderWorkspaceProjectGroup(projectGroupIndex, workspace)
+        const group = resolveFolderWorkspaceProjectGroupWithLegacySsh(projectGroupIndex, workspace)
         if (!group) {
           return null
         }

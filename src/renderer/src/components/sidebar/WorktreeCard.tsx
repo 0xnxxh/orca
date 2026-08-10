@@ -260,6 +260,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const projectGroups = useAppStore((s) => s.projectGroups)
   const newCardStyle = settings?.experimentalNewWorktreeCardStyle === true
   const compactCards = !newCardStyle && settings?.compactWorktreeCards === true
+  const worktreeExecutionHostId = parseExecutionHostId(worktree.hostId)?.id
   const handleEditIssue = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
@@ -268,6 +269,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
         // Why: the same workspace ID can exist under two hosts. Naming the owner
         // keeps the dialog on the clicked row instead of the ambiguous lookup.
         repoId: worktree.repoId,
+        executionHostId: worktreeExecutionHostId,
         currentDisplayName: worktree.displayName,
         currentIssue: worktree.linkedIssue,
         currentPR: worktree.linkedPR,
@@ -275,7 +277,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
         focus: 'issue'
       })
     },
-    [worktree, openModal]
+    [worktree, openModal, worktreeExecutionHostId]
   )
 
   const handleEditComment = useCallback(
@@ -284,6 +286,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
       openModal('edit-meta', {
         worktreeId: worktree.id,
         repoId: worktree.repoId,
+        executionHostId: worktreeExecutionHostId,
         currentDisplayName: worktree.displayName,
         currentIssue: worktree.linkedIssue,
         currentPR: worktree.linkedPR,
@@ -291,7 +294,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
         focus: 'comment'
       })
     },
-    [worktree, openModal]
+    [worktree, openModal, worktreeExecutionHostId]
   )
 
   const handleOpenAutomation = useCallback(
@@ -906,9 +909,13 @@ const WorktreeCard = React.memo(function WorktreeCard({
     // Inline rename has no surface for the failure; the store already logs and
     // refetches, which reverts the optimistic title in place.
     async (displayName: string): Promise<void> => {
-      await updateWorktreeMeta(worktree.id, { displayName })
+      await updateWorktreeMeta(
+        worktree.id,
+        { displayName },
+        { executionHostId: worktreeExecutionHostId }
+      )
     },
-    [updateWorktreeMeta, worktree.id]
+    [updateWorktreeMeta, worktree.id, worktreeExecutionHostId]
   )
 
   const handleDoubleClick = useCallback(
@@ -922,6 +929,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
       openModal('edit-meta', {
         worktreeId: worktree.id,
         repoId: worktree.repoId,
+        executionHostId: worktreeExecutionHostId,
         currentDisplayName: worktree.displayName,
         currentIssue: worktree.linkedIssue,
         currentPR: worktree.linkedPR,
@@ -936,7 +944,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
       worktree.id,
       worktree.linkedIssue,
       worktree.linkedPR,
-      worktree.repoId
+      worktree.repoId,
+      worktreeExecutionHostId
     ]
   )
 
@@ -944,9 +953,13 @@ const WorktreeCard = React.memo(function WorktreeCard({
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault()
       event.stopPropagation()
-      updateWorktreeMeta(worktree.id, { isUnread: !worktree.isUnread })
+      updateWorktreeMeta(
+        worktree.id,
+        { isUnread: !worktree.isUnread },
+        { executionHostId: worktreeExecutionHostId }
+      )
     },
-    [worktree.id, worktree.isUnread, updateWorktreeMeta]
+    [worktree.id, worktree.isUnread, updateWorktreeMeta, worktreeExecutionHostId]
   )
   // Why: delete is destructive, so it only appears while holding Option/Alt, not in the ordinary hover chrome.
   const showDeleteQuickAction =
@@ -962,7 +975,9 @@ const WorktreeCard = React.memo(function WorktreeCard({
       event.stopPropagation()
       if (showDeleteQuickAction) {
         if (folderWorkspaceId) {
-          void deleteFolderWorkspace(folderWorkspaceId).then((deleted) => {
+          void deleteFolderWorkspace(folderWorkspaceId, {
+            ownerHostId: worktreeExecutionHostId
+          }).then((deleted) => {
             if (
               deleted &&
               useAppStore.getState().activeWorktreeId === folderWorkspaceKey(folderWorkspaceId)
@@ -978,6 +993,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
     [
       deleteFolderWorkspace,
       folderWorkspaceId,
+      worktreeExecutionHostId,
       setActiveWorktree,
       showDeleteQuickAction,
       worktree.id
@@ -1144,25 +1160,45 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const handleUnlinkReview = useCallback(() => {
     switch (hoverReviewProvider) {
       case 'github':
-        void updateWorktreeMeta(worktree.id, { linkedPR: null })
+        void updateWorktreeMeta(
+          worktree.id,
+          { linkedPR: null },
+          { executionHostId: worktreeExecutionHostId }
+        )
         return
       case 'gitlab':
-        void updateWorktreeMeta(worktree.id, { linkedGitLabMR: null })
+        void updateWorktreeMeta(
+          worktree.id,
+          { linkedGitLabMR: null },
+          { executionHostId: worktreeExecutionHostId }
+        )
         return
       case 'bitbucket':
-        void updateWorktreeMeta(worktree.id, { linkedBitbucketPR: null })
+        void updateWorktreeMeta(
+          worktree.id,
+          { linkedBitbucketPR: null },
+          { executionHostId: worktreeExecutionHostId }
+        )
         return
       case 'azure-devops':
-        void updateWorktreeMeta(worktree.id, { linkedAzureDevOpsPR: null })
+        void updateWorktreeMeta(
+          worktree.id,
+          { linkedAzureDevOpsPR: null },
+          { executionHostId: worktreeExecutionHostId }
+        )
         return
       case 'gitea':
-        void updateWorktreeMeta(worktree.id, { linkedGiteaPR: null })
+        void updateWorktreeMeta(
+          worktree.id,
+          { linkedGiteaPR: null },
+          { executionHostId: worktreeExecutionHostId }
+        )
         break
       case 'unsupported':
       case undefined:
         break
     }
-  }, [hoverReviewProvider, updateWorktreeMeta, worktree.id])
+  }, [hoverReviewProvider, updateWorktreeMeta, worktree.id, worktreeExecutionHostId])
   const handleOpenLinearIssueInOrca = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()

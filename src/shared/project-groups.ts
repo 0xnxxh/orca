@@ -198,12 +198,9 @@ export function normalizeProjectGroups(value: unknown): ProjectGroup[] {
       id: raw.id,
       name: normalizeProjectGroupName(typeof raw.name === 'string' ? raw.name : ''),
       parentPath: typeof raw.parentPath === 'string' ? raw.parentPath : null,
-      connectionId:
-        typeof raw.connectionId === 'string'
-          ? raw.connectionId
-          : raw.connectionId === null
-            ? null
-            : null,
+      ...(typeof raw.connectionId === 'string' || raw.connectionId === null
+        ? { connectionId: raw.connectionId }
+        : {}),
       parentGroupId: typeof raw.parentGroupId === 'string' ? raw.parentGroupId : null,
       createdFrom:
         raw.createdFrom === 'manual' ||

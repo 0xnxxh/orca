@@ -187,28 +187,39 @@ export function selectRepoByIdForActiveWorkspace(
   }
   const repo = getCachedRepoMap(state.repos).get(repoId) ?? null
   if (repoId === state.activeRepoId && state.activeWorkspaceExecutionHostId) {
-    const repoCandidates = state.repos.filter((candidate) => candidate.id === repoId)
-    const hostMatch = repoCandidates.find(
-      (candidate) => getRepoExecutionHostId(candidate) === state.activeWorkspaceExecutionHostId
-    )
-    if (hostMatch) {
-      return hostMatch
-    }
-    // Why: withRepoHostOwnership keeps a paired-hub worktree on its own SSH host while the repo
-    // stays hub-owned, so that one mismatch still names the right repo; every other stays closed.
-    if (parseExecutionHostId(state.activeWorkspaceExecutionHostId)?.kind !== 'ssh') {
-      return null
-    }
-    const pairedHubRepos = repoCandidates.filter(
-      (candidate) => parseExecutionHostId(getRepoExecutionHostId(candidate))?.kind === 'runtime'
-    )
-    return pairedHubRepos.length === 1 ? pairedHubRepos[0] : null
+    return selectRepoByIdForExecutionHost(state, repoId, state.activeWorkspaceExecutionHostId)
   }
   return repo
 }
 
-export const useRepoById = (repoId: string | null) =>
-  useAppStore((s) => selectRepoByIdForActiveWorkspace(s, repoId))
+export function selectRepoByIdForExecutionHost(
+  state: Pick<AppState, 'repos'>,
+  repoId: string,
+  executionHostId: ExecutionHostId
+): Repo | null {
+  const repoCandidates = state.repos.filter((candidate) => candidate.id === repoId)
+  const hostMatch = repoCandidates.find(
+    (candidate) => getRepoExecutionHostId(candidate) === executionHostId
+  )
+  if (hostMatch) {
+    return hostMatch
+  }
+  // Why: paired-hub worktrees can name a private SSH host while their repo remains hub-owned.
+  if (parseExecutionHostId(executionHostId)?.kind !== 'ssh') {
+    return null
+  }
+  const pairedHubRepos = repoCandidates.filter(
+    (candidate) => parseExecutionHostId(getRepoExecutionHostId(candidate))?.kind === 'runtime'
+  )
+  return pairedHubRepos.length === 1 ? pairedHubRepos[0] : null
+}
+
+export const useRepoById = (repoId: string | null, executionHostId?: ExecutionHostId) =>
+  useAppStore((s) =>
+    repoId && executionHostId
+      ? selectRepoByIdForExecutionHost(s, repoId, executionHostId)
+      : selectRepoByIdForActiveWorkspace(s, repoId)
+  )
 export const useProjectHostSetupProjection = () =>
   useAppStore((s) => getProjectHostSetupProjectionFromState(s))
 

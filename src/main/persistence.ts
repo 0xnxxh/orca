@@ -229,9 +229,9 @@ import {
   normalizeProjectGroupName,
   normalizeProjectGroups,
   resolveProjectGroupMembership,
-  resolveProjectGroupOwner,
-  resolveFolderWorkspaceProjectGroup
+  resolveProjectGroupOwner
 } from '../shared/project-groups'
+import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from '../shared/folder-workspace-project-group-resolution'
 import { createNestedProjectGroupResolver } from './project-groups/nested-repo-import'
 import {
   mergeLegacyCommitMessageAiIntoSourceControlAi,
@@ -4491,7 +4491,7 @@ export class Store {
     })
     const folderWorkspaces = this.state.folderWorkspaces ?? []
     const removedFolderWorkspaces = folderWorkspaces.filter((workspace) => {
-      const group = resolveFolderWorkspaceProjectGroup(projectGroupIndex, workspace)
+      const group = resolveFolderWorkspaceProjectGroupWithLegacySsh(projectGroupIndex, workspace)
       return group && deletedGroupIdentities.has(getProjectGroupOwnerIdentity(group))
     })
     this.state.folderWorkspaces = folderWorkspaces.filter(

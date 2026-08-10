@@ -58,7 +58,11 @@ import { isNativeChatTranscriptLocalReadable } from '@/lib/native-chat-transcrip
 import { seedNativeChatAppliedSessionOptions } from '@/components/native-chat/native-chat-session-option-cache'
 import type { SessionOptionValue } from '../../../shared/native-chat-session-options'
 import type { ExecutionHostId } from '../../../shared/execution-host'
-import { findFolderWorkspaceOwner } from './folder-workspace-runtime-owner'
+import { resolveFolderWorkspaceCatalogOwnerHostId } from '../../../shared/folder-workspaces'
+import {
+  findFolderWorkspaceOwner,
+  getRuntimeEnvironmentIdForFolderWorkspace
+} from './folder-workspace-runtime-owner'
 
 /** Telemetry threaded from the launch site to `pty:spawn`; main fires `agent_started`
  *  only after the spawn succeeds. See telemetry-plan.md§Agent launch semantics. */
@@ -225,16 +229,22 @@ export function activateAndRevealFolderWorkspace(
   if (!folderWorkspace) {
     return false
   }
+  const ownerHostId =
+    opts?.executionHostId ??
+    resolveFolderWorkspaceCatalogOwnerHostId(folderWorkspace, state.projectGroups)
+  if (!ownerHostId) {
+    return false
+  }
   const runtimeEnvironmentId =
     opts && 'runtimeEnvironmentId' in opts
       ? (opts.runtimeEnvironmentId ?? null)
-      : getRuntimeEnvironmentIdForWorktree(state, folderWorkspaceKey(folderWorkspaceId))
+      : getRuntimeEnvironmentIdForFolderWorkspace(state, folderWorkspaceId, ownerHostId)
   const pathStatus = state.getFreshFolderWorkspacePathStatus(
     {
       scope: 'folder-workspace',
       folderWorkspaceId
     },
-    { runtimeEnvironmentId }
+    { runtimeEnvironmentId, ownerHostId }
   )
   if (folderWorkspaceActivationBlocked(pathStatus)) {
     const title =
@@ -253,7 +263,7 @@ export function activateAndRevealFolderWorkspace(
     state.setActiveView('terminal')
   }
 
-  state.setActiveFolderWorkspace(folderWorkspaceId, opts?.executionHostId)
+  state.setActiveFolderWorkspace(folderWorkspaceId, ownerHostId)
 
   const workspaceKey = folderWorkspaceKey(folderWorkspaceId)
   state.markWorktreeVisited(workspaceKey)
@@ -264,9 +274,12 @@ export function activateAndRevealFolderWorkspace(
   const primaryTabId = ensureFolderWorkspaceInitialTerminal(folderWorkspace, opts?.startup)
 
   if (opts?.sidebarRevealBehavior) {
-    state.revealWorktreeInSidebar(workspaceKey, { behavior: opts.sidebarRevealBehavior })
+    state.revealWorktreeInSidebar(workspaceKey, {
+      behavior: opts.sidebarRevealBehavior,
+      ownerHostId
+    })
   } else {
-    state.revealWorktreeInSidebar(workspaceKey)
+    state.revealWorktreeInSidebar(workspaceKey, { ownerHostId })
   }
 
   return { primaryTabId }

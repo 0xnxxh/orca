@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { FolderWorkspace, ProjectGroup, Worktree } from '../../../../shared/types'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
 import {
+  getFolderWorkspaceSidebarRowKey,
   getFolderWorkspaceRevealGroupKeys,
   getKnownSidebarWorktreeById,
   sidebarWorkspaceStillExists
@@ -115,5 +116,60 @@ describe('worktree list folder reveal', () => {
         [child, root]
       )
     ).toEqual([getProjectGroupHeaderKey(root.id), getProjectGroupHeaderKey(child.id)])
+  })
+
+  it('reveals only the exact owner when folder and group ids collide', () => {
+    const localRoot = makeProjectGroup({
+      id: 'group-root',
+      executionHostId: 'local'
+    })
+    const runtimeRoot = makeProjectGroup({
+      id: 'group-root',
+      executionHostId: 'runtime:env-1'
+    })
+    const localChild = makeProjectGroup({
+      id: 'group-child',
+      parentGroupId: localRoot.id,
+      executionHostId: 'local'
+    })
+    const runtimeChild = makeProjectGroup({
+      id: 'group-child',
+      parentGroupId: runtimeRoot.id,
+      executionHostId: 'runtime:env-1'
+    })
+    const localFolder = makeFolderWorkspace({ executionHostId: 'local' })
+    const runtimeFolder = makeFolderWorkspace({ executionHostId: 'runtime:env-1' })
+    const workspaceKey = folderWorkspaceKey(localFolder.id)
+
+    expect(
+      getFolderWorkspaceRevealGroupKeys(
+        workspaceKey,
+        [localFolder, runtimeFolder],
+        [localChild, runtimeChild, localRoot, runtimeRoot]
+      )
+    ).toEqual([])
+    expect(
+      getFolderWorkspaceRevealGroupKeys(
+        workspaceKey,
+        [localFolder, runtimeFolder],
+        [localChild, runtimeChild, localRoot, runtimeRoot],
+        'runtime:env-1'
+      )
+    ).toEqual([
+      getProjectGroupHeaderKey(runtimeRoot.id, 'runtime:env-1'),
+      getProjectGroupHeaderKey(runtimeChild.id, 'runtime:env-1')
+    ])
+  })
+
+  it('uses qualified DOM row keys only for collision-qualified folder rows', () => {
+    expect(
+      getFolderWorkspaceSidebarRowKey('folder-workspace-1', 'folder-workspace:folder-workspace-1')
+    ).toBe(folderWorkspaceKey('folder-workspace-1'))
+    expect(
+      getFolderWorkspaceSidebarRowKey(
+        'folder-workspace-1',
+        'folder-workspace:runtime%3Aenv-1:folder-workspace-1'
+      )
+    ).toBe('folder-workspace:runtime%3Aenv-1:folder-workspace-1')
   })
 })

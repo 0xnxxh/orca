@@ -3809,6 +3809,56 @@ describe('Store', () => {
     expect(store.getFolderWorkspace('same-folder', 'ssh:builder')?.name).toBe('Remote')
   })
 
+  it('loads a persisted legacy SSH folder under one unstamped group', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: {},
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      projectGroups: [
+        {
+          id: 'legacy-group',
+          name: 'Legacy',
+          parentPath: '/remote',
+          parentGroupId: null,
+          createdFrom: 'migration',
+          tabOrder: 0,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      folderWorkspaces: [
+        {
+          id: 'legacy-folder',
+          projectGroupId: 'legacy-group',
+          name: 'Legacy folder',
+          folderPath: '/remote/folder',
+          connectionId: 'builder',
+          linkedTask: null,
+          comment: '',
+          isArchived: false,
+          isUnread: false,
+          isPinned: false,
+          sortOrder: 0,
+          lastActivityAt: 1,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    const store = await createStore()
+
+    expect(store.getProjectGroups()[0]?.connectionId).toBeUndefined()
+    expect(store.getFolderWorkspace('legacy-folder', 'ssh:builder')).toBeDefined()
+    expect(store.deleteProjectGroup('legacy-group', 'local')).toBe(true)
+    expect(store.getFolderWorkspace('legacy-folder', 'ssh:builder')).toBeUndefined()
+  })
+
   it('adapts flat folder-scan groups into sparse nested folder scopes on load', async () => {
     writeDataFile({
       schemaVersion: 1,

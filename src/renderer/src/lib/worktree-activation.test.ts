@@ -2,7 +2,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SetupScriptLaunchMode } from '../../../shared/types'
 import { SETUP_AGENT_SEQUENCE_STARTUP_SCRIPT_ENV } from '../../../shared/setup-agent-sequencing'
-import { activateAndRevealWorktree, ensureWorktreeHasInitialTerminal } from './worktree-activation'
+import {
+  activateAndRevealFolderWorkspace,
+  activateAndRevealWorktree,
+  ensureWorktreeHasInitialTerminal
+} from './worktree-activation'
 import { resetHookCommandDelayedDeliveryForTests } from './hook-command-delayed-delivery'
 import { useAppStore } from '@/store'
 
@@ -25,6 +29,7 @@ function setSetupScriptLaunchMode(mode: SetupScriptLaunchMode | null): void {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   delete (globalThis as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__
   useAppStore.setState((state) => ({
     settings: state.settings
@@ -39,6 +44,49 @@ afterEach(() => {
     getKnownWorktreeById: initialGetKnownWorktreeById,
     pendingIssueCommandSplitByTabId: initialPendingIssueCommandSplitByTabId
   } as Partial<AppStoreState>)
+})
+
+describe('activateAndRevealFolderWorkspace owner routing', () => {
+  it('reads path status from the exact folder owner cache', () => {
+    const getFreshFolderWorkspacePathStatus = vi.fn(() => ({
+      path: '/runtime/folder',
+      exists: false,
+      reason: 'missing' as const
+    }))
+    vi.spyOn(useAppStore, 'getState').mockReturnValue({
+      folderWorkspaces: [
+        {
+          id: 'same-id',
+          projectGroupId: 'same-group',
+          name: 'Local',
+          folderPath: '/local/folder',
+          executionHostId: 'local'
+        },
+        {
+          id: 'same-id',
+          projectGroupId: 'same-group',
+          name: 'Runtime',
+          folderPath: '/runtime/folder',
+          executionHostId: 'runtime:env-1'
+        }
+      ],
+      projectGroups: [
+        { id: 'same-group', executionHostId: 'local' },
+        { id: 'same-group', executionHostId: 'runtime:env-1' }
+      ],
+      getFreshFolderWorkspacePathStatus
+    } as never)
+
+    expect(
+      activateAndRevealFolderWorkspace('same-id', {
+        executionHostId: 'runtime:env-1'
+      })
+    ).toBe(false)
+    expect(getFreshFolderWorkspacePathStatus).toHaveBeenCalledWith(
+      { scope: 'folder-workspace', folderWorkspaceId: 'same-id' },
+      { runtimeEnvironmentId: 'env-1', ownerHostId: 'runtime:env-1' }
+    )
+  })
 })
 
 function createMockStore(overrides: Record<string, unknown> = {}) {

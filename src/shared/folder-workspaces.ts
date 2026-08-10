@@ -8,9 +8,9 @@ import {
   buildProjectGroupOwnerIndex,
   getFolderWorkspaceProjectGroupOwnerHostId,
   resolveFolderWorkspaceProjectGroup,
-  resolveProjectGroupOwner,
   type ProjectGroupOwnerIndex
 } from './project-groups'
+import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from './folder-workspace-project-group-resolution'
 import type { FolderWorkspace, ProjectGroup } from './types'
 import { isTuiAgent } from './tui-agent-config'
 import { normalizeStoredTaskSourceContext } from './task-source-context'
@@ -21,15 +21,7 @@ export function resolveLegacySshFolderWorkspaceProjectGroup(
   index: ProjectGroupOwnerIndex,
   workspace: Pick<FolderWorkspace, 'connectionId' | 'projectGroupId'>
 ): ProjectGroup | null {
-  if (!workspace.connectionId) {
-    return null
-  }
-  const group = resolveProjectGroupOwner(index, workspace.projectGroupId)
-  return group &&
-    group.connectionId === undefined &&
-    !normalizeExecutionHostId(group.executionHostId)
-    ? group
-    : null
+  return resolveFolderWorkspaceProjectGroupWithLegacySsh(index, workspace)
 }
 
 export function getFolderWorkspaceCatalogOwnerHostId(
@@ -51,14 +43,7 @@ export function resolveFolderWorkspaceCatalogOwnerHostId(
   }
   if (projectGroups.length > 0) {
     const index = buildProjectGroupOwnerIndex(projectGroups)
-    const group = resolveFolderWorkspaceProjectGroup(index, workspace)
-    if (group) {
-      return getFolderWorkspaceProjectGroupOwnerHostId(workspace, index)
-    }
-    if (workspace.connectionId) {
-      return toSshExecutionHostId(workspace.connectionId)
-    }
-    return null
+    return resolveFolderWorkspaceCatalogOwnerHostIdFromIndex(workspace, index)
   }
   if (workspace.connectionId) {
     return toSshExecutionHostId(workspace.connectionId)
@@ -67,6 +52,21 @@ export function resolveFolderWorkspaceCatalogOwnerHostId(
     return LOCAL_EXECUTION_HOST_ID
   }
   return LOCAL_EXECUTION_HOST_ID
+}
+
+export function resolveFolderWorkspaceCatalogOwnerHostIdFromIndex(
+  workspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId' | 'projectGroupId'>,
+  index: ProjectGroupOwnerIndex
+): ExecutionHostId | null {
+  const executionHostId = normalizeExecutionHostId(workspace.executionHostId)
+  if (executionHostId) {
+    return executionHostId
+  }
+  const group = resolveFolderWorkspaceProjectGroupWithLegacySsh(index, workspace)
+  if (group) {
+    return getFolderWorkspaceProjectGroupOwnerHostId(workspace, index)
+  }
+  return workspace.connectionId ? toSshExecutionHostId(workspace.connectionId) : null
 }
 
 export function getFolderWorkspaceOwnerIdentity(

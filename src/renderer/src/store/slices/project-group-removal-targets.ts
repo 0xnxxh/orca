@@ -6,10 +6,10 @@ import {
   getProjectGroupOwnerHostId,
   getProjectGroupOwnerIdentity,
   getProjectGroupOwnerSubtreeIdentities,
-  resolveFolderWorkspaceProjectGroup,
   resolveProjectGroupOwner,
   type ProjectGroupOwnerIndex
 } from '../../../../shared/project-groups'
+import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from '../../../../shared/folder-workspace-project-group-resolution'
 import { getRepoHostIdentity } from './repo-host-identity'
 
 export type ProjectGroupRemovalProjectTarget = {
@@ -32,7 +32,7 @@ export function getProjectGroupRemovalFolderWorkspaceIdentity(
   index: ProjectGroupOwnerIndex,
   workspace: Pick<FolderWorkspace, 'id' | 'projectGroupId' | 'connectionId' | 'executionHostId'>
 ): string | null {
-  const group = resolveFolderWorkspaceProjectGroup(index, workspace)
+  const group = resolveFolderWorkspaceProjectGroupWithLegacySsh(index, workspace)
   return group ? JSON.stringify([getProjectGroupOwnerHostId(group), workspace.id]) : null
 }
 
@@ -88,7 +88,7 @@ export function selectProjectGroupRemovalTargets(
   }
   const folderWorkspaceIdentities = new Set<string>()
   for (const workspace of folderWorkspaces) {
-    const group = resolveFolderWorkspaceProjectGroup(index, workspace)
+    const group = resolveFolderWorkspaceProjectGroupWithLegacySsh(index, workspace)
     if (!group || !deletedGroupIdentities.has(getProjectGroupOwnerIdentity(group))) {
       continue
     }

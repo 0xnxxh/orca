@@ -165,7 +165,16 @@ describe('project-groups', () => {
   })
 
   it('retains a legacy SSH folder owner with one unstamped group', () => {
-    const legacyGroup = projectGroup({ id: 'legacy', name: 'Legacy', parentPath: '/legacy' })
+    const legacyGroup = normalizeProjectGroups([
+      {
+        id: 'legacy',
+        name: 'Legacy',
+        parentPath: '/legacy',
+        createdFrom: 'migration',
+        tabOrder: 0
+      }
+    ])[0]!
+    expect(legacyGroup.connectionId).toBeUndefined()
     const index = buildProjectGroupOwnerIndex([legacyGroup])
     const workspace = { projectGroupId: 'legacy', connectionId: 'builder' }
 

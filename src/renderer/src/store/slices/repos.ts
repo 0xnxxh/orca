@@ -103,7 +103,8 @@ import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/worksp
 import {
   getFolderWorkspaceIdentity,
   getFolderWorkspaceOwnerIdentity,
-  resolveFolderWorkspaceCatalogOwnerHostId
+  resolveFolderWorkspaceCatalogOwnerHostId,
+  resolveFolderWorkspaceCatalogOwnerHostIdFromIndex
 } from '../../../../shared/folder-workspaces'
 import { formatFolderWorkspaceCreateError } from '../../lib/folder-workspace-path-status'
 import { getEnvironmentSshStateGeneration } from './runtime-environment-ssh'
@@ -1569,7 +1570,7 @@ function getFolderWorkspaceStatusRequestSnapshot(
           (workspace) =>
             workspace.id === request.folderWorkspaceId &&
             (!request.ownerHostId ||
-              resolveFolderWorkspaceCatalogOwnerHostId(workspace, state.projectGroups) ===
+              resolveFolderWorkspaceCatalogOwnerHostIdFromIndex(workspace, projectGroupIndex) ===
                 request.ownerHostId)
         )
       : []

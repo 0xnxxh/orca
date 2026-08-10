@@ -1059,7 +1059,8 @@ export function buildRows(
   hostLabelById?: ReadonlyMap<string, string>,
   defaultHostId: ExecutionHostId = LOCAL_EXECUTION_HOST_ID,
   pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy = getPinnedWorktreeDisplayPolicy(settings),
-  ownerQualifiedProjectGroupIds: ReadonlySet<string> = new Set()
+  ownerQualifiedProjectGroupIds: ReadonlySet<string> = new Set(),
+  ownerQualifiedFolderWorkspaceIds: ReadonlySet<string> = new Set()
 ): Row[] {
   const result: Row[] = []
   const projectIndex = buildProjectGroupingIndex(projectGrouping)
@@ -1598,7 +1599,8 @@ export function buildRows(
           key: getFolderWorkspaceRowKey(
             folderWorkspace,
             [projectGroup],
-            ambiguousFolderWorkspaceIds.has(folderWorkspace.id)
+            ambiguousFolderWorkspaceIds.has(folderWorkspace.id) ||
+              ownerQualifiedFolderWorkspaceIds.has(folderWorkspace.id)
           ),
           folderWorkspace,
           projectGroup,

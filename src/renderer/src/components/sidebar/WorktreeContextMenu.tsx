@@ -371,7 +371,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   const moveProjectToGroup = useAppStore((s) => s.moveProjectToGroup)
   const deleteFolderWorkspace = useAppStore((s) => s.deleteFolderWorkspace)
   const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
-  const repo = useRepoById(worktree.repoId)
+  const repo = useRepoById(worktree.repoId, normalizeExecutionHostId(worktree.hostId) ?? undefined)
   const projectGroupTargets = useMemo(
     () => (repo ? getContextMenuProjectGroupTargets(repo, projectGroups) : null),
     [projectGroups, repo]
@@ -603,8 +603,16 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   }, [worktree, updateWorktreeMeta])
 
   const handleTogglePin = useCallback(() => {
+    if (parseWorkspaceKey(worktree.id)?.type === 'folder') {
+      void updateWorktreeMeta(
+        worktree.id,
+        { isPinned: !worktree.isPinned },
+        getContextMenuWorktreeExecutionHost(worktree)
+      )
+      return
+    }
     setWorktreesPinnedAndReveal([worktree.id], !worktree.isPinned)
-  }, [worktree.id, worktree.isPinned, setWorktreesPinnedAndReveal])
+  }, [setWorktreesPinnedAndReveal, updateWorktreeMeta, worktree])
 
   const handleCreateGroupFromRepo = useCallback(() => {
     if (!repo) {
