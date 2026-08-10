@@ -37,6 +37,10 @@ vi.mock('@/store', () => {
 })
 
 vi.mock('@/store/selectors', () => ({
+  getAllWorktreesFromState: () => [],
+  getRepoMapFromState: () => new Map(),
+  getWorktreeMapFromState: () => new Map(),
+  selectRepoByIdForActiveWorkspace: () => null,
   useAllWorktrees: () => [],
   useRepoById: () => null,
   useRepoMap: () => new Map(),

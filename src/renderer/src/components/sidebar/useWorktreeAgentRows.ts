@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import type { DashboardAgentRow } from '@/components/dashboard/useDashboardData'
 import { applyAgentRowLineage } from '@/components/dashboard/agent-row-lineage'
 import { migrationUnsupportedToAgentStatusEntry } from '@/lib/migration-unsupported-agent-entry'
-import { useAppStore } from '@/store'
+import { useAppStore, type AppState } from '@/store'
 import {
   selectLivePtyIdsForWorktree,
   selectRuntimePaneTitlesForWorktree
@@ -44,38 +44,59 @@ export function useWorktreeAgentRows(worktreeId: string, active = true): Dashboa
     () => createWorktreeAgentFreshnessSelector(worktreeId),
     [worktreeId]
   )
-  const tabs = useAppStore((s) => (active ? s.tabsByWorktree[worktreeId] : undefined))
+  const selectLiveEntries = useShallow((state: AppState) =>
+    active ? selectLiveAgentStatusEntriesForWorktree(state, worktreeId) : []
+  )
+  const selectMigrationUnsupported = useShallow((state: AppState) =>
+    active ? selectMigrationUnsupportedEntriesForWorktree(state, worktreeId) : []
+  )
+  const selectRetained = useShallow((state: AppState) =>
+    active ? selectRetainedAgentEntriesForWorktree(state, worktreeId) : []
+  )
+  const selectRuntimePaneTitles = useShallow((state: AppState) =>
+    active ? selectRuntimePaneTitlesForWorktree(state, worktreeId) : {}
+  )
+  const selectLivePtyIds = useShallow((state: AppState) =>
+    active ? selectLivePtyIdsForWorktree(state, worktreeId) : {}
+  )
+  const selectTerminalLayouts = useShallow((state: AppState) =>
+    active ? selectTerminalLayoutsForWorktree(state, worktreeId) : {}
+  )
+  const selectRuntimeAgentOrchestration = useShallow((state: AppState) =>
+    active ? selectRuntimeAgentOrchestrationForWorktree(state, worktreeId) : {}
+  )
   // Why: narrow the subscriptions to only THIS worktree's entries via
   // useShallow. Subscribing to the whole agentStatusByPaneKey map would make
   // every on-screen card re-render on any agent-status update anywhere —
   // O(worktrees²) render amplification. Pre-filtering here means the card
   // only re-renders when something relevant to THIS worktree changes.
-  const liveEntries = useAppStore(
-    useShallow((s) => (active ? selectLiveAgentStatusEntriesForWorktree(s, worktreeId) : []))
-  )
   // Why: keep the store selector limited to stable raw records. Converting
   // migration entries creates fresh objects with Date.now(), which breaks
   // useSyncExternalStore's cached-snapshot contract and can blank Electron.
-  const migrationUnsupported = useAppStore(
-    useShallow((s) => (active ? selectMigrationUnsupportedEntriesForWorktree(s, worktreeId) : []))
-  )
-  const retained = useAppStore(
-    useShallow((s) => (active ? selectRetainedAgentEntriesForWorktree(s, worktreeId) : []))
-  )
-  const runtimePaneTitlesByTabId = useAppStore(
-    useShallow((s) => (active ? selectRuntimePaneTitlesForWorktree(s, worktreeId) : {}))
-  )
-  const ptyIdsByTabId = useAppStore(
-    useShallow((s) => (active ? selectLivePtyIdsForWorktree(s, worktreeId) : {}))
-  )
-  const terminalLayoutsByTabId = useAppStore(
-    useShallow((s) => (active ? selectTerminalLayoutsForWorktree(s, worktreeId) : {}))
-  )
-  const runtimeAgentOrchestrationByPaneKey = useAppStore(
-    useShallow((s) => (active ? selectRuntimeAgentOrchestrationForWorktree(s, worktreeId) : {}))
-  )
-  const agentFreshnessSignature = useAppStore((s) =>
-    active ? selectAgentFreshness(s) : EMPTY_WORKTREE_AGENT_FRESHNESS_SIGNATURE
+  const {
+    tabs,
+    liveEntries,
+    migrationUnsupported,
+    retained,
+    runtimePaneTitlesByTabId,
+    ptyIdsByTabId,
+    terminalLayoutsByTabId,
+    runtimeAgentOrchestrationByPaneKey,
+    agentFreshnessSignature
+  } = useAppStore(
+    useShallow((state) => ({
+      tabs: active ? state.tabsByWorktree[worktreeId] : undefined,
+      liveEntries: selectLiveEntries(state),
+      migrationUnsupported: selectMigrationUnsupported(state),
+      retained: selectRetained(state),
+      runtimePaneTitlesByTabId: selectRuntimePaneTitles(state),
+      ptyIdsByTabId: selectLivePtyIds(state),
+      terminalLayoutsByTabId: selectTerminalLayouts(state),
+      runtimeAgentOrchestrationByPaneKey: selectRuntimeAgentOrchestration(state),
+      agentFreshnessSignature: active
+        ? selectAgentFreshness(state)
+        : EMPTY_WORKTREE_AGENT_FRESHNESS_SIGNATURE
+    }))
   )
 
   return useMemo<DashboardAgentRow[]>(() => {

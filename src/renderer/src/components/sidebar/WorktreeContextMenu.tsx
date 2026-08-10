@@ -32,7 +32,6 @@ import {
 } from 'lucide-react'
 import { useAppStore } from '@/store'
 import type { AppState } from '@/store/types'
-import { useAllWorktrees, useRepoById, useRepoMap, useWorktreeMap } from '@/store/selectors'
 import { cn } from '@/lib/utils'
 import type {
   Repo,
@@ -67,6 +66,9 @@ import {
   parseWorkspaceKey,
   worktreeWorkspaceKey
 } from '../../../../shared/workspace-scope'
+import { useWorktreeContextMenuStoreSelection } from './use-worktree-context-menu-store-selection'
+
+export { selectMenuScopedMap } from './use-worktree-context-menu-store-selection'
 
 type Props = {
   worktree: Worktree
@@ -89,27 +91,7 @@ const DELETE_POSITION_RESTORE_STABLE_FRAMES = 6
 // data-[state=closed] exit animation short; hold the subtree for its duration.
 const PARENT_PICKER_EXIT_ANIMATION_MS = 200
 
-// Why: stable empty sentinels let closed menu wrappers subscribe to a referentially
-// stable value instead of the high-churn maps that delete teardown replaces. The
-// selector returns these when the menu is closed, so the wrapper stays inert to
-// teardown set() churn. Module-level (one allocation, never recreated per render) so
-// the reference is constant and Zustand's Object.is equality short-circuits.
-const EMPTY_TABS_BY_WORKTREE: AppState['tabsByWorktree'] = {}
-const EMPTY_PTY_IDS_BY_TAB_ID: AppState['ptyIdsByTabId'] = {}
-const EMPTY_BROWSER_TABS_BY_WORKTREE: AppState['browserTabsByWorktree'] = {}
-const EMPTY_DELETE_STATE_BY_WORKTREE_ID: AppState['deleteStateByWorktreeId'] = {}
-const EMPTY_WORKTREE_LINEAGE_BY_ID: AppState['worktreeLineageById'] = {}
-const EMPTY_WORKSPACE_LINEAGE_BY_CHILD_KEY: AppState['workspaceLineageByChildKey'] = {}
 const EMPTY_CYCLIC_LINEAGE_IDS: ReadonlySet<string> = new Set()
-
-// Why: the gating decision for the menu-only store subscriptions. When the menu is
-// closed we MUST return the same `empty` reference every render so Zustand's Object.is
-// equality short-circuits the subscription and the closed wrapper stays inert to delete
-// teardown's high-churn set()s. When open we return the live map so menu items see real
-// data. Extracted as a pure function so the stable-reference contract is unit-testable.
-export function selectMenuScopedMap<T>(menuOpen: boolean, live: T, empty: T): T {
-  return menuOpen ? live : empty
-}
 
 // Why: the Developer submenu is hidden by default and revealed only by holding
 // Option/Alt at right-click. altKey is the same physical key on every platform
@@ -325,17 +307,6 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
 }: Props) {
   const defaultSelectedWorktrees = useMemo(() => [worktree], [worktree])
   const effectiveSelectedWorktrees = selectedWorktrees ?? defaultSelectedWorktrees
-  const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
-  const setWorktreesPinnedAndReveal = useAppStore((s) => s.setWorktreesPinnedAndReveal)
-  const workspaceStatuses = useAppStore((s) => s.workspaceStatuses)
-  const openModal = useAppStore((s) => s.openModal)
-  const projectGroups = useAppStore((s) => s.projectGroups)
-  const createProjectGroup = useAppStore((s) => s.createProjectGroup)
-  const moveProjectToGroup = useAppStore((s) => s.moveProjectToGroup)
-  const deleteFolderWorkspace = useAppStore((s) => s.deleteFolderWorkspace)
-  const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
-  const repo = useRepoById(worktree.repoId)
-  const deleteState = useAppStore((s) => s.deleteStateByWorktreeId[worktree.id])
   const [menuOpen, setMenuOpen] = useState(false)
   // Why: the Developer submenu is a power-user affordance, so it is revealed by
   // holding Option/Alt at right-click — captured at open time (like the Help
@@ -360,39 +331,30 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   const parentPickerFallbackTimerRef = useRef<number | null>(null)
   const parentPickerUnmountTimerRef = useRef<number | null>(null)
   const lifecycleStartedRef = useRef(false)
+  const {
+    updateWorktreeMeta,
+    setWorktreesPinnedAndReveal,
+    workspaceStatuses,
+    openModal,
+    projectGroups,
+    createProjectGroup,
+    moveProjectToGroup,
+    deleteFolderWorkspace,
+    setActiveWorktree,
+    repo,
+    deleteState,
+    repoMap,
+    worktreeMap,
+    allWorktrees,
+    worktreeLineageById,
+    workspaceLineageByChildKey,
+    updateWorktreeLineage,
+    tabsByWorktree,
+    ptyIdsByTabId,
+    browserTabsByWorktree,
+    deleteStateByWorktreeId
+  } = useWorktreeContextMenuStoreSelection(worktree, menuOpen)
   const isDeleting = deleteState?.isDeleting ?? false
-  const repoMap = useRepoMap()
-  const worktreeMap = useWorktreeMap()
-  const allWorktrees = useAllWorktrees()
-  // Why: these maps feed only items rendered inside the OPEN dropdown, yet delete
-  // teardown replaces them on every set(). Gate them behind menuOpen via stable
-  // empty sentinels so the (common) closed wrapper stays inert to that churn. The
-  // conditional lives INSIDE the selector so useAppStore is always called; the
-  // inline arrow (not a useCallback) re-reads the live map synchronously on the
-  // render where menuOpen flips true, so dependent useMemos recompute with real data.
-  const worktreeLineageById = useAppStore((s) =>
-    selectMenuScopedMap(menuOpen, s.worktreeLineageById, EMPTY_WORKTREE_LINEAGE_BY_ID)
-  )
-  const workspaceLineageByChildKey = useAppStore((s) =>
-    selectMenuScopedMap(
-      menuOpen,
-      s.workspaceLineageByChildKey,
-      EMPTY_WORKSPACE_LINEAGE_BY_CHILD_KEY
-    )
-  )
-  const updateWorktreeLineage = useAppStore((s) => s.updateWorktreeLineage)
-  const tabsByWorktree = useAppStore((s) =>
-    selectMenuScopedMap(menuOpen, s.tabsByWorktree, EMPTY_TABS_BY_WORKTREE)
-  )
-  const ptyIdsByTabId = useAppStore((s) =>
-    selectMenuScopedMap(menuOpen, s.ptyIdsByTabId, EMPTY_PTY_IDS_BY_TAB_ID)
-  )
-  const browserTabsByWorktree = useAppStore((s) =>
-    selectMenuScopedMap(menuOpen, s.browserTabsByWorktree, EMPTY_BROWSER_TABS_BY_WORKTREE)
-  )
-  const deleteStateByWorktreeId = useAppStore((s) =>
-    selectMenuScopedMap(menuOpen, s.deleteStateByWorktreeId, EMPTY_DELETE_STATE_BY_WORKTREE_ID)
-  )
   const scopeRef = useRef<HTMLDivElement>(null)
   const contextMenuOpenedAtRef = useRef<number | null>(null)
   const activeContextWorktrees = menuOpen ? contextWorktrees : effectiveSelectedWorktrees

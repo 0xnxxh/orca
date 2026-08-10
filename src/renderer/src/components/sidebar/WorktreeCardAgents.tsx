@@ -1,12 +1,12 @@
 import React, { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { useAppStore } from '@/store'
+import { useAppStore, type AppState } from '@/store'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { activateTabAndFocusPane } from '@/lib/activate-tab-and-focus-pane'
 import DashboardAgentRow from '@/components/dashboard/DashboardAgentRow'
 import { useNow } from '@/components/dashboard/useNow'
-import { deriveRunningAgentSendTargets } from '@/lib/running-agent-targets'
 import {
+  deriveWorktreeCardAgentSendTargets,
   selectSendTargetControlInputs,
   selectSendTargetInputs
 } from './worktree-card-send-target-inputs'
@@ -50,19 +50,37 @@ type Props = {
   className?: string
 }
 
-/** Inline agent list rendered inside WorktreeCard when 'inline-agents' is enabled. */
-const WorktreeCardAgents = React.memo(function WorktreeCardAgents({
+function WorktreeCardAgentsRows({
   worktreeId,
-  agents: precomputedAgents,
+  agents,
   className
-}: Props) {
-  const selectedAgents = useWorktreeAgentRows(worktreeId, precomputedAgents === undefined)
-  const agents = precomputedAgents ?? selectedAgents
+}: Required<Pick<Props, 'agents' | 'worktreeId'>> & Pick<Props, 'className'>) {
   if (agents.length === 0) {
     return null
   }
   // Why: mount the inner body (owns the 30s useNow tick) only for non-empty rows, so idle worktrees pay no timer cost.
   return <WorktreeCardAgentsBody worktreeId={worktreeId} agents={agents} className={className} />
+}
+
+function WorktreeCardAgentsFromStore({
+  worktreeId,
+  className
+}: Pick<Props, 'className' | 'worktreeId'>) {
+  const agents = useWorktreeAgentRows(worktreeId)
+  return <WorktreeCardAgentsRows worktreeId={worktreeId} agents={agents} className={className} />
+}
+
+/** Inline agent list rendered inside WorktreeCard when 'inline-agents' is enabled. */
+const WorktreeCardAgents = React.memo(function WorktreeCardAgents({
+  worktreeId,
+  agents,
+  className
+}: Props) {
+  return agents === undefined ? (
+    <WorktreeCardAgentsFromStore worktreeId={worktreeId} className={className} />
+  ) : (
+    <WorktreeCardAgentsRows worktreeId={worktreeId} agents={agents} className={className} />
+  )
 })
 
 type BodyProps = {
@@ -76,21 +94,38 @@ const WorktreeCardAgentsBody = React.memo(function WorktreeCardAgentsBody({
   agents,
   className
 }: BodyProps) {
-  const agentActivityDisplayMode =
-    useAppStore((s) => s.agentActivityDisplayMode) ?? DEFAULT_AGENT_ACTIVITY_DISPLAY_MODE
-  const dropAgentStatus = useAppStore((s) => s.dropAgentStatus)
-  const dismissRetainedAgent = useAppStore((s) => s.dismissRetainedAgent)
-  const { targetMode: agentSendPopoverTargetMode, agentStatusEpoch } = useAppStore(
-    useShallow((s) => selectSendTargetControlInputs(s, worktreeId))
+  const selectSendTargetControl = useShallow((state: AppState) =>
+    selectSendTargetControlInputs(state, worktreeId)
+  )
+  const selectWorktreeSendTargetInputs = useShallow((state: AppState) =>
+    selectSendTargetInputs(state, worktreeId)
   )
   // Why: return a stable empty constant unless the send-target popover is ours, so churny pane-title/agent-status maps don't re-render idle bodies.
-  const sendTargetInputs = useAppStore(useShallow((s) => selectSendTargetInputs(s, worktreeId)))
-  const sendPromptToSidebarAgentTarget = useAppStore((s) => s.sendPromptToSidebarAgentTarget)
+  const {
+    agentActivityDisplayMode,
+    dropAgentStatus,
+    dismissRetainedAgent,
+    sendTargetControl,
+    sendTargetInputs,
+    sendPromptToSidebarAgentTarget,
+    acknowledgedAgentsByPaneKey
+  } = useAppStore(
+    useShallow((state) => ({
+      agentActivityDisplayMode:
+        state.agentActivityDisplayMode ?? DEFAULT_AGENT_ACTIVITY_DISPLAY_MODE,
+      dropAgentStatus: state.dropAgentStatus,
+      dismissRetainedAgent: state.dismissRetainedAgent,
+      sendTargetControl: selectSendTargetControl(state),
+      sendTargetInputs: selectWorktreeSendTargetInputs(state),
+      sendPromptToSidebarAgentTarget: state.sendPromptToSidebarAgentTarget,
+      acknowledgedAgentsByPaneKey: state.acknowledgedAgentsByPaneKey
+    }))
+  )
+  const { targetMode: agentSendPopoverTargetMode, agentStatusEpoch } = sendTargetControl
   const focusedAgentPaneKey = useFocusedAgentPaneKey(worktreeId)
   const compactAgentListRootRef = useRef<HTMLDivElement | null>(null)
 
   // Why: derive per-agent unvisited flags from the ack map so rows bold on first appearance and mute once the tab is visited.
-  const acknowledgedAgentsByPaneKey = useAppStore((s) => s.acknowledgedAgentsByPaneKey)
   const unvisitedByPaneKey = useMemo(() => {
     const out: Record<string, boolean> = {}
     for (const a of agents) {
@@ -111,30 +146,15 @@ const WorktreeCardAgentsBody = React.memo(function WorktreeCardAgentsBody({
   const isAgentSendTargetModeActive = agentSendPopoverTargetMode !== null
   const sendTargetsByPaneKey = useMemo(() => {
     void agentStatusEpoch
-    if (!isAgentSendTargetModeActive) {
-      return new Map<
-        string,
-        { status: 'eligible' | 'disabled' | 'sending'; disabledReason?: string }
-      >()
-    }
-
-    return new Map(
-      deriveRunningAgentSendTargets(sendTargetInputs, worktreeId).map((target) => [
-        target.paneKey,
-        agentSendPopoverTargetMode?.status === 'sending' &&
-        agentSendPopoverTargetMode.sendingPaneKey === target.paneKey
-          ? { status: 'sending' as const, disabledReason: 'Sending...' }
-          : target.disabledReason
-            ? { status: target.status, disabledReason: target.disabledReason }
-            : { status: target.status }
-      ])
+    return deriveWorktreeCardAgentSendTargets(
+      sendTargetInputs,
+      worktreeId,
+      agentSendPopoverTargetMode
     )
   }, [
     // Why: stale-boundary timers bump this epoch without replacing the status map, so re-derive when freshness flips.
     agentStatusEpoch,
-    agentSendPopoverTargetMode?.sendingPaneKey,
-    agentSendPopoverTargetMode?.status,
-    isAgentSendTargetModeActive,
+    agentSendPopoverTargetMode,
     // sendTargetInputs: stable empty when inactive, shallow bundle of the five maps when active — one ref covers all five deps.
     sendTargetInputs,
     worktreeId

@@ -1,5 +1,6 @@
 import { getAgentRowConversationName } from '../../../../shared/agent-row-conversation-name'
 import { parsePaneKey } from '../../../../shared/stable-pane-id'
+import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '@/store'
 import type { AppState } from '@/store/types'
 import type { DashboardAgentRow } from './useDashboardData'
@@ -31,13 +32,13 @@ export function useAgentRowConversationName(agent: DashboardAgentRow): string | 
     parentPaneKey !== undefined &&
     parsePaneKey(parentPaneKey)?.tabId === agent.tab.id
   const cannotOwnTabName = agent.rowSource === 'subagent' || usesParentTab
-  const generatedTitlesEnabled = useAppStore(
-    (s) => !cannotOwnTabName && s.settings?.tabAutoGenerateTitle === true
-  )
-  const liveTab = useAppStore((s) =>
-    cannotOwnTabName
-      ? undefined
-      : getIndexedTab(s.tabsByWorktree[agent.tab.worktreeId], agent.tab.id)
+  const { generatedTitlesEnabled, liveTab } = useAppStore(
+    useShallow((state) => ({
+      generatedTitlesEnabled: !cannotOwnTabName && state.settings?.tabAutoGenerateTitle === true,
+      liveTab: cannotOwnTabName
+        ? undefined
+        : getIndexedTab(state.tabsByWorktree[agent.tab.worktreeId], agent.tab.id)
+    }))
   )
   // Why: synthetic and same-tab child rows do not own the parent tab's name.
   if (cannotOwnTabName) {

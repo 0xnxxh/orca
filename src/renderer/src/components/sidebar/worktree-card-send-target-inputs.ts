@@ -1,5 +1,8 @@
 import type { AppState } from '@/store/types'
-import type { RunningAgentTargetState } from '@/lib/running-agent-targets'
+import {
+  deriveRunningAgentSendTargets,
+  type RunningAgentTargetState
+} from '@/lib/running-agent-targets'
 
 export type SendTargetInputsState = Pick<
   AppState,
@@ -19,6 +22,11 @@ export type SendTargetControlInputsState = Pick<
 export type SendTargetControlInputs = {
   targetMode: AppState['agentSendPopoverTargetMode']
   agentStatusEpoch: number
+}
+
+export type WorktreeCardAgentSendTarget = {
+  status: 'eligible' | 'disabled' | 'sending'
+  disabledReason?: string
 }
 
 // Why: shared stable reference returned whenever the send-target popover isn't
@@ -72,4 +80,24 @@ export function selectSendTargetControlInputs(
     return EMPTY_SEND_TARGET_CONTROL_INPUTS
   }
   return { targetMode, agentStatusEpoch: s.agentStatusEpoch }
+}
+
+export function deriveWorktreeCardAgentSendTargets(
+  inputs: RunningAgentTargetState,
+  worktreeId: string,
+  targetMode: AppState['agentSendPopoverTargetMode']
+): Map<string, WorktreeCardAgentSendTarget> {
+  if (!targetMode) {
+    return new Map()
+  }
+  return new Map(
+    deriveRunningAgentSendTargets(inputs, worktreeId).map((target) => [
+      target.paneKey,
+      targetMode.status === 'sending' && targetMode.sendingPaneKey === target.paneKey
+        ? { status: 'sending' as const, disabledReason: 'Sending...' }
+        : target.disabledReason
+          ? { status: target.status, disabledReason: target.disabledReason }
+          : { status: target.status }
+    ])
+  )
 }

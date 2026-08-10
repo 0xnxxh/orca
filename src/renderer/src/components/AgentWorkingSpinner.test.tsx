@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { AgentWorkingSpinner } from './AgentWorkingSpinner'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -21,23 +21,23 @@ describe('AgentWorkingSpinner', () => {
     expect(markup).toContain('motion-reduce:border-t-yellow-500')
   })
 
-  it('renders when the Web Animations API is unavailable', async () => {
+  it('does not query per-element Web Animations state', async () => {
     const originalGetAnimations = Object.getOwnPropertyDescriptor(
       HTMLElement.prototype,
       'getAnimations'
     )
     Object.defineProperty(HTMLElement.prototype, 'getAnimations', {
       configurable: true,
-      value: undefined
+      value: () => {
+        throw new Error('Unexpected Web Animations query')
+      }
     })
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
 
     try {
-      await act(async () => {
-        root.render(<AgentWorkingSpinner />)
-      })
+      await act(async () => root.render(<AgentWorkingSpinner />))
       expect(container.querySelector('[data-agent-spinner]')).not.toBeNull()
     } finally {
       act(() => root.unmount())
@@ -50,45 +50,20 @@ describe('AgentWorkingSpinner', () => {
     }
   })
 
-  it('anchors mount and restart animations to the shared document epoch', async () => {
-    const animation = {
-      animationName: 'agent-spinner-rotate',
-      startTime: 321
-    } as unknown as Animation
-    const getAnimations = vi.fn(() => [animation])
-    const originalGetAnimations = Object.getOwnPropertyDescriptor(
-      HTMLElement.prototype,
-      'getAnimations'
-    )
-    Object.defineProperty(HTMLElement.prototype, 'getAnimations', {
+  it('anchors late mounts to the shared document epoch with a negative delay', () => {
+    const originalTimeline = Object.getOwnPropertyDescriptor(document, 'timeline')
+    Object.defineProperty(document, 'timeline', {
       configurable: true,
-      value: getAnimations
+      value: { currentTime: 1_321 }
     })
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    const root = createRoot(container)
 
     try {
-      await act(async () => {
-        root.render(<AgentWorkingSpinner />)
-      })
-      expect(animation.startTime).toBe(0)
-
-      animation.startTime = 654
-      const restart = new Event('animationstart', { bubbles: true })
-      Object.defineProperty(restart, 'animationName', { value: 'agent-spinner-rotate' })
-      await act(async () => {
-        container.querySelector('[data-agent-spinner]')!.dispatchEvent(restart)
-      })
-      expect(animation.startTime).toBe(0)
-      expect(getAnimations).toHaveBeenCalledTimes(2)
+      expect(renderToStaticMarkup(<AgentWorkingSpinner />)).toContain('animation-delay:-321ms')
     } finally {
-      act(() => root.unmount())
-      container.remove()
-      if (originalGetAnimations === undefined) {
-        Reflect.deleteProperty(HTMLElement.prototype, 'getAnimations')
+      if (originalTimeline === undefined) {
+        Reflect.deleteProperty(document, 'timeline')
       } else {
-        Object.defineProperty(HTMLElement.prototype, 'getAnimations', originalGetAnimations)
+        Object.defineProperty(document, 'timeline', originalTimeline)
       }
     }
   })

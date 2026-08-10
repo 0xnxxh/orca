@@ -43,8 +43,7 @@ export type WellKnownAgentType =
 export type AgentType = WellKnownAgentType | (string & {})
 
 /** A snapshot of a previous agent state, used to render activity blocks.
- *  Why: intentionally narrower than AgentStatusEntry — tool/assistant context is
- *  per-turn, not meaningful on a historical snapshot, and would bloat memory. */
+ *  Why: narrow except for completed output needed to observe coalesced turns. */
 export type AgentStateHistoryEntry = {
   state: AgentStatusState
   prompt: string
@@ -53,6 +52,8 @@ export type AgentStateHistoryEntry = {
   /** True when this `done` was a cancellation (agent hook like Claude `is_interrupt`,
    *  or Orca's guarded fallback). Always falsy for non-`done` states so retention logic can preserve it. */
   interrupted?: boolean
+  /** Assistant output from a completed turn. */
+  lastAssistantMessage?: string
 }
 
 /** Maximum number of history entries kept per agent to bound memory. */

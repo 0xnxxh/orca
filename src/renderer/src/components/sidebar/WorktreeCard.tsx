@@ -61,7 +61,6 @@ import {
 } from './worktree-card-title-display'
 import { useWorktreeCardDetailsHoverControl } from './worktree-card-details-hover-state'
 import { isEventTargetInsideCurrentTarget } from './worktree-card-dom-events'
-import { getWorkspacePortsByWorktreeId } from '@/lib/workspace-port-groups'
 import { RepoBadgeMark } from '@/components/repo/RepoBadgeLabel'
 import { RepoIconGlyph } from '@/components/repo/repo-icon'
 import { resolveRepoHeaderColor } from './project-header-color'
@@ -83,21 +82,12 @@ import {
 import { translate } from '@/i18n/i18n'
 import { recordRendererCrashBreadcrumb } from '@/lib/crash-diagnostics'
 import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
-import {
-  getRepoExecutionHostId,
-  isRuntimeOwnedSshTargetId,
-  parseExecutionHostId,
-  toRuntimeExecutionHostId
-} from '../../../../shared/execution-host'
-import { getHostDisplayLabelOverrides } from '../../../../shared/host-setting-overrides'
-import { DEFAULT_AGENT_ACTIVITY_DISPLAY_MODE } from '../../../../shared/constants'
-import { getExplicitRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
-import {
-  selectRuntimeAwareSshStatus,
-  selectRuntimeAwareSshTargetLabel,
-  selectRuntimeAwareSshTargetRemoved
-} from '@/store/slices/runtime-environment-ssh'
+import { getRepoExecutionHostId } from '../../../../shared/execution-host'
 import { hydrateRuntimeEnvironmentSshState } from '@/runtime/runtime-environment-ssh-state'
+import {
+  useWorktreeCardCacheSelection,
+  useWorktreeCardStoreSelection
+} from './use-worktree-card-store-selection'
 
 type WorktreeRenameRequest = {
   worktreeId: string
@@ -149,7 +139,6 @@ type WorktreeCardProps = {
   statusPrDisplay?: WorktreeCardPrDisplay | null
 }
 
-const EMPTY_WORKSPACE_PORTS = []
 const HOSTED_REVIEW_CARD_REFRESH_INTERVAL_MS = 60_000
 
 export function shouldBeginWorktreeRename(
@@ -241,23 +230,36 @@ const WorktreeCard = React.memo(function WorktreeCard({
   affiliateListMode = false,
   statusPrDisplay = null
 }: WorktreeCardProps) {
-  const openModal = useAppStore((s) => s.openModal)
-  const openTaskPage = useAppStore((s) => s.openTaskPage)
-  const openAutomationsPage = useAppStore((s) => s.openAutomationsPage)
-  const setPendingAutomationRunNavigation = useAppStore((s) => s.setPendingAutomationRunNavigation)
-  const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
-  const deleteFolderWorkspace = useAppStore((s) => s.deleteFolderWorkspace)
-  const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
-  const renamingWorktreeId = useAppStore((s) => s.renamingWorktreeId)
-  const setRenamingWorktreeId = useAppStore((s) => s.setRenamingWorktreeId)
-  const fetchHostedReviewForBranch = useAppStore((s) => s.fetchHostedReviewForBranch)
-  const settings = useAppStore((s) => s.settings)
-  const fetchIssue = useAppStore((s) => s.fetchIssue)
-  const fetchLinearIssue = useAppStore((s) => s.fetchLinearIssue)
-  const cardProps = useAppStore((s) => s.worktreeCardProperties)
-  const agentActivityDisplayMode =
-    useAppStore((s) => s.agentActivityDisplayMode) ?? DEFAULT_AGENT_ACTIVITY_DISPLAY_MODE
-  const projectGroups = useAppStore((s) => s.projectGroups)
+  const {
+    openModal,
+    openTaskPage,
+    openAutomationsPage,
+    setPendingAutomationRunNavigation,
+    updateWorktreeMeta,
+    deleteFolderWorkspace,
+    setActiveWorktree,
+    renamingWorktreeId,
+    setRenamingWorktreeId,
+    fetchHostedReviewForBranch,
+    settings,
+    fetchIssue,
+    fetchLinearIssue,
+    cardProps,
+    agentActivityDisplayMode,
+    projectGroups,
+    deleteState,
+    conflictOperation,
+    remoteBranchConflict,
+    workspacePorts,
+    sshOwnerEnvironmentId,
+    sshStatus,
+    sshTargetRemoved,
+    isRuntimeHost,
+    runtimeHostLabel,
+    isRuntimeDisconnected,
+    sshTargetLabel,
+    linearStatus
+  } = useWorktreeCardStoreSelection(worktree, repo)
   const newCardStyle = settings?.experimentalNewWorktreeCardStyle === true
   const compactCards = !newCardStyle && settings?.compactWorktreeCards === true
   const handleEditIssue = useCallback(
@@ -341,72 +343,14 @@ const WorktreeCard = React.memo(function WorktreeCard({
     ]
   )
 
-  const deleteState = useAppStore((s) => s.deleteStateByWorktreeId[worktree.id])
-  const conflictOperation = useAppStore((s) => s.gitConflictOperationByWorktree[worktree.id])
-  const remoteBranchConflict = useAppStore((s) => s.remoteBranchConflictByWorktreeId[worktree.id])
-  const workspacePorts = useAppStore(
-    (s) =>
-      getWorkspacePortsByWorktreeId(s.workspacePortScan?.result).get(worktree.id) ??
-      EMPTY_WORKSPACE_PORTS
-  )
-
-  // SSH disconnected state
-  const sshOwnerEnvironmentId = useAppStore((s) =>
-    repo?.connectionId ? getExplicitRuntimeEnvironmentIdForWorktree(s, worktree.id) : null
-  )
-  const sshStatus = useAppStore((s) => {
-    // Why: runtime-owned SSH targets suppress their ssh:state-changed broadcasts, so don't show a false "disconnected" chip for them.
-    if (!repo?.connectionId || isRuntimeOwnedSshTargetId(repo.connectionId)) {
-      return null
-    }
-    return selectRuntimeAwareSshStatus(s, sshOwnerEnvironmentId, repo.connectionId)
-  })
   useEffect(() => {
     if (sshOwnerEnvironmentId) {
       void hydrateRuntimeEnvironmentSshState(sshOwnerEnvironmentId).catch(() => {})
     }
   }, [sshOwnerEnvironmentId])
   const isSshDisconnected = sshStatus != null && sshStatus !== 'connected'
-  // Why: only reported on positive evidence, so a removed host never offers a Connect that can
-  // only fail. Runtime-owned targets are excluded for the same reason sshStatus excludes them —
-  // ssh:listTargets filters them out, so "absent from the target list" is not evidence of removal.
-  const sshTargetRemoved = useAppStore((s) =>
-    repo?.connectionId && !isRuntimeOwnedSshTargetId(repo.connectionId)
-      ? selectRuntimeAwareSshTargetRemoved(s, sshOwnerEnvironmentId, repo.connectionId)
-      : false
-  )
-
-  const parsedRepoHost = parseExecutionHostId(repo?.executionHostId)
-  const runtimeOwnerEnvironmentId =
-    worktree.runtimeOwnerEnvironmentId ??
-    (parsedRepoHost?.kind === 'runtime' ? parsedRepoHost.environmentId : null)
-  const runtimeHostId = runtimeOwnerEnvironmentId
-    ? toRuntimeExecutionHostId(runtimeOwnerEnvironmentId)
-    : null
-  const runtimeEnvironmentName = useAppStore((s) =>
-    runtimeOwnerEnvironmentId
-      ? (s.runtimeEnvironments.find((environment) => environment.id === runtimeOwnerEnvironmentId)
-          ?.name ?? null)
-      : null
-  )
-  const runtimeHostLabel = runtimeHostId
-    ? (getHostDisplayLabelOverrides(settings).get(runtimeHostId) ?? runtimeEnvironmentName)
-    : null
-  // Why: runtime ("Orca server") hosts get the same disconnected dimming as SSH when their environment has no live status.
-  const isRuntimeDisconnected = useAppStore((s) => {
-    if (!runtimeOwnerEnvironmentId) {
-      return false
-    }
-    return !s.runtimeStatusByEnvironmentId.get(runtimeOwnerEnvironmentId)?.status
-  })
   const [titleRenaming, setTitleRenaming] = useState(false)
   const [showRenameErrorDialog, setShowRenameErrorDialog] = useState(false)
-  // Why: read the target label from its owning host's store instead of exposing HUB-private SSH metadata as client-local state.
-  const sshTargetLabel = useAppStore((s) =>
-    repo?.connectionId
-      ? selectRuntimeAwareSshTargetLabel(s, sshOwnerEnvironmentId, repo.connectionId)
-      : ''
-  )
 
   const gitIdentityDisplay = getWorktreeGitIdentityDisplay(worktree)
   const detachedHeadDisplay = gitIdentityDisplay?.kind === 'detached' ? gitIdentityDisplay : null
@@ -466,17 +410,19 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const linearIssueCacheKey = worktree.linkedLinearIssue ? `all::${worktree.linkedLinearIssue}` : ''
 
   // Subscribe to ONLY the specific cache entry, not entire review/issue caches.
-  const hostedReviewEntry = useAppStore((s) =>
-    hostedReviewCacheKey ? s.hostedReviewCache[hostedReviewCacheKey] : undefined
-  )
-  const prCacheEntry = useAppStore((s) => (prCacheKey ? s.prCache?.[prCacheKey] : undefined))
-  const issueEntry = useAppStore((s) => (issueCacheKey ? s.issueCache[issueCacheKey] : undefined))
-  const linearIssueEntry = useAppStore((s) =>
-    linearIssueCacheKey ? s.linearIssueCache[linearIssueCacheKey] : undefined
-  )
-  const linearIssueFallbackEntry = useAppStore((s) =>
-    worktree.linkedLinearIssue ? s.linearIssueCache[worktree.linkedLinearIssue] : undefined
-  )
+  const {
+    hostedReviewEntry,
+    prCacheEntry,
+    issueEntry,
+    linearIssueEntry,
+    linearIssueFallbackEntry
+  } = useWorktreeCardCacheSelection({
+    hostedReviewCacheKey,
+    issueCacheKey,
+    linearIssueCacheKey,
+    linkedLinearIssue: worktree.linkedLinearIssue,
+    prCacheKey
+  })
 
   const hostedReview: HostedReviewInfo | null | undefined =
     hostedReviewEntry !== undefined ? hostedReviewEntry.data : undefined
@@ -568,7 +514,6 @@ const WorktreeCard = React.memo(function WorktreeCard({
           title: issue === null ? 'Issue details unavailable' : 'Loading issue...'
         }
       : null)
-  const linearStatus = useAppStore((s) => s.linearStatus)
   const linearIssue: LinearIssue | null | undefined = worktree.linkedLinearIssue
     ? (linearIssueEntry?.data ?? linearIssueFallbackEntry?.data)
     : null
@@ -1184,9 +1129,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
   })
   const hasPorts = showPorts && workspacePorts.length > 0
   const cacheStartedAt = usePromptCacheCountdownStartedAt(worktree.id, showAggregateCacheTimer)
-  const cacheTtlMs = useAppStore((s) =>
-    showAggregateCacheTimer ? (s.settings?.promptCacheTtlMs ?? 0) : 0
-  )
+  const cacheTtlMs = showAggregateCacheTimer ? (settings?.promptCacheTtlMs ?? 0) : 0
   // Why: pinned trees mix repos, so the repo icon shows regardless of groupBy's hideRepoBadge.
   const showPinnedRepoIcon = inPinnedSection && !!repo
   // Why: new card style retired the Compact/Detailed switch; repo identity uses the compact chip, not a lower pill.
@@ -1447,7 +1390,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
               />
             )}
 
-            {!repo?.connectionId && parsedRepoHost?.kind === 'runtime' && (
+            {!repo?.connectionId && isRuntimeHost && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="shrink-0 inline-flex items-center">

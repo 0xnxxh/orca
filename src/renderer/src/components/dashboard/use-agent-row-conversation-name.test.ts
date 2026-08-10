@@ -1,3 +1,5 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppState } from '@/store/types'
 import { useAgentRowConversationName } from './use-agent-row-conversation-name'
@@ -10,8 +12,6 @@ const storeState = vi.hoisted(() => ({
   }
 }))
 
-// Why: the mocked selector makes the hook a pure function, so tests can call it
-// directly without mounting a component.
 vi.mock('@/store', () => ({
   useAppStore: (selector: (state: AppState) => unknown) =>
     selector(storeState.current as unknown as AppState)
@@ -29,18 +29,28 @@ function makeAgent(overrides: Partial<DashboardAgentRow> = {}): DashboardAgentRo
   } as DashboardAgentRow
 }
 
+function readConversationName(agent: DashboardAgentRow): string | null {
+  let result: string | null = null
+  function Probe() {
+    result = useAgentRowConversationName(agent)
+    return null
+  }
+  renderToStaticMarkup(createElement(Probe))
+  return result
+}
+
 beforeEach(() => {
   storeState.current = { settings: {}, tabsByWorktree: {} }
 })
 
 describe('useAgentRowConversationName', () => {
   it('returns the conversation name by default', () => {
-    expect(useAgentRowConversationName(makeAgent())).toBe('Patient sync spike')
+    expect(readConversationName(makeAgent())).toBe('Patient sync spike')
   })
 
   it('ignores a retired stored opt-out value', () => {
     storeState.current = { settings: { agentRowsUseConversationName: false }, tabsByWorktree: {} }
-    expect(useAgentRowConversationName(makeAgent())).toBe('Patient sync spike')
+    expect(readConversationName(makeAgent())).toBe('Patient sync spike')
   })
 
   it('never reads the parent tab for subagent child rows', () => {
@@ -53,7 +63,7 @@ describe('useAgentRowConversationName', () => {
       }
     )
     storeState.current = { settings: {}, tabsByWorktree }
-    expect(useAgentRowConversationName(makeAgent({ rowSource: 'subagent' }))).toBeNull()
+    expect(readConversationName(makeAgent({ rowSource: 'subagent' }))).toBeNull()
   })
 
   it('does not inherit a same-tab lineage parent conversation name', () => {
@@ -67,7 +77,7 @@ describe('useAgentRowConversationName', () => {
     )
     storeState.current = { settings: {}, tabsByWorktree }
     expect(
-      useAgentRowConversationName(
+      readConversationName(
         makeAgent({
           entry: {
             prompt: 'child prompt',
@@ -91,7 +101,7 @@ describe('useAgentRowConversationName', () => {
       },
       lineage: { depth: 1, isFirstSibling: true, isLastSibling: true, childCount: 0 }
     } as Partial<DashboardAgentRow>)
-    expect(useAgentRowConversationName(agent)).toBe('Patient sync spike')
+    expect(readConversationName(agent)).toBe('Patient sync spike')
   })
 
   it('indexes one immutable tab array once across rows', () => {
@@ -115,10 +125,10 @@ describe('useAgentRowConversationName', () => {
       tabsByWorktree: { 'wt-1': tabs }
     }
 
-    expect(useAgentRowConversationName(makeAgent())).toBe('First name')
+    expect(readConversationName(makeAgent())).toBe('First name')
     const readsAfterFirstRow = tabReads
     expect(
-      useAgentRowConversationName(
+      readConversationName(
         makeAgent({
           paneKey: 'tab-2:leaf-1',
           tab: { id: 'tab-2', worktreeId: 'wt-1', customTitle: null, title: '' }
@@ -138,7 +148,7 @@ describe('useAgentRowConversationName', () => {
         'wt-1': [{ id: 'tab-1', worktreeId: 'wt-1', customTitle: 'Renamed later', title: '' }]
       }
     }
-    expect(useAgentRowConversationName(makeAgent())).toBe('Renamed later')
+    expect(readConversationName(makeAgent())).toBe('Renamed later')
   })
 
   it('honors the generated-titles setting for generated names', () => {
@@ -146,11 +156,11 @@ describe('useAgentRowConversationName', () => {
       tab: { customTitle: null, title: '', generatedTitle: 'Fix intake flow' }
     } as Partial<DashboardAgentRow>)
     storeState.current = { settings: {}, tabsByWorktree: {} }
-    expect(useAgentRowConversationName(agent)).toBeNull()
+    expect(readConversationName(agent)).toBeNull()
     storeState.current = {
       settings: { tabAutoGenerateTitle: true },
       tabsByWorktree: {}
     }
-    expect(useAgentRowConversationName(agent)).toBe('Fix intake flow')
+    expect(readConversationName(agent)).toBe('Fix intake flow')
   })
 })

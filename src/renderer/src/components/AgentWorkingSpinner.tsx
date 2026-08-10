@@ -1,30 +1,11 @@
 import React from 'react'
 import { cn } from '@/lib/utils'
 
-const SPINNER_ANIMATION_NAME = 'agent-spinner-rotate'
+const SPINNER_ANIMATION_DURATION_MS = 1_000
 
-// Why: CSS assigns per-element start times after refs run; anchoring the Web
-// Animation timeline gives late mounts exact phase sync without recurring JS.
-function syncSpinnerPhase(el: HTMLSpanElement | null): void {
-  if (el === null || typeof el.getAnimations !== 'function') {
-    return
-  }
-
-  const animation = el
-    .getAnimations()
-    .find(
-      (candidate) =>
-        'animationName' in candidate && candidate.animationName === SPINNER_ANIMATION_NAME
-    )
-  if (animation !== undefined) {
-    animation.startTime = 0
-  }
-}
-
-function handleSpinnerAnimationStart(event: React.AnimationEvent<HTMLSpanElement>): void {
-  if (event.animationName === SPINNER_ANIMATION_NAME) {
-    syncSpinnerPhase(event.currentTarget)
-  }
+function getSharedSpinnerAnimationDelay(): string {
+  const timelineTime = typeof document === 'undefined' ? null : document.timeline?.currentTime
+  return `${-(typeof timelineTime === 'number' ? timelineTime % SPINNER_ANIMATION_DURATION_MS : 0)}ms`
 }
 
 // Why: the working-state ring animates via CSS (.agent-working-spinner in
@@ -33,9 +14,8 @@ function handleSpinnerAnimationStart(event: React.AnimationEvent<HTMLSpanElement
 export function AgentWorkingSpinner({ className }: { className?: string }): React.JSX.Element {
   return (
     <span
-      ref={syncSpinnerPhase}
-      onAnimationStart={handleSpinnerAnimationStart}
       data-agent-spinner=""
+      style={{ animationDelay: getSharedSpinnerAnimationDelay() }}
       className={cn(
         // Why: under reduced motion the animation is disabled, so fill the top
         // border too — a frozen transparent-top ring reads as a broken
