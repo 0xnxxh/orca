@@ -82,16 +82,16 @@ export function codexApprovalItem(input: {
 }
 
 function approvalDetail(params: Record<string, unknown>): string | null {
-  const reason = readString(params, 'reason')
-  if (reason) {
-    return reason
-  }
   const command = params.command
   if (typeof command === 'string' && command.length > 0) {
     return command
   }
   if (Array.isArray(command) && command.every((part) => typeof part === 'string')) {
     return command.join(' ')
+  }
+  const reason = readString(params, 'reason')
+  if (reason) {
+    return reason
   }
   const detail = params.grantRoot ?? params.changes
   return detail === undefined ? null : JSON.stringify(detail)

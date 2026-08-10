@@ -112,6 +112,14 @@ export class MobileE2EEV2PhysicalChannel {
         throw new Error('Invalid E2EE v2 authenticated response')
       }
       this.state = 'ready'
+      this.enqueueReady({
+        kind: 'text',
+        plaintext: JSON.stringify({
+          type: 'e2ee_client_capabilities',
+          v: 1,
+          clientCapabilities: [STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY]
+        })
+      })
       this.args.onAuthenticated()
     } else if (typeof plaintext === 'string') {
       this.args.onText(plaintext)
@@ -140,8 +148,7 @@ export class MobileE2EEV2PhysicalChannel {
         type: 'e2ee_auth',
         v: 2,
         transcriptHashB64: this.args.session.transcriptHashB64,
-        deviceToken: this.args.deviceToken,
-        clientCapabilities: [STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY]
+        deviceToken: this.args.deviceToken
       })
     })
   }

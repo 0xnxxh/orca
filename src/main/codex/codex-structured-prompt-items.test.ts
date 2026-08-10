@@ -78,6 +78,13 @@ describe('codex approval items', () => {
     ).toBe('git status')
     expect(
       codexApprovalItem({
+        method: CODEX_COMMAND_APPROVAL_METHOD,
+        params: { command: ['pnpm', 'test'], reason: 'same parent reason' },
+        detail: 'parent command'
+      }).detail
+    ).toBe('pnpm test')
+    expect(
+      codexApprovalItem({
         method: CODEX_FILE_CHANGE_APPROVAL_METHOD,
         params: { grantRoot: '/outside' },
         detail: null

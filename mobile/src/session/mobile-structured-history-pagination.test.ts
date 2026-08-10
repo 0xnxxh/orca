@@ -21,4 +21,14 @@ describe('mobile structured pagination latch', () => {
     beginStructuredUserScroll(state)
     expect(admitStructuredOlderPage(state)).toBe(true)
   })
+
+  it('admits a second page after a settled load without a momentum event', () => {
+    const state = createMobileStructuredPaginationState()
+    beginStructuredUserScroll(state)
+    expect(admitStructuredOlderPage(state)).toBe(true)
+    settleStructuredOlderPage(state)
+
+    beginStructuredUserScroll(state)
+    expect(admitStructuredOlderPage(state)).toBe(true)
+  })
 })

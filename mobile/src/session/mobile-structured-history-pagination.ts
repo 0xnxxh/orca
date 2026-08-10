@@ -26,8 +26,8 @@ export function admitStructuredOlderPage(state: MobileStructuredPaginationState)
 }
 
 export function settleStructuredOlderPage(state: MobileStructuredPaginationState): void {
-  state.phase = 'settling'
-  state.programmaticMomentum = true
+  state.phase = 'latched'
+  state.programmaticMomentum = false
 }
 
 export function finishStructuredPaginationMomentum(

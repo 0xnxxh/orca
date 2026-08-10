@@ -142,6 +142,9 @@ export const STRUCTURED_AGENT_SESSION_METHODS: RpcAnyMethod[] = [
         }
         return result
       }
+      if (ctx.clientKind === 'mobile') {
+        throw new Error('agent_session_create_intent_required')
+      }
       await ensureHostInstalled(ctx)
       return requireHost(ctx).attach(callerFor(ctx), params)
     }

@@ -46,3 +46,8 @@ export function noteStructuredStreamClosed(
   }
   state.streamOpenedAt = null
 }
+
+export function scheduleStructuredStreamLongevityConfirmation(confirm: () => void): () => void {
+  const timer = setTimeout(confirm, STRUCTURED_STREAM_STABLE_MS + 1)
+  return () => clearTimeout(timer)
+}

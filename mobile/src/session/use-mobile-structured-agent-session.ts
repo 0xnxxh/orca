@@ -20,8 +20,28 @@ import {
   noteStructuredStreamClosed,
   noteStructuredStreamOpened,
   resumeStructuredSession,
-  STRUCTURED_STREAM_STABLE_MS
+  scheduleStructuredStreamLongevityConfirmation
 } from './mobile-structured-session-reconnect'
+
+function openStructuredAgentSessionSubscription(args: {
+  client: RpcClient
+  sessionId: string
+  cursor: AgentJournalCursor | null
+  onEvent: (raw: unknown) => void
+  resumeCursor: () => AgentJournalCursor | null
+}): () => void {
+  return args.client.subscribe(
+    'agentSession.subscribe',
+    { sessionId: args.sessionId, ...(args.cursor ? { cursor: args.cursor } : {}) },
+    args.onEvent,
+    {
+      paramsForReconnect: () => ({
+        sessionId: args.sessionId,
+        ...(args.resumeCursor() ? { cursor: args.resumeCursor() } : {})
+      })
+    }
+  )
+}
 
 export function useMobileStructuredAgentSession(args: {
   client: RpcClient | null
@@ -48,37 +68,49 @@ export function useMobileStructuredAgentSession(args: {
   resumeCursorRef.current = state.cursor
   const [loadingOlder, setLoadingOlder] = useState(false)
   const reconnectRef = useRef(createMobileStructuredReconnectState())
-  const longevityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelLongevityRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     dispatch({ type: 'loading' })
     setLoadingOlder(false)
-    if (!client || !sessionId) {
-      dispatch({ type: 'error', message: '' })
-      return
-    }
     let closed = false
     let streamOpened = false
     let unsubscribe = (): void => {}
     const coalescer = createMobileStructuredEventCoalescer((event) => {
       dispatch({ type: 'event', event })
     })
-    const subscribe = (cursor: AgentJournalCursor | null): void => {
+    const cleanup = (): void => {
+      closed = true
+      cancelLongevityRef.current()
+      cancelLongevityRef.current = () => {}
+      if (streamOpened) {
+        noteStructuredStreamClosed(reconnectRef.current, Date.now())
+      }
+      coalescer.dispose()
+      unsubscribe()
+    }
+    if (!client || !sessionId) {
+      dispatch({ type: 'error', message: '' })
+      return cleanup
+    }
+    const openSubscription = (cursor: AgentJournalCursor | null): void => {
       if (closed) {
         return
       }
       streamOpened = true
       noteStructuredStreamOpened(reconnectRef.current, Date.now())
-      longevityTimerRef.current = setTimeout(() => {
-        longevityTimerRef.current = null
+      cancelLongevityRef.current()
+      cancelLongevityRef.current = scheduleStructuredStreamLongevityConfirmation(() => {
         if (!closed) {
           client.confirmStructuredStreamLongevity?.()
         }
-      }, STRUCTURED_STREAM_STABLE_MS + 1)
-      unsubscribe = client.subscribe(
-        'agentSession.subscribe',
-        { sessionId, ...(cursor ? { cursor } : {}) },
-        (raw) => {
+      })
+      unsubscribe = openStructuredAgentSessionSubscription({
+        client,
+        sessionId,
+        cursor,
+        resumeCursor: () => resumeCursorRef.current,
+        onEvent: (raw) => {
           if (closed) {
             return
           }
@@ -105,14 +137,8 @@ export function useMobileStructuredAgentSession(args: {
             }
           }
           coalescer.push(event)
-        },
-        {
-          paramsForReconnect: () => ({
-            sessionId,
-            ...(resumeCursorRef.current ? { cursor: resumeCursorRef.current } : {})
-          })
         }
-      )
+      })
     }
     void client
       .sendRequest('agentSession.history', { sessionId, direction: 'tail', limit: 40 })
@@ -127,7 +153,7 @@ export function useMobileStructuredAgentSession(args: {
         if (result.ok) {
           dispatch({ type: 'tail-page', page: result.page })
           resumeCursorRef.current = result.page.liveCursor ?? null
-          subscribe(result.page.liveCursor ?? null)
+          openSubscription(result.page.liveCursor ?? null)
           return
         }
         dispatch({
@@ -141,7 +167,7 @@ export function useMobileStructuredAgentSession(args: {
           }
         })
         resumeCursorRef.current = result.snapshot.cursor
-        subscribe(result.snapshot.cursor)
+        openSubscription(result.snapshot.cursor)
       })
       .catch((error: unknown) => {
         if (!closed) {
@@ -151,18 +177,7 @@ export function useMobileStructuredAgentSession(args: {
           })
         }
       })
-    return () => {
-      closed = true
-      if (longevityTimerRef.current) {
-        clearTimeout(longevityTimerRef.current)
-        longevityTimerRef.current = null
-      }
-      if (streamOpened) {
-        noteStructuredStreamClosed(reconnectRef.current, Date.now())
-      }
-      coalescer.dispose()
-      unsubscribe()
-    }
+    return cleanup
   }, [client, sessionId])
 
   useEffect(() => {

@@ -217,6 +217,16 @@ describe('capability gating', () => {
     expect(hostCalls.send).toHaveBeenCalledTimes(1)
   })
 
+  it('rejects host-authoritative attach fields from a mobile caller', async () => {
+    const response = await call('agentSession.create', attachParams(), STRUCTURED_CLIENT)
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining('agent_session_create_intent_required') }
+    })
+    expect(hostCalls.attach).not.toHaveBeenCalled()
+  })
+
   it('serves an in-process caller, which negotiates no capabilities at all', async () => {
     const response = await call('agentSession.send', sendParams())
     expect(response).toMatchObject({ ok: true })
@@ -260,21 +270,13 @@ describe('method routing', () => {
   })
 
   it('separates create from ensure by the fence the client may declare', async () => {
-    const created = await call('agentSession.create', attachParams(), STRUCTURED_CLIENT)
+    const created = await call('agentSession.create', attachParams())
     expect(created).toMatchObject({ ok: true })
 
-    const fenced = await call(
-      'agentSession.create',
-      attachParams({ envelope: envelope() }),
-      STRUCTURED_CLIENT
-    )
+    const fenced = await call('agentSession.create', attachParams({ envelope: envelope() }))
     expect(fenced).toMatchObject({ ok: false })
 
-    const ensured = await call(
-      'agentSession.ensure',
-      attachParams({ envelope: envelope() }),
-      STRUCTURED_CLIENT
-    )
+    const ensured = await call('agentSession.ensure', attachParams({ envelope: envelope() }))
     expect(ensured).toMatchObject({ ok: true })
   })
 
