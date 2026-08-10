@@ -5,31 +5,7 @@ import {
   type AgentStartupShell
 } from './tui-agent-startup-shell'
 
-/** Claude options that always consume the following token as their value, so a
- * dash-leading value (`--model -mine`) is never mistaken for a resume selector. */
-const CLAUDE_VALUE_OPTIONS = new Set([
-  '--add-dir',
-  '--agents',
-  '--allowed-tools',
-  '--allowedTools',
-  '--append-system-prompt',
-  '--config',
-  '--disallowed-tools',
-  '--disallowedTools',
-  '--fallback-model',
-  '--input-format',
-  '--max-turns',
-  '--mcp-config',
-  '--model',
-  '--output-format',
-  '--permission-mode',
-  '--permission-prompt-tool',
-  '--session-id',
-  '--settings',
-  '--system-prompt'
-])
-
-function isResumeSelector(token: string): boolean {
+export function isClaudeResumeSelector(token: string): boolean {
   if (token === '--resume' || token.startsWith('--resume=')) {
     return true
   }
@@ -39,16 +15,40 @@ function isResumeSelector(token: string): boolean {
   if (token.startsWith('--')) {
     return false
   }
-  if (token === '-c' || token.startsWith('-c=')) {
-    return true
-  }
-  // -r, -r=<id>, and the joined -r<id> form all select a session.
-  return token.startsWith('-r')
+  // Why: the joined -r<id> form is deliberately NOT matched — any `-r…` token
+  // is ambiguous with another option's dash-leading value (`--agent -review`),
+  // and no arity table can keep up with the CLI. Only exact selector shapes
+  // are stripped; a persisted joined form degrades to pre-guard behavior.
+  return token === '-r' || token.startsWith('-r=') || token === '-c' || token.startsWith('-c=')
 }
 
 function isClaudeExecutableToken(token: string): boolean {
   const base = token.split(/[\\/]/).pop() ?? ''
   return /^claude(\.(exe|cmd|bat|ps1))?$/i.test(base)
+}
+
+/** Accepts a claude token only in command position — index 0, right after a
+ * wrapper's `--`, or preceded solely by NAME=value assignments — so an
+ * argument that merely ends in /claude (an ssh key, a project dir) can never
+ * be mistaken for the executable. */
+function findClaudeExecutableIndex(tokens: readonly string[]): number {
+  let commandPosition = true
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i]
+    if (commandPosition) {
+      if (isClaudeExecutableToken(token)) {
+        return i
+      }
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
+        continue
+      }
+      commandPosition = false
+    }
+    if (token === '--') {
+      commandPosition = true
+    }
+  }
+  return -1
 }
 
 /** Joins the resolved base command with the agent's resume argv. Claude goes
@@ -93,7 +93,7 @@ export function buildClaudeResumeLaunchCommand(
     return appended
   }
   const { tokens, spans } = tokenized
-  const claudeIndex = tokens.findIndex(isClaudeExecutableToken)
+  const claudeIndex = findClaudeExecutableIndex(tokens)
   if (claudeIndex === -1) {
     return appended
   }
@@ -107,27 +107,18 @@ export function buildClaudeResumeLaunchCommand(
       terminatorStart = spans[i].start
       break
     }
-    if (isResumeSelector(token)) {
-      const selectorStart = spans[i].start
-      let end = spans[i].end
-      const next = tokens[i + 1]
-      if ((token === '--resume' || token === '-r') && next !== undefined && !next.startsWith('-')) {
-        // A stale session locator rides along with its selector.
-        end = spans[i + 1].end
-        i += 1
-      }
-      cuts.push({ start: selectorStart, end })
+    if (!isClaudeResumeSelector(token)) {
       continue
     }
-    if (CLAUDE_VALUE_OPTIONS.has(token)) {
+    const selectorStart = spans[i].start
+    let end = spans[i].end
+    const next = tokens[i + 1]
+    if ((token === '--resume' || token === '-r') && next !== undefined && !next.startsWith('-')) {
+      // A stale session locator rides along with its selector.
+      end = spans[i + 1].end
       i += 1
-      continue
     }
-    if (token.startsWith('-') && tokens[i + 1] !== undefined && !tokens[i + 1].startsWith('-')) {
-      // Unknown option: assume it consumes a non-dash value so that value is
-      // never inspected as a selector.
-      i += 1
-    }
+    cuts.push({ start: selectorStart, end })
   }
   if (cuts.length === 0 && terminatorStart === null) {
     return appended

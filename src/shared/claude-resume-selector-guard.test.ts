@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { buildClaudeResumeLaunchCommand } from './claude-resume-selector-guard'
+import {
+  buildClaudeResumeLaunchCommand,
+  isClaudeResumeSelector
+} from './claude-resume-selector-guard'
 import { buildAgentResumeStartupPlan, buildAgentStartupPlan } from './tui-agent-startup'
 import { tokenizeStartupCommand, type AgentStartupShell } from './tui-agent-startup-shell'
 
@@ -14,16 +17,15 @@ const SHELLS: { platform: NodeJS.Platform; shell: AgentStartupShell }[] = [
   { platform: 'win32', shell: 'cmd' }
 ]
 
-/** Tokenizes a launch command and asserts exactly one identity-bearing resume. */
+/** Tokenizes a launch command and asserts exactly one identity-bearing resume,
+ * using the guard's own selector predicate so `=`-joined forms count too. */
 function expectSingleAuthoritativeResume(command: string, shell: AgentStartupShell): void {
   const tokenized = tokenizeStartupCommand(command, shell)
   expect(tokenized.ok).toBe(true)
   if (!tokenized.ok) {
     return
   }
-  const selectors = tokenized.tokens.filter(
-    (token) => token === '--resume' || token === '-r' || token === '--continue' || token === '-c'
-  )
+  const selectors = tokenized.tokens.filter(isClaudeResumeSelector)
   expect(selectors).toEqual(['--resume'])
   const index = tokenized.tokens.indexOf('--resume')
   expect(tokenized.tokens[index + 1]).toBe(SESSION_ID)
@@ -47,7 +49,6 @@ describe('buildClaudeResumeLaunchCommand', () => {
     'claude --resume=stale-session',
     'claude -r stale-session',
     'claude -r=stale-session',
-    'claude -rstale-session',
     'claude --resume= --model sonnet',
     'claude --continue',
     'claude -c',
@@ -72,8 +73,17 @@ describe('buildClaudeResumeLaunchCommand', () => {
     expect(
       buildClaudeResumeLaunchCommand('claude --append-system-prompt -rules-here', RESUME, 'posix')
     ).toBe(`claude --append-system-prompt -rules-here '--resume' '${SESSION_ID}'`)
-    expect(buildClaudeResumeLaunchCommand('claude --add-dir -c', RESUME, 'posix')).toBe(
-      `claude --add-dir -c '--resume' '${SESSION_ID}'`
+    expect(buildClaudeResumeLaunchCommand('claude --agent -reviewer', RESUME, 'posix')).toBe(
+      `claude --agent -reviewer '--resume' '${SESSION_ID}'`
+    )
+    expect(buildClaudeResumeLaunchCommand('claude --plugin-url -remote.zip', RESUME, 'posix')).toBe(
+      `claude --plugin-url -remote.zip '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it('leaves the ambiguous joined -r<id> form alone (degrades to pre-guard behavior)', () => {
+    expect(buildClaudeResumeLaunchCommand('claude -rstale-session', RESUME, 'posix')).toBe(
+      `claude -rstale-session '--resume' '${SESSION_ID}'`
     )
   })
 
@@ -89,13 +99,43 @@ describe('buildClaudeResumeLaunchCommand', () => {
     )
   })
 
-  it('strips selectors that follow claude inside a wrapper command', () => {
+  it('strips selectors that follow claude after a wrapper terminator', () => {
     expect(
       buildClaudeResumeLaunchCommand("mise exec -- claude '--resume' stale", RESUME, 'posix')
     ).toBe(`mise exec -- claude '--resume' '${SESSION_ID}'`)
+  })
+
+  it('fails open for claude outside command position (wrapper without --)', () => {
+    // Why: npx/bunx-style passthrough cannot be told apart from an argument
+    // that merely names claude, so the guard defers to append-only behavior.
     expect(buildClaudeResumeLaunchCommand("npx claude '--resume'", RESUME, 'posix')).toBe(
-      `npx claude '--resume' '${SESSION_ID}'`
+      `npx claude '--resume' '--resume' '${SESSION_ID}'`
     )
+  })
+
+  it('never mistakes a claude-suffixed argument for the executable', () => {
+    expect(
+      buildClaudeResumeLaunchCommand(
+        'ssh -i ~/.ssh/claude devbox -- claude --resume OLD',
+        RESUME,
+        'posix'
+      )
+    ).toBe(`ssh -i ~/.ssh/claude devbox -- claude '--resume' '${SESSION_ID}'`)
+    expect(
+      buildClaudeResumeLaunchCommand(
+        'mise exec --cd /Users/me/src/claude -- claude --resume OLD',
+        RESUME,
+        'posix'
+      )
+    ).toBe(`mise exec --cd /Users/me/src/claude -- claude '--resume' '${SESSION_ID}'`)
+    // No claude in command position at all: wrapper flags stay untouched.
+    expect(
+      buildClaudeResumeLaunchCommand(
+        'nix develop /Users/me/src/claude -c claude --resume OLD',
+        RESUME,
+        'posix'
+      )
+    ).toBe(`nix develop /Users/me/src/claude -c claude --resume OLD '--resume' '${SESSION_ID}'`)
   })
 
   it('preserves an env-assignment or path prefix byte for byte', () => {

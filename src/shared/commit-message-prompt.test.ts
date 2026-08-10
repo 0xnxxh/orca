@@ -250,27 +250,39 @@ describe('excerptAgentFailureOutput', () => {
 describe('tokenizeCustomCommandTemplate', () => {
   it('splits on whitespace', () => {
     const r = tokenizeCustomCommandTemplate('claude -p')
-    expect(r).toMatchObject({ ok: true, tokens: ['claude', '-p'] })
+    expect(r).toEqual({ ok: true, tokens: ['claude', '-p'], spans: expect.any(Array) })
   })
 
   it('groups double-quoted segments with spaces', () => {
     const r = tokenizeCustomCommandTemplate('claude --msg "hello world"')
-    expect(r).toMatchObject({ ok: true, tokens: ['claude', '--msg', 'hello world'] })
+    expect(r).toEqual({
+      ok: true,
+      tokens: ['claude', '--msg', 'hello world'],
+      spans: expect.any(Array)
+    })
   })
 
   it('groups single-quoted segments verbatim', () => {
     const r = tokenizeCustomCommandTemplate(`agent --json '{"k":"v"}'`)
-    expect(r).toMatchObject({ ok: true, tokens: ['agent', '--json', '{"k":"v"}'] })
+    expect(r).toEqual({
+      ok: true,
+      tokens: ['agent', '--json', '{"k":"v"}'],
+      spans: expect.any(Array)
+    })
   })
 
   it('honors backslash escapes inside double quotes', () => {
     const r = tokenizeCustomCommandTemplate('claude --msg "she said \\"hi\\""')
-    expect(r).toMatchObject({ ok: true, tokens: ['claude', '--msg', 'she said "hi"'] })
+    expect(r).toEqual({
+      ok: true,
+      tokens: ['claude', '--msg', 'she said "hi"'],
+      spans: expect.any(Array)
+    })
   })
 
   it('keeps adjacent quoted/unquoted regions in one token (a"b"c → abc)', () => {
     const r = tokenizeCustomCommandTemplate('foo a"b"c')
-    expect(r).toMatchObject({ ok: true, tokens: ['foo', 'abc'] })
+    expect(r).toEqual({ ok: true, tokens: ['foo', 'abc'], spans: expect.any(Array) })
   })
 
   it('reports source spans covering each raw token including quotes', () => {
