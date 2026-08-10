@@ -76,6 +76,7 @@ import {
 } from '../../../../shared/task-source-context'
 import { normalizeGitHubPRForBranchOutcome } from '../../../../shared/github-pr-for-branch-outcome'
 import { restoreReactionOnSubject, setReactionOnSubject } from '@/lib/pr-comment-reactions'
+import { withGitHubCheckDetailsTimeout } from '@/runtime/github-check-details-timeout'
 
 // ─── ProjectV2 cache types ────────────────────────────────────────────
 // Why: separate from CacheEntry<T> — project-view has a single GraphQL source (no issue/PR fallback) and a distinct error union.
@@ -3588,16 +3589,18 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
           },
           { timeoutMs: 30_000 }
         )
-      : ((await window.api.gh.prCheckDetails({
-          repoPath,
-          repoId,
-          checkRunId: args.checkRunId,
-          workflowRunId: args.workflowRunId,
-          checkName: args.checkName,
-          url: args.url,
-          prRepo: args.prRepo ?? null,
-          sourceContext: options?.sourceContext
-        })) as PRCheckRunDetails | null)
+      : await withGitHubCheckDetailsTimeout(
+          window.api.gh.prCheckDetails({
+            repoPath,
+            repoId,
+            checkRunId: args.checkRunId,
+            workflowRunId: args.workflowRunId,
+            checkName: args.checkName,
+            url: args.url,
+            prRepo: args.prRepo ?? null,
+            sourceContext: options?.sourceContext
+          })
+        )
   },
 
   fetchPRComments: async (repoPath, prNumber, options): Promise<PRComment[]> => {

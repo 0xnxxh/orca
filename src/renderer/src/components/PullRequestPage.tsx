@@ -134,6 +134,7 @@ import { buildPRCommentConversationReplyBody } from '@/components/right-sidebar/
 import { useAppStore } from '@/store'
 import { useAllWorktrees } from '@/store/selectors'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
+import { withGitHubCheckDetailsTimeout } from '@/runtime/github-check-details-timeout'
 import { useRepoLabels, useRepoAssignees, useImmediateMutation } from '@/hooks/useIssueMetadata'
 import { useRepoLabelsBySlug, useRepoAssigneesBySlug } from '@/hooks/useGitHubSlugMetadata'
 import {
@@ -3557,16 +3558,18 @@ function ChecksTab({
             },
             { timeoutMs: 30_000 }
           )
-        : window.api.gh.prCheckDetails({
-            repoPath: repoPath ?? '',
-            repoId: repoId ?? undefined,
-            sourceContext,
-            checkRunId: check.checkRunId,
-            workflowRunId: check.workflowRunId,
-            checkName: check.name,
-            url: check.url,
-            prRepo
-          })
+        : withGitHubCheckDetailsTimeout(
+            window.api.gh.prCheckDetails({
+              repoPath: repoPath ?? '',
+              repoId: repoId ?? undefined,
+              sourceContext,
+              checkRunId: check.checkRunId,
+              workflowRunId: check.workflowRunId,
+              checkName: check.name,
+              url: check.url,
+              prRepo
+            })
+          )
       void detailsRequest
         .then((details) => {
           if (!mountedRef.current) {

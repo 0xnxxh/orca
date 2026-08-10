@@ -122,7 +122,8 @@ describe('hostedReviewSummaryFromGitHubPRInfo', () => {
   })
 
   it('maps PRInfo into sidebar hosted review metadata', () => {
-    const review = hostedReviewInfoFromGitHubPRInfo(pr)
+    const githubRepository = { owner: 'upstream', repo: 'orca' }
+    const review = hostedReviewInfoFromGitHubPRInfo({ ...pr, prRepo: githubRepository })
 
     expect(review).toMatchObject({
       provider: 'github',
@@ -131,7 +132,8 @@ describe('hostedReviewSummaryFromGitHubPRInfo', () => {
       state: 'open',
       status: 'pending',
       mergeable: 'MERGEABLE',
-      headSha: 'abc123'
+      headSha: 'abc123',
+      githubRepository
     })
   })
 })

@@ -230,6 +230,9 @@ describe('GitHubItemDialog source host boundaries', () => {
     expect(checksSection).toContain('window.api.gh.prChecks({')
     expect(checksSection).toContain('window.api.gh.rerunPRChecks({')
     expect(checksSection).toContain('prCheckDetails({')
+    expect(checksSection).toMatch(
+      /withGitHubCheckDetailsTimeout\(\s*window\.api\.gh\.prCheckDetails\(\{/
+    )
   })
 
   it('uses hydrated work item details for the page checks tab', () => {

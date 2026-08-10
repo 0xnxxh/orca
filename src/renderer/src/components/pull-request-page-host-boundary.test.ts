@@ -249,6 +249,9 @@ describe('PullRequestPage host boundaries', () => {
     expect(checksSection).toContain('window.api.gh.prChecks({')
     expect(checksSection).toContain('window.api.gh.rerunPRChecks({')
     expect(checksSection).toContain('prCheckDetails({')
+    expect(checksSection).toMatch(
+      /withGitHubCheckDetailsTimeout\(\s*window\.api\.gh\.prCheckDetails\(\{/
+    )
   })
 
   it('routes edit metadata and mutations through the PR source context', () => {
