@@ -221,6 +221,7 @@ export function registerBrowserHandlers(): void {
   ipcMain.removeHandler('browser:extractHoverPayload')
   ipcMain.removeHandler('browser:activeTabChanged')
   ipcMain.removeHandler('browser:proceedCertificate')
+  ipcMain.removeHandler('browser:recoverGoogleCookieMismatch')
 
   const registerGuest = (
     event: Electron.IpcMainInvokeEvent,
@@ -336,6 +337,18 @@ export function registerBrowserHandlers(): void {
         return { ok: false, reason: 'missing' }
       }
       return browserCertificateTrustController.proceed(args.browserPageId, args.challengeId)
+    }
+  )
+
+  // Why: the toast action is the only path that clears cookies; the tab's stashed mismatch
+  // URL (not renderer input) decides where it navigates.
+  ipcMain.handle(
+    'browser:recoverGoogleCookieMismatch',
+    async (event, args: { browserPageId?: unknown }): Promise<boolean> => {
+      if (!isTrustedBrowserRenderer(event.sender) || typeof args?.browserPageId !== 'string') {
+        return false
+      }
+      return browserManager.recoverFromGoogleCookieMismatch(args.browserPageId)
     }
   )
 

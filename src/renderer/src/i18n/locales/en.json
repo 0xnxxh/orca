@@ -14081,7 +14081,11 @@
             "6e776f9ef9": "Download failed",
             "756bfc25c9": "Open",
             "09a9489aa5": "Show",
-            "2a4c4b8e1f": "Copy"
+            "2a4c4b8e1f": "Copy",
+            "googleCookieMismatchTitle": "Google sign-in hit a stale-cookie error",
+            "googleCookieMismatchDescription": "Reset Orca's Google cookies to sign in again — other sites are unaffected.",
+            "googleCookieMismatchAction": "Reset Google cookies",
+            "googleCookieMismatchFailed": "Couldn't reset Google cookies"
           },
           "BrowserToolbarMenu": {
             "429ef481f9": "Cancel",

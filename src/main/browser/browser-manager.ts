@@ -45,6 +45,12 @@ import {
 import { cleanElectronUserAgent } from './browser-session-ua'
 import { getBrowserSessionUserAgentMode } from './browser-session-user-agent-mode'
 import { googleAuthUserAgent, isGoogleAuthUrl } from './browser-google-auth-ua'
+import {
+  GoogleCookieMismatchPromptThrottle,
+  clearGoogleCookies,
+  googleCookieMismatchRecoveryUrl,
+  isGoogleCookieMismatchUrl
+} from './browser-google-cookie-mismatch-recovery'
 import { buildViewportUserAgentOverride } from './browser-viewport-user-agent'
 import type {
   BrowserViewportOverride,
@@ -259,6 +265,8 @@ export class BrowserManager {
   private readonly pendingDownloadIdsByGuestId = new Map<number, string[]>()
   private readonly downloadsById = new Map<string, ActiveDownload>()
   private readonly grabSessionController = new BrowserGrabSessionController()
+  private readonly googleCookieMismatchPromptThrottle = new GoogleCookieMismatchPromptThrottle()
+  private readonly googleCookieMismatchUrlByGuestId = new Map<number, string>()
 
   setDictationShortcutForwardingPredicate(predicate: (() => boolean) | null): void {
     this.shouldForwardDictationShortcut = predicate
@@ -898,6 +906,9 @@ export class BrowserManager {
       // Why: a committed nav makes the did-start-navigation stash obsolete; drop it so a later ERR_ABORTED can't restore an error over it.
       this.clearedLoadErrorsByGuestId.delete(guest.id)
       this.certificateTrustController?.onMainFrameNavigationCommitted(guest.id, url)
+      // Why: detect at commit, not did-start-navigation — a sign-in nav that 302s into
+      // CookieMismatch never re-fires did-start-navigation with the mismatch URL.
+      this.maybePromptGoogleCookieMismatchRecovery(guest, url)
     }
 
     guest.on('will-navigate', navigationGuard)
@@ -941,6 +952,57 @@ export class BrowserManager {
         guest.off('did-fail-load', didFailLoadHandler)
       }
     })
+  }
+
+  // Why: applies in every UA mode — CookieMismatch is about the cookie jar, not the
+  // identity a profile presents, so native-UA profiles hit it the same way. Detection only
+  // offers the fix; cookies are cleared in recoverFromGoogleCookieMismatch, on the user's click.
+  private maybePromptGoogleCookieMismatchRecovery(guest: Electron.WebContents, url: string): void {
+    if (!isGoogleCookieMismatchUrl(url)) {
+      return
+    }
+    // Why: stash the mismatch URL so the click recovers to the flow's own continue target —
+    // the renderer never gets to name a navigation target.
+    this.googleCookieMismatchUrlByGuestId.set(guest.id, url)
+    if (!this.googleCookieMismatchPromptThrottle.shouldPrompt(guest.session)) {
+      return
+    }
+    const browserPageId = this.tabIdByWebContentsId.get(guest.id)
+    if (!browserPageId) {
+      return
+    }
+    const renderer = this.resolveRendererForBrowserTab(browserPageId)
+    renderer?.send('browser:google-cookie-mismatch-detected', { browserPageId })
+  }
+
+  // Why: user-initiated only — this is the destructive half, reached from the toast action.
+  async recoverFromGoogleCookieMismatch(browserPageId: string): Promise<boolean> {
+    const webContentsId = this.webContentsIdByTabId.get(browserPageId)
+    if (webContentsId === undefined) {
+      return false
+    }
+    const mismatchUrl = this.googleCookieMismatchUrlByGuestId.get(webContentsId)
+    if (!mismatchUrl) {
+      return false
+    }
+    const guest = webContents.fromId(webContentsId)
+    if (!guest || guest.isDestroyed()) {
+      return false
+    }
+    this.googleCookieMismatchUrlByGuestId.delete(webContentsId)
+    try {
+      await clearGoogleCookies(guest.session.cookies)
+    } catch (error) {
+      // Why: navigate anyway — a persisting mismatch just shows Google's page again.
+      console.error('[browser-manager] Google CookieMismatch cookie clear failed', error)
+    }
+    if (guest.isDestroyed()) {
+      return false
+    }
+    await guest.loadURL(googleCookieMismatchRecoveryUrl(mismatchUrl)).catch(() => {
+      // a failed load surfaces through the tab's normal load-error overlay
+    })
+    return true
   }
 
   // Why: navigator.userAgent (read by Google's auth JS) reflects the WebContents UA,
@@ -1123,6 +1185,7 @@ export class BrowserManager {
     this.clearedLoadErrorsByGuestId.delete(guestWebContentsId)
     this.pendingPermissionEventsByGuestId.delete(guestWebContentsId)
     this.pendingPopupEventsByGuestId.delete(guestWebContentsId)
+    this.googleCookieMismatchUrlByGuestId.delete(guestWebContentsId)
     this.cancelPendingDownloadsForGuest(guestWebContentsId)
   }
 
@@ -1319,6 +1382,7 @@ export class BrowserManager {
     this.clearedLoadErrorsByGuestId.clear()
     this.pendingPermissionEventsByGuestId.clear()
     this.pendingPopupEventsByGuestId.clear()
+    this.googleCookieMismatchUrlByGuestId.clear()
     this.pendingDownloadIdsByGuestId.clear()
     this.mouseWheelZoomCleanupByTabId.clear()
     this.annotationViewportBridgeOpsByTabId.clear()

@@ -2581,6 +2581,18 @@ const api = {
       return () => ipcRenderer.removeListener('browser:permission-denied', listener)
     },
 
+    onGoogleCookieMismatchDetected: (
+      callback: (event: { browserPageId: string }) => void
+    ): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { browserPageId: string }) =>
+        callback(data)
+      ipcRenderer.on('browser:google-cookie-mismatch-detected', listener)
+      return () => ipcRenderer.removeListener('browser:google-cookie-mismatch-detected', listener)
+    },
+
+    recoverGoogleCookieMismatch: (args: { browserPageId: string }): Promise<boolean> =>
+      ipcRenderer.invoke('browser:recoverGoogleCookieMismatch', args),
+
     onPopup: (
       callback: (event: {
         browserPageId: string

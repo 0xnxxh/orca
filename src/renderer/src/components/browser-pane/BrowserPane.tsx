@@ -187,6 +187,7 @@ import {
 import { shouldPollChromiumErrorPage } from './chromium-error-page-polling'
 import { useContextualTour } from '@/components/contextual-tours/use-contextual-tour'
 import { translate } from '@/i18n/i18n'
+import { toast } from 'sonner'
 import { isBrowserPagePanePaintable } from './browser-page-paintability'
 import { useMarkupMode, type MarkupCaptureContext } from './markup/useMarkupMode'
 import { MarkupOverlay } from './markup/MarkupOverlay'
@@ -2903,6 +2904,50 @@ function BrowserPagePane({
         return
       }
       setResourceNotice(formatPermissionNotice(event))
+    })
+  }, [browserTab.id])
+
+  // Why: the reset is destructive, so it stays the user's call — the toast offers it and
+  // waits (main clears nothing on its own). Fixed id keeps a recurring mismatch to one toast.
+  useEffect(() => {
+    return window.api.browser.onGoogleCookieMismatchDetected((event) => {
+      if (event.browserPageId !== browserTab.id) {
+        return
+      }
+      toast.warning(
+        translate(
+          'auto.components.browser.pane.BrowserPane.googleCookieMismatchTitle',
+          'Google sign-in hit a stale-cookie error'
+        ),
+        {
+          id: `google-cookie-mismatch-${browserTab.id}`,
+          duration: Infinity,
+          description: translate(
+            'auto.components.browser.pane.BrowserPane.googleCookieMismatchDescription',
+            "Reset Orca's Google cookies to sign in again — other sites are unaffected."
+          ),
+          action: {
+            label: translate(
+              'auto.components.browser.pane.BrowserPane.googleCookieMismatchAction',
+              'Reset Google cookies'
+            ),
+            onClick: () => {
+              void window.api.browser
+                .recoverGoogleCookieMismatch({ browserPageId: browserTab.id })
+                .then((ok) => {
+                  if (!ok) {
+                    toast.error(
+                      translate(
+                        'auto.components.browser.pane.BrowserPane.googleCookieMismatchFailed',
+                        "Couldn't reset Google cookies"
+                      )
+                    )
+                  }
+                })
+            }
+          }
+        }
+      )
     })
   }, [browserTab.id])
 

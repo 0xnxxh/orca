@@ -2280,6 +2280,8 @@ function createBrowserApi(): NonNullable<Partial<PreloadApi>['browser']> {
     onCertificateFailureChanged: () => noopUnsubscribe,
     proceedCertificate: () => Promise.resolve({ ok: false, reason: 'missing' }),
     onPermissionDenied: () => noopUnsubscribe,
+    onGoogleCookieMismatchDetected: () => noopUnsubscribe,
+    recoverGoogleCookieMismatch: () => Promise.resolve(false),
     onPopup: () => noopUnsubscribe,
     onDownloadRequested: () => noopUnsubscribe,
     onDownloadProgress: () => noopUnsubscribe,

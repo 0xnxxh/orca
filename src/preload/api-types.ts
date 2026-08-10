@@ -606,6 +606,10 @@ export type BrowserApi = {
     challengeId: string
   }) => Promise<BrowserCertificateProceedResult>
   onPermissionDenied: (callback: (event: BrowserPermissionDeniedEvent) => void) => () => void
+  onGoogleCookieMismatchDetected: (
+    callback: (event: { browserPageId: string }) => void
+  ) => () => void
+  recoverGoogleCookieMismatch: (args: { browserPageId: string }) => Promise<boolean>
   onPopup: (callback: (event: BrowserPopupEvent) => void) => () => void
   onDownloadRequested: (callback: (event: BrowserDownloadRequestedEvent) => void) => () => void
   onDownloadProgress: (callback: (event: BrowserDownloadProgressEvent) => void) => () => void
