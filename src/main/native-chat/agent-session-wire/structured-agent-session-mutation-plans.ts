@@ -29,29 +29,42 @@ export type MutationPlan<TValue> = {
   fields: Record<string, unknown>
   run: (ctx: AgentSessionTurnContext) => Promise<TurnOutcome<TValue>>
   replay: (ctx: AgentSessionTurnContext, outcome: AgentSessionOperationOutcome) => TValue | null
+  rerunWhenReplayMissing?: (ctx: AgentSessionTurnContext) => boolean
 }
 
 export function sendPlan(params: {
   envelope: AgentSessionMutationEnvelope
   body: AgentJournalMessageItem
+  retryUnknown?: true
 }): MutationPlan<AgentSessionSendResult> {
   // The operation id IS the client message id: one send, one durable row, one
   // key the client reconciles its optimistic bubble against.
   const clientMessageId = params.envelope.clientOperationId
   return {
     method: 'agentSession.send',
+    // A control signal is not payload; only the matching durable unknown unlocks redispatch.
     fields: { body: params.body },
+    rerunWhenReplayMissing: (ctx) =>
+      params.retryUnknown === true &&
+      ctx.journal
+        .submissions()
+        .some(
+          (entry) => entry.clientMessageId === clientMessageId && entry.dispatchState === 'unknown'
+        ),
     run: (ctx) =>
       performSend(ctx, {
         clientMessageId,
         payloadFingerprint: params.envelope.payloadFingerprint,
-        body: params.body
+        body: params.body,
+        retryUnknown: params.retryUnknown
       }),
     replay: (ctx) => {
       const submission = ctx.journal
         .submissions()
         .find((entry) => entry.clientMessageId === clientMessageId)
-      return submission ? { clientMessageId, submission } : null
+      return submission && !(params.retryUnknown && submission.dispatchState === 'unknown')
+        ? { clientMessageId, submission }
+        : null
     }
   }
 }

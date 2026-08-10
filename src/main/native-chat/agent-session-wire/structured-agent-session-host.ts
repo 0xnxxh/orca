@@ -177,6 +177,10 @@ export class StructuredAgentSessionHost {
         journalRoot: this.deps.journalRoot,
         eventSink: eventSink.sink,
         onAcquiring: () => eventSink.unbind(),
+        beforeJournalOpen: async () => {
+          eventSink.unbind()
+          await eventSink.drained()
+        },
         authority: {
           spawnToken: this.deps.mintSpawnToken?.() ?? randomUUID(),
           claimKeyId: this.deps.claimKeyId,
@@ -263,7 +267,11 @@ export class StructuredAgentSessionHost {
 
   send(
     caller: StructuredAgentSessionCaller,
-    params: { envelope: AgentSessionMutationEnvelope; body: AgentJournalMessageItem }
+    params: {
+      envelope: AgentSessionMutationEnvelope
+      body: AgentJournalMessageItem
+      retryUnknown?: true
+    }
   ): Promise<AgentSessionMutationResult<AgentSessionSendResult>> {
     return this.mutate(caller, params.envelope, sendPlan(params))
   }

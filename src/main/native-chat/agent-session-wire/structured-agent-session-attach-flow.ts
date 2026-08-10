@@ -42,7 +42,9 @@ export type AttachFlowInput = {
    *  host owns it and binds it to the journal inside `onAttached`. */
   eventSink?: StructuredAgentSessionEventSink
   /** Stops acquisition-window events targeting the superseded journal. */
-  onAcquiring?: () => void
+  onAcquiring?: () => Promise<void> | void
+  /** Settles writes already captured by the superseded journal before opening another. */
+  beforeJournalOpen?: () => Promise<void> | void
 }
 
 export async function performAttach(
@@ -80,6 +82,7 @@ export async function performAttach(
     }
   }
 
+  await input.beforeJournalOpen?.()
   const attached = await attachJournal({
     record,
     params,
@@ -119,7 +122,7 @@ async function acquireOwner(
   if (!spawnToken) {
     throw new Error('agent_session_ownership_unknown')
   }
-  input.onAcquiring?.()
+  await input.onAcquiring?.()
   const acquired = await input.adapter.acquire({
     identity: journalIdentityFor(record, input.params),
     fence,

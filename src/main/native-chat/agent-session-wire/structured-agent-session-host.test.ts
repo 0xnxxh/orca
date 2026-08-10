@@ -20,7 +20,10 @@ import type {
 } from '../../../shared/agent-session-wire'
 import { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
 import { journalDirectoryFor } from '../agent-session-journal/journal-paths'
-import { openAgentSessionJournal } from '../agent-session-journal/journal-store'
+import {
+  openAgentSessionJournal,
+  type AgentSessionJournal
+} from '../agent-session-journal/journal-store'
 import type {
   AgentSessionDispatchOutcome,
   StructuredAgentSessionAdapter
@@ -368,6 +371,39 @@ describe('attach', () => {
 
     expect(releaseAcquisition).toHaveBeenCalledWith({ sessionId: SESSION })
   })
+
+  it('drains writes captured by the old journal before acquiring its replacement', async () => {
+    const record = await attach()
+    const events = acquire.mock.calls[0]?.[0].events
+    const oldJournal = (
+      host as unknown as { sessions: Map<string, { journal: AgentSessionJournal }> }
+    ).sessions.get(SESSION)!.journal
+    const appendGate = Promise.withResolvers<void>()
+    const originalAppend = oldJournal.appendItem.bind(oldJournal)
+    const append = vi.spyOn(oldJournal, 'appendItem').mockImplementationOnce(async (...args) => {
+      await appendGate.promise
+      return originalAppend(...args)
+    })
+    events?.appendItem(
+      { provider: 'orca', clientMessageId: 'old-journal-write' },
+      { kind: 'status', text: 'old journal write' }
+    )
+    await vi.waitFor(() => expect(append).toHaveBeenCalledOnce())
+    const released = await store.evictProvenDeadOwner({
+      sessionId: SESSION,
+      expectedFence: record?.lease.runtimeFence ?? 1,
+      probe: { outcome: 'pid-absent' },
+      now: NOW
+    })
+
+    const replacement = host.attach(CALLER, ensureParams(released.lease.runtimeFence))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(acquire).toHaveBeenCalledTimes(1)
+
+    appendGate.resolve()
+    await expect(replacement).resolves.toMatchObject({ ok: true })
+    expect(acquire).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('send', () => {
@@ -407,6 +443,31 @@ describe('send', () => {
     const retry = await host.send(CALLER, params)
     expect(retry).toMatchObject({ ok: true, replayed: true })
     expect(dispatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('redispatches an explicitly retried durable unknown without appending a second submission', async () => {
+    await attach()
+    dispatch
+      .mockRejectedValueOnce(new Error('socket closed'))
+      .mockImplementationOnce(async () => accepted())
+    const body = message('possibly delivered')
+    const params = { envelope: envelope('agentSession.send', { body }), body }
+
+    const first = await host.send(CALLER, params)
+    expect(first).toMatchObject({
+      ok: true,
+      value: { submission: { dispatchState: 'unknown' } }
+    })
+    const retried = await host.send(CALLER, { ...params, retryUnknown: true })
+
+    expect(retried).toMatchObject({
+      ok: true,
+      replayed: false,
+      value: { submission: { dispatchState: 'accepted' } }
+    })
+    expect(dispatch).toHaveBeenCalledTimes(2)
+    const state = host.history({ sessionId: SESSION, direction: 'tail' })
+    expect(state.ok && state.page.submissions).toHaveLength(1)
   })
 
   it('refuses a stale fence and hands back the current one', async () => {

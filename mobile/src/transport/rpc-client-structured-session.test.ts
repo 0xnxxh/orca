@@ -81,4 +81,22 @@ describe('structured session RPC transport', () => {
     })
     client.close()
   })
+
+  it('unsubscribes a structured stream by its request-scoped subscription id', () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const socket = mockSockets[0]!
+    socket.open()
+    socket.receive(JSON.stringify({ type: 'e2ee_ready' }))
+    socket.receive('encrypted:{"type":"e2ee_authenticated"}')
+    const dispose = client.subscribe('agentSession.subscribe', { sessionId: 'session-a' }, () => {})
+    const subscribe = sentRequest(socket, 'agentSession.subscribe')
+
+    dispose()
+
+    expect(sentRequest(socket, 'agentSession.unsubscribe').params).toEqual({
+      sessionId: 'session-a',
+      subscriptionId: subscribe.id
+    })
+    client.close()
+  })
 })

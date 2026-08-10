@@ -79,10 +79,20 @@ async function appendStatus(
 
 export async function performSend(
   ctx: AgentSessionTurnContext,
-  input: { clientMessageId: string; payloadFingerprint: string; body: AgentJournalMessageItem }
+  input: {
+    clientMessageId: string
+    payloadFingerprint: string
+    body: AgentJournalMessageItem
+    retryUnknown?: true
+  }
 ): Promise<TurnOutcome<AgentSessionSendResult>> {
-  await ctx.journal.appendSubmission({ ...input, fence: ctx.fence })
-  ctx.publish()
+  const existing = ctx.journal
+    .submissions()
+    .find((entry) => entry.clientMessageId === input.clientMessageId)
+  if (!(input.retryUnknown && existing?.dispatchState === 'unknown')) {
+    await ctx.journal.appendSubmission({ ...input, fence: ctx.fence })
+    ctx.publish()
+  }
 
   const outcome = await dispatchSafely(ctx, input.clientMessageId, input.body)
   await ctx.journal.resolveDispatch(

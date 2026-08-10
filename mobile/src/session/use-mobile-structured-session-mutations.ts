@@ -34,13 +34,19 @@ export function useMobileStructuredSessionMutations(args: {
   onRefusal: (message: string | null) => void
 }): MobileStructuredSessionMutations {
   const operationIdsRef = useRef(new Map<string, string>())
+  const activeContextRef = useRef({
+    client: args.client,
+    fence: args.fence,
+    sessionId: args.sessionId
+  })
+  activeContextRef.current = { client: args.client, fence: args.fence, sessionId: args.sessionId }
   const { client, fence, onRefusal, sessionId } = args
   const mutate = useCallback(
     async <TValue>(method: string, fingerprintMethod: string, fields: Record<string, unknown>) => {
       if (!client || !sessionId || fence === null || client.getState() !== 'connected') {
         return null
       }
-      const mutationKey = `${fingerprintMethod}:${JSON.stringify(fields)}`
+      const mutationKey = `${sessionId}:${fingerprintMethod}:${JSON.stringify(fields)}`
       const clientOperationId =
         operationIdsRef.current.get(mutationKey) ??
         createMobileStructuredOperationId('mobile-mutation', () => ExpoCrypto.randomUUID())
@@ -61,26 +67,34 @@ export function useMobileStructuredSessionMutations(args: {
           ...fields
         })
       } catch (error) {
-        onRefusal(
-          isRpcDeliveryUnknown(error) || isLogicalClientCutoverError(error)
-            ? 'Response delivery unconfirmed'
-            : error instanceof Error
-              ? error.message
-              : 'Request was not sent'
-        )
+        if (matchesActiveContext(activeContextRef.current, client, sessionId, fence)) {
+          onRefusal(
+            isRpcDeliveryUnknown(error) || isLogicalClientCutoverError(error)
+              ? 'Response delivery unconfirmed'
+              : error instanceof Error
+                ? error.message
+                : 'Request was not sent'
+          )
+        }
         return null
       }
       if (!response.ok) {
-        onRefusal(response.error.message)
+        if (matchesActiveContext(activeContextRef.current, client, sessionId, fence)) {
+          onRefusal(response.error.message)
+        }
         return null
       }
       const result = response.result as AgentSessionMutationResult<TValue>
       if (!result.ok) {
-        onRefusal(result.refusal.message)
+        if (matchesActiveContext(activeContextRef.current, client, sessionId, fence)) {
+          onRefusal(result.refusal.message)
+        }
         return null
       }
       operationIdsRef.current.delete(mutationKey)
-      onRefusal(null)
+      if (matchesActiveContext(activeContextRef.current, client, sessionId, fence)) {
+        onRefusal(null)
+      }
       return result.value
     },
     [client, fence, onRefusal, sessionId]
@@ -105,4 +119,13 @@ export function useMobileStructuredSessionMutations(args: {
     }),
     [mutate]
   )
+}
+
+function matchesActiveContext(
+  active: { client: RpcClient | null; sessionId: string | null; fence: number | null },
+  client: RpcClient,
+  sessionId: string,
+  fence: number
+): boolean {
+  return active.client === client && active.sessionId === sessionId && active.fence === fence
 }

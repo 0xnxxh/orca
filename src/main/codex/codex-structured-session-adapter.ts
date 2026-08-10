@@ -25,7 +25,9 @@ import { readCodexThreadId, readCodexTurnId } from './codex-structured-thread-fa
 import { openCodexThread } from './codex-structured-thread-open'
 import { dispatchCodexTurn, isCodexTurnOptionKey } from './codex-structured-turn-start'
 import { supportsCodexStructuredLocation } from './codex-structured-location-support'
+import { closeCodexPublishedSession } from './codex-structured-session-close'
 import {
+  cancelCodexAcquisitionAttempt,
   createCodexAcquisitionAttempt,
   type CodexAcquisitionAttempt,
   type CodexSession,
@@ -39,11 +41,7 @@ export type {
   CodexStructuredSessionEvent
 } from './codex-structured-session-state'
 
-// The Codex half of the structured agent-session wire: one long-lived
-// `codex app-server` child per session, started or resumed under the lease the
-// host already reserved. Everything durable — journal, fence, idempotency —
-// belongs to the wire; this adapter only starts the process, names the turn the
-// provider accepted, and answers Codex's blocking prompt requests.
+// Owns one app-server child per structured Codex session; durable state stays on the wire.
 
 export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdapter {
   private readonly sessions = new Map<string, CodexSession>()
@@ -53,26 +51,19 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
 
   supportsLocation = supportsCodexStructuredLocation
 
-  private get requestTimeoutMs(): number | undefined {
-    return this.deps.requestTimeoutMs
-  }
-
   async acquire(input: {
     identity: AgentSessionJournalIdentity
     fence: number
     spawnToken: string
     events?: StructuredAgentSessionEventSink
   }): Promise<AgentSessionAcquisition> {
-    // A re-acquire at a new fence must not leave the old child writing.
-    await this.closeSession(input.identity.sessionId)
     const sessionId = input.identity.sessionId
-    const launch = await this.deps.resolveLaunch({ identity: input.identity })
+    const previousAttempt = this.acquiring.get(sessionId)
     const attempt = createCodexAcquisitionAttempt()
     const acquisition = attempt.window
+    this.acquiring.set(sessionId, attempt)
     let primaryThreadId =
       input.identity.providerHandle.kind === 'codex' ? input.identity.providerHandle.threadId : null
-    // Registered before the spawn, because the handshake itself can emit.
-    this.acquiring.set(sessionId, attempt)
     const translator = input.events
       ? createCodexJournalTranslator({
           sink: input.events,
@@ -84,6 +75,15 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     const open = this.deps.openConnection ?? openCodexAppServerConnection
 
     try {
+      await cancelCodexAcquisitionAttempt(previousAttempt)
+      await this.closePublishedSession(sessionId)
+      if (attempt.cancelled || this.acquiring.get(sessionId) !== attempt) {
+        throw new Error(`codex session ${sessionId} was superseded while being acquired`)
+      }
+      const launch = await this.deps.resolveLaunch({ identity: input.identity })
+      if (attempt.cancelled || this.acquiring.get(sessionId) !== attempt) {
+        throw new Error(`codex session ${sessionId} was superseded while being acquired`)
+      }
       const connection = await open(
         {
           command: launch.command,
@@ -106,7 +106,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
         }
       )
       acquisition.connection = connection
-      const opened = await openCodexThread(connection, launch, this.requestTimeoutMs)
+      const opened = await openCodexThread(connection, launch, this.deps.requestTimeoutMs)
       primaryThreadId = opened.threadId
       const acquired: AgentSessionAcquisition = {
         process: await codexProcessIdentity(
@@ -121,10 +121,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
           observedAt: this.deps.now?.() ?? Date.now()
         })
       }
-      // Publication is one step at the end: everything the caller is promised is
-      // in hand, the child is still alive, and this attempt still owns the
-      // session. A half-published session would be a live map entry in front of
-      // a child nobody can reach.
+      // Publish only after every promised identity is proven and this attempt still owns the child.
       if (connection.closed) {
         throw new Error(`codex app-server for session ${sessionId} exited while being acquired`)
       }
@@ -161,8 +158,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     }
   }
 
-  /** Buffers an event that arrived before the session was published, and drops
-   *  one from a connection this session has already replaced. */
+  /** Buffers pre-publication events and drops events from superseded children. */
   private deliver(
     acquisition: CodexAcquisitionAttempt['window'],
     sessionId: string,
@@ -176,8 +172,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     }
   }
 
-  /** Only the connection that currently owns the session may retire it, or a
-   *  superseded child's death would evict its live replacement. */
+  /** Only the current connection may retire a session. */
   private handleExit(
     sessionId: string,
     acquisition: CodexAcquisitionAttempt['window'],
@@ -210,8 +205,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     this.emit(session, { type: 'notification', sessionId, threadId, method, params })
   }
 
-  /** Journal first, observers second: a test tap must never see a row the
-   *  journal has not been told about. */
+  /** Journal first so observers never see an event ahead of its durable row. */
   private emit(session: CodexSession, event: CodexStructuredSessionEvent): void {
     session.translator?.handle(event)
     this.deps.onEvent?.(event)
@@ -250,7 +244,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     body: AgentJournalMessageItem
     fence: number
   }): Promise<AgentSessionDispatchOutcome> {
-    return dispatchCodexTurn(this.session(input.sessionId), input, this.requestTimeoutMs)
+    return dispatchCodexTurn(this.session(input.sessionId), input, this.deps.requestTimeoutMs)
   }
 
   async cancelTurn(input: {
@@ -263,7 +257,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
       await session.connection.request(
         'turn/interrupt',
         { threadId: session.threadId, turnId: input.turnId },
-        { timeoutMs: this.requestTimeoutMs }
+        { timeoutMs: this.deps.requestTimeoutMs }
       )
       return { cancelled: true }
     } catch (error) {
@@ -315,15 +309,15 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
       await attempt.window.connection?.close()
       await attempt.finished
     }
-    const session = this.sessions.get(sessionId)
-    if (!session) {
-      return
-    }
-    this.sessions.delete(sessionId)
-    session.prompts.clear()
-    session.translator?.flush()
-    session.translator?.dispose()
-    await session.connection.close()
+    await this.closePublishedSession(sessionId)
+  }
+
+  private async closePublishedSession(sessionId: string): Promise<void> {
+    await closeCodexPublishedSession({
+      sessions: this.sessions,
+      sessionId,
+      onEvent: this.deps.onEvent
+    })
   }
 
   async closeAll(): Promise<void> {

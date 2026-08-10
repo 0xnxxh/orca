@@ -63,3 +63,14 @@ export function createCodexAcquisitionAttempt(): CodexAcquisitionAttempt {
   })
   return { window: new CodexAcquisitionWindow(), cancelled: false, finished, finish }
 }
+
+export async function cancelCodexAcquisitionAttempt(
+  attempt: CodexAcquisitionAttempt | undefined
+): Promise<void> {
+  if (!attempt) {
+    return
+  }
+  attempt.cancelled = true
+  await attempt.window.connection?.close()
+  await attempt.finished
+}

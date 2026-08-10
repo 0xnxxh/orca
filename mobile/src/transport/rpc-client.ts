@@ -1104,7 +1104,7 @@ export function connect(
             })
           }
         } else {
-          const unsub = buildStreamUnsubscribe(stream?.method, stream?.params)
+          const unsub = buildStreamUnsubscribe(stream?.method, stream?.params, id)
           if (unsub) {
             sendEncrypted({ id: nextId(), deviceToken, method: unsub.method, params: unsub.params })
           }

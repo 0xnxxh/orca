@@ -65,13 +65,14 @@ describe('useMobileStructuredSessionWrites', () => {
   } as RpcClient
   let connected = true
   let fence = 3
+  let sessionId = 'mobile_1'
   let submissions: AgentJournalSubmission[] = []
 
   function Probe(): null {
     api = useMobileStructuredSessionWrites({
       client,
       connected,
-      sessionId: 'mobile_1',
+      sessionId,
       fence,
       submissions
     })
@@ -85,6 +86,7 @@ describe('useMobileStructuredSessionWrites', () => {
     sendRequest.mockReset()
     connected = true
     fence = 3
+    sessionId = 'mobile_1'
     submissions = []
     const crypto = await import('expo-crypto')
     vi.mocked(crypto.randomUUID)
@@ -187,6 +189,7 @@ describe('useMobileStructuredSessionWrites', () => {
     const retryId = (sendRequest.mock.calls[1]![1] as { envelope: { clientOperationId: string } })
       .envelope.clientOperationId
     expect(retryId).toBe(firstId)
+    expect(sendRequest.mock.calls[1]![1]).toMatchObject({ retryUnknown: true })
     await act(async () => {
       await Promise.resolve()
       await Promise.resolve()
@@ -371,5 +374,42 @@ describe('useMobileStructuredSessionWrites', () => {
 
     expect(applied).toBe(false)
     expect(api!.error).toBe('not allowed')
+  })
+
+  it('isolates mutation ids and late errors across session changes', async () => {
+    const first = deferred<RpcSuccess>()
+    sendRequest.mockImplementationOnce(() => first.promise).mockResolvedValueOnce(accepted('b'))
+
+    let mutationA!: Promise<boolean>
+    act(() => {
+      mutationA = api!.setOption('model', 'gpt-5.6-sol')
+    })
+    const operationA = (
+      sendRequest.mock.calls[0]![1] as { envelope: { clientOperationId: string } }
+    ).envelope.clientOperationId
+
+    sessionId = 'mobile_2'
+    await act(async () => {
+      renderer!.update(createElement(Probe))
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await api!.setOption('model', 'gpt-5.6-sol')
+    })
+    const operationB = (
+      sendRequest.mock.calls[1]![1] as { envelope: { clientOperationId: string } }
+    ).envelope.clientOperationId
+    expect(operationB).not.toBe(operationA)
+
+    await act(async () => {
+      first.resolve({
+        id: 'a',
+        ok: false,
+        _meta: { runtimeId: 'runtime-1' },
+        error: { code: 'failed', message: 'late session A failure' }
+      })
+      await mutationA
+    })
+    expect(api!.error).toBeNull()
   })
 })

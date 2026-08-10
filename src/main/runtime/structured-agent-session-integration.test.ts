@@ -464,7 +464,6 @@ describe('a structured codex session over agentSession.*', () => {
     // no page overlaps another, and nothing the live stream showed is missing.
     expect([...older.page.items, ...tail.page.items].map((item) => item.body?.kind)).toEqual([
       'message',
-      'status',
       'message',
       'tool-call',
       'approval',
@@ -473,7 +472,6 @@ describe('a structured codex session over agentSession.*', () => {
     ])
     expect([...older.page.items, ...tail.page.items].map(textOf)).toEqual([
       'list files',
-      '',
       'Two files.',
       '',
       '',

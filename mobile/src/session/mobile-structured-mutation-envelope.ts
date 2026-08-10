@@ -51,6 +51,7 @@ export function mobileStructuredSendRequest(
         fields
       })
     },
+    ...(entry.retryAfterUnknownSubmittedAt !== null ? { retryUnknown: true } : {}),
     ...fields
   }
 }

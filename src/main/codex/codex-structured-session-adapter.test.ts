@@ -319,6 +319,34 @@ describe('CodexStructuredSessionAdapter.acquire', () => {
     await closing
     expect(codex.connections[0]?.closeCount).toBe(1)
   })
+
+  it('fences an acquisition while launch resolution is still pending', async () => {
+    const launch = Promise.withResolvers<CodexStructuredLaunch>()
+    const codex = fakeCodex()
+    const adapter = new CodexStructuredSessionAdapter({
+      resolveLaunch: () => launch.promise,
+      openConnection: codex.openConnection,
+      readProcessStartTime: async () => 1_700_000_000_000
+    })
+    const acquiring = adapter.acquire({
+      identity: identityFor('session-1'),
+      fence: 7,
+      spawnToken: 'spawn-9'
+    })
+
+    const closing = adapter.closeAll()
+    launch.resolve({
+      command: 'codex',
+      args: ['app-server'],
+      cwd: '/work/repo',
+      codexHome: null,
+      resumeThreadId: null
+    })
+
+    await expect(acquiring).rejects.toThrow('superseded while being acquired')
+    await closing
+    expect(codex.connections).toHaveLength(0)
+  })
 })
 
 describe('CodexStructuredSessionAdapter.dispatch', () => {
@@ -768,10 +796,11 @@ describe('CodexStructuredSessionAdapter lifecycle', () => {
     const events: CodexStructuredSessionEvent[] = []
     const adapter = await acquired(codex, {}, events)
     await adapter.acquire({ identity: identityFor('session-1'), fence: 8, spawnToken: 'spawn-10' })
+    const endedBeforeStaleExit = events.filter((event) => event.type === 'ended').length
 
     codex.connections[0].handlers.onExit?.(new Error('the superseded child died'))
 
-    expect(events.some((event) => event.type === 'ended')).toBe(false)
+    expect(events.filter((event) => event.type === 'ended')).toHaveLength(endedBeforeStaleExit)
     expect(await adapter.historyFilePath({ identity: identityFor('session-1') })).toBe(
       '/rollouts/abc.jsonl'
     )
@@ -796,13 +825,14 @@ describe('CodexStructuredSessionAdapter lifecycle', () => {
   it('flushes the final coalesced text before a graceful close', async () => {
     const codex = fakeCodex()
     const bodies: AgentJournalMessageItem[] = []
+    const tombstones: unknown[] = []
     const sink: StructuredAgentSessionEventSink = {
       appendItem: (_identity, body) => {
         if (body.kind === 'message') {
           bodies.push(body)
         }
       },
-      appendTombstone: () => {},
+      appendTombstone: (identity) => tombstones.push(identity),
       publish: () => {}
     }
     const adapter = adapterFor(codex)
@@ -827,5 +857,11 @@ describe('CodexStructuredSessionAdapter lifecycle', () => {
     await adapter.closeSession('session-1')
 
     expect(bodies.at(-1)?.blocks).toEqual([{ type: 'text', text: 'last words' }])
+    expect(tombstones).toContainEqual({
+      provider: 'legacy',
+      agent: 'codex',
+      sessionId: 'session-1',
+      recordId: 'turn-lifecycle:turn-1'
+    })
   })
 })

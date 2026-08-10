@@ -14,6 +14,7 @@ export function resolveAgentSessionReplayOutcome<TValue>(input: {
   operationId: string
   outcome: AgentSessionOperationOutcome
   reconstruct: () => TValue | null
+  rerunWhenReplayMissing?: boolean
 }): AgentSessionReplayOutcomeDecision<TValue> {
   const { operationId, outcome } = input
   if (outcome.status === 'failed') {
@@ -40,6 +41,9 @@ export function resolveAgentSessionReplayOutcome<TValue>(input: {
   const recorded = input.reconstruct()
   if (recorded) {
     return { decision: 'replay', value: recorded }
+  }
+  if (input.rerunWhenReplayMissing) {
+    return { decision: 'rerun' }
   }
   return outcome.status === 'succeeded'
     ? {

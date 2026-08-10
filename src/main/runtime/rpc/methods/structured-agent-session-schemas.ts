@@ -133,6 +133,7 @@ const SendBlock = z.discriminatedUnion('type', [
 export const SendParams = z
   .object({
     envelope: MutationEnvelope,
+    retryUnknown: z.literal(true).optional(),
     body: z
       .object({
         kind: z.literal('message'),
