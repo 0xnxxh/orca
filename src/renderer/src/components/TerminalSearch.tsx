@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { ChevronUp, ChevronDown, X, CaseSensitive, Regex } from 'lucide-react'
 import type { SearchAddon } from '@xterm/addon-search'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,14 @@ type TerminalSearchProps = {
   onClose: () => void
   searchAddon: SearchAddon | null
   searchStateRef: React.RefObject<SearchState>
+}
+
+const SEARCH_DEBOUNCE_MS = 75
+
+type PendingSearch = {
+  addon: SearchAddon
+  query: string
+  options: NonNullable<Parameters<SearchAddon['findNext']>[1]>
 }
 
 function clearTerminalSearch(searchAddon: SearchAddon | null): void {
@@ -32,6 +40,8 @@ export default function TerminalSearch({
   const [query, setQuery] = useState('')
   const [caseSensitive, setCaseSensitive] = useState(false)
   const [regex, setRegex] = useState(false)
+  const pendingSearchRef = useRef<PendingSearch | null>(null)
+  const searchTimerRef = useRef<number | null>(null)
   const requestQuery = getFindRequestQuery(query)
 
   // Why: the default xterm SearchAddon highlights blend into common
@@ -81,11 +91,32 @@ export default function TerminalSearch({
     input?.focus()
   }, [])
 
+  const cancelPendingSearch = useCallback((): void => {
+    if (searchTimerRef.current !== null) {
+      window.clearTimeout(searchTimerRef.current)
+      searchTimerRef.current = null
+    }
+    pendingSearchRef.current = null
+  }, [])
+
+  const flushPendingSearch = useCallback((): void => {
+    const pending = pendingSearchRef.current
+    cancelPendingSearch()
+    if (pending) {
+      safeFind(
+        (term, options) => pending.addon.findNext(term, options),
+        pending.query,
+        pending.options
+      )
+    }
+  }, [cancelPendingSearch])
+
   useEffect(
     () => () => {
+      cancelPendingSearch()
       clearTerminalSearch(searchAddon)
     },
-    [searchAddon]
+    [cancelPendingSearch, searchAddon]
   )
 
   useEffect(() => {
@@ -93,6 +124,7 @@ export default function TerminalSearch({
     // can read the current search state without lifting it to parent state.
     searchStateRef.current = { query: requestQuery ?? '', caseSensitive, regex }
 
+    cancelPendingSearch()
     if (!isOpen) {
       clearTerminalSearch(searchAddon)
       return
@@ -102,13 +134,32 @@ export default function TerminalSearch({
       return
     }
     if (searchAddon) {
-      safeFind(
-        (term, options) => searchAddon.findNext(term, options),
-        requestQuery,
-        searchOptions(true)
-      )
+      const pending = { addon: searchAddon, query: requestQuery, options: searchOptions(true) }
+      pendingSearchRef.current = pending
+      searchTimerRef.current = window.setTimeout(() => {
+        if (pendingSearchRef.current !== pending) {
+          return
+        }
+        pendingSearchRef.current = null
+        searchTimerRef.current = null
+        safeFind(
+          (term, options) => pending.addon.findNext(term, options),
+          pending.query,
+          pending.options
+        )
+      }, SEARCH_DEBOUNCE_MS)
     }
-  }, [requestQuery, searchAddon, isOpen, caseSensitive, regex, searchStateRef, searchOptions])
+    return cancelPendingSearch
+  }, [
+    requestQuery,
+    searchAddon,
+    isOpen,
+    caseSensitive,
+    regex,
+    searchStateRef,
+    searchOptions,
+    cancelPendingSearch
+  ])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -117,12 +168,26 @@ export default function TerminalSearch({
       if (e.key === 'Escape') {
         onClose()
       } else if (e.key === 'Enter' && e.shiftKey) {
+        flushPendingSearch()
         findPrevious()
       } else if (e.key === 'Enter') {
+        flushPendingSearch()
         findNext()
       }
     },
-    [onClose, findNext, findPrevious]
+    [onClose, findNext, findPrevious, flushPendingSearch]
+  )
+
+  const handleQueryChange = useCallback(
+    (nextQuery: string): void => {
+      searchStateRef.current = {
+        query: getFindRequestQuery(nextQuery) ?? '',
+        caseSensitive,
+        regex
+      }
+      setQuery(nextQuery)
+    },
+    [caseSensitive, regex, searchStateRef]
   )
 
   if (!isOpen) {
@@ -140,7 +205,7 @@ export default function TerminalSearch({
         ref={handleInputRef}
         type="text"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => handleQueryChange(e.target.value)}
         placeholder={translate('auto.components.TerminalSearch.e07012f26e', 'Search...')}
         className="min-w-0 flex-1 border-none bg-transparent text-sm text-white outline-none placeholder:text-zinc-500"
       />
