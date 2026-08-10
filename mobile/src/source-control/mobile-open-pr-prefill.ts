@@ -1,9 +1,7 @@
 import { readMobileGitStatusResult } from '../session/mobile-diff-review-rpc'
 import type { MobileGitStatusResult } from './mobile-git-status'
 
-// Reads a fresh git.status after a push so the prefill reflects the just-pushed
-// branch's upstream/ahead data instead of the pre-push captured status. Best-effort:
-// returns the captured status on any read failure.
+// Refresh after a push when possible so readiness reflects the new upstream state.
 export async function readFreshGitStatus(
   worktreeId: string,
   fallback: MobileGitStatusResult | null,

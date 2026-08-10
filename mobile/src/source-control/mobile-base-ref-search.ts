@@ -2,8 +2,6 @@ import type { RpcClient } from '../transport/rpc-client'
 import type { RpcSuccess } from '../transport/types'
 import { mobileRepoSelectorFromWorktreeId } from './mobile-pr-create'
 
-// Defensively normalize the repo.searchRefs payload (`{ refs: string[] }`) to a
-// clean string[] — drops non-string / malformed entries instead of throwing.
 export function mapBaseRefResults(raw: unknown): string[] {
   if (raw === null || typeof raw !== 'object') {
     return []
