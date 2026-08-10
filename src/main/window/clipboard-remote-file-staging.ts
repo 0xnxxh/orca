@@ -7,6 +7,8 @@ const REMOTE_CLIPBOARD_LEGACY_PREFIX = 'orca-clipboard-file-'
 const REMOTE_CLIPBOARD_MIGRATION_MARKER = '.legacy-cleanup-complete'
 const REMOTE_CLIPBOARD_FILE_TTL_MS = 60 * 60 * 1000
 const REMOTE_CLIPBOARD_CLEANUP_CONCURRENCY = 8
+const REMOTE_CLIPBOARD_CLEANUP_RETRY_MS = 60 * 1000
+const REMOTE_CLIPBOARD_CLEANUP_RETRY_LIMIT = 3
 // Why: compatibility cleanup must never restore O(shared temp root) work.
 const REMOTE_CLIPBOARD_LEGACY_ENTRY_LIMIT = 4_096
 const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
@@ -116,6 +118,41 @@ export async function removeRemoteClipboardTransferDirectory(
     return true
   } catch (error) {
     return isMissingPathError(error)
+  }
+}
+
+export function scheduleRemoteClipboardTransferCleanup(
+  tempRoot: string,
+  transferDirectory: string
+): void {
+  scheduleCleanupAttempt(
+    tempRoot,
+    transferDirectory,
+    REMOTE_CLIPBOARD_FILE_TTL_MS,
+    REMOTE_CLIPBOARD_CLEANUP_RETRY_LIMIT
+  )
+}
+
+function scheduleCleanupAttempt(
+  tempRoot: string,
+  transferDirectory: string,
+  delayMs: number,
+  retriesRemaining: number
+): void {
+  const timer = setTimeout(() => {
+    void removeRemoteClipboardTransferDirectory(tempRoot, transferDirectory).then((removed) => {
+      if (!removed && retriesRemaining > 0) {
+        scheduleCleanupAttempt(
+          tempRoot,
+          transferDirectory,
+          REMOTE_CLIPBOARD_CLEANUP_RETRY_MS,
+          retriesRemaining - 1
+        )
+      }
+    })
+  }, delayMs)
+  if (typeof timer === 'object' && 'unref' in timer) {
+    timer.unref()
   }
 }
 

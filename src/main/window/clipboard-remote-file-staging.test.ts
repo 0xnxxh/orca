@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { join, resolve } from 'node:path'
 
 const { accessMock, lstatMock, mkdirMock, opendirMock, rmMock, writeFileMock } = vi.hoisted(() => ({
@@ -24,10 +24,12 @@ import {
   cleanupLegacyRemoteClipboardStaging,
   createRemoteClipboardTransferDirectory,
   getRemoteClipboardStagingRoot,
-  removeRemoteClipboardTransferDirectory
+  removeRemoteClipboardTransferDirectory,
+  scheduleRemoteClipboardTransferCleanup
 } from './clipboard-remote-file-staging'
 
 const TTL_MS = 60 * 60 * 1000
+const RETRY_MS = 60 * 1000
 const NOW_MS = 1_760_000_000_000
 const TEMP_ROOT = resolve('fixture-temp')
 const UID_SUFFIX = typeof process.getuid === 'function' ? `-${process.getuid()}` : ''
@@ -81,6 +83,10 @@ describe('remote clipboard staging ownership', () => {
     opendirMock.mockResolvedValue(openedDirectory([]))
     rmMock.mockResolvedValue(undefined)
     writeFileMock.mockResolvedValue(undefined)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('creates a private owned parent and a per-transfer child', async () => {
@@ -213,6 +219,17 @@ describe('remote clipboard staging ownership', () => {
     rmMock.mockResolvedValue(undefined)
     await cleanupExpiredRemoteClipboardStaging(TEMP_ROOT, NOW_MS)
     expect(rmMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('bounds locked-file timer retries', async () => {
+    vi.useFakeTimers()
+    rmMock.mockRejectedValue(Object.assign(new Error('locked'), { code: 'EPERM' }))
+
+    scheduleRemoteClipboardTransferCleanup(TEMP_ROOT, join(STAGING_ROOT, EXPIRED_TRANSFER))
+    await vi.advanceTimersByTimeAsync(TTL_MS + 4 * RETRY_MS)
+
+    expect(rmMock).toHaveBeenCalledTimes(4)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('keeps owned-child cleanup concurrency at eight', async () => {

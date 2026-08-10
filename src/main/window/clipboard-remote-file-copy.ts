@@ -15,13 +15,12 @@ import {
   cleanupExpiredRemoteClipboardStaging,
   cleanupLegacyRemoteClipboardStaging,
   createRemoteClipboardTransferDirectory,
-  removeRemoteClipboardTransferDirectory
+  removeRemoteClipboardTransferDirectory,
+  scheduleRemoteClipboardTransferCleanup
 } from './clipboard-remote-file-staging'
 
 type RemoteClipboardFileDeps = Omit<ClipboardFileDeps, 'resolveFilePath'>
 
-const REMOTE_CLIPBOARD_FILE_TTL_MS = 60 * 60 * 1000
-const REMOTE_CLIPBOARD_CLEANUP_RETRY_MS = 60 * 1000
 const REMOTE_CLIPBOARD_LEGACY_CLEANUP_DELAY_MS = 30 * 1000
 const WINDOWS_RESERVED_LOCAL_BASENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
 const LOCAL_FILENAME_REPLACEMENT_CHARS = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
@@ -73,7 +72,7 @@ export async function writeRemoteFileToClipboard({
       // Why: OS file clipboards keep a path reference, so the staged copy must
       // survive after this IPC call long enough for the user to paste it.
       keepTempFile = true
-      scheduleRemoteClipboardFileCleanup(tempRoot, tempDir)
+      scheduleRemoteClipboardTransferCleanup(tempRoot, tempDir)
     }
     return result
   } finally {
@@ -112,21 +111,6 @@ function sanitizeLocalClipboardFilename(remoteBasename: string): string {
     return 'download'
   }
   return sanitized
-}
-
-function scheduleRemoteClipboardFileCleanup(
-  tempRoot: string,
-  tempDir: string,
-  delayMs = REMOTE_CLIPBOARD_FILE_TTL_MS
-): void {
-  const timer = setTimeout(() => {
-    void removeRemoteClipboardTransferDirectory(tempRoot, tempDir).then((removed) => {
-      if (!removed) {
-        scheduleRemoteClipboardFileCleanup(tempRoot, tempDir, REMOTE_CLIPBOARD_CLEANUP_RETRY_MS)
-      }
-    })
-  }, delayMs)
-  unrefTimer(timer)
 }
 
 function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
