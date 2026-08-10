@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises'
+import * as fsPromises from 'node:fs/promises'
 import { win32 } from 'node:path'
 import type { Stats } from 'node:fs'
 
@@ -55,8 +55,8 @@ export type WslLinkedWorktreeRoutingOptions = {
 }
 
 const defaultFileSystem: WslLinkedWorktreeRoutingFileSystem = {
-  stat,
-  readFile: (path) => readFile(path, 'utf8')
+  stat: (path) => fsPromises.stat(path),
+  readFile: (path) => fsPromises.readFile(path, 'utf8')
 }
 
 async function shouldUseHostGit(
