@@ -7,10 +7,6 @@ import {
 import type { SavedCursorRegister } from '../../shared/terminal-serialize-absolute-cursor'
 import type { TerminalModes } from './types'
 
-type TerminalWithScrollRegion = Terminal & {
-  _core?: { buffer?: { scrollTop?: number; scrollBottom?: number } }
-}
-
 export function buildFrameRestoreSnapshotFields(
   serializer: SerializeAddon,
   terminal: Terminal,
@@ -49,9 +45,6 @@ function buildTerminalFrameRestoreSequences(
   if (terminalModes.insertMode) {
     seqs.push('\x1b[4h')
   }
-  if (terminalModes.originMode) {
-    seqs.push('\x1b[?6h')
-  }
   if (terminalModes.reverseWraparoundMode) {
     seqs.push('\x1b[?45h')
   }
@@ -85,15 +78,11 @@ function buildTerminalFrameRestoreSequences(
   if (!terminalModes.showCursor) {
     seqs.push('\x1b[?25l')
   }
-  const buffer = (terminal as TerminalWithScrollRegion)._core?.buffer
-  if (
-    typeof buffer?.scrollTop === 'number' &&
-    typeof buffer.scrollBottom === 'number' &&
-    (buffer.scrollTop !== 0 || buffer.scrollBottom !== terminal.rows - 1)
-  ) {
-    seqs.push(`\x1b[${buffer.scrollTop + 1};${buffer.scrollBottom + 1}r`)
-  }
-  seqs.push(buildAbsoluteCursorRestoreSequence(terminal, savedCursor))
+  seqs.push(
+    buildAbsoluteCursorRestoreSequence(terminal, savedCursor, {
+      restoreModesWithoutCursor: true
+    })
+  )
   return seqs.join('')
 }
 

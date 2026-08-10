@@ -581,6 +581,7 @@ describe('HeadlessEmulator', () => {
 
       const snapshot = emulator.getSnapshot()
 
+      expect(snapshot.frameRestoreAnsi).toContain('\x1b[?1049h')
       expect(snapshot.frameRestoreAnsi).toContain('\x1b[?1004h')
       expect(snapshot.frameRestoreAnsi).toContain('\x1b[?25l')
       expect(snapshot.frameRestoreAnsi).toContain('\x1b7')
@@ -589,8 +590,37 @@ describe('HeadlessEmulator', () => {
 
       const restored = new HeadlessEmulator({ cols: 80, rows: 24 })
       await restored.write(snapshot.frameRestoreAnsi ?? '')
+      expect(restored.isAlternateScreen).toBe(true)
       await restored.write('X')
       expect(restored.getSnapshot().snapshotAnsi).toContain('\x1b[31;44;1mX')
+      restored.dispose()
+    })
+
+    it('restores current and saved cursor rows relative to origin-mode margins', async () => {
+      emulator = new HeadlessEmulator({ cols: 20, rows: 10 })
+      await emulator.write('\x1b[?1049h\x1b[3;8r\x1b[?6h\x1b[2;7H\x1b7\x1b[4;5H')
+
+      const snapshot = emulator.getSnapshot()
+      const restored = new HeadlessEmulator({ cols: 20, rows: 10 })
+      await restored.write(snapshot.frameRestoreAnsi ?? '')
+      await restored.write('C\x1b8S')
+
+      expect(restored.getVisibleLines()[5]?.[4]).toBe('C')
+      expect(restored.getVisibleLines()[3]?.[6]).toBe('S')
+      restored.dispose()
+    })
+
+    it('restores a saved cursor from before the current origin-mode margins', async () => {
+      emulator = new HeadlessEmulator({ cols: 20, rows: 10 })
+      await emulator.write('\x1b[?1049h\x1b[1;3H\x1b7\x1b[3;8r\x1b[?6h\x1b[4;5H')
+
+      const snapshot = emulator.getSnapshot()
+      const restored = new HeadlessEmulator({ cols: 20, rows: 10 })
+      await restored.write(snapshot.frameRestoreAnsi ?? '')
+      await restored.write('C\x1b8S')
+
+      expect(restored.getVisibleLines()[5]?.[4]).toBe('C')
+      expect(restored.getVisibleLines()[0]?.[2]).toBe('S')
       restored.dispose()
     })
 

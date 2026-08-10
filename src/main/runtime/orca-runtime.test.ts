@@ -11053,6 +11053,7 @@ describe('OrcaRuntimeService', () => {
     expect(snapshot?.frameRestoreAnsi).toContain('\x1b[?1004h')
     expect(snapshot?.frameRestoreAnsi).toContain('\x1b[?25l')
     expect(snapshot?.frameRestoreAnsi).not.toContain('STATIC-FRAME')
+    expect(snapshot?.data).toContain('STATIC-FRAME')
   })
 
   it('keeps Windows SSH OSC7 cwd as a drive path when the desktop runtime is POSIX', () => {
