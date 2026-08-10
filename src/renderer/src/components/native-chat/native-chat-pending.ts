@@ -119,8 +119,8 @@ function messagesAfterPendingBoundary(
   if (boundaryIndex >= 0) {
     return messages.slice(boundaryIndex + 1)
   }
-  // A bounded authoritative read can page the boundary out. Fall back to the
-  // send time instead of matching an arbitrary older identical prompt.
+  // A bounded authoritative read can page the boundary out. Use the pending
+  // host-domain timestamp when available; otherwise match by identity/occurrence.
   return messages.filter((message) => messageIsAfterPendingTimestamp(message, pending))
 }
 
@@ -179,10 +179,14 @@ export function prunePendingSends(
   // Why: when rapid body writes glued two optimistic sends into one transcript
   // user row ("joke"+"continue"→"jokecontinue"), exact keys never match. Drop
   // those echoes once an assistant turn advances past the glued user text.
+  // Boundary-filter per send so a pre-watermark "tellagain" cannot prune a
+  // fresh tell+again pair after the new high-water.
   const stillOpen = pending.filter((_, index) => exactKeep[index])
-  const gluedRepresented = selectPendingIndicesRepresentedByUserTexts(
+  const gluedRepresented = gluedPendingIndicesAfterBoundaries(
     stillOpen,
-    advancedNativeChatUserTexts(messages)
+    messages,
+    transcriptOrder,
+    advancedNativeChatUserTexts
   )
   const next = pending.filter((entry, index) => {
     if (!exactKeep[index]) {
@@ -224,9 +228,11 @@ export function pendingSendsAsMessages(
   // Hide optimistic echoes that were glued into a single transcript user row
   // even before the assistant reply lands (matching, not advanced).
   const stillVisible = pending.filter((_, index) => exactVisible[index])
-  const gluedRepresented = selectPendingIndicesRepresentedByUserTexts(
+  const gluedRepresented = gluedPendingIndicesAfterBoundaries(
     stillVisible,
-    matchingNativeChatUserTexts(existingMessages)
+    existingMessages,
+    transcriptOrder,
+    matchingNativeChatUserTexts
   )
   return pending
     .filter((entry, index) => {
@@ -246,6 +252,67 @@ export function pendingSendsAsMessages(
       timestamp: entry.sentAt,
       source: 'scrape' as const
     }))
+}
+
+function pendingBoundaryKey(pending: NativeChatPendingSend): string {
+  return [
+    String(pending.afterMessageId),
+    String(pending.afterTranscriptGeneration),
+    String(pending.afterTranscriptHighWater),
+    String(nativeChatPendingMatchingAfter(pending))
+  ].join('\0')
+}
+
+/** Glue-match only inside each send's post-boundary window (never full history). */
+function gluedPendingIndicesAfterBoundaries(
+  open: readonly NativeChatPendingSend[],
+  messages: readonly NativeChatMessage[],
+  transcriptOrder: NativeChatTranscriptOrder | undefined,
+  userTextsOf: (window: readonly NativeChatMessage[]) => readonly string[]
+): Set<number> {
+  const represented = new Set<number>()
+  if (open.length < 2) {
+    return represented
+  }
+  const groups = new Map<string, number[]>()
+  for (let index = 0; index < open.length; index += 1) {
+    const entry = open[index]
+    if (!entry) {
+      continue
+    }
+    const key = pendingBoundaryKey(entry)
+    const group = groups.get(key)
+    if (group) {
+      group.push(index)
+    } else {
+      groups.set(key, [index])
+    }
+  }
+  for (const indices of groups.values()) {
+    if (indices.length < 2) {
+      continue
+    }
+    const headIndex = indices[0]
+    const head = headIndex === undefined ? undefined : open[headIndex]
+    if (!head) {
+      continue
+    }
+    const groupPending = indices.flatMap((index) => {
+      const entry = open[index]
+      return entry ? [entry] : []
+    })
+    const local = selectPendingIndicesRepresentedByUserTexts(
+      groupPending,
+      userTextsOf(messagesAfterPendingBoundary(messages, head, transcriptOrder))
+    )
+    for (const localIndex of local) {
+      const openIndex = indices[localIndex]
+      if (openIndex !== undefined) {
+        represented.add(openIndex)
+      }
+    }
+  }
+  return represented
 }
 
 /** True when a message id was minted for an optimistic pending send. */
