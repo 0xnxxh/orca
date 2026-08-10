@@ -8116,6 +8116,14 @@
               "invert": "invert",
               "opposite": "opposite"
             },
+            "terminalLinkActions": {
+              "terminal": "terminal",
+              "click": "click",
+              "actions": "actions",
+              "popover": "popover",
+              "menu": "menu",
+              "disable": "disable"
+            },
             "72c58f7792": "webview",
             "82ba1c80ea": "localhost",
             "bea27bac4b": "links",

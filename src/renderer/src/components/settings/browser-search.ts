@@ -148,12 +148,30 @@ export function getBrowserPaneSearchEntries(
       keywords: [
         ...translateSearchKeyword('auto.components.settings.browser.search.2d2d995c58', 'browser'),
         ...translateSearchKeyword('auto.components.settings.browser.search.bea27bac4b', 'links'),
-        'terminal',
-        'click',
-        'actions',
-        'popover',
-        'menu',
-        'disable',
+        ...translateSearchKeyword(
+          'auto.components.settings.browser.search.terminalLinkActions.terminal',
+          'terminal'
+        ),
+        ...translateSearchKeyword(
+          'auto.components.settings.browser.search.terminalLinkActions.click',
+          'click'
+        ),
+        ...translateSearchKeyword(
+          'auto.components.settings.browser.search.terminalLinkActions.actions',
+          'actions'
+        ),
+        ...translateSearchKeyword(
+          'auto.components.settings.browser.search.terminalLinkActions.popover',
+          'popover'
+        ),
+        ...translateSearchKeyword(
+          'auto.components.settings.browser.search.terminalLinkActions.menu',
+          'menu'
+        ),
+        ...translateSearchKeyword(
+          'auto.components.settings.browser.search.terminalLinkActions.disable',
+          'disable'
+        ),
         platform.isMac ? 'cmd' : 'ctrl'
       ]
     },
