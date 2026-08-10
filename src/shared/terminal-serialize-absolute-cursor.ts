@@ -118,11 +118,12 @@ export function buildAbsoluteCursorRestoreSequence(
   const savedRestore = savedCursor
     ? `\x1b[r\x1b[?6${savedCursor.originMode ? 'h' : 'l'}\x1b[${savedCursor.y + 1};${savedCursor.x + 1}H\x1b7`
     : ''
+  const mustRestoreModes = savedCursor != null || options.restoreModesWithoutCursor === true
   const scrollRegionRestore =
-    scrollTop !== 0 || scrollBottom !== terminal.rows - 1
+    mustRestoreModes && (scrollTop !== 0 || scrollBottom !== terminal.rows - 1)
       ? `\x1b[${scrollTop + 1};${scrollBottom + 1}r`
       : ''
-  const originModeRestore = `\x1b[?6${originMode ? 'h' : 'l'}`
+  const originModeRestore = mustRestoreModes ? `\x1b[?6${originMode ? 'h' : 'l'}` : ''
   // CUP rows become margin-relative under DECOM; ordinary snapshots keep the
   // zero offset because scrollback length does not shift viewport coordinates.
   const currentCursorRestore = canRestoreCurrentCursor
