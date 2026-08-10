@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { chmod, mkdtemp, mkdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -343,6 +343,66 @@ describe('scanCursorSidecars', () => {
     expect(result.counters.returnedBytes).toBe(0)
     expect(result.truncated.sidecarBytes).toBe(true)
     expect(result.issues).toContainEqual(expect.objectContaining({ message: 'file_too_large' }))
+  })
+
+  it('prioritizes cancellation that lands during a failed raced read', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    const bucket = 'cececececececececececececececece'
+    const metaPath = join(chatsRoot, bucket, 'race', 'meta.json')
+    await addSession(chatsRoot, bucket, 'race')
+    let cancelled = false
+    let checks = 0
+
+    await expect(
+      scanCursorSidecars(defaultCursorSidecarScanRequest(chatsRoot, [], process.platform), {
+        clientId: 1,
+        isStale: () => {
+          checks += 1
+          if (checks === CHECKS_BEFORE_FIRST_VERIFIED_READ) {
+            writeFileSync(metaPath, 'x'.repeat(CURSOR_SIDECAR_MAX_BYTES + 1))
+            queueMicrotask(() => {
+              cancelled = true
+            })
+          }
+          return cancelled
+        }
+      })
+    ).rejects.toThrow('cursor_sidecar_scan_cancelled')
+  })
+
+  it('caps generic failed read attempts without charging returned bytes', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    const bucket = 'cfcfcfcfcfcfcfcfcfcfcfcfcfcfcfcf'
+    const sessionIds = ['first', 'second']
+    await Promise.all(sessionIds.map((sessionId) => addSession(chatsRoot, bucket, sessionId)))
+    const request = defaultCursorSidecarScanRequest(chatsRoot, [], process.platform)
+    request.maxAggregateBytes = CURSOR_SIDECAR_MAX_BYTES
+    let checks = 0
+
+    const result = await scanCursorSidecars(request, {
+      clientId: 1,
+      isStale: () => {
+        checks += 1
+        if (checks === CHECKS_BEFORE_FIRST_VERIFIED_READ) {
+          for (const sessionId of sessionIds) {
+            const metaPath = join(chatsRoot, bucket, sessionId, 'meta.json')
+            rmSync(metaPath)
+            mkdirSync(metaPath)
+          }
+        }
+        return false
+      }
+    })
+
+    expect(result.sidecars).toEqual([])
+    expect(result.counters.boundedReads).toBe(1)
+    expect(result.counters.returnedBytes).toBe(0)
+    expect(result.truncated.sidecarBytes).toBe(true)
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ message: 'verified_file_not_regular' })
+    )
   })
 
   it('retains the newer equal-size session under a tight aggregate byte cap', async () => {

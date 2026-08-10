@@ -60,9 +60,10 @@ async function readCandidates(
   response: CursorSidecarScanResponse,
   context: RequestContext
 ): Promise<void> {
+  let chargedBytes = 0
   for (let index = 0; index < candidates.length; index += 1) {
     throwIfCancelled(context)
-    if (response.counters.returnedBytes >= caps.aggregateBytes) {
+    if (chargedBytes >= caps.aggregateBytes) {
       if (index < candidates.length) {
         response.truncated.sidecarBytes = true
       }
@@ -70,7 +71,7 @@ async function readCandidates(
     }
     const candidate = candidates[index]
     // Pre-check statted size so we do not open a sidecar that cannot fit.
-    if (response.counters.returnedBytes + candidate.meta.size > caps.aggregateBytes) {
+    if (chargedBytes + candidate.meta.size > caps.aggregateBytes) {
       response.truncated.sidecarBytes = true
       break
     }
@@ -82,7 +83,8 @@ async function readCandidates(
       })
       throwIfCancelled(context)
       const bytes = Buffer.byteLength(content, 'utf8')
-      if (response.counters.returnedBytes + bytes > caps.aggregateBytes) {
+      chargedBytes += bytes
+      if (chargedBytes > caps.aggregateBytes) {
         response.truncated.sidecarBytes = true
         break
       }
@@ -97,18 +99,25 @@ async function readCandidates(
         storeMtimeMs: candidate.store.mtimeMs,
         scopeCwd: candidate.scopeCwd
       })
-      if (response.counters.returnedBytes >= caps.aggregateBytes && index < candidates.length - 1) {
+      if (chargedBytes >= caps.aggregateBytes && index < candidates.length - 1) {
         response.truncated.sidecarBytes = true
         break
       }
     } catch (error) {
+      throwIfCancelled(context)
       if (isCursorSidecarScanCancelledError(error)) {
         throw error
       }
       if (!isMissing(error)) {
         addIssue(response, candidate.metaPath, error)
       }
+      // A failed remote read hides how many bytes it consumed; charge its full ceiling.
+      chargedBytes = Math.min(caps.aggregateBytes, chargedBytes + caps.sidecarBytes)
       if (isVerifiedReadTooLargeError(error)) {
+        response.truncated.sidecarBytes = true
+        break
+      }
+      if (chargedBytes >= caps.aggregateBytes && index < candidates.length - 1) {
         response.truncated.sidecarBytes = true
         break
       }

@@ -274,7 +274,11 @@ async function parseSidecarWithAggregateCap(
         if (storage) {
           storage.truncated.sidecarBytes = true
         }
+      } else {
+        // A failed remote read hides how many bytes it consumed; charge its full ceiling.
+        budget.chargedBytes += CURSOR_SIDECAR_MAX_BYTES
       }
+      throwIfAiVaultScanCancelled(args.signal)
       throw error
     }
 

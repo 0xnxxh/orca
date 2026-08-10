@@ -155,6 +155,89 @@ describe('Cursor verified-read budgets by storage context', () => {
     }
   })
 
+  it('prioritizes cancellation that lands during a failed raced read', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-cursor-storage-cancelled-failure-'))
+    roots.push(root)
+    const chatsRoot = join(root, '.cursor', 'chats')
+    const files = [await addSession(chatsRoot, 'race', sidecarPayload(1_000), 1_000)]
+    await writeFile(files[0].path, sidecarPayload(CURSOR_SIDECAR_MAX_BYTES + 1))
+    const discovery = sidecarDiscovery('native', chatsRoot, await realpath(chatsRoot), files)
+    const span = startSpan('cursor-storage-cancelled-failure-test')
+    let aborted = false
+    const signal = {
+      get aborted() {
+        queueMicrotask(() => {
+          aborted = true
+        })
+        return aborted
+      }
+    } as AbortSignal
+
+    try {
+      await expect(
+        processLocalCursorCandidates({
+          candidates: discoveryCandidates(discovery),
+          discoveries: [discovery],
+          executionHostId: 'local',
+          issues: [],
+          limit: 20,
+          parseStats: createSessionParseStats(),
+          platform: 'linux',
+          scopeLimit: 20,
+          signal,
+          span
+        })
+      ).rejects.toMatchObject({ name: 'AbortError' })
+      expect(discovery.cursorDiscoveryCounters?.boundedReads).toBe(1)
+    } finally {
+      span.end()
+    }
+  })
+
+  it('caps generic failed read attempts without charging returned bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-cursor-storage-failed-reads-'))
+    roots.push(root)
+    const chatsRoot = join(root, '.cursor', 'chats')
+    const attemptLimit = CURSOR_REMOTE_MAX_AGGREGATE_BYTES / CURSOR_SIDECAR_MAX_BYTES
+    const files = await Promise.all(
+      Array.from({ length: attemptLimit + 2 }, (_, index) =>
+        addSession(chatsRoot, `failed-${index}`, sidecarPayload(1_000), 1_000)
+      )
+    )
+    await Promise.all(
+      files.map(async (file) => {
+        await rm(file.path)
+        await mkdir(file.path)
+      })
+    )
+    const discovery = sidecarDiscovery('wsl:ubuntu', chatsRoot, await realpath(chatsRoot), files)
+    const span = startSpan('cursor-storage-failed-reads-test')
+    const issues: AiVaultScanIssue[] = []
+
+    try {
+      const result = await processLocalCursorCandidates({
+        candidates: discoveryCandidates(discovery),
+        discoveries: [discovery],
+        executionHostId: 'local',
+        issues,
+        limit: 100,
+        parseStats: createSessionParseStats(),
+        platform: 'linux',
+        scopeLimit: 100,
+        span
+      })
+
+      expect(result.sessions).toEqual([])
+      expect(discovery.cursorDiscoveryCounters?.boundedReads).toBe(attemptLimit)
+      expect(discovery.cursorDiscoveryCounters?.returnedBytes).toBe(0)
+      expect(discovery.cursorDiscoveryTruncated?.sidecarBytes).toBe(true)
+      expect(issues).toHaveLength(attemptLimit)
+      expect(issues[0]?.message).toContain('verified_file_not_regular')
+    } finally {
+      span.end()
+    }
+  })
+
   it('does not let native reads consume the WSL ingress budget', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-cursor-storage-budget-'))
     roots.push(root)
