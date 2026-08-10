@@ -43,6 +43,45 @@ function applySnapshots(snapshots: readonly RuntimeMobileSessionTabsResult[]): v
   })
 }
 
+async function startLocalStructuredSessionTabsSync(args: {
+  isDisposed: () => boolean
+  setUnsubscribe: (unsubscribe: () => void) => void
+}): Promise<void> {
+  const status = await window.api.runtime.getStatus()
+  if (args.isDisposed()) {
+    return
+  }
+  const supported = status.capabilities?.includes(STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY)
+  void window.api.runtime.call({ method: 'session.tabs.listAll', params: {} }).then((response) => {
+    if (!args.isDisposed() && response.ok) {
+      const result = response.result as { snapshots?: RuntimeMobileSessionTabsResult[] }
+      applySnapshots(result.snapshots ?? [])
+    }
+  })
+  if (!supported) {
+    return
+  }
+  const handle = await window.api.runtime.subscribe(
+    { method: 'session.tabs.subscribeAll', params: {} },
+    (response) => {
+      if (args.isDisposed() || !response.ok) {
+        return
+      }
+      const event = response.result as SessionTabsEvent
+      if (event.type === 'snapshots') {
+        applySnapshots(event.snapshots)
+      } else if (event.type === 'snapshot' || event.type === 'updated') {
+        applySnapshots([event])
+      }
+    }
+  )
+  if (args.isDisposed()) {
+    handle.unsubscribe()
+  } else {
+    args.setUnsubscribe(handle.unsubscribe)
+  }
+}
+
 export function useLocalStructuredSessionTabsSync(): void {
   const ready = useAppStore((state) => state.workspaceSessionReady)
   useEffect(() => {
@@ -51,43 +90,12 @@ export function useLocalStructuredSessionTabsSync(): void {
     }
     let disposed = false
     let unsubscribe = (): void => {}
-    void window.api.runtime.getStatus().then((status) => {
-      if (disposed) {
-        return
+    void startLocalStructuredSessionTabsSync({
+      isDisposed: () => disposed,
+      setUnsubscribe: (next) => {
+        unsubscribe = next
       }
-      const supported = status.capabilities?.includes(STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY)
-      void window.api.runtime
-        .call({ method: 'session.tabs.listAll', params: {} })
-        .then((response) => {
-          if (!disposed && response.ok) {
-            const result = response.result as { snapshots?: RuntimeMobileSessionTabsResult[] }
-            applySnapshots(result.snapshots ?? [])
-          }
-        })
-      if (!supported) {
-        return
-      }
-      void window.api.runtime
-        .subscribe({ method: 'session.tabs.subscribeAll', params: {} }, (response) => {
-          if (disposed || !response.ok) {
-            return
-          }
-          const event = response.result as SessionTabsEvent
-          if (event.type === 'snapshots') {
-            applySnapshots(event.snapshots)
-          } else if (event.type === 'snapshot' || event.type === 'updated') {
-            applySnapshots([event])
-          }
-        })
-        .then((handle) => {
-          if (disposed) {
-            handle.unsubscribe()
-          } else {
-            unsubscribe = handle.unsubscribe
-          }
-        })
-        .catch((error) => console.warn('[structured-session-tabs] subscription failed', error))
-    })
+    }).catch((error) => console.warn('[structured-session-tabs] sync failed', error))
     return () => {
       disposed = true
       unsubscribe()

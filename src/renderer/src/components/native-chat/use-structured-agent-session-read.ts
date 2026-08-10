@@ -16,6 +16,29 @@ import {
   subscribeStructuredAgentSession
 } from '@/runtime/structured-agent-session-client'
 
+function createReconnectScheduler(args: { shouldStop: () => boolean; reconnect: () => void }) {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  return {
+    schedule(delay = 750): void {
+      if (args.shouldStop() || timer) {
+        return
+      }
+      timer = setTimeout(() => {
+        timer = null
+        if (!args.shouldStop()) {
+          args.reconnect()
+        }
+      }, delay)
+    },
+    dispose(): void {
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
+    }
+  }
+}
+
 export function useStructuredAgentSessionRead(args: {
   sessionId: string
   target: RuntimeClientTarget
@@ -34,27 +57,19 @@ export function useStructuredAgentSessionRead(args: {
     let connected = false
     let opening = false
     let unsubscribe = (): void => {}
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     const coalescer = createStructuredAgentSessionEventCoalescer((event) =>
       dispatch({ type: 'event', event })
     )
-    function scheduleReconnect(delay = 750): void {
-      if (stopped || reconnectTimer) {
-        return
-      }
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null
-        if (!connected) {
-          void open()
-        }
-      }, delay)
-    }
+    const reconnectScheduler = createReconnectScheduler({
+      shouldStop: () => stopped || connected,
+      reconnect: () => void open()
+    })
     async function open(): Promise<void> {
       if (stopped || connected) {
         return
       }
       if (opening) {
-        scheduleReconnect()
+        reconnectScheduler.schedule()
         return
       }
       opening = true
@@ -75,14 +90,14 @@ export function useStructuredAgentSessionRead(args: {
               resumeCursorRef.current = event.batch.cursor
             } else if (event.type === 'end') {
               connected = false
-              scheduleReconnect()
+              reconnectScheduler.schedule()
             }
             coalescer.push(event)
           },
           (error) => {
             connected = false
             dispatch({ type: 'error', message: String(error) })
-            scheduleReconnect()
+            reconnectScheduler.schedule()
           }
         )
         if (stopped) {
@@ -94,7 +109,7 @@ export function useStructuredAgentSessionRead(args: {
       } catch (error) {
         connected = false
         dispatch({ type: 'error', message: String(error) })
-        scheduleReconnect()
+        reconnectScheduler.schedule()
       } finally {
         opening = false
       }
@@ -133,7 +148,7 @@ export function useStructuredAgentSessionRead(args: {
         .catch((error) => dispatch({ type: 'error', message: String(error) }))
         .finally(() => {
           if (!connected) {
-            scheduleReconnect(0)
+            reconnectScheduler.schedule(0)
           }
         })
     }
@@ -142,14 +157,12 @@ export function useStructuredAgentSessionRead(args: {
       .then(() => open())
       .catch((error) => {
         dispatch({ type: 'error', message: String(error) })
-        scheduleReconnect()
+        reconnectScheduler.schedule()
       })
     return () => {
       stopped = true
       window.removeEventListener('focus', refreshOnFocus)
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer)
-      }
+      reconnectScheduler.dispose()
       coalescer.dispose()
       unsubscribe()
     }

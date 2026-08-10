@@ -368,6 +368,7 @@ export default function TabGroupPanel({
         {activeTab?.contentType === 'agent-session' ? (
           <div className="absolute inset-0 flex min-h-0 min-w-0">
             <DesktopStructuredAgentSessionView
+              key={activeTab.entityId}
               sessionId={activeTab.entityId}
               agent={activeTab.agentSessionAgent ?? 'codex'}
               target={structuredRuntimeTarget}

@@ -54,12 +54,6 @@ export function useStructuredAgentSession(args: {
     submissions: state.submissions
   })
 
-  useEffect(() => {
-    setOptionState(createStructuredAgentSessionOptionState(agent))
-    operationIds.current.clear()
-    setWriteError(null)
-  }, [agent, sessionId])
-
   const mutate = useCallback(
     async <T>(
       method: string,
