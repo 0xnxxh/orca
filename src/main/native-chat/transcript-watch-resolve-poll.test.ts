@@ -68,7 +68,7 @@ describe('native chat transcript resolve polling', () => {
   })
 
   it('retries the WSL translation on the slow cadence, never installing the raw guest path', async () => {
-    // Why: each translation sync-stats the UNC twin per distro over the 9P
+    // Why: each translation probes the UNC twin per distro over the 9P
     // share; doing it every fast tick would hammer the main process (#10326).
     setPlatform('win32')
     const subscription = await subscribeNativeChatTranscript({

@@ -1,8 +1,14 @@
 import { access } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
-import { parseWslUncPath, toWindowsWslPath } from '../../shared/wsl-paths'
+import {
+  foldWslUncPathCaseInsensitiveParts,
+  isWslUncPath,
+  parseWslUncPath,
+  toWindowsWslPath
+} from '../../shared/wsl-paths'
 import { WSL_CODEX_RUNTIME_HOME_SEGMENTS } from '../pty/codex-home-wsl-env'
 import { getWslHomeAsync, listWslDistrosAsync } from '../wsl'
+import { runWslTranscriptFsTask } from './wsl-transcript-fs-gate'
 
 /**
  * True for guest-absolute Linux paths that Win32 cannot open as-is.
@@ -39,12 +45,19 @@ export type HostReadableTranscriptPathDeps = {
 // against a stopped or unreachable distro would stall the Electron main thread
 // instead of falling through to the next candidate, so keep this off the loop.
 async function pathExistsAsync(path: string): Promise<boolean> {
-  try {
-    await access(path)
-    return true
-  } catch {
-    return false
+  const probe = async (): Promise<boolean> => {
+    try {
+      await access(path)
+      return true
+    } catch {
+      return false
+    }
   }
+  if (!isWslUncPath(path)) {
+    return probe()
+  }
+  const identity = foldWslUncPathCaseInsensitiveParts(path) ?? path
+  return runWslTranscriptFsTask(JSON.stringify(['access', identity]), probe)
 }
 
 // Why: resolveSessionFilePath runs on a 500ms–5s poll loop. listWslDistrosAsync

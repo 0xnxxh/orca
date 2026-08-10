@@ -1,7 +1,10 @@
+import type { Dirent } from 'node:fs'
+import { readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, extname, join } from 'node:path'
 import type { AgentType } from '../../shared/native-chat-types'
 import { resolveNativeChatTranscriptAgent } from '../../shared/native-chat-agent-support'
+import { foldWslUncPathCaseInsensitiveParts, isWslUncPath } from '../../shared/wsl-paths'
 import { walkSessionFiles } from '../ai-vault/session-scanner-discovery'
 import { OMP_SESSION_ARTIFACT_DIR_PATTERN } from '../ai-vault/session-scanner-omp-subagent-transcripts'
 import { normalizeAgentSessionsDir } from '../ai-vault/session-scanner-values'
@@ -11,6 +14,7 @@ import {
   resolveGrokSessionsDir
 } from '../../shared/grok-session-paths'
 import { toHostReadableTranscriptPath, wslCodexSessionsDirs } from './host-readable-transcript-path'
+import { runWslTranscriptFsTask, shareWslTranscriptFsTask } from './wsl-transcript-fs-gate'
 
 // Why: these mirror the path constants in ai-vault/session-scanner.ts. Reads
 // run in the main process against the runtime's own home directory; over SSH
@@ -168,18 +172,35 @@ async function findCodexRolloutInDirs(
     // Why: no existence pre-check — walkSessionFiles already yields [] for a
     // missing/unreadable root, and a sync probe would block the main thread on a
     // `\\wsl.localhost` root whose distro is stopped.
-    const files = await walkSessionFiles(sessionsDir, 'codex', [], {
+    const scanOptions = {
       extensions: new Set(['.jsonl']),
-      filePredicate: (path) => {
+      filePredicate: (path: string): boolean => {
         const name = basename(path, extname(path))
         return name === sessionId || name.endsWith(`-${sessionId}`)
       }
-    })
+    }
+    const isWslRoot = isWslUncPath(sessionsDir)
+    const identity = foldWslUncPathCaseInsensitiveParts(sessionsDir) ?? sessionsDir
+    const files = isWslRoot
+      ? await shareWslTranscriptFsTask(JSON.stringify(['codex-scan', identity, sessionId]), () =>
+          walkSessionFiles(sessionsDir, 'codex', [], {
+            ...scanOptions,
+            readDirectory: readWslCodexSessionDirectory
+          })
+        )
+      : await walkSessionFiles(sessionsDir, 'codex', [], scanOptions)
     if (files[0]) {
       return files[0]
     }
   }
   return null
+}
+
+function readWslCodexSessionDirectory(dirPath: string): Promise<Dirent[]> {
+  const identity = foldWslUncPathCaseInsensitiveParts(dirPath) ?? dirPath
+  return runWslTranscriptFsTask(JSON.stringify(['codex-readdir', identity]), () =>
+    readdir(dirPath, { withFileTypes: true })
+  )
 }
 
 async function resolveGrokSessionFile(

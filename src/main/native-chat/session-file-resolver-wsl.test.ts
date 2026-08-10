@@ -13,8 +13,12 @@ vi.mock('../wsl', () => ({
   getWslHomeAsync: vi.fn(async () => UBUNTU_HOME)
 }))
 
-// Only WSL UNC paths are readable; the guest Linux path is not (as on a real
-// Windows host, where it would misresolve against the current drive).
+// Only these UNC fixtures are readable. Every other `\\wsl.localhost\` path —
+// wrong distro, missing file — must reject, or the mock would mask a misresolve.
+// Non-WSL paths hit the real fs, so the guest Linux path stays unreadable as on a
+// real Windows host, where it would misresolve against the current drive.
+const READABLE_WSL_UNC_PATHS = new Set([ROLLOUT_UNC])
+
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFsPromisesModule>()
   return {
@@ -22,6 +26,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     access: async (path: string) => {
       if (!path.startsWith('\\\\wsl.localhost\\')) {
         await actual.access(path)
+        return
+      }
+      if (!READABLE_WSL_UNC_PATHS.has(path)) {
+        throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' })
       }
     }
   }
@@ -69,6 +77,14 @@ describe('resolveSessionFilePath on a Windows host with WSL', () => {
       codexSessionsDirs: []
     })
     expect(resolved).toBe(ROLLOUT_UNC)
+  })
+
+  it('does not return a UNC twin that no distro actually has', async () => {
+    const resolved = await resolveSessionFilePath('codex', 'wsl-sess', {
+      transcriptPath: '/home/ada/.codex/sessions/2026/07/24/rollout-gone.jsonl',
+      codexSessionsDirs: []
+    })
+    expect(resolved).toBeNull()
   })
 
   it('searches the WSL managed Codex sessions root when no hook path is known', async () => {

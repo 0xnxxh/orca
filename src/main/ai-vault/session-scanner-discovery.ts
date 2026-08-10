@@ -1,3 +1,4 @@
+import type { Dirent } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import type { AiVaultAgent, AiVaultScanIssue } from '../../shared/ai-vault-types'
@@ -52,12 +53,15 @@ export async function walkSessionFiles(
     // Return false to skip descending into a directory; depth 0 is a child of
     // rootDir, so pruned subtrees are never stat'd or parsed.
     directoryPredicate?: (name: string, depth: number) => boolean
+    readDirectory?: (dirPath: string) => Promise<Dirent[]>
   },
   depth = 0
 ): Promise<string[]> {
   let entries
   try {
-    entries = await readdir(dirPath, { withFileTypes: true })
+    entries = options.readDirectory
+      ? await options.readDirectory(dirPath)
+      : await readdir(dirPath, { withFileTypes: true })
   } catch {
     return []
   }
