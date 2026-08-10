@@ -895,6 +895,7 @@ const api = {
         .invoke('workspaceCleanup:scan', { ...args, scanId })
         .finally(() => ipcRenderer.removeListener('workspaceCleanup:scanProgress', listener))
     },
+    getCachedScan: () => ipcRenderer.invoke('workspaceCleanup:getCachedScan'),
     dismiss: (args) => ipcRenderer.invoke('workspaceCleanup:dismiss', args),
     clearDismissals: () => ipcRenderer.invoke('workspaceCleanup:clearDismissals'),
     hasKillableLocalProcesses: (args) =>
@@ -903,6 +904,7 @@ const api = {
 
   workspaceSpace: {
     analyze: () => ipcRenderer.invoke('workspaceSpace:analyze'),
+    getCachedAnalysis: () => ipcRenderer.invoke('workspaceSpace:getCachedAnalysis'),
     cancel: () => ipcRenderer.invoke('workspaceSpace:cancel'),
     onProgress: (callback) => {
       const listener = (

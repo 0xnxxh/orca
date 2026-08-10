@@ -11,6 +11,8 @@ const {
   analyzeWorkspaceSpaceMock,
   removeHandlerMock,
   handleMock,
+  persistAnalysisSnapshotMock,
+  readAnalysisSnapshotMock,
   WorkspaceSpaceScanCancelledErrorMock
 } = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => Promise<unknown>>()
@@ -21,6 +23,8 @@ const {
     handleMock: vi.fn((channel: string, handler: (...args: unknown[]) => Promise<unknown>) => {
       handlers.set(channel, handler)
     }),
+    persistAnalysisSnapshotMock: vi.fn(),
+    readAnalysisSnapshotMock: vi.fn(),
     WorkspaceSpaceScanCancelledErrorMock: class WorkspaceSpaceScanCancelledError extends Error {}
   }
 })
@@ -35,6 +39,11 @@ vi.mock('electron', () => ({
 vi.mock('../workspace-space-analysis', () => ({
   WorkspaceSpaceScanCancelledError: WorkspaceSpaceScanCancelledErrorMock,
   analyzeWorkspaceSpace: analyzeWorkspaceSpaceMock
+}))
+
+vi.mock('../workspace-space-analysis-snapshot', () => ({
+  persistWorkspaceSpaceAnalysisSnapshot: persistAnalysisSnapshotMock,
+  readWorkspaceSpaceAnalysisSnapshot: readAnalysisSnapshotMock
 }))
 
 import { registerWorkspaceSpaceHandlers } from './workspace-space'
@@ -68,6 +77,8 @@ function createEvent() {
 describe('registerWorkspaceSpaceHandlers', () => {
   beforeEach(() => {
     analyzeWorkspaceSpaceMock.mockReset()
+    persistAnalysisSnapshotMock.mockReset().mockResolvedValue(undefined)
+    readAnalysisSnapshotMock.mockReset().mockResolvedValue(null)
   })
 
   it('shares an in-flight analysis request', async () => {
@@ -164,5 +175,28 @@ describe('registerWorkspaceSpaceHandlers', () => {
     const analyzeHandler = handlers.get('workspaceSpace:analyze')
 
     await expect(analyzeHandler!(createEvent())).resolves.toEqual({ ok: false, cancelled: true })
+    expect(persistAnalysisSnapshotMock).not.toHaveBeenCalled()
+  })
+
+  it('persists the completed analysis snapshot', async () => {
+    const analysis = createAnalysis(7)
+    analyzeWorkspaceSpaceMock.mockResolvedValueOnce(analysis)
+
+    registerWorkspaceSpaceHandlers({} as Store)
+    const analyzeHandler = handlers.get('workspaceSpace:analyze')
+
+    await expect(analyzeHandler!(createEvent())).resolves.toEqual({ ok: true, analysis })
+    expect(persistAnalysisSnapshotMock).toHaveBeenCalledWith(analysis)
+  })
+
+  it('serves the cached analysis through getCachedAnalysis', async () => {
+    const cached = createAnalysis(3)
+    readAnalysisSnapshotMock.mockResolvedValue(cached)
+
+    registerWorkspaceSpaceHandlers({} as Store)
+    expect(removeHandlerMock).toHaveBeenCalledWith('workspaceSpace:getCachedAnalysis')
+    const cachedHandler = handlers.get('workspaceSpace:getCachedAnalysis')
+
+    await expect(cachedHandler!()).resolves.toBe(cached)
   })
 })

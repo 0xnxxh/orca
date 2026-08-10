@@ -234,6 +234,19 @@ vi.mock('../ports/advertised-url-watcher', () => ({
   }
 }))
 
+const { pruneCleanupScanSnapshotMock, pruneSpaceAnalysisSnapshotMock } = vi.hoisted(() => ({
+  pruneCleanupScanSnapshotMock: vi.fn().mockResolvedValue(undefined),
+  pruneSpaceAnalysisSnapshotMock: vi.fn().mockResolvedValue(undefined)
+}))
+
+vi.mock('../workspace-cleanup-scan-snapshot', () => ({
+  pruneWorkspaceCleanupScanSnapshot: pruneCleanupScanSnapshotMock
+}))
+
+vi.mock('../workspace-space-analysis-snapshot', () => ({
+  pruneWorkspaceSpaceAnalysisSnapshot: pruneSpaceAnalysisSnapshotMock
+}))
+
 const {
   killAllProcessesForWorktreeMock,
   clearProviderPtyStateMock,
@@ -8279,6 +8292,18 @@ describe('registerWorktreeHandlers', () => {
     expect(mainWindow.webContents.send).toHaveBeenCalledWith('worktrees:changed', {
       repoId: 'repo-1'
     })
+  })
+
+  it('prunes the persisted cleanup and space snapshots on removal', async () => {
+    mockKnownFeatureWorktree()
+    getEffectiveHooksMock.mockReturnValue(null)
+    removeWorktreeMock.mockResolvedValue({})
+
+    await handlers['worktrees:remove'](null, { worktreeId: 'repo-1::/workspace/feature-wt' })
+
+    // A removed workspace must never resurrect from the cached scan snapshots.
+    expect(pruneCleanupScanSnapshotMock).toHaveBeenCalledWith('repo-1::/workspace/feature-wt')
+    expect(pruneSpaceAnalysisSnapshotMock).toHaveBeenCalledWith('repo-1::/workspace/feature-wt')
   })
 
   it('traces the removal as worktree.remove with a stage sub-span tree', async () => {

@@ -13,6 +13,10 @@ import {
   type WorkspaceCleanupScanResult
 } from '../../shared/workspace-cleanup'
 import { scanWorkspaceCleanup } from './workspace-cleanup-scan'
+import {
+  persistWorkspaceCleanupScanResult,
+  readWorkspaceCleanupScanSnapshot
+} from '../workspace-cleanup-scan-snapshot'
 
 export { scanWorkspaceCleanup }
 
@@ -26,18 +30,28 @@ export function registerWorkspaceCleanupHandlers(
   deps: WorkspaceCleanupHandlerDeps = {}
 ): void {
   ipcMain.removeHandler('workspaceCleanup:scan')
+  ipcMain.removeHandler('workspaceCleanup:getCachedScan')
   ipcMain.removeHandler('workspaceCleanup:dismiss')
   ipcMain.removeHandler('workspaceCleanup:clearDismissals')
   ipcMain.removeHandler('workspaceCleanup:hasKillableLocalProcesses')
 
   ipcMain.handle(
     'workspaceCleanup:scan',
-    (event, args?: WorkspaceCleanupScanArgs): Promise<WorkspaceCleanupScanResult> =>
-      scanWorkspaceCleanup(store, args ?? {}, {
+    async (event, args?: WorkspaceCleanupScanArgs): Promise<WorkspaceCleanupScanResult> => {
+      const result = await scanWorkspaceCleanup(store, args ?? {}, {
         onProgress: args?.scanId
           ? (progress) => event.sender.send('workspaceCleanup:scanProgress', progress)
           : undefined
       })
+      // Fire-and-forget: snapshot persistence must never delay or fail the scan reply.
+      void persistWorkspaceCleanupScanResult(args ?? {}, result)
+      return result
+    }
+  )
+
+  ipcMain.handle(
+    'workspaceCleanup:getCachedScan',
+    (): Promise<WorkspaceCleanupScanResult | null> => readWorkspaceCleanupScanSnapshot()
   )
 
   ipcMain.handle('workspaceCleanup:dismiss', (_event, args: WorkspaceCleanupDismissArgs) => {

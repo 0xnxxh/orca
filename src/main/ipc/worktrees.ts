@@ -19,6 +19,8 @@ import { getProjectGroupSubtreeIds } from '../../shared/project-groups'
 import { projectResolvedWorktreeLineage } from '../../shared/resolved-worktree-lineage'
 import { isPathInsideOrEqual, isWindowsAbsolutePathLike } from '../../shared/cross-platform-path'
 import { deleteWorktreeHistoryDir } from '../terminal-history-deletion'
+import { pruneWorkspaceCleanupScanSnapshot } from '../workspace-cleanup-scan-snapshot'
+import { pruneWorkspaceSpaceAnalysisSnapshot } from '../workspace-space-analysis-snapshot'
 import type {
   AutomationWorkspaceProvenance,
   CliWorkspaceProvenance,
@@ -336,6 +338,9 @@ function removeWorktreeMetadataAndTransientState(
   deleteWorktreeHistoryDir(worktreeId)
   // Why: release the removed worktree's PR-refresh aliases so coalesced queue entries don't retain it all session (memory creep).
   pruneWorktreePRRefreshAliases(worktreeId)
+  // Why: removed workspaces must never resurrect from the persisted cleanup/space scan snapshots.
+  void pruneWorkspaceCleanupScanSnapshot(worktreeId)
+  void pruneWorkspaceSpaceAnalysisSnapshot(worktreeId)
 }
 
 function getProjectHostSetupMetaUpdates(

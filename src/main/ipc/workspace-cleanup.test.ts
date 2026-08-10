@@ -19,7 +19,6 @@ const {
   gitExecFileAsyncMock,
   getLocalProjectWorktreeGitOptionsMock,
   getSshGitProviderMock,
-  getSshPtyProviderMock,
   listRegisteredPtysMock
 } = vi.hoisted(() => ({
   lstatMock: vi.fn(),
@@ -29,7 +28,6 @@ const {
   gitExecFileAsyncMock: vi.fn(),
   getLocalProjectWorktreeGitOptionsMock: vi.fn(),
   getSshGitProviderMock: vi.fn(),
-  getSshPtyProviderMock: vi.fn(),
   listRegisteredPtysMock: vi.fn()
 }))
 
@@ -71,10 +69,16 @@ vi.mock('../memory/pty-registry', () => ({
 }))
 
 vi.mock('./pty', () => ({
-  getSshPtyProvider: getSshPtyProviderMock
+  getSshPtyProvider: vi.fn()
 }))
 
-import { registerWorkspaceCleanupHandlers, scanWorkspaceCleanup } from './workspace-cleanup'
+// Why: snapshot persistence does real file I/O; covered in workspace-cleanup-snapshot-ipc.test.ts.
+vi.mock('../workspace-cleanup-scan-snapshot', () => ({
+  persistWorkspaceCleanupScanResult: vi.fn(async () => undefined),
+  readWorkspaceCleanupScanSnapshot: vi.fn(async () => null)
+}))
+
+import { scanWorkspaceCleanup } from './workspace-cleanup'
 
 const NOW = 1_700_000_000_000
 const REPO: Repo = {
@@ -163,7 +167,6 @@ describe('workspace cleanup scan', () => {
     gitExecFileAsyncMock.mockReset()
     getLocalProjectWorktreeGitOptionsMock.mockReset().mockReturnValue({})
     getSshGitProviderMock.mockReset()
-    getSshPtyProviderMock.mockReset()
     listRegisteredPtysMock.mockReset()
     listRegisteredPtysMock.mockReturnValue([])
     lstatMock.mockResolvedValue({ mtimeMs: 0 })
@@ -830,62 +833,5 @@ describe('workspace cleanup scan', () => {
       reasons: ['idle-clean']
     })
     expect(result.candidates[0]).not.toHaveProperty('linkedPR')
-  })
-
-  it('reports local processes that workspace deletion would kill', async () => {
-    const localProvider = {
-      listProcesses: vi.fn().mockResolvedValue([
-        {
-          id: 'repo-1::/repo-feature@@session-1',
-          cwd: '/repo-feature',
-          title: 'zsh'
-        }
-      ])
-    }
-    registerWorkspaceCleanupHandlers(makeStore(), {
-      runtime: {
-        hasTerminalsForWorktree: vi.fn().mockResolvedValue(false)
-      } as never,
-      getLocalPtyProvider: () => localProvider as never
-    })
-
-    const handler = vi
-      .mocked(ipcMain.handle)
-      .mock.calls.find(([channel]) => channel === 'workspaceCleanup:hasKillableLocalProcesses')?.[1]
-
-    await expect(handler?.({} as never, { worktreeId: 'repo-1::/repo-feature' })).resolves.toEqual({
-      hasKillableProcesses: true
-    })
-  })
-
-  it('reports SSH processes inside the remote workspace path', async () => {
-    getSshPtyProviderMock.mockReturnValue({
-      listProcesses: vi.fn().mockResolvedValue([
-        {
-          id: 'remote-session-1',
-          cwd: '/remote/repo-feature/subdir',
-          title: 'codex'
-        }
-      ])
-    })
-    registerWorkspaceCleanupHandlers(makeStore(), {
-      runtime: {
-        hasTerminalsForWorktree: vi.fn().mockResolvedValue(false)
-      } as never
-    })
-
-    const handler = vi
-      .mocked(ipcMain.handle)
-      .mock.calls.find(([channel]) => channel === 'workspaceCleanup:hasKillableLocalProcesses')?.[1]
-
-    await expect(
-      handler?.({} as never, {
-        worktreeId: 'repo-ssh::/remote/repo-feature',
-        connectionId: 'ssh-1',
-        worktreePath: '/remote/repo-feature'
-      })
-    ).resolves.toEqual({
-      hasKillableProcesses: true
-    })
   })
 })

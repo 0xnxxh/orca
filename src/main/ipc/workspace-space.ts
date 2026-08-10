@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import type { Store } from '../persistence'
 import type {
+  WorkspaceSpaceAnalysis,
   WorkspaceSpaceAnalyzeResult,
   WorkspaceSpaceScanProgress
 } from '../../shared/workspace-space-types'
@@ -8,6 +9,10 @@ import {
   analyzeWorkspaceSpace,
   WorkspaceSpaceScanCancelledError
 } from '../workspace-space-analysis'
+import {
+  persistWorkspaceSpaceAnalysisSnapshot,
+  readWorkspaceSpaceAnalysisSnapshot
+} from '../workspace-space-analysis-snapshot'
 
 const PROGRESS_EMIT_INTERVAL_MS = 100
 
@@ -22,6 +27,7 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
   let inFlightScan: InFlightWorkspaceSpaceScan | null = null
   ipcMain.removeHandler('workspaceSpace:cancel')
   ipcMain.removeHandler('workspaceSpace:analyze')
+  ipcMain.removeHandler('workspaceSpace:getCachedAnalysis')
   ipcMain.handle('workspaceSpace:analyze', async (event): Promise<WorkspaceSpaceAnalyzeResult> => {
     if (!inFlightScan) {
       const controller = new AbortController()
@@ -78,7 +84,12 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
           sendProgress(progress)
         }
       })
-        .then((analysis): WorkspaceSpaceAnalyzeResult => ({ ok: true, analysis }))
+        .then((analysis): WorkspaceSpaceAnalyzeResult => {
+          // Fire-and-forget: a ~6-minute cold analysis must survive reload/restart, but
+          // persistence must never delay or fail the reply.
+          void persistWorkspaceSpaceAnalysisSnapshot(analysis)
+          return { ok: true, analysis }
+        })
         .catch((error: unknown): WorkspaceSpaceAnalyzeResult => {
           if (error instanceof WorkspaceSpaceScanCancelledError) {
             return { ok: false, cancelled: true }
@@ -91,6 +102,11 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
     }
     return inFlightScan.promise
   })
+
+  ipcMain.handle(
+    'workspaceSpace:getCachedAnalysis',
+    (): Promise<WorkspaceSpaceAnalysis | null> => readWorkspaceSpaceAnalysisSnapshot()
+  )
 
   ipcMain.handle('workspaceSpace:cancel', async (): Promise<boolean> => {
     if (!inFlightScan || inFlightScan.controller.signal.aborted) {

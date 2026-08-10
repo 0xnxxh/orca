@@ -466,6 +466,7 @@ import type {
   SpeechTranscriptEvent
 } from '../shared/speech-types'
 import type {
+  WorkspaceSpaceAnalysis,
   WorkspaceSpaceAnalyzeResult,
   WorkspaceSpaceScanProgress
 } from '../shared/workspace-space-types'
@@ -1506,6 +1507,8 @@ export type PreloadApi = {
       args?: WorkspaceCleanupScanArgs,
       onProgress?: (progress: WorkspaceCleanupScanProgress) => void
     ) => Promise<WorkspaceCleanupScanResult>
+    /** Last persisted broad-scan snapshot; null until one completes or when the cache is stale/corrupt. */
+    getCachedScan: () => Promise<WorkspaceCleanupScanResult | null>
     dismiss: (args: WorkspaceCleanupDismissArgs) => Promise<void>
     clearDismissals: () => Promise<void>
     hasKillableLocalProcesses: (
@@ -1514,6 +1517,8 @@ export type PreloadApi = {
   }
   workspaceSpace: {
     analyze: () => Promise<WorkspaceSpaceAnalyzeResult>
+    /** Last persisted analysis (topLevelItems pruned to bound the payload); null until one completes. */
+    getCachedAnalysis: () => Promise<WorkspaceSpaceAnalysis | null>
     cancel: () => Promise<boolean>
     onProgress: (callback: (progress: WorkspaceSpaceScanProgress) => void) => () => void
   }
