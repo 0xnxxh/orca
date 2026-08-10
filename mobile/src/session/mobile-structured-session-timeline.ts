@@ -3,7 +3,10 @@ import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import type { MobileStructuredPromptItem } from './MobileStructuredPromptCard'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
 import type { MobileStructuredOutboxEntry } from './mobile-structured-outbox-store'
-import { projectStructuredItemToNativeChat } from './mobile-structured-agent-session-projection'
+import {
+  activeStructuredAgentSessionTurnId,
+  projectStructuredItemToNativeChat
+} from '../../../src/shared/structured-agent-session-projection'
 
 export type MobileStructuredTimelineRow =
   | {
@@ -65,13 +68,7 @@ export function buildMobileStructuredTimeline(
 export function activeMobileStructuredTurnId(
   items: readonly AgentJournalRenderItem[]
 ): string | null {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const body = items[index]?.body
-    if (body?.kind === 'status' && body.turnLifecycle?.state === 'running') {
-      return body.turnLifecycle.turnId
-    }
-  }
-  return null
+  return activeStructuredAgentSessionTurnId(items)
 }
 
 export function mobileStructuredOutboxText(entry: MobileStructuredOutboxEntry): string {

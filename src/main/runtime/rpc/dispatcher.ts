@@ -40,7 +40,13 @@ export class RpcDispatcher {
     this.legacyOrchestration = new OrchestrationLegacyCompatibility(runtime)
   }
 
-  async dispatch(request: RpcRequest, options?: { signal?: AbortSignal }): Promise<RpcResponse> {
+  async dispatch(
+    request: RpcRequest,
+    options?: Pick<
+      RpcDispatchStreamingOptions,
+      'signal' | 'clientId' | 'clientKind' | 'clientCapabilities'
+    >
+  ): Promise<RpcResponse> {
     const meta = this.meta()
     const method = this.registry.get(request.method)
     if (!method) {
@@ -94,6 +100,9 @@ export class RpcDispatcher {
           runtime: this.runtime,
           signal: options?.signal,
           requestId: request.id,
+          clientId: options?.clientId,
+          clientKind: options?.clientKind,
+          clientCapabilities: options?.clientCapabilities,
           orchestrationCapability: request.orchestrationCapability,
           authenticatedCallerFingerprint:
             mutation?.identity.callerFingerprint ?? authenticatedCallerFingerprint(request),

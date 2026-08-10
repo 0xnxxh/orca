@@ -416,7 +416,12 @@ function collapseGroupLayout(
 }
 
 function toVisibleTabType(contentType: TabContentType): WorkspaceVisibleTabType {
-  if (contentType === 'browser' || contentType === 'terminal' || contentType === 'simulator') {
+  if (
+    contentType === 'agent-session' ||
+    contentType === 'browser' ||
+    contentType === 'terminal' ||
+    contentType === 'simulator'
+  ) {
     return contentType
   }
   return 'editor'

@@ -11,6 +11,7 @@ import {
 import { agentProviderSessionsEqual } from '../../../shared/agent-session-resume'
 import type {
   RuntimeMobileSessionTabsResult,
+  RuntimeMobileSessionAgentTab,
   RuntimeMobileSessionBrowserTab,
   RuntimeMobileSessionFileTab,
   RuntimeMobileSessionMarkdownTab,
@@ -110,6 +111,11 @@ type TerminalSurface = RuntimeMobileSessionTerminalClientTab
 type ReadyTerminalSurface = RuntimeMobileSessionTerminalClientTab & { status: 'ready' }
 type ReadyBrowserSurface = RuntimeMobileSessionBrowserTab & { browserPageId: string }
 type ReadyEditorSurface = RuntimeMobileSessionMarkdownTab | RuntimeMobileSessionFileTab
+
+type MirroredAgentTab = {
+  hostTabId: string
+  unifiedTab: Tab
+}
 
 type MirroredTerminalTab = {
   tab: TerminalTab
@@ -440,6 +446,45 @@ function isReadyEditorTab(
   tab: RuntimeMobileSessionTabsResult['tabs'][number]
 ): tab is ReadyEditorSurface {
   return tab.type === 'markdown' || tab.type === 'file'
+}
+
+function isAgentSessionTab(
+  tab: RuntimeMobileSessionTabsResult['tabs'][number]
+): tab is RuntimeMobileSessionAgentTab {
+  return tab.type === 'agent-session'
+}
+
+function buildMirroredAgentTabs(
+  snapshot: RuntimeMobileSessionTabsResult,
+  hostGroupIdByTabId: ReadonlyMap<string, string>,
+  fallbackGroupId: string,
+  sortOffset: number,
+  currentUnifiedTabs: readonly Tab[],
+  now: number
+): MirroredAgentTab[] {
+  return snapshot.tabs.filter(isAgentSessionTab).map((tab, index) => {
+    const localId = `structured-agent-session-${tab.sessionId}`
+    const existing = currentUnifiedTabs.find(
+      (candidate) => candidate.contentType === 'agent-session' && candidate.id === localId
+    )
+    return {
+      hostTabId: tab.id,
+      unifiedTab: {
+        id: localId,
+        entityId: tab.sessionId,
+        groupId: hostGroupIdByTabId.get(tab.id) ?? fallbackGroupId,
+        worktreeId: snapshot.worktree,
+        contentType: 'agent-session',
+        agentSessionAgent: tab.agent,
+        label: tab.title.trim() || 'Codex Chat',
+        customLabel: null,
+        color: tab.color !== undefined ? tab.color : (existing?.color ?? null),
+        sortOrder: sortOffset + index,
+        createdAt: existing?.createdAt ?? now + sortOffset + index,
+        isPinned: tab.isPinned !== undefined ? tab.isPinned : existing?.isPinned === true
+      }
+    }
+  })
 }
 
 function localEditorFileId(tab: ReadyEditorSurface): string {
@@ -1251,12 +1296,14 @@ function buildHostToLocalTabIdMap({
   terminalSurfaces,
   terminalTabs,
   browserTabs,
-  editorTabs
+  editorTabs,
+  agentTabs
 }: {
   terminalSurfaces: readonly TerminalSurface[]
   terminalTabs: readonly TerminalTab[]
   browserTabs: readonly MirroredBrowserTab[]
   editorTabs: readonly MirroredEditorTab[]
+  agentTabs: readonly MirroredAgentTab[]
 }): Map<string, string> {
   const hostToLocal = new Map<string, string>()
   const terminalIds = new Set(terminalTabs.map((tab) => tab.id))
@@ -1274,6 +1321,9 @@ function buildHostToLocalTabIdMap({
   for (const entry of editorTabs) {
     hostToLocal.set(entry.hostTabId, entry.unifiedTab.id)
   }
+  for (const entry of agentTabs) {
+    hostToLocal.set(entry.hostTabId, entry.unifiedTab.id)
+  }
   return hostToLocal
 }
 
@@ -1284,6 +1334,7 @@ function updateHostSessionTabIdMappings(args: {
   terminalTabs: readonly TerminalTab[]
   browserTabs: readonly MirroredBrowserTab[]
   editorTabs: readonly MirroredEditorTab[]
+  agentTabs: readonly MirroredAgentTab[]
 }): void {
   const keyPrefix = `${args.environmentId}:${args.worktreeId}:`
   for (const key of hostSessionTabIdByLocalKey.keys()) {
@@ -1309,6 +1360,12 @@ function updateHostSessionTabIdMappings(args: {
     )
   }
   for (const entry of args.editorTabs) {
+    hostSessionTabIdByLocalKey.set(
+      hostSessionTabMappingKey({ ...args, tabId: entry.unifiedTab.id }),
+      entry.hostTabId
+    )
+  }
+  for (const entry of args.agentTabs) {
     hostSessionTabIdByLocalKey.set(
       hostSessionTabMappingKey({ ...args, tabId: entry.unifiedTab.id }),
       entry.hostTabId
@@ -1676,6 +1733,7 @@ function tabEqual(a: Tab, b: Tab): boolean {
     a.groupId === b.groupId &&
     a.worktreeId === b.worktreeId &&
     a.contentType === b.contentType &&
+    a.agentSessionAgent === b.agentSessionAgent &&
     a.label === b.label &&
     // Why: the generated label is the visible tab title; ignoring it let the
     // equality bail keep a unified tab that disagreed with its terminal tab.
@@ -1721,6 +1779,9 @@ function sameGroups(a: readonly TabGroup[] | undefined, b: readonly TabGroup[] |
 }
 
 function toVisibleTabType(tab: Tab): WebSessionTabsSyncState['activeTabType'] {
+  if (tab.contentType === 'agent-session') {
+    return 'agent-session'
+  }
   if (tab.contentType === 'browser' || tab.contentType === 'terminal') {
     return tab.contentType
   }
@@ -1759,6 +1820,9 @@ function findCurrentVisibleUnifiedTabId(args: {
       nextUnifiedTabs.find((tab) => tab.contentType === 'editor' && tab.entityId === fileId)?.id ??
       null
     )
+  }
+  if (currentVisibleType === 'agent-session') {
+    return nextUnifiedTabs.find((tab) => tab.contentType === 'agent-session')?.id ?? null
   }
   return null
 }
@@ -1898,6 +1962,7 @@ export function applyWebSessionTabsSnapshot(
 
   const targetGroupId = chooseTargetGroupId(state, snapshot)
   const hostGroupIdByTabId = buildHostGroupIdByTabId(snapshot.tabGroups)
+  const currentUnifiedTabs = state.unifiedTabsByWorktree[worktreeId] ?? []
   const readyBrowserTabs = snapshot.tabs.filter(isReadyBrowserTab)
   const nextRemoteBrowserPageIds = new Set(readyBrowserTabs.map((tab) => tab.browserPageId))
   const mirroredBrowserTabs = buildMirroredBrowserTabs(
@@ -1949,6 +2014,14 @@ export function applyWebSessionTabsSnapshot(
     mirroredTerminalTabEntries.length + mirroredBrowserTabs.length,
     now
   )
+  const mirroredAgentTabs = buildMirroredAgentTabs(
+    snapshot,
+    hostGroupIdByTabId,
+    targetGroupId,
+    mirroredTerminalTabEntries.length + mirroredBrowserTabs.length + mirroredEditorTabs.length,
+    currentUnifiedTabs,
+    now
+  )
   const mirroredEditorFileIds = new Set(mirroredEditorTabs.map((entry) => entry.file.id))
   const mirroredEditorHostTabIds = new Set(mirroredEditorTabs.map((entry) => entry.hostTabId))
   const removedEditorFileIds = new Set(
@@ -1976,8 +2049,10 @@ export function applyWebSessionTabsSnapshot(
     const next = [...retained, ...mirroredEditorTabs.map((entry) => entry.file)]
     return sameOpenFiles(state.openFiles, next) ? state.openFiles : next
   })()
-  const currentUnifiedTabs = state.unifiedTabsByWorktree[worktreeId] ?? []
   const retainedUnifiedTabs = currentUnifiedTabs.filter((tab) => {
+    if (tab.contentType === 'agent-session') {
+      return false
+    }
     if (tab.contentType === 'browser') {
       return (
         !removedBrowserWorkspaceIds.has(tab.entityId) &&
@@ -2013,10 +2088,12 @@ export function applyWebSessionTabsSnapshot(
   )
   const mirroredBrowserUnifiedTabs = mirroredBrowserTabs.map((entry) => entry.unifiedTab)
   const mirroredEditorUnifiedTabs = mirroredEditorTabs.map((entry) => entry.unifiedTab)
+  const mirroredAgentUnifiedTabs = mirroredAgentTabs.map((entry) => entry.unifiedTab)
   const mirroredUnifiedTabs = [
     ...mirroredTerminalUnifiedTabs,
     ...mirroredBrowserUnifiedTabs,
-    ...mirroredEditorUnifiedTabs
+    ...mirroredEditorUnifiedTabs,
+    ...mirroredAgentUnifiedTabs
   ]
   const nextUnifiedTabs =
     retainedUnifiedTabs.length + mirroredUnifiedTabs.length > 0
@@ -2054,6 +2131,14 @@ export function applyWebSessionTabsSnapshot(
     : null
   const activeMirroredEditorFileId = activeMirroredEditor?.file.id ?? null
   const activeMirroredEditorTabId = activeMirroredEditor?.unifiedTab.id ?? null
+  const activeHostAgent =
+    snapshot.tabs
+      .filter(isAgentSessionTab)
+      .find((tab) => tab.id === snapshot.activeTabId || tab.isActive) ?? null
+  const activeMirroredAgentTabId = activeHostAgent
+    ? (mirroredAgentTabs.find((entry) => entry.hostTabId === activeHostAgent.id)?.unifiedTab.id ??
+      null)
+    : null
   const intentMirroredTerminalId =
     navigationIntentTab?.type === 'terminal'
       ? toWebTerminalSurfaceTabId(navigationIntentTab.parentTabId)
@@ -2069,6 +2154,10 @@ export function applyWebSessionTabsSnapshot(
   const intentMirroredEditor =
     navigationIntentTab?.type === 'markdown' || navigationIntentTab?.type === 'file'
       ? (mirroredEditorTabs.find((entry) => entry.hostTabId === navigationIntentTab.id) ?? null)
+      : null
+  const intentMirroredAgent =
+    navigationIntentTab?.type === 'agent-session'
+      ? (mirroredAgentTabs.find((entry) => entry.hostTabId === navigationIntentTab.id) ?? null)
       : null
   const currentActiveTerminalStillExists =
     state.activeTabIdByWorktree[worktreeId] &&
@@ -2132,30 +2221,35 @@ export function applyWebSessionTabsSnapshot(
       ? (intentMirroredBrowser?.unifiedTab.id ?? null)
       : navigationIntentTab?.type === 'terminal'
         ? intentTerminalId
-        : navigationIntentTab?.type === 'markdown' || navigationIntentTab?.type === 'file'
-          ? (intentMirroredEditor?.unifiedTab.id ?? null)
-          : null
+        : navigationIntentTab?.type === 'agent-session'
+          ? (intentMirroredAgent?.unifiedTab.id ?? null)
+          : navigationIntentTab?.type === 'markdown' || navigationIntentTab?.type === 'file'
+            ? (intentMirroredEditor?.unifiedTab.id ?? null)
+            : null
     : null
   const nextActiveUnifiedTabId =
     intentUnifiedTabId ??
     currentVisibleUnifiedTabId ??
-    (snapshot.activeTabType === 'browser'
-      ? (activeMirroredBrowserTabId ??
-        mirroredBrowserTabs[0]?.unifiedTab.id ??
-        state.activeTabIdByWorktree[worktreeId] ??
-        nextActiveTerminalId)
-      : snapshot.activeTabType === 'markdown' || snapshot.activeTabType === 'file'
-        ? (activeMirroredEditorTabId ??
-          mirroredEditorTabs[0]?.unifiedTab.id ??
+    (snapshot.activeTabType === 'agent-session'
+      ? (activeMirroredAgentTabId ?? mirroredAgentUnifiedTabs[0]?.id ?? nextActiveTerminalId)
+      : snapshot.activeTabType === 'browser'
+        ? (activeMirroredBrowserTabId ??
+          mirroredBrowserTabs[0]?.unifiedTab.id ??
           state.activeTabIdByWorktree[worktreeId] ??
           nextActiveTerminalId)
-        : nextActiveTerminalId)
+        : snapshot.activeTabType === 'markdown' || snapshot.activeTabType === 'file'
+          ? (activeMirroredEditorTabId ??
+            mirroredEditorTabs[0]?.unifiedTab.id ??
+            state.activeTabIdByWorktree[worktreeId] ??
+            nextActiveTerminalId)
+          : nextActiveTerminalId)
   const mirroredUnifiedIds = new Set(mirroredUnifiedTabs.map((tab) => tab.id))
   const hostToLocalTabId = buildHostToLocalTabIdMap({
     terminalSurfaces: terminalSurfaceTabs,
     terminalTabs: mirroredTerminalTabEntries,
     browserTabs: mirroredBrowserTabs,
-    editorTabs: mirroredEditorTabs
+    editorTabs: mirroredEditorTabs,
+    agentTabs: mirroredAgentTabs
   })
   updateHostSessionTabIdMappings({
     environmentId,
@@ -2163,7 +2257,8 @@ export function applyWebSessionTabsSnapshot(
     terminalSurfaces: terminalSurfaceTabs,
     terminalTabs: mirroredTerminalTabEntries,
     browserTabs: mirroredBrowserTabs,
-    editorTabs: mirroredEditorTabs
+    editorTabs: mirroredEditorTabs,
+    agentTabs: mirroredAgentTabs
   })
 
   const currentGroups = state.groupsByWorktree[worktreeId] ?? []
@@ -2492,32 +2587,42 @@ export function applyWebSessionTabsSnapshot(
       : state.activeFileIdByWorktree
   const isActiveWorktree = state.activeWorktreeId === worktreeId
   const focusIntentVisibleTabType =
-    navigationIntentTab?.type === 'browser' && intentBrowserWorkspaceId
-      ? ('browser' as const)
-      : navigationIntentTab?.type === 'terminal' && intentTerminalId
-        ? ('terminal' as const)
-        : intentEditorFileId
-          ? ('editor' as const)
-          : null
+    navigationIntentTab?.type === 'agent-session' && intentMirroredAgent
+      ? ('agent-session' as const)
+      : navigationIntentTab?.type === 'browser' && intentBrowserWorkspaceId
+        ? ('browser' as const)
+        : navigationIntentTab?.type === 'terminal' && intentTerminalId
+          ? ('terminal' as const)
+          : intentEditorFileId
+            ? ('editor' as const)
+            : null
   const snapshotVisibleTabType =
-    snapshot.activeTabType === 'browser' && nextActiveBrowserWorkspaceId
-      ? ('browser' as const)
-      : snapshot.activeTabType === 'terminal' && nextActiveTerminalId
-        ? ('terminal' as const)
-        : (snapshot.activeTabType === 'markdown' || snapshot.activeTabType === 'file') &&
-            nextActiveEditorFileId
-          ? ('editor' as const)
-          : null
+    snapshot.activeTabType === 'agent-session' && activeMirroredAgentTabId
+      ? ('agent-session' as const)
+      : snapshot.activeTabType === 'browser' && nextActiveBrowserWorkspaceId
+        ? ('browser' as const)
+        : snapshot.activeTabType === 'terminal' && nextActiveTerminalId
+          ? ('terminal' as const)
+          : (snapshot.activeTabType === 'markdown' || snapshot.activeTabType === 'file') &&
+              nextActiveEditorFileId
+            ? ('editor' as const)
+            : null
   const currentVisibleTabType =
     state.activeTabTypeByWorktree[worktreeId] ?? (isActiveWorktree ? state.activeTabType : null)
   const currentVisibleTabTypeStillValid =
-    currentVisibleTabType === 'browser' && currentActiveBrowserStillExists
-      ? ('browser' as const)
-      : currentVisibleTabType === 'editor' && currentActiveEditorStillExists
-        ? ('editor' as const)
-        : currentVisibleTabType === 'terminal' && currentActiveTerminalStillExists
-          ? ('terminal' as const)
-          : null
+    currentVisibleTabType === 'agent-session' &&
+    currentVisibleUnifiedTabId &&
+    nextUnifiedTabs?.some(
+      (tab) => tab.id === currentVisibleUnifiedTabId && tab.contentType === 'agent-session'
+    )
+      ? ('agent-session' as const)
+      : currentVisibleTabType === 'browser' && currentActiveBrowserStillExists
+        ? ('browser' as const)
+        : currentVisibleTabType === 'editor' && currentActiveEditorStillExists
+          ? ('editor' as const)
+          : currentVisibleTabType === 'terminal' && currentActiveTerminalStillExists
+            ? ('terminal' as const)
+            : null
   const activeUnifiedTab =
     nextActiveUnifiedTabId && nextUnifiedTabs
       ? (nextUnifiedTabs.find((tab) => tab.id === nextActiveUnifiedTabId) ?? null)

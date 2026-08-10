@@ -129,6 +129,7 @@ type TabBarProps = {
   onTogglePaneExpand: (tabId: string) => void
   editorFiles?: (OpenFile & { tabId?: string })[]
   browserTabs?: (BrowserTabState & { tabId?: string })[]
+  agentSessionTabs?: (Tab & { contentType: 'agent-session' })[]
   activeFileId?: string | null
   activeBrowserTabId?: string | null
   activeSimulatorTabId?: string | null
@@ -136,6 +137,7 @@ type TabBarProps = {
   onActivateFile?: (fileId: string) => void
   onCloseFile?: (fileId: string) => void
   onActivateBrowserTab?: (tabId: string) => void
+  onActivateAgentSession?: (tabId: string) => void
   onCloseBrowserTab?: (tabId: string) => void
   onDuplicateBrowserTab?: (tabId: string) => void
   onCloseAllFiles?: () => void
@@ -170,6 +172,13 @@ type TabItem =
       data: BrowserTabState & { tabId?: string }
     }
   | {
+      type: 'agent-session'
+      id: string
+      unifiedTabId: string
+      isPinned: boolean
+      data: Tab & { contentType: 'agent-session' }
+    }
+  | {
       type: 'simulator'
       id: string
       unifiedTabId: string
@@ -184,7 +193,7 @@ function getTabDragLabel(item: TabItem, generatedTitlesEnabled: boolean): string
   if (item.type === 'browser') {
     return getBrowserTabLabel(item.data)
   }
-  if (item.type === 'simulator') {
+  if (item.type === 'simulator' || item.type === 'agent-session') {
     return item.data.label || 'Mobile Emulator'
   }
   return getEditorDisplayLabel(item.data)
@@ -255,6 +264,7 @@ function TabBarInner({
   onTogglePaneExpand,
   editorFiles,
   browserTabs,
+  agentSessionTabs,
   activeFileId,
   activeBrowserTabId,
   activeSimulatorTabId,
@@ -262,6 +272,7 @@ function TabBarInner({
   onActivateFile,
   onCloseFile,
   onActivateBrowserTab,
+  onActivateAgentSession,
   onCloseBrowserTab,
   onDuplicateBrowserTab,
   onCloseAllFiles,
@@ -815,6 +826,14 @@ function TabBarInner({
         .map((t) => t.id),
     [unifiedTabs, resolvedGroupId]
   )
+  const agentSessionTabIds = useMemo(
+    () => agentSessionTabs?.map((tab) => tab.id) ?? [],
+    [agentSessionTabs]
+  )
+  const agentSessionMap = useMemo(
+    () => new Map((agentSessionTabs ?? []).map((tab) => [tab.id, tab])),
+    [agentSessionTabs]
+  )
 
   // Build the unified ordered list, reconciling stored order with current items
   const orderedItems = useMemo(() => {
@@ -823,7 +842,8 @@ function TabBarInner({
       terminalIds,
       editorFileIds,
       browserTabIds,
-      simulatorTabIds
+      simulatorTabIds,
+      agentSessionTabIds
     )
     const items: TabItem[] = []
     for (const id of ids) {
@@ -874,6 +894,16 @@ function TabBarInner({
         })
         continue
       }
+      const agentSession = agentSessionMap.get(id)
+      if (agentSession) {
+        items.push({
+          type: 'agent-session',
+          id,
+          unifiedTabId: agentSession.id,
+          isPinned: agentSession.isPinned === true,
+          data: agentSession
+        })
+      }
     }
     return items
   }, [
@@ -882,9 +912,11 @@ function TabBarInner({
     editorFileIds,
     browserTabIds,
     simulatorTabIds,
+    agentSessionTabIds,
     terminalMap,
     editorMap,
     browserMap,
+    agentSessionMap,
     unifiedTabByVisibleId
   ])
 
@@ -915,6 +947,9 @@ function TabBarInner({
       }
       if (item.type === 'simulator') {
         return activeTabType === 'simulator' && item.id === activeSimulatorTabId
+      }
+      if (item.type === 'agent-session') {
+        return activeTabType === 'agent-session' && item.id === activeTabId
       }
       return (
         (activeTabType === 'editor' || activeTabType === 'simulator') && activeFileId === item.id
@@ -1092,6 +1127,45 @@ function TabBarInner({
                     onSetTabColor={onSetTabColor}
                     onTogglePin={() => togglePinned(item)}
                     onToggleExpand={onTogglePaneExpand}
+                    dragData={dragData}
+                    dropIndicator={dropIndicatorByVisibleId.get(item.id) ?? null}
+                    includeTopTabBorder={includeTopTabBorder}
+                  />
+                )
+              }
+              if (item.type === 'agent-session') {
+                const structuredTab: TerminalTab = {
+                  id: item.id,
+                  ptyId: null,
+                  worktreeId,
+                  title: item.data.label,
+                  customTitle: item.data.customLabel,
+                  color: item.data.color,
+                  sortOrder: item.data.sortOrder,
+                  createdAt: item.data.createdAt,
+                  launchAgent: (item.data.agentSessionAgent ?? 'codex') as TuiAgent
+                }
+                return (
+                  <SortableTab
+                    key={item.id}
+                    tab={structuredTab}
+                    unifiedTabId={item.unifiedTabId}
+                    groupId={resolvedGroupId}
+                    tabCount={orderedItems.length}
+                    hasTabsToRight={index < orderedItems.length - 1}
+                    hasTabsToLeft={index > 0}
+                    isActive={activeTabType === 'agent-session' && item.id === activeTabId}
+                    isPinned={item.isPinned}
+                    isExpanded={false}
+                    onActivate={() => onActivateAgentSession?.(item.id)}
+                    onClose={() => onClose(item.id)}
+                    onCloseOthers={() => onCloseOthers(item.id)}
+                    onCloseToRight={() => onCloseToRight(item.id)}
+                    onCloseToLeft={() => onCloseToLeft(item.id)}
+                    onSetCustomTitle={onSetCustomTitle}
+                    onSetTabColor={onSetTabColor}
+                    onTogglePin={() => togglePinned(item)}
+                    onToggleExpand={() => {}}
                     dragData={dragData}
                     dropIndicator={dropIndicatorByVisibleId.get(item.id) ?? null}
                     includeTopTabBorder={includeTopTabBorder}

@@ -113,6 +113,8 @@ import {
   setRuntimeGraphSyncEnabled
 } from './runtime/sync-runtime-graph'
 import { useWebSessionTabsSync } from './runtime/web-session-tabs-sync'
+import { useLocalStructuredSessionTabsSync } from './runtime/local-structured-session-tabs-sync'
+import { StructuredAgentSessionStatusBridge } from './components/native-chat/StructuredAgentSessionStatusBridge'
 import { useGlobalFileDrop } from './hooks/useGlobalFileDrop'
 import { MacosTccPromptNoticeHost } from './hooks/MacosTccPromptNoticeHost'
 import { useRadixBodyPointerEventsRecovery } from './hooks/useRadixBodyPointerEventsRecovery'
@@ -445,6 +447,7 @@ function App(): React.JSX.Element {
   const clearUnreadDockBadge = useUnreadDockBadge()
   useRadixBodyPointerEventsRecovery()
   useWebSessionTabsSync()
+  useLocalStructuredSessionTabsSync()
   // Why restored: leaving the panel closed forces the user to reopen and re-maximize it,
   // and that size jump reflows a live TUI's buffer (see floating-terminal-panel-view-state).
   const [floatingTerminalOpen, setFloatingTerminalOpen] = useState(
@@ -2252,6 +2255,7 @@ function App(): React.JSX.Element {
             <MacosTccPromptNoticeHost />
             {/* Why: leaf-mounted retention sync keeps agent-status subscriptions out of the App render tree. */}
             <RetainedAgentsSyncGate />
+            <StructuredAgentSessionStatusBridge />
             <AiVaultTabTitleSyncGate />
             {settings?.experimentalAgentDashboardPopout === true ? (
               <Suspense fallback={null}>

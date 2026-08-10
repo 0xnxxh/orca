@@ -5,15 +5,16 @@ import type {
   AgentSessionSubscribeEvent
 } from '../../../src/shared/agent-session-wire'
 import type { AgentJournalCursor } from '../../../src/shared/agent-session-journal-types'
-import type { RpcClient } from '../transport/rpc-client'
-import { createMobileStructuredEventCoalescer } from './mobile-structured-agent-session-coalescer'
-import { projectStructuredItemsToNativeChat } from './mobile-structured-agent-session-projection'
+import { createStructuredAgentSessionEventCoalescer } from '../../../src/shared/structured-agent-session-coalescer'
+import { projectStructuredItemsToNativeChat } from '../../../src/shared/structured-agent-session-projection'
 import {
-  EMPTY_MOBILE_STRUCTURED_AGENT_SESSION,
-  oldestMobileStructuredCursor,
-  reduceMobileStructuredAgentSession,
-  type MobileStructuredAgentSessionState
-} from './mobile-structured-agent-session-reducer'
+  EMPTY_STRUCTURED_AGENT_SESSION,
+  oldestStructuredAgentSessionCursor,
+  reduceStructuredAgentSession,
+  shouldAdvanceStructuredResumeCursor,
+  type StructuredAgentSessionState
+} from '../../../src/shared/structured-agent-session-reducer'
+import type { RpcClient } from '../transport/rpc-client'
 import {
   createMobileStructuredReconnectState,
   noteStructuredBackground,
@@ -48,8 +49,8 @@ export function useMobileStructuredAgentSession(args: {
   sessionId: string | null
 }): {
   messages: ReturnType<typeof projectStructuredItemsToNativeChat>
-  items: MobileStructuredAgentSessionState['items']
-  submissions: MobileStructuredAgentSessionState['submissions']
+  items: StructuredAgentSessionState['items']
+  submissions: StructuredAgentSessionState['submissions']
   fence: number | null
   status: 'idle' | 'loading' | 'ready' | 'error'
   error?: string
@@ -58,10 +59,7 @@ export function useMobileStructuredAgentSession(args: {
   loadOlder: () => Promise<boolean>
 } {
   const { client, sessionId } = args
-  const [state, dispatch] = useReducer(
-    reduceMobileStructuredAgentSession,
-    EMPTY_MOBILE_STRUCTURED_AGENT_SESSION
-  )
+  const [state, dispatch] = useReducer(reduceStructuredAgentSession, EMPTY_STRUCTURED_AGENT_SESSION)
   const stateRef = useRef(state)
   stateRef.current = state
   const resumeCursorRef = useRef<AgentJournalCursor | null>(state.cursor)
@@ -76,7 +74,7 @@ export function useMobileStructuredAgentSession(args: {
     let closed = false
     let streamOpened = false
     let unsubscribe = (): void => {}
-    const coalescer = createMobileStructuredEventCoalescer((event) => {
+    const coalescer = createStructuredAgentSessionEventCoalescer((event) => {
       dispatch({ type: 'event', event })
     })
     const cleanup = (): void => {
@@ -128,11 +126,7 @@ export function useMobileStructuredAgentSession(args: {
             resumeCursorRef.current = event.snapshot.cursor
           } else if (event.type === 'batch') {
             const current = resumeCursorRef.current
-            if (
-              !current ||
-              (current.epoch === event.batch.cursor.epoch &&
-                event.batch.cursor.sequence >= current.sequence)
-            ) {
+            if (shouldAdvanceStructuredResumeCursor(current, event.batch.cursor)) {
               resumeCursorRef.current = event.batch.cursor
             }
           }
@@ -199,7 +193,7 @@ export function useMobileStructuredAgentSession(args: {
 
   const loadOlder = useCallback(async (): Promise<boolean> => {
     const current = stateRef.current
-    const cursor = oldestMobileStructuredCursor(current)
+    const cursor = oldestStructuredAgentSessionCursor(current)
     if (!client || !sessionId || !cursor || !current.hasOlder || loadingOlder) {
       return false
     }

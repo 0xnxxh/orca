@@ -3056,7 +3056,10 @@
             "ec2adf093e": "Launch {{value0}} in a new terminal",
             "465e432ef1": "Could not build launch command for {{value0}}.",
             "e518f544b1": "No agents detected",
-            "8dea9b5cdf": "No enabled agents"
+            "8dea9b5cdf": "No enabled agents",
+            "f378201fbd": "Could not create chat session",
+            "a847779775": "Start Codex without a terminal",
+            "0ea6a78efb": "Chat session"
           },
           "RecentTabSwitcher": {
             "329638ff6f": "Switch Tab",
@@ -15090,6 +15093,19 @@
           "openLink": "Open link",
           "updating": "Updating…",
           "update": "Update shared content"
+        }
+      },
+      "native": {
+        "chat": {
+          "DesktopStructuredAgentSessionView": {
+            "1f772bb5d0": "Message delivery is unconfirmed.",
+            "93ef441197": "Message was not sent.",
+            "a5e7f14068": "Retry",
+            "1b1ea0a0ab": "Answer the question above",
+            "0b88a4e5e9": "Message {{value0}}",
+            "a78fc7cbde": "Stop response",
+            "25189835dc": "Send message"
+          }
         }
       }
     },

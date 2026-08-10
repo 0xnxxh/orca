@@ -9,13 +9,13 @@ import type {
   AgentSessionMutationResult,
   AgentSessionPromptResult
 } from '../../../src/shared/agent-session-wire'
+import {
+  createStructuredAgentSessionOperationId,
+  structuredAgentSessionPayloadFingerprint
+} from '../../../src/shared/structured-agent-session-mutation'
 import type { RpcClient } from '../transport/rpc-client'
 import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
-import {
-  createMobileStructuredOperationId,
-  mobileStructuredPayloadFingerprint
-} from './mobile-structured-mutation-envelope'
 
 export type MobileStructuredPromptItem = AgentJournalRenderItem & {
   body: AgentJournalApprovalItem | AgentJournalQuestionItem
@@ -51,7 +51,7 @@ export function useMobileStructuredSessionMutations(args: {
       const mutationKey = `${sessionId}:${fingerprintMethod}:${JSON.stringify(fields)}`
       const clientOperationId =
         operationIdsRef.current.get(mutationKey) ??
-        createMobileStructuredOperationId(() => ExpoCrypto.randomUUID())
+        createStructuredAgentSessionOperationId(() => ExpoCrypto.randomUUID())
       operationIdsRef.current.set(mutationKey, clientOperationId)
       let response
       try {
@@ -60,7 +60,7 @@ export function useMobileStructuredSessionMutations(args: {
             sessionId,
             clientOperationId,
             expectedRuntimeFence: fence,
-            payloadFingerprint: mobileStructuredPayloadFingerprint({
+            payloadFingerprint: structuredAgentSessionPayloadFingerprint({
               method: fingerprintMethod,
               sessionId,
               fields
