@@ -63,3 +63,5 @@ Source-control and review changes must consider GitLab and other supported git p
 ## GitHub CLI Usage
 
 Be mindful of the user's `gh` CLI API rate limit — batch requests where possible and avoid unnecessary calls. All code, commands, and scripts must be compatible with macOS, Linux, and Windows.
+
+Never create a GitHub Release or tag to host PR/issue evidence. Use GitHub user attachments; if the capture host cannot upload them, transfer the files to a trusted host that can. Keep the files local and report the blocker when no trusted upload path is available.

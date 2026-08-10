@@ -210,7 +210,7 @@ diff의 어느 줄에든 코멘트를 남기고 에이전트에게 바로 보내
 ### 데스크톱 — macOS, Windows, Linux
 
 - **[onOrca.dev에서 다운로드](https://onorca.dev/download)**
-- 또는 빌드를 직접 받기: [macOS Apple Silicon](https://github.com/stablyai/orca/releases/latest/download/orca-macos-arm64.dmg) · [macOS Intel](https://github.com/stablyai/orca/releases/latest/download/orca-macos-x64.dmg) · [Windows (.exe)](https://github.com/stablyai/orca/releases/latest/download/orca-windows-setup.exe) · [Linux AppImage](https://github.com/stablyai/orca/releases/latest/download/orca-linux.AppImage) · [전체 빌드](https://github.com/stablyai/orca/releases/latest)
+- 또는 빌드를 직접 받기: [macOS Apple Silicon](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-macos-arm64.dmg?download=1) · [macOS Intel](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-macos-x64.dmg?download=1) · [Windows (.exe)](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-windows-setup.exe?download=1) · [Linux AppImage](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-linux.AppImage?download=1) · [전체 빌드](https://github.com/stablyai/orca/releases/tag/v1.4.178)
 
 _또는 패키지 매니저로 설치:_
 

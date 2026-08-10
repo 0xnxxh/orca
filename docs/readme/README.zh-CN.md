@@ -210,7 +210,7 @@ VS Code 的编辑器，处处自动保存 — 把文件或图片直接拖入智�
 ### 桌面端 — macOS、Windows、Linux
 
 - **[从 onOrca.dev 下载](https://onorca.dev/download)**
-- 或直接获取安装包：[macOS Apple Silicon](https://github.com/stablyai/orca/releases/latest/download/orca-macos-arm64.dmg) · [macOS Intel](https://github.com/stablyai/orca/releases/latest/download/orca-macos-x64.dmg) · [Windows (.exe)](https://github.com/stablyai/orca/releases/latest/download/orca-windows-setup.exe) · [Linux AppImage](https://github.com/stablyai/orca/releases/latest/download/orca-linux.AppImage) · [全部构建](https://github.com/stablyai/orca/releases/latest)
+- 或直接获取安装包：[macOS Apple Silicon](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-macos-arm64.dmg?download=1) · [macOS Intel](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-macos-x64.dmg?download=1) · [Windows (.exe)](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-windows-setup.exe?download=1) · [Linux AppImage](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-linux.AppImage?download=1) · [全部构建](https://github.com/stablyai/orca/releases/tag/v1.4.178)
 
 _也可以通过包管理器安装：_
 

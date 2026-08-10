@@ -1,0 +1,29 @@
+name: Release Policy
+
+on:
+  release:
+    types:
+      - published
+      - edited
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-policy
+  cancel-in-progress: false
+
+jobs:
+  enforce:
+    if: github.repository == 'stablyai/orca'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout policy from main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Enforce release policy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node config/scripts/enforce-release-policy.mjs

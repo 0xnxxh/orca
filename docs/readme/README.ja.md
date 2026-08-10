@@ -210,7 +210,7 @@ PR、Issue、プロジェクトボードをアプリ内で閲覧 — 任意の�
 ### デスクトップ — macOS, Windows, Linux
 
 - **[onOrca.dev からダウンロード](https://onorca.dev/download)**
-- またはビルドを直接入手: [macOS Apple Silicon](https://github.com/stablyai/orca/releases/latest/download/orca-macos-arm64.dmg) · [macOS Intel](https://github.com/stablyai/orca/releases/latest/download/orca-macos-x64.dmg) · [Windows (.exe)](https://github.com/stablyai/orca/releases/latest/download/orca-windows-setup.exe) · [Linux AppImage](https://github.com/stablyai/orca/releases/latest/download/orca-linux.AppImage) · [すべてのビルド](https://github.com/stablyai/orca/releases/latest)
+- またはビルドを直接入手: [macOS Apple Silicon](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-macos-arm64.dmg?download=1) · [macOS Intel](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-macos-x64.dmg?download=1) · [Windows (.exe)](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-windows-setup.exe?download=1) · [Linux AppImage](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-linux.AppImage?download=1) · [すべてのビルド](https://github.com/stablyai/orca/releases/tag/v1.4.178)
 
 _パッケージマネージャーからもインストールできます:_
 

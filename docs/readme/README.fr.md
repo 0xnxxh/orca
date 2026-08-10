@@ -216,7 +216,7 @@ Fonctionne avec **n'importe quel agent CLI** — s'il tourne dans un terminal, i
 ### Desktop — macOS, Windows, Linux
 
 - **[Télécharger depuis onOrca.dev](https://onorca.dev/download)**
-- Ou récupérez un build directement : [macOS Apple Silicon](https://github.com/stablyai/orca/releases/latest/download/orca-macos-arm64.dmg) · [macOS Intel](https://github.com/stablyai/orca/releases/latest/download/orca-macos-x64.dmg) · [Windows (.exe)](https://github.com/stablyai/orca/releases/download/v1.4.147-rc.3/orca-windows-setup.exe) · [Linux AppImage](https://github.com/stablyai/orca/releases/latest/download/orca-linux.AppImage) · [Tous les builds](https://github.com/stablyai/orca/releases/latest)
+- Ou récupérez un build directement : [macOS Apple Silicon](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-macos-arm64.dmg?download=1) · [macOS Intel](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-macos-x64.dmg?download=1) · [Windows (.exe)](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-windows-setup.exe?download=1) · [Linux AppImage](https://github.com/stablyai/orca/releases/download/v1.4.178/orca-linux.AppImage?download=1) · [Tous les builds](https://github.com/stablyai/orca/releases/tag/v1.4.178)
 - **Sous Windows :** utilisez la [dernière RC (`v1.4.147-rc.3`)](https://github.com/stablyai/orca/releases#release-v1.4.147-rc.3) — elle inclut des correctifs Windows absents de la stable.
 - Vous lancez `orca serve` sur un serveur Linux headless ? Consultez le [guide serveur Linux headless](../reference/headless-linux-server.md).
 
