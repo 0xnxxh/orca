@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-07",
+  "updatedAt": "2026-08-09",
   "policy": {
     "maturityLevels": ["experimental", "soak", "blocking", "accepted-gap", "deprecated"],
     "blockingPromotion": {
@@ -10,103 +10,6 @@
     }
   },
   "gates": [
-    {
-      "id": "ai-vault.live-session-delete-authority",
-      "title": "AI Vault deletion fails closed against owning-runtime session liveness",
-      "maturity": "experimental",
-      "protection": "partial",
-      "owner": "ai-vault-runtime",
-      "layer": "main-process-filesystem-mutation",
-      "surfaces": [
-        "AI Vault transcript deletion",
-        "local and WSL agent sessions",
-        "paired-client-owned host sessions"
-      ],
-      "platforms": ["macos", "linux", "windows"],
-      "providers": ["local", "wsl", "ssh", "paired-runtime"],
-      "coveredPlatforms": ["macos", "linux", "windows"],
-      "coveredProviders": ["local", "wsl", "ssh", "paired-runtime"],
-      "coverageNotes": "Platform-independent contracts cover local and WSL authority, paired-owned and unmanaged live sessions absent from renderer or managed-PTY state, identity retention across UI dismissal, inventory and foreground-inspection ordering, SSH exclusion, unavailable and ambiguous inventory, bounded inspection concurrency, oversized inventories, returned rejection, and real temporary-file survival. Live headed/headless paired-runtime, physical Windows/WSL, and Docker SSH journeys remain uncollected.",
-      "motivatingLinks": ["https://github.com/stablyai/orca/releases/tag/v1.4.177-rc.0"],
-      "invariant": "Main may delete a local AI transcript only after the owning runtime freshly proves that no live local or WSL provider-session identity exists, including exact hook identities absent from managed PTY inventory; live and unknown liveness preserve the transcript regardless of renderer freshness.",
-      "oracle": "Open confirmation against a stale empty renderer snapshot, transition the authoritative session to live before main authorization and during a controlled foreground-inspection barrier, and separately model paired and unmanaged local owners absent from renderer or managed-PTY state. Dismiss a live row and require its identity-only authority to remain. Require session-live or session-liveness-unknown rejection and the real temporary transcript to survive. Make process inventory unavailable or ambiguous and require unknown with the file preserved; prove known other sessions permit deletion and inspection concurrency stays at or below eight.",
-      "commands": [
-        "pnpm exec vitest run --config config/vitest.config.ts src/main/ai-vault/session-delete-liveness.repro.test.ts src/main/ai-vault/session-liveness.test.ts src/main/agent-hooks/server-ai-vault-liveness.test.ts --reporter=dot"
-      ],
-      "testFiles": [
-        "src/main/ai-vault/session-delete-liveness.repro.test.ts",
-        "src/main/ai-vault/session-liveness.test.ts",
-        "src/main/agent-hooks/server-ai-vault-liveness.test.ts"
-      ],
-      "assertionRefs": [
-        {
-          "file": "src/main/ai-vault/session-delete-liveness.repro.test.ts",
-          "assertions": [
-            "confirmation TOCTOU returns session-live and preserves the real transcript",
-            "paired ownership missing from the renderer snapshot returns session-live and preserves the real transcript",
-            "exact live local hook identity missing from managed PTY inventory returns unknown and preserves the real transcript",
-            "dismissed live status retained as identity-only authority returns unknown and preserves the real transcript",
-            "unknown authoritative liveness fails closed and preserves the real transcript"
-          ]
-        },
-        {
-          "file": "src/main/ai-vault/session-liveness.test.ts",
-          "assertions": [
-            "local, WSL, paired-runtime, and SSH host partitions resolve without local fallback",
-            "renderer session identity must match the identity parsed from the validated transcript",
-            "hook identity is captured after the controlled process-inventory barrier",
-            "hook identity is captured after the controlled foreground-inspection barrier",
-            "missing identity, unavailable inventory, unattributed ownership, and oversized inventory remain unknown",
-            "foreground inspection concurrency never exceeds eight and stops scheduling at the shared deadline"
-          ]
-        },
-        {
-          "file": "src/main/agent-hooks/server-ai-vault-liveness.test.ts",
-          "assertions": [
-            "user dismissal retains provider identity without retaining a visible turn-status row",
-            "restart hydration preserves dismissed identity as unconfirmed liveness-only authority"
-          ]
-        }
-      ],
-      "evidenceRuns": [
-        {
-          "date": "2026-08-07",
-          "runner": "local",
-          "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/ai-vault/session-delete-liveness.repro.test.ts src/main/ai-vault/session-liveness.test.ts src/main/agent-hooks/server-ai-vault-liveness.test.ts --reporter=dot",
-          "result": "passed",
-          "durationSeconds": 1,
-          "summary": "Twenty deterministic deletion, identity-binding, inventory/inspection-ordering, dismissal/restart-retention, unmanaged-ownership, unknown-state, filesystem-survival, host-partition, deadline, and bounded-concurrency assertions passed."
-        }
-      ],
-      "runtimeBudget": {
-        "p95Seconds": 2,
-        "scope": "focused main-process liveness and temporary-filesystem contracts"
-      },
-      "flakeHistory": {
-        "status": "unknown",
-        "evidence": "One local deterministic run is recorded; CI and soak history have not started."
-      },
-      "redGreenEvidence": {
-        "status": "complete",
-        "evidence": "The byte-identical two-scenario oracle failed on v1.4.177-rc.0 (9e948fbdf4) and latest main (7a867f12aa): both returned deleted and both real transcripts were removed. On PR commit 8e2fcfd681, an exact live local hook identity absent from empty managed-PTY inventory returned deleted and removed the real transcript. Independent review then proved a session-other to session-live transition during foreground inspection returned not-live, and live-row dismissal erased the only external identity. The corrected candidate passed all 20 assertions, including restart hydration of dismissed identity; temporarily disabling only the original liveness decision made all three original deletion-safety tests red again."
-      },
-      "performanceBudget": {
-        "required": true,
-        "evidence": "Deletion parses only the validated target through the incremental parse cache, performs one local-provider process listing, makes no SSH or paired-runtime request, caps inventory at 512 PTYs, bounds foreground inspections to eight concurrent calls under one shared three-second fail-closed deadline, and adds no polling or background work."
-      },
-      "promotionCriteria": [
-        "Collect CI soak history for the deterministic gate.",
-        "Collect headed and headless paired-runtime deletion-refusal evidence.",
-        "Collect physical Windows/WSL and Docker SSH host-partition evidence."
-      ],
-      "knownGaps": [
-        "No live headed/headless paired-runtime journey was run.",
-        "No physical Windows/WSL or Docker SSH journey was run.",
-        "The authorization check cannot make an external provider process start atomic with filesystem trashing; it closes the reported renderer-confirmation window at the main mutation boundary."
-      ],
-      "demotionRule": "Keep experimental or demote if live or unknown ownership can reach trashing, remote ownership falls back locally, process inspection becomes unbounded, or the deterministic filesystem oracle flakes without a product or harness defect."
-    },
     {
       "id": "editor.restored-sibling-owner-reparent",
       "title": "Restored sibling tabs migrate filesystem authority before becoming editable",
@@ -4830,24 +4733,33 @@
       "platforms": ["macos", "linux", "windows"],
       "providers": ["local", "daemon", "ssh", "wsl", "remote-runtime"],
       "coveredPlatforms": ["macos"],
-      "coveredProviders": [],
-      "coverageNotes": "Platform-neutral unit coverage proves the Resource Manager closed badge performs one readiness seed, coalesces unknown spawn signals, skips known-session reattach signals, installs no interval, and re-reads only once per explicit daemon-management kill/restart (which emits no pty:exit). Broader terminal interaction coverage remains on the pending reliability stack.",
+      "coveredProviders": ["local", "ssh", "remote-runtime"],
+      "coverageNotes": "Platform-neutral unit coverage proves the Resource Manager closed badge performs one readiness seed, coalesces unknown spawn signals, skips known-session reattach signals, installs no interval, and re-reads only once per explicit daemon-management kill/restart. AI Vault tab-title sync uses bounded exact identities on the transcript-owning local, SSH, or runtime host and has no access to broad listing; unsupported older hosts retain persisted titles without fallback scans. WSL path translation still needs a Windows integration oracle.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/7002",
         "https://github.com/stablyai/orca/pull/6858",
         "https://github.com/stablyai/orca/issues/9386",
-        "https://github.com/stablyai/orca/pull/9387"
+        "https://github.com/stablyai/orca/pull/9387",
+        "https://github.com/stablyai/orca/pull/12778"
       ],
-      "invariant": "Typing, focus, terminal switch, workspace switch, visibility resume, resize, render, and per-pane liveness paths must not call global pty:listSessions; they must use targeted per-PTY APIs or cached provider-owned state.",
-      "oracle": "The current executable slice asserts targeted visibility/first-input liveness, resize re-assertion after visibility resume, light tab/active-state resume, SSH/remote skip behavior, and a closed Resource Manager budget of one readiness seed plus one coalesced inventory read only for unknown spawn IDs; known-session reattach signals and steady closed time perform zero reads. Targeted hasPty/getSize calls are allowed for liveness/resize slices and forbidden for light tab/active-state resume. The full hot-path oracle still needs instrumentation around raw focus, split focus, workspace switch, render ticks, and high-session local/daemon/SSH fixtures.",
+      "invariant": "Typing, focus, terminal switch, workspace switch, visibility resume, resize, render, per-pane liveness, and tab-title synchronization must not call global pty:listSessions or aiVault.listSessions; they must use targeted APIs or cached provider-owned state.",
+      "oracle": "The current executable slice asserts targeted visibility/first-input liveness, resize re-assertion after visibility resume, light tab/active-state resume, SSH/remote skip behavior, and a closed Resource Manager budget of one readiness seed plus one coalesced inventory read only for unknown spawn IDs. AI Vault title sync deterministically accepts only resolveSessionTitles, batches at most 64 exact identities, serializes worker work, routes requests to the transcript-owning local/SSH/runtime host, and proves zero broad scans for unsupported hosts. The full hot-path oracle still needs instrumentation around raw focus, split focus, workspace switch, render ticks, and high-session PTY fixtures.",
       "commands": [
-        "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/pty.test.ts src/renderer/src/components/status-bar/use-resource-session-inventory.test.tsx src/renderer/src/components/status-bar/resource-session-inventory.test.ts src/renderer/src/components/status-bar/ResourceUsageStatusSegment.session-polling.test.ts"
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/pty.test.ts src/renderer/src/components/status-bar/use-resource-session-inventory.test.tsx src/renderer/src/components/status-bar/resource-session-inventory.test.ts src/renderer/src/components/status-bar/ResourceUsageStatusSegment.session-polling.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/lib/ai-vault-tab-title-sync.test.ts src/main/ai-vault/session-scanner-worker-client.test.ts src/main/ai-vault/session-title-file-reader.test.ts src/main/ai-vault/session-parse-cache-persistence.test.ts src/main/ipc/ai-vault.test.ts src/main/runtime/rpc/methods/ai-vault.test.ts src/relay/ai-vault-handler.test.ts"
       ],
       "testFiles": [
         "src/main/ipc/pty.test.ts",
         "src/renderer/src/components/status-bar/use-resource-session-inventory.test.tsx",
         "src/renderer/src/components/status-bar/resource-session-inventory.test.ts",
-        "src/renderer/src/components/status-bar/ResourceUsageStatusSegment.session-polling.test.ts"
+        "src/renderer/src/components/status-bar/ResourceUsageStatusSegment.session-polling.test.ts",
+        "src/renderer/src/lib/ai-vault-tab-title-sync.test.ts",
+        "src/main/ai-vault/session-scanner-worker-client.test.ts",
+        "src/main/ai-vault/session-title-file-reader.test.ts",
+        "src/main/ai-vault/session-parse-cache-persistence.test.ts",
+        "src/main/ipc/ai-vault.test.ts",
+        "src/main/runtime/rpc/methods/ai-vault.test.ts",
+        "src/relay/ai-vault-handler.test.ts"
       ],
       "assertionRefs": [
         {
@@ -4881,6 +4793,38 @@
             "the closed inventory hook installs no interval",
             "the badge count comes from cached daemon inventory rather than wake-hint bindings"
           ]
+        },
+        {
+          "file": "src/renderer/src/lib/ai-vault-tab-title-sync.test.ts",
+          "assertions": [
+            "title sync invokes only exact resolveSessionTitles requests",
+            "status pings and worktree path changes do not trigger rereads",
+            "title requests are bounded to 64 identities per batch",
+            "independent hosts resolve concurrently while each host wire stays serial"
+          ]
+        },
+        {
+          "file": "src/main/ai-vault/session-scanner-worker-client.test.ts",
+          "assertions": [
+            "full scans and exact-title reads share one serial FIFO worker",
+            "active cancellation stays serialized and queued work remains bounded",
+            "worker faults restart queued work and idle time preserves incremental parse state",
+            "worker disposal rejects retained work and terminates the worker"
+          ]
+        },
+        {
+          "file": "src/main/ai-vault/session-parse-cache-persistence.test.ts",
+          "assertions": [
+            "the background scanner receives the configured persisted-cache identity",
+            "unchanged transcripts remain reusable across process restarts"
+          ]
+        },
+        {
+          "file": "src/main/ipc/ai-vault.test.ts",
+          "assertions": [
+            "exact title identities route to local, SSH, and runtime host authority",
+            "unsupported remote hosts return no refresh and never fall back to broad scans"
+          ]
         }
       ],
       "evidenceRuns": [
@@ -4892,6 +4836,15 @@
           "result": "passed",
           "durationSeconds": 4.3,
           "summary": "4 files and 358 tests passed, covering readiness seed/recovery, zero interval polling, bounded unknown-spawn reconciliation, concurrent provider starts, exit fencing, cleanup, and out-of-order refresh fencing."
+        },
+        {
+          "date": "2026-08-09",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/lib/ai-vault-tab-title-sync.test.ts src/main/ai-vault/session-scanner-worker-client.test.ts src/main/ai-vault/session-title-file-reader.test.ts src/main/ai-vault/session-parse-cache-persistence.test.ts src/main/ipc/ai-vault.test.ts src/main/runtime/rpc/methods/ai-vault.test.ts src/relay/ai-vault-handler.test.ts",
+          "result": "passed",
+          "durationSeconds": 3.1,
+          "summary": "The focused run passed 112 tests across 7 files, proving exact-title-only renderer requests, provider-isolated batching, persistent serial worker lifecycle and fault recovery, exact transcript identity, host routing, mixed-version degradation, and zero broad-scan fallback."
         }
       ],
       "runtimeBudget": {
@@ -4904,11 +4857,11 @@
       },
       "redGreenEvidence": {
         "status": "partial",
-        "evidence": "Tests assert visibility resume prefers targeted hasPty over listSessions, first input after visibility resume calls targeted hasPty once, resize re-assertion after visibility resume uses getSize/resize without listSessions, light tab switches and visible active-state resume avoid listSessions/hasPty/getSize fanout while still allowing the active PTY scheduler hint, SSH/remote broad listing is skipped, and the closed Resource Manager performs one readiness seed while known reattach signals and steady time perform no additional reads. Needs broader raw focus/workspace-switch/render/high-session count coverage before promotion."
+        "evidence": "Tests assert visibility resume prefers targeted hasPty over listSessions, first input after visibility resume calls targeted hasPty once, resize re-assertion after visibility resume uses getSize/resize without listSessions, light tab switches and visible active-state resume avoid listSessions/hasPty/getSize fanout, and the closed Resource Manager performs one readiness seed while known reattach signals and steady time perform no additional reads. For the #12778 regression, title sync no longer receives a listSessions dependency at all: it sends at most 64 exact identities per batch to one serial worker or transcript-owning remote host, and old hosts degrade without broad fallback. Needs broader raw focus/workspace-switch/render/high-session PTY count coverage before promotion."
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "This gate is the performance budget for global session listing in hot paths."
+        "evidence": "This gate is the performance budget for global session listing in hot paths. AI Vault title sync permits zero global scans, at most 64 exact identities per request, one active worker operation, 16 queued operations, four concurrent transcript parses inside the worker, a 4,096-title index, and no worktree-path-triggered refresh. The worker emits the aiVault.scan.worker span with duration and session count for full scans."
       },
       "promotionCriteria": [
         "Add deterministic call-count instrumentation.",
@@ -4918,7 +4871,8 @@
       "knownGaps": [
         "Current commands cover Resource Manager readiness/lifecycle inventory counts; the broader targeted-liveness slice still lives on the pending fix-terminal-reliability stack.",
         "Current coverage includes the closed Resource Manager's no-interval and known-reattach budgets, but not every hot interaction listed in the invariant.",
-        "No Electron or IPC-level high-session counter gate yet proves raw focus, workspace switch, render, or high-session typing stay at zero global listSessions calls."
+        "No Electron or IPC-level high-session counter gate yet proves raw focus, workspace switch, render, or high-session typing stay at zero PTY listSessions calls.",
+        "The exact-title path has deterministic provider routing coverage but no packaged Windows WSL or live SSH performance run yet."
       ],
       "demotionRule": "Cannot promote if the test allows broad listing in any hot interaction path."
     },
@@ -8296,6 +8250,166 @@
       ],
       "knownGaps": ["No manifest command yet.", "No startup color-query contract is wired."],
       "demotionRule": "Cannot promote if success is based only on absence of visible artifacts."
+    },
+    {
+      "id": "terminal-input.cooked-reply-queue",
+      "title": "Cooked-echo-safe terminal reply backlog stays bounded without evicting ordinary input",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "terminal-runtime",
+      "layer": "renderer-provider-contract",
+      "surfaces": [
+        "desktop terminal input",
+        "OSC 10/11 replies",
+        "mode-2031 replies",
+        "local PTY",
+        "daemon and SSH PTYs"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["local", "daemon", "ssh"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["local", "ssh"],
+      "coverageNotes": "Deterministic renderer and IPC-transport tests prove count and text ceilings, oldest-reply shedding, explicit query-reply source routing, ordinary-input preservation, one-reply-per-write delivery, real xterm OSC reply generation, drain-failure containment, and clear/reuse generation fencing. Live macOS Electron tests cover local PTY OSC replies and interactive typing; a macOS-hosted Docker OpenSSH test proves a real Linux SSH process receives xterm's OSC reply through the same queue. No live daemon, WSL, physical Linux/Windows client, or mixed-version run is registered.",
+      "motivatingLinks": [
+        "https://github.com/stablyai/orca/issues/13137",
+        "https://github.com/stablyai/orca/issues/7329"
+      ],
+      "invariant": "The desktop PTY input queue retains at most 64 explicitly sourced pending cooked-echo-safe replies and 4096 UTF-16 code units. Overflow removes the oldest pending query-reply entries, never ordinary input or reply-shaped bytes from the ordinary path, so later user input has a finite reply backlog; every retained reply reaches the established provider path as one atomic write. Drain failures settle without an unhandled rejection and cannot clear a newer queue generation.",
+      "oracle": "Synchronously enqueue 10,000 cooked-echo-safe query replies before the scheduled drain and assert that only the initial immediate reply and newest 64 pending replies are written, each as one provider write, before a trailing keystroke. Repeat behind 10,000 ordinary inputs and through the real IPC transport, requiring ordinary and reply-shaped ordinary-path bytes to survive while only the newest 64 explicit replies remain. Exercise the text ceiling, real xterm OSC 10/11 generation, provider-write failure, rejected yield, and clear/reuse generation fencing.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/pty-input-write-queue.test.ts src/renderer/src/components/terminal-pane/pty-transport.test.ts src/shared/terminal-query-reply.test.ts src/shared/pty-startup-ingress-live-query-reply.test.ts",
+        "pnpm exec playwright test tests/e2e/terminal-osc-color-queries.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+        "pnpm exec playwright test tests/e2e/terminal-typing-latency.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+        "ORCA_E2E_SSH_DOCKER=1 pnpm exec playwright test tests/e2e/pty-input-write-queue-ssh.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1"
+      ],
+      "testFiles": [
+        "src/renderer/src/components/terminal-pane/pty-input-write-queue.test.ts",
+        "src/renderer/src/components/terminal-pane/pty-transport.test.ts",
+        "src/shared/terminal-query-reply.test.ts",
+        "src/shared/pty-startup-ingress-live-query-reply.test.ts",
+        "tests/e2e/terminal-osc-color-queries.spec.ts",
+        "tests/e2e/terminal-typing-latency.spec.ts",
+        "tests/e2e/pty-input-write-queue-ssh.spec.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/renderer/src/components/terminal-pane/pty-input-write-queue.test.ts",
+          "assertions": [
+            "a synchronous 10,000-reply flood writes only the immediate first and newest 64 pending replies before a trailing keystroke",
+            "10,000 ordinary queued inputs survive a later reply flood while reply retention remains bounded",
+            "reply-shaped bytes from the ordinary input path never enter the shed-able reply budget",
+            "reply count and text overflow remove only the oldest pending replies",
+            "real xterm OSC 10/11 query handlers remain subject to the same retention ceiling",
+            "retained cooked-echo-safe replies stay one provider write each",
+            "provider-write and yield failures settle without unhandled rejection, repeated same-generation admission, or stale-generation clearing",
+            "clear releases saturated reply accounting and fences in-flight validation before later input"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/terminal-pane/pty-transport.test.ts",
+          "assertions": [
+            "sendInputImmediate applies the reply ceiling while sendInput preserves a reply-shaped ordinary payload in exact IPC write order",
+            "a thrown renderer write triggers one owning-transport recovery callback and rejects later input in that queue generation"
+          ]
+        },
+        {
+          "file": "src/shared/terminal-query-reply.test.ts",
+          "assertions": [
+            "only complete cooked-echo-risk replies are classified and consecutive replies extract losslessly"
+          ]
+        },
+        {
+          "file": "src/shared/pty-startup-ingress-live-query-reply.test.ts",
+          "assertions": [
+            "repeated live query replies are delivered independently and their cooked echoes stay hidden"
+          ]
+        },
+        {
+          "file": "tests/e2e/terminal-osc-color-queries.spec.ts",
+          "assertions": [
+            "real Electron xterm OSC 10/11 replies reach the active local PTY as separate writes"
+          ]
+        },
+        {
+          "file": "tests/e2e/terminal-typing-latency.spec.ts",
+          "assertions": [
+            "real keyboard input reaches and echoes from the active local PTY within the interactive latency ceilings"
+          ]
+        },
+        {
+          "file": "tests/e2e/pty-input-write-queue-ssh.spec.ts",
+          "assertions": [
+            "a real Linux SSH process emits an OSC query and receives xterm's synthetic reply through the live PTY queue"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-09",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/pty-input-write-queue.test.ts src/renderer/src/components/terminal-pane/pty-transport.test.ts src/shared/terminal-query-reply.test.ts src/shared/pty-startup-ingress-live-query-reply.test.ts",
+          "result": "passed",
+          "durationSeconds": 2.35,
+          "summary": "Four files and 138 tests passed, including explicit IPC reply-source routing, the 10,000-reply count ceiling, text ceiling, 10,000-entry ordinary backlog preservation, real xterm OSC query flood, single-shot drain-failure recovery, one-reply-per-write echo containment, and clear/reuse generation fencing."
+        },
+        {
+          "date": "2026-08-09",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec playwright test tests/e2e/terminal-osc-color-queries.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 13.2,
+          "summary": "The real Electron/xterm OSC 10/11 query path wrote the exact foreground and background replies separately to the active local PTY."
+        },
+        {
+          "date": "2026-08-09",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec playwright test tests/e2e/terminal-typing-latency.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 10.6,
+          "summary": "Real keyboard events traversed xterm and the input queue to a local interactive PTY with every sampled key echoed inside the latency ceiling."
+        },
+        {
+          "date": "2026-08-09",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_SSH_DOCKER=1 pnpm exec playwright test tests/e2e/pty-input-write-queue-ssh.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 36.8,
+          "summary": "A real Linux process behind Docker OpenSSH emitted an OSC 10 query and observed xterm's synthetic RGB reply after it traversed the live renderer queue, Electron IPC, SSH provider, and relay PTY."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 120,
+        "scope": "focused unit, local Electron, and Docker SSH contracts"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "Ten consecutive local unit-gate runs passed 1,380 tests in 29.57 seconds total with no fixed timing sleeps. The exact Docker SSH OSC oracle passed three consecutive runs before extraction into its dedicated spec and then passed the registered dedicated command once. CI and the normal soak window are not yet available."
+      },
+      "redGreenEvidence": {
+        "status": "partial",
+        "evidence": "Without the branch's admission cap, the 10,000-reply fixture writes all replies before the trailing keystroke. Before the source-routing repair, the queue had no API capable of distinguishing reply-shaped ordinary input; before failure containment, a thrown provider write rejected waitForDrain and Vitest recorded an unhandled rejection; the first containment pass retried a failed generation and invoked recovery twice; before generation fencing, a rejected stale yield cleared fresh input. No saved intentional-break artifact is attached yet."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "Pending cooked replies are capped at 64 and 4096 UTF-16 code units. Explicit source routing and separate sequence-merged FIFOs keep ordinary input out of the fixed-size reply store; oldest-reply eviction uses an amortized O(1) head advance without scanning ordinary input, consumed prefixes compact at a fixed threshold, and drain coalescing reads the stored classification without repeated reply-regex scans. A synchronous flood forwards only the immediate first and newest 64 replies before the trailing key. Ten complete gate runs, including two 10,000-entry flood shapes each, finished in 29.57 seconds with zero failures. The change adds no polling, timers, listeners, subprocesses, or network retries."
+      },
+      "promotionCriteria": [
+        "Run the gate on Windows and Linux CI.",
+        "Exercise a live daemon PTY with cooked echo enabled and record exact shell-visible and provider-visible bytes.",
+        "Attach an intentional-break run proving reply overflow cannot evict ordinary input or exceed either ceiling.",
+        "Accumulate the normal soak window with zero unexplained flakes."
+      ],
+      "knownGaps": [
+        "No live daemon, WSL, physical Linux/Windows client, mixed-version, or network-fault run is registered.",
+        "The remote-runtime transport has a separate immediate-input queue and is unaffected by this gate.",
+        "Ordinary-input queue growth predates this change and is outside this reply-only gate.",
+        "Reply overload intentionally sheds the oldest synthetic replies; live application behavior under a pathological query flood is not measured."
+      ],
+      "demotionRule": "Keep experimental or revert if ordinary input is evicted, pending replies exceed either ceiling, retained replies are coalesced, a trailing key sits behind more than the bounded reply window, or the gate develops unexplained flakes."
     },
     {
       "id": "terminal-query.mobile-view-authority",

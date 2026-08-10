@@ -64,7 +64,9 @@
     "openWorktreePalette": "ワークツリーパレットを開く",
     "window": "ウィンドウ",
     "help": "ヘルプ",
-    "paste": "貼り付け"
+    "paste": "貼り付け",
+    "copy": "コピー",
+    "selectAll": "すべて選択"
   },
   "tray": {
     "openOrca": "Orca を開く",
@@ -2717,6 +2719,7 @@
             "ec85df5914": "クイックコマンド",
             "0a917b591a": "貼り付け",
             "f3eeb1de13": "コピー",
+            "selectAll": "すべて選択",
             "c2f0b72b8d": "入れる",
             "925f49f210": "ペインを展開する",
             "df766809e0": "ペインを折りたたむ",
@@ -11315,8 +11318,7 @@
             "delete": "削除",
             "deleteReasonNonLocalHost": "このデバイス上のセッションのみ削除できます。",
             "deleteReasonSyntheticPath": "このセッションは Orca では削除できません。",
-            "deleteReasonUnsupportedAgent": "{{value0}} のセッションは Orca では削除できません。",
-            "deleteReasonSessionLive": "このセッションはまだ実行中です — 削除する前に完了を待ってください。"
+            "deleteReasonUnsupportedAgent": "{{value0}} のセッションは Orca では削除できません。"
           },
           "AiVaultSessionDeleteDialog": {
             "title": "このセッションを削除しますか?",
