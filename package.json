@@ -296,7 +296,6 @@
       ]
     },
     "onlyBuiltDependencies": [
-      "@homebridge/node-pty-prebuilt-multiarch",
       "@parcel/watcher",
       "cpu-features",
       "esbuild",
