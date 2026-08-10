@@ -95,6 +95,42 @@ describe('RelayAiVaultServiceClient', () => {
     await disposing
   })
 
+  it('keeps the sidecar alive once a cancelled call acknowledges', async () => {
+    vi.useFakeTimers()
+    const children: AiVaultServiceTestChild[] = []
+    const client = createClient(children)
+    const controller = new AbortController()
+    const first = client.listSessions({}, controller.signal)
+    const second = client.resolveSessionTitles([])
+    const child = children[0]!
+    readyAiVaultServiceChild(child)
+    await Promise.resolve()
+    const firstRequest = child.sent.find(
+      (message) => (message as { operation?: string }).operation === 'list'
+    ) as { id: number }
+
+    controller.abort()
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    child.emit('message', { type: 'error', id: firstRequest.id, message: 'aborted' })
+    await Promise.resolve()
+    vi.advanceTimersByTime(2_000)
+
+    expect(child.killed).toBe(false)
+    const titleRequest = child.sent.find(
+      (message) => (message as { operation?: string }).operation === 'titles'
+    ) as { id: number }
+    child.emit('message', {
+      type: 'result',
+      id: titleRequest.id,
+      operation: 'titles',
+      value: { titles: [] }
+    })
+    await expect(second).resolves.toEqual({ titles: [] })
+    const disposing = client.dispose()
+    child.emit('exit', 0)
+    await disposing
+  })
+
   it('restarts queued work after a sidecar crash with bounded backoff', async () => {
     vi.useFakeTimers()
     const children: AiVaultServiceTestChild[] = []

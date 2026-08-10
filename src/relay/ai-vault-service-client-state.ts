@@ -36,13 +36,16 @@ export function settleRelayAiVaultServiceCall(
   call: RelayAiVaultServiceCall,
   value: Error | AiVaultListResult | AiVaultSessionTitlesResult
 ): void {
+  // A cancelled call is settled before its cancel watchdog is armed, so the
+  // timer has to be cleared even when the reject/resolve is already done.
+  if (call.timer) {
+    clearTimeout(call.timer)
+    call.timer = null
+  }
   if (call.settled) {
     return
   }
   call.settled = true
-  if (call.timer) {
-    clearTimeout(call.timer)
-  }
   if (call.signal && call.onAbort) {
     call.signal.removeEventListener('abort', call.onAbort)
   }
