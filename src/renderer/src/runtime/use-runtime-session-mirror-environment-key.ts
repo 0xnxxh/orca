@@ -1,6 +1,9 @@
 import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { getReachableRuntimeSessionMirrorTargets } from '@/lib/runtime-session-mirror-targets'
+import {
+  getReachableRuntimeSessionMirrorTargets,
+  toRuntimeSessionMirrorTargetKey
+} from '@/lib/runtime-session-mirror-targets'
 import { useAppStore } from '@/store'
 import type { AppState } from '@/store/types'
 
@@ -45,10 +48,7 @@ export function buildRuntimeSessionMirrorEnvironmentKey(
     runtimeEnvironments: inputs.runtimeEnvironments,
     runtimeStatusByEnvironmentId: inputs.runtimeStatusByEnvironmentId
   })
-    .map(
-      ({ environmentId, runtimeId, connectionGeneration, pairingRevision }) =>
-        `${environmentId}\u0001${runtimeId}\u0001${connectionGeneration}\u0001${pairingRevision}`
-    )
+    .map(toRuntimeSessionMirrorTargetKey)
     .join('\u0000')
 }
 

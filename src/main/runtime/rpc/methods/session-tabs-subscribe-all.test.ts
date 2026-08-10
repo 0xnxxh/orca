@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import {
+  RUNTIME_CAPABILITIES,
+  SESSION_TABS_ATOMIC_SUBSCRIBE_ALL_RUNTIME_CAPABILITY
+} from '../../../../shared/protocol-version'
 import type { RuntimeMobileSessionTabsResult } from '../../../../shared/runtime-types'
 import { OrcaRuntimeService } from '../../orca-runtime'
 import type { RpcRequest } from '../core'
@@ -162,6 +166,10 @@ describe('atomic all-session inventory boundary', () => {
     refreshAllMobileSessionTabs: () => Promise<void>
     captureAllMobileSessionTabs: (clientNavigationId?: string) => RuntimeMobileSessionTabsResult[]
   }
+
+  it('advertises the atomic subscription boundary to paired clients', () => {
+    expect(RUNTIME_CAPABILITIES).toContain(SESSION_TABS_ATOMIC_SUBSCRIBE_ALL_RUNTIME_CAPABILITY)
+  })
 
   it('installs the listener after refresh and before capture', async () => {
     const runtime = new OrcaRuntimeService()

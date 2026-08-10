@@ -3,22 +3,22 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getDefaultSettings } from '../../../shared/constants'
+import { SESSION_TABS_ATOMIC_SUBSCRIBE_ALL_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
 import type { PublicKnownRuntimeEnvironment } from '../../../shared/runtime-environments'
 import type { RuntimeRpcResponse } from '../../../shared/runtime-rpc-envelope'
-import type { RuntimeStatus } from '../../../shared/runtime-types'
-import type { Repo } from '../../../shared/types'
+import type { RuntimeMobileSessionTabsResult, RuntimeStatus } from '../../../shared/runtime-types'
+import type { Repo, TerminalTab } from '../../../shared/types'
 import { useAppStore } from '../store'
 import { makeWorktree } from '../store/slices/store-test-helpers'
 import { replaceRuntimeEnvironmentRevisions } from './runtime-environment-revision'
-import {
-  resetWebSessionTabsSnapshotFreshnessForTests,
-  useWebSessionTabsSync
-} from './web-session-tabs-sync'
+import { resetWebSessionTabsSnapshotFreshnessForTests } from './web-session-tabs-sync'
+import { useWebSessionTabsSync } from './use-web-session-tabs-sync'
 
 const ENVIRONMENT_ID = 'remote-env'
 const RUNTIME_ID = 'remote-runtime'
 const REPO_ID = 'remote-repo'
 const WORKTREE_ID = `${REPO_ID}::/remote/worktree`
+const SECOND_WORKTREE_ID = `${REPO_ID}::/remote/second-worktree`
 const PAIRING_REVISION = 17
 const initialState = useAppStore.getInitialState()
 type RuntimeSubscribeCallbacks = Parameters<typeof window.api.runtimeEnvironments.subscribe>[1]
@@ -51,7 +51,8 @@ function runtimeStatus(): RuntimeStatus {
     graphStatus: 'ready',
     authoritativeWindowId: null,
     liveTabCount: 0,
-    liveLeafCount: 0
+    liveLeafCount: 0,
+    capabilities: [SESSION_TABS_ATOMIC_SUBSCRIBE_ALL_RUNTIME_CAPABILITY]
   }
 }
 
@@ -67,18 +68,43 @@ function repo(): Repo {
   }
 }
 
-function worktree() {
+function worktree(id = WORKTREE_ID) {
   return makeWorktree({
-    id: WORKTREE_ID,
+    id,
     repoId: REPO_ID,
-    path: '/remote/worktree',
+    path: id === WORKTREE_ID ? '/remote/worktree' : '/remote/second-worktree',
     hostId: `runtime:${ENVIRONMENT_ID}`,
     runtimeOwnerEnvironmentId: ENVIRONMENT_ID
   })
 }
 
+function snapshot(
+  overrides: Partial<RuntimeMobileSessionTabsResult> = {}
+): RuntimeMobileSessionTabsResult {
+  return {
+    worktree: WORKTREE_ID,
+    publicationEpoch: 'epoch-1',
+    snapshotVersion: 1,
+    activeGroupId: null,
+    activeTabId: null,
+    activeTabType: null,
+    tabs: [],
+    ...overrides
+  }
+}
+
 function seedRemoteWorkspace(): void {
   const remoteEnvironment = environment()
+  const localTab: TerminalTab = {
+    id: 'local-tab',
+    ptyId: 'local-pty',
+    worktreeId: WORKTREE_ID,
+    title: 'Terminal',
+    customTitle: null,
+    color: null,
+    sortOrder: 0,
+    createdAt: 1
+  }
   replaceRuntimeEnvironmentRevisions([remoteEnvironment])
   useAppStore.setState(
     {
@@ -92,6 +118,8 @@ function seedRemoteWorkspace(): void {
       activeRepoId: REPO_ID,
       activeWorktreeId: WORKTREE_ID,
       activeWorkspaceExecutionHostId: `runtime:${ENVIRONMENT_ID}`,
+      tabsByWorktree: { [WORKTREE_ID]: [localTab] },
+      ptyIdsByTabId: { [localTab.id]: ['local-pty'] },
       runtimeEnvironments: [remoteEnvironment],
       runtimeStatusByEnvironmentId: new Map([
         [
@@ -127,12 +155,21 @@ describe('useWebSessionTabsSync subscription topology', () => {
     runtimeCall.mockReset()
     runtimeSubscribe.mockReset()
     globalCallbacks = undefined
-    runtimeCall.mockResolvedValue({
-      id: 'list-all',
-      ok: true,
-      result: { snapshots: [] },
-      _meta: { runtimeId: RUNTIME_ID }
-    })
+    runtimeCall.mockImplementation(
+      async ({ method, params }: { method: string; params?: { worktree?: string } }) => ({
+        id: method,
+        ok: true,
+        result:
+          method === 'session.tabs.listAll'
+            ? { snapshots: [] }
+            : snapshot({
+                worktree: params?.worktree?.startsWith('id:')
+                  ? params.worktree.slice(3)
+                  : WORKTREE_ID
+              }),
+        _meta: { runtimeId: RUNTIME_ID }
+      })
+    )
     runtimeSubscribe.mockImplementation(
       async (args: { method: string }, callbacks: RuntimeSubscribeCallbacks) => {
         if (args.method === 'session.tabs.subscribeAll') {
@@ -164,110 +201,219 @@ describe('useWebSessionTabsSync subscription topology', () => {
     resetWebSessionTabsSnapshotFreshnessForTests()
   })
 
-  it('hydrates through subscribeAll without an eager listAll request', async () => {
+  it('retires the bootstrap stream when the global batch contains the active worktree', async () => {
     const hook = renderHook(() => useWebSessionTabsSync())
 
     await waitFor(() => expect(runtimeSubscribe).toHaveBeenCalledTimes(2))
-    expect(runtimeSubscribe.mock.calls.map(([args]) => args)).toEqual(
-      expect.arrayContaining([
-        {
-          selector: ENVIRONMENT_ID,
-          method: 'session.tabs.subscribeAll',
-          params: {},
-          timeoutMs: 15_000,
-          expectedEnvironmentPairingRevision: PAIRING_REVISION
-        },
-        {
-          selector: ENVIRONMENT_ID,
-          method: 'session.tabs.subscribe',
-          params: { worktree: `id:${WORKTREE_ID}` },
-          timeoutMs: 15_000,
-          expectedEnvironmentPairingRevision: PAIRING_REVISION
-        }
-      ])
+    await act(async () => {
+      globalCallbacks?.onResponse(response({ type: 'snapshots', snapshots: [snapshot()] }))
+    })
+
+    await waitFor(() => expect(activeUnsubscribe).toHaveBeenCalledOnce())
+    expect(runtimeSubscribe).toHaveBeenCalledTimes(2)
+    expect(runtimeCall).not.toHaveBeenCalled()
+    hook.unmount()
+  })
+
+  it('uses one scoped list when a valid global batch omits the active worktree', async () => {
+    const hook = renderHook(() => useWebSessionTabsSync())
+
+    await waitFor(() => expect(globalCallbacks).toBeDefined())
+    await act(async () => {
+      globalCallbacks?.onResponse(response({ type: 'snapshots', snapshots: [] }))
+    })
+
+    await waitFor(() =>
+      expect(runtimeCall).toHaveBeenCalledWith({
+        selector: ENVIRONMENT_ID,
+        method: 'session.tabs.list',
+        params: { worktree: `id:${WORKTREE_ID}` },
+        timeoutMs: 15_000,
+        expectedEnvironmentPairingRevision: PAIRING_REVISION
+      })
     )
-    expect(runtimeCall).not.toHaveBeenCalled()
-
+    expect(runtimeSubscribe).toHaveBeenCalledTimes(2)
+    expect(activeUnsubscribe).toHaveBeenCalledOnce()
+    expect(
+      runtimeCall.mock.calls.filter(([args]) => args.method === 'session.tabs.list')
+    ).toHaveLength(1)
     hook.unmount()
-    expect(globalUnsubscribe).toHaveBeenCalledTimes(1)
-    expect(activeUnsubscribe).toHaveBeenCalledTimes(1)
   })
 
-  it('falls back to one listAll request when subscribeAll cannot start', async () => {
-    let rejectGlobalSubscription: (error: Error) => void = () => {}
-    const globalSubscription = new Promise<never>((_resolve, reject) => {
-      rejectGlobalSubscription = reject
-    })
-    runtimeSubscribe.mockImplementation(async (args: { method: string }) => {
-      if (args.method === 'session.tabs.subscribeAll') {
-        return globalSubscription
-      }
-      return { unsubscribe: activeUnsubscribe, sendBinary: vi.fn() }
-    })
-
+  it('re-lists an omitted active worktree after a global reconnect replay', async () => {
     const hook = renderHook(() => useWebSessionTabsSync())
-
-    await waitFor(() => expect(runtimeSubscribe).toHaveBeenCalledTimes(2))
-    expect(runtimeCall).not.toHaveBeenCalled()
-    rejectGlobalSubscription(new Error('shared-control unavailable'))
-    await waitFor(() => expect(runtimeCall).toHaveBeenCalledTimes(1))
-    expect(runtimeCall).toHaveBeenCalledWith({
-      selector: ENVIRONMENT_ID,
-      method: 'session.tabs.listAll',
-      params: {},
-      timeoutMs: 15_000,
-      expectedEnvironmentPairingRevision: PAIRING_REVISION
-    })
-
-    hook.unmount()
-    expect(globalUnsubscribe).not.toHaveBeenCalled()
-    expect(activeUnsubscribe).toHaveBeenCalledTimes(1)
-  })
-
-  it('once-gates fallback across invalid and failed pre-initial stream events', async () => {
-    const hook = renderHook(() => useWebSessionTabsSync())
-
     await waitFor(() => expect(globalCallbacks).toBeDefined())
-    expect(() => globalCallbacks?.onResponse(response(null))).not.toThrow()
-    globalCallbacks?.onResponse({
-      id: 'subscribe-all',
+    await act(async () =>
+      globalCallbacks?.onResponse(response({ type: 'snapshots', snapshots: [] }))
+    )
+    await waitFor(() =>
+      expect(
+        runtimeCall.mock.calls.filter(([args]) => args.method === 'session.tabs.list')
+      ).toHaveLength(1)
+    )
+
+    await act(async () =>
+      globalCallbacks?.onResponse({
+        ...response({ type: 'snapshots', snapshots: [] }),
+        _replayedAfterReconnect: true
+      } as unknown as RuntimeRpcResponse<unknown>)
+    )
+    await waitFor(() =>
+      expect(
+        runtimeCall.mock.calls.filter(([args]) => args.method === 'session.tabs.list')
+      ).toHaveLength(2)
+    )
+    expect(runtimeSubscribe).toHaveBeenCalledTimes(2)
+    hook.unmount()
+  })
+
+  it('routes later global updates through active wake recovery without a scoped stream', async () => {
+    const hook = renderHook(() => useWebSessionTabsSync())
+    await waitFor(() => expect(globalCallbacks).toBeDefined())
+    await act(async () =>
+      globalCallbacks?.onResponse(response({ type: 'snapshots', snapshots: [snapshot()] }))
+    )
+    useAppStore.setState({
+      tabsByWorktree: {
+        [WORKTREE_ID]: [
+          {
+            id: 'slept-tab',
+            ptyId: null,
+            worktreeId: WORKTREE_ID,
+            title: 'Terminal',
+            customTitle: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 2
+          }
+        ]
+      },
+      ptyIdsByTabId: {}
+    })
+
+    await act(async () =>
+      globalCallbacks?.onResponse(
+        response({ ...snapshot({ snapshotVersion: 2 }), type: 'updated' })
+      )
+    )
+
+    await waitFor(() =>
+      expect(runtimeCall.mock.calls.map(([args]) => args.method)).toContain(
+        'session.tabs.createTerminal'
+      )
+    )
+    expect(runtimeSubscribe).toHaveBeenCalledTimes(2)
+    expect(activeUnsubscribe).toHaveBeenCalledOnce()
+    hook.unmount()
+  })
+
+  it('retires a list-failure fallback after later global active evidence', async () => {
+    runtimeCall.mockResolvedValueOnce({
+      id: 'session.tabs.list',
       ok: false,
-      error: { code: 'method_not_found', message: 'missing' }
+      error: { code: 'transport_closed', message: 'retry on the live stream' }
     })
-    globalCallbacks?.onError?.({ code: 'transport_closed', message: 'closed' })
-    globalCallbacks?.onClose?.()
-
-    await waitFor(() => expect(runtimeCall).toHaveBeenCalledTimes(1))
-    hook.unmount()
-  })
-
-  it('does not fall back after a valid initial snapshot batch', async () => {
     const hook = renderHook(() => useWebSessionTabsSync())
-
-    await waitFor(() => expect(globalCallbacks).toBeDefined())
-    globalCallbacks?.onResponse(response({ type: 'snapshots', snapshots: [] }))
-    globalCallbacks?.onError?.({ code: 'transport_closed', message: 'closed' })
-    globalCallbacks?.onClose?.()
-
     await waitFor(() => expect(runtimeSubscribe).toHaveBeenCalledTimes(2))
-    expect(runtimeCall).not.toHaveBeenCalled()
+    await act(async () =>
+      globalCallbacks?.onResponse(response({ type: 'snapshots', snapshots: [] }))
+    )
+    await waitFor(() =>
+      expect(
+        runtimeSubscribe.mock.calls.filter(([args]) => args.method === 'session.tabs.subscribe')
+      ).toHaveLength(2)
+    )
+
+    await act(async () =>
+      globalCallbacks?.onResponse(
+        response({ ...snapshot({ snapshotVersion: 2 }), type: 'updated' })
+      )
+    )
+    await waitFor(() => expect(activeUnsubscribe).toHaveBeenCalledTimes(2))
+
+    await act(async () =>
+      globalCallbacks?.onResponse(
+        response({ ...snapshot({ snapshotVersion: 3 }), type: 'updated' })
+      )
+    )
+    expect(activeUnsubscribe).toHaveBeenCalledTimes(2)
+    expect(runtimeSubscribe).toHaveBeenCalledTimes(3)
     hook.unmount()
   })
 
-  it('falls back when a started stream never sends its initial batch', async () => {
-    vi.useFakeTimers()
-    try {
-      const hook = renderHook(() => useWebSessionTabsSync())
-      await act(async () => {})
+  it('fails open to scoped coverage when a replay comes from another runtime', async () => {
+    const hook = renderHook(() => useWebSessionTabsSync())
+    await waitFor(() => expect(runtimeSubscribe).toHaveBeenCalledTimes(2))
+    await act(async () =>
+      globalCallbacks?.onResponse(response({ type: 'snapshots', snapshots: [snapshot()] }))
+    )
+    await waitFor(() => expect(activeUnsubscribe).toHaveBeenCalledOnce())
 
-      expect(runtimeSubscribe).toHaveBeenCalledTimes(2)
-      expect(runtimeCall).not.toHaveBeenCalled()
-      await act(async () => vi.advanceTimersByTimeAsync(15_000))
-      expect(runtimeCall).toHaveBeenCalledTimes(1)
+    await act(async () =>
+      globalCallbacks?.onResponse({
+        ...response({ type: 'snapshots', snapshots: [snapshot({ snapshotVersion: 2 })] }),
+        _meta: { runtimeId: 'restarted-pre-atomic-runtime' },
+        _replayedAfterReconnect: true
+      } as unknown as RuntimeRpcResponse<unknown>)
+    )
 
-      hook.unmount()
-    } finally {
-      vi.useRealTimers()
-    }
+    await waitFor(() =>
+      expect(
+        runtimeSubscribe.mock.calls.filter(([args]) => args.method === 'session.tabs.subscribe')
+      ).toHaveLength(2)
+    )
+    expect(activeUnsubscribe).toHaveBeenCalledOnce()
+    hook.unmount()
+  })
+
+  it('re-lists the same worktree after switching away and back', async () => {
+    const hook = renderHook(() => useWebSessionTabsSync())
+    await waitFor(() => expect(globalCallbacks).toBeDefined())
+    await act(async () =>
+      globalCallbacks?.onResponse(response({ type: 'snapshots', snapshots: [snapshot()] }))
+    )
+
+    await act(async () => {
+      useAppStore.setState((state) => ({
+        worktreesByRepo: { [REPO_ID]: [worktree(), worktree(SECOND_WORKTREE_ID)] },
+        activeWorktreeId: SECOND_WORKTREE_ID,
+        tabsByWorktree: {
+          ...state.tabsByWorktree,
+          [SECOND_WORKTREE_ID]: []
+        }
+      }))
+    })
+    await waitFor(() =>
+      expect(
+        runtimeCall.mock.calls.filter(
+          ([args]) =>
+            args.method === 'session.tabs.list' &&
+            args.params.worktree === `id:${SECOND_WORKTREE_ID}`
+        )
+      ).toHaveLength(1)
+    )
+
+    runtimeCall.mockClear()
+    await act(async () => {
+      useAppStore.setState((state) => ({
+        activeWorktreeId: WORKTREE_ID,
+        tabsByWorktree: { ...state.tabsByWorktree, [WORKTREE_ID]: [] },
+        ptyIdsByTabId: {}
+      }))
+    })
+
+    await waitFor(() =>
+      expect(
+        runtimeCall.mock.calls.filter(
+          ([args]) =>
+            args.method === 'session.tabs.list' && args.params.worktree === `id:${WORKTREE_ID}`
+        )
+      ).toHaveLength(1)
+    )
+    expect(
+      runtimeSubscribe.mock.calls.filter(([args]) => args.method === 'session.tabs.subscribe')
+    ).toHaveLength(1)
+    expect(activeUnsubscribe).toHaveBeenCalledOnce()
+    hook.unmount()
   })
 })

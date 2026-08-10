@@ -19,6 +19,10 @@ export type RuntimeSessionMirrorTarget = {
   pairingRevision: number
 }
 
+export function toRuntimeSessionMirrorTargetKey(target: RuntimeSessionMirrorTarget): string {
+  return `${target.environmentId}\u0001${target.runtimeId}\u0001${target.connectionGeneration}\u0001${target.pairingRevision}`
+}
+
 export type RuntimeSessionMirrorTargetState = Omit<
   WorktreeRuntimeOwnerState,
   'runtimeEnvironments'

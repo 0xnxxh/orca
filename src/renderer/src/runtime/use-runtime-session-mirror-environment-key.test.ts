@@ -22,7 +22,7 @@ import {
   selectRuntimeSessionMirrorTargetInputs,
   useRuntimeSessionMirrorEnvironmentKey
 } from './use-runtime-session-mirror-environment-key'
-import { useWebSessionTabsSync } from './web-session-tabs-sync'
+import { useWebSessionTabsSync } from './use-web-session-tabs-sync'
 
 const initialState = useAppStore.getInitialState()
 
