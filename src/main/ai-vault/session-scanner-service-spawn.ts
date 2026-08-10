@@ -11,13 +11,14 @@ import type {
   ReadAiVaultFirstUserPromptResult
 } from './session-first-user-prompt-read'
 import { getSessionParseCachePersistenceOptions } from './session-parse-cache-persistence'
+import { buildAiVaultServiceEnv } from './session-scanner-service-env'
 import { AiVaultScannerServiceClient } from './session-scanner-service-client'
 import { getAiVaultServiceEntryPath } from './session-scanner-service-entry-path'
 import { lowerAiVaultServicePriority } from './session-scanner-service-priority'
 import type { AiVaultServiceSubagentRequest } from './session-scanner-service-protocol'
 import type { AiVaultWorkerScanOptions } from './session-scanner-worker-protocol'
 
-function defaultProcessFactory(): ChildProcess {
+export function spawnAiVaultServiceProcess(): ChildProcess {
   const entryPath = getAiVaultServiceEntryPath()
   if (!existsSync(entryPath)) {
     throw new Error(`AI Vault service entry not found: ${entryPath}`)
@@ -25,7 +26,7 @@ function defaultProcessFactory(): ChildProcess {
   const child = fork(entryPath, [], {
     stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
     execArgv: ['--max-old-space-size=384'],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: buildAiVaultServiceEnv(),
     ...(process.platform === 'win32' ? { windowsHide: true } : {})
   })
   lowerAiVaultServicePriority(child.pid)
@@ -37,7 +38,7 @@ let sharedClient: AiVaultScannerServiceClient | null = null
 
 function getSharedClient(): AiVaultScannerServiceClient {
   sharedClient ??= new AiVaultScannerServiceClient({
-    processFactory: defaultProcessFactory,
+    processFactory: spawnAiVaultServiceProcess,
     init: { sessionParseCache: getSessionParseCachePersistenceOptions() },
     onStderr: (text) => console.error('[ai-vault-service]', text.trimEnd())
   })
