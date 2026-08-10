@@ -91,6 +91,11 @@ function releaseApiUrl(repo, releaseId) {
   return `https://api.github.com/repos/${repo}/releases/${releaseId}`
 }
 
+function tagRefApiUrl(repo, tag) {
+  const encodedTag = tag.split('/').map(encodeURIComponent).join('/')
+  return `https://api.github.com/repos/${repo}/git/refs/tags/${encodedTag}`
+}
+
 async function restoreLatestStableRelease(fetchImpl, token, repo) {
   const stableRelease = latestAllowedStableRelease(await fetchReleases(fetchImpl, token, repo))
   if (!stableRelease) {
@@ -145,6 +150,7 @@ export async function enforceReleasePolicy({
   })
   await restoreLatestStableRelease(fetchImpl, token, repo)
   await githubRequest(fetchImpl, token, url, { method: 'DELETE' })
+  await githubRequest(fetchImpl, token, tagRefApiUrl(repo, release.tag_name), { method: 'DELETE' })
   log(`Deleted unauthorized release ${release.tag_name}: ${classification.reason}.`)
   return { action: 'deleted', tag: release.tag_name, reason: classification.reason }
 }

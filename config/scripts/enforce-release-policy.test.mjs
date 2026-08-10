@@ -130,6 +130,7 @@ describe('enforceReleasePolicy', () => {
       .mockResolvedValueOnce(response([release('v1.4.178', { id: 178 })]))
       .mockResolvedValueOnce(response())
       .mockResolvedValueOnce(response({}, 204))
+      .mockResolvedValueOnce(response({}, 204))
 
     await expect(
       enforceReleasePolicy({
@@ -146,6 +147,7 @@ describe('enforceReleasePolicy', () => {
       'PATCH',
       undefined,
       'PATCH',
+      'DELETE',
       'DELETE'
     ])
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
@@ -157,5 +159,8 @@ describe('enforceReleasePolicy', () => {
       'https://api.github.com/repos/stablyai/orca/releases/178'
     )
     expect(JSON.parse(fetchImpl.mock.calls[2][1].body)).toEqual({ make_latest: 'true' })
+    expect(fetchImpl.mock.calls[4][0]).toBe(
+      'https://api.github.com/repos/stablyai/orca/git/refs/tags/qa-pr13411-exact-head-58e91cb0d8-windows-wsl'
+    )
   })
 })
