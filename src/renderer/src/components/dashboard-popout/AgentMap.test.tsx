@@ -192,9 +192,15 @@ describe('AgentMap', () => {
       name: /Open Finished worktree worktree details/
     })
 
-    expect(workingNode.querySelector('[data-agent-map-agent-working-glow]')).toBeInTheDocument()
-    expect(waitingNode.querySelector('[data-agent-map-agent-working-glow]')).not.toBeInTheDocument()
-    expect(doneNode.querySelector('[data-agent-map-agent-working-glow]')).not.toBeInTheDocument()
+    expect(workingNode.querySelector('[data-agent-map-agent-status-glow]')).toHaveAttribute(
+      'data-agent-active-status',
+      'working'
+    )
+    expect(waitingNode.querySelector('[data-agent-map-agent-status-glow]')).toHaveAttribute(
+      'data-agent-active-status',
+      'waiting'
+    )
+    expect(doneNode.querySelector('[data-agent-map-agent-status-glow]')).not.toBeInTheDocument()
     expect(workingRing).toHaveClass('is-waiting')
     expect(workingRing).not.toHaveClass('is-working')
     expect(doneRing).not.toHaveClass('is-working')
@@ -221,7 +227,7 @@ describe('AgentMap', () => {
     })
     const { container } = renderMap(cards, { selectedPaneKey: 'pane-0' })
 
-    expect(container.querySelectorAll('[data-agent-map-agent-working-glow]')).toHaveLength(60)
+    expect(container.querySelectorAll('[data-agent-map-agent-status-glow]')).toHaveLength(60)
     expect(container.querySelectorAll('[data-agent-map-worktree-status-glow]')).toHaveLength(1)
     expect(container.querySelectorAll('filter')).toHaveLength(0)
   })

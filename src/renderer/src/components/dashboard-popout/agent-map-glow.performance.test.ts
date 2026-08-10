@@ -14,13 +14,13 @@ describe('Agent Map glow performance boundary', () => {
     const component = source('AgentMapWorktreeRingNode.tsx')
 
     expect(component.match(/data-agent-map-worktree-status-glow/g)).toHaveLength(1)
-    expect(component.match(/data-agent-map-agent-working-glow/g)).toHaveLength(1)
+    expect(component.match(/data-agent-map-agent-status-glow/g)).toHaveLength(1)
     expect(component).not.toMatch(/<filter|filter=/)
   })
 
   it('keeps glow styling free of animated and filtered paint work', () => {
     const css = source('agent-map.css')
-    const glowRules = css.match(/\.agent-map-(?:worktree-status|agent-working)-glow\s*\{[^}]+\}/gs)
+    const glowRules = css.match(/\.agent-map-(?:worktree-status|agent-status)-glow\s*\{[^}]+\}/gs)
 
     expect(glowRules).toHaveLength(2)
     for (const rule of glowRules ?? []) {
