@@ -14991,44 +14991,6 @@
           "gitlabMergeRequestNumber": "MR #{{value0}}",
           "githubPullRequestNumber": "PR #{{value0}}"
         },
-        "presets": {
-          "suggested": {
-            "label": "Suggested",
-            "description": "Idle, clean, and safe to delete right now."
-          },
-          "needs-review": {
-            "label": "Needs review",
-            "description": "Old enough to remove, but something still needs a human look."
-          },
-          "protected": {
-            "label": "Protected",
-            "description": "Held back by a blocker such as a live agent, pin, or unpushed work."
-          },
-          "ignored": {
-            "label": "Ignored",
-            "description": "Workspaces you dismissed from cleanup."
-          },
-          "merged-review-clean": {
-            "label": "Merged review & clean",
-            "description": "The pull/merge request landed and the working tree is clean."
-          },
-          "never-opened": {
-            "label": "Never opened",
-            "description": "Orca never recorded you opening these, whatever background activity says."
-          },
-          "largest": {
-            "label": "Largest on disk",
-            "description": "Biggest measured workspaces first. Needs a disk-space scan."
-          },
-          "stale-visits": {
-            "label": "Not opened in 90 days",
-            "description": "Threshold is editable — background activity does not reset it."
-          },
-          "all": {
-            "label": "All workspaces",
-            "description": "Every workspace Orca knows about, including dismissed ones."
-          }
-        },
         "browse": {
           "noSizes": "No workspace sizes measured yet.",
           "noSizesDescription": "Sizes come from the disk-space scan. Run it to sort and filter by size.",

@@ -168,7 +168,7 @@ export function createDefaultWorkspaceCleanupFilterState(): WorkspaceCleanupFilt
       blockers: [],
       blockerMode: 'none-of',
       tiers: [],
-      dismissed: 'exclude',
+      dismissed: 'any',
       selectableOnly: false
     }
   }

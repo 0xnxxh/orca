@@ -46,6 +46,8 @@ describe('workspaceCleanup client-ui schema', () => {
     expect(parsed.browse?.filters.activity.idleMinDays).toBe(14)
     expect(parsed.browse?.filters.activity.idleSignal).toBe('last-visited')
     expect(parsed.browse?.sort).toEqual({ field: 'last-activity', direction: 'desc' })
+    expect(parsed.browse).not.toHaveProperty('activePresetId')
+    expect(parsed.browse).not.toHaveProperty('customPresets')
     expect(parsed.browse).not.toHaveProperty('futureTopLevelField')
   })
 

@@ -86,7 +86,6 @@ describe('workspace cleanup browse slice', () => {
     const store = createStore(uiSet)
 
     const next = createDefaultWorkspaceCleanupBrowseState()
-    next.activePresetId = null
     next.filters.safety.tiers = ['review']
     next.sort = { field: 'size', direction: 'desc' }
     store.getState().updateWorkspaceCleanupBrowseState(next)
