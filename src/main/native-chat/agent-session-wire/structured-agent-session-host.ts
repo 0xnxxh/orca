@@ -56,6 +56,7 @@ import {
   AgentSessionSubscribers,
   type AgentSessionSubscriberEmit
 } from './structured-agent-session-subscribers'
+import { StructuredAgentSessionTaskQueue } from './structured-agent-session-task-queue'
 import { restoreStructuredAgentSessionRead } from './structured-agent-session-read-restore'
 
 export type StructuredAgentSessionCaller = {
@@ -88,7 +89,7 @@ type SessionState = {
 export class StructuredAgentSessionHost {
   private readonly sessions = new Map<string, SessionState>()
   private readonly subscribers = new AgentSessionSubscribers()
-  private readonly chains = new Map<string, Promise<unknown>>()
+  private readonly tasks = new StructuredAgentSessionTaskQueue()
   private readonly eventSinks = new Map<string, DeferredStructuredAgentSessionEventSink>()
   private readonly reconcileLeases: (sessionId: string) => Promise<AgentSessionWireRefusal | null>
 
@@ -147,13 +148,7 @@ export class StructuredAgentSessionHost {
 
   /** Per-session single file. A rejected task must not poison the chain. */
   private serialize<T>(sessionId: string, task: () => Promise<T>): Promise<T> {
-    const prior = this.chains.get(sessionId) ?? Promise.resolve()
-    const next = prior.then(task, task)
-    this.chains.set(
-      sessionId,
-      next.catch(() => undefined)
-    )
-    return next
+    return this.tasks.serialize(sessionId, task)
   }
 
   /**
@@ -164,7 +159,7 @@ export class StructuredAgentSessionHost {
     caller: StructuredAgentSessionCaller,
     params: AgentSessionAttachParams
   ): Promise<AgentSessionMutationResult<AgentSessionAttachResult>> {
-    return this.serialize(params.envelope.sessionId, async () => {
+    const attaching = this.serialize(params.envelope.sessionId, async () => {
       const sessionId = params.envelope.sessionId
       const unreconciled = await this.reconcileLeases(sessionId)
       if (unreconciled) {
@@ -219,6 +214,7 @@ export class StructuredAgentSessionHost {
       }
       return attached
     })
+    return this.tasks.trackAttach(attaching)
   }
 
   /** Settles every row the provider streamed. Callers that must read the
@@ -229,6 +225,8 @@ export class StructuredAgentSessionHost {
 
   /** Settles final provider rows after every child has stopped producing them. */
   async flushAllStreamedEvents(): Promise<void> {
+    // An acquired provider can still be opening its journal; bind before draining.
+    await this.tasks.drainAttaches()
     await Promise.all([...this.eventSinks.values()].map((sink) => sink.drained()))
   }
 
