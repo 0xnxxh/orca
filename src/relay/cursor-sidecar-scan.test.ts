@@ -435,6 +435,40 @@ describe('scanCursorSidecars', () => {
     expect(result.issues).toContainEqual(expect.objectContaining({ message: 'file_too_large' }))
   })
 
+  it('bounds a raced sidecar by the remaining aggregate budget', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    const bucket = 'dededededededededededededededede'
+    const racePath = join(chatsRoot, bucket, 'race', 'meta.json')
+    await Promise.all([
+      addSession(chatsRoot, bucket, 'filler', 'f'.repeat(90)),
+      addSession(chatsRoot, bucket, 'race', 'r'.repeat(5))
+    ])
+    await setSessionMtime(chatsRoot, bucket, 'filler', 10_000)
+    await setSessionMtime(chatsRoot, bucket, 'race', 1_000)
+    const request = defaultCursorSidecarScanRequest(chatsRoot, [], process.platform)
+    request.maxAggregateBytes = 100
+    let checks = 0
+
+    const result = await scanCursorSidecars(request, {
+      clientId: 1,
+      isStale: () => {
+        checks += 1
+        if (checks === CHECKS_BEFORE_FIRST_VERIFIED_READ) {
+          writeFileSync(racePath, 'x'.repeat(20))
+        }
+        return false
+      }
+    })
+
+    expect(result.sidecars.map((sidecar) => sidecar.sessionId)).toEqual(['filler'])
+    expect(result.counters.returnedBytes).toBe(90)
+    expect(result.truncated.sidecarBytes).toBe(true)
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ path: racePath, message: 'file_too_large' })
+    )
+  })
+
   it('prioritizes cancellation that lands during a failed raced read', async () => {
     const root = await createRoot()
     const chatsRoot = join(root, 'chats')

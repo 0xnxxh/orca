@@ -79,7 +79,7 @@ async function readCandidates(
       response.counters.boundedReads++
       const content = await readVerifiedBoundedTextFile(candidate.metaPath, {
         expectedRootRealPath: rootRealPath,
-        maxBytes: caps.sidecarBytes
+        maxBytes: Math.min(caps.sidecarBytes, caps.aggregateBytes - chargedBytes)
       })
       throwIfCancelled(context)
       const bytes = Buffer.byteLength(content, 'utf8')

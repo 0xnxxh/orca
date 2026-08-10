@@ -55,13 +55,14 @@ export async function parseCursorSidecarFile(args: {
   targetPlatform?: NodeJS.Platform
   executionHostId?: ExecutionHostId
   expectedRootRealPath?: string
+  maxBytes?: number
 }): Promise<CursorSidecarParseResult> {
   if (!args.expectedRootRealPath) {
     throw new Error('cursor_sidecar_root_unavailable')
   }
   const content = await readVerifiedBoundedTextFile(args.file.path, {
     expectedRootRealPath: args.expectedRootRealPath,
-    maxBytes: CURSOR_SIDECAR_MAX_BYTES
+    maxBytes: args.maxBytes ?? CURSOR_SIDECAR_MAX_BYTES
   })
   return {
     ...parseCursorSidecarContent({
@@ -78,6 +79,7 @@ export async function parseCursorSidecarFileCached(args: {
   targetPlatform?: NodeJS.Platform
   executionHostId?: ExecutionHostId
   expectedRootRealPath?: string
+  maxBytes?: number
 }): Promise<CursorSidecarParseResult> {
   const cached = sidecarCache.get(args.file.path)
   if (

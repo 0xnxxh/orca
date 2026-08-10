@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AiVaultScanIssue } from '../../shared/ai-vault-types'
 import {
   CURSOR_REMOTE_MAX_AGGREGATE_BYTES,
@@ -10,6 +10,7 @@ import {
 } from '../../shared/cursor-sidecar-scan'
 import { startSpan } from '../observability/tracer'
 import { processLocalCursorCandidates } from './session-scanner-cursor-local-pipeline'
+import * as cursorSidecarParser from './session-scanner-cursor-sidecar'
 import { createSessionParseStats } from './session-scanner-parse-cache'
 import type {
   FileWithMtime,
@@ -20,10 +21,63 @@ import type {
 const roots: string[] = []
 
 afterEach(async () => {
+  vi.restoreAllMocks()
+  cursorSidecarParser.resetCursorSidecarParseCacheForTests()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
 describe('Cursor verified-read budgets by storage context', () => {
+  it.each(['native', 'wsl:ubuntu'])(
+    'keeps eight cold %s verified reads concurrent within one storage budget',
+    async (storageKey) => {
+      const root = await mkdtemp(join(tmpdir(), 'orca-cursor-storage-concurrency-'))
+      roots.push(root)
+      const chatsRoot = join(root, '.cursor', 'chats')
+      const files = await Promise.all(
+        Array.from({ length: 8 }, (_, index) =>
+          addSession(chatsRoot, `session-${index}`, sidecarPayload(1_000), 1_000)
+        )
+      )
+      const discovery = sidecarDiscovery(storageKey, chatsRoot, await realpath(chatsRoot), files)
+      const originalParse = cursorSidecarParser.parseCursorSidecarFileCached
+      let activeReads = 0
+      let peakReads = 0
+      vi.spyOn(cursorSidecarParser, 'parseCursorSidecarFileCached').mockImplementation(
+        async (args) => {
+          activeReads += 1
+          peakReads = Math.max(peakReads, activeReads)
+          await new Promise<void>((resolve) => setImmediate(resolve))
+          try {
+            return await originalParse(args)
+          } finally {
+            activeReads -= 1
+          }
+        }
+      )
+      const span = startSpan('cursor-storage-concurrency-test')
+
+      try {
+        const result = await processLocalCursorCandidates({
+          candidates: discoveryCandidates(discovery),
+          discoveries: [discovery],
+          executionHostId: 'local',
+          issues: [],
+          limit: 20,
+          parseStats: createSessionParseStats(),
+          platform: 'linux',
+          scopeLimit: 20,
+          span
+        })
+
+        expect(result.sessions).toHaveLength(8)
+        expect(peakReads).toBe(8)
+        expect(discovery.cursorDiscoveryCounters?.boundedReads).toBe(8)
+      } finally {
+        span.end()
+      }
+    }
+  )
+
   it('stops after the first verified read when cancellation lands during parsing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-cursor-parse-cancel-'))
     roots.push(root)
@@ -63,7 +117,7 @@ describe('Cursor verified-read budgets by storage context', () => {
     }
   })
 
-  it('charges a raced verified read and skips later candidates after budget exhaustion', async () => {
+  it('bounds a raced verified read by the remaining aggregate budget', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-cursor-storage-race-'))
     roots.push(root)
     const chatsRoot = join(root, '.cursor', 'chats')
@@ -89,13 +143,14 @@ describe('Cursor verified-read budgets by storage context', () => {
     const files = [...fillerFiles, ...racedFiles]
     const discovery = sidecarDiscovery('native', chatsRoot, await realpath(chatsRoot), files)
     const span = startSpan('cursor-storage-race-test')
+    const issues: AiVaultScanIssue[] = []
 
     try {
       const result = await processLocalCursorCandidates({
         candidates: discoveryCandidates(discovery),
         discoveries: [discovery],
         executionHostId: 'local',
-        issues: [],
+        issues,
         limit: 100,
         parseStats: createSessionParseStats(),
         platform: 'linux',
@@ -106,11 +161,12 @@ describe('Cursor verified-read budgets by storage context', () => {
 
       expect(result.sessions).toHaveLength(fillerCount)
       expect(discovery.cursorDiscoveryCounters?.boundedReads).toBe(fillerCount + 1)
-      expect(discovery.cursorDiscoveryCounters?.returnedBytes).toBe(fillerTotal + racedBytes)
-      expect(discovery.cursorDiscoveryCounters?.returnedBytes).toBeGreaterThan(
+      expect(discovery.cursorDiscoveryCounters?.returnedBytes).toBe(fillerTotal)
+      expect(discovery.cursorDiscoveryCounters?.returnedBytes).toBeLessThanOrEqual(
         CURSOR_REMOTE_MAX_AGGREGATE_BYTES
       )
       expect(discovery.cursorDiscoveryTruncated?.sidecarBytes).toBe(true)
+      expect(issues).toContainEqual(expect.objectContaining({ message: 'file_too_large' }))
     } finally {
       span.end()
     }
@@ -145,10 +201,10 @@ describe('Cursor verified-read budgets by storage context', () => {
       })
 
       expect(result.sessions).toEqual([])
-      expect(discovery.cursorDiscoveryCounters?.boundedReads).toBe(1)
+      expect(discovery.cursorDiscoveryCounters?.boundedReads).toBe(2)
       expect(discovery.cursorDiscoveryCounters?.returnedBytes).toBe(0)
       expect(discovery.cursorDiscoveryTruncated?.sidecarBytes).toBe(true)
-      expect(issues).toHaveLength(1)
+      expect(issues).toHaveLength(2)
       expect(issues[0]?.message).toContain('file_too_large')
     } finally {
       span.end()
