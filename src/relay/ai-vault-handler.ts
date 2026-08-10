@@ -55,11 +55,26 @@ export class AiVaultHandler {
     )
   }
 
-  private resolveSessionTitles(
+  private async resolveSessionTitles(
     rawParams: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<AiVaultSessionTitlesResult> {
-    return this.service.resolveSessionTitles(normalizeTitleRequests(rawParams.requests), signal)
+    try {
+      return await this.service.resolveSessionTitles(
+        normalizeTitleRequests(rawParams.requests),
+        signal
+      )
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw error
+      }
+      // Why: titles are decoration. Degrade like an unresolvable title instead of
+      // failing the RPC, which would surface a raw error on every list row.
+      relayLogLine(
+        `[relay-ai-vault-service] title resolution unavailable: ${error instanceof Error ? error.message : String(error)}`
+      )
+      return { titles: [] }
+    }
   }
 
   private async listSessions(

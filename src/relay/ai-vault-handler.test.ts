@@ -309,6 +309,51 @@ describe('AiVaultHandler', () => {
       ]
     })
   })
+
+  it('returns no titles instead of an RPC error when the sidecar is unavailable', async () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      const dispatcher = createMockDispatcher()
+      new AiVaultHandler(dispatcher.value, {
+        remoteHome: '/home/ada',
+        hostPlatform: getRemoteHostPlatform('linux-x64'),
+        service: {
+          listSessions: () => Promise.resolve(emptyResult()),
+          resolveSessionTitles: () => Promise.reject(new Error('sidecar crashed'))
+        }
+      })
+
+      await expect(
+        dispatcher.call(SSH_AI_VAULT_RESOLVE_SESSION_TITLES_METHOD, {
+          requests: [
+            { agent: 'codex', sessionId: 'ssh-session', transcriptPath: '/home/ada/s.jsonl' }
+          ]
+        })
+      ).resolves.toEqual({ titles: [] })
+    } finally {
+      stderr.mockRestore()
+    }
+  })
+
+  it('propagates title cancellation instead of degrading it', async () => {
+    const dispatcher = createMockDispatcher()
+    new AiVaultHandler(dispatcher.value, {
+      remoteHome: '/home/ada',
+      hostPlatform: getRemoteHostPlatform('linux-x64'),
+      service: {
+        listSessions: () => Promise.resolve(emptyResult()),
+        resolveSessionTitles: () => {
+          const error = new Error('The operation was aborted.')
+          error.name = 'AbortError'
+          return Promise.reject(error)
+        }
+      }
+    })
+
+    await expect(
+      dispatcher.call(SSH_AI_VAULT_RESOLVE_SESSION_TITLES_METHOD, { requests: [] })
+    ).rejects.toMatchObject({ name: 'AbortError' })
+  })
 })
 
 async function makeTemporaryHome(): Promise<string> {
