@@ -14,7 +14,7 @@ function tokenizeWindowsStartupCommand(
   const spans: CommandTokenSpan[] = []
   let token = ''
   let tokenStart = 0
-  let bareOperator = false
+  let bareShellSyntax = false
   let quote: "'" | '"' | null = null
   let tokenStarted = false
   for (let index = 0; index < value.length; index += 1) {
@@ -38,6 +38,10 @@ function tokenizeWindowsStartupCommand(
           quote = null
         }
       } else {
+        // Why: cmd.exe has no single-quote syntax, so an operator between
+        // single quotes is still shell-active even though this tokenizer
+        // groups it; the flag must reflect what cmd's parser sees.
+        bareShellSyntax ||= shell === 'cmd' && quote === "'" && ';&|<>'.includes(char)
         token += char
       }
       tokenStarted = true
@@ -52,17 +56,20 @@ function tokenizeWindowsStartupCommand(
     } else if (/\s/.test(char)) {
       if (tokenStarted) {
         tokens.push(token)
-        spans.push({ start: tokenStart, end: index, bareOperator })
+        spans.push({ start: tokenStart, end: index, bareShellSyntax })
         token = ''
         tokenStarted = false
-        bareOperator = false
+        bareShellSyntax = false
       }
     } else {
       if (!tokenStarted) {
         tokenStart = index
       }
-      bareOperator ||=
-        ';&|<>'.includes(char) || (shell === 'powershell' && char === '#' && !tokenStarted)
+      bareShellSyntax ||=
+        ';&|<>'.includes(char) ||
+        (shell === 'powershell' &&
+          ((char === '#' && !tokenStarted) ||
+            (char === '$' && (value[index + 1] === '(' || value[index + 1] === '{'))))
       token += char
       tokenStarted = true
     }
@@ -72,7 +79,7 @@ function tokenizeWindowsStartupCommand(
   }
   if (tokenStarted) {
     tokens.push(token)
-    spans.push({ start: tokenStart, end: value.length, bareOperator })
+    spans.push({ start: tokenStart, end: value.length, bareShellSyntax })
   }
   return { ok: true, tokens, spans }
 }

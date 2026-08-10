@@ -211,6 +211,41 @@ describe('buildClaudeResumeLaunchCommand', () => {
     )
   })
 
+  it.each([
+    'claude --resume $(cat sid.txt)',
+    'claude --resume=$(cat sid.txt)',
+    'claude --resume `cat sid.txt`',
+    'claude --resume ${SID:-a b}'
+  ])('fails open on unquoted multi-token shell expansions: %s', (base) => {
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'posix')).toBe(
+      `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it('fails open on a powershell subexpression locator', () => {
+    const base = 'claude --resume $(Get-Content sid.txt)'
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'powershell')).toBe(
+      `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it('never walks the separator backoff into an escaped-space token', () => {
+    expect(
+      buildClaudeResumeLaunchCommand(
+        'claude --append-system-prompt Be\\ nice\\  --resume OLD',
+        RESUME,
+        'posix'
+      )
+    ).toBe(`claude --append-system-prompt Be\\ nice\\  '--resume' '${SESSION_ID}'`)
+  })
+
+  it('fails open when cmd operators hide in single quotes', () => {
+    // cmd.exe has no single-quote syntax, so '&' is a live command separator.
+    expect(buildClaudeResumeLaunchCommand("claude '&' --resume=old-session", RESUME, 'cmd')).toBe(
+      `claude '&' --resume=old-session "--resume" "${SESSION_ID}"`
+    )
+  })
+
   it('still strips next to a caret-escaped literal ampersand on cmd', () => {
     // ^& is an inactive, literal & in cmd, so the guard may keep working.
     expect(buildClaudeResumeLaunchCommand('claude --resume old ^&', RESUME, 'cmd')).toBe(

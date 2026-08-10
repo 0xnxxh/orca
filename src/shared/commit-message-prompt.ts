@@ -132,11 +132,11 @@ export function truncateDiffForPrompt(
 export const CUSTOM_PROMPT_PLACEHOLDER = '{prompt}'
 
 /** Source range of a token: [start, end) offsets into the original string.
- * `bareOperator` marks a token carrying an unquoted, unescaped shell-active
- * byte (`;&|<>`, or a word-leading `#` where the shell treats it as a
- * comment) — the only quote-state-aware signal consumers cannot recover from
- * the token value alone. */
-export type CommandTokenSpan = { start: number; end: number; bareOperator: boolean }
+ * `bareShellSyntax` marks a token carrying an unquoted, unescaped shell-active
+ * byte — an operator (`;&|<>`), a word-leading `#` comment, or an expansion
+ * opener that can span tokens (backtick, `$(`, `${`) — the quote-state-aware
+ * signal consumers cannot recover from the token value alone. */
+export type CommandTokenSpan = { start: number; end: number; bareShellSyntax: boolean }
 
 export type TokenizeCustomCommandResult =
   | { ok: true; tokens: string[]; spans: CommandTokenSpan[] }
@@ -154,7 +154,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
   let current = ''
   let inToken = false
   let tokenStart = 0
-  let bareOperator = false
+  let bareShellSyntax = false
   let quote: '"' | "'" | null = null
   let i = 0
 
@@ -202,10 +202,10 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
     if (/\s/.test(ch)) {
       if (inToken) {
         tokens.push(current)
-        spans.push({ start: tokenStart, end: i, bareOperator })
+        spans.push({ start: tokenStart, end: i, bareShellSyntax })
         current = ''
         inToken = false
-        bareOperator = false
+        bareShellSyntax = false
       }
       i++
       continue
@@ -214,7 +214,10 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
     if (!inToken) {
       tokenStart = i
     }
-    bareOperator ||= ';&|<>'.includes(ch) || (ch === '#' && !inToken)
+    bareShellSyntax ||=
+      ';&|<>`'.includes(ch) ||
+      (ch === '#' && !inToken) ||
+      (ch === '$' && (template[i + 1] === '(' || template[i + 1] === '{'))
     current += ch
     inToken = true
     i++
@@ -225,7 +228,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
   }
   if (inToken) {
     tokens.push(current)
-    spans.push({ start: tokenStart, end: template.length, bareOperator })
+    spans.push({ start: tokenStart, end: template.length, bareShellSyntax })
   }
   return { ok: true, tokens, spans }
 }

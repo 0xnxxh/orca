@@ -100,20 +100,20 @@ export function buildClaudeResumeLaunchCommand(
   if (claudeIndex === -1) {
     return appended
   }
-  // Why: the tokenizers are not shell-aware, so a bare operator or comment
-  // byte, or a newline, after the claude token means the base chains further
-  // shell syntax; splicing across that boundary would hand the selector to
-  // the wrong command.
+  // Why: the tokenizers are not shell-aware, so a bare operator, comment, or
+  // multi-token expansion byte, or a newline, after the claude token means
+  // the base carries shell syntax the splice cannot model; cutting there
+  // could hand the selector to the wrong command or break a construct.
   for (let i = claudeIndex + 1; i < tokens.length; i += 1) {
     const gap = baseCommand.slice(spans[i - 1].end, spans[i].start)
-    if (!/^[ \t]+$/.test(gap) || spans[i].bareOperator) {
+    if (!/^[ \t]+$/.test(gap) || spans[i].bareShellSyntax) {
       return appended
     }
   }
   if (!/^[ \t]*$/.test(baseCommand.slice(spans.at(-1)?.end ?? 0))) {
     return appended
   }
-  const cuts: { start: number; end: number }[] = []
+  const cuts: { start: number; end: number; floor: number }[] = []
   let terminatorStart: number | null = null
   for (let i = claudeIndex + 1; i < tokens.length; i += 1) {
     const token = tokens[i]
@@ -129,6 +129,9 @@ export function buildClaudeResumeLaunchCommand(
       continue
     }
     const selectorStart = spans[i].start
+    // Why: the separator backoff below must never cross into the previous
+    // token, whose span can end with an escaped-space byte.
+    const floor = spans[i - 1].end
     let end = spans[i].end
     const next = tokens[i + 1]
     if ((token === '--resume' || token === '-r') && next !== undefined && !next.startsWith('-')) {
@@ -136,7 +139,7 @@ export function buildClaudeResumeLaunchCommand(
       end = spans[i + 1].end
       i += 1
     }
-    cuts.push({ start: selectorStart, end })
+    cuts.push({ start: selectorStart, end, floor })
   }
   if (cuts.length === 0 && terminatorStart === null) {
     return appended
@@ -147,7 +150,7 @@ export function buildClaudeResumeLaunchCommand(
   }
   for (let i = cuts.length - 1; i >= 0; i -= 1) {
     let { start } = cuts[i]
-    while (start > 0 && (result[start - 1] === ' ' || result[start - 1] === '\t')) {
+    while (start > cuts[i].floor && (result[start - 1] === ' ' || result[start - 1] === '\t')) {
       start -= 1
     }
     result = `${result.slice(0, start)}${result.slice(cuts[i].end)}`
