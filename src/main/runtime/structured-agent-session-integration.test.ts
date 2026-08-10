@@ -24,6 +24,11 @@ import type {
 } from '../../shared/agent-session-wire'
 import { attachFingerprintFields } from '../native-chat/agent-session-wire/structured-agent-session-attach'
 import { getStructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-registry'
+import { journalDirectoryFor } from '../native-chat/agent-session-journal/journal-paths'
+import {
+  openAgentSessionJournal,
+  type AgentSessionJournal
+} from '../native-chat/agent-session-journal/journal-store'
 import type { OrcaRuntimeService } from './orca-runtime'
 import type { RpcRequest, RpcResponse } from './rpc/core'
 import { RpcDispatcher } from './rpc/dispatcher'
@@ -498,6 +503,67 @@ describe('a structured codex session over agentSession.*', () => {
     // child — so the gate has to run before it, not after.
     expect(getStructuredAgentSessionHost()).toBeNull()
     expect(codex.connections).toEqual([])
+  })
+
+  it('joins final deferred writes before runtime teardown completes', async () => {
+    await ok<{ fence: number }>('agentSession.create', createIntentParams())
+    codex.notify('turn/started', { threadId: THREAD, turn: { id: TURN } })
+    codex.notify('item/started', {
+      threadId: THREAD,
+      turnId: TURN,
+      item: { type: 'agentMessage', id: 'item-final', text: '' }
+    })
+    await drainStreamedEvents()
+
+    codex.notify('item/agentMessage/delta', {
+      threadId: THREAD,
+      turnId: TURN,
+      itemId: 'item-final',
+      delta: 'Final text before shutdown.'
+    })
+    const host = getStructuredAgentSessionHost()
+    const journal = (
+      host as unknown as { sessions: Map<string, { journal: AgentSessionJournal }> }
+    ).sessions.get(SESSION)!.journal
+    const appendEntered = Promise.withResolvers<void>()
+    const appendGate = Promise.withResolvers<void>()
+    const originalAppend = journal.appendItem.bind(journal)
+    vi.spyOn(journal, 'appendItem').mockImplementationOnce(async (...args) => {
+      appendEntered.resolve()
+      await appendGate.promise
+      return originalAppend(...args)
+    })
+
+    let stopped = false
+    const stopping = stopStructuredAgentSessionRuntime().then(() => {
+      stopped = true
+    })
+    await appendEntered.promise
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const waitedForFinalAppend = !stopped
+    appendGate.resolve()
+    await stopping
+
+    expect(waitedForFinalAppend).toBe(true)
+    const identity = {
+      sessionId: SESSION,
+      workspaceId: WORKSPACE,
+      hostId: 'local',
+      agent: 'codex' as const,
+      providerHandle: { kind: 'codex' as const, threadId: THREAD }
+    }
+    const reopened = await openAgentSessionJournal({
+      identity,
+      journalDir: journalDirectoryFor(root, identity)
+    })
+    expect(reopened.snapshot().items.map(textOf)).toContain('Final text before shutdown.')
+    expect(
+      reopened
+        .snapshot()
+        .items.some(
+          (item) => item.body?.kind === 'status' && item.body.turnLifecycle?.state === 'running'
+        )
+    ).toBe(false)
   })
 })
 

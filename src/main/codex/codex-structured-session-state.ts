@@ -64,6 +64,52 @@ export function createCodexAcquisitionAttempt(): CodexAcquisitionAttempt {
   return { window: new CodexAcquisitionWindow(), cancelled: false, finished, finish }
 }
 
+export class CodexAcquisitionRegistry {
+  private readonly attempts = new Map<string, CodexAcquisitionAttempt>()
+  private closing = false
+
+  get size(): number {
+    return this.attempts.size
+  }
+
+  start(sessionId: string): {
+    previousAttempt: CodexAcquisitionAttempt | undefined
+    attempt: CodexAcquisitionAttempt
+  } {
+    if (this.closing) {
+      throw new Error('codex structured session adapter is closing')
+    }
+    const previousAttempt = this.attempts.get(sessionId)
+    const attempt = createCodexAcquisitionAttempt()
+    this.attempts.set(sessionId, attempt)
+    return { previousAttempt, attempt }
+  }
+
+  assertCurrent(sessionId: string, attempt: CodexAcquisitionAttempt): void {
+    if (this.closing || attempt.cancelled || this.attempts.get(sessionId) !== attempt) {
+      throw new Error(`codex session ${sessionId} was superseded while being acquired`)
+    }
+  }
+
+  get(sessionId: string): CodexAcquisitionAttempt | undefined {
+    return this.attempts.get(sessionId)
+  }
+
+  deleteIfCurrent(sessionId: string, attempt: CodexAcquisitionAttempt): void {
+    if (this.attempts.get(sessionId) === attempt) {
+      this.attempts.delete(sessionId)
+    }
+  }
+
+  sessionIds(): IterableIterator<string> {
+    return this.attempts.keys()
+  }
+
+  close(): void {
+    this.closing = true
+  }
+}
+
 export async function cancelCodexAcquisitionAttempt(
   attempt: CodexAcquisitionAttempt | undefined
 ): Promise<void> {

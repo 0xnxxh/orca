@@ -68,7 +68,14 @@ export async function stopStructuredAgentSessionRuntime(): Promise<void> {
     return
   }
   const installed = await pending.catch(() => null)
-  await installed?.adapter.closeAll()
+  if (!installed) {
+    return
+  }
+  try {
+    await installed.adapter.closeAll()
+  } finally {
+    await installed.host.flushAllStreamedEvents()
+  }
 }
 
 async function install(deps: StructuredAgentSessionRuntimeDeps): Promise<InstalledRuntime> {

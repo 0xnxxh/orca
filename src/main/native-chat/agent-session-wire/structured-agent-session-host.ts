@@ -227,6 +227,11 @@ export class StructuredAgentSessionHost {
     return this.eventSinks.get(sessionId)?.drained() ?? Promise.resolve()
   }
 
+  /** Settles final provider rows after every child has stopped producing them. */
+  async flushAllStreamedEvents(): Promise<void> {
+    await Promise.all([...this.eventSinks.values()].map((sink) => sink.drained()))
+  }
+
   /** One sink per session, rebound on every attach. A single identity lets an
    *  adapter hold it across a re-acquire without noticing the new journal. */
   private eventSinkFor(sessionId: string): DeferredStructuredAgentSessionEventSink {

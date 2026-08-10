@@ -28,7 +28,7 @@ import { supportsCodexStructuredLocation } from './codex-structured-location-sup
 import { closeCodexPublishedSession } from './codex-structured-session-close'
 import {
   cancelCodexAcquisitionAttempt,
-  createCodexAcquisitionAttempt,
+  CodexAcquisitionRegistry,
   type CodexAcquisitionAttempt,
   type CodexSession,
   type CodexStructuredSessionAdapterDeps,
@@ -45,7 +45,7 @@ export type {
 
 export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdapter {
   private readonly sessions = new Map<string, CodexSession>()
-  private readonly acquiring = new Map<string, CodexAcquisitionAttempt>()
+  private readonly acquisitions = new CodexAcquisitionRegistry()
 
   constructor(private readonly deps: CodexStructuredSessionAdapterDeps) {}
 
@@ -58,10 +58,8 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     events?: StructuredAgentSessionEventSink
   }): Promise<AgentSessionAcquisition> {
     const sessionId = input.identity.sessionId
-    const previousAttempt = this.acquiring.get(sessionId)
-    const attempt = createCodexAcquisitionAttempt()
+    const { previousAttempt, attempt } = this.acquisitions.start(sessionId)
     const acquisition = attempt.window
-    this.acquiring.set(sessionId, attempt)
     let primaryThreadId =
       input.identity.providerHandle.kind === 'codex' ? input.identity.providerHandle.threadId : null
     const translator = input.events
@@ -76,14 +74,11 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
 
     try {
       await cancelCodexAcquisitionAttempt(previousAttempt)
+      this.acquisitions.assertCurrent(sessionId, attempt)
       await this.closePublishedSession(sessionId)
-      if (attempt.cancelled || this.acquiring.get(sessionId) !== attempt) {
-        throw new Error(`codex session ${sessionId} was superseded while being acquired`)
-      }
+      this.acquisitions.assertCurrent(sessionId, attempt)
       const launch = await this.deps.resolveLaunch({ identity: input.identity })
-      if (attempt.cancelled || this.acquiring.get(sessionId) !== attempt) {
-        throw new Error(`codex session ${sessionId} was superseded while being acquired`)
-      }
+      this.acquisitions.assertCurrent(sessionId, attempt)
       const connection = await open(
         {
           command: launch.command,
@@ -106,13 +101,17 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
         }
       )
       acquisition.connection = connection
+      this.acquisitions.assertCurrent(sessionId, attempt)
       const opened = await openCodexThread(connection, launch, this.deps.requestTimeoutMs)
+      this.acquisitions.assertCurrent(sessionId, attempt)
       primaryThreadId = opened.threadId
+      const process = await codexProcessIdentity(
+        { ...input, pid: connection.pid },
+        this.deps.readProcessStartTime
+      )
+      this.acquisitions.assertCurrent(sessionId, attempt)
       const acquired: AgentSessionAcquisition = {
-        process: await codexProcessIdentity(
-          { ...input, pid: connection.pid },
-          this.deps.readProcessStartTime
-        ),
+        process,
         link: codexProviderHandleLink({
           threadId: opened.threadId,
           resumed: launch.resumeThreadId !== null,
@@ -125,10 +124,8 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
       if (connection.closed) {
         throw new Error(`codex app-server for session ${sessionId} exited while being acquired`)
       }
-      if (attempt.cancelled || this.acquiring.get(sessionId) !== attempt) {
-        throw new Error(`codex session ${sessionId} was superseded while being acquired`)
-      }
-      this.acquiring.delete(sessionId)
+      this.acquisitions.assertCurrent(sessionId, attempt)
+      this.acquisitions.deleteIfCurrent(sessionId, attempt)
       this.sessions.set(sessionId, {
         connection,
         threadId: opened.threadId,
@@ -143,9 +140,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
       }
       return acquired
     } catch (error) {
-      if (this.acquiring.get(sessionId) === attempt) {
-        this.acquiring.delete(sessionId)
-      }
+      this.acquisitions.deleteIfCurrent(sessionId, attempt)
       // Reap this attempt's child only. A replacement already published for the
       // same session keeps running.
       if (this.sessions.get(sessionId)?.connection !== acquisition.connection) {
@@ -303,7 +298,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
   /** Reaps one session's child. The proven handle chain is already durable, so
    *  a graceful close loses nothing. */
   async closeSession(sessionId: string): Promise<void> {
-    const attempt = this.acquiring.get(sessionId)
+    const attempt = this.acquisitions.get(sessionId)
     if (attempt) {
       attempt.cancelled = true
       await attempt.window.connection?.close()
@@ -321,8 +316,11 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
   }
 
   async closeAll(): Promise<void> {
-    const sessionIds = new Set([...this.sessions.keys(), ...this.acquiring.keys()])
-    await Promise.all([...sessionIds].map((sessionId) => this.closeSession(sessionId)))
+    this.acquisitions.close()
+    while (this.sessions.size > 0 || this.acquisitions.size > 0) {
+      const sessionIds = new Set([...this.sessions.keys(), ...this.acquisitions.sessionIds()])
+      await Promise.all([...sessionIds].map((sessionId) => this.closeSession(sessionId)))
+    }
   }
 
   releaseAcquisition(input: { sessionId: string }): Promise<void> {
