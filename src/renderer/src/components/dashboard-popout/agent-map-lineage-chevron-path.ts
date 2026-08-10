@@ -3,6 +3,10 @@ export type AgentMapLineagePoint = {
   y: number
 }
 
+type AgentMapLineageNode = AgentMapLineagePoint & {
+  radius: number
+}
+
 type LineageSegment = {
   start: AgentMapLineagePoint
   unitX: number
@@ -63,4 +67,22 @@ export function agentMapLineageChevronPath(points: AgentMapLineagePoint[]): stri
     )
   }
   return commands.join(' ')
+}
+
+export function agentMapDirectLineageChevronPath(
+  parent: AgentMapLineageNode,
+  child: AgentMapLineageNode
+): string {
+  const dx = child.x - parent.x
+  const dy = child.y - parent.y
+  const distance = Math.hypot(dx, dy)
+  if (distance === 0) {
+    return agentMapLineageChevronPath([parent])
+  }
+  const unitX = dx / distance
+  const unitY = dy / distance
+  return agentMapLineageChevronPath([
+    { x: parent.x + unitX * parent.radius, y: parent.y + unitY * parent.radius },
+    { x: child.x - unitX * child.radius, y: child.y - unitY * child.radius }
+  ])
 }
