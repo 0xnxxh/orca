@@ -75,6 +75,9 @@ export type WorkspaceCleanupScanArgs = {
   worktreeId?: string
   skipGitWorktreeIds?: string[]
   scanId?: string
+  // Why: optional so an older client still receives the legacy suggestion-only
+  // broad scan; only a client that renders the full list asks for every row.
+  includeAllWorkspaces?: boolean
 }
 
 export type WorkspaceCleanupLocalProcessArgs = {

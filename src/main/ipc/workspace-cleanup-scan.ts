@@ -13,7 +13,7 @@ import type {
   WorkspaceCleanupScanProgress,
   WorkspaceCleanupScanResult
 } from '../../shared/workspace-cleanup'
-import { getPersistedWorkspaceCleanupActivityAt } from '../../shared/workspace-cleanup'
+import { shouldScanBroadWorkspaceCleanupWorktree } from './workspace-cleanup-scan-eligibility'
 import {
   resolvePersistedWorkspaceCleanupActivityWorktree,
   resolveWorkspaceCleanupActivityWorktree
@@ -75,6 +75,7 @@ export async function scanWorkspaceCleanup(
       repo,
       scannedAt,
       targetWorktreeId: args.worktreeId,
+      includeAllWorkspaces: args.includeAllWorkspaces === true,
       skipGitWorktreeIds: new Set(args.skipGitWorktreeIds ?? []),
       onWorktreesDiscovered: progress.addDiscovered,
       onCandidateScanned: progress.addCandidate,
@@ -93,6 +94,7 @@ async function scanRepoWorkspaces(
     repo: Repo
     scannedAt: number
     targetWorktreeId?: string
+    includeAllWorkspaces: boolean
     skipGitWorktreeIds: Set<string>
   } & WorkspaceCleanupScanRepoProgress
 ): Promise<WorkspaceCleanupScanResult> {
@@ -101,6 +103,7 @@ async function scanRepoWorkspaces(
     repo,
     scannedAt,
     targetWorktreeId,
+    includeAllWorkspaces,
     skipGitWorktreeIds,
     onWorktreesDiscovered,
     onCandidateScanned,
@@ -120,9 +123,18 @@ async function scanRepoWorkspaces(
   }
 
   if (repo.connectionId && !provider) {
-    const candidates = targetWorktreeId
-      ? synthesizeDisconnectedSshCleanupCandidates(store, repo, scannedAt, targetWorktreeId)
-      : []
+    // Why: a disconnected host still owns real workspaces; the full list shows
+    // them (blocked), while legacy scans keep omitting what they cannot inspect.
+    const candidates =
+      targetWorktreeId || includeAllWorkspaces
+        ? synthesizeDisconnectedSshCleanupCandidates(
+            store,
+            repo,
+            scannedAt,
+            targetWorktreeId,
+            includeAllWorkspaces
+          )
+        : []
     onWorktreesDiscovered?.(candidates.length)
     for (const candidate of candidates) {
       onCandidateScanned?.(candidate)
@@ -135,10 +147,17 @@ async function scanRepoWorkspaces(
     const meta = store.getWorktreeMeta(worktreeId)
     return mergeWorktree(repo.id, gitWorktree, meta, repo.displayName)
   })
+  // Why: with includeAllWorkspaces the browser shows every workspace and lets
+  // filters narrow it; an age threshold here would hide rows from all views.
   const candidateWorktrees = targetWorktreeId
     ? mergedWorktrees.filter((worktree) => worktree.id === targetWorktreeId)
     : mergedWorktrees.filter((worktree) =>
-        shouldResolveBroadWorkspaceCleanupActivity(repoIsFolder, worktree, scannedAt)
+        shouldScanBroadWorkspaceCleanupWorktree({
+          includeAllWorkspaces,
+          repoIsFolder,
+          worktree,
+          scannedAt
+        })
       )
   // Why: fs stat has no cancellation, so on a hung network/WSL mount every
   // timed-out row would abandon more threadpool work. After the first timeout,
@@ -155,7 +174,8 @@ async function scanRepoWorkspaces(
         : await resolveCleanupActivityWithTimeout(repo, worktree, () => {
             activityStatsUnavailable = true
           })
-      if (!targetWorktreeId && !isWorkspaceInactiveForCleanup(worktreeWithActivity, scannedAt)) {
+      const isInactive = isWorkspaceInactiveForCleanup(worktreeWithActivity, scannedAt)
+      if (!targetWorktreeId && !includeAllWorkspaces && !isInactive) {
         return null
       }
       onWorktreesDiscovered?.(1)
@@ -164,7 +184,9 @@ async function scanRepoWorkspaces(
         worktree: worktreeWithActivity,
         scannedAt,
         provider,
-        skipGit: skipGitWorktreeIds.has(worktreeWithActivity.id),
+        // Why: a row with no inactivity reason can never be queued or selected,
+        // so full-fleet scans stream it now and let a focused scan read git later.
+        skipGit: skipGitWorktreeIds.has(worktreeWithActivity.id) || !isInactive,
         forceGitCheck: Boolean(targetWorktreeId)
       }).catch((error) => {
         console.error('Workspace cleanup candidate scan failed', error)
@@ -197,23 +219,6 @@ async function resolveCleanupActivityWithTimeout(
     console.warn('Workspace cleanup activity scan failed', error)
     return resolvePersistedWorkspaceCleanupActivityWorktree(worktree)
   }
-}
-
-function shouldResolveBroadWorkspaceCleanupActivity(
-  repoIsFolder: boolean,
-  worktree: Worktree,
-  scannedAt: number
-): boolean {
-  if (repoIsFolder || worktree.isMainWorktree) {
-    return false
-  }
-  return isWorkspaceInactiveForCleanup(
-    {
-      isArchived: worktree.isArchived,
-      lastActivityAt: getPersistedWorkspaceCleanupActivityAt(worktree)
-    },
-    scannedAt
-  )
 }
 
 async function listCleanupGitWorktrees(

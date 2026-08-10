@@ -1,0 +1,276 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Store } from '../persistence'
+import type * as RepoWorktreesModule from '../repo-worktrees'
+import type { GitStatusResult, GitWorktreeInfo, Repo, WorktreeMeta } from '../../shared/types'
+
+const {
+  lstatMock,
+  readFileMock,
+  listRepoWorktreesMock,
+  getStatusMock,
+  gitExecFileAsyncMock,
+  getLocalProjectWorktreeGitOptionsMock,
+  getSshGitProviderMock
+} = vi.hoisted(() => ({
+  lstatMock: vi.fn(),
+  readFileMock: vi.fn(),
+  listRepoWorktreesMock: vi.fn(),
+  getStatusMock: vi.fn(),
+  gitExecFileAsyncMock: vi.fn(),
+  getLocalProjectWorktreeGitOptionsMock: vi.fn(),
+  getSshGitProviderMock: vi.fn()
+}))
+
+vi.mock('node:fs/promises', () => ({
+  lstat: lstatMock,
+  readFile: readFileMock
+}))
+
+vi.mock('../repo-worktrees', async () => {
+  const actual = await vi.importActual<typeof RepoWorktreesModule>('../repo-worktrees')
+  return {
+    listRepoWorktrees: listRepoWorktreesMock,
+    createFolderWorktree: actual.createFolderWorktree
+  }
+})
+
+vi.mock('../git/status', () => ({
+  getStatus: getStatusMock
+}))
+
+vi.mock('../git/runner', () => ({
+  gitExecFileAsync: gitExecFileAsyncMock
+}))
+
+vi.mock('../providers/ssh-git-dispatch', () => ({
+  getSshGitProvider: getSshGitProviderMock
+}))
+
+vi.mock('../project-runtime-git-options', () => ({
+  getLocalProjectWorktreeGitOptions: getLocalProjectWorktreeGitOptionsMock
+}))
+
+import { scanWorkspaceCleanup } from './workspace-cleanup-scan'
+
+const NOW = 1_700_000_000_000
+const DAY_MS = 24 * 60 * 60 * 1000
+const REPO: Repo = {
+  id: 'repo-1',
+  path: '/repo',
+  displayName: 'Repo',
+  badgeColor: '#000',
+  addedAt: NOW,
+  symlinkPaths: ['node_modules']
+}
+const FOLDER_REPO: Repo = {
+  ...REPO,
+  id: 'repo-folder',
+  path: '/folder-workspace',
+  displayName: 'Folder',
+  kind: 'folder'
+}
+
+const GIT_WORKTREES: GitWorktreeInfo[] = [
+  {
+    path: '/repo',
+    head: 'main123',
+    branch: 'refs/heads/main',
+    isBare: false,
+    isMainWorktree: true
+  },
+  {
+    path: '/repo-old',
+    head: 'old123',
+    branch: 'refs/heads/old',
+    isBare: false,
+    isMainWorktree: false
+  },
+  {
+    path: '/repo-recent',
+    head: 'recent123',
+    branch: 'refs/heads/recent',
+    isBare: false,
+    isMainWorktree: false
+  }
+]
+
+function makeWorktreeMeta(overrides: Partial<WorktreeMeta> = {}): WorktreeMeta {
+  return {
+    displayName: '',
+    comment: '',
+    linkedIssue: null,
+    linkedPR: null,
+    linkedLinearIssue: null,
+    isArchived: false,
+    isUnread: false,
+    isPinned: false,
+    sortOrder: 0,
+    lastActivityAt: NOW,
+    baseRef: 'origin/main',
+    ...overrides
+  } as WorktreeMeta
+}
+
+const META_BY_WORKTREE_ID: Record<string, WorktreeMeta> = {
+  'repo-1::/repo': makeWorktreeMeta({ lastActivityAt: NOW - 40 * DAY_MS }),
+  'repo-1::/repo-old': makeWorktreeMeta({ lastActivityAt: NOW - 40 * DAY_MS }),
+  'repo-1::/repo-recent': makeWorktreeMeta({ lastActivityAt: NOW - 2 * DAY_MS }),
+  'repo-folder::/folder-workspace': makeWorktreeMeta({ lastActivityAt: NOW - 40 * DAY_MS })
+}
+
+function makeStore(repos: Repo[] = [REPO], allMeta: Record<string, WorktreeMeta> = {}): Store {
+  return {
+    getRepos: () => repos,
+    getWorktreeMeta: (worktreeId: string) => META_BY_WORKTREE_ID[worktreeId] ?? allMeta[worktreeId],
+    getAllWorktreeMeta: () => allMeta,
+    getGitHubCache: () => ({ pr: {}, issue: {} })
+  } as unknown as Store
+}
+
+describe('workspace cleanup broad scan opt-in', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    lstatMock.mockReset().mockResolvedValue({ mtimeMs: 0 })
+    readFileMock.mockReset().mockRejectedValue(new Error('not a gitdir pointer'))
+    listRepoWorktreesMock.mockReset().mockResolvedValue(GIT_WORKTREES)
+    getStatusMock.mockReset().mockResolvedValue({
+      entries: [],
+      conflictOperation: 'unknown',
+      upstreamStatus: { hasUpstream: true, ahead: 0, behind: 0 }
+    } satisfies GitStatusResult)
+    gitExecFileAsyncMock.mockReset().mockResolvedValue({ stdout: '0\n', stderr: '' })
+    getLocalProjectWorktreeGitOptionsMock.mockReset().mockReturnValue({})
+    getSshGitProviderMock.mockReset().mockReturnValue(undefined)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('emits every worktree when the client opts into the full workspace list', async () => {
+    const result = await scanWorkspaceCleanup(makeStore(), { includeAllWorkspaces: true })
+
+    expect(result.errors).toEqual([])
+    expect(result.candidates.map((candidate) => candidate.worktreeId)).toEqual([
+      'repo-1::/repo',
+      'repo-1::/repo-old',
+      'repo-1::/repo-recent'
+    ])
+  })
+
+  it('keeps the legacy suggestion-only projection when the flag is absent', async () => {
+    const result = await scanWorkspaceCleanup(makeStore())
+
+    expect(result.candidates.map((candidate) => candidate.worktreeId)).toEqual([
+      'repo-1::/repo-old'
+    ])
+  })
+
+  it('reports recent workspaces with no cleanup reasons', async () => {
+    const result = await scanWorkspaceCleanup(makeStore(), { includeAllWorkspaces: true })
+
+    const recent = result.candidates.find(
+      (candidate) => candidate.worktreeId === 'repo-1::/repo-recent'
+    )
+    expect(recent).toMatchObject({
+      reasons: [],
+      tier: 'review',
+      selectedByDefault: false,
+      lastActivityAt: NOW - 2 * DAY_MS
+    })
+  })
+
+  it('reports the main worktree with a main-worktree blocker', async () => {
+    const result = await scanWorkspaceCleanup(makeStore(), { includeAllWorkspaces: true })
+
+    const main = result.candidates.find((candidate) => candidate.worktreeId === 'repo-1::/repo')
+    expect(main).toMatchObject({
+      tier: 'protected',
+      selectedByDefault: false,
+      blockers: ['main-worktree']
+    })
+  })
+
+  it('reports folder workspaces with a folder-repo blocker', async () => {
+    const result = await scanWorkspaceCleanup(makeStore([FOLDER_REPO]), {
+      includeAllWorkspaces: true
+    })
+
+    expect(result.candidates).toHaveLength(1)
+    expect(result.candidates[0]).toMatchObject({
+      worktreeId: 'repo-folder::/folder-workspace',
+      tier: 'protected',
+      selectedByDefault: false
+    })
+    expect(result.candidates[0]?.blockers).toEqual(
+      expect.arrayContaining(['folder-repo', 'main-worktree'])
+    )
+  })
+
+  it('defers git evidence for rows that no cleanup decision can use', async () => {
+    const result = await scanWorkspaceCleanup(makeStore(), { includeAllWorkspaces: true })
+
+    // Why: only the inactive row can ever be queued, so it is the only row worth
+    // a git read; the rest stream immediately with empty evidence.
+    expect(getStatusMock).toHaveBeenCalledTimes(1)
+    expect(getStatusMock).toHaveBeenCalledWith('/repo-old', expect.anything())
+    expect(
+      result.candidates.find((candidate) => candidate.worktreeId === 'repo-1::/repo-recent')?.git
+    ).toEqual({ clean: null, upstreamAhead: null, upstreamBehind: null, checkedAt: null })
+    expect(
+      result.candidates.find((candidate) => candidate.worktreeId === 'repo-1::/repo-old')?.git
+    ).toMatchObject({ clean: true, checkedAt: expect.any(Number) })
+  })
+
+  it('still forces a git read for a focused scan of a recent workspace', async () => {
+    const result = await scanWorkspaceCleanup(makeStore(), {
+      worktreeId: 'repo-1::/repo-recent',
+      includeAllWorkspaces: true
+    })
+
+    expect(getStatusMock).toHaveBeenCalledTimes(1)
+    expect(result.candidates).toHaveLength(1)
+    expect(result.candidates[0]).toMatchObject({
+      worktreeId: 'repo-1::/repo-recent',
+      reasons: [],
+      git: { clean: true, checkedAt: expect.any(Number) }
+    })
+  })
+
+  it('lists disconnected SSH workspaces only on an opt-in scan', async () => {
+    const sshRepo: Repo = { ...REPO, id: 'repo-ssh', connectionId: 'ssh-1' }
+    const allMeta: Record<string, WorktreeMeta> = {
+      'repo-ssh::/remote/recent': makeWorktreeMeta({ lastActivityAt: NOW - 2 * DAY_MS })
+    }
+
+    const legacy = await scanWorkspaceCleanup(makeStore([sshRepo], allMeta))
+    const optIn = await scanWorkspaceCleanup(makeStore([sshRepo], allMeta), {
+      includeAllWorkspaces: true
+    })
+
+    expect(legacy.candidates).toEqual([])
+    expect(optIn.candidates).toHaveLength(1)
+    expect(optIn.candidates[0]).toMatchObject({
+      worktreeId: 'repo-ssh::/remote/recent',
+      blockers: ['ssh-disconnected'],
+      reasons: []
+    })
+  })
+
+  it('streams every row through scan progress on an opt-in scan', async () => {
+    const progress: { scannedWorktreeCount: number; totalWorktreeCount: number }[] = []
+
+    await scanWorkspaceCleanup(
+      makeStore(),
+      { includeAllWorkspaces: true, scanId: 'scan-all' },
+      { onProgress: (event) => progress.push(event) }
+    )
+
+    expect(progress.at(-1)).toMatchObject({
+      scanId: 'scan-all',
+      scannedWorktreeCount: 3,
+      totalWorktreeCount: 3
+    })
+  })
+})

@@ -17,7 +17,8 @@ export function synthesizeDisconnectedSshCleanupCandidates(
   store: Store,
   repo: Repo,
   scannedAt: number,
-  targetWorktreeId?: string
+  targetWorktreeId?: string,
+  includeAllWorkspaces = false
 ): WorkspaceCleanupCandidate[] {
   const repoWorktreePrefix = `${repo.id}::`
   if (targetWorktreeId) {
@@ -37,7 +38,7 @@ export function synthesizeDisconnectedSshCleanupCandidates(
       continue
     }
     const meta = allMeta[worktreeId]
-    if (!meta || !isWorkspaceInactiveForCleanup(meta, scannedAt)) {
+    if (!meta || (!includeAllWorkspaces && !isWorkspaceInactiveForCleanup(meta, scannedAt))) {
       continue
     }
     candidates.push(createDisconnectedSshCandidate(repo, scannedAt, worktreeId, meta))
