@@ -1,6 +1,10 @@
 import type { ChildProcess } from 'node:child_process'
 import { gitSpawn } from '../git/runner'
 import {
+  isWslLinkedWorktreeGitRoutingCandidate,
+  prepareWslLinkedWorktreeGitRouting
+} from '../git/wsl-linked-worktree-git-routing'
+import {
   buildGitLsFilesArgsForQuickOpen,
   shouldExcludeQuickOpenRelPath,
   shouldIncludeQuickOpenPath
@@ -25,6 +29,12 @@ async function isInsideGitWorkTree(
   localGitOptions: { wslDistro?: string },
   signal?: AbortSignal
 ): Promise<boolean> {
+  if (signal?.aborted) {
+    throw fileListingCancellationError(signal)
+  }
+  if (isWslLinkedWorktreeGitRoutingCandidate(rootPath, localGitOptions.wslDistro)) {
+    await prepareWslLinkedWorktreeGitRouting(rootPath, localGitOptions.wslDistro)
+  }
   if (signal?.aborted) {
     throw fileListingCancellationError(signal)
   }
