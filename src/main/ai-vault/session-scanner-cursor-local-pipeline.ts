@@ -23,6 +23,12 @@ import {
   selectCursorScopedGroups,
   type CursorCandidateSelectionGroup
 } from './session-scanner-cursor-selection'
+import {
+  createCursorVerifiedReadBudget,
+  reserveCursorVerifiedReadBytes,
+  settleCursorVerifiedReadReservation,
+  type CursorVerifiedReadBudget
+} from './session-scanner-cursor-read-budget'
 
 const CURSOR_PARSE_CONCURRENCY = 8
 
@@ -100,10 +106,8 @@ type VerifiedReadTracker = {
       truncated: NonNullable<SessionFileDiscovery['cursorDiscoveryTruncated']>
     }
   >
-  budgetsByStorageKey: Map<string, VerifiedReadBudget>
+  budgetsByStorageKey: Map<string, CursorVerifiedReadBudget>
 }
-
-type VerifiedReadBudget = { chargedBytes: number; reservedBytes: number }
 
 function createVerifiedReadTracker(
   discoveries: readonly SessionFileDiscovery[] | undefined
@@ -132,12 +136,15 @@ function createVerifiedReadTracker(
   return { byStorageKey, budgetsByStorageKey: new Map() }
 }
 
-function verifiedReadBudget(tracker: VerifiedReadTracker, storageKey: string): VerifiedReadBudget {
+function verifiedReadBudget(
+  tracker: VerifiedReadTracker,
+  storageKey: string
+): CursorVerifiedReadBudget {
   const existing = tracker.budgetsByStorageKey.get(storageKey)
   if (existing) {
     return existing
   }
-  const created = { chargedBytes: 0, reservedBytes: 0 }
+  const created = createCursorVerifiedReadBudget()
   tracker.budgetsByStorageKey.set(storageKey, created)
   return created
 }
@@ -229,17 +236,13 @@ async function parseSidecarWithAggregateCap(
     candidate.file.sizeBytes === undefined
       ? CURSOR_SIDECAR_MAX_BYTES
       : Math.min(Math.max(0, candidate.file.sizeBytes), CURSOR_SIDECAR_MAX_BYTES)
-  throwIfAiVaultScanCancelled(args.signal)
-  const availableBytes =
-    CURSOR_REMOTE_MAX_AGGREGATE_BYTES - budget.chargedBytes - budget.reservedBytes
-  if (availableBytes <= 0 || estimatedBytes > availableBytes) {
+  const reservedBytes = await reserveCursorVerifiedReadBytes(budget, estimatedBytes, args.signal)
+  if (reservedBytes === null) {
     if (storage) {
       storage.truncated.sidecarBytes = true
     }
     return null
   }
-  const reservedBytes = Math.min(CURSOR_SIDECAR_MAX_BYTES, availableBytes)
-  budget.reservedBytes += reservedBytes
 
   let result
   try {
@@ -252,7 +255,7 @@ async function parseSidecarWithAggregateCap(
       maxBytes: reservedBytes
     })
   } catch (error) {
-    settleVerifiedReadReservation(
+    settleCursorVerifiedReadReservation(
       budget,
       reservedBytes,
       isVerifiedReadTooLargeError(error)
@@ -270,7 +273,7 @@ async function parseSidecarWithAggregateCap(
   }
 
   const readBytes = result.cacheHit ? 0 : (result.returnedBytes ?? 0)
-  settleVerifiedReadReservation(budget, reservedBytes, readBytes)
+  settleCursorVerifiedReadReservation(budget, reservedBytes, readBytes)
   if (!result.cacheHit && storage) {
     storage.counters.boundedReads += 1
     storage.counters.returnedBytes += readBytes
@@ -289,16 +292,6 @@ async function parseSidecarWithAggregateCap(
         sidecar: result.evidence
       }
     : null
-}
-
-function settleVerifiedReadReservation(
-  budget: VerifiedReadBudget,
-  reservedBytes: number,
-  chargedBytes: number
-): void {
-  budget.reservedBytes -= reservedBytes
-  const available = CURSOR_REMOTE_MAX_AGGREGATE_BYTES - budget.chargedBytes - budget.reservedBytes
-  budget.chargedBytes += Math.min(chargedBytes, Math.max(0, available))
 }
 
 function isVerifiedReadTooLargeError(error: unknown): boolean {

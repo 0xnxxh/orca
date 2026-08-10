@@ -78,6 +78,56 @@ describe('Cursor verified-read budgets by storage context', () => {
     }
   )
 
+  it.each(['native', 'wsl:ubuntu'])(
+    'waits for temporary %s reservations when the statted batch still fits',
+    async (storageKey) => {
+      const root = await mkdtemp(join(tmpdir(), 'orca-cursor-storage-reservations-'))
+      roots.push(root)
+      const chatsRoot = join(root, '.cursor', 'chats')
+      const fillerBytes = CURSOR_SIDECAR_MAX_BYTES - 100
+      const fillerFiles = await Promise.all(
+        Array.from({ length: 63 }, (_, index) =>
+          addSession(
+            chatsRoot,
+            `filler-${String(index).padStart(2, '0')}`,
+            sidecarPayload(fillerBytes),
+            10_000
+          )
+        )
+      )
+      const tailFiles = await Promise.all(
+        Array.from({ length: 8 }, (_, index) =>
+          addSession(chatsRoot, `tail-${index}`, sidecarPayload(1_000), 1_000)
+        )
+      )
+      const files = [...fillerFiles, ...tailFiles]
+      const discovery = sidecarDiscovery(storageKey, chatsRoot, await realpath(chatsRoot), files)
+      const span = startSpan('cursor-storage-reservation-wait-test')
+
+      try {
+        const result = await processLocalCursorCandidates({
+          candidates: discoveryCandidates(discovery),
+          discoveries: [discovery],
+          executionHostId: 'local',
+          issues: [],
+          limit: 100,
+          parseStats: createSessionParseStats(),
+          platform: 'linux',
+          scopeLimit: 100,
+          span
+        })
+
+        expect(result.sessions).toHaveLength(files.length)
+        expect(discovery.cursorDiscoveryCounters?.boundedReads).toBe(files.length)
+        expect(discovery.cursorDiscoveryCounters?.returnedBytes).toBe(63 * fillerBytes + 8_000)
+        expect(discovery.cursorDiscoveryTruncated?.sidecarBytes).toBe(false)
+      } finally {
+        span.end()
+      }
+    },
+    30_000
+  )
+
   it('stops after the first verified read when cancellation lands during parsing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-cursor-parse-cancel-'))
     roots.push(root)
