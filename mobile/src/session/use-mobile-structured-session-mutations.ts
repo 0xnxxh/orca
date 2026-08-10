@@ -1,5 +1,5 @@
 import * as ExpoCrypto from 'expo-crypto'
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type {
   AgentJournalApprovalItem,
   AgentJournalQuestionItem,
@@ -39,8 +39,10 @@ export function useMobileStructuredSessionMutations(args: {
     fence: args.fence,
     sessionId: args.sessionId
   })
-  activeContextRef.current = { client: args.client, fence: args.fence, sessionId: args.sessionId }
   const { client, fence, onRefusal, sessionId } = args
+  useEffect(() => {
+    activeContextRef.current = { client, fence, sessionId }
+  }, [client, fence, sessionId])
   const mutate = useCallback(
     async <TValue>(method: string, fingerprintMethod: string, fields: Record<string, unknown>) => {
       if (!client || !sessionId || fence === null || client.getState() !== 'connected') {
