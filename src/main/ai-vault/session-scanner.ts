@@ -98,6 +98,7 @@ export async function scanAiVaultSessions(
                   : undefined,
               cursorLayout: discovery.cursorLayout,
               cursorStorageContextKey: discovery.cursorStorageContextKey,
+              cursorTargetPlatform: discovery.cursorTargetPlatform,
               cursorCwdEvidence: discovery.cursorCwdEvidenceByPath?.get(file.path),
               cursorExpectedRootRealPath: discovery.cursorExpectedRootRealPath
             })

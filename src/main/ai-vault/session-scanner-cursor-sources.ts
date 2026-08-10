@@ -96,7 +96,8 @@ async function discoverCursorSidecars(args: {
       rootDir: args.roots.chatsDir,
       files: [],
       cursorLayout: 'sidecar',
-      cursorStorageContextKey: args.roots.storageContextKey
+      cursorStorageContextKey: args.roots.storageContextKey,
+      cursorTargetPlatform: args.roots.targetPlatform
     }
   }
 
@@ -111,6 +112,7 @@ async function discoverCursorSidecars(args: {
       files: [],
       cursorLayout: 'sidecar',
       cursorStorageContextKey: args.roots.storageContextKey,
+      cursorTargetPlatform: args.roots.targetPlatform,
       cursorDiscoveryCounters: counters,
       cursorDiscoveryTruncated: discovery.truncated
     }
@@ -130,6 +132,7 @@ async function discoverCursorSidecars(args: {
     files: retained,
     cursorLayout: 'sidecar',
     cursorStorageContextKey: args.roots.storageContextKey,
+    cursorTargetPlatform: args.roots.targetPlatform,
     cursorCwdEvidenceByPath: discovery.evidenceByPath,
     cursorExpectedRootRealPath: discovery.rootRealPath,
     cursorDiscoveryCounters: counters,

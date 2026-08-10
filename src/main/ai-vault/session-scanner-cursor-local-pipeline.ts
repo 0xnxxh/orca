@@ -253,6 +253,7 @@ async function parseSidecarWithAggregateCap(
     const result = await parseCursorSidecarFileCached({
       file: candidate.file,
       platform: args.platform,
+      targetPlatform: candidate.cursorTargetPlatform,
       executionHostId: args.executionHostId,
       expectedRootRealPath: candidate.cursorExpectedRootRealPath
     })

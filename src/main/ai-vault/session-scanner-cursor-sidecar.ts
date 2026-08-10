@@ -42,6 +42,7 @@ const sidecarCache = new Map<
     ino: number | null
     nlink: number | null
     platform: NodeJS.Platform
+    targetPlatform: NodeJS.Platform
     executionHostId: ExecutionHostId | null
     expectedRootRealPath: string | null
     result: CursorSidecarParseResult
@@ -51,6 +52,7 @@ const sidecarCache = new Map<
 export async function parseCursorSidecarFile(args: {
   file: FileWithMtime
   platform: NodeJS.Platform
+  targetPlatform?: NodeJS.Platform
   executionHostId?: ExecutionHostId
   expectedRootRealPath?: string
 }): Promise<CursorSidecarParseResult> {
@@ -73,6 +75,7 @@ export async function parseCursorSidecarFile(args: {
 export async function parseCursorSidecarFileCached(args: {
   file: FileWithMtime
   platform: NodeJS.Platform
+  targetPlatform?: NodeJS.Platform
   executionHostId?: ExecutionHostId
   expectedRootRealPath?: string
 }): Promise<CursorSidecarParseResult> {
@@ -85,6 +88,7 @@ export async function parseCursorSidecarFileCached(args: {
     cached.ino === (args.file.ino ?? null) &&
     cached.nlink === (args.file.nlink ?? null) &&
     cached.platform === args.platform &&
+    cached.targetPlatform === (args.targetPlatform ?? args.platform) &&
     cached.executionHostId === (args.executionHostId ?? null) &&
     cached.expectedRootRealPath === (args.expectedRootRealPath ?? null) &&
     (cached.sizeBytes === null ||
@@ -109,6 +113,7 @@ export async function parseCursorSidecarFileCached(args: {
     ino: args.file.ino ?? null,
     nlink: args.file.nlink ?? null,
     platform: args.platform,
+    targetPlatform: args.targetPlatform ?? args.platform,
     executionHostId: args.executionHostId ?? null,
     expectedRootRealPath: args.expectedRootRealPath ?? null,
     result: cacheEntry
@@ -130,6 +135,7 @@ export function parseCursorSidecarContent(args: {
   file: FileWithMtime
   content: string
   platform: NodeJS.Platform
+  targetPlatform?: NodeJS.Platform
   executionHostId?: ExecutionHostId
 }): CursorSidecarParseResult {
   let value: unknown
@@ -170,7 +176,7 @@ export function parseCursorSidecarContent(args: {
     return { evidence: null, issue: null }
   }
   const rawTitle = typeof record.title === 'string' ? record.title.trim() : ''
-  const cwdResult = validatedSidecarCwd(record.cwd, args.platform, bucket)
+  const cwdResult = validatedSidecarCwd(record.cwd, args.targetPlatform ?? args.platform, bucket)
 
   return {
     evidence: {
