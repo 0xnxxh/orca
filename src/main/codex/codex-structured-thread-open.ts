@@ -12,6 +12,12 @@ export type CodexOpenedThread = {
   threadId: string
   /** Rollout file Codex named, when it named one. */
   historyPath: string | null
+  model?: string
+  effort?: string
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null
 }
 
 export async function openCodexThread(
@@ -33,5 +39,13 @@ export async function openCodexThread(
   if (launch.resumeThreadId && threadId !== launch.resumeThreadId) {
     throw new Error(`codex app-server resumed ${threadId} instead of ${launch.resumeThreadId}`)
   }
-  return { threadId, historyPath: readCodexThreadPath(opened) }
+  const result = opened as Record<string, unknown>
+  const model = nonEmptyString(result.model)
+  const effort = nonEmptyString(result.reasoningEffort)
+  return {
+    threadId,
+    historyPath: readCodexThreadPath(opened),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {})
+  }
 }

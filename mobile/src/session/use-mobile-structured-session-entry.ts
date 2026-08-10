@@ -50,6 +50,8 @@ export function useMobileStructuredSessionEntry(args: {
     submissions: session.submissions
   })
   const sessionOptions = useMobileStructuredSessionOptions({
+    client,
+    connected,
     sessionId,
     setOption: writes.setOption
   })

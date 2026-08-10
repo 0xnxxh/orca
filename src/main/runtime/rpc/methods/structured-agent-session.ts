@@ -23,6 +23,7 @@ import {
   CreateParams,
   CreateSupportParams,
   HistoryParams,
+  OptionsParams,
   RespondParams,
   SendParams,
   SetOptionParams,
@@ -183,6 +184,11 @@ export const STRUCTURED_AGENT_SESSION_METHODS: RpcAnyMethod[] = [
     name: 'agentSession.setOption',
     params: SetOptionParams,
     handler: async (params, ctx) => requireHost(ctx).setOption(callerFor(ctx), params)
+  }),
+  defineMethod({
+    name: 'agentSession.options',
+    params: OptionsParams,
+    handler: async (params, ctx) => requireHost(ctx).readOptions(params.sessionId)
   }),
   defineMethod({
     name: 'agentSession.history',

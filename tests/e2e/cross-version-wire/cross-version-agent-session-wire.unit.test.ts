@@ -46,6 +46,7 @@ const STRUCTURED_CALLS: { method: string; hostMethod: string | null }[] = [
   { method: 'agentSession.respondToApproval', hostMethod: 'respondToPrompt' },
   { method: 'agentSession.respondToQuestion', hostMethod: 'respondToPrompt' },
   { method: 'agentSession.setOption', hostMethod: 'setOption' },
+  { method: 'agentSession.options', hostMethod: 'readOptions' },
   { method: 'agentSession.history', hostMethod: 'history' },
   { method: 'agentSession.subscribe', hostMethod: 'subscribe' },
   // Teardown runs through the runtime's subscription registry rather than the
@@ -233,6 +234,7 @@ describe('cross-version structured agent sessions', () => {
         cancel: vi.fn(async () => ({ ok: true, replayed: false })),
         respondToPrompt: vi.fn(async () => ({ ok: true, replayed: false })),
         setOption: vi.fn(async () => ({ ok: true, replayed: false })),
+        readOptions: vi.fn(async () => ({ models: [], current: { model: 'gpt-live' } })),
         history: vi.fn(() => ({ ok: true, page: { items: [] } })),
         subscribe: vi.fn(() => () => undefined),
         unsubscribe: vi.fn()
@@ -292,7 +294,7 @@ describe('cross-version structured agent sessions', () => {
     it('finds no structured method registered on the old build', () => {
       expect(baseline.methodNames.filter((name) => name.startsWith('agentSession.'))).toEqual([])
       expect(current.methodNames.filter((name) => name.startsWith('agentSession.'))).toHaveLength(
-        11
+        12
       )
     })
 
@@ -356,24 +358,24 @@ describe('cross-version structured agent sessions', () => {
 
     /** Reopens the store from disk and installs a fresh host over the same journal
      *  root — what a process restart actually leaves behind. */
-    async function bootHost(generation: string): Promise<void> {
+    async function bootHost(generation: string): Promise<StructuredAgentSessionHost> {
       store = await AgentSessionRecordStore.open({
         directory: join(root, 'store'),
         hostId: 'local'
       })
-      setStructuredAgentSessionHost(
-        new StructuredAgentSessionHost({
-          store,
-          adapter: adapter(),
-          journalRoot: root,
-          claimKeyId: 'key-1',
-          mintSpawnToken: () => `spawn-${generation}`,
-          // The provider died with the host that spawned it, which is what makes
-          // the restarted host the legitimate next writer.
-          probeOwner: async () => ({ outcome: 'pid-absent' }),
-          now: () => NOW
-        })
-      )
+      const host = new StructuredAgentSessionHost({
+        store,
+        adapter: adapter(),
+        journalRoot: root,
+        claimKeyId: 'key-1',
+        mintSpawnToken: () => `spawn-${generation}`,
+        // The provider died with the host that spawned it, which is what makes
+        // the restarted host the legitimate next writer.
+        probeOwner: async () => ({ outcome: 'pid-absent' }),
+        now: () => NOW
+      })
+      setStructuredAgentSessionHost(host)
+      return host
     }
 
     type HostAnswer = {
@@ -441,14 +443,11 @@ describe('cross-version structured agent sessions', () => {
       expect(first.ok).toBe(true)
       const held = first.cursor
 
-      await bootHost('b')
-      // A restart is a new writer generation; the old fence must not survive it.
-      const reattached = await reattach(created.fence)
-      expect(reattached.fence).toBeGreaterThan(created.fence)
-      const second = await answer(
-        'agentSession.send',
-        sendParams('after restart', reattached.fence)
-      )
+      const restarted = await bootHost('b')
+      await restarted.restoreReadableSessions()
+      const resumedFence = store.getRecord(SESSION)?.lease.runtimeFence ?? 0
+      expect(resumedFence).toBeGreaterThan(created.fence)
+      const second = await answer('agentSession.send', sendParams('after restart', resumedFence))
       expect(second.ok).toBe(true)
 
       const events = (

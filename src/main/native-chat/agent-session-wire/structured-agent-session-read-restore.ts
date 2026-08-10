@@ -7,9 +7,11 @@ import {
   type AgentSessionJournal
 } from '../agent-session-journal/journal-store'
 import {
+  attachFingerprintFields,
   journalIdentityFor,
   type AgentSessionAttachParams
 } from './structured-agent-session-attach'
+import { computeAgentSessionPayloadFingerprint } from '../../../shared/agent-session-mutation-envelope'
 
 export type RestoredStructuredAgentSessionRead = {
   journal: AgentSessionJournal
@@ -26,7 +28,10 @@ export async function restoreStructuredAgentSessionRead(
   if (!record || record.provider !== 'codex') {
     return null
   }
-  const params = attachParamsForReadableRestore(record)
+  const params = attachParamsForRecord(record, {
+    clientOperationId: `read-restore:${record.sessionId}`,
+    expectedRuntimeFence: record.lease.runtimeFence
+  })
   const journalDir = journalDirectoryFor(journalRoot, {
     workspaceId: record.location.workspaceId,
     sessionId
@@ -42,12 +47,15 @@ export async function restoreStructuredAgentSessionRead(
   return { journal, params, fence: record.lease.runtimeFence }
 }
 
-function attachParamsForReadableRestore(record: AgentSessionRecord): AgentSessionAttachParams {
-  return {
+export function attachParamsForRecord(
+  record: AgentSessionRecord,
+  input: { clientOperationId: string; expectedRuntimeFence: number }
+): AgentSessionAttachParams {
+  const params: AgentSessionAttachParams = {
     envelope: {
       sessionId: record.sessionId,
-      clientOperationId: `read-restore:${record.sessionId}`,
-      expectedRuntimeFence: record.lease.runtimeFence,
+      clientOperationId: input.clientOperationId,
+      expectedRuntimeFence: input.expectedRuntimeFence,
       payloadFingerprint: ''
     },
     location: record.location,
@@ -55,5 +63,16 @@ function attachParamsForReadableRestore(record: AgentSessionRecord): AgentSessio
     agent: 'codex',
     accountHome: record.accountHome,
     runtimeKind: record.lease.runtimeKind
+  }
+  return {
+    ...params,
+    envelope: {
+      ...params.envelope,
+      payloadFingerprint: computeAgentSessionPayloadFingerprint({
+        method: 'agentSession.attach',
+        sessionId: record.sessionId,
+        fields: attachFingerprintFields(params)
+      })
+    }
   }
 }

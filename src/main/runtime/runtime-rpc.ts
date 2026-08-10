@@ -189,6 +189,7 @@ const MOBILE_RPC_METHOD_ALLOWLIST = new Set([
   'agentSession.createSupport',
   'agentSession.cancel',
   'agentSession.history',
+  'agentSession.options',
   'agentSession.respondToApproval',
   'agentSession.respondToQuestion',
   'agentSession.send',

@@ -84,9 +84,15 @@ function fakeCodex(routes: Record<string, Route> = {}): {
     connections.push(connection)
     return connection
   }) as typeof openCodexAppServerConnection
-  routes['thread/start'] ??= () => ({ thread: { id: THREAD_ID, path: '/rollouts/abc.jsonl' } })
+  routes['thread/start'] ??= () => ({
+    thread: { id: THREAD_ID, path: '/rollouts/abc.jsonl' },
+    model: 'gpt-live',
+    reasoningEffort: 'medium'
+  })
   routes['thread/resume'] ??= (params) => ({
-    thread: { id: (params as { threadId: string }).threadId }
+    thread: { id: (params as { threadId: string }).threadId },
+    model: 'gpt-live',
+    reasoningEffort: 'medium'
   })
   return { connections, openConnection, routes }
 }

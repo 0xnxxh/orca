@@ -16,6 +16,7 @@ import type {
   AgentSessionExecutionLocation,
   AgentSessionProcessIdentity
 } from '../../../shared/agent-session-record'
+import type { AgentSessionOptionsResult } from '../../../shared/agent-session-wire'
 import type { StructuredAgentSessionEventSink } from './structured-agent-session-event-sink'
 
 /** What a reservation turns into once something is actually running under it:
@@ -73,6 +74,7 @@ export type StructuredAgentSessionAdapter = {
     fence: number
   }): Promise<void>
   setOption(input: { sessionId: string; key: string; value: string; fence: number }): Promise<void>
+  readOptions?(input: { sessionId: string; fence: number }): Promise<AgentSessionOptionsResult>
   /** Transcript path for journal recovery. Omit to let the existing session-file
    *  resolver discover it from the provider session id. */
   historyFilePath?(input: { identity: AgentSessionJournalIdentity }): Promise<string | null>

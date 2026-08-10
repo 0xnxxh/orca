@@ -27,6 +27,10 @@ import { dispatchCodexTurn, isCodexTurnOptionKey } from './codex-structured-turn
 import { supportsCodexStructuredLocation } from './codex-structured-location-support'
 import { closeCodexPublishedSession } from './codex-structured-session-close'
 import {
+  readLiveCodexSessionOptions,
+  reportedCodexThreadOptions
+} from './codex-structured-session-options'
+import {
   cancelCodexAcquisitionAttempt,
   CodexAcquisitionRegistry,
   type CodexAcquisitionAttempt,
@@ -40,8 +44,6 @@ export type {
   CodexStructuredSessionAdapterDeps,
   CodexStructuredSessionEvent
 } from './codex-structured-session-state'
-
-// Owns one app-server child per structured Codex session; durable state stays on the wire.
 
 export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdapter {
   private readonly sessions = new Map<string, CodexSession>()
@@ -75,7 +77,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     try {
       await cancelCodexAcquisitionAttempt(previousAttempt)
       this.acquisitions.assertCurrent(sessionId, attempt)
-      await this.closePublishedSession(sessionId)
+      await closeCodexPublishedSession(this.sessions, sessionId, this.deps.onEvent)
       this.acquisitions.assertCurrent(sessionId, attempt)
       const launch = await this.deps.resolveLaunch({ identity: input.identity })
       this.acquisitions.assertCurrent(sessionId, attempt)
@@ -132,6 +134,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
         historyPath: opened.historyPath,
         prompts: acquisition.prompts,
         options: new Map(),
+        reportedOptions: reportedCodexThreadOptions(opened),
         turnIdWaiters: [],
         translator
       })
@@ -226,12 +229,10 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     })
   }
 
-  /** Lets the translation module address a live prompt by the journal item it
-   *  became; until then the prompt key addresses it directly. */
-  bindPromptItemId(sessionId: string, journalItemId: string, promptKey: string): void {
-    const session = this.sessions.get(sessionId)
-    session?.prompts.bindJournalItemId(journalItemId, session.threadId, promptKey)
-  }
+  bindPromptItemId = (sessionId: string, journalItemId: string, promptKey: string): void =>
+    this.sessions
+      .get(sessionId)
+      ?.prompts.bindJournalItemId(journalItemId, this.session(sessionId).threadId, promptKey)
 
   async dispatch(input: {
     sessionId: string
@@ -291,9 +292,12 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     session.options.set(input.key, input.value)
   }
 
-  async historyFilePath(input: { identity: AgentSessionJournalIdentity }): Promise<string | null> {
-    return this.sessions.get(input.identity.sessionId)?.historyPath ?? null
-  }
+  readOptions = (input: { sessionId: string; fence: number }) =>
+    readLiveCodexSessionOptions(this.session(input.sessionId), this.deps.requestTimeoutMs)
+
+  historyFilePath = async (input: {
+    identity: AgentSessionJournalIdentity
+  }): Promise<string | null> => this.sessions.get(input.identity.sessionId)?.historyPath ?? null
 
   /** Reaps one session's child. The proven handle chain is already durable, so
    *  a graceful close loses nothing. */
@@ -304,15 +308,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
       await attempt.window.connection?.close()
       await attempt.finished
     }
-    await this.closePublishedSession(sessionId)
-  }
-
-  private async closePublishedSession(sessionId: string): Promise<void> {
-    await closeCodexPublishedSession({
-      sessions: this.sessions,
-      sessionId,
-      onEvent: this.deps.onEvent
-    })
+    await closeCodexPublishedSession(this.sessions, sessionId, this.deps.onEvent)
   }
 
   async closeAll(): Promise<void> {
@@ -323,9 +319,8 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     }
   }
 
-  releaseAcquisition(input: { sessionId: string }): Promise<void> {
-    return this.closeSession(input.sessionId)
-  }
+  releaseAcquisition = (input: { sessionId: string }): Promise<void> =>
+    this.closeSession(input.sessionId)
 
   private session(sessionId: string): CodexSession {
     const session = this.sessions.get(sessionId)

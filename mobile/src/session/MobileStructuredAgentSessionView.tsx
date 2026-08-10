@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   FlatList,
@@ -37,6 +37,11 @@ import {
 } from './mobile-structured-history-pagination'
 import { styles } from './mobile-structured-agent-session-view-styles'
 import { useMobileStructuredComposerState } from './use-mobile-structured-composer-state'
+import {
+  dispatchMobileStructuredComposerCommand,
+  isMobileStructuredComposerCommand,
+  MOBILE_STRUCTURED_SLASH_COMMANDS
+} from './mobile-structured-composer-command'
 
 type Props = {
   items: AgentJournalRenderItem[]
@@ -67,6 +72,7 @@ export function MobileStructuredAgentSessionView(props: Props): React.JSX.Elemen
   const androidAnchorOffsetRef = useRef(0)
   const { composerText, setComposerText, restored, setRestored } =
     useMobileStructuredComposerState()
+  const [commandError, setCommandError] = useState<string | null>(null)
   const turnId = activeMobileStructuredTurnId(props.items)
   const allAttachments = [...restored, ...props.attachments]
   const rows = useMemo(
@@ -191,15 +197,28 @@ export function MobileStructuredAgentSessionView(props: Props): React.JSX.Elemen
           </Pressable>
         </View>
       ) : null}
-      {props.writeError ? (
+      {commandError || props.writeError ? (
         <View style={styles.writeError} accessibilityRole="alert">
-          <Text style={styles.writeErrorText}>{props.writeError}</Text>
+          <Text style={styles.writeErrorText}>{commandError ?? props.writeError}</Text>
         </View>
       ) : null}
       <MobileNativeChatComposer
         value={composerText}
         onChangeText={setComposerText}
         onSend={async (text) => {
+          if (allAttachments.length > 0 && isMobileStructuredComposerCommand(text)) {
+            setCommandError('Remove attachments before using a chat-session command.')
+            return false
+          }
+          const command = await dispatchMobileStructuredComposerCommand(text, props.sessionOptions)
+          if (command.handled) {
+            setCommandError(command.error)
+            if (command.accepted) {
+              setComposerText('')
+            }
+            return command.accepted
+          }
+          setCommandError(null)
           const accepted = await props.onSend(text, restored)
           if (accepted) {
             setComposerText('')
@@ -208,6 +227,7 @@ export function MobileStructuredAgentSessionView(props: Props): React.JSX.Elemen
           return accepted
         }}
         agent="codex"
+        slashCommands={MOBILE_STRUCTURED_SLASH_COMMANDS}
         sessionOptions={{ controller: props.sessionOptions, isWorking: false }}
         onAttachImage={props.onAttachImage}
         attachments={allAttachments}

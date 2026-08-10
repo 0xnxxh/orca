@@ -25,6 +25,7 @@ import type {
   AgentSessionMutationEnvelope,
   AgentSessionMutationResult,
   AgentSessionOptionResult,
+  AgentSessionOptionsResult,
   AgentSessionPromptResult,
   AgentSessionSendResult,
   AgentSessionWireRefusal
@@ -57,7 +58,7 @@ import {
   type AgentSessionSubscriberEmit
 } from './structured-agent-session-subscribers'
 import { StructuredAgentSessionTaskQueue } from './structured-agent-session-task-queue'
-import { restoreStructuredAgentSessionRead } from './structured-agent-session-read-restore'
+import { restoreStructuredAgentSessionsOnRestart } from './structured-agent-session-restart-restore'
 
 export type StructuredAgentSessionCaller = {
   /** Stable per-client identity; scopes the operation ledger and records who
@@ -124,29 +125,23 @@ export class StructuredAgentSessionHost {
   }
 
   async restoreReadableSessions(): Promise<void> {
-    await Promise.all(
-      this.deps.store
-        .listRecords()
-        .filter((record) => record.provider === 'codex')
-        .map((record) =>
-          this.serialize(record.sessionId, async () => {
-            if (this.sessions.has(record.sessionId)) {
-              return
-            }
-            const restored = await restoreStructuredAgentSessionRead(
-              this.deps.store,
-              this.deps.journalRoot,
-              record.sessionId
-            )
-            if (restored) {
-              this.sessions.set(record.sessionId, restored)
-            }
-          })
-        )
-    )
+    await restoreStructuredAgentSessionsOnRestart({
+      store: this.deps.store,
+      journalRoot: this.deps.journalRoot,
+      records: this.deps.store.listRecords().filter((record) => record.provider === 'codex'),
+      reconcile: this.reconcileLeases,
+      operationId: () =>
+        `${Math.trunc(this.now()).toString().padStart(13, '0')}-${randomUUID().replaceAll('-', '')}`,
+      resume: (params) =>
+        this.attach({ callerKey: 'trusted-local:host-restart' }, params).then(
+          (result) => result.ok
+        ),
+      serialize: (sessionId, task) => this.serialize(sessionId, task),
+      hasSession: (sessionId) => this.sessions.has(sessionId),
+      onReadable: (sessionId, restored) => this.sessions.set(sessionId, restored)
+    })
   }
 
-  /** Per-session single file. A rejected task must not poison the chain. */
   private serialize<T>(sessionId: string, task: () => Promise<T>): Promise<T> {
     return this.tasks.serialize(sessionId, task)
   }
@@ -306,6 +301,16 @@ export class StructuredAgentSessionHost {
     return this.mutate(caller, params.envelope, setOptionPlan(params))
   }
 
+  readOptions(sessionId: string): Promise<AgentSessionOptionsResult> {
+    return this.serialize(sessionId, async () => {
+      const session = this.requireSession(sessionId)
+      if (!this.deps.adapter.readOptions) {
+        throw new Error('structured_agent_session_options_unsupported')
+      }
+      return this.deps.adapter.readOptions({ sessionId, fence: session.fence })
+    })
+  }
+
   private mutate<TValue>(
     caller: StructuredAgentSessionCaller,
     envelope: AgentSessionMutationEnvelope,
@@ -350,9 +355,7 @@ export class StructuredAgentSessionHost {
     return this.subscribers.open({ ...input, journal: session.journal, fence })
   }
 
-  unsubscribe(sessionId: string, id: string): void {
-    this.subscribers.close(sessionId, id)
-  }
+  unsubscribe = (sessionId: string, id: string): void => this.subscribers.close(sessionId, id)
 
   private requireSession(sessionId: string): SessionState {
     const session = this.sessions.get(sessionId)

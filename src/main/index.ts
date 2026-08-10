@@ -2453,6 +2453,11 @@ void app.whenReady().then(async () => {
           codexRuntimeHome?.getSelectedHostAccountCodexHomePath() ?? null,
         systemCodexHomePath: resolveHostCodexSessionSourceHome(store!.getSettings())
       }),
+    prepareCodexStructuredLaunch: ({ workspacePath, launchEnv }) =>
+      prepareCodexRuntimeHomeForLaunch(undefined, launchEnv, {
+        launchAgent: 'codex',
+        workspacePath
+      }),
     buildAgentHookPtyEnv: () =>
       isAgentStatusHooksEnabled(store?.getSettings()) ? agentHookServer.buildPtyEnv() : {},
     orchestrationEnvironmentTransport

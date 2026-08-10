@@ -86,6 +86,10 @@ function hostStub(): StructuredAgentSessionHost {
     cancel: vi.fn(async () => ({ ok: true, replayed: false })),
     respondToPrompt: vi.fn(async () => ({ ok: true, replayed: false })),
     setOption: vi.fn(async () => ({ ok: true, replayed: false })),
+    readOptions: vi.fn(async () => ({
+      models: [{ id: 'gpt-live', label: 'GPT Live', isDefault: true, efforts: [] }],
+      current: { model: 'gpt-live' }
+    })),
     history: vi.fn(() => ({ ok: true, page: { items: [] } })),
     subscribe: vi.fn(() => () => undefined),
     unsubscribe: vi.fn()
@@ -170,7 +174,7 @@ describe('capability gating', () => {
     for (const method of STRUCTURED_AGENT_SESSION_METHODS) {
       expect(names).toContain(method.name)
     }
-    expect(STRUCTURED_AGENT_SESSION_METHODS).toHaveLength(11)
+    expect(STRUCTURED_AGENT_SESSION_METHODS).toHaveLength(12)
   })
 
   it('hides the surface from a declared client that did not advertise it', async () => {

@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { RpcClient } from '../transport/rpc-client'
 import type { MobileNativeChatSessionOptionsController } from './use-mobile-native-chat-session-options'
 import { useMobileStructuredSessionOptions } from './use-mobile-structured-session-options'
 
@@ -9,18 +10,64 @@ describe('useMobileStructuredSessionOptions', () => {
   let controller: MobileNativeChatSessionOptionsController | null = null
   let sessionId = 'mobile_1'
   const setOption = vi.fn<(key: string, value: string) => Promise<boolean>>()
+  const sendRequest = vi.fn<RpcClient['sendRequest']>()
+  const client = { sendRequest } as RpcClient
 
   function Probe(): null {
-    controller = useMobileStructuredSessionOptions({ sessionId, setOption })
+    controller = useMobileStructuredSessionOptions({
+      client,
+      connected: true,
+      sessionId,
+      setOption
+    })
     return null
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     setOption.mockReset().mockResolvedValue(true)
+    sendRequest.mockReset().mockResolvedValue({
+      id: 'options',
+      ok: true,
+      result: {
+        models: [
+          {
+            id: 'account-only',
+            label: 'Account Only',
+            isDefault: true,
+            defaultEffort: 'medium',
+            efforts: [
+              { value: 'medium', label: 'Medium' },
+              { value: 'high', label: 'High' }
+            ]
+          },
+          {
+            id: 'gpt-5.6-sol',
+            label: 'GPT-5.6 Sol Live',
+            isDefault: false,
+            efforts: [
+              { value: 'low', label: 'Low' },
+              { value: 'high', label: 'High' }
+            ]
+          },
+          {
+            id: 'gpt-5.6-terra',
+            label: 'GPT-5.6 Terra Live',
+            isDefault: false,
+            efforts: [
+              { value: 'medium', label: 'Medium' },
+              { value: 'high', label: 'High' }
+            ]
+          }
+        ],
+        current: { model: 'account-only', effort: 'medium' }
+      },
+      _meta: { runtimeId: 'runtime-1' }
+    })
     sessionId = 'mobile_1'
-    act(() => {
+    await act(async () => {
       renderer = create(createElement(Probe))
+      await Promise.resolve()
     })
   })
 
@@ -28,6 +75,24 @@ describe('useMobileStructuredSessionOptions', () => {
     act(() => renderer?.unmount())
     renderer = null
     controller = null
+  })
+
+  it('uses only provider models and hydrates current model and effort', () => {
+    expect(sendRequest).toHaveBeenCalledWith('agentSession.options', { sessionId: 'mobile_1' })
+    const model = controller!.snapshot.find((entry) => entry.id === 'model')
+    expect(model?.kind).toEqual({
+      type: 'select',
+      currentValue: 'account-only',
+      choices: [
+        { value: 'account-only', label: 'Account Only' },
+        { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol Live' },
+        { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra Live' }
+      ]
+    })
+    expect(controller!.snapshot.find((entry) => entry.id === 'effort')).toMatchObject({
+      kind: { currentValue: 'medium' },
+      valueSource: 'reported'
+    })
   })
 
   it('uses agentSession.setOption and tracks the applied model and effort', async () => {
@@ -48,6 +113,25 @@ describe('useMobileStructuredSessionOptions', () => {
     })
   })
 
+  it('opens the real model and effort pickers for structured actions', async () => {
+    await act(async () => {
+      expect(await controller!.invokeAction('model')).toBe(true)
+    })
+    expect(controller!.pickerRequest?.id).toBe('model')
+    await act(async () => {
+      controller!.dismissPickerRequest?.(controller!.pickerRequest!.token)
+      expect(await controller!.invokeAction('effort')).toBe(true)
+    })
+    expect(controller!.pickerRequest?.id).toBe('effort')
+  })
+
+  it('rejects values absent from the live provider catalog', async () => {
+    await act(async () => {
+      expect(await controller!.setOption('model', 'static-only-model')).toBe(false)
+    })
+    expect(setOption).not.toHaveBeenCalled()
+  })
+
   it('does not claim a rejected option was applied', async () => {
     setOption.mockResolvedValue(false)
     await act(async () => {
@@ -55,7 +139,8 @@ describe('useMobileStructuredSessionOptions', () => {
     })
 
     expect(controller!.snapshot.find((entry) => entry.id === 'model')).toMatchObject({
-      valueSource: 'unknown'
+      valueSource: 'reported',
+      kind: { currentValue: 'account-only' }
     })
   })
 
@@ -68,7 +153,10 @@ describe('useMobileStructuredSessionOptions', () => {
       pending = controller!.setOption('model', 'gpt-5.6-sol')
     })
     sessionId = 'mobile_2'
-    act(() => renderer!.update(createElement(Probe)))
+    await act(async () => {
+      renderer!.update(createElement(Probe))
+      await Promise.resolve()
+    })
     await act(async () => {
       resolve(true)
       oldResult = await pending
@@ -77,27 +165,8 @@ describe('useMobileStructuredSessionOptions', () => {
     expect(oldResult).toBe(false)
     expect(controller!.pendingId).toBeNull()
     expect(controller!.snapshot.find((entry) => entry.id === 'model')).toMatchObject({
-      valueSource: 'unknown'
+      valueSource: 'reported',
+      kind: { currentValue: 'account-only' }
     })
-  })
-
-  it('does not restore stale pending state when returning to a prior session', async () => {
-    const oldRequest = new Promise<boolean>(() => {})
-    setOption.mockReturnValueOnce(oldRequest).mockResolvedValueOnce(true)
-    act(() => {
-      void controller!.setOption('model', 'gpt-5.6-sol')
-    })
-    sessionId = 'mobile_2'
-    act(() => renderer!.update(createElement(Probe)))
-    sessionId = 'mobile_1'
-    act(() => renderer!.update(createElement(Probe)))
-
-    let applied!: boolean
-    await act(async () => {
-      applied = await controller!.setOption('effort', 'high')
-    })
-
-    expect(applied).toBe(true)
-    expect(setOption).toHaveBeenNthCalledWith(2, 'effort', 'high')
   })
 })

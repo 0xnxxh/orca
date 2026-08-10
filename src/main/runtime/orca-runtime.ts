@@ -3337,6 +3337,9 @@ export class OrcaRuntimeService {
   private readonly prepareAiVaultSessionResumeFn:
     | ((args: AiVaultPrepareSessionResumeArgs) => Promise<AiVaultPrepareSessionResumeResult>)
     | null
+  private readonly prepareCodexStructuredLaunchFn:
+    | ((input: { workspacePath: string; launchEnv: NodeJS.ProcessEnv }) => string | null)
+    | null
   private readonly agentSessionClaimSigner: AgentSessionClaimSigner
   private readonly agentSessionCreateOperations = new Map<string, AgentSessionCreateOperation>()
   private readonly orchestrationCompatibilitySshAttachments = new Map<
@@ -3414,6 +3417,10 @@ export class OrcaRuntimeService {
       prepareAiVaultSessionResume?: (
         args: AiVaultPrepareSessionResumeArgs
       ) => Promise<AiVaultPrepareSessionResumeResult>
+      prepareCodexStructuredLaunch?: (input: {
+        workspacePath: string
+        launchEnv: NodeJS.ProcessEnv
+      }) => string | null
       buildAgentHookPtyEnv?: () => Record<string, string>
       getDesktopWindowStatus?: () => RuntimeDesktopWindowStatus
       agentSessionClaimSigner?: AgentSessionClaimSigner
@@ -3464,6 +3471,7 @@ export class OrcaRuntimeService {
     this.buildAgentHookPtyEnv = deps?.buildAgentHookPtyEnv ?? null
     this.getDesktopWindowStatusFn = deps?.getDesktopWindowStatus ?? (() => 'openable')
     this.prepareAiVaultSessionResumeFn = deps?.prepareAiVaultSessionResume ?? null
+    this.prepareCodexStructuredLaunchFn = deps?.prepareCodexStructuredLaunch ?? null
     this.agentSessionClaimSigner =
       deps?.agentSessionClaimSigner ?? createEphemeralAgentSessionClaimSigner(this.runtimeId)
     this.onTerminalSideEffects = deps?.onTerminalSideEffects ?? null
@@ -9245,8 +9253,11 @@ export class OrcaRuntimeService {
       throw new Error('structured_agent_session_unsupported')
     }
     const settings = this.requireStore().getSettings()
-    const configuredHome = resolveTuiAgentLaunchEnv('codex', settings.agentDefaultEnv).CODEX_HOME
+    const launchEnv = resolveTuiAgentLaunchEnv('codex', settings.agentDefaultEnv)
     const location = await this.resolveStructuredAgentSessionLocation(input.worktree)
+    const workspacePath = (await this.resolveRuntimeFileTarget(input.worktree)).worktree.path
+    const preparedHome = this.prepareCodexStructuredLaunchFn?.({ workspacePath, launchEnv })
+    const configuredHome = launchEnv.CODEX_HOME
     return {
       envelope: {
         sessionId: input.envelope.sessionId,
@@ -9259,7 +9270,12 @@ export class OrcaRuntimeService {
       agent: 'codex',
       accountHome: {
         variable: 'CODEX_HOME',
-        path: configuredHome?.trim() || getSystemCodexHomePath()
+        path:
+          preparedHome?.trim() ||
+          (this.prepareCodexStructuredLaunchFn
+            ? getSystemCodexHomePath()
+            : configuredHome?.trim()) ||
+          getSystemCodexHomePath()
       },
       runtimeKind: 'native'
     }

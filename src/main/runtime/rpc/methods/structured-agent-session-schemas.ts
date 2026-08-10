@@ -170,6 +170,8 @@ export const SetOptionParams = z
   })
   .strict()
 
+export const OptionsParams = z.object({ sessionId: SessionId }).strict()
+
 export const HistoryParams = z
   .object({
     sessionId: SessionId,

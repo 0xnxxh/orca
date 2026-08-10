@@ -45,6 +45,7 @@ export type CodexSession = {
   historyPath: string | null
   prompts: CodexAcquisitionWindow['prompts']
   options: Map<string, string>
+  reportedOptions: { model?: string; effort?: string }
   turnIdWaiters: ((turnId: string) => void)[]
   translator: CodexJournalTranslator | null
 }

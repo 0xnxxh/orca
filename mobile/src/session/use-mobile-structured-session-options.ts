@@ -6,19 +6,27 @@ import {
 } from '../../../src/shared/native-chat-session-option-snapshot'
 import {
   createNativeChatSessionOptionRecord,
+  applyNativeChatReportedSessionOptions,
   setTrackedSessionOption
 } from '../../../src/shared/native-chat-session-option-state'
 import type { SessionOptionValue } from '../../../src/shared/native-chat-session-options'
+import type { AgentSessionOptionsResult } from '../../../src/shared/agent-session-wire'
+import type { RpcClient } from '../transport/rpc-client'
+import { mobileStructuredOptionCatalog } from './mobile-structured-session-option-catalog'
 import type { MobileNativeChatSessionOptionsController } from './use-mobile-native-chat-session-options'
 
 const CODEX_CATALOG = getAgentSessionOptionCatalog('codex')
 
 export function useMobileStructuredSessionOptions(args: {
+  client: RpcClient | null
+  connected: boolean
   sessionId: string | null
   setOption: (key: string, value: string) => Promise<boolean>
 }): MobileNativeChatSessionOptionsController {
-  const { sessionId, setOption: dispatchOption } = args
+  const { client, connected, sessionId, setOption: dispatchOption } = args
   const [version, setVersion] = useState(0)
+  const [catalog, setCatalog] = useState<typeof CODEX_CATALOG>(null)
+  const [pickerRequest, setPickerRequest] = useState<{ id: string; token: number } | null>(null)
   const [pending, setPending] = useState<{
     sessionId: string
     id: string
@@ -31,23 +39,60 @@ export function useMobileStructuredSessionOptions(args: {
   }, [record])
   const pendingId = pending?.record === record ? pending.id : null
 
+  useEffect(() => {
+    setCatalog(null)
+    setPickerRequest(null)
+    if (!client || !connected || !sessionId || !CODEX_CATALOG) {
+      return
+    }
+    let stale = false
+    void client
+      .sendRequest('agentSession.options', { sessionId })
+      .then((response) => {
+        if (stale || !response.ok) {
+          return
+        }
+        const result = response.result as AgentSessionOptionsResult
+        const live = mobileStructuredOptionCatalog(CODEX_CATALOG, result)
+        applyNativeChatReportedSessionOptions(record, {
+          model: result.current.model,
+          ...(result.current.effort ? { effort: result.current.effort } : {})
+        })
+        setCatalog(live)
+        setVersion((current) => current + 1)
+      })
+      .catch(() => {})
+    return () => {
+      stale = true
+    }
+  }, [client, connected, record, sessionId])
+
   const snapshot = useMemo(() => {
     void version
-    if (!CODEX_CATALOG || !sessionId) {
+    if (!catalog || !sessionId) {
       return []
     }
     return buildNativeChatSessionOptionSnapshot({
-      catalog: CODEX_CATALOG,
-      models: CODEX_CATALOG.models,
+      catalog,
+      models: catalog.models,
       record,
       mode: 'live',
       modelLabel: 'Model'
     })
-  }, [record, sessionId, version])
+  }, [catalog, record, sessionId, version])
 
   const setOption = useCallback(
     async (id: string, value: SessionOptionValue): Promise<boolean> => {
-      if (!CODEX_CATALOG || !sessionId || typeof value !== 'string' || pendingId !== null) {
+      const descriptor = snapshot.find((entry) => entry.id === id)
+      if (
+        !catalog ||
+        !sessionId ||
+        typeof value !== 'string' ||
+        pendingId !== null ||
+        !descriptor ||
+        descriptor.kind.type !== 'select' ||
+        !descriptor.kind.choices.some((choice) => choice.value === value)
+      ) {
         return false
       }
       const targetSessionId = sessionId
@@ -59,8 +104,8 @@ export function useMobileStructuredSessionOptions(args: {
           return false
         }
         const effectiveModel = resolveEffectiveNativeChatModelId(
-          CODEX_CATALOG,
-          CODEX_CATALOG.models,
+          catalog,
+          catalog.models,
           targetRecord
         )
         setTrackedSessionOption(targetRecord, id, value, 'dispatched', effectiveModel)
@@ -72,7 +117,18 @@ export function useMobileStructuredSessionOptions(args: {
         )
       }
     },
-    [dispatchOption, pendingId, record, sessionId]
+    [catalog, dispatchOption, pendingId, record, sessionId, snapshot]
+  )
+
+  const invokeAction = useCallback(
+    async (id: string): Promise<boolean> => {
+      if (!snapshot.some((descriptor) => descriptor.id === id)) {
+        return false
+      }
+      setPickerRequest({ id, token: Date.now() })
+      return true
+    },
+    [snapshot]
   )
 
   return useMemo(
@@ -80,9 +136,12 @@ export function useMobileStructuredSessionOptions(args: {
       snapshot,
       pendingId,
       setOption,
-      invokeAction: async () => false,
-      recordCommand: () => {}
+      invokeAction,
+      recordCommand: () => {},
+      pickerRequest,
+      dismissPickerRequest: (token: number) =>
+        setPickerRequest((current) => (current?.token === token ? null : current))
     }),
-    [pendingId, setOption, snapshot]
+    [invokeAction, pendingId, pickerRequest, setOption, snapshot]
   )
 }

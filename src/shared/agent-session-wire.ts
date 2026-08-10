@@ -178,3 +178,28 @@ export type AgentSessionOptionResult = {
   key: string
   value: string
 }
+
+export type AgentSessionOptionChoice = {
+  value: string
+  label: string
+  description?: string
+}
+
+export type AgentSessionModelOption = {
+  id: string
+  label: string
+  description?: string
+  isDefault: boolean
+  defaultEffort?: string
+  efforts: AgentSessionOptionChoice[]
+}
+
+/** Provider-reported choices and effective next-turn values. Additive read-only
+ *  surface so older hosts can reject it without changing structured v1 writes. */
+export type AgentSessionOptionsResult = {
+  models: AgentSessionModelOption[]
+  current: {
+    model: string
+    effort?: string
+  }
+}
