@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
+import {
+  BENCHMARK_SAMPLE_AGGREGATION,
+  summarizeBenchmarkSamples
+} from './benchmark-sample-summary.mjs'
 import { buildCounterbalancedSchedule } from './counterbalanced-benchmark-schedule.mjs'
 
 function mean(values) {
@@ -36,20 +40,27 @@ describe('counterbalanced benchmark schedule', () => {
     expect(mean(positions.login)).toBe(mean(positions.fast))
   })
 
-  it('cancels linear drift from paired arm deltas', () => {
+  it('cancels linear drift in the reported median difference', () => {
     const schedule = buildCounterbalancedSchedule(20, 'login', 'fast')
     const trueDuration = { login: 100, fast: 80 }
     const driftPerLaunch = 7
-    const pairDeltas = schedule.map((order, pairIndex) => {
-      const byArm = Object.fromEntries(
-        order.map((arm, orderIndex) => [
-          arm,
-          trueDuration[arm] + (pairIndex * 2 + orderIndex) * driftPerLaunch
-        ])
-      )
-      return byArm.fast - byArm.login
+    const samples = { login: [], fast: [] }
+    schedule.flat().forEach((arm, launchIndex) => {
+      samples[arm].push(trueDuration[arm] + launchIndex * driftPerLaunch)
     })
 
-    expect(mean(pairDeltas)).toBe(trueDuration.fast - trueDuration.login)
+    const login = summarizeBenchmarkSamples(samples.login)
+    const fast = summarizeBenchmarkSamples(samples.fast)
+    expect(fast.medianMs - login.medianMs).toBe(trueDuration.fast - trueDuration.login)
+
+    const lowerMedian = (values) => [...values].sort((left, right) => left - right)[9]
+    expect(lowerMedian(samples.fast) - lowerMedian(samples.login)).toBe(
+      trueDuration.fast - trueDuration.login - driftPerLaunch
+    )
+    expect(BENCHMARK_SAMPLE_AGGREGATION).toEqual({
+      version: 2,
+      median: 'average-middle',
+      p95: 'nearest-rank'
+    })
   })
 })
