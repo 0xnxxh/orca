@@ -310,6 +310,9 @@ async function main() {
     const { ensureWslHookRelayForReattach } = await jiti.import(
       '../../src/main/agent-hooks/wsl-hook-relay-reattach.ts'
     )
+    const { reconcileWslHookRelaysOnStartup } = await jiti.import(
+      '../../src/main/agent-hooks/wsl-hook-relay-startup-reconciliation.ts'
+    )
     const { codexHookService } = await jiti.import('../../src/main/codex/hook-service.ts')
     const { MANAGED_AGENT_HOOK_TARGETS } = await jiti.import(
       '../../src/shared/managed-agent-hook-targets.ts'
@@ -457,6 +460,38 @@ async function main() {
 
     delivered = 0
     manager = await createManager('after-restart-token')
+    const startupDistros = []
+    const startupStartedAt = performance.now()
+    await reconcileWslHookRelaysOnStartup({
+      platform: 'win32',
+      listLiveProcesses: async () => [
+        {
+          id: survivingPty.id,
+          cwd: guestHome,
+          title: 'shell',
+          wslDistro: distro
+        }
+      ],
+      ensureForDistro: async (startupDistro) => {
+        startupDistros.push(startupDistro)
+        await manager.ensureForDistroReady(startupDistro)
+      }
+    })
+    const startupRelayReadyMs = performance.now() - startupStartedAt
+    if (startupDistros.length !== 1 || startupDistros[0] !== distro) {
+      throw new Error(
+        `Startup inventory did not reconcile '${distro}': [${startupDistros.join(', ')}]`
+      )
+    }
+    const refreshedEndpoint = await waitFor('startup relay endpoint rewrite', async () => {
+      const contents = await readGuestFile(distro, endpointPath)
+      const parsed = contents ? parseEndpoint(contents) : null
+      return parsed && parsed.token === 'after-restart-token' ? parsed : null
+    })
+
+    const immediateHook = await invokeHook(distro, scriptPath, endpointPath)
+    await waitFor('immediate startup hook delivery', async () => (delivered >= 1 ? true : null))
+
     // Reattach the surviving WSL PTY through main's real spawn path — no direct helper call.
     // Why delta: only the reattach phase should record ensureForDistro; length alone can false-
     // green if an earlier phase already refreshed (or if a future hooks-on change reintroduces it).
@@ -473,12 +508,8 @@ async function main() {
         `PTY reattach did not refresh the relay for '${distro}': before=${refreshesBeforeReattach} all=[${relayRefreshes.join(', ')}]`
       )
     }
-    const refreshedEndpoint = await waitFor('reattached relay endpoint rewrite', async () => {
-      const contents = await readGuestFile(distro, endpointPath)
-      const parsed = contents ? parseEndpoint(contents) : null
-      return parsed && parsed.token === 'after-restart-token' ? parsed : null
-    })
 
+    delivered = 0
     await invokeHook(distro, scriptPath, endpointPath)
     await waitFor('refreshed hook warmup delivery', async () => (delivered >= 1 ? true : null))
     delivered = 0
@@ -495,8 +526,11 @@ async function main() {
     const result = {
       distro,
       endpointPath,
-      endpointPortAfterReattach: refreshedEndpoint.port,
+      endpointPortAfterStartup: refreshedEndpoint.port,
       reattachedPtyId: reattachedPty.id,
+      startupDistros,
+      startupRelayReadyMs: Number(startupRelayReadyMs.toFixed(1)),
+      immediateHookMs: Number(immediateHook.elapsedMs.toFixed(1)),
       relayRefreshes,
       reattachRefreshes,
       stale,

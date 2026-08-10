@@ -35,6 +35,7 @@ import {
   initDaemonPtyProvider,
   disconnectDaemon,
   getDaemonProvider,
+  listLiveDaemonProcesses,
   listLiveDaemonPtyIds,
   shutdownDaemon
 } from './daemon/daemon-init'
@@ -249,6 +250,7 @@ import { agentHookServer, type AgentHookProviderSessionIdentity } from './agent-
 import { createHookProviderSessionInvalidator } from './agent-hooks/hook-provider-session-invalidation'
 import { createHookStatusSessionTabsInvalidator } from './agent-hooks/hook-status-session-tabs-invalidation'
 import { wslHookRelayManager } from './agent-hooks/wsl-hook-relay-manager'
+import { reconcileWslHookRelaysOnStartup } from './agent-hooks/wsl-hook-relay-startup-reconciliation'
 import { maybeAutoRenameBranchOnFirstWork } from './agent-hooks/first-work-branch-rename'
 import { rememberBranchRenameFailureOutput } from './agent-hooks/branch-rename-failure-output'
 import { renameWorktreeFolderOnFirstWork } from './agent-hooks/first-work-folder-rename'
@@ -940,6 +942,14 @@ function startTerminalRuntimeStartupServices(): Promise<void> {
       })
       logStartupMilestone('startup-service-done', { service: 'agent-hook-server' })
     },
+    reconcileWslHookRelays: async () => {
+      if (!isAgentStatusHooksEnabled(store?.getSettings())) {
+        return
+      }
+      logStartupMilestone('startup-service-start', { service: 'wsl-hook-relay-reconciliation' })
+      await reconcileWslHookRelaysOnStartup({ listLiveProcesses: listLiveDaemonProcesses })
+      logStartupMilestone('startup-service-done', { service: 'wsl-hook-relay-reconciliation' })
+    },
     onDaemonError: (error) => {
       // Why: daemon failure silently falls back to non-persistent local PTYs; log + telemetry so a fleet-wide outage is observable (was invisible in v1.4.129-rc.1).
       const reason = error instanceof Error ? error.message : String(error)
@@ -951,6 +961,9 @@ function startTerminalRuntimeStartupServices(): Promise<void> {
     onAgentHookServerError: (error) => {
       // Why: hook callbacks are sidebar enrichment only; Orca must still boot if the loopback receiver fails.
       console.error('[agent-hooks] Failed to start local hook server:', error)
+    },
+    onWslHookRelayReconciliationError: (error) => {
+      console.warn('[agent-hooks] Failed to reconcile startup WSL hook relays:', error)
     }
   })
   firstWindowStartupServicesReady = startupServices.firstWindowReady

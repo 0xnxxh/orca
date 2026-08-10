@@ -267,6 +267,27 @@ describe('WslHookRelayManager', () => {
     manager.disposeAll()
   })
 
+  it('exposes first-attempt readiness for startup ordering', async () => {
+    let releaseInstall: (() => void) | undefined
+    const installHooks = vi.fn(
+      () => new Promise<never[]>((resolve) => (releaseInstall = () => resolve([])))
+    )
+    const { manager, deps } = createManager({ installHooks })
+    let ready = false
+
+    const firstAttempt = manager.ensureForDistroReady('Ubuntu').then(() => {
+      ready = true
+    })
+    await vi.waitFor(() => expect(deps.installHooks).toHaveBeenCalledTimes(1))
+    expect(ready).toBe(false)
+
+    releaseInstall?.()
+    await firstAttempt
+    expect(manager.getGuestEndpointFilePath('Ubuntu')).not.toBeNull()
+    expect(ready).toBe(true)
+    manager.disposeAll()
+  })
+
   it('ships the OpenCode plugin to the guest and exposes the overlay dir', async () => {
     const { manager } = createManager({})
     manager.ensureForDistro('Ubuntu')

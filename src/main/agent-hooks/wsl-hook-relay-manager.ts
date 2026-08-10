@@ -82,10 +82,15 @@ export class WslHookRelayManager {
 
   /** Fire-and-forget from every WSL PTY spawn-env build; errors breadcrumb. */
   ensureForDistro(distro: string | null): void {
+    void this.ensureForDistroReady(distro)
+  }
+
+  /** Awaitable first attempt for the startup gate; failures retain timer-driven recovery. */
+  async ensureForDistroReady(distro: string | null): Promise<void> {
     if (this.disposed || !isWslHookRelayAllowed(this.deps)) {
       return
     }
-    void this.ensureInternal(distro).catch((err) => {
+    await this.ensureInternal(distro).catch((err) => {
       const detail = err instanceof Error ? err.message : String(err)
       this.deps.warn(`[agent-hooks] WSL hook relay ensure failed: ${detail}`)
     })

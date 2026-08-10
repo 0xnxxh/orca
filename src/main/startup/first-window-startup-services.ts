@@ -1,8 +1,10 @@
 type FirstWindowStartupServices = {
   startDaemonPtyProvider: (signal: AbortSignal) => Promise<void>
   startAgentHookServer: (signal: AbortSignal) => Promise<void>
+  reconcileWslHookRelays: () => Promise<void>
   onDaemonError: (error: unknown) => void
   onAgentHookServerError: (error: unknown) => void
+  onWslHookRelayReconciliationError: (error: unknown) => void
 }
 
 type StartupService = {
@@ -62,8 +64,10 @@ function startService(
 export function startFirstWindowStartupServices({
   startDaemonPtyProvider,
   startAgentHookServer,
+  reconcileWslHookRelays,
   onDaemonError,
-  onAgentHookServerError
+  onAgentHookServerError,
+  onWslHookRelayReconciliationError
 }: FirstWindowStartupServices): FirstWindowStartupServicesResult {
   // Why: daemon startup and hook-server binding are independent, but both gate
   // restored terminals; run them together so cold-start latency is max(), not sum().
@@ -74,7 +78,11 @@ export function startFirstWindowStartupServices({
   // strand any fallback PTYs that spawn after the gate opens.
   const daemon = startService('daemon PTY provider', startDaemonPtyProvider, onDaemonError)
   const hooks = startService('agent hook server', startAgentHookServer, onAgentHookServerError)
-  const allServicesReady = Promise.all([daemon.ready, hooks.ready]).then(() => undefined)
+  let failOpened = false
+  const allServicesReady = Promise.all([daemon.ready, hooks.ready])
+    .then(() => (failOpened ? undefined : reconcileWslHookRelays()))
+    .catch(onWslHookRelayReconciliationError)
+    .then(() => undefined)
   let windowTimeout: ReturnType<typeof setTimeout> | null = null
   let failOpenTimeout: ReturnType<typeof setTimeout> | null = null
   const servicesSettled = allServicesReady.finally(() => {
@@ -87,6 +95,7 @@ export function startFirstWindowStartupServices({
   })
   const failOpenReady = new Promise<void>((resolve) => {
     failOpenTimeout = setTimeout(() => {
+      failOpened = true
       daemon.reportTimeout()
       hooks.reportTimeout()
       resolve()

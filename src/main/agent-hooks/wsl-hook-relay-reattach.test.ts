@@ -17,7 +17,8 @@ describe('ensureWslHookRelayForReattach', () => {
     ['native reattach', { isReattach: true, wslDistro: null }, null],
     ['legacy reattach without ownership context', { isReattach: true }, null],
     ['blank distro', { isReattach: true, wslDistro: '  ' }, null],
-    ['SSH reattach', { isReattach: true, wslDistro: 'Ubuntu' }, 'ssh-1']
+    ['SSH reattach', { isReattach: true, wslDistro: 'Ubuntu' }, 'ssh-1'],
+    ['relay reattach', { isReattach: true, wslDistro: 'Ubuntu' }, 'relay-1']
   ])('does not refresh a %s', (_label, result, connectionId) => {
     const ensure = vi.fn()
 

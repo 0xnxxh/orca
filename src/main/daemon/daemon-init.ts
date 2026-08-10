@@ -59,6 +59,7 @@ import {
 } from '../claude-accounts/live-pty-gate'
 import { parseDaemonReadyIdentity, readDaemonProcessIncarnation } from './daemon-ready-identity'
 import type { DaemonEndpointIdentity } from './daemon-hello-protocol'
+import type { PtyProcessInfo } from '../providers/pty-process-info'
 
 // Why: daemon init runs concurrent with window load, so an in-process t timestamp (not harness stderr timing) measures cold-start.
 function logDaemonMilestone(event: string, details: Record<string, unknown> = {}): void {
@@ -1081,7 +1082,7 @@ export async function getCurrentDaemonMacTccAttributionHealth(): Promise<MacDaem
 }
 
 /** Returns null unless every daemon generation supplied an authoritative inventory. */
-export async function listLiveDaemonPtyIds(): Promise<string[] | null> {
+export async function listLiveDaemonProcesses(): Promise<PtyProcessInfo[] | null> {
   if (!adapter) {
     return null
   }
@@ -1096,8 +1097,13 @@ export async function listLiveDaemonPtyIds(): Promise<string[] | null> {
     return null
   }
   return inventories.flatMap((inventory) =>
-    inventory.status === 'fulfilled' ? inventory.value.map((process) => process.id) : []
+    inventory.status === 'fulfilled' ? inventory.value : []
   )
+}
+
+export async function listLiveDaemonPtyIds(): Promise<string[] | null> {
+  const processes = await listLiveDaemonProcesses()
+  return processes?.map((process) => process.id) ?? null
 }
 
 // Why: keep the module-level adapter and ipc/pty.ts's localProvider in sync so app-quit can't dispose a stale reference.

@@ -16,6 +16,7 @@ import {
   type WslRelayStartupFailure
 } from './wsl-hook-relay-sentinel'
 import { addOrcaWslInteropEnv } from '../pty/wsl-orca-env'
+import { wslHookRelayStateKey } from './wsl-hook-relay-state-key'
 import {
   WSL_HOOK_RELAY_BUNDLE_NAME,
   WSL_HOOK_RELAY_DIR,
@@ -140,14 +141,8 @@ export function spawnWslRelayProcess(
   })
 }
 
-/** True when the distro shows in `wsl --list --running`. Listing does NOT
- *  boot anything — unlike `wsl -d`, which starts a stopped distro. The
- *  restart timer must check this so relay recovery never resurrects a VM the
- *  user shut down with `wsl --shutdown`. Fails CLOSED (false) on probe
- *  errors: booting a VM the user shut down is worse than a skipped restart
- *  (the next WSL PTY spawn re-ensures), and a wsl.exe too wedged to list
- *  distros would not have launched the relay anyway. */
-export function isWslDistroRunning(distro: string): Promise<boolean> {
+/** One non-booting snapshot; null fails closed when WSL cannot report authority. */
+export function listRunningWslDistros(): Promise<string[] | null> {
   return new Promise((resolve) => {
     execFile(
       'wsl.exe',
@@ -157,18 +152,24 @@ export function isWslDistroRunning(distro: string): Promise<boolean> {
       { env: { ...process.env, WSL_UTF8: '1' }, timeout: 10_000, windowsHide: true },
       (err, stdout) => {
         if (err) {
-          resolve(false)
+          resolve(null)
           return
         }
-        const wanted = distro.trim().toLowerCase()
         const running = decodeWslText(String(stdout))
           .split(/\r?\n/)
-          .map((line) => line.trim().toLowerCase())
+          .map((line) => line.trim())
           .filter(Boolean)
-        resolve(running.includes(wanted))
+        resolve(running)
       }
     )
   })
+}
+
+/** Recovery must not resurrect a distro the user stopped with `wsl --shutdown`. */
+export async function isWslDistroRunning(distro: string): Promise<boolean> {
+  const running = await listRunningWslDistros()
+  const wanted = wslHookRelayStateKey(distro)
+  return running?.some((candidate) => wslHookRelayStateKey(candidate) === wanted) ?? false
 }
 
 export function runWslInstallProcess(
