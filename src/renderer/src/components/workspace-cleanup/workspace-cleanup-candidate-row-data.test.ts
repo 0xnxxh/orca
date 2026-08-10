@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { getDirtyGitLabel, shouldShowGitMetadataChip } from './workspace-cleanup-candidate-row-data'
+import {
+  getCandidateFactStatus,
+  getDirtyGitLabel,
+  shouldShowGitMetadataChip
+} from './workspace-cleanup-candidate-row-data'
 import { makeCandidate } from './workspace-cleanup-presentation-fixtures'
 
 describe('workspace cleanup candidate row data', () => {
+  it('shows facts instead of cleanup policy tiers', () => {
+    expect(getCandidateFactStatus(makeCandidate({ tier: 'ready' }))).toBeNull()
+    expect(getCandidateFactStatus(makeCandidate({ tier: 'review' }))).toBeNull()
+    expect(
+      getCandidateFactStatus(makeCandidate({ tier: 'ready', reasons: ['archived'] }))
+    ).toMatchObject({ label: 'Archived' })
+  })
+
   it('does not duplicate git status blockers as a separate git icon label', () => {
     const gitStatusError = makeCandidate({
       blockers: ['git-status-error'],

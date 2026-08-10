@@ -9,7 +9,7 @@ import { translate } from '@/i18n/i18n'
 import type { WorkspaceCleanupCandidate } from '../../../../shared/workspace-cleanup'
 import type { WorkspaceCleanupRemovalProgress } from './workspace-cleanup-background-removal'
 import {
-  getCandidateStatus,
+  getCandidateFactStatus,
   getContextPillLabel,
   getDirtyGitLabel,
   getReviewPillTone,
@@ -171,7 +171,7 @@ function ConfirmRemoveRow({
   const branchDiffersFromName = candidate.branch !== candidate.displayName
   const contextPillLabel = getContextPillLabel(candidate)
   const showGitMetadataChip = shouldShowGitMetadataChip(candidate)
-  const status = getCandidateStatus(candidate)
+  const factStatus = getCandidateFactStatus(candidate)
   return (
     <div className={cn('border-b border-border/60 px-5 py-2.5', last && 'border-b-0')}>
       <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -183,7 +183,7 @@ function ConfirmRemoveRow({
           )}{' '}
           {formatWorkspaceCleanupRelativeTime(candidate.lastActivityAt)}
         </span>
-        <StatusPill tone={status.tone}>{status.label}</StatusPill>
+        {factStatus ? <StatusPill tone={factStatus.tone}>{factStatus.label}</StatusPill> : null}
         {reviewInfo.label ? (
           <StatusPill tone={getReviewPillTone(reviewInfo)}>{reviewInfo.label}</StatusPill>
         ) : null}

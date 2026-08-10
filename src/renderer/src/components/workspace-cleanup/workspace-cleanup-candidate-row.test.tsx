@@ -31,6 +31,36 @@ describe('CandidateRow', () => {
     container = null
   })
 
+  it('does not present cleanup policy tiers as workspace facts', () => {
+    const candidate = makeCandidate({ tier: 'ready' })
+
+    act(() => {
+      root?.render(
+        <CandidateRow
+          candidate={candidate}
+          expanded={false}
+          last
+          lastActivityLabel="1d ago"
+          reviewInfo={{
+            hasReview: false,
+            label: null,
+            provider: null,
+            state: null,
+            title: null
+          }}
+          selected
+          onIgnore={vi.fn()}
+          onRemove={vi.fn()}
+          onToggleExpanded={vi.fn()}
+          onToggleSelected={vi.fn()}
+          onView={vi.fn()}
+        />
+      )
+    })
+
+    expect(container?.textContent).not.toContain('Ready')
+  })
+
   it('hides selection and remove controls while the workspace is already deleting', () => {
     const candidate = makeCandidate()
 

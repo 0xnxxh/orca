@@ -32,7 +32,7 @@ import {
   formatBranchSafetyDetails,
   formatContextDetails,
   formatGitStatus,
-  getCandidateStatus,
+  getCandidateFactStatus,
   getContextCount,
   getDirtyGitLabel,
   getReviewPillTone,
@@ -132,7 +132,7 @@ export const CandidateRow = React.memo(function CandidateRow({
   const blockers = getWorkspaceCleanupBlockerLabels(candidate)
   const contextDetails = formatContextDetails(candidate)
   const branchSafetyDetails = formatBranchSafetyDetails(candidate)
-  const status = getCandidateStatus(candidate)
+  const factStatus = getCandidateFactStatus(candidate)
   const dirtyLabel = getDirtyGitLabel(candidate)
   const showGitMetadataChip = shouldShowGitMetadataChip(candidate)
   const contextCount = getContextCount(candidate)
@@ -189,9 +189,9 @@ export const CandidateRow = React.memo(function CandidateRow({
                       'Deleting…'
                     )}
               </StatusPill>
-            ) : (
-              <StatusPill tone={status.tone}>{status.label}</StatusPill>
-            )}
+            ) : factStatus ? (
+              <StatusPill tone={factStatus.tone}>{factStatus.label}</StatusPill>
+            ) : null}
             <MetadataIconChip
               icon={Clock3}
               label={`${translate(

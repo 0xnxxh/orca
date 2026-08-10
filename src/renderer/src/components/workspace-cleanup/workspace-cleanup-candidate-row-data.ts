@@ -23,10 +23,10 @@ export function getWorkspaceCleanupBlockerLabels(candidate: WorkspaceCleanupCand
   return candidate.blockers.map((blocker) => getWorkspaceCleanupBlockerLabel(blocker))
 }
 
-export function getCandidateStatus(candidate: WorkspaceCleanupCandidate): {
+export function getCandidateFactStatus(candidate: WorkspaceCleanupCandidate): {
   label: string
   tone: StatusPillTone
-} {
+} | null {
   if (candidate.blockers.includes('dismissed')) {
     return {
       label: translate(
@@ -36,18 +36,13 @@ export function getCandidateStatus(candidate: WorkspaceCleanupCandidate): {
       tone: 'neutral'
     }
   }
-  if (candidate.tier === 'ready') {
+  if (candidate.reasons.includes('archived')) {
     return {
-      label: candidate.reasons.includes('archived')
-        ? translate(
-            'auto.components.workspace.cleanup.WorkspaceCleanupDialog.archivedStatus',
-            'Archived'
-          )
-        : translate(
-            'auto.components.workspace.cleanup.WorkspaceCleanupDialog.readyStatus',
-            'Ready'
-          ),
-      tone: 'ready'
+      label: translate(
+        'auto.components.workspace.cleanup.WorkspaceCleanupDialog.archivedStatus',
+        'Archived'
+      ),
+      tone: 'neutral'
     }
   }
   if (candidate.blockers.length > 0) {
@@ -71,22 +66,7 @@ export function getCandidateStatus(candidate: WorkspaceCleanupCandidate): {
       tone: 'review'
     }
   }
-  if (candidate.tier === 'review') {
-    return {
-      label: translate(
-        'auto.components.workspace.cleanup.WorkspaceCleanupDialog.0a2e3c7cba',
-        'Review'
-      ),
-      tone: 'review'
-    }
-  }
-  return {
-    label: translate(
-      'auto.components.workspace.cleanup.WorkspaceCleanupDialog.c4f4782c02',
-      'Not suggested'
-    ),
-    tone: 'neutral'
-  }
+  return null
 }
 
 export function formatGitStatus(candidate: WorkspaceCleanupCandidate): string {
