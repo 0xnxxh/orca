@@ -63,6 +63,13 @@ function codexResponseItem(
     if (!role) {
       return null
     }
+    // Model-facing Response API mirrors use input_text/output_text and often
+    // carry injected skills/instructions. User-facing chat for modern Codex is
+    // item_completed (paginated) or event_msg (legacy); decoding both would
+    // double-render and leak model-only prompt copies (#13320 / #13393).
+    if (isModelFacingResponseApiContent(payload.content)) {
+      return null
+    }
     const blocks = claudeContentBlocks(payload.content)
     if (blocks.length === 0) {
       return null
@@ -161,6 +168,19 @@ function codexCompletedTurnItem(
     return { id, role: 'assistant', blocks, timestamp, source: 'transcript' }
   }
   return null
+}
+
+function isModelFacingResponseApiContent(content: unknown): boolean {
+  if (!Array.isArray(content)) {
+    return false
+  }
+  for (const value of content) {
+    const type = asRecord(value)?.type
+    if (type === 'input_text' || type === 'output_text' || type === 'input_image') {
+      return true
+    }
+  }
+  return false
 }
 
 function codexTurnItemBlocks(content: unknown): NativeChatBlock[] {

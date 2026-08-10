@@ -70,6 +70,10 @@ export function claudeContentBlocks(content: unknown): NativeChatBlock[] {
 
 function claudeContentBlock(record: Record<string, unknown>): NativeChatBlock | null {
   switch (record.type) {
+    // Codex Response API uses input_text/output_text; Claude uses text. Treat
+    // all three as plain text so shared block mapping stays schema-tolerant.
+    case 'output_text':
+    case 'input_text':
     case 'text': {
       const text = extractString(record.text)
       return text ? { type: 'text', text } : null
