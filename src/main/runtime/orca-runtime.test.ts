@@ -39324,6 +39324,35 @@ describe('OrcaRuntimeService', () => {
     expect(reposChanged).not.toHaveBeenCalled()
   })
 
+  it('persists changed worktree order once and emits targeted invalidations', () => {
+    const firstId = `${TEST_REPO_ID}::/tmp/first`
+    const secondId = `${TEST_REPO_ID}::/tmp/second`
+    const metaById: Record<string, Partial<WorktreeMeta>> = {
+      [firstId]: { sortOrder: 200 },
+      [secondId]: { sortOrder: 100 }
+    }
+    const setWorktreeMeta = vi.fn((id: string, updates: Partial<WorktreeMeta>) => {
+      metaById[id] = { ...metaById[id], ...updates }
+    })
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getWorktreeMeta: (id: string) => metaById[id],
+      setWorktreeMeta
+    } as never)
+    const events: { type: string; repoId?: string }[] = []
+    const unsubscribe = runtime.onClientEvent((event) => events.push(event))
+
+    expect(runtime.persistManagedWorktreeSortOrder([firstId, secondId])).toEqual({ updated: 0 })
+    expect(setWorktreeMeta).not.toHaveBeenCalled()
+    expect(events).toEqual([])
+
+    expect(runtime.persistManagedWorktreeSortOrder([secondId, firstId])).toEqual({ updated: 2 })
+    unsubscribe()
+
+    expect(setWorktreeMeta).toHaveBeenCalledTimes(2)
+    expect(events).toEqual([{ type: 'worktreesChanged', repoId: TEST_REPO_ID }])
+  })
+
   it('worktree scan cache: folder metadata invalidation preserves raw scans', async () => {
     vi.mocked(listWorktrees).mockClear()
     const runtime = createRuntime()
