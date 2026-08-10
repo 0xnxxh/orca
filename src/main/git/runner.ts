@@ -968,7 +968,9 @@ export async function gitExecFileAsync(
     { args, ...(options.cwd !== undefined ? { cwd: options.cwd } : {}) },
     async () => {
       if (isWslLinkedWorktreeGitRoutingCandidate(options.cwd, options.wslDistro)) {
-        await prepareWslLinkedWorktreeGitRouting(options.cwd, options.wslDistro)
+        await prepareWslLinkedWorktreeGitRouting(options.cwd, options.wslDistro, {
+          signal: options.signal
+        })
       }
       const resolved = resolveGitCommand(args, options)
       const policy = options.useConfiguredSshCommandForNetwork
@@ -1106,7 +1108,9 @@ export async function gitStreamStdout(
   const maxBuffer = options.maxBuffer ?? DEFAULT_GIT_MAX_BUFFER
   return withGitSpan({ args, cwd: options.cwd }, async () => {
     if (isWslLinkedWorktreeGitRoutingCandidate(options.cwd, options.wslDistro)) {
-      await prepareWslLinkedWorktreeGitRouting(options.cwd, options.wslDistro)
+      await prepareWslLinkedWorktreeGitRouting(options.cwd, options.wslDistro, {
+        signal: options.signal
+      })
     }
     const gitOptions: GitExecOptions = {
       cwd: options.cwd,

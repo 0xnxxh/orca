@@ -517,12 +517,10 @@ describe('WSL direct Git reads', () => {
         }),
         readFile: vi.fn(async () => 'gitdir: C:/main/.git/worktrees/linked\n')
       }
-      const pending = prepareWslLinkedWorktreeGitRouting(
-        String.raw`C:\repo`,
-        DISTRO,
-        'win32',
+      const pending = prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, DISTRO, {
+        platform: 'win32',
         fileSystem
-      )
+      })
       spawnMock.mockReturnValue(createMockChild())
 
       gitSpawn(['ls-files'], {
@@ -546,6 +544,39 @@ describe('WSL direct Git reads', () => {
     })
   })
 
+  it('aborts an async Git call while linked-worktree discovery remains pending', async () => {
+    await withPlatform('win32', async () => {
+      let releaseStat: (() => void) | undefined
+      const delayedStat = new Promise<void>((resolve) => {
+        releaseStat = resolve
+      })
+      const fileSystem: WslLinkedWorktreeRoutingFileSystem = {
+        stat: vi.fn(async () => {
+          await delayedStat
+          return { isDirectory: () => false, isFile: () => true }
+        }),
+        readFile: vi.fn(async () => 'gitdir: C:/main/.git/worktrees/linked\n')
+      }
+      const discovery = prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, DISTRO, {
+        platform: 'win32',
+        fileSystem
+      })
+      const controller = new AbortController()
+
+      const command = gitExecFileAsync(['status', '--short'], {
+        cwd: String.raw`C:\repo`,
+        wslDistro: DISTRO,
+        signal: controller.signal
+      })
+      controller.abort()
+
+      await expect(command).rejects.toMatchObject({ name: 'AbortError' })
+      expect(execFileMock).not.toHaveBeenCalled()
+      releaseStat?.()
+      await expect(discovery).resolves.toBe(true)
+    })
+  })
+
   it('keeps gitSpawn cache-only when a linked-worktree route expires', async () => {
     await withPlatform('win32', async () => {
       let currentTime = 1_000
@@ -555,7 +586,10 @@ describe('WSL direct Git reads', () => {
           stat: vi.fn(async () => ({ isDirectory: () => false, isFile: () => true })),
           readFile: vi.fn(async () => 'gitdir: C:/main/.git/worktrees/linked\n')
         }
-        await prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, DISTRO, 'win32', fileSystem)
+        await prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, DISTRO, {
+          platform: 'win32',
+          fileSystem
+        })
         spawnMock.mockReturnValue(createMockChild())
 
         gitSpawn(['ls-files'], {
@@ -574,7 +608,10 @@ describe('WSL direct Git reads', () => {
         expect(spawnMock.mock.calls[1]?.[0]).toBe('wsl.exe')
         expect(fileSystem.stat).toHaveBeenCalledTimes(1)
 
-        await prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, DISTRO, 'win32', fileSystem)
+        await prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, DISTRO, {
+          platform: 'win32',
+          fileSystem
+        })
         gitSpawn(['ls-files'], {
           cwd: String.raw`C:\repo`,
           wslDistro: DISTRO,

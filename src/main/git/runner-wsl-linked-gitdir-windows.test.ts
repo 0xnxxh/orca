@@ -11,6 +11,7 @@ import {
   toLinuxPath,
   toWindowsWslPath
 } from './runner'
+import { listWorktrees } from './worktree'
 import { resetWslLinkedWorktreeGitRoutingForTests } from './wsl-linked-worktree-git-routing'
 
 const distro = process.env.ORCA_TEST_WSL_DISTRO?.trim()
@@ -123,6 +124,17 @@ describe.runIf(process.platform === 'win32' && Boolean(distro))(
       })
       expect(linkedExecPath.stdout).toMatch(/^[A-Za-z]:\//)
       expect(mainExecPath.stdout).toMatch(/(?:^|\n)\/[^\n]+\n$/)
+      await expect(listWorktrees(linkedPath, { wslDistro: distro! })).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: expect.stringMatching(/[\\/]linked$/) })
+        ])
+      )
+
+      const nestedPath = join(linkedPath, 'nested')
+      wslExec(['git', 'init', toLinuxPath(nestedPath)])
+      await expect(
+        gitExecFileAsync(['--exec-path'], { cwd: nestedPath, wslDistro: distro! })
+      ).resolves.toMatchObject({ stdout: expect.stringMatching(/(?:^|\n)\/[^\n]+\n$/) })
     })
 
     it('keeps WSL-native repositories on WSL Git', async () => {

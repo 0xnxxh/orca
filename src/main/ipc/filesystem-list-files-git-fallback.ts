@@ -33,7 +33,14 @@ async function isInsideGitWorkTree(
     throw fileListingCancellationError(signal)
   }
   if (isWslLinkedWorktreeGitRoutingCandidate(rootPath, localGitOptions.wslDistro)) {
-    await prepareWslLinkedWorktreeGitRouting(rootPath, localGitOptions.wslDistro)
+    try {
+      await prepareWslLinkedWorktreeGitRouting(rootPath, localGitOptions.wslDistro, { signal })
+    } catch (error) {
+      if (signal?.aborted) {
+        throw fileListingCancellationError(signal)
+      }
+      throw error
+    }
   }
   if (signal?.aborted) {
     throw fileListingCancellationError(signal)

@@ -5,6 +5,8 @@ import {
   resetWslLinkedWorktreeGitRoutingForTests,
   seedWslLinkedWorktreeGitRoutingForTests,
   usesHostGitForWslLinkedWorktree,
+  WSL_LINKED_WORKTREE_ROUTE_CACHE_PRUNE_THRESHOLD,
+  WSL_LINKED_WORKTREE_ROUTE_PROBE_TIMEOUT_MS,
   WSL_LINKED_WORKTREE_ROUTE_TTL_MS,
   type WslLinkedWorktreeRoutingFileSystem
 } from './wsl-linked-worktree-git-routing'
@@ -37,24 +39,16 @@ describe('parseWindowsLinkedGitdir', () => {
 })
 
 describe('usesHostGitForWslLinkedWorktree', () => {
-  it('scopes a cached route to the linked root and its folder workspaces', () => {
-    seedWslLinkedWorktreeGitRoutingForTests(String.raw`C:\repo\linked`)
+  it('scopes a cached route to the exact primed folder workspace', () => {
+    seedWslLinkedWorktreeGitRoutingForTests(String.raw`C:\repo\linked\packages\app`)
 
     expect(
       usesHostGitForWslLinkedWorktree(String.raw`C:\repo\linked\packages\app`, 'Ubuntu', 'win32')
     ).toBe(true)
+    expect(usesHostGitForWslLinkedWorktree('C:/repo/linked/packages/app/', 'Ubuntu', 'win32')).toBe(
+      true
+    )
     expect(usesHostGitForWslLinkedWorktree(String.raw`C:\repo\main`, 'Ubuntu', 'win32')).toBe(false)
-  })
-
-  it('treats a child named ..data as inside the linked root', () => {
-    seedWslLinkedWorktreeGitRoutingForTests(String.raw`C:\repo\linked`)
-
-    expect(
-      usesHostGitForWslLinkedWorktree(String.raw`C:\repo\linked\..data`, 'Ubuntu', 'win32')
-    ).toBe(true)
-    expect(
-      usesHostGitForWslLinkedWorktree(String.raw`C:\repo\linked-sibling`, 'Ubuntu', 'win32')
-    ).toBe(false)
   })
 
   it('does not affect native Windows, WSL-native, or non-Windows execution', () => {
@@ -77,10 +71,10 @@ describe('usesHostGitForWslLinkedWorktree', () => {
 })
 
 describe('prepareWslLinkedWorktreeGitRouting', () => {
-  it('discovers a parent marker asynchronously and caches its folder tree', async () => {
+  it('discovers parent markers independently for sibling folder workspaces', async () => {
     const fileSystem: WslLinkedWorktreeRoutingFileSystem = {
       stat: vi.fn(async (path) => {
-        if (path === String.raw`c:\repo\.git`) {
+        if (path === String.raw`C:\repo\.git`) {
           return fileMarker
         }
         throw missingMarker()
@@ -89,23 +83,19 @@ describe('prepareWslLinkedWorktreeGitRouting', () => {
     }
 
     await expect(
-      prepareWslLinkedWorktreeGitRouting(
-        String.raw`C:\repo\packages\app`,
-        'Ubuntu',
-        'win32',
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo\packages\app`, 'Ubuntu', {
+        platform: 'win32',
         fileSystem
-      )
+      })
     ).resolves.toBe(true)
     await expect(
-      prepareWslLinkedWorktreeGitRouting(
-        String.raw`C:\repo\packages\other`,
-        'Ubuntu',
-        'win32',
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo\packages\other`, 'Ubuntu', {
+        platform: 'win32',
         fileSystem
-      )
+      })
     ).resolves.toBe(true)
-    expect(fileSystem.stat).toHaveBeenCalledTimes(3)
-    expect(fileSystem.readFile).toHaveBeenCalledTimes(1)
+    expect(fileSystem.stat).toHaveBeenCalledTimes(6)
+    expect(fileSystem.readFile).toHaveBeenCalledTimes(2)
   })
 
   it('caches an ordinary repository marker without reading it', async () => {
@@ -115,13 +105,82 @@ describe('prepareWslLinkedWorktreeGitRouting', () => {
     }
 
     await expect(
-      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', 'win32', fileSystem)
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem
+      })
     ).resolves.toBe(false)
     await expect(
-      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', 'win32', fileSystem)
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem
+      })
     ).resolves.toBe(false)
     expect(fileSystem.stat).toHaveBeenCalledTimes(1)
     expect(fileSystem.readFile).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when a marker cannot be read', async () => {
+    const fileSystem: WslLinkedWorktreeRoutingFileSystem = {
+      stat: vi.fn(async () => fileMarker),
+      readFile: vi.fn(async () => {
+        throw Object.assign(new Error('access denied'), { code: 'EACCES' })
+      })
+    }
+
+    await expect(
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem
+      })
+    ).resolves.toBe(false)
+  })
+
+  it('does not inherit a linked-parent route across a nested repository boundary', async () => {
+    const fileSystem: WslLinkedWorktreeRoutingFileSystem = {
+      stat: vi.fn(async (path) =>
+        path === String.raw`C:\repo\linked\nested\.git` ? directoryMarker : fileMarker
+      ),
+      readFile: vi.fn(async () => 'gitdir: C:/main/.git/worktrees/linked\n')
+    }
+
+    await expect(
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo\linked`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem
+      })
+    ).resolves.toBe(true)
+    await expect(
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo\linked\nested`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem
+      })
+    ).resolves.toBe(false)
+    expect(
+      usesHostGitForWslLinkedWorktree(String.raw`C:\repo\linked\nested`, 'Ubuntu', 'win32')
+    ).toBe(false)
+  })
+
+  it('does not conflate case-distinct directories on case-sensitive Windows storage', async () => {
+    const fileSystem: WslLinkedWorktreeRoutingFileSystem = {
+      stat: vi.fn(async (path) =>
+        path === String.raw`C:\Repo\.git` ? fileMarker : directoryMarker
+      ),
+      readFile: vi.fn(async () => 'gitdir: C:/main/.git/worktrees/linked\n')
+    }
+
+    await expect(
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\Repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem
+      })
+    ).resolves.toBe(true)
+    await expect(
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem
+      })
+    ).resolves.toBe(false)
   })
 
   it('revalidates a linked route that becomes an ordinary repository', async () => {
@@ -134,18 +193,30 @@ describe('prepareWslLinkedWorktreeGitRouting', () => {
     }
 
     await expect(
-      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', 'win32', fileSystem, now)
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem,
+        now
+      })
     ).resolves.toBe(true)
     linked = false
     currentTime += WSL_LINKED_WORKTREE_ROUTE_TTL_MS - 1
     await expect(
-      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', 'win32', fileSystem, now)
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem,
+        now
+      })
     ).resolves.toBe(true)
     expect(fileSystem.stat).toHaveBeenCalledTimes(1)
 
     currentTime += 1
     await expect(
-      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', 'win32', fileSystem, now)
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem,
+        now
+      })
     ).resolves.toBe(false)
     expect(usesHostGitForWslLinkedWorktree(String.raw`C:\repo`, 'Ubuntu', 'win32', now)).toBe(false)
     expect(fileSystem.stat).toHaveBeenCalledTimes(2)
@@ -162,29 +233,41 @@ describe('prepareWslLinkedWorktreeGitRouting', () => {
     }
 
     await expect(
-      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', 'win32', fileSystem, now)
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem,
+        now
+      })
     ).resolves.toBe(false)
     linked = true
     currentTime += WSL_LINKED_WORKTREE_ROUTE_TTL_MS - 1
     await expect(
-      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', 'win32', fileSystem, now)
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem,
+        now
+      })
     ).resolves.toBe(false)
     expect(fileSystem.stat).toHaveBeenCalledTimes(1)
 
     currentTime += 1
     await expect(
-      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', 'win32', fileSystem, now)
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem,
+        now
+      })
     ).resolves.toBe(true)
     expect(usesHostGitForWslLinkedWorktree(String.raw`C:\repo`, 'Ubuntu', 'win32', now)).toBe(true)
     expect(fileSystem.stat).toHaveBeenCalledTimes(2)
     expect(fileSystem.readFile).toHaveBeenCalledTimes(1)
   })
 
-  it('lets a revalidated linked parent supersede an unexpired child miss', async () => {
+  it('does not let a sibling route supersede an unexpired nested-repository miss', async () => {
     let linked = false
     const fileSystem: WslLinkedWorktreeRoutingFileSystem = {
       stat: vi.fn(async (path) => {
-        if (path === String.raw`c:\repo\.git`) {
+        if (path === String.raw`C:\repo\.git`) {
           return linked ? fileMarker : directoryMarker
         }
         throw missingMarker()
@@ -193,31 +276,48 @@ describe('prepareWslLinkedWorktreeGitRouting', () => {
     }
 
     await expect(
-      prepareWslLinkedWorktreeGitRouting(
-        String.raw`C:\repo\packages\app`,
-        'Ubuntu',
-        'win32',
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo\packages\app`, 'Ubuntu', {
+        platform: 'win32',
         fileSystem
-      )
+      })
     ).resolves.toBe(false)
     linked = true
     await expect(
-      prepareWslLinkedWorktreeGitRouting(
-        String.raw`C:\repo\packages\other`,
-        'Ubuntu',
-        'win32',
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo\packages\other`, 'Ubuntu', {
+        platform: 'win32',
         fileSystem
-      )
+      })
     ).resolves.toBe(true)
     await expect(
-      prepareWslLinkedWorktreeGitRouting(
-        String.raw`C:\repo\packages\app`,
-        'Ubuntu',
-        'win32',
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo\packages\app`, 'Ubuntu', {
+        platform: 'win32',
         fileSystem
-      )
-    ).resolves.toBe(true)
+      })
+    ).resolves.toBe(false)
     expect(fileSystem.stat).toHaveBeenCalledTimes(6)
+  })
+
+  it('does not evict fresh routes while pruning under working-directory churn', async () => {
+    const fileSystem: WslLinkedWorktreeRoutingFileSystem = {
+      stat: vi.fn(async () => fileMarker),
+      readFile: vi.fn(async () => 'gitdir: C:/main/.git/worktrees/linked\n')
+    }
+
+    for (let index = 0; index <= WSL_LINKED_WORKTREE_ROUTE_CACHE_PRUNE_THRESHOLD; index += 1) {
+      await prepareWslLinkedWorktreeGitRouting(`C:\\repo-${index}`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem
+      })
+    }
+
+    expect(usesHostGitForWslLinkedWorktree(String.raw`C:\repo-0`, 'Ubuntu', 'win32')).toBe(true)
+    expect(
+      usesHostGitForWslLinkedWorktree(
+        `C:\\repo-${WSL_LINKED_WORKTREE_ROUTE_CACHE_PRUNE_THRESHOLD}`,
+        'Ubuntu',
+        'win32'
+      )
+    ).toBe(true)
   })
 
   it('coalesces delayed discovery without blocking an event-loop turn', async () => {
@@ -231,20 +331,16 @@ describe('prepareWslLinkedWorktreeGitRouting', () => {
     }
     let settled = false
 
-    const first = prepareWslLinkedWorktreeGitRouting(
-      String.raw`C:\repo`,
-      'Ubuntu',
-      'win32',
+    const first = prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+      platform: 'win32',
       fileSystem
-    ).finally(() => {
+    }).finally(() => {
       settled = true
     })
-    const second = prepareWslLinkedWorktreeGitRouting(
-      String.raw`C:\repo`,
-      'Ubuntu',
-      'win32',
+    const second = prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+      platform: 'win32',
       fileSystem
-    )
+    })
     await new Promise<void>((resolve) => setImmediate(resolve))
 
     expect(settled).toBe(false)
@@ -252,6 +348,68 @@ describe('prepareWslLinkedWorktreeGitRouting', () => {
     releaseStat?.(fileMarker)
     await expect(Promise.all([first, second])).resolves.toEqual([true, true])
     expect(fileSystem.readFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels a waiter without canceling or duplicating shared discovery', async () => {
+    let releaseStat: ((marker: typeof fileMarker) => void) | undefined
+    const delayedStat = new Promise<typeof fileMarker>((resolve) => {
+      releaseStat = resolve
+    })
+    const fileSystem: WslLinkedWorktreeRoutingFileSystem = {
+      stat: vi.fn(() => delayedStat),
+      readFile: vi.fn(async () => 'gitdir: C:/main/.git/worktrees/linked\n')
+    }
+    const controller = new AbortController()
+
+    const cancelled = prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+      platform: 'win32',
+      fileSystem,
+      signal: controller.signal
+    })
+    controller.abort()
+
+    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fileSystem.stat).toHaveBeenCalledTimes(1)
+    releaseStat?.(fileMarker)
+    await expect(
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem
+      })
+    ).resolves.toBe(true)
+    expect(fileSystem.stat).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails closed and clears coalescing after a stalled discovery deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const fileSystem: WslLinkedWorktreeRoutingFileSystem = {
+        stat: vi.fn(() => new Promise<typeof fileMarker>(() => {})),
+        readFile: vi.fn(async () => 'gitdir: C:/main/.git/worktrees/linked\n')
+      }
+
+      const first = prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem
+      })
+      const second = prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem
+      })
+      await vi.advanceTimersByTimeAsync(WSL_LINKED_WORKTREE_ROUTE_PROBE_TIMEOUT_MS)
+
+      await expect(Promise.all([first, second])).resolves.toEqual([false, false])
+      expect(fileSystem.stat).toHaveBeenCalledTimes(1)
+      await expect(
+        prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+          platform: 'win32',
+          fileSystem
+        })
+      ).resolves.toBe(false)
+      expect(fileSystem.stat).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('coalesces concurrent revalidation after a cached route expires', async () => {
@@ -267,24 +425,24 @@ describe('prepareWslLinkedWorktreeGitRouting', () => {
     }
 
     await expect(
-      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', 'win32', fileSystem, now)
+      prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+        platform: 'win32',
+        fileSystem,
+        now
+      })
     ).resolves.toBe(false)
     currentTime += WSL_LINKED_WORKTREE_ROUTE_TTL_MS
 
-    const first = prepareWslLinkedWorktreeGitRouting(
-      String.raw`C:\repo`,
-      'Ubuntu',
-      'win32',
+    const first = prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+      platform: 'win32',
       fileSystem,
       now
-    )
-    const second = prepareWslLinkedWorktreeGitRouting(
-      String.raw`C:\repo`,
-      'Ubuntu',
-      'win32',
+    })
+    const second = prepareWslLinkedWorktreeGitRouting(String.raw`C:\repo`, 'Ubuntu', {
+      platform: 'win32',
       fileSystem,
       now
-    )
+    })
 
     expect(fileSystem.stat).toHaveBeenCalledTimes(2)
     releaseStat?.(fileMarker)
