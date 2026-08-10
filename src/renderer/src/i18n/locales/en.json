@@ -14990,6 +14990,173 @@
         "presentation": {
           "gitlabMergeRequestNumber": "MR #{{value0}}",
           "githubPullRequestNumber": "PR #{{value0}}"
+        },
+        "presets": {
+          "suggested": {
+            "label": "Suggested",
+            "description": "Idle, clean, and safe to delete right now."
+          },
+          "needs-review": {
+            "label": "Needs review",
+            "description": "Old enough to remove, but something still needs a human look."
+          },
+          "protected": {
+            "label": "Protected",
+            "description": "Held back by a blocker such as a live agent, pin, or unpushed work."
+          },
+          "ignored": {
+            "label": "Ignored",
+            "description": "Workspaces you dismissed from cleanup."
+          },
+          "merged-review-clean": {
+            "label": "Merged review & clean",
+            "description": "The pull/merge request landed and the working tree is clean."
+          },
+          "never-opened": {
+            "label": "Never opened",
+            "description": "Orca never recorded you opening these, whatever background activity says."
+          },
+          "largest": {
+            "label": "Largest on disk",
+            "description": "Biggest measured workspaces first. Needs a disk-space scan."
+          },
+          "stale-visits": {
+            "label": "Not opened in 90 days",
+            "description": "Threshold is editable — background activity does not reset it."
+          },
+          "all": {
+            "label": "All workspaces",
+            "description": "Every workspace Orca knows about, including dismissed ones."
+          }
+        },
+        "browse": {
+          "noSizes": "No workspace sizes measured yet.",
+          "noSizesDescription": "Sizes come from the disk-space scan. Run it to sort and filter by size.",
+          "measureSizes": "Measure sizes",
+          "sizeOnDisk": "Size on disk: {{value0}}",
+          "checkingGitRow": "Checking git status",
+          "searchPlaceholder": "Search name, repo, branch, path, host",
+          "searchLabel": "Search workspaces",
+          "filters": "Filters",
+          "showingCount": "Showing {{value0}} of {{value1}}",
+          "clearFilters": "Clear filters",
+          "checkingGit": "Checking git status: {{value0}} left",
+          "facet": {
+            "git": "Git",
+            "review": "Review",
+            "ticket": "Tickets",
+            "location": "Location",
+            "safety": "Safety",
+            "activity": "Activity",
+            "size": "Size on disk",
+            "status": "Workspace status",
+            "agent": "Agent",
+            "context": "Local context"
+          },
+          "minAhead": "Commits ahead ≥",
+          "minBehind": "Commits behind ≥",
+          "branchQuery": "Branch contains",
+          "prunable": "Prunable",
+          "locked": "Locked",
+          "reviewPresence": "PR / MR",
+          "reviewProvider": "Provider",
+          "ticketPresence": "Linked ticket",
+          "host": "Host",
+          "repo": "Repository",
+          "pathPrefix": "Path starts with",
+          "tier": {
+            "ready": "Ready",
+            "review": "Needs review",
+            "protected": "Protected"
+          },
+          "blockerMode": "Blocker match",
+          "blockers": "Blockers",
+          "dismissed": "Ignored",
+          "selectableOnly": "Only workspaces I can delete now",
+          "idleSignal": {
+            "lastVisited": "Not opened",
+            "lastActivity": "No activity",
+            "created": "Created before"
+          },
+          "idleMinDays": "Idle for at least",
+          "days": "days",
+          "neverVisited": "Never opened",
+          "minSize": "At least",
+          "maxSize": "At most",
+          "includeUnsized": "Include unmeasured workspaces",
+          "matchStatusless": "Include workspaces with no status",
+          "archived": "Archived",
+          "pinned": "Pinned",
+          "unread": "Unread",
+          "comment": "Has comment",
+          "retainedDoneAgents": "Finished agent transcripts",
+          "contextPresence": "Open tabs, terminals, comments",
+          "completelyEmpty": "Nothing left to lose",
+          "presetModified": "edited",
+          "noWorkspaces": "No workspaces found.",
+          "noMatches": "No workspaces match these filters.",
+          "noMatchesDescription": "Every workspace is in one list — widen a facet or clear the filters.",
+          "selectAll": "Select all matching workspaces",
+          "moreSorts": "More sorts",
+          "sortBy": "Sort by",
+          "sortByField": "Sort by {{value0}}",
+          "sort": {
+            "lastActivity": "Last activity",
+            "lastVisited": "Last opened",
+            "created": "Created",
+            "size": "Size",
+            "name": "Workspace",
+            "repo": "Repository",
+            "path": "Path",
+            "host": "Host",
+            "workspaceStatus": "Status",
+            "agent": "Agent",
+            "git": "Git",
+            "ahead": "Ahead",
+            "behind": "Behind",
+            "branch": "Branch",
+            "review": "Review",
+            "ticket": "Ticket",
+            "localContext": "Open context",
+            "tier": "Safety",
+            "blockerCount": "Blockers"
+          },
+          "git": {
+            "clean": "Clean",
+            "dirty": "Uncommitted changes",
+            "unpushed": "Unpushed commits",
+            "unknown": "Not checked"
+          },
+          "agent": {
+            "working": "Working",
+            "permission": "Waiting on you",
+            "idle": "Idle"
+          },
+          "review": {
+            "open": "Open",
+            "draft": "Draft",
+            "merged": "Merged",
+            "closed": "Closed",
+            "unknown": "Unknown",
+            "otherProvider": "Other"
+          },
+          "ticket": {
+            "workItem": "Work item",
+            "linear": "Linear",
+            "issue": "Issue"
+          },
+          "triState": {
+            "any": "Any",
+            "only": "Only",
+            "exclude": "Exclude"
+          },
+          "presence": {
+            "any": "Any",
+            "some": "Has one",
+            "none": "Has none"
+          },
+          "tierField": "Cleanup tier",
+          "idleSignalField": "Idle signal"
         }
       }
     },

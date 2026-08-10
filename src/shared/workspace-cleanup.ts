@@ -1,3 +1,6 @@
+// Type-only, so the cycle back through workspace-cleanup-filter-model erases at build.
+import type { WorkspaceCleanupBrowseState } from './workspace-cleanup-browse-state'
+
 export const WORKSPACE_CLEANUP_CLASSIFIER_VERSION = 2
 export const WORKSPACE_CLEANUP_ARCHIVED_IDLE_MS = 7 * 24 * 60 * 60 * 1000
 export const WORKSPACE_CLEANUP_IDLE_MS = 30 * 24 * 60 * 60 * 1000
@@ -38,6 +41,8 @@ export type WorkspaceCleanupDismissal = {
 
 export type WorkspaceCleanupUIState = {
   dismissals: Record<string, WorkspaceCleanupDismissal>
+  // Why optional: a host that predates the flat list still writes dismissals-only state.
+  browse?: WorkspaceCleanupBrowseState
 }
 
 export type WorkspaceCleanupCandidate = {
