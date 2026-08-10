@@ -22,6 +22,8 @@ type AgentMapWorktreeRingNodeProps = {
   worktree: AgentMapWorktreeRing
   zoom: number
   mapScale: number
+  /** Pressed at the start of a pan drag; keeps the ring lit through the gesture. */
+  held: boolean
   selectedPaneKey: string | null
   allowAggregation: boolean
   showOrchestrationLinks: boolean
@@ -175,6 +177,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
   worktree,
   zoom,
   mapScale,
+  held,
   selectedPaneKey,
   allowAggregation,
   showOrchestrationLinks,
@@ -196,7 +199,8 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
   return (
     <Popover open={detailsOpen && !exiting} onOpenChange={setDetailsOpen}>
       <g
-        className={`agent-map-worktree-group${worktree.motionState ? ` is-${worktree.motionState}` : ''}`}
+        className={`agent-map-worktree-group${worktree.motionState ? ` is-${worktree.motionState}` : ''}${held ? ' is-held' : ''}`}
+        data-agent-map-worktree-id={worktree.id}
         aria-hidden={exiting || undefined}
         onPointerEnter={() => onLabelActiveChange(worktree.id, true)}
         onPointerLeave={() => onLabelActiveChange(worktree.id, false)}
