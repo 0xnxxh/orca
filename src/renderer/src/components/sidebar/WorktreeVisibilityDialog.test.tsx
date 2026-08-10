@@ -214,6 +214,29 @@ describe('WorktreeVisibilityDialog', () => {
     expect(document.body.textContent).toContain('Hidden worktrees')
   })
 
+  it('keeps rows visible but not actionable until the open-time scan settles', async () => {
+    // Why: a Show clicked mid-scan could join the pre-write refetch and read
+    // success off a list computed before the import landed — a silent no-op.
+    mocks.state.fetchWorktrees.mockImplementation(() => new Promise(() => {}))
+    await renderDialog()
+
+    expect(document.body.textContent).toContain('scratch-1')
+    expect(buttonWithText('Show').disabled).toBe(true)
+    expect(document.body.textContent).toContain('Checking…')
+  })
+
+  it('reports a failed refresh even while an older trusted snapshot is on screen', async () => {
+    // Why: a warm snapshot must not present stale rows as current with no
+    // failure indication when the host has since become unreachable.
+    mocks.state.fetchWorktrees.mockResolvedValue(false)
+    await renderDialog()
+
+    expect(document.body.textContent).toContain('scratch-1')
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "Could not list this repo's worktrees."
+    )
+  })
+
   it('keeps the repo-wide toggle unchanged, never counting scratch toward it', async () => {
     await renderDialog()
 

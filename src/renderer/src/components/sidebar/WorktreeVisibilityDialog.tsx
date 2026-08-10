@@ -49,7 +49,6 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const hiddenCount = getHiddenExternalWorktrees(detected).length
   const otherCount = getVisibleExternalWorktrees(detected).length
   const hiddenImportable = getHiddenImportableExternalWorktrees(detected)
-  const hasAuthoritativeList = detected?.authoritative === true
   const hiddenWorktreeLabel = `${hiddenCount} ${hiddenCount === 1 ? 'worktree' : 'worktrees'}`
   const shownWorktreeLabel = `${otherCount} ${otherCount === 1 ? 'worktree' : 'worktrees'}`
 
@@ -173,13 +172,13 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           </Button>
         </div>
 
-        {!hasAuthoritativeList && listState === 'checking' ? (
+        {listState === 'checking' ? (
           <p className="text-xs text-muted-foreground">
             {translate('auto.components.sidebar.WorktreeVisibilityDialog.a3f19c07d2', 'Checking…')}
           </p>
         ) : null}
 
-        {!hasAuthoritativeList && listState === 'failed' ? (
+        {listState === 'failed' ? (
           <div className="flex min-w-0 items-center gap-3" role="alert">
             <p className="min-w-0 flex-1 text-xs text-destructive">
               {translate(
@@ -208,7 +207,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
               <p className="text-xs text-muted-foreground">
                 {translate(
                   'auto.components.sidebar.WorktreeVisibilityDialog.9b53f7a160',
-                  'The switch above never shows agent-created worktrees; show them here one at a time.'
+                  'Show a single worktree without importing all of them; agent-created worktrees can only be shown here.'
                 )}
               </p>
             </div>
@@ -229,7 +228,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
                       type="button"
                       variant="outline"
                       size="sm"
-                      disabled={busyPath !== null}
+                      disabled={busyPath !== null || listState === 'checking'}
                       onClick={() => void handleShowWorktree(worktree.path)}
                     >
                       {busyPath === worktree.path

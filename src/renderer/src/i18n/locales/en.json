@@ -4883,7 +4883,7 @@
           "b8d24e61f5": "Could not list this repo's worktrees.",
           "c5e70a93b1": "Try again",
           "7d21c5e848": "Hidden worktrees",
-          "9b53f7a160": "The switch above never shows agent-created worktrees; show them here one at a time.",
+          "9b53f7a160": "Show a single worktree without importing all of them; agent-created worktrees can only be shown here.",
           "2f80cd4b97": "Showing…",
           "e64b81d3a9": "Show"
         },
