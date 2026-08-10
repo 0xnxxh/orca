@@ -14,6 +14,7 @@ import type {
   AgentMapWorktreeRing
 } from './agent-map-layout'
 import { AGENT_MAP_LINEAGE_RELATION, shouldAggregateAgentMapWorktree } from './agent-map-layout'
+import { agentMapLineageChevronPath } from './agent-map-lineage-chevron-path'
 import { agentMapWorktreeActiveStatus } from './agent-map-worktree-active-status'
 
 type AgentMapWorktreeRingNodeProps = {
@@ -58,7 +59,12 @@ function lineagePath(parent: AgentMapAgentNode, child: AgentMapAgentNode): strin
   const startY = parent.y + parent.radius * direction
   const endY = child.y - child.radius * direction
   const branchY = (startY + endY) / 2
-  return `M ${parent.x} ${startY} L ${parent.x} ${branchY} L ${child.x} ${branchY} L ${child.x} ${endY}`
+  return agentMapLineageChevronPath([
+    { x: parent.x, y: startY },
+    { x: parent.x, y: branchY },
+    { x: child.x, y: branchY },
+    { x: child.x, y: endY }
+  ])
 }
 
 function agentName(card: DashboardCard): string {

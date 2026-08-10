@@ -12,6 +12,7 @@ import type {
 } from './agent-map-layout'
 import { AGENT_MAP_LINEAGE_RELATION, shouldAggregateAgentMapWorktree } from './agent-map-layout'
 import { selectVisibleAgentMapLabels } from './agent-map-label-declutter'
+import { agentMapLineageChevronPath } from './agent-map-lineage-chevron-path'
 import { AgentMapWorktreeLabel } from './AgentMapWorktreeLabel'
 import { AgentMapWorktreeRingNode } from './AgentMapWorktreeRingNode'
 
@@ -60,7 +61,10 @@ function agentLineagePath(parent: AgentMapAgentNode, child: AgentMapAgentNode): 
   }
   const unitX = dx / distance
   const unitY = dy / distance
-  return `M ${parent.x + unitX * parent.radius} ${parent.y + unitY * parent.radius} L ${child.x - unitX * child.radius} ${child.y - unitY * child.radius}`
+  return agentMapLineageChevronPath([
+    { x: parent.x + unitX * parent.radius, y: parent.y + unitY * parent.radius },
+    { x: child.x - unitX * child.radius, y: child.y - unitY * child.radius }
+  ])
 }
 
 /** Memoization keeps pointer panning to one SVG viewBox write, not a map rerender. */
