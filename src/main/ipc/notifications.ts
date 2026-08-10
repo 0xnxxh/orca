@@ -523,6 +523,7 @@ export function registerNotificationHandlers(store: Store, runtime?: OrcaRuntime
             if (win.isMinimized()) {
               win.restore()
             }
+            win.show()
             win.focus()
             win.webContents.send('ui:activateWorktree', {
               repoId,

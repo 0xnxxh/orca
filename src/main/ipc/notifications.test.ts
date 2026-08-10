@@ -466,6 +466,7 @@ describe('registerNotificationHandlers', () => {
     const popoutFocus = vi.fn()
     const webContentsSend = vi.fn()
     const restore = vi.fn()
+    const show = vi.fn()
     const focus = vi.fn()
     const popoutWindow = {
       isDestroyed: () => false,
@@ -480,6 +481,7 @@ describe('registerNotificationHandlers', () => {
       isFocused: () => false,
       isMinimized: () => true,
       restore,
+      show,
       focus,
       webContents: { send: webContentsSend }
     }
@@ -507,6 +509,7 @@ describe('registerNotificationHandlers', () => {
 
     expect(getTrustedUIRendererWindowMock).toHaveBeenCalledTimes(1)
     expect(restore).toHaveBeenCalledTimes(1)
+    expect(show).toHaveBeenCalledTimes(1)
     expect(focus).toHaveBeenCalledTimes(1)
     expect(popoutFocus).not.toHaveBeenCalled()
     expect(popoutSend).not.toHaveBeenCalled()
