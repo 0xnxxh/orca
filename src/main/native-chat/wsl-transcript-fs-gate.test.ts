@@ -132,6 +132,38 @@ describe('WSL transcript filesystem task scheduling', () => {
     expect(task).toHaveBeenCalledOnce()
   })
 
+  it('does not attach new callers to abandoned running work', async () => {
+    const stalled = deferred<string>()
+    const firstTask = vi.fn(() => stalled.promise)
+    const firstController = new AbortController()
+    const first = run(
+      '\\\\wsl.localhost\\Ubuntu\\abandoned',
+      'exact',
+      firstTask,
+      firstController.signal
+    )
+    await vi.waitFor(() => expect(firstTask).toHaveBeenCalledOnce())
+
+    firstController.abort(new Error('first closed'))
+    await expect(first).rejects.toThrow('first closed')
+    const replacementWork = deferred<string>()
+    const replacementTask = vi.fn(() => replacementWork.promise)
+    const replacement = run('\\\\wsl.localhost\\Ubuntu\\abandoned', 'exact', replacementTask)
+
+    stalled.resolve('abandoned')
+    await vi.waitFor(() => expect(replacementTask).toHaveBeenCalledOnce())
+    const duplicateTask = vi.fn(async () => 'duplicate')
+    const duplicate = run('\\\\wsl.localhost\\Ubuntu\\abandoned', 'exact', duplicateTask)
+    replacementWork.resolve('replacement')
+
+    await expect(Promise.all([replacement, duplicate])).resolves.toEqual([
+      'replacement',
+      'replacement'
+    ])
+    expect(replacementTask).toHaveBeenCalledOnce()
+    expect(duplicateTask).not.toHaveBeenCalled()
+  })
+
   it('does not conflate provider aliases or Linux path case', async () => {
     const paths = [
       '\\\\wsl.localhost\\Ubuntu\\home\\a',

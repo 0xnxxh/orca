@@ -148,4 +148,59 @@ describe('native chat transcript resolve polling', () => {
     subscription.unsubscribe()
     expect(receivedSignal?.aborted).toBe(true)
   })
+
+  it('does not install after initial resolution is cancelled', async () => {
+    let finishResolve: ((path: string) => void) | undefined
+    mocks.resolve.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          finishResolve = resolve
+        })
+    )
+    const controller = new AbortController()
+    const cancelled = new Error('setup cancelled')
+    const setup = subscribeNativeChatTranscript(
+      {
+        agent: 'codex',
+        sessionId: 'session-id',
+        onAppend: () => {}
+      },
+      controller.signal
+    )
+
+    controller.abort(cancelled)
+    finishResolve?.('/transcript.jsonl')
+    await expect(setup).rejects.toBe(cancelled)
+    expect(mocks.install).not.toHaveBeenCalled()
+  })
+
+  it('tears down a watcher returned after initial setup is cancelled', async () => {
+    mocks.resolve.mockResolvedValue('/transcript.jsonl')
+    const installControl: {
+      finish?: (subscription: { unsubscribe: () => void; watching: boolean }) => void
+    } = {}
+    const unsubscribe = vi.fn()
+    mocks.install.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          installControl.finish = resolve
+        })
+    )
+    const controller = new AbortController()
+    const cancelled = new Error('setup cancelled')
+    const setup = subscribeNativeChatTranscript(
+      {
+        agent: 'codex',
+        sessionId: 'session-id',
+        onAppend: () => {}
+      },
+      controller.signal
+    )
+    await vi.waitFor(() => expect(mocks.install).toHaveBeenCalledOnce())
+
+    controller.abort(cancelled)
+    installControl.finish?.({ unsubscribe, watching: true })
+    await expect(setup).rejects.toBe(cancelled)
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
 })

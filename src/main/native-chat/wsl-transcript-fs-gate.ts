@@ -60,10 +60,11 @@ function abandonTaskIfUnused(task: UnknownScheduledTask): void {
     return
   }
   task.controller.abort()
+  // Running I/O keeps its permit; new callers need a reusable controller.
+  clearTask(task)
   if (task.state === 'queued') {
     task.state = 'settled'
     removeQueuedTask(task)
-    clearTask(task)
     pumpTasks()
   }
 }

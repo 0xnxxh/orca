@@ -28,10 +28,16 @@ async function attemptInstall(
 ): Promise<NativeChatTranscriptSubscription | null> {
   const filePath =
     args.filePath ?? (await resolveSessionFilePath(args.agent, args.sessionId, args, signal))
+  signal?.throwIfAborted()
   if (!filePath) {
     return null
   }
-  return installTranscriptWatcher(filePath, decode, args)
+  const installed = await installTranscriptWatcher(filePath, decode, args)
+  if (signal?.aborted) {
+    installed?.unsubscribe()
+    signal.throwIfAborted()
+  }
+  return installed
 }
 
 // Why: Claude Code (and other agents) can take from ~3s to minutes to flush a
@@ -185,8 +191,10 @@ function subscribeViaResolvePoll(
  * than returning a no-op that never recovers.
  */
 export async function subscribeNativeChatTranscript(
-  args: SubscribeNativeChatTranscriptArgs
+  args: SubscribeNativeChatTranscriptArgs,
+  setupSignal?: AbortSignal
 ): Promise<NativeChatTranscriptSubscription> {
+  setupSignal?.throwIfAborted()
   const decode = nativeChatLineDecoderForAgent(args.agent)
   if (!decode) {
     // Nothing watchable — return a no-op teardown so callers can unconditionally
@@ -199,9 +207,10 @@ export async function subscribeNativeChatTranscript(
     return { unsubscribe: () => {}, watching: false }
   }
 
-  const installed = await attemptInstall(args, decode)
+  const installed = await attemptInstall(args, decode, setupSignal)
   if (installed) {
     return installed
   }
+  setupSignal?.throwIfAborted()
   return subscribeViaResolvePoll(args, decode)
 }

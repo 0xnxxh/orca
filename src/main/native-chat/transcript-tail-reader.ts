@@ -204,7 +204,8 @@ export async function readNativeChatTranscriptTail(
     filePath?: string
     limit: number
     beforeOffset?: number
-  }
+  },
+  signal?: AbortSignal
 ): Promise<
   | {
       messages: NativeChatMessage[]
@@ -216,7 +217,9 @@ export async function readNativeChatTranscriptTail(
 > {
   const decode = nativeChatLineDecoderForAgent(args.agent)
   const decodeLifecycle = nativeChatTurnLifecycleDecoderForAgent(args.agent)
-  const filePath = args.filePath ?? (await resolveSessionFilePath(args.agent, args.sessionId, args))
+  const filePath =
+    args.filePath ?? (await resolveSessionFilePath(args.agent, args.sessionId, args, signal))
+  signal?.throwIfAborted()
   if (!decode) {
     return { error: 'Transcript unavailable' }
   }
