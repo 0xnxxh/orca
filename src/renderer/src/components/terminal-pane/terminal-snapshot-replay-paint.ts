@@ -1,3 +1,6 @@
+import type { ManagedPane } from '@/lib/pane-manager/pane-manager-types'
+import { readProposedPaneFitDimensions } from '@/lib/pane-manager/pane-fit'
+
 /**
  * Shared guards and write choreography for painting a main-model snapshot into
  * a (possibly fresh) xterm. One source for the reattach/hidden-restore paint
@@ -44,29 +47,33 @@ export function resolvePositiveTerminalDimensions(
  * The column count the post-replay fit will land on. Why not terminal.cols: a
  * pane that has not been fitted yet still reads xterm's 80-column default, so
  * comparing against it would drop frames whose width actually matches the
- * container. Returns undefined when the pane cannot be measured, which the
- * caller must treat as "do not skip".
+ * container. Returns undefined when the pane cannot be measured; live callers
+ * can clear and defer repaint, while cold/offline callers keep their frame.
  */
-export function readProposedTerminalCols(pane: {
-  fitAddon?: { proposeDimensions?: () => { cols: number; rows: number } | undefined }
-}): number | undefined {
-  try {
-    return pane.fitAddon?.proposeDimensions?.()?.cols
-  } catch {
-    return undefined
-  }
+export function readProposedTerminalCols(pane: ManagedPane): number | undefined {
+  return readProposedPaneFitDimensions(pane)?.cols
 }
 
 export function shouldSkipAltFrameForWidthMismatch(
   snapshotCols: number | undefined,
-  targetCols: number | undefined
+  targetCols: number | undefined,
+  options: { skipIfTargetUnknown?: boolean } = {}
 ): boolean {
+  const hasSnapshotWidth =
+    typeof snapshotCols === 'number' && Number.isFinite(snapshotCols) && snapshotCols > 0
+  if (!hasSnapshotWidth) {
+    return false
+  }
+  const hasTargetWidth =
+    typeof targetCols === 'number' && Number.isFinite(targetCols) && targetCols > 0
+  if (!hasTargetWidth) {
+    // A hidden pane has no final grid yet. A live app can repaint a cleared
+    // screen after its deferred fit; painting first risks destructive reflow.
+    return options.skipIfTargetUnknown === true
+  }
   return (
     typeof snapshotCols === 'number' &&
     typeof targetCols === 'number' &&
-    Number.isFinite(snapshotCols) &&
-    Number.isFinite(targetCols) &&
-    snapshotCols > 0 &&
     targetCols > 0 &&
     snapshotCols > targetCols
   )
@@ -80,12 +87,14 @@ export function shouldSkipAltFrameForWidthMismatch(
  * before their post-replay reset/escape-tail sequences.
  *
  * `skipAltFrame` drops only the frame paint, never the buffer choreography or
- * scrollback: the alt buffer is still entered and cleared so the caller's
- * SIGWINCH lands on a clean screen the application repaints itself.
+ * scrollback or mode rehydration: the alt buffer is still entered and cleared
+ * so the caller's SIGWINCH lands on a clean screen the application repaints.
  */
 export function buildMainModelSnapshotReplayWrites(
   snapshot: {
     data: string
+    /** Live state that can be restored without an alternate-screen frame. */
+    frameRestoreAnsi?: string
     alternateScreen?: boolean
     scrollbackAnsi?: string
   },
@@ -96,7 +105,12 @@ export function buildMainModelSnapshotReplayWrites(
     // snapshot carries its own history in data (mirrors pty-transport.ts).
     return ['\x1b[2J\x1b[3J\x1b[H', snapshot.data]
   }
-  const altFrame = options.skipAltFrame ? [] : [snapshot.data]
+  // Older snapshot producers do not expose the mode/frame boundary. Keep their
+  // composed data rather than dropping terminal modes together with the frame.
+  const altFrame =
+    options.skipAltFrame && snapshot.frameRestoreAnsi !== undefined
+      ? [snapshot.frameRestoreAnsi]
+      : [snapshot.data]
   if (snapshot.scrollbackAnsi !== undefined) {
     // Why: main serializes normal + alt buffers separately; rebuild normal
     // while active, then return to a clean alt frame.

@@ -963,8 +963,8 @@ const api = {
       snapshot?: string
       snapshotCols?: number
       snapshotRows?: number
-      snapshotPrefixAnsi?: string
-      snapshotFrameAnsi?: string
+      snapshotFrameStart?: number
+      snapshotFrameRestoreAnsi?: string
       isReattach?: boolean
       isAlternateScreen?: boolean
       replay?: string
@@ -1075,6 +1075,7 @@ const api = {
       opts?: { scrollbackRows?: number }
     ): Promise<{
       data: string
+      frameRestoreAnsi?: string
       cols: number
       rows: number
       cwd?: string | null

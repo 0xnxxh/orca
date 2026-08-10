@@ -7200,6 +7200,7 @@ export function connectPanePty(
 
     async function applyMainBufferSnapshot(snapshot: {
       data: string
+      frameRestoreAnsi?: string
       cols: number
       rows: number
       seq?: number
@@ -7223,6 +7224,7 @@ export function connectPanePty(
       const colsBeforeReplay = pane.terminal.cols
       const rowsBeforeReplay = pane.terminal.rows
       const hasSnapshotDimensions = hasPositiveTerminalDimensions(snapshot.cols, snapshot.rows)
+      let skippedAltFrame = false
       try {
         await structuralReplayCoordinator.run(
           async () => {
@@ -7259,11 +7261,14 @@ export function connectPanePty(
             // Why shared: the SSH reattach model paint inlines the same
             // choreography (coordinator nesting would deadlock there); one
             // builder keeps the alt-screen branches from drifting.
+            skippedAltFrame =
+              snapshot.alternateScreen === true &&
+              snapshot.frameRestoreAnsi !== undefined &&
+              shouldSkipAltFrameForWidthMismatch(snapshot.cols, readProposedTerminalCols(pane), {
+                skipIfTargetUnknown: true
+              })
             for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot, {
-              skipAltFrame: shouldSkipAltFrameForWidthMismatch(
-                snapshot.cols,
-                readProposedTerminalCols(pane)
-              )
+              skipAltFrame: skippedAltFrame
             })) {
               writeReplayData(replayChunk)
             }
@@ -7298,7 +7303,14 @@ export function connectPanePty(
                 return
               }
               const currentPtyId = transport.getPtyId()
-              if (!currentPtyId || getFitOverrideForPty(currentPtyId)) {
+              if (!currentPtyId) {
+                return
+              }
+              if (getFitOverrideForPty(currentPtyId)) {
+                safeFit(pane)
+                if (skippedAltFrame && !isRemoteRuntimePtyId(currentPtyId)) {
+                  window.api.pty.signal(currentPtyId, 'SIGWINCH')
+                }
                 return
               }
               const fit = safeFitAndThen(
@@ -7320,7 +7332,13 @@ export function connectPanePty(
                     }
                   }
                 },
-                { shouldContinue: isCurrentRestore, retryIfUnmeasurable: true }
+                {
+                  shouldContinue: isCurrentRestore,
+                  retryIfUnmeasurable: true,
+                  // A skipped frame is blank until this fit pushes the final
+                  // grid/SIGWINCH, so carry the continuation through reveal.
+                  deferIfHidden: true
+                }
               )
               pendingHiddenSnapshotFit = fit
               try {
@@ -8213,17 +8231,23 @@ export function connectPanePty(
           // width, so drop it and let the SIGWINCH below repaint it.
           // Why not on a cold restore: its owner is gone, so nothing would repaint —
           // a stale frame beats a blank pane.
+          const snapshotFrameStart = connectResult.snapshotFrameStart
+          const snapshotFrameRestoreAnsi = connectResult.snapshotFrameRestoreAnsi
           const daemonAltFrameSkippable =
-            typeof connectResult.snapshotPrefixAnsi === 'string' &&
-            typeof connectResult.snapshotFrameAnsi === 'string' &&
+            typeof snapshotFrameStart === 'number' &&
+            typeof snapshotFrameRestoreAnsi === 'string' &&
+            Number.isInteger(snapshotFrameStart) &&
+            snapshotFrameStart >= 0 &&
+            snapshotFrameStart <= connectResult.snapshot.length &&
             !connectResult.coldRestore &&
             shouldSkipAltFrameForWidthMismatch(
               connectResult.snapshotCols,
-              readProposedTerminalCols(pane)
+              readProposedTerminalCols(pane),
+              { skipIfTargetUnknown: true }
             )
           writeReplayData(
             daemonAltFrameSkippable
-              ? (connectResult.snapshotPrefixAnsi ?? '')
+              ? connectResult.snapshot.slice(0, snapshotFrameStart) + snapshotFrameRestoreAnsi
               : connectResult.snapshot
           )
           // Snapshot reattach keeps a live session, so drop only renderer-owned state instead of the broader mode reset — unless this is a cold restore, whose owner is gone.
@@ -8284,10 +8308,11 @@ export function connectPanePty(
             // the ?1049h marker when splitting scrollbackAnsi) — inlined here
             // because nesting structuralReplayCoordinator would deadlock.
             for (const replayChunk of buildMainModelSnapshotReplayWrites(modelSnapshot, {
-              skipAltFrame: shouldSkipAltFrameForWidthMismatch(
-                modelCols,
-                readProposedTerminalCols(pane)
-              )
+              skipAltFrame:
+                !connectResult?.coldRestore &&
+                shouldSkipAltFrameForWidthMismatch(modelCols, readProposedTerminalCols(pane), {
+                  skipIfTargetUnknown: true
+                })
             })) {
               writeReplayData(replayChunk)
             }

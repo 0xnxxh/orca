@@ -18,6 +18,8 @@ import type { RemoteRuntimeSnapshotOutcome } from '../../runtime/remote-runtime-
 
 export type PtyBufferSnapshot = {
   data: string
+  /** Live state that can be restored without an alternate-screen frame. */
+  frameRestoreAnsi?: string
   cols: number
   rows: number
   seq?: number
@@ -59,11 +61,11 @@ export type PtyConnectResult = {
   snapshot?: string
   snapshotCols?: number
   snapshotRows?: number
-  /** Optional split of `snapshot` for an alt-screen reattach: everything before
-   *  the frame, and the frame itself. Absent from older hosts, so every reader
-   *  must fall back to the merged `snapshot`. */
-  snapshotPrefixAnsi?: string
-  snapshotFrameAnsi?: string
+  /** UTF-16 index where the alt frame begins in `snapshot`. Absent from older
+   *  hosts, so readers must fall back to the merged snapshot. */
+  snapshotFrameStart?: number
+  /** Live state to append when omitting the alt frame at `snapshotFrameStart`. */
+  snapshotFrameRestoreAnsi?: string
   isAlternateScreen?: boolean
   sessionExpired?: boolean
   coldRestore?: { scrollback: string; cwd: string; cols?: number; rows?: number }

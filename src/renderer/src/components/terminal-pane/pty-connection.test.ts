@@ -8704,8 +8704,8 @@ describe('connectPanePty', () => {
         return {
           id: sessionId,
           snapshot: 'PREFIX-SCROLLBACK' + 'ALT-FRAME-BODY',
-          snapshotPrefixAnsi: 'PREFIX-SCROLLBACK',
-          snapshotFrameAnsi: 'ALT-FRAME-BODY',
+          snapshotFrameStart: 'PREFIX-SCROLLBACK'.length,
+          snapshotFrameRestoreAnsi: 'RESTORE-LIVE-STATE',
           snapshotCols: 200,
           snapshotRows: 50,
           isAlternateScreen: true
@@ -8731,7 +8731,48 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(20)
 
     const writes = (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])
-    expect(writes).toContain('PREFIX-SCROLLBACK')
+    expect(writes.join('')).toContain('PREFIX-SCROLLBACK')
+    expect(writes.join('')).toContain('RESTORE-LIVE-STATE')
+    expect(writes.join('')).not.toContain('ALT-FRAME-BODY')
+  })
+
+  it('drops a live daemon alt frame until a hidden pane has a final grid', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('tab-pty')
+    transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) =>
+      sessionId
+        ? {
+            id: sessionId,
+            snapshot: 'PREFIX-SCROLLBACK' + 'ALT-FRAME-BODY',
+            snapshotFrameStart: 'PREFIX-SCROLLBACK'.length,
+            snapshotFrameRestoreAnsi: 'RESTORE-LIVE-STATE',
+            snapshotCols: 120,
+            snapshotRows: 40,
+            isAlternateScreen: true
+          }
+        : null
+    )
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: 'tab-pty' }] }
+    } as StoreState
+
+    const pane = createPane(1)
+    pane.container.getBoundingClientRect = vi.fn(() => createRect(0, 0))
+    pane.fitAddon.proposeDimensions = vi.fn(() => ({ cols: 1, rows: 1 }))
+    connectPanePty(
+      pane as never,
+      createManager(1) as never,
+      createDeps({
+        restoredLeafId: LEAF_1,
+        restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' }
+      }) as never
+    )
+    await flushAsyncTicks(20)
+
+    const writes = (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])
+    expect(writes.join('')).toContain('PREFIX-SCROLLBACK')
     expect(writes.join('')).not.toContain('ALT-FRAME-BODY')
   })
 
@@ -8743,8 +8784,8 @@ describe('connectPanePty', () => {
         return {
           id: sessionId,
           snapshot: 'PREFIX-SCROLLBACK' + 'ALT-FRAME-BODY',
-          snapshotPrefixAnsi: 'PREFIX-SCROLLBACK',
-          snapshotFrameAnsi: 'ALT-FRAME-BODY',
+          snapshotFrameStart: 'PREFIX-SCROLLBACK'.length,
+          snapshotFrameRestoreAnsi: 'RESTORE-LIVE-STATE',
           snapshotCols: 120,
           snapshotRows: 40,
           isAlternateScreen: true
@@ -8782,8 +8823,8 @@ describe('connectPanePty', () => {
         return {
           id: sessionId,
           snapshot: 'PREFIX-SCROLLBACK' + 'ALT-FRAME-BODY',
-          snapshotPrefixAnsi: 'PREFIX-SCROLLBACK',
-          snapshotFrameAnsi: 'ALT-FRAME-BODY',
+          snapshotFrameStart: 'PREFIX-SCROLLBACK'.length,
+          snapshotFrameRestoreAnsi: 'RESTORE-LIVE-STATE',
           snapshotCols: 200,
           snapshotRows: 50,
           isAlternateScreen: true,
@@ -15326,6 +15367,55 @@ describe('connectPanePty', () => {
     )
     expect(pane.terminal.write).toHaveBeenCalledWith('altscreen-snapshot\r\n', expect.any(Function))
     disposable.dispose()
+  })
+
+  it('repaints a skipped hidden alt frame at the active fit override grid', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const { setFitOverride } = await import('@/lib/pane-manager/mobile-fit-overrides')
+    const transport = createMockTransport('pty-id')
+    let onData: ConnectCallbacks['onData']
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      onData = callbacks.onData
+      return 'pty-id'
+    })
+    transportFactoryQueue.push(transport)
+    const getMainBufferSnapshot = window.api.pty.getMainBufferSnapshot as unknown as ReturnType<
+      typeof vi.fn
+    >
+    const hidden = 'x'.repeat(2 * 1024 * 1024 + 1)
+    getMainBufferSnapshot.mockResolvedValue({
+      data: 'TOO-WIDE-ALT-FRAME',
+      frameRestoreAnsi: '\x1b[?1004h\x1b[?25l',
+      cols: 100,
+      rows: 30,
+      seq: hidden.length + 1,
+      alternateScreen: true,
+      scrollbackAnsi: 'preserved history'
+    })
+    const pane = createPane(1)
+    const deps = createDeps({ isVisibleRef: { current: false } })
+    const signalPty = window.api.pty.signal as unknown as ReturnType<typeof vi.fn>
+    setFitOverride('pty-id', 'mobile-fit', 40, 20)
+
+    try {
+      const disposable = connectPanePty(pane as never, createManager(1) as never, deps as never)
+      await flushAsyncTicks(6)
+      onData?.(hidden, { seq: hidden.length, rawLength: hidden.length })
+      ;(deps.isVisibleRef as { current: boolean }).current = true
+      onData?.('x', { seq: hidden.length + 1, rawLength: 1 })
+      await flushAsyncTicks(20)
+
+      const writes = (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map(
+        (call) => call[0]
+      )
+      expect(writes.join('')).not.toContain('TOO-WIDE-ALT-FRAME')
+      expect(writes.join('')).toContain('\x1b[?1004h\x1b[?25l')
+      expect(pane.terminal.resize).toHaveBeenLastCalledWith(40, 20)
+      expect(signalPty).toHaveBeenCalledWith('pty-id', 'SIGWINCH')
+      disposable.dispose()
+    } finally {
+      setFitOverride('pty-id', 'desktop-fit', 0, 0)
+    }
   })
 
   it('drains foreground output after a renderer-sourced hidden-backlog snapshot without seq', async () => {

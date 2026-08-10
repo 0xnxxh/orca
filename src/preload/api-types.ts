@@ -1566,8 +1566,8 @@ export type PreloadApi = {
       snapshot?: string
       snapshotCols?: number
       snapshotRows?: number
-      snapshotPrefixAnsi?: string
-      snapshotFrameAnsi?: string
+      snapshotFrameStart?: number
+      snapshotFrameRestoreAnsi?: string
       isReattach?: boolean
       isAlternateScreen?: boolean
       replay?: string
@@ -1634,6 +1634,7 @@ export type PreloadApi = {
       opts?: { scrollbackRows?: number }
     ) => Promise<{
       data: string
+      frameRestoreAnsi?: string
       cols: number
       rows: number
       cwd?: string | null

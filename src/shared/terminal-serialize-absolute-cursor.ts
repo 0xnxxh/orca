@@ -70,6 +70,14 @@ export function serializeWithAbsoluteCursor<TOpts>(
   if (serialized.length === 0) {
     return serialized
   }
+  return `${serialized}${buildAbsoluteCursorRestoreSequence(terminal, savedCursor)}`
+}
+
+/** Cursor state appended after serialized modes; safe to replay without the frame body. */
+export function buildAbsoluteCursorRestoreSequence(
+  terminal: SerializeCursorTerminal,
+  savedCursor?: SavedCursorRegister | null
+): string {
   const { cursorX, cursorY } = terminal.buffer.active
   // Why skip wrap-pending sources (cursorX == cols): plain replay already
   // reproduces that state exactly, while CUP would clamp to the last column
@@ -78,7 +86,7 @@ export function serializeWithAbsoluteCursor<TOpts>(
   // The saved-cursor injection is skipped with it — it moves the cursor, so
   // it may only ride along when the absolute CUP restores the position after.
   if (cursorX < 0 || cursorX >= terminal.cols || cursorY < 0 || cursorY >= terminal.rows) {
-    return serialized
+    return ''
   }
   // Why the DECSC injection: the serialized screen cannot carry the VT100
   // saved-cursor register, so a hidden DECSC followed by a post-reveal DECRC
@@ -91,5 +99,5 @@ export function serializeWithAbsoluteCursor<TOpts>(
   // cursorY is viewport-relative (0 at the buffer's base row), which is the
   // same coordinate space CUP addresses after replay; scrollback length
   // differences between source and destination do not shift it.
-  return `${serialized}${savedRestore}\x1b[${cursorY + 1};${cursorX + 1}H`
+  return `${savedRestore}\x1b[${cursorY + 1};${cursorX + 1}H`
 }

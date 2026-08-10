@@ -87,19 +87,34 @@ describe('shouldSkipAltFrameForWidthMismatch', () => {
     expect(shouldSkipAltFrameForWidthMismatch(Number.NaN, 128)).toBe(false)
     expect(shouldSkipAltFrameForWidthMismatch(Number.POSITIVE_INFINITY, 128)).toBe(false)
   })
+
+  it('can conservatively skip a live frame until a hidden pane has a final grid', () => {
+    expect(shouldSkipAltFrameForWidthMismatch(135, undefined, { skipIfTargetUnknown: true })).toBe(
+      true
+    )
+    expect(
+      shouldSkipAltFrameForWidthMismatch(undefined, undefined, { skipIfTargetUnknown: true })
+    ).toBe(false)
+  })
 })
 
 describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
   it('drops only the frame paint, keeping scrollback and the alt-buffer choreography', () => {
     expect(
       buildMainModelSnapshotReplayWrites(
-        { data: 'alt-frame', alternateScreen: true, scrollbackAnsi: 'normal-history' },
+        {
+          data: 'mode-prefixalt-frame',
+          frameRestoreAnsi: 'complete-live-state',
+          alternateScreen: true,
+          scrollbackAnsi: 'normal-history'
+        },
         { skipAltFrame: true }
       )
     ).toEqual([
       '\x1b[?1049l\x1b[2J\x1b[3J\x1b[H',
       'normal-history',
-      '\x1b[0m\x1b[?1049h\x1b[2J\x1b[H'
+      '\x1b[0m\x1b[?1049h\x1b[2J\x1b[H',
+      'complete-live-state'
     ])
   })
 
@@ -108,10 +123,23 @@ describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
     // screen the application repaints, not the stale pre-park frame.
     expect(
       buildMainModelSnapshotReplayWrites(
-        { data: 'alt-frame', alternateScreen: true },
+        {
+          data: 'mode-prefixalt-frame',
+          frameRestoreAnsi: 'complete-live-state',
+          alternateScreen: true
+        },
         { skipAltFrame: true }
       )
-    ).toEqual(['\x1b[0m\x1b[?1049h\x1b[2J\x1b[H'])
+    ).toEqual(['\x1b[0m\x1b[?1049h\x1b[2J\x1b[H', 'complete-live-state'])
+  })
+
+  it('keeps composed data when an older producer omits the mode boundary', () => {
+    expect(
+      buildMainModelSnapshotReplayWrites(
+        { data: 'legacy-modes-and-frame', alternateScreen: true },
+        { skipAltFrame: true }
+      )
+    ).toEqual(['\x1b[0m\x1b[?1049h\x1b[2J\x1b[H', 'legacy-modes-and-frame'])
   })
 
   it('never drops a normal-buffer snapshot, whose rows reflow correctly', () => {

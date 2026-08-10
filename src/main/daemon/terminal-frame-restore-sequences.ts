@@ -1,0 +1,108 @@
+import type { Terminal } from '@xterm/headless'
+import type { SerializeAddon } from '@xterm/addon-serialize'
+import {
+  buildAbsoluteCursorRestoreSequence,
+  readSavedCursorRegister
+} from '../../shared/terminal-serialize-absolute-cursor'
+import type { SavedCursorRegister } from '../../shared/terminal-serialize-absolute-cursor'
+import type { TerminalModes } from './types'
+
+type TerminalWithScrollRegion = Terminal & {
+  _core?: { buffer?: { scrollTop?: number; scrollBottom?: number } }
+}
+
+export function buildFrameRestoreSnapshotFields(
+  serializer: SerializeAddon,
+  terminal: Terminal,
+  modes: TerminalModes
+): { frameRestoreAnsi?: string } {
+  return modes.alternateScreen
+    ? {
+        frameRestoreAnsi: buildTerminalFrameRestoreSequences(
+          serializer,
+          terminal,
+          modes,
+          readSavedCursorRegister(terminal)
+        )
+      }
+    : {}
+}
+
+/** Restores live terminal state without replaying an alternate-screen frame. */
+function buildTerminalFrameRestoreSequences(
+  serializer: SerializeAddon,
+  terminal: Terminal,
+  modes: TerminalModes,
+  savedCursor: SavedCursorRegister | null
+): string {
+  const terminalModes = terminal.modes
+  const seqs: string[] = ['\x1b[0m\x1b[?1049h', serializeCurrentSgrState(serializer, terminal)]
+  if (terminalModes.applicationCursorKeysMode) {
+    seqs.push('\x1b[?1h')
+  }
+  if (terminalModes.applicationKeypadMode) {
+    seqs.push('\x1b[?66h')
+  }
+  if (terminalModes.bracketedPasteMode) {
+    seqs.push('\x1b[?2004h')
+  }
+  if (terminalModes.insertMode) {
+    seqs.push('\x1b[4h')
+  }
+  if (terminalModes.originMode) {
+    seqs.push('\x1b[?6h')
+  }
+  if (terminalModes.reverseWraparoundMode) {
+    seqs.push('\x1b[?45h')
+  }
+  if (terminalModes.sendFocusMode) {
+    seqs.push('\x1b[?1004h')
+  }
+  if (!terminalModes.wraparoundMode) {
+    seqs.push('\x1b[?7l')
+  }
+  switch (modes.mouseTracking ? (modes.mouseTrackingMode ?? 'vt200') : 'none') {
+    case 'x10':
+      seqs.push('\x1b[?9h')
+      break
+    case 'vt200':
+      seqs.push('\x1b[?1000h')
+      break
+    case 'drag':
+      seqs.push('\x1b[?1002h')
+      break
+    case 'any':
+      seqs.push('\x1b[?1003h')
+      break
+    case 'none':
+      break
+  }
+  if (modes.sgrMousePixelsMode) {
+    seqs.push('\x1b[?1016h')
+  } else if (modes.sgrMouseMode) {
+    seqs.push('\x1b[?1006h')
+  }
+  if (!terminalModes.showCursor) {
+    seqs.push('\x1b[?25l')
+  }
+  const buffer = (terminal as TerminalWithScrollRegion)._core?.buffer
+  if (
+    typeof buffer?.scrollTop === 'number' &&
+    typeof buffer.scrollBottom === 'number' &&
+    (buffer.scrollTop !== 0 || buffer.scrollBottom !== terminal.rows - 1)
+  ) {
+    seqs.push(`\x1b[${buffer.scrollTop + 1};${buffer.scrollBottom + 1}r`)
+  }
+  seqs.push(buildAbsoluteCursorRestoreSequence(terminal, savedCursor))
+  return seqs.join('')
+}
+
+function serializeCurrentSgrState(serializer: SerializeAddon, terminal: Terminal): string {
+  // An out-of-range row emits no cells; SerializeAddon still appends its authoritative pen-state diff.
+  const emptyRow = terminal.buffer.normal.length
+  return serializer.serialize({
+    range: { start: emptyRow, end: emptyRow },
+    excludeAltBuffer: true,
+    excludeModes: true
+  })
+}

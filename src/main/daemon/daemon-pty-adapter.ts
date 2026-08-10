@@ -831,11 +831,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
 
     const isAltScreen = result.snapshot.modes.alternateScreen
-    // Why split out: an alt-screen frame is absolutely positioned, so it only
+    // Why mark the boundary: an alt-screen frame is absolutely positioned, so it only
     // renders at its capture width. The renderer pins to the snapshot grid, paints,
     // then fits to its container — and a narrower container makes xterm split every
-    // frame row. Carrying the prefix separately lets the renderer drop just the
-    // frame and let the app repaint. Optional: older renderers read `snapshot`.
+    // frame row. The marker lets the renderer drop just the frame without sending
+    // the payload twice. Optional: older renderers still read the merged `snapshot`.
     const snapshotPrefix = result.snapshot.scrollbackAnsi + result.snapshot.rehydrateSequences
     const snapshotPayload = snapshotPrefix + result.snapshot.snapshotAnsi
     // Why kitty flags ride beside the payload, not inside it: the snapshot reaches renderer xterms where POST_REPLAY_REATTACH_RESET's kitty reset must win (terminal-query-authority.md §kitty).
@@ -851,11 +851,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
       snapshotCols: result.snapshot.cols,
       snapshotRows: result.snapshot.rows,
       // Why only for an alt frame: the normal buffer is soft-wrapped and reflows
-      // correctly, so splitting it would buy nothing.
-      ...(isAltScreen && result.snapshot.snapshotAnsi
+      // correctly, so marking a boundary would buy nothing.
+      ...(isAltScreen && result.snapshot.snapshotAnsi && result.snapshot.frameRestoreAnsi
         ? {
-            snapshotPrefixAnsi: snapshotPrefix,
-            snapshotFrameAnsi: result.snapshot.snapshotAnsi
+            snapshotFrameStart: snapshotPrefix.length,
+            snapshotFrameRestoreAnsi: result.snapshot.frameRestoreAnsi
           }
         : {}),
       ...(providerSequence ? { providerSequence } : {}),
@@ -1227,6 +1227,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       }
       return {
         data: snapshot.rehydrateSequences + snapshot.snapshotAnsi,
+        frameRestoreAnsi: snapshot.frameRestoreAnsi,
         scrollbackAnsi: snapshot.scrollbackAnsi,
         cols: snapshot.cols,
         rows: snapshot.rows,

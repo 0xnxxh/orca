@@ -55,6 +55,28 @@ export type SafeFitContinuationHandle = {
 
 export { readFitClientSize } from './pane-fit-client-size'
 
+/** Returns the exact dimensions the next safe fit will use after any applicable
+ * deferred metrics. An owner override remains measurable while its pane is hidden. */
+export function readProposedPaneFitDimensions(
+  pane: ManagedPane
+): { cols: number; rows: number } | null {
+  const ptyId = pane.container?.dataset?.ptyId
+  const override = ptyId ? getFitOverrideForPty(ptyId) : null
+  const measurable = canMeasurePaneForFit(pane)
+  if (!measurable && !override) {
+    return null
+  }
+  // Re-check after the metric flush: larger cells can push a narrow pane below
+  // the fit floor even though it was measurable with the old metrics.
+  if (measurable && flushDeferredPaneMetricOptions(pane) && !canMeasurePaneForFit(pane)) {
+    return null
+  }
+  if (override) {
+    return { cols: override.cols, rows: override.rows }
+  }
+  return getProposedPaneDimensions(pane)
+}
+
 function canPreserveScrollIntentForFit(pane: ManagedPane): boolean {
   // Why: split reparent has its own delayed restore; restoring here can fight that timer.
   return !(
@@ -66,15 +88,10 @@ function performSafeFit(pane: ManagedPane): boolean {
   if (deferTerminalGeometryMutationDuringRebuild(pane.terminal, 'safe-fit', () => safeFit(pane))) {
     return false
   }
-  if (!canMeasurePaneForFit(pane)) {
-    return false
-  }
-  // Why here: metric options deferred while the pane was unmeasurable must land
-  // before this fit reads dimensions, or the fit pins cols/rows to stale metrics.
-  // Why re-check: the gate above measured with the old cell size — a large font
-  // jump on a narrow pane can drop it under the floor, and fit() would then pin
-  // the PTY at the tiny grid that floor exists to prevent.
-  if (flushDeferredPaneMetricOptions(pane) && !canMeasurePaneForFit(pane)) {
+  // Why here: replay width gates share this helper, so they compare against the
+  // same post-metric grid that fit will actually apply.
+  const proposedDimensions = readProposedPaneFitDimensions(pane)
+  if (!proposedDimensions) {
     return false
   }
   let scrollIntent = null as ReturnType<typeof captureTerminalStructuralScrollIntent>
@@ -104,7 +121,7 @@ function performSafeFit(pane: ManagedPane): boolean {
       return true
     }
 
-    const dims = getProposedPaneDimensions(pane)
+    const dims = proposedDimensions
     if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
       // Why: divider drags often stay within one cell; avoid needless clear/refresh churn.
       resumePendingFitScrollRestoreAfterFit(pane.terminal)
