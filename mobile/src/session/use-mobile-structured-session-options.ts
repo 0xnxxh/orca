@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAgentSessionOptionCatalog } from '../../../src/shared/agent-session-option-catalog'
 import {
   buildNativeChatSessionOptionSnapshot,
@@ -24,13 +24,12 @@ export function useMobileStructuredSessionOptions(args: {
     id: string
     record: ReturnType<typeof createNativeChatSessionOptionRecord>
   } | null>(null)
-  const recordRef = useRef(createNativeChatSessionOptionRecord('codex'))
-  const sessionRef = useRef(sessionId)
-  if (sessionRef.current !== sessionId) {
-    sessionRef.current = sessionId
-    recordRef.current = createNativeChatSessionOptionRecord('codex')
-  }
-  const pendingId = pending?.record === recordRef.current ? pending.id : null
+  const record = useMemo(() => createNativeChatSessionOptionRecord('codex'), [sessionId])
+  const activeRecordRef = useRef(record)
+  useEffect(() => {
+    activeRecordRef.current = record
+  }, [record])
+  const pendingId = pending?.record === record ? pending.id : null
 
   const snapshot = useMemo(() => {
     void version
@@ -40,11 +39,11 @@ export function useMobileStructuredSessionOptions(args: {
     return buildNativeChatSessionOptionSnapshot({
       catalog: CODEX_CATALOG,
       models: CODEX_CATALOG.models,
-      record: recordRef.current,
+      record,
       mode: 'live',
       modelLabel: 'Model'
     })
-  }, [sessionId, version])
+  }, [record, sessionId, version])
 
   const setOption = useCallback(
     async (id: string, value: SessionOptionValue): Promise<boolean> => {
@@ -52,15 +51,11 @@ export function useMobileStructuredSessionOptions(args: {
         return false
       }
       const targetSessionId = sessionId
-      const targetRecord = recordRef.current
+      const targetRecord = record
       setPending({ sessionId: targetSessionId, id, record: targetRecord })
       try {
         const applied = await dispatchOption(id, value)
-        if (
-          !applied ||
-          sessionRef.current !== targetSessionId ||
-          recordRef.current !== targetRecord
-        ) {
+        if (!applied || activeRecordRef.current !== targetRecord) {
           return false
         }
         const effectiveModel = resolveEffectiveNativeChatModelId(
@@ -77,7 +72,7 @@ export function useMobileStructuredSessionOptions(args: {
         )
       }
     },
-    [dispatchOption, pendingId, sessionId]
+    [dispatchOption, pendingId, record, sessionId]
   )
 
   return useMemo(

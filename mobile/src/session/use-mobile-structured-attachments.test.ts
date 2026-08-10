@@ -2,11 +2,12 @@ import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
+import type * as MobileNativeChatImageAttachment from './mobile-native-chat-image-attachment'
 import { uploadMobileNativeChatImages } from './mobile-native-chat-image-attachment'
 import { useMobileStructuredAttachments } from './use-mobile-structured-attachments'
 
 vi.mock('./mobile-native-chat-image-attachment', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./mobile-native-chat-image-attachment')>()
+  const original = await importOriginal<typeof MobileNativeChatImageAttachment>()
   return { ...original, uploadMobileNativeChatImages: vi.fn() }
 })
 vi.mock('./mobile-image-source-picker', () => ({

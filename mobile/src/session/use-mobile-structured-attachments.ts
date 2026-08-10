@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import {
   ImageLibraryPermissionError,
@@ -32,10 +32,10 @@ export function useMobileStructuredAttachments(args: {
   const generationRef = useRef(0)
   const idCounterRef = useRef(0)
   const { client, getConnectionId, onError, sessionId } = args
-  if (sessionRef.current !== sessionId) {
+  useEffect(() => {
     sessionRef.current = sessionId
     generationRef.current += 1
-  }
+  }, [sessionId])
   const attachments = state.sessionId === sessionId ? state.attachments : []
   const attaching = state.sessionId === sessionId && state.attaching
 

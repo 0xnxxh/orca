@@ -39,16 +39,13 @@ export function useMobileStructuredSessionWrites(args: {
   const [hydrated, setHydrated] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dispatchVersion, setDispatchVersion] = useState(0)
-  const outboxRef = useRef(outbox)
-  outboxRef.current = outbox
+  const outboxRef = useRef<MobileStructuredOutboxEntry[]>([])
   const persistTailRef = useRef<Promise<void>>(Promise.resolve())
   const dispatchingRef = useRef(false)
   const dispatchGenerationRef = useRef(0)
   const blockedIdRef = useRef<string | null>(null)
   const activeSessionRef = useRef(sessionId)
-  activeSessionRef.current = sessionId
   const activeFenceRef = useRef(fence)
-  activeFenceRef.current = fence
   const mutations = useMobileStructuredSessionMutations({
     client,
     sessionId,
@@ -65,6 +62,7 @@ export function useMobileStructuredSessionWrites(args: {
   }, [])
 
   useEffect(() => {
+    activeSessionRef.current = sessionId
     dispatchGenerationRef.current += 1
     dispatchingRef.current = false
     setOutbox([])
@@ -104,6 +102,8 @@ export function useMobileStructuredSessionWrites(args: {
   }, [persist, sessionId, submissions])
 
   useEffect(() => {
+    activeSessionRef.current = sessionId
+    activeFenceRef.current = fence
     dispatchGenerationRef.current += 1
     dispatchingRef.current = false
     blockedIdRef.current = null

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcSuccess } from '../transport/types'
 import type { AgentJournalSubmission } from '../../../src/shared/agent-session-journal-types'
+import type * as MobileStructuredOutboxStore from './mobile-structured-outbox-store'
 import {
   loadMobileStructuredOutbox,
   saveMobileStructuredOutbox
@@ -15,7 +16,7 @@ import {
 
 vi.mock('expo-crypto', () => ({ randomUUID: vi.fn() }))
 vi.mock('./mobile-structured-outbox-store', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./mobile-structured-outbox-store')>()
+  const original = await importOriginal<typeof MobileStructuredOutboxStore>()
   return { ...original, loadMobileStructuredOutbox: vi.fn(), saveMobileStructuredOutbox: vi.fn() }
 })
 
