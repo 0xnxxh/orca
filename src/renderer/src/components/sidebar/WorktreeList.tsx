@@ -5430,9 +5430,9 @@ const WorktreeList = React.memo(function WorktreeList({
     }
     prevClassByWorktreeIdRef.current = next
     hasObservedSmartOnceRef.current = true
-  }, [sortBy, sortedIds])
+  }, [sortBy, recomputedSortedIds])
 
-  // Why retry on sortedIds: Smart may activate before attention hydrates; fire once, then stay quiet until the user leaves Smart.
+  // Why retry on recomputation: Smart may activate before attention hydrates; fire once, then stay quiet until the user leaves Smart.
   const hasTrackedSmartDistributionRef = useRef(false)
   useEffect(() => {
     if (sortBy !== 'smart') {
@@ -5469,7 +5469,7 @@ const WorktreeList = React.memo(function WorktreeList({
       total_worktrees: attention.size
     })
     hasTrackedSmartDistributionRef.current = true
-  }, [sortBy, sortedIds])
+  }, [sortBy, recomputedSortedIds])
 
   // Why fire on the transition: switching away from Smart is the signal; compare via ref so a round-trip doesn't double-fire.
   const prevSortByRef = useRef(sortBy)

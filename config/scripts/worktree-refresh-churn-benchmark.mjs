@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { performance } from 'node:perf_hooks'
 import { planWorktreeSortOrderUpdates } from '../../src/shared/worktree-sort-order-update.ts'
+import { reuseEqualCatalogRows } from '../../src/renderer/src/store/slices/worktree-catalog-reconciliation.ts'
 
 const WORKTREE_COUNT = 655
 const TAB_COUNT = 1_895
 const REFRESH_COUNT = 10
 const ROUNDS = 15
-const BATCHES_PER_ROUND = 100
+const BATCHES_PER_ROUND = 25
 
 function makeFixture() {
   const worktrees = Array.from({ length: WORKTREE_COUNT }, (_, index) => ({
@@ -40,18 +41,27 @@ function runSidebarProjection(worktrees, tabs) {
 
 function runBaseline() {
   const fixture = makeFixture()
-  let worktrees = fixture.worktrees
+  const metaById = new Map(fixture.worktrees.map((worktree) => [worktree.id, worktree]))
+  const requestedIds = fixture.worktrees.map((worktree) => worktree.id)
+  let catalog = fixture.worktrees
   let publications = 0
   let persistenceWrites = 0
   for (let refresh = 0; refresh < REFRESH_COUNT; refresh += 1) {
     const now = 1_000_000 + refresh
-    worktrees = worktrees.map((worktree, index) => ({
-      ...worktree,
-      sortOrder: now - index * 1000
-    }))
-    publications += 1
-    runSidebarProjection(worktrees, fixture.tabs)
-    persistenceWrites += worktrees.length
+    requestedIds.forEach((worktreeId, index) => {
+      metaById.set(worktreeId, {
+        ...metaById.get(worktreeId),
+        sortOrder: now - index * 1000
+      })
+      persistenceWrites += 1
+    })
+    const incoming = structuredClone(requestedIds.map((worktreeId) => metaById.get(worktreeId)))
+    const reconciled = reuseEqualCatalogRows(catalog, incoming)
+    if (reconciled !== catalog) {
+      catalog = reconciled
+      publications += 1
+      runSidebarProjection(catalog, fixture.tabs)
+    }
   }
   return { publications, persistenceWrites }
 }
@@ -60,6 +70,7 @@ function runCandidate() {
   const fixture = makeFixture()
   const metaById = new Map(fixture.worktrees.map((worktree) => [worktree.id, worktree]))
   const requestedIds = fixture.worktrees.map((worktree) => worktree.id)
+  let catalog = fixture.worktrees
   let publications = 0
   let persistenceWrites = 0
   for (let refresh = 0; refresh < REFRESH_COUNT; refresh += 1) {
@@ -68,18 +79,20 @@ function runCandidate() {
       (worktreeId) => metaById.get(worktreeId),
       1_000_000 + refresh
     )
-    if (updates.length === 0) {
-      continue
-    }
     for (const update of updates) {
       metaById.set(update.worktreeId, {
         ...metaById.get(update.worktreeId),
         sortOrder: update.sortOrder
       })
     }
-    publications += 1
     persistenceWrites += updates.length
-    runSidebarProjection([...metaById.values()], fixture.tabs)
+    const incoming = structuredClone(requestedIds.map((worktreeId) => metaById.get(worktreeId)))
+    const reconciled = reuseEqualCatalogRows(catalog, incoming)
+    if (reconciled !== catalog) {
+      catalog = reconciled
+      publications += 1
+      runSidebarProjection(catalog, fixture.tabs)
+    }
   }
   return { publications, persistenceWrites }
 }
