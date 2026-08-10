@@ -552,6 +552,24 @@ describe('workspace cleanup scan progress', () => {
     expect(store.getState().workspaceCleanupScan).toMatchObject(secondResult)
   })
 
+  it('does not join legacy and full-workspace broad scans', async () => {
+    const legacyPending = deferred<WorkspaceCleanupScanResult>()
+    const fullPending = deferred<WorkspaceCleanupScanResult>()
+    const scan = vi.fn((args?: { includeAllWorkspaces?: boolean }) =>
+      args?.includeAllWorkspaces ? fullPending.promise : legacyPending.promise
+    )
+    installWorkspaceCleanupApi(scan)
+    const store = createCleanupTestStore()
+
+    const legacy = store.getState().scanWorkspaceCleanup()
+    const full = store.getState().scanWorkspaceCleanup({ includeAllWorkspaces: true })
+
+    expect(scan).toHaveBeenCalledTimes(2)
+    fullPending.resolve({ scannedAt: NOW, candidates: [], errors: [] })
+    legacyPending.resolve({ scannedAt: NOW - 1, candidates: [], errors: [] })
+    await expect(Promise.all([legacy, full])).resolves.toHaveLength(2)
+  })
+
   it('keeps stale cleanup results visible after a broad refresh failure', async () => {
     const previous = { scannedAt: NOW, candidates: [makeCandidate()], errors: [] }
     const scan = vi
