@@ -5775,8 +5775,24 @@ export function registerPtyHandlers(
         await startupPromise
       }
       // Why: honor the fallback only for fresh local spawns — reattach needs exact cwd and SSH can't probe the local filesystem.
-      const allowMissingCwdFallback =
+      const requestedMissingCwdFallback =
         !args.connectionId && !args.sessionId && args.cwdFallback === 'worktree'
+      const isWslOwnedPosixCwd =
+        args.cwd?.startsWith('/') === true && !/^\/[A-Za-z](?:\/|$)/.test(args.cwd)
+      const wslRuntimeOwnsStartupCwd =
+        requestedMissingCwdFallback &&
+        process.platform === 'win32' &&
+        isWslOwnedPosixCwd &&
+        (isWslShellName(
+          resolveLocalWindowsTerminalRuntimeOptions({
+            requestedShellOverride: args.shellOverride,
+            settings: getSettings?.(),
+            projectRuntime: args.projectRuntime,
+            fallbackHostShell: process.env.COMSPEC || 'powershell.exe'
+          }).shellOverride
+        ) ||
+          isWslUncPath(resolvePtySpawnStartupCwd(args.worktreeId, '.') ?? ''))
+      const allowMissingCwdFallback = requestedMissingCwdFallback && !wslRuntimeOwnsStartupCwd
       let didFallbackToWorkspaceRootCwd = false
       const cwd = resolvePtySpawnStartupCwd(
         args.worktreeId,

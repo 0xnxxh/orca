@@ -12125,6 +12125,82 @@ describe('registerPtyHandlers', () => {
     expect(result.startupCwdFallback).toEqual({ kind: 'worktree', cwd: worktreePath })
   })
 
+  it('leaves a POSIX startup cwd for the selected WSL runtime to validate', async () => {
+    const originalPlatform = process.platform
+    const providerSpawn = vi.fn().mockResolvedValue({ id: 'pty-wsl-cwd' })
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    statSyncMock.mockImplementation((target: string) => {
+      if (target === '/home/alice/repo') {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      }
+      return { isDirectory: () => true, mode: 0o755 }
+    })
+
+    try {
+      installDaemonTestProvider({ spawn: providerSpawn })
+      registerPtyHandlers(mainWindow as never)
+      await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        cwd: '/home/alice/repo',
+        cwdFallback: 'worktree',
+        worktreeId: 'repo-1::C:\\Users\\alice\\repo',
+        projectRuntime: {
+          status: 'resolved',
+          runtime: {
+            kind: 'wsl',
+            hostPlatform: 'wsl',
+            projectId: 'repo-1',
+            distro: 'Ubuntu-24.04',
+            reason: 'project-override',
+            cacheKey: 'repo-1:wsl'
+          }
+        }
+      })
+
+      expect(statSyncMock).not.toHaveBeenCalledWith('/home/alice/repo')
+      expect(providerSpawn).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: '/home/alice/repo', shellOverride: 'wsl.exe' })
+      )
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
+  })
+
+  it('still falls back a missing Windows cwd when the selected runtime is WSL', async () => {
+    const originalPlatform = process.platform
+    const providerSpawn = vi.fn().mockResolvedValue({ id: 'pty-wsl-windows-cwd' })
+    const worktreePath = 'C:/Users/alice/repo'
+    const missingCwd = `${worktreePath}/deleted-folder`
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    statSyncMock.mockImplementation((target: string) => {
+      if (target === missingCwd) {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      }
+      return { isDirectory: () => true, mode: 0o755 }
+    })
+
+    try {
+      installDaemonTestProvider({ spawn: providerSpawn })
+      registerPtyHandlers(mainWindow as never)
+      const result = (await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        cwd: missingCwd,
+        cwdFallback: 'worktree',
+        worktreeId: `repo-1::${worktreePath}`,
+        shellOverride: 'wsl.exe'
+      })) as { startupCwdFallback?: { kind: string; cwd: string } }
+
+      expect(providerSpawn).toHaveBeenCalledWith(
+        expect.objectContaining({ cwd: worktreePath, shellOverride: 'wsl.exe' })
+      )
+      expect(result.startupCwdFallback).toEqual({ kind: 'worktree', cwd: worktreePath })
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
+  })
+
   it('keeps a missing cwd unchanged without the fallback flag', async () => {
     registerPtyHandlers(mainWindow as never)
     existsSyncMock.mockImplementation((target: string) => target !== '/repo/app/deleted-folder')
