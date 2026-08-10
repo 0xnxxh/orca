@@ -111,6 +111,7 @@ import { resolveWorktreeCreateBase } from '../worktree-create-base'
 import { resolveWorktreeAddBaseRef } from '../../shared/worktree-base-ref'
 import { OrchestrationDb } from './orchestration/db'
 import { reconcileRequestedWorkerTerminalReleases } from './orchestration/worker-terminal-release-reconciliation'
+import { rollbackWorkspaceSessionAfterFailedAsyncWrite } from './workspace-session-failed-write-rollback'
 import { OrchestrationError } from './orchestration/orchestration-error'
 import {
   planLegacyWorkerTerminalRecovery,
@@ -3998,6 +3999,7 @@ export class OrcaRuntimeService {
       return new Set()
     }
     const originalSessions = new Map<ExecutionHostId, WorkspaceSessionState>()
+    const stagedSessions = new Map<ExecutionHostId, WorkspaceSessionState>()
     const stagedDispatchIds = new Set<string>()
     let changed = false
     try {
@@ -4028,6 +4030,7 @@ export class OrcaRuntimeService {
           store.setWorkspaceSession(next, hostId)
           changed = true
         }
+        stagedSessions.set(hostId, store.getWorkspaceSession(hostId))
         stagedDispatchIds.add(candidate.dispatchId)
       }
       if (changed) {
@@ -4035,8 +4038,16 @@ export class OrcaRuntimeService {
       }
       return stagedDispatchIds
     } catch (error) {
-      for (const [hostId, session] of originalSessions) {
-        store.setWorkspaceSession(session, hostId)
+      for (const [hostId, original] of originalSessions) {
+        const staged = stagedSessions.get(hostId)
+        const current = store.getWorkspaceSession(hostId)
+        if (!staged || !current) {
+          continue
+        }
+        const rolledBack = rollbackWorkspaceSessionAfterFailedAsyncWrite(original, staged, current)
+        if (rolledBack !== current) {
+          store.setWorkspaceSession(rolledBack, hostId)
+        }
       }
       console.warn('[orchestration] failed to persist legacy worker recovery batch', {
         dispatchIds: [...stagedDispatchIds],
@@ -15869,11 +15880,19 @@ export class OrcaRuntimeService {
       [workspace.id]: activeGroup.id
     }
     const persisted = advanceTerminalTopologyRevision(next, workspace.id)
+    let staged: WorkspaceSessionState | null = null
     try {
       this.setWorkspaceSessionForWorktree(workspace.id, persisted)
+      staged = this.getWorkspaceSessionForWorktree(workspace.id)
       await this.flushWorkspaceSessionOrThrowAsync()
     } catch (error) {
-      this.setWorkspaceSessionForWorktree(workspace.id, session)
+      const current = this.getWorkspaceSessionForWorktree(workspace.id)
+      if (staged && current) {
+        const rolledBack = rollbackWorkspaceSessionAfterFailedAsyncWrite(session, staged, current)
+        if (rolledBack !== current) {
+          this.setWorkspaceSessionForWorktree(workspace.id, rolledBack)
+        }
+      }
       throw error
     }
     for (const { claim, pty, paneKey } of validated) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Run: node config/scripts/legacy-worker-recovery-persistence-benchmark.mjs
 import { closeSync, fsyncSync, openSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { mkdir, open, readFile, rename } from 'node:fs/promises'
+import { mkdtemp, open, readFile, rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
@@ -38,8 +38,7 @@ if (
   throw new Error('recovery persistence implementation changed; update this benchmark')
 }
 
-const root = join(tmpdir(), `orca-legacy-recovery-benchmark-${process.pid}`)
-await mkdir(root, { recursive: true })
+const root = await mkdtemp(join(tmpdir(), 'orca-legacy-recovery-benchmark-'))
 const filler = 'x'.repeat(fixtureMiB * 1024 * 1024)
 
 function payload(state) {
