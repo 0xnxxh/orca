@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type Dispatch,
-  type SetStateAction
-} from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { NativeChatSession } from '../../../../shared/native-chat-types'
 import {
   appendCommandMarkerCache,
@@ -24,9 +17,8 @@ export function useNativeChatPendingState(args: {
   agent: NativeChatSession['agent']
   sessionId: string | null
   messages: NativeChatSession['messages']
-  setWorkingInterrupted: Dispatch<SetStateAction<boolean>>
 }) {
-  const { paneKey, agent, sessionId, messages, setWorkingInterrupted } = args
+  const { paneKey, agent, sessionId, messages } = args
   const commandMarkerScope = useMemo(
     () => ({ paneKey, agent, sessionId }),
     [paneKey, agent, sessionId]
@@ -41,12 +33,10 @@ export function useNativeChatPendingState(args: {
 
   useEffect(() => {
     setPending(readPendingSendCache(pendingScope))
-    setWorkingInterrupted(false)
-  }, [pendingScope, setWorkingInterrupted])
+  }, [pendingScope])
   useEffect(() => {
     setCommandMarkers(readCommandMarkerCache(commandMarkerScope))
-    setWorkingInterrupted(false)
-  }, [commandMarkerScope, setWorkingInterrupted])
+  }, [commandMarkerScope])
   useEffect(() => {
     setPending((previous) =>
       writePendingSendCache(pendingScope, prunePendingSends(previous, messages))
@@ -55,7 +45,6 @@ export function useNativeChatPendingState(args: {
 
   const onOptimisticSend = useCallback(
     (text: string, imagePaths?: string[]) => {
-      setWorkingInterrupted(false)
       const sentAt = Date.now()
       const boundary = messages.at(-1)
       const entry: NativeChatPendingSend = {
@@ -69,7 +58,7 @@ export function useNativeChatPendingState(args: {
       setPending(appendPendingSendCache(pendingScope, entry))
       return entry.id
     },
-    [messages, pendingScope, setWorkingInterrupted]
+    [messages, pendingScope]
   )
   const onOptimisticSendCanceled = useCallback(
     (pendingId: string) => {

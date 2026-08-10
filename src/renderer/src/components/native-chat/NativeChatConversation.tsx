@@ -11,10 +11,8 @@ import { useNativeChatCanSend } from './use-native-chat-can-send'
 import { NativeChatInteractiveCard } from './NativeChatInteractiveCard'
 import { NativeChatEmptyState } from './NativeChatEmptyState'
 import { useNativeChatInteractiveSend } from './use-native-chat-interactive-send'
-import {
-  shouldClearNativeChatWorkingSuppression,
-  shouldShowNativeChatWorking
-} from './native-chat-working-suppression'
+import { shouldShowNativeChatWorking } from './native-chat-working-suppression'
+import { useNativeChatWorkingInterruption } from './use-native-chat-working-interruption'
 import {
   applyCommandMarkerBoundaries,
   commandMarkersAsMessages,
@@ -125,8 +123,18 @@ export function NativeChatConversation({
     ptyWriter,
     liveState?.questionInferenceRequest
   )
-  const [workingInterrupted, setWorkingInterrupted] = useState(false)
-  const previousWorkingEpochRef = useRef<number | null>(null)
+  const {
+    interrupted: workingInterrupted,
+    interruptWorking,
+    resumeWorking
+  } = useNativeChatWorkingInterruption({
+    working: liveWorking,
+    paneKey,
+    agent,
+    sessionId,
+    workingEpoch: hookWorkingEpoch,
+    messages: session.messages
+  })
   // True while a question card owns the input region, so the composer is hidden.
   const [questionActive, setQuestionActive] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -157,7 +165,7 @@ export function NativeChatConversation({
 
   const {
     commandMarkers,
-    onOptimisticSend,
+    onOptimisticSend: appendOptimisticSend,
     onOptimisticSendCanceled,
     onSlashCommand,
     pending,
@@ -167,9 +175,15 @@ export function NativeChatConversation({
     paneKey,
     agent,
     sessionId,
-    messages: session.messages,
-    setWorkingInterrupted
+    messages: session.messages
   })
+  const onOptimisticSend = useCallback(
+    (text: string, imagePaths?: string[]) => {
+      resumeWorking()
+      return appendOptimisticSend(text, imagePaths)
+    },
+    [appendOptimisticSend, resumeWorking]
+  )
   useEffect(() => {
     if (!paneLaunchPrompt || !shouldPruneLaunchPrompt(paneLaunchPrompt, session.messages)) {
       return
@@ -237,24 +251,6 @@ export function NativeChatConversation({
   const viewState = selectNativeChatViewState(sessionWithPending)
 
   const isConversation = viewState.kind === 'ready'
-  useEffect(() => {
-    if (
-      shouldClearNativeChatWorkingSuppression({
-        working: liveWorking,
-        interrupted: workingInterrupted,
-        workingEpoch: hookWorkingEpoch,
-        previousWorkingEpoch: previousWorkingEpochRef.current
-      })
-    ) {
-      setWorkingInterrupted(false)
-    }
-    if (liveWorking && hookWorkingEpoch != null) {
-      previousWorkingEpochRef.current = hookWorkingEpoch
-    }
-    if (!liveWorking) {
-      previousWorkingEpochRef.current = null
-    }
-  }, [liveWorking, workingInterrupted, hookWorkingEpoch])
   const isWorking = shouldShowNativeChatWorking({
     isConversation,
     working: liveWorking,
@@ -263,7 +259,7 @@ export function NativeChatConversation({
 
   const stopAgent = useCallback((): boolean | Promise<boolean> => {
     const finishAcceptedStop = (): void => {
-      setWorkingInterrupted(true)
+      interruptWorking()
       // Why: Stop after a submitted turn drops the delayed-write handle once it
       // settles, so cancelPendingSends no longer sees the optimistic id. Clear
       // the echo cache here so a cancelled prompt cannot stick as a ghost bubble.
@@ -282,7 +278,7 @@ export function NativeChatConversation({
       }
       return delivered
     })
-  }, [interactiveSend, pendingScope, setPending])
+  }, [interactiveSend, interruptWorking, pendingScope, setPending])
   const nativeChatFileLinkClick = useNativeChatFileLinkClick(fileLinkContext)
 
   // Chat-only font zoom via Cmd/Ctrl +/-/0, gated to the live conversation so
