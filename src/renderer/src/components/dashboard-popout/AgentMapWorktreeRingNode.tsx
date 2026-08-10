@@ -193,7 +193,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
   onAgentKeyDown
 }: AgentMapWorktreeRingNodeProps): React.JSX.Element {
   const [detailsOpen, setDetailsOpen] = useState(false)
-  const exiting = worktree.motionState === 'exiting'
+  const exiting = project.motionState === 'exiting' || worktree.motionState === 'exiting'
   const selected = worktree.agents.some((agent) => agent.card.paneKey === selectedPaneKey)
   const activeStatus = agentMapWorktreeActiveStatus(worktree.statusCounts)
   const aggregate = !selected && shouldAggregateAgentMapWorktree(worktree, zoom, allowAggregation)
@@ -203,6 +203,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
     <Popover open={detailsOpen && !exiting} onOpenChange={setDetailsOpen}>
       <g
         className={`agent-map-worktree-group${worktree.motionState ? ` is-${worktree.motionState}` : ''}`}
+        aria-hidden={exiting || undefined}
         onPointerEnter={() => onLabelActiveChange(worktree.id, true)}
         onPointerLeave={() => onLabelActiveChange(worktree.id, false)}
         onFocus={() => onLabelActiveChange(worktree.id, true)}
@@ -257,7 +258,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
               }
             }}
             onContextMenu={
-              onOpenWorkspaceContextMenu
+              onOpenWorkspaceContextMenu && !exiting
                 ? (event) => {
                     event.preventDefault()
                     event.stopPropagation()
@@ -308,7 +309,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
             </g>
             {worktree.agents.map((agent) => {
               const iconSize = Math.max(12, Math.min(22, agent.radius * 1.05))
-              const agentExiting = agent.motionState === 'exiting'
+              const agentExiting = exiting || agent.motionState === 'exiting'
               return (
                 <g
                   key={agent.card.paneKey}

@@ -581,7 +581,12 @@ describe('AgentMap', () => {
     const ring = view.container.querySelector<SVGCircleElement>(
       '[aria-label="Open Motion branch worktree details"]'
     )
-    expect(ring?.closest('.agent-map-worktree-group')).toHaveClass('is-exiting')
+    const exitingGroup = ring?.closest('.agent-map-worktree-group')
+    const exitingAgent = exitingGroup?.querySelector('[data-agent-map-agent]')
+    expect(exitingGroup).toHaveClass('is-exiting')
+    expect(exitingGroup).toHaveAttribute('aria-hidden', 'true')
+    expect(exitingAgent).toHaveAttribute('tabindex', '-1')
+    expect(exitingAgent).toHaveAttribute('aria-hidden', 'true')
 
     act(() => vi.advanceTimersByTime(AGENT_MAP_EXIT_DURATION_MS))
     expect(

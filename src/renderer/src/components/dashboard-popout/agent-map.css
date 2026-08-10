@@ -458,7 +458,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .agent-map-project-ring,
+  .agent-map-project-node,
   .agent-map-worktree-ring,
+  .agent-map-worktree-group,
   .agent-map-worktree-label-group,
   .agent-map-agent-node,
   .agent-map-agent-visual,

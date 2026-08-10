@@ -133,6 +133,7 @@ export const AgentMapScene = memo(function AgentMapScene({
           <g
             key={project.id}
             className={`agent-map-project-node${project.motionState ? ` is-${project.motionState}` : ''}`}
+            aria-hidden={project.motionState === 'exiting' || undefined}
           >
             <circle
               className="agent-map-project-ring"

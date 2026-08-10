@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type {
   AgentMapAgentNode,
   AgentMapLayout,
@@ -153,28 +153,17 @@ export function reconcileAgentMapMotionLayout(
   }
 }
 
-function hasExitingNodes(layout: AgentMapLayout): boolean {
-  return layout.projects.some(
-    (project) =>
-      project.motionState === 'exiting' ||
-      project.worktrees.some(
-        (worktree) =>
-          worktree.motionState === 'exiting' ||
-          worktree.agents.some((agent) => agent.motionState === 'exiting')
-      )
-  )
-}
-
-function hasEnteringNodes(layout: AgentMapLayout): boolean {
-  return layout.projects.some(
-    (project) =>
-      project.motionState === 'entering' ||
-      project.worktrees.some(
-        (worktree) =>
-          worktree.motionState === 'entering' ||
-          worktree.agents.some((agent) => agent.motionState === 'entering')
-      )
-  )
+function motionNodeSignature(layout: AgentMapLayout, motionState: 'entering' | 'exiting'): string {
+  const nodeIds = layout.projects.flatMap((project) => [
+    ...(project.motionState === motionState ? [`project:${project.id}`] : []),
+    ...project.worktrees.flatMap((worktree) => [
+      ...(worktree.motionState === motionState ? [`worktree:${worktree.id}`] : []),
+      ...worktree.agents
+        .filter((agent) => agent.motionState === motionState)
+        .map((agent) => `agent:${agent.card.paneKey}`)
+    ])
+  ])
+  return nodeIds.length > 0 ? JSON.stringify(nodeIds) : ''
 }
 
 function clearEnteringAgentMapLayout(layout: AgentMapLayout): AgentMapLayout {
@@ -234,12 +223,20 @@ export function useAgentMapMotionLayout(
     setMotionLayout((previous) => reconcileAgentMapMotionLayout(previous, layout))
   }, [layout, reducedMotion])
 
+  const { enteringSignature, exitingSignature } = useMemo(
+    () => ({
+      enteringSignature: motionNodeSignature(motionLayout, 'entering'),
+      exitingSignature: motionNodeSignature(motionLayout, 'exiting')
+    }),
+    [motionLayout]
+  )
+
   useEffect(() => {
     if (enterTimerRef.current) {
       clearTimeout(enterTimerRef.current)
       enterTimerRef.current = null
     }
-    if (reducedMotion || !hasEnteringNodes(motionLayout)) {
+    if (reducedMotion || !enteringSignature) {
       return
     }
     enterTimerRef.current = setTimeout(() => {
@@ -252,14 +249,14 @@ export function useAgentMapMotionLayout(
         enterTimerRef.current = null
       }
     }
-  }, [motionLayout, reducedMotion])
+  }, [enteringSignature, reducedMotion])
 
   useEffect(() => {
     if (exitTimerRef.current) {
       clearTimeout(exitTimerRef.current)
       exitTimerRef.current = null
     }
-    if (reducedMotion || !hasExitingNodes(motionLayout)) {
+    if (reducedMotion || !exitingSignature) {
       return
     }
     exitTimerRef.current = setTimeout(() => {
@@ -272,7 +269,7 @@ export function useAgentMapMotionLayout(
         exitTimerRef.current = null
       }
     }
-  }, [motionLayout, reducedMotion])
+  }, [exitingSignature, reducedMotion])
 
   return reducedMotion ? layout : motionLayout
 }
