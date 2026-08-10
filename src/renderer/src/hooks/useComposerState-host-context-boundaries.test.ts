@@ -751,6 +751,10 @@ describe('useComposerState host-context boundaries', () => {
     )
     expect(fullSubmit).toContain('platform: selectedRepoAgentLaunchPlatform')
     expect(fullSubmit).toContain('startupDraft: startupPlan.draftPrompt')
+    expect(fullSubmit).toContain(
+      'startupSessionOptions: { agent: tuiAgent, values: startupPlan.sessionOptions }'
+    )
+    expect(fullSubmit).toContain('resolveCreatedAgentAppliedSessionOptions')
     expect(fullSubmit).not.toContain('platform: CLIENT_PLATFORM')
 
     const quickSubmit = sourceBetween(

@@ -15,6 +15,7 @@ import {
 } from '@/lib/github-links'
 import { activateAndRevealWorktree, type AgentStartedTelemetry } from '@/lib/worktree-activation'
 import { runBackgroundWorktreeCreation } from '@/lib/worktree-creation-flow'
+import { resolveCreatedAgentAppliedSessionOptions } from '@/lib/worktree-creation-agent-seeds'
 import {
   findPendingLinkedWorkItemCreationId,
   type WorktreeCreationRequest
@@ -3851,7 +3852,14 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
           linkedWorkItem: toFolderWorkspaceLinkedTask(submitLinkedWorkItem),
           linkedTaskSourceContext: taskSourceContext,
           ...(!backendStartup && startupPlan?.draftPrompt
-            ? { startupDraft: startupPlan.draftPrompt }
+            ? {
+                startupDraft: startupPlan.draftPrompt,
+                ...(startupPlan.sessionOptions
+                  ? {
+                      startupSessionOptions: { agent: tuiAgent, values: startupPlan.sessionOptions }
+                    }
+                  : {})
+              }
             : {})
         }
       )
@@ -3907,10 +3915,24 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
           : {})
       })
       if (startupPlan) {
+        const createdAgent =
+          backendSpawnedStartup && !backendStartup
+            ? (worktree.createdWithAgent ?? tuiAgent)
+            : tuiAgent
         const optionScopeKey =
           (activation !== false ? activation.primaryTabId : null) ?? result.startupTerminal?.tabId
         if (optionScopeKey) {
-          seedNativeChatAppliedSessionOptions(optionScopeKey, tuiAgent, startupPlan.sessionOptions)
+          seedNativeChatAppliedSessionOptions(
+            optionScopeKey,
+            createdAgent,
+            resolveCreatedAgentAppliedSessionOptions({
+              agent: createdAgent,
+              backendSpawned: backendSpawnedStartup,
+              clientBuiltStartup: Boolean(backendStartup),
+              clientSessionOptions: startupPlan.sessionOptions,
+              hostAppliedSessionOptions: result.startupTerminal?.appliedSessionOptions
+            })
+          )
         }
       }
       if (startupPlan && !backendSpawnedStartup) {

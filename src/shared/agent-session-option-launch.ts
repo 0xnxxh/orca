@@ -49,6 +49,12 @@ export function resolveAgentSessionOptionLaunch(
       const explicitValue = values[option.id]
       if (explicitValue !== undefined) {
         if (
+          (option.kind.type === 'boolean' && typeof explicitValue !== 'boolean') ||
+          (option.kind.type === 'select' && typeof explicitValue !== 'string')
+        ) {
+          return []
+        }
+        if (
           !model &&
           option.kind.type === 'select' &&
           !option.kind.choices.some((choice) => choice.value === explicitValue)
