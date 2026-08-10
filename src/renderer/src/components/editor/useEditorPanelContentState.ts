@@ -1,7 +1,7 @@
 /* oxlint-disable max-lines -- Why: content loading, retry, and external-change
    subscriptions share in-flight caches and state setters; splitting them would
    make the hook coordination harder to audit. */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { OpenFile } from '@/store/slices/editor'
 import { getConnectionIdForFile, isWorktreeConnectionResolved } from '@/lib/connection-context'
 import { joinPath } from '@/lib/path'
@@ -133,7 +133,7 @@ export function useEditorPanelContentState({
   const activeContentFileId = selectedConflictReviewFile?.id ?? activeFile?.id ?? null
   const activeContentFileIdRef = useRef(activeContentFileId)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // Why: event-driven readers must only observe state from committed renders.
     diffContentsRef.current = diffContents
     openFilesRef.current = openFiles

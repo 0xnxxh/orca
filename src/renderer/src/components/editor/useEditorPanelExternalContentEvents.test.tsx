@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { act, useEffect, useRef, useState } from 'react'
+import { act, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OpenFile } from '@/store/slices/editor'
@@ -30,7 +30,7 @@ function ExternalContentProbe({ activeFileId, calls, isVisible, openFiles }: Pro
   const [, setFileContents] = useState<Record<string, FileContent>>({})
   const [, setDiffContents] = useState<Record<string, DiffContent>>({})
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     activeContentFileIdRef.current = activeFileId
     isVisibleRef.current = isVisible
     openFilesRef.current = openFiles
