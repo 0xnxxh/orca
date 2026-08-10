@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
+import { DatabaseSync } from 'node:sqlite'
 import type { Cookie } from 'electron'
 import {
   isGoogleSourceBoundCookie,
+  isNonTransplantableCookieDomain,
+  NON_TRANSPLANTABLE_HOST_KEY_SQL,
   normalizeCookieDomain,
+  removeAllCookiesExcept,
   replaceCookiesForImportedDomains
 } from './browser-cookie-import-policy'
 
@@ -145,5 +149,95 @@ describe('replaceCookiesForImportedDomains', () => {
       httpOnly: undefined,
       sameSite: 'unspecified'
     })
+  })
+})
+
+describe('isNonTransplantableCookieDomain', () => {
+  it('covers the whole google.com registrable family', () => {
+    expect(isNonTransplantableCookieDomain('google.com')).toBe(true)
+    expect(isNonTransplantableCookieDomain('.google.com')).toBe(true)
+    expect(isNonTransplantableCookieDomain('accounts.google.com')).toBe(true)
+    expect(isNonTransplantableCookieDomain('MAIL.Google.Com')).toBe(true)
+  })
+
+  it('does not match lookalikes or unrelated sites', () => {
+    expect(isNonTransplantableCookieDomain('withgoogle.com')).toBe(false)
+    expect(isNonTransplantableCookieDomain('google.com.evil.example')).toBe(false)
+    expect(isNonTransplantableCookieDomain('notgoogle.com')).toBe(false)
+    expect(isNonTransplantableCookieDomain('linear.app')).toBe(false)
+    expect(isNonTransplantableCookieDomain('')).toBe(false)
+  })
+
+  // Why: youtube.com re-issues its cookies from a transplanted session, so excluding it would
+  // drop imports users asked for. Locking it in keeps a future "just add it too" edit honest.
+  it('deliberately leaves youtube.com transplantable', () => {
+    expect(isNonTransplantableCookieDomain('.youtube.com')).toBe(false)
+    expect(isNonTransplantableCookieDomain('accounts.youtube.com')).toBe(false)
+  })
+})
+
+describe('NON_TRANSPLANTABLE_HOST_KEY_SQL', () => {
+  it('selects the google.com family and nothing that merely looks like it', () => {
+    const db = new DatabaseSync(':memory:')
+    db.exec('CREATE TABLE cookies (host_key TEXT)')
+    for (const hostKey of [
+      'google.com',
+      '.google.com',
+      'accounts.google.com',
+      'withgoogle.com',
+      'google.com.evil.example',
+      '.youtube.com',
+      '.linear.app'
+    ]) {
+      db.prepare('INSERT INTO cookies (host_key) VALUES (?)').run(hostKey)
+    }
+
+    const matched = db
+      .prepare(
+        `SELECT host_key FROM cookies WHERE ${NON_TRANSPLANTABLE_HOST_KEY_SQL} ORDER BY host_key`
+      )
+      .all() as { host_key: string }[]
+    db.close()
+
+    expect(matched.map((row) => row.host_key)).toEqual([
+      '.google.com',
+      'accounts.google.com',
+      'google.com'
+    ])
+  })
+})
+
+describe('removeAllCookiesExcept', () => {
+  it('removes only the cookies the predicate does not exclude', async () => {
+    const get = vi
+      .fn()
+      .mockResolvedValue([
+        cookie('.google.com', 'SID'),
+        cookie('.example.com', 'session'),
+        cookie('other.test', 'tracker', '/scoped')
+      ])
+    const remove = vi.fn().mockResolvedValue(undefined)
+
+    await removeAllCookiesExcept({ get, remove }, (c) => c.domain === '.google.com')
+
+    expect(remove.mock.calls).toEqual([
+      ['https://example.com/', 'session'],
+      ['https://other.test/scoped', 'tracker']
+    ])
+  })
+
+  it('aggregates removal failures after attempting every cookie', async () => {
+    const get = vi
+      .fn()
+      .mockResolvedValue([cookie('.example.com', 'first'), cookie('.example.com', 'second')])
+    const remove = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('store unavailable'))
+      .mockResolvedValueOnce(undefined)
+
+    await expect(removeAllCookiesExcept({ get, remove }, () => false)).rejects.toThrow(
+      'Could not clear existing cookies'
+    )
+    expect(remove).toHaveBeenCalledTimes(2)
   })
 })
