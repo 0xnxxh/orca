@@ -27,6 +27,7 @@ import {
 export type MutationPlan<TValue> = {
   method: string
   fields: Record<string, unknown>
+  beforeRun?: () => void
   run: (ctx: AgentSessionTurnContext) => Promise<TurnOutcome<TValue>>
   replay: (ctx: AgentSessionTurnContext, outcome: AgentSessionOperationOutcome) => TValue | null
   rerunWhenReplayMissing?: (ctx: AgentSessionTurnContext) => boolean
@@ -36,6 +37,7 @@ export function sendPlan(params: {
   envelope: AgentSessionMutationEnvelope
   body: AgentJournalMessageItem
   retryUnknown?: true
+  beforeRun?: () => void
 }): MutationPlan<AgentSessionSendResult> {
   // The operation id IS the client message id: one send, one durable row, one
   // key the client reconciles its optimistic bubble against.
@@ -44,6 +46,7 @@ export function sendPlan(params: {
     method: 'agentSession.send',
     // A control signal is not payload; only the matching durable unknown unlocks redispatch.
     fields: { body: params.body },
+    ...(params.beforeRun ? { beforeRun: params.beforeRun } : {}),
     rerunWhenReplayMissing: (ctx) =>
       params.retryUnknown === true &&
       ctx.journal

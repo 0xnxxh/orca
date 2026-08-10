@@ -181,8 +181,10 @@ export const STRUCTURED_AGENT_SESSION_METHODS: RpcAnyMethod[] = [
     params: SendParams,
     handler: async (params, ctx) => {
       const host = requireHost(ctx)
-      assertMobileImageProvenance(ctx, params.body)
-      return host.send(callerFor(ctx), params)
+      return host.send(callerFor(ctx), {
+        ...params,
+        beforeRun: () => assertMobileImageProvenance(ctx, params.body)
+      })
     }
   }),
   defineMethod({

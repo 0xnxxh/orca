@@ -86,7 +86,10 @@ function hostStub(): StructuredAgentSessionHost {
         unconfirmedClientMessageIds: []
       }
     })),
-    send: vi.fn(async () => ({ ok: true, replayed: false })),
+    send: vi.fn(async (_caller, params) => {
+      params.beforeRun?.()
+      return { ok: true, replayed: false }
+    }),
     cancel: vi.fn(async () => ({ ok: true, replayed: false })),
     respondToPrompt: vi.fn(async () => ({ ok: true, replayed: false })),
     setOption: vi.fn(async () => ({ ok: true, replayed: false })),
@@ -355,7 +358,7 @@ describe('mobile image provenance', () => {
         error: { message: expect.stringContaining('agent_session_image_untrusted') }
       })
     }
-    expect(hostCalls.send).not.toHaveBeenCalled()
+    expect(hostCalls.send).toHaveBeenCalledTimes(3)
   })
 
   it('keeps trusted in-process image paths unchanged', async () => {

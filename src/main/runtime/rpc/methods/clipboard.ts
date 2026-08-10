@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { defineMethod, type RpcMethod } from '../core'
+import { defineMethod, type RpcContext, type RpcMethod } from '../core'
 import { saveClipboardImageBufferAsTempFile } from '../../../window/clipboard-image-temp-file'
 import { randomUUID } from 'node:crypto'
 import {
@@ -17,6 +17,7 @@ const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/
 type ClipboardImageUpload = {
   expectedBase64Length: number
   connectionId?: string | null
+  mobileClientId?: string
   chunks: string[]
   receivedBase64Length: number
   expiresAt: number
@@ -68,6 +69,28 @@ function getUpload(uploadId: string): ClipboardImageUpload {
     throw new Error('Clipboard image upload was not found')
   }
   return upload
+}
+
+function mobileClientId(ctx: RpcContext): string | undefined {
+  if (ctx.clientKind !== 'mobile') {
+    return undefined
+  }
+  const clientId = ctx.clientId?.trim()
+  if (!clientId) {
+    throw new Error('Clipboard image upload requires an authenticated mobile client')
+  }
+  return clientId
+}
+
+function assertMobileUploadOwner(
+  upload: ClipboardImageUpload,
+  ctx: RpcContext
+): string | undefined {
+  const clientId = mobileClientId(ctx)
+  if (clientId && upload.mobileClientId !== clientId) {
+    throw new Error('Clipboard image upload was not found')
+  }
+  return clientId
 }
 
 function assertValidBase64Content(value: string): void {
@@ -133,14 +156,15 @@ export const CLIPBOARD_METHODS: RpcMethod[] = [
     name: 'clipboard.saveImageAsTempFile',
     params: SaveImageAsTempFile,
     handler: async (params, ctx) => {
+      const clientId = mobileClientId(ctx)
       const path = await saveClipboardImageBufferAsTempFile(
         Buffer.from(params.contentBase64, 'base64'),
         {
           connectionId: params.connectionId
         }
       )
-      if (ctx.clientKind === 'mobile') {
-        recordMobileClipboardImagePath(ctx.clientId, path)
+      if (clientId && !params.connectionId) {
+        recordMobileClipboardImagePath(clientId, path)
       }
       return path
     }
@@ -148,7 +172,7 @@ export const CLIPBOARD_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'clipboard.startImageUpload',
     params: StartImageUpload,
-    handler: (params) => {
+    handler: (params, ctx) => {
       pruneExpiredUploads()
       if (clipboardImageUploads.size >= CLIPBOARD_IMAGE_UPLOAD_MAX_CONCURRENT) {
         throw new Error('Too many clipboard image uploads are in progress')
@@ -157,6 +181,7 @@ export const CLIPBOARD_METHODS: RpcMethod[] = [
       clipboardImageUploads.set(uploadId, {
         expectedBase64Length: params.expectedBase64Length,
         connectionId: params.connectionId,
+        mobileClientId: mobileClientId(ctx),
         chunks: [],
         receivedBase64Length: 0,
         expiresAt: Date.now() + CLIPBOARD_IMAGE_UPLOAD_TTL_MS,
@@ -168,8 +193,9 @@ export const CLIPBOARD_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'clipboard.appendImageUploadChunk',
     params: AppendImageUploadChunk,
-    handler: (params) => {
+    handler: (params, ctx) => {
       const upload = getUpload(params.uploadId)
+      assertMobileUploadOwner(upload, ctx)
       if (params.offset !== upload.receivedBase64Length) {
         throw new Error('Clipboard image chunk offset is out of order')
       }
@@ -188,6 +214,7 @@ export const CLIPBOARD_METHODS: RpcMethod[] = [
     params: CommitImageUpload,
     handler: async (params, ctx) => {
       const upload = getUpload(params.uploadId)
+      const clientId = assertMobileUploadOwner(upload, ctx)
       try {
         if (upload.receivedBase64Length !== upload.expectedBase64Length) {
           throw new Error('Clipboard image upload is incomplete')
@@ -200,8 +227,8 @@ export const CLIPBOARD_METHODS: RpcMethod[] = [
             connectionId: upload.connectionId
           }
         )
-        if (ctx.clientKind === 'mobile') {
-          recordMobileClipboardImagePath(ctx.clientId, path)
+        if (clientId && !upload.connectionId) {
+          recordMobileClipboardImagePath(clientId, path)
         }
         return path
       } finally {
@@ -214,7 +241,12 @@ export const CLIPBOARD_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'clipboard.abortImageUpload',
     params: AbortImageUpload,
-    handler: (params) => {
+    handler: (params, ctx) => {
+      pruneExpiredUploads()
+      const upload = clipboardImageUploads.get(params.uploadId)
+      if (upload) {
+        assertMobileUploadOwner(upload, ctx)
+      }
       deleteUpload(params.uploadId)
       return { aborted: true }
     }

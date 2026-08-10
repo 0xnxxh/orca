@@ -26,6 +26,7 @@ import type {
 import { attachFingerprintFields } from '../native-chat/agent-session-wire/structured-agent-session-attach'
 import { getStructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-registry'
 import { journalDirectoryFor } from '../native-chat/agent-session-journal/journal-paths'
+import { readJournalBlob } from '../native-chat/agent-session-journal/journal-blob-store'
 import {
   openAgentSessionJournal,
   type AgentSessionJournal
@@ -34,6 +35,10 @@ import type { OrcaRuntimeService } from './orca-runtime'
 import type { RpcRequest, RpcResponse } from './rpc/core'
 import { RpcDispatcher } from './rpc/dispatcher'
 import { STRUCTURED_AGENT_SESSION_METHODS } from './rpc/methods/structured-agent-session'
+import {
+  recordMobileClipboardImagePath,
+  resetMobileClipboardImageProvenanceForTest
+} from './rpc/mobile-clipboard-image-provenance'
 import {
   ensureStructuredAgentSessionHost,
   stopStructuredAgentSessionRuntime
@@ -44,6 +49,7 @@ const THREAD = 'thread-integration'
 const TURN = 'turn-1'
 const WORKSPACE = 'workspace-1'
 const CLIENT = {
+  clientId: 'device-a',
   clientKind: 'mobile' as const,
   clientCapabilities: [STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY]
 }
@@ -258,6 +264,7 @@ async function historyPage(
 }
 
 beforeEach(async () => {
+  resetMobileClipboardImageProvenanceForTest()
   operations = 0
   root = await mkdtemp(join(tmpdir(), 'orca-structured-integration-'))
   codex = fakeCodex()
@@ -307,6 +314,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await stopStructuredAgentSessionRuntime()
+  resetMobileClipboardImageProvenanceForTest()
   await rm(root, { recursive: true, force: true })
 })
 
@@ -565,6 +573,56 @@ describe('a structured codex session over agentSession.*', () => {
           (item) => item.body?.kind === 'status' && item.body.turnLifecycle?.state === 'running'
         )
     ).toBe(false)
+  })
+
+  it('persists truncated command output before publishing its journal row', async () => {
+    await ok<{ fence: number }>('agentSession.create', createIntentParams())
+    const output = 'large command output\n'.repeat(2_000)
+
+    codex.notify('item/completed', {
+      threadId: THREAD,
+      turnId: TURN,
+      item: {
+        type: 'commandExecution',
+        id: 'item-large-output',
+        command: 'print-many-lines',
+        status: 'completed',
+        exitCode: 0,
+        aggregatedOutput: output
+      }
+    })
+    await drainStreamedEvents()
+
+    const host = getStructuredAgentSessionHost()
+    const journal = (
+      host as unknown as { sessions: Map<string, { journal: AgentSessionJournal }> }
+    ).sessions.get(SESSION)!.journal
+    const item = journal.snapshot().items.find((candidate) => candidate.body?.kind === 'tool-call')
+    const bounded = item?.body?.kind === 'tool-call' ? item.body.output : undefined
+    expect(bounded).toMatchObject({ truncated: true, byteLength: Buffer.byteLength(output) })
+    expect(await readJournalBlob(journal.directory, bounded?.digest ?? '')).toBe(output)
+  })
+
+  it('replays a durable image send after ephemeral upload provenance is gone', async () => {
+    const created = await ok<{ fence: number }>('agentSession.create', createIntentParams())
+    const path = '/tmp/orca-paste-image.png'
+    recordMobileClipboardImagePath('device-a', path)
+    const body = {
+      kind: 'message' as const,
+      role: 'user' as const,
+      blocks: [{ type: 'image-ref' as const, path }]
+    }
+    const params = {
+      envelope: envelope('agentSession.send', { body }, created.fence),
+      body
+    }
+
+    await ok('agentSession.send', params)
+    resetMobileClipboardImageProvenanceForTest()
+    const replay = await call('agentSession.send', params)
+
+    expect(replay).toMatchObject({ ok: true, result: { ok: true, replayed: true } })
+    expect(codex.live().calls.filter((entry) => entry.method === 'turn/start')).toHaveLength(1)
   })
 
   it('joins an acquired attach through journal bind before draining final rows', async () => {

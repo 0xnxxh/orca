@@ -16,12 +16,19 @@ import type {
   AgentJournalItemIdentity
 } from '../../../shared/agent-session-journal-types'
 import type { AgentSessionJournal } from '../agent-session-journal/journal-store'
+import { putJournalBlob } from '../agent-session-journal/journal-blob-store'
+
+export type StructuredAgentSessionJournalBlob = { digest: string; payload: string }
 
 /** The only journal surface an adapter gets: append and publish, no reads. An
  *  adapter that could read the journal would start reconciling against it, and
  *  reconciliation is the wire's job, not the provider's. */
 export type StructuredAgentSessionEventSink = {
-  appendItem(identity: AgentJournalItemIdentity, body: AgentJournalItemBody): void
+  appendItem(
+    identity: AgentJournalItemIdentity,
+    body: AgentJournalItemBody,
+    blobs?: readonly StructuredAgentSessionJournalBlob[]
+  ): void
   appendTombstone(identity: AgentJournalItemIdentity): void
   /** Fan the journal out to subscribers. Cheap and idempotent. */
   publish(): void
@@ -88,8 +95,13 @@ export function createDeferredStructuredAgentSessionEventSink(
 
   return {
     sink: {
-      appendItem: (identity, body: AgentJournalItemBody) => {
-        submit((bound) => bound.journal.appendItem(identity, body, { fence: bound.fence }))
+      appendItem: (identity, body: AgentJournalItemBody, blobs = []) => {
+        submit(async (bound) => {
+          for (const blob of blobs) {
+            await putJournalBlob(bound.journal.directory, blob.digest, blob.payload)
+          }
+          await bound.journal.appendItem(identity, body, { fence: bound.fence })
+        })
       },
       appendTombstone: (identity) => {
         submit((bound) => bound.journal.appendTombstone(identity, { fence: bound.fence }))

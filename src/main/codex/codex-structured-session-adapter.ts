@@ -2,10 +2,11 @@ import type {
   AgentJournalMessageItem,
   AgentSessionJournalIdentity
 } from '../../shared/agent-session-journal-types'
-import type {
-  AgentSessionAcquisition,
-  AgentSessionDispatchOutcome,
-  StructuredAgentSessionAdapter
+import {
+  AgentSessionPreSpawnError,
+  type AgentSessionAcquisition,
+  type AgentSessionDispatchOutcome,
+  type StructuredAgentSessionAdapter
 } from '../native-chat/agent-session-wire/structured-agent-session-adapter'
 import type { StructuredAgentSessionEventSink } from '../native-chat/agent-session-wire/structured-agent-session-event-sink'
 import { createCodexJournalTranslator } from './codex-structured-journal-translation'
@@ -79,7 +80,11 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
       this.acquisitions.assertCurrent(sessionId, attempt)
       await closeCodexPublishedSession(this.sessions, sessionId, this.deps.onEvent)
       this.acquisitions.assertCurrent(sessionId, attempt)
-      const launch = await this.deps.resolveLaunch({ identity: input.identity })
+      const launch = await this.deps
+        .resolveLaunch({ identity: input.identity })
+        .catch((error: unknown) => {
+          throw new AgentSessionPreSpawnError(error)
+        })
       this.acquisitions.assertCurrent(sessionId, attempt)
       const connection = await open(
         {

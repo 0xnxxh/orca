@@ -26,6 +26,18 @@ export type AgentSessionAcquisition = {
   link: AgentSessionProviderHandleLink
 }
 
+/** Acquisition validation failed before the adapter attempted to spawn. */
+export class AgentSessionPreSpawnError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause })
+    this.name = 'AgentSessionPreSpawnError'
+  }
+}
+
+export function isAgentSessionPreSpawnError(error: unknown): error is AgentSessionPreSpawnError {
+  return error instanceof Error && error.name === 'AgentSessionPreSpawnError'
+}
+
 export type AgentSessionDispatchOutcome =
   /** The provider owns the turn now, under this identity. */
   | { state: 'accepted'; providerIdentity: AgentJournalItemIdentity }

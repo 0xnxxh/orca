@@ -24,6 +24,7 @@ import {
 } from './structured-agent-session-attach'
 import type { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
 import type { StructuredAgentSessionAdapter } from './structured-agent-session-adapter'
+import { isAgentSessionPreSpawnError } from './structured-agent-session-adapter'
 import type { StructuredAgentSessionEventSink } from './structured-agent-session-event-sink'
 
 export type AttachFlowInput = {
@@ -58,6 +59,7 @@ export async function performAttach(
   }
 
   let record: AgentSessionRecord
+  let reservedRecord: AgentSessionRecord | null = null
   let replayed = false
   try {
     const reserved = await store.reserveOwner(
@@ -71,11 +73,23 @@ export async function performAttach(
       })
     )
     record = reserved.record
+    reservedRecord = record
     replayed = reserved.disposition === 'replayed'
     if (!agentSessionLeaseAdmitsWriter(record.lease)) {
       record = await acquireOwner(input, record)
     }
   } catch (error) {
+    if (reservedRecord && isAgentSessionPreSpawnError(error)) {
+      const spawnToken = reservedRecord.lease.reservedSpawnToken
+      if (spawnToken) {
+        await store.markReservationProcessless({
+          sessionId,
+          fence: reservedRecord.lease.runtimeFence,
+          spawnToken,
+          now: input.now()
+        })
+      }
+    }
     return {
       ok: false,
       refusal: classifyStoreFailure(error, store.getRecord(sessionId)?.lease.runtimeFence ?? null)

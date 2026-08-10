@@ -269,6 +269,7 @@ export class StructuredAgentSessionHost {
       envelope: AgentSessionMutationEnvelope
       body: AgentJournalMessageItem
       retryUnknown?: true
+      beforeRun?: () => void
     }
   ): Promise<AgentSessionMutationResult<AgentSessionSendResult>> {
     return this.mutate(caller, params.envelope, sendPlan(params))
