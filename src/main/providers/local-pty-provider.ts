@@ -10,7 +10,7 @@ import {
 import { buildWindowsPowerShellSpawnAttempts } from './windows-shell-fallback-chain'
 import { resolveProcessCwd } from './process-cwd'
 import { existsSync } from 'node:fs'
-import * as pty from 'node-pty'
+import type * as pty from 'node-pty'
 import { getDefaultWslDistro, parseWslPath, isWslAvailableAsync } from '../wsl'
 import { splitWorktreeIdForFilesystem } from '../../shared/worktree-id'
 import {
@@ -78,6 +78,7 @@ import {
   expandWindowsEnvironmentVariables,
   expandWindowsPathEnvironmentVariables
 } from '../../shared/windows-environment-expansion'
+import { loadNodePty, type NodePtyModule } from './node-pty-loader'
 
 const PANE_IDENTITY_ENV_KEYS = [
   'ORCA_PANE_KEY',
@@ -341,8 +342,13 @@ function allocatePtyId(sessionId: string | undefined): string {
   return id
 }
 
-async function prepareLocalPtySpawn(id: string): Promise<void> {
+async function prepareLocalPtySpawn(
+  id: string,
+  signal: AbortSignal | undefined,
+  load: () => Promise<NodePtyModule>
+): Promise<{ nodePty: NodePtyModule; generation: number }> {
   const pendingSpawn: PendingLocalPtySpawn = { canceled: false }
+  const generation = loadGeneration
   const pending = pendingLocalPtySpawns.get(id) ?? new Set()
   pending.add(pendingSpawn)
   pendingLocalPtySpawns.set(id, pending)
@@ -352,6 +358,17 @@ async function prepareLocalPtySpawn(id: string): Promise<void> {
     if (pendingSpawn.canceled) {
       throw new Error(`PTY spawn canceled: ${id}`)
     }
+    if (signal?.aborted) {
+      throw new Error('client_disconnected')
+    }
+    const nodePty = await load()
+    if (pendingSpawn.canceled || generation !== loadGeneration) {
+      throw new Error(`PTY spawn canceled: ${id}`)
+    }
+    if (signal?.aborted) {
+      throw new Error('client_disconnected')
+    }
+    return { nodePty, generation }
   } finally {
     pending.delete(pendingSpawn)
     if (pending.size === 0) {
@@ -489,6 +506,8 @@ function requestPtyTermination(id: string, proc: pty.IPty): void {
 }
 
 export type LocalPtyProviderOptions = {
+  /** Test seam for holding the native load across lifecycle races. */
+  loadNodePty?: () => Promise<NodePtyModule>
   /** Why: `ctx.command` (pi/omp/claude) must drive overlay source-dir selection — a disk-presence fallback shadows the other agent's extensions. */
   buildSpawnEnv?: (
     id: string,
@@ -838,10 +857,11 @@ export class LocalPtyProvider implements IPtyProvider {
       logHistoryInjection(worktreeId, historyResult)
     }
 
-    await prepareLocalPtySpawn(id)
-    if (args.signal?.aborted) {
-      throw new Error('client_disconnected')
-    }
+    const prepared = await prepareLocalPtySpawn(
+      id,
+      args.signal,
+      this.opts.loadNodePty ?? loadNodePty
+    )
     // Why: another same-id request can win while this one awaits preflight; attach before launching a redundant shell.
     const concurrentWinner = reattachId ? reattachLocalPty(id, args.cols, args.rows) : null
     if (concurrentWinner) {
@@ -855,7 +875,7 @@ export class LocalPtyProvider implements IPtyProvider {
       cwd: effectiveCwd,
       env: finalEnv,
       termName: finalEnv.TERM,
-      ptySpawn: pty.spawn,
+      ptySpawn: prepared.nodePty.spawn,
       getShellReadyConfig: getFallbackShellReadyConfig,
       // Why: on zsh→bash fallback HISTFILE still points to zsh_history; update before spawn so the child inherits it (design doc §8).
       onBeforeFallbackSpawn: historyResult?.histFile
@@ -906,7 +926,7 @@ export class LocalPtyProvider implements IPtyProvider {
       id,
       getAgentForegroundContextPaths({ cwd: args.cwd, worktreeId: args.worktreeId })
     )
-    ptyLoadGeneration.set(id, loadGeneration)
+    ptyLoadGeneration.set(id, prepared.generation)
     ptyIncarnations.set(id, incarnationId)
     this.opts.onSpawned?.(id, incarnationId)
 

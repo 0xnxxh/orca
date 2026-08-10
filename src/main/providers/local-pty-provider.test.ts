@@ -112,8 +112,23 @@ import {
   LOCAL_PTY_PHYSICAL_EXIT_TIMEOUT_MS,
   LocalPtyProvider
 } from './local-pty-provider'
+import type { NodePtyModule } from './node-pty-loader'
 import { isRootLikePath } from './pty-path-safety'
 import { POWERLEVEL10K_WIZARD_DISABLE_ENV } from '../pty/powerlevel10k-wizard-env'
+
+function createHeldNodePtyLoad() {
+  let finish!: (module: NodePtyModule) => void
+  const load = vi.fn(
+    () =>
+      new Promise<NodePtyModule>((resolve) => {
+        finish = resolve
+      })
+  )
+  return {
+    load,
+    finish: () => finish({ spawn: spawnMock } as unknown as NodePtyModule)
+  }
+}
 
 describe('LocalPtyProvider', () => {
   let provider: LocalPtyProvider
@@ -398,6 +413,66 @@ describe('LocalPtyProvider', () => {
         provider.spawn({ cols: 80, rows: 24, sessionId: 'pending-local-session' })
       ).resolves.toMatchObject({ id: 'pending-local-session' })
       expect(spawnMock).toHaveBeenCalledOnce()
+    })
+
+    it('does not spawn when shutdown wins during the native module load', async () => {
+      const heldLoad = createHeldNodePtyLoad()
+      provider = new LocalPtyProvider({ loadNodePty: heldLoad.load })
+      spawnMock.mockClear()
+
+      const spawn = provider.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'native-load-shutdown'
+      })
+      const canceledSpawn = expect(spawn).rejects.toThrow(
+        'PTY spawn canceled: native-load-shutdown'
+      )
+      await vi.waitFor(() => expect(heldLoad.load).toHaveBeenCalledOnce())
+
+      await provider.shutdown('native-load-shutdown', { immediate: true })
+      heldLoad.finish()
+
+      await canceledSpawn
+      expect(spawnMock).not.toHaveBeenCalled()
+    })
+
+    it('does not spawn into a stale renderer generation after the native module load', async () => {
+      const heldLoad = createHeldNodePtyLoad()
+      provider = new LocalPtyProvider({ loadNodePty: heldLoad.load })
+      spawnMock.mockClear()
+
+      const spawn = provider.spawn({ cols: 80, rows: 24, sessionId: 'stale-load' })
+      const canceledSpawn = expect(spawn).rejects.toThrow('PTY spawn canceled: stale-load')
+      await vi.waitFor(() => expect(heldLoad.load).toHaveBeenCalledOnce())
+
+      provider.advanceGeneration()
+      heldLoad.finish()
+
+      await canceledSpawn
+      expect(spawnMock).not.toHaveBeenCalled()
+    })
+
+    it('revalidates client cancellation after the native module load', async () => {
+      const heldLoad = createHeldNodePtyLoad()
+      const abortController = new AbortController()
+      provider = new LocalPtyProvider({ loadNodePty: heldLoad.load })
+      spawnMock.mockClear()
+
+      const spawn = provider.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'aborted-load',
+        signal: abortController.signal
+      })
+      const canceledSpawn = expect(spawn).rejects.toThrow('client_disconnected')
+      await vi.waitFor(() => expect(heldLoad.load).toHaveBeenCalledOnce())
+
+      abortController.abort()
+      heldLoad.finish()
+
+      await canceledSpawn
+      expect(spawnMock).not.toHaveBeenCalled()
     })
 
     it('coalesces a concurrent same-session-id spawn before launching a redundant shell (F3)', async () => {
