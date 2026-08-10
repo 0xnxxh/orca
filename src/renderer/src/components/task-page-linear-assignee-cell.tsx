@@ -3,6 +3,7 @@ import { ChevronDown, LoaderCircle } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTeamMembers } from '@/hooks/useIssueMetadata'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
@@ -15,18 +16,21 @@ export function LinearAssigneeCell({
   issue,
   className,
   sourceContext,
+  onIssuePatch,
   variant = 'avatar'
 }: {
   issue: LinearIssue
   className?: string
   sourceContext?: TaskSourceContext | null
+  onIssuePatch?: (issueId: string, patch: Partial<LinearIssue>) => void
   variant?: 'avatar' | 'name'
 }): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
   const providerSettings = sourceContext ?? settings
   const patchLinearIssue = useAppStore((s) => s.patchLinearIssue)
-  const members = useTeamMembers(issue.team.id, providerSettings, issue.workspaceId)
   const [open, setOpen] = useState(false)
+  // Why: a list renders one cell per row; only fetch members for the team the user actually opens.
+  const members = useTeamMembers(open ? issue.team.id : null, providerSettings, issue.workspaceId)
   const [pending, setPending] = useState(false)
   const reqRef = useRef(0)
 
@@ -52,6 +56,7 @@ export function LinearAssigneeCell({
 
       setPending(true)
       patchLinearIssue(issue.id, { assignee: nextAssignee }, { sourceContext })
+      onIssuePatch?.(issue.id, { assignee: nextAssignee })
       void linearUpdateIssue(
         providerSettings,
         issue.id,
@@ -64,6 +69,7 @@ export function LinearAssigneeCell({
           }
           if (result.ok === false) {
             patchLinearIssue(issue.id, { assignee: previousAssignee }, { sourceContext })
+            onIssuePatch?.(issue.id, { assignee: previousAssignee })
             toast.error(
               result.error ??
                 translate(
@@ -81,6 +87,7 @@ export function LinearAssigneeCell({
             return
           }
           patchLinearIssue(issue.id, { assignee: previousAssignee }, { sourceContext })
+          onIssuePatch?.(issue.id, { assignee: previousAssignee })
           toast.error(
             translate(
               'auto.components.TaskPage.linearAssigneeUpdateFailed',
@@ -99,6 +106,7 @@ export function LinearAssigneeCell({
       issue.id,
       issue.workspaceId,
       members.data,
+      onIssuePatch,
       patchLinearIssue,
       pending,
       providerSettings,
@@ -126,42 +134,53 @@ export function LinearAssigneeCell({
     ) : (
       <span className="text-xs text-muted-foreground/60">-</span>
     )
+  const trigger = (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+      className={cn(
+        'inline-flex min-w-0 max-w-full cursor-pointer! items-center gap-1 text-left transition hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default! disabled:opacity-80',
+        variant === 'avatar'
+          ? 'justify-center rounded-full p-0.5'
+          : 'rounded-sm px-1 py-0.5 text-[11px] text-muted-foreground',
+        className
+      )}
+      aria-label={
+        issue.assignee
+          ? translate(
+              'auto.components.TaskPage.linearChangeAssigneeFrom',
+              'Change assignee from {{value0}}',
+              { value0: issue.assignee.displayName }
+            )
+          : translate('auto.components.TaskPage.linearAssignIssue', 'Assign Linear issue')
+      }
+      aria-busy={pending || members.loading}
+    >
+      {triggerContent}
+      {pending || members.loading ? (
+        <LoaderCircle className="size-3 shrink-0 animate-spin opacity-70" />
+      ) : variant === 'name' ? (
+        <ChevronDown className="size-3 shrink-0 opacity-55" />
+      ) : null}
+    </button>
+  )
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-          className={cn(
-            'inline-flex min-w-0 max-w-full cursor-pointer! items-center gap-1 text-left transition hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default! disabled:opacity-80',
-            variant === 'avatar'
-              ? 'justify-center rounded-full p-0.5'
-              : 'rounded-sm px-1 py-0.5 text-[11px] text-muted-foreground',
-            className
-          )}
-          title={displayName}
-          aria-label={
-            issue.assignee
-              ? translate(
-                  'auto.components.TaskPage.linearChangeAssigneeFrom',
-                  'Change assignee from {{value0}}',
-                  { value0: issue.assignee.displayName }
-                )
-              : translate('auto.components.TaskPage.linearAssignIssue', 'Assign Linear issue')
-          }
-          aria-busy={pending || members.loading}
-        >
-          {triggerContent}
-          {pending || members.loading ? (
-            <LoaderCircle className="size-3 shrink-0 animate-spin opacity-70" />
-          ) : variant === 'name' ? (
-            <ChevronDown className="size-3 shrink-0 opacity-55" />
-          ) : null}
-        </button>
-      </PopoverTrigger>
+      {variant === 'avatar' ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={6}>
+            {displayName}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      )}
       <PopoverContent
         className="popover-scroll-content scrollbar-sleek w-48 p-1"
         align="start"
@@ -169,6 +188,7 @@ export function LinearAssigneeCell({
       >
         <button
           type="button"
+          aria-pressed={issue.assignee == null}
           onClick={() => {
             handleAssigneeChange(null)
             setOpen(false)
@@ -192,6 +212,8 @@ export function LinearAssigneeCell({
             <button
               key={member.id}
               type="button"
+              aria-label={member.displayName}
+              aria-pressed={issue.assignee?.id === member.id}
               onClick={() => {
                 handleAssigneeChange(member.id)
                 setOpen(false)
