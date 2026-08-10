@@ -4001,7 +4001,6 @@ export class OrcaRuntimeService {
     const originalSessions = new Map<ExecutionHostId, WorkspaceSessionState>()
     const stagedSessions = new Map<ExecutionHostId, WorkspaceSessionState>()
     const stagedDispatchIds = new Set<string>()
-    let changed = false
     try {
       for (const { candidate, resolution } of resolutions) {
         const hostId = this.tryGetWorkspaceSessionHostIdForWorktree(candidate.worktreeId)
@@ -4028,12 +4027,11 @@ export class OrcaRuntimeService {
         }
         if (next !== session) {
           store.setWorkspaceSession(next, hostId)
-          changed = true
         }
         stagedSessions.set(hostId, store.getWorkspaceSession(hostId))
         stagedDispatchIds.add(candidate.dispatchId)
       }
-      if (changed) {
+      if (stagedDispatchIds.size > 0) {
         await this.flushWorkspaceSessionOrThrowAsync()
       }
       return stagedDispatchIds

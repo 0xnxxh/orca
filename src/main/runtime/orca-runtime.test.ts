@@ -20108,7 +20108,7 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
-  it('retries missing-worker recovery when clearing its persisted resume fence fails', async () => {
+  it('waits for durability before retry settles a resolution already present in memory', async () => {
     const workerPaneKey = `legacy-missing-retry:${HEADLESS_LEAF_ID}`
     const incarnationId = '34343434-3434-4434-8434-343434343434'
     const session: WorkspaceSessionState = {
@@ -20129,16 +20129,26 @@ describe('OrcaRuntimeService', () => {
         }
       }
     }
-    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(session)
-    const flushOrThrow = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        throw new Error('disk unavailable')
-      })
-      .mockImplementation(() => undefined)
-    const runtime = new OrcaRuntimeService({ ...runtimeStore, flushOrThrow } as never, undefined, {
-      canRecoverPersistentLocalPtys: () => true
+    const { runtimeStore, getSession, setSession } = makeRuntimeStoreWithWorkspaceSession(session)
+    const firstDurableWrite = deferred<void>()
+    const firstDurableWriteStarted = deferred<void>()
+    const retryDurableWrite = deferred<void>()
+    const retryDurableWriteStarted = deferred<void>()
+    let flushCount = 0
+    const flushPendingOrThrowAsync = vi.fn(() => {
+      flushCount += 1
+      if (flushCount === 1) {
+        firstDurableWriteStarted.resolve()
+        return firstDurableWrite.promise
+      }
+      retryDurableWriteStarted.resolve()
+      return retryDurableWrite.promise
     })
+    const runtime = new OrcaRuntimeService(
+      { ...runtimeStore, flushPendingOrThrowAsync } as never,
+      undefined,
+      { canRecoverPersistentLocalPtys: () => true }
+    )
     const db = new OrchestrationDb(':memory:')
     try {
       const task = db.createTask({ spec: 'retry missing worker recovery' })
@@ -20168,20 +20178,30 @@ describe('OrcaRuntimeService', () => {
       runtime.setNotifier({ resolveLegacyWorkerTerminalRecovery } as never)
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-      await expect(runtime.reconcileLegacyWorkerTerminals()).resolves.toMatchObject({
+      const firstRecovery = runtime.reconcileLegacyWorkerTerminals()
+      await firstDurableWriteStarted.promise
+      setSession({ ...getSession(), sleepingAgentSessionsByPaneKey: undefined })
+      firstDurableWrite.reject(new Error('disk unavailable'))
+
+      await expect(firstRecovery).resolves.toMatchObject({
         exitedDispatchIds: [],
         deferredDispatchIds: [started.dispatch.id]
       })
       expect(db.getDispatchContextById(started.dispatch.id)?.status).toBe('dispatched')
       expect(db.getWorkerDispatch(started.dispatch.id)?.state).toBe('ready')
-      expect(
-        getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]?.automaticResumeBlockedBy
-      ).toBe('legacy-orchestration-worker')
+      expect(getSession().sleepingAgentSessionsByPaneKey).toBeUndefined()
 
-      await expect(runtime.reconcileLegacyWorkerTerminals()).resolves.toMatchObject({
+      const retry = runtime.reconcileLegacyWorkerTerminals()
+      await retryDurableWriteStarted.promise
+      expect(db.getDispatchContextById(started.dispatch.id)?.status).toBe('dispatched')
+      expect(db.getWorkerDispatch(started.dispatch.id)?.state).toBe('ready')
+      retryDurableWrite.resolve()
+
+      await expect(retry).resolves.toMatchObject({
         exitedDispatchIds: [started.dispatch.id],
         deferredDispatchIds: []
       })
+      expect(flushPendingOrThrowAsync).toHaveBeenCalledTimes(2)
       expect(db.getWorkerDispatch(started.dispatch.id)?.state).toBe('abandoned')
       expect(getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
       expect(resolveLegacyWorkerTerminalRecovery).toHaveBeenCalledWith(
