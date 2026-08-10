@@ -71,7 +71,7 @@ describe('native chat working suppression', () => {
     ).toBe(true)
   })
 
-  it('stops suppressing when the conversation or user turn changes', () => {
+  it('stops suppressing when the conversation changes', () => {
     expect(
       shouldSuppressNativeChatWorking({
         ...interruption,
@@ -80,6 +80,20 @@ describe('native chat working suppression', () => {
         interruption
       })
     ).toBe(false)
+  })
+
+  it('keeps suppression when an initially unknown session id hydrates', () => {
+    const sessionPendingInterruption = { ...interruption, sessionId: null }
+    expect(
+      shouldSuppressNativeChatWorking({
+        ...interruption,
+        working: true,
+        interruption: sessionPendingInterruption
+      })
+    ).toBe(true)
+  })
+
+  it('keeps suppressing when the interrupted epoch only gains its transcript id', () => {
     expect(
       shouldSuppressNativeChatWorking({
         ...interruption,
@@ -87,10 +101,10 @@ describe('native chat working suppression', () => {
         userTurnKey: 'turn-2',
         interruption
       })
-    ).toBe(false)
+    ).toBe(true)
   })
 
-  it('suppresses an interrupted turn when its working epoch is unavailable', () => {
+  it('falls back to user-turn identity when the working epoch is unavailable', () => {
     const noEpochInterruption = { ...interruption, workingEpoch: null }
     expect(
       shouldSuppressNativeChatWorking({

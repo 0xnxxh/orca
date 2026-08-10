@@ -33,16 +33,17 @@ export function shouldSuppressNativeChatWorking(args: {
     interruption === null ||
     interruption.paneKey !== args.paneKey ||
     interruption.agent !== args.agent ||
-    interruption.sessionId !== args.sessionId ||
-    interruption.userTurnKey !== args.userTurnKey
+    (interruption.sessionId != null &&
+      args.sessionId != null &&
+      interruption.sessionId !== args.sessionId)
   ) {
     return false
   }
-  return (
-    interruption.workingEpoch == null ||
-    args.workingEpoch == null ||
-    args.workingEpoch <= interruption.workingEpoch
-  )
+  if (interruption.workingEpoch != null && args.workingEpoch != null) {
+    // A known hook epoch outranks transcript ids replaced during optimistic catch-up.
+    return args.workingEpoch <= interruption.workingEpoch
+  }
+  return interruption.userTurnKey === args.userTurnKey
 }
 
 export function shouldShowNativeChatWorking(args: {
