@@ -3928,4 +3928,400 @@ describe('ClaudeRuntimeAuthService', () => {
 
     expect(readManagedCredentialsForTest('account-1', managedAuthPath1)).toBe(runtimeRotated)
   })
+
+  // #13165 — shared runtime is multi-writer; materializing an older same-identity
+  // managed snapshot must not clobber a fresher file/keychain lineage.
+  describe('monotonic shared-runtime credential writes', () => {
+    it('does not overwrite a fresher same-identity runtime file with an older managed snapshot', async () => {
+      const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+      const freshRuntime = createClaudeCredentialsJson(
+        'one@example.com',
+        'fresh-runtime',
+        null,
+        9_000
+      )
+      const staleManaged = createClaudeCredentialsJson(
+        'one@example.com',
+        'stale-managed',
+        null,
+        1_000
+      )
+      writeFileSync(runtimeCredentialsPath, freshRuntime, 'utf-8')
+      testState.scopedKeychainCredentials = freshRuntime
+      testState.legacyKeychainCredentials = freshRuntime
+      const managedAuthPath = createManagedClaudeAuth(
+        testState.userDataDir,
+        'account-1',
+        staleManaged
+      )
+      const settings = createSettings({
+        claudeManagedAccounts: [
+          createClaudeAccount('account-1', managedAuthPath, { email: 'one@example.com' })
+        ],
+        // Deselected so first selection materializes without a prior lastWritten baseline.
+        activeClaudeManagedAccountId: null
+      })
+      const store = createStore(settings)
+      const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+      const service = new ClaudeRuntimeAuthService(store as never)
+      await service.syncForCurrentSelection()
+
+      store.updateSettings({ activeClaudeManagedAccountId: 'account-1' })
+      await service.syncForCurrentSelection()
+
+      expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(freshRuntime)
+      expect(testState.scopedKeychainCredentials).toBe(freshRuntime)
+      expect(testState.legacyKeychainCredentials).toBe(freshRuntime)
+      expect(readManagedCredentialsForTest('account-1', managedAuthPath)).toBe(freshRuntime)
+    })
+
+    it('writes a newer managed snapshot over an older same-identity runtime', async () => {
+      const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+      const staleRuntime = createClaudeCredentialsJson(
+        'one@example.com',
+        'stale-runtime',
+        null,
+        1_000
+      )
+      const freshManaged = createClaudeCredentialsJson(
+        'one@example.com',
+        'fresh-managed',
+        null,
+        9_000
+      )
+      writeFileSync(runtimeCredentialsPath, staleRuntime, 'utf-8')
+      testState.scopedKeychainCredentials = staleRuntime
+      testState.legacyKeychainCredentials = staleRuntime
+      const managedAuthPath = createManagedClaudeAuth(
+        testState.userDataDir,
+        'account-1',
+        freshManaged
+      )
+      const settings = createSettings({
+        claudeManagedAccounts: [
+          createClaudeAccount('account-1', managedAuthPath, { email: 'one@example.com' })
+        ],
+        activeClaudeManagedAccountId: null
+      })
+      const store = createStore(settings)
+      const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+      const service = new ClaudeRuntimeAuthService(store as never)
+      await service.syncForCurrentSelection()
+
+      store.updateSettings({ activeClaudeManagedAccountId: 'account-1' })
+      await service.syncForCurrentSelection()
+
+      expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(freshManaged)
+      expect(testState.scopedKeychainCredentials).toBe(freshManaged)
+      expect(readManagedCredentialsForTest('account-1', managedAuthPath)).toBe(freshManaged)
+    })
+
+    it('allows equal-expiry materialization without treating it as a regression', async () => {
+      const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+      const runtimeEqual = createClaudeCredentialsJson(
+        'one@example.com',
+        'runtime-equal',
+        null,
+        5_000
+      )
+      const managedEqual = createClaudeCredentialsJson(
+        'one@example.com',
+        'managed-equal',
+        null,
+        5_000
+      )
+      writeFileSync(runtimeCredentialsPath, runtimeEqual, 'utf-8')
+      testState.scopedKeychainCredentials = runtimeEqual
+      testState.legacyKeychainCredentials = runtimeEqual
+      const managedAuthPath = createManagedClaudeAuth(
+        testState.userDataDir,
+        'account-1',
+        managedEqual
+      )
+      const settings = createSettings({
+        claudeManagedAccounts: [
+          createClaudeAccount('account-1', managedAuthPath, { email: 'one@example.com' })
+        ],
+        activeClaudeManagedAccountId: null
+      })
+      const store = createStore(settings)
+      const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+      const service = new ClaudeRuntimeAuthService(store as never)
+      await service.syncForCurrentSelection()
+
+      store.updateSettings({ activeClaudeManagedAccountId: 'account-1' })
+      await service.syncForCurrentSelection()
+
+      // Equal expiry is not a regression; managed may still materialize or cold-start
+      // read-back may adopt the rotated refresh token. Either same-identity snapshot is fine.
+      const runtimeAfter = readFileSync(runtimeCredentialsPath, 'utf-8')
+      expect([runtimeEqual, managedEqual]).toContain(runtimeAfter)
+    })
+
+    it('keeps a dated runtime when the managed snapshot has missing or invalid expiresAt', async () => {
+      const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+      const datedRuntime = createClaudeCredentialsJson(
+        'one@example.com',
+        'dated-runtime',
+        null,
+        9_000
+      )
+      const parsedManaged = JSON.parse(
+        createClaudeCredentialsJson('one@example.com', 'invalid-expiry', null, 1_000)
+      ) as { claudeAiOauth: Record<string, unknown> }
+      const invalidExpiryManaged = JSON.stringify({
+        ...parsedManaged,
+        claudeAiOauth: {
+          ...parsedManaged.claudeAiOauth,
+          expiresAt: 'not-a-number'
+        }
+      })
+      writeFileSync(runtimeCredentialsPath, datedRuntime, 'utf-8')
+      testState.scopedKeychainCredentials = datedRuntime
+      testState.legacyKeychainCredentials = datedRuntime
+      const managedAuthPath = createManagedClaudeAuth(
+        testState.userDataDir,
+        'account-1',
+        invalidExpiryManaged
+      )
+      const settings = createSettings({
+        claudeManagedAccounts: [
+          createClaudeAccount('account-1', managedAuthPath, { email: 'one@example.com' })
+        ],
+        activeClaudeManagedAccountId: null
+      })
+      const store = createStore(settings)
+      const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+      const service = new ClaudeRuntimeAuthService(store as never)
+      await service.syncForCurrentSelection()
+
+      store.updateSettings({ activeClaudeManagedAccountId: 'account-1' })
+      await service.syncForCurrentSelection()
+
+      expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(datedRuntime)
+      expect(testState.scopedKeychainCredentials).toBe(datedRuntime)
+    })
+
+    it('uses the freshest of diverged file/keychain stores before materializing', async () => {
+      const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+      const staleFile = createClaudeCredentialsJson('one@example.com', 'stale-file', null, 1_000)
+      const fresherKeychain = createClaudeCredentialsJson(
+        'one@example.com',
+        'fresh-keychain',
+        null,
+        9_000
+      )
+      const staleManaged = createClaudeCredentialsJson(
+        'one@example.com',
+        'stale-managed',
+        null,
+        2_000
+      )
+      writeFileSync(runtimeCredentialsPath, staleFile, 'utf-8')
+      testState.scopedKeychainCredentials = fresherKeychain
+      testState.legacyKeychainCredentials = staleFile
+      const managedAuthPath = createManagedClaudeAuth(
+        testState.userDataDir,
+        'account-1',
+        staleManaged
+      )
+      const settings = createSettings({
+        claudeManagedAccounts: [
+          createClaudeAccount('account-1', managedAuthPath, { email: 'one@example.com' })
+        ],
+        activeClaudeManagedAccountId: null
+      })
+      const store = createStore(settings)
+      const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+      const service = new ClaudeRuntimeAuthService(store as never)
+      await service.syncForCurrentSelection()
+
+      store.updateSettings({ activeClaudeManagedAccountId: 'account-1' })
+      await service.syncForCurrentSelection()
+
+      expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(fresherKeychain)
+      expect(testState.scopedKeychainCredentials).toBe(fresherKeychain)
+      expect(testState.legacyKeychainCredentials).toBe(fresherKeychain)
+      expect(readManagedCredentialsForTest('account-1', managedAuthPath)).toBe(fresherKeychain)
+    })
+
+    it('still switches accounts when the incoming identity is older', async () => {
+      const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+      const accountOne = createClaudeCredentialsJson('one@example.com', 'one', null, 9_000)
+      const accountTwoOlder = createClaudeCredentialsJson(
+        'two@example.com',
+        'two-older',
+        null,
+        1_000
+      )
+      const managedAuthPath1 = createManagedClaudeAuth(
+        testState.userDataDir,
+        'account-1',
+        accountOne
+      )
+      const managedAuthPath2 = createManagedClaudeAuth(
+        testState.userDataDir,
+        'account-2',
+        accountTwoOlder
+      )
+      const settings = createSettings({
+        claudeManagedAccounts: [
+          createClaudeAccount('account-1', managedAuthPath1, { email: 'one@example.com' }),
+          createClaudeAccount('account-2', managedAuthPath2, { email: 'two@example.com' })
+        ],
+        activeClaudeManagedAccountId: 'account-1'
+      })
+      const store = createStore(settings)
+      const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+      const service = new ClaudeRuntimeAuthService(store as never)
+      await service.syncForCurrentSelection()
+      expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(accountOne)
+
+      store.updateSettings({ activeClaudeManagedAccountId: 'account-2' })
+      await service.syncForCurrentSelection()
+
+      expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(accountTwoOlder)
+      expect(readManagedCredentialsForTest('account-1', managedAuthPath1)).toBe(accountOne)
+      expect(readManagedCredentialsForTest('account-2', managedAuthPath2)).toBe(accountTwoOlder)
+    })
+
+    it('does not let a failed refresh materialize an older managed snapshot over a fresh login', async () => {
+      const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+      const freshLogin = createClaudeCredentialsJson(
+        'one@example.com',
+        'fresh-login',
+        null,
+        9_999_999_999_999
+      )
+      const expiredManaged = createClaudeCredentialsJson(
+        'one@example.com',
+        'expired-managed',
+        null,
+        1_000
+      )
+      writeFileSync(runtimeCredentialsPath, freshLogin, 'utf-8')
+      testState.scopedKeychainCredentials = freshLogin
+      testState.legacyKeychainCredentials = freshLogin
+      const managedAuthPath = createManagedClaudeAuth(
+        testState.userDataDir,
+        'account-1',
+        expiredManaged
+      )
+      const settings = createSettings({
+        claudeManagedAccounts: [
+          createClaudeAccount('account-1', managedAuthPath, { email: 'one@example.com' })
+        ],
+        activeClaudeManagedAccountId: null
+      })
+      const store = createStore(settings)
+      const actualOauthRefresh = await vi.importActual<{
+        isOauthTokenExpiring: typeof isOauthTokenExpiring
+      }>('./oauth-refresh')
+      const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+      const service = new ClaudeRuntimeAuthService(store as never)
+      await service.syncForCurrentSelection()
+
+      vi.mocked(isOauthTokenExpiring).mockImplementation(actualOauthRefresh.isOauthTokenExpiring)
+      try {
+        vi.mocked(refreshClaudeOauthCredentials).mockResolvedValue(null)
+        store.updateSettings({ activeClaudeManagedAccountId: 'account-1' })
+        await service.syncForCurrentSelection()
+
+        expect(refreshClaudeOauthCredentials).toHaveBeenCalled()
+        expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(freshLogin)
+        expect(testState.scopedKeychainCredentials).toBe(freshLogin)
+        expect(readManagedCredentialsForTest('account-1', managedAuthPath)).toBe(freshLogin)
+      } finally {
+        vi.mocked(isOauthTokenExpiring).mockReturnValue(false)
+      }
+    })
+
+    it('serializes concurrent syncs so a stale materialize cannot win the last write', async () => {
+      const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+      const freshRuntime = createClaudeCredentialsJson(
+        'one@example.com',
+        'fresh-runtime',
+        null,
+        9_000
+      )
+      const staleManaged = createClaudeCredentialsJson(
+        'one@example.com',
+        'stale-managed',
+        null,
+        1_000
+      )
+      writeFileSync(runtimeCredentialsPath, freshRuntime, 'utf-8')
+      testState.scopedKeychainCredentials = freshRuntime
+      testState.legacyKeychainCredentials = freshRuntime
+      const managedAuthPath = createManagedClaudeAuth(
+        testState.userDataDir,
+        'account-1',
+        staleManaged
+      )
+      const settings = createSettings({
+        claudeManagedAccounts: [
+          createClaudeAccount('account-1', managedAuthPath, { email: 'one@example.com' })
+        ],
+        activeClaudeManagedAccountId: 'account-1'
+      })
+      const store = createStore(settings)
+      const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+      const service = new ClaudeRuntimeAuthService(store as never)
+
+      await Promise.all([
+        service.syncForCurrentSelection(),
+        service.syncForCurrentSelection(),
+        service.syncForCurrentSelection()
+      ])
+
+      expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(freshRuntime)
+      expect(testState.scopedKeychainCredentials).toBe(freshRuntime)
+      expect(readManagedCredentialsForTest('account-1', managedAuthPath)).toBe(freshRuntime)
+    })
+
+    it('force-materializes after re-auth skip even when runtime expires later', async () => {
+      const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+      const previousRuntime = createClaudeCredentialsJson(
+        'one@example.com',
+        'previous-runtime',
+        null,
+        9_000
+      )
+      const reauthedManaged = createClaudeCredentialsJson(
+        'one@example.com',
+        'reauthed-managed',
+        null,
+        2_000
+      )
+      const managedAuthPath = createManagedClaudeAuth(
+        testState.userDataDir,
+        'account-1',
+        previousRuntime
+      )
+      const settings = createSettings({
+        claudeManagedAccounts: [
+          createClaudeAccount('account-1', managedAuthPath, { email: 'one@example.com' })
+        ],
+        activeClaudeManagedAccountId: 'account-1'
+      })
+      const store = createStore(settings)
+      const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+      const service = new ClaudeRuntimeAuthService(store as never)
+      await service.syncForCurrentSelection()
+      expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(previousRuntime)
+
+      // Simulate add/re-auth writing managed storage then clearing the last-written baseline.
+      testState.managedKeychainCredentials.set('account-1', reauthedManaged)
+      writeFileSync(join(managedAuthPath, '.credentials.json'), reauthedManaged, 'utf-8')
+      writeFileSync(runtimeCredentialsPath, previousRuntime, 'utf-8')
+      testState.scopedKeychainCredentials = previousRuntime
+      testState.legacyKeychainCredentials = previousRuntime
+      service.clearLastWrittenCredentialsJson('account-1')
+      await service.syncForCurrentSelection()
+
+      expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(reauthedManaged)
+      expect(testState.scopedKeychainCredentials).toBe(reauthedManaged)
+      expect(readManagedCredentialsForTest('account-1', managedAuthPath)).toBe(reauthedManaged)
+    })
+  })
 })
