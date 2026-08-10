@@ -23,6 +23,7 @@ import { wireWslRelayLink } from './wsl-hook-relay-link'
 import { WslRelayRecovery } from './wsl-hook-relay-recovery'
 import { wslHookRelayStateKey } from './wsl-hook-relay-state-key'
 import type { WslHookRelayLifecycleState } from './wsl-hook-relay-lifecycle-state'
+import { resolveWslHookRelayDefaultDistro } from './wsl-hook-relay-default-distro'
 import { SshChannelMultiplexer, type MultiplexerTransport } from '../ssh/ssh-channel-multiplexer'
 import { AGENT_HOOK_REQUEST_REPLAY_METHOD } from '../../shared/agent-hook-relay'
 import {
@@ -343,15 +344,9 @@ export class WslHookRelayManager {
   }
 
   private async resolveDefaultDistro(): Promise<string | null> {
-    if (this.defaultDistro) {
-      return this.defaultDistro
-    }
-    try {
-      const distros = await this.deps.listDistros()
-      this.defaultDistro = distros[0] ?? null
-    } catch {
-      this.defaultDistro = null
-    }
+    this.defaultDistro = await resolveWslHookRelayDefaultDistro(this.defaultDistro, () =>
+      this.deps.listDistros()
+    )
     return this.defaultDistro
   }
 }
