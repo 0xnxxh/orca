@@ -5,6 +5,7 @@ import { performance } from 'node:perf_hooks'
 import process from 'node:process'
 
 import { createJiti } from 'jiti'
+import { buildCounterbalancedSchedule } from './counterbalanced-benchmark-schedule.mjs'
 
 const DEFAULT_SAMPLES = 20
 const DEFAULT_WARMUPS = 3
@@ -48,6 +49,9 @@ function parseArgs(argv) {
     if (!Number.isInteger(value) || value < minimum || value > 1_000) {
       throw new Error(`--${name} must be an integer between ${minimum} and 1000`)
     }
+  }
+  if (options.samples % 2 !== 0) {
+    throw new Error('--samples must be even so ABBA blocks are counterbalanced')
   }
   if (!options.nativeRepo || !options.mountedRepo) {
     throw new Error('--native-repo and --mounted-repo are required')
@@ -204,8 +208,8 @@ async function main() {
       await runArm('fast')
     }
     const samples = { login: [], fast: [] }
-    for (let index = 0; index < options.samples; index += 1) {
-      const order = index % 2 === 0 ? ['login', 'fast'] : ['fast', 'login']
+    const schedule = buildCounterbalancedSchedule(options.samples, 'login', 'fast')
+    for (const order of schedule) {
       const results = []
       for (const mode of order) {
         const result = await runArm(mode)
