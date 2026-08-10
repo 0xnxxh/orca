@@ -361,11 +361,13 @@ describe('AgentMap', () => {
     expect(workerLink).toHaveClass('agent-map-lineage-link')
     expect(workerLink).toHaveAttribute('data-agent-map-lineage-relation', 'orchestration')
     expect(workerLink).toHaveAttribute('data-parent-pane-key', 'parent')
+    expect(workerLink?.getAttribute('d')?.match(/\bM\b/g)?.length).toBeGreaterThan(1)
     // Why orchestration, not subagent: `nested` is a card, and in-process subagents
     // never become cards — so a grandchild dispatch is still an orchestration edge.
     expect(nestedLink).toHaveClass('agent-map-lineage-link')
     expect(nestedLink).toHaveAttribute('data-agent-map-lineage-relation', 'orchestration')
     expect(nestedLink).toHaveAttribute('data-parent-pane-key', 'child')
+    expect(nestedLink?.getAttribute('d')?.match(/\bM\b/g)?.length).toBeGreaterThan(1)
   })
 
   it('connects spawned workers across worktree rings', () => {
