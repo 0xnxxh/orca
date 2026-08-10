@@ -46,9 +46,12 @@ export function useStructuredAgentSessionRead(args: {
   const { sessionId, target } = args
   const [state, dispatch] = useReducer(reduceStructuredAgentSession, EMPTY_STRUCTURED_AGENT_SESSION)
   const stateRef = useRef(state)
-  stateRef.current = state
   const resumeCursorRef = useRef(state.cursor)
   const [loadingOlder, setLoadingOlder] = useState(false)
+
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
 
   useEffect(() => {
     resumeCursorRef.current = null

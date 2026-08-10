@@ -75,10 +75,13 @@ export function useStructuredAgentSessionOutbox(args: {
     readOutbox(sessionId)
   )
   const outboxRef = useRef(outbox)
-  outboxRef.current = outbox
   const dispatchingRef = useRef(false)
   const blockedIdRef = useRef<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    outboxRef.current = outbox
+  }, [outbox])
 
   useEffect(() => {
     dispatchingRef.current = false

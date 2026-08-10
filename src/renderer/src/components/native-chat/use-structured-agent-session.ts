@@ -40,7 +40,6 @@ export function useStructuredAgentSession(args: {
   const { agent, sessionId, target } = args
   const { state, loadingOlder, loadOlder } = useStructuredAgentSessionRead({ sessionId, target })
   const stateRef = useRef(state)
-  stateRef.current = state
   const [writeError, setWriteError] = useState<string | null>(null)
   const operationIds = useRef(new Map<string, string>())
   const [optionState, setOptionState] = useState(() =>
@@ -53,6 +52,10 @@ export function useStructuredAgentSession(args: {
     fence: state.fence,
     submissions: state.submissions
   })
+
+  useEffect(() => {
+    stateRef.current = state
+  }, [state])
 
   const mutate = useCallback(
     async <T>(
