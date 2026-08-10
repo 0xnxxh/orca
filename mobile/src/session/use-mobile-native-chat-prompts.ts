@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import type { MobileNativeChatAgentStatusWithProvider } from './mobile-native-chat-eligibility'
-import { parseAskFromStatus, resolveNativeChatAsk } from './mobile-native-chat-ask'
+import { parseAskFromStatus, resolveNativeChatAsk } from '../../../src/shared/native-chat-ask'
 import { detectAgentPermission, parseApprovalFromStatus } from './mobile-native-chat-permission'
 import { parseAgentQuestion } from './mobile-native-chat-question'
 

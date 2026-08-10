@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import type { HostSessionChatDraftOperations } from './host-session-chat-draft-operations'
 import type { HostSessionChatPendingDeliveryOperations } from './host-session-chat-pending-delivery-operations'
@@ -31,10 +31,6 @@ function assistantTextMessage(id: string, text: string): NativeChatMessage {
 describe('useMobileNativeChatDrafts', () => {
   let renderer: ReactTestRenderer | null = null
   let state: DraftState | null = null
-
-  beforeEach(() => {
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-  })
 
   afterEach(() => {
     act(() => renderer?.unmount())
@@ -77,20 +73,9 @@ describe('useMobileNativeChatDrafts', () => {
   }
 
   async function mount(tabId: string): Promise<void> {
-    const original = console.error
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
-      if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
-        return
-      }
-      original(...args)
+    await act(async () => {
+      renderer = create(createElement(Harness, { tabId }))
     })
-    try {
-      await act(async () => {
-        renderer = create(createElement(Harness, { tabId }))
-      })
-    } finally {
-      consoleSpy.mockRestore()
-    }
   }
 
   async function switchTo(tabId: string): Promise<void> {

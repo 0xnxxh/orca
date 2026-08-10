@@ -1,4 +1,4 @@
-import { isTerminalOscLinkRanges } from '../terminal/terminal-osc-link-ranges'
+import { isTerminalOscLinkRanges } from '../../../src/shared/terminal-osc-link-ranges'
 import type { TerminalWebViewHandle } from '../terminal/terminal-webview-contract'
 import type {
   HostSessionTerminalOperations,

@@ -1,5 +1,5 @@
 import type { Terminal } from '@xterm/xterm'
-import type { TerminalOscLinkRange } from './terminal-osc-link-ranges'
+import type { TerminalOscLinkRange } from '../../../src/shared/terminal-osc-link-ranges'
 
 export type RetainedTerminalOscLinkRange = TerminalOscLinkRange & {
   expectedText: string

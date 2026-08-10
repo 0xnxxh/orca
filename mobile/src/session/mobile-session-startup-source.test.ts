@@ -85,26 +85,24 @@ describe('mobile session startup', () => {
     expect(startupEffect).toContain("showToast('Open Orca on the host to wake sleeping agents.'")
   })
 
-  it('fails runtime capability gates closed before probing a replacement client', () => {
+  it('fails runtime capability gates closed while probing a replacement client', () => {
     const capabilityEffect = sliceBetween(
-      'const hostQueryReplyInputSupportedRef = useRef(false)',
+      'const [runtimeCapabilitySnapshot, setRuntimeCapabilitySnapshot]',
       '// Why: read deviceToken from host record'
     )
     const probeStart = capabilityEffect.indexOf('startRuntimeCapabilityRead(')
 
     expect(probeStart).toBeGreaterThanOrEqual(0)
     expect(capabilityEffect).toContain('sessionTabOperations.runtimeCapabilities()')
-    for (const reset of [
-      'setBrowserScreencastSupported(null)',
-      'setAgentSessionHistorySupported(null)',
-      'setQuickCommandsSupported(null)',
-      'setShowQuickCommands(false)',
+    expect(capabilityEffect).toContain(
+      "connState === 'connected' && runtimeCapabilitySnapshot?.operations === sessionTabOperations"
+    )
+    expect(capabilityEffect).toContain('setRuntimeCapabilitySnapshot({')
+    const resetIndex = capabilityEffect.lastIndexOf(
       'hostQueryReplyInputSupportedRef.current = false'
-    ]) {
-      const resetIndex = capabilityEffect.lastIndexOf(reset)
-      expect(resetIndex).toBeGreaterThanOrEqual(0)
-      expect(resetIndex).toBeLessThan(probeStart)
-    }
+    )
+    expect(resetIndex).toBeGreaterThanOrEqual(0)
+    expect(resetIndex).toBeLessThan(probeStart)
   })
 
   it('activates an already-selected pending terminal tab after hydration', () => {

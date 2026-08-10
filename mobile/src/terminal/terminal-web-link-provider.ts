@@ -1,6 +1,6 @@
 import type { IBufferLine, ILink, Terminal } from '@xterm/xterm'
 import { findTerminalFileLinks } from '../../../src/shared/terminal-file-link-matcher'
-import type { TerminalOscLinkRange } from './terminal-osc-link-ranges'
+import type { TerminalOscLinkRange } from '../../../src/shared/terminal-osc-link-ranges'
 import { resolveTerminalOscFileTap } from './terminal-file-url-tap'
 import {
   createTerminalLiveOscLinkRanges,

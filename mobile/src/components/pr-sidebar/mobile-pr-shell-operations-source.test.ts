@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 
 const sharedPrSources = [
   '../MobilePRSidebar.tsx',
-  '../MobilePrComposeSheet.tsx',
   './CommentMarkdown.tsx',
   './MobileLinkPrForm.tsx',
   './MobilePrComposeForm.tsx',

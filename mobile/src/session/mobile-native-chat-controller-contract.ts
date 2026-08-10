@@ -1,5 +1,9 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
-import type { AskAnswerSelection, AskPrompt, parseAskFromStatus } from './mobile-native-chat-ask'
+import type {
+  AskAnswerSelection,
+  AskPrompt,
+  parseAskFromStatus
+} from '../../../src/shared/native-chat-ask'
 import type { detectAgentPermission } from './mobile-native-chat-permission'
 import type { parseAgentQuestion } from './mobile-native-chat-question'
 import type { HostSessionNativeChatTarget } from './host-session-native-chat-operations'

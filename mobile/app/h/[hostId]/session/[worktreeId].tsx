@@ -89,8 +89,8 @@ import type {
   TerminalModes,
   TerminalWebViewHandle
 } from '../../../../src/terminal/terminal-webview-contract'
-import { useTerminalViewportRefit } from '../../../../src/terminal/terminal-viewport-refit'
 import { computeActiveTerminalKeyboardLift } from '../../../../src/terminal/terminal-keyboard-avoidance-lift'
+import { useTerminalViewportRefit } from '../../../../src/terminal/terminal-viewport-refit'
 import {
   getDefaultTerminalAccessoryBuiltInIds,
   getVisibleTerminalAccessoryKeys
@@ -1089,7 +1089,9 @@ export function SessionScreen({
     createMobileSessionCreateWarningState(initialCreateWarning)
   )
   const [showCreateTabDrawer, setShowCreateTabDrawer] = useState(false)
-  const [showQuickCommands, setShowQuickCommands] = useState(false)
+  const [quickCommandsOpenFor, setQuickCommandsOpenFor] = useState<HostSessionTabOperations | null>(
+    null
+  )
   const [createTabAgentLoadState, setCreateTabAgentLoadState] =
     useState<MobileNewTabAgentLoadState>('idle')
   const [createTabAgentOptions, setCreateTabAgentOptions] = useState<MobileNewTabAgentOption[]>([])
@@ -1261,12 +1263,23 @@ export function SessionScreen({
       return resetLiveInputFocus
     }, [resetLiveInputFocus])
   )
-  const [browserScreencastSupported, setBrowserScreencastSupported] = useState<boolean | null>(null)
+  const [runtimeCapabilitySnapshot, setRuntimeCapabilitySnapshot] = useState<{
+    operations: HostSessionTabOperations
+    browserScreencastSupported: boolean
+    agentSessionHistorySupported: boolean
+    quickCommandsSupported: boolean
+  } | null>(null)
+  const currentRuntimeCapabilities =
+    connState === 'connected' && runtimeCapabilitySnapshot?.operations === sessionTabOperations
+      ? runtimeCapabilitySnapshot
+      : null
+  const browserScreencastSupported = currentRuntimeCapabilities?.browserScreencastSupported ?? null
   // Why: hosts without aiVault.v1 reject listSessions, so hide the header entry instead of a dead-end "update this host" panel.
-  const [agentSessionHistorySupported, setAgentSessionHistorySupported] = useState<boolean | null>(
-    null
-  )
-  const [quickCommandsSupported, setQuickCommandsSupported] = useState<boolean | null>(null)
+  const agentSessionHistorySupported =
+    currentRuntimeCapabilities?.agentSessionHistorySupported ?? null
+  const quickCommandsSupported = currentRuntimeCapabilities?.quickCommandsSupported ?? null
+  const showQuickCommands =
+    quickCommandsOpenFor !== null && quickCommandsOpenFor === sessionTabOperations
   // Why: stable callbacks (handleFileTap) read the live value via this ref, since
   // the capability probe resolves after the callbacks are created.
   const browserScreencastSupportedRef = useRef(browserScreencastSupported)
@@ -2439,28 +2452,21 @@ export function SessionScreen({
 
   useEffect(() => {
     if (!sessionTabOperations || connState !== 'connected') {
-      setBrowserScreencastSupported(null)
-      setAgentSessionHistorySupported(null)
-      setQuickCommandsSupported(null)
-      setShowQuickCommands(false)
       hostQueryReplyInputSupportedRef.current = false
       return
     }
-    // Why: a client swap can keep the route connected while moving to an older
-    // host; clear the prior capability before exposing host-specific actions.
-    setBrowserScreencastSupported(null)
-    setAgentSessionHistorySupported(null)
-    setQuickCommandsSupported(null)
-    setShowQuickCommands(false)
     hostQueryReplyInputSupportedRef.current = false
     // Why: the probe retries — a relay→direct cutover or request timeout rejects
     // status.get without changing connState, which used to latch these hidden.
     return startRuntimeCapabilityRead(
       () => sessionTabOperations.runtimeCapabilities(),
       (value) => {
-        setBrowserScreencastSupported(value.browserScreencastSupported)
-        setAgentSessionHistorySupported(value.agentHistorySupported)
-        setQuickCommandsSupported(value.quickCommandsSupported)
+        setRuntimeCapabilitySnapshot({
+          operations: sessionTabOperations,
+          browserScreencastSupported: value.browserScreencastSupported,
+          agentSessionHistorySupported: value.agentHistorySupported,
+          quickCommandsSupported: value.quickCommandsSupported
+        })
         // Why: hosts without this capability strip inputKind from terminal.send,
         // so a forwarded xterm reply would become floor-stealing shell input.
         hostQueryReplyInputSupportedRef.current = value.terminalQueryReplyInputSupported
@@ -4492,7 +4498,7 @@ export function SessionScreen({
                 }
                 onPress={() => {
                   if (quickCommandsSupported === true) {
-                    setShowQuickCommands(true)
+                    setQuickCommandsOpenFor(sessionTabOperations)
                     return
                   }
                   showToast(
@@ -5040,7 +5046,7 @@ export function SessionScreen({
 
       <QuickCommandsSheet
         visible={showQuickCommands && quickCommandsSupported === true}
-        onClose={() => setShowQuickCommands(false)}
+        onClose={() => setQuickCommandsOpenFor(null)}
         operations={sessionQuickCommandOperations}
         workspaceId={worktreeId}
         repoName={worktreeName || null}

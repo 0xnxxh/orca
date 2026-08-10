@@ -1,6 +1,6 @@
 import { createElement, type ReactNode } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalQuickCommand } from '../../../src/shared/types'
 import { MAX_QUICK_COMMANDS } from '../terminal/quick-commands'
 import { QuickCommandsSheet } from './QuickCommandsSheet'
@@ -68,28 +68,17 @@ function deferred<T>() {
 
 describe('QuickCommandsSheet', () => {
   let renderer: ReactTestRenderer | null = null
-  let consoleSpy: MockInstance
-
   beforeEach(() => {
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
     mocks.alert.mockReset()
     mocks.commands = []
     mocks.repoId = 'workspace-1'
     mocks.totalCount = 0
     mocks.persist.mockReset()
-    const originalConsoleError = console.error
-    consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
-      if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
-        return
-      }
-      originalConsoleError(...args)
-    })
   })
 
   afterEach(() => {
     act(() => renderer?.unmount())
     renderer = null
-    consoleSpy.mockRestore()
   })
 
   it('keeps the sheet open when a launch is rejected', async () => {

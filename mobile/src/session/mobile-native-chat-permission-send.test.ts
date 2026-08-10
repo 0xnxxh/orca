@@ -79,7 +79,6 @@ describe('useMobileNativeChatPermissionSend', () => {
   let respond: ((text: string) => Promise<boolean>) | null = null
 
   beforeEach(() => {
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
     resetMobileNativeChatStaleInputForTests()
     resetMobileNativeChatTerminalWritesForTests()
   })

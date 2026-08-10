@@ -11,7 +11,7 @@ import {
   hasAskAnswer,
   type AskAnswerSelection,
   type AskPrompt
-} from './mobile-native-chat-ask'
+} from '../../../src/shared/native-chat-ask'
 import { openMobileNativeChatSendBudget } from './mobile-native-chat-send'
 import {
   acquireMobileNativeChatTerminalWrite,

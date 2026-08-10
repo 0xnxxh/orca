@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createNativeChatTranscriptRetention } from '../../../src/shared/native-chat-transcript-retention'
+import {
+  createNativeChatTranscriptRetention,
+  encodeNativeChatTranscriptIdentity
+} from '../../../src/shared/native-chat-transcript-retention'
+import { createNativeChatMerger, replaceList } from '../../../src/shared/native-chat-merge'
 import type {
   NativeChatMessage,
   NativeChatTurnLifecycle
@@ -8,7 +12,6 @@ import type {
   HostSessionNativeChatOperations,
   HostSessionNativeChatTarget
 } from './host-session-native-chat-operations'
-import { createNativeChatMerger, replaceList } from './mobile-native-chat-merge'
 import {
   applyMobileNativeChatStreamFrame,
   type MobileNativeChatStreamFrame
@@ -63,7 +66,14 @@ export function useMobileNativeChatSession(args: {
 }): MobileNativeChatSession {
   const { operations, workspaceId, agent, sessionId, transcriptPath, terminalId, clientId } = args
   const [messages, setMessages] = useState<NativeChatMessage[]>([])
-  const identity = `${workspaceId}\0${agent ?? ''}\0${sessionId ?? ''}\0${transcriptPath ?? ''}\0${terminalId ?? ''}\0${clientId ?? ''}`
+  const identity = encodeNativeChatTranscriptIdentity([
+    workspaceId,
+    agent,
+    sessionId,
+    transcriptPath,
+    terminalId,
+    clientId
+  ])
   // Pre-read status is a pure function of the props, so derive it rather than
   // letting the effect write it a commit later.
   const initialStatus: MobileNativeChatStatus =
