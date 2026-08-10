@@ -367,6 +367,7 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
 
 function getWorkspaceCleanupScanKey(args: WorkspaceCleanupScanArgs): string {
   return JSON.stringify({
+    includeAllWorkspaces: args.includeAllWorkspaces === true,
     skipGitWorktreeIds: [...new Set(args.skipGitWorktreeIds ?? [])].sort()
   })
 }
