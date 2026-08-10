@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { buildCodexAppServerExitError } from './codex-app-server-exit-error'
+import { isAppServerRecord, parseCodexAppServerJsonLine } from './codex-app-server-jsonl'
 import { waitForProcessExitUntil } from './codex-process-exit-deadline'
 import {
   CodexAppServerTimeoutError,
@@ -8,12 +9,8 @@ import {
   killCodexAppServerProcessTree
 } from './codex-app-server-session'
 
-// Why: `runCodexAppServerSession` is request-scoped — one deadline for the whole
-// session and every inbound message that is not a pending response is dropped.
-// A structured chat session needs the opposite: a child that outlives any single
-// call, per-request deadlines, and both directions of traffic, because Codex
-// asks for approvals by sending REQUESTS back and streams a turn as
-// notifications. This module owns that transport and nothing above it.
+// Structured chat needs a persistent bidirectional child and per-request deadlines;
+// the request-scoped app-server runner cannot carry approvals or streamed turns.
 
 /** Codex answered the call and refused it. Distinct from a timeout or a dead
  *  child, which leave the call unsettled rather than declined. */
@@ -82,10 +79,6 @@ type PendingRequest = {
   resolve: (result: unknown) => void
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /**
@@ -203,7 +196,7 @@ export async function openCodexAppServerConnection(
     pending.delete(message.id)
     clearTimeout(waiter.timer)
     const error = message.error
-    if (isRecord(error)) {
+    if (isAppServerRecord(error)) {
       const detail = typeof error.message === 'string' ? error.message : 'unknown error'
       waiter.reject(
         isCodexMethodNotFoundError(error)
@@ -239,13 +232,17 @@ export async function openCodexAppServerConnection(
       if (!line) {
         continue
       }
+      const parsed = parseCodexAppServerJsonLine(line)
+      if (!parsed) {
+        continue
+      }
       try {
-        const parsed: unknown = JSON.parse(line)
-        if (isRecord(parsed)) {
-          dispatchMessage(parsed)
-        }
-      } catch {
-        // A line Codex did not frame as JSON is not addressed to any caller.
+        dispatchMessage(parsed)
+      } catch (error) {
+        child.stdout.destroy()
+        killCodexAppServerProcessTree(child)
+        handleUnexpectedEnd(error instanceof Error ? error : new Error(String(error)))
+        return
       }
     }
   })

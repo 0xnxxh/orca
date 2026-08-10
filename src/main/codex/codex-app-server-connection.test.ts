@@ -311,6 +311,46 @@ describe('openCodexAppServerConnection', () => {
     await connection.close()
   })
 
+  it.each([
+    {
+      kind: 'notification',
+      frame: { method: 'turn/started', params: { turn: { id: 'turn-1' } } }
+    },
+    {
+      kind: 'server request',
+      frame: { id: 41, method: 'item/fileChange/requestApproval', params: { itemId: 'item-1' } }
+    }
+  ])('surfaces a synchronous $kind handler failure as a terminal exit', async ({ frame }) => {
+    const { child, spawnImpl } = stubChild({ exitOnStdinEnd: false })
+    answerInitialize(child)
+    const exits: string[] = []
+    const fail = (): never => {
+      throw new Error('structured sink failed')
+    }
+    const connection = await openCodexAppServerConnection(
+      { command: 'codex', args: ['app-server'] },
+      {
+        onNotification: fail,
+        onServerRequest: fail,
+        onExit: (error) => exits.push(error.message)
+      },
+      spawnImpl
+    )
+    child.kill.mockImplementation(() => {
+      child.emit('exit', null, 'SIGKILL')
+      return true
+    })
+
+    const inFlight = rejection(connection.request('turn/start'))
+    child.stdout.write(`${JSON.stringify(frame)}\n`)
+
+    expect((await inFlight).message).toContain('structured sink failed')
+    expect(exits).toEqual([expect.stringContaining('structured sink failed')])
+    expect(connection.closed).toBe(true)
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    await connection.close()
+  })
+
   it('reports one exit for a death that arrives through two listeners', async () => {
     const { child, spawnImpl } = stubChild({ exitOnStdinEnd: false })
     answerInitialize(child)

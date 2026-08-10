@@ -6,6 +6,7 @@ import {
   CLIPBOARD_IMAGE_MAX_BASE64_CHARS,
   CLIPBOARD_IMAGE_TOO_LARGE_ERROR
 } from '../../../../shared/clipboard-image'
+import { recordMobileClipboardImagePath } from '../mobile-clipboard-image-provenance'
 
 const MAX_CLIPBOARD_IMAGE_BASE64_CHARS = CLIPBOARD_IMAGE_MAX_BASE64_CHARS
 export const CLIPBOARD_IMAGE_UPLOAD_CHUNK_BASE64_CHARS = 512 * 1024
@@ -131,10 +132,18 @@ export const CLIPBOARD_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'clipboard.saveImageAsTempFile',
     params: SaveImageAsTempFile,
-    handler: async (params) =>
-      saveClipboardImageBufferAsTempFile(Buffer.from(params.contentBase64, 'base64'), {
-        connectionId: params.connectionId
-      })
+    handler: async (params, ctx) => {
+      const path = await saveClipboardImageBufferAsTempFile(
+        Buffer.from(params.contentBase64, 'base64'),
+        {
+          connectionId: params.connectionId
+        }
+      )
+      if (ctx.clientKind === 'mobile') {
+        recordMobileClipboardImagePath(ctx.clientId, path)
+      }
+      return path
+    }
   }),
   defineMethod({
     name: 'clipboard.startImageUpload',
@@ -177,7 +186,7 @@ export const CLIPBOARD_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'clipboard.commitImageUpload',
     params: CommitImageUpload,
-    handler: async (params) => {
+    handler: async (params, ctx) => {
       const upload = getUpload(params.uploadId)
       try {
         if (upload.receivedBase64Length !== upload.expectedBase64Length) {
@@ -185,9 +194,16 @@ export const CLIPBOARD_METHODS: RpcMethod[] = [
         }
         const contentBase64 = upload.chunks.join('')
         assertValidBase64Content(contentBase64)
-        return await saveClipboardImageBufferAsTempFile(Buffer.from(contentBase64, 'base64'), {
-          connectionId: upload.connectionId
-        })
+        const path = await saveClipboardImageBufferAsTempFile(
+          Buffer.from(contentBase64, 'base64'),
+          {
+            connectionId: upload.connectionId
+          }
+        )
+        if (ctx.clientKind === 'mobile') {
+          recordMobileClipboardImagePath(ctx.clientId, path)
+        }
+        return path
       } finally {
         // Why: failed SSH or filesystem commits must not leave bounded upload
         // memory pinned until TTL cleanup.

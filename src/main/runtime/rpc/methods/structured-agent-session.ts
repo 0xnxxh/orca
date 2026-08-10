@@ -30,6 +30,7 @@ import {
   SubscribeParams,
   UnsubscribeParams
 } from './structured-agent-session-schemas'
+import { hasMobileClipboardImagePath } from '../mobile-clipboard-image-provenance'
 
 const SUBSCRIPTION_PREFIX = 'agentSession'
 
@@ -57,6 +58,23 @@ function requireHost(ctx: RpcContext): StructuredAgentSessionHost {
     throw new Error('structured_agent_session_unsupported')
   }
   return host
+}
+
+function assertMobileImageProvenance(
+  ctx: RpcContext,
+  body: { blocks: { type: string; path?: string; url?: string }[] }
+): void {
+  if (ctx.clientKind !== 'mobile') {
+    return
+  }
+  for (const block of body.blocks) {
+    if (block.type !== 'image-ref') {
+      continue
+    }
+    if (block.url || !block.path || !hasMobileClipboardImagePath(ctx.clientId, block.path)) {
+      throw new Error('agent_session_image_untrusted')
+    }
+  }
 }
 
 /** Attach is the only way a session comes into being, so it is the only call
@@ -161,7 +179,11 @@ export const STRUCTURED_AGENT_SESSION_METHODS: RpcAnyMethod[] = [
   defineMethod({
     name: 'agentSession.send',
     params: SendParams,
-    handler: async (params, ctx) => requireHost(ctx).send(callerFor(ctx), params)
+    handler: async (params, ctx) => {
+      const host = requireHost(ctx)
+      assertMobileImageProvenance(ctx, params.body)
+      return host.send(callerFor(ctx), params)
+    }
   }),
   defineMethod({
     name: 'agentSession.cancel',
