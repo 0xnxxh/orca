@@ -132,12 +132,12 @@ export function truncateDiffForPrompt(
 export const CUSTOM_PROMPT_PLACEHOLDER = '{prompt}'
 
 /** Source range of a token: [start, end) offsets into the original string.
- * `bareShellSyntax` marks a token whose value the target shell would not see
- * the way this tokenizer does: an unquoted, unescaped operator (`;&|<>`), a
- * word-leading `#` comment, an expansion opener that can span tokens
- * (backtick, `$(`, `${`), or a cmd single-quoted region (cmd has no
- * single-quote syntax). Consumers cannot recover this from the value alone. */
-export type CommandTokenSpan = { start: number; end: number; bareShellSyntax: boolean }
+ * `divergesFromShell` marks a token this tokenizer cannot model faithfully for
+ * the target shell: an unquoted operator (`;&|<>`), a word-leading `#`
+ * comment, an expansion opener whose body can span tokens (backtick, `$(`,
+ * `${`, quoted or not), or a cmd single-quoted region (cmd has no
+ * single-quote syntax). Not recoverable from the token value alone. */
+export type CommandTokenSpan = { start: number; end: number; divergesFromShell: boolean }
 
 export type TokenizeCustomCommandResult =
   | { ok: true; tokens: string[]; spans: CommandTokenSpan[] }
@@ -155,7 +155,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
   let current = ''
   let inToken = false
   let tokenStart = 0
-  let bareShellSyntax = false
+  let divergesFromShell = false
   let quote: '"' | "'" | null = null
   let i = 0
 
@@ -167,6 +167,11 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
         i += 2
         continue
       }
+      // Why: a `"` inside $(…) or `…` re-opens a nested quoting context in the
+      // real shell, so this tokenizer's word boundaries stop matching it.
+      divergesFromShell ||=
+        quote === '"' &&
+        (ch === '`' || (ch === '$' && (template[i + 1] === '(' || template[i + 1] === '{')))
       if (ch === quote) {
         quote = null
         i++
@@ -203,10 +208,10 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
     if (/\s/.test(ch)) {
       if (inToken) {
         tokens.push(current)
-        spans.push({ start: tokenStart, end: i, bareShellSyntax })
+        spans.push({ start: tokenStart, end: i, divergesFromShell })
         current = ''
         inToken = false
-        bareShellSyntax = false
+        divergesFromShell = false
       }
       i++
       continue
@@ -215,7 +220,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
     if (!inToken) {
       tokenStart = i
     }
-    bareShellSyntax ||=
+    divergesFromShell ||=
       ';&|<>`'.includes(ch) ||
       (ch === '#' && !inToken) ||
       (ch === '$' && (template[i + 1] === '(' || template[i + 1] === '{'))
@@ -229,7 +234,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
   }
   if (inToken) {
     tokens.push(current)
-    spans.push({ start: tokenStart, end: template.length, bareShellSyntax })
+    spans.push({ start: tokenStart, end: template.length, divergesFromShell })
   }
   return { ok: true, tokens, spans }
 }

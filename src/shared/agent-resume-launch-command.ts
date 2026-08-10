@@ -40,7 +40,9 @@ function findClaudeExecutableIndex(tokens: readonly string[], shell: AgentStartu
         return i
       }
       if (
-        /^[A-Za-z_][A-Za-z0-9_]*=/.test(token) ||
+        // Why: `NAME=value cmd` is posix-only syntax; on cmd/PowerShell such a
+        // token is just a bogus executable name, not a prefix to skip.
+        (shell === 'posix' && /^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) ||
         (shell === 'powershell' && token === '&' && i === 0)
       ) {
         continue
@@ -106,11 +108,11 @@ export function buildClaudeResumeLaunchCommand(
   // could hand the selector to the wrong command or break a construct.
   for (let i = claudeIndex + 1; i < tokens.length; i += 1) {
     const gap = baseCommand.slice(spans[i - 1].end, spans[i].start)
-    if (!/^[ \t]+$/.test(gap) || spans[i].bareShellSyntax) {
+    if (!/^[ \t]+$/.test(gap) || spans[i].divergesFromShell) {
       return appended
     }
   }
-  if (!/^[ \t]*$/.test(baseCommand.slice(spans.at(-1)?.end ?? 0))) {
+  if (!/^[ \t]*$/.test(baseCommand.slice(spans[tokens.length - 1].end))) {
     return appended
   }
   const cuts: { start: number; end: number; floor: number }[] = []
@@ -140,9 +142,6 @@ export function buildClaudeResumeLaunchCommand(
       i += 1
     }
     cuts.push({ start: selectorStart, end, floor })
-  }
-  if (cuts.length === 0 && terminatorStart === null) {
-    return appended
   }
   let result = baseCommand
   if (terminatorStart !== null) {

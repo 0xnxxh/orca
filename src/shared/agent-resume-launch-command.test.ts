@@ -144,6 +144,17 @@ describe('buildClaudeResumeLaunchCommand', () => {
     ).toBe(`nix develop /Users/me/src/claude -c claude --resume OLD '--resume' '${SESSION_ID}'`)
   })
 
+  it.each(['cmd', 'powershell'] as const)(
+    'fails open on a posix-style assignment prefix under %s',
+    (shell) => {
+      // NAME=value prefixes are posix-only syntax; on Windows shells that
+      // token is a bogus executable, so nothing may be spliced.
+      const base = "FOO='bar' claude --resume old"
+      const quoted = shell === 'cmd' ? `"--resume" "${SESSION_ID}"` : `'--resume' '${SESSION_ID}'`
+      expect(buildClaudeResumeLaunchCommand(base, RESUME, shell)).toBe(`${base} ${quoted}`)
+    }
+  )
+
   it('preserves an env-assignment or path prefix byte for byte', () => {
     expect(
       buildClaudeResumeLaunchCommand('FOO="$HOME/x" ~/bin/claude \'--resume\'', RESUME, 'posix')
@@ -218,6 +229,24 @@ describe('buildClaudeResumeLaunchCommand', () => {
     'claude --resume ${SID:-a b}'
   ])('fails open on unquoted multi-token shell expansions: %s', (base) => {
     expect(buildClaudeResumeLaunchCommand(base, RESUME, 'posix')).toBe(
+      `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it.each([
+    'claude --resume "`cat "a b"`"',
+    'claude --model "$(pick "x -c y")"',
+    'claude --model "$(f "x --resume y")"',
+    'claude --resume "$(cat "$HOME/My Sessions/id")"'
+  ])('fails open on expansions nested inside double quotes: %s', (base) => {
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'posix')).toBe(
+      `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it('fails open on a powershell double-quoted subexpression', () => {
+    const base = 'claude --model "$(pick "x -c y")"'
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'powershell')).toBe(
       `${base} '--resume' '${SESSION_ID}'`
     )
   })

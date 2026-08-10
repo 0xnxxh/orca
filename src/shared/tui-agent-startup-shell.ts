@@ -14,7 +14,7 @@ function tokenizeWindowsStartupCommand(
   const spans: CommandTokenSpan[] = []
   let token = ''
   let tokenStart = 0
-  let bareShellSyntax = false
+  let divergesFromShell = false
   let quote: "'" | '"' | null = null
   let tokenStarted = false
   for (let index = 0; index < value.length; index += 1) {
@@ -30,6 +30,13 @@ function tokenizeWindowsStartupCommand(
       continue
     }
     if (quote) {
+      // Why: see the posix tokenizer — a `"` inside $(…) re-opens a nested
+      // quoting context that this tokenizer does not model.
+      divergesFromShell ||=
+        shell === 'powershell' &&
+        quote === '"' &&
+        char === '$' &&
+        (value[index + 1] === '(' || value[index + 1] === '{')
       if (char === quote) {
         if (shell === 'powershell' && quote === "'" && value[index + 1] === "'") {
           token += "'"
@@ -48,7 +55,7 @@ function tokenizeWindowsStartupCommand(
       // Why: cmd.exe has no single-quote syntax, so this tokenizer's grouping
       // of a single-quoted region diverges from what cmd actually parses;
       // flag the token so consumers treat it as unmodelable.
-      bareShellSyntax ||= shell === 'cmd' && char === "'"
+      divergesFromShell ||= shell === 'cmd' && char === "'"
       if (!tokenStarted) {
         tokenStart = index
       }
@@ -56,16 +63,16 @@ function tokenizeWindowsStartupCommand(
     } else if (/\s/.test(char)) {
       if (tokenStarted) {
         tokens.push(token)
-        spans.push({ start: tokenStart, end: index, bareShellSyntax })
+        spans.push({ start: tokenStart, end: index, divergesFromShell })
         token = ''
         tokenStarted = false
-        bareShellSyntax = false
+        divergesFromShell = false
       }
     } else {
       if (!tokenStarted) {
         tokenStart = index
       }
-      bareShellSyntax ||=
+      divergesFromShell ||=
         ';&|<>'.includes(char) ||
         (shell === 'powershell' &&
           ((char === '#' && !tokenStarted) ||
@@ -79,7 +86,7 @@ function tokenizeWindowsStartupCommand(
   }
   if (tokenStarted) {
     tokens.push(token)
-    spans.push({ start: tokenStart, end: value.length, bareShellSyntax })
+    spans.push({ start: tokenStart, end: value.length, divergesFromShell })
   }
   return { ok: true, tokens, spans }
 }

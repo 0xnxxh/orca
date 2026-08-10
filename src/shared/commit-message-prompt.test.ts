@@ -292,9 +292,9 @@ describe('tokenizeCustomCommandTemplate', () => {
       ok: true,
       tokens: ['claude', '--msg', 'hello world'],
       spans: [
-        { start: 0, end: 6, bareShellSyntax: false },
-        { start: 7, end: 12, bareShellSyntax: false },
-        { start: 13, end: 26, bareShellSyntax: false }
+        { start: 0, end: 6, divergesFromShell: false },
+        { start: 7, end: 12, divergesFromShell: false },
+        { start: 13, end: 26, divergesFromShell: false }
       ]
     })
     if (r.ok) {
