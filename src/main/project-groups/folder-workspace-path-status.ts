@@ -9,12 +9,15 @@ import {
   getFolderWorkspaceProjectGroupOwnerHostId,
   getProjectGroupOwnerHostId,
   getProjectGroupSubtreeIds,
-  resolveProjectGroupOwner,
-  resolveFolderWorkspaceProjectGroup
+  resolveFolderWorkspaceProjectGroup,
+  resolveProjectGroupOwner
 } from '../../shared/project-groups'
 import { getRepoExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
 import type { FolderWorkspace, ProjectGroup, Repo } from '../../shared/types'
-import { resolveFolderWorkspaceCatalogOwnerHostId } from '../../shared/folder-workspaces'
+import {
+  resolveFolderWorkspaceCatalogOwnerHostId,
+  resolveLegacySshFolderWorkspaceProjectGroup
+} from '../../shared/folder-workspaces'
 import type { IFilesystemProvider } from '../providers/types'
 
 type FolderWorkspacePathStatusStore = {
@@ -205,7 +208,9 @@ export function resolveFolderWorkspaceStatusPath(args: {
   if (!workspace) {
     throw new Error('folder_workspace_path_scope_not_found')
   }
-  const group = resolveFolderWorkspaceProjectGroup(projectGroupIndex, workspace)
+  const group =
+    resolveFolderWorkspaceProjectGroup(projectGroupIndex, workspace) ??
+    resolveLegacySshFolderWorkspaceProjectGroup(projectGroupIndex, workspace)
   if (!group && projectGroupIndex.byId.has(workspace.projectGroupId)) {
     throw new Error('folder_workspace_path_scope_not_found')
   }

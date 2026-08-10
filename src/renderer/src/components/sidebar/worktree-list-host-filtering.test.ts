@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { FolderWorkspace, ProjectGroup } from '../../../../shared/types'
+import { addHostSectionRows } from './host-section-rows'
+import type { Row } from './worktree-list-groups'
 import {
   getFolderPathStatusRouteOptionsForRows,
   getFolderWorkspaceExecutionHostIdForRows,
@@ -140,5 +142,82 @@ describe('WorktreeList host filtering ownership', () => {
         folderWorkspacesById: new Map()
       })
     ).toEqual({ runtimeEnvironmentId: null })
+  })
+})
+
+describe('runtime folder host section rows', () => {
+  it('keeps a runtime-stamped folder under its host after a filter rebuild', () => {
+    const runtimeGroup = group({
+      id: 'group-1',
+      name: 'Remote folder',
+      executionHostId: 'runtime:env-2'
+    })
+    const runtimeFolder = folderWorkspace({
+      id: 'folder-1',
+      projectGroupId: runtimeGroup.id,
+      name: 'Runtime workspace',
+      folderPath: '/workspace',
+      executionHostId: 'runtime:env-2'
+    })
+    const localGroup = group({
+      id: 'local-group',
+      name: 'Local folder',
+      executionHostId: 'local'
+    })
+    const localFolder = folderWorkspace({
+      id: 'local-folder',
+      projectGroupId: localGroup.id,
+      name: 'Local workspace',
+      folderPath: '/workspace',
+      executionHostId: 'local'
+    })
+    const rows: Row[] = [
+      {
+        type: 'folder-workspace',
+        key: 'folder-workspace:local:local-folder',
+        folderWorkspace: localFolder,
+        projectGroup: localGroup,
+        depth: 0,
+        groupDepth: 0
+      },
+      {
+        type: 'folder-workspace',
+        key: 'folder-workspace:runtime%3Aenv-2:folder-1',
+        folderWorkspace: runtimeFolder,
+        projectGroup: runtimeGroup,
+        depth: 0,
+        groupDepth: 0
+      }
+    ]
+
+    const sectioned = addHostSectionRows({
+      rows,
+      hostOptions: [
+        {
+          id: 'local',
+          kind: 'local',
+          label: 'Local Mac',
+          detail: 'This computer',
+          health: 'local'
+        },
+        {
+          id: 'runtime:env-2',
+          kind: 'runtime',
+          label: 'env-2',
+          detail: 'Orca server',
+          health: 'available'
+        }
+      ],
+      workspaceHostScope: 'all',
+      visibleWorkspaceHostIds: ['runtime:env-2', 'local'],
+      defaultHostId: 'local'
+    })
+
+    expect(sectioned.map((row) => (row.type === 'item' ? row.rowKey : row.key))).toEqual([
+      'host:local',
+      'folder-workspace:local:local-folder',
+      'host:runtime:env-2',
+      'folder-workspace:runtime%3Aenv-2:folder-1'
+    ])
   })
 })

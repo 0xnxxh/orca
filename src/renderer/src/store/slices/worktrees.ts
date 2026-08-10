@@ -4809,7 +4809,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
   updateWorktreeMeta: async (worktreeId, updates, options) => {
     const shouldApplyUpdate = options?.shouldApply
-    const existingWorktree = get().getKnownWorktreeById(worktreeId)
+    const existingWorktree = get().getKnownWorktreeById(worktreeId, options?.executionHostId)
     if (shouldApplyUpdate && !shouldApplyUpdate(existingWorktree)) {
       return { ok: true }
     }
@@ -4824,7 +4824,8 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         // reporting ok would show the dialog a save that silently undid itself.
         const updated = await get().updateFolderWorkspace(
           workspaceScope.folderWorkspaceId,
-          folderUpdates
+          folderUpdates,
+          options?.executionHostId ? { executionHostId: options.executionHostId } : undefined
         )
         return updated
           ? { ok: true }
@@ -5925,10 +5926,12 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   },
 
   setActiveFolderWorkspace: (folderWorkspaceId, executionHostId) => {
-    // Why: tabs keep the legacy bare workspace id, so a same-id catalog cannot activate safely.
-    if (
-      get().folderWorkspaces.filter((workspace) => workspace.id === folderWorkspaceId).length !== 1
-    ) {
+    const matchingWorkspaces = get().folderWorkspaces.filter(
+      (workspace) =>
+        workspace.id === folderWorkspaceId &&
+        (!executionHostId || folderWorkspaceMatchesHost(workspace, executionHostId))
+    )
+    if (matchingWorkspaces.length !== 1) {
       return
     }
     const workspaceKey = folderWorkspaceKey(folderWorkspaceId)

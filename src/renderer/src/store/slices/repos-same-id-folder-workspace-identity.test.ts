@@ -168,7 +168,7 @@ describe('same-id cross-host folder workspace identity', () => {
     expect(state.activeTabId).toBe('legacy-tab')
   })
 
-  it('fails closed instead of owner-qualifying tabs for ambiguous folder ids', () => {
+  it('activates an ambiguous folder id only with an exact owner', () => {
     const store = createTestStore()
     const bareKey = folderWorkspaceKey('same-id')
     store.setState({
@@ -208,9 +208,45 @@ describe('same-id cross-host folder workspace identity', () => {
     })
 
     store.getState().setActiveFolderWorkspace('same-id', 'local')
-    expect(store.getState().activeWorkspaceKey).toBeNull()
-    expect(store.getState().activeWorktreeId).toBeNull()
+    expect(store.getState().activeWorkspaceKey).toBe(bareKey)
+    expect(store.getState().activeWorktreeId).toBe(bareKey)
+    expect(store.getState().activeWorkspaceExecutionHostId).toBe('local')
     expect(store.getState().tabsByWorktree[bareKey]?.[0]?.id).toBe('legacy-tab')
+  })
+
+  it('routes folder metadata writes through the selected owner', async () => {
+    const local = makeFolder({ executionHostId: 'local' })
+    const ssh = makeFolder({
+      connectionId: 'builder',
+      executionHostId: undefined,
+      folderPath: '/remote/folder'
+    })
+    const update = vi.fn().mockResolvedValue({ ...ssh, comment: 'SSH note' })
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [
+        makeGroup({ executionHostId: 'local' }),
+        makeGroup({ connectionId: 'builder', executionHostId: undefined })
+      ],
+      folderWorkspaces: [local, ssh]
+    })
+    vi.stubGlobal('window', { api: { folderWorkspaces: { update } } })
+
+    await expect(
+      store.getState().updateWorktreeMeta(
+        'folder:same-id',
+        { comment: 'SSH note' },
+        {
+          executionHostId: 'ssh:builder'
+        }
+      )
+    ).resolves.toEqual({ ok: true })
+
+    expect(update).toHaveBeenCalledWith({
+      folderWorkspaceId: 'same-id',
+      ownerHostId: 'ssh:builder',
+      updates: { comment: 'SSH note', lastActivityAt: expect.any(Number) }
+    })
   })
 
   it('forwards the selected folder owner through local update IPC', async () => {

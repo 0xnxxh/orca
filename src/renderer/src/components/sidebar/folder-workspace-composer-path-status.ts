@@ -7,6 +7,7 @@ import {
   getFolderWorkspacePathStatusTitle
 } from '@/lib/folder-workspace-path-status'
 import { isConfirmedStaleFolderPathStatus } from '../../../../shared/folder-workspace-path-status'
+import { getProjectGroupOwnerHostId } from '../../../../shared/project-groups'
 import type { ProjectGroup } from '../../../../shared/types'
 
 export function useFolderWorkspaceComposerPathStatus(
@@ -32,7 +33,13 @@ export function useFolderWorkspaceComposerPathStatus(
   )
   const pathStatusRequest = useMemo(
     () =>
-      projectGroup ? { scope: 'project-group' as const, projectGroupId: projectGroup.id } : null,
+      projectGroup
+        ? {
+            scope: 'project-group' as const,
+            projectGroupId: projectGroup.id,
+            ownerHostId: getProjectGroupOwnerHostId(projectGroup)
+          }
+        : null,
     [projectGroup]
   )
   const cacheExpiryTick = useFolderWorkspacePathStatusCacheExpiryTick(folderWorkspacePathStatuses)

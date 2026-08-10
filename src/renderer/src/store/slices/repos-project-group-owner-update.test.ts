@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ProjectGroup } from '../../../../shared/types'
+import type { ProjectGroup, Repo } from '../../../../shared/types'
 import { createTestStore } from './store-test-helpers'
 import {
   createCompatibleRuntimeStatusResponseIfNeeded,
@@ -120,5 +120,44 @@ describe('project-group owner-qualified updates', () => {
     expect(update).not.toHaveBeenCalled()
     expect(runtimeCall).not.toHaveBeenCalled()
     expect(store.getState().projectGroups).toEqual([local, runtime])
+  })
+
+  it('queries the owning runtime when target group metadata is stale', async () => {
+    const runtimeRepo: Repo = {
+      id: 'runtime-repo',
+      path: '/runtime/repo',
+      displayName: 'Runtime repo',
+      badgeColor: '#111',
+      addedAt: 1,
+      projectGroupId: null,
+      executionHostId: 'runtime:env-1'
+    }
+    const runtimeCall = vi.fn((request: RuntimeEnvironmentCallRequest) => {
+      const compatibility = createCompatibleRuntimeStatusResponseIfNeeded(request)
+      if (compatibility) {
+        return compatibility
+      }
+      return {
+        id: 'rpc-project-group-move',
+        ok: true,
+        result: { repo: { ...runtimeRepo, projectGroupId: 'runtime-group' } },
+        _meta: { runtimeId: 'runtime-remote' }
+      }
+    })
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+    const store = createTestStore()
+    store.setState({ repos: [runtimeRepo], projectGroups: [] })
+
+    await expect(
+      store.getState().moveProjectToGroup(runtimeRepo.id, 'runtime-group')
+    ).resolves.toBe(true)
+
+    expect(runtimeCall).toHaveBeenCalledWith({
+      selector: 'env-1',
+      method: 'projectGroup.moveProject',
+      params: { repo: runtimeRepo.id, groupId: 'runtime-group', order: undefined },
+      timeoutMs: 15_000
+    })
+    expect(store.getState().repos).toEqual([{ ...runtimeRepo, projectGroupId: 'runtime-group' }])
   })
 })

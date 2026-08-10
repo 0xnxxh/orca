@@ -1,11 +1,28 @@
 import { useMemo } from 'react'
 import { useAppStore } from '@/store'
 import { findIndexedWorktreeOwner } from '@/lib/worktree-runtime-owner-index'
-import type { Worktree } from '../../../../shared/types'
+import type { FolderWorkspace, Worktree } from '../../../../shared/types'
+import type { ExecutionHostId } from '../../../../shared/execution-host'
+import { getFolderWorkspaceCatalogOwnerHostId } from '../../../../shared/folder-workspaces'
 import { parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
 import type { IssueLinkProvider } from '../../../../shared/issue-link-input'
 import type { WorktreeMetaLiveLinks } from './worktree-meta-updates'
+
+export function findFolderWorkspaceMetaOwner(
+  folderWorkspaces: readonly FolderWorkspace[],
+  projectGroups: Parameters<typeof getFolderWorkspaceCatalogOwnerHostId>[1],
+  folderWorkspaceId: string,
+  executionHostId: ExecutionHostId | null
+): FolderWorkspace | null {
+  const matches = folderWorkspaces.filter(
+    (workspace) =>
+      workspace.id === folderWorkspaceId &&
+      (!executionHostId ||
+        getFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups) === executionHostId)
+  )
+  return matches.length === 1 ? matches[0] : null
+}
 
 /** Resolves the workspace the meta dialog edits and the issue-link state it
  *  seeds from. Link state is read from the store rather than threaded through
@@ -15,6 +32,7 @@ export function useWorktreeMetaWorkspace(args: {
   worktreeId: string
   /** The repo bucket the opening row belongs to, when it knows. */
   ownerRepoId: string | null
+  executionHostId: ExecutionHostId | null
 }): {
   worktree: Worktree | undefined
   linkedIssue: number | null
@@ -26,7 +44,7 @@ export function useWorktreeMetaWorkspace(args: {
   /** Link state as it stands now, for save-time displacement decisions. */
   liveLinks: WorktreeMetaLiveLinks
 } {
-  const { worktreeId, ownerRepoId } = args
+  const { worktreeId, ownerRepoId, executionHostId } = args
   const workspaceScope = useMemo(() => parseWorkspaceKey(worktreeId), [worktreeId])
   const indexedWorktree = useAppStore((s) => {
     // Why: the same workspace ID can exist under two hosts, which the owner index
@@ -50,7 +68,13 @@ export function useWorktreeMetaWorkspace(args: {
   // on every store write and re-render the dialog continuously.
   const folderWorkspace = useAppStore((s) =>
     workspaceScope?.type === 'folder'
-      ? (s.folderWorkspaces.find((item) => item.id === workspaceScope.folderWorkspaceId) ?? null)
+      ? findFolderWorkspaceMetaOwner(
+          s.folderWorkspaces,
+          s.projectGroups,
+          workspaceScope.folderWorkspaceId,
+          executionHostId ??
+            (s.activeWorktreeId === worktreeId ? s.activeWorkspaceExecutionHostId : null)
+        )
       : null
   )
   const worktree = useMemo(

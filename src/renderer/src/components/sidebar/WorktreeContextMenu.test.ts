@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  getContextMenuWorktreeExecutionHost,
+  getFolderWorkspaceContextMenuDeleteOwner,
   getContextMenuProjectGroupTargets,
   isContextWorktreeDeletable,
   shouldUseNativeContextMenu,
@@ -15,7 +17,9 @@ import {
   selectMenuScopedMap,
   shouldRevealWorktreeDeveloperMenu
 } from './WorktreeContextMenu'
+import { findFolderWorkspaceMetaOwner } from './use-worktree-meta-workspace'
 import type {
+  FolderWorkspace,
   ProjectGroup,
   Worktree,
   WorktreeLineage,
@@ -34,6 +38,49 @@ describe('getContextMenuProjectGroupTargets', () => {
 
     expect(result.ownerHostId).toBe('runtime:env-1')
     expect(result.projectGroups).toEqual([group('runtime:env-1')])
+  })
+})
+
+describe('getFolderWorkspaceContextMenuDeleteOwner', () => {
+  it('retains the selected folder row owner for deletion', () => {
+    expect(getFolderWorkspaceContextMenuDeleteOwner({ hostId: 'runtime:env-1' })).toEqual({
+      ownerHostId: 'runtime:env-1'
+    })
+  })
+
+  it('retains the selected row owner for metadata actions', () => {
+    expect(getContextMenuWorktreeExecutionHost({ hostId: 'runtime:env-1' })).toEqual({
+      executionHostId: 'runtime:env-1'
+    })
+  })
+})
+
+describe('findFolderWorkspaceMetaOwner', () => {
+  const folder = (executionHostId: 'local' | 'runtime:env-1'): FolderWorkspace => ({
+    id: 'same-id',
+    projectGroupId: 'same-group',
+    name: executionHostId,
+    folderPath: `/${executionHostId}`,
+    executionHostId,
+    linkedTask: null,
+    comment: '',
+    isArchived: false,
+    isUnread: false,
+    isPinned: false,
+    sortOrder: 0,
+    lastActivityAt: 0,
+    createdAt: 1,
+    updatedAt: 1
+  })
+
+  it('selects duplicate folder ids only with the opening row owner', () => {
+    const local = folder('local')
+    const runtime = folder('runtime:env-1')
+
+    expect(findFolderWorkspaceMetaOwner([local, runtime], [], 'same-id', null)).toBeNull()
+    expect(findFolderWorkspaceMetaOwner([local, runtime], [], 'same-id', 'runtime:env-1')).toBe(
+      runtime
+    )
   })
 })
 

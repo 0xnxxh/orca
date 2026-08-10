@@ -75,12 +75,12 @@ export function getFolderWorkspaceProjectGroupOwnerHostId(
   if (executionHostId) {
     return executionHostId
   }
+  if (workspace.connectionId) {
+    return toSshExecutionHostId(workspace.connectionId)
+  }
   const group = resolveFolderWorkspaceProjectGroup(index, workspace)
   if (group) {
     return getProjectGroupOwnerHostId(group)
-  }
-  if (workspace.connectionId) {
-    return toSshExecutionHostId(workspace.connectionId)
   }
   return LOCAL_EXECUTION_HOST_ID
 }

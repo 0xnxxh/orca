@@ -4,6 +4,7 @@ import {
   clearMissingProjectGroupMemberships,
   createProjectGroup,
   getEffectiveProjectGroupManualRank,
+  getFolderWorkspaceProjectGroupOwnerHostId,
   getNextProjectGroupOrder,
   getProjectGroupOwnerIdentity,
   getProjectGroupOwnerSubtreeIdentities,
@@ -163,8 +164,28 @@ describe('project-groups', () => {
     expect(resolveFolderWorkspaceProjectGroup(index, { projectGroupId: 'same-id' })).toBeNull()
   })
 
+  it('retains a legacy SSH folder owner with one unstamped group', () => {
+    const legacyGroup = projectGroup({ id: 'legacy', name: 'Legacy', parentPath: '/legacy' })
+    const index = buildProjectGroupOwnerIndex([legacyGroup])
+    const workspace = { projectGroupId: 'legacy', connectionId: 'builder' }
+
+    expect(resolveFolderWorkspaceProjectGroup(index, workspace)).toBeNull()
+    expect(getFolderWorkspaceProjectGroupOwnerHostId(workspace, index)).toBe('ssh:builder')
+    expect(
+      normalizeFolderWorkspaces(
+        [{ id: 'legacy-folder', projectGroupId: 'legacy', connectionId: 'builder' }],
+        [legacyGroup]
+      )
+    ).toHaveLength(1)
+  })
+
   it('rejects folder workspaces stamped for missing foreign owners', () => {
-    const local = projectGroup({ id: 'same-id', name: 'Local', parentPath: '/local' })
+    const local = projectGroup({
+      id: 'same-id',
+      name: 'Local',
+      parentPath: '/local',
+      connectionId: null
+    })
 
     expect(
       normalizeFolderWorkspaces(

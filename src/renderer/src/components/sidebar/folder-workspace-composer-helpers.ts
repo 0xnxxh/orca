@@ -49,8 +49,11 @@ export function getFolderSourceRepos(
     return EMPTY_REPOS
   }
   const folderPath = projectGroup.parentPath
-  const groupIds = getProjectGroupSubtreeIds(projectGroups, projectGroup.id)
   const projectGroupHostId = getProjectGroupExecutionHostId(projectGroup)
+  const ownerProjectGroups = projectGroups.filter(
+    (group) => getProjectGroupExecutionHostId(group) === projectGroupHostId
+  )
+  const groupIds = getProjectGroupSubtreeIds(ownerProjectGroups, projectGroup.id)
   return repos.filter(
     (repo) =>
       isGitRepoKind(repo) &&

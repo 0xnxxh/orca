@@ -7,13 +7,30 @@ import {
 import {
   buildProjectGroupOwnerIndex,
   getFolderWorkspaceProjectGroupOwnerHostId,
-  resolveFolderWorkspaceProjectGroup
+  resolveFolderWorkspaceProjectGroup,
+  resolveProjectGroupOwner,
+  type ProjectGroupOwnerIndex
 } from './project-groups'
 import type { FolderWorkspace, ProjectGroup } from './types'
 import { isTuiAgent } from './tui-agent-config'
 import { normalizeStoredTaskSourceContext } from './task-source-context'
 import { normalizeWorkspaceLinkedItem } from './workspace-linked-item'
 import { isWorkspaceLinkedItemSourceContextMatch } from './workspace-linked-item-source-context'
+
+export function resolveLegacySshFolderWorkspaceProjectGroup(
+  index: ProjectGroupOwnerIndex,
+  workspace: Pick<FolderWorkspace, 'connectionId' | 'projectGroupId'>
+): ProjectGroup | null {
+  if (!workspace.connectionId) {
+    return null
+  }
+  const group = resolveProjectGroupOwner(index, workspace.projectGroupId)
+  return group &&
+    group.connectionId === undefined &&
+    !normalizeExecutionHostId(group.executionHostId)
+    ? group
+    : null
+}
 
 export function getFolderWorkspaceCatalogOwnerHostId(
   workspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId' | 'projectGroupId'>,
@@ -37,6 +54,9 @@ export function resolveFolderWorkspaceCatalogOwnerHostId(
     const group = resolveFolderWorkspaceProjectGroup(index, workspace)
     if (group) {
       return getFolderWorkspaceProjectGroupOwnerHostId(workspace, index)
+    }
+    if (workspace.connectionId) {
+      return toSshExecutionHostId(workspace.connectionId)
     }
     return null
   }
@@ -110,11 +130,14 @@ export function normalizeFolderWorkspaces(
       continue
     }
     const executionHostId = normalizeExecutionHostId(raw.executionHostId)
-    const group = resolveFolderWorkspaceProjectGroup(projectGroupIndex, {
+    const workspaceSelector = {
       projectGroupId: raw.projectGroupId,
       connectionId: raw.connectionId,
       executionHostId
-    })
+    }
+    const group =
+      resolveFolderWorkspaceProjectGroup(projectGroupIndex, workspaceSelector) ??
+      resolveLegacySshFolderWorkspaceProjectGroup(projectGroupIndex, workspaceSelector)
     if (!group?.parentPath) {
       continue
     }

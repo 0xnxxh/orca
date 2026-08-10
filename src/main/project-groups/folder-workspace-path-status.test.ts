@@ -132,6 +132,47 @@ it('resolves same-id folder-workspace paths by exact owner and rejects a bare se
   ).toThrow('folder_workspace_path_scope_not_found')
 })
 
+it('resolves a legacy SSH folder against one unstamped group', () => {
+  const store = {
+    getRepos: () => [],
+    getProjectGroups: () => [makeGroup({ id: 'legacy' })],
+    getFolderWorkspaces: () => [
+      {
+        id: 'legacy-folder',
+        projectGroupId: 'legacy',
+        name: 'Legacy SSH',
+        folderPath: '/remote/folder',
+        connectionId: 'builder',
+        linkedTask: null,
+        comment: '',
+        isArchived: false,
+        isUnread: false,
+        isPinned: false,
+        sortOrder: 1,
+        lastActivityAt: 1,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+  }
+
+  expect(
+    resolveFolderWorkspaceStatusPath({
+      store,
+      request: {
+        scope: 'folder-workspace',
+        folderWorkspaceId: 'legacy-folder',
+        ownerHostId: 'ssh:builder'
+      }
+    })
+  ).toEqual({
+    folderPath: '/remote/folder',
+    projectGroupId: 'legacy',
+    connectionId: 'builder',
+    ownerHostId: 'ssh:builder'
+  })
+})
+
 describe('folder workspace path status', () => {
   it('reports existing local directories and local files', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-folder-status-'))

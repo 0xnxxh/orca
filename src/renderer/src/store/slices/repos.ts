@@ -3198,7 +3198,9 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         return false
       }
       const ownerHostId = getRepoExecutionHostId(matchingRepos[0])
+      const target = getProjectGroupRuntimeTarget(ownerHostId)
       if (
+        target.kind === 'local' &&
         groupId !== null &&
         !resolveProjectGroupOwner(
           buildProjectGroupOwnerIndex(get().projectGroups),
@@ -3208,7 +3210,6 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       ) {
         return false
       }
-      const target = getProjectGroupRuntimeTarget(ownerHostId)
       // Why: omit ownerHostId when the bare group id is unique so legacy preload callers keep their call shape.
       const groupIdIsAmbiguous =
         groupId !== null && get().projectGroups.filter((group) => group.id === groupId).length > 1

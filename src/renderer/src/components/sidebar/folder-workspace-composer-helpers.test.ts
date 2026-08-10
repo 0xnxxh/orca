@@ -77,6 +77,52 @@ describe('getFolderSourceRepos', () => {
       ).map((item) => item.id)
     ).toEqual(['runtime-by-path', 'runtime-by-group'])
   })
+
+  it('ignores descendant ids contributed only by another owner', () => {
+    const localRoot = group({
+      id: 'root',
+      name: 'Local root',
+      parentPath: '/local',
+      connectionId: null,
+      executionHostId: 'local'
+    })
+    const localUnrelated = group({
+      id: 'foreign-child',
+      name: 'Local unrelated',
+      parentPath: '/other',
+      connectionId: null,
+      executionHostId: 'local'
+    })
+    const runtimeRoot = group({
+      id: 'root',
+      name: 'Runtime root',
+      parentPath: '/runtime',
+      connectionId: null,
+      executionHostId: 'runtime:env-1'
+    })
+    const runtimeChild = group({
+      id: 'foreign-child',
+      name: 'Runtime child',
+      parentPath: '/runtime/child',
+      connectionId: null,
+      executionHostId: 'runtime:env-1',
+      parentGroupId: 'root'
+    })
+    const localRepo = repo('local-unrelated', {
+      path: '/outside/root',
+      connectionId: null,
+      executionHostId: 'local',
+      projectGroupId: 'foreign-child'
+    })
+
+    expect(
+      getFolderSourceRepos(
+        [localRepo],
+        [localRoot, localUnrelated, runtimeRoot, runtimeChild],
+        localRoot
+      )
+    ).toEqual([])
+  })
 })
 
 describe('getFolderWorkspacePrimaryActionLabel', () => {

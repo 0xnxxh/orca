@@ -5638,14 +5638,16 @@ describe('Store', () => {
           projectGroupId: 'same-id',
           name: 'Local folder',
           folderPath: '/local',
-          connectionId: null
+          connectionId: null,
+          sortOrder: 2
         },
         {
           id: 'ssh-folder',
           projectGroupId: 'same-id',
           name: 'SSH folder',
           folderPath: '/remote',
-          connectionId: 'ssh-1'
+          connectionId: 'ssh-1',
+          sortOrder: 1
         }
       ]
     })

@@ -68,7 +68,11 @@ import {
   parseWorkspaceKey,
   worktreeWorkspaceKey
 } from '../../../../shared/workspace-scope'
-import { getRepoExecutionHostId, type ExecutionHostId } from '../../../../shared/execution-host'
+import {
+  getRepoExecutionHostId,
+  normalizeExecutionHostId,
+  type ExecutionHostId
+} from '../../../../shared/execution-host'
 import {
   getProjectGroupOwnerHostId,
   getProjectGroupOwnerIdentity
@@ -128,6 +132,20 @@ export function getContextMenuProjectGroupTargets(
       (group) => getProjectGroupOwnerHostId(group) === ownerHostId
     )
   }
+}
+
+export function getFolderWorkspaceContextMenuDeleteOwner(
+  worktree: Pick<Worktree, 'hostId'>
+): { ownerHostId: ExecutionHostId } | undefined {
+  const ownerHostId = normalizeExecutionHostId(worktree.hostId)
+  return ownerHostId ? { ownerHostId } : undefined
+}
+
+export function getContextMenuWorktreeExecutionHost(
+  worktree: Pick<Worktree, 'hostId'>
+): { executionHostId: ExecutionHostId } | undefined {
+  const executionHostId = normalizeExecutionHostId(worktree.hostId)
+  return executionHostId ? { executionHostId } : undefined
 }
 
 // Why: the Developer submenu is hidden by default and revealed only by holding
@@ -577,8 +595,12 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   }, [worktree.path])
 
   const handleToggleRead = useCallback(() => {
-    updateWorktreeMeta(worktree.id, { isUnread: !worktree.isUnread })
-  }, [worktree.id, worktree.isUnread, updateWorktreeMeta])
+    updateWorktreeMeta(
+      worktree.id,
+      { isUnread: !worktree.isUnread },
+      getContextMenuWorktreeExecutionHost(worktree)
+    )
+  }, [worktree, updateWorktreeMeta])
 
   const handleTogglePin = useCallback(() => {
     setWorktreesPinnedAndReveal([worktree.id], !worktree.isPinned)
@@ -648,7 +670,15 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
       // Why: outside the workspace board (e.g. the sidebar list) status changes
       // are local-only; Linear sync is scoped to board moves like drag-and-drop.
       void Promise.all(
-        plan.localWriteIds.map((id) => updateWorktreeMeta(id, { workspaceStatus: status }))
+        activeContextWorktrees
+          .filter((item) => getWorkspaceStatus(item, workspaceStatuses) !== status)
+          .map((item) =>
+            updateWorktreeMeta(
+              item.id,
+              { workspaceStatus: status },
+              getContextMenuWorktreeExecutionHost(item)
+            )
+          )
       )
     },
     [
@@ -666,6 +696,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
       // Why: the same workspace ID can exist under two hosts. Naming the owner
       // keeps the dialog on this row instead of the ambiguous lookup.
       repoId: worktree.repoId,
+      executionHostId: normalizeExecutionHostId(worktree.hostId),
       currentDisplayName: worktree.displayName,
       currentIssue: worktree.linkedIssue,
       currentPR: worktree.linkedPR,
@@ -675,6 +706,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   }, [
     worktree.id,
     worktree.repoId,
+    worktree.hostId,
     worktree.displayName,
     worktree.linkedIssue,
     worktree.linkedPR,
@@ -718,7 +750,10 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
         return
       }
       if (folderWorkspaceId) {
-        void deleteFolderWorkspace(folderWorkspaceId).then((deleted) => {
+        void deleteFolderWorkspace(
+          folderWorkspaceId,
+          getFolderWorkspaceContextMenuDeleteOwner({ hostId: worktree.hostId })
+        ).then((deleted) => {
           if (
             deleted &&
             useAppStore.getState().activeWorktreeId === folderWorkspaceKey(folderWorkspaceId)
@@ -742,6 +777,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
     isMultiContext,
     setActiveWorktree,
     setMenuOpenState,
+    worktree.hostId,
     worktree.id
   ])
 
