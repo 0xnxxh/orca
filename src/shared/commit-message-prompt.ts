@@ -132,10 +132,11 @@ export function truncateDiffForPrompt(
 export const CUSTOM_PROMPT_PLACEHOLDER = '{prompt}'
 
 /** Source range of a token: [start, end) offsets into the original string.
- * `bareShellSyntax` marks a token carrying an unquoted, unescaped shell-active
- * byte — an operator (`;&|<>`), a word-leading `#` comment, or an expansion
- * opener that can span tokens (backtick, `$(`, `${`) — the quote-state-aware
- * signal consumers cannot recover from the token value alone. */
+ * `bareShellSyntax` marks a token whose value the target shell would not see
+ * the way this tokenizer does: an unquoted, unescaped operator (`;&|<>`), a
+ * word-leading `#` comment, an expansion opener that can span tokens
+ * (backtick, `$(`, `${`), or a cmd single-quoted region (cmd has no
+ * single-quote syntax). Consumers cannot recover this from the value alone. */
 export type CommandTokenSpan = { start: number; end: number; bareShellSyntax: boolean }
 
 export type TokenizeCustomCommandResult =

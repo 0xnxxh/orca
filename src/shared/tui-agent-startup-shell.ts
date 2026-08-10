@@ -38,10 +38,6 @@ function tokenizeWindowsStartupCommand(
           quote = null
         }
       } else {
-        // Why: cmd.exe has no single-quote syntax, so an operator between
-        // single quotes is still shell-active even though this tokenizer
-        // groups it; the flag must reflect what cmd's parser sees.
-        bareShellSyntax ||= shell === 'cmd' && quote === "'" && ';&|<>'.includes(char)
         token += char
       }
       tokenStarted = true
@@ -49,6 +45,10 @@ function tokenizeWindowsStartupCommand(
     }
     if (char === "'" || char === '"') {
       quote = char
+      // Why: cmd.exe has no single-quote syntax, so this tokenizer's grouping
+      // of a single-quoted region diverges from what cmd actually parses;
+      // flag the token so consumers treat it as unmodelable.
+      bareShellSyntax ||= shell === 'cmd' && char === "'"
       if (!tokenStarted) {
         tokenStart = index
       }

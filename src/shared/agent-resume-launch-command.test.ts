@@ -246,6 +246,17 @@ describe('buildClaudeResumeLaunchCommand', () => {
     )
   })
 
+  it('fails open on cmd single-quoted literals that merely look like selectors', () => {
+    // cmd passes the quotes through, so these are junk positionals for
+    // claude, not real selectors or terminators.
+    expect(buildClaudeResumeLaunchCommand("claude '--resume' old", RESUME, 'cmd')).toBe(
+      `claude '--resume' old "--resume" "${SESSION_ID}"`
+    )
+    expect(buildClaudeResumeLaunchCommand("claude '--' --resume old", RESUME, 'cmd')).toBe(
+      `claude '--' --resume old "--resume" "${SESSION_ID}"`
+    )
+  })
+
   it('still strips next to a caret-escaped literal ampersand on cmd', () => {
     // ^& is an inactive, literal & in cmd, so the guard may keep working.
     expect(buildClaudeResumeLaunchCommand('claude --resume old ^&', RESUME, 'cmd')).toBe(
