@@ -5355,7 +5355,7 @@ const WorktreeList = React.memo(function WorktreeList({
   // Why a ref alongside the memo: telemetry effects need the last attention map without re-reading store state.
   const lastAttentionByWorktreeRef = useRef<Map<string, WorktreeAttention> | null>(null)
 
-  const sortedIds = useMemo(() => {
+  const recomputedSortedIds = useMemo(() => {
     const state = useAppStore.getState()
     const nonArchivedWorktrees = getAllWorktreesFromState(state).filter(
       (worktree) => !worktree.isArchived
@@ -5403,6 +5403,8 @@ const WorktreeList = React.memo(function WorktreeList({
     // debouncedSortEpoch is an intentional trigger not read in the memo; its change (debounced) signals a recompute.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSortEpoch, repoMap, sortBy])
+  // Why: stable ID order prevents rank-only refreshes from echoing an unchanged snapshot.
+  const sortedIds = useReusedArrayIdentity(recomputedSortedIds)
 
   // Why a ref of prior class: fire class_1_promotion only on transitions into Class 1, not every recompute that stays there.
   const prevClassByWorktreeIdRef = useRef<Map<string, SmartClass>>(new Map())

@@ -10,6 +10,7 @@ import {
   normalizeTerminalTitle
 } from '../../shared/agent-detection'
 import { extractOscTitleScanTail } from '../../shared/osc-title-scan-tail'
+import { planWorktreeSortOrderUpdates } from '../../shared/worktree-sort-order-update'
 import { isArtifactSharingEnabled } from '../../shared/artifact-sharing-gate'
 import { sortDirEntries } from '../../shared/file-name-sort'
 import { isServerDriveListRequest, listWindowsDrives } from './windows-drive-listing'
@@ -23566,21 +23567,29 @@ export class OrcaRuntimeService {
     if (!this.store) {
       throw new Error('runtime_unavailable')
     }
-    const now = Date.now()
-    let updated = 0
-    for (let i = 0; i < orderedIds.length; i++) {
-      // Why: a sort-order snapshot must only reorder existing worktrees, never
-      // mint new meta — a stale id would otherwise resurrect an orphan workspace
-      // (setWorktreeMeta has no repo-existence check).
-      if (!this.store.getWorktreeMeta(orderedIds[i])) {
-        continue
-      }
-      this.store.setWorktreeMeta(orderedIds[i], { sortOrder: now - i * 1000 })
-      updated++
+    const store = this.store
+    const updates = planWorktreeSortOrderUpdates(
+      orderedIds,
+      (worktreeId) => store.getWorktreeMeta(worktreeId),
+      Date.now()
+    )
+    for (const update of updates) {
+      store.setWorktreeMeta(update.worktreeId, { sortOrder: update.sortOrder })
+    }
+    if (updates.length === 0) {
+      return { updated: 0 }
     }
     this.invalidateResolvedWorktreeCache()
-    this.notifyReposChanged()
-    return { updated }
+    const changedRepoIds = new Set(
+      updates.flatMap((update) => {
+        const parsed = splitWorktreeId(update.worktreeId)
+        return parsed ? [parsed.repoId] : []
+      })
+    )
+    for (const repoId of changedRepoIds) {
+      this.notifyWorktreesChanged(repoId)
+    }
+    return { updated: updates.length }
   }
 
   async resolveManagedPrBase(args: {
