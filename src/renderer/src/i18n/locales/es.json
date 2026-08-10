@@ -64,7 +64,9 @@
     "openWorktreePalette": "Abrir paleta de worktrees",
     "window": "Ventana",
     "help": "Ayuda",
-    "paste": "Pegar"
+    "paste": "Pegar",
+    "copy": "Copiar",
+    "selectAll": "Seleccionar todo"
   },
   "tray": {
     "openOrca": "Abrir Orca",
@@ -344,6 +346,7 @@
           "fc80296033": "Devin",
           "da41abbdd4": "Ante",
           "060d152fb5": "Trae",
+          "d443a47995": "Prime Agent",
           "mimo_code_label": "MiMo Code"
         },
         "skill": {
@@ -1982,8 +1985,6 @@
         "556e7232ca": "Actual",
         "684e8d7bc2": "Recopilando tus worktrees recientes y pestañas abiertas.",
         "ff908adfe9": "Cargando objetivos de salto",
-        "1ebe225fee": "Busca worktrees, ajustes, pestañas y acciones...",
-        "4e4ff044d5": "Buscar worktrees, ajustes, pestañas y acciones",
         "4ee378034d": "Saltar a...",
         "f7fda8d562": "Crea un worktree o abre una pestaña en Orca para comenzar.",
         "1628fd7dfa": "No hay worktrees activos, ajustes, acciones ni pestañas abiertas",
@@ -2011,7 +2012,10 @@
         "projectsGroupsHeader": "Proyectos y grupos",
         "projectBadge": "Proyecto",
         "repoGroupBadge": "Grupo de repositorios",
-        "pluginCommandFailed": "No se pudo ejecutar el comando del plugin."
+        "pluginCommandFailed": "No se pudo ejecutar el comando del plugin.",
+        "27f10cca63": "Busca chats, terminales, worktrees, ajustes y acciones...",
+        "2770f02910": "Busca chats, terminales, worktrees, ajustes y acciones",
+        "recentChatsTerminalsHeader": "Chats y terminales recientes"
       },
       "github": {
         "pr": {
@@ -2715,6 +2719,7 @@
             "ec85df5914": "Comandos rápidos",
             "0a917b591a": "Pegar",
             "f3eeb1de13": "Copiar",
+            "selectAll": "Seleccionar todo",
             "c2f0b72b8d": "Insertar",
             "925f49f210": "Expandir panel",
             "df766809e0": "Contraer panel",
@@ -2987,7 +2992,12 @@
             "25dc1cd653": "Abrir archivo",
             "7cdf8ee0c8": "Abrir URL",
             "b27864279e": "Iniciar agente",
-            "39676a184c": "Abrir cualquier archivo, URL, agente, ..."
+            "0e5b7a3f16": "Buscar pestañas abiertas, archivos, URL y agentes…",
+            "8f0a1c4d92": "Cambiar a la pestaña",
+            "2c38630a01": "El espacio de trabajo ya no existe",
+            "4f0d9a71c2": "La pestaña ya no existe",
+            "d7d496a451": "La página del navegador ya no existe",
+            "7726ce9970": "La pestaña del emulador móvil ya no existe"
           },
           "TabBarQuickCommandsButton": {
             "a2c7a33831": "Comando",
@@ -3021,7 +3031,7 @@
                 "classifier": {
                   "42e6262ae9": "No hay acción disponible.",
                   "097a982ee0": "Cargando archivos...",
-                  "5a9c83c04b": "Abrir cualquier archivo, URL, agente, ...",
+                  "c41f8d20b7": "Buscar pestañas abiertas, archivos, URL y agentes…",
                   "90eb94dc48": "Introduce una URL http:// o https://.",
                   "5553b283ce": "Introduce una URL o ruta de archivo.",
                   "queryTooLarge": "El texto de búsqueda es demasiado grande.",
@@ -11170,7 +11180,9 @@
             "openSupportedWorkspace": "Abre un workspace antes de reanudar una sesión.",
             "localSessionSshWorkspaceUnsupported": "El historial de esta sesión solo existe en este equipo. Para reanudarla, abre un workspace local. Los workspaces SSH no tienen acceso a ese historial.",
             "sessionHostMismatchUnsupported": "Esta sesión pertenece a un host diferente. Abre un espacio de trabajo en el mismo host para reanudarla.",
-            "prepareSessionResumeFailed": "Could not prepare this session for resume."
+            "prepareSessionResumeFailed": "Could not prepare this session for resume.",
+            "sessionDeleted": "Sesión eliminada",
+            "sessionDeleteFailed": "No se pudo eliminar la sesión"
           },
           "AiVaultPanelControls": {
             "scanningSessions": "Buscando sesiones",
@@ -11302,7 +11314,17 @@
             "jumpToWorktree": "Saltar al worktree",
             "recoverableBadge": "No guardada",
             "subagentCountSingular": "1 subagente",
-            "subagentCountPlural": "{{value0}} subagentes"
+            "subagentCountPlural": "{{value0}} subagentes",
+            "delete": "Eliminar",
+            "deleteReasonNonLocalHost": "Solo se pueden eliminar las sesiones de este dispositivo.",
+            "deleteReasonSyntheticPath": "Esta sesión no se puede eliminar desde Orca.",
+            "deleteReasonUnsupportedAgent": "Las sesiones de {{value0}} no se pueden eliminar desde Orca.",
+            "deleteReasonSessionLive": "Esta sesión aún se está ejecutando: espera a que termine antes de eliminarla."
+          },
+          "AiVaultSessionDeleteDialog": {
+            "title": "¿Eliminar esta sesión?",
+            "description": "\"{{value0}}\" se eliminará. Una vez eliminada, tampoco podrá reanudarse desde la línea de comandos propia de {{value1}}.",
+            "confirm": "Eliminar"
           },
           "FileExplorerNameFilter": {
             "26fb73c6e3": "Buscar archivos",
