@@ -60,6 +60,56 @@ describe('plugin language pack loading', () => {
     expect(usePluginLanguagePackStore.getState().packs).toEqual([first, second])
   })
 
+  it.each([
+    ['Date', new Date(0)],
+    ['Map', new Map([['greeting', 'Hello']])]
+  ])('rejects a %s language-pack catalog at renderer ingress', async (_name, catalog) => {
+    const id = 'plugin:malformed' as const
+    vi.stubGlobal('window', {
+      api: {
+        plugins: {
+          listLanguagePacks: vi.fn().mockResolvedValue([
+            {
+              id,
+              resourceLanguage: pluginLanguageResourceId(id),
+              pluginKey: 'malformed',
+              locale: 'en',
+              catalog
+            }
+          ])
+        }
+      }
+    })
+
+    await usePluginLanguagePackStore.getState().fetchPacks()
+
+    expect(usePluginLanguagePackStore.getState().packs).toEqual([])
+  })
+
+  it('rejects a structured-cloned cyclic catalog before i18next resource installation', async () => {
+    const id = 'plugin:cyclic' as const
+    const catalog: Record<string, unknown> = { greeting: 'Hello' }
+    catalog.self = catalog
+    const response = structuredClone([
+      {
+        id,
+        resourceLanguage: pluginLanguageResourceId(id),
+        pluginKey: 'cyclic',
+        locale: 'en',
+        catalog
+      }
+    ])
+    vi.stubGlobal('window', {
+      api: { plugins: { listLanguagePacks: vi.fn().mockResolvedValue(response) } }
+    })
+
+    await usePluginLanguagePackStore.getState().fetchPacks()
+    const packs = usePluginLanguagePackStore.getState().packs
+
+    expect(() => setRendererPluginLanguagePacks(packs)).not.toThrow()
+    expect(packs).toEqual([])
+  })
+
   it('rejects an inconsistent resource language before i18next owns its cleanup', async () => {
     vi.stubGlobal('window', {
       api: {

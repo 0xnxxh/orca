@@ -590,6 +590,43 @@ describe('Store', () => {
     })
   })
 
+  it('loads a null persisted project container as empty', async () => {
+    writeDataFile({
+      ...getDefaultPersistedState(testState.dir),
+      projects: null
+    })
+
+    const store = await createStore()
+
+    expect(store.getProjects()).toEqual([])
+    store.flush()
+    expect((readDataFile() as PersistedState).projects).toEqual([])
+  })
+
+  it('drops malformed persisted project members before compatibility projection', async () => {
+    const first = makeProject({ id: 'folder-first', displayName: 'First' })
+    const second = makeProject({ id: 'folder-second', displayName: 'Second' })
+    const firstSetup = makeProjectHostSetup({
+      id: 'folder-first::local',
+      projectId: first.id,
+      path: 'C:\\workspace\\first'
+    })
+    const secondSetup = makeProjectHostSetup({
+      id: 'folder-second::local',
+      projectId: second.id,
+      path: 'C:\\workspace\\second'
+    })
+    writeDataFile({
+      ...getDefaultPersistedState(testState.dir),
+      projects: [null, first, 42, [], second, 'project'],
+      projectHostSetups: [firstSetup, secondSetup]
+    })
+
+    const store = await createStore()
+
+    expect(store.getProjects()).toEqual([first, second])
+  })
+
   it('updates and persists a project Windows runtime preference', async () => {
     const project = makeProject({
       id: 'project-1',

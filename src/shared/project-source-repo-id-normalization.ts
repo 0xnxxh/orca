@@ -1,24 +1,40 @@
 import type { Project } from './types'
 
-export function normalizePersistedProjectSourceRepoIds(projects: readonly Project[]): {
+function isProjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function normalizePersistedProjectSourceRepoIds(projects: unknown): {
   projects: Project[]
   changed: boolean
 } {
+  if (!Array.isArray(projects)) {
+    return { projects: [], changed: true }
+  }
+
   let changed = false
-  const normalizedProjects = projects.map((project) => {
+  const normalizedProjects: Project[] = []
+  for (const candidate of projects) {
+    if (!isProjectRecord(candidate)) {
+      changed = true
+      continue
+    }
+    const project = candidate as Project
+    const sourceRepoIds = candidate.sourceRepoIds
     if (
-      Array.isArray(project.sourceRepoIds) &&
-      project.sourceRepoIds.every((repoId) => typeof repoId === 'string')
+      Array.isArray(sourceRepoIds) &&
+      sourceRepoIds.every((repoId) => typeof repoId === 'string')
     ) {
-      return project
+      normalizedProjects.push(project)
+      continue
     }
     changed = true
-    return {
+    normalizedProjects.push({
       ...project,
-      sourceRepoIds: Array.isArray(project.sourceRepoIds)
-        ? project.sourceRepoIds.filter((repoId): repoId is string => typeof repoId === 'string')
+      sourceRepoIds: Array.isArray(sourceRepoIds)
+        ? sourceRepoIds.filter((repoId): repoId is string => typeof repoId === 'string')
         : []
-    }
-  })
+    })
+  }
   return { projects: normalizedProjects, changed }
 }

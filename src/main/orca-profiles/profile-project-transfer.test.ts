@@ -144,6 +144,43 @@ describe('profile project transfer', () => {
     )
   })
 
+  it('loads null and malformed project containers without inventing project rows', async () => {
+    const validProject = {
+      id: 'folder-project',
+      displayName: 'Folder Project',
+      badgeColor: '#737373',
+      sourceRepoIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const validSetup = {
+      id: 'folder-project::local',
+      projectId: 'folder-project',
+      hostId: 'local' as const,
+      repoId: '',
+      path: 'C:\\workspace\\folder-project',
+      displayName: 'Folder Project',
+      setupState: 'ready' as const,
+      setupMethod: 'imported-existing-folder' as const,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    writeProfileState('personal', makeState({ projects: null as never }))
+    writeProfileState(
+      'work',
+      makeState({
+        projects: [null, 42, [], validProject, 'project'] as never,
+        projectHostSetups: [validSetup]
+      })
+    )
+
+    const { readProfileState: readPersistedProfileState } =
+      await import('./profile-project-state-file')
+
+    expect(readPersistedProfileState('personal', testState.dir).projects).toEqual([])
+    expect(readPersistedProfileState('work', testState.dir).projects).toEqual([validProject])
+  })
+
   it('copies a project into another profile with a new repo id and re-keyed metadata', async () => {
     const sourceWorktreeId = 'repo-1::/workspace/orca-feature'
     writeProfileState(

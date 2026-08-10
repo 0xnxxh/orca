@@ -37,9 +37,7 @@ export function isPluginLanguagePackRegistration(
     pack.resourceLanguage === pluginLanguageResourceId(pack.id as `plugin:${string}`) &&
     typeof pack.pluginKey === 'string' &&
     typeof pack.locale === 'string' &&
-    typeof pack.catalog === 'object' &&
-    pack.catalog !== null &&
-    !Array.isArray(pack.catalog)
+    validatePluginLanguagePackCatalog(pack.catalog).ok
   )
 }
 
@@ -65,7 +63,12 @@ type CatalogFrame = {
 }
 
 function isCatalogObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  )
 }
 
 function protectedTranslation(path: string): boolean {
@@ -89,12 +92,17 @@ export function parsePluginLanguagePackArtifact(raw: string): PluginLanguagePack
   } catch {
     return { ok: false, error: 'language pack must contain one JSON object' }
   }
-  if (!isCatalogObject(json)) {
+  return validatePluginLanguagePackCatalog(json)
+}
+
+export function validatePluginLanguagePackCatalog(source: unknown): PluginLanguagePackParseResult {
+  if (!isCatalogObject(source)) {
     return { ok: false, error: 'language pack root must be an object' }
   }
 
   const catalog: Record<string, unknown> = {}
-  const stack: CatalogFrame[] = [{ source: json, target: catalog, path: '', depth: 0 }]
+  const stack: CatalogFrame[] = [{ source, target: catalog, path: '', depth: 0 }]
+  const seen = new WeakSet<object>([source])
   let entries = 0
   while (stack.length > 0) {
     const frame = stack.pop()!
@@ -136,6 +144,10 @@ export function parsePluginLanguagePackArtifact(raw: string): PluginLanguagePack
       if (!isCatalogObject(value)) {
         return { ok: false, error: `translation at ${path} must be a string or object` }
       }
+      if (seen.has(value)) {
+        return { ok: false, error: `catalog contains a repeated or cyclic object at ${path}` }
+      }
+      seen.add(value)
       const child: Record<string, unknown> = {}
       frame.target[key] = child
       stack.push({ source: value, target: child, path, depth: frame.depth + 1 })

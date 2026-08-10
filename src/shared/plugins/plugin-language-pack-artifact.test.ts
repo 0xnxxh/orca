@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   parsePluginLanguagePackArtifact,
   PLUGIN_LANGUAGE_CATALOG_MAX_DEPTH,
+  PLUGIN_LANGUAGE_CATALOG_MAX_ENTRIES,
+  validatePluginLanguagePackCatalog,
   pluginLanguageResourceId
 } from './plugin-language-pack-artifact'
 
@@ -161,6 +163,25 @@ describe('plugin language-pack artifacts', () => {
     expect(parsePluginLanguagePackArtifact(JSON.stringify(catalog))).toMatchObject({
       ok: false,
       error: expect.stringContaining('depth')
+    })
+  })
+
+  it('accepts the entry limit and rejects one additional entry', () => {
+    const catalog = Object.fromEntries(
+      Array.from({ length: PLUGIN_LANGUAGE_CATALOG_MAX_ENTRIES }, (_, index) => [
+        `key${index}`,
+        'value'
+      ])
+    )
+
+    expect(validatePluginLanguagePackCatalog(catalog)).toMatchObject({
+      ok: true,
+      entries: PLUGIN_LANGUAGE_CATALOG_MAX_ENTRIES
+    })
+    catalog.overflow = 'value'
+    expect(validatePluginLanguagePackCatalog(catalog)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining(`${PLUGIN_LANGUAGE_CATALOG_MAX_ENTRIES} entries`)
     })
   })
 })
