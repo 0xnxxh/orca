@@ -289,6 +289,30 @@ describe('scanCursorSidecars', () => {
     )
   })
 
+  it('isolates invalid UTF-8 metadata without rejecting other sidecars', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    const bucket = 'abababababababababababababababab'
+    const validContent = JSON.stringify({ createdAtMs: 10, title: 'valid' })
+    await Promise.all([
+      addSession(chatsRoot, bucket, 'aaa-invalid'),
+      addSession(chatsRoot, bucket, 'zzz-valid', validContent)
+    ])
+    const invalidPath = join(chatsRoot, bucket, 'aaa-invalid', 'meta.json')
+    await writeFile(invalidPath, Buffer.alloc(100_000, 0x80))
+
+    const result = await scanCursorSidecars(
+      defaultCursorSidecarScanRequest(chatsRoot, [], process.platform),
+      context
+    )
+
+    expect(result.sidecars.map((sidecar) => sidecar.sessionId)).toEqual(['zzz-valid'])
+    expect(result.counters.returnedBytes).toBe(Buffer.byteLength(validContent))
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ path: invalidPath, message: 'invalid_utf8' })
+    )
+  })
+
   it('normalizes scope truncation deterministically inside the owning-host scan', async () => {
     const root = await createRoot()
     const chatsRoot = join(root, 'chats')
