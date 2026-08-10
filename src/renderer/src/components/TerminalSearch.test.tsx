@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import type { SearchAddon } from '@xterm/addon-search'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { matchSearchNavigate, type SearchState } from '@/components/terminal-pane/keyboard-handlers'
+import type { SearchState } from '@/components/terminal-pane/keyboard-handlers'
 import TerminalSearch from './TerminalSearch'
 
 vi.mock('@/i18n/i18n', () => ({
@@ -78,37 +78,51 @@ describe('TerminalSearch debounce', () => {
 
   it('updates shortcut search state on every input change before the debounce', () => {
     const addon = createSearchAddon()
-    const searchStateRef = {
+    const searchStateRef: React.RefObject<SearchState> = {
       current: { query: '', caseSensitive: false, regex: false }
     }
     const view = renderSearch(addon, searchStateRef)
     const input = view.getByPlaceholderText('Search...')
 
     fireEvent.change(input, { target: { value: 'n' } })
-    expect(searchStateRef.current).toEqual({ query: 'n', caseSensitive: false, regex: false })
+    expect(searchStateRef.current).toEqual(
+      expect.objectContaining({ query: 'n', caseSensitive: false, regex: false })
+    )
     fireEvent.change(input, { target: { value: 'needle' } })
-    expect(searchStateRef.current).toEqual({ query: 'needle', caseSensitive: false, regex: false })
+    expect(searchStateRef.current).toEqual(
+      expect.objectContaining({ query: 'needle', caseSensitive: false, regex: false })
+    )
+    expect(searchStateRef.current.flushPendingSearch).toEqual(expect.any(Function))
   })
 
   it.each([
-    ['macOS', true, { metaKey: true, ctrlKey: false }],
-    ['Linux/Windows', false, { metaKey: false, ctrlKey: true }]
-  ])('exposes the pending query to %s search navigation', (_platform, isMac, modifiers) => {
+    ['Previous match', 'previous'],
+    ['Next match', 'next']
+  ])('flushes before the %s button navigates', (buttonTitle, direction) => {
     const addon = createSearchAddon()
-    const searchStateRef = {
-      current: { query: '', caseSensitive: false, regex: false }
-    }
-    const view = renderSearch(addon, searchStateRef)
+    const view = renderSearch(addon)
+    clearAddonMocks(addon)
     fireEvent.change(view.getByPlaceholderText('Search...'), { target: { value: 'needle' } })
+    fireEvent.click(view.getByTitle(buttonTitle))
 
-    expect(
-      matchSearchNavigate(
-        { key: 'g', shiftKey: false, altKey: false, ...modifiers },
-        isMac,
-        true,
-        searchStateRef.current
-      )
-    ).toBe('next')
+    expect(addon.findNext).toHaveBeenNthCalledWith(
+      1,
+      'needle',
+      expect.objectContaining({ incremental: true })
+    )
+    const navigation = direction === 'next' ? addon.findNext : addon.findPrevious
+    expect(navigation).toHaveBeenCalledWith(
+      'needle',
+      expect.objectContaining({ incremental: false })
+    )
+    const navigationCallIndex = direction === 'next' ? 1 : 0
+    expect(vi.mocked(addon.findNext).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(navigation).mock.invocationCallOrder[navigationCallIndex]
+    )
+    const findNextCalls = vi.mocked(addon.findNext).mock.calls.length
+
+    advanceSearchDebounce()
+    expect(addon.findNext).toHaveBeenCalledTimes(findNextCalls)
   })
 
   it('flushes an armed search on Enter and does not rerun its timer', () => {

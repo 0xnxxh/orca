@@ -111,6 +111,16 @@ export default function TerminalSearch({
     }
   }, [cancelPendingSearch])
 
+  const navigateNext = useCallback((): void => {
+    flushPendingSearch()
+    findNext()
+  }, [findNext, flushPendingSearch])
+
+  const navigatePrevious = useCallback((): void => {
+    flushPendingSearch()
+    findPrevious()
+  }, [findPrevious, flushPendingSearch])
+
   useEffect(
     () => () => {
       cancelPendingSearch()
@@ -122,7 +132,12 @@ export default function TerminalSearch({
   useEffect(() => {
     // Keep the ref in sync so the keyboard handler (Cmd+G / Cmd+Shift+G)
     // can read the current search state without lifting it to parent state.
-    searchStateRef.current = { query: requestQuery ?? '', caseSensitive, regex }
+    searchStateRef.current = {
+      query: requestQuery ?? '',
+      caseSensitive,
+      regex,
+      flushPendingSearch
+    }
 
     cancelPendingSearch()
     if (!isOpen) {
@@ -158,7 +173,8 @@ export default function TerminalSearch({
     regex,
     searchStateRef,
     searchOptions,
-    cancelPendingSearch
+    cancelPendingSearch,
+    flushPendingSearch
   ])
 
   const handleKeyDown = useCallback(
@@ -168,14 +184,12 @@ export default function TerminalSearch({
       if (e.key === 'Escape') {
         onClose()
       } else if (e.key === 'Enter' && e.shiftKey) {
-        flushPendingSearch()
-        findPrevious()
+        navigatePrevious()
       } else if (e.key === 'Enter') {
-        flushPendingSearch()
-        findNext()
+        navigateNext()
       }
     },
-    [onClose, findNext, findPrevious, flushPendingSearch]
+    [onClose, navigateNext, navigatePrevious]
   )
 
   const handleQueryChange = useCallback(
@@ -183,11 +197,12 @@ export default function TerminalSearch({
       searchStateRef.current = {
         query: getFindRequestQuery(nextQuery) ?? '',
         caseSensitive,
-        regex
+        regex,
+        flushPendingSearch
       }
       setQuery(nextQuery)
     },
-    [caseSensitive, regex, searchStateRef]
+    [caseSensitive, regex, searchStateRef, flushPendingSearch]
   )
 
   if (!isOpen) {
@@ -242,7 +257,7 @@ export default function TerminalSearch({
         type="button"
         variant="ghost"
         size="icon-xs"
-        onClick={findPrevious}
+        onClick={navigatePrevious}
         className="flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:text-zinc-200"
         title={translate('auto.components.TerminalSearch.0f3066256e', 'Previous match')}
       >
@@ -253,7 +268,7 @@ export default function TerminalSearch({
         type="button"
         variant="ghost"
         size="icon-xs"
-        onClick={findNext}
+        onClick={navigateNext}
         className="flex size-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:text-zinc-200"
         title={translate('auto.components.TerminalSearch.7cb40c04eb', 'Next match')}
       >

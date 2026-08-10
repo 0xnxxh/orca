@@ -127,6 +127,7 @@ export type SearchState = {
   query: string
   caseSensitive: boolean
   regex: boolean
+  flushPendingSearch?: () => void
 }
 
 export type SearchNavigationDirection = 'next' | 'previous'
@@ -171,6 +172,8 @@ export function runTerminalSearchNavigation(
 ): boolean {
   const { query, caseSensitive, regex } = searchState
   const options = { caseSensitive, regex }
+
+  searchState.flushPendingSearch?.()
 
   // Why: Cmd/Ctrl+G hits the same xterm decoration path as the search panel,
   // so narrow-viewport highlight failures need the same containment.
