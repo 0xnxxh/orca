@@ -87,7 +87,7 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
     const pendingViewportRef = useRef<AgentMapViewport | null>(null)
     const interactionBoundsRef = useRef<DOMRect | null>(null)
     const hasShownProjectsRef = useRef(layout.projects.length > 0)
-    const { held, hold, release: releaseHold } = useAgentMapPointerHold()
+    const { held, hold, release: releaseHold, clearDrag } = useAgentMapPointerHold(dragRef)
     const clearInteractionBounds = useCallback(() => {
       interactionBoundsRef.current = null
     }, [])
@@ -317,7 +317,7 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
               'Nested project, workspace, and agent map'
             )}
             onPointerDown={(event) => {
-              if (event.button !== 0) {
+              if (event.button !== 0 || dragRef.current) {
                 return
               }
               if (
@@ -360,16 +360,15 @@ export const AgentMapCanvas = forwardRef<AgentMapCanvasHandle, AgentMapCanvasPro
               })
             }}
             onPointerUp={(event) => {
-              if (dragRef.current?.pointerId === event.pointerId) {
-                dragRef.current = null
+              if (clearDrag(event.pointerId)) {
                 event.currentTarget.releasePointerCapture(event.pointerId)
               }
             }}
             onPointerCancel={(event) => {
-              if (dragRef.current?.pointerId === event.pointerId) {
-                dragRef.current = null
-                releaseHold()
-              }
+              clearDrag(event.pointerId)
+            }}
+            onLostPointerCapture={(event) => {
+              clearDrag(event.pointerId)
             }}
             onPointerLeave={() => {
               if (!dragRef.current) {

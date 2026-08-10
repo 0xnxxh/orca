@@ -8,9 +8,9 @@ const css = readFileSync(
 )
 
 const PROJECT_SCALE =
-  /:where\(\.agent-map-project-node:hover,\s*\.agent-map-project-node\.is-held\)\s*\.agent-map-project-ring\s*\{([^}]*)\}/
+  /:where\(\s*\.agent-map-project-node:hover,\s*\.agent-map-project-node:focus-within,\s*\.agent-map-project-node\.is-held\s*\)\s*\.agent-map-project-ring\s*\{([^}]*)\}/
 const WORKTREE_SCALE =
-  /:where\(\.agent-map-worktree-group:hover,\s*\.agent-map-worktree-group\.is-held\)\s*\.agent-map-worktree-ring\s*\{([^}]*)\}/
+  /:where\(\s*\.agent-map-worktree-group:hover,\s*\.agent-map-worktree-group:focus-within,\s*\.agent-map-worktree-group\.is-held\s*\)\s*\.agent-map-worktree-ring\s*\{([^}]*)\}/
 
 /** A ring that only reacts to :hover on itself pulses shut whenever the pointer
  *  crosses onto something drawn inside it, and again when a pan drag takes
@@ -31,6 +31,11 @@ describe('Agent Map hover containment', () => {
     for (const state of ['.is-open', '.is-selected', '.is-working', '.is-blocked']) {
       expect(css.indexOf(`.agent-map-worktree-ring${state}`)).toBeGreaterThan(hoverAt)
     }
+  })
+
+  it('expands containing rings for keyboard focus as well as pointer hover', () => {
+    expect(css.match(PROJECT_SCALE)?.[0]).toContain('.agent-map-project-node:focus-within')
+    expect(css.match(WORKTREE_SCALE)?.[0]).toContain('.agent-map-worktree-group:focus-within')
   })
 
   it('drops both hover triggers under reduced motion', () => {

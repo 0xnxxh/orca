@@ -58,12 +58,7 @@ describe('AgentMap ring hover', () => {
     fireEvent.pointerMove(svg, { pointerId: 1, clientX: 40, clientY: 24 })
     expect(projectRing).toHaveClass('is-held')
 
-    // Hover only resumes on the first move after release, when the browser
-    // recomputes :hover in that same event — so neither reads off in between.
     fireEvent.pointerUp(svg, { pointerId: 1 })
-    expect(projectRing).toHaveClass('is-held')
-
-    fireEvent.pointerMove(svg, { pointerId: 1, clientX: 41, clientY: 25 })
     expect(projectRing).not.toHaveClass('is-held')
     expect(worktreeGroup).not.toHaveClass('is-held')
   })
@@ -90,5 +85,40 @@ describe('AgentMap ring hover', () => {
     fireEvent.pointerCancel(svg, { pointerId: 1 })
 
     expect(projectRing).not.toHaveClass('is-held')
+  })
+
+  it('drops the held rings and drag when pointer capture is lost', () => {
+    const { container } = renderMap([card()])
+    const svg = container.querySelector('svg')!
+    const projectRing = container.querySelector('[data-agent-map-project-id]')!
+
+    fireEvent.pointerDown(projectRing, { button: 0, pointerId: 1 })
+    fireEvent.lostPointerCapture(svg, { pointerId: 1 })
+
+    expect(projectRing).not.toHaveClass('is-held')
+  })
+
+  it('keeps a focused workspace label visible after its pointer leaves', () => {
+    const { container } = renderMap([card()])
+    const group = container.querySelector('.agent-map-worktree-group')!
+    const ring = container.querySelector<SVGCircleElement>('.agent-map-worktree-ring')!
+
+    ring.focus()
+    fireEvent.pointerOver(group)
+    fireEvent.pointerOut(group)
+
+    expect(container.querySelector('[data-agent-map-hover-label]')).toBeInTheDocument()
+  })
+
+  it('keeps a hovered workspace label visible after its focus leaves', () => {
+    const { container } = renderMap([card()])
+    const group = container.querySelector('.agent-map-worktree-group')!
+    const ring = container.querySelector<SVGCircleElement>('.agent-map-worktree-ring')!
+
+    fireEvent.pointerOver(group)
+    ring.focus()
+    ring.blur()
+
+    expect(container.querySelector('[data-agent-map-hover-label]')).toBeInTheDocument()
   })
 })

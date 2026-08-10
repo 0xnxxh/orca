@@ -31,12 +31,13 @@
   vector-effect: non-scaling-stroke;
 }
 
-/* Hover the containing group, not the ring itself: the ring is a sibling of the
- * contents drawn inside it, so element-level :hover drops the moment the pointer
- * crosses onto a child and the ring pulses open/closed. `.is-held` covers the pan
- * drag, where pointer capture retargets :hover to the <svg>. `:where()` keeps the
- * original specificity so the state rules below still win the same properties. */
-:where(.agent-map-project-node:hover, .agent-map-project-node.is-held) .agent-map-project-ring {
+/* Group hover includes nested contents; held state bridges pointer capture. */
+:where(
+    .agent-map-project-node:hover,
+    .agent-map-project-node:focus-within,
+    .agent-map-project-node.is-held
+  )
+  .agent-map-project-ring {
   fill: color-mix(in srgb, var(--card) 42%, transparent);
   stroke: var(--ring);
   transform: scale(1.018);
@@ -159,7 +160,11 @@
   stroke: color-mix(in srgb, var(--color-yellow-500) 28%, transparent);
 }
 
-:where(.agent-map-worktree-group:hover, .agent-map-worktree-group.is-held)
+:where(
+    .agent-map-worktree-group:hover,
+    .agent-map-worktree-group:focus-within,
+    .agent-map-worktree-group.is-held
+  )
   .agent-map-worktree-ring {
   fill: color-mix(in srgb, var(--card) 72%, transparent);
   stroke: var(--ring);
@@ -491,8 +496,17 @@
     transition: none;
   }
 
-  :where(.agent-map-project-node:hover, .agent-map-project-node.is-held) .agent-map-project-ring,
-  :where(.agent-map-worktree-group:hover, .agent-map-worktree-group.is-held)
+  :where(
+      .agent-map-project-node:hover,
+      .agent-map-project-node:focus-within,
+      .agent-map-project-node.is-held
+    )
+    .agent-map-project-ring,
+  :where(
+      .agent-map-worktree-group:hover,
+      .agent-map-worktree-group:focus-within,
+      .agent-map-worktree-group.is-held
+    )
     .agent-map-worktree-ring,
   .agent-map-agent-node:hover .agent-map-agent-visual,
   .agent-map-agent-node:focus-visible .agent-map-agent-visual {

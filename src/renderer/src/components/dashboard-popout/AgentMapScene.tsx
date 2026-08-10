@@ -80,11 +80,15 @@ export const AgentMapScene = memo(function AgentMapScene({
   onAgentKeyDown
 }: AgentMapSceneProps): React.JSX.Element {
   const [hoveredWorktreeId, setHoveredWorktreeId] = useState<string | null>(null)
-  // A pan that starts inside a workspace keeps that workspace's name up: pointer
-  // capture fires a spurious leave the moment the drag begins.
-  const activeWorktreeId = heldWorktreeId ?? hoveredWorktreeId
-  const handleLabelActiveChange = useCallback((worktreeId: string, active: boolean): void => {
+  const [focusedWorktreeId, setFocusedWorktreeId] = useState<string | null>(null)
+  const activeWorktreeId = heldWorktreeId ?? hoveredWorktreeId ?? focusedWorktreeId
+  const handleLabelHoverChange = useCallback((worktreeId: string, active: boolean): void => {
     setHoveredWorktreeId((current) =>
+      active ? worktreeId : current === worktreeId ? null : current
+    )
+  }, [])
+  const handleLabelFocusChange = useCallback((worktreeId: string, active: boolean): void => {
+    setFocusedWorktreeId((current) =>
       active ? worktreeId : current === worktreeId ? null : current
     )
   }, [])
@@ -211,7 +215,8 @@ export const AgentMapScene = memo(function AgentMapScene({
                 onSelectAgent={onSelectAgent}
                 onSpawnAgent={onSpawnAgent}
                 onOpenWorkspaceContextMenu={onOpenWorkspaceContextMenu}
-                onLabelActiveChange={handleLabelActiveChange}
+                onLabelHoverChange={handleLabelHoverChange}
+                onLabelFocusChange={handleLabelFocusChange}
                 onAgentKeyDown={onAgentKeyDown}
               />
             ))}
