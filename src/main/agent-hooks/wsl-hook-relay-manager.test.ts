@@ -348,6 +348,31 @@ describe('WslHookRelayManager', () => {
     manager.disposeAll()
   })
 
+  it.each([
+    ['guest install', startupError(42)],
+    ['transient retry', startupError(1, 'Catastrophic failure (E_UNEXPECTED)')]
+  ])('does not continue %s after teardown during its liveness probe', async (_label, failure) => {
+    let resolveRunning!: (running: boolean) => void
+    const isDistroRunning = vi
+      .fn<() => Promise<boolean>>()
+      .mockImplementationOnce(() => new Promise<boolean>((resolve) => (resolveRunning = resolve)))
+      .mockResolvedValue(false)
+    const waitForSentinel = vi
+      .fn()
+      .mockRejectedValueOnce(failure)
+      .mockImplementationOnce(async () => guestTransport())
+    const { manager, deps } = createManager({ isDistroRunning, waitForSentinel })
+
+    const attempt = manager.ensureRunningDistroForStartup('Ubuntu')
+    await vi.waitFor(() => expect(isDistroRunning).toHaveBeenCalledOnce())
+    manager.disposeAll()
+    resolveRunning(true)
+    await attempt
+
+    expect(deps.spawnRelay).toHaveBeenCalledTimes(1)
+    expect(deps.runInstall).not.toHaveBeenCalled()
+  })
+
   it('lets a concurrent reattach retry after startup drops a stopped attempt', async () => {
     let rejectStartup!: (error: Error) => void
     const waitForSentinel = vi

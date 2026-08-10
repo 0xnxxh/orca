@@ -3,7 +3,7 @@ import { wslHookRelayManager } from './wsl-hook-relay-manager'
 
 type ReattachResult = Pick<PtySpawnResult, 'isReattach' | 'wslDistro'>
 
-export const WSL_HOOK_RELAY_REATTACH_FAIL_OPEN_MS = 60_000
+export const WSL_HOOK_RELAY_REATTACH_FAIL_OPEN_MS = 2_000
 
 export async function ensureWslHookRelayForReattach(
   result: ReattachResult,

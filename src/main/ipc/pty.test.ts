@@ -266,6 +266,7 @@ import {
 import { resolveWindowsShellLaunchArgs } from '../providers/windows-shell-args'
 import { _resetWslCachesForTests, _setWslCachesForTests } from '../wsl'
 import { wslHookRelayManager } from '../agent-hooks/wsl-hook-relay-manager'
+import { WSL_HOOK_RELAY_REATTACH_FAIL_OPEN_MS } from '../agent-hooks/wsl-hook-relay-reattach'
 import { acquireWatcherRemovalGate } from './watcher-removal-gate'
 import { __resetShellStartupEnvCache } from '../pty/shell-startup-env'
 import {
@@ -1251,6 +1252,64 @@ describe('registerPtyHandlers', () => {
       }
     }
   )
+
+  it('rejects a materialized WSL adoption that exits during relay readiness', async () => {
+    const ptyId = 'pty-materialized-relay-exit'
+    const incarnationId = 'incarnation-materialized-relay-exit'
+    const worktreeId = 'repo::/tmp/materialized-relay-exit'
+    const tabId = 'tab-materialized-relay-exit'
+    const leafId = '77777777-7777-4777-8777-777777777777'
+    const runtime = new OrcaRuntimeService()
+    let releaseRelay!: () => void
+    const ensureForDistro = vi
+      .spyOn(wslHookRelayManager, 'ensureForDistroReady')
+      .mockImplementation(() => new Promise<void>((resolve) => (releaseRelay = resolve)))
+    registerPtyHandlers(mainWindow as never, runtime)
+    const controller = (
+      runtime as unknown as {
+        ptyController: { spawn(args: Record<string, unknown>): Promise<unknown> }
+      }
+    ).ptyController
+
+    runtime.onPtySpawned(ptyId, incarnationId)
+    runtime.registerPty(ptyId, worktreeId, null, { tabId, leafId, incarnationId })
+
+    try {
+      const spawn = controller.spawn({
+        cols: 80,
+        rows: 24,
+        cwd: '/tmp/materialized-relay-exit',
+        worktreeId,
+        tabId,
+        leafId,
+        preAllocatedHandle: 'term-materialized-relay-exit',
+        adoptedStablePane: {
+          result: {
+            id: ptyId,
+            incarnationId,
+            isReattach: true,
+            wslDistro: 'Ubuntu-24.04'
+          },
+          owner: {
+            handle: 'term-materialized-relay-exit',
+            tabId,
+            leafId,
+            ptyId,
+            incarnationId
+          },
+          materialized: true
+        }
+      })
+      const rejectedSpawn = expect(spawn).rejects.toThrow('agent_session_exited_during_start')
+      await vi.waitFor(() => expect(ensureForDistro).toHaveBeenCalledWith('Ubuntu-24.04'))
+      runtime.onPtyExit(ptyId, 0, incarnationId)
+      releaseRelay()
+      await rejectedSpawn
+    } finally {
+      ensureForDistro.mockRestore()
+      clearProviderPtyState(ptyId)
+    }
+  })
 
   it('adopts a live controller-owned local fallback when listings cannot serialize claims', async () => {
     const sessions: {
@@ -9169,9 +9228,16 @@ describe('registerPtyHandlers', () => {
       const tabId = 'tab-live-owner'
       const leafId = '66666666-6666-4666-8666-666666666666'
       const paneKey = makePaneKey(tabId, leafId)
+      let relayAttempt = 0
+      let releaseMaterializedRelay!: () => void
       const ensureForDistro = vi
         .spyOn(wslHookRelayManager, 'ensureForDistroReady')
-        .mockResolvedValue(undefined)
+        .mockImplementation(() => {
+          relayAttempt++
+          return relayAttempt === 3
+            ? new Promise<void>((resolve) => (releaseMaterializedRelay = resolve))
+            : Promise.resolve()
+        })
       let ownerPublished = false
       let releaseAttach!: () => void
       let attachBarrier: Promise<void>
@@ -9367,28 +9433,38 @@ describe('registerPtyHandlers', () => {
       const adoptedOwner = await pendingRuntimeAdoption
       expect(adoptedOwner).toMatchObject({ materialized: true })
 
-      const claimedResultPromise = spawnController.spawn({
-        cols: 120,
-        rows: 40,
-        cwd,
-        command: 'codex resume should-not-run',
-        launchAgent: 'codex',
-        worktreeId,
-        preAllocatedHandle: 'term-live-owner',
-        tabId,
-        leafId,
-        env: { ORCA_PANE_KEY: paneKey },
-        persistHostSessionBinding: true,
-        adoptedStablePane: adoptedOwner,
-        agentSessionEnsure: {
-          claim: {
-            ...recoveredAgentClaim,
-            identityDigest: 'ccccccccccccccccccccccccccccccccccccccccccc'
+      let materializedSpawnReady = false
+      const claimedResultPromise = spawnController
+        .spawn({
+          cols: 120,
+          rows: 40,
+          cwd,
+          command: 'codex resume should-not-run',
+          launchAgent: 'codex',
+          worktreeId,
+          preAllocatedHandle: 'term-live-owner',
+          tabId,
+          leafId,
+          env: { ORCA_PANE_KEY: paneKey },
+          persistHostSessionBinding: true,
+          adoptedStablePane: adoptedOwner,
+          agentSessionEnsure: {
+            claim: {
+              ...recoveredAgentClaim,
+              identityDigest: 'ccccccccccccccccccccccccccccccccccccccccccc'
+            },
+            surface: { worktreeId, tabId, leafId, terminalHandle: 'term-live-owner' }
           },
-          surface: { worktreeId, tabId, leafId, terminalHandle: 'term-live-owner' }
-        },
-        agentSessionCreateOperationId: 'create-op-must-not-run'
-      })
+          agentSessionCreateOperationId: 'create-op-must-not-run'
+        })
+        .then((result) => {
+          materializedSpawnReady = true
+          return result
+        })
+      await vi.waitFor(() => expect(ensureForDistro).toHaveBeenCalledTimes(3))
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(materializedSpawnReady).toBe(false)
+      releaseMaterializedRelay()
       const [rendererFirstResult, claimedResult] = await Promise.all([
         rendererFirstMount,
         claimedResultPromise
@@ -9416,7 +9492,7 @@ describe('registerPtyHandlers', () => {
       expect(
         mainWindow.webContents.send.mock.calls.filter(([channel]) => channel === 'pty:spawned')
       ).toHaveLength(1)
-      expect(ensureForDistro).toHaveBeenCalledTimes(2)
+      expect(ensureForDistro).toHaveBeenCalledTimes(3)
       ensureForDistro.mockRestore()
     }
   )
@@ -17604,6 +17680,67 @@ describe('registerPtyHandlers', () => {
       expect(ensureForDistro).toHaveBeenCalledWith('Ubuntu-24.04')
     } finally {
       ensureForDistro.mockRestore()
+    }
+  })
+
+  it('publishes a WSL reattach within the optional relay readiness budget', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let releaseRelay!: () => void
+    let relayCompleted = false
+    const ensureForDistro = vi
+      .spyOn(wslHookRelayManager, 'ensureForDistroReady')
+      .mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseRelay = () => {
+              relayCompleted = true
+              resolve()
+            }
+          })
+      )
+    setLocalPtyProvider({
+      spawn: vi.fn(async () => ({ id: 'pty-wsl-budget', isReattach: true, wslDistro: 'Ubuntu' })),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      shutdown: vi.fn(),
+      onData: vi.fn(() => vi.fn()),
+      onExit: vi.fn(() => vi.fn()),
+      listProcesses: vi.fn(async () => []),
+      getForegroundProcess: vi.fn(async () => null)
+    } as never)
+    registerPtyHandlers(mainWindow as never)
+
+    try {
+      let spawnReady = false
+      const spawn = (
+        handlers.get('pty:spawn')!(null, {
+          cols: 80,
+          rows: 24,
+          sessionId: 'pty-wsl-budget'
+        }) as Promise<unknown>
+      ).then(() => {
+        spawnReady = true
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(ensureForDistro).toHaveBeenCalledWith('Ubuntu')
+      await vi.advanceTimersByTimeAsync(WSL_HOOK_RELAY_REATTACH_FAIL_OPEN_MS - 1)
+      expect(spawnReady).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await spawn
+      expect(spawnReady).toBe(true)
+      expect(relayCompleted).toBe(false)
+
+      releaseRelay()
+      await Promise.resolve()
+      expect(relayCompleted).toBe(true)
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('timed out'))
+    } finally {
+      ensureForDistro.mockRestore()
+      warn.mockRestore()
+      vi.useRealTimers()
     }
   })
 

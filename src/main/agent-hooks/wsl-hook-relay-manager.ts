@@ -71,13 +71,13 @@ export class WslHookRelayManager {
   }
 
   /** Awaitable first attempt for startup and reattach ordering. */
-  async ensureForDistroReady(distro: string | null): Promise<void> {
-    await this.ensureForDistroReadyWhile(distro)
+  ensureForDistroReady(distro: string | null): Promise<void> {
+    return this.ensureForDistroReadyWhile(distro)
   }
 
   /** Startup retries must not resurrect a distro that stopped after inventory. */
-  async ensureRunningDistroForStartup(distro: string): Promise<void> {
-    await this.ensureForDistroReadyWhile(distro, () => this.deps.isDistroRunning(distro))
+  ensureRunningDistroForStartup(distro: string): Promise<void> {
+    return this.ensureForDistroReadyWhile(distro, () => this.deps.isDistroRunning(distro))
   }
 
   private async ensureForDistroReadyWhile(

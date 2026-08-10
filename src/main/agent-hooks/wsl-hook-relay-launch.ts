@@ -234,12 +234,7 @@ export type WslRelayLaunchIo = {
   transientRetryDelayMs: number
 }
 
-/** Spawn → sentinel → connect, with the guest-install/retry policy: stale or
- *  missing installs get exactly one streamed reinstall, wsl.exe's transient
- *  "Catastrophic failure (E_UNEXPECTED)" gets a bounded retry, a distro
- *  without node >= 18 reports through `onNoNode`. Terminal failures report
- *  through `onFailure`; non-startup errors propagate to the caller. */
-export async function launchWslRelayWithInstall(options: {
+type WslRelayLaunchOptions = {
   distro: string
   env: NodeJS.ProcessEnv
   bundleJsPath: string
@@ -252,7 +247,14 @@ export async function launchWslRelayWithInstall(options: {
   continueAfterFailure?: () => Promise<boolean>
   onContinuationBlocked: () => void
   connect: (transport: MultiplexerTransport, child: ChildProcessWithoutNullStreams) => Promise<void>
-}): Promise<void> {
+}
+
+/** Spawn → sentinel → connect, with the guest-install/retry policy: stale or
+ *  missing installs get exactly one streamed reinstall, wsl.exe's transient
+ *  "Catastrophic failure (E_UNEXPECTED)" gets a bounded retry, a distro
+ *  without node >= 18 reports through `onNoNode`. Terminal failures report
+ *  through `onFailure`; non-startup errors propagate to the caller. */
+export async function launchWslRelayWithInstall(options: WslRelayLaunchOptions): Promise<void> {
   const { distro, env, bundleJsPath, version, io } = options
   let installTried = false
   let transientRetries = 0
@@ -261,11 +263,7 @@ export async function launchWslRelayWithInstall(options: {
     if (options.isDisposed()) {
       return
     }
-    if (
-      continuationRequiresRunning &&
-      !(await canContinueRelayStartup(options.continueAfterFailure))
-    ) {
-      options.onContinuationBlocked()
+    if (continuationRequiresRunning && !(await canContinueRelayStartup(options))) {
       return
     }
     continuationRequiresRunning = false
@@ -299,8 +297,7 @@ export async function launchWslRelayWithInstall(options: {
         continue
       }
       if (!installTried) {
-        if (!(await canContinueRelayStartup(options.continueAfterFailure))) {
-          options.onContinuationBlocked()
+        if (!(await canContinueRelayStartup(options))) {
           return
         }
         installTried = true
@@ -321,17 +318,18 @@ export async function launchWslRelayWithInstall(options: {
   }
 }
 
-async function canContinueRelayStartup(
-  continueAfterFailure: (() => Promise<boolean>) | undefined
-): Promise<boolean> {
-  if (!continueAfterFailure) {
-    return true
-  }
+async function canContinueRelayStartup(options: WslRelayLaunchOptions): Promise<boolean> {
+  let canContinue = true
   try {
-    return await continueAfterFailure()
+    canContinue = (await options.continueAfterFailure?.()) ?? true
   } catch {
-    return false
+    canContinue = false
   }
+  const disposed = options.isDisposed()
+  if (!disposed && !canContinue) {
+    options.onContinuationBlocked()
+  }
+  return !disposed && canContinue
 }
 
 export function formatWslRelayFailure(failure: WslRelayStartupFailure): string {

@@ -4414,6 +4414,19 @@ export function registerPtyHandlers(
             leafId: preAdoptedStablePane.owner.leafId
           }
         }
+        if (!args.connectionId && result.wslDistro?.trim()) {
+          runtime?.beginPtyRegistration?.(result.id, result.incarnationId)
+          try {
+            await ensureWslHookRelayForReattach(
+              { isReattach: true, wslDistro: result.wslDistro },
+              args.connectionId
+            )
+            runtime?.assertPtyRegistrationAllowed?.(result.id, result.incarnationId)
+          } catch (error) {
+            runtime?.cancelPendingPtyRegistration?.(result.id, result.incarnationId)
+            throw error
+          }
+        }
         if (!args.connectionId) {
           options?.onCodexHomePtySpawned?.({
             id: result.id,
