@@ -217,27 +217,94 @@ describe('removeAllCookiesExcept', () => {
         cookie('other.test', 'tracker', '/scoped')
       ])
     const remove = vi.fn().mockResolvedValue(undefined)
+    const set = vi.fn().mockResolvedValue(undefined)
 
-    await removeAllCookiesExcept({ get, remove }, (c) => c.domain === '.google.com')
+    await removeAllCookiesExcept({ get, remove, set }, (c) => c.domain === '.google.com')
 
     expect(remove.mock.calls).toEqual([
       ['https://example.com/', 'session'],
       ['https://other.test/scoped', 'tracker']
     ])
+    expect(set).not.toHaveBeenCalled()
   })
 
-  it('aggregates removal failures after attempting every cookie', async () => {
+  it('restores every successfully removed cookie when another removal fails', async () => {
     const get = vi
       .fn()
-      .mockResolvedValue([cookie('.example.com', 'first'), cookie('.example.com', 'second')])
-    const remove = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('store unavailable'))
-      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue([
+        cookie('.example.com', 'first', '/one'),
+        cookie('.example.com', 'second', '/two'),
+        cookie('.example.com', 'third', '/three')
+      ])
+    const remove = vi.fn().mockImplementation(async (_url: string, name: string) => {
+      if (name === 'second') {
+        throw new Error('store unavailable')
+      }
+    })
+    const set = vi.fn().mockResolvedValue(undefined)
 
-    await expect(removeAllCookiesExcept({ get, remove }, () => false)).rejects.toThrow(
+    await expect(removeAllCookiesExcept({ get, remove, set }, () => false)).rejects.toThrow(
       'Could not clear existing cookies'
     )
-    expect(remove).toHaveBeenCalledTimes(2)
+    expect(remove).toHaveBeenCalledTimes(3)
+    expect(set.mock.calls.map(([details]) => details.name)).toEqual(['first', 'third'])
+  })
+
+  it('bounds parallel removals so large cookie jars do not clear serially or fan out', async () => {
+    const get = vi
+      .fn()
+      .mockResolvedValue(
+        Array.from({ length: 12 }, (_, index) => cookie('.example.com', `${index}`))
+      )
+    let releaseRemovals: (() => void) | undefined
+    const removalsReleased = new Promise<void>((resolve) => {
+      releaseRemovals = resolve
+    })
+    let active = 0
+    let maxActive = 0
+    const remove = vi.fn().mockImplementation(async () => {
+      active++
+      maxActive = Math.max(maxActive, active)
+      await removalsReleased
+      active--
+    })
+    const set = vi.fn().mockResolvedValue(undefined)
+
+    const clearing = removeAllCookiesExcept({ get, remove, set }, () => false)
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledTimes(8))
+    expect(maxActive).toBe(8)
+    releaseRemovals?.()
+    await clearing
+
+    expect(remove).toHaveBeenCalledTimes(12)
+    expect(set).not.toHaveBeenCalled()
+  })
+
+  it('serializes cookies that share Electron removal coordinates', async () => {
+    const get = vi
+      .fn()
+      .mockResolvedValue([
+        cookie('.example.com', 'session'),
+        { ...cookie('example.com', 'session'), hostOnly: true }
+      ])
+    let releaseFirst: (() => void) | undefined
+    const firstReleased = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const remove = vi
+      .fn()
+      .mockImplementationOnce(() => firstReleased)
+      .mockResolvedValueOnce(undefined)
+    const set = vi.fn().mockResolvedValue(undefined)
+
+    const clearing = removeAllCookiesExcept({ get, remove, set }, () => false)
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledOnce())
+    releaseFirst?.()
+    await clearing
+
+    expect(remove.mock.calls).toEqual([
+      ['https://example.com/', 'session'],
+      ['https://example.com/', 'session']
+    ])
   })
 })
