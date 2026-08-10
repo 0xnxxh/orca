@@ -9195,7 +9195,11 @@ export class OrcaRuntimeService {
       // Resolves folder workspaces as well as git worktrees, so a chat session
       // in a plain folder lands in the folder rather than failing to resolve.
       resolveWorkspacePath: async (workspaceId) =>
-        (await this.resolveRuntimeFileTarget(`id:${workspaceId}`)).worktree.path
+        (await this.resolveRuntimeFileTarget(`id:${workspaceId}`)).worktree.path,
+      resolveClaudeLaunchEnv: () => {
+        const settings = this.requireStore().getSettings()
+        return resolveTuiAgentLaunchEnv('claude', settings.agentDefaultEnv)
+      }
     })
   }
 

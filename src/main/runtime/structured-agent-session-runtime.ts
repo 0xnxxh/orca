@@ -42,6 +42,7 @@ export type StructuredAgentSessionRuntimeDeps = {
   resolveWorkspacePath: (workspaceId: string) => Promise<string>
   resolveCodexCommand?: () => string
   resolveClaudeCommand?: () => string
+  resolveClaudeLaunchEnv?: () => Record<string, string>
   /** Transport for the Codex child. Overridden only to drive the whole runtime
    *  against a scripted app-server; production spawns the real one. */
   openCodexConnection?: CodexStructuredSessionAdapterDeps['openConnection']
@@ -104,7 +105,8 @@ async function install(deps: StructuredAgentSessionRuntimeDeps): Promise<Install
     resolveLaunch: createClaudeStructuredLaunchResolver({
       store,
       resolveWorkspacePath: deps.resolveWorkspacePath,
-      ...(deps.resolveClaudeCommand ? { resolveCommand: deps.resolveClaudeCommand } : {})
+      ...(deps.resolveClaudeCommand ? { resolveCommand: deps.resolveClaudeCommand } : {}),
+      ...(deps.resolveClaudeLaunchEnv ? { resolveEnv: deps.resolveClaudeLaunchEnv } : {})
     }),
     ...(deps.openClaudeConnection ? { openConnection: deps.openClaudeConnection } : {}),
     persistHandle: async (observed) => {
