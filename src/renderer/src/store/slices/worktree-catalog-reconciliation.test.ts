@@ -59,8 +59,16 @@ describe('reuseEqualCatalogRows', () => {
       { id: 'repo::/same/path', hostId: 'ssh:a' },
       { id: 'repo::/same/path', hostId: 'ssh:b' }
     ]
-    const incoming = structuredClone(current)
+    const equivalent = structuredClone(current)
 
-    expect(reuseEqualCatalogRows(current, incoming)).toBe(current)
+    expect(reuseEqualCatalogRows(current, equivalent)).toBe(current)
+
+    const incoming = structuredClone(current.toReversed())
+    const reconciled = reuseEqualCatalogRows(current, incoming)
+
+    expect(reconciled).not.toBe(current)
+    expect(reconciled.map((row) => row.hostId)).toEqual(['ssh:b', 'ssh:a'])
+    expect(reconciled[0]).toBe(current[1])
+    expect(reconciled[1]).toBe(current[0])
   })
 })

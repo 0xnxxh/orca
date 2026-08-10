@@ -333,6 +333,11 @@ describe('WorktreeCard memo bail-out across epoch bumps', () => {
     mountedRoots.push(root)
 
     await renderList(root)
+    const renderedOrder = (): (string | null)[] =>
+      [...container.querySelectorAll('[data-mock-worktree-card]')].map((card) =>
+        card.getAttribute('data-mock-worktree-card')
+      )
+    expect(renderedOrder()).toEqual(['wt-a', 'wt-b'])
     expect(trackSpy).not.toHaveBeenCalledWith('smart_sort_class_distribution', expect.anything())
 
     const now = Date.now()
@@ -354,6 +359,7 @@ describe('WorktreeCard memo bail-out across epoch bumps', () => {
     }
     await renderList(root)
 
+    expect(renderedOrder()).toEqual(['wt-a', 'wt-b'])
     expect(trackSpy).toHaveBeenCalledWith(
       'smart_sort_class_distribution',
       expect.objectContaining({ class_3: 1, total_worktrees: 2 })
@@ -368,6 +374,7 @@ describe('WorktreeCard memo bail-out across epoch bumps', () => {
     }
     await renderList(root)
 
+    expect(renderedOrder()).toEqual(['wt-a', 'wt-b'])
     expect(trackSpy).toHaveBeenCalledWith('smart_sort_class_1_promotion', { cause: 'blocked' })
   })
 })
