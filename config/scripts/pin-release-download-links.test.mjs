@@ -35,6 +35,7 @@ describe('pinReleaseDownloadLinksInText', () => {
   it('rejects prerelease and evidence tags', () => {
     expect(() => pinReleaseDownloadLinksInText('text', 'v1.4.179-rc.1')).toThrow(/non-stable/)
     expect(() => pinReleaseDownloadLinksInText('text', 'qa-pr13411')).toThrow(/non-stable/)
+    expect(() => pinReleaseDownloadLinksInText('text', 'v01.4.178')).toThrow(/non-stable/)
   })
 
   it('keeps an already pinned download query idempotent', () => {

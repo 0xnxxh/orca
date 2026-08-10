@@ -14,7 +14,10 @@ export const RELEASE_DOWNLOAD_LINK_FILES = [
   'docs/reference/headless-linux-server.md'
 ]
 
-const DESKTOP_STABLE_TAG = /^v[0-9]+\.[0-9]+\.[0-9]+$/
+const VERSION_NUMBER = '(?:0|[1-9][0-9]*)'
+const DESKTOP_STABLE_TAG = new RegExp(
+  `^v${VERSION_NUMBER}\\.${VERSION_NUMBER}\\.${VERSION_NUMBER}$`
+)
 const RELEASE_BASE = 'https://github.com/stablyai/orca/releases/'
 const RELEASE_BASE_PATTERN = String.raw`https://github\.com/stablyai/orca/releases/`
 const VERSION_TAG = 'v[0-9]+\\.[0-9]+\\.[0-9]+(?:-rc\\.[0-9]+(?:\\.[0-9A-Za-z]+)?)?'

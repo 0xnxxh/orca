@@ -58,6 +58,17 @@ describe('classifyRelease', () => {
       classifyRelease(release('v9.0.0', { author: { login: 'write-collaborator' } }))
     ).toMatchObject({ allowed: false })
   })
+
+  it.each([
+    'v01.2.3',
+    'v1.02.3',
+    'v1.2.03',
+    'v1.2.3-rc.01',
+    'mobile-v0.00.13',
+    'mobile-android-v00.0.43'
+  ])('rejects noncanonical release tag %s', (tag) => {
+    expect(classifyRelease(release(tag))).toMatchObject({ allowed: false })
+  })
 })
 
 describe('latestAllowedStableRelease', () => {

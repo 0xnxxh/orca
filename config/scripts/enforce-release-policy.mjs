@@ -5,9 +5,11 @@ import { pathToFileURL } from 'node:url'
 
 const API_VERSION = '2022-11-28'
 const RELEASE_AUTOMATION_AUTHOR = 'github-actions[bot]'
-const DESKTOP_STABLE_TAG = /^v[0-9]+\.[0-9]+\.[0-9]+$/
-const DESKTOP_RC_TAG = /^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+(?:\.[0-9A-Za-z]+)?$/
-const MOBILE_TAG = /^mobile(?:-android)?-v[0-9]+\.[0-9]+\.[0-9]+$/
+const VERSION_NUMBER = '(?:0|[1-9][0-9]*)'
+const CORE_VERSION = `${VERSION_NUMBER}\\.${VERSION_NUMBER}\\.${VERSION_NUMBER}`
+const DESKTOP_STABLE_TAG = new RegExp(`^v${CORE_VERSION}$`)
+const DESKTOP_RC_TAG = new RegExp(`^v${CORE_VERSION}-rc\\.${VERSION_NUMBER}(?:\\.[0-9A-Za-z]+)?$`)
+const MOBILE_TAG = new RegExp(`^mobile(?:-android)?-v${CORE_VERSION}$`)
 
 export function classifyRelease(release) {
   const tag = typeof release?.tag_name === 'string' ? release.tag_name : ''
