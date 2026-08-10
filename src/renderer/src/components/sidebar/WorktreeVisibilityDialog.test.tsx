@@ -138,6 +138,14 @@ function buttonWithText(text: string): HTMLButtonElement {
   return button as HTMLButtonElement
 }
 
+function alwaysShowSwitch(): HTMLButtonElement {
+  const control = document.querySelector('[role="switch"]')
+  if (!control) {
+    throw new Error('No Always show switch')
+  }
+  return control as HTMLButtonElement
+}
+
 async function click(element: HTMLElement): Promise<void> {
   await act(async () => {
     element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
@@ -230,7 +238,7 @@ describe('WorktreeVisibilityDialog', () => {
     mocks.state.fetchWorktrees.mockImplementation(() => new Promise(() => {}))
     await renderDialog()
 
-    expect(buttonWithText('Import').disabled).toBe(true)
+    expect(alwaysShowSwitch().disabled).toBe(true)
   })
 
   it('reports a failed refresh even while an older trusted snapshot is on screen', async () => {
@@ -264,7 +272,7 @@ describe('WorktreeVisibilityDialog', () => {
 
     await click(buttonWithText('Show'))
 
-    expect(buttonWithText('Import').disabled).toBe(true)
+    expect(alwaysShowSwitch().disabled).toBe(true)
   })
 
   it('locks row actions and retry while the repo-wide toggle is in flight', async () => {
@@ -272,7 +280,7 @@ describe('WorktreeVisibilityDialog', () => {
     mocks.state.updateRepo.mockImplementation(() => new Promise(() => {}))
     await renderDialog()
 
-    await click(buttonWithText('Import'))
+    await click(alwaysShowSwitch())
 
     expect(buttonWithText('Show').disabled).toBe(true)
     expect(buttonWithText('Try again').disabled).toBe(true)
@@ -289,16 +297,34 @@ describe('WorktreeVisibilityDialog', () => {
     expect(document.querySelector('[role="alert"]')).toBeNull()
   })
 
-  it('keeps the repo-wide toggle unchanged, never counting scratch toward it', async () => {
+  it('presents the repo-wide policy as a persistent switch without counting scratch', async () => {
     await renderDialog()
 
-    expect(document.body.textContent).toContain('0 worktrees available to import')
+    expect(document.body.textContent).toContain('Always show')
+    expect(document.body.textContent).toContain('0 worktrees currently hidden')
+    expect(alwaysShowSwitch().getAttribute('aria-checked')).toBe('false')
 
-    await click(buttonWithText('Import'))
+    await click(alwaysShowSwitch())
 
     expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
       externalWorktreeVisibility: 'show',
       externalWorktreeDiscoverySuppressedAt: null
     })
+    expect(mocks.state.closeModal).not.toHaveBeenCalled()
+  })
+
+  it('turns the persistent policy off without closing the dialog', async () => {
+    mocks.state.repos = [makeRepo({ externalWorktreeVisibility: 'show' })]
+    await renderDialog()
+
+    expect(document.body.textContent).toContain('0 worktrees currently shown')
+    expect(alwaysShowSwitch().getAttribute('aria-checked')).toBe('true')
+
+    await click(alwaysShowSwitch())
+
+    expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
+      externalWorktreeVisibility: 'hide'
+    })
+    expect(mocks.state.closeModal).not.toHaveBeenCalled()
   })
 })

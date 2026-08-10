@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useId, useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
 import { useAppStore } from '@/store'
 import {
@@ -9,6 +9,8 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
   getHiddenExternalWorktrees,
   getHiddenImportableExternalWorktrees,
@@ -38,6 +40,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const [busyPath, setBusyPath] = useState<string | null>(null)
   const [isToggling, setIsToggling] = useState(false)
   const [listState, setListState] = useState<'checking' | 'ready' | 'failed'>('checking')
+  const alwaysShowSwitchId = useId()
 
   const isOpen = activeModal === 'worktree-visibility'
   const repoId = typeof modalData.repoId === 'string' ? modalData.repoId : ''
@@ -106,26 +109,28 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
     [fetchWorktrees, repo, updateRepo]
   )
 
-  const handleToggle = useCallback(async () => {
-    if (!repoId) {
-      return
-    }
-    setIsToggling(true)
-    try {
-      await updateRepo(repoId, {
-        externalWorktreeVisibility: showOther ? 'hide' : 'show',
-        // Why: showing hidden externals again should re-enable the inbox if the
-        // user previously opted out of discovery prompts for this repo.
-        // Why: null is the transport sentinel for clearing on remote runtime paths
-        // where `undefined` is stripped before persistence.
-        ...(!showOther ? { externalWorktreeDiscoverySuppressedAt: null } : {})
-      })
-      await fetchWorktrees(repoId)
-      closeModal()
-    } finally {
-      setIsToggling(false)
-    }
-  }, [closeModal, fetchWorktrees, repoId, showOther, updateRepo])
+  const handleAlwaysShowChange = useCallback(
+    async (checked: boolean) => {
+      if (!repoId || checked === showOther) {
+        return
+      }
+      setIsToggling(true)
+      try {
+        await updateRepo(repoId, {
+          externalWorktreeVisibility: checked ? 'show' : 'hide',
+          // Why: showing hidden externals again should re-enable the inbox if the
+          // user previously opted out of discovery prompts for this repo.
+          // Why: null is the transport sentinel for clearing on remote runtime paths
+          // where `undefined` is stripped before persistence.
+          ...(checked ? { externalWorktreeDiscoverySuppressedAt: null } : {})
+        })
+        await fetchWorktrees(repoId)
+      } finally {
+        setIsToggling(false)
+      }
+    },
+    [fetchWorktrees, repoId, showOther, updateRepo]
+  )
 
   if (!isOpen || !repo || !isGitRepoKind(repo)) {
     return null
@@ -169,21 +174,23 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
                   )
                 : translate(
                     'auto.components.sidebar.WorktreeVisibilityDialog.25ddf19920',
-                    '{{value0}} available to import',
+                    '{{value0}} currently hidden',
                     { value0: hiddenWorktreeLabel }
                   )}
             </div>
           </div>
-          <Button
-            type="button"
-            variant={showOther ? 'secondary' : 'outline'}
-            disabled={busyPath !== null || isToggling || listState === 'checking'}
-            onClick={handleToggle}
-          >
-            {showOther
-              ? translate('auto.components.sidebar.WorktreeVisibilityDialog.759371df43', 'Hide')
-              : translate('auto.components.sidebar.WorktreeVisibilityDialog.f1f71b9f02', 'Import')}
-          </Button>
+          <Label htmlFor={alwaysShowSwitchId} className="shrink-0 gap-2">
+            {translate(
+              'auto.components.sidebar.WorktreeVisibilityDialog.f1f71b9f02',
+              'Always show'
+            )}
+            <Switch
+              id={alwaysShowSwitchId}
+              checked={showOther}
+              disabled={busyPath !== null || isToggling || listState === 'checking'}
+              onCheckedChange={(checked) => void handleAlwaysShowChange(checked)}
+            />
+          </Label>
         </div>
 
         {listState === 'checking' ? (

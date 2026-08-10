@@ -4873,9 +4873,9 @@
         },
         "WorktreeVisibilityDialog": {
           "83a5ba8dd1": "Non-Orca worktrees",
-          "f1f71b9f02": "Import",
+          "f1f71b9f02": "Always show",
           "759371df43": "Hide",
-          "25ddf19920": "{{value0}} available to import",
+          "25ddf19920": "{{value0}} currently hidden",
           "8372e4bbd9": "{{value0}} currently shown",
           "5d02a5647f": "Hidden from sidebar",
           "3e045d4cb8": "Shown in sidebar",
