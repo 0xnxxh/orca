@@ -1347,7 +1347,9 @@ async function reconcileFailedFolderWorkspaceUpdate(args: {
       return
     }
     const refreshed = catalog.folderWorkspaces.find(
-      (workspace) => workspace.id === args.folderWorkspaceId
+      (workspace) =>
+        workspace.id === args.folderWorkspaceId &&
+        getFolderWorkspaceHostId(workspace, args.get().projectGroups) === args.ownerHostId
     )
     args.set((state) => ({
       folderWorkspaces: refreshed

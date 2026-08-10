@@ -238,4 +238,38 @@ describe('same-id cross-host folder workspace identity', () => {
       updates: { name: 'Updated' }
     })
   })
+
+  it('reconciles a failed same-id update from the selected owner row', async () => {
+    const local = makeFolder({ name: 'Local current', executionHostId: 'local' })
+    const ssh = makeFolder({
+      name: 'SSH current',
+      folderPath: '/remote/folder',
+      connectionId: 'builder'
+    })
+    const list = vi.fn().mockResolvedValue([
+      { ...local, name: 'Local persisted' },
+      { ...ssh, name: 'SSH persisted' }
+    ])
+    const update = vi.fn().mockResolvedValue(null)
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [
+        makeGroup({ executionHostId: 'local' }),
+        makeGroup({ connectionId: 'builder', parentPath: '/remote' })
+      ],
+      folderWorkspaces: [local, ssh]
+    })
+    vi.stubGlobal('window', { api: { folderWorkspaces: { list, update } } })
+
+    await expect(
+      store
+        .getState()
+        .updateFolderWorkspace('same-id', { name: 'Rejected' }, { executionHostId: 'ssh:builder' })
+    ).resolves.toBe(false)
+
+    expect(store.getState().folderWorkspaces.map((workspace) => workspace.name)).toEqual([
+      'Local current',
+      'SSH persisted'
+    ])
+  })
 })
