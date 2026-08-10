@@ -2,7 +2,10 @@ import {
   CURSOR_REMOTE_MAX_AGGREGATE_BYTES,
   CURSOR_SIDECAR_MAX_BYTES
 } from '../../shared/cursor-sidecar-scan'
-import { throwIfAiVaultScanCancelled } from './ai-vault-scan-cancellation'
+import {
+  createAiVaultScanCancelledError,
+  throwIfAiVaultScanCancelled
+} from './ai-vault-scan-cancellation'
 
 export type CursorVerifiedReadBudget = {
   chargedBytes: number
@@ -36,8 +39,32 @@ export async function reserveCursorVerifiedReadBytes(
     if (remainingBytes <= 0 || estimatedBytes > remainingBytes) {
       return null
     }
-    await budget.changed
+    await waitForCursorVerifiedReadBudgetChange(budget.changed, signal)
   }
+}
+
+function waitForCursorVerifiedReadBudgetChange(
+  changed: Promise<void>,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!signal) {
+    return changed
+  }
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(createAiVaultScanCancelledError())
+      return
+    }
+    const onAbort = (): void => {
+      signal.removeEventListener('abort', onAbort)
+      reject(createAiVaultScanCancelledError())
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    void changed.then(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    })
+  })
 }
 
 export function settleCursorVerifiedReadReservation(
