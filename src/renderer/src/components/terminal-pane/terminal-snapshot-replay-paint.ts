@@ -32,18 +32,6 @@ export function resolvePositiveTerminalDimensions(
 }
 
 /**
- * Why width-gated: an alt-screen frame is absolutely positioned. Replay pins
- * the terminal to the snapshot's grid (#7279) and the post-replay fit sizes the
- * pane back to its container, so a narrower target makes xterm's _reflowSmaller
- * split every frame row longer than the new width into a stray remainder row —
- * the garbled-on-reopen shape.
- *
- * Why only narrowing: _reflowLarger merely joins soft-wrapped lines, and a frame
- * row is not wrapped, so a wider target leaves it intact (just short of the
- * edge) — worth keeping over a blank screen. Scrollback is never dropped either
- * way: those rows are soft-wrapped, which is what reflow re-wraps correctly.
- */
-/**
  * The column count the post-replay fit will land on. Why not terminal.cols: a
  * pane that has not been fitted yet still reads xterm's 80-column default, so
  * comparing against it would drop frames whose width actually matches the
@@ -59,24 +47,15 @@ export function shouldSkipAltFrameForWidthMismatch(
   targetCols: number | undefined,
   options: { skipIfTargetUnknown?: boolean } = {}
 ): boolean {
-  const hasSnapshotWidth =
-    typeof snapshotCols === 'number' && Number.isFinite(snapshotCols) && snapshotCols > 0
-  if (!hasSnapshotWidth) {
+  if (typeof snapshotCols !== 'number' || !Number.isFinite(snapshotCols) || snapshotCols <= 0) {
     return false
   }
-  const hasTargetWidth =
-    typeof targetCols === 'number' && Number.isFinite(targetCols) && targetCols > 0
-  if (!hasTargetWidth) {
-    // A hidden pane has no final grid yet. A live app can repaint a cleared
-    // screen after its deferred fit; painting first risks destructive reflow.
+  if (typeof targetCols !== 'number' || !Number.isFinite(targetCols) || targetCols <= 0) {
+    // A hidden pane has no final grid; its live app can repaint after the deferred fit.
     return options.skipIfTargetUnknown === true
   }
-  return (
-    typeof snapshotCols === 'number' &&
-    typeof targetCols === 'number' &&
-    targetCols > 0 &&
-    snapshotCols > targetCols
-  )
+  // Fixed-grid alt rows clip at narrower columns; normal history remains reflowable.
+  return snapshotCols > targetCols
 }
 
 /**

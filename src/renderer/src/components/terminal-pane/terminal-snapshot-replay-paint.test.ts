@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import { Terminal } from '@xterm/headless'
 import {
   buildMainModelSnapshotReplayWrites,
   hasPositiveTerminalDimensions,
   resolvePositiveTerminalDimensions,
   shouldSkipAltFrameForWidthMismatch
 } from './terminal-snapshot-replay-paint'
+
+function writeTerminal(terminal: Terminal, data: string): Promise<void> {
+  return new Promise((resolve) => terminal.write(data, resolve))
+}
 
 describe('hasPositiveTerminalDimensions', () => {
   it('accepts only finite positive numeric pairs', () => {
@@ -71,11 +76,8 @@ describe('buildMainModelSnapshotReplayWrites', () => {
 describe('shouldSkipAltFrameForWidthMismatch', () => {
   it('skips only when the snapshot is WIDER than the target', () => {
     expect(shouldSkipAltFrameForWidthMismatch(135, 128)).toBe(true)
-    // One column is enough: _reflowSmaller splits every row longer than the new width.
     expect(shouldSkipAltFrameForWidthMismatch(129, 128)).toBe(true)
     expect(shouldSkipAltFrameForWidthMismatch(128, 128)).toBe(false)
-    // Widening only joins soft-wrapped lines, so an unwrapped frame row survives
-    // intact — keep it rather than blanking the pane.
     expect(shouldSkipAltFrameForWidthMismatch(100, 120)).toBe(false)
   })
 
@@ -99,6 +101,29 @@ describe('shouldSkipAltFrameForWidthMismatch', () => {
 })
 
 describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
+  it('keeps normal history and a clean alt grid through the real resize path', async () => {
+    const terminal = new Terminal({ cols: 12, rows: 5, scrollback: 20 })
+    const snapshot = {
+      data: '\x1b[1;1HWIDE-FRAME',
+      frameRestoreAnsi: '\x1b[?25l',
+      alternateScreen: true,
+      scrollbackAnsi: 'log'
+    }
+
+    try {
+      for (const chunk of buildMainModelSnapshotReplayWrites(snapshot, { skipAltFrame: true })) {
+        await writeTerminal(terminal, chunk)
+      }
+      terminal.resize(4, 5)
+
+      expect(terminal.buffer.active.type).toBe('alternate')
+      expect(terminal.buffer.active.getLine(0)?.translateToString(true)).toBe('')
+      expect(terminal.buffer.normal.getLine(0)?.translateToString(true)).toBe('log')
+    } finally {
+      terminal.dispose()
+    }
+  })
+
   it('drops only the frame paint, keeping scrollback and the alt-buffer choreography', () => {
     expect(
       buildMainModelSnapshotReplayWrites(

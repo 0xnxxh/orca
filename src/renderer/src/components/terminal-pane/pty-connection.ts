@@ -8224,11 +8224,7 @@ export function connectPanePty(
           writeReplayData('\x1b[2J\x1b[3J\x1b[H')
           // Why: re-arm the kitty keyboard mirror from the snapshot preamble so Option chords keep their encoding after a window reload.
           kittyKeyboardModes.scanReplay(connectResult.snapshot)
-          // Why the split when the host offers it: replay pins the terminal to the
-          // snapshot grid (#7279), then the post-replay fit sizes the pane back to
-          // its container. A narrower container makes xterm split every alt-frame
-          // row longer than the new width. The frame only renders at its capture
-          // width, so drop it and let the SIGWINCH below repaint it.
+          // A narrower fit clips the fixed-grid alt frame; drop it and let SIGWINCH repaint.
           // Why not on a cold restore: its owner is gone, so nothing would repaint —
           // a stale frame beats a blank pane.
           const snapshotFrameStart = connectResult.snapshotFrameStart

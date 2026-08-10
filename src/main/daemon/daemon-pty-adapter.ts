@@ -831,11 +831,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
 
     const isAltScreen = result.snapshot.modes.alternateScreen
-    // Why mark the boundary: an alt-screen frame is absolutely positioned, so it only
-    // renders at its capture width. The renderer pins to the snapshot grid, paints,
-    // then fits to its container — and a narrower container makes xterm split every
-    // frame row. The marker lets the renderer drop just the frame without sending
-    // the payload twice. Optional: older renderers still read the merged `snapshot`.
+    // The optional boundary lets newer renderers omit a stale fixed-grid frame without duplicating the payload.
     const snapshotPrefix = result.snapshot.scrollbackAnsi + result.snapshot.rehydrateSequences
     const snapshotPayload = snapshotPrefix + result.snapshot.snapshotAnsi
     // Why kitty flags ride beside the payload, not inside it: the snapshot reaches renderer xterms where POST_REPLAY_REATTACH_RESET's kitty reset must win (terminal-query-authority.md §kitty).
