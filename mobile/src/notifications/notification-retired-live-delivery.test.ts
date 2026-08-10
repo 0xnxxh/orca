@@ -4,7 +4,8 @@ import type { RpcClient } from '../transport/rpc-client'
 import { subscribeToDesktopNotifications } from './mobile-notifications'
 import {
   resetHostNotificationSessionsForTests,
-  retireHostNotificationState
+  retireHostNotificationState,
+  saveWatermark
 } from './notification-reconnect-catchup'
 import { loadPushNotificationsEnabled } from '../storage/preferences'
 
@@ -165,6 +166,62 @@ describe('retired host live delivery', () => {
     vi.useFakeTimers()
     try {
       const retirement = retireHostNotificationState('host-wedged')
+      let settled = false
+      void retirement.then(() => {
+        settled = true
+      })
+
+      await vi.advanceTimersByTimeAsync(2_000)
+      await retirement
+
+      expect(settled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears a watermark write that finishes after retirement', async () => {
+    let storedWatermark: string | undefined
+    let finishWrite: () => void = () => {}
+    asyncStorage.setItem.mockImplementationOnce(
+      (_key: string, value: string) =>
+        new Promise<void>((resolve) => {
+          finishWrite = () => {
+            storedWatermark = value
+            resolve()
+          }
+        })
+    )
+    asyncStorage.removeItem
+      .mockImplementationOnce(async () => {
+        storedWatermark = undefined
+      })
+      .mockImplementationOnce(async () => undefined)
+
+    vi.useFakeTimers()
+    try {
+      const save = saveWatermark('host-late-watermark', { seq: 7, epoch: 'epoch-a' })
+      await Promise.resolve()
+      const retirement = retireHostNotificationState('host-late-watermark')
+
+      await vi.advanceTimersByTimeAsync(2_000)
+      await retirement
+      finishWrite()
+      await save
+      await Promise.resolve()
+
+      expect(storedWatermark).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retires when watermark removal never settles', async () => {
+    asyncStorage.removeItem.mockImplementationOnce(() => new Promise<void>(() => {}))
+
+    vi.useFakeTimers()
+    try {
+      const retirement = retireHostNotificationState('host-wedged-watermark-clear')
       let settled = false
       void retirement.then(() => {
         settled = true

@@ -1,5 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage'
-
 // Why: the reconnect catch-up watermark + dedup helpers for #8129, extracted
 // from mobile-notifications.ts so that file stays under its max-lines budget.
 // The highest desktop notification seq this device has delivered is persisted
@@ -18,73 +16,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 // from one counter beside a seq from another — a pair that looks internally valid
 // on the next launch and is therefore trusted, silently cutting real notifications.
 // A single JSON value cannot tear that way.
-const WATERMARK_STORAGE_KEY_PREFIX = 'orca:mobileNotificationsWatermark:'
-// Pre-#8591 installs wrote the seq alone. Read once to migrate; never written.
-const LEGACY_SEQ_STORAGE_KEY_PREFIX = 'orca:mobileNotificationsLastSeq:'
+import {
+  clearWatermark,
+  loadWatermark,
+  resetWatermarkPersistenceForTests,
+  saveWatermark,
+  type LoadedWatermark,
+  type PersistedWatermark
+} from './notification-watermark-storage'
 
-function watermarkStorageKey(hostId: string): string {
-  return WATERMARK_STORAGE_KEY_PREFIX + encodeURIComponent(hostId)
-}
-
-// A null epoch means "the counter this seq came from is unknown" — a legacy
-// watermark, or nothing stored. It can never be assumed to be the live counter.
-export type PersistedWatermark = { seq: number; epoch: string | null }
-// `stored` is the record's existence, independent of its seq: it answers "has this
-// device ever been subscribed to this host", which is what a cold open needs to tell
-// a returning device from a first pairing. A seq of 0 is a real answer, not an absence.
-export type LoadedWatermark = PersistedWatermark & { stored: boolean }
-
-function coerceSeq(value: unknown): number {
-  const parsed = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
-}
-
-export async function loadWatermark(hostId: string): Promise<LoadedWatermark> {
-  try {
-    const raw = await AsyncStorage.getItem(watermarkStorageKey(hostId))
-    if (raw != null) {
-      const parsed = JSON.parse(raw) as { seq?: unknown; epoch?: unknown }
-      const epoch =
-        typeof parsed.epoch === 'string' && parsed.epoch.length > 0 ? parsed.epoch : null
-      return { seq: coerceSeq(parsed.seq), epoch, stored: true }
-    }
-  } catch {
-    // Unreadable or malformed: fall through to the legacy key rather than throw.
-  }
-  try {
-    const legacy = await AsyncStorage.getItem(
-      LEGACY_SEQ_STORAGE_KEY_PREFIX + encodeURIComponent(hostId)
-    )
-    return { seq: coerceSeq(legacy), epoch: null, stored: legacy != null }
-  } catch {
-    return { seq: 0, epoch: null, stored: false }
-  }
-}
-
-export async function clearWatermark(hostId: string): Promise<void> {
-  // Why both keys: loadWatermark falls back to the legacy one, so removing only the
-  // current key would let a re-paired host resurrect a pre-#8591 seq from a counter
-  // lifetime that is long gone — the exact stale cut this fix removes.
-  await Promise.all([
-    AsyncStorage.removeItem(watermarkStorageKey(hostId)).catch(() => {}),
-    AsyncStorage.removeItem(LEGACY_SEQ_STORAGE_KEY_PREFIX + encodeURIComponent(hostId)).catch(
-      () => {}
-    )
-  ])
-}
-
-export async function saveWatermark(hostId: string, watermark: PersistedWatermark): Promise<void> {
-  try {
-    await AsyncStorage.setItem(watermarkStorageKey(hostId), JSON.stringify(watermark))
-  } catch {
-    // Why: persisting the watermark is best-effort. If it fails (or lags), the
-    // stored value stays BELOW what we delivered, so a later cold start can
-    // re-fetch — and, once the in-memory seen-set is gone, re-show — an already
-    // delivered notification. That's the accepted at-least-once trade-off;
-    // within a live session the in-memory watermark is authoritative, so only
-    // post-restart reconnects are affected.
-  }
-}
+export { clearWatermark, loadWatermark, saveWatermark }
+export type { LoadedWatermark, PersistedWatermark }
 
 // Why: bounded in-memory dedup window for notificationIds/dismiss ids observed
 // on the current connection. The desktop already dedupes by seq on replay, but
@@ -245,6 +187,7 @@ export function releaseQueuedShowNotificationId(
 export function resetHostNotificationSessionsForTests(): void {
   sessionsByHost.clear()
   retirementByHost.clear()
+  resetWatermarkPersistenceForTests()
 }
 
 /**
@@ -403,6 +346,7 @@ export function forgetHostNotificationSession(hostId: string): void {
 // drain is safe because `retired` is already set — every watermark write checks it, so a
 // late delivery cannot persist past the clear below.
 const RETIREMENT_DELIVERY_DRAIN_TIMEOUT_MS = 2_000
+const RETIREMENT_WATERMARK_CLEAR_TIMEOUT_MS = 2_000
 
 async function drainHostDeliveries(session: HostNotificationSession | undefined): Promise<void> {
   if (!session) {
@@ -430,12 +374,17 @@ export function retireHostNotificationState(hostId: string): Promise<void> {
   if (session) {
     session.retired = true
   }
+  // Invalidate prior writers before waiting for delivery; the serialized clear still
+  // runs after any write already inside AsyncStorage.
+  const watermarkClear = clearWatermark(hostId)
   const retirement = (async () => {
-    await drainHostDeliveries(session)
+    await Promise.all([
+      drainHostDeliveries(session),
+      withTimeout(watermarkClear, RETIREMENT_WATERMARK_CLEAR_TIMEOUT_MS)
+    ])
     if (!session || sessionsByHost.get(hostId) === session) {
       sessionsByHost.delete(hostId)
     }
-    await clearWatermark(hostId)
   })()
   retirementByHost.set(hostId, retirement)
   void retirement.finally(() => {
