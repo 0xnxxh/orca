@@ -7,7 +7,10 @@ import {
 import { RelayAiVaultServiceClient } from './ai-vault-service-client'
 import { relayAiVaultServiceEntryPath } from './ai-vault-service-spawn'
 
-function createClient(children: AiVaultServiceTestChild[]): RelayAiVaultServiceClient {
+function createClient(
+  children: AiVaultServiceTestChild[],
+  idleTimeoutMs?: number
+): RelayAiVaultServiceClient {
   return new RelayAiVaultServiceClient({
     init: {
       remoteHome: '/home/ada',
@@ -17,7 +20,8 @@ function createClient(children: AiVaultServiceTestChild[]): RelayAiVaultServiceC
       const child = new AiVaultServiceTestChild(20_000 + children.length)
       children.push(child)
       return child.asChildProcess()
-    }
+    },
+    idleTimeoutMs
   })
 }
 
@@ -120,6 +124,34 @@ describe('RelayAiVaultServiceClient', () => {
     const disposing = client.dispose()
     children[1]!.emit('exit', 0)
     await disposing
+  })
+
+  it('retires the sidecar after the idle bound', async () => {
+    vi.useFakeTimers()
+    const children: AiVaultServiceTestChild[] = []
+    const client = createClient(children, 100)
+    const list = client.listSessions({})
+    const child = children[0]!
+    readyAiVaultServiceChild(child)
+    await Promise.resolve()
+    const request = child.sent.find(
+      (message) => (message as { operation?: string }).operation === 'list'
+    ) as { id: number }
+    child.emit('message', {
+      type: 'result',
+      id: request.id,
+      operation: 'list',
+      value: { sessions: [], issues: [], scannedAt: '2026-08-09T00:00:00.000Z' }
+    })
+    await list
+
+    vi.advanceTimersByTime(99)
+    expect(child.sent).not.toContainEqual({ type: 'shutdown' })
+    vi.advanceTimersByTime(1)
+    expect(child.sent).toContainEqual({ type: 'shutdown' })
+    vi.advanceTimersByTime(2_000)
+    expect(child.killed).toBe(true)
+    await client.dispose()
   })
 
   it('resolves the sidecar beside each bundled relay', () => {

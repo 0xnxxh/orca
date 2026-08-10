@@ -12,6 +12,7 @@ export const RELAY_AI_VAULT_READY_TIMEOUT_MS = 5_000
 export const RELAY_AI_VAULT_SCAN_TIMEOUT_MS = 130_000
 export const RELAY_AI_VAULT_TITLE_TIMEOUT_MS = 15_000
 export const RELAY_AI_VAULT_MAX_CALLS = 16
+export const RELAY_AI_VAULT_IDLE_TIMEOUT_MS = 10 * 60_000
 
 export function relayAiVaultAbortError(): Error {
   const error = new Error('The operation was aborted.')
@@ -29,6 +30,27 @@ export function armRelayAiVaultCancellationTimeout(
 ): void {
   call.timer = setTimeout(onExpired, 2_000)
   call.timer.unref?.()
+}
+
+export function settleRelayAiVaultServiceCall(
+  call: RelayAiVaultServiceCall,
+  value: Error | AiVaultListResult | AiVaultSessionTitlesResult
+): void {
+  if (call.settled) {
+    return
+  }
+  call.settled = true
+  if (call.timer) {
+    clearTimeout(call.timer)
+  }
+  if (call.signal && call.onAbort) {
+    call.signal.removeEventListener('abort', call.onAbort)
+  }
+  if (value instanceof Error) {
+    call.reject(value)
+  } else {
+    call.resolve(value)
+  }
 }
 
 export type RelayAiVaultServiceCall = {
@@ -57,4 +79,34 @@ export type RelayAiVaultServiceClientOptions = {
     hostPlatform: RemoteHostPlatform
   }
   now?: () => number
+  idleTimeoutMs?: number
+}
+
+export class RelayAiVaultIdleRetirement {
+  private timer: NodeJS.Timeout | null = null
+
+  clear(): void {
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+  }
+
+  schedule(busy: boolean, timeoutMs: number, retire: () => void): void {
+    if (busy || this.timer) {
+      return
+    }
+    this.timer = setTimeout(() => {
+      this.timer = null
+      retire()
+    }, timeoutMs)
+    this.timer.unref?.()
+  }
+}
+
+export function retireRelayAiVaultServiceChild(child: ChildProcess): void {
+  const timer = setTimeout(() => child.kill(), 2_000)
+  timer.unref?.()
+  child.once('exit', () => clearTimeout(timer))
+  child.send({ type: 'shutdown' }, () => undefined)
 }

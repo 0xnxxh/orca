@@ -6,6 +6,7 @@ import {
   AI_VAULT_SERVICE_MAX_CALLS,
   AI_VAULT_SERVICE_READY_TIMEOUT_MS,
   AI_VAULT_SERVICE_SCAN_TIMEOUT_MS,
+  AiVaultServiceIdleRetirement,
   armAiVaultServiceCancellationTimeout,
   clearAiVaultServiceCall,
   rejectAiVaultServiceCall,
@@ -35,7 +36,7 @@ export class AiVaultScannerServiceClient {
   private readonly invalidations = new Map<number, AiVaultServiceInvalidation>()
   private nextId = 1
   private invalidationGeneration = 0
-  private idleTimer: NodeJS.Timeout | null = null
+  private readonly idleRetirement = new AiVaultServiceIdleRetirement()
   private readonly restartPolicy = new AiVaultServiceRestartPolicy()
   private disposed = false
 
@@ -68,7 +69,7 @@ export class AiVaultScannerServiceClient {
         signal.addEventListener('abort', call.onAbort, { once: true })
       }
       this.queue.push(call)
-      this.clearIdleTimer()
+      this.idleRetirement.clear()
       this.pump()
     })
   }
@@ -77,12 +78,14 @@ export class AiVaultScannerServiceClient {
     if (paths.length === 0 || this.disposed) {
       return
     }
+    this.idleRetirement.clear()
     const child = await this.ensureChild()
     const generation = ++this.invalidationGeneration
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.invalidations.delete(generation)
         reject(new Error('AI Vault service cache invalidation timed out.'))
+        this.scheduleIdleIfNeeded()
       }, AI_VAULT_SERVICE_READY_TIMEOUT_MS)
       timer.unref?.()
       this.invalidations.set(generation, { resolve, reject, timer })
@@ -96,7 +99,7 @@ export class AiVaultScannerServiceClient {
     }
     this.disposed = true
     this.restartPolicy.dispose()
-    this.clearIdleTimer()
+    this.idleRetirement.clear()
     const error = new Error('AI Vault service client was disposed.')
     for (const call of [...this.active.values(), ...this.queue]) {
       rejectAiVaultServiceCall(call, error)
@@ -218,6 +221,7 @@ export class AiVaultScannerServiceClient {
         clearTimeout(pending.timer)
         this.invalidations.delete(message.generation)
         pending.resolve()
+        this.scheduleIdleIfNeeded()
       }
       return
     }
@@ -284,25 +288,15 @@ export class AiVaultScannerServiceClient {
   }
 
   private scheduleIdleIfNeeded(): void {
-    if (this.active.size > 0 || this.queue.length > 0 || !this.child || this.idleTimer) {
-      return
-    }
-    this.idleTimer = setTimeout(
-      () => this.retireChild(),
-      this.options.idleTimeoutMs ?? AI_VAULT_SERVICE_IDLE_TIMEOUT_MS
+    this.idleRetirement.schedule(
+      this.active.size > 0 || this.queue.length > 0 || this.invalidations.size > 0 || !this.child,
+      this.options.idleTimeoutMs ?? AI_VAULT_SERVICE_IDLE_TIMEOUT_MS,
+      () => this.retireChild()
     )
-    this.idleTimer.unref?.()
-  }
-
-  private clearIdleTimer(): void {
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer)
-      this.idleTimer = null
-    }
   }
 
   private retireChild(): void {
-    this.clearIdleTimer()
+    this.idleRetirement.clear()
     const child = this.child
     this.child = null
     if (!child) {

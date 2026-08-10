@@ -113,6 +113,44 @@ describe('AiVaultScannerServiceClient', () => {
     client.dispose()
   })
 
+  it('keeps invalidation-only children alive through acknowledgement, then retires them', async () => {
+    vi.useFakeTimers()
+    const children: AiVaultServiceTestChild[] = []
+    const client = new AiVaultScannerServiceClient({
+      processFactory: () => {
+        const child = new AiVaultServiceTestChild(12_345 + children.length)
+        children.push(child)
+        return child.asChildProcess()
+      },
+      init: { sessionParseCache: null },
+      idleTimeoutMs: 100
+    })
+
+    const first = client.request({ type: 'request', operation: 'titles', requests: [] })
+    readyAiVaultServiceChild(children[0]!)
+    await Promise.resolve()
+    children[0]!.emit('message', {
+      type: 'result',
+      id: aiVaultServiceRequestId(children[0]!, 'titles'),
+      operation: 'titles',
+      value: { titles: [] }
+    })
+    await first
+    vi.advanceTimersByTime(100)
+
+    const invalidation = client.invalidate(['/tmp/deleted.jsonl'])
+    readyAiVaultServiceChild(children[1]!)
+    await Promise.resolve()
+    vi.advanceTimersByTime(100)
+    expect(children[1]!.sent).not.toContainEqual({ type: 'shutdown' })
+    children[1]!.emit('message', { type: 'invalidated', generation: 1 })
+    await invalidation
+    vi.advanceTimersByTime(100)
+
+    expect(children[1]!.sent).toContainEqual({ type: 'shutdown' })
+    client.dispose()
+  })
+
   it('faults the child on malformed output without affecting later processes', async () => {
     const { child, client } = setup()
     const request = client.request({ type: 'request', operation: 'titles', requests: [] })

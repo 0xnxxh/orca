@@ -84,3 +84,25 @@ export type AiVaultServiceReadyWaiter = {
   reject: (error: Error) => void
   timer: NodeJS.Timeout
 }
+
+export class AiVaultServiceIdleRetirement {
+  private timer: NodeJS.Timeout | null = null
+
+  clear(): void {
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+  }
+
+  schedule(busy: boolean, timeoutMs: number, retire: () => void): void {
+    if (busy || this.timer) {
+      return
+    }
+    this.timer = setTimeout(() => {
+      this.timer = null
+      retire()
+    }, timeoutMs)
+    this.timer.unref?.()
+  }
+}
