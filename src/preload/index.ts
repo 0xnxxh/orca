@@ -4457,6 +4457,7 @@ const api = {
         params?: unknown
         timeoutMs?: number
         expectedEnvironmentPairingRevision?: number
+        subscriptionId?: string
       },
       callbacks: {
         onResponse: (response: RuntimeRpcResponse<unknown>) => void
@@ -4465,7 +4466,9 @@ const api = {
         onClose?: () => void
       }
     ): Promise<RuntimeEnvironmentSubscriptionHandle> =>
-      subscribeRuntimeEnvironmentFromPreload(ipcRenderer, args, callbacks)
+      subscribeRuntimeEnvironmentFromPreload(ipcRenderer, args, callbacks),
+    cancelSubscription: (args: { subscriptionId: string }): Promise<{ unsubscribed: boolean }> =>
+      ipcRenderer.invoke('runtimeEnvironments:unsubscribe', args)
   },
 
   rateLimits: {

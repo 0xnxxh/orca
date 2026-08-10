@@ -3473,6 +3473,7 @@ export type PreloadApi = {
         params?: unknown
         timeoutMs?: number
         expectedEnvironmentPairingRevision?: number
+        subscriptionId?: string
       },
       callbacks: {
         onResponse: (response: RuntimeRpcResponse<unknown>) => void
@@ -3481,6 +3482,7 @@ export type PreloadApi = {
         onClose?: () => void
       }
     ) => Promise<RuntimeEnvironmentSubscriptionHandle>
+    cancelSubscription?: (args: { subscriptionId: string }) => Promise<{ unsubscribed: boolean }>
   }
   rateLimits: {
     get: () => Promise<RateLimitState>

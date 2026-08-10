@@ -468,6 +468,73 @@ describe('web runtime environment identity', () => {
     })
   })
 
+  it('keeps a reused subscription id owned by its newest pending setup', async () => {
+    const signals: AbortSignal[] = []
+    vi.doMock('./web-runtime-client', () => ({
+      WebRuntimeClient: class {
+        subscribe(
+          _method: string,
+          _params: unknown,
+          _callbacks: unknown,
+          options?: { signal?: AbortSignal }
+        ): Promise<never> {
+          const signal = options?.signal
+          if (!signal) {
+            throw new Error('Expected pending subscription setup signal')
+          }
+          signals.push(signal)
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                const error = new Error('aborted')
+                error.name = 'AbortError'
+                reject(error)
+              },
+              { once: true }
+            )
+          })
+        }
+
+        close(): void {}
+      }
+    }))
+    const globals = installBrowserGlobals('Linux')
+    writeStoredRuntimeEnvironment(globals.storage, 'web-server-a')
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+    const args = {
+      selector: 'web-server-a',
+      method: 'files.search',
+      subscriptionId: 'reused-sub'
+    }
+
+    const first = globals.window.api.runtimeEnvironments.subscribe(args, {
+      onResponse: vi.fn()
+    })
+    const firstRejection = expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    const second = globals.window.api.runtimeEnvironments.subscribe(args, {
+      onResponse: vi.fn()
+    })
+    const secondRejection = expect(second).rejects.toMatchObject({ name: 'AbortError' })
+
+    await firstRejection
+    expect(signals).toHaveLength(2)
+    expect(signals[0]?.aborted).toBe(true)
+    expect(signals[1]?.aborted).toBe(false)
+    await expect(
+      globals.window.api.runtimeEnvironments.cancelSubscription?.({
+        subscriptionId: 'reused-sub'
+      })
+    ).resolves.toEqual({ unsubscribed: true })
+    await secondRejection
+    await expect(
+      globals.window.api.runtimeEnvironments.cancelSubscription?.({
+        subscriptionId: 'reused-sub'
+      })
+    ).resolves.toEqual({ unsubscribed: false })
+  })
+
   it.each(['active runtime', 'selected environment'] as const)(
     'returns a disconnect envelope when a queued %s call disconnects',
     async (route) => {

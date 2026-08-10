@@ -2136,7 +2136,8 @@ describe('runtime file client', () => {
         method: 'files.search',
         params: { worktree: 'id:wt-1', query: 'needle', maxResults: 50 },
         timeoutMs: 15_000,
-        expectedEnvironmentPairingRevision: undefined
+        expectedEnvironmentPairingRevision: undefined,
+        subscriptionId: expect.any(String)
       },
       expect.any(Object)
     )

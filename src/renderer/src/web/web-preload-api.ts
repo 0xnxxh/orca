@@ -182,6 +182,7 @@ let activeEnvironment: StoredWebRuntimeEnvironment | null = readStoredWebRuntime
 let activeClient: WebRuntimeClient | null = null
 let activeClientEnvironmentId: string | null = null
 const manuallyDisconnectedEnvironmentIds = new Set<string>()
+const webRuntimeSubscriptionSetupControllers = new Map<string, AbortController>()
 let cachedWorktrees: { loadedAt: number; worktrees: Worktree[] } | null = null
 let cachedDetectedWorktrees: { loadedAt: number; worktrees: Worktree[] } | null = null
 const runtimeCallQueuePool = new RuntimeRpcCallQueuePool()
@@ -1543,15 +1544,40 @@ function createRuntimeEnvironmentsApi(): NonNullable<Partial<PreloadApi>['runtim
       callEnvironmentEnvelope<RuntimeStatus>(selector, 'status.get', undefined, timeoutMs),
     call: ({ selector, method, params, timeoutMs }) =>
       callEnvironmentEnvelope(selector, method, params, timeoutMs),
-    subscribe: async ({ selector, method, params, timeoutMs }, callbacks) => {
+    subscribe: async ({ selector, method, params, timeoutMs, subscriptionId }, callbacks) => {
       const environment = resolveEnvironment(selector)
       const client = getClientForEnvironment(environment)
-      const subscription = await client.subscribe(method, params, callbacks, { timeoutMs })
-      if (manuallyDisconnectedEnvironmentIds.has(environment.id)) {
-        subscription.unsubscribe()
-        throw new Error('runtime_manually_disconnected')
+      const controller = subscriptionId ? new AbortController() : null
+      if (subscriptionId && controller) {
+        webRuntimeSubscriptionSetupControllers.get(subscriptionId)?.abort()
+        webRuntimeSubscriptionSetupControllers.set(subscriptionId, controller)
       }
-      return subscription
+      try {
+        const subscription = await client.subscribe(method, params, callbacks, {
+          timeoutMs,
+          signal: controller?.signal
+        })
+        if (manuallyDisconnectedEnvironmentIds.has(environment.id)) {
+          subscription.unsubscribe()
+          throw new Error('runtime_manually_disconnected')
+        }
+        return subscription
+      } finally {
+        if (
+          subscriptionId &&
+          webRuntimeSubscriptionSetupControllers.get(subscriptionId) === controller
+        ) {
+          webRuntimeSubscriptionSetupControllers.delete(subscriptionId)
+        }
+      }
+    },
+    cancelSubscription: async ({ subscriptionId }) => {
+      const controller = webRuntimeSubscriptionSetupControllers.get(subscriptionId)
+      if (webRuntimeSubscriptionSetupControllers.get(subscriptionId) === controller) {
+        webRuntimeSubscriptionSetupControllers.delete(subscriptionId)
+      }
+      controller?.abort()
+      return { unsubscribed: controller !== undefined }
     }
   }
 }
@@ -3671,6 +3697,10 @@ function getClientForEnvironment(environment: StoredWebRuntimeEnvironment): WebR
 }
 
 function closeActiveRuntimeClients(): void {
+  for (const controller of webRuntimeSubscriptionSetupControllers.values()) {
+    controller.abort()
+  }
+  webRuntimeSubscriptionSetupControllers.clear()
   activeClient?.close()
   activeClient = null
   activeClientEnvironmentId = null
