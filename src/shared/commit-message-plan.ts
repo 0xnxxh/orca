@@ -68,7 +68,14 @@ function planAdditionalAgentArgs(
   return { ok: true, args: tokenized.tokens }
 }
 
-const CODEX_MODEL_OPTION_ALIASES = ['--model', '-m'] as const
+// Why: Codex and OpenCode treat --model/-m as a singleton string. When recipe
+// CLI args also pass a model, yargs (OpenCode) or the CLI (Codex) mishandle
+// the duplicate — OpenCode turns it into an array and then crashes on split.
+const SINGLETON_MODEL_OPTION_ALIASES = ['--model', '-m'] as const
+
+function agentUsesSingletonModelOption(agentId: TuiAgent | 'custom'): boolean {
+  return agentId === 'codex' || agentId === 'opencode'
+}
 
 function matchesOption(token: string, aliases: readonly string[]): boolean {
   return aliases.some(
@@ -227,16 +234,15 @@ export function planCommitMessageGeneration(
   if (!agentArgs.ok) {
     return agentArgs
   }
-  // Why: Codex rejects repeated singleton model flags. Recipe CLI arguments
-  // are the more specific setting, so they replace Orca's generated model.
-  const overriddenArgs =
-    input.agentId === 'codex'
-      ? applyRecipeOptionOverride({
-          generatedArgs: baseArgs,
-          recipeArgs: agentArgs.args,
-          aliases: CODEX_MODEL_OPTION_ALIASES
-        })
-      : { generatedArgs: baseArgs, recipeArgs: agentArgs.args }
+  // Why: recipe CLI arguments are the more specific setting; when they include
+  // a model flag, replace Orca's generated --model so CLIs never see duplicates.
+  const overriddenArgs = agentUsesSingletonModelOption(input.agentId)
+    ? applyRecipeOptionOverride({
+        generatedArgs: baseArgs,
+        recipeArgs: agentArgs.args,
+        aliases: SINGLETON_MODEL_OPTION_ALIASES
+      })
+    : { generatedArgs: baseArgs, recipeArgs: agentArgs.args }
   const args = insertAdditionalAgentArgs({
     baseArgs: overriddenArgs.generatedArgs,
     agentArgs: overriddenArgs.recipeArgs,

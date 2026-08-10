@@ -311,12 +311,72 @@ describe('planCommitMessageGeneration', () => {
     })
   })
 
-  it('appends per-action CLI arguments for stdin agents', () => {
+  it.each([
+    ['long option', '--model opencode/gpt-5.5', ['--model', 'opencode/gpt-5.5'], []],
+    ['short option', '-m opencode/gpt-5.5', ['-m', 'opencode/gpt-5.5'], []],
+    ['equals form', '--model=opencode/gpt-5.5', ['--model=opencode/gpt-5.5'], []],
+    ['attached short form', '-mopencode/gpt-5.5', ['-mopencode/gpt-5.5'], []],
+    [
+      'sibling arguments',
+      '--model opencode/gpt-5.5 --log-level warn',
+      ['--model', 'opencode/gpt-5.5'],
+      ['--log-level', 'warn']
+    ],
+    [
+      'quoted model with spaces',
+      '--model "provider/my model"',
+      ['--model', 'provider/my model'],
+      []
+    ]
+  ])(
+    'lets OpenCode recipe args override the generated model via %s',
+    (_, agentArgs, overrideArgs, trailingArgs) => {
+      const result = planCommitMessageGeneration(
+        {
+          agentId: 'opencode',
+          model: 'opencode/gpt-5.4-mini',
+          thinkingLevel: 'high',
+          agentArgs
+        },
+        'PROMPT'
+      )
+
+      expect(result).toMatchObject({
+        ok: true,
+        plan: {
+          args: [
+            'run',
+            ...overrideArgs,
+            '--agent',
+            'build',
+            '--format',
+            'default',
+            '--variant',
+            'high',
+            ...trailingArgs
+          ],
+          stdinPayload: 'PROMPT'
+        }
+      })
+      // Why: OpenCode yargs collapses duplicate --model into an array and then
+      // crashes on split; the plan must never emit more than one model option.
+      const modelFlagCount = (result.ok ? result.plan.args : []).filter(
+        (token) =>
+          token === '--model' ||
+          token === '-m' ||
+          token.startsWith('--model=') ||
+          (token.startsWith('-m') && token.length > 2 && !token.startsWith('--'))
+      ).length
+      expect(modelFlagCount).toBe(1)
+    }
+  )
+
+  it('keeps OpenCode recipe arguments that do not override the model', () => {
     const result = planCommitMessageGeneration(
       {
         agentId: 'opencode',
         model: 'opencode/gpt-5.4-mini',
-        agentArgs: '--model opencode/gpt-5.5'
+        agentArgs: '--log-level warn'
       },
       'PROMPT'
     )
@@ -332,8 +392,65 @@ describe('planCommitMessageGeneration', () => {
           'build',
           '--format',
           'default',
+          '--log-level',
+          'warn'
+        ],
+        stdinPayload: 'PROMPT'
+      }
+    })
+  })
+
+  it('keeps the generated OpenCode model when model-like text follows an option terminator', () => {
+    const result = planCommitMessageGeneration(
+      {
+        agentId: 'opencode',
+        model: 'opencode/gpt-5.4-mini',
+        agentArgs: '-- --model literal'
+      },
+      'PROMPT'
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      plan: {
+        args: [
+          'run',
           '--model',
-          'opencode/gpt-5.5'
+          'opencode/gpt-5.4-mini',
+          '--agent',
+          'build',
+          '--format',
+          'default',
+          '--',
+          '--model',
+          'literal'
+        ]
+      }
+    })
+  })
+
+  it('appends non-model per-action CLI arguments for stdin agents that do not override model', () => {
+    const result = planCommitMessageGeneration(
+      {
+        agentId: 'claude',
+        model: 'sonnet',
+        agentArgs: '--verbose'
+      },
+      'PROMPT'
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      plan: {
+        args: [
+          '-p',
+          '--output-format',
+          'text',
+          '--model',
+          'sonnet',
+          '--permission-mode',
+          'plan',
+          '--verbose'
         ],
         stdinPayload: 'PROMPT'
       }
