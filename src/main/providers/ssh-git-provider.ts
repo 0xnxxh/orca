@@ -41,6 +41,7 @@ type NonInteractiveExecQueueEntry = {
 }
 
 const NON_INTERACTIVE_TRANSPORT_TIMEOUT_MARGIN_MS = 5_000
+const ABSENT_BRANCH_DIFF_HEAD_OID = { absent: true } as const
 
 function isJsonRpcMethodNotFoundError(error: unknown): boolean {
   if (!error || typeof error !== 'object') {
@@ -658,9 +659,10 @@ export class SshGitProvider implements IGitProvider {
   async getBranchDiff(
     worktreePath: string,
     baseRef: string,
-    options?: { includePatch?: boolean; filePath?: string; oldPath?: string }
+    options?: { includePatch?: boolean; filePath?: string; oldPath?: string; headOid?: string }
   ): Promise<GitDiffResult[]> {
     const keyOptions = options ?? {}
+    const { headOid, ...relayOptions } = keyOptions
     return this.gitDiffReadDedupe.run(
       stableInFlightKey([
         'branchDiff',
@@ -668,13 +670,15 @@ export class SshGitProvider implements IGitProvider {
         baseRef,
         keyOptions.includePatch ?? null,
         keyOptions.filePath ?? null,
-        keyOptions.oldPath ?? null
+        keyOptions.oldPath ?? null,
+        headOid === undefined ? ABSENT_BRANCH_DIFF_HEAD_OID : headOid
       ]),
       async () =>
         (await requestGitStreamable(this.mux, 'git.branchDiff', {
           worktreePath,
           baseRef,
-          ...options
+          ...relayOptions,
+          ...(headOid === undefined ? {} : { headOid })
         })) as GitDiffResult[]
     ) as Promise<GitDiffResult[]>
   }
