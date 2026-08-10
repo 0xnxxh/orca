@@ -1,15 +1,19 @@
-import { tokenizeCustomCommandTemplate } from './commit-message-prompt'
+import { tokenizeCustomCommandTemplate, type CommandTokenSpan } from './commit-message-prompt'
 
 export type AgentStartupShell = 'posix' | 'powershell' | 'cmd'
 
-export type StartupCommandTokens = { ok: true; tokens: string[] } | { ok: false; error: string }
+export type StartupCommandTokens =
+  | { ok: true; tokens: string[]; spans: CommandTokenSpan[] }
+  | { ok: false; error: string }
 
 function tokenizeWindowsStartupCommand(
   value: string,
   shell: Exclude<AgentStartupShell, 'posix'>
 ): StartupCommandTokens {
   const tokens: string[] = []
+  const spans: CommandTokenSpan[] = []
   let token = ''
+  let tokenStart = 0
   let quote: "'" | '"' | null = null
   let tokenStarted = false
   for (let index = 0; index < value.length; index += 1) {
@@ -17,6 +21,9 @@ function tokenizeWindowsStartupCommand(
     const escape = shell === 'cmd' ? '^' : '`'
     if (char === escape && index + 1 < value.length) {
       token += value[index + 1]
+      if (!tokenStarted) {
+        tokenStart = index
+      }
       tokenStarted = true
       index += 1
       continue
@@ -37,14 +44,21 @@ function tokenizeWindowsStartupCommand(
     }
     if (char === "'" || char === '"') {
       quote = char
+      if (!tokenStarted) {
+        tokenStart = index
+      }
       tokenStarted = true
     } else if (/\s/.test(char)) {
       if (tokenStarted) {
         tokens.push(token)
+        spans.push({ start: tokenStart, end: index })
         token = ''
         tokenStarted = false
       }
     } else {
+      if (!tokenStarted) {
+        tokenStart = index
+      }
       token += char
       tokenStarted = true
     }
@@ -54,8 +68,9 @@ function tokenizeWindowsStartupCommand(
   }
   if (tokenStarted) {
     tokens.push(token)
+    spans.push({ start: tokenStart, end: value.length })
   }
-  return { ok: true, tokens }
+  return { ok: true, tokens, spans }
 }
 
 export function tokenizeStartupCommand(

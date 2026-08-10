@@ -250,27 +250,48 @@ describe('excerptAgentFailureOutput', () => {
 describe('tokenizeCustomCommandTemplate', () => {
   it('splits on whitespace', () => {
     const r = tokenizeCustomCommandTemplate('claude -p')
-    expect(r).toEqual({ ok: true, tokens: ['claude', '-p'] })
+    expect(r).toMatchObject({ ok: true, tokens: ['claude', '-p'] })
   })
 
   it('groups double-quoted segments with spaces', () => {
     const r = tokenizeCustomCommandTemplate('claude --msg "hello world"')
-    expect(r).toEqual({ ok: true, tokens: ['claude', '--msg', 'hello world'] })
+    expect(r).toMatchObject({ ok: true, tokens: ['claude', '--msg', 'hello world'] })
   })
 
   it('groups single-quoted segments verbatim', () => {
     const r = tokenizeCustomCommandTemplate(`agent --json '{"k":"v"}'`)
-    expect(r).toEqual({ ok: true, tokens: ['agent', '--json', '{"k":"v"}'] })
+    expect(r).toMatchObject({ ok: true, tokens: ['agent', '--json', '{"k":"v"}'] })
   })
 
   it('honors backslash escapes inside double quotes', () => {
     const r = tokenizeCustomCommandTemplate('claude --msg "she said \\"hi\\""')
-    expect(r).toEqual({ ok: true, tokens: ['claude', '--msg', 'she said "hi"'] })
+    expect(r).toMatchObject({ ok: true, tokens: ['claude', '--msg', 'she said "hi"'] })
   })
 
   it('keeps adjacent quoted/unquoted regions in one token (a"b"c → abc)', () => {
     const r = tokenizeCustomCommandTemplate('foo a"b"c')
-    expect(r).toEqual({ ok: true, tokens: ['foo', 'abc'] })
+    expect(r).toMatchObject({ ok: true, tokens: ['foo', 'abc'] })
+  })
+
+  it('reports source spans covering each raw token including quotes', () => {
+    const source = 'claude --msg "hello world"'
+    const r = tokenizeCustomCommandTemplate(source)
+    expect(r).toEqual({
+      ok: true,
+      tokens: ['claude', '--msg', 'hello world'],
+      spans: [
+        { start: 0, end: 6 },
+        { start: 7, end: 12 },
+        { start: 13, end: 26 }
+      ]
+    })
+    if (r.ok) {
+      expect(r.spans.map(({ start, end }) => source.slice(start, end))).toEqual([
+        'claude',
+        '--msg',
+        '"hello world"'
+      ])
+    }
   })
 
   it('returns an error for an unclosed quote', () => {
@@ -283,7 +304,7 @@ describe('tokenizeCustomCommandTemplate', () => {
 
   it('returns an empty token list for whitespace-only input', () => {
     const r = tokenizeCustomCommandTemplate('   \t  ')
-    expect(r).toEqual({ ok: true, tokens: [] })
+    expect(r).toEqual({ ok: true, tokens: [], spans: [] })
   })
 })
 

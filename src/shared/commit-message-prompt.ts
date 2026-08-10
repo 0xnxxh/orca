@@ -131,8 +131,11 @@ export function truncateDiffForPrompt(
 
 export const CUSTOM_PROMPT_PLACEHOLDER = '{prompt}'
 
+/** Source range of a token: [start, end) offsets into the original string. */
+export type CommandTokenSpan = { start: number; end: number }
+
 export type TokenizeCustomCommandResult =
-  | { ok: true; tokens: string[] }
+  | { ok: true; tokens: string[]; spans: CommandTokenSpan[] }
   | { ok: false; error: string }
 
 // Why: deliberately POSIX-shell-style only for *grouping* (single + double
@@ -143,8 +146,10 @@ export type TokenizeCustomCommandResult =
 // surface we don't need.
 export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomCommandResult {
   const tokens: string[] = []
+  const spans: CommandTokenSpan[] = []
   let current = ''
   let inToken = false
+  let tokenStart = 0
   let quote: '"' | "'" | null = null
   let i = 0
 
@@ -171,6 +176,9 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
 
     if (ch === '"' || ch === "'") {
       quote = ch
+      if (!inToken) {
+        tokenStart = i
+      }
       inToken = true
       i++
       continue
@@ -178,6 +186,9 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
 
     if (ch === '\\' && i + 1 < template.length) {
       current += template[i + 1]
+      if (!inToken) {
+        tokenStart = i
+      }
       inToken = true
       i += 2
       continue
@@ -186,6 +197,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
     if (/\s/.test(ch)) {
       if (inToken) {
         tokens.push(current)
+        spans.push({ start: tokenStart, end: i })
         current = ''
         inToken = false
       }
@@ -193,6 +205,9 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
       continue
     }
 
+    if (!inToken) {
+      tokenStart = i
+    }
     current += ch
     inToken = true
     i++
@@ -203,8 +218,9 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
   }
   if (inToken) {
     tokens.push(current)
+    spans.push({ start: tokenStart, end: template.length })
   }
-  return { ok: true, tokens }
+  return { ok: true, tokens, spans }
 }
 
 export type CustomCommandPlan =
