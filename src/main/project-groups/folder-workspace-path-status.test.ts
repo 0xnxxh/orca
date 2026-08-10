@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   getFolderWorkspacePathStatus,
   getFolderWorkspacePathStatusForPath,
-  inferFolderWorkspacePathConnection
+  inferFolderWorkspacePathConnection,
+  resolveFolderWorkspaceStatusPath
 } from './folder-workspace-path-status'
 import type { IFilesystemProvider } from '../providers/types'
 import type { ProjectGroup, Repo } from '../../shared/types'
@@ -38,6 +39,33 @@ function makeRepo(overrides: Partial<Repo> = {}): Repo {
     ...overrides
   }
 }
+
+it('resolves same-id project-group paths by exact owner', () => {
+  const local = makeGroup({ id: 'same-id', parentPath: '/local' })
+  const ssh = makeGroup({ id: 'same-id', parentPath: '/remote', connectionId: 'builder' })
+  const store = {
+    getRepos: () => [],
+    getProjectGroups: () => [local, ssh]
+  }
+
+  expect(
+    resolveFolderWorkspaceStatusPath({
+      store,
+      request: { scope: 'project-group', projectGroupId: 'same-id', ownerHostId: 'ssh:builder' }
+    })
+  ).toEqual({
+    folderPath: '/remote',
+    projectGroupId: 'same-id',
+    connectionId: 'builder',
+    ownerHostId: 'ssh:builder'
+  })
+  expect(() =>
+    resolveFolderWorkspaceStatusPath({
+      store,
+      request: { scope: 'project-group', projectGroupId: 'same-id' }
+    })
+  ).toThrow('folder_workspace_path_scope_not_found')
+})
 
 describe('folder workspace path status', () => {
   it('reports existing local directories and local files', async () => {

@@ -1345,13 +1345,15 @@ export type PreloadApi = {
     }) => Promise<ProjectGroup>
     update: (args: {
       groupId: string
+      ownerHostId?: ExecutionHostId
       updates: Partial<Pick<ProjectGroup, 'name' | 'isCollapsed' | 'tabOrder' | 'color'>>
     }) => Promise<ProjectGroup | null>
-    delete: (args: { groupId: string }) => Promise<boolean>
+    delete: (args: { groupId: string; ownerHostId?: ExecutionHostId }) => Promise<boolean>
     moveProject: (args: {
       projectId: string
       groupId: string | null
       order?: number
+      ownerHostId?: ExecutionHostId
     }) => Promise<Repo | null>
     scanNested: (args: {
       path: string

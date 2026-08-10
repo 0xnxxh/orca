@@ -6,8 +6,15 @@ import type { Store } from '../persistence'
 import { isRepoRoot, listRepoWorktrees } from '../repo-worktrees'
 import { computeWorkspaceRoot, getWorktreePathSettings } from './worktree-logic'
 import { isPathInsideOrEqual } from '../../shared/cross-platform-path'
-import { getProjectGroupSubtreeIds } from '../../shared/project-groups'
-import type { FolderWorkspace, ProjectGroup, Repo } from '../../shared/types'
+import {
+  buildProjectGroupOwnerIndex,
+  getProjectGroupOwnerHostId,
+  getProjectGroupSubtreeIds,
+  resolveFolderWorkspaceProjectGroup
+} from '../../shared/project-groups'
+import { getRepoExecutionHostId, LOCAL_EXECUTION_HOST_ID } from '../../shared/execution-host'
+import type { ProjectGroup, Repo } from '../../shared/types'
+import { getFolderWorkspaceCatalogOwnerHostId } from '../../shared/folder-workspaces'
 
 export const PATH_ACCESS_DENIED_MESSAGE =
   'Access denied: path resolves outside allowed directories. If this blocks a legitimate workflow, please file a GitHub issue.'
@@ -58,43 +65,189 @@ function getLocalRepos(store: Store) {
   return store.getRepos().filter((repo) => !repo.connectionId)
 }
 
-function getFolderScopeCandidateRepos(
-  folderPath: string,
-  projectGroupId: string,
-  projectGroups: readonly ProjectGroup[],
+type FolderAuthIndex = {
+  projectGroupIndex: ReturnType<typeof buildProjectGroupOwnerIndex>
+  ownerGroupIdsByOwner: Map<string, ProjectGroup[]>
+  reposByOwner: Map<string, Repo[]>
+  reposByOwnerAndGroupId: Map<string, Repo[]>
+  ownerSubtreeIds: Map<string, Map<string, Set<string>>>
+  unscopedSubtreeIds: Map<string, Set<string>>
   repos: readonly Repo[]
-): Repo[] {
-  const groupIds = getProjectGroupSubtreeIds(projectGroups, projectGroupId)
-  return repos.filter(
-    (repo) =>
-      (typeof repo.projectGroupId === 'string' && groupIds.has(repo.projectGroupId)) ||
-      isPathInsideOrEqual(folderPath, repo.path)
-  )
+  projectGroups: readonly ProjectGroup[]
 }
 
-function isRemoteOnlyFolderScope(
-  folderPath: string,
-  projectGroupId: string,
-  connectionId: string | null | undefined,
+function ownerGroupKey(ownerHostId: string, groupId: string): string {
+  return `${ownerHostId}\0${groupId}`
+}
+
+function buildFolderAuthIndex(
   projectGroups: readonly ProjectGroup[],
   repos: readonly Repo[]
+): FolderAuthIndex {
+  const projectGroupIndex = buildProjectGroupOwnerIndex(projectGroups)
+  const ownerGroupIdsByOwner = new Map<string, ProjectGroup[]>()
+  const childrenByOwnerParent = new Map<string, string[]>()
+  for (const group of projectGroups) {
+    const ownerHostId = getProjectGroupOwnerHostId(group)
+    const ownerGroups = ownerGroupIdsByOwner.get(ownerHostId) ?? []
+    ownerGroups.push(group)
+    ownerGroupIdsByOwner.set(ownerHostId, ownerGroups)
+    if (!group.parentGroupId) {
+      continue
+    }
+    const parentKey = ownerGroupKey(ownerHostId, group.parentGroupId)
+    const children = childrenByOwnerParent.get(parentKey) ?? []
+    children.push(group.id)
+    childrenByOwnerParent.set(parentKey, children)
+  }
+
+  const ownerSubtreeIds = new Map<string, Map<string, Set<string>>>()
+  for (const [ownerHostId, groups] of ownerGroupIdsByOwner) {
+    const subtreeByRoot = new Map<string, Set<string>>()
+    for (const group of groups) {
+      if (subtreeByRoot.has(group.id)) {
+        continue
+      }
+      const subtree = new Set<string>()
+      const pending = [group.id]
+      while (pending.length > 0) {
+        const groupId = pending.pop()!
+        if (subtree.has(groupId)) {
+          continue
+        }
+        subtree.add(groupId)
+        for (const childId of childrenByOwnerParent.get(ownerGroupKey(ownerHostId, groupId)) ??
+          []) {
+          pending.push(childId)
+        }
+      }
+      subtreeByRoot.set(group.id, subtree)
+    }
+    ownerSubtreeIds.set(ownerHostId, subtreeByRoot)
+  }
+
+  const unscopedSubtreeIds = new Map<string, Set<string>>()
+  for (const group of projectGroups) {
+    if (!unscopedSubtreeIds.has(group.id)) {
+      unscopedSubtreeIds.set(group.id, getProjectGroupSubtreeIds(projectGroups, group.id))
+    }
+  }
+
+  const reposByOwner = new Map<string, Repo[]>()
+  const reposByOwnerAndGroupId = new Map<string, Repo[]>()
+  for (const repo of repos) {
+    const ownerHostId = getRepoExecutionHostId(repo)
+    const ownerRepos = reposByOwner.get(ownerHostId) ?? []
+    ownerRepos.push(repo)
+    reposByOwner.set(ownerHostId, ownerRepos)
+    if (typeof repo.projectGroupId === 'string') {
+      const key = ownerGroupKey(ownerHostId, repo.projectGroupId)
+      const groupRepos = reposByOwnerAndGroupId.get(key) ?? []
+      groupRepos.push(repo)
+      reposByOwnerAndGroupId.set(key, groupRepos)
+    }
+  }
+
+  return {
+    projectGroupIndex,
+    ownerGroupIdsByOwner,
+    reposByOwner,
+    reposByOwnerAndGroupId,
+    ownerSubtreeIds,
+    unscopedSubtreeIds,
+    repos,
+    projectGroups
+  }
+}
+
+function collectOwnerGroupMembershipRepos(
+  index: FolderAuthIndex,
+  projectGroupId: string,
+  ownerHostId: string
+): Repo[] {
+  const groupIds =
+    index.ownerSubtreeIds.get(ownerHostId)?.get(projectGroupId) ?? new Set([projectGroupId])
+  const seen = new Set<Repo>()
+  const candidates: Repo[] = []
+  for (const groupId of groupIds) {
+    for (const repo of index.reposByOwnerAndGroupId.get(ownerGroupKey(ownerHostId, groupId)) ??
+      []) {
+      if (!seen.has(repo)) {
+        seen.add(repo)
+        candidates.push(repo)
+      }
+    }
+  }
+  return candidates
+}
+
+function collectOwnerPathMembershipRepos(
+  index: FolderAuthIndex,
+  folderPath: string,
+  ownerHostId: string,
+  exclude: ReadonlySet<Repo>
+): Repo[] {
+  const candidates: Repo[] = []
+  for (const repo of index.reposByOwner.get(ownerHostId) ?? []) {
+    if (exclude.has(repo)) {
+      continue
+    }
+    if (isPathInsideOrEqual(folderPath, repo.path)) {
+      candidates.push(repo)
+    }
+  }
+  return candidates
+}
+
+function isRemoteOnlyFolderScopeWithIndex(
+  index: FolderAuthIndex,
+  folderPath: string,
+  projectGroupId: string,
+  ownerHostId: string,
+  inferLegacyOwner: boolean
 ): boolean {
-  if (connectionId) {
+  if (ownerHostId !== LOCAL_EXECUTION_HOST_ID) {
     return true
   }
-  const candidates = getFolderScopeCandidateRepos(folderPath, projectGroupId, projectGroups, repos)
-  return candidates.length > 0 && candidates.every((repo) => Boolean(repo.connectionId))
-}
-
-function getFolderWorkspaceConnectionId(
-  workspace: FolderWorkspace,
-  projectGroups: readonly ProjectGroup[]
-): string | null {
-  return (
-    workspace.connectionId ??
-    projectGroups.find((group) => group.id === workspace.projectGroupId)?.connectionId ??
-    null
+  if (inferLegacyOwner) {
+    const groupIds = index.unscopedSubtreeIds.get(projectGroupId) ?? new Set([projectGroupId])
+    let sawLegacyCandidate = false
+    let sawLocalLegacyCandidate = false
+    for (const repo of index.repos) {
+      const inGroup = typeof repo.projectGroupId === 'string' && groupIds.has(repo.projectGroupId)
+      // Why: only pay path reads when group membership alone cannot classify the scope.
+      if (!inGroup && !isPathInsideOrEqual(folderPath, repo.path)) {
+        continue
+      }
+      sawLegacyCandidate = true
+      if (getRepoExecutionHostId(repo) === LOCAL_EXECUTION_HOST_ID) {
+        sawLocalLegacyCandidate = true
+        break
+      }
+    }
+    if (sawLegacyCandidate && !sawLocalLegacyCandidate) {
+      return true
+    }
+  }
+  const groupCandidates = collectOwnerGroupMembershipRepos(index, projectGroupId, ownerHostId)
+  if (groupCandidates.length === 0) {
+    // Why: empty membership means no remote-linked evidence; authorize local folder scopes without path scans.
+    return false
+  }
+  if (groupCandidates.some((repo) => !repo.connectionId)) {
+    return false
+  }
+  // Why: path containment only matters when every group-linked repo is remote-linked.
+  const pathCandidates = collectOwnerPathMembershipRepos(
+    index,
+    folderPath,
+    ownerHostId,
+    new Set(groupCandidates)
   )
+  if (pathCandidates.some((repo) => !repo.connectionId)) {
+    return false
+  }
+  return true
 }
 
 function getLocalFolderScopeRoots(store: Store): string[] {
@@ -102,23 +255,40 @@ function getLocalFolderScopeRoots(store: Store): string[] {
   const repos = scopeStore.getRepos()
   // Why: many filesystem tests use narrow Store doubles; folder scopes are additive.
   const projectGroups = scopeStore.getProjectGroups?.() ?? []
+  // Why: one owner-indexed pass avoids O((groups+folders)*(groups+repos)) remote-only checks.
+  const index = buildFolderAuthIndex(projectGroups, repos)
   const roots: string[] = []
   for (const group of projectGroups) {
     if (
       group.parentPath &&
-      !isRemoteOnlyFolderScope(group.parentPath, group.id, group.connectionId, projectGroups, repos)
+      !isRemoteOnlyFolderScopeWithIndex(
+        index,
+        group.parentPath,
+        group.id,
+        getProjectGroupOwnerHostId(group),
+        group.connectionId === undefined &&
+          group.executionHostId === undefined &&
+          index.projectGroupIndex.byId.get(group.id)?.length === 1
+      )
     ) {
       roots.push(resolve(group.parentPath))
     }
   }
   for (const workspace of scopeStore.getFolderWorkspaces?.() ?? []) {
+    const group = resolveFolderWorkspaceProjectGroup(index.projectGroupIndex, workspace)
+    // Why: narrow Store doubles may omit projectGroups; folder roots stay additive from the workspace catalog.
+    const ownerHostId = group
+      ? getProjectGroupOwnerHostId(group)
+      : getFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups)
     if (
-      !isRemoteOnlyFolderScope(
+      !isRemoteOnlyFolderScopeWithIndex(
+        index,
         workspace.folderPath,
         workspace.projectGroupId,
-        getFolderWorkspaceConnectionId(workspace, projectGroups),
-        projectGroups,
-        repos
+        ownerHostId,
+        workspace.connectionId === undefined &&
+          workspace.executionHostId === undefined &&
+          index.projectGroupIndex.byId.get(workspace.projectGroupId)?.length === 1
       )
     ) {
       roots.push(resolve(workspace.folderPath))

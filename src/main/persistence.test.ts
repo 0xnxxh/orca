@@ -3524,6 +3524,218 @@ describe('Store', () => {
     expect(store.getRepo('sibling')?.projectGroupId).toBe(sibling.id)
   })
 
+  it('moves duplicate repo ids only within the exact project group owner', async () => {
+    const makeOwnedGroup = (name: string, connectionId: string | null): ProjectGroup => ({
+      id: 'same-group',
+      name,
+      parentPath: null,
+      connectionId,
+      parentGroupId: null,
+      createdFrom: 'manual',
+      tabOrder: 0,
+      isCollapsed: false,
+      color: null,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [
+        makeRepo({ id: 'same-repo', path: '/local', projectGroupOrder: 900 }),
+        makeRepo({
+          id: 'same-repo',
+          path: '/ssh',
+          connectionId: 'builder',
+          projectGroupOrder: 1
+        }),
+        makeRepo({
+          id: 'ssh-sibling',
+          path: '/ssh/sibling',
+          connectionId: 'builder',
+          projectGroupId: 'same-group',
+          projectGroupOrder: 5
+        })
+      ],
+      worktreeMeta: {},
+      settings: {},
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      projectGroups: [
+        makeOwnedGroup('Local', null),
+        makeOwnedGroup('SSH', 'builder'),
+        { ...makeOwnedGroup('Local only', null), id: 'local-only' }
+      ]
+    })
+    const store = await createStore()
+
+    expect(store.moveProjectToGroup('same-repo', null)).toBeNull()
+    expect(store.moveProjectToGroup('same-repo', null, undefined, 'ssh:missing')).toBeNull()
+    expect(store.moveProjectToGroup('same-repo', 'local-only', undefined, 'ssh:builder')).toBeNull()
+    expect(
+      store.moveProjectToGroup('same-repo', 'same-group', undefined, 'ssh:builder')
+    ).toMatchObject({
+      path: '/ssh',
+      projectGroupId: 'same-group',
+      projectGroupOrder: 6
+    })
+
+    const repos = store.getRepos()
+    const localRepo = repos.find((entry) => entry.path === '/local')
+    expect(localRepo).toMatchObject({ projectGroupOrder: 900 })
+    expect(localRepo?.projectGroupId).toBeUndefined()
+    expect(repos.find((entry) => entry.path === '/ssh')).toMatchObject({
+      projectGroupId: 'same-group',
+      projectGroupOrder: 6
+    })
+  })
+
+  it('updates and deletes same-id project groups only within the selected owner', async () => {
+    const projectGroups = [
+      {
+        id: 'root',
+        name: 'Local root',
+        parentPath: '/local',
+        connectionId: null,
+        parentGroupId: null,
+        createdFrom: 'folder-scan' as const,
+        tabOrder: 0,
+        isCollapsed: false,
+        color: null,
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'child',
+        name: 'Local child',
+        parentPath: '/local/child',
+        connectionId: null,
+        parentGroupId: 'root',
+        createdFrom: 'folder-scan' as const,
+        tabOrder: 1,
+        isCollapsed: false,
+        color: null,
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'root',
+        name: 'SSH root',
+        parentPath: '/remote',
+        connectionId: 'builder',
+        parentGroupId: null,
+        createdFrom: 'folder-scan' as const,
+        tabOrder: 0,
+        isCollapsed: false,
+        color: null,
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'child',
+        name: 'SSH child',
+        parentPath: '/remote/child',
+        connectionId: 'builder',
+        parentGroupId: 'root',
+        createdFrom: 'folder-scan' as const,
+        tabOrder: 1,
+        isCollapsed: false,
+        color: null,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [
+        makeRepo({ id: 'local-repo', path: '/local/repo', projectGroupId: 'child' }),
+        makeRepo({
+          id: 'ssh-repo',
+          path: '/remote/repo',
+          projectGroupId: 'child',
+          connectionId: 'builder'
+        })
+      ],
+      worktreeMeta: {},
+      settings: {},
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      projectGroups
+    })
+    const store = await createStore()
+    const localWorkspace = store.createFolderWorkspace({
+      projectGroupId: 'child',
+      connectionId: null
+    })
+    const sshWorkspace = store.createFolderWorkspace({
+      projectGroupId: 'child',
+      connectionId: 'builder'
+    })
+
+    expect(store.updateProjectGroup('root', { name: 'Ambiguous' })).toBeNull()
+    expect(store.updateProjectGroup('root', { name: 'Missing' }, 'ssh:missing')).toBeNull()
+    expect(store.updateProjectGroup('root', { name: 'Remote' }, 'ssh:builder')?.name).toBe('Remote')
+    expect(store.deleteProjectGroup('root', 'local')).toBe(true)
+
+    expect(store.getProjectGroups().map((group) => [group.name, group.connectionId])).toEqual([
+      ['Remote', 'builder'],
+      ['SSH child', 'builder']
+    ])
+    expect(store.getRepo('local-repo')?.projectGroupId).toBeNull()
+    expect(store.getRepo('ssh-repo')?.projectGroupId).toBe('child')
+    expect(store.getFolderWorkspace(localWorkspace.id)).toBeUndefined()
+    expect(store.getFolderWorkspace(sshWorkspace.id)).toBeDefined()
+  })
+
+  it('resolves same-id folder workspace creation from explicit connection ownership', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: {},
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      projectGroups: [
+        {
+          id: 'same-id',
+          name: 'Local',
+          parentPath: '/local',
+          connectionId: null,
+          parentGroupId: null,
+          createdFrom: 'folder-scan',
+          tabOrder: 0,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'same-id',
+          name: 'SSH',
+          parentPath: '/remote',
+          connectionId: 'builder',
+          parentGroupId: null,
+          createdFrom: 'folder-scan',
+          tabOrder: 1,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+    const store = await createStore()
+
+    expect(
+      store.createFolderWorkspace({ projectGroupId: 'same-id', connectionId: null }).folderPath
+    ).toBe('/local')
+    expect(
+      store.createFolderWorkspace({ projectGroupId: 'same-id', connectionId: 'builder' }).folderPath
+    ).toBe('/remote')
+    expect(() => store.createFolderWorkspace({ projectGroupId: 'same-id' })).toThrow(
+      'Folder-backed project group not found.'
+    )
+  })
+
   it('adapts flat folder-scan groups into sparse nested folder scopes on load', async () => {
     writeDataFile({
       schemaVersion: 1,
@@ -5302,6 +5514,137 @@ describe('Store', () => {
       connectionId: 'ssh-1'
     })
     expect(store.getFolderWorkspaces()[0]).toMatchObject({ id: 'fw-1', connectionId: 'ssh-1' })
+  })
+
+  it('does not backfill folder scope provenance across same-id owners', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [
+        makeRepo({
+          id: 'remote-repo',
+          path: '/remote/repo',
+          projectGroupId: 'same-id',
+          connectionId: 'ssh-1'
+        })
+      ],
+      worktreeMeta: {},
+      settings: {},
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      projectGroups: [
+        {
+          id: 'same-id',
+          name: 'Local',
+          parentPath: '/local',
+          connectionId: null,
+          parentGroupId: null,
+          createdFrom: 'folder-scan',
+          tabOrder: 0,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'same-id',
+          name: 'SSH',
+          parentPath: '/remote',
+          connectionId: 'ssh-1',
+          parentGroupId: null,
+          createdFrom: 'folder-scan',
+          tabOrder: 1,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      folderWorkspaces: [
+        {
+          id: 'local-folder',
+          projectGroupId: 'same-id',
+          name: 'Local folder',
+          folderPath: '/local',
+          connectionId: null
+        },
+        {
+          id: 'ssh-folder',
+          projectGroupId: 'same-id',
+          name: 'SSH folder',
+          folderPath: '/remote',
+          connectionId: 'ssh-1'
+        }
+      ]
+    })
+
+    const store = await createStore()
+
+    expect(store.getProjectGroups().map((group) => [group.name, group.connectionId])).toEqual([
+      ['Local', null],
+      ['SSH', 'ssh-1']
+    ])
+    expect(
+      store.getFolderWorkspaces().map((workspace) => [workspace.name, workspace.connectionId])
+    ).toEqual([
+      ['Local folder', null],
+      ['SSH folder', 'ssh-1']
+    ])
+  })
+
+  it('normalizes same-id runtime folder workspaces against their explicit owner', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: {},
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      projectGroups: [
+        {
+          id: 'same-id',
+          name: 'Runtime',
+          parentPath: '/runtime',
+          executionHostId: 'runtime:hub-1',
+          parentGroupId: null,
+          createdFrom: 'folder-scan',
+          tabOrder: 0,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'same-id',
+          name: 'Local',
+          parentPath: '/local',
+          parentGroupId: null,
+          createdFrom: 'folder-scan',
+          tabOrder: 1,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      folderWorkspaces: [
+        {
+          id: 'runtime-folder',
+          projectGroupId: 'same-id',
+          name: 'Runtime folder',
+          executionHostId: 'runtime:hub-1'
+        }
+      ]
+    })
+
+    const store = await createStore()
+
+    expect(store.getFolderWorkspaces()).toEqual([
+      expect.objectContaining({
+        id: 'runtime-folder',
+        folderPath: '/runtime',
+        executionHostId: 'runtime:hub-1'
+      })
+    ])
   })
 
   it('removes folder workspace metadata and its scoped session state only', async () => {

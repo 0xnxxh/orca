@@ -264,6 +264,90 @@ describe('filesystem-auth path containment', () => {
     }
   })
 
+  it('authorizes only the local same-id folder owner', async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), 'orca-auth-same-id-folders-'))
+    try {
+      const localPath = join(tempRoot, 'local')
+      const sshPath = join(tempRoot, 'ssh')
+      await mkdir(localPath)
+      await mkdir(sshPath)
+      const localGroup = makeProjectGroup({ id: 'same-id', parentPath: localPath })
+      const sshGroup = makeProjectGroup({
+        id: 'same-id',
+        parentPath: sshPath,
+        connectionId: 'ssh-1'
+      })
+      const store = makeStore([], {
+        projectGroups: [localGroup, sshGroup],
+        folderWorkspaces: [
+          makeFolderWorkspace({
+            id: 'local-folder',
+            projectGroupId: 'same-id',
+            folderPath: localPath,
+            connectionId: null
+          }),
+          makeFolderWorkspace({
+            id: 'ssh-folder',
+            projectGroupId: 'same-id',
+            folderPath: sshPath,
+            connectionId: 'ssh-1'
+          })
+        ]
+      })
+
+      await expect(resolveAuthorizedPath(localPath, store)).resolves.toBe(await realpath(localPath))
+      await expect(resolveAuthorizedPath(sshPath, store)).rejects.toThrow('Access denied')
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps large multi-owner folder authorization linear in catalog size', () => {
+    const groupCount = 2_048
+    const repoCount = 2_048
+    let pathReads = 0
+    const projectGroups = Array.from({ length: groupCount }, (_, index) =>
+      makeProjectGroup({
+        id: index < 16 ? 'same-id' : `group-${index}`,
+        parentPath: index % 16 === 0 ? `/local/group-${index}` : null,
+        executionHostId: index % 16 === 0 ? 'local' : `runtime:env-${index % 16}`
+      })
+    )
+    const folderWorkspaces = Array.from({ length: groupCount }, (_, index) =>
+      makeFolderWorkspace({
+        id: index < 16 ? 'same-folder' : `folder-${index}`,
+        projectGroupId: index < 16 ? 'same-id' : `group-${index}`,
+        folderPath: `/folder-${index}`,
+        executionHostId: index % 16 === 0 ? 'local' : `runtime:env-${index % 16}`,
+        connectionId: index % 16 === 0 ? null : undefined
+      })
+    )
+    const repos = Array.from({ length: repoCount }, (_, index) => {
+      const ownerIndex = index % 16
+      return {
+        ...repo,
+        id: `repo-${index}`,
+        get path() {
+          pathReads += 1
+          return `/repo-${index}`
+        },
+        projectGroupId: ownerIndex === 0 ? 'same-id' : `group-${index}`,
+        executionHostId: ownerIndex === 0 ? 'local' : `runtime:env-${ownerIndex}`,
+        connectionId: ownerIndex === 0 ? null : undefined
+      } as Repo
+    })
+    const store = makeStore(repos, { projectGroups, folderWorkspaces })
+
+    const started = performance.now()
+    const allowed = isPathAllowed('/local/group-0', store)
+    const elapsedMs = performance.now() - started
+
+    expect(allowed).toBe(true)
+    // Why: indexed auth must not re-scan every path for every group/folder on each authorize.
+    expect(pathReads).toBeLessThan(repoCount * 4)
+    expect(elapsedMs).toBeLessThan(250)
+  })
+
   it.skipIf(process.platform === 'win32')(
     'rejects missing descendants under a symlinked ancestor outside the repo',
     async () => {

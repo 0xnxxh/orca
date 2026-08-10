@@ -1,8 +1,68 @@
+import {
+  LOCAL_EXECUTION_HOST_ID,
+  normalizeExecutionHostId,
+  toSshExecutionHostId,
+  type ExecutionHostId
+} from './execution-host'
+import {
+  buildProjectGroupOwnerIndex,
+  getFolderWorkspaceProjectGroupOwnerHostId,
+  resolveFolderWorkspaceProjectGroup,
+  resolveProjectGroupOwner
+} from './project-groups'
 import type { FolderWorkspace, ProjectGroup } from './types'
 import { isTuiAgent } from './tui-agent-config'
 import { normalizeStoredTaskSourceContext } from './task-source-context'
 import { normalizeWorkspaceLinkedItem } from './workspace-linked-item'
 import { isWorkspaceLinkedItemSourceContextMatch } from './workspace-linked-item-source-context'
+
+export function getFolderWorkspaceCatalogOwnerHostId(
+  workspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId' | 'projectGroupId'>,
+  projectGroups: readonly ProjectGroup[] = []
+): ExecutionHostId {
+  const executionHostId = normalizeExecutionHostId(workspace.executionHostId)
+  if (executionHostId) {
+    return executionHostId
+  }
+  if (workspace.connectionId) {
+    return toSshExecutionHostId(workspace.connectionId)
+  }
+  if (workspace.connectionId === null) {
+    return LOCAL_EXECUTION_HOST_ID
+  }
+  if (projectGroups.length === 0) {
+    return LOCAL_EXECUTION_HOST_ID
+  }
+  return getFolderWorkspaceProjectGroupOwnerHostId(
+    workspace,
+    buildProjectGroupOwnerIndex(projectGroups)
+  )
+}
+
+export function getFolderWorkspaceOwnerIdentity(
+  workspace: Pick<FolderWorkspace, 'id' | 'connectionId' | 'executionHostId' | 'projectGroupId'>,
+  projectGroups: readonly ProjectGroup[] = []
+): string {
+  return getFolderWorkspaceIdentity(
+    workspace.id,
+    getFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups)
+  )
+}
+
+export function getFolderWorkspaceIdentity(
+  folderWorkspaceId: string,
+  ownerHostId: ExecutionHostId
+): string {
+  return JSON.stringify([ownerHostId, folderWorkspaceId])
+}
+
+export function getFolderWorkspaceRowKey(
+  workspace: Pick<FolderWorkspace, 'id' | 'connectionId' | 'executionHostId' | 'projectGroupId'>,
+  projectGroups: readonly ProjectGroup[] = []
+): string {
+  const ownerHostId = getFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups)
+  return `folder-workspace:${encodeURIComponent(ownerHostId)}:${encodeURIComponent(workspace.id)}`
+}
 
 export function normalizeFolderWorkspaceName(
   name: string | null | undefined,
@@ -19,12 +79,7 @@ export function normalizeFolderWorkspaces(
   if (!Array.isArray(value)) {
     return []
   }
-  const folderGroups = new Map<string, ProjectGroup>()
-  for (const group of projectGroups) {
-    if (group.parentPath) {
-      folderGroups.set(group.id, group)
-    }
-  }
+  const projectGroupIndex = buildProjectGroupOwnerIndex(projectGroups)
 
   const workspaces: FolderWorkspace[] = []
   const seen = new Set<string>()
@@ -36,13 +91,20 @@ export function normalizeFolderWorkspaces(
     if (
       typeof raw.id !== 'string' ||
       raw.id.trim().length === 0 ||
-      seen.has(raw.id) ||
-      typeof raw.projectGroupId !== 'string' ||
-      !folderGroups.has(raw.projectGroupId)
+      typeof raw.projectGroupId !== 'string'
     ) {
       continue
     }
-    const group = folderGroups.get(raw.projectGroupId)
+    const executionHostId = normalizeExecutionHostId(raw.executionHostId)
+    const group =
+      resolveFolderWorkspaceProjectGroup(projectGroupIndex, {
+        projectGroupId: raw.projectGroupId,
+        connectionId: raw.connectionId,
+        executionHostId
+      }) ?? resolveProjectGroupOwner(projectGroupIndex, raw.projectGroupId)
+    if (!group?.parentPath) {
+      continue
+    }
     const folderPath =
       typeof raw.folderPath === 'string' && raw.folderPath.trim().length > 0
         ? raw.folderPath
@@ -50,21 +112,36 @@ export function normalizeFolderWorkspaces(
     if (!folderPath) {
       continue
     }
+    const connectionId =
+      typeof raw.connectionId === 'string'
+        ? raw.connectionId
+        : raw.connectionId === null
+          ? null
+          : (group?.connectionId ?? null)
+    // Why: multi-host catalogs keep same-id folder rows; identity is owner+id, not bare id.
+    const identity = getFolderWorkspaceOwnerIdentity(
+      {
+        id: raw.id,
+        projectGroupId: raw.projectGroupId,
+        connectionId,
+        ...(executionHostId ? { executionHostId } : {})
+      },
+      projectGroups
+    )
+    if (seen.has(identity)) {
+      continue
+    }
     const now = Date.now()
     const linkedTask = normalizeWorkspaceLinkedItem(raw.linkedTask)
     const linkedTaskSourceContext = normalizeStoredTaskSourceContext(raw.linkedTaskSourceContext)
-    seen.add(raw.id)
+    seen.add(identity)
     workspaces.push({
       id: raw.id,
       projectGroupId: raw.projectGroupId,
       name: normalizeFolderWorkspaceName(raw.name),
       folderPath,
-      connectionId:
-        typeof raw.connectionId === 'string'
-          ? raw.connectionId
-          : raw.connectionId === null
-            ? null
-            : (group?.connectionId ?? null),
+      connectionId,
+      ...(executionHostId ? { executionHostId } : {}),
       linkedTask,
       linkedTaskSourceContext: isWorkspaceLinkedItemSourceContextMatch(
         linkedTask,

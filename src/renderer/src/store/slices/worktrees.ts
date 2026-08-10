@@ -97,13 +97,16 @@ import { captureWorktreeOperationGenerationGuard } from '@/lib/worktree-operatio
 import { getEnvironmentSshStateGeneration } from './runtime-environment-ssh'
 import { getRuntimeEnvironmentConnectionGeneration } from './runtime-status'
 import {
+  dualReadFolderWorkspaceKeyedValue,
   folderWorkspaceKey,
   getActiveSidebarWorkspaceId,
   isWorkspaceKey,
+  migrateFolderWorkspaceKeyedRecord,
   parseWorkspaceKey,
   worktreeWorkspaceKey
 } from '../../../../shared/workspace-scope'
 import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
+import { getFolderWorkspaceCatalogOwnerHostId } from '../../../../shared/folder-workspaces'
 import {
   CLIENT_WORKTREE_CREATE_MAX_ATTEMPTS,
   getClientWorktreeCreateCandidate,
@@ -875,6 +878,110 @@ function folderWorkspaceMatchesHost(
   )
 }
 
+/** Promote legacy bare `folder:<id>` session maps to owner-qualified keys for one unambiguous owner. */
+function migrateLegacyFolderWorkspaceSessionMaps(
+  s: AppState,
+  folderWorkspaceId: string,
+  ownerHostId: ExecutionHostId
+): Partial<AppState> | null {
+  const resolveOwner = (id: string): ExecutionHostId | null =>
+    id === folderWorkspaceId ? ownerHostId : null
+  const tabs = migrateFolderWorkspaceKeyedRecord(s.tabsByWorktree, resolveOwner)
+  const activeFileIdByWorktree = migrateFolderWorkspaceKeyedRecord(
+    s.activeFileIdByWorktree,
+    resolveOwner
+  )
+  const activeBrowserTabIdByWorktree = migrateFolderWorkspaceKeyedRecord(
+    s.activeBrowserTabIdByWorktree,
+    resolveOwner
+  )
+  const activeTabTypeByWorktree = migrateFolderWorkspaceKeyedRecord(
+    s.activeTabTypeByWorktree,
+    resolveOwner
+  )
+  const activeTabIdByWorktree = migrateFolderWorkspaceKeyedRecord(
+    s.activeTabIdByWorktree,
+    resolveOwner
+  )
+  const browserTabsByWorktree = migrateFolderWorkspaceKeyedRecord(
+    s.browserTabsByWorktree,
+    resolveOwner
+  )
+  const groupsByWorktree = migrateFolderWorkspaceKeyedRecord(s.groupsByWorktree, resolveOwner)
+  const unifiedTabsByWorktree = migrateFolderWorkspaceKeyedRecord(
+    s.unifiedTabsByWorktree,
+    resolveOwner
+  )
+  const activeGroupIdByWorktree = migrateFolderWorkspaceKeyedRecord(
+    s.activeGroupIdByWorktree,
+    resolveOwner
+  )
+  // Why: openFiles rows also stamp worktreeId; rewrite legacy bare folder stamps for this owner.
+  let openFilesChanged = false
+  const nextOpenFiles = s.openFiles.map((file) => {
+    const scope = parseWorkspaceKey(file.worktreeId)
+    if (
+      scope?.type === 'folder' &&
+      !scope.ownerHostId &&
+      scope.folderWorkspaceId === folderWorkspaceId
+    ) {
+      openFilesChanged = true
+      return { ...file, worktreeId: folderWorkspaceKey(folderWorkspaceId, ownerHostId) }
+    }
+    return file
+  })
+  const bareKey = folderWorkspaceKey(folderWorkspaceId)
+  const qualifiedKey = folderWorkspaceKey(folderWorkspaceId, ownerHostId)
+  const activeMigrated =
+    s.activeWorkspaceKey === bareKey || s.activeWorktreeId === bareKey
+      ? { activeWorkspaceKey: qualifiedKey, activeWorktreeId: qualifiedKey }
+      : null
+  const changed =
+    tabs.migratedKeys.length > 0 ||
+    activeFileIdByWorktree.migratedKeys.length > 0 ||
+    activeBrowserTabIdByWorktree.migratedKeys.length > 0 ||
+    activeTabTypeByWorktree.migratedKeys.length > 0 ||
+    activeTabIdByWorktree.migratedKeys.length > 0 ||
+    browserTabsByWorktree.migratedKeys.length > 0 ||
+    groupsByWorktree.migratedKeys.length > 0 ||
+    unifiedTabsByWorktree.migratedKeys.length > 0 ||
+    activeGroupIdByWorktree.migratedKeys.length > 0 ||
+    openFilesChanged ||
+    activeMigrated != null
+  if (!changed) {
+    return null
+  }
+  return {
+    ...(tabs.migratedKeys.length > 0 ? { tabsByWorktree: tabs.record } : {}),
+    ...(activeFileIdByWorktree.migratedKeys.length > 0
+      ? { activeFileIdByWorktree: activeFileIdByWorktree.record }
+      : {}),
+    ...(activeBrowserTabIdByWorktree.migratedKeys.length > 0
+      ? { activeBrowserTabIdByWorktree: activeBrowserTabIdByWorktree.record }
+      : {}),
+    ...(activeTabTypeByWorktree.migratedKeys.length > 0
+      ? { activeTabTypeByWorktree: activeTabTypeByWorktree.record }
+      : {}),
+    ...(activeTabIdByWorktree.migratedKeys.length > 0
+      ? { activeTabIdByWorktree: activeTabIdByWorktree.record }
+      : {}),
+    ...(browserTabsByWorktree.migratedKeys.length > 0
+      ? { browserTabsByWorktree: browserTabsByWorktree.record }
+      : {}),
+    ...(groupsByWorktree.migratedKeys.length > 0
+      ? { groupsByWorktree: groupsByWorktree.record }
+      : {}),
+    ...(unifiedTabsByWorktree.migratedKeys.length > 0
+      ? { unifiedTabsByWorktree: unifiedTabsByWorktree.record }
+      : {}),
+    ...(activeGroupIdByWorktree.migratedKeys.length > 0
+      ? { activeGroupIdByWorktree: activeGroupIdByWorktree.record }
+      : {}),
+    ...(openFilesChanged ? { openFiles: nextOpenFiles } : {}),
+    ...(activeMigrated != null ? activeMigrated : {})
+  }
+}
+
 function findKnownWorktreeById(
   state: Pick<AppState, 'worktreesByRepo' | 'detectedWorktreesByRepo' | 'folderWorkspaces'>,
   worktreeId: string,
@@ -882,11 +989,18 @@ function findKnownWorktreeById(
 ): Worktree | DetectedWorktreeListResult['worktrees'][number] | undefined {
   const workspaceScope = parseWorkspaceKey(worktreeId)
   if (workspaceScope?.type === 'folder') {
-    const folderWorkspace = state.folderWorkspaces.find(
+    const preferredHostId = executionHostId ?? workspaceScope.ownerHostId
+    const matches = state.folderWorkspaces.filter(
       (workspace) =>
         workspace.id === workspaceScope.folderWorkspaceId &&
-        (!executionHostId || folderWorkspaceMatchesHost(workspace, executionHostId))
+        (!preferredHostId || folderWorkspaceMatchesHost(workspace, preferredHostId))
     )
+    // Why: bare folder keys dual-read only when the owner is unambiguous; multi-owner same-id must use owner-qualified keys.
+    const folderWorkspace = preferredHostId
+      ? (matches[0] ?? null)
+      : matches.length === 1
+        ? matches[0]
+        : null
     if (!folderWorkspace) {
       return undefined
     }
@@ -3673,6 +3787,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     validIds.add(FLOATING_TERMINAL_WORKTREE_ID)
     // Why: folder workspaces persist tabs under `folder:<id>` keys that authoritative repo scans never return.
     for (const workspace of get().folderWorkspaces ?? []) {
+      const ownerHostId = getFolderWorkspaceCatalogOwnerHostId(workspace, get().projectGroups)
+      validIds.add(folderWorkspaceKey(workspace.id, ownerHostId))
+      // Why: pre-owner session rows still use bare folder ids.
       validIds.add(folderWorkspaceKey(workspace.id))
     }
     for (const key of Object.keys(get().restoredRuntimeHostIdByWorkspaceSessionKey ?? {})) {
@@ -4003,7 +4120,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           const activeScope = parseWorkspaceKey(get().activeWorkspaceKey ?? '')
           const parentWorkspace =
             activeScope?.type === 'folder'
-              ? folderWorkspaceKey(activeScope.folderWorkspaceId)
+              ? folderWorkspaceKey(activeScope.folderWorkspaceId, activeScope.ownerHostId)
               : undefined
           const createArgs = {
             repoId,
@@ -5924,10 +6041,25 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   },
 
   setActiveFolderWorkspace: (folderWorkspaceId, executionHostId) => {
-    const workspaceKey = folderWorkspaceKey(folderWorkspaceId)
-    const workspace = findKnownWorktreeById(get(), workspaceKey, executionHostId)
+    const workspace = findKnownWorktreeById(
+      get(),
+      folderWorkspaceKey(folderWorkspaceId, executionHostId),
+      executionHostId
+    )
     if (!workspace) {
       return
+    }
+    // Why: synthetic folder worktrees stamp hostId from catalog ownership; prefer the caller host when provided.
+    const ownerHostId = executionHostId ?? workspace.hostId ?? LOCAL_EXECUTION_HOST_ID
+    const workspaceKey = folderWorkspaceKey(folderWorkspaceId, ownerHostId)
+    // Why: promote legacy bare `folder:<id>` session maps before activation so dual-read becomes a one-time migration.
+    const migratedSession = migrateLegacyFolderWorkspaceSessionMaps(
+      get(),
+      folderWorkspaceId,
+      ownerHostId
+    )
+    if (migratedSession) {
+      set(migratedSession)
     }
     if (shouldDeferActivationTerminalPrep()) {
       markInputQuietSchedulerInput()
@@ -5938,32 +6070,71 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     const reconciledActiveTabId =
       get().reconcileWorktreeTabModel(workspaceKey).activeRenderableTabId
     set((s) => {
-      const restoredFileId = s.activeFileIdByWorktree[workspaceKey] ?? null
-      const restoredBrowserTabId = s.activeBrowserTabIdByWorktree[workspaceKey] ?? null
-      const restoredTabType = s.activeTabTypeByWorktree[workspaceKey] ?? 'terminal'
-      const activeGroupId =
-        s.activeGroupIdByWorktree[workspaceKey] ?? s.groupsByWorktree[workspaceKey]?.[0]?.id ?? null
+      const dualTabs = dualReadFolderWorkspaceKeyedValue((key) => s.tabsByWorktree[key], {
+        folderWorkspaceId,
+        ownerHostId
+      })
+      const dualActiveFile = dualReadFolderWorkspaceKeyedValue(
+        (key) => s.activeFileIdByWorktree[key],
+        { folderWorkspaceId, ownerHostId }
+      )
+      const dualActiveBrowser = dualReadFolderWorkspaceKeyedValue(
+        (key) => s.activeBrowserTabIdByWorktree[key],
+        { folderWorkspaceId, ownerHostId }
+      )
+      const dualActiveTabType = dualReadFolderWorkspaceKeyedValue(
+        (key) => s.activeTabTypeByWorktree[key],
+        { folderWorkspaceId, ownerHostId }
+      )
+      const dualActiveTab = dualReadFolderWorkspaceKeyedValue(
+        (key) => s.activeTabIdByWorktree[key],
+        { folderWorkspaceId, ownerHostId }
+      )
+      const dualBrowserTabs = dualReadFolderWorkspaceKeyedValue(
+        (key) => s.browserTabsByWorktree[key],
+        { folderWorkspaceId, ownerHostId }
+      )
+      const dualGroups = dualReadFolderWorkspaceKeyedValue((key) => s.groupsByWorktree[key], {
+        folderWorkspaceId,
+        ownerHostId
+      })
+      const dualUnified = dualReadFolderWorkspaceKeyedValue((key) => s.unifiedTabsByWorktree[key], {
+        folderWorkspaceId,
+        ownerHostId
+      })
+      const dualActiveGroup = dualReadFolderWorkspaceKeyedValue(
+        (key) => s.activeGroupIdByWorktree[key],
+        { folderWorkspaceId, ownerHostId }
+      )
+      const restoredFileId = dualActiveFile?.value ?? null
+      const restoredBrowserTabId = dualActiveBrowser?.value ?? null
+      const restoredTabType = dualActiveTabType?.value ?? 'terminal'
+      const activeGroupId = dualActiveGroup?.value ?? dualGroups?.value?.[0]?.id ?? null
       const activeGroup = activeGroupId
-        ? ((s.groupsByWorktree[workspaceKey] ?? []).find((group) => group.id === activeGroupId) ??
-          null)
+        ? ((dualGroups?.value ?? []).find((group) => group.id === activeGroupId) ?? null)
         : null
       const activeUnifiedTabId = reconciledActiveTabId ?? activeGroup?.activeTabId ?? null
       const activeUnifiedTab =
         activeUnifiedTabId != null
-          ? ((s.unifiedTabsByWorktree[workspaceKey] ?? []).find(
+          ? ((dualUnified?.value ?? []).find(
               (tab) =>
                 tab.id === activeUnifiedTabId && (!activeGroup || tab.groupId === activeGroup.id)
             ) ?? null)
           : null
       const fileStillOpen = restoredFileId
-        ? s.openFiles.some((file) => file.id === restoredFileId && file.worktreeId === workspaceKey)
+        ? s.openFiles.some(
+            (file) =>
+              file.id === restoredFileId &&
+              (file.worktreeId === workspaceKey ||
+                file.worktreeId === folderWorkspaceKey(folderWorkspaceId))
+          )
         : false
-      const browserTabs = s.browserTabsByWorktree[workspaceKey] ?? []
+      const browserTabs = dualBrowserTabs?.value ?? []
       const browserTabStillOpen = restoredBrowserTabId
         ? browserTabs.some((tab) => tab.id === restoredBrowserTabId)
         : false
-      const worktreeTabs = s.tabsByWorktree[workspaceKey] ?? []
-      const restoredTabId = s.activeTabIdByWorktree[workspaceKey] ?? null
+      const worktreeTabs = dualTabs?.value ?? []
+      const restoredTabId = dualActiveTab?.value ?? null
       const tabStillExists = restoredTabId
         ? worktreeTabs.some((tab) => tab.id === restoredTabId)
         : false

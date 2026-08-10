@@ -1,7 +1,142 @@
-import { normalizeExecutionHostId } from './execution-host'
-import type { Repo, ProjectGroup, ProjectGroupCreatedFrom } from './types'
+import {
+  getRepoExecutionHostId,
+  LOCAL_EXECUTION_HOST_ID,
+  normalizeExecutionHostId,
+  toSshExecutionHostId,
+  type ExecutionHostId
+} from './execution-host'
+import type { FolderWorkspace, Repo, ProjectGroup, ProjectGroupCreatedFrom } from './types'
 
 export const UNGROUPED_PROJECT_GROUP_KEY = 'project-group:ungrouped'
+
+export type ProjectGroupOwnerIndex = {
+  byIdentity: ReadonlyMap<string, ProjectGroup>
+  byId: ReadonlyMap<string, readonly ProjectGroup[]>
+}
+
+export function getProjectGroupOwnerHostId(
+  group: Pick<ProjectGroup, 'connectionId' | 'executionHostId'>
+): ExecutionHostId {
+  const executionHostId = normalizeExecutionHostId(group.executionHostId)
+  if (executionHostId) {
+    return executionHostId
+  }
+  return group.connectionId ? toSshExecutionHostId(group.connectionId) : LOCAL_EXECUTION_HOST_ID
+}
+
+export function getProjectGroupOwnerIdentity(
+  group: Pick<ProjectGroup, 'id' | 'connectionId' | 'executionHostId'>
+): string {
+  return getProjectGroupIdentity(group.id, getProjectGroupOwnerHostId(group))
+}
+
+export function getProjectGroupIdentity(groupId: string, ownerHostId: ExecutionHostId): string {
+  return JSON.stringify([ownerHostId, groupId])
+}
+
+export function buildProjectGroupOwnerIndex(
+  projectGroups: readonly ProjectGroup[]
+): ProjectGroupOwnerIndex {
+  const byIdentity = new Map<string, ProjectGroup>()
+  const byId = new Map<string, ProjectGroup[]>()
+  for (const group of projectGroups) {
+    byIdentity.set(getProjectGroupOwnerIdentity(group), group)
+    const matches = byId.get(group.id) ?? []
+    matches.push(group)
+    byId.set(group.id, matches)
+  }
+  return { byIdentity, byId }
+}
+
+export function resolveProjectGroupOwner(
+  index: ProjectGroupOwnerIndex,
+  groupId: string,
+  ownerHostId?: ExecutionHostId
+): ProjectGroup | null {
+  if (ownerHostId) {
+    return index.byIdentity.get(getProjectGroupIdentity(groupId, ownerHostId)) ?? null
+  }
+  const matches = index.byId.get(groupId) ?? []
+  return matches.length === 1 ? (matches[0] ?? null) : null
+}
+
+export function resolveProjectGroupMembership(
+  index: ProjectGroupOwnerIndex,
+  groupId: string,
+  ownerHostId: ExecutionHostId
+): ProjectGroup | null {
+  return index.byIdentity.get(getProjectGroupIdentity(groupId, ownerHostId)) ?? null
+}
+
+export function getFolderWorkspaceProjectGroupOwnerHostId(
+  workspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId' | 'projectGroupId'>,
+  index: ProjectGroupOwnerIndex
+): ExecutionHostId {
+  const executionHostId = normalizeExecutionHostId(workspace.executionHostId)
+  if (executionHostId) {
+    return executionHostId
+  }
+  const group = resolveFolderWorkspaceProjectGroup(index, workspace)
+  if (group) {
+    return getProjectGroupOwnerHostId(group)
+  }
+  if (workspace.connectionId) {
+    return toSshExecutionHostId(workspace.connectionId)
+  }
+  return LOCAL_EXECUTION_HOST_ID
+}
+
+export function resolveFolderWorkspaceProjectGroup(
+  index: ProjectGroupOwnerIndex,
+  workspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId' | 'projectGroupId'>
+): ProjectGroup | null {
+  const executionHostId = normalizeExecutionHostId(workspace.executionHostId)
+  if (executionHostId) {
+    return resolveProjectGroupMembership(index, workspace.projectGroupId, executionHostId)
+  }
+  if (workspace.connectionId !== undefined) {
+    const ownerHostId = workspace.connectionId
+      ? toSshExecutionHostId(workspace.connectionId)
+      : LOCAL_EXECUTION_HOST_ID
+    const group = resolveProjectGroupMembership(index, workspace.projectGroupId, ownerHostId)
+    return group ?? resolveProjectGroupOwner(index, workspace.projectGroupId)
+  }
+  return resolveProjectGroupOwner(index, workspace.projectGroupId)
+}
+
+export function getProjectGroupOwnerSubtreeIdentities(
+  projectGroups: readonly ProjectGroup[],
+  rootGroup: ProjectGroup
+): Set<string> {
+  const childrenByParentIdentity = new Map<string, ProjectGroup[]>()
+  for (const group of projectGroups) {
+    if (!group.parentGroupId) {
+      continue
+    }
+    const parentIdentity = getProjectGroupIdentity(
+      group.parentGroupId,
+      getProjectGroupOwnerHostId(group)
+    )
+    const children = childrenByParentIdentity.get(parentIdentity) ?? []
+    children.push(group)
+    childrenByParentIdentity.set(parentIdentity, children)
+  }
+
+  const subtreeIdentities = new Set<string>()
+  const pending = [rootGroup]
+  while (pending.length > 0) {
+    const group = pending.pop()!
+    const identity = getProjectGroupOwnerIdentity(group)
+    if (subtreeIdentities.has(identity)) {
+      continue
+    }
+    subtreeIdentities.add(identity)
+    for (const child of childrenByParentIdentity.get(identity) ?? []) {
+      pending.push(child)
+    }
+  }
+  return subtreeIdentities
+}
 
 function createProjectGroupId(): string {
   const randomUUID = globalThis.crypto?.randomUUID
@@ -52,13 +187,12 @@ export function normalizeProjectGroups(value: unknown): ProjectGroup[] {
       continue
     }
     const raw = candidate as Partial<ProjectGroup>
-    if (typeof raw.id !== 'string' || seen.has(raw.id)) {
+    if (typeof raw.id !== 'string') {
       continue
     }
-    seen.add(raw.id)
     const now = Date.now()
     const executionHostId = normalizeExecutionHostId(raw.executionHostId)
-    groups.push({
+    const group: ProjectGroup = {
       id: raw.id,
       name: normalizeProjectGroupName(typeof raw.name === 'string' ? raw.name : ''),
       parentPath: typeof raw.parentPath === 'string' ? raw.parentPath : null,
@@ -83,16 +217,27 @@ export function normalizeProjectGroups(value: unknown): ProjectGroup[] {
         typeof raw.createdAt === 'number' && Number.isFinite(raw.createdAt) ? raw.createdAt : now,
       updatedAt:
         typeof raw.updatedAt === 'number' && Number.isFinite(raw.updatedAt) ? raw.updatedAt : now,
-      // Why: runtime-owned groups otherwise look local after persistence reload.
       ...(executionHostId ? { executionHostId } : {})
-    })
+    }
+    const identity = getProjectGroupOwnerIdentity(group)
+    if (seen.has(identity)) {
+      continue
+    }
+    seen.add(identity)
+    groups.push(group)
   }
   groups.sort(
     (left, right) => left.tabOrder - right.tabOrder || left.name.localeCompare(right.name)
   )
-  const groupIds = new Set(groups.map((group) => group.id))
+  const groupIdentities = new Set(groups.map(getProjectGroupOwnerIdentity))
   for (const group of groups) {
-    if (group.parentGroupId === group.id || !groupIds.has(group.parentGroupId ?? '')) {
+    const parentIdentity = group.parentGroupId
+      ? getProjectGroupIdentity(group.parentGroupId, getProjectGroupOwnerHostId(group))
+      : null
+    if (
+      group.parentGroupId === group.id ||
+      (parentIdentity !== null && !groupIdentities.has(parentIdentity))
+    ) {
       group.parentGroupId = null
     }
   }
@@ -100,9 +245,10 @@ export function normalizeProjectGroups(value: unknown): ProjectGroup[] {
 }
 
 export function clearMissingProjectGroupMemberships(repos: Repo[], groups: ProjectGroup[]): Repo[] {
-  const groupIds = new Set(groups.map((group) => group.id))
+  const index = buildProjectGroupOwnerIndex(groups)
   return repos.map((repo) =>
-    repo.projectGroupId && !groupIds.has(repo.projectGroupId)
+    repo.projectGroupId &&
+    !resolveProjectGroupMembership(index, repo.projectGroupId, getRepoExecutionHostId(repo))
       ? { ...repo, projectGroupId: null }
       : repo
   )
@@ -130,8 +276,7 @@ export function getProjectGroupSubtreeIds(
       continue
     }
     subtreeIds.add(groupId)
-    // Why: imported project-group trees can be very wide; `push(...children)`
-    // can exceed V8's argument limit while collecting descendants.
+    // Why: avoid V8 argument limits in wide imported project-group trees.
     for (const childGroupId of childGroupsByParentId.get(groupId) ?? []) {
       pending.push(childGroupId)
     }

@@ -350,6 +350,68 @@ describe('projectGroups IPC validation', () => {
     expect(mockStore.updateProjectGroup).not.toHaveBeenCalled()
   })
 
+  it('forwards optional project group mutation ownership to persistence', () => {
+    mockStore.updateProjectGroup.mockReturnValue({ id: 'group-1' })
+    mockStore.deleteProjectGroup.mockReturnValue(true)
+    mockStore.moveProjectToGroup.mockReturnValue({ id: 'repo-1' })
+
+    handlers.get('projectGroups:update')!(null, {
+      groupId: 'group-1',
+      ownerHostId: 'ssh:builder',
+      updates: { name: 'Remote' }
+    })
+    handlers.get('projectGroups:delete')!(null, {
+      groupId: 'group-1',
+      ownerHostId: 'local'
+    })
+    handlers.get('projectGroups:moveProject')!(null, {
+      projectId: 'repo-1',
+      groupId: 'group-1',
+      order: 2,
+      ownerHostId: 'runtime:env-1'
+    })
+
+    expect(mockStore.updateProjectGroup).toHaveBeenCalledWith(
+      'group-1',
+      { name: 'Remote' },
+      'ssh:builder'
+    )
+    expect(mockStore.deleteProjectGroup).toHaveBeenCalledWith('group-1', 'local')
+    expect(mockStore.moveProjectToGroup).toHaveBeenCalledWith(
+      'repo-1',
+      'group-1',
+      2,
+      'runtime:env-1'
+    )
+  })
+
+  it('rejects invalid project group mutation owners before persistence', () => {
+    expect(() =>
+      handlers.get('projectGroups:update')!(null, {
+        groupId: 'group-1',
+        ownerHostId: 'ssh:',
+        updates: { name: 'Remote' }
+      })
+    ).toThrow('invalid_project_group_update_args')
+    expect(() =>
+      handlers.get('projectGroups:delete')!(null, {
+        groupId: 'group-1',
+        ownerHostId: 'builder'
+      })
+    ).toThrow('invalid_project_group_delete_args')
+    expect(() =>
+      handlers.get('projectGroups:moveProject')!(null, {
+        projectId: 'repo-1',
+        groupId: 'group-1',
+        ownerHostId: 'runtime:'
+      })
+    ).toThrow('invalid_project_group_move_repo_args')
+
+    expect(mockStore.updateProjectGroup).not.toHaveBeenCalled()
+    expect(mockStore.deleteProjectGroup).not.toHaveBeenCalled()
+    expect(mockStore.moveProjectToGroup).not.toHaveBeenCalled()
+  })
+
   it('scans nested repositories over a connected SSH filesystem', async () => {
     mockGitProvider.isGitRepoAsync.mockImplementation(async (path: string) => ({
       isRepo: path === '/srv/platform/api',

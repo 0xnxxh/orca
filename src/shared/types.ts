@@ -326,7 +326,7 @@ export type ProjectGroup = {
 
 export type WorkspaceScope =
   | { type: 'worktree'; worktreeId: string }
-  | { type: 'folder'; folderWorkspaceId: string }
+  | { type: 'folder'; folderWorkspaceId: string; ownerHostId?: ExecutionHostId }
 
 export type WorkspaceKey = `worktree:${string}` | `folder:${string}`
 

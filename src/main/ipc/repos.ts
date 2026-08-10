@@ -102,8 +102,16 @@ import {
   LOCAL_EXECUTION_HOST_ID,
   normalizeExecutionHostId,
   parseExecutionHostId,
+  toSshExecutionHostId,
   type ExecutionHostId
 } from '../../shared/execution-host'
+import {
+  buildProjectGroupOwnerIndex,
+  getFolderWorkspaceProjectGroupOwnerHostId,
+  getProjectGroupOwnerHostId,
+  resolveFolderWorkspaceProjectGroup,
+  resolveProjectGroupOwner
+} from '../../shared/project-groups'
 import { joinRemotePath } from '../ssh/ssh-remote-platform'
 import {
   assertFolderWorkspacePathUsable,
@@ -798,8 +806,21 @@ const ProjectGroupCreateArgs = z.object({
   createdFrom: z.enum(['manual', 'folder-scan', 'migration']).optional()
 })
 
+const ProjectGroupOwnerHostId = z
+  .string()
+  .min(1)
+  .transform((value, ctx) => {
+    const hostId = normalizeExecutionHostId(value)
+    if (!hostId) {
+      ctx.addIssue({ code: 'custom', message: 'Invalid owner host ID' })
+      return z.NEVER
+    }
+    return hostId
+  })
+
 const ProjectGroupUpdateArgs = z.object({
   groupId: z.string().min(1),
+  ownerHostId: ProjectGroupOwnerHostId.optional(),
   updates: z.object({
     name: z.string().optional(),
     isCollapsed: z.boolean().optional(),
@@ -809,13 +830,15 @@ const ProjectGroupUpdateArgs = z.object({
 })
 
 const ProjectGroupSelectorArgs = z.object({
-  groupId: z.string().min(1)
+  groupId: z.string().min(1),
+  ownerHostId: ProjectGroupOwnerHostId.optional()
 })
 
 const ProjectGroupMoveProjectArgs = z.object({
   projectId: z.string().min(1),
   groupId: z.string().nullable(),
-  order: z.number().finite().optional()
+  order: z.number().finite().optional(),
+  ownerHostId: ProjectGroupOwnerHostId.optional()
 })
 
 const ProjectHostSetupExistingFolderIpcArgs = z.object({
@@ -958,7 +981,8 @@ const FolderWorkspacePathStatusArgs = z.discriminatedUnion('scope', [
   }),
   z.object({
     scope: z.literal('project-group'),
-    projectGroupId: z.string().min(1)
+    projectGroupId: z.string().min(1),
+    ownerHostId: ProjectGroupOwnerHostId.optional()
   }),
   z.object({
     scope: z.literal('path'),
@@ -1488,7 +1512,15 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         'invalid_folder_workspace_create_args'
       )
       const projectGroups = store.getProjectGroups()
-      const group = projectGroups.find((entry) => entry.id === args.projectGroupId)
+      const group = resolveProjectGroupOwner(
+        buildProjectGroupOwnerIndex(projectGroups),
+        args.projectGroupId,
+        args.connectionId !== undefined
+          ? args.connectionId
+            ? toSshExecutionHostId(args.connectionId)
+            : LOCAL_EXECUTION_HOST_ID
+          : undefined
+      )
       const folderPath =
         typeof args.folderPath === 'string' && args.folderPath.trim().length > 0
           ? args.folderPath
@@ -1501,8 +1533,13 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
           folderPath,
           projectGroupId: group.id,
           connectionId: args.connectionId ?? group.connectionId ?? null,
-          projectGroups,
-          repos: store.getRepos()
+          projectGroups: projectGroups.filter(
+            (candidate) =>
+              getProjectGroupOwnerHostId(candidate) === getProjectGroupOwnerHostId(group)
+          ),
+          repos: store
+            .getRepos()
+            .filter((repo) => getRepoExecutionHostId(repo) === getProjectGroupOwnerHostId(group))
         },
         { getSshFilesystemProvider }
       )
@@ -1530,16 +1567,21 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
           return null
         }
         const projectGroups = store.getProjectGroups()
+        const projectGroupIndex = buildProjectGroupOwnerIndex(projectGroups)
+        const group = resolveFolderWorkspaceProjectGroup(projectGroupIndex, workspace)
+        if (!group) {
+          return null
+        }
+        const ownerHostId = getFolderWorkspaceProjectGroupOwnerHostId(workspace, projectGroupIndex)
         const status = await getFolderWorkspacePathStatusForPath(
           {
             folderPath: args.updates.folderPath,
             projectGroupId: workspace.projectGroupId,
-            connectionId:
-              workspace.connectionId ??
-              projectGroups.find((entry) => entry.id === workspace.projectGroupId)?.connectionId ??
-              null,
-            projectGroups,
-            repos: store.getRepos()
+            connectionId: workspace.connectionId ?? group.connectionId ?? null,
+            projectGroups: projectGroups.filter(
+              (candidate) => getProjectGroupOwnerHostId(candidate) === ownerHostId
+            ),
+            repos: store.getRepos().filter((repo) => getRepoExecutionHostId(repo) === ownerHostId)
           },
           { getSshFilesystemProvider }
         )
@@ -1589,7 +1631,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       rawArgs,
       'invalid_project_group_update_args'
     )
-    const updated = store.updateProjectGroup(args.groupId, args.updates)
+    const updated = store.updateProjectGroup(args.groupId, args.updates, args.ownerHostId)
     if (updated) {
       notifyReposChanged(mainWindow)
     }
@@ -1602,7 +1644,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       rawArgs,
       'invalid_project_group_delete_args'
     )
-    const deleted = store.deleteProjectGroup(args.groupId)
+    const deleted = store.deleteProjectGroup(args.groupId, args.ownerHostId)
     if (deleted) {
       notifyReposChanged(mainWindow)
     }
@@ -1615,7 +1657,12 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       rawArgs,
       'invalid_project_group_move_repo_args'
     )
-    const moved = store.moveProjectToGroup(args.projectId, args.groupId, args.order)
+    const moved = store.moveProjectToGroup(
+      args.projectId,
+      args.groupId,
+      args.order,
+      args.ownerHostId
+    )
     if (moved) {
       notifyReposChanged(mainWindow)
     }
