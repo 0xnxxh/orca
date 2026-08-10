@@ -313,6 +313,30 @@ describe('scanCursorSidecars', () => {
     )
   })
 
+  it('isolates response-invalid file timestamps without rejecting other sidecars', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    const bucket = 'acacacacacacacacacacacacacacacac'
+    await Promise.all([
+      addSession(chatsRoot, bucket, 'invalid-time'),
+      addSession(chatsRoot, bucket, 'valid')
+    ])
+    await setSessionMtime(chatsRoot, bucket, 'invalid-time', -1_000)
+
+    const result = await scanCursorSidecars(
+      defaultCursorSidecarScanRequest(chatsRoot, [], process.platform),
+      context
+    )
+
+    expect(result.sidecars.map((sidecar) => sidecar.sessionId)).toEqual(['valid'])
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        path: join(chatsRoot, bucket, 'invalid-time', 'meta.json'),
+        message: 'Cursor session metadata has invalid file timestamps.'
+      })
+    )
+  })
+
   it('normalizes scope truncation deterministically inside the owning-host scan', async () => {
     const root = await createRoot()
     const chatsRoot = join(root, 'chats')

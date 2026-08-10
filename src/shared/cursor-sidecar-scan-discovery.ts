@@ -192,6 +192,18 @@ async function inspectSession(
     if (!meta.isFile() || meta.isSymbolicLink() || !store.isFile() || store.isSymbolicLink()) {
       return null
     }
+    if (!isFiniteNonnegative(meta.mtimeMs) || !isFiniteNonnegative(store.mtimeMs)) {
+      addIssue(
+        args.response,
+        metaPath,
+        new Error('Cursor session metadata has invalid file timestamps.')
+      )
+      return null
+    }
+    if (!isFiniteNonnegative(meta.size)) {
+      addIssue(args.response, metaPath, new Error('Cursor session metadata has an invalid size.'))
+      return null
+    }
     if (meta.size > args.caps.sidecarBytes) {
       addIssue(
         args.response,
@@ -276,4 +288,8 @@ function addIssue(response: CursorSidecarScanResponse, path: string, error: unkn
 function isMissing(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | null)?.code
   return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
+function isFiniteNonnegative(value: number): boolean {
+  return Number.isFinite(value) && value >= 0
 }
