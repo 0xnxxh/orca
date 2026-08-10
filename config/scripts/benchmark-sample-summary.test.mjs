@@ -7,6 +7,10 @@ describe('benchmark sample summary', () => {
     expect(summarizeBenchmarkSamples([100, 1, 2, 99]).medianMs).toBe(50.5)
   })
 
+  it('selects the middle sample for an odd-sized median', () => {
+    expect(summarizeBenchmarkSamples([100, 1, 2, 99, 3]).medianMs).toBe(3)
+  })
+
   it('preserves nearest-rank p95 and range reporting', () => {
     expect(summarizeBenchmarkSamples([1, 2, 3, 4, 5, 6])).toEqual({
       samples: 6,
