@@ -225,6 +225,14 @@ describe('WorktreeVisibilityDialog', () => {
     expect(document.body.textContent).toContain('Checking…')
   })
 
+  it('locks the repo-wide toggle until the open-time scan settles', async () => {
+    // Why: its post-write refresh must not coalesce onto a list started before the visibility write.
+    mocks.state.fetchWorktrees.mockImplementation(() => new Promise(() => {}))
+    await renderDialog()
+
+    expect(buttonWithText('Import').disabled).toBe(true)
+  })
+
   it('reports a failed refresh even while an older trusted snapshot is on screen', async () => {
     // Why: a warm snapshot must not present stale rows as current with no
     // failure indication when the host has since become unreachable.
@@ -246,6 +254,27 @@ describe('WorktreeVisibilityDialog', () => {
 
     await click(buttonWithText('Show'))
 
+    expect(buttonWithText('Try again').disabled).toBe(true)
+  })
+
+  it('locks the repo-wide toggle while a row import is in flight', async () => {
+    mocks.state.fetchWorktrees.mockResolvedValue(false)
+    mocks.state.updateRepo.mockImplementation(() => new Promise(() => {}))
+    await renderDialog()
+
+    await click(buttonWithText('Show'))
+
+    expect(buttonWithText('Import').disabled).toBe(true)
+  })
+
+  it('locks row actions and retry while the repo-wide toggle is in flight', async () => {
+    mocks.state.fetchWorktrees.mockResolvedValueOnce(false)
+    mocks.state.updateRepo.mockImplementation(() => new Promise(() => {}))
+    await renderDialog()
+
+    await click(buttonWithText('Import'))
+
+    expect(buttonWithText('Show').disabled).toBe(true)
     expect(buttonWithText('Try again').disabled).toBe(true)
   })
 

@@ -36,6 +36,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const detectedWorktreesByRepo = useAppStore((s) => s.detectedWorktreesByRepo)
   const [actionState, setActionState] = useState<NewExternalWorktreesInboxActionState | null>(null)
   const [busyPath, setBusyPath] = useState<string | null>(null)
+  const [isToggling, setIsToggling] = useState(false)
   const [listState, setListState] = useState<'checking' | 'ready' | 'failed'>('checking')
 
   const isOpen = activeModal === 'worktree-visibility'
@@ -109,16 +110,21 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
     if (!repoId) {
       return
     }
-    await updateRepo(repoId, {
-      externalWorktreeVisibility: showOther ? 'hide' : 'show',
-      // Why: showing hidden externals again should re-enable the inbox if the
-      // user previously opted out of discovery prompts for this repo.
-      // Why: null is the transport sentinel for clearing on remote runtime paths
-      // where `undefined` is stripped before persistence.
-      ...(!showOther ? { externalWorktreeDiscoverySuppressedAt: null } : {})
-    })
-    await fetchWorktrees(repoId)
-    closeModal()
+    setIsToggling(true)
+    try {
+      await updateRepo(repoId, {
+        externalWorktreeVisibility: showOther ? 'hide' : 'show',
+        // Why: showing hidden externals again should re-enable the inbox if the
+        // user previously opted out of discovery prompts for this repo.
+        // Why: null is the transport sentinel for clearing on remote runtime paths
+        // where `undefined` is stripped before persistence.
+        ...(!showOther ? { externalWorktreeDiscoverySuppressedAt: null } : {})
+      })
+      await fetchWorktrees(repoId)
+      closeModal()
+    } finally {
+      setIsToggling(false)
+    }
   }, [closeModal, fetchWorktrees, repoId, showOther, updateRepo])
 
   if (!isOpen || !repo || !isGitRepoKind(repo)) {
@@ -171,6 +177,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           <Button
             type="button"
             variant={showOther ? 'secondary' : 'outline'}
+            disabled={busyPath !== null || isToggling || listState === 'checking'}
             onClick={handleToggle}
           >
             {showOther
@@ -197,7 +204,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
               type="button"
               variant="outline"
               size="sm"
-              disabled={busyPath !== null}
+              disabled={busyPath !== null || isToggling}
               onClick={handleRetryList}
             >
               {translate(
@@ -241,7 +248,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
                       type="button"
                       variant="outline"
                       size="sm"
-                      disabled={busyPath !== null || listState === 'checking'}
+                      disabled={busyPath !== null || isToggling || listState === 'checking'}
                       onClick={() => void handleShowWorktree(worktree.path)}
                     >
                       {busyPath === worktree.path
