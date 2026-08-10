@@ -1763,7 +1763,7 @@ describe('createIpcPtyTransport', () => {
     expect(writeMock).not.toHaveBeenCalled()
   })
 
-  it('preserves snapshot dimensions when reattaching', async () => {
+  it('preserves snapshot dimensions and split alt-frame payload when reattaching', async () => {
     const { createIpcPtyTransport } = await import('./pty-transport')
     const spawnMock = vi.fn().mockResolvedValue({
       id: 'pty-reattach',
@@ -1771,7 +1771,9 @@ describe('createIpcPtyTransport', () => {
       launchAgent: 'droid',
       snapshot: 'snapshot data',
       snapshotCols: 132,
-      snapshotRows: 43
+      snapshotRows: 43,
+      snapshotPrefixAnsi: 'scrollback and modes',
+      snapshotFrameAnsi: 'alt frame'
     })
 
     ;(globalThis as { window: typeof window }).window = {
@@ -1811,6 +1813,8 @@ describe('createIpcPtyTransport', () => {
       snapshot: 'snapshot data',
       snapshotCols: 132,
       snapshotRows: 43,
+      snapshotPrefixAnsi: 'scrollback and modes',
+      snapshotFrameAnsi: 'alt frame',
       isAlternateScreen: undefined,
       coldRestore: undefined,
       replay: undefined,
