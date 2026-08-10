@@ -8,7 +8,7 @@ import {
   submitNativeChatPrompt
 } from './native-chat-runtime-send'
 import type { NativeChatSendHandle } from './native-chat-runtime-send'
-import { isVerifiedOptionSend, verifiedSendOptions } from './native-chat-verified-submit'
+import { verifiedSendOptions, verifyCodexSend } from './native-chat-verified-submit'
 import { resolveNativeChatLaunchDraftSend } from './native-chat-launch-draft-send'
 import { getVerifiedNativeChatCommands } from '../../../../shared/native-chat-agent-profiles'
 import { emitNativeChatMessageSent } from '@/lib/native-chat-telemetry'
@@ -252,7 +252,7 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
         return
       }
       const classification = classifySend(text)
-      const tracksOption = isVerifiedOptionSend(classification, sessionOptionsSurface, text.trim())
+      const verified = verifyCodexSend(agent, classification, sessionOptionsSurface, text.trim())
       // A parked launch draft must be cleared line-by-line before the body.
       const launchDraftSend = resolveNativeChatLaunchDraftSend({
         launchDraft,
@@ -260,7 +260,7 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
         agent,
         readScreen: () => readTerminalScreen?.()
       })
-      const sendOptions = verifiedSendOptions(launchDraftSend.sendOptions, tracksOption)
+      const sendOptions = verifiedSendOptions(launchDraftSend.sendOptions, verified)
       let pendingHandle: NativeChatSendHandle | null = null
       // Why: image attachments take the attachment send path even for a
       // command/unknown send, otherwise `clearImageAttachments()` below drops

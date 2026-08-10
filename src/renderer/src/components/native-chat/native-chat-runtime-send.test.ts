@@ -27,7 +27,7 @@ import {
   buildNativeChatPasteBytes,
   NATIVE_CHAT_SUBMIT
 } from './native-chat-send'
-import { isVerifiedOptionSend } from './native-chat-verified-submit'
+import { verifyCodexSend } from './native-chat-verified-submit'
 
 const SETTINGS = {} as Parameters<typeof sendNativeChatMessage>[0]
 const PTY = 'pty-1'
@@ -69,9 +69,11 @@ describe('sendNativeChatMessage', () => {
   it('does not inspect session-option state for ordinary chat sends', () => {
     const surface = { tracksOutgoingCommand: vi.fn(() => true) }
 
-    expect(isVerifiedOptionSend('chat', surface, 'hello')).toBe(false)
+    expect(verifyCodexSend('codex', 'chat', surface, 'hello')).toBe(false)
     expect(surface.tracksOutgoingCommand).not.toHaveBeenCalled()
-    expect(isVerifiedOptionSend('command', surface, '/model')).toBe(true)
+    expect(verifyCodexSend('claude', 'command', surface, '/model')).toBe(false)
+    expect(surface.tracksOutgoingCommand).not.toHaveBeenCalled()
+    expect(verifyCodexSend('codex', 'command', surface, '/model')).toBe(true)
     expect(surface.tracksOutgoingCommand).toHaveBeenCalledOnce()
   })
 

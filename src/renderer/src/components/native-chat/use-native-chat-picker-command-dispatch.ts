@@ -58,11 +58,12 @@ export function useNativeChatPickerCommandDispatch(args: {
         return
       }
       const tracksSessionOption = sessionOptionsSurface?.tracksOutgoingCommand(text) === true
+      const verifySubmission = agent === 'codex' && tracksSessionOption
       const send = sendNativeChatMessage(
         target.settings,
         target.ptyId,
         text,
-        tracksSessionOption ? { verifySubmission: true } : undefined
+        verifySubmission ? { verifySubmission: true } : undefined
       )
       trackPendingSend(send)
       emitNativeChatPickerItemAccepted({ agent, itemKind: 'command' })
@@ -72,7 +73,10 @@ export function useNativeChatPickerCommandDispatch(args: {
       emitNativeChatSendClassified({ agent, outcome: 'command' })
       onSlashCommand?.(text)
       if (tracksSessionOption) {
-        sessionOptionsSurface?.recordOutgoingCommand(text, send.submission)
+        sessionOptionsSurface?.recordOutgoingCommand(
+          text,
+          verifySubmission ? send.submission : undefined
+        )
       }
       emitNativeChatMessageSent({
         agent,
