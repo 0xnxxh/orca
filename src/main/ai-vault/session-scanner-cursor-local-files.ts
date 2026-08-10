@@ -40,6 +40,7 @@ export async function discoverLocalCursorSidecarsBounded(args: {
   issues: AiVaultScanIssue[]
   signal?: AbortSignal
   pathPlatform?: NodeJS.Platform
+  resolveScopePaths?: (scopePath: string) => Promise<readonly string[]>
 }): Promise<LocalCursorSidecarDiscovery> {
   const response = emptyLocalScanResponse()
   // Pass the full scope list so discovery can mark truncation before capping.
@@ -57,7 +58,8 @@ export async function discoverLocalCursorSidecarsBounded(args: {
     caps: LOCAL_CAPS,
     response,
     cancellation: cursorSidecarScanCancellationFromSignal(args.signal),
-    pathPlatform: args.pathPlatform
+    pathPlatform: args.pathPlatform,
+    resolveScopePaths: args.resolveScopePaths
   })
 
   for (const issue of response.issues) {

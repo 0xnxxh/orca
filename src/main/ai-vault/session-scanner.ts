@@ -124,7 +124,8 @@ export async function scanAiVaultSessions(
       issues,
       parseStats,
       span,
-      discoveries
+      discoveries,
+      signal: options.signal
     })
     // Record after verified reads so counters include boundedReads/returnedBytes.
     recordLocalCursorDiscoverySpan(span, discoveries)

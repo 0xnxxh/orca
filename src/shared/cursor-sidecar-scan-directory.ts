@@ -1,5 +1,5 @@
 import type { Dir, Dirent } from 'node:fs'
-import { opendir, readdir } from 'node:fs/promises'
+import { opendir, readdir, realpath } from 'node:fs/promises'
 import { posix, win32 } from 'node:path'
 
 /** Per-directory dirent examination budget; keeps cold scans hard-bounded. */
@@ -150,6 +150,26 @@ export function targetPathVariants(value: string, pathPlatform: NodeJS.Platform)
         ])
       ]
     : [resolved]
+}
+
+export async function resolveTargetScopePathVariants(args: {
+  value: string
+  pathPlatform: NodeJS.Platform
+  resolveScopePaths?: (scopePath: string) => Promise<readonly string[]>
+}): Promise<readonly string[]> {
+  if (args.resolveScopePaths) {
+    return args.resolveScopePaths(args.value)
+  }
+  const variants = targetPathVariants(args.value, args.pathPlatform)
+  try {
+    variants.push(...targetPathVariants(await realpath(args.value), args.pathPlatform))
+  } catch (error) {
+    if ((error as Error).message === 'cursor_sidecar_scan_cancelled') {
+      throw error
+    }
+    // A scope path need not exist on the owning host.
+  }
+  return variants
 }
 
 export function safeBasename(value: string): boolean {

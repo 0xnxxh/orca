@@ -72,7 +72,7 @@ async function discoverCursorSidecars(args: {
   issues: AiVaultScanIssue[]
 }): Promise<SessionFileDiscovery> {
   const startedAt = Date.now()
-  const scopePaths = localSidecarScopeCandidates(args)
+  const scopePaths = localSidecarScopePaths(args)
   let discovery
   try {
     discovery = await discoverLocalCursorSidecarsBounded({
@@ -80,7 +80,13 @@ async function discoverCursorSidecars(args: {
       scopePaths,
       issues: args.issues,
       signal: args.options.signal,
-      pathPlatform: args.roots.targetPlatform
+      pathPlatform: args.roots.targetPlatform,
+      resolveScopePaths: (scopePath) =>
+        resolveLocalSidecarScopePaths({
+          scopePath,
+          storageContextKey: args.roots.storageContextKey,
+          targetPlatform: args.roots.targetPlatform
+        })
     })
   } catch (error) {
     if ((error as Error).message === 'cursor_sidecar_scan_cancelled') {
@@ -216,20 +222,47 @@ async function localScopeCandidates(args: {
   return [...candidates]
 }
 
-function localSidecarScopeCandidates(args: {
+function localSidecarScopePaths(args: {
   roots: CursorRootPair
   options: AiVaultScanOptions
 }): string[] {
-  const candidates = new Set<string>()
+  const paths = new Set<string>()
   for (const scopePath of args.options.scopePaths ?? []) {
-    const candidate = cursorContextPathForHash(
-      scopePath,
-      args.roots.storageContextKey,
-      args.roots.targetPlatform
-    )
-    if (candidate) {
+    const trimmed = scopePath.trim()
+    if (
+      trimmed &&
+      cursorContextPathForHash(trimmed, args.roots.storageContextKey, args.roots.targetPlatform)
+    ) {
+      paths.add(trimmed)
+    }
+  }
+  return [...paths]
+}
+
+export async function resolveLocalSidecarScopePaths(args: {
+  scopePath: string
+  storageContextKey: string
+  targetPlatform: NodeJS.Platform
+  realpathPath?: (path: string) => Promise<string>
+}): Promise<string[]> {
+  const candidates = new Set(
+    cursorScopeCwdCandidates({
+      scopePath: args.scopePath,
+      storageContextKey: args.storageContextKey,
+      platform: args.targetPlatform
+    })
+  )
+  try {
+    const resolved = await (args.realpathPath ?? realpath)(args.scopePath)
+    for (const candidate of cursorScopeCwdCandidates({
+      scopePath: resolved,
+      storageContextKey: args.storageContextKey,
+      platform: args.targetPlatform
+    })) {
       candidates.add(candidate)
     }
+  } catch {
+    // A scope path need not exist in every selected storage context.
   }
   return [...candidates]
 }

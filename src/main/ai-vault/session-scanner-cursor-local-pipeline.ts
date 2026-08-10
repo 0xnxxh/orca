@@ -1,4 +1,4 @@
-import type { AiVaultScanIssue } from '../../shared/ai-vault-types'
+import { isAiVaultScanCancelledError, type AiVaultScanIssue } from '../../shared/ai-vault-types'
 import type { ExecutionHostId } from '../../shared/execution-host'
 import {
   CURSOR_REMOTE_MAX_AGGREGATE_BYTES,
@@ -16,6 +16,7 @@ import {
 import { parseCursorSidecarFileCached } from './session-scanner-cursor-sidecar'
 import type { SessionFileCandidate, SessionFileDiscovery } from './session-scanner-types'
 import { errorMessage } from './session-scanner-values'
+import { throwIfAiVaultScanCancelled } from './ai-vault-scan-cancellation'
 import {
   buildCursorCandidateSelectionGroups,
   canStopCursorGroupSelection,
@@ -35,6 +36,7 @@ export async function processLocalCursorCandidates(args: {
   parseStats: SessionParseStats
   span: ActiveSpan
   discoveries?: readonly SessionFileDiscovery[]
+  signal?: AbortSignal
 }): Promise<ReturnType<typeof reconcileCursorCandidates>> {
   const groups = buildCursorCandidateSelectionGroups({
     candidates: args.candidates,
@@ -165,6 +167,7 @@ async function parseCursorGroups(
     executionHostId: ExecutionHostId
     issues: AiVaultScanIssue[]
     parseStats: SessionParseStats
+    signal?: AbortSignal
   },
   verifiedReads: VerifiedReadTracker
 ): Promise<void> {
@@ -185,6 +188,7 @@ async function parseCursorCandidate(
     executionHostId: ExecutionHostId
     issues: AiVaultScanIssue[]
     parseStats: SessionParseStats
+    signal?: AbortSignal
   },
   verifiedReads: VerifiedReadTracker
 ): Promise<ParsedCursorCandidate | null> {
@@ -204,7 +208,7 @@ async function parseCursorCandidate(
         }
       : null
   } catch (error) {
-    if (isCursorSidecarScanCancelledError(error)) {
+    if (isCursorSidecarScanCancelledError(error) || isAiVaultScanCancelledError(error)) {
       throw error
     }
     args.issues.push({
@@ -223,6 +227,7 @@ async function parseSidecarWithAggregateCap(
     platform: NodeJS.Platform
     executionHostId: ExecutionHostId
     issues: AiVaultScanIssue[]
+    signal?: AbortSignal
   },
   verifiedReads: VerifiedReadTracker
 ): Promise<ParsedCursorCandidate | null> {
@@ -237,6 +242,7 @@ async function parseSidecarWithAggregateCap(
 
   // Gate covers reserve → verified read → commit of actual returned bytes.
   return withVerifiedReadGate(budget, async () => {
+    throwIfAiVaultScanCancelled(args.signal)
     if (budget.returnedBytes >= CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
       if (storage) {
         storage.truncated.sidecarBytes = true
@@ -263,18 +269,18 @@ async function parseSidecarWithAggregateCap(
       if (storage) {
         // Count the logical verified-read work even when the payload is dropped.
         storage.counters.boundedReads += 1
-      }
-      if (budget.returnedBytes + readBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
-        if (storage) {
-          storage.truncated.sidecarBytes = true
-        }
-        return null
-      }
-      if (storage) {
         storage.counters.returnedBytes += readBytes
       }
       budget.returnedBytes += readBytes
+      if (budget.returnedBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
+        if (storage) {
+          storage.truncated.sidecarBytes = true
+        }
+        throwIfAiVaultScanCancelled(args.signal)
+        return null
+      }
     }
+    throwIfAiVaultScanCancelled(args.signal)
 
     if (result.issue) {
       args.issues.push(result.issue)

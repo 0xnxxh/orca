@@ -6,8 +6,8 @@ import type { CursorSidecarScanRequest, CursorSidecarScanResponse } from './curs
 import {
   CURSOR_DIR_MAX_ENTRIES_EXAMINED,
   listLexicographicDirectoryNames,
-  safeBasename,
-  targetPathVariants
+  resolveTargetScopePathVariants,
+  safeBasename
 } from './cursor-sidecar-scan-directory'
 
 const BUCKET_PATTERN = /^[0-9a-f]{32}$/u
@@ -32,6 +32,7 @@ type ScanArgs = {
   caps: CursorSidecarScanCaps
   response: CursorSidecarScanResponse
   cancellation: CursorSidecarScanCancellation
+  resolveScopePaths?: (scopePath: string) => Promise<readonly string[]>
 }
 
 export type CursorSidecarScanCandidate = Bucket & {
@@ -62,6 +63,7 @@ export async function discoverCursorSidecarCandidates(args: {
   caps: CursorSidecarScanCaps
   response: CursorSidecarScanResponse
   cancellation: CursorSidecarScanCancellation
+  resolveScopePaths?: (scopePath: string) => Promise<readonly string[]>
   // Why: WSL scopes are Linux paths after UNC conversion while process.platform
   // remains win32; path flavor must follow the storage context, not the host OS.
   pathPlatform?: NodeJS.Platform
@@ -98,18 +100,16 @@ async function scopeBuckets(
   args.response.truncated.scopePaths = paths.length > args.caps.scopes
   const cwds = new Set<string>()
   for (const scopePath of paths.slice(0, args.caps.scopes)) {
-    for (const cwd of targetPathVariants(scopePath, pathPlatform)) {
-      cwds.add(cwd)
-    }
     try {
       args.response.counters.scopeRealpath++
-      const resolved = await realpath(scopePath)
-      for (const cwd of targetPathVariants(resolved, pathPlatform)) {
-        cwds.add(cwd)
-      }
+      const variants = await resolveTargetScopePathVariants({
+        value: scopePath,
+        pathPlatform,
+        resolveScopePaths: args.resolveScopePaths
+      })
+      variants.forEach((cwd) => cwds.add(cwd))
     } catch (error) {
       rethrowCancel(error)
-      // Scope paths are allowed to be absent on the owning host.
     }
     args.cancellation.throwIfCancelled()
   }

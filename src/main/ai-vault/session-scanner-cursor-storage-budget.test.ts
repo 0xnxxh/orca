@@ -23,6 +23,98 @@ afterEach(async () => {
 })
 
 describe('Cursor verified-read budgets by storage context', () => {
+  it('stops after the first verified read when cancellation lands during parsing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-cursor-parse-cancel-'))
+    roots.push(root)
+    const chatsRoot = join(root, '.cursor', 'chats')
+    const files = await Promise.all([
+      addSession(chatsRoot, 'first-session', sidecarPayload(5_000), 2_000),
+      addSession(chatsRoot, 'second-session', sidecarPayload(5_000), 1_000)
+    ])
+    const discovery = sidecarDiscovery('native', chatsRoot, await realpath(chatsRoot), files)
+    let cancellationChecks = 0
+    const signal = {
+      get aborted() {
+        cancellationChecks += 1
+        return cancellationChecks > 1
+      }
+    } as AbortSignal
+    const span = startSpan('cursor-parse-cancel-test')
+
+    try {
+      await expect(
+        processLocalCursorCandidates({
+          candidates: discoveryCandidates(discovery),
+          discoveries: [discovery],
+          executionHostId: 'local',
+          issues: [],
+          limit: 20,
+          parseStats: createSessionParseStats(),
+          platform: 'linux',
+          scopeLimit: 20,
+          signal,
+          span
+        })
+      ).rejects.toMatchObject({ name: 'AbortError' })
+      expect(discovery.cursorDiscoveryCounters?.boundedReads).toBe(1)
+    } finally {
+      span.end()
+    }
+  })
+
+  it('charges a raced verified read and skips later candidates after budget exhaustion', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-cursor-storage-race-'))
+    roots.push(root)
+    const chatsRoot = join(root, '.cursor', 'chats')
+    const fillerBytes = CURSOR_SIDECAR_MAX_BYTES - 100
+    const fillerCount = Math.floor(CURSOR_REMOTE_MAX_AGGREGATE_BYTES / fillerBytes)
+    const fillerFiles: FileWithMtime[] = []
+    for (let index = 0; index < fillerCount; index += 1) {
+      fillerFiles.push(
+        await addSession(
+          chatsRoot,
+          `filler-${String(index).padStart(3, '0')}`,
+          sidecarPayload(fillerBytes),
+          10_000
+        )
+      )
+    }
+    const racedFiles = await Promise.all([
+      addSession(chatsRoot, 'race-first', sidecarPayload(1_000), 2_000),
+      addSession(chatsRoot, 'race-second', sidecarPayload(1_000), 1_000)
+    ])
+    const racedBytes = 8_000
+    await Promise.all(racedFiles.map((file) => writeFile(file.path, sidecarPayload(racedBytes))))
+    const files = [...fillerFiles, ...racedFiles]
+    const discovery = sidecarDiscovery('native', chatsRoot, await realpath(chatsRoot), files)
+    const span = startSpan('cursor-storage-race-test')
+
+    try {
+      const result = await processLocalCursorCandidates({
+        candidates: discoveryCandidates(discovery),
+        discoveries: [discovery],
+        executionHostId: 'local',
+        issues: [],
+        limit: 100,
+        parseStats: createSessionParseStats(),
+        platform: 'linux',
+        scopeLimit: 100,
+        span
+      })
+      const fillerTotal = fillerBytes * fillerCount
+
+      expect(result.sessions).toHaveLength(fillerCount)
+      expect(discovery.cursorDiscoveryCounters?.boundedReads).toBe(fillerCount + 1)
+      expect(discovery.cursorDiscoveryCounters?.returnedBytes).toBe(fillerTotal + racedBytes)
+      expect(discovery.cursorDiscoveryCounters?.returnedBytes).toBeGreaterThan(
+        CURSOR_REMOTE_MAX_AGGREGATE_BYTES
+      )
+      expect(discovery.cursorDiscoveryTruncated?.sidecarBytes).toBe(true)
+    } finally {
+      span.end()
+    }
+  }, 30_000)
+
   it('does not let native reads consume the WSL ingress budget', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-cursor-storage-budget-'))
     roots.push(root)
