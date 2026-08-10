@@ -85,6 +85,7 @@ describe('WSL Codex session path scans', () => {
       'closed',
       controller.signal
     )
+    await vi.waitFor(() => expect(mocks.walk).toHaveBeenCalledOnce())
 
     controller.abort(new Error('closed'))
     await expect(scan).rejects.toThrow('closed')
@@ -110,7 +111,7 @@ describe('WSL Codex session path scans', () => {
       '\\\\wsl.localhost\\Ubuntu\\sessions',
       'replacement'
     )
-    expect(mocks.walk).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(mocks.walk).toHaveBeenCalledTimes(2))
 
     abandoned.resolve([])
     await Promise.resolve()
