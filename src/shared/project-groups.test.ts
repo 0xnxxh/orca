@@ -13,6 +13,7 @@ import {
   resolveFolderWorkspaceProjectGroup,
   resolveProjectGroupOwner
 } from './project-groups'
+import { normalizeFolderWorkspaces } from './folder-workspaces'
 import type { ProjectGroup, Repo } from './types'
 
 function repo(overrides: Partial<Repo>): Repo {
@@ -160,6 +161,28 @@ describe('project-groups', () => {
       })
     ).toBe(runtime)
     expect(resolveFolderWorkspaceProjectGroup(index, { projectGroupId: 'same-id' })).toBeNull()
+  })
+
+  it('rejects folder workspaces stamped for missing foreign owners', () => {
+    const local = projectGroup({ id: 'same-id', name: 'Local', parentPath: '/local' })
+
+    expect(
+      normalizeFolderWorkspaces(
+        [
+          {
+            id: 'runtime-folder',
+            projectGroupId: 'same-id',
+            executionHostId: 'runtime:missing'
+          },
+          {
+            id: 'ssh-folder',
+            projectGroupId: 'same-id',
+            connectionId: 'missing'
+          }
+        ],
+        [local]
+      )
+    ).toEqual([])
   })
 
   it('collects descendants only from the selected owner hierarchy', () => {

@@ -302,6 +302,31 @@ describe('filesystem-auth path containment', () => {
     }
   })
 
+  it('rejects a foreign-stamped folder whose group exists only locally', async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), 'orca-auth-stale-folder-owner-'))
+    try {
+      const localPath = join(tempRoot, 'local')
+      const foreignPath = join(tempRoot, 'foreign')
+      await mkdir(localPath)
+      await mkdir(foreignPath)
+      const store = makeStore([], {
+        projectGroups: [makeProjectGroup({ id: 'same-id', parentPath: localPath })],
+        folderWorkspaces: [
+          makeFolderWorkspace({
+            id: 'foreign-folder',
+            projectGroupId: 'same-id',
+            folderPath: foreignPath,
+            connectionId: 'missing'
+          })
+        ]
+      })
+
+      await expect(resolveAuthorizedPath(foreignPath, store)).rejects.toThrow('Access denied')
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true })
+    }
+  })
+
   it('keeps large multi-owner folder authorization linear in catalog size', () => {
     const groupCount = 2_048
     const repoCount = 2_048

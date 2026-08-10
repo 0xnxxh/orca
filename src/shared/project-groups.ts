@@ -17,11 +17,10 @@ export type ProjectGroupOwnerIndex = {
 export function getProjectGroupOwnerHostId(
   group: Pick<ProjectGroup, 'connectionId' | 'executionHostId'>
 ): ExecutionHostId {
-  const executionHostId = normalizeExecutionHostId(group.executionHostId)
-  if (executionHostId) {
-    return executionHostId
-  }
-  return group.connectionId ? toSshExecutionHostId(group.connectionId) : LOCAL_EXECUTION_HOST_ID
+  return (
+    normalizeExecutionHostId(group.executionHostId) ??
+    (group.connectionId ? toSshExecutionHostId(group.connectionId) : LOCAL_EXECUTION_HOST_ID)
+  )
 }
 
 export function getProjectGroupOwnerIdentity(
@@ -99,7 +98,10 @@ export function resolveFolderWorkspaceProjectGroup(
       ? toSshExecutionHostId(workspace.connectionId)
       : LOCAL_EXECUTION_HOST_ID
     const group = resolveProjectGroupMembership(index, workspace.projectGroupId, ownerHostId)
-    return group ?? resolveProjectGroupOwner(index, workspace.projectGroupId)
+    // Why: null predates owner stamps; a named SSH owner is authoritative.
+    return workspace.connectionId === null
+      ? (group ?? resolveProjectGroupOwner(index, workspace.projectGroupId))
+      : group
   }
   return resolveProjectGroupOwner(index, workspace.projectGroupId)
 }

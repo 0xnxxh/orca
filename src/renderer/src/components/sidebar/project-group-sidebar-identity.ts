@@ -103,10 +103,7 @@ export function findProjectGroupForSidebarOwner(
     return undefined
   }
   if (ownerHostId) {
-    const exact = index.byIdentity.get(JSON.stringify([ownerHostId, groupId]))
-    if (exact) {
-      return exact
-    }
+    return index.byIdentity.get(JSON.stringify([ownerHostId, groupId]))
   }
   return index.byUnambiguousId.get(groupId)
 }

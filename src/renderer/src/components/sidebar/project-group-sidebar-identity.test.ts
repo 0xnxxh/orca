@@ -35,6 +35,13 @@ describe('project-group sidebar identity', () => {
     expect(getProjectGroupSidebarIdentity(local)).not.toBe(getProjectGroupSidebarIdentity(runtime))
   })
 
+  it('does not fall back to a foreign group for an explicit stale owner', () => {
+    const local = group('same-id', 'local')
+    const index = buildProjectGroupSidebarIndex([local])
+
+    expect(findProjectGroupForSidebarOwner(index, 'same-id', 'runtime:missing')).toBeUndefined()
+  })
+
   it('disables focused-host mutations for mixed-owner and mismatched lists', () => {
     const localA = group('a', 'local')
     const localB = group('b', 'local')

@@ -7,8 +7,7 @@ import {
 import {
   buildProjectGroupOwnerIndex,
   getFolderWorkspaceProjectGroupOwnerHostId,
-  resolveFolderWorkspaceProjectGroup,
-  resolveProjectGroupOwner
+  resolveFolderWorkspaceProjectGroup
 } from './project-groups'
 import type { FolderWorkspace, ProjectGroup } from './types'
 import { isTuiAgent } from './tui-agent-config'
@@ -107,12 +106,11 @@ export function normalizeFolderWorkspaces(
       continue
     }
     const executionHostId = normalizeExecutionHostId(raw.executionHostId)
-    const group =
-      resolveFolderWorkspaceProjectGroup(projectGroupIndex, {
-        projectGroupId: raw.projectGroupId,
-        connectionId: raw.connectionId,
-        executionHostId
-      }) ?? resolveProjectGroupOwner(projectGroupIndex, raw.projectGroupId)
+    const group = resolveFolderWorkspaceProjectGroup(projectGroupIndex, {
+      projectGroupId: raw.projectGroupId,
+      connectionId: raw.connectionId,
+      executionHostId
+    })
     if (!group?.parentPath) {
       continue
     }
