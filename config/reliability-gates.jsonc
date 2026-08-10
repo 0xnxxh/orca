@@ -10279,7 +10279,7 @@
       "oracle": "Send a linked-task draft and session options through the real worktree.create schema and handler. Require Git, nested SSH, and folder hosts to emit the selected model and effort in the exact startup command, return the actual applied subset with the startup-terminal receipt, and publish no client-authored command. Feed that receipt through Tasks completion and activation; require the host tab to own draft/session state, zero fallback or wake creation, and no applied cache entry when a legacy receipt omits acknowledgement. On a physical paired Windows host, compare authoritative PTY inventory before and after the fix and require Codex plus Setup only, a running Codex process, the unsent issue draft, completed Setup, and no ConPTY DA1 text.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/shared/tui-agent-startup-session-options.test.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/rpc/schemas.test.ts src/main/runtime/rpc/methods/worktree.test.ts src/renderer/src/hooks/useComposerState-host-context-boundaries.test.ts src/renderer/src/store/slices/worktrees.test.ts src/renderer/src/lib/worktree-creation-flow.test.ts src/renderer/src/lib/worktree-creation-flow-startup.test.ts src/renderer/src/lib/worktree-creation-agent-seeds.test.ts src/renderer/src/lib/worktree-activation.test.ts",
-        "Tasks -> GitHub issue -> Codex -> windows 2 paired host"
+        "Tasks -> GitHub issue #13320 -> create on Windows 2 paired host with Codex"
       ],
       "testFiles": [
         "src/shared/tui-agent-startup-session-options.test.ts",
@@ -10306,7 +10306,14 @@
         {
           "file": "src/shared/tui-agent-startup-session-options.test.ts",
           "assertions": [
-            "option values with the wrong catalog kind are neither encoded nor acknowledged"
+            "option values with the wrong catalog kind are neither encoded nor acknowledged",
+            "invalid requested replacements preserve valid host-configured agent arguments"
+          ]
+        },
+        {
+          "file": "src/main/runtime/rpc/schemas.test.ts",
+          "assertions": [
+            "draft session options cannot be combined with a competing startup agent or command"
           ]
         },
         {
@@ -10351,14 +10358,14 @@
           "result": "passed",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/shared/tui-agent-startup-session-options.test.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/rpc/schemas.test.ts src/main/runtime/rpc/methods/worktree.test.ts src/renderer/src/hooks/useComposerState-host-context-boundaries.test.ts src/renderer/src/store/slices/worktrees.test.ts src/renderer/src/lib/worktree-creation-flow.test.ts src/renderer/src/lib/worktree-creation-flow-startup.test.ts src/renderer/src/lib/worktree-creation-agent-seeds.test.ts src/renderer/src/lib/worktree-activation.test.ts",
           "durationSeconds": 12,
-          "summary": "1,516 deterministic renderer, RPC, Git, SSH, folder, launch-command, compatibility, and activation tests passed; one unrelated test was skipped."
+          "summary": "1,518 deterministic renderer, RPC, Git, SSH, folder, launch-command, compatibility, and activation tests passed; one unrelated test was skipped."
         },
         {
           "date": "2026-08-09",
           "runner": "manual",
           "platform": "windows",
           "result": "passed",
-          "command": "Tasks -> GitHub issue -> Codex -> windows 2 paired host",
+          "command": "Tasks -> GitHub issue #13320 -> create on Windows 2 paired host with Codex",
           "durationSeconds": 60,
           "summary": "Baseline had two blank shells plus Setup and no Codex. Candidate had Codex plus Setup only, Codex running with the issue URL drafted, Setup complete, and no DA1 text."
         }

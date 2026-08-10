@@ -21735,6 +21735,9 @@ export class OrcaRuntimeService {
     if (!this.store) {
       throw new Error('runtime_unavailable')
     }
+    if (args.startupSessionOptions && (!args.startupDraft || args.startupAgent || args.startup)) {
+      throw new Error('Startup session options require a draft without another startup command.')
+    }
 
     const repo = await this.resolveRepoSelector(args.repoSelector)
     const createSettings = this.store.getSettings()

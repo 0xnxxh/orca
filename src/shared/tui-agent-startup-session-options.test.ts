@@ -201,4 +201,23 @@ describe('tui agent startup session options', () => {
       expect(resolved.appliedSessionOptions).toEqual({ model: 'gpt-5.3-codex' })
     }
   })
+
+  it('preserves configured arguments when their requested replacement has the wrong type', () => {
+    const plan = buildAgentStartupPlan({
+      agent: 'codex',
+      prompt: '',
+      cmdOverrides: {},
+      platform: 'linux',
+      allowEmptyPromptLaunch: true,
+      sessionOptions: { model: 'gpt-5.6-sol', effort: true },
+      sessionOptionsOverrideAgentArgs: true,
+      agentArgs:
+        '-m host-model -c model_reasoning_effort=low --dangerously-bypass-approvals-and-sandbox'
+    })
+
+    expect(plan?.launchCommand).toBe(
+      "codex '-c' 'model_reasoning_effort=low' '--dangerously-bypass-approvals-and-sandbox' '-m' 'gpt-5.6-sol'"
+    )
+    expect(plan?.sessionOptions).toEqual({ model: 'gpt-5.6-sol' })
+  })
 })

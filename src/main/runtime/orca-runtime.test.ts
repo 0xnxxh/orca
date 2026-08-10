@@ -42672,6 +42672,35 @@ describe('OrcaRuntimeService', () => {
     expect(addWorktree).not.toHaveBeenCalled()
   })
 
+  it('rejects startup draft options combined with another startup command', async () => {
+    const runtime = new OrcaRuntimeService(store as never)
+    const startupSessionOptions = {
+      agent: 'codex' as const,
+      values: { model: 'gpt-5.6-sol', effort: 'high' }
+    }
+
+    await expect(
+      runtime.createManagedWorktree({
+        repoSelector: TEST_REPO_ID,
+        name: 'ambiguous-startup',
+        startupAgent: 'codex',
+        startupDraft: 'https://github.com/stablyai/orca/issues/123',
+        startupSessionOptions
+      })
+    ).rejects.toThrow('Startup session options require a draft without another startup command.')
+    await expect(
+      runtime.createManagedWorktree({
+        repoSelector: TEST_REPO_ID,
+        name: 'ambiguous-startup',
+        startup: { command: 'codex' },
+        startupDraft: 'https://github.com/stablyai/orca/issues/123',
+        startupSessionOptions
+      })
+    ).rejects.toThrow('Startup session options require a draft without another startup command.')
+
+    expect(addWorktree).not.toHaveBeenCalled()
+  })
+
   it('launches explicit startup agents with prompts for CLI-created worktrees', async () => {
     const metaById: Record<string, WorktreeMeta> = {}
     const runtimeStore = {

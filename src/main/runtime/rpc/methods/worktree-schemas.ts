@@ -212,11 +212,16 @@ export const WorktreeCreate = z
         message: 'startupPrompt requires startupAgent'
       })
     }
-    if (params.startupSessionOptions !== undefined && params.startupDraft === undefined) {
+    if (
+      params.startupSessionOptions !== undefined &&
+      (params.startupDraft === undefined ||
+        params.startupAgent !== undefined ||
+        params.startupCommand !== undefined)
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['startupSessionOptions'],
-        message: 'startupSessionOptions requires startupDraft'
+        message: 'startupSessionOptions requires startupDraft without an explicit startup command'
       })
     }
   })

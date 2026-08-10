@@ -207,6 +207,18 @@ describe('RPC optional pipe schemas', () => {
     })
     expectRejects(create, {
       repo: 'id:repo-github',
+      startupAgent: 'codex',
+      startupDraft: 'https://github.com/acme/app/pull/123',
+      startupSessionOptions: { agent: 'codex', values: { model: 'gpt-5.6-sol' } }
+    })
+    expectRejects(create, {
+      repo: 'id:repo-github',
+      startupCommand: 'codex',
+      startupDraft: 'https://github.com/acme/app/pull/123',
+      startupSessionOptions: { agent: 'codex', values: { model: 'gpt-5.6-sol' } }
+    })
+    expectRejects(create, {
+      repo: 'id:repo-github',
       startupDraft: 'https://github.com/acme/app/pull/123',
       startupSessionOptions: { values: { model: 'gpt-5.6-sol' } }
     })
