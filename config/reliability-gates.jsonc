@@ -10346,7 +10346,8 @@
           "assertions": [
             "legacy hosts without acknowledgement cannot stamp client options as applied",
             "client-built commands retain their known applied state",
-            "fallback agents own draft state without inheriting requested-agent options"
+            "fallback agents own draft state without inheriting requested-agent options",
+            "paired-runtime receipts target the authoritative web-surface agent tab"
           ]
         }
       ],

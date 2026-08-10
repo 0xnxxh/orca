@@ -755,6 +755,7 @@ describe('useComposerState host-context boundaries', () => {
       'startupSessionOptions: { agent: tuiAgent, values: startupPlan.sessionOptions }'
     )
     expect(fullSubmit).toContain('resolveCreatedAgentAppliedSessionOptions')
+    expect(fullSubmit).toContain('resolveLaunchAgentTabId')
     expect(fullSubmit).not.toContain('platform: CLIENT_PLATFORM')
 
     const quickSubmit = sourceBetween(

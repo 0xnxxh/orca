@@ -15,7 +15,10 @@ import {
 } from '@/lib/github-links'
 import { activateAndRevealWorktree, type AgentStartedTelemetry } from '@/lib/worktree-activation'
 import { runBackgroundWorktreeCreation } from '@/lib/worktree-creation-flow'
-import { resolveCreatedAgentAppliedSessionOptions } from '@/lib/worktree-creation-agent-seeds'
+import {
+  resolveCreatedAgentAppliedSessionOptions,
+  resolveLaunchAgentTabId
+} from '@/lib/worktree-creation-agent-seeds'
 import {
   findPendingLinkedWorkItemCreationId,
   type WorktreeCreationRequest
@@ -3919,8 +3922,13 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
           backendSpawnedStartup && !backendStartup
             ? (worktree.createdWithAgent ?? tuiAgent)
             : tuiAgent
-        const optionScopeKey =
-          (activation !== false ? activation.primaryTabId : null) ?? result.startupTerminal?.tabId
+        const optionScopeKey = resolveLaunchAgentTabId(useAppStore.getState(), {
+          agent: createdAgent,
+          worktreeId: worktree.id,
+          primaryTabId: activation === false ? null : activation.primaryTabId,
+          startupTerminalTabId: result.startupTerminal?.tabId,
+          backendSpawned: backendSpawnedStartup
+        })
         if (optionScopeKey) {
           seedNativeChatAppliedSessionOptions(
             optionScopeKey,
