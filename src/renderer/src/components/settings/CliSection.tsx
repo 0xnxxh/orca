@@ -290,6 +290,10 @@ export function CliSection({
             </TooltipProvider>
             {!isBrowserManaged ? (
               <Switch
+                aria-label={translate(
+                  'auto.components.settings.CliSection.38edbb5721',
+                  'Shell command'
+                )}
                 checked={isEnabled}
                 disabled={loading || !isSupported || pathStatusUnknown || busyAction !== null}
                 onCheckedChange={() => setDialogOpen(true)}

@@ -57,6 +57,10 @@ export function InputPane({ settings, updateSettings }: InputPaneProps): React.J
           </p>
         </div>
         <Switch
+          aria-label={translate(
+            'auto.components.settings.InputPane.ad31c3c5fb',
+            'Middle-click Paste from Selection'
+          )}
           checked={enabled}
           onCheckedChange={(checked) =>
             updateSettings({

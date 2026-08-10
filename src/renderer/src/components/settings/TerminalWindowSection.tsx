@@ -121,6 +121,10 @@ export function TerminalWindowSection({
               </p>
             </div>
             <Switch
+              aria-label={translate(
+                'auto.components.settings.TerminalWindowSection.2b82242f43',
+                'Window Blur'
+              )}
               checked={settings.windowBackgroundBlur ?? false}
               onCheckedChange={(checked) => updateSettings({ windowBackgroundBlur: checked })}
             />
@@ -241,6 +245,10 @@ export function TerminalWindowSection({
             </Label>
           </div>
           <Switch
+            aria-label={translate(
+              'auto.components.settings.TerminalWindowSection.3530908ef9',
+              'Hide Mouse While Typing'
+            )}
             checked={settings.terminalMouseHideWhileTyping ?? false}
             onCheckedChange={(checked) =>
               updateSettings({

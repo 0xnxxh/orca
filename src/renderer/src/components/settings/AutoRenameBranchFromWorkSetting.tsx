@@ -174,6 +174,10 @@ export function AutoRenameBranchFromWorkSetting({
           </p>
         </div>
         <Switch
+          aria-label={translate(
+            'auto.components.settings.AutoRenameBranchFromWorkSetting.ef787db0e3',
+            'Auto-rename branch & worktree'
+          )}
           checked={settings.autoRenameBranchFromWork}
           onCheckedChange={(checked) =>
             updateSettings({

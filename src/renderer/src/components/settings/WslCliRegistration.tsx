@@ -189,6 +189,10 @@ export function WslCliRegistration({
               </Tooltip>
             </TooltipProvider>
             <Switch
+              aria-label={translate(
+                'auto.components.settings.WslCliRegistration.d9c6880dbd',
+                'WSL shell command'
+              )}
               checked={isEnabled}
               disabled={loading || !isSupported || busyAction !== null}
               onCheckedChange={() => setDialogOpen(true)}

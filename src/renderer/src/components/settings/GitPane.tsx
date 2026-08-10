@@ -277,6 +277,7 @@ export function GitPane({
           </p>
         </div>
         <Switch
+          aria-label={keepLocalMainUpToDateTitle}
           checked={settings.refreshLocalBaseRefOnWorktreeCreate}
           onCheckedChange={(checked) =>
             updateSettings({
@@ -361,6 +362,7 @@ export function GitPane({
           </p>
         </div>
         <Switch
+          aria-label={translate('auto.components.settings.GitPane.e02ea23a32', 'Orca Attribution')}
           checked={settings.enableGitHubAttribution}
           onCheckedChange={(checked) =>
             updateSettings({

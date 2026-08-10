@@ -1557,6 +1557,10 @@ export function AccountsPane({
             </p>
           </div>
           <Switch
+            aria-label={translate(
+              'auto.components.settings.AccountsPane.96f3649526',
+              'Use Gemini CLI credentials (experimental)'
+            )}
             checked={settings.geminiCliOAuthEnabled}
             onCheckedChange={(checked) => {
               recordFeatureInteraction('usage-tracking')

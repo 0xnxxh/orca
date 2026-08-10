@@ -88,6 +88,7 @@ export function ExperimentalPane({
               </p>
             </div>
             <Switch
+              aria-label={translate('auto.components.settings.ExperimentalPane.dd6f0a1d45', 'Pet')}
               checked={settings.experimentalPet}
               onCheckedChange={(checked) => {
                 updateSettings({ experimentalPet: checked })
@@ -120,6 +121,10 @@ export function ExperimentalPane({
               </p>
             </div>
             <Switch
+              aria-label={translate(
+                'auto.components.settings.ExperimentalPane.a05bcdaf57',
+                'Agents View'
+              )}
               checked={settings.experimentalActivity}
               onCheckedChange={(checked) =>
                 updateSettings({
@@ -168,6 +173,10 @@ export function ExperimentalPane({
               </p>
             </div>
             <Switch
+              aria-label={translate(
+                'auto.components.settings.ExperimentalPane.ec897e8d89',
+                'Terminal attention'
+              )}
               checked={settings.experimentalTerminalAttention}
               onCheckedChange={(checked) =>
                 updateSettings({

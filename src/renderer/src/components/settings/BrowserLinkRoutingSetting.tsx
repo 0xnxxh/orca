@@ -41,6 +41,7 @@ export function BrowserLinkRoutingSetting({
         <p className="text-xs text-muted-foreground">{linkRoutingDescription}</p>
       </div>
       <Switch
+        aria-label={translate('auto.components.settings.BrowserPane.d3eb69c0aa', 'Link Routing')}
         checked={settings.openLinksInApp}
         onCheckedChange={(checked) =>
           updateSettings({

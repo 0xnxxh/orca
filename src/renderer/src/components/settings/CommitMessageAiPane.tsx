@@ -200,7 +200,14 @@ export function CommitMessageAiPane({
             )}
           </p>
         </div>
-        <Switch checked={config.enabled} onCheckedChange={onToggleEnabled} />
+        <Switch
+          aria-label={translate(
+            'auto.components.settings.CommitMessageAiPane.d5b45a3628',
+            'Show Source Control AI actions'
+          )}
+          checked={config.enabled}
+          onCheckedChange={onToggleEnabled}
+        />
       </SearchableSetting>
     )
   }
