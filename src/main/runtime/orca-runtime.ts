@@ -25871,7 +25871,7 @@ export class OrcaRuntimeService {
 
   async launchAgentTerminal(
     worktreeSelector: string,
-    opts: { agent: TuiAgent; prompt: string; title?: string }
+    opts: { agent: TuiAgent; prompt: string; title?: string; signal?: AbortSignal }
   ): Promise<RuntimeTerminalCreate> {
     const worktree = await this.resolveWorktreeSelector(worktreeSelector)
     const repo = this.store?.getRepo(worktree.repoId)
@@ -25891,7 +25891,8 @@ export class OrcaRuntimeService {
       launchAgent: startup.agent,
       startupCommandDelivery: startup.startup.startupCommandDelivery,
       telemetry: startup.startup.telemetry,
-      title: opts.title
+      title: opts.title,
+      signal: opts.signal
     })
   }
 
