@@ -136,6 +136,7 @@ describe('useNativeChatSessionOptions retirement on mount', () => {
     mocks.createNativeChatPtySessionOptions.mockReset().mockImplementation(() => ({
       subscribe: () => () => {},
       getSnapshot: () => emptySnapshot,
+      tracksOutgoingCommand: () => false,
       recordOutgoingCommand: () => {},
       reportSessionOptions: () => {},
       replaceModels: () => {}

@@ -57,7 +57,13 @@ export function useNativeChatPickerCommandDispatch(args: {
       if (!target || disabled || isDispatchingSessionOption) {
         return
       }
-      const send = sendNativeChatMessage(target.settings, target.ptyId, text)
+      const tracksSessionOption = sessionOptionsSurface?.tracksOutgoingCommand(text) === true
+      const send = sendNativeChatMessage(
+        target.settings,
+        target.ptyId,
+        text,
+        tracksSessionOption ? { verifySubmission: true } : undefined
+      )
       trackPendingSend(send)
       emitNativeChatPickerItemAccepted({ agent, itemKind: 'command' })
       // Why: picker dispatch is a catalog-verified command send; it must leave
@@ -65,10 +71,9 @@ export function useNativeChatPickerCommandDispatch(args: {
       // disarming attachments, or a stale image rides the next prompt.
       emitNativeChatSendClassified({ agent, outcome: 'command' })
       onSlashCommand?.(text)
-      sessionOptionsSurface?.recordOutgoingCommand(
-        text,
-        send.settled?.then(() => send.submitted?.() ?? true)
-      )
+      if (tracksSessionOption) {
+        sessionOptionsSurface?.recordOutgoingCommand(text, send.submission)
+      }
       emitNativeChatMessageSent({
         agent,
         runtime: nativeChatComposerTargetIsRemote(target.ptyId) ? 'remote' : 'local'

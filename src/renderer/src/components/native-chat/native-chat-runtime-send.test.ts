@@ -39,6 +39,7 @@ describe('sendNativeChatMessage', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     sendRuntimePtyInput.mockClear()
+    sendRuntimePtyInputVerified.mockReset().mockResolvedValue(true)
     resetNativeChatPtySendQueuesForTests()
     sendRuntimePtyInput.mockReturnValue(true)
   })
@@ -114,6 +115,75 @@ describe('sendNativeChatMessage', () => {
     handle.cancel()
 
     expect(sendRuntimePtyInput).not.toHaveBeenCalled()
+  })
+
+  it('reports command submission only after the transport accepts Enter', async () => {
+    const handle = sendNativeChatMessage(SETTINGS, PTY, '/model', {
+      verifySubmission: true
+    })
+    await vi.waitFor(() => expect(sendRuntimePtyInputVerified).toHaveBeenCalledTimes(1))
+
+    await vi.advanceTimersByTimeAsync(NATIVE_CHAT_SUBMIT_DELAY_MS)
+
+    await expect(handle.submission).resolves.toBe(true)
+    await handle.settled
+    expect(handle.submitted?.()).toBe(true)
+    expect(sendRuntimePtyInputVerified).toHaveBeenLastCalledWith(SETTINGS, PTY, NATIVE_CHAT_SUBMIT)
+  })
+
+  it('does not report a remotely rejected command Enter as submitted', async () => {
+    sendRuntimePtyInputVerified.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+    const handle = sendNativeChatMessage(SETTINGS, PTY, '/model', {
+      verifySubmission: true
+    })
+    await vi.waitFor(() => expect(sendRuntimePtyInputVerified).toHaveBeenCalledTimes(1))
+
+    await vi.advanceTimersByTimeAsync(NATIVE_CHAT_SUBMIT_DELAY_MS)
+
+    await expect(handle.submission).resolves.toBe(false)
+    await handle.settled
+    expect(handle.submitted?.()).toBe(false)
+  })
+
+  it('settles command submission false when teardown cancels before Enter', async () => {
+    const handle = sendNativeChatMessage(SETTINGS, PTY, '/model', {
+      verifySubmission: true
+    })
+    handle.cancel()
+
+    await expect(handle.submission).resolves.toBe(false)
+    await handle.settled
+    expect(handle.submitted?.()).toBe(false)
+  })
+
+  it('waits for an in-flight command Enter when teardown cannot cancel the transport', async () => {
+    let resolveEnter: ((accepted: boolean) => void) | undefined
+    sendRuntimePtyInputVerified.mockResolvedValueOnce(true).mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveEnter = resolve
+        })
+    )
+    const handle = sendNativeChatMessage(SETTINGS, PTY, '/model', {
+      verifySubmission: true
+    })
+    let settled = false
+    void handle.settled?.then(() => {
+      settled = true
+    })
+    await vi.waitFor(() => expect(sendRuntimePtyInputVerified).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(NATIVE_CHAT_SUBMIT_DELAY_MS)
+    await vi.waitFor(() => expect(sendRuntimePtyInputVerified).toHaveBeenCalledTimes(2))
+
+    handle.cancel()
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    resolveEnter?.(true)
+    await expect(handle.submission).resolves.toBe(true)
+    await handle.settled
+    expect(settled).toBe(true)
+    expect(handle.submitted?.()).toBe(true)
   })
 
   it('matches orca-runtime writeTerminalAction Enter gap (500ms)', () => {
@@ -258,6 +328,7 @@ describe('sendNativeChatMessageWithImageAttachments', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     sendRuntimePtyInput.mockClear()
+    sendRuntimePtyInputVerified.mockReset().mockResolvedValue(true)
     resetNativeChatPtySendQueuesForTests()
   })
   afterEach(() => {
@@ -309,6 +380,23 @@ describe('sendNativeChatMessageWithImageAttachments', () => {
     vi.advanceTimersByTime(1)
     expect(sendRuntimePtyInput).toHaveBeenCalledTimes(3)
     expect(sendRuntimePtyInput).toHaveBeenLastCalledWith(SETTINGS, PTY, NATIVE_CHAT_SUBMIT)
+  })
+
+  it('verifies a command body and Enter after writing its attachments', async () => {
+    const handle = sendNativeChatMessageWithImageAttachments(
+      SETTINGS,
+      PTY,
+      '/model',
+      ['/tmp/orca-paste-image.png'],
+      { verifySubmission: true }
+    )
+
+    await vi.advanceTimersByTimeAsync(NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS)
+    await vi.waitFor(() => expect(sendRuntimePtyInputVerified).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(NATIVE_CHAT_SUBMIT_DELAY_MS)
+
+    await expect(handle.submission).resolves.toBe(true)
+    expect(sendRuntimePtyInputVerified).toHaveBeenLastCalledWith(SETTINGS, PTY, NATIVE_CHAT_SUBMIT)
   })
 
   it('cancels deferred prompt and Enter writes after the attachment path', () => {

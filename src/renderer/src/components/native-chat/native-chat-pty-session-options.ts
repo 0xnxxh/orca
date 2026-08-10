@@ -12,6 +12,7 @@ import { recordNativeChatSessionOptionCommand } from '../../../../shared/native-
 import {
   applyNativeChatReportedSessionOptions,
   clearNativeChatSessionModel,
+  cloneNativeChatSessionOptionRecord,
   createNativeChatSessionOptionRecord,
   setTrackedSessionOption
 } from '../../../../shared/native-chat-session-option-state'
@@ -37,6 +38,7 @@ type PersistSelection = (args: {
 }) => Promise<void> | void
 
 export type NativeChatPtySessionOptionsSurface = SessionOptionsSurface & {
+  tracksOutgoingCommand(command: string): boolean
   recordOutgoingCommand(command: string, submitted?: Promise<boolean>): void
   reportSessionOptions(values: Record<string, SessionOptionValue>): void
   replaceModels(models: CatalogModel[]): void
@@ -172,7 +174,7 @@ export function createNativeChatPtySessionOptions(
     setTrackedValue
   })
 
-  const recordOutgoingCommand = (command: string): void => {
+  const recordOutgoingCommand = async (command: string): Promise<void> => {
     const result = recordNativeChatSessionOptionCommand({
       catalog,
       models: activeModels(),
@@ -184,7 +186,7 @@ export function createNativeChatPtySessionOptions(
       publish()
     }
     if (result.opensAgentPicker) {
-      args.onAgentPicker?.()
+      await args.onAgentPicker?.()
     }
   }
 
@@ -196,18 +198,28 @@ export function createNativeChatPtySessionOptions(
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
+    tracksOutgoingCommand: (command) => {
+      const result = recordNativeChatSessionOptionCommand({
+        catalog,
+        models: activeModels(),
+        record: cloneNativeChatSessionOptionRecord(record),
+        command
+      })
+      return result.changed || result.opensAgentPicker
+    },
     recordOutgoingCommand: (command, submitted) => {
       if (submitted) {
         void submitted
           .then((accepted) => {
             if (accepted) {
-              recordOutgoingCommand(command)
+              return recordOutgoingCommand(command)
             }
+            return undefined
           })
           .catch(() => undefined)
         return
       }
-      recordOutgoingCommand(command)
+      void recordOutgoingCommand(command).catch(() => undefined)
     },
     reportSessionOptions: (values) => {
       if (applyNativeChatReportedSessionOptions(record, values)) {

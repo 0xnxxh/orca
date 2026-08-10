@@ -23,8 +23,10 @@ import {
   cancelNativeChatPtySends,
   enqueueNativeChatPtySend,
   resetNativeChatPtySendQueuesForTests,
+  type NativeChatPtySendQueueHandle,
   waitForNativeChatPtyIdle
 } from './native-chat-pty-send-queue'
+import { writeVerifiedNativeChatBody } from './native-chat-verified-submit'
 
 export { NATIVE_CHAT_ADVANCE_BUFFER_MS, NATIVE_CHAT_QUESTION_STEP_MS, NATIVE_CHAT_SUBMIT_DELAY_MS }
 export { resetNativeChatPtySendQueuesForTests }
@@ -55,6 +57,8 @@ export type NativeChatSendOptions = {
    * pasting on top of residue.
    */
   confirmCleared?: () => boolean
+  /** Await transport acceptance for command body and Enter before reporting submission. */
+  verifySubmission?: boolean
 }
 
 /** Cancels an in-flight send's pending pty writes (the delayed Enter, and any
@@ -67,9 +71,20 @@ export type NativeChatSendHandle = {
   settled?: Promise<void>
   /** Whether the write that submits the composed input actually fired. */
   submitted?: () => boolean
+  /** Transport acceptance for option-state recording; false on rejection or pre-submit cancel. */
+  submission?: Promise<boolean>
 }
 
 type RuntimeSettings = ReturnType<typeof getSettingsForAgentTabRuntimeOwner>
+
+function withVerifiedSubmission(
+  handle: NativeChatPtySendQueueHandle,
+  verified: boolean | undefined
+): NativeChatSendHandle {
+  return verified
+    ? { ...handle, submission: handle.settled.then(() => handle.submitted()) }
+    : handle
+}
 
 function clearUnsubmittedAgentInput(
   settings: RuntimeSettings,
@@ -133,15 +148,28 @@ export function sendNativeChatMessage(
   text: string,
   options?: NativeChatSendOptions
 ): NativeChatSendHandle {
-  return enqueueNativeChatPtySend(
+  let submitStarted = false
+  const handle = enqueueNativeChatPtySend(
     ptyId,
     NATIVE_CHAT_SUBMIT_DELAY_MS + clearConfirmDurationMs(options),
-    ({ isCancelled, delay, markSubmitted }) => {
+    ({ isCancelled, delay, markSubmitted, markFinished }) => {
       if (isCancelled()) {
         return
       }
       clearThenWrite(settings, ptyId, options, delay, () => {
         if (isCancelled()) {
+          return
+        }
+        if (options?.verifySubmission) {
+          writeVerifiedNativeChatBody(
+            settings,
+            ptyId,
+            text,
+            { isCancelled, delay, markSubmitted, markFinished },
+            () => {
+              submitStarted = true
+            }
+          )
           return
         }
         sendRuntimePtyInput(settings, ptyId, buildNativeChatPasteBytes(text))
@@ -154,9 +182,15 @@ export function sendNativeChatMessage(
       })
     },
     {
-      onCancelUnsubmitted: () => clearUnsubmittedAgentInput(settings, ptyId, options)
+      finishOnCancel: () => !submitStarted,
+      onCancelUnsubmitted: () => {
+        if (!submitStarted) {
+          clearUnsubmittedAgentInput(settings, ptyId, options)
+        }
+      }
     }
   )
+  return withVerifiedSubmission(handle, options?.verifySubmission)
 }
 
 function waitForNativeChatSubmit(signal?: AbortSignal): Promise<boolean> {
@@ -230,10 +264,11 @@ export function sendNativeChatMessageWithImageAttachments(
     (trimmedText.length > 0
       ? NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS + NATIVE_CHAT_SUBMIT_DELAY_MS
       : NATIVE_CHAT_SUBMIT_DELAY_MS) + clearConfirmDurationMs(options)
-  return enqueueNativeChatPtySend(
+  let submitStarted = false
+  const handle = enqueueNativeChatPtySend(
     ptyId,
     durationMs,
-    ({ isCancelled, delay, markSubmitted }) => {
+    ({ isCancelled, delay, markSubmitted, markFinished }) => {
       if (isCancelled()) {
         return
       }
@@ -246,6 +281,18 @@ export function sendNativeChatMessageWithImageAttachments(
         }
         if (trimmedText.length > 0) {
           delay(NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS, () => {
+            if (options?.verifySubmission) {
+              writeVerifiedNativeChatBody(
+                settings,
+                ptyId,
+                text,
+                { isCancelled, delay, markSubmitted, markFinished },
+                () => {
+                  submitStarted = true
+                }
+              )
+              return
+            }
             sendRuntimePtyInput(settings, ptyId, buildNativeChatPasteBytes(text))
             delay(NATIVE_CHAT_SUBMIT_DELAY_MS, () => {
               sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
@@ -261,9 +308,15 @@ export function sendNativeChatMessageWithImageAttachments(
       })
     },
     {
-      onCancelUnsubmitted: () => clearUnsubmittedAgentInput(settings, ptyId, options)
+      finishOnCancel: () => !submitStarted,
+      onCancelUnsubmitted: () => {
+        if (!submitStarted) {
+          clearUnsubmittedAgentInput(settings, ptyId, options)
+        }
+      }
     }
   )
+  return withVerifiedSubmission(handle, options?.verifySubmission)
 }
 
 /** Submit a TUI prompt with no body (Enter only) — e.g. a plain submit when the

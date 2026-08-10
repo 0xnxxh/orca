@@ -157,10 +157,10 @@ async function dispatchLiveCommand(
     : await ctx.dispatchCommand(command)
 }
 
-function applyDispatchOutcome(
+async function applyDispatchOutcome(
   ctx: SessionOptionApplyContext,
   dispatchResult: NativeChatSessionOptionDispatchResult | void
-): SessionOptionSetResult | null {
+): Promise<SessionOptionSetResult | null> {
   if (dispatchResult?.outcome === 'rejected') {
     throw new Error('Claude kept the current model.')
   }
@@ -172,7 +172,7 @@ function applyDispatchOutcome(
   if (dispatchResult?.outcome === 'interaction-required') {
     ctx.clearModelTruth()
     const snapshot = ctx.publish()
-    ctx.onAgentPicker?.()
+    await ctx.onAgentPicker?.()
     return { snapshot }
   }
   return null
@@ -227,7 +227,7 @@ async function applySetOption(
     throw new Error('This option is only available after the session starts.')
   }
 
-  const early = applyDispatchOutcome(ctx, dispatchResult)
+  const early = await applyDispatchOutcome(ctx, dispatchResult)
   if (early) {
     return early
   }
