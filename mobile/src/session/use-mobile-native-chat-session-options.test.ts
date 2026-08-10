@@ -107,6 +107,15 @@ describe('useMobileNativeChatSessionOptions', () => {
     expect(onAgentPicker).toHaveBeenCalledOnce()
   })
 
+  it('types the Codex effort picker command', async () => {
+    mount({ agent: 'codex', reportedModel: 'gpt-5.5' })
+    await act(async () => {
+      await api!.invokeAction('effort')
+    })
+    expect(dispatchCommand).toHaveBeenCalledWith('/model', { delivery: 'type' })
+    expect(onAgentPicker).toHaveBeenCalledOnce()
+  })
+
   it('seeds the current model from a hook-reported provider model', () => {
     mount({ reportedModel: 'claude-sonnet-5' })
     const model = api!.snapshot[0]!

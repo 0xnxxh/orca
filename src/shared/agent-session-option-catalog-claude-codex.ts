@@ -204,7 +204,7 @@ function codexEffort(includeExtraHigh: boolean): CatalogOption {
       launchArgs: (value) => ['-c', `model_reasoning_effort=${String(value)}`],
       agentArgsOverride: hasCodexEffortOverride,
       removeAgentArgs: removeCodexEffortOverride,
-      midSession: { kind: 'agent-picker', command: '/model' }
+      midSession: { kind: 'agent-picker', command: '/model', delivery: 'type' }
     }
   }
 }
