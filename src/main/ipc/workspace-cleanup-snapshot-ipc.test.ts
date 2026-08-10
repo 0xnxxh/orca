@@ -25,6 +25,7 @@ const NOW = 1_700_000_000_000
 
 function makeEmptyStore(): Store {
   return {
+    getProfileStorageDirectory: () => '/profile-a',
     getRepos: () => [],
     getWorktreeMeta: () => ({}),
     getAllWorktreeMeta: () => ({}),
@@ -48,7 +49,7 @@ describe('workspace cleanup snapshot IPC', () => {
     const args = { includeAllWorkspaces: true }
     const result = await handler?.({ sender: { send: vi.fn() } } as never, args)
 
-    expect(persistScanResultMock).toHaveBeenCalledWith(args, result)
+    expect(persistScanResultMock).toHaveBeenCalledWith('/profile-a', args, result)
   })
 
   it('serves the cached scan snapshot through getCachedScan', async () => {
@@ -60,6 +61,7 @@ describe('workspace cleanup snapshot IPC', () => {
       .mock.calls.find(([channel]) => channel === 'workspaceCleanup:getCachedScan')?.[1]
 
     await expect(handler?.({} as never)).resolves.toBe(snapshot)
+    expect(readScanSnapshotMock).toHaveBeenCalledWith('/profile-a')
     expect(vi.mocked(ipcMain.removeHandler)).toHaveBeenCalledWith('workspaceCleanup:getCachedScan')
   })
 })

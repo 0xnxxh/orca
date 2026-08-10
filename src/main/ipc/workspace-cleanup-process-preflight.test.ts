@@ -30,6 +30,7 @@ import { registerWorkspaceCleanupHandlers } from './workspace-cleanup'
 
 function makeEmptyStore(): Store {
   return {
+    getProfileStorageDirectory: () => '/profile-a',
     getRepos: () => [],
     getWorktreeMeta: () => ({}),
     getAllWorktreeMeta: () => ({}),

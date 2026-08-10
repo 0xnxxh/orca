@@ -1,5 +1,6 @@
 // Type-only, so the cycle back through workspace-cleanup-filter-model erases at build.
 import type { WorkspaceCleanupBrowseState } from './workspace-cleanup-browse-state'
+import type { ExecutionHostId } from './execution-host'
 
 export const WORKSPACE_CLEANUP_CLASSIFIER_VERSION = 2
 export const WORKSPACE_CLEANUP_ARCHIVED_IDLE_MS = 7 * 24 * 60 * 60 * 1000
@@ -50,6 +51,7 @@ export type WorkspaceCleanupCandidate = {
   repoId: string
   repoName: string
   connectionId: string | null
+  executionHostId?: ExecutionHostId
   displayName: string
   branch: string
   path: string

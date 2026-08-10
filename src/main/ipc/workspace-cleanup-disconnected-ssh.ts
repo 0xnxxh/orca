@@ -1,4 +1,5 @@
 import { basename } from 'node:path'
+import { getRepoExecutionHostId } from '../../shared/execution-host'
 import type { Store } from '../persistence'
 import type { Repo, WorktreeMeta } from '../../shared/types'
 import {
@@ -6,7 +7,7 @@ import {
   createWorkspaceCleanupFingerprint,
   type WorkspaceCleanupCandidate
 } from '../../shared/workspace-cleanup'
-import { splitWorktreeId } from '../../shared/worktree-id'
+import { splitWorktreeIdForFilesystem } from '../../shared/worktree-id'
 import {
   getNewestWorkspaceCleanupDiffCommentAt,
   getWorkspaceCleanupInactivityReasonsForWorkspace,
@@ -52,7 +53,7 @@ function createDisconnectedSshCandidate(
   worktreeId: string,
   meta: WorktreeMeta
 ): WorkspaceCleanupCandidate {
-  const parsed = splitWorktreeId(worktreeId)
+  const parsed = splitWorktreeIdForFilesystem(worktreeId)
   const path = parsed?.worktreePath ?? worktreeId
   const reasons = getWorkspaceCleanupInactivityReasonsForWorkspace(meta, scannedAt)
   return applyWorkspaceCleanupPolicy({
@@ -60,6 +61,7 @@ function createDisconnectedSshCandidate(
     repoId: repo.id,
     repoName: repo.displayName,
     connectionId: repo.connectionId ?? null,
+    executionHostId: getRepoExecutionHostId(repo),
     displayName: meta.displayName || basename(path),
     branch: basename(path),
     path,

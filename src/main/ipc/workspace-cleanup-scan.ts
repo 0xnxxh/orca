@@ -33,6 +33,7 @@ import {
   withWorkspaceCleanupTimeout
 } from './workspace-cleanup-scan-primitives'
 import { getLocalProjectWorktreeGitOptions } from '../project-runtime-git-options'
+import { listWorkspaceCleanupFolderWorkspaces } from './workspace-cleanup-folder-workspaces'
 
 const WORKTREE_SCAN_CONCURRENCY = 3
 
@@ -142,11 +143,14 @@ async function scanRepoWorkspaces(
     return { scannedAt, candidates, errors: [] }
   }
 
-  const mergedWorktrees = gitWorktrees.map((gitWorktree) => {
-    const worktreeId = `${repo.id}::${gitWorktree.path}`
-    const meta = store.getWorktreeMeta(worktreeId)
-    return mergeWorktree(repo.id, gitWorktree, meta, repo.displayName)
-  })
+  const mergedWorktrees =
+    repoIsFolder && includeAllWorkspaces
+      ? listWorkspaceCleanupFolderWorkspaces(store, repo)
+      : gitWorktrees.map((gitWorktree) => {
+          const worktreeId = `${repo.id}::${gitWorktree.path}`
+          const meta = store.getWorktreeMeta(worktreeId)
+          return mergeWorktree(repo.id, gitWorktree, meta, repo.displayName)
+        })
   // Why: with includeAllWorkspaces the browser shows every workspace and lets
   // filters narrow it; an age threshold here would hide rows from all views.
   const candidateWorktrees = targetWorktreeId
@@ -227,7 +231,10 @@ async function listCleanupGitWorktrees(
   repoIsFolder: boolean
 ): Promise<{ provider: IGitProvider | null; gitWorktrees: GitWorktreeInfo[] }> {
   if (repoIsFolder) {
-    return { provider: null, gitWorktrees: [createFolderWorktree(repo)] }
+    return {
+      provider: repo.connectionId ? (getSshGitProvider(repo.connectionId) ?? null) : null,
+      gitWorktrees: [createFolderWorktree(repo)]
+    }
   }
   if (repo.connectionId) {
     const provider = getSshGitProvider(repo.connectionId) ?? null

@@ -3,21 +3,26 @@
 // githubCache sidecar precedent). Best-effort by design: a lost snapshot only costs a rescan.
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { durableWriteTempPath, writeFileDurable } from './durable-file-write'
-import { getCanonicalUserDataPath } from './persistence'
+import {
+  durableWriteTempPath,
+  removeStaleDurableWriteTempFiles,
+  writeFileDurable
+} from './durable-file-write'
 
 const queues = new Map<string, Promise<unknown>>()
+const staleTempCleanups = new Map<string, Promise<void>>()
+const STALE_TEMP_AGE_MS = 24 * 60 * 60 * 1000
 
-export function sidecarSnapshotFile(fileName: string): string {
-  return join(getCanonicalUserDataPath(), fileName)
+export function sidecarSnapshotFile(snapshotDirectory: string, fileName: string): string {
+  return join(snapshotDirectory, fileName)
 }
 
 /** Serialize tasks per sidecar so read-modify-write patch/prune cycles cannot interleave. */
-export function withSidecarSnapshotQueue<T>(fileName: string, task: () => Promise<T>): Promise<T> {
-  const previous = queues.get(fileName) ?? Promise.resolve()
+export function withSidecarSnapshotQueue<T>(file: string, task: () => Promise<T>): Promise<T> {
+  const previous = queues.get(file) ?? Promise.resolve()
   const run = previous.then(task, task)
   queues.set(
-    fileName,
+    file,
     run.then(
       () => undefined,
       () => undefined
@@ -27,15 +32,20 @@ export function withSidecarSnapshotQueue<T>(fileName: string, task: () => Promis
 }
 
 /** Parsed sidecar contents, or null when the file is missing or not valid JSON. */
-export async function readSidecarSnapshot(fileName: string): Promise<unknown> {
+export async function readSidecarSnapshot(file: string): Promise<unknown> {
   try {
-    return JSON.parse(await readFile(sidecarSnapshotFile(fileName), 'utf-8')) as unknown
+    return JSON.parse(await readFile(file, 'utf-8')) as unknown
   } catch {
     return null
   }
 }
 
-export async function writeSidecarSnapshot(fileName: string, payload: unknown): Promise<void> {
-  const file = sidecarSnapshotFile(fileName)
+export async function writeSidecarSnapshot(file: string, payload: unknown): Promise<void> {
+  let cleanup = staleTempCleanups.get(file)
+  if (!cleanup) {
+    cleanup = removeStaleDurableWriteTempFiles(file, { minimumAgeMs: STALE_TEMP_AGE_MS })
+    staleTempCleanups.set(file, cleanup)
+  }
+  await cleanup
   await writeFileDurable(durableWriteTempPath(file), file, JSON.stringify(payload))
 }

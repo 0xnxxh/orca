@@ -4179,6 +4179,10 @@ export class Store {
 
   // ── Repos ──────────────────────────────────────────────────────────
 
+  getProfileStorageDirectory(): string {
+    return dirname(this.dataFile)
+  }
+
   getRepos(): Repo[] {
     return this.state.repos.map((repo) => this.hydrateRepo(repo))
   }

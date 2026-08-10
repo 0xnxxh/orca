@@ -29,6 +29,7 @@ export function registerWorkspaceCleanupHandlers(
   store: Store,
   deps: WorkspaceCleanupHandlerDeps = {}
 ): void {
+  const snapshotDirectory = store.getProfileStorageDirectory()
   ipcMain.removeHandler('workspaceCleanup:scan')
   ipcMain.removeHandler('workspaceCleanup:getCachedScan')
   ipcMain.removeHandler('workspaceCleanup:dismiss')
@@ -44,14 +45,15 @@ export function registerWorkspaceCleanupHandlers(
           : undefined
       })
       // Fire-and-forget: snapshot persistence must never delay or fail the scan reply.
-      void persistWorkspaceCleanupScanResult(args ?? {}, result)
+      void persistWorkspaceCleanupScanResult(snapshotDirectory, args ?? {}, result)
       return result
     }
   )
 
   ipcMain.handle(
     'workspaceCleanup:getCachedScan',
-    (): Promise<WorkspaceCleanupScanResult | null> => readWorkspaceCleanupScanSnapshot()
+    (): Promise<WorkspaceCleanupScanResult | null> =>
+      readWorkspaceCleanupScanSnapshot(snapshotDirectory)
   )
 
   ipcMain.handle('workspaceCleanup:dismiss', (_event, args: WorkspaceCleanupDismissArgs) => {
