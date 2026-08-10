@@ -2,8 +2,9 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { getExecutionHostLabel } from '../../../../shared/execution-host'
+import { getExecutionHostLabel, type ExecutionHostId } from '../../../../shared/execution-host'
 import { projectHostSetupProjectionFromRepos } from '../../../../shared/project-host-setup-projection'
+import { getRepoHostIdentity } from '../../store/slices/repo-host-identity'
 import {
   ALL_GROUP_META,
   buildRows,
@@ -62,6 +63,39 @@ const worktree: Worktree = {
 }
 
 const repoMap = new Map([[repo.id, repo]])
+
+function buildOwnerResolvedRows(
+  worktrees: Worktree[],
+  repoById: Map<string, Repo>,
+  repoByHostIdentity: ReadonlyMap<string, Repo>,
+  defaultHostId: ExecutionHostId = 'local'
+) {
+  return buildRows(
+    'none',
+    worktrees,
+    repoById,
+    null,
+    new Set(),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    defaultHostId,
+    undefined,
+    repoByHostIdentity
+  )
+}
 
 function readWorktreeListSource(): string {
   return readFileSync(fileURLToPath(new URL('./WorktreeList.tsx', import.meta.url)), 'utf8')
@@ -2116,6 +2150,116 @@ describe('buildRows with pinned worktrees', () => {
       { key: 'workspace-status:blocked', label: 'Blocked' },
       { key: 'workspace-status:in-progress', label: 'Doing' }
     ])
+  })
+})
+
+describe('buildRows repo ownership', () => {
+  const runtimeRepoA: Repo = {
+    ...repo,
+    id: 'shared-repo',
+    path: '/runtime-a/repo',
+    executionHostId: 'runtime:env-a'
+  }
+  const runtimeRepoB: Repo = {
+    ...runtimeRepoA,
+    path: '/runtime-b/repo',
+    executionHostId: 'runtime:env-b'
+  }
+  const bareRepoMap = new Map([[runtimeRepoA.id, runtimeRepoB]])
+  const repoByHostIdentity = new Map([
+    [getRepoHostIdentity(runtimeRepoA), runtimeRepoA],
+    [getRepoHostIdentity(runtimeRepoB), runtimeRepoB]
+  ])
+
+  it('assigns same-id rows to each runtime owner before their nested SSH host', () => {
+    const rows = buildOwnerResolvedRows(
+      [
+        {
+          ...worktree,
+          id: 'runtime-a-worktree',
+          repoId: runtimeRepoA.id,
+          hostId: 'ssh:nested-a',
+          runtimeOwnerEnvironmentId: 'env-a'
+        },
+        {
+          ...worktree,
+          id: 'runtime-b-worktree',
+          repoId: runtimeRepoB.id,
+          hostId: 'ssh:nested-b',
+          runtimeOwnerEnvironmentId: 'env-b'
+        }
+      ],
+      bareRepoMap,
+      repoByHostIdentity
+    )
+
+    expect(rows.filter((row) => row.type === 'item').map((row) => row.repo)).toEqual([
+      runtimeRepoA,
+      runtimeRepoB
+    ])
+  })
+
+  it('fails closed when an explicit runtime owner disappears', () => {
+    const rows = buildOwnerResolvedRows(
+      [
+        {
+          ...worktree,
+          id: 'removed-owner-worktree',
+          repoId: runtimeRepoA.id,
+          hostId: 'ssh:nested-a',
+          runtimeOwnerEnvironmentId: 'env-a'
+        }
+      ],
+      bareRepoMap,
+      new Map([[getRepoHostIdentity(runtimeRepoB), runtimeRepoB]])
+    )
+
+    expect(rows.find((row) => row.type === 'item')?.repo).toBeUndefined()
+  })
+
+  it('maps a legacy nested SSH row to its only runtime owner', () => {
+    const rows = buildOwnerResolvedRows(
+      [
+        {
+          ...worktree,
+          id: 'legacy-nested-worktree',
+          repoId: runtimeRepoA.id,
+          hostId: 'ssh:nested-a'
+        }
+      ],
+      new Map([[runtimeRepoA.id, runtimeRepoA]]),
+      new Map([[getRepoHostIdentity(runtimeRepoA), runtimeRepoA]])
+    )
+
+    expect(rows.find((row) => row.type === 'item')?.repo).toBe(runtimeRepoA)
+  })
+
+  it('fails closed for a legacy nested SSH row with ambiguous runtime owners', () => {
+    const rows = buildOwnerResolvedRows(
+      [
+        {
+          ...worktree,
+          id: 'ambiguous-legacy-nested-worktree',
+          repoId: runtimeRepoA.id,
+          hostId: 'ssh:nested-a'
+        }
+      ],
+      bareRepoMap,
+      repoByHostIdentity
+    )
+
+    expect(rows.find((row) => row.type === 'item')?.repo).toBeUndefined()
+  })
+
+  it('preserves the bare-id fallback for hostless worktrees', () => {
+    const rows = buildOwnerResolvedRows(
+      [{ ...worktree, id: 'hostless-worktree', repoId: runtimeRepoA.id }],
+      bareRepoMap,
+      repoByHostIdentity,
+      'runtime:missing-owner'
+    )
+
+    expect(rows.find((row) => row.type === 'item')?.repo).toBe(runtimeRepoB)
   })
 })
 

@@ -6,6 +6,8 @@ import {
 } from './worktree-palette-query-bounds'
 import type { Repo, Worktree } from '../../../shared/types'
 import type { HostedReviewInfo } from '../../../shared/hosted-review'
+import { issueCacheKey } from '@/store/slices/github'
+import { getRepoHostIdentity } from '@/store/slices/repo-host-identity'
 
 function makeWorktree(overrides: Partial<Worktree> = {}): Worktree {
   return {
@@ -538,6 +540,141 @@ describe('worktree-palette-search', () => {
       text: 'Issue #304',
       matchRange: { start: 7, end: 10 }
     })
+  })
+
+  it('matches issue titles from each nested SSH runtime owner', () => {
+    const runtimeRepoA: Repo = {
+      id: 'shared-repo',
+      path: '/runtime-a/repo',
+      displayName: 'shared-repo',
+      badgeColor: '#22c55e',
+      addedAt: 0,
+      executionHostId: 'runtime:env-a'
+    }
+    const runtimeRepoB: Repo = {
+      ...runtimeRepoA,
+      path: '/runtime-b/repo',
+      executionHostId: 'runtime:env-b'
+    }
+    const runtimeWorktreeA = makeWorktree({
+      id: 'runtime-worktree-a',
+      repoId: 'shared-repo',
+      hostId: 'ssh:nested-env-a',
+      runtimeOwnerEnvironmentId: 'env-a',
+      linkedIssue: 1
+    })
+    const runtimeWorktreeB = makeWorktree({
+      id: 'runtime-worktree-b',
+      repoId: 'shared-repo',
+      hostId: 'ssh:nested-env-b',
+      runtimeOwnerEnvironmentId: 'env-b',
+      linkedIssue: 2
+    })
+    const sharedRepoMap = new Map([['shared-repo', runtimeRepoB]])
+    const repoByHostIdentity = new Map([
+      [getRepoHostIdentity(runtimeRepoA), runtimeRepoA],
+      [getRepoHostIdentity(runtimeRepoB), runtimeRepoB]
+    ])
+    const issueCache = {
+      [issueCacheKey('/runtime-a/repo', 'shared-repo', 1, null, null, 'runtime:env-a', true)]: {
+        data: { number: 1, title: 'Environment A issue title' }
+      },
+      [issueCacheKey('/runtime-b/repo', 'shared-repo', 2, null, null, 'runtime:env-b', true)]: {
+        data: { number: 2, title: 'Environment B issue title' }
+      }
+    }
+
+    const environmentAResults = searchWorktrees(
+      [runtimeWorktreeA, runtimeWorktreeB],
+      'environment a',
+      sharedRepoMap,
+      null,
+      issueCache,
+      undefined,
+      undefined,
+      repoByHostIdentity
+    )
+    const environmentBResults = searchWorktrees(
+      [runtimeWorktreeA, runtimeWorktreeB],
+      'environment b',
+      sharedRepoMap,
+      null,
+      issueCache,
+      undefined,
+      undefined,
+      repoByHostIdentity
+    )
+
+    expect(environmentAResults.map((result) => result.worktreeId)).toEqual(['runtime-worktree-a'])
+    expect(environmentBResults.map((result) => result.worktreeId)).toEqual(['runtime-worktree-b'])
+
+    const removedOwnerResults = searchWorktrees(
+      [runtimeWorktreeA],
+      'environment b',
+      sharedRepoMap,
+      null,
+      issueCache,
+      undefined,
+      undefined,
+      new Map([[getRepoHostIdentity(runtimeRepoB), runtimeRepoB]])
+    )
+    expect(removedOwnerResults).toEqual([])
+  })
+
+  it('falls back from a legacy nested SSH host only for one runtime owner', () => {
+    const runtimeRepo: Repo = {
+      id: 'shared-repo',
+      path: '/runtime/repo',
+      displayName: 'shared-repo',
+      badgeColor: '#22c55e',
+      addedAt: 0,
+      executionHostId: 'runtime:env-a'
+    }
+    const legacyWorktree = makeWorktree({
+      repoId: 'shared-repo',
+      hostId: 'ssh:nested-env-a',
+      linkedIssue: 1
+    })
+    const issueCache = {
+      [issueCacheKey('/runtime/repo', 'shared-repo', 1, null, null, 'runtime:env-a', true)]: {
+        data: { number: 1, title: 'Legacy nested SSH issue' }
+      }
+    }
+    const repoById = new Map([['shared-repo', runtimeRepo]])
+    const oneRuntime = new Map([[getRepoHostIdentity(runtimeRepo), runtimeRepo]])
+
+    expect(
+      searchWorktrees(
+        [legacyWorktree],
+        'legacy nested',
+        repoById,
+        null,
+        issueCache,
+        undefined,
+        undefined,
+        oneRuntime
+      ).map((result) => result.worktreeId)
+    ).toEqual(['wt-1'])
+
+    const secondRuntime: Repo = {
+      ...runtimeRepo,
+      path: '/runtime-b/repo',
+      executionHostId: 'runtime:env-b'
+    }
+    const ambiguousRuntimes = new Map(oneRuntime)
+    ambiguousRuntimes.set(getRepoHostIdentity(secondRuntime), secondRuntime)
+    expect(
+      searchWorktrees(
+        [legacyWorktree],
+        'legacy nested',
+        repoById,
+        null,
+        issueCache,
+        undefined,
+        undefined,
+        ambiguousRuntimes
+      )
+    ).toEqual([])
   })
 
   it('matches workspace ports by port number before issue and PR numbers', () => {

@@ -60,6 +60,8 @@ import {
 } from './github-work-items-query-bounds'
 import { classifyGitHubUnavailable } from '../../../../shared/github-api-availability'
 import { isMacAppDataPath } from '@/lib/passive-macos-app-data-access'
+import { isWebClientLocation } from '@/lib/web-client-location'
+import { isWindowVisible } from '@/lib/window-visibility-interval'
 import { translate } from '@/i18n/i18n'
 import {
   LOCAL_EXECUTION_HOST_ID,
@@ -76,6 +78,13 @@ import {
 } from '../../../../shared/task-source-context'
 import { normalizeGitHubPRForBranchOutcome } from '../../../../shared/github-pr-for-branch-outcome'
 import { restoreReactionOnSubject, setReactionOnSubject } from '@/lib/pr-comment-reactions'
+import { yieldToEventLoop } from '../../../../shared/event-loop-yield'
+import {
+  findRepoForHost,
+  findRepoForWorktreeHostIdentity,
+  findRepoForWorktreeOwner,
+  getRepoHostIdentity
+} from './repo-host-identity'
 
 // ─── ProjectV2 cache types ────────────────────────────────────────────
 // Why: separate from CacheEntry<T> — project-view has a single GraphQL source (no issue/PR fallback) and a distinct error union.
@@ -125,7 +134,12 @@ function getRuntimeRepoTarget(
   if (target.kind !== 'environment') {
     return null
   }
-  const repo = state.repos.find((candidate) => candidate.path === repoPath)
+  const targetHostId: ExecutionHostId = `runtime:${target.environmentId}`
+  const repo =
+    state.repos.find(
+      (candidate) =>
+        candidate.path === repoPath && getRepoExecutionHostId(candidate) === targetHostId
+    ) ?? state.repos.find((candidate) => candidate.path === repoPath)
   return repo ? { target, repo } : null
 }
 
@@ -247,11 +261,18 @@ function getRefreshAliasExecutionHostId(alias: GitHubPRRefreshAlias): string {
 function findRepoForGitHubOwner(
   state: Partial<Pick<AppState, 'repos'>>,
   repoId: string | undefined,
-  repoPath: string
+  repoPath: string,
+  repoExecutionHostId?: ExecutionHostId
 ): Repo | undefined {
-  return (state.repos ?? []).find((candidate) =>
-    repoId ? candidate.id === repoId || candidate.path === repoPath : candidate.path === repoPath
-  )
+  const repos = state.repos ?? []
+  if (!repoId) {
+    return repos.find((candidate) => candidate.path === repoPath)
+  }
+  if (repoExecutionHostId) {
+    const owner = findRepoForHost(repos, repoId, { hostId: repoExecutionHostId })
+    return owner ?? undefined
+  }
+  return repos.find((candidate) => candidate.id === repoId || candidate.path === repoPath)
 }
 
 function getGitHubFocusedRepoOwnerHostId(
@@ -632,6 +653,29 @@ type RepoScopedFetchOptions = FetchOptions & {
   repoId?: string
 }
 
+type GitHubIssueRequestResult = {
+  data: IssueInfo | null
+  entry: CacheEntry<IssueInfo>
+}
+
+type GitHubIssueRequestRecord = {
+  promise: Promise<GitHubIssueRequestResult>
+}
+
+type GitHubIssueCacheWrite = {
+  entry: CacheEntry<IssueInfo>
+  request: GitHubIssueRequestRecord
+}
+
+type GitHubIssueCacheWriteSink = (cacheKey: string, write: GitHubIssueCacheWrite) => void
+
+type IssueFetchOptions = RepoScopedFetchOptions & {
+  repoExecutionHostId?: ExecutionHostId
+  reuseRecentCompatibilityFailure?: boolean
+  // Why: cache-only bulk refreshes publish once per batch so Space does not rebuild per response.
+  cacheWriteSink?: GitHubIssueCacheWriteSink
+}
+
 export type PRRefreshState = {
   status: 'queued' | 'in-flight' | 'paused' | 'skipped' | 'error'
   reason: GitHubPRRefreshReason
@@ -659,6 +703,12 @@ function bypassesGitHubPRRefreshFreshness(reason: GitHubPRRefreshReason): boolea
 }
 
 const CACHE_TTL = 300_000 // 5 minutes (stale data shown instantly, then refreshed)
+const MAX_NATIVE_FOREGROUND_ISSUE_REFRESHES = 5
+const MAX_BACKGROUND_ISSUE_REFRESHES = 5
+const MAX_DEMAND_MISSING_ISSUE_REFRESHES = 25
+const ISSUE_CACHE_WRITE_MAX_DELAY_MS = 50
+// Why: early paints stay responsive while whole-cache consumers see at most four timed updates plus the final drain.
+const MAX_TIMED_ISSUE_CACHE_PUBLICATIONS = 4
 const CHECKS_CACHE_TTL = 60_000 // 1 minute — checks change more frequently
 const EMPTY_CHECKS_CACHE_TTL = 10_000
 // Why: the work-item list is a browse surface, not a source of truth, so 60s staleness is fine (SWR keeps it current).
@@ -673,7 +723,7 @@ const inflightPRRequests = new Map<
   string,
   { promise: Promise<PRInfo | null>; force: boolean; generation: number; lookupHintKey: string }
 >()
-const inflightIssueRequests = new Map<string, Promise<IssueInfo | null>>()
+const inflightIssueRequests = new Map<string, GitHubIssueRequestRecord>()
 type InflightChecks = {
   promise: Promise<PRCheckDetail[]>
   force: boolean
@@ -1130,9 +1180,10 @@ function shouldApplyBranchMismatchedLinkedPRClear(args: {
 function buildPRRefreshCandidate(
   state: AppState,
   worktree: Worktree,
-  repoPath?: string
+  repoPath?: string,
+  repoOwner?: Repo
 ): GitHubPRRefreshCandidate | null {
-  const repo = state.repos.find((r) => r.id === worktree.repoId)
+  const repo = repoOwner ?? state.repos.find((r) => r.id === worktree.repoId)
   if (!repo) {
     return null
   }
@@ -1654,12 +1705,50 @@ function evictStaleEntries<T extends { fetchedAt: number }>(
   return pruned
 }
 
+function mergeNewestCacheEntries<T extends { fetchedAt: number }>(
+  persisted: Record<string, T>,
+  current: Record<string, T>
+): Record<string, T> {
+  const merged = { ...persisted }
+  for (const [key, entry] of Object.entries(current)) {
+    if (!merged[key] || merged[key].fetchedAt <= entry.fetchedAt) {
+      merged[key] = entry
+    }
+  }
+  return evictStaleEntries(merged)
+}
+
 function withBoundedCacheEntry<T extends { fetchedAt: number }>(
   cache: Record<string, T>,
   key: string,
   entry: T
 ): Record<string, T> {
   return evictStaleEntries({ ...cache, [key]: entry })
+}
+
+function applyGitHubIssueCacheWrites(
+  cache: Record<string, CacheEntry<IssueInfo>>,
+  writes: ReadonlyMap<string, GitHubIssueCacheWrite>
+): Record<string, CacheEntry<IssueInfo>> {
+  let updated = cache
+  for (const [cacheKey, write] of writes) {
+    if (cache[cacheKey] && cache[cacheKey].fetchedAt >= write.entry.fetchedAt) {
+      continue
+    }
+    if (updated === cache) {
+      updated = { ...cache }
+    }
+    updated[cacheKey] = write.entry
+  }
+  return updated === cache ? cache : evictStaleEntries(updated)
+}
+
+function releaseGitHubIssueCacheWrites(writes: ReadonlyMap<string, GitHubIssueCacheWrite>): void {
+  for (const [cacheKey, write] of writes) {
+    if (inflightIssueRequests.get(cacheKey) === write.request) {
+      inflightIssueRequests.delete(cacheKey)
+    }
+  }
 }
 
 // Why: prRefresh* maps have no `fetchedAt` to sort by, so bound them by insertion order (oldest-touched evicted first; an evicted long-idle branch restarts clean).
@@ -1808,6 +1897,349 @@ function shouldRefreshIssueDecorations(state: AppState): boolean {
   return (state.worktreeCardProperties ?? []).includes('issue')
 }
 
+const hasLinkedGitHubIssueCache = new WeakMap<object, boolean>()
+
+function hasLinkedGitHubIssue(state: Pick<AppState, 'worktreesByRepo'>): boolean {
+  const cached = hasLinkedGitHubIssueCache.get(state.worktreesByRepo)
+  if (cached !== undefined) {
+    return cached
+  }
+  for (const worktrees of Object.values(state.worktreesByRepo)) {
+    if (worktrees.some((worktree) => Boolean(worktree.linkedIssue))) {
+      hasLinkedGitHubIssueCache.set(state.worktreesByRepo, true)
+      return true
+    }
+  }
+  hasLinkedGitHubIssueCache.set(state.worktreesByRepo, false)
+  return false
+}
+
+type GitHubIssueRefreshCandidate = {
+  cacheKey: string
+  repoPath: string
+  repoId: string
+  repoExecutionHostId: ExecutionHostId
+  issueNumber: number
+  fetchedAt: number
+  lastActivityAt: number
+}
+
+type GitHubIssueFetcher = (
+  repoPath: string,
+  number: number,
+  options?: IssueFetchOptions
+) => Promise<IssueInfo | null>
+
+type GitHubIssueRefreshQueue = {
+  pending: Map<string, GitHubIssueRefreshCandidate>
+  activeKeys: Set<string>
+  isActive: () => boolean
+  commitCacheWrites: (writes: ReadonlyMap<string, GitHubIssueCacheWrite>) => void
+  running: boolean
+}
+
+type GitHubIssueCacheWriteBuffer = {
+  add: GitHubIssueCacheWriteSink
+  flush: () => void
+}
+
+function createGitHubIssueCacheWriteBuffer(
+  commit: (writes: ReadonlyMap<string, GitHubIssueCacheWrite>) => void
+): GitHubIssueCacheWriteBuffer {
+  const writes = new Map<string, GitHubIssueCacheWrite>()
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let timedPublicationCount = 0
+  const commitWrites = (): void => {
+    if (writes.size === 0) {
+      return
+    }
+    const pendingWrites = new Map(writes)
+    writes.clear()
+    commit(pendingWrites)
+  }
+  const flush = (): void => {
+    if (timer !== null) {
+      clearTimeout(timer)
+      timer = null
+    }
+    commitWrites()
+  }
+  const flushTimed = (): void => {
+    timer = null
+    timedPublicationCount++
+    commitWrites()
+  }
+  return {
+    add: (cacheKey, write) => {
+      writes.set(cacheKey, write)
+      if (timer === null && timedPublicationCount < MAX_TIMED_ISSUE_CACHE_PUBLICATIONS) {
+        timer = setTimeout(flushTimed, ISSUE_CACHE_WRITE_MAX_DELAY_MS)
+      }
+    },
+    flush
+  }
+}
+
+const githubIssueRefreshQueues = new WeakMap<GitHubIssueFetcher, GitHubIssueRefreshQueue>()
+
+function startGitHubIssueRefreshQueue(
+  fetchIssue: GitHubIssueFetcher,
+  queue: GitHubIssueRefreshQueue
+): void {
+  if (queue.running || queue.pending.size === 0 || !queue.isActive()) {
+    return
+  }
+  queue.running = true
+  void drainGitHubIssueRefreshQueue(fetchIssue, queue)
+}
+
+function reconcileGitHubIssueRefreshCandidates(
+  fetchIssue: GitHubIssueFetcher,
+  candidates: readonly GitHubIssueRefreshCandidate[],
+  isActive: () => boolean,
+  commitCacheWrites: GitHubIssueRefreshQueue['commitCacheWrites']
+): void {
+  let queue = githubIssueRefreshQueues.get(fetchIssue)
+  if (!queue) {
+    queue = {
+      pending: new Map(),
+      activeKeys: new Set(),
+      isActive,
+      commitCacheWrites,
+      running: false
+    }
+    githubIssueRefreshQueues.set(fetchIssue, queue)
+  } else {
+    queue.isActive = isActive
+    queue.commitCacheWrites = commitCacheWrites
+  }
+  const pending = new Map<string, GitHubIssueRefreshCandidate>()
+  for (const candidate of candidates) {
+    if (!queue.activeKeys.has(candidate.cacheKey)) {
+      pending.set(candidate.cacheKey, candidate)
+    }
+  }
+  queue.pending = pending
+  startGitHubIssueRefreshQueue(fetchIssue, queue)
+}
+
+async function drainGitHubIssueRefreshQueue(
+  fetchIssue: GitHubIssueFetcher,
+  queue: GitHubIssueRefreshQueue
+): Promise<void> {
+  const bufferedKeys = new Set<string>()
+  const cacheWriteBuffer = createGitHubIssueCacheWriteBuffer((writes) => {
+    try {
+      queue.commitCacheWrites(writes)
+    } finally {
+      for (const cacheKey of writes.keys()) {
+        bufferedKeys.delete(cacheKey)
+        queue.activeKeys.delete(cacheKey)
+      }
+    }
+  })
+  const bufferCacheWrite: GitHubIssueCacheWriteSink = (cacheKey, write) => {
+    bufferedKeys.add(cacheKey)
+    cacheWriteBuffer.add(cacheKey, write)
+  }
+  const activeCandidates = new Map<string, GitHubIssueRefreshCandidate>()
+  const activeRequests = new Set<Promise<void>>()
+  const lastScheduledOrdinalByHost = new Map<ExecutionHostId, number>()
+  let nextScheduledOrdinal = 0
+  try {
+    while (activeRequests.size > 0 || (queue.pending.size > 0 && queue.isActive())) {
+      while (
+        activeRequests.size < MAX_BACKGROUND_ISSUE_REFRESHES &&
+        queue.pending.size > 0 &&
+        queue.isActive()
+      ) {
+        const activeCountsByHost = new Map<ExecutionHostId, number>()
+        for (const candidate of activeCandidates.values()) {
+          activeCountsByHost.set(
+            candidate.repoExecutionHostId,
+            (activeCountsByHost.get(candidate.repoExecutionHostId) ?? 0) + 1
+          )
+        }
+        let nextCandidate: GitHubIssueRefreshCandidate | null = null
+        let nextHostActiveCount = Number.POSITIVE_INFINITY
+        let nextHostScheduledOrdinal = Number.POSITIVE_INFINITY
+        for (const candidate of queue.pending.values()) {
+          const activeCount = activeCountsByHost.get(candidate.repoExecutionHostId) ?? 0
+          const scheduledOrdinal =
+            lastScheduledOrdinalByHost.get(candidate.repoExecutionHostId) ??
+            Number.NEGATIVE_INFINITY
+          if (
+            activeCount < nextHostActiveCount ||
+            (activeCount === nextHostActiveCount && scheduledOrdinal < nextHostScheduledOrdinal)
+          ) {
+            nextCandidate = candidate
+            nextHostActiveCount = activeCount
+            nextHostScheduledOrdinal = scheduledOrdinal
+          }
+        }
+        if (!nextCandidate) {
+          break
+        }
+        const candidate = nextCandidate
+        lastScheduledOrdinalByHost.set(candidate.repoExecutionHostId, nextScheduledOrdinal++)
+        queue.pending.delete(candidate.cacheKey)
+        queue.activeKeys.add(candidate.cacheKey)
+        activeCandidates.set(candidate.cacheKey, candidate)
+        let request!: Promise<void>
+        request = Promise.resolve()
+          .then(() =>
+            fetchIssue(candidate.repoPath, candidate.issueNumber, {
+              repoId: candidate.repoId,
+              repoExecutionHostId: candidate.repoExecutionHostId,
+              reuseRecentCompatibilityFailure: true,
+              cacheWriteSink: bufferCacheWrite
+            })
+          )
+          .then(
+            () => undefined,
+            () => undefined
+          )
+          .finally(() => {
+            if (!bufferedKeys.has(candidate.cacheKey)) {
+              queue.activeKeys.delete(candidate.cacheKey)
+            }
+            activeCandidates.delete(candidate.cacheKey)
+            activeRequests.delete(request)
+          })
+        activeRequests.add(request)
+      }
+      if (activeRequests.size === 0) {
+        break
+      }
+      await Promise.race(activeRequests)
+      if (queue.pending.size > 0 && queue.isActive()) {
+        await yieldToEventLoop()
+      }
+    }
+  } finally {
+    cacheWriteBuffer.flush()
+    queue.running = false
+    if (queue.pending.size > 0 && queue.isActive()) {
+      startGitHubIssueRefreshQueue(fetchIssue, queue)
+    }
+  }
+}
+
+function collectGitHubIssueRefreshCandidates(
+  state: AppState,
+  mode: 'stale' | 'missing-title',
+  now: number
+): GitHubIssueRefreshCandidate[] {
+  const candidates = new Map<string, GitHubIssueRefreshCandidate>()
+  const repoById = new Map<string, Repo>()
+  const duplicateRepoIds = new Set<string>()
+  const repoByHostIdentity = new Map<string, Repo>()
+  for (const repo of state.repos) {
+    if (!duplicateRepoIds.has(repo.id)) {
+      if (repoById.has(repo.id)) {
+        repoById.delete(repo.id)
+        duplicateRepoIds.add(repo.id)
+      } else {
+        repoById.set(repo.id, repo)
+      }
+    }
+    const hostIdentity = getRepoHostIdentity(repo)
+    if (!repoByHostIdentity.has(hostIdentity)) {
+      repoByHostIdentity.set(hostIdentity, repo)
+    }
+  }
+  const defaultHostId = getSettingsFocusedExecutionHostId(state.settings)
+  for (const worktrees of Object.values(state.worktreesByRepo)) {
+    for (const worktree of worktrees) {
+      if (!worktree.linkedIssue) {
+        continue
+      }
+      const repo = findRepoForWorktreeHostIdentity(
+        worktree,
+        repoById,
+        repoByHostIdentity,
+        defaultHostId
+      )
+      if (!repo) {
+        continue
+      }
+      const ownerSettings = settingsForGitHubRepoOwner(state.settings, repo)
+      const cacheKey = issueCacheKey(
+        repo.path,
+        repo.id,
+        worktree.linkedIssue,
+        ownerSettings,
+        repo.connectionId,
+        repo.executionHostId,
+        true
+      )
+      const entry = state.issueCache[cacheKey]
+      const candidate = {
+        cacheKey,
+        repoPath: repo.path,
+        repoId: repo.id,
+        repoExecutionHostId: getRepoExecutionHostId(repo),
+        issueNumber: worktree.linkedIssue,
+        fetchedAt: entry?.fetchedAt ?? 0,
+        lastActivityAt: worktree.lastActivityAt
+      }
+      const existing = candidates.get(cacheKey)
+      if (!existing || existing.lastActivityAt < candidate.lastActivityAt) {
+        candidates.set(cacheKey, candidate)
+      }
+    }
+  }
+  return [...candidates.values()]
+    .sort(
+      (a, b) =>
+        b.lastActivityAt - a.lastActivityAt ||
+        (a.cacheKey < b.cacheKey ? -1 : a.cacheKey > b.cacheKey ? 1 : 0)
+    )
+    .slice(0, MAX_CACHE_ENTRIES)
+    .filter((candidate) => {
+      const entry = state.issueCache[candidate.cacheKey]
+      const stale = !entry || now - entry.fetchedAt >= CACHE_TTL
+      const hasTitle = typeof entry?.data?.title === 'string' && entry.data.title.trim().length > 0
+      return mode === 'stale' ? stale : !entry || (!hasTitle && stale)
+    })
+}
+
+function refreshGitHubIssues(
+  state: AppState,
+  fetchIssue: GitHubIssueFetcher,
+  getState: () => AppState,
+  commitCacheWrites: GitHubIssueRefreshQueue['commitCacheWrites']
+): void {
+  const candidates =
+    shouldRefreshIssueDecorations(state) || state.activeView === 'space'
+      ? collectGitHubIssueRefreshCandidates(state, 'stale', Date.now())
+      : []
+  candidates.sort((a, b) => a.fetchedAt - b.fetchedAt || b.lastActivityAt - a.lastActivityAt)
+  if (isWebClientLocation() || state.activeView === 'space') {
+    reconcileGitHubIssueRefreshCandidates(
+      fetchIssue,
+      candidates,
+      () => {
+        const current = getState()
+        return (
+          isWindowVisible() &&
+          hasLinkedGitHubIssue(current) &&
+          (current.activeView === 'space' ||
+            (isWebClientLocation() && shouldRefreshIssueDecorations(current)))
+        )
+      },
+      commitCacheWrites
+    )
+    return
+  }
+  for (const candidate of candidates.slice(0, MAX_NATIVE_FOREGROUND_ISSUE_REFRESHES)) {
+    void fetchIssue(candidate.repoPath, candidate.issueNumber, {
+      repoId: candidate.repoId,
+      repoExecutionHostId: candidate.repoExecutionHostId
+    })
+  }
+}
+
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 function debouncedSaveCache(state: AppState): void {
@@ -1848,7 +2280,7 @@ export type GitHubSlice = {
   fetchIssue: (
     repoPath: string,
     number: number,
-    options?: RepoScopedFetchOptions
+    options?: IssueFetchOptions
   ) => Promise<IssueInfo | null>
   fetchPRChecks: (
     repoPath: string,
@@ -1909,6 +2341,8 @@ export type GitHubSlice = {
   ) => Promise<boolean>
   initGitHubCache: () => Promise<void>
   refreshAllGitHub: () => void
+  refreshCacheOnlyGitHubIssues: () => void
+  fillMissingGitHubIssueTitles: (signal?: AbortSignal) => Promise<number>
   refreshGitHubForWorktree: (worktreeId: string) => void
   refreshGitHubForWorktreeIfStale: (worktreeId: string) => void
   enqueueGitHubPRRefresh: (
@@ -2978,10 +3412,10 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     try {
       const persisted = await window.api.cache.getGitHub()
       if (persisted) {
-        set({
-          prCache: evictStaleEntries(persisted.pr || {}),
-          issueCache: evictStaleEntries(persisted.issue || {})
-        })
+        set((state) => ({
+          prCache: mergeNewestCacheEntries(persisted.pr || {}, state.prCache),
+          issueCache: mergeNewestCacheEntries(persisted.issue || {}, state.issueCache)
+        }))
       }
     } catch (err) {
       console.error('Failed to load GitHub cache from disk:', err)
@@ -3318,7 +3752,15 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
   },
 
   fetchIssue: async (repoPath, number, options) => {
-    const repo = findRepoForGitHubOwner(get(), options?.repoId, repoPath)
+    const repo = findRepoForGitHubOwner(
+      get(),
+      options?.repoId,
+      repoPath,
+      options?.repoExecutionHostId
+    )
+    if (options?.repoExecutionHostId && !repo) {
+      return null
+    }
     const repoId = options?.repoId ?? repo?.id
     const requestSettings = getGitHubRepoSourceSettings(
       get().settings,
@@ -3340,59 +3782,65 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       return cached.data
     }
 
-    const inflightRequest = inflightIssueRequests.get(cacheKey)
-    if (inflightRequest) {
-      return inflightRequest
+    let requestRecord = inflightIssueRequests.get(cacheKey)
+    if (!requestRecord) {
+      const promise = (async (): Promise<GitHubIssueRequestResult> => {
+        try {
+          const requestContext = getGitHubWorkItemRequestContext(
+            get(),
+            requestSettings,
+            repoId ?? repoPath,
+            repoPath,
+            options?.sourceContext
+          )
+          const issue =
+            requestContext.target.kind === 'environment'
+              ? await callRuntimeRpc<IssueInfo | null>(
+                  { kind: 'environment', environmentId: requestContext.target.environmentId },
+                  'github.issue',
+                  { repo: requestContext.target.runtimeRepoId, number },
+                  {
+                    timeoutMs: 30_000,
+                    reuseRecentCompatibilityFailure: options?.reuseRecentCompatibilityFailure
+                  }
+                )
+              : await window.api.gh.issue({
+                  repoPath,
+                  repoId,
+                  number,
+                  sourceContext: options?.sourceContext
+                })
+          return { data: issue, entry: { data: issue, fetchedAt: Date.now() } }
+        } catch (err) {
+          console.error('Failed to fetch issue:', err)
+          return { data: null, entry: { data: null, fetchedAt: Date.now() } }
+        }
+      })()
+      requestRecord = { promise }
+      inflightIssueRequests.set(cacheKey, requestRecord)
     }
 
-    const request = (async () => {
-      try {
-        const requestContext = getGitHubWorkItemRequestContext(
-          get(),
-          requestSettings,
-          repoId ?? repoPath,
-          repoPath,
-          options?.sourceContext
-        )
-        const issue =
-          requestContext.target.kind === 'environment'
-            ? await callRuntimeRpc<IssueInfo | null>(
-                { kind: 'environment', environmentId: requestContext.target.environmentId },
-                'github.issue',
-                { repo: requestContext.target.runtimeRepoId, number },
-                { timeoutMs: 30_000 }
-              )
-            : await window.api.gh.issue({
-                repoPath,
-                repoId,
-                number,
-                sourceContext: options?.sourceContext
-              })
-        set((s) => ({
-          issueCache: withBoundedCacheEntry(s.issueCache, cacheKey, {
-            data: issue,
-            fetchedAt: Date.now()
-          })
-        }))
+    const result = await requestRecord.promise
+    const write = { entry: result.entry, request: requestRecord }
+    if (options?.cacheWriteSink) {
+      options.cacheWriteSink(cacheKey, write)
+    } else {
+      const writes = new Map([[cacheKey, write]])
+      let cacheChanged = false
+      set((current) => {
+        const issueCache = applyGitHubIssueCacheWrites(current.issueCache, writes)
+        if (issueCache === current.issueCache) {
+          return current
+        }
+        cacheChanged = true
+        return { issueCache }
+      })
+      if (cacheChanged) {
         debouncedSaveCache(get())
-        return issue
-      } catch (err) {
-        console.error('Failed to fetch issue:', err)
-        set((s) => ({
-          issueCache: withBoundedCacheEntry(s.issueCache, cacheKey, {
-            data: null,
-            fetchedAt: Date.now()
-          })
-        }))
-        debouncedSaveCache(get())
-        return null
-      } finally {
-        inflightIssueRequests.delete(cacheKey)
       }
-    })()
-
-    inflightIssueRequests.set(cacheKey, request)
-    return request
+      releaseGitHubIssueCacheWrites(writes)
+    }
+    return result.data
   },
 
   fetchPRChecks: async (
@@ -4427,13 +4875,12 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
 
     // Why: don't prune prRequestGenerations here — deleting a live generation makes its response look stale.
 
-    // Only re-fetch PR/issue entries that are already stale — skip fresh ones
+    // Only re-fetch stale entries needed by global surfaces; mounted native cards refresh themselves.
     const state = get()
     const now = Date.now()
     const stalePRCandidates: { candidate: GitHubPRRefreshCandidate; score: number }[] = []
     const cardProps = state.worktreeCardProperties ?? []
     const rawCardProps = cardProps as readonly string[]
-    const shouldRefreshIssues = shouldRefreshIssueDecorations(state)
     const isPRStatusGrouping = state.groupBy === 'pr-status'
     const rightSidebarShowsPR = rightSidebarShowsPullRequestData(state)
     const shouldRefreshPRs =
@@ -4443,55 +4890,48 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
         ? cardProps.includes('status')
         : cardProps.includes('pr') || rawCardProps.includes('ci'))
 
-    for (const worktrees of Object.values(state.worktreesByRepo)) {
-      for (const wt of worktrees) {
-        const repo = state.repos.find((r) => r.id === wt.repoId)
-        if (!repo) {
-          continue
+    if (shouldRefreshPRs) {
+      const firstRepoById = new Map<string, Repo>()
+      for (const repo of state.repos) {
+        if (!firstRepoById.has(repo.id)) {
+          firstRepoById.set(repo.id, repo)
         }
-
-        const branch = wt.branch.replace(/^refs\/heads\//, '')
-        if (shouldRefreshPRs && !wt.isBare && branch) {
-          const ownerSettings = settingsForGitHubRepoOwner(state.settings, repo)
-          const prKey = prCacheKey(
-            repo.path,
-            repo.id,
-            branch,
-            ownerSettings,
-            repo.connectionId,
-            repo.executionHostId
-          )
-          const prEntry = state.prCache[prKey]
-          if (!prEntry || now - prEntry.fetchedAt >= CACHE_TTL) {
-            const candidate = buildPRRefreshCandidate(state, wt)
-            if (candidate) {
-              stalePRCandidates.push({
-                candidate,
-                score:
-                  (state.activeWorktreeId === wt.id ? Number.MAX_SAFE_INTEGER : 0) +
-                  wt.lastActivityAt
-              })
-            }
+      }
+      for (const worktrees of Object.values(state.worktreesByRepo)) {
+        for (const wt of worktrees) {
+          const repo = firstRepoById.get(wt.repoId)
+          if (!repo) {
+            continue
           }
-        }
-        if (shouldRefreshIssues && wt.linkedIssue) {
-          const ownerSettings = settingsForGitHubRepoOwner(state.settings, repo)
-          const issueKey = issueCacheKey(
-            repo.path,
-            repo.id,
-            wt.linkedIssue,
-            ownerSettings,
-            repo.connectionId,
-            repo.executionHostId,
-            true
-          )
-          const issueEntry = state.issueCache[issueKey]
-          if (!issueEntry || now - issueEntry.fetchedAt >= CACHE_TTL) {
-            void get().fetchIssue(repo.path, wt.linkedIssue, { repoId: repo.id })
+
+          const branch = wt.branch.replace(/^refs\/heads\//, '')
+          if (!wt.isBare && branch) {
+            const ownerSettings = settingsForGitHubRepoOwner(state.settings, repo)
+            const prKey = prCacheKey(
+              repo.path,
+              repo.id,
+              branch,
+              ownerSettings,
+              repo.connectionId,
+              repo.executionHostId
+            )
+            const prEntry = state.prCache[prKey]
+            if (!prEntry || now - prEntry.fetchedAt >= CACHE_TTL) {
+              const candidate = buildPRRefreshCandidate(state, wt, undefined, repo)
+              if (candidate) {
+                stalePRCandidates.push({
+                  candidate,
+                  score:
+                    (state.activeWorktreeId === wt.id ? Number.MAX_SAFE_INTEGER : 0) +
+                    wt.lastActivityAt
+                })
+              }
+            }
           }
         }
       }
     }
+    get().refreshCacheOnlyGitHubIssues()
     const candidatesToRefresh = stalePRCandidates
       .sort((a, b) => b.score - a.score)
       .slice(0, isPRStatusGrouping ? stalePRCandidates.length : 5)
@@ -4514,6 +4954,78 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     }
   },
 
+  refreshCacheOnlyGitHubIssues: () => {
+    refreshGitHubIssues(get(), get().fetchIssue, get, (writes) => {
+      let cacheChanged = false
+      set((current) => {
+        const issueCache = applyGitHubIssueCacheWrites(current.issueCache, writes)
+        if (issueCache === current.issueCache) {
+          return current
+        }
+        cacheChanged = true
+        return { issueCache }
+      })
+      if (cacheChanged) {
+        debouncedSaveCache(get())
+      }
+      releaseGitHubIssueCacheWrites(writes)
+    })
+  },
+
+  fillMissingGitHubIssueTitles: async (signal) => {
+    const candidates = collectGitHubIssueRefreshCandidates(get(), 'missing-title', Date.now())
+      .sort((a, b) => a.fetchedAt - b.fetchedAt || b.lastActivityAt - a.lastActivityAt)
+      .slice(0, MAX_CACHE_ENTRIES)
+    let attempted = 0
+    const cacheWriteBuffer = createGitHubIssueCacheWriteBuffer((writes) => {
+      let cacheChanged = false
+      set((current) => {
+        const issueCache = applyGitHubIssueCacheWrites(current.issueCache, writes)
+        if (issueCache === current.issueCache) {
+          return current
+        }
+        cacheChanged = true
+        return { issueCache }
+      })
+      if (cacheChanged) {
+        debouncedSaveCache(get())
+      }
+      releaseGitHubIssueCacheWrites(writes)
+    })
+    try {
+      for (
+        let index = 0;
+        index < candidates.length && !signal?.aborted;
+        index += MAX_DEMAND_MISSING_ISSUE_REFRESHES
+      ) {
+        const batch = candidates.slice(index, index + MAX_DEMAND_MISSING_ISSUE_REFRESHES)
+        const results = await Promise.allSettled(
+          batch.map((candidate) =>
+            get().fetchIssue(candidate.repoPath, candidate.issueNumber, {
+              repoId: candidate.repoId,
+              repoExecutionHostId: candidate.repoExecutionHostId,
+              reuseRecentCompatibilityFailure: true,
+              cacheWriteSink: cacheWriteBuffer.add
+            })
+          )
+        )
+        const rejected = results.find(
+          (result): result is PromiseRejectedResult => result.status === 'rejected'
+        )
+        if (rejected) {
+          throw rejected.reason
+        }
+        attempted += batch.length
+        if (index + batch.length < candidates.length && !signal?.aborted) {
+          await yieldToEventLoop()
+        }
+      }
+      return attempted
+    } finally {
+      cacheWriteBuffer.flush()
+    }
+  },
+
   refreshGitHubForWorktree: (worktreeId) => {
     const state = get()
     let worktree: Worktree | undefined
@@ -4527,10 +5039,15 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       return
     }
 
-    const repo = state.repos.find((r) => r.id === worktree.repoId)
+    const repo = state.repos.find((candidate) => candidate.id === worktree.repoId)
     if (!repo) {
       return
     }
+    const issueRepo = findRepoForWorktreeOwner(
+      state.repos.filter((candidate) => candidate.id === worktree.repoId),
+      worktree,
+      state.settings
+    )
 
     // Invalidate this worktree's cache entries
     const branch = worktree.branch.replace(/^refs\/heads\//, '')
@@ -4543,17 +5060,18 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       repo.connectionId,
       repo.executionHostId
     )
-    const issueKey = worktree.linkedIssue
-      ? issueCacheKey(
-          repo.path,
-          repo.id,
-          worktree.linkedIssue,
-          ownerSettings,
-          repo.connectionId,
-          repo.executionHostId,
-          true
-        )
-      : ''
+    const issueKey =
+      worktree.linkedIssue && issueRepo
+        ? issueCacheKey(
+            issueRepo.path,
+            issueRepo.id,
+            worktree.linkedIssue,
+            settingsForGitHubRepoOwner(state.settings, issueRepo),
+            issueRepo.connectionId,
+            issueRepo.executionHostId,
+            true
+          )
+        : ''
 
     set((s) => {
       const updates: Partial<AppState> = {}
@@ -4587,8 +5105,11 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
         }
       }
     }
-    if (shouldRefreshIssueDecorations(state) && worktree.linkedIssue) {
-      void get().fetchIssue(repo.path, worktree.linkedIssue, { repoId: repo.id })
+    if (shouldRefreshIssueDecorations(state) && worktree.linkedIssue && issueRepo) {
+      void get().fetchIssue(issueRepo.path, worktree.linkedIssue, {
+        repoId: issueRepo.id,
+        repoExecutionHostId: getRepoExecutionHostId(issueRepo)
+      })
     }
   },
 
@@ -4721,10 +5242,15 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       return
     }
 
-    const repo = state.repos.find((r) => r.id === worktree.repoId)
+    const repo = state.repos.find((candidate) => candidate.id === worktree.repoId)
     if (!repo) {
       return
     }
+    const issueRepo = findRepoForWorktreeOwner(
+      state.repos.filter((candidate) => candidate.id === worktree.repoId),
+      worktree,
+      state.settings
+    )
 
     const now = Date.now()
     const branch = worktree.branch.replace(/^refs\/heads\//, '')
@@ -4755,20 +5281,23 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       }
     }
 
-    if (shouldRefreshIssueDecorations(state) && worktree.linkedIssue) {
-      const ownerSettings = settingsForGitHubRepoOwner(state.settings, repo)
+    if (shouldRefreshIssueDecorations(state) && worktree.linkedIssue && issueRepo) {
+      const ownerSettings = settingsForGitHubRepoOwner(state.settings, issueRepo)
       const issueKey = issueCacheKey(
-        repo.path,
-        repo.id,
+        issueRepo.path,
+        issueRepo.id,
         worktree.linkedIssue,
         ownerSettings,
-        repo.connectionId,
-        repo.executionHostId,
+        issueRepo.connectionId,
+        issueRepo.executionHostId,
         true
       )
       const issueEntry = state.issueCache[issueKey]
       if (!issueEntry || now - issueEntry.fetchedAt >= CACHE_TTL) {
-        void get().fetchIssue(repo.path, worktree.linkedIssue, { repoId: repo.id })
+        void get().fetchIssue(issueRepo.path, worktree.linkedIssue, {
+          repoId: issueRepo.id,
+          repoExecutionHostId: getRepoExecutionHostId(issueRepo)
+        })
       }
     }
   }

@@ -15,34 +15,39 @@ let worktreeCardProperties: WorktreeCardProperty[] = ['status']
 let root: Root | null = null
 let container: HTMLDivElement | null = null
 
-vi.mock('@/store', () => ({
-  useAppStore: (selector: (state: unknown) => unknown) =>
-    selector({
-      deleteStateByWorktreeId: {},
-      fetchHostedReviewForBranch,
-      fetchIssue,
-      fetchLinearIssue,
-      gitConflictOperationByWorktree: {},
-      hostedReviewCache: {
-        'local::repo-1::feature/branch': {
-          data: null,
-          fetchedAt: Date.now(),
-          linkedReviewHintKey: ''
-        }
-      },
-      issueCache: {},
-      linearIssueCache: {},
-      openModal,
-      projectGroups: [],
-      remoteBranchConflictByWorktreeId: {},
-      settings: { experimentalNewWorktreeCardStyle: true },
-      sshConnectionStates: new Map(),
-      sshTargetLabels: new Map(),
-      updateWorktreeMeta,
-      workspacePortScan: null,
-      worktreeCardProperties
+vi.mock('@/store', () => {
+  const getState = () => ({
+    deleteStateByWorktreeId: {},
+    fetchHostedReviewForBranch,
+    fetchIssue,
+    fetchLinearIssue,
+    gitConflictOperationByWorktree: {},
+    hostedReviewCache: {
+      'local::repo-1::feature/branch': {
+        data: null,
+        fetchedAt: Date.now(),
+        linkedReviewHintKey: ''
+      }
+    },
+    issueCache: {},
+    linearIssueCache: {},
+    openModal,
+    projectGroups: [],
+    remoteBranchConflictByWorktreeId: {},
+    settings: { experimentalNewWorktreeCardStyle: true },
+    sshConnectionStates: new Map(),
+    sshTargetLabels: new Map(),
+    updateWorktreeMeta,
+    workspacePortScan: null,
+    worktreeCardProperties
+  })
+  return {
+    useAppStore: Object.assign((selector: (state: unknown) => unknown) => selector(getState()), {
+      getState,
+      subscribe: () => () => {}
     })
-}))
+  }
+})
 
 vi.mock('@/lib/sidebar-worktree-activation', () => ({
   activateWorktreeFromSidebar: vi.fn()
@@ -107,11 +112,25 @@ function makeWorktree(overrides: Partial<Worktree> = {}): Worktree {
   }
 }
 
+function setDocumentVisibility(visibilityState: DocumentVisibilityState): void {
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    value: visibilityState
+  })
+  document.dispatchEvent(new Event('visibilitychange'))
+}
+
+function setWebClientForTest(enabled: boolean): void {
+  ;(window as unknown as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__ = enabled
+}
+
 describe('WorktreeCard hosted review refresh', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
     worktreeCardProperties = ['status']
+    setWebClientForTest(false)
+    setDocumentVisibility('visible')
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -124,6 +143,8 @@ describe('WorktreeCard hosted review refresh', () => {
     container?.remove()
     root = null
     container = null
+    setWebClientForTest(false)
+    setDocumentVisibility('visible')
     vi.useRealTimers()
   })
 
@@ -166,5 +187,52 @@ describe('WorktreeCard hosted review refresh', () => {
     })
 
     expect(fetchHostedReviewForBranch).not.toHaveBeenCalled()
+  })
+
+  it('refreshes a mounted issue card only while the window is visible', async () => {
+    worktreeCardProperties = ['issue']
+    const { default: WorktreeCard } = await import('./WorktreeCard')
+
+    act(() => {
+      root?.render(
+        <WorktreeCard
+          worktree={makeWorktree({ linkedIssue: 42 })}
+          repo={makeRepo()}
+          isActive={false}
+        />
+      )
+    })
+    expect(fetchIssue).toHaveBeenCalledExactlyOnceWith('/repo', 42, {
+      repoId: 'repo-1',
+      repoExecutionHostId: 'local'
+    })
+
+    act(() => {
+      setDocumentVisibility('hidden')
+      vi.advanceTimersByTime(5 * 60_000)
+    })
+    expect(fetchIssue).toHaveBeenCalledTimes(1)
+
+    act(() => setDocumentVisibility('visible'))
+    expect(fetchIssue).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves paired-web issue refreshes to the global coordinator', async () => {
+    worktreeCardProperties = ['issue']
+    setWebClientForTest(true)
+    const { default: WorktreeCard } = await import('./WorktreeCard')
+
+    act(() => {
+      root?.render(
+        <WorktreeCard
+          worktree={makeWorktree({ linkedIssue: 42 })}
+          repo={makeRepo()}
+          isActive={false}
+        />
+      )
+      vi.advanceTimersByTime(10 * 60_000)
+    })
+
+    expect(fetchIssue).not.toHaveBeenCalled()
   })
 })

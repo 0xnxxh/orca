@@ -29,6 +29,7 @@ import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rp
 import { getHostedReviewCacheKey } from './hosted-review-cache-identity'
 import { getTaskSourceCacheScope } from '../../../../shared/task-source-context'
 import type { TaskSourceContext } from '../../../../shared/task-source-context'
+import type { ExecutionHostId } from '../../../../shared/execution-host'
 import { GITHUB_WORK_ITEMS_QUERY_MAX_BYTES } from './github-work-items-query-bounds'
 
 const runtimeEnvironmentCall = vi.fn()
@@ -71,7 +72,11 @@ const mockApi = {
 }
 
 // @ts-expect-error test window mock
-globalThis.window = { api: mockApi }
+globalThis.window = { api: mockApi, location: { pathname: '' } }
+
+function setWebClientForTest(enabled: boolean): void {
+  ;(globalThis.window as unknown as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__ = enabled
+}
 
 function resetRemoteRuntimeMocks() {
   clearRuntimeCompatibilityCacheForTests()
@@ -127,6 +132,39 @@ function makePRRefreshWorktree(overrides: Partial<Worktree> = {}): Worktree {
     lastActivityAt: 1,
     ...overrides
   }
+}
+
+function makeRemoteIssueRefreshFixture(hostCount: number, worktreesPerHost: number) {
+  const repos = Array.from({ length: hostCount }, (_, hostIndex) => ({
+    id: `repo-${hostIndex}`,
+    path: `/remote/repo-${hostIndex}`,
+    name: `repo-${hostIndex}`,
+    kind: 'git' as const,
+    executionHostId: `runtime:env-${hostIndex}`
+  }))
+  const worktreesByRepo = Object.fromEntries(
+    repos.map((repo, hostIndex) => [
+      repo.id,
+      Array.from({ length: worktreesPerHost }, (_, worktreeIndex) => {
+        const issueNumber = hostIndex * worktreesPerHost + worktreeIndex + 1
+        return makePRRefreshWorktree({
+          id: `${repo.id}::worktree-${worktreeIndex}`,
+          repoId: repo.id,
+          path: `${repo.path}/worktree-${worktreeIndex}`,
+          branch: `feature/${worktreeIndex}`,
+          linkedIssue: issueNumber,
+          lastActivityAt: issueNumber
+        })
+      })
+    ])
+  )
+  return { repos, worktreesByRepo }
+}
+
+function getRuntimeIssueRequestNumbers(): number[] {
+  return runtimeEnvironmentCall.mock.calls.flatMap(([request]) =>
+    request.method === 'github.issue' ? [request.params.number as number] : []
+  )
 }
 
 function installLinkedPRClearStub(
@@ -361,6 +399,35 @@ describe('createGitHubSlice cache bounds', () => {
     expect(store.getState().issueCache['repo-id::0']).toBeUndefined()
   })
 
+  it('keeps newer in-memory entries when disk cache hydration resolves late', async () => {
+    const store = createTestStore()
+    mockApi.cache.getGitHub.mockResolvedValueOnce({
+      pr: {
+        'repo-id::branch': { data: makePR({ title: 'persisted' }), fetchedAt: 10 }
+      },
+      issue: {
+        'repo-id::123': {
+          data: { number: 123, title: 'persisted' } as never,
+          fetchedAt: 10
+        }
+      }
+    })
+
+    const hydration = store.getState().initGitHubCache()
+    store.setState({
+      prCache: {
+        'repo-id::branch': { data: makePR({ title: 'live' }), fetchedAt: 20 }
+      },
+      issueCache: {
+        'repo-id::123': { data: { number: 123, title: 'live' } as never, fetchedAt: 20 }
+      }
+    } as Partial<AppState>)
+    await hydration
+
+    expect(store.getState().prCache['repo-id::branch']?.data?.title).toBe('live')
+    expect(store.getState().issueCache['repo-id::123']?.data?.title).toBe('live')
+  })
+
   it('bounds PR and issue caches as fetches add entries', async () => {
     vi.useFakeTimers()
     const store = createTestStore()
@@ -438,6 +505,32 @@ describe('createGitHubSlice cache bounds', () => {
         issueCacheKey(repoPath, 'repo-runtime', 123, null, null, 'runtime:env-1')
       ]?.data
     ).toMatchObject({ number: 123 })
+  })
+
+  it('fails closed when an explicitly hinted issue owner is gone', async () => {
+    const store = createTestStore()
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-b' } as AppState['settings'],
+      repos: [
+        {
+          id: 'shared-repo',
+          path: '/shared/repo',
+          name: 'shared-repo',
+          kind: 'git',
+          executionHostId: 'runtime:env-b'
+        }
+      ]
+    } as unknown as Partial<AppState>)
+
+    await expect(
+      store.getState().fetchIssue('/shared/repo', 123, {
+        repoId: 'shared-repo',
+        repoExecutionHostId: 'runtime:env-a'
+      })
+    ).resolves.toBeNull()
+
+    expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
+    expect(mockApi.gh.issue).not.toHaveBeenCalled()
   })
 
   it('routes explicit source-context issue fetches through the source runtime', async () => {
@@ -5125,6 +5218,50 @@ describe('createGitHubSlice.refreshGitHubForWorktreeIfStale', () => {
     })
   })
 
+  it('routes active nested SSH issue refreshes through their runtime owner', async () => {
+    resetRemoteRuntimeMocks()
+    runtimeEnvironmentCall.mockResolvedValueOnce({
+      id: 'rpc-issue-owner',
+      ok: true,
+      result: null,
+      _meta: { runtimeId: 'env-b' }
+    })
+    const store = createTestStore()
+    const worktreeId = 'shared-repo::nested-env-b'
+    store.setState({
+      repos: ['env-a', 'env-b'].map((environmentId) => ({
+        id: 'shared-repo',
+        path: `/runtime/${environmentId}/repo`,
+        name: 'shared-repo',
+        kind: 'git' as const,
+        executionHostId: `runtime:${environmentId}` as `runtime:${string}`
+      })),
+      groupBy: 'repo',
+      worktreeCardProperties: ['issue'],
+      worktreesByRepo: {
+        'shared-repo': [
+          makePRRefreshWorktree({
+            id: worktreeId,
+            repoId: 'shared-repo',
+            hostId: 'ssh:nested-env-b',
+            runtimeOwnerEnvironmentId: 'env-b',
+            linkedIssue: 123
+          })
+        ]
+      }
+    } as unknown as Partial<AppState>)
+
+    store.getState().refreshGitHubForWorktreeIfStale(worktreeId)
+    await vi.waitFor(() => expect(runtimeEnvironmentCall).toHaveBeenCalledTimes(1))
+
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
+      selector: 'env-b',
+      method: 'github.issue',
+      params: { repo: 'shared-repo', number: 123 },
+      timeoutMs: 30_000
+    })
+  })
+
   it('enqueues active PR refresh IPC for connected SSH-backed repos', () => {
     const store = createTestStore()
     const repoPath = '/repo'
@@ -5425,6 +5562,39 @@ describe('createGitHubSlice.refreshGitHubForWorktreeIfStale', () => {
 describe('createGitHubSlice.refreshAllGitHub', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetRemoteRuntimeMocks()
+    setWebClientForTest(false)
+  })
+
+  it('reconciles cache-only issues without touching unrelated GitHub caches', async () => {
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-issue',
+      ok: true,
+      result: null,
+      _meta: { runtimeId: 'env-0' }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(1, 1)
+    store.setState({
+      repos,
+      activeView: 'space',
+      worktreeCardProperties: ['comment'],
+      worktreesByRepo,
+      commentsCache: { marker: { data: [], fetchedAt: 1 } }
+    } as unknown as Partial<AppState>)
+    const before = store.getState()
+
+    store.getState().refreshCacheOnlyGitHubIssues()
+
+    const after = store.getState()
+    expect(after.commentsCache).toBe(before.commentsCache)
+    expect(after.prCache).toBe(before.prCache)
+    expect(after.checksCache).toBe(before.checksCache)
+    expect(after.workItemsCache).toBe(before.workItemsCache)
+    expect(after.projectViewCache).toBe(before.projectViewCache)
+    expect(after.prRefreshStates).toBe(before.prRefreshStates)
+    await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toEqual([1]))
+    expect(mockApi.gh.enqueuePRRefresh).not.toHaveBeenCalled()
   })
 
   it('refreshes stale PR data when source control is the visible PR surface', () => {
@@ -5564,6 +5734,50 @@ describe('createGitHubSlice.refreshAllGitHub', () => {
     })
   })
 
+  it('skips PR worktree traversal when no PR surface is visible', () => {
+    const store = createTestStore()
+    const worktree = makePRRefreshWorktree()
+    const branchRead = vi.fn(() => 'feature/not-visible')
+    Object.defineProperty(worktree, 'branch', { configurable: true, get: branchRead })
+
+    store.setState({
+      repos: [{ id: 'repo-1', path: '/repo', name: 'repo', kind: 'git' }],
+      groupBy: 'repo',
+      worktreeCardProperties: ['comment'],
+      rightSidebarOpen: false,
+      worktreesByRepo: { 'repo-1': [worktree] }
+    } as unknown as Partial<AppState>)
+
+    store.getState().refreshAllGitHub()
+
+    expect(branchRead).not.toHaveBeenCalled()
+    expect(mockApi.gh.enqueuePRRefresh).not.toHaveBeenCalled()
+  })
+
+  it('preserves first-repo ownership while indexing PR candidates', () => {
+    const store = createTestStore()
+    store.setState({
+      repos: [
+        { id: 'shared-repo', path: '/first/repo', name: 'first', kind: 'git' },
+        { id: 'shared-repo', path: '/second/repo', name: 'second', kind: 'git' }
+      ],
+      groupBy: 'pr-status',
+      worktreeCardProperties: ['comment'],
+      rightSidebarOpen: false,
+      worktreesByRepo: {
+        'shared-repo': [makePRRefreshWorktree({ repoId: 'shared-repo' })]
+      }
+    } as unknown as Partial<AppState>)
+
+    store.getState().refreshAllGitHub()
+
+    expect(mockApi.gh.enqueuePRRefresh).toHaveBeenCalledWith({
+      candidate: expect.objectContaining({ repoId: 'shared-repo', repoPath: '/first/repo' }),
+      reason: 'swr',
+      priority: 10
+    })
+  })
+
   it('does not refresh stale linked issues when the issue card section is hidden', async () => {
     const store = createTestStore()
     const repoPath = '/repo'
@@ -5598,42 +5812,877 @@ describe('createGitHubSlice.refreshAllGitHub', () => {
     expect(mockApi.gh.issue).not.toHaveBeenCalled()
   })
 
-  it('refreshes stale linked issues when the issue card section is visible', async () => {
+  it('bounds native remote linked-issue refreshes and rotates through cold entries', async () => {
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-issue',
+      ok: true,
+      result: null,
+      _meta: { runtimeId: 'remote-runtime' }
+    })
     const store = createTestStore()
-    const repoPath = '/repo'
-    const branch = 'feature/test'
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(3, 4)
 
     store.setState({
-      repos: [{ id: 'repo-1', path: repoPath, name: 'repo', kind: 'git' }],
+      repos,
       groupBy: 'repo',
       worktreeCardProperties: ['issue'],
       rightSidebarOpen: false,
-      worktreesByRepo: {
-        'repo-1': [
-          {
-            id: 'wt-1',
-            repoId: 'repo-1',
-            path: '/repo/worktrees/test',
-            branch,
-            displayName: 'test',
-            isMainWorktree: false,
-            isBare: false,
-            isArchived: false,
-            lastActivityAt: 1,
-            linkedIssue: 123
-          }
-        ]
-      }
+      worktreesByRepo
     } as unknown as Partial<AppState>)
 
     store.getState().refreshAllGitHub()
-    await Promise.resolve()
+    await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(5))
+    await vi.waitFor(() => expect(Object.keys(store.getState().issueCache)).toHaveLength(5))
+    const firstIssueNumbers = getRuntimeIssueRequestNumbers()
 
-    expect(mockApi.gh.issue).toHaveBeenCalledWith({
-      repoPath,
-      repoId: 'repo-1',
-      number: 123
+    runtimeEnvironmentCall.mockClear()
+    store.getState().refreshAllGitHub()
+    await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(5))
+
+    expect(new Set([...firstIssueNumbers, ...getRuntimeIssueRequestNumbers()]).size).toBe(10)
+    expect(mockApi.gh.issue).not.toHaveBeenCalled()
+  })
+
+  it('routes same-id issue fills to each worktree owner', async () => {
+    runtimeEnvironmentCall.mockImplementation(async (request) => ({
+      id: `rpc-${request.selector}`,
+      ok: true,
+      result: {
+        number: request.params.number,
+        title: `${request.selector} issue`,
+        state: 'open',
+        url: `https://example.com/${request.selector}/issues/${request.params.number}`
+      },
+      _meta: { runtimeId: String(request.selector) }
+    }))
+    const store = createTestStore()
+    const repoPath = '/shared/repo'
+    const repos = ['env-a', 'env-b'].map((environmentId) => ({
+      id: 'shared-repo',
+      path: repoPath,
+      name: 'shared-repo',
+      kind: 'git' as const,
+      executionHostId: `runtime:${environmentId}` as const
+    }))
+    const worktrees = ['env-a', 'env-b'].map((environmentId, index) =>
+      makePRRefreshWorktree({
+        id: `shared-repo::${environmentId}`,
+        repoId: 'shared-repo',
+        hostId: `ssh:nested-${environmentId}`,
+        runtimeOwnerEnvironmentId: environmentId,
+        linkedIssue: index + 1
+      })
+    )
+
+    store.setState({
+      repos,
+      worktreesByRepo: { 'shared-repo': worktrees }
+    } as unknown as Partial<AppState>)
+
+    await expect(store.getState().fillMissingGitHubIssueTitles()).resolves.toBe(2)
+
+    expect(runtimeEnvironmentCall).toHaveBeenCalledTimes(2)
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selector: 'env-a',
+        method: 'github.issue',
+        params: { repo: 'shared-repo', number: 1 }
+      })
+    )
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selector: 'env-b',
+        method: 'github.issue',
+        params: { repo: 'shared-repo', number: 2 }
+      })
+    )
+    expect(
+      store.getState().issueCache[
+        issueCacheKey(repoPath, 'shared-repo', 1, null, null, 'runtime:env-a', true)
+      ]?.data?.title
+    ).toBe('env-a issue')
+    expect(
+      store.getState().issueCache[
+        issueCacheKey(repoPath, 'shared-repo', 2, null, null, 'runtime:env-b', true)
+      ]?.data?.title
+    ).toBe('env-b issue')
+  })
+
+  it('routes same-path issue fills with each runtime repo id', async () => {
+    runtimeEnvironmentCall.mockImplementation(async (request) => ({
+      id: `rpc-${request.selector}`,
+      ok: true,
+      result: null,
+      _meta: { runtimeId: String(request.selector) }
+    }))
+    const store = createTestStore()
+    const repoPath = '/shared/repo'
+    const repos = ['env-a', 'env-b'].map((environmentId) => ({
+      id: `repo-${environmentId}`,
+      path: repoPath,
+      name: `repo-${environmentId}`,
+      kind: 'git' as const,
+      executionHostId: `runtime:${environmentId}` as const
+    }))
+    const worktreesByRepo = Object.fromEntries(
+      repos.map((repo, index) => [
+        repo.id,
+        [
+          makePRRefreshWorktree({
+            id: `${repo.id}::worktree`,
+            repoId: repo.id,
+            hostId: `ssh:nested-${index}`,
+            runtimeOwnerEnvironmentId: `env-${index === 0 ? 'a' : 'b'}`,
+            linkedIssue: index + 1
+          })
+        ]
+      ])
+    )
+    store.setState({ repos, worktreesByRepo } as unknown as Partial<AppState>)
+
+    await expect(store.getState().fillMissingGitHubIssueTitles()).resolves.toBe(2)
+
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selector: 'env-a',
+        method: 'github.issue',
+        params: { repo: 'repo-env-a', number: 1 }
+      })
+    )
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selector: 'env-b',
+        method: 'github.issue',
+        params: { repo: 'repo-env-b', number: 2 }
+      })
+    )
+  })
+
+  it('uses only an unambiguous runtime owner for legacy nested SSH issue fills', async () => {
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-issue',
+      ok: true,
+      result: null,
+      _meta: { runtimeId: 'env-a' }
     })
+    const store = createTestStore()
+    const runtimeRepoA = {
+      id: 'shared-repo',
+      path: '/runtime-a/repo',
+      name: 'shared-repo',
+      kind: 'git' as const,
+      executionHostId: 'runtime:env-a' as const
+    }
+    const legacyWorktree = makePRRefreshWorktree({
+      id: 'legacy-nested-worktree',
+      repoId: 'shared-repo',
+      hostId: 'ssh:nested-a',
+      linkedIssue: 1
+    })
+    store.setState({
+      repos: [runtimeRepoA],
+      worktreesByRepo: { 'shared-repo': [legacyWorktree] }
+    } as unknown as Partial<AppState>)
+
+    await expect(store.getState().fillMissingGitHubIssueTitles()).resolves.toBe(1)
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selector: 'env-a',
+        method: 'github.issue',
+        params: { repo: 'shared-repo', number: 1 }
+      })
+    )
+
+    runtimeEnvironmentCall.mockClear()
+    store.setState({
+      repos: [
+        runtimeRepoA,
+        {
+          ...runtimeRepoA,
+          path: '/runtime-b/repo',
+          executionHostId: 'runtime:env-b' as const
+        }
+      ],
+      worktreesByRepo: {
+        'shared-repo': [{ ...legacyWorktree, linkedIssue: 2 }]
+      }
+    } as unknown as Partial<AppState>)
+
+    await expect(store.getState().fillMissingGitHubIssueTitles()).resolves.toBe(0)
+    expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
+  })
+
+  it('single-flights paired-web issue refreshes across host-balanced workers', async () => {
+    let activeIssueRequests = 0
+    let peakConcurrentIssueRequests = 0
+    let releaseIssueRequests!: () => void
+    const issueRequestGate = new Promise<void>((resolve) => {
+      releaseIssueRequests = resolve
+    })
+    runtimeEnvironmentCall.mockImplementation(async () => {
+      activeIssueRequests += 1
+      peakConcurrentIssueRequests = Math.max(peakConcurrentIssueRequests, activeIssueRequests)
+      await issueRequestGate
+      activeIssueRequests -= 1
+      return {
+        id: 'rpc-issue',
+        ok: true,
+        result: null,
+        _meta: { runtimeId: 'remote-runtime' }
+      }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(2, 10)
+    setWebClientForTest(true)
+
+    try {
+      store.setState({
+        repos,
+        groupBy: 'repo',
+        worktreeCardProperties: ['issue'],
+        rightSidebarOpen: false,
+        worktreesByRepo
+      } as unknown as Partial<AppState>)
+
+      store.getState().refreshAllGitHub()
+      await vi.waitFor(() => expect(activeIssueRequests).toBe(5))
+      store.getState().refreshAllGitHub()
+      expect(getRuntimeIssueRequestNumbers()).toHaveLength(5)
+      expect(
+        new Set(runtimeEnvironmentCall.mock.calls.map(([request]) => request.selector))
+      ).toEqual(new Set(['env-0', 'env-1']))
+
+      releaseIssueRequests()
+      await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(20))
+      expect(new Set(getRuntimeIssueRequestNumbers()).size).toBe(20)
+      expect(peakConcurrentIssueRequests).toBe(5)
+    } finally {
+      releaseIssueRequests()
+      setWebClientForTest(false)
+    }
+  })
+
+  it('fills freed issue-refresh slots before a slow peer finishes', async () => {
+    let releaseSlowRequest!: () => void
+    const slowRequestGate = new Promise<void>((resolve) => {
+      releaseSlowRequest = resolve
+    })
+    runtimeEnvironmentCall.mockImplementation(async (request) => {
+      if (request.params.number === 6) {
+        await slowRequestGate
+      }
+      return {
+        id: `rpc-issue-${request.params.number}`,
+        ok: true,
+        result: null,
+        _meta: { runtimeId: 'env-0' }
+      }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(1, 6)
+    store.setState({
+      repos,
+      activeView: 'space',
+      worktreeCardProperties: ['comment'],
+      worktreesByRepo
+    } as unknown as Partial<AppState>)
+
+    try {
+      store.getState().refreshCacheOnlyGitHubIssues()
+      await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(6))
+    } finally {
+      releaseSlowRequest()
+    }
+    await vi.waitFor(() => expect(Object.keys(store.getState().issueCache)).toHaveLength(6))
+  })
+
+  it('admits a sixth remote host before refilling an incumbent host slot', async () => {
+    let releaseAllRequests = false
+    const requestResolvers: (() => void)[] = []
+    runtimeEnvironmentCall.mockImplementation(async (request) => {
+      if (!releaseAllRequests) {
+        await new Promise<void>((resolve) => requestResolvers.push(resolve))
+      }
+      return {
+        id: `rpc-issue-${request.selector}-${request.params.number}`,
+        ok: true,
+        result: null,
+        _meta: { runtimeId: request.selector }
+      }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(6, 2)
+    store.setState({
+      repos,
+      activeView: 'space',
+      worktreeCardProperties: ['comment'],
+      worktreesByRepo
+    } as unknown as Partial<AppState>)
+
+    try {
+      store.getState().refreshCacheOnlyGitHubIssues()
+      await vi.waitFor(() => expect(runtimeEnvironmentCall).toHaveBeenCalledTimes(5))
+      const initialHosts = runtimeEnvironmentCall.mock.calls.map(([request]) => request.selector)
+      expect(new Set(initialHosts).size).toBe(5)
+      const missingHost = repos
+        .map((repo) => repo.executionHostId?.replace('runtime:', ''))
+        .find((environmentId) => environmentId && !initialHosts.includes(environmentId))
+      expect(missingHost).toBeDefined()
+
+      requestResolvers[0]?.()
+      await vi.waitFor(() => expect(runtimeEnvironmentCall).toHaveBeenCalledTimes(6))
+      expect(runtimeEnvironmentCall.mock.calls[5]?.[0].selector).toBe(missingHost)
+    } finally {
+      releaseAllRequests = true
+      for (const resolve of requestResolvers) {
+        resolve()
+      }
+    }
+    await vi.waitFor(() => expect(Object.keys(store.getState().issueCache)).toHaveLength(12))
+  })
+
+  it('reuses an offline runtime verdict while draining cache-only issue batches', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    runtimeEnvironmentTransportCall.mockRejectedValue(new Error('runtime offline'))
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(1, 12)
+    setWebClientForTest(true)
+
+    try {
+      store.setState({
+        repos,
+        groupBy: 'repo',
+        worktreeCardProperties: ['issue'],
+        rightSidebarOpen: false,
+        worktreesByRepo
+      } as unknown as Partial<AppState>)
+
+      store.getState().refreshCacheOnlyGitHubIssues()
+      await vi.waitFor(() => expect(Object.keys(store.getState().issueCache)).toHaveLength(12))
+
+      expect(runtimeEnvironmentTransportCall).toHaveBeenCalledTimes(1)
+      expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
+    } finally {
+      errorLog.mockRestore()
+      setWebClientForTest(false)
+    }
+  })
+
+  it('reprioritizes pending cache-only work when a more active workspace arrives', async () => {
+    let activeIssueRequests = 0
+    let releaseIssueRequests!: () => void
+    const issueRequestGate = new Promise<void>((resolve) => {
+      releaseIssueRequests = resolve
+    })
+    runtimeEnvironmentCall.mockImplementation(async () => {
+      activeIssueRequests += 1
+      await issueRequestGate
+      activeIssueRequests -= 1
+      return {
+        id: 'rpc-issue',
+        ok: true,
+        result: null,
+        _meta: { runtimeId: 'env-0' }
+      }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(1, 10)
+    store.setState({
+      repos,
+      activeView: 'space',
+      worktreeCardProperties: ['comment'],
+      worktreesByRepo
+    } as unknown as Partial<AppState>)
+
+    try {
+      store.getState().refreshAllGitHub()
+      await vi.waitFor(() => expect(activeIssueRequests).toBe(5))
+      store.setState({
+        worktreesByRepo: {
+          ...worktreesByRepo,
+          [repos[0].id]: [
+            ...worktreesByRepo[repos[0].id],
+            makePRRefreshWorktree({
+              id: `${repos[0].id}::new-worktree`,
+              repoId: repos[0].id,
+              linkedIssue: 99,
+              lastActivityAt: Number.MAX_SAFE_INTEGER
+            })
+          ]
+        }
+      })
+      store.getState().refreshAllGitHub()
+      releaseIssueRequests()
+      await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(11))
+
+      expect(getRuntimeIssueRequestNumbers().slice(5, 10)).toContain(99)
+    } finally {
+      releaseIssueRequests()
+    }
+  })
+
+  it('keeps completed batch requests deduplicated until their cache write publishes', async () => {
+    let releaseSlowRequests!: () => void
+    const slowRequestGate = new Promise<void>((resolve) => {
+      releaseSlowRequests = resolve
+    })
+    runtimeEnvironmentCall.mockImplementation(async (request) => {
+      if (request.params.number !== 1) {
+        await slowRequestGate
+      }
+      return {
+        id: `rpc-issue-${request.params.number}`,
+        ok: true,
+        result: {
+          number: request.params.number,
+          title: `Issue ${request.params.number}`,
+          state: 'open',
+          url: `https://example.com/issues/${request.params.number}`
+        },
+        _meta: { runtimeId: 'remote-runtime' }
+      }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(1, 5)
+    const repo = repos[0]
+    const cacheKey = issueCacheKey(repo.path, repo.id, 1, null, null, repo.executionHostId, true)
+    store.setState({
+      repos,
+      activeView: 'space',
+      worktreeCardProperties: ['comment'],
+      worktreesByRepo
+    } as unknown as Partial<AppState>)
+
+    try {
+      store.getState().refreshAllGitHub()
+      await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(5))
+      await vi.waitFor(() => expect(store.getState().issueCache[cacheKey]).toBeUndefined())
+
+      await expect(
+        store.getState().fetchIssue(repo.path, 1, {
+          repoId: repo.id,
+          repoExecutionHostId: repo.executionHostId as ExecutionHostId
+        })
+      ).resolves.toMatchObject({ number: 1, title: 'Issue 1' })
+
+      expect(store.getState().issueCache[cacheKey]?.data?.title).toBe('Issue 1')
+      expect(getRuntimeIssueRequestNumbers().filter((number) => number === 1)).toHaveLength(1)
+    } finally {
+      releaseSlowRequests()
+    }
+    await vi.waitFor(() => expect(Object.keys(store.getState().issueCache)).toHaveLength(5))
+  })
+
+  it('publishes a completed cache-only result before a slow batch peer', async () => {
+    let releaseSlowRequests!: () => void
+    const slowRequestGate = new Promise<void>((resolve) => {
+      releaseSlowRequests = resolve
+    })
+    runtimeEnvironmentCall.mockImplementation(async (request) => {
+      if (request.params.number !== 1) {
+        await slowRequestGate
+      }
+      return {
+        id: `rpc-issue-${request.params.number}`,
+        ok: true,
+        result: {
+          number: request.params.number,
+          title: `Issue ${request.params.number}`,
+          state: 'open',
+          url: `https://example.com/issues/${request.params.number}`
+        },
+        _meta: { runtimeId: 'remote-runtime' }
+      }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(1, 5)
+    const repo = repos[0]
+    const cacheKey = issueCacheKey(repo.path, repo.id, 1, null, null, repo.executionHostId, true)
+    store.setState({
+      repos,
+      activeView: 'space',
+      worktreeCardProperties: ['comment'],
+      worktreesByRepo
+    } as unknown as Partial<AppState>)
+
+    try {
+      store.getState().refreshAllGitHub()
+      await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(5))
+      await vi.waitFor(() =>
+        expect(store.getState().issueCache[cacheKey]?.data?.title).toBe('Issue 1')
+      )
+    } finally {
+      releaseSlowRequests()
+    }
+  })
+
+  it('preserves an equal-timestamp live issue over a delayed batch write', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(100)
+    let releaseSlowRequests!: () => void
+    const slowRequestGate = new Promise<void>((resolve) => {
+      releaseSlowRequests = resolve
+    })
+    runtimeEnvironmentCall.mockImplementation(async (request) => {
+      if (request.params.number !== 1) {
+        await slowRequestGate
+      }
+      return {
+        id: `rpc-issue-${request.params.number}`,
+        ok: true,
+        result: null,
+        _meta: { runtimeId: 'remote-runtime' }
+      }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(1, 5)
+    const repo = repos[0]
+    const cacheKey = issueCacheKey(repo.path, repo.id, 1, null, null, repo.executionHostId, true)
+    store.setState({
+      repos,
+      activeView: 'space',
+      worktreeCardProperties: ['comment'],
+      worktreesByRepo
+    } as unknown as Partial<AppState>)
+
+    try {
+      store.getState().refreshAllGitHub()
+      await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(5))
+      store.setState({
+        issueCache: {
+          [cacheKey]: {
+            data: {
+              number: 1,
+              title: 'Newer live issue',
+              state: 'open',
+              url: 'https://example.com/issues/1',
+              labels: []
+            },
+            fetchedAt: 100
+          }
+        }
+      })
+      releaseSlowRequests()
+      await vi.waitFor(() => expect(Object.keys(store.getState().issueCache)).toHaveLength(5))
+
+      expect(store.getState().issueCache[cacheKey]?.data?.title).toBe('Newer live issue')
+    } finally {
+      releaseSlowRequests()
+      now.mockRestore()
+    }
+  })
+
+  it('refreshes every cache-only Space issue even when card decorations are hidden', async () => {
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-issue',
+      ok: true,
+      result: null,
+      _meta: { runtimeId: 'remote-runtime' }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(2, 4)
+
+    store.setState({
+      repos,
+      activeView: 'space',
+      groupBy: 'repo',
+      worktreeCardProperties: ['comment'],
+      rightSidebarOpen: false,
+      worktreesByRepo
+    } as unknown as Partial<AppState>)
+
+    store.getState().refreshAllGitHub()
+    await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(8))
+  })
+
+  it('coalesces a complete cache-only drain while keeping batches bounded to five', async () => {
+    let activeIssueRequests = 0
+    let peakConcurrentIssueRequests = 0
+    let releaseFirstBatch!: () => void
+    const firstBatchGate = new Promise<void>((resolve) => {
+      releaseFirstBatch = resolve
+    })
+    runtimeEnvironmentCall.mockImplementation(async () => {
+      activeIssueRequests += 1
+      peakConcurrentIssueRequests = Math.max(peakConcurrentIssueRequests, activeIssueRequests)
+      await firstBatchGate
+      activeIssueRequests -= 1
+      return {
+        id: 'rpc-issue',
+        ok: true,
+        result: null,
+        _meta: { runtimeId: 'remote-runtime' }
+      }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(3, 12)
+    store.setState({
+      repos,
+      activeView: 'space',
+      worktreeCardProperties: ['comment'],
+      worktreesByRepo
+    } as unknown as Partial<AppState>)
+    let issueCachePublications = 0
+    const unsubscribe = store.subscribe((state, previousState) => {
+      if (state.issueCache !== previousState.issueCache) {
+        issueCachePublications++
+      }
+    })
+
+    store.getState().refreshAllGitHub()
+    store.getState().refreshAllGitHub()
+    await vi.waitFor(() => expect(activeIssueRequests).toBe(5))
+    expect(getRuntimeIssueRequestNumbers()).toHaveLength(5)
+    releaseFirstBatch()
+
+    await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(36))
+    await vi.waitFor(() => expect(activeIssueRequests).toBe(0))
+    expect(peakConcurrentIssueRequests).toBe(5)
+    expect(issueCachePublications).toBe(1)
+    unsubscribe()
+  })
+
+  it('caps staggered cache-only drain publications at five', async () => {
+    let activeIssueRequests = 0
+    runtimeEnvironmentCall.mockImplementation(async () => {
+      activeIssueRequests += 1
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      activeIssueRequests -= 1
+      return {
+        id: 'rpc-issue',
+        ok: true,
+        result: null,
+        _meta: { runtimeId: 'remote-runtime' }
+      }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(1, 30)
+    store.setState({
+      repos,
+      activeView: 'space',
+      worktreeCardProperties: ['comment'],
+      worktreesByRepo
+    } as unknown as Partial<AppState>)
+    let issueCachePublications = 0
+    const unsubscribe = store.subscribe((state, previousState) => {
+      if (state.issueCache !== previousState.issueCache) {
+        issueCachePublications++
+      }
+    })
+
+    store.getState().refreshAllGitHub()
+    await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(30))
+    await vi.waitFor(() => expect(activeIssueRequests).toBe(0))
+
+    expect(issueCachePublications).toBeGreaterThan(1)
+    expect(issueCachePublications).toBeLessThanOrEqual(5)
+    unsubscribe()
+  })
+
+  it('keeps cache-only refreshes within the 500 most-active issue keys across passes', async () => {
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-issue',
+      ok: true,
+      result: null,
+      _meta: { runtimeId: 'remote-runtime' }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(1, 600)
+    setWebClientForTest(true)
+
+    try {
+      store.setState({
+        repos,
+        groupBy: 'repo',
+        worktreeCardProperties: ['issue'],
+        worktreesByRepo
+      } as unknown as Partial<AppState>)
+
+      store.getState().refreshAllGitHub()
+      await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(500), {
+        timeout: 5_000
+      })
+      await vi.waitFor(() => expect(Object.keys(store.getState().issueCache)).toHaveLength(500))
+      await new Promise((resolve) => setTimeout(resolve, 250))
+
+      const firstPassIssueNumbers = getRuntimeIssueRequestNumbers()
+      expect(new Set(firstPassIssueNumbers)).toEqual(
+        new Set(Array.from({ length: 500 }, (_, index) => index + 101))
+      )
+
+      store.getState().refreshAllGitHub()
+      await new Promise((resolve) => setTimeout(resolve, 250))
+
+      expect(getRuntimeIssueRequestNumbers()).toEqual(firstPassIssueNumbers)
+      expect(Object.keys(store.getState().issueCache)).toHaveLength(500)
+    } finally {
+      setWebClientForTest(false)
+    }
+  })
+
+  it('reconciles a parked cache-only drain before the next visible refresh', async () => {
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-issue',
+      ok: true,
+      result: null,
+      _meta: { runtimeId: 'remote-runtime' }
+    })
+    const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document')
+    const testDocument = { visibilityState: 'hidden' }
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: testDocument })
+    try {
+      const store = createTestStore()
+      const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(2, 4)
+      store.setState({
+        repos,
+        activeView: 'space',
+        worktreeCardProperties: ['comment'],
+        worktreesByRepo
+      } as unknown as Partial<AppState>)
+
+      store.getState().refreshAllGitHub()
+      await Promise.resolve()
+      expect(getRuntimeIssueRequestNumbers()).toHaveLength(0)
+
+      const currentWorktreesByRepo = Object.fromEntries(
+        Object.entries(worktreesByRepo).map(([repoId, worktrees]) => [
+          repoId,
+          worktrees.map((worktree) => ({
+            ...worktree,
+            linkedIssue: (worktree.linkedIssue ?? 0) + 100
+          }))
+        ])
+      )
+      store.setState({ worktreesByRepo: currentWorktreesByRepo })
+      testDocument.visibilityState = 'visible'
+      store.getState().refreshAllGitHub()
+      await vi.waitFor(() => expect(getRuntimeIssueRequestNumbers()).toHaveLength(8))
+      expect(new Set(getRuntimeIssueRequestNumbers())).toEqual(
+        new Set(Array.from({ length: 8 }, (_, index) => index + 101))
+      )
+    } finally {
+      if (documentDescriptor) {
+        Object.defineProperty(globalThis, 'document', documentDescriptor)
+      } else {
+        Reflect.deleteProperty(globalThis, 'document')
+      }
+    }
+  })
+
+  it('stops a cache-only drain when the final linked issue is removed', async () => {
+    let activeIssueRequests = 0
+    let releaseIssueRequests!: () => void
+    const issueRequestGate = new Promise<void>((resolve) => {
+      releaseIssueRequests = resolve
+    })
+    runtimeEnvironmentCall.mockImplementation(async () => {
+      activeIssueRequests += 1
+      await issueRequestGate
+      activeIssueRequests -= 1
+      return {
+        id: 'rpc-issue',
+        ok: true,
+        result: null,
+        _meta: { runtimeId: 'remote-runtime' }
+      }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(2, 4)
+    store.setState({
+      repos,
+      activeView: 'space',
+      worktreeCardProperties: ['comment'],
+      worktreesByRepo
+    } as unknown as Partial<AppState>)
+
+    try {
+      store.getState().refreshAllGitHub()
+      await vi.waitFor(() => expect(activeIssueRequests).toBe(5))
+      store.setState({
+        worktreesByRepo: Object.fromEntries(
+          Object.entries(worktreesByRepo).map(([repoId, worktrees]) => [
+            repoId,
+            worktrees.map((worktree) => ({ ...worktree, linkedIssue: null }))
+          ])
+        )
+      })
+      releaseIssueRequests()
+      await vi.waitFor(() => expect(activeIssueRequests).toBe(0))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      expect(getRuntimeIssueRequestNumbers()).toHaveLength(5)
+    } finally {
+      releaseIssueRequests()
+    }
+  })
+
+  it('fills every missing issue title with bounded concurrency and suppresses fresh null retries', async () => {
+    let activeIssueRequests = 0
+    let peakConcurrentIssueRequests = 0
+    let releaseIssueRequests!: () => void
+    const issueRequestGate = new Promise<void>((resolve) => {
+      releaseIssueRequests = resolve
+    })
+    runtimeEnvironmentCall.mockImplementation(async () => {
+      activeIssueRequests += 1
+      peakConcurrentIssueRequests = Math.max(peakConcurrentIssueRequests, activeIssueRequests)
+      await issueRequestGate
+      activeIssueRequests -= 1
+      return {
+        id: 'rpc-issue',
+        ok: true,
+        result: null,
+        _meta: { runtimeId: 'remote-runtime' }
+      }
+    })
+    const store = createTestStore()
+    const { repos, worktreesByRepo } = makeRemoteIssueRefreshFixture(3, 12)
+    const staleIssueKey = issueCacheKey(
+      repos[0].path,
+      repos[0].id,
+      1,
+      null,
+      null,
+      repos[0].executionHostId,
+      true
+    )
+
+    store.setState({
+      repos,
+      activeView: 'space',
+      groupBy: 'repo',
+      worktreeCardProperties: ['comment'],
+      rightSidebarOpen: false,
+      worktreesByRepo,
+      issueCache: {
+        [staleIssueKey]: { data: null, fetchedAt: 0 }
+      }
+    } as unknown as Partial<AppState>)
+    let issueCachePublications = 0
+    const unsubscribe = store.subscribe((state, previousState) => {
+      if (state.issueCache !== previousState.issueCache) {
+        issueCachePublications++
+      }
+    })
+
+    const fill = store.getState().fillMissingGitHubIssueTitles()
+    await vi.waitFor(() => expect(activeIssueRequests).toBe(25))
+    releaseIssueRequests()
+
+    await expect(fill).resolves.toBe(36)
+    const attemptedIssueNumbers = getRuntimeIssueRequestNumbers()
+    expect(attemptedIssueNumbers).toHaveLength(36)
+    expect(new Set(attemptedIssueNumbers)).toEqual(
+      new Set(Array.from({ length: 36 }, (_, index) => index + 1))
+    )
+    expect(attemptedIssueNumbers).toContain(1)
+    expect(peakConcurrentIssueRequests).toBe(25)
+    expect(issueCachePublications).toBe(1)
+
+    runtimeEnvironmentCall.mockClear()
+    await expect(store.getState().fillMissingGitHubIssueTitles()).resolves.toBe(0)
+    expect(getRuntimeIssueRequestNumbers()).toHaveLength(0)
+    expect(issueCachePublications).toBe(1)
+    unsubscribe()
   })
 })
 

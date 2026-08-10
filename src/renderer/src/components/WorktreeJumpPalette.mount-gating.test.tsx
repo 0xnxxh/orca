@@ -11,7 +11,8 @@ const contentProbe = vi.hoisted(() => ({
   renders: vi.fn(),
   storeNotifications: vi.fn(),
   subscriptions: vi.fn(),
-  unsubscriptions: vi.fn()
+  unsubscriptions: vi.fn(),
+  commandInputProps: vi.fn()
 }))
 
 vi.mock('react-i18next', async (importOriginal) => {
@@ -72,10 +73,18 @@ vi.mock('@/components/ui/command', async () => {
     CommandDialog: ({ children, open }: { children: React.ReactNode; open?: boolean }) =>
       open ? <div data-command-dialog="true">{children}</div> : null,
     CommandInput: React.forwardRef(function CommandInput(
-      _props: Record<string, unknown>,
+      { value, onValueChange }: { value?: string; onValueChange?: (nextValue: string) => void },
       ref: React.ForwardedRef<HTMLInputElement>
     ) {
-      return <input ref={ref} data-command-input="true" />
+      contentProbe.commandInputProps({ value, onValueChange })
+      return (
+        <input
+          ref={ref}
+          data-command-input="true"
+          value={value}
+          onChange={(event) => onValueChange?.(event.currentTarget.value)}
+        />
+      )
     }),
     CommandList: React.forwardRef(function CommandList(
       { children }: { children: React.ReactNode },
@@ -91,6 +100,7 @@ vi.mock('@/components/ui/command', async () => {
 })
 
 const initialAppState = useAppStore.getInitialState()
+const fillMissingGitHubIssueTitles = vi.fn().mockResolvedValue(0)
 let testContainer: HTMLDivElement
 let testRoot: Root
 
@@ -123,8 +133,14 @@ describe('WorktreeJumpPalette mount gating', () => {
     contentProbe.storeNotifications.mockClear()
     contentProbe.subscriptions.mockClear()
     contentProbe.unsubscriptions.mockClear()
+    contentProbe.commandInputProps.mockClear()
+    fillMissingGitHubIssueTitles.mockClear()
     useAppStore.setState(initialAppState, true)
-    useAppStore.setState({ activeModal: 'none', activeWorktreeId: null })
+    useAppStore.setState({
+      activeModal: 'none',
+      activeWorktreeId: null,
+      fillMissingGitHubIssueTitles
+    })
     testContainer = document.createElement('div')
     document.body.appendChild(testContainer)
     testRoot = createRoot(testContainer)
@@ -194,5 +210,36 @@ describe('WorktreeJumpPalette mount gating', () => {
 
     expect(testContainer.querySelector('[data-command-dialog="true"]')).not.toBeNull()
     expect(activeContentSubscriptions()).toBe(1)
+  })
+
+  it('fills cache-only issue search data only for a query while open', async () => {
+    await act(async () => testRoot.render(<WorktreeJumpPalette />))
+    await flushEffects()
+
+    expect(fillMissingGitHubIssueTitles).not.toHaveBeenCalled()
+
+    await act(async () => useAppStore.getState().openModal('worktree-palette'))
+    await flushEffects()
+
+    expect(fillMissingGitHubIssueTitles).not.toHaveBeenCalled()
+    const inputProps = contentProbe.commandInputProps.mock.lastCall?.[0] as
+      | { onValueChange?: (nextValue: string) => void }
+      | undefined
+    expect(inputProps?.onValueChange).toBeTypeOf('function')
+    await act(async () => {
+      inputProps?.onValueChange?.('remote issue')
+    })
+    await flushEffects()
+
+    expect(fillMissingGitHubIssueTitles).toHaveBeenCalledTimes(1)
+    const signal = fillMissingGitHubIssueTitles.mock.calls[0]?.[0]
+    expect(signal).toBeInstanceOf(AbortSignal)
+    expect(signal?.aborted).toBe(false)
+
+    await act(async () => useAppStore.setState({ activeWorktreeId: 'background-update' }))
+    expect(fillMissingGitHubIssueTitles).toHaveBeenCalledTimes(1)
+
+    await act(async () => useAppStore.getState().closeModal())
+    expect(signal?.aborted).toBe(true)
   })
 })

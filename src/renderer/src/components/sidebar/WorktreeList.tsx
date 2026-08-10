@@ -24,6 +24,7 @@ import {
   Trash2
 } from 'lucide-react'
 import { useAppStore } from '@/store'
+import { getRepoHostIdentity } from '@/store/slices/repo-host-identity'
 import { createLineageToggleHandlerCache } from './worktree-lineage-toggle-handler-cache'
 import { reuseArrayIfEqual } from './worktree-agent-row-selectors'
 import { useShallow } from 'zustand/react/shallow'
@@ -348,18 +349,6 @@ const NOOP_WORKSPACE_BOARD_DRAG_PREVIEW_CALLBACK = (): void => {}
 const WORKTREE_SIDEBAR_SCROLL_STYLE: React.CSSProperties = {
   // Why: TanStack Virtual owns scroll correction; native overflow anchoring fights it and causes jumps.
   overflowAnchor: 'none'
-}
-
-const recordKeyCountCache = new WeakMap<Record<string, unknown>, number>()
-
-export function countRecordKeysByReference(record: Record<string, unknown>): number {
-  const cached = recordKeyCountCache.get(record)
-  if (cached !== undefined) {
-    return cached
-  }
-  const count = Object.keys(record).length
-  recordKeyCountCache.set(record, count)
-  return count
 }
 
 export function shouldAdjustWorktreeSidebarMeasuredRowScroll(args: {
@@ -2406,8 +2395,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     cancelPendingRevealFrames
   ])
 
-  const prCacheLen = useAppStore((s) => countRecordKeysByReference(s.prCache))
-  const issueCacheLen = useAppStore((s) => countRecordKeysByReference(s.issueCache))
   const renderRowKeySignature = useMemo(
     () => renderRows.map(getRenderRowKey).join('\n'),
     [renderRows]
@@ -2457,14 +2444,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     measureMountedRows()
     const frameId = window.requestAnimationFrame(measureMountedRows)
     return () => window.cancelAnimationFrame(frameId)
-  }, [
-    activeRenderRowKeys,
-    prCacheLen,
-    issueCacheLen,
-    measureMountedRows,
-    renderRowKeySignature,
-    virtualizer
-  ])
+  }, [activeRenderRowKeys, measureMountedRows, renderRowKeySignature, virtualizer])
 
   useVirtualizedScrollAnchor({
     anchorRef: scrollAnchorRef,
@@ -5552,6 +5532,10 @@ const WorktreeList = React.memo(function WorktreeList({
 
   // Why: manual header order is bound to state.repos; Recent/Smart derive order from the sorted worktree stream.
   const repos = useAppStore((s) => s.repos)
+  const repoByHostIdentity = useMemo(
+    () => new Map(repos.map((repo) => [getRepoHostIdentity(repo), repo])),
+    [repos]
+  )
   const projectHostSetupProjection = useProjectHostSetupProjection()
   const projectGrouping = useMemo(
     () => ({
@@ -5751,7 +5735,8 @@ const WorktreeList = React.memo(function WorktreeList({
         visibleFolderWorkspacesForRows,
         hostLabelById,
         defaultHostId,
-        pinnedDisplayPolicy
+        pinnedDisplayPolicy,
+        repoByHostIdentity
       ),
     [
       groupBy,
@@ -5774,7 +5759,8 @@ const WorktreeList = React.memo(function WorktreeList({
       newExternalWorktreesInboxByRepo,
       pendingCreations,
       hostLabelById,
-      pinnedDisplayPolicy
+      pinnedDisplayPolicy,
+      repoByHostIdentity
     ]
   )
   const orderedHostOptions = useMemo(

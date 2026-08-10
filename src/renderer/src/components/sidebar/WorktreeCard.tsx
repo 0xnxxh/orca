@@ -4,6 +4,7 @@ import { useAppStore } from '@/store'
 import { getHostedReviewCacheKey } from '@/store/slices/hosted-review'
 import { issueCacheKey as getIssueCacheKey } from '@/store/slices/github'
 import { getGitHubPRCacheKey } from '@/store/slices/github-cache-key'
+import { useGitHubIssueCacheEntryData } from '@/hooks/use-github-issue-cache-entry'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -470,7 +471,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
     hostedReviewCacheKey ? s.hostedReviewCache[hostedReviewCacheKey] : undefined
   )
   const prCacheEntry = useAppStore((s) => (prCacheKey ? s.prCache?.[prCacheKey] : undefined))
-  const issueEntry = useAppStore((s) => (issueCacheKey ? s.issueCache[issueCacheKey] : undefined))
+  const cachedIssue = useGitHubIssueCacheEntryData(issueCacheKey || null)
   const linearIssueEntry = useAppStore((s) =>
     linearIssueCacheKey ? s.linearIssueCache[linearIssueCacheKey] : undefined
   )
@@ -554,11 +555,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
       branchLookupGitHubPRNumber
     }
   )
-  const issue: IssueInfo | null | undefined = worktree.linkedIssue
-    ? issueEntry !== undefined
-      ? issueEntry.data
-      : undefined
-    : null
+  const issue: IssueInfo | null | undefined = worktree.linkedIssue ? cachedIssue : null
   const issueDisplay: WorktreeCardIssueDisplay | null =
     issue ??
     (worktree.linkedIssue
@@ -774,10 +771,11 @@ const WorktreeCard = React.memo(function WorktreeCard({
     }
 
     const issueNumber = worktree.linkedIssue
+    const repoExecutionHostId = getRepoExecutionHostId(repo)
 
     // Why: fallback poll behind activity triggers; stopped while hidden to avoid waking idle workspaces.
     return installWindowVisibilityInterval({
-      run: () => void fetchIssue(repo.path, issueNumber, { repoId: repo.id }),
+      run: () => void fetchIssue(repo.path, issueNumber, { repoId: repo.id, repoExecutionHostId }),
       intervalMs: 5 * 60_000
     })
   }, [repo, isFolder, worktree.linkedIssue, fetchIssue, issueCacheKey, showIssue])
@@ -795,7 +793,10 @@ const WorktreeCard = React.memo(function WorktreeCard({
     ) {
       return
     }
-    void fetchIssue(repo.path, worktree.linkedIssue, { repoId: repo.id })
+    void fetchIssue(repo.path, worktree.linkedIssue, {
+      repoId: repo.id,
+      repoExecutionHostId: getRepoExecutionHostId(repo)
+    })
   }, [
     newCardStyle,
     hoverDetailsOpen,

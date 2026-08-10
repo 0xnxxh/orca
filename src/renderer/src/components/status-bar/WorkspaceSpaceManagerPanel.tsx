@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Why: the analyzer's private treemap, selection,
    breakdown, and table pieces share one scan state and should evolve as one resource-manager surface. */
 /* oxlint-disable react-doctor/no-adjust-state-on-prop-change -- Why: the relative time clock advances from a wall-clock interval, which is an external timer rather than render-derived state. */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowDown,
@@ -25,10 +25,6 @@ import {
   ZoomOut,
   X
 } from 'lucide-react'
-import type {
-  AgentStatusEntry,
-  MigrationUnsupportedPtyEntry
-} from '../../../../shared/agent-status-types'
 import type { GitStatusResult, Repo, TerminalTab, Worktree } from '../../../../shared/types'
 import type {
   WorkspaceSpaceItem,
@@ -36,12 +32,17 @@ import type {
 } from '../../../../shared/workspace-space-types'
 import { cn } from '@/lib/utils'
 import { installWindowVisibilityInterval } from '@/lib/window-visibility-interval'
+import { useGitHubIssueCacheEntryData } from '@/hooks/use-github-issue-cache-entry'
 import { toast } from 'sonner'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { useAppStore } from '../../store'
 import { getRepoMapFromState, getWorktreeMapFromState } from '../../store/selectors'
 import { getHostedReviewCacheKey } from '../../store/slices/hosted-review'
 import { issueCacheKey as getIssueCacheKey } from '../../store/slices/github'
+import {
+  findRepoForWorktreeHostIdentity,
+  getRepoHostIdentity
+} from '../../store/slices/repo-host-identity'
 import { refreshGitStatusForWorktree } from '../right-sidebar/git-status-refresh'
 import { runWorktreeBatchDelete } from '../sidebar/delete-worktree-flow'
 import { prepareActiveWorktreeFocusAfterDelete } from '../sidebar/active-worktree-focus-after-delete'
@@ -68,8 +69,11 @@ import {
 } from './workspace-space-format'
 import { buildTreemapLayout, type TreemapRect } from './workspace-space-layout'
 import {
+  buildWorkspaceSpaceActivityCountsByWorktreeId,
+  buildWorkspaceSpaceActiveAgentCountsByWorktreeId
+} from './workspace-space-activity-evidence'
+import {
   filterWorkspaceSpaceRows,
-  countWorkspaceSpaceActiveAgents,
   getLargestWorkspaceSpaceItemSize,
   getLargestWorkspaceSpaceRowSize,
   getSelectedDeletableWorkspaceIds,
@@ -85,6 +89,7 @@ import {
 } from './workspace-space-presentation'
 import { translate } from '@/i18n/i18n'
 import type { WorktreeForceDeleteReason } from '../../../../shared/worktree-removal'
+import { getSettingsFocusedExecutionHostId } from '../../../../shared/execution-host'
 
 const TREEMAP_FILLS = [
   'color-mix(in srgb, var(--chart-2) 34%, var(--card))',
@@ -120,21 +125,20 @@ type WorkspaceDecisionDetails = {
   changedFileCount: number | null
   branchStatus: string | null
   reviewLabel: string | null
+  issueCacheKey: string | null
+  linkedIssueNumber: number | null
   issueLabel: string | null
   linearIssueLabel: string | null
 }
 
 type WorkspaceDecisionInputs = {
   repoMap: Map<string, Repo>
+  repoByHostIdentity: ReadonlyMap<string, Repo>
   worktreeMap: Map<string, Worktree>
   tabsByWorktree: Record<string, TerminalTab[]>
   ptyIdsByTabId: Record<string, string[]>
-  agentStatusByPaneKey: Record<string, AgentStatusEntry>
-  migrationUnsupportedByPtyId: Record<string, MigrationUnsupportedPtyEntry>
-  runtimePaneTitlesByTabId: Record<string, Record<number, string>>
-  retainedAgentsByPaneKey: Record<string, { worktreeId: string; entry: AgentStatusEntry }>
-  openFiles: { id: string; worktreeId: string; isDirty: boolean }[]
-  editorDrafts: Record<string, string>
+  activeAgentCountByWorktreeId: ReturnType<typeof buildWorkspaceSpaceActiveAgentCountsByWorktreeId>
+  activityCountsByWorktreeId: ReturnType<typeof buildWorkspaceSpaceActivityCountsByWorktreeId>
   browserTabsByWorktree: Record<string, unknown[]>
   gitStatusByWorktree: Record<string, unknown[]>
   remoteStatusesByWorktree: Record<string, { hasUpstream: boolean; ahead: number; behind: number }>
@@ -149,8 +153,9 @@ type WorkspaceDecisionInputs = {
   >
   settings: Parameters<typeof getHostedReviewCacheKey>[2]
   activeWorktreeId: string | null
-  now: number
 }
+
+const EMPTY_WORKSPACE_ISSUE_CACHE: WorkspaceDecisionInputs['issueCache'] = {}
 
 function pluralize(count: number, singular: string, plural = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : plural}`
@@ -192,15 +197,19 @@ export function getWorkspaceDecisionDetails(
 ): WorkspaceDecisionDetails {
   const workspaceRecord = inputs.worktreeMap.get(worktree.worktreeId)
   const tabs = inputs.tabsByWorktree[worktree.worktreeId] ?? []
-  const openFiles = inputs.openFiles.filter((file) => file.worktreeId === worktree.worktreeId)
-  const dirtyEditorBufferCount = openFiles.filter(
-    (file) => file.isDirty || inputs.editorDrafts[file.id] !== undefined
-  ).length
+  const activityCounts = inputs.activityCountsByWorktreeId.get(worktree.worktreeId)
   const gitEntries = inputs.gitStatusByWorktree[worktree.worktreeId]
   const branch = workspaceRecord
     ? branchDisplayName(workspaceRecord.branch)
     : getWorkspaceSpaceBranchLabel(worktree)
-  const repo = inputs.repoMap.get(worktree.repoId)
+  const repo = workspaceRecord
+    ? findRepoForWorktreeHostIdentity(
+        workspaceRecord,
+        inputs.repoMap,
+        inputs.repoByHostIdentity,
+        getSettingsFocusedExecutionHostId(inputs.settings)
+      )
+    : inputs.repoMap.get(worktree.repoId)
   const reviewCacheKey = getHostedReviewCacheKey(
     worktree.repoPath,
     branch,
@@ -221,20 +230,19 @@ export function getWorkspaceDecisionDetails(
         ? `PR #${linkedPR}`
         : null
   const linkedIssue = workspaceRecord?.linkedIssue ?? null
-  const issue =
+  const issueKey =
     linkedIssue && repo
-      ? inputs.issueCache[
-          getIssueCacheKey(
-            repo.path,
-            repo.id,
-            linkedIssue,
-            inputs.settings,
-            repo.connectionId,
-            repo.executionHostId,
-            true
-          )
-        ]?.data
+      ? getIssueCacheKey(
+          repo.path,
+          repo.id,
+          linkedIssue,
+          inputs.settings,
+          repo.connectionId,
+          repo.executionHostId,
+          true
+        )
       : null
+  const issue = issueKey ? inputs.issueCache[issueKey]?.data : null
   const issueLabel = linkedIssue
     ? issue
       ? `#${issue.number} ${issue.state}: ${issue.title}`
@@ -258,24 +266,16 @@ export function getWorkspaceDecisionDetails(
     canOpenWorkspace: workspaceRecord !== undefined,
     terminalTabCount: tabs.length,
     liveTerminalCount: countLiveTerminals(tabs, inputs.ptyIdsByTabId),
-    activeAgentCount: countWorkspaceSpaceActiveAgents({
-      worktreeId: worktree.worktreeId,
-      tabs,
-      agentStatusByPaneKey: inputs.agentStatusByPaneKey,
-      migrationUnsupportedByPtyId: inputs.migrationUnsupportedByPtyId,
-      runtimePaneTitlesByTabId: inputs.runtimePaneTitlesByTabId,
-      ptyIdsByTabId: inputs.ptyIdsByTabId,
-      now: inputs.now
-    }),
-    completedAgentCount: Object.values(inputs.retainedAgentsByPaneKey).filter(
-      (entry) => entry.worktreeId === worktree.worktreeId && entry.entry.state === 'done'
-    ).length,
-    openEditorFileCount: openFiles.length,
-    dirtyEditorBufferCount,
+    activeAgentCount: inputs.activeAgentCountByWorktreeId.get(worktree.worktreeId) ?? 0,
+    completedAgentCount: activityCounts?.completedAgentCount ?? 0,
+    openEditorFileCount: activityCounts?.openEditorFileCount ?? 0,
+    dirtyEditorBufferCount: activityCounts?.dirtyEditorBufferCount ?? 0,
     browserTabCount: inputs.browserTabsByWorktree[worktree.worktreeId]?.length ?? 0,
     changedFileCount: gitEntries ? gitEntries.length : null,
     branchStatus: getBranchStatus(inputs.remoteStatusesByWorktree[worktree.worktreeId]),
     reviewLabel,
+    issueCacheKey: issueKey,
+    linkedIssueNumber: linkedIssue,
     issueLabel,
     linearIssueLabel
   }
@@ -1047,7 +1047,65 @@ function BreakdownRow({
   )
 }
 
-function WorkspaceRow({
+type WorkspaceRowProps = {
+  worktree: WorkspaceSpaceWorktree
+  maxSize: number
+  selected: boolean
+  inspected: boolean
+  decisionDetails: WorkspaceDecisionDetails
+  gitRefreshState?: WorkspaceGitRefreshState
+  deleteState?: WorkspaceSpaceDeleteState
+  onToggleSelected: (worktreeId: string) => void
+  onInspect: (worktreeId: string) => void
+  onOpenWorkspace: (worktreeId: string) => void
+  onDelete: (worktreeIds: readonly string[]) => void
+  onForceDelete: (worktree: WorkspaceSpaceWorktree) => void
+}
+
+function workspaceDecisionDetailsEqual(
+  left: WorkspaceDecisionDetails,
+  right: WorkspaceDecisionDetails
+): boolean {
+  return (
+    left === right ||
+    (left.isActive === right.isActive &&
+      left.canOpenWorkspace === right.canOpenWorkspace &&
+      left.terminalTabCount === right.terminalTabCount &&
+      left.liveTerminalCount === right.liveTerminalCount &&
+      left.activeAgentCount === right.activeAgentCount &&
+      left.completedAgentCount === right.completedAgentCount &&
+      left.openEditorFileCount === right.openEditorFileCount &&
+      left.dirtyEditorBufferCount === right.dirtyEditorBufferCount &&
+      left.browserTabCount === right.browserTabCount &&
+      left.changedFileCount === right.changedFileCount &&
+      left.branchStatus === right.branchStatus &&
+      left.reviewLabel === right.reviewLabel &&
+      left.issueCacheKey === right.issueCacheKey &&
+      left.linkedIssueNumber === right.linkedIssueNumber &&
+      left.issueLabel === right.issueLabel &&
+      left.linearIssueLabel === right.linearIssueLabel)
+  )
+}
+
+function workspaceRowPropsEqual(left: WorkspaceRowProps, right: WorkspaceRowProps): boolean {
+  return (
+    left.worktree === right.worktree &&
+    left.maxSize === right.maxSize &&
+    left.selected === right.selected &&
+    left.inspected === right.inspected &&
+    workspaceDecisionDetailsEqual(left.decisionDetails, right.decisionDetails) &&
+    left.gitRefreshState === right.gitRefreshState &&
+    left.deleteState === right.deleteState &&
+    left.onToggleSelected === right.onToggleSelected &&
+    left.onInspect === right.onInspect &&
+    left.onOpenWorkspace === right.onOpenWorkspace &&
+    left.onDelete === right.onDelete &&
+    left.onForceDelete === right.onForceDelete
+  )
+}
+
+// Why: issue-cache batches should update only rows whose cached issue changed.
+const WorkspaceRow = memo(function WorkspaceRow({
   worktree,
   maxSize,
   selected,
@@ -1060,41 +1118,40 @@ function WorkspaceRow({
   onOpenWorkspace,
   onDelete,
   onForceDelete
-}: {
-  worktree: WorkspaceSpaceWorktree
-  maxSize: number
-  selected: boolean
-  inspected: boolean
-  decisionDetails: WorkspaceDecisionDetails
-  gitRefreshState?: WorkspaceGitRefreshState
-  deleteState?: WorkspaceSpaceDeleteState
-  onToggleSelected: () => void
-  onInspect: () => void
-  onOpenWorkspace: () => void
-  onDelete: () => void
-  onForceDelete: () => void
-}): React.JSX.Element {
+}: WorkspaceRowProps): React.JSX.Element {
+  const cachedIssue = useGitHubIssueCacheEntryData(decisionDetails.issueCacheKey) ?? null
+  const resolvedDecisionDetails = useMemo(() => {
+    const issueLabel = decisionDetails.linkedIssueNumber
+      ? cachedIssue
+        ? `#${cachedIssue.number} ${cachedIssue.state}: ${cachedIssue.title}`
+        : `#${decisionDetails.linkedIssueNumber}`
+      : null
+    return issueLabel === decisionDetails.issueLabel
+      ? decisionDetails
+      : { ...decisionDetails, issueLabel }
+  }, [cachedIssue, decisionDetails])
   const isDeleting = deleteState?.isDeleting ?? false
   const deleteError = deleteState?.error ?? null
   const canForceDelete = deleteState?.canForceDelete ?? false
-  const canDelete = isWorkspaceSpaceRowReadyToDelete(worktree, decisionDetails) && !isDeleting
+  const canDelete =
+    isWorkspaceSpaceRowReadyToDelete(worktree, resolvedDecisionDetails) && !isDeleting
   const handleForceDelete = (event: React.MouseEvent<HTMLButtonElement>): void => {
     event.preventDefault()
     event.stopPropagation()
-    onForceDelete()
+    onForceDelete(worktree)
   }
   const row = (
     <div
       role="button"
       tabIndex={0}
       aria-busy={isDeleting}
-      onClick={onInspect}
+      onClick={() => onInspect(worktree.worktreeId)}
       onKeyDown={(event) => {
         if (event.key !== 'Enter' && event.key !== ' ') {
           return
         }
         event.preventDefault()
-        onInspect()
+        onInspect(worktree.worktreeId)
       }}
       className={cn(
         'grid w-full cursor-pointer grid-cols-[1.75rem_minmax(0,1.25fr)_minmax(9rem,0.55fr)_8rem_9.5rem] items-center gap-3 border-b border-border/45 px-3 py-2.5 text-left text-sm transition-colors last:border-b-0 hover:bg-accent/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -1110,7 +1167,7 @@ function WorkspaceRow({
           'Select {{value0}}',
           { value0: worktree.displayName }
         )}
-        onClick={onToggleSelected}
+        onClick={() => onToggleSelected(worktree.worktreeId)}
       />
 
       <div className="min-w-0">
@@ -1184,16 +1241,16 @@ function WorkspaceRow({
             >
               <StatusBadge
                 worktree={worktree}
-                decisionDetails={decisionDetails}
+                decisionDetails={resolvedDecisionDetails}
                 deleteState={deleteState}
               />
             </span>
           </HoverCardTrigger>
           <WorkspaceDecisionHoverCard
             worktree={worktree}
-            details={decisionDetails}
+            details={resolvedDecisionDetails}
             gitRefreshState={gitRefreshState}
-            onOpenWorkspace={onOpenWorkspace}
+            onOpenWorkspace={() => onOpenWorkspace(worktree.worktreeId)}
           />
         </HoverCard>
       </div>
@@ -1208,7 +1265,7 @@ function WorkspaceRow({
     <ContextMenu>
       <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItem variant="destructive" onSelect={onDelete}>
+        <ContextMenuItem variant="destructive" onSelect={() => onDelete([worktree.worktreeId])}>
           <Trash2 className="size-3.5" />
           {translate(
             'auto.components.status.bar.WorkspaceSpaceManagerPanel.792a214457',
@@ -1218,7 +1275,7 @@ function WorkspaceRow({
       </ContextMenuContent>
     </ContextMenu>
   )
-}
+}, workspaceRowPropsEqual)
 
 export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   const analysis = useAppStore((state) => state.workspaceSpaceAnalysis)
@@ -1230,7 +1287,12 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   const removeWorkspaceSpaceWorktrees = useAppStore((state) => state.removeWorkspaceSpaceWorktrees)
   const removeWorktree = useAppStore((state) => state.removeWorktree)
   const deleteStateByWorktreeId = useAppStore((state) => state.deleteStateByWorktreeId)
+  const repos = useAppStore((state) => state.repos)
   const repoMap = useAppStore((state) => getRepoMapFromState(state))
+  const repoByHostIdentity = useMemo(
+    () => new Map(repos.map((repo) => [getRepoHostIdentity(repo), repo])),
+    [repos]
+  )
   const worktreeMap = useAppStore((state) => getWorktreeMapFromState(state))
   const tabsByWorktree = useAppStore((state) => state.tabsByWorktree)
   const ptyIdsByTabId = useAppStore((state) => state.ptyIdsByTabId)
@@ -1245,7 +1307,6 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   const gitStatusByWorktree = useAppStore((state) => state.gitStatusByWorktree)
   const remoteStatusesByWorktree = useAppStore((state) => state.remoteStatusesByWorktree)
   const hostedReviewCache = useAppStore((state) => state.hostedReviewCache)
-  const issueCache = useAppStore((state) => state.issueCache)
   const linearIssueCache = useAppStore((state) => state.linearIssueCache)
   const settings = useAppStore((state) => state.settings)
   const activeWorktreeId = useAppStore((state) => state.activeWorktreeId)
@@ -1276,56 +1337,76 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   }, [cancelWorkspaceSpaceScan])
 
   const sourceRows = useMemo(() => analysis?.worktrees ?? [], [analysis?.worktrees])
-  const decisionDetailsByWorktreeId = useMemo(() => {
-    // Why: active-agent freshness is time-based. The epoch bumps when fresh
-    // hook entries cross the stale boundary so delete readiness recomputes.
+  const activityCountsByWorktreeId = useMemo(
+    () =>
+      buildWorkspaceSpaceActivityCountsByWorktreeId({
+        openFiles,
+        editorDrafts,
+        retainedAgentsByPaneKey
+      }),
+    [editorDrafts, openFiles, retainedAgentsByPaneKey]
+  )
+  const activeAgentCountByWorktreeId = useMemo(() => {
+    // Why: the epoch crosses freshness boundaries without replacing the status map.
     void agentStatusEpoch
+    return buildWorkspaceSpaceActiveAgentCountsByWorktreeId({
+      tabsByWorktree,
+      agentStatusByPaneKey,
+      migrationUnsupportedByPtyId,
+      runtimePaneTitlesByTabId,
+      ptyIdsByTabId,
+      now: Date.now()
+    })
+  }, [
+    agentStatusByPaneKey,
+    agentStatusEpoch,
+    migrationUnsupportedByPtyId,
+    ptyIdsByTabId,
+    runtimePaneTitlesByTabId,
+    tabsByWorktree
+  ])
+  const previousDecisionDetailsByWorktreeId = useRef(new Map<string, WorkspaceDecisionDetails>())
+  const decisionDetailsByWorktreeId = useMemo(() => {
+    const previousDetails = previousDecisionDetailsByWorktreeId.current
     const details = new Map<string, WorkspaceDecisionDetails>()
-    const now = Date.now()
     for (const worktree of sourceRows) {
+      const nextDetails = getWorkspaceDecisionDetails(worktree, {
+        repoMap,
+        repoByHostIdentity,
+        worktreeMap,
+        tabsByWorktree,
+        ptyIdsByTabId,
+        activeAgentCountByWorktreeId,
+        activityCountsByWorktreeId,
+        browserTabsByWorktree,
+        gitStatusByWorktree,
+        remoteStatusesByWorktree,
+        hostedReviewCache,
+        issueCache: EMPTY_WORKSPACE_ISSUE_CACHE,
+        linearIssueCache,
+        settings,
+        activeWorktreeId
+      })
+      const previous = previousDetails.get(worktree.worktreeId)
       details.set(
         worktree.worktreeId,
-        getWorkspaceDecisionDetails(worktree, {
-          repoMap,
-          worktreeMap,
-          tabsByWorktree,
-          ptyIdsByTabId,
-          agentStatusByPaneKey,
-          migrationUnsupportedByPtyId,
-          runtimePaneTitlesByTabId,
-          retainedAgentsByPaneKey,
-          openFiles,
-          editorDrafts,
-          browserTabsByWorktree,
-          gitStatusByWorktree,
-          remoteStatusesByWorktree,
-          hostedReviewCache,
-          issueCache,
-          linearIssueCache,
-          settings,
-          activeWorktreeId,
-          now
-        })
+        previous && workspaceDecisionDetailsEqual(previous, nextDetails) ? previous : nextDetails
       )
     }
+    previousDecisionDetailsByWorktreeId.current = details
     return details
   }, [
     activeWorktreeId,
-    agentStatusEpoch,
-    agentStatusByPaneKey,
+    activeAgentCountByWorktreeId,
     browserTabsByWorktree,
-    editorDrafts,
+    activityCountsByWorktreeId,
     gitStatusByWorktree,
     hostedReviewCache,
-    issueCache,
     linearIssueCache,
-    openFiles,
     ptyIdsByTabId,
     repoMap,
+    repoByHostIdentity,
     remoteStatusesByWorktree,
-    retainedAgentsByPaneKey,
-    migrationUnsupportedByPtyId,
-    runtimePaneTitlesByTabId,
     settings,
     sourceRows,
     tabsByWorktree,
@@ -1513,7 +1594,7 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
     setSortDirection(key === 'name' || key === 'repo' ? 'asc' : 'desc')
   }
 
-  const toggleSelection = (worktreeId: string): void => {
+  const toggleSelection = useCallback((worktreeId: string): void => {
     setSelectedIds((current) => {
       const next = new Set(current)
       if (next.has(worktreeId)) {
@@ -1523,7 +1604,13 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
       }
       return next
     })
-  }
+  }, [])
+  const inspectWorktree = useCallback((worktreeId: string): void => {
+    setInspectedWorktreeId(worktreeId)
+  }, [])
+  const openWorkspace = useCallback((worktreeId: string): void => {
+    activateAndRevealWorktree(worktreeId)
+  }, [])
 
   const toggleVisibleSelection = (): void => {
     setSelectedIds((current) => {
@@ -2020,46 +2107,44 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
                   )}
                 </div>
               ) : (
-                rows.map((worktree) => (
-                  <WorkspaceRow
-                    key={worktree.worktreeId}
-                    worktree={worktree}
-                    maxSize={maxSize}
-                    selected={nextSelectedIds.has(worktree.worktreeId)}
-                    inspected={inspectedWorktree?.worktreeId === worktree.worktreeId}
-                    decisionDetails={
-                      decisionDetailsByWorktreeId.get(worktree.worktreeId) ??
-                      getWorkspaceDecisionDetails(worktree, {
-                        repoMap,
-                        worktreeMap,
-                        tabsByWorktree,
-                        ptyIdsByTabId,
-                        agentStatusByPaneKey,
-                        migrationUnsupportedByPtyId,
-                        runtimePaneTitlesByTabId,
-                        retainedAgentsByPaneKey,
-                        openFiles,
-                        editorDrafts,
-                        browserTabsByWorktree,
-                        gitStatusByWorktree,
-                        remoteStatusesByWorktree,
-                        hostedReviewCache,
-                        issueCache,
-                        linearIssueCache,
-                        settings,
-                        activeWorktreeId,
-                        now: Date.now()
-                      })
-                    }
-                    gitRefreshState={gitRefreshStateByWorktreeId[worktree.worktreeId]}
-                    deleteState={deleteStateByWorktreeId[worktree.worktreeId]}
-                    onToggleSelected={() => toggleSelection(worktree.worktreeId)}
-                    onInspect={() => setInspectedWorktreeId(worktree.worktreeId)}
-                    onOpenWorkspace={() => activateAndRevealWorktree(worktree.worktreeId)}
-                    onDelete={() => deleteWorktrees([worktree.worktreeId])}
-                    onForceDelete={() => forceDeleteWorktree(worktree)}
-                  />
-                ))
+                rows.map((worktree) => {
+                  const decisionDetails =
+                    decisionDetailsByWorktreeId.get(worktree.worktreeId) ??
+                    getWorkspaceDecisionDetails(worktree, {
+                      repoMap,
+                      repoByHostIdentity,
+                      worktreeMap,
+                      tabsByWorktree,
+                      ptyIdsByTabId,
+                      activeAgentCountByWorktreeId,
+                      activityCountsByWorktreeId,
+                      browserTabsByWorktree,
+                      gitStatusByWorktree,
+                      remoteStatusesByWorktree,
+                      hostedReviewCache,
+                      issueCache: EMPTY_WORKSPACE_ISSUE_CACHE,
+                      linearIssueCache,
+                      settings,
+                      activeWorktreeId
+                    })
+                  return (
+                    <WorkspaceRow
+                      key={worktree.worktreeId}
+                      worktree={worktree}
+                      maxSize={maxSize}
+                      selected={nextSelectedIds.has(worktree.worktreeId)}
+                      inspected={inspectedWorktree?.worktreeId === worktree.worktreeId}
+                      decisionDetails={decisionDetails}
+                      gitRefreshState={gitRefreshStateByWorktreeId[worktree.worktreeId]}
+                      deleteState={deleteStateByWorktreeId[worktree.worktreeId]}
+                      onToggleSelected={toggleSelection}
+                      onInspect={inspectWorktree}
+                      onOpenWorkspace={openWorkspace}
+                      onDelete={deleteWorktrees}
+                      onForceDelete={forceDeleteWorktree}
+                    />
+                  )
+                })
               )}
             </div>
           </div>

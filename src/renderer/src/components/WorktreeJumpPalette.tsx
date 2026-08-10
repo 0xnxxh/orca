@@ -546,6 +546,7 @@ function WorktreeJumpPaletteContent({
   // Why: subscribe to language changes so translated memos recompute without a fake i18n.language dependency.
   useTranslation()
   const closeModal = useAppStore((s) => s.closeModal)
+  const fillMissingGitHubIssueTitles = useAppStore((s) => s.fillMissingGitHubIssueTitles)
   const openModal = useAppStore((s) => s.openModal)
   const openSettingsPage = useAppStore((s) => s.openSettingsPage)
   const openSettingsTarget = useAppStore((s) => s.openSettingsTarget)
@@ -560,6 +561,9 @@ function WorktreeJumpPaletteContent({
   const detectedWorktreesByRepo = useAppStore((s) => s.detectedWorktreesByRepo)
   const pendingWorktreeCreations = useAppStore((s) => s.pendingWorktreeCreations)
   const pluginCommands = usePluginCommands()
+  const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query)
+  const hasQuery = deferredQuery.trim().length > 0
   const paletteStatusInputsActive = visible || lingering
   // Why: keep hot status maps live through the shell's close-animation linger.
   // Why: ptyIdsByTabId must be included — slept tabs keep a wake-hint sessionId in tab.ptyId, so without it the palette dot would lie green.
@@ -567,7 +571,7 @@ function WorktreeJumpPaletteContent({
     useShallow((s) => selectPaletteStatusInputs(s, paletteStatusInputsActive))
   )
   const { prCache, issueCache, hostedReviewCache } = useAppStore(
-    useShallow((s) => selectWorktreePaletteCacheInputs(s, paletteStatusInputsActive))
+    useShallow((s) => selectWorktreePaletteCacheInputs(s, paletteStatusInputsActive && hasQuery))
   )
   const migrationUnsupportedByPtyId = useAppStore((s) => s.migrationUnsupportedByPtyId)
   const activeView = useAppStore((s) => s.activeView)
@@ -628,8 +632,6 @@ function WorktreeJumpPaletteContent({
   )
   const settingsSections = useSettingsNavigationMetadata()
 
-  const [query, setQuery] = useState('')
-  const deferredQuery = useDeferredValue(query)
   const [selectedItemId, setSelectedItemId] = useState('')
   const latestQueryRef = useRef('')
   // Why: the id cmdk auto-selected for the last committed list, so a late recent-order snapshot can
@@ -735,7 +737,15 @@ function WorktreeJumpPaletteContent({
     [defaultHostId, projectGroups]
   )
 
-  const hasQuery = deferredQuery.trim().length > 0
+  useEffect(() => {
+    // Why: an empty Cmd-J never reads issue titles, so warming them would wake up to 500 remote requests for no result.
+    if (!visible || !hasQuery) {
+      return
+    }
+    const controller = new AbortController()
+    void fillMissingGitHubIssueTitles(controller.signal)
+    return () => controller.abort()
+  }, [fillMissingGitHubIssueTitles, hasQuery, visible])
   const isLoading = repos.length > 0 && Object.keys(worktreesByRepo).length === 0
 
   // Why: keep running-agent workspaces visible under "Hide sleeping" even when the live PTY is momentarily absent, matching sidebar. #7197
@@ -902,7 +912,9 @@ function WorktreeJumpPaletteContent({
         prCache,
         issueCache,
         getWorkspacePortsByWorktreeId(workspacePortScan),
-        checksReviewByWorktree
+        checksReviewByWorktree,
+        repoByHostIdentity,
+        defaultHostId
       ),
     [
       sortedWorktrees,
@@ -911,7 +923,9 @@ function WorktreeJumpPaletteContent({
       prCache,
       issueCache,
       workspacePortScan,
-      checksReviewByWorktree
+      checksReviewByWorktree,
+      repoByHostIdentity,
+      defaultHostId
     ]
   )
 

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceSpaceWorktree } from '../../../../shared/workspace-space-types'
 import {
+  buildWorkspaceSpaceActivityCountsByWorktreeId,
+  buildWorkspaceSpaceActiveAgentCountsByWorktreeId,
+  countWorkspaceSpaceActiveAgents
+} from './workspace-space-activity-evidence'
+import {
   WORKSPACE_SPACE_FILTER_QUERY_MAX_BYTES,
-  countWorkspaceSpaceActiveAgents,
   filterWorkspaceSpaceRows,
   getLargestWorkspaceSpaceItemSize,
   getLargestWorkspaceSpaceRowSize,
@@ -19,6 +23,7 @@ import {
 import { getWorkspaceDecisionDetails } from './WorkspaceSpaceManagerPanel'
 import type { AgentStatusEntry } from '../../../../shared/agent-status-types'
 import type { Repo, Worktree } from '../../../../shared/types'
+import { getRepoHostIdentity } from '../../store/slices/repo-host-identity'
 
 function row(overrides: Partial<WorkspaceSpaceWorktree>): WorkspaceSpaceWorktree {
   return {
@@ -117,15 +122,12 @@ function decisionInputs(
   const defaultWorktree = worktreeRecord()
   return {
     repoMap: new Map([[defaultRepo.id, defaultRepo]]),
+    repoByHostIdentity: new Map([[getRepoHostIdentity(defaultRepo), defaultRepo]]),
     worktreeMap: new Map([[defaultWorktree.id, defaultWorktree]]),
     tabsByWorktree: {},
     ptyIdsByTabId: {},
-    agentStatusByPaneKey: {},
-    migrationUnsupportedByPtyId: {},
-    runtimePaneTitlesByTabId: {},
-    retainedAgentsByPaneKey: {},
-    openFiles: [],
-    editorDrafts: {},
+    activeAgentCountByWorktreeId: new Map(),
+    activityCountsByWorktreeId: new Map(),
     browserTabsByWorktree: {},
     gitStatusByWorktree: {},
     remoteStatusesByWorktree: {},
@@ -134,12 +136,48 @@ function decisionInputs(
     linearIssueCache: {},
     settings: null,
     activeWorktreeId: null,
-    now: 1_000,
     ...overrides
   }
 }
 
 describe('workspace space presentation helpers', () => {
+  it('indexes editor and completed-agent counts by worktree in one pass', () => {
+    const counts = buildWorkspaceSpaceActivityCountsByWorktreeId({
+      openFiles: [
+        { id: 'clean', worktreeId: 'wt-a', isDirty: false },
+        { id: 'draft', worktreeId: 'wt-a', isDirty: false },
+        { id: 'dirty', worktreeId: 'wt-b', isDirty: true }
+      ],
+      editorDrafts: { draft: '' },
+      retainedAgentsByPaneKey: {
+        done: { worktreeId: 'wt-a', entry: activeAgent({ state: 'done' }) },
+        working: { worktreeId: 'wt-a', entry: activeAgent() },
+        otherDone: { worktreeId: 'wt-b', entry: activeAgent({ state: 'done' }) }
+      }
+    })
+
+    expect(counts.get('wt-a')).toEqual({
+      openEditorFileCount: 2,
+      dirtyEditorBufferCount: 1,
+      completedAgentCount: 1
+    })
+    expect(counts.get('wt-b')).toEqual({
+      openEditorFileCount: 1,
+      dirtyEditorBufferCount: 1,
+      completedAgentCount: 1
+    })
+    expect(
+      getWorkspaceDecisionDetails(
+        row({ worktreeId: 'wt-a' }),
+        decisionInputs({ activityCountsByWorktreeId: counts })
+      )
+    ).toMatchObject({
+      openEditorFileCount: 2,
+      dirtyEditorBufferCount: 1,
+      completedAgentCount: 1
+    })
+  })
+
   it('sorts rows by the selected key and direction', () => {
     const rows = [
       row({ worktreeId: 'small', displayName: 'Small', sizeBytes: 10 }),
@@ -303,6 +341,122 @@ describe('workspace space presentation helpers', () => {
     ).toBe(0)
   })
 
+  it('indexes active-agent evidence with the same per-worktree precedence', () => {
+    const now = 60 * 60 * 1_000
+    const leafA = '00000000-0000-4000-8000-000000000001'
+    const leafB = '00000000-0000-4000-8000-000000000002'
+    const tabsByWorktree = {
+      'wt-a': [
+        { id: 'fresh', title: 'Codex working' },
+        { id: 'stale', title: 'Codex working' },
+        { id: 'pane-titles', title: 'Terminal' },
+        { id: 'done', title: 'Claude - action required' },
+        { id: 'restored', title: 'Codex working' }
+      ],
+      'wt-b': [
+        { id: 'legacy', title: 'Codex working' },
+        { id: 'migration', title: 'Codex working' },
+        { id: 'dead', title: 'Codex working' }
+      ],
+      'wt-c': []
+    }
+    const agentStatusByPaneKey = {
+      [`fresh:${leafA}`]: activeAgent({ paneKey: `fresh:${leafA}`, updatedAt: now }),
+      [`fresh:${leafB}`]: activeAgent({ paneKey: `fresh:${leafB}`, updatedAt: now }),
+      [`stale:${leafA}`]: activeAgent({ paneKey: `stale:${leafA}`, updatedAt: 1_000 }),
+      'legacy:7': activeAgent({ paneKey: '', updatedAt: now }),
+      [`done:${leafA}`]: activeAgent({
+        paneKey: `done:${leafA}`,
+        state: 'done',
+        updatedAt: now
+      }),
+      [`restored:${leafA}`]: activeAgent({
+        paneKey: `restored:${leafA}`,
+        restoredUnconfirmed: true,
+        updatedAt: now
+      })
+    }
+    const migrationUnsupportedByPtyId = {
+      migration: {
+        ptyId: 'pty-migration',
+        worktreeId: 'wt-c',
+        paneKey: 'migration:3',
+        reason: 'legacy-numeric-pane-key' as const,
+        source: 'ssh' as const,
+        updatedAt: now
+      }
+    }
+    const runtimePaneTitlesByTabId = {
+      'pane-titles': {
+        0: 'mimo working',
+        1: 'Claude - action required',
+        2: '✳ Claude Code ready'
+      }
+    }
+    const ptyIdsByTabId = Object.fromEntries(
+      Object.values(tabsByWorktree)
+        .flat()
+        .filter((tab) => tab.id !== 'dead')
+        .map((tab) => [tab.id, [`pty-${tab.id}`]])
+    )
+    const counts = buildWorkspaceSpaceActiveAgentCountsByWorktreeId({
+      tabsByWorktree,
+      agentStatusByPaneKey,
+      migrationUnsupportedByPtyId,
+      runtimePaneTitlesByTabId,
+      ptyIdsByTabId,
+      now
+    })
+
+    for (const [worktreeId, tabs] of Object.entries(tabsByWorktree)) {
+      expect(counts.get(worktreeId) ?? 0).toBe(
+        countWorkspaceSpaceActiveAgents({
+          worktreeId,
+          tabs,
+          agentStatusByPaneKey,
+          migrationUnsupportedByPtyId,
+          runtimePaneTitlesByTabId,
+          ptyIdsByTabId,
+          now
+        })
+      )
+    }
+    expect(Object.fromEntries(counts)).toEqual({ 'wt-c': 1, 'wt-a': 7, 'wt-b': 2 })
+    expect(
+      getWorkspaceDecisionDetails(
+        row({ worktreeId: 'wt-a' }),
+        decisionInputs({ activeAgentCountByWorktreeId: counts })
+      ).activeAgentCount
+    ).toBe(7)
+  })
+
+  it('counts shared-tab evidence once for each owner without double-counting its explicit owner', () => {
+    const tabsByWorktree = {
+      'wt-a': [{ id: 'shared', title: 'Codex working' }],
+      'wt-b': [{ id: 'shared', title: 'Codex working' }]
+    }
+    const counts = buildWorkspaceSpaceActiveAgentCountsByWorktreeId({
+      tabsByWorktree,
+      agentStatusByPaneKey: {},
+      migrationUnsupportedByPtyId: {
+        shared: {
+          ptyId: 'pty-shared',
+          worktreeId: 'wt-a',
+          tabId: 'shared',
+          reason: 'legacy-numeric-pane-key',
+          source: 'local',
+          updatedAt: 1_000
+        }
+      },
+      runtimePaneTitlesByTabId: {},
+      ptyIdsByTabId: { shared: ['pty-shared'] },
+      now: 1_000
+    })
+
+    expect(counts.get('wt-a')).toBe(1)
+    expect(counts.get('wt-b')).toBe(1)
+  })
+
   it('reads review and issue details from local owner cache while a runtime is focused', () => {
     const details = getWorkspaceDecisionDetails(
       row({ branch: 'refs/heads/feature/local' }),
@@ -332,6 +486,87 @@ describe('workspace space presentation helpers', () => {
 
     expect(details.reviewLabel).toBe('PR #12 Open, success')
     expect(details.issueLabel).toBe('#123 open: Local owner issue')
+  })
+
+  it('reads issue details from the nested SSH runtime owner when repo ids collide', () => {
+    const runtimeRepoA = repo({
+      path: '/runtime-a/repo',
+      executionHostId: 'runtime:env-a'
+    })
+    const runtimeRepoB = repo({
+      path: '/runtime-b/repo',
+      executionHostId: 'runtime:env-b'
+    })
+    const runtimeWorktree = worktreeRecord({
+      hostId: 'ssh:nested-a',
+      runtimeOwnerEnvironmentId: 'env-a',
+      linkedIssue: 123
+    })
+    const details = getWorkspaceDecisionDetails(
+      row({ repoPath: runtimeRepoA.path }),
+      decisionInputs({
+        repoMap: new Map([[runtimeRepoB.id, runtimeRepoB]]),
+        repoByHostIdentity: new Map([
+          [getRepoHostIdentity(runtimeRepoA), runtimeRepoA],
+          [getRepoHostIdentity(runtimeRepoB), runtimeRepoB]
+        ]),
+        worktreeMap: new Map([[runtimeWorktree.id, runtimeWorktree]]),
+        issueCache: {
+          'runtime:env-a::repo::123': {
+            data: { number: 123, title: 'Environment A issue', state: 'open' }
+          },
+          'runtime:env-b::repo::123': {
+            data: { number: 123, title: 'Environment B issue', state: 'closed' }
+          }
+        }
+      })
+    )
+
+    expect(details.issueLabel).toBe('#123 open: Environment A issue')
+  })
+
+  it('uses the only runtime owner for legacy nested SSH and rejects ambiguity', () => {
+    const runtimeRepoA = repo({
+      path: '/runtime-a/repo',
+      executionHostId: 'runtime:env-a'
+    })
+    const runtimeRepoB = repo({
+      path: '/runtime-b/repo',
+      executionHostId: 'runtime:env-b'
+    })
+    const legacyWorktree = worktreeRecord({ hostId: 'ssh:nested-a', linkedIssue: 123 })
+    const issueCache = {
+      'runtime:env-a::repo::123': {
+        data: { number: 123, title: 'Environment A issue', state: 'open' }
+      },
+      'runtime:env-b::repo::123': {
+        data: { number: 123, title: 'Environment B issue', state: 'closed' }
+      }
+    }
+    const onlyOwner = getWorkspaceDecisionDetails(
+      row({ repoPath: runtimeRepoA.path }),
+      decisionInputs({
+        repoMap: new Map([[runtimeRepoA.id, runtimeRepoA]]),
+        repoByHostIdentity: new Map([[getRepoHostIdentity(runtimeRepoA), runtimeRepoA]]),
+        worktreeMap: new Map([[legacyWorktree.id, legacyWorktree]]),
+        issueCache
+      })
+    )
+    const ambiguousOwner = getWorkspaceDecisionDetails(
+      row({ repoPath: runtimeRepoA.path }),
+      decisionInputs({
+        repoMap: new Map([[runtimeRepoB.id, runtimeRepoB]]),
+        repoByHostIdentity: new Map([
+          [getRepoHostIdentity(runtimeRepoA), runtimeRepoA],
+          [getRepoHostIdentity(runtimeRepoB), runtimeRepoB]
+        ]),
+        worktreeMap: new Map([[legacyWorktree.id, legacyWorktree]]),
+        issueCache
+      })
+    )
+
+    expect(onlyOwner.issueLabel).toBe('#123 open: Environment A issue')
+    expect(ambiguousOwner.issueLabel).toBe('#123')
   })
 
   it('counts migration-unsupported agent entries by worktree id', () => {

@@ -28,38 +28,43 @@ let settings: Partial<GlobalSettings> | null = { compactWorktreeCards: true }
 let agentActivityDisplayMode: 'compact' | 'full' | undefined
 let mockInlineAgentRows: DashboardAgentRowData[] = []
 
-vi.mock('@/store', () => ({
-  useAppStore: (selector: (state: unknown) => unknown) =>
-    selector({
-      browserTabsByWorktree: {},
-      agentActivityDisplayMode,
-      createBrowserTab: vi.fn(),
-      deleteStateByWorktreeId: {},
-      fetchHostedReviewForBranch,
-      fetchIssue,
-      fetchLinearIssue,
-      gitConflictOperationByWorktree: {},
-      hostedReviewCache,
-      issueCache,
-      linearIssueCache: {},
-      openModal,
-      openTaskPage,
-      projectGroups,
-      ptyIdsByTabId: {},
-      recordFeatureInteraction,
-      remoteBranchConflictByWorktreeId: {},
-      setRemoteBrowserPageHandle: vi.fn(),
-      setWorkspacePortScan,
-      setWorkspacePortScanRefreshing,
-      settings,
-      sshConnectionStates: new Map(),
-      sshTargetLabels: new Map(),
-      tabsByWorktree: {},
-      updateWorktreeMeta,
-      workspacePortScan,
-      worktreeCardProperties
+vi.mock('@/store', () => {
+  const getState = () => ({
+    browserTabsByWorktree: {},
+    agentActivityDisplayMode,
+    createBrowserTab: vi.fn(),
+    deleteStateByWorktreeId: {},
+    fetchHostedReviewForBranch,
+    fetchIssue,
+    fetchLinearIssue,
+    gitConflictOperationByWorktree: {},
+    hostedReviewCache,
+    issueCache,
+    linearIssueCache: {},
+    openModal,
+    openTaskPage,
+    projectGroups,
+    ptyIdsByTabId: {},
+    recordFeatureInteraction,
+    remoteBranchConflictByWorktreeId: {},
+    setRemoteBrowserPageHandle: vi.fn(),
+    setWorkspacePortScan,
+    setWorkspacePortScanRefreshing,
+    settings,
+    sshConnectionStates: new Map(),
+    sshTargetLabels: new Map(),
+    tabsByWorktree: {},
+    updateWorktreeMeta,
+    workspacePortScan,
+    worktreeCardProperties
+  })
+  return {
+    useAppStore: Object.assign((selector: (state: unknown) => unknown) => selector(getState()), {
+      getState,
+      subscribe: () => () => {}
     })
-}))
+  }
+})
 
 vi.mock('@/components/ui/hover-card', () => ({
   HoverCard: ({ children, openDelay }: { children: ReactNode; openDelay?: number }) => (

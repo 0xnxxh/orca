@@ -35,6 +35,10 @@ import { getGitHubPRCacheKey, getLegacyGitHubPRCacheKey } from '../../store/slic
 import { getRepoDisplayLabelKey, getRepoDisplayLabelsByPath } from '@/lib/repo-display-labels'
 import { translate } from '@/i18n/i18n'
 import {
+  findRepoForWorktreeHostIdentity,
+  getRepoHostIdentity
+} from '@/store/slices/repo-host-identity'
+import {
   getExecutionHostLabel,
   LOCAL_EXECUTION_HOST_ID,
   getRepoExecutionHostId,
@@ -165,6 +169,7 @@ function buildPendingCreationRow(
 }
 
 type OrderedGroupEntry = [string, WorktreeGroupEntry]
+type WorktreeRowRepoResolver = (worktree: Worktree) => Repo | undefined
 
 export type ProjectGroupingModel = {
   projects: readonly Project[]
@@ -459,6 +464,7 @@ export function getPRGroupKey(
 function emitPinnedGroup(
   worktrees: Worktree[],
   repoMap: Map<string, Repo>,
+  resolveWorktreeRepo: WorktreeRowRepoResolver,
   defaultHostId: ExecutionHostId,
   collapsedGroups: Set<string>,
   renderedNaturalAnchorRepoIds: ReadonlySet<string>,
@@ -509,7 +515,7 @@ function emitPinnedGroup(
     pinned.forEach((worktree, index) => lastPinnedIndexByRepoId.set(worktree.repoId, index))
     for (const [index, worktree] of pinned.entries()) {
       result.push(
-        buildWorktreeRow(worktree, repoMap, {
+        buildWorktreeRow(worktree, resolveWorktreeRepo, {
           rowKey: `${PINNED_GROUP_KEY}:${worktree.id}`,
           sectionKey: PINNED_GROUP_KEY,
           depth: 0,
@@ -559,7 +565,7 @@ function buildNewExternalWorktreesInboxRow(
 
 function buildWorktreeRow(
   worktree: Worktree,
-  repoMap: Map<string, Repo>,
+  resolveWorktreeRepo: WorktreeRowRepoResolver,
   options: {
     rowKey: string
     sectionKey: string
@@ -577,7 +583,7 @@ function buildWorktreeRow(
     rowKey: options.rowKey,
     sectionKey: options.sectionKey,
     worktree,
-    repo: repoMap.get(worktree.repoId),
+    repo: resolveWorktreeRepo(worktree),
     depth: options.depth,
     groupDepth: options.groupDepth,
     lineageTrail: options.lineageTrail,
@@ -592,7 +598,7 @@ function buildWorktreeRow(
 function appendWorktreeRows(
   result: Row[],
   worktrees: Worktree[],
-  repoMap: Map<string, Repo>,
+  resolveWorktreeRepo: WorktreeRowRepoResolver,
   lineageById: Record<string, WorktreeLineage>,
   worktreeMap: Map<string, Worktree>,
   options: {
@@ -617,7 +623,7 @@ function appendWorktreeRows(
   if (!nestLineage) {
     for (const worktree of worktrees) {
       result.push(
-        buildWorktreeRow(worktree, repoMap, {
+        buildWorktreeRow(worktree, resolveWorktreeRepo, {
           rowKey: `${sectionKey}:${worktree.id}`,
           sectionKey,
           depth: 0,
@@ -664,7 +670,7 @@ function appendWorktreeRows(
     const lineageCollapsed = collapsedGroups.has(lineageGroupKey)
     emitted.add(worktree.id)
     result.push(
-      buildWorktreeRow(worktree, repoMap, {
+      buildWorktreeRow(worktree, resolveWorktreeRepo, {
         rowKey: `${sectionKey}:${worktree.id}`,
         sectionKey,
         depth,
@@ -1023,9 +1029,15 @@ export function buildRows(
   folderWorkspaces: readonly FolderWorkspace[] = [],
   hostLabelById?: ReadonlyMap<string, string>,
   defaultHostId: ExecutionHostId = LOCAL_EXECUTION_HOST_ID,
-  pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy = getPinnedWorktreeDisplayPolicy(settings)
+  pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy = getPinnedWorktreeDisplayPolicy(settings),
+  repoByHostIdentity?: ReadonlyMap<string, Repo>
 ): Row[] {
   const result: Row[] = []
+  const effectiveRepoByHostIdentity =
+    repoByHostIdentity ??
+    new Map([...repoMap.values()].map((repo) => [getRepoHostIdentity(repo), repo]))
+  const resolveWorktreeRepo = (worktree: Worktree): Repo | undefined =>
+    findRepoForWorktreeHostIdentity(worktree, repoMap, effectiveRepoByHostIdentity, defaultHostId)
   const projectIndex = buildProjectGroupingIndex(projectGrouping)
   const cyclicLineageIds = nestLineage
     ? getCyclicProjectedWorktreeLineageIds(lineageById, worktreeMap)
@@ -1070,6 +1082,7 @@ export function buildRows(
   emitPinnedGroup(
     worktrees,
     repoMap,
+    resolveWorktreeRepo,
     defaultHostId,
     collapsedGroups,
     renderedNaturalAnchorRepoIds,
@@ -1091,14 +1104,21 @@ export function buildRows(
         worktreeIds: naturalWorktrees.map((worktree) => worktree.id)
       })
       if (!collapsedGroups.has(ALL_GROUP_KEY)) {
-        appendWorktreeRows(result, naturalWorktrees, repoMap, lineageById, worktreeMap, {
-          nestLineage,
-          collapsedGroups,
-          groupDepth: 0,
-          sectionKey: ALL_GROUP_KEY,
-          hostContextLabelByWorktreeId: mixedWorktreeHostContextLabels,
-          cyclicLineageIds
-        })
+        appendWorktreeRows(
+          result,
+          naturalWorktrees,
+          resolveWorktreeRepo,
+          lineageById,
+          worktreeMap,
+          {
+            nestLineage,
+            collapsedGroups,
+            groupDepth: 0,
+            sectionKey: ALL_GROUP_KEY,
+            hostContextLabelByWorktreeId: mixedWorktreeHostContextLabels,
+            cyclicLineageIds
+          }
+        )
       }
     }
     return result
@@ -1338,7 +1358,7 @@ export function buildRows(
         const hostContextLabelByWorktreeId =
           groupBy === 'repo' ? undefined : mixedWorktreeHostContextLabels
         if (groupBy === 'repo') {
-          appendWorktreeRows(result, items, repoMap, lineageById, worktreeMap, {
+          appendWorktreeRows(result, items, resolveWorktreeRepo, lineageById, worktreeMap, {
             nestLineage,
             collapsedGroups,
             groupDepth: projectGroupDepth,
@@ -1348,7 +1368,7 @@ export function buildRows(
             cyclicLineageIds
           })
         } else {
-          appendWorktreeRows(result, items, repoMap, lineageById, worktreeMap, {
+          appendWorktreeRows(result, items, resolveWorktreeRepo, lineageById, worktreeMap, {
             nestLineage,
             collapsedGroups,
             groupDepth: projectGroupDepth,

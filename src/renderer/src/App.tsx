@@ -29,6 +29,11 @@ import {
   isPairedWebClientWindow,
   shouldRenderDesktopWindowChrome
 } from '@/lib/desktop-window-chrome'
+import {
+  advanceCacheOnlyGitHubIssueRefreshTrigger,
+  getCacheOnlyGitHubIssueCatalogKey,
+  INITIAL_CACHE_ONLY_GITHUB_ISSUE_REFRESH_TRIGGER_STATE
+} from '@/lib/cache-only-github-issue-refresh-trigger'
 import { resolveLeftTitlebarChromeLayout } from '@/lib/titlebar-left-chrome'
 import { shouldShowWorktreeCreationSurface } from '@/lib/worktree-creation-surface'
 import { buildAppFontFamily } from '@/lib/app-font-family'
@@ -475,6 +480,7 @@ function App(): React.JSX.Element {
       fetchKeybindings: s.fetchKeybindings,
       initGitHubCache: s.initGitHubCache,
       refreshAllGitHub: s.refreshAllGitHub,
+      refreshCacheOnlyGitHubIssues: s.refreshCacheOnlyGitHubIssues,
       reportVisibleGitHubPRRefreshCandidates: s.reportVisibleGitHubPRRefreshCandidates,
       bumpGitHubPRVisibleRefreshGeneration: s.bumpGitHubPRVisibleRefreshGeneration,
       hydrateWorkspaceSession: s.hydrateWorkspaceSession,
@@ -530,6 +536,11 @@ function App(): React.JSX.Element {
   const worktreeSidebarScrollAnchorRef = useRef<VirtualizedScrollAnchor>(null)
   const floatingVisibleTabCount = useAppStore(selectFloatingVisibleTabCount)
   const workspaceSessionReady = useAppStore((s) => s.workspaceSessionReady)
+  const startupWorktreeRefreshCompleted = useAppStore((s) => s.startupWorktreeRefreshCompleted)
+  const issueDecorationsEnabled = useAppStore((s) => s.worktreeCardProperties.includes('issue'))
+  const cacheOnlyGitHubIssueRefreshTriggerRef = useRef(
+    INITIAL_CACHE_ONLY_GITHUB_ISSUE_REFRESH_TRIGGER_STATE
+  )
   const backgroundTerminalMountRequested = useSyncExternalStore(
     subscribeBackgroundTerminalWorktreeMountRequests,
     hasRequestedBackgroundTerminalWorktreeMount,
@@ -1514,6 +1525,46 @@ function App(): React.JSX.Element {
     document.addEventListener('visibilitychange', handler)
     return () => document.removeEventListener('visibilitychange', handler)
   }, [actions])
+
+  useEffect(() => {
+    const pairedWebEligible =
+      isPairedWebClientWindow() && persistedUIReady && issueDecorationsEnabled
+    const spaceActive = activeView === 'space'
+    const updateTrigger = (issueCatalogKey: string): void => {
+      const trigger = advanceCacheOnlyGitHubIssueRefreshTrigger(
+        cacheOnlyGitHubIssueRefreshTriggerRef.current,
+        {
+          startupWorktreeRefreshCompleted,
+          issueCatalogKey,
+          pairedWebEligible,
+          spaceActive,
+          windowVisible: document.visibilityState === 'visible'
+        }
+      )
+      cacheOnlyGitHubIssueRefreshTriggerRef.current = trigger.state
+      // Why: these cache-only surfaces have no mounted card to fetch issue labels after remote rows arrive.
+      if (trigger.shouldRefresh) {
+        actions.refreshCacheOnlyGitHubIssues()
+      }
+    }
+    if (!startupWorktreeRefreshCompleted || (!pairedWebEligible && !spaceActive)) {
+      updateTrigger('')
+      return
+    }
+    updateTrigger(getCacheOnlyGitHubIssueCatalogKey(useAppStore.getState().worktreesByRepo))
+    return useAppStore.subscribe((state, previousState) => {
+      if (state.worktreesByRepo === previousState.worktreesByRepo) {
+        return
+      }
+      updateTrigger(getCacheOnlyGitHubIssueCatalogKey(state.worktreesByRepo))
+    })
+  }, [
+    actions,
+    activeView,
+    issueDecorationsEnabled,
+    persistedUIReady,
+    startupWorktreeRefreshCompleted
+  ])
 
   // Why (STA-2383): macOS throttles the backgrounded window; on occlusion-uncover only `focus`
   // fires (invalidate-only), so the app-shell's dvh height stays stale and the bottom status bar

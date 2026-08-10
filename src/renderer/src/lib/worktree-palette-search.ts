@@ -8,6 +8,8 @@ import type { Repo, Worktree } from '../../../shared/types'
 import { extractWorktreePaletteCommentSnippet } from './worktree-palette-comment-snippet'
 import { isWorktreePaletteQueryTooLarge } from './worktree-palette-query-bounds'
 import { matchWorktreePaletteReview } from './worktree-palette-review-match'
+import { findRepoForWorktreeHostIdentity } from '@/store/slices/repo-host-identity'
+import { LOCAL_EXECUTION_HOST_ID, type ExecutionHostId } from '../../../shared/execution-host'
 
 export type MatchRange = { start: number; end: number }
 
@@ -75,7 +77,9 @@ export function searchWorktrees(
   prCache: Record<string, PRCacheEntry> | null,
   issueCache: Record<string, IssueCacheEntry> | null,
   workspacePortsByWorktreeId?: Map<string, { port: number; processName?: string }[]>,
-  checksReviewByWorktree?: ReadonlyMap<Worktree, HostedReviewInfo | null>
+  checksReviewByWorktree?: ReadonlyMap<Worktree, HostedReviewInfo | null>,
+  repoByHostIdentity?: ReadonlyMap<string, Repo>,
+  defaultHostId: ExecutionHostId = LOCAL_EXECUTION_HOST_ID
 ): PaletteSearchResult[] {
   if (isWorktreePaletteQueryTooLarge(query)) {
     return []
@@ -204,7 +208,9 @@ export function searchWorktrees(
       continue
     }
 
-    const repo = repoMap.get(worktree.repoId)
+    const repo = repoByHostIdentity
+      ? findRepoForWorktreeHostIdentity(worktree, repoMap, repoByHostIdentity, defaultHostId)
+      : repoMap.get(worktree.repoId)
     const checksReview = checksReviewByWorktree?.get(worktree)
     const hasChecksReviewEntry = checksReview !== undefined
     if (checksReview) {
