@@ -64,6 +64,24 @@ function isUserFacingExternalWorktree(worktree: DetectedWorktree): boolean {
   )
 }
 
+// Why: scratch is not user-facing, but the visibility toggle can never reveal
+// it (#9388), so an explicit per-path import is its only reachable path back
+// once hidden (#10324).
+function isImportableExternalWorktree(worktree: DetectedWorktree): boolean {
+  return !worktree.selectedCheckout && worktree.ownership !== 'orca-managed'
+}
+
+export function getHiddenImportableExternalWorktrees(
+  detected: DetectedWorktreeListResult | undefined
+): DetectedWorktree[] {
+  if (detected?.authoritative !== true) {
+    return []
+  }
+  return detected.worktrees.filter(
+    (worktree) => !worktree.visible && isImportableExternalWorktree(worktree)
+  )
+}
+
 export function isExternalWorktreeDiscoverySuppressed(
   repo: Pick<Repo, 'externalWorktreeDiscoverySuppressedAt'>
 ): boolean {

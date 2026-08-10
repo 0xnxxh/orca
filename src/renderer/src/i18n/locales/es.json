@@ -4695,7 +4695,14 @@
           "25ddf19920": "{{value0}} disponible para importar",
           "8372e4bbd9": "{{value0}} mostrado actualmente",
           "5d02a5647f": "Oculto de la barra lateral",
-          "3e045d4cb8": "Mostrado en la barra lateral"
+          "3e045d4cb8": "Mostrado en la barra lateral",
+          "a3f19c07d2": "Comprobando…",
+          "b8d24e61f5": "No se pudieron listar los worktrees de este repositorio.",
+          "c5e70a93b1": "Reintentar",
+          "7d21c5e848": "Worktrees ocultos",
+          "9b53f7a160": "El interruptor de arriba nunca muestra los worktrees creados por agentes; muéstralos aquí uno a uno.",
+          "2f80cd4b97": "Mostrando…",
+          "e64b81d3a9": "Mostrar"
         },
         "add": {
           "repo": {

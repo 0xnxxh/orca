@@ -4878,7 +4878,14 @@
           "25ddf19920": "{{value0}} available to import",
           "8372e4bbd9": "{{value0}} currently shown",
           "5d02a5647f": "Hidden from sidebar",
-          "3e045d4cb8": "Shown in sidebar"
+          "3e045d4cb8": "Shown in sidebar",
+          "a3f19c07d2": "Checking…",
+          "b8d24e61f5": "Could not list this repo's worktrees.",
+          "c5e70a93b1": "Try again",
+          "7d21c5e848": "Hidden worktrees",
+          "9b53f7a160": "The switch above never shows agent-created worktrees; show them here one at a time.",
+          "2f80cd4b97": "Showing…",
+          "e64b81d3a9": "Show"
         },
         "add": {
           "repo": {

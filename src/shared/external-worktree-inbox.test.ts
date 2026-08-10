@@ -9,6 +9,7 @@ import type {
 } from './types'
 import {
   getHiddenExternalWorktrees,
+  getHiddenImportableExternalWorktrees,
   getNewExternalWorktreeInboxWorktrees,
   getVisibleExternalWorktrees,
   mergeExternalWorktreeInboxPaths,
@@ -172,6 +173,37 @@ describe('external worktree inbox', () => {
     })
 
     expect(getVisibleExternalWorktrees(detectedResult([visible, scratch]))).toEqual([visible])
+  })
+
+  it('lists hidden agent scratch among importable worktrees so recovery stays reachable', () => {
+    // Why: the visibility toggle can never reveal scratch (#9388), so if no list
+    // offers it for per-path import, a hidden scratch worktree is lost for good (#10324).
+    const hiddenScratch = detectedWorktree({
+      id: 'hidden-scratch',
+      path: '/repo/.claude/worktrees/scratch-1',
+      ownership: 'agent-scratch'
+    })
+    const hiddenExternal = detectedWorktree({ id: 'hidden-external' })
+    const detected = detectedResult([
+      hiddenScratch,
+      hiddenExternal,
+      detectedWorktree({ id: 'visible-scratch', ownership: 'agent-scratch', visible: true }),
+      detectedWorktree({ id: 'orca-managed', ownership: 'orca-managed' }),
+      detectedWorktree({ id: 'checked-out', selectedCheckout: true })
+    ])
+
+    expect(getHiddenImportableExternalWorktrees(detected)).toEqual([hiddenScratch, hiddenExternal])
+    // Why: scratch stays out of the repo-wide discovery/visibility counts (#9388).
+    expect(getHiddenExternalWorktrees(detected)).toEqual([hiddenExternal])
+  })
+
+  it('offers no importable worktrees from a non-authoritative snapshot', () => {
+    const scratch = detectedWorktree({ id: 'scratch', ownership: 'agent-scratch' })
+
+    expect(
+      getHiddenImportableExternalWorktrees({ ...detectedResult([scratch]), authoritative: false })
+    ).toEqual([])
+    expect(getHiddenImportableExternalWorktrees(undefined)).toEqual([])
   })
 
   it('offers metadata-free nested Orca workspace worktrees through the inbox', () => {
