@@ -23,6 +23,9 @@ describe('spawnAiVaultServiceProcess', () => {
     spawnAiVaultServiceProcess()
     const options = forkOptions()
 
+    // Asserted first: omitting `env` entirely inherits everything, and would
+    // leave the NODE_OPTIONS assertion below passing for the wrong reason.
+    expect(options.env).toBeDefined()
     expect(options.env?.NODE_OPTIONS).toBeUndefined()
     expect(options.execArgv).toEqual(['--max-old-space-size=384'])
     vi.unstubAllEnvs()
