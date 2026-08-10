@@ -22480,7 +22480,6 @@ export class OrcaRuntimeService {
         repo.id,
         localWorktreeGitOptions,
         {
-          createdWorktreeId,
           onRemoteCreated: (createdTarget) => {
             createdPushTargetRemote = createdTarget
           },
