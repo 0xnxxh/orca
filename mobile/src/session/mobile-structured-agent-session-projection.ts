@@ -8,7 +8,7 @@ function boundedText(payload: { head: string; truncated: boolean; byteLength: nu
 function itemBlocks(item: AgentJournalRenderItem): {
   role: NativeChatMessage['role']
   blocks: NativeChatBlock[]
-} {
+} | null {
   const body = item.body
   if (body.kind === 'message') {
     return { role: body.role, blocks: body.blocks }
@@ -40,13 +40,19 @@ function itemBlocks(item: AgentJournalRenderItem): {
     }
   }
   if (body.kind === 'approval') {
-    const suffix = body.resolution.state === 'pending' ? 'Awaiting response' : body.resolution.state
+    if (body.resolution.state === 'pending') {
+      return null
+    }
+    const suffix = body.resolution.state
     return {
       role: 'system',
       blocks: [{ type: 'text', text: `${body.title}\n${body.detail ?? ''}\n${suffix}`.trim() }]
     }
   }
   if (body.kind === 'question') {
+    if (body.resolution.state === 'pending') {
+      return null
+    }
     const choices = body.options.map((option) => option.label).join(' · ')
     return {
       role: 'system',
@@ -59,14 +65,24 @@ function itemBlocks(item: AgentJournalRenderItem): {
 export function projectStructuredItemsToNativeChat(
   items: readonly AgentJournalRenderItem[]
 ): NativeChatMessage[] {
-  return items.map((item) => {
+  return items.flatMap((item) => {
     const projected = itemBlocks(item)
-    return {
-      id: item.itemId,
-      role: projected.role,
-      blocks: projected.blocks,
-      timestamp: item.observedAt,
-      source: 'transcript'
-    }
+    return projected
+      ? [
+          {
+            id: item.itemId,
+            role: projected.role,
+            blocks: projected.blocks,
+            timestamp: item.observedAt,
+            source: 'transcript'
+          }
+        ]
+      : []
   })
+}
+
+export function projectStructuredItemToNativeChat(
+  item: AgentJournalRenderItem
+): NativeChatMessage | null {
+  return projectStructuredItemsToNativeChat([item])[0] ?? null
 }

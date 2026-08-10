@@ -1,5 +1,5 @@
 import { StyleSheet } from 'react-native'
-import { colors, spacing, typography } from '../theme/mobile-theme'
+import { colors, radii, spacing, typography } from '../theme/mobile-theme'
 
 export const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bgBase },
@@ -18,12 +18,28 @@ export const styles = StyleSheet.create({
     marginTop: spacing.sm
   },
   loader: { paddingVertical: spacing.md },
-  readOnlyBanner: {
+  writeChrome: {
+    alignItems: 'flex-end',
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.borderSubtle,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    alignItems: 'center'
+    paddingVertical: spacing.xs
   },
-  readOnlyText: { color: colors.textMuted, fontSize: typography.metaSize }
+  cancelButton: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.button,
+    backgroundColor: colors.bgRaised
+  },
+  cancelText: { color: colors.statusRed, fontSize: typography.metaSize, fontWeight: '600' },
+  pressed: { opacity: 0.7 },
+  writeError: {
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm
+  },
+  writeErrorText: { color: colors.statusRed, fontSize: typography.metaSize }
 })

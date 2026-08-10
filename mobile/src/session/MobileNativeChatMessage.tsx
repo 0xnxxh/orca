@@ -280,6 +280,8 @@ function AgentControls({
 function MobileNativeChatMessageImpl({
   message,
   queued,
+  deliveryState,
+  onQueuedPress,
   toolsExpanded = false,
   fontScale = 1,
   messageIndex,
@@ -288,6 +290,8 @@ function MobileNativeChatMessageImpl({
 }: {
   message: NativeChatMessage
   queued?: boolean
+  deliveryState?: 'queued' | 'dispatching' | 'unconfirmed'
+  onQueuedPress?: () => void
   toolsExpanded?: boolean
   /** Multiplies all chat text sizes for pinch-to-zoom (1 = no change). */
   fontScale?: number
@@ -345,7 +349,19 @@ function MobileNativeChatMessageImpl({
 
   return (
     <View style={[styles.row, isUser && styles.rowUser]}>
-      {isUser && queued ? <Text style={styles.queuedTag}>Queued</Text> : null}
+      {isUser && queued ? (
+        <Pressable onPress={onQueuedPress} disabled={!onQueuedPress} hitSlop={6}>
+          <Text style={styles.queuedTag}>
+            {deliveryState === 'unconfirmed'
+              ? 'Unconfirmed · Retry'
+              : deliveryState === 'dispatching'
+                ? 'Sending…'
+                : deliveryState === 'queued'
+                  ? 'Queued · Edit'
+                  : 'Queued'}
+          </Text>
+        </Pressable>
+      ) : null}
       <View
         style={[
           styles.content,

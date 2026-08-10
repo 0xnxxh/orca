@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState, type MutableRefObject } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import { mobileStructuredCreateFingerprint } from './mobile-structured-session-create'
 import { useMobileStructuredAgentSession } from './use-mobile-structured-agent-session'
+import { useMobileStructuredAttachments } from './use-mobile-structured-attachments'
+import { useMobileStructuredSessionOptions } from './use-mobile-structured-session-options'
+import { useMobileStructuredSessionWrites } from './use-mobile-structured-session-writes'
 
 export function useMobileStructuredSessionEntry(args: {
   client: RpcClient | null
@@ -16,6 +19,7 @@ export function useMobileStructuredSessionEntry(args: {
   closeDrawer: () => void
   onCreated: (tabId: string) => void
   onError: (message: string) => void
+  getConnectionId: () => Promise<string | null>
 }) {
   const {
     client,
@@ -35,6 +39,23 @@ export function useMobileStructuredSessionEntry(args: {
   const session = useMobileStructuredAgentSession({
     client,
     sessionId
+  })
+  const writes = useMobileStructuredSessionWrites({
+    client,
+    sessionId,
+    fence: session.fence,
+    items: session.items,
+    submissions: session.submissions
+  })
+  const sessionOptions = useMobileStructuredSessionOptions({
+    sessionId,
+    setOption: writes.setOption
+  })
+  const attachments = useMobileStructuredAttachments({
+    client,
+    sessionId,
+    getConnectionId: args.getConnectionId,
+    onError
   })
 
   useEffect(() => {
@@ -111,5 +132,5 @@ export function useMobileStructuredSessionEntry(args: {
     worktreeId
   ])
 
-  return { createSupported, create, session }
+  return { createSupported, create, session, writes, sessionOptions, attachments }
 }

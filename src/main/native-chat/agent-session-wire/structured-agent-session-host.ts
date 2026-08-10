@@ -320,7 +320,12 @@ export class StructuredAgentSessionHost {
    * does not exist here.
    */
   history(request: AgentSessionHistoryRequest): AgentSessionHistoryResult {
-    return readAgentSessionHistory(this.requireSession(request.sessionId).journal, request)
+    const result = readAgentSessionHistory(this.requireSession(request.sessionId).journal, request)
+    const fence = this.deps.store.getRecord(request.sessionId)?.lease.runtimeFence
+    if (fence === undefined) {
+      return result
+    }
+    return result.ok ? { ...result, page: { ...result.page, fence } } : { ...result, fence }
   }
 
   subscribe(input: {

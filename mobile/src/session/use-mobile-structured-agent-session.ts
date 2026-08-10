@@ -11,7 +11,8 @@ import { projectStructuredItemsToNativeChat } from './mobile-structured-agent-se
 import {
   EMPTY_MOBILE_STRUCTURED_AGENT_SESSION,
   oldestMobileStructuredCursor,
-  reduceMobileStructuredAgentSession
+  reduceMobileStructuredAgentSession,
+  type MobileStructuredAgentSessionState
 } from './mobile-structured-agent-session-reducer'
 import {
   createMobileStructuredReconnectState,
@@ -27,6 +28,9 @@ export function useMobileStructuredAgentSession(args: {
   sessionId: string | null
 }): {
   messages: ReturnType<typeof projectStructuredItemsToNativeChat>
+  items: MobileStructuredAgentSessionState['items']
+  submissions: MobileStructuredAgentSessionState['submissions']
+  fence: number | null
   status: 'idle' | 'loading' | 'ready' | 'error'
   error?: string
   hasOlder: boolean
@@ -133,7 +137,7 @@ export function useMobileStructuredAgentSession(args: {
             sessionId,
             reset: result.reset,
             snapshot: result.snapshot,
-            fence: 0
+            fence: result.fence ?? 0
           }
         })
         resumeCursorRef.current = result.snapshot.cursor
@@ -205,7 +209,7 @@ export function useMobileStructuredAgentSession(args: {
             sessionId,
             reset: result.reset,
             snapshot: result.snapshot,
-            fence: 0
+            fence: result.fence ?? 0
           }
         })
         return false
@@ -220,6 +224,9 @@ export function useMobileStructuredAgentSession(args: {
   const messages = useMemo(() => projectStructuredItemsToNativeChat(state.items), [state.items])
   return {
     messages,
+    items: state.items,
+    submissions: state.submissions,
+    fence: state.fence,
     status: !client || !sessionId ? 'idle' : state.status,
     error: state.error || undefined,
     hasOlder: state.hasOlder,

@@ -1,16 +1,33 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   FlatList,
   Platform,
+  Pressable,
   Text,
   View,
   type NativeScrollEvent,
   type NativeSyntheticEvent
 } from 'react-native'
-import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import { Square } from 'lucide-react-native'
+import type { AgentJournalRenderItem } from '../../../src/shared/agent-session-journal-types'
 import { colors } from '../theme/mobile-theme'
+import { MobileNativeChatComposer } from './MobileNativeChatComposer'
 import { MobileNativeChatMessage } from './MobileNativeChatMessage'
+import type { MobileNativeChatSessionOptionsController } from './use-mobile-native-chat-session-options'
+import {
+  MobileStructuredPromptCard,
+  type MobileStructuredPromptItem
+} from './MobileStructuredPromptCard'
+import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
+import type { MobileStructuredOutboxEntry } from './mobile-structured-outbox-store'
+import {
+  buildMobileStructuredTimeline,
+  latestMobileStructuredTurnId,
+  mobileStructuredOutboxText,
+  restoreMobileStructuredAttachments,
+  type MobileStructuredTimelineRow
+} from './mobile-structured-session-timeline'
 import {
   admitStructuredOlderPage,
   beginStructuredUserScroll,
@@ -21,21 +38,41 @@ import {
 import { styles } from './mobile-structured-agent-session-view-styles'
 
 type Props = {
-  messages: NativeChatMessage[]
+  items: AgentJournalRenderItem[]
   status: 'idle' | 'loading' | 'ready' | 'error'
   error?: string
+  writeError?: string | null
   hasOlder: boolean
   loadingOlder: boolean
   onLoadOlder: () => Promise<boolean>
   onOpenFile?: (path: string) => void
+  outbox: MobileStructuredOutboxEntry[]
+  onSend: (text: string, restored: readonly PendingNativeChatImage[]) => Promise<boolean>
+  onTakeQueuedForEdit: (clientMessageId: string) => Promise<MobileStructuredOutboxEntry | null>
+  onRetry: (clientMessageId: string) => Promise<void>
+  onRespondToPrompt: (item: MobileStructuredPromptItem, optionId: string) => Promise<boolean>
+  sessionOptions: MobileNativeChatSessionOptionsController
+  attachments: PendingNativeChatImage[]
+  isAttaching: boolean
+  onAttachImage: () => void
+  onRemoveAttachment: (id: string) => void
+  onCancel: (turnId: string) => Promise<boolean>
 }
 
 export function MobileStructuredAgentSessionView(props: Props): React.JSX.Element {
-  const listRef = useRef<FlatList<NativeChatMessage>>(null)
+  const listRef = useRef<FlatList<MobileStructuredTimelineRow>>(null)
   const paginationRef = useRef(createMobileStructuredPaginationState())
   const priorContentHeightRef = useRef(0)
   const androidAnchorOffsetRef = useRef(0)
-  const data = props.messages.toReversed()
+  const [composerText, setComposerText] = useState('')
+  const [restored, setRestored] = useState<PendingNativeChatImage[]>([])
+  const turnId = latestMobileStructuredTurnId(props.items)
+  const allAttachments = [...restored, ...props.attachments]
+  const rows = useMemo(
+    () => buildMobileStructuredTimeline(props.items, props.outbox),
+    [props.items, props.outbox]
+  )
+  const data = rows.toReversed()
 
   const loadOlder = useCallback(() => {
     const pagination = paginationRef.current
@@ -63,14 +100,39 @@ export function MobileStructuredAgentSessionView(props: Props): React.JSX.Elemen
         ref={listRef}
         inverted
         data={data}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item, index }) => (
-          <MobileNativeChatMessage
-            message={item}
-            messageIndex={data.length - index - 1}
-            onOpenFile={props.onOpenFile}
-          />
-        )}
+        keyExtractor={(row) => row.key}
+        renderItem={({ item, index }) =>
+          item.kind === 'prompt' ? (
+            <MobileStructuredPromptCard item={item.item} onRespond={props.onRespondToPrompt} />
+          ) : (
+            <MobileNativeChatMessage
+              message={item.message}
+              queued={Boolean(item.outbox)}
+              deliveryState={item.outbox?.state}
+              onQueuedPress={
+                item.outbox?.state === 'queued' || item.outbox?.state === 'unconfirmed'
+                  ? async () => {
+                      const outbox = item.outbox
+                      if (!outbox) {
+                        return
+                      }
+                      if (outbox.state === 'unconfirmed') {
+                        await props.onRetry(outbox.clientMessageId)
+                        return
+                      }
+                      const editable = await props.onTakeQueuedForEdit(outbox.clientMessageId)
+                      if (editable) {
+                        setComposerText(mobileStructuredOutboxText(editable))
+                        setRestored(restoreMobileStructuredAttachments(editable))
+                      }
+                    }
+                  : undefined
+              }
+              messageIndex={data.length - index - 1}
+              onOpenFile={props.onOpenFile}
+            />
+          )
+        }
         contentContainerStyle={styles.content}
         maintainVisibleContentPosition={
           Platform.OS === 'android' ? undefined : { minIndexForVisible: 0 }
@@ -113,13 +175,53 @@ export function MobileStructuredAgentSessionView(props: Props): React.JSX.Elemen
             <Text style={styles.title}>
               {props.status === 'error' ? 'Conversation unavailable' : 'New Codex chat'}
             </Text>
-            <Text style={styles.subtitle}>{props.error ?? 'Messages will appear here.'}</Text>
+            <Text style={styles.subtitle}>{props.error ?? 'Send a message to get started.'}</Text>
           </View>
         }
       />
-      <View style={styles.readOnlyBanner}>
-        <Text style={styles.readOnlyText}>Read only · sending arrives in the next update</Text>
-      </View>
+      {turnId ? (
+        <View style={styles.writeChrome}>
+          <Pressable
+            style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}
+            onPress={() => void props.onCancel(turnId)}
+            accessibilityLabel="Stop the agent"
+          >
+            <Square size={13} color={colors.statusRed} strokeWidth={2.4} fill={colors.statusRed} />
+            <Text style={styles.cancelText}>Stop</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {props.writeError ? (
+        <View style={styles.writeError} accessibilityRole="alert">
+          <Text style={styles.writeErrorText}>{props.writeError}</Text>
+        </View>
+      ) : null}
+      <MobileNativeChatComposer
+        value={composerText}
+        onChangeText={setComposerText}
+        onSend={async (text) => {
+          const accepted = await props.onSend(text, restored)
+          if (accepted) {
+            setComposerText('')
+            setRestored([])
+          }
+          return accepted
+        }}
+        agent="codex"
+        sessionOptions={{ controller: props.sessionOptions, isWorking: false }}
+        onAttachImage={props.onAttachImage}
+        attachments={allAttachments}
+        onRemoveAttachment={(id) => {
+          if (id.startsWith('restored:')) {
+            setRestored((current) => current.filter((entry) => entry.id !== id))
+          } else {
+            props.onRemoveAttachment(id)
+          }
+        }}
+        isAttaching={props.isAttaching}
+        disabled={props.status !== 'ready'}
+        placeholder={props.status === 'ready' ? 'Message Codex' : 'Reconnecting…'}
+      />
     </View>
   )
 }

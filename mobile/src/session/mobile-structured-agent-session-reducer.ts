@@ -12,6 +12,7 @@ import type {
 export type MobileStructuredAgentSessionState = {
   epoch: string | null
   cursor: AgentJournalCursor | null
+  fence: number | null
   items: AgentJournalRenderItem[]
   submissions: AgentJournalSubmission[]
   hasOlder: boolean
@@ -29,16 +30,21 @@ export type MobileStructuredAgentSessionAction =
 export const EMPTY_MOBILE_STRUCTURED_AGENT_SESSION: MobileStructuredAgentSessionState = {
   epoch: null,
   cursor: null,
+  fence: null,
   items: [],
   submissions: [],
   hasOlder: false,
   status: 'idle'
 }
 
-function replaceSnapshot(snapshot: AgentJournalSnapshot): MobileStructuredAgentSessionState {
+function replaceSnapshot(
+  snapshot: AgentJournalSnapshot,
+  fence: number
+): MobileStructuredAgentSessionState {
   return {
     epoch: snapshot.cursor.epoch,
     cursor: snapshot.cursor,
+    fence,
     items: [...snapshot.items].sort((left, right) => left.sequence - right.sequence),
     submissions: snapshot.submissions,
     hasOlder: snapshot.items.length >= 40,
@@ -89,6 +95,7 @@ export function reduceMobileStructuredAgentSession(
     return {
       epoch: action.page.epoch,
       cursor: action.page.liveCursor ?? null,
+      fence: action.page.fence ?? null,
       items: action.page.items,
       submissions: action.page.submissions,
       hasOlder: action.page.hasOlder,
@@ -111,7 +118,7 @@ export function reduceMobileStructuredAgentSession(
     return state
   }
   if (event.type === 'snapshot' || event.type === 'reset') {
-    return replaceSnapshot(event.snapshot)
+    return replaceSnapshot(event.snapshot, event.fence)
   }
   if (state.epoch !== event.batch.cursor.epoch) {
     return state

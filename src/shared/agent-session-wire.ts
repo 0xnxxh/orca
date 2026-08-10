@@ -35,6 +35,9 @@ export type AgentSessionHistoryRequest = {
 export type AgentSessionHistoryPage = {
   sessionId: string
   epoch: string
+  /** Optional for mixed-version readers; write-capable clients use the
+   *  checkpoint without forcing a second attach or a redundant snapshot. */
+  fence?: number
   direction: AgentSessionHistoryDirection
   items: AgentJournalRenderItem[]
   /** Populated by `after` reads so a disconnected client can apply tombstones. */
@@ -59,7 +62,12 @@ export type AgentSessionHistoryResult =
   | { ok: true; page: AgentSessionHistoryPage }
   /** Every reset forces a clean reload; the snapshot is inlined so the client
    *  never has to make a second call to recover. */
-  | { ok: false; reset: AgentJournalResetReason; snapshot: AgentJournalSnapshot }
+  | {
+      ok: false
+      reset: AgentJournalResetReason
+      snapshot: AgentJournalSnapshot
+      fence?: number
+    }
 
 /** Cursor-qualified incremental publication. Items and submissions carry their
  *  CURRENT reduced state rather than a delta, so applying a batch twice

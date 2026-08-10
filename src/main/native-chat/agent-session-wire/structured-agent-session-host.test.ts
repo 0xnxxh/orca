@@ -385,6 +385,7 @@ describe('send', () => {
     expect(dispatch).toHaveBeenCalledTimes(1)
     const page = host.history({ sessionId: SESSION, direction: 'tail' })
     expect(page.ok && page.page.items).toHaveLength(1)
+    expect(page.ok && page.page.fence).toBe(1)
   })
 
   it('settles a thrown dispatch as unknown, never as a rejection', async () => {

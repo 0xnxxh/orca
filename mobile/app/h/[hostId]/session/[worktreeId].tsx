@@ -2304,6 +2304,20 @@ export default function SessionScreen() {
       getApplicationRevision: getSessionTabsApplicationRevision,
       ...sessionTabsFetchReporting
     })
+  const getActiveWorktreeConnectionId = useCallback(async (): Promise<string | null> => {
+    // Why: the floating workspace always runs on the paired host itself, never an SSH repo target.
+    if (!client || isFloatingWorkspaceRoute) {
+      return null
+    }
+    const repoId = getRepoIdFromMobileWorktreeId(worktreeId)
+    const repoResponse = await client.sendRequest('repo.list')
+    if (!repoResponse.ok) {
+      throw new Error((repoResponse as RpcFailure).error.message)
+    }
+    const repos =
+      ((repoResponse as RpcSuccess).result as { repos?: RuntimeRepoSummary[] }).repos ?? []
+    return repos.find((repo) => repo.id === repoId)?.connectionId?.trim() || null
+  }, [client, isFloatingWorkspaceRoute, worktreeId])
   const structuredSessionEntry = useMobileStructuredSessionEntry({
     client,
     connected: connState === 'connected',
@@ -2325,7 +2339,8 @@ export default function SessionScreen() {
     onError: (message) => {
       triggerError()
       showToast(message, 1800)
-    }
+    },
+    getConnectionId: getActiveWorktreeConnectionId
   })
 
   useEffect(() => {
@@ -3528,21 +3543,6 @@ export default function SessionScreen() {
     }
   }, [])
 
-  const getActiveWorktreeConnectionId = useCallback(async (): Promise<string | null> => {
-    // Why: the floating workspace always runs on the paired host itself, never an SSH repo target.
-    if (!client || isFloatingWorkspaceRoute) {
-      return null
-    }
-    const repoId = getRepoIdFromMobileWorktreeId(worktreeId)
-    const repoResponse = await client.sendRequest('repo.list')
-    if (!repoResponse.ok) {
-      throw new Error((repoResponse as RpcFailure).error.message)
-    }
-    const repos =
-      ((repoResponse as RpcSuccess).result as { repos?: RuntimeRepoSummary[] }).repos ?? []
-    return repos.find((repo) => repo.id === repoId)?.connectionId?.trim() || null
-  }, [client, isFloatingWorkspaceRoute, worktreeId])
-
   const refreshCanPaste = useCallback(() => {
     void Promise.all([
       Clipboard.hasStringAsync().catch(() => false),
@@ -4253,7 +4253,7 @@ export default function SessionScreen() {
     ? [
         {
           label: 'Chat session',
-          hint: 'Codex · read-only preview',
+          hint: 'Codex · structured chat',
           icon: MessageSquare,
           onPress: structuredSessionEntry.create
         }
@@ -4634,13 +4634,34 @@ export default function SessionScreen() {
               </View>
             ) : activeStructuredTab ? (
               <MobileStructuredAgentSessionView
-                messages={structuredSessionEntry.session.messages}
+                items={structuredSessionEntry.session.items}
                 status={structuredSessionEntry.session.status}
                 error={structuredSessionEntry.session.error}
                 hasOlder={structuredSessionEntry.session.hasOlder}
                 loadingOlder={structuredSessionEntry.session.loadingOlder}
                 onLoadOlder={structuredSessionEntry.session.loadOlder}
                 onOpenFile={handleNativeChatFileTap}
+                outbox={structuredSessionEntry.writes.outbox}
+                writeError={structuredSessionEntry.writes.error}
+                onSend={async (text, restored) => {
+                  const accepted = await structuredSessionEntry.writes.send(text, [
+                    ...restored,
+                    ...structuredSessionEntry.attachments.attachments
+                  ])
+                  if (accepted) {
+                    structuredSessionEntry.attachments.clear()
+                  }
+                  return accepted
+                }}
+                onTakeQueuedForEdit={structuredSessionEntry.writes.takeQueuedForEdit}
+                onRetry={structuredSessionEntry.writes.retry}
+                onRespondToPrompt={structuredSessionEntry.writes.respondToPrompt}
+                sessionOptions={structuredSessionEntry.sessionOptions}
+                attachments={structuredSessionEntry.attachments.attachments}
+                isAttaching={structuredSessionEntry.attachments.attaching}
+                onAttachImage={() => void structuredSessionEntry.attachments.attach('library')}
+                onRemoveAttachment={structuredSessionEntry.attachments.remove}
+                onCancel={structuredSessionEntry.writes.cancel}
               />
             ) : activePendingTerminalTab ? (
               <View style={styles.emptyState}>

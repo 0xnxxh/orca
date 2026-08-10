@@ -11,11 +11,16 @@ vi.mock('expo-document-picker', () => ({
 vi.mock('expo-file-system', () => ({
   File: vi.fn()
 }))
+vi.mock('expo-image-manipulator', () => ({
+  ImageManipulator: { manipulate: vi.fn() },
+  SaveFormat: { PNG: 'png' }
+}))
 
 import {
   ImageLibraryPermissionError,
   pickMobileImage,
   pickMobileImages,
+  shouldDownsampleMobileImage,
   type PickedMobileImage
 } from './mobile-image-source-picker'
 
@@ -179,19 +184,22 @@ describe('pickMobileImage', () => {
     expect(result).toBeNull()
   })
 
-  it('rejects an oversized asset before opening it', async () => {
+  it('prepares an oversized asset before any raw base64 read', async () => {
     const file = fileFactory(new Uint8Array([1]))
+    const prepareImage = vi.fn().mockRejectedValue(new Error('Clipboard image is too large'))
     await expect(
       pickMobileImage('files', {
         launchFiles: vi.fn().mockResolvedValue({
           canceled: false,
           assets: [{ uri: 'file:///huge.png', size: CLIPBOARD_IMAGE_MAX_SOURCE_BYTES + 1 }]
         }),
-        createFile: file.createFile
+        createFile: file.createFile,
+        prepareImage
       })
     ).rejects.toThrow('Clipboard image is too large')
     expect(file.createFile).not.toHaveBeenCalled()
     expect(file.open).not.toHaveBeenCalled()
+    expect(prepareImage).toHaveBeenCalledOnce()
   })
 
   it('closes the file handle when reading fails', async () => {
@@ -206,5 +214,32 @@ describe('pickMobileImage', () => {
       })
     ).rejects.toThrow('read failed')
     expect(file.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('routes large or high-resolution images through on-device preparation', async () => {
+    expect(shouldDownsampleMobileImage({ fileSize: 5 * 1024 * 1024 })).toBe(true)
+    expect(shouldDownsampleMobileImage({ width: 3000, height: 1200 })).toBe(true)
+    expect(shouldDownsampleMobileImage({ fileSize: 100, width: 800, height: 600 })).toBe(false)
+
+    const prepareImage = vi.fn().mockResolvedValue({
+      base64: 'AAAA',
+      uri: 'file:///resized.png'
+    })
+    const result = await pickMobileImage('library', {
+      requestLibraryPermission: vi.fn().mockResolvedValue(granted),
+      launchLibrary: vi.fn().mockResolvedValue({
+        canceled: false,
+        assets: [{ uri: 'file:///large.jpg', fileSize: 5 * 1024 * 1024, width: 4000, height: 3000 }]
+      }),
+      prepareImage
+    })
+
+    expect(result).toEqual({ base64: 'AAAA', uri: 'file:///resized.png' })
+    expect(prepareImage).toHaveBeenCalledWith({
+      uri: 'file:///large.jpg',
+      fileSize: 5 * 1024 * 1024,
+      width: 4000,
+      height: 3000
+    })
   })
 })
