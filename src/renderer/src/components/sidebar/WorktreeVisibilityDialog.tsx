@@ -91,7 +91,14 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
         worktreePaths: [worktreePath],
         updateRepo,
         fetchWorktrees,
-        setInboxState: (_projectId, state) => setActionState(state)
+        setInboxState: (_projectId, state) => {
+          setActionState(state)
+          // Why: a null state is only reachable after a successful authoritative
+          // refetch, which supersedes an earlier failed open-time scan.
+          if (state === null) {
+            setListState('ready')
+          }
+        }
       })
       setBusyPath(null)
     },
@@ -173,7 +180,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
         </div>
 
         {listState === 'checking' ? (
-          <p className="text-xs text-muted-foreground">
+          <p aria-live="polite" className="text-xs text-muted-foreground">
             {translate('auto.components.sidebar.WorktreeVisibilityDialog.a3f19c07d2', 'Checking…')}
           </p>
         ) : null}
@@ -186,7 +193,13 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
                 "Could not list this repo's worktrees."
               )}
             </p>
-            <Button type="button" variant="outline" size="sm" onClick={handleRetryList}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={busyPath !== null}
+              onClick={handleRetryList}
+            >
               {translate(
                 'auto.components.sidebar.WorktreeVisibilityDialog.c5e70a93b1',
                 'Try again'

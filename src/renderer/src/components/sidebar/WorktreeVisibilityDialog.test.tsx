@@ -237,6 +237,29 @@ describe('WorktreeVisibilityDialog', () => {
     )
   })
 
+  it('locks retry while a row import is in flight, so it cannot race the write', async () => {
+    // Why: a retry scan started before the import's write lands can absorb the
+    // import's own refetch and report success off a pre-import list.
+    mocks.state.fetchWorktrees.mockResolvedValue(false)
+    mocks.state.updateRepo.mockImplementation(() => new Promise(() => {}))
+    await renderDialog()
+
+    await click(buttonWithText('Show'))
+
+    expect(buttonWithText('Try again').disabled).toBe(true)
+  })
+
+  it('clears a stale failure once a row import refreshes the list successfully', async () => {
+    mocks.state.fetchWorktrees.mockResolvedValueOnce(false)
+    await renderDialog()
+    expect(document.querySelector('[role="alert"]')).not.toBeNull()
+
+    mocks.state.fetchWorktrees.mockResolvedValue(true)
+    await click(buttonWithText('Show'))
+
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
   it('keeps the repo-wide toggle unchanged, never counting scratch toward it', async () => {
     await renderDialog()
 
