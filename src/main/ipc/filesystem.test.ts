@@ -3120,6 +3120,46 @@ describe('registerFilesystemHandlers', () => {
     })
   })
 
+  it('fs:listFiles aborts an in-flight direct SSH listing when its sender is destroyed', async () => {
+    let capturedSignal: AbortSignal | undefined
+    const listFilesMock = vi.fn(
+      (_rootPath: string, options: { signal?: AbortSignal }) =>
+        new Promise<string[]>((_resolve, reject) => {
+          capturedSignal = options.signal
+          options.signal?.addEventListener('abort', () => reject(new Error('sender destroyed')), {
+            once: true
+          })
+        })
+    )
+    getSshFilesystemProviderMock.mockReturnValue({ listFiles: listFilesMock })
+
+    registerFilesystemHandlers(store as never)
+
+    let destroyed = false
+    const sender = Object.assign(new EventEmitter(), {
+      id: 8,
+      isDestroyed: () => destroyed
+    })
+    const pending = handlers.get('fs:listFiles')!(
+      { sender },
+      {
+        rootPath: '/home/user/repo',
+        connectionId: 'conn-1',
+        requestToken: 'token-destroyed-sender'
+      }
+    ) as Promise<string[]>
+
+    expect(capturedSignal?.aborted).toBe(false)
+    expect(sender.listenerCount('destroyed')).toBe(1)
+
+    destroyed = true
+    sender.emit('destroyed')
+
+    expect(capturedSignal?.aborted).toBe(true)
+    await expect(pending).rejects.toThrow('sender destroyed')
+    expect(sender.listenerCount('destroyed')).toBe(0)
+  })
+
   // Why #7721: without a cancel path, every workspace switch left the previous
   // workspace's full-tree SSH scan running, stacking scans on the relay until
   // interactive fs.readDir/fs.stat starved past their 30s timeout.
