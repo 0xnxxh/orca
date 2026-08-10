@@ -19849,7 +19849,7 @@ describe('OrcaRuntimeService', () => {
     let flushCount = 0
     const flushOrThrow = vi.fn(() => {
       flushCount += 1
-      if (flushCount === 1 || flushCount === 3) {
+      if (flushCount === 2) {
         throw new Error('disk unavailable')
       }
     })
@@ -19911,7 +19911,7 @@ describe('OrcaRuntimeService', () => {
       exitedDispatchIds: [],
       deferredDispatchIds: ['dispatch-persistence-failure']
     })
-    expect(flushOrThrow).toHaveBeenCalledTimes(3)
+    expect(flushOrThrow).toHaveBeenCalledTimes(2)
     expect(revealTerminalSession).toHaveBeenCalledOnce()
     expect(
       getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]?.automaticResumeBlockedBy
@@ -19942,8 +19942,17 @@ describe('OrcaRuntimeService', () => {
       }
     }
     const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(session)
+    const durableWrite = deferred<void>()
+    const durableWriteStarted = deferred<void>()
+    const flushPendingOrThrowAsync = vi.fn(() => {
+      durableWriteStarted.resolve()
+      return durableWrite.promise
+    })
+    const flushOrThrow = vi.fn(() => {
+      throw new Error('synchronous persistence must not run')
+    })
     const runtime = new OrcaRuntimeService(
-      { ...runtimeStore, flushOrThrow: vi.fn() } as never,
+      { ...runtimeStore, flushOrThrow, flushPendingOrThrowAsync } as never,
       undefined,
       { canRecoverPersistentLocalPtys: () => true }
     )
@@ -19975,12 +19984,24 @@ describe('OrcaRuntimeService', () => {
       const resolveLegacyWorkerTerminalRecovery = vi.fn()
       runtime.setNotifier({ resolveLegacyWorkerTerminalRecovery } as never)
 
-      await expect(runtime.reconcileLegacyWorkerTerminals()).resolves.toMatchObject({
+      const recovery = runtime.reconcileLegacyWorkerTerminals()
+      await durableWriteStarted.promise
+
+      expect(resolveLegacyWorkerTerminalRecovery).not.toHaveBeenCalled()
+      expect(db.getDispatchContextById(started.dispatch.id)?.status).toBe('dispatched')
+      durableWrite.resolve()
+
+      await expect(recovery).resolves.toMatchObject({
         adoptedDispatchIds: [],
         exitedDispatchIds: [started.dispatch.id],
         deferredDispatchIds: []
       })
 
+      expect(flushPendingOrThrowAsync).toHaveBeenCalledOnce()
+      expect(flushPendingOrThrowAsync).toHaveBeenCalledWith({
+        drainToStableGeneration: false
+      })
+      expect(flushOrThrow).not.toHaveBeenCalled()
       expect(db.getDispatchContextById(started.dispatch.id)).toMatchObject({
         status: 'failed',
         failure_count: 1
@@ -20023,7 +20044,6 @@ describe('OrcaRuntimeService', () => {
     const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(session)
     const flushOrThrow = vi
       .fn()
-      .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
         throw new Error('disk unavailable')
       })

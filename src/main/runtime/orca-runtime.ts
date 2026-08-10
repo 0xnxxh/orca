@@ -1116,6 +1116,7 @@ type RuntimeStore = {
   getWorkspaceSessionHostIds?: Store['getWorkspaceSessionHostIds']
   setWorkspaceSession?: Store['setWorkspaceSession']
   flushOrThrow?: Store['flushOrThrow']
+  flushPendingOrThrowAsync?: Store['flushPendingOrThrowAsync']
   persistPtyBinding?: Store['persistPtyBinding']
   getSshRemotePtyLeases?: Store['getSshRemotePtyLeases']
   getUI?: Store['getUI']
@@ -1976,6 +1977,11 @@ export type LegacyWorkerTerminalRecoveryResult = {
   adoptedDispatchIds: string[]
   exitedDispatchIds: string[]
   deferredDispatchIds: string[]
+}
+
+type LegacyWorkerTerminalRecoveryResolution = {
+  candidate: LegacyWorkerTerminalRecoveryPlan['candidates'][number]
+  resolution: 'adopted' | 'exited'
 }
 
 export type OrchestrationCompatibilityCallerAuthority = Readonly<{
@@ -3803,7 +3809,11 @@ export class OrcaRuntimeService {
   prepareLegacyWorkerTerminalRecovery(): LegacyWorkerTerminalRecoveryPlan {
     const plan = this.getLegacyWorkerTerminalRecoveryPlan()
     const store = this.store
-    if (!store?.getWorkspaceSession || !store.setWorkspaceSession || !store.flushOrThrow) {
+    if (
+      !store?.getWorkspaceSession ||
+      !store.setWorkspaceSession ||
+      (!store.flushPendingOrThrowAsync && !store.flushOrThrow)
+    ) {
       return plan
     }
     const sessions = new Map<
@@ -3858,11 +3868,23 @@ export class OrcaRuntimeService {
       for (const [hostId, state] of changed) {
         store.setWorkspaceSession(state.next, hostId)
       }
-      store.flushOrThrow()
     } catch (error) {
-      console.warn('[orchestration] failed to persist legacy worker resume fence', error)
+      console.warn('[orchestration] failed to stage legacy worker resume fence', error)
     }
     return plan
+  }
+
+  private async flushWorkspaceSessionOrThrowAsync(): Promise<void> {
+    const store = this.store
+    if (store?.flushPendingOrThrowAsync) {
+      await store.flushPendingOrThrowAsync({ drainToStableGeneration: false })
+      return
+    }
+    if (store?.flushOrThrow) {
+      store.flushOrThrow()
+      return
+    }
+    throw new Error('workspace_session_persistence_unavailable')
   }
 
   async reconcileLegacyWorkerTerminals(
@@ -3964,33 +3986,63 @@ export class OrcaRuntimeService {
     )
   }
 
-  private persistLegacyWorkerTerminalRecoveryResolution(
-    candidate: LegacyWorkerTerminalRecoveryPlan['candidates'][number],
-    resolution: 'adopted' | 'exited'
-  ): boolean {
+  private async persistLegacyWorkerTerminalRecoveryBatch(
+    resolutions: readonly LegacyWorkerTerminalRecoveryResolution[]
+  ): Promise<ReadonlySet<string>> {
     const store = this.store
-    const session = this.getWorkspaceSessionForWorktree(candidate.worktreeId)
-    if (!store?.setWorkspaceSession || !store.flushOrThrow || !session) {
-      return false
+    if (
+      !store?.getWorkspaceSession ||
+      !store.setWorkspaceSession ||
+      (!store.flushPendingOrThrowAsync && !store.flushOrThrow)
+    ) {
+      return new Set()
     }
-    const record = session.sleepingAgentSessionsByPaneKey?.[candidate.paneKey]
-    if (!record || !runtimeWorktreeIdsEqual(record.worktreeId, candidate.worktreeId)) {
-      return true
-    }
-    const next = structuredClone(session)
-    delete next.sleepingAgentSessionsByPaneKey?.[candidate.paneKey]
+    const originalSessions = new Map<ExecutionHostId, WorkspaceSessionState>()
+    const stagedDispatchIds = new Set<string>()
+    let changed = false
     try {
-      this.setWorkspaceSessionForWorktree(candidate.worktreeId, next)
-      store.flushOrThrow()
-      return true
+      for (const { candidate, resolution } of resolutions) {
+        const hostId = this.tryGetWorkspaceSessionHostIdForWorktree(candidate.worktreeId)
+        const session = hostId ? store.getWorkspaceSession(hostId) : null
+        if (!hostId || !session) {
+          continue
+        }
+        originalSessions.set(hostId, originalSessions.get(hostId) ?? session)
+        let next =
+          resolution === 'exited'
+            ? retireTerminalSurfaceFromPersistence(session, {
+                worktreeId: candidate.worktreeId,
+                parentTabId: candidate.tabId,
+                leafId: candidate.leafId,
+                ptyId: candidate.ptyId,
+                incarnationId: candidate.incarnationId
+              })
+            : session
+        const record = next.sleepingAgentSessionsByPaneKey?.[candidate.paneKey]
+        if (record && runtimeWorktreeIdsEqual(record.worktreeId, candidate.worktreeId)) {
+          const sleepingAgentSessionsByPaneKey = { ...next.sleepingAgentSessionsByPaneKey }
+          delete sleepingAgentSessionsByPaneKey[candidate.paneKey]
+          next = { ...next, sleepingAgentSessionsByPaneKey }
+        }
+        if (next !== session) {
+          store.setWorkspaceSession(next, hostId)
+          changed = true
+        }
+        stagedDispatchIds.add(candidate.dispatchId)
+      }
+      if (changed) {
+        await this.flushWorkspaceSessionOrThrowAsync()
+      }
+      return stagedDispatchIds
     } catch (error) {
-      this.setWorkspaceSessionForWorktree(candidate.worktreeId, session)
-      console.warn('[orchestration] failed to persist legacy worker recovery resolution', {
-        dispatchId: candidate.dispatchId,
-        resolution,
+      for (const [hostId, session] of originalSessions) {
+        store.setWorkspaceSession(session, hostId)
+      }
+      console.warn('[orchestration] failed to persist legacy worker recovery batch', {
+        dispatchIds: [...stagedDispatchIds],
         error
       })
-      return false
+      return new Set()
     }
   }
 
@@ -4015,48 +4067,9 @@ export class OrcaRuntimeService {
     }
   }
 
-  private resolveExitedLegacyWorkerTerminal(
-    candidate: LegacyWorkerTerminalRecoveryPlan['candidates'][number]
-  ): boolean {
-    if (
-      !this.rollbackLegacyWorkerTerminalSurface(candidate) ||
-      !this.persistLegacyWorkerTerminalRecoveryResolution(candidate, 'exited') ||
-      !this.reconcileMissingLegacyWorkerTerminal(candidate)
-    ) {
-      return false
-    }
-    this.notifier?.resolveLegacyWorkerTerminalRecovery?.(candidate.paneKey, 'exited')
-    return true
-  }
-
   private rollbackLegacyWorkerTerminalSurface(
     candidate: LegacyWorkerTerminalRecoveryPlan['candidates'][number]
-  ): boolean {
-    const store = this.store
-    const session = this.getWorkspaceSessionForWorktree(candidate.worktreeId)
-    if (store?.setWorkspaceSession && store.flushOrThrow && session) {
-      const retired = retireTerminalSurfaceFromPersistence(session, {
-        worktreeId: candidate.worktreeId,
-        parentTabId: candidate.tabId,
-        leafId: candidate.leafId,
-        ptyId: candidate.ptyId,
-        incarnationId: candidate.incarnationId
-      })
-      if (retired !== session) {
-        try {
-          this.setWorkspaceSessionForWorktree(candidate.worktreeId, retired)
-          store.flushOrThrow()
-        } catch (error) {
-          this.setWorkspaceSessionForWorktree(candidate.worktreeId, session)
-          console.warn('[orchestration] failed to persist legacy worker surface rollback', {
-            dispatchId: candidate.dispatchId,
-            error
-          })
-          return false
-        }
-      }
-    }
-
+  ): void {
     const snapshot = this.mobileSessionTabsByWorktree.get(candidate.worktreeId)
     if (snapshot) {
       const retired = retireTerminalSurfacesFromSnapshot({
@@ -4104,13 +4117,6 @@ export class OrcaRuntimeService {
       'rolled_back',
       candidate.ptyId
     )
-    return true
-  }
-
-  private resolveReplacedLegacyWorkerTerminal(
-    candidate: LegacyWorkerTerminalRecoveryPlan['candidates'][number]
-  ): boolean {
-    return this.resolveExitedLegacyWorkerTerminal(candidate)
   }
 
   private updateLegacyWorkerTerminalRecoveryRetry(
@@ -4190,6 +4196,7 @@ export class OrcaRuntimeService {
     const adoptedDispatchIds: string[] = []
     const exitedDispatchIds: string[] = []
     const deferredDispatchIds = new Set(plan.ambiguousDispatchIds)
+    const pendingResolutions: LegacyWorkerTerminalRecoveryResolution[] = []
     const recoveryCandidatesByProvider = new Map<
       string,
       {
@@ -4256,11 +4263,7 @@ export class OrcaRuntimeService {
       }
       for (const { candidate, workspace } of provider.entries) {
         if (!inventory.livePtyIds.has(candidate.ptyId)) {
-          if (this.resolveExitedLegacyWorkerTerminal(candidate)) {
-            exitedDispatchIds.push(candidate.dispatchId)
-          } else {
-            deferredDispatchIds.add(candidate.dispatchId)
-          }
+          pendingResolutions.push({ candidate, resolution: 'exited' })
           continue
         }
         const controllerIdentity = inventory.terminalIdentityByPtyId.get(candidate.ptyId)
@@ -4272,11 +4275,7 @@ export class OrcaRuntimeService {
           controllerIdentity.handle !== candidate.terminalHandle ||
           controllerIdentity.incarnationId !== candidate.incarnationId
         ) {
-          if (this.resolveReplacedLegacyWorkerTerminal(candidate)) {
-            exitedDispatchIds.push(candidate.dispatchId)
-          } else {
-            deferredDispatchIds.add(candidate.dispatchId)
-          }
+          pendingResolutions.push({ candidate, resolution: 'exited' })
           continue
         }
         const preAdoptionInventory = await this.refreshPtyWorktreeRecordsWithControllerInventory(
@@ -4290,11 +4289,7 @@ export class OrcaRuntimeService {
           continue
         }
         if (!preAdoptionInventory.livePtyIds.has(candidate.ptyId)) {
-          if (this.resolveExitedLegacyWorkerTerminal(candidate)) {
-            exitedDispatchIds.push(candidate.dispatchId)
-          } else {
-            deferredDispatchIds.add(candidate.dispatchId)
-          }
+          pendingResolutions.push({ candidate, resolution: 'exited' })
           continue
         }
         const preAdoptionIdentity = preAdoptionInventory.terminalIdentityByPtyId.get(
@@ -4308,11 +4303,7 @@ export class OrcaRuntimeService {
           preAdoptionIdentity.handle !== candidate.terminalHandle ||
           preAdoptionIdentity.incarnationId !== candidate.incarnationId
         ) {
-          if (this.resolveReplacedLegacyWorkerTerminal(candidate)) {
-            exitedDispatchIds.push(candidate.dispatchId)
-          } else {
-            deferredDispatchIds.add(candidate.dispatchId)
-          }
+          pendingResolutions.push({ candidate, resolution: 'exited' })
           continue
         }
         const session = this.getWorkspaceSessionForWorktree(candidate.worktreeId)
@@ -4443,11 +4434,7 @@ export class OrcaRuntimeService {
         if (!finalInventory.livePtyIds.has(candidate.ptyId)) {
           this.legacyWorkerTerminalReceiptEpochByPane.delete(candidate.paneKey)
           this.onPtyExit(candidate.ptyId, 0, candidate.incarnationId)
-          if (this.resolveExitedLegacyWorkerTerminal(candidate)) {
-            exitedDispatchIds.push(candidate.dispatchId)
-          } else {
-            deferredDispatchIds.add(candidate.dispatchId)
-          }
+          pendingResolutions.push({ candidate, resolution: 'exited' })
           continue
         }
         const finalIdentity = finalInventory.terminalIdentityByPtyId.get(candidate.ptyId)
@@ -4461,21 +4448,32 @@ export class OrcaRuntimeService {
           finalIdentity.incarnationId !== candidate.incarnationId
         ) {
           this.legacyWorkerTerminalReceiptEpochByPane.delete(candidate.paneKey)
-          if (this.resolveReplacedLegacyWorkerTerminal(candidate)) {
-            exitedDispatchIds.push(candidate.dispatchId)
-          } else {
-            deferredDispatchIds.add(candidate.dispatchId)
-          }
+          pendingResolutions.push({ candidate, resolution: 'exited' })
           continue
         }
-        if (!this.persistLegacyWorkerTerminalRecoveryResolution(candidate, 'adopted')) {
-          deferredDispatchIds.add(candidate.dispatchId)
-          continue
-        }
+        pendingResolutions.push({ candidate, resolution: 'adopted' })
+      }
+    }
+    const persistedDispatchIds =
+      await this.persistLegacyWorkerTerminalRecoveryBatch(pendingResolutions)
+    for (const { candidate, resolution } of pendingResolutions) {
+      if (!persistedDispatchIds.has(candidate.dispatchId)) {
+        deferredDispatchIds.add(candidate.dispatchId)
+        continue
+      }
+      if (resolution === 'adopted') {
         this.legacyWorkerRecoveredPtys.add(candidate.ptyId)
         this.notifier?.resolveLegacyWorkerTerminalRecovery?.(candidate.paneKey, 'adopted')
         adoptedDispatchIds.push(candidate.dispatchId)
+        continue
       }
+      this.rollbackLegacyWorkerTerminalSurface(candidate)
+      if (!this.reconcileMissingLegacyWorkerTerminal(candidate)) {
+        deferredDispatchIds.add(candidate.dispatchId)
+        continue
+      }
+      this.notifier?.resolveLegacyWorkerTerminalRecovery?.(candidate.paneKey, 'exited')
+      exitedDispatchIds.push(candidate.dispatchId)
     }
     const result = {
       blockedPaneCount: plan.blockedPanes.length,
@@ -15447,7 +15445,11 @@ export class OrcaRuntimeService {
     const { livePtyIds, terminalIdentityByPtyId } = inventory
     const store = this.store
     const session = this.getWorkspaceSessionForWorktree(workspace.id)
-    if (!store?.setWorkspaceSession || !store.flushOrThrow || !session) {
+    if (
+      !store?.setWorkspaceSession ||
+      (!store.flushPendingOrThrowAsync && !store.flushOrThrow) ||
+      !session
+    ) {
       throw new Error('workspace_session_unavailable')
     }
     const sessionWorktreeId = resolveTerminalSessionWorktreeId(session, workspace.id)
@@ -15869,7 +15871,7 @@ export class OrcaRuntimeService {
     const persisted = advanceTerminalTopologyRevision(next, workspace.id)
     try {
       this.setWorkspaceSessionForWorktree(workspace.id, persisted)
-      store.flushOrThrow()
+      await this.flushWorkspaceSessionOrThrowAsync()
     } catch (error) {
       this.setWorkspaceSessionForWorktree(workspace.id, session)
       throw error
