@@ -252,7 +252,8 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
         return
       }
       const classification = classifySend(text)
-      const verified = verifyCodexSend(agent, classification, sessionOptionsSurface, text.trim())
+      const optionSurface = imagePaths.length === 0 ? sessionOptionsSurface : null
+      const verified = verifyCodexSend(agent, classification, optionSurface, text.trim())
       // A parked launch draft must be cleared line-by-line before the body.
       const launchDraftSend = resolveNativeChatLaunchDraftSend({
         launchDraft,
@@ -288,7 +289,7 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
         // mutate session-option state; unknown slash-like text has no such proof.
         if (classification === 'command') {
           onSlashCommand?.(text.trim())
-          sessionOptionsSurface?.recordOutgoingCommand(text.trim(), pendingHandle?.submission)
+          optionSurface?.recordOutgoingCommand(text.trim(), pendingHandle?.submission)
         }
       } else {
         const pendingId = onOptimisticSend?.(text, imagePaths)
