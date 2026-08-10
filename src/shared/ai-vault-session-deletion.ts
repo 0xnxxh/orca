@@ -4,7 +4,8 @@ import type { ExecutionHostId } from './execution-host'
 // IPC payload for aiVault:deleteSession.
 export type AiVaultDeleteSessionArgs = {
   agent: AiVaultAgent
-  // Optional for mixed renderer/main versions; main rejects missing identity.
+  // Optional for mixed renderer/main versions. Main ignores this field on delete
+  // (path + host + agent validation only; no identity/liveness check).
   sessionId?: string
   filePath: string
   // The session's host; only a local session may be deleted.
