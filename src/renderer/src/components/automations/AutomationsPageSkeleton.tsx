@@ -39,6 +39,7 @@ function TableRowSkeleton({
 
 const TABLE_ROW_SKELETONS = [
   {
+    id: 'row-1',
     nameWidthClass: 'w-28',
     scheduleWidthClass: 'w-36',
     projectWidthClass: 'w-28',
@@ -46,6 +47,7 @@ const TABLE_ROW_SKELETONS = [
     statusWidthClass: 'w-16'
   },
   {
+    id: 'row-2',
     nameWidthClass: 'w-36',
     scheduleWidthClass: 'w-28',
     projectWidthClass: 'w-32',
@@ -53,6 +55,7 @@ const TABLE_ROW_SKELETONS = [
     statusWidthClass: 'w-14'
   },
   {
+    id: 'row-3',
     nameWidthClass: 'w-24',
     scheduleWidthClass: 'w-40',
     projectWidthClass: 'w-24',
@@ -60,6 +63,7 @@ const TABLE_ROW_SKELETONS = [
     statusWidthClass: 'w-16'
   },
   {
+    id: 'row-4',
     nameWidthClass: 'w-32',
     scheduleWidthClass: 'w-32',
     projectWidthClass: 'w-36',
@@ -67,6 +71,7 @@ const TABLE_ROW_SKELETONS = [
     statusWidthClass: 'w-14'
   },
   {
+    id: 'row-5',
     nameWidthClass: 'w-40',
     scheduleWidthClass: 'w-24',
     projectWidthClass: 'w-28',
@@ -74,6 +79,7 @@ const TABLE_ROW_SKELETONS = [
     statusWidthClass: 'w-16'
   },
   {
+    id: 'row-6',
     nameWidthClass: 'w-28',
     scheduleWidthClass: 'w-36',
     projectWidthClass: 'w-20',
@@ -101,7 +107,7 @@ export function AutomationsPageSkeleton(): React.JSX.Element {
       </div>
       <div
         className={cn('min-h-0 flex-1 overflow-hidden', AUTOMATIONS_TABLE_CONTAINER_CLASS)}
-        data-contextual-tour-target="automations-list"
+        data-contextual-fix-target="automations-list"
       >
         <div className={cn(AUTOMATIONS_TABLE_GRID_CLASS, AUTOMATIONS_TABLE_HEADER_CLASS)}>
           <SkeletonBar className="h-2.5 w-12" />
@@ -113,8 +119,8 @@ export function AutomationsPageSkeleton(): React.JSX.Element {
           <span />
         </div>
         <div className="divide-y divide-border/50">
-          {TABLE_ROW_SKELETONS.map((row, index) => (
-            <TableRowSkeleton key={index} {...row} />
+          {TABLE_ROW_SKELETONS.map(({ id, ...row }) => (
+            <TableRowSkeleton key={id} {...row} />
           ))}
         </div>
       </div>
