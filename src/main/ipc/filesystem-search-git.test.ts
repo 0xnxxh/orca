@@ -204,25 +204,31 @@ describe('filesystem-search-git', () => {
   })
 
   it('bounds a WSL folder-workspace git grep record', async () => {
-    const proc = createMockProcess()
-    spawnMock.mockReturnValue(proc)
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    try {
+      const proc = createMockProcess()
+      spawnMock.mockReturnValue(proc)
 
-    const rootPath = 'C:\\folder-workspace'
-    const promise = searchWithGitGrep(rootPath, { query: 'ok', rootPath }, 100, {
-      wslDistro: 'Ubuntu'
-    })
-    const stdout = proc.stdout as unknown as EventEmitter
-    const chunk = 'x'.repeat(1024 * 1024)
-    for (let bytes = 0; bytes <= GIT_GREP_MAX_RECORD_BYTES; bytes += chunk.length) {
-      stdout.emit('data', chunk)
+      const rootPath = 'C:\\folder-workspace'
+      const promise = searchWithGitGrep(rootPath, { query: 'ok', rootPath }, 100, {
+        wslDistro: 'Ubuntu'
+      })
+      const stdout = proc.stdout as unknown as EventEmitter
+      const chunk = 'x'.repeat(1024 * 1024)
+      for (let bytes = 0; bytes <= GIT_GREP_MAX_RECORD_BYTES; bytes += chunk.length) {
+        stdout.emit('data', chunk)
+      }
+
+      expect(proc.kill).toHaveBeenCalledTimes(1)
+      await expect(promise).resolves.toMatchObject({ truncated: true })
+      const [binary, wslArgs] = spawnMock.mock.calls[0]
+      expect(binary).toBe('wsl.exe')
+      expect(wslArgs.slice(0, 4)).toEqual(['-d', 'Ubuntu', '--', 'sh'])
+      expect(wslArgs.at(-1)).toContain('/mnt/c/folder-workspace')
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
     }
-
-    expect(proc.kill).toHaveBeenCalledTimes(1)
-    await expect(promise).resolves.toMatchObject({ truncated: true })
-    const [binary, wslArgs] = spawnMock.mock.calls[0]
-    expect(binary).toBe('wsl.exe')
-    expect(wslArgs.slice(0, 4)).toEqual(['-d', 'Ubuntu', '--', 'sh'])
-    expect(wslArgs.at(-1)).toContain('/mnt/c/folder-workspace')
   })
 
   it('skips lines without null separator', async () => {
