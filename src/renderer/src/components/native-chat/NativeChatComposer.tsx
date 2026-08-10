@@ -8,7 +8,7 @@ import {
   submitNativeChatPrompt
 } from './native-chat-runtime-send'
 import type { NativeChatSendHandle } from './native-chat-runtime-send'
-import { verifiedSendOptions } from './native-chat-verified-submit'
+import { isVerifiedOptionSend, verifiedSendOptions } from './native-chat-verified-submit'
 import { resolveNativeChatLaunchDraftSend } from './native-chat-launch-draft-send'
 import { getVerifiedNativeChatCommands } from '../../../../shared/native-chat-agent-profiles'
 import { emitNativeChatMessageSent } from '@/lib/native-chat-telemetry'
@@ -252,7 +252,7 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
         return
       }
       const classification = classifySend(text)
-      const tracksSessionOption = sessionOptionsSurface?.tracksOutgoingCommand(text.trim()) === true
+      const tracksOption = isVerifiedOptionSend(classification, sessionOptionsSurface, text.trim())
       // A parked launch draft must be cleared line-by-line before the body.
       const launchDraftSend = resolveNativeChatLaunchDraftSend({
         launchDraft,
@@ -260,7 +260,7 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
         agent,
         readScreen: () => readTerminalScreen?.()
       })
-      const sendOptions = verifiedSendOptions(launchDraftSend.sendOptions, tracksSessionOption)
+      const sendOptions = verifiedSendOptions(launchDraftSend.sendOptions, tracksOption)
       let pendingHandle: NativeChatSendHandle | null = null
       // Why: image attachments take the attachment send path even for a
       // command/unknown send, otherwise `clearImageAttachments()` below drops
@@ -288,9 +288,7 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
         // mutate session-option state; unknown slash-like text has no such proof.
         if (classification === 'command') {
           onSlashCommand?.(text.trim())
-          if (tracksSessionOption) {
-            sessionOptionsSurface?.recordOutgoingCommand(text.trim(), pendingHandle?.submission)
-          }
+          sessionOptionsSurface?.recordOutgoingCommand(text.trim(), pendingHandle?.submission)
         }
       } else {
         const pendingId = onOptimisticSend?.(text, imagePaths)

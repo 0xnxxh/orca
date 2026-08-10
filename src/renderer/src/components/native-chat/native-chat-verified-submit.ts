@@ -10,6 +10,14 @@ type NativeChatVerifiedSubmitContext = {
   markFinished: () => void
 }
 
+export function isVerifiedOptionSend(
+  classification: string,
+  surface: { tracksOutgoingCommand(command: string): boolean } | null,
+  command: string
+): boolean {
+  return classification === 'command' && surface?.tracksOutgoingCommand(command) === true
+}
+
 export function verifiedSendOptions(
   options: NativeChatSendOptions | undefined,
   verified: boolean
