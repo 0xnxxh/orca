@@ -1,16 +1,12 @@
 import type { FolderWorkspace, ProjectGroup, Repo } from '../../../../shared/types'
-import {
-  getRepoExecutionHostId,
-  normalizeExecutionHostId,
-  toSshExecutionHostId,
-  type ExecutionHostId
-} from '../../../../shared/execution-host'
+import { getRepoExecutionHostId, type ExecutionHostId } from '../../../../shared/execution-host'
 import {
   buildProjectGroupOwnerIndex,
   getProjectGroupIdentity,
   getProjectGroupOwnerHostId,
   getProjectGroupOwnerIdentity,
   getProjectGroupOwnerSubtreeIdentities,
+  resolveFolderWorkspaceProjectGroup,
   resolveProjectGroupOwner,
   type ProjectGroupOwnerIndex
 } from '../../../../shared/project-groups'
@@ -30,26 +26,6 @@ export type ProjectGroupRemovalTargets = {
   projectIds: string[]
   projectTargets: ProjectGroupRemovalProjectTarget[]
   folderWorkspaceIdentities: Set<string>
-}
-
-function getFolderWorkspacePreferredOwnerHostId(
-  workspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId'>
-): ExecutionHostId | undefined {
-  return (
-    normalizeExecutionHostId(workspace.executionHostId) ??
-    (workspace.connectionId ? toSshExecutionHostId(workspace.connectionId) : undefined)
-  )
-}
-
-function resolveFolderWorkspaceProjectGroup(
-  index: ProjectGroupOwnerIndex,
-  workspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId' | 'projectGroupId'>
-): ProjectGroup | null {
-  return resolveProjectGroupOwner(
-    index,
-    workspace.projectGroupId,
-    getFolderWorkspacePreferredOwnerHostId(workspace)
-  )
 }
 
 export function getProjectGroupRemovalFolderWorkspaceIdentity(

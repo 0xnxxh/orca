@@ -5,16 +5,15 @@ import { realpath } from 'node:fs/promises'
 import type { Store } from '../persistence'
 import { isRepoRoot, listRepoWorktrees } from '../repo-worktrees'
 import { computeWorkspaceRoot, getWorktreePathSettings } from './worktree-logic'
-import { isPathInsideOrEqual } from '../../shared/cross-platform-path'
+import { normalizeRuntimePathForComparison } from '../../shared/cross-platform-path'
 import {
   buildProjectGroupOwnerIndex,
   getProjectGroupOwnerHostId,
-  getProjectGroupSubtreeIds,
   resolveFolderWorkspaceProjectGroup
 } from '../../shared/project-groups'
 import { getRepoExecutionHostId, LOCAL_EXECUTION_HOST_ID } from '../../shared/execution-host'
 import type { ProjectGroup, Repo } from '../../shared/types'
-import { getFolderWorkspaceCatalogOwnerHostId } from '../../shared/folder-workspaces'
+import { resolveFolderWorkspaceCatalogOwnerHostId } from '../../shared/folder-workspaces'
 
 export const PATH_ACCESS_DENIED_MESSAGE =
   'Access denied: path resolves outside allowed directories. If this blocks a legitimate workflow, please file a GitHub issue.'
@@ -67,13 +66,18 @@ function getLocalRepos(store: Store) {
 
 type FolderAuthIndex = {
   projectGroupIndex: ReturnType<typeof buildProjectGroupOwnerIndex>
-  ownerGroupIdsByOwner: Map<string, ProjectGroup[]>
-  reposByOwner: Map<string, Repo[]>
-  reposByOwnerAndGroupId: Map<string, Repo[]>
-  ownerSubtreeIds: Map<string, Map<string, Set<string>>>
-  unscopedSubtreeIds: Map<string, Set<string>>
-  repos: readonly Repo[]
-  projectGroups: readonly ProjectGroup[]
+  groupMembership: ReadonlyMap<string, GroupMembershipSummary>
+  legacyGroupMembership: ReadonlyMap<string, GroupMembershipSummary>
+  allRepoPaths: readonly string[]
+  localOwnerRepoPaths: readonly string[]
+  unconnectedRepoPathsByOwner: ReadonlyMap<string, readonly string[]>
+}
+
+type GroupMembershipSummary = {
+  repoCount: number
+  hasLocalOwner: boolean
+  hasUnconnectedRepo: boolean
+  unsafeCycle: boolean
 }
 
 function ownerGroupKey(ownerHostId: string, groupId: string): string {
@@ -85,118 +89,183 @@ function buildFolderAuthIndex(
   repos: readonly Repo[]
 ): FolderAuthIndex {
   const projectGroupIndex = buildProjectGroupOwnerIndex(projectGroups)
-  const ownerGroupIdsByOwner = new Map<string, ProjectGroup[]>()
-  const childrenByOwnerParent = new Map<string, string[]>()
+  const parentByGroup = new Map<string, string>()
+  const remainingChildren = new Map<string, number>()
+  const groupMembership = new Map<string, GroupMembershipSummary>()
+  const legacyParentsByGroup = new Map<string, Set<string>>()
+  const legacyChildrenByGroup = new Map<string, Set<string>>()
+  const legacyGroupMembership = new Map<string, GroupMembershipSummary>()
   for (const group of projectGroups) {
     const ownerHostId = getProjectGroupOwnerHostId(group)
-    const ownerGroups = ownerGroupIdsByOwner.get(ownerHostId) ?? []
-    ownerGroups.push(group)
-    ownerGroupIdsByOwner.set(ownerHostId, ownerGroups)
+    const key = ownerGroupKey(ownerHostId, group.id)
+    remainingChildren.set(key, 0)
+    groupMembership.set(key, emptyGroupMembershipSummary())
+    if (!legacyGroupMembership.has(group.id)) {
+      legacyGroupMembership.set(group.id, emptyGroupMembershipSummary())
+    }
+    if (group.parentGroupId) {
+      const parents = legacyParentsByGroup.get(group.id) ?? new Set<string>()
+      parents.add(group.parentGroupId)
+      legacyParentsByGroup.set(group.id, parents)
+      const children = legacyChildrenByGroup.get(group.parentGroupId) ?? new Set<string>()
+      children.add(group.id)
+      legacyChildrenByGroup.set(group.parentGroupId, children)
+    }
+  }
+  for (const group of projectGroups) {
     if (!group.parentGroupId) {
       continue
     }
+    const ownerHostId = getProjectGroupOwnerHostId(group)
+    const key = ownerGroupKey(ownerHostId, group.id)
     const parentKey = ownerGroupKey(ownerHostId, group.parentGroupId)
-    const children = childrenByOwnerParent.get(parentKey) ?? []
-    children.push(group.id)
-    childrenByOwnerParent.set(parentKey, children)
-  }
-
-  const ownerSubtreeIds = new Map<string, Map<string, Set<string>>>()
-  for (const [ownerHostId, groups] of ownerGroupIdsByOwner) {
-    const subtreeByRoot = new Map<string, Set<string>>()
-    for (const group of groups) {
-      if (subtreeByRoot.has(group.id)) {
-        continue
-      }
-      const subtree = new Set<string>()
-      const pending = [group.id]
-      while (pending.length > 0) {
-        const groupId = pending.pop()!
-        if (subtree.has(groupId)) {
-          continue
-        }
-        subtree.add(groupId)
-        for (const childId of childrenByOwnerParent.get(ownerGroupKey(ownerHostId, groupId)) ??
-          []) {
-          pending.push(childId)
-        }
-      }
-      subtreeByRoot.set(group.id, subtree)
-    }
-    ownerSubtreeIds.set(ownerHostId, subtreeByRoot)
-  }
-
-  const unscopedSubtreeIds = new Map<string, Set<string>>()
-  for (const group of projectGroups) {
-    if (!unscopedSubtreeIds.has(group.id)) {
-      unscopedSubtreeIds.set(group.id, getProjectGroupSubtreeIds(projectGroups, group.id))
+    if (remainingChildren.has(parentKey)) {
+      parentByGroup.set(key, parentKey)
+      remainingChildren.set(parentKey, (remainingChildren.get(parentKey) ?? 0) + 1)
     }
   }
 
-  const reposByOwner = new Map<string, Repo[]>()
-  const reposByOwnerAndGroupId = new Map<string, Repo[]>()
+  const allRepoPaths: string[] = []
+  const localOwnerRepoPaths: string[] = []
+  const unconnectedRepoPathsByOwner = new Map<string, string[]>()
   for (const repo of repos) {
     const ownerHostId = getRepoExecutionHostId(repo)
-    const ownerRepos = reposByOwner.get(ownerHostId) ?? []
-    ownerRepos.push(repo)
-    reposByOwner.set(ownerHostId, ownerRepos)
+    const normalizedPath = normalizeRuntimePathForComparison(repo.path)
+    allRepoPaths.push(normalizedPath)
+    if (ownerHostId === LOCAL_EXECUTION_HOST_ID) {
+      localOwnerRepoPaths.push(normalizedPath)
+    }
+    if (!repo.connectionId) {
+      const ownerPaths = unconnectedRepoPathsByOwner.get(ownerHostId) ?? []
+      ownerPaths.push(normalizedPath)
+      unconnectedRepoPathsByOwner.set(ownerHostId, ownerPaths)
+    }
     if (typeof repo.projectGroupId === 'string') {
       const key = ownerGroupKey(ownerHostId, repo.projectGroupId)
-      const groupRepos = reposByOwnerAndGroupId.get(key) ?? []
-      groupRepos.push(repo)
-      reposByOwnerAndGroupId.set(key, groupRepos)
-    }
-  }
-
-  return {
-    projectGroupIndex,
-    ownerGroupIdsByOwner,
-    reposByOwner,
-    reposByOwnerAndGroupId,
-    ownerSubtreeIds,
-    unscopedSubtreeIds,
-    repos,
-    projectGroups
-  }
-}
-
-function collectOwnerGroupMembershipRepos(
-  index: FolderAuthIndex,
-  projectGroupId: string,
-  ownerHostId: string
-): Repo[] {
-  const groupIds =
-    index.ownerSubtreeIds.get(ownerHostId)?.get(projectGroupId) ?? new Set([projectGroupId])
-  const seen = new Set<Repo>()
-  const candidates: Repo[] = []
-  for (const groupId of groupIds) {
-    for (const repo of index.reposByOwnerAndGroupId.get(ownerGroupKey(ownerHostId, groupId)) ??
-      []) {
-      if (!seen.has(repo)) {
-        seen.add(repo)
-        candidates.push(repo)
+      const summary = groupMembership.get(key)
+      if (summary) {
+        summary.repoCount++
+        summary.hasLocalOwner ||= ownerHostId === LOCAL_EXECUTION_HOST_ID
+        summary.hasUnconnectedRepo ||= !repo.connectionId
+      }
+      const legacySummary = legacyGroupMembership.get(repo.projectGroupId)
+      if (legacySummary) {
+        legacySummary.repoCount++
+        legacySummary.hasLocalOwner ||= ownerHostId === LOCAL_EXECUTION_HOST_ID
+        legacySummary.hasUnconnectedRepo ||= !repo.connectionId
       }
     }
   }
-  return candidates
-}
 
-function collectOwnerPathMembershipRepos(
-  index: FolderAuthIndex,
-  folderPath: string,
-  ownerHostId: string,
-  exclude: ReadonlySet<Repo>
-): Repo[] {
-  const candidates: Repo[] = []
-  for (const repo of index.reposByOwner.get(ownerHostId) ?? []) {
-    if (exclude.has(repo)) {
+  const pending = [...remainingChildren]
+    .filter(([, childCount]) => childCount === 0)
+    .map(([key]) => key)
+  let processed = 0
+  while (pending.length > 0) {
+    const key = pending.pop()!
+    processed++
+    const parentKey = parentByGroup.get(key)
+    if (!parentKey) {
       continue
     }
-    if (isPathInsideOrEqual(folderPath, repo.path)) {
-      candidates.push(repo)
+    mergeGroupMembership(groupMembership.get(parentKey)!, groupMembership.get(key)!)
+    const nextChildCount = (remainingChildren.get(parentKey) ?? 1) - 1
+    remainingChildren.set(parentKey, nextChildCount)
+    if (nextChildCount === 0) {
+      pending.push(parentKey)
     }
   }
-  return candidates
+  if (processed !== groupMembership.size) {
+    for (const [key, childCount] of remainingChildren) {
+      if (childCount > 0) {
+        groupMembership.get(key)!.unsafeCycle = true
+      }
+    }
+  }
+
+  const legacyRemainingChildren = new Map(
+    [...legacyGroupMembership.keys()].map((groupId) => [
+      groupId,
+      legacyChildrenByGroup.get(groupId)?.size ?? 0
+    ])
+  )
+  const legacyPending = [...legacyRemainingChildren]
+    .filter(([, childCount]) => childCount === 0)
+    .map(([groupId]) => groupId)
+  let legacyProcessed = 0
+  while (legacyPending.length > 0) {
+    const groupId = legacyPending.pop()!
+    legacyProcessed++
+    for (const parentId of legacyParentsByGroup.get(groupId) ?? []) {
+      const parentSummary = legacyGroupMembership.get(parentId)
+      if (!parentSummary) {
+        continue
+      }
+      mergeGroupMembership(parentSummary, legacyGroupMembership.get(groupId)!)
+      const nextChildCount = (legacyRemainingChildren.get(parentId) ?? 1) - 1
+      legacyRemainingChildren.set(parentId, nextChildCount)
+      if (nextChildCount === 0) {
+        legacyPending.push(parentId)
+      }
+    }
+  }
+  if (legacyProcessed !== legacyGroupMembership.size) {
+    for (const [groupId, childCount] of legacyRemainingChildren) {
+      if (childCount > 0) {
+        legacyGroupMembership.get(groupId)!.unsafeCycle = true
+      }
+    }
+  }
+
+  allRepoPaths.sort()
+  localOwnerRepoPaths.sort()
+  for (const paths of unconnectedRepoPathsByOwner.values()) {
+    paths.sort()
+  }
+  return {
+    projectGroupIndex,
+    groupMembership,
+    legacyGroupMembership,
+    allRepoPaths,
+    localOwnerRepoPaths,
+    unconnectedRepoPathsByOwner
+  }
+}
+
+function emptyGroupMembershipSummary(): GroupMembershipSummary {
+  return {
+    repoCount: 0,
+    hasLocalOwner: false,
+    hasUnconnectedRepo: false,
+    unsafeCycle: false
+  }
+}
+
+function mergeGroupMembership(target: GroupMembershipSummary, child: GroupMembershipSummary): void {
+  target.repoCount += child.repoCount
+  target.hasLocalOwner ||= child.hasLocalOwner
+  target.hasUnconnectedRepo ||= child.hasUnconnectedRepo
+  target.unsafeCycle ||= child.unsafeCycle
+}
+
+function hasIndexedPathInside(rootPath: string, sortedPaths: readonly string[]): boolean {
+  const root = normalizeRuntimePathForComparison(rootPath)
+  let low = 0
+  let high = sortedPaths.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (sortedPaths[middle] < root) {
+      low = middle + 1
+    } else {
+      high = middle
+    }
+  }
+  const candidate = sortedPaths[low]
+  if (!candidate) {
+    return false
+  }
+  const prefix = root === '/' || /^[a-z]:\/$/i.test(root) ? root : `${root}/`
+  return candidate === root || candidate.startsWith(prefix)
 }
 
 function isRemoteOnlyFolderScopeWithIndex(
@@ -209,42 +278,34 @@ function isRemoteOnlyFolderScopeWithIndex(
   if (ownerHostId !== LOCAL_EXECUTION_HOST_ID) {
     return true
   }
+  const summary =
+    index.groupMembership.get(ownerGroupKey(ownerHostId, projectGroupId)) ??
+    emptyGroupMembershipSummary()
+  if (summary.unsafeCycle) {
+    return true
+  }
   if (inferLegacyOwner) {
-    const groupIds = index.unscopedSubtreeIds.get(projectGroupId) ?? new Set([projectGroupId])
-    let sawLegacyCandidate = false
-    let sawLocalLegacyCandidate = false
-    for (const repo of index.repos) {
-      const inGroup = typeof repo.projectGroupId === 'string' && groupIds.has(repo.projectGroupId)
-      // Why: only pay path reads when group membership alone cannot classify the scope.
-      if (!inGroup && !isPathInsideOrEqual(folderPath, repo.path)) {
-        continue
-      }
-      sawLegacyCandidate = true
-      if (getRepoExecutionHostId(repo) === LOCAL_EXECUTION_HOST_ID) {
-        sawLocalLegacyCandidate = true
-        break
-      }
+    const legacySummary =
+      index.legacyGroupMembership.get(projectGroupId) ?? emptyGroupMembershipSummary()
+    if (legacySummary.unsafeCycle) {
+      return true
     }
-    if (sawLegacyCandidate && !sawLocalLegacyCandidate) {
+    const hasAnyCandidate =
+      legacySummary.repoCount > 0 || hasIndexedPathInside(folderPath, index.allRepoPaths)
+    const hasLocalCandidate =
+      legacySummary.hasLocalOwner || hasIndexedPathInside(folderPath, index.localOwnerRepoPaths)
+    if (hasAnyCandidate && !hasLocalCandidate) {
       return true
     }
   }
-  const groupCandidates = collectOwnerGroupMembershipRepos(index, projectGroupId, ownerHostId)
-  if (groupCandidates.length === 0) {
+  if (summary.repoCount === 0) {
     // Why: empty membership means no remote-linked evidence; authorize local folder scopes without path scans.
     return false
   }
-  if (groupCandidates.some((repo) => !repo.connectionId)) {
+  if (summary.hasUnconnectedRepo) {
     return false
   }
-  // Why: path containment only matters when every group-linked repo is remote-linked.
-  const pathCandidates = collectOwnerPathMembershipRepos(
-    index,
-    folderPath,
-    ownerHostId,
-    new Set(groupCandidates)
-  )
-  if (pathCandidates.some((repo) => !repo.connectionId)) {
+  if (hasIndexedPathInside(folderPath, index.unconnectedRepoPathsByOwner.get(ownerHostId) ?? [])) {
     return false
   }
   return true
@@ -276,10 +337,16 @@ function getLocalFolderScopeRoots(store: Store): string[] {
   }
   for (const workspace of scopeStore.getFolderWorkspaces?.() ?? []) {
     const group = resolveFolderWorkspaceProjectGroup(index.projectGroupIndex, workspace)
-    // Why: narrow Store doubles may omit projectGroups; folder roots stay additive from the workspace catalog.
+    if (!group && index.projectGroupIndex.byId.has(workspace.projectGroupId)) {
+      continue
+    }
+    // Why: narrow Store doubles may omit groups; folder roots stay additive from the workspace catalog.
     const ownerHostId = group
       ? getProjectGroupOwnerHostId(group)
-      : getFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups)
+      : resolveFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups)
+    if (!ownerHostId) {
+      continue
+    }
     if (
       !isRemoteOnlyFolderScopeWithIndex(
         index,

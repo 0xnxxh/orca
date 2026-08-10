@@ -67,12 +67,12 @@ describe('same-id cross-host folder workspace identity', () => {
       ],
       folderWorkspaces: [local, remote],
       folderWorkspacePathStatuses: {
-        'local:folder-workspace:local:same-id': {
+        'local:folder-workspace:["local","same-id"]': {
           status: { path: '/local/folder', exists: true },
           checkedAt: 1,
           requestSnapshot: 'local'
         },
-        'local:folder-workspace:runtime:env-1:same-id': {
+        'local:folder-workspace:["runtime:env-1","same-id"]': {
           status: { path: '/remote/folder', exists: true },
           checkedAt: 1,
           requestSnapshot: 'remote'
@@ -81,10 +81,11 @@ describe('same-id cross-host folder workspace identity', () => {
       purgeWorktreeTerminalState
     })
 
+    const deleteFolderWorkspace = vi.fn().mockResolvedValue(true)
     vi.stubGlobal('window', {
       api: {
         folderWorkspaces: {
-          delete: vi.fn().mockResolvedValue(true)
+          delete: deleteFolderWorkspace
         }
       }
     })
@@ -96,11 +97,13 @@ describe('same-id cross-host folder workspace identity', () => {
     const remaining = store.getState().folderWorkspaces
     expect(remaining).toHaveLength(1)
     expect(remaining[0]?.executionHostId).toBe('runtime:env-1')
-    expect(purgeWorktreeTerminalState).toHaveBeenCalledWith([
-      folderWorkspaceKey('same-id', 'local')
-    ])
+    expect(deleteFolderWorkspace).toHaveBeenCalledWith({
+      folderWorkspaceId: 'same-id',
+      ownerHostId: 'local'
+    })
+    expect(purgeWorktreeTerminalState).not.toHaveBeenCalled()
     expect(Object.keys(store.getState().folderWorkspacePathStatuses)).toEqual([
-      'local:folder-workspace:runtime:env-1:same-id'
+      'local:folder-workspace:["runtime:env-1","same-id"]'
     ])
   })
 
@@ -119,16 +122,13 @@ describe('same-id cross-host folder workspace identity', () => {
         { ownerHostId: 'runtime:env-1' }
       )
     expect(localKey).not.toBe(remoteKey)
-    expect(localKey).toContain('local:')
-    expect(localKey).toContain('folder-workspace:same-id')
-    expect(remoteKey).toContain('runtime:env-1:')
-    expect(remoteKey).toContain('folder-workspace:same-id')
+    expect(localKey).toContain('["local","same-id"]')
+    expect(remoteKey).toContain('["runtime:env-1","same-id"]')
   })
 
-  it('migrates legacy bare folder session tabs for the default owner on activation', () => {
+  it('keeps the legacy bare folder session identity on unambiguous activation', () => {
     const store = createTestStore()
     const bareKey = folderWorkspaceKey('folder-workspace-1')
-    const qualifiedKey = folderWorkspaceKey('folder-workspace-1', 'local')
     const folder = makeFolder({
       id: 'folder-workspace-1',
       projectGroupId: 'group-a',
@@ -161,18 +161,16 @@ describe('same-id cross-host folder workspace identity', () => {
     store.getState().setActiveFolderWorkspace('folder-workspace-1', 'local')
 
     const state = store.getState()
-    expect(state.activeWorkspaceKey).toBe(qualifiedKey)
-    expect(state.activeWorktreeId).toBe(qualifiedKey)
-    expect(state.tabsByWorktree[qualifiedKey]?.[0]?.id).toBe('legacy-tab')
-    expect(state.tabsByWorktree[bareKey]).toBeUndefined()
-    expect(state.activeTabIdByWorktree[qualifiedKey]).toBe('legacy-tab')
+    expect(state.activeWorkspaceKey).toBe(bareKey)
+    expect(state.activeWorktreeId).toBe(bareKey)
+    expect(state.tabsByWorktree[bareKey]?.[0]?.id).toBe('legacy-tab')
+    expect(state.activeTabIdByWorktree[bareKey]).toBe('legacy-tab')
     expect(state.activeTabId).toBe('legacy-tab')
   })
 
-  it('keeps owner-distinct same-id session tabs isolated across hosts', () => {
+  it('fails closed instead of owner-qualifying tabs for ambiguous folder ids', () => {
     const store = createTestStore()
-    const localKey = folderWorkspaceKey('same-id', 'local')
-    const remoteKey = folderWorkspaceKey('same-id', 'runtime:env-1')
+    const bareKey = folderWorkspaceKey('same-id')
     store.setState({
       projectGroups: [
         makeGroup({ id: 'same-group', executionHostId: 'local', parentPath: '/local' }),
@@ -193,24 +191,12 @@ describe('same-id cross-host folder workspace identity', () => {
         })
       ],
       tabsByWorktree: {
-        [localKey]: [
+        [bareKey]: [
           {
-            id: 'local-tab',
-            ptyId: 'pty-local',
-            worktreeId: localKey,
-            title: 'Local',
-            customTitle: null,
-            color: null,
-            sortOrder: 0,
-            createdAt: 1
-          }
-        ],
-        [remoteKey]: [
-          {
-            id: 'remote-tab',
-            ptyId: 'pty-remote',
-            worktreeId: remoteKey,
-            title: 'Remote',
+            id: 'legacy-tab',
+            ptyId: 'pty-legacy',
+            worktreeId: bareKey,
+            title: 'Legacy',
             customTitle: null,
             color: null,
             sortOrder: 0,
@@ -218,20 +204,38 @@ describe('same-id cross-host folder workspace identity', () => {
           }
         ]
       },
-      ptyIdsByTabId: {
-        'local-tab': ['pty-local'],
-        'remote-tab': ['pty-remote']
-      }
+      ptyIdsByTabId: { 'legacy-tab': ['pty-legacy'] }
     })
 
     store.getState().setActiveFolderWorkspace('same-id', 'local')
-    expect(store.getState().activeWorkspaceKey).toBe(localKey)
-    expect(store.getState().tabsByWorktree[localKey]?.[0]?.id).toBe('local-tab')
-    expect(store.getState().tabsByWorktree[remoteKey]?.[0]?.id).toBe('remote-tab')
+    expect(store.getState().activeWorkspaceKey).toBeNull()
+    expect(store.getState().activeWorktreeId).toBeNull()
+    expect(store.getState().tabsByWorktree[bareKey]?.[0]?.id).toBe('legacy-tab')
+  })
 
-    store.getState().setActiveFolderWorkspace('same-id', 'runtime:env-1')
-    expect(store.getState().activeWorkspaceKey).toBe(remoteKey)
-    expect(store.getState().tabsByWorktree[localKey]?.[0]?.id).toBe('local-tab')
-    expect(store.getState().tabsByWorktree[remoteKey]?.[0]?.id).toBe('remote-tab')
+  it('forwards the selected folder owner through local update IPC', async () => {
+    const local = makeFolder({ executionHostId: 'local' })
+    const remote = makeFolder({ executionHostId: 'runtime:env-1' })
+    const update = vi.fn().mockResolvedValue({ ...local, name: 'Updated' })
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [
+        makeGroup({ executionHostId: 'local' }),
+        makeGroup({ executionHostId: 'runtime:env-1' })
+      ],
+      folderWorkspaces: [local, remote]
+    })
+    vi.stubGlobal('window', { api: { folderWorkspaces: { update } } })
+
+    await expect(
+      store
+        .getState()
+        .updateFolderWorkspace('same-id', { name: 'Updated' }, { executionHostId: 'local' })
+    ).resolves.toBe(true)
+    expect(update).toHaveBeenCalledWith({
+      folderWorkspaceId: 'same-id',
+      ownerHostId: 'local',
+      updates: { name: 'Updated' }
+    })
   })
 })

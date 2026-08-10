@@ -38,6 +38,8 @@ const {
     updateProjectGroup: vi.fn(),
     deleteProjectGroup: vi.fn(),
     moveProjectToGroup: vi.fn(),
+    updateFolderWorkspace: vi.fn(),
+    removeFolderWorkspace: vi.fn(),
     getSshTarget: vi.fn()
   },
   mockGitProvider: {
@@ -179,6 +181,8 @@ describe('projectGroups IPC validation', () => {
     mockStore.updateProjectGroup.mockReset()
     mockStore.deleteProjectGroup.mockReset()
     mockStore.moveProjectToGroup.mockReset()
+    mockStore.updateFolderWorkspace.mockReset()
+    mockStore.removeFolderWorkspace.mockReset()
     mockStore.addRepo.mockReset()
     mockStore.getProjects.mockReset().mockReturnValue([])
     mockStore.getProjectHostSetups.mockReset().mockReturnValue([])
@@ -410,6 +414,28 @@ describe('projectGroups IPC validation', () => {
     expect(mockStore.updateProjectGroup).not.toHaveBeenCalled()
     expect(mockStore.deleteProjectGroup).not.toHaveBeenCalled()
     expect(mockStore.moveProjectToGroup).not.toHaveBeenCalled()
+  })
+
+  it('forwards optional folder workspace mutation ownership to persistence', () => {
+    mockStore.updateFolderWorkspace.mockReturnValue({ id: 'same-folder' })
+    mockStore.removeFolderWorkspace.mockReturnValue(true)
+
+    handlers.get('folderWorkspaces:update')!(null, {
+      folderWorkspaceId: 'same-folder',
+      ownerHostId: 'ssh:builder',
+      updates: { name: 'Remote' }
+    })
+    handlers.get('folderWorkspaces:delete')!(null, {
+      folderWorkspaceId: 'same-folder',
+      ownerHostId: 'local'
+    })
+
+    expect(mockStore.updateFolderWorkspace).toHaveBeenCalledWith(
+      'same-folder',
+      { name: 'Remote' },
+      'ssh:builder'
+    )
+    expect(mockStore.removeFolderWorkspace).toHaveBeenCalledWith('same-folder', 'local')
   })
 
   it('scans nested repositories over a connected SSH filesystem', async () => {

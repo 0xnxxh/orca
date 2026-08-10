@@ -20,9 +20,26 @@ export function getFolderWorkspaceCatalogOwnerHostId(
   workspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId' | 'projectGroupId'>,
   projectGroups: readonly ProjectGroup[] = []
 ): ExecutionHostId {
+  return (
+    resolveFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups) ?? LOCAL_EXECUTION_HOST_ID
+  )
+}
+
+export function resolveFolderWorkspaceCatalogOwnerHostId(
+  workspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId' | 'projectGroupId'>,
+  projectGroups: readonly ProjectGroup[] = []
+): ExecutionHostId | null {
   const executionHostId = normalizeExecutionHostId(workspace.executionHostId)
   if (executionHostId) {
     return executionHostId
+  }
+  if (projectGroups.length > 0) {
+    const index = buildProjectGroupOwnerIndex(projectGroups)
+    const group = resolveFolderWorkspaceProjectGroup(index, workspace)
+    if (group) {
+      return getFolderWorkspaceProjectGroupOwnerHostId(workspace, index)
+    }
+    return null
   }
   if (workspace.connectionId) {
     return toSshExecutionHostId(workspace.connectionId)
@@ -30,13 +47,7 @@ export function getFolderWorkspaceCatalogOwnerHostId(
   if (workspace.connectionId === null) {
     return LOCAL_EXECUTION_HOST_ID
   }
-  if (projectGroups.length === 0) {
-    return LOCAL_EXECUTION_HOST_ID
-  }
-  return getFolderWorkspaceProjectGroupOwnerHostId(
-    workspace,
-    buildProjectGroupOwnerIndex(projectGroups)
-  )
+  return LOCAL_EXECUTION_HOST_ID
 }
 
 export function getFolderWorkspaceOwnerIdentity(

@@ -66,6 +66,7 @@ export function parseProjectGroupSidebarHeaderKey(
 export type ProjectGroupSidebarIndex = {
   byIdentity: ReadonlyMap<ProjectGroupSidebarIdentity, ProjectGroup>
   byUnambiguousId: ReadonlyMap<string, ProjectGroup>
+  ambiguousIds: ReadonlySet<string>
 }
 
 export function buildProjectGroupSidebarIndex(
@@ -90,7 +91,7 @@ export function buildProjectGroupSidebarIndex(
       byUnambiguousId.set(group.id, group)
     }
   }
-  return { byIdentity, byUnambiguousId }
+  return { byIdentity, byUnambiguousId, ambiguousIds }
 }
 
 export function findProjectGroupForSidebarOwner(

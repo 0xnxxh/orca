@@ -949,6 +949,7 @@ const FolderWorkspaceCreateArgs = z
 
 const FolderWorkspaceUpdateArgs = z.object({
   folderWorkspaceId: z.string().min(1),
+  ownerHostId: ProjectGroupOwnerHostId.optional(),
   updates: z
     .object({
       name: z.string().optional(),
@@ -971,13 +972,15 @@ const FolderWorkspaceUpdateArgs = z.object({
 })
 
 const FolderWorkspaceSelectorArgs = z.object({
-  folderWorkspaceId: z.string().min(1)
+  folderWorkspaceId: z.string().min(1),
+  ownerHostId: ProjectGroupOwnerHostId.optional()
 })
 
 const FolderWorkspacePathStatusArgs = z.discriminatedUnion('scope', [
   z.object({
     scope: z.literal('folder-workspace'),
-    folderWorkspaceId: z.string().min(1)
+    folderWorkspaceId: z.string().min(1),
+    ownerHostId: ProjectGroupOwnerHostId.optional()
   }),
   z.object({
     scope: z.literal('project-group'),
@@ -1562,7 +1565,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         typeof args.updates.folderPath === 'string' &&
         args.updates.folderPath.trim().length > 0
       ) {
-        const workspace = store.getFolderWorkspace(args.folderWorkspaceId)
+        const workspace = store.getFolderWorkspace(args.folderWorkspaceId, args.ownerHostId)
         if (!workspace) {
           return null
         }
@@ -1587,7 +1590,11 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         )
         assertFolderWorkspacePathUsable(status)
       }
-      const updated = store.updateFolderWorkspace(args.folderWorkspaceId, args.updates)
+      const updated = store.updateFolderWorkspace(
+        args.folderWorkspaceId,
+        args.updates,
+        args.ownerHostId
+      )
       if (updated) {
         notifyReposChanged(mainWindow)
       }
@@ -1601,7 +1608,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       rawArgs,
       'invalid_folder_workspace_delete_args'
     )
-    const deleted = store.removeFolderWorkspace(args.folderWorkspaceId)
+    const deleted = store.removeFolderWorkspace(args.folderWorkspaceId, args.ownerHostId)
     if (deleted) {
       notifyReposChanged(mainWindow)
     }

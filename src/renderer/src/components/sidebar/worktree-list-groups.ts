@@ -1555,10 +1555,7 @@ export function buildRows(
     const repoEntries = sortRepoEntriesWithinGroup(groupByProjectGroupIdentity.get(identity) ?? [])
     const childGroups = childGroupsByParentIdentity.get(identity) ?? []
     // Why: bare project-group:<id> stays when the bare id is unique; only same-id multi-owner rows need owner stamps.
-    const keyOwner =
-      projectGroups.filter((group) => group.id === projectGroup.id).length > 1
-        ? ownerHostId
-        : undefined
+    const keyOwner = projectGroupIndex.ambiguousIds.has(projectGroup.id) ? ownerHostId : undefined
     const key = getProjectGroupHeaderKey(projectGroup.id, keyOwner)
     // Why: same-id groups on distinct owners collapse independently in persisted sidebar state.
     const collapseKey = getProjectGroupHeaderKey(projectGroup.id, keyOwner)
@@ -1685,10 +1682,9 @@ export function getGroupKeysForWorktree(
       break
     }
     visited.add(identity)
-    const revealOwner =
-      projectGroups.filter((entry) => entry.id === group!.id).length > 1
-        ? getProjectGroupOwnerHostId(group)
-        : undefined
+    const revealOwner = projectGroupIndex.ambiguousIds.has(group.id)
+      ? getProjectGroupOwnerHostId(group)
+      : undefined
     groupKeys.unshift(getProjectGroupHeaderKey(group.id, revealOwner))
     group = findProjectGroupParentForSidebar(projectGroupIndex, group)
   }

@@ -263,6 +263,7 @@ import { normalizeBrowserPageZoomLevel } from '../shared/browser-page-zoom'
 import { persistedUIValuesEqual } from '../shared/persisted-ui-equality'
 import { ActiveViewPreference } from './active-view-preference'
 import {
+  resolveFolderWorkspaceCatalogOwnerHostId,
   normalizeFolderWorkspaceName,
   normalizeFolderWorkspaces
 } from '../shared/folder-workspaces'
@@ -4488,10 +4489,20 @@ export class Store {
         ? { ...repo, projectGroupId: null }
         : repo
     })
-    const removedFolderWorkspaceKeys = new Set<string>()
-    for (const workspace of this.state.folderWorkspaces ?? []) {
+    const folderWorkspaces = this.state.folderWorkspaces ?? []
+    const removedFolderWorkspaces = folderWorkspaces.filter((workspace) => {
       const group = resolveFolderWorkspaceProjectGroup(projectGroupIndex, workspace)
-      if (group && deletedGroupIdentities.has(getProjectGroupOwnerIdentity(group))) {
+      return group && deletedGroupIdentities.has(getProjectGroupOwnerIdentity(group))
+    })
+    this.state.folderWorkspaces = folderWorkspaces.filter(
+      (workspace) => !removedFolderWorkspaces.includes(workspace)
+    )
+    const removedFolderWorkspaceKeys = new Set<string>()
+    for (const workspace of removedFolderWorkspaces) {
+      const hasSameIdSibling = this.state.folderWorkspaces.some(
+        (candidate) => candidate.id === workspace.id
+      )
+      if (!hasSameIdSibling) {
         removedFolderWorkspaceKeys.add(folderWorkspaceKey(workspace.id))
         this.state.workspaceSession = removeWorkspaceSessionOwner(
           this.state.workspaceSession,
@@ -4500,10 +4511,6 @@ export class Store {
         this.removeWorkspaceLineageForFolderParent(workspace.id)
       }
     }
-    this.state.folderWorkspaces = (this.state.folderWorkspaces ?? []).filter((workspace) => {
-      const group = resolveFolderWorkspaceProjectGroup(projectGroupIndex, workspace)
-      return !group || !deletedGroupIdentities.has(getProjectGroupOwnerIdentity(group))
-    })
     this.pruneMobileClientTabSelections((worktreeId) => removedFolderWorkspaceKeys.has(worktreeId))
     this.scheduleSave()
     return true
@@ -4515,8 +4522,15 @@ export class Store {
     )
   }
 
-  getFolderWorkspace(id: string): FolderWorkspace | undefined {
-    return (this.state.folderWorkspaces ?? []).find((workspace) => workspace.id === id)
+  getFolderWorkspace(id: string, ownerHostId?: ExecutionHostId): FolderWorkspace | undefined {
+    const matches = (this.state.folderWorkspaces ?? []).filter(
+      (workspace) =>
+        workspace.id === id &&
+        (!ownerHostId ||
+          resolveFolderWorkspaceCatalogOwnerHostId(workspace, this.state.projectGroups ?? []) ===
+            ownerHostId)
+    )
+    return matches.length === 1 ? matches[0] : undefined
   }
 
   createFolderWorkspace(input: {
@@ -4598,9 +4612,10 @@ export class Store {
         | 'firstAgentMessageRenameError'
         | 'lastActivityAt'
       >
-    >
+    >,
+    ownerHostId?: ExecutionHostId
   ): FolderWorkspace | null {
-    const workspace = this.getFolderWorkspace(id)
+    const workspace = this.getFolderWorkspace(id, ownerHostId)
     if (!workspace) {
       return null
     }
@@ -4675,20 +4690,22 @@ export class Store {
     return workspace
   }
 
-  removeFolderWorkspace(id: string): boolean {
-    const before = this.state.folderWorkspaces?.length ?? 0
-    this.state.folderWorkspaces = (this.state.folderWorkspaces ?? []).filter(
-      (workspace) => workspace.id !== id
-    )
-    if ((this.state.folderWorkspaces?.length ?? 0) === before) {
+  removeFolderWorkspace(id: string, ownerHostId?: ExecutionHostId): boolean {
+    const workspace = this.getFolderWorkspace(id, ownerHostId)
+    if (!workspace) {
       return false
     }
-    this.state.workspaceSession = removeWorkspaceSessionOwner(
-      this.state.workspaceSession,
-      folderWorkspaceKey(id)
-    )!
-    this.removeWorkspaceLineageForFolderParent(id)
-    this.pruneMobileClientTabSelections((worktreeId) => worktreeId === folderWorkspaceKey(id))
+    this.state.folderWorkspaces = (this.state.folderWorkspaces ?? []).filter(
+      (candidate) => candidate !== workspace
+    )
+    if (!this.state.folderWorkspaces.some((candidate) => candidate.id === id)) {
+      this.state.workspaceSession = removeWorkspaceSessionOwner(
+        this.state.workspaceSession,
+        folderWorkspaceKey(id)
+      )!
+      this.removeWorkspaceLineageForFolderParent(id)
+      this.pruneMobileClientTabSelections((worktreeId) => worktreeId === folderWorkspaceKey(id))
+    }
     this.scheduleSave()
     return true
   }

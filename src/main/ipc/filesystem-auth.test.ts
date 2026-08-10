@@ -348,6 +348,34 @@ describe('filesystem-auth path containment', () => {
     expect(elapsedMs).toBeLessThan(250)
   })
 
+  it('bounds deep legacy folder hierarchies without materializing every subtree', () => {
+    const groupCount = 4_096
+    const projectGroups = Array.from({ length: groupCount }, (_, index) =>
+      makeProjectGroup({
+        id: `group-${index}`,
+        parentPath: index === 0 ? '/legacy/root' : null,
+        parentGroupId: index === 0 ? null : `group-${index - 1}`
+      })
+    )
+    const repos = [
+      {
+        ...repo,
+        id: 'remote-leaf',
+        path: '/outside/repo',
+        projectGroupId: `group-${groupCount - 1}`,
+        connectionId: 'builder'
+      } as Repo
+    ]
+    const store = makeStore(repos, { projectGroups, folderWorkspaces: [] })
+
+    const started = performance.now()
+    const allowed = isPathAllowed('/legacy/root', store)
+    const elapsedMs = performance.now() - started
+
+    expect(allowed).toBe(false)
+    expect(elapsedMs).toBeLessThan(250)
+  })
+
   it.skipIf(process.platform === 'win32')(
     'rejects missing descendants under a symlinked ancestor outside the repo',
     async () => {

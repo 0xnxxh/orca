@@ -3736,6 +3736,79 @@ describe('Store', () => {
     )
   })
 
+  it('updates and removes same-id folder workspaces only for the selected owner', async () => {
+    const folderWorkspace = {
+      id: 'same-folder',
+      projectGroupId: 'same-id',
+      name: 'Folder',
+      folderPath: '/folder',
+      linkedTask: null,
+      comment: '',
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 1,
+      lastActivityAt: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: {},
+      ui: {},
+      githubCache: { pr: {}, issue: {} },
+      projectGroups: [
+        {
+          id: 'same-id',
+          name: 'Local',
+          parentPath: '/local',
+          connectionId: null,
+          parentGroupId: null,
+          createdFrom: 'folder-scan',
+          tabOrder: 0,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'same-id',
+          name: 'SSH',
+          parentPath: '/remote',
+          connectionId: 'builder',
+          parentGroupId: null,
+          createdFrom: 'folder-scan',
+          tabOrder: 1,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      folderWorkspaces: [
+        { ...folderWorkspace, name: 'Local', folderPath: '/local/folder', connectionId: null },
+        {
+          ...folderWorkspace,
+          name: 'SSH',
+          folderPath: '/remote/folder',
+          connectionId: 'builder'
+        }
+      ]
+    })
+    const store = await createStore()
+
+    expect(store.getFolderWorkspace('same-folder')).toBeUndefined()
+    expect(store.updateFolderWorkspace('same-folder', { name: 'Ambiguous' })).toBeNull()
+    expect(
+      store.updateFolderWorkspace('same-folder', { name: 'Remote' }, 'ssh:builder')?.name
+    ).toBe('Remote')
+    expect(store.removeFolderWorkspace('same-folder')).toBe(false)
+    expect(store.removeFolderWorkspace('same-folder', 'local')).toBe(true)
+    expect(store.getFolderWorkspace('same-folder', 'ssh:builder')?.name).toBe('Remote')
+  })
+
   it('adapts flat folder-scan groups into sparse nested folder scopes on load', async () => {
     writeDataFile({
       schemaVersion: 1,

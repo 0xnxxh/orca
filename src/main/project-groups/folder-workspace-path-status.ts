@@ -14,6 +14,7 @@ import {
 } from '../../shared/project-groups'
 import { getRepoExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
 import type { FolderWorkspace, ProjectGroup, Repo } from '../../shared/types'
+import { resolveFolderWorkspaceCatalogOwnerHostId } from '../../shared/folder-workspaces'
 import type { IFilesystemProvider } from '../providers/types'
 
 type FolderWorkspacePathStatusStore = {
@@ -194,14 +195,20 @@ export function resolveFolderWorkspaceStatusPath(args: {
     }
   }
 
-  const workspace = args.store
-    .getFolderWorkspaces?.()
-    .find((entry) => entry.id === request.folderWorkspaceId)
+  const matches = (args.store.getFolderWorkspaces?.() ?? []).filter(
+    (entry) =>
+      entry.id === request.folderWorkspaceId &&
+      (!request.ownerHostId ||
+        resolveFolderWorkspaceCatalogOwnerHostId(entry, projectGroups) === request.ownerHostId)
+  )
+  const workspace = matches.length === 1 ? matches[0] : null
   if (!workspace) {
     throw new Error('folder_workspace_path_scope_not_found')
   }
   const group = resolveFolderWorkspaceProjectGroup(projectGroupIndex, workspace)
-  // Why: fail closed only when the workspace row is missing; group may lag hydrate on Store doubles.
+  if (!group && projectGroupIndex.byId.has(workspace.projectGroupId)) {
+    throw new Error('folder_workspace_path_scope_not_found')
+  }
   const ownerHostId = getFolderWorkspaceProjectGroupOwnerHostId(workspace, projectGroupIndex)
   return {
     folderPath: workspace.folderPath,

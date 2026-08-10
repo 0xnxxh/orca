@@ -46,6 +46,7 @@ import { applyManualRepoOrder, getManualRepoOrder } from '../../../../shared/man
 import {
   buildProjectGroupOwnerIndex,
   getFolderWorkspaceProjectGroupOwnerHostId,
+  getProjectGroupIdentity,
   getProjectGroupOwnerHostId,
   getProjectGroupOwnerIdentity,
   getProjectGroupSubtreeIds,
@@ -98,15 +99,11 @@ import {
 } from '../../../../shared/execution-host'
 import { isRemovedRuntimeHostId } from './stale-runtime-host-rows'
 import { cleanupEphemeralVmRuntimesForDeleted } from '@/lib/ephemeral-vm-runtime-cleanup'
+import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import {
-  folderWorkspaceKey,
-  folderWorkspaceSessionKeys,
-  parseWorkspaceKey
-} from '../../../../shared/workspace-scope'
-import {
-  getFolderWorkspaceCatalogOwnerHostId,
   getFolderWorkspaceIdentity,
-  getFolderWorkspaceOwnerIdentity
+  getFolderWorkspaceOwnerIdentity,
+  resolveFolderWorkspaceCatalogOwnerHostId
 } from '../../../../shared/folder-workspaces'
 import { formatFolderWorkspaceCreateError } from '../../lib/folder-workspace-path-status'
 import { getEnvironmentSshStateGeneration } from './runtime-environment-ssh'
@@ -1232,15 +1229,8 @@ function clearRestoredFolderWorkspaceSessionOwners(
       next[key] = hostId
       continue
     }
-    const workspace = state.folderWorkspaces.find((entry) => {
-      if (entry.id !== scope.folderWorkspaceId) {
-        return false
-      }
-      if (!scope.ownerHostId) {
-        return true
-      }
-      return getFolderWorkspaceCatalogOwnerHostId(entry, state.projectGroups) === scope.ownerHostId
-    })
+    const matches = state.folderWorkspaces.filter((entry) => entry.id === scope.folderWorkspaceId)
+    const workspace = matches.length === 1 ? matches[0] : undefined
     if (workspace && !state.projectGroups.some((group) => group.id === workspace.projectGroupId)) {
       // Why: ownership resolves via the project group; if that catalog is still missing, keep the restored host owner so a session write doesn't move runtime tabs local.
       next[key] = hostId
@@ -1380,14 +1370,9 @@ async function reconcileFailedFolderWorkspaceUpdate(args: {
       const remainingSameId = args
         .get()
         .folderWorkspaces.some((workspace) => workspace.id === args.folderWorkspaceId)
-      args.get().purgeWorktreeTerminalState(
-        remainingSameId
-          ? [folderWorkspaceKey(args.folderWorkspaceId, args.ownerHostId)]
-          : folderWorkspaceSessionKeys({
-              folderWorkspaceId: args.folderWorkspaceId,
-              ownerHostId: args.ownerHostId
-            })
-      )
+      if (!remainingSameId) {
+        args.get().purgeWorktreeTerminalState([folderWorkspaceKey(args.folderWorkspaceId)])
+      }
     }
   } catch (err) {
     console.warn('Failed to reconcile folder workspace after update failure:', err)
@@ -1433,14 +1418,14 @@ function settingsForRepoOwner(
 function getFolderWorkspacePathStatusScopeKey(request: FolderWorkspacePathStatusRequest): string {
   if (request.scope === 'project-group') {
     return request.ownerHostId
-      ? `project-group:${request.ownerHostId}:${request.projectGroupId}`
+      ? `project-group:${getProjectGroupIdentity(request.projectGroupId, request.ownerHostId)}`
       : `project-group:${request.projectGroupId}`
   }
   if (request.scope === 'path') {
     return `path:${request.connectionId ?? ''}:${request.path}`
   }
   return request.ownerHostId
-    ? `folder-workspace:${request.ownerHostId}:${request.folderWorkspaceId}`
+    ? `folder-workspace:${getFolderWorkspaceIdentity(request.folderWorkspaceId, request.ownerHostId)}`
     : `folder-workspace:${request.folderWorkspaceId}`
 }
 
@@ -1576,21 +1561,22 @@ function getFolderWorkspaceStatusRequestSnapshot(
 
   const catalog = getFolderPathStatusCatalog(state.projectGroups, state.repos)
   const projectGroupIndex = catalog.projectGroupIndex
+  const folderMatches =
+    request.scope === 'folder-workspace'
+      ? state.folderWorkspaces.filter(
+          (workspace) =>
+            workspace.id === request.folderWorkspaceId &&
+            (!request.ownerHostId ||
+              resolveFolderWorkspaceCatalogOwnerHostId(workspace, state.projectGroups) ===
+                request.ownerHostId)
+        )
+      : []
   const scope =
     request.scope === 'project-group'
       ? resolveProjectGroupOwner(projectGroupIndex, request.projectGroupId, request.ownerHostId)
-      : state.folderWorkspaces.find((workspace) => {
-          if (workspace.id !== request.folderWorkspaceId) {
-            return false
-          }
-          if (!request.ownerHostId) {
-            return true
-          }
-          return (
-            getFolderWorkspaceCatalogOwnerHostId(workspace, state.projectGroups) ===
-            request.ownerHostId
-          )
-        })
+      : folderMatches.length === 1
+        ? folderMatches[0]
+        : null
   const projectGroup =
     request.scope === 'project-group'
       ? scope && 'parentPath' in scope
@@ -2593,10 +2579,12 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     }
   },
 
-  getFolderWorkspacePathStatusCacheKey: (request, options) =>
-    `${getRuntimeTargetCachePrefix(
+  getFolderWorkspacePathStatusCacheKey: (request, options) => {
+    const ownedRequest = getOwnerQualifiedFolderWorkspacePathStatusRequest(request, options)
+    return `${getRuntimeTargetCachePrefix(
       getFolderWorkspacePathStatusRouteSettings(options, get().settings)
-    )}:${options?.ownerHostId ? `${options.ownerHostId}:` : ''}${getFolderWorkspacePathStatusScopeKey(request)}`,
+    )}:${getFolderWorkspacePathStatusScopeKey(ownedRequest)}`
+  },
 
   getFreshFolderWorkspacePathStatus: (request, options) => {
     const state = get()
@@ -2840,7 +2828,15 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       (state.activeWorktreeId === folderWorkspaceKey(folderWorkspaceId)
         ? (state.activeWorkspaceExecutionHostId ?? undefined)
         : undefined)
-    if (!findFolderWorkspaceOwner(state, folderWorkspaceId, executionHostId)) {
+    const owner = findFolderWorkspaceOwner(state, folderWorkspaceId, executionHostId)
+    if (!owner) {
+      return false
+    }
+    const ownerHostId =
+      executionHostId ??
+      resolveFolderWorkspaceCatalogOwnerHostId(owner, state.projectGroups) ??
+      undefined
+    if (!ownerHostId) {
       return false
     }
     const runtimeEnvironmentId = getRuntimeEnvironmentIdForFolderWorkspace(
@@ -2850,8 +2846,10 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     )
     // Why: owner-scoped mutations must not follow whichever runtime happens to be focused.
     const target = getActiveRuntimeTarget({ activeRuntimeEnvironmentId: runtimeEnvironmentId })
-    const ownerHostId = executionHostId ?? getRuntimeTargetHostId(target)
     const updateIdentity = getFolderWorkspaceUpdateIdentity(ownerHostId, folderWorkspaceId)
+    const includeOwnerHostId =
+      executionHostId !== undefined ||
+      state.folderWorkspaces.filter((workspace) => workspace.id === folderWorkspaceId).length > 1
     // Why: same gate as folderWorkspace.create — an older paired runtime would drop the Jira link silently.
     if (
       target.kind === 'environment' &&
@@ -2871,7 +2869,11 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     try {
       const updated =
         target.kind === 'local'
-          ? await window.api.folderWorkspaces.update({ folderWorkspaceId, updates })
+          ? await window.api.folderWorkspaces.update({
+              folderWorkspaceId,
+              ...(includeOwnerHostId ? { ownerHostId } : {}),
+              updates
+            })
           : (
               await callRuntimeRpc<{ folderWorkspace: FolderWorkspace | null }>(
                 target,
@@ -2936,9 +2938,17 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       return false
     }
     const ownerHostId =
-      options?.ownerHostId ?? getFolderWorkspaceCatalogOwnerHostId(owner, state.projectGroups)
+      options?.ownerHostId ??
+      resolveFolderWorkspaceCatalogOwnerHostId(owner, state.projectGroups) ??
+      undefined
+    if (!ownerHostId) {
+      return false
+    }
     // Why: catalog owner can come from the project group even when the folder row itself is still unstamped.
     const ownerRuntime = parseExecutionHostId(ownerHostId)
+    const includeOwnerHostId =
+      options?.ownerHostId !== undefined ||
+      state.folderWorkspaces.filter((workspace) => workspace.id === folderWorkspaceId).length > 1
     const runtimeEnvironmentId =
       ownerRuntime?.kind === 'runtime'
         ? ownerRuntime.environmentId
@@ -2948,7 +2958,10 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       const target = getActiveRuntimeTarget({ activeRuntimeEnvironmentId: runtimeEnvironmentId })
       const deleted =
         target.kind === 'local'
-          ? await window.api.folderWorkspaces.delete({ folderWorkspaceId })
+          ? await window.api.folderWorkspaces.delete({
+              folderWorkspaceId,
+              ...(includeOwnerHostId ? { ownerHostId } : {})
+            })
           : (
               await callRuntimeRpc<{ deleted: boolean }>(
                 target,
@@ -2968,21 +2981,22 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         ),
         folderWorkspacePathStatuses: Object.fromEntries(
           Object.entries(s.folderWorkspacePathStatuses).filter(([cacheKey]) => {
-            const ownerScoped = `folder-workspace:${ownerHostId}:${folderWorkspaceId}`
+            const ownerScoped = getFolderWorkspacePathStatusScopeKey({
+              scope: 'folder-workspace',
+              folderWorkspaceId,
+              ownerHostId
+            })
             const bareScoped = `folder-workspace:${folderWorkspaceId}`
-            return !cacheKey.includes(ownerScoped) && !cacheKey.endsWith(bareScoped)
+            return !cacheKey.endsWith(ownerScoped) && !cacheKey.endsWith(bareScoped)
           })
         )
       }))
       const remainingSameId = get().folderWorkspaces.some(
         (workspace) => workspace.id === folderWorkspaceId
       )
-      // Why: same-id cross-host rows share the legacy bare key; only drop it when no sibling remains.
-      get().purgeWorktreeTerminalState(
-        remainingSameId
-          ? [folderWorkspaceKey(folderWorkspaceId, ownerHostId)]
-          : folderWorkspaceSessionKeys({ folderWorkspaceId, ownerHostId })
-      )
+      if (!remainingSameId) {
+        get().purgeWorktreeTerminalState([folderWorkspaceKey(folderWorkspaceId)])
+      }
       return true
     } catch (err) {
       console.error('Failed to delete folder workspace:', err)
