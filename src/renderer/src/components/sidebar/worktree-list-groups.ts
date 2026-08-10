@@ -61,6 +61,7 @@ import {
   findProjectGroupForFolderWorkspace,
   findProjectGroupForRepo,
   findProjectGroupParentForSidebar,
+  getAmbiguousFolderWorkspaceSidebarIds,
   getProjectGroupOwnerHostId,
   getProjectGroupSidebarIdentity
 } from './project-group-sidebar-identity'
@@ -1407,6 +1408,10 @@ export function buildRows(
   }
 
   const projectGroupIndex = buildProjectGroupSidebarIndex(projectGroups)
+  const ambiguousFolderWorkspaceIds = getAmbiguousFolderWorkspaceSidebarIds(
+    projectGroupIndex,
+    folderWorkspaces
+  )
   const groupByProjectGroupIdentity = new Map<string | null, OrderedGroupEntry[]>()
   for (const entry of orderedGroups) {
     const repo = entry[1].repo
@@ -1585,7 +1590,11 @@ export function buildRows(
       for (const folderWorkspace of folderWorkspacesByProjectGroupIdentity.get(identity) ?? []) {
         result.push({
           type: 'folder-workspace',
-          key: getFolderWorkspaceRowKey(folderWorkspace, [projectGroup]),
+          key: getFolderWorkspaceRowKey(
+            folderWorkspace,
+            [projectGroup],
+            ambiguousFolderWorkspaceIds.has(folderWorkspace.id)
+          ),
           folderWorkspace,
           projectGroup,
           depth: 0,

@@ -137,6 +137,32 @@ export function findProjectGroupForFolderWorkspace(
   return findProjectGroupForSidebarOwner(index, workspace.projectGroupId, ownerHostId)
 }
 
+export function getAmbiguousFolderWorkspaceSidebarIds(
+  index: ProjectGroupSidebarIndex,
+  workspaces: readonly Pick<
+    FolderWorkspace,
+    'id' | 'connectionId' | 'executionHostId' | 'projectGroupId'
+  >[]
+): ReadonlySet<string> {
+  const ownerById = new Map<string, ExecutionHostId>()
+  const ambiguousIds = new Set<string>()
+  for (const workspace of workspaces) {
+    const group = findProjectGroupForFolderWorkspace(index, workspace)
+    if (!group || ambiguousIds.has(workspace.id)) {
+      continue
+    }
+    const ownerHostId = getProjectGroupOwnerHostId(group)
+    const existingOwnerHostId = ownerById.get(workspace.id)
+    if (existingOwnerHostId && existingOwnerHostId !== ownerHostId) {
+      ownerById.delete(workspace.id)
+      ambiguousIds.add(workspace.id)
+    } else {
+      ownerById.set(workspace.id, ownerHostId)
+    }
+  }
+  return ambiguousIds
+}
+
 export function findProjectGroupParentForSidebar(
   index: ProjectGroupSidebarIndex,
   group: ProjectGroup

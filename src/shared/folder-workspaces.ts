@@ -68,8 +68,12 @@ export function getFolderWorkspaceIdentity(
 
 export function getFolderWorkspaceRowKey(
   workspace: Pick<FolderWorkspace, 'id' | 'connectionId' | 'executionHostId' | 'projectGroupId'>,
-  projectGroups: readonly ProjectGroup[] = []
+  projectGroups: readonly ProjectGroup[] = [],
+  qualifyOwner = false
 ): string {
+  if (!qualifyOwner) {
+    return `folder-workspace:${workspace.id}`
+  }
   const ownerHostId = getFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups)
   return `folder-workspace:${encodeURIComponent(ownerHostId)}:${encodeURIComponent(workspace.id)}`
 }
