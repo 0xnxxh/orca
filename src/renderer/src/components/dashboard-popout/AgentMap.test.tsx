@@ -13,6 +13,7 @@ import { AgentMap } from './AgentMap'
 import { agentMapAttentionMarkerScale } from './AgentMapWorktreeRingNode'
 import type { AgentMapState } from './agent-map-filter'
 import { AGENT_MAP_AGENT_RADIUS } from './agent-map-layout'
+import { AGENT_MAP_ENTER_DURATION_MS, AGENT_MAP_EXIT_DURATION_MS } from './useAgentMapMotionLayout'
 
 const NOW = 2_000_000_000
 
@@ -124,6 +125,7 @@ describe('AgentMap', () => {
 
   afterEach(() => {
     cleanup()
+    vi.useRealTimers()
     vi.clearAllMocks()
     vi.unstubAllGlobals()
     boundsSpy.mockRestore()
@@ -507,6 +509,84 @@ describe('AgentMap', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Agent alpha/ }))
     expect(onOpenTerminal).toHaveBeenCalledWith(agent)
+  })
+
+  it('keeps agent positioning separate from the animated hover visual', () => {
+    renderMap([card()])
+
+    const agent = screen.getByRole('button', { name: /Agent alpha/ })
+    expect(agent).toHaveAttribute('transform', expect.stringMatching(/^translate\(/))
+    expect(agent.querySelector(':scope > .agent-map-agent-visual')).toBeInTheDocument()
+  })
+
+  it('retains created and removed agents for anchored enter and exit motion', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+    )
+    const first = card()
+    const added = card({
+      paneKey: 'pane-2',
+      ptyId: 'pty-2',
+      tabId: 'tab-2',
+      leafId: 'leaf-2',
+      conversationName: 'Agent beta'
+    })
+    const view = renderMap([first])
+
+    vi.useFakeTimers()
+    view.rerender(<AgentMap cards={[first, added]} now={NOW} onOpenTerminal={vi.fn()} />)
+    const entering = screen.getByRole('button', { name: /Agent beta/ })
+    const position = entering.getAttribute('transform')
+    expect(entering).toHaveClass('is-entering')
+    act(() => vi.advanceTimersByTime(AGENT_MAP_ENTER_DURATION_MS))
+    expect(entering).not.toHaveClass('is-entering')
+
+    view.rerender(<AgentMap cards={[first]} now={NOW} onOpenTerminal={vi.fn()} />)
+    const exiting = view.container.querySelector<SVGGElement>('[aria-label^="Agent beta,"]')
+    expect(exiting).toHaveClass('is-exiting')
+    expect(exiting).toHaveAttribute('transform', position)
+
+    act(() => vi.advanceTimersByTime(AGENT_MAP_EXIT_DURATION_MS))
+    expect(view.container.querySelector('[aria-label^="Agent beta,"]')).not.toBeInTheDocument()
+  })
+
+  it('retains removed worktrees until their exit transition completes', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+    )
+    const first = card()
+    const second = card({
+      paneKey: 'pane-2',
+      ptyId: 'pty-2',
+      tabId: 'tab-2',
+      leafId: 'leaf-2',
+      worktreeId: 'worktree-2',
+      worktreeName: 'Motion branch',
+      conversationName: 'Agent beta'
+    })
+    const view = renderMap([first])
+
+    vi.useFakeTimers()
+    view.rerender(<AgentMap cards={[first, second]} now={NOW} onOpenTerminal={vi.fn()} />)
+    const enteringGroup = view.container
+      .querySelector('[aria-label="Open Motion branch worktree details"]')
+      ?.closest('.agent-map-worktree-group')
+    expect(enteringGroup).toHaveClass('is-entering')
+    act(() => vi.advanceTimersByTime(AGENT_MAP_ENTER_DURATION_MS))
+    expect(enteringGroup).not.toHaveClass('is-entering')
+
+    view.rerender(<AgentMap cards={[first]} now={NOW} onOpenTerminal={vi.fn()} />)
+    const ring = view.container.querySelector<SVGCircleElement>(
+      '[aria-label="Open Motion branch worktree details"]'
+    )
+    expect(ring?.closest('.agent-map-worktree-group')).toHaveClass('is-exiting')
+
+    act(() => vi.advanceTimersByTime(AGENT_MAP_EXIT_DURATION_MS))
+    expect(
+      view.container.querySelector('[aria-label="Open Motion branch worktree details"]')
+    ).not.toBeInTheDocument()
   })
 
   it('keeps a selected node visible while compacting around an adjacent terminal', () => {
