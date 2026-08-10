@@ -332,17 +332,16 @@ function MobileNativeChatMessageImpl({
 
   // Copy + scroll-to-top, shown inline with the first tool call (or after the
   // prose when there are no tools).
-  const controls =
-    isAgent && !queued ? (
-      <AgentControls
-        onCopy={handleCopy}
-        onScrollToTop={
-          onScrollToMessage && messageIndex !== undefined
-            ? () => onScrollToMessage(messageIndex)
-            : undefined
-        }
-      />
-    ) : null
+  const controls = isAgent ? (
+    <AgentControls
+      onCopy={handleCopy}
+      onScrollToTop={
+        onScrollToMessage && messageIndex !== undefined
+          ? () => onScrollToMessage(messageIndex)
+          : undefined
+      }
+    />
+  ) : null
 
   return (
     <View style={[styles.row, isUser && styles.rowUser]}>
@@ -364,7 +363,6 @@ function MobileNativeChatMessageImpl({
           styles.content,
           isUser && styles.userBubble,
           isReasoning && styles.reasoning,
-          queued && styles.queued,
           copied && styles.copied
         ]}
       >
