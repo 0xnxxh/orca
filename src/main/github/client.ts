@@ -4561,6 +4561,7 @@ export async function resolveReviewThread(
 function mapReviewCommentResponse(
   data: {
     id?: number
+    node_id?: string | null
     user: { login: string; avatar_url: string; type?: string } | null
     body?: string
     created_at?: string
@@ -4576,6 +4577,7 @@ function mapReviewCommentResponse(
 ): PRComment {
   return {
     id: data.id ?? Date.now(),
+    reactionSubjectId: data.node_id?.trim() || undefined,
     author: data.user?.login ?? 'You',
     authorAvatarUrl: data.user?.avatar_url ?? '',
     body: data.body ?? body,

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { PRComment } from '../../../shared/types'
-import { setCommentReaction, setReactionOnSubject } from './pr-comment-reactions'
+import {
+  restoreCommentReaction,
+  setCommentReaction,
+  setReactionOnSubject
+} from './pr-comment-reactions'
 
 function comment(overrides: Partial<PRComment> = {}): PRComment {
   return {
@@ -45,5 +49,23 @@ describe('setCommentReaction', () => {
 
     expect(result[0].reactions).toEqual([{ content: 'eyes', count: 1, viewerHasReacted: true }])
     expect(result[1]).toBe(other)
+  })
+
+  it('restores only the failed reaction while preserving concurrent updates', () => {
+    const result = restoreCommentReaction(
+      comment({
+        reactions: [
+          { content: 'heart', count: 3, viewerHasReacted: true },
+          { content: 'eyes', count: 1, viewerHasReacted: false }
+        ]
+      }),
+      'heart',
+      { content: 'heart', count: 2, viewerHasReacted: false }
+    )
+
+    expect(result.reactions).toEqual([
+      { content: 'heart', count: 2, viewerHasReacted: false },
+      { content: 'eyes', count: 1, viewerHasReacted: false }
+    ])
   })
 })

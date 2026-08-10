@@ -1713,7 +1713,10 @@ describe('createGitHubSlice PR comment mutations', () => {
   })
 
   it('rolls back an optimistic reaction when GitHub rejects it', async () => {
-    mockApi.gh.setPRCommentReaction.mockResolvedValueOnce(false)
+    let resolveReaction!: (ok: boolean) => void
+    mockApi.gh.setPRCommentReaction.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => (resolveReaction = resolve))
+    )
     const store = createTestStore()
     const repoPath = '/repo'
     const repoId = 'repo-id'
@@ -1739,14 +1742,33 @@ describe('createGitHubSlice PR comment mutations', () => {
       }
     } as unknown as Partial<AppState>)
 
-    const ok = await store.getState().setPRCommentReaction(repoPath, 12, 'IC_10', 'heart', true, {
+    const pending = store.getState().setPRCommentReaction(repoPath, 12, 'IC_10', 'heart', true, {
       repoId,
       prRepo: { owner: 'Acme', repo: 'Widgets' }
     })
+    const optimisticEntry = store.getState().commentsCache[cacheKey]
+    store.setState({
+      commentsCache: {
+        ...store.getState().commentsCache,
+        [cacheKey]: {
+          ...optimisticEntry,
+          data: (optimisticEntry?.data ?? []).map((comment) => ({
+            ...comment,
+            reactions: [
+              ...(comment.reactions ?? []),
+              { content: 'eyes' as const, count: 1, viewerHasReacted: false }
+            ]
+          }))
+        }
+      }
+    })
+    resolveReaction(false)
+    const ok = await pending
 
     expect(ok).toBe(false)
     expect(store.getState().commentsCache[cacheKey]?.data?.[0].reactions).toEqual([
-      { content: 'heart', count: 2, viewerHasReacted: false }
+      { content: 'heart', count: 2, viewerHasReacted: false },
+      { content: 'eyes', count: 1, viewerHasReacted: false }
     ])
   })
 

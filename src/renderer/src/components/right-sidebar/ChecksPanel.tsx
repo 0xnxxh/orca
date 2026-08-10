@@ -25,7 +25,7 @@ import { useActiveWorktree, useRepoById } from '@/store/selectors'
 import { useChecksPanelTerminalWorktree } from './use-checks-panel-terminal-worktree'
 import { cn } from '@/lib/utils'
 import { openHttpLink } from '@/lib/http-link-routing'
-import { setReactionOnSubject } from '@/lib/pr-comment-reactions'
+import { restoreReactionOnSubject, setReactionOnSubject } from '@/lib/pr-comment-reactions'
 import { Button } from '@/components/ui/button'
 import { DetachedHeadBadge } from '@/components/DetachedHeadBadge'
 import {
@@ -2957,7 +2957,7 @@ export default function ChecksPanel(): React.JSX.Element {
         pr.prRepo,
         pr.headSha
       )
-      const previousReactions = comment.reactions
+      const previousReaction = comment.reactions?.find((reaction) => reaction.content === content)
       setComments((current) => setReactionOnSubject(current, reactionSubjectId, content, reacted))
       const ok = await setPRCommentReaction(
         repo.path,
@@ -2971,11 +2971,7 @@ export default function ChecksPanel(): React.JSX.Element {
         return
       }
       setComments((current) =>
-        current.map((entry) =>
-          entry.reactionSubjectId === reactionSubjectId
-            ? { ...entry, reactions: previousReactions }
-            : entry
-        )
+        restoreReactionOnSubject(current, reactionSubjectId, content, previousReaction)
       )
       toast.error(
         translate(

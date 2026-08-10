@@ -75,7 +75,7 @@ import {
   type TaskSourceContext
 } from '../../../../shared/task-source-context'
 import { normalizeGitHubPRForBranchOutcome } from '../../../../shared/github-pr-for-branch-outcome'
-import { setReactionOnSubject } from '@/lib/pr-comment-reactions'
+import { restoreReactionOnSubject, setReactionOnSubject } from '@/lib/pr-comment-reactions'
 
 // ─── ProjectV2 cache types ────────────────────────────────────────────
 // Why: separate from CacheEntry<T> — project-view has a single GraphQL source (no issue/PR fallback) and a distinct error union.
@@ -3879,6 +3879,9 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     const previousComment = get().commentsCache[cacheKey]?.data?.find(
       (comment) => comment.reactionSubjectId === reactionSubjectId
     )
+    const previousReaction = previousComment?.reactions?.find(
+      (reaction) => reaction.content === content
+    )
     set((state) => {
       const entry = state.commentsCache[cacheKey]
       if (!entry?.data) {
@@ -3941,10 +3944,11 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
             ...state.commentsCache,
             [cacheKey]: {
               ...entry,
-              data: entry.data.map((comment) =>
-                comment.reactionSubjectId === reactionSubjectId
-                  ? { ...comment, reactions: previousComment.reactions }
-                  : comment
+              data: restoreReactionOnSubject(
+                entry.data,
+                reactionSubjectId,
+                content,
+                previousReaction
               )
             }
           }
