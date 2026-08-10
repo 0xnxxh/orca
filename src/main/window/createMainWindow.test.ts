@@ -3425,6 +3425,48 @@ describe('createMainWindow', () => {
     }
   })
 
+  it('opens the breaker for the b32b2865 renderer recovery timestamps', () => {
+    vi.useFakeTimers()
+
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const onRendererRecoveryExhausted = vi.fn()
+    const { browserWindowInstance, windowHandlers } = createRendererRecoveryWindowHarness()
+
+    try {
+      createMainWindow(null, { onRendererRecoveryExhausted })
+
+      const driveFailure = (
+        reason: Electron.RenderProcessGoneDetails['reason'],
+        exitCode: number
+      ) => {
+        windowHandlers['render-process-gone']?.(
+          {} as never,
+          { reason, exitCode } as Electron.RenderProcessGoneDetails
+        )
+        vi.advanceTimersByTime(250)
+      }
+
+      driveFailure('crashed', 1)
+      vi.advanceTimersByTime(6_750)
+      driveFailure('oom', -536_870_904)
+      vi.advanceTimersByTime(56_750)
+      driveFailure('oom', -536_870_904)
+      vi.advanceTimersByTime(5_750)
+      driveFailure('launch-failed', 18)
+
+      expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(4)
+      expect(onRendererRecoveryExhausted).toHaveBeenCalledOnce()
+      expect(onRendererRecoveryExhausted).toHaveBeenCalledWith(
+        expect.objectContaining({
+          details: expect.objectContaining({ reason: 'launch-failed', exitCode: 18 }),
+          recentRecoveryCount: 3
+        })
+      )
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
   function createStartupRevealWindowFixture() {
     const windowHandlers: Record<string, (...args: any[]) => void> = {}
     const webContents = {

@@ -193,6 +193,7 @@ import {
   ensureAutoUpdaterConfigured
 } from './window/attach-main-window-services'
 import { createMainWindow, loadMainWindow } from './window/createMainWindow'
+import { RendererRecoveryPromptController } from './window/renderer-recovery-prompt-controller'
 import {
   getDashboardPopoutWindow,
   zoomDashboardPopoutIfFocused
@@ -1590,6 +1591,8 @@ function sendOpenCrashReport(targetWindow?: BrowserWindow | null): void {
   webContents?.send('ui:openCrashReport')
 }
 
+const rendererRecoveryPromptController = new RendererRecoveryPromptController()
+
 // Why: on renderer crash-loop the breaker stops auto-reloading and the window goes blank, so a main-process dialog is the only retry/quit surface.
 async function presentRendererRecoveryPrompt(recentRecoveryCount: number): Promise<void> {
   if (isQuitting) {
@@ -1605,16 +1608,26 @@ async function presentRendererRecoveryPrompt(recentRecoveryCount: number): Promi
     message: 'The app window crashed repeatedly and stopped reloading automatically.',
     detail: `Orca tried to recover ${recentRecoveryCount} times in a row without success. This is often a graphics-driver or installation problem. Reload to try again, or quit and relaunch Orca.`
   }
-  const { response } = window
-    ? await dialog.showMessageBox(window, options)
-    : await dialog.showMessageBox(options)
-  if (response === 0 && mainWindow && !mainWindow.isDestroyed()) {
-    recordDurableCrashBreadcrumb('renderer_recovery_manual_retry')
-    loadMainWindow(mainWindow)
-  } else if (response === 1) {
-    isQuitting = true
-    app.quit()
-  }
+  await rendererRecoveryPromptController.present({
+    showPrompt: () =>
+      window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options),
+    isQuitting: () => isQuitting,
+    reload: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        return
+      }
+      markRecoveryReloadInFlight(mainWindow.webContents.id)
+      recordDurableCrashBreadcrumb('renderer_recovery_manual_retry')
+      loadMainWindow(mainWindow)
+    },
+    quit: () => {
+      isQuitting = true
+      app.quit()
+    },
+    onPromptError: (error) => {
+      console.warn('[renderer-recovery] failed to show recovery prompt; quitting:', error)
+    }
+  })
 }
 
 function getGpuFallbackEnvironment(): GpuFallbackEnvironment {

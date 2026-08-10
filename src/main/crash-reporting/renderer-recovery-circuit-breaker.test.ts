@@ -50,6 +50,21 @@ describe('RendererRecoveryCircuitBreaker', () => {
     expect(breaker.registerRecoveryAttempt(10_000_000).allowed).toBe(true)
   })
 
+  it('opens for the b32b2865 recovery cadence after a GPU child crash', () => {
+    const breaker = new RendererRecoveryCircuitBreaker({
+      windowMs: DEFAULT_RENDERER_RECOVERY_WINDOW_MS,
+      maxRecoveries: DEFAULT_RENDERER_RECOVERY_MAX_RECOVERIES
+    })
+
+    for (const at of [0, 7_000, 64_000]) {
+      expect(breaker.registerRecoveryAttempt(at).allowed).toBe(true)
+    }
+    expect(breaker.registerRecoveryAttempt(70_000)).toEqual({
+      allowed: false,
+      recentRecoveryCount: 3
+    })
+  })
+
   it('reset() clears history so the next recovery is allowed', () => {
     const breaker = new RendererRecoveryCircuitBreaker({ windowMs: 60_000, maxRecoveries: 1 })
     expect(breaker.registerRecoveryAttempt(0).allowed).toBe(true)
@@ -59,7 +74,7 @@ describe('RendererRecoveryCircuitBreaker', () => {
   })
 
   it('ships conservative defaults', () => {
-    expect(DEFAULT_RENDERER_RECOVERY_WINDOW_MS).toBe(60_000)
+    expect(DEFAULT_RENDERER_RECOVERY_WINDOW_MS).toBe(120_000)
     expect(DEFAULT_RENDERER_RECOVERY_MAX_RECOVERIES).toBe(3)
   })
 })

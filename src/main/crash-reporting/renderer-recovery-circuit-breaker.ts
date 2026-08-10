@@ -9,9 +9,9 @@ export type RendererRecoveryCircuitBreakerOptions = {
 // AV interference) crashes on every load. Orca auto-reloads recoverable
 // renderer deaths, so without a breaker it reloads every ~0.25-1.3s forever,
 // burning CPU and spamming breadcrumbs (Windows clusters F0BDRAZN55L /
-// F0BDPCL93UM). 3 reloads in 60s is well above any single transient crash but
-// far below a runaway loop.
-export const DEFAULT_RENDERER_RECOVERY_WINDOW_MS = 60_000
+// F0BDPCL93UM). Keep the window above slow process-start failures so attempts
+// cannot age out while the same renderer fault is still recurring.
+export const DEFAULT_RENDERER_RECOVERY_WINDOW_MS = 120_000
 export const DEFAULT_RENDERER_RECOVERY_MAX_RECOVERIES = 3
 
 /**
