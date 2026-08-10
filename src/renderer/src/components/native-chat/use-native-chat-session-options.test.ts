@@ -135,6 +135,72 @@ describe('useNativeChatSessionOptions model reporting', () => {
     ).toBe('high')
   })
 
+  it('settles picker ownership before handing the pane to Codex', async () => {
+    discoverModels.mockResolvedValue(null)
+    storeState.settings = {
+      nativeChatSessionOptions: { codex: { model: 'gpt-5.2-codex' } }
+    }
+    let settleWrite: (() => void) | undefined
+    updateSettings.mockImplementation(
+      ({ nativeChatSessionOptions }) =>
+        new Promise<void>((resolve) => {
+          settleWrite = () => {
+            storeState.settings = { nativeChatSessionOptions }
+            resolve()
+          }
+        })
+    )
+    const onAgentPicker = vi.fn()
+    seedNativeChatAppliedSessionOptions('tab-ordered', 'codex', {
+      model: 'gpt-5.2-codex',
+      effort: 'medium'
+    })
+    const { result } = renderHook(() =>
+      useNativeChatSessionOptions({
+        agent: 'codex',
+        terminalTabId: 'tab-ordered',
+        targetPtyId: 'pty-ordered',
+        dispatchCommand: vi.fn(),
+        onAgentPicker
+      })
+    )
+
+    const picker = result.current.surface?.invokeAction('effort')
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledOnce())
+
+    expect(onAgentPicker).not.toHaveBeenCalled()
+    settleWrite?.()
+    await picker
+    expect(onAgentPicker).toHaveBeenCalledOnce()
+    expect(storeState.settings.nativeChatSessionOptions?.codex?.model).toBeUndefined()
+  })
+
+  it('keeps the override when Codex never accepts the picker command', async () => {
+    discoverModels.mockResolvedValue(null)
+    storeState.settings = {
+      nativeChatSessionOptions: { codex: { model: 'gpt-5.2-codex' } }
+    }
+    const onAgentPicker = vi.fn()
+    seedNativeChatAppliedSessionOptions('tab-rejected', 'codex', {
+      model: 'gpt-5.2-codex',
+      effort: 'medium'
+    })
+    const { result } = renderHook(() =>
+      useNativeChatSessionOptions({
+        agent: 'codex',
+        terminalTabId: 'tab-rejected',
+        targetPtyId: 'pty-rejected',
+        dispatchCommand: vi.fn().mockRejectedValue(new Error('rejected')),
+        onAgentPicker
+      })
+    )
+
+    await expect(result.current.surface?.invokeAction('effort')).rejects.toThrow('rejected')
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(onAgentPicker).not.toHaveBeenCalled()
+    expect(storeState.settings.nativeChatSessionOptions?.codex?.model).toBe('gpt-5.2-codex')
+  })
+
   it('re-resolves the reported model against models discovered after the read', async () => {
     // Why: discovery is async, so the first scrape can only reach the seed. If
     // the reported id were left at the family the picker would show a row it

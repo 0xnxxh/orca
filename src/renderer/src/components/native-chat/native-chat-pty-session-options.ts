@@ -50,7 +50,7 @@ export type CreateNativeChatPtySessionOptionsArgs = {
   mode: NativeChatSessionOptionMode
   reportedValues?: Record<string, SessionOptionValue> | null
   dispatchCommand: NativeChatSessionOptionDispatchCommand
-  onAgentPicker?: () => void
+  onAgentPicker?: () => Promise<void> | void
   persistSelection?: PersistSelection
   onDraftValuesChanged?: (values: Record<string, SessionOptionValue>) => void
 }

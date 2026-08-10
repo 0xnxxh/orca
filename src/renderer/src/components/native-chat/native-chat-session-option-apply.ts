@@ -33,7 +33,7 @@ type SessionOptionApplyContext = {
   getModels: () => CatalogModel[]
   getRecord: () => NativeChatSessionOptionRecord
   dispatchCommand: NativeChatSessionOptionDispatchCommand
-  onAgentPicker?: () => void
+  onAgentPicker?: () => Promise<void> | void
   /** The one persist entry point, shared with typed commands: it owns both the
    *  null-model guard and whether the id may be adopted as the launch default. */
   persist: (modelId: string | null, optionId: string, value: SessionOptionValue) => void
@@ -112,7 +112,7 @@ async function handleAgentPicker(
   await ctx.dispatchCommand(midSession.command)
   ctx.clearModelTruth()
   const snapshot = ctx.publish()
-  ctx.onAgentPicker?.()
+  await ctx.onAgentPicker?.()
   return { snapshot }
 }
 

@@ -109,10 +109,10 @@ export function useNativeChatSessionOptions(args: {
     () => resolveNativeChatModelDiscoveryContext(terminalTabId),
     [terminalTabId]
   )
-  const handleAgentPicker = useCallback(() => {
+  const handleAgentPicker = useCallback(async () => {
     if (agent === 'codex') {
       // Codex persists picker choices; dropping Orca's override keeps its host config authoritative.
-      void clearPersistedCodexModelForAgentPicker().catch(() => undefined)
+      await clearPersistedCodexModelForAgentPicker().catch(() => undefined)
     }
     onAgentPicker?.()
   }, [agent, onAgentPicker])
