@@ -20,12 +20,10 @@ import {
 } from './native-chat-working-suppression'
 import {
   appendPendingSendCache,
-  launchPromptAsMessage,
   pendingSendsAsMessages,
   nextNativeChatPendingSendId,
   prunePendingSends,
   readPendingSendCache,
-  shouldPruneLaunchPrompt,
   writePendingSendCache,
   type NativeChatPendingSend
 } from './native-chat-pending'
@@ -53,6 +51,7 @@ import { selectNativeChatRuntimeEnvironmentId } from './native-chat-runtime-owne
 import { useNativeChatPasteBridge } from './use-native-chat-paste-bridge'
 import { useNativeChatFileLinkClick } from './use-native-chat-file-link-click'
 import type { NativeChatViewProps } from './native-chat-view-types'
+import { useNativeChatLaunchPrompt } from './use-native-chat-launch-prompt'
 
 export type { NativeChatViewProps } from './native-chat-view-types'
 
@@ -138,9 +137,6 @@ function NativeChatResolvedView({
     transcriptPath,
     runtimeEnvironmentId
   })
-  const launchPrompt = useAppStore((s) => s.nativeChatLaunchPromptByTabId[terminalTabId] ?? null)
-  const clearNativeChatLaunchPrompt = useAppStore((s) => s.clearNativeChatLaunchPrompt)
-  const paneLaunchPrompt = launchPrompt?.agent === agent ? launchPrompt : null
   // Launch context prefilled into the TUI input as an unsent draft; the
   // composer adopts it so the GUI view shows the same context as the TUI.
   // Shape matches NativeChatComposer's two launch-draft props, so it spreads.
@@ -222,12 +218,6 @@ function NativeChatResolvedView({
       writePendingSendCache(pendingScope, prunePendingSends(prev, session.messages, order))
     )
   }, [session.messages, order, pendingScope])
-  useEffect(() => {
-    if (!paneLaunchPrompt || !shouldPruneLaunchPrompt(paneLaunchPrompt, session.messages)) {
-      return
-    }
-    clearNativeChatLaunchPrompt(terminalTabId)
-  }, [clearNativeChatLaunchPrompt, paneLaunchPrompt, session.messages, terminalTabId])
   const onOptimisticSend = useCallback(
     (text: string, imagePaths?: string[]) => {
       setWorkingInterrupted(false)
@@ -258,10 +248,13 @@ function NativeChatResolvedView({
     [pendingScope]
   )
 
-  const launchPromptMessage = useMemo(
-    () => launchPromptAsMessage(paneLaunchPrompt, session.messages),
-    [paneLaunchPrompt, session.messages]
-  )
+  const { message: launchPromptMessage, failed: launchPromptFailed } = useNativeChatLaunchPrompt({
+    terminalTabId,
+    agent,
+    messages: session.messages,
+    transcriptOrder: order,
+    crossClock: runtimeEnvironmentId != null
+  })
   const sessionWithLaunchPrompt = useMemo<typeof session>(() => {
     if (!launchPromptMessage) {
       return session
@@ -280,12 +273,12 @@ function NativeChatResolvedView({
       : { ...sessionWithLaunchPrompt, messages }
   }, [sessionWithLaunchPrompt, commandMarkers, order])
   const failedLaunchPromptMessageIds = useMemo(() => {
-    const id = paneLaunchPrompt?.failed ? launchPromptMessage?.id : null
+    const id = launchPromptFailed ? launchPromptMessage?.id : null
     if (!id || !sessionAfterCommandBoundaries.messages.some((message) => message.id === id)) {
       return undefined
     }
     return new Set([id])
-  }, [paneLaunchPrompt?.failed, launchPromptMessage?.id, sessionAfterCommandBoundaries.messages])
+  }, [launchPromptFailed, launchPromptMessage?.id, sessionAfterCommandBoundaries.messages])
 
   // The streaming preview bubble (if any) sits after the transcript but before
   // the optimistic user echoes — same order mobile uses.
