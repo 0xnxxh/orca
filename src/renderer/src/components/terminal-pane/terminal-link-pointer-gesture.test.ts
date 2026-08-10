@@ -3,6 +3,8 @@ import type { Terminal } from '@xterm/xterm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { installTerminalLinkPointerGesture } from './terminal-link-pointer-gesture'
 
+const activeGestures = new Set<ReturnType<typeof installTerminalLinkPointerGesture>>()
+
 function createGesture(): {
   gesture: ReturnType<typeof installTerminalLinkPointerGesture>
   element: HTMLDivElement
@@ -15,8 +17,10 @@ function createGesture(): {
     element,
     hasSelection: () => selected
   } as unknown as Terminal
+  const gesture = installTerminalLinkPointerGesture(terminal)
+  activeGestures.add(gesture)
   return {
-    gesture: installTerminalLinkPointerGesture(terminal),
+    gesture,
     element,
     setSelection: (next) => {
       selected = next
@@ -29,6 +33,10 @@ function mouse(type: string, x: number, y: number): MouseEvent {
 }
 
 afterEach(() => {
+  for (const gesture of activeGestures) {
+    gesture.dispose()
+  }
+  activeGestures.clear()
   document.body.replaceChildren()
   vi.unstubAllGlobals()
 })

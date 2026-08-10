@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import ko from '@/i18n/locales/ko.json'
 import { i18n } from '@/i18n/i18n'
-import { getBrowserPaneSearchEntries } from './browser-search'
+import { getBrowserPaneSearchEntries, getTerminalLinkActionSearchKeywords } from './browser-search'
 import {
   getBrowserLinkRoutingDescription,
   getBrowserLinkRoutingShortcutLabel,
@@ -53,6 +53,11 @@ describe('browser settings search copy', () => {
     )
     expect(terminalActionsEntry?.description).toContain('Ctrl-click')
     expect(terminalActionsEntry?.description).not.toContain('Cmd/Ctrl')
+    expect(terminalActionsEntry?.keywords).toEqual(
+      getTerminalLinkActionSearchKeywords({ isMac: false })
+    )
+    expect(terminalActionsEntry?.keywords).toContain('browser')
+    expect(terminalActionsEntry?.keywords).toContain('ctrl')
   })
 
   // Why: shipping the opt-in must not reword this row for anyone who never enables

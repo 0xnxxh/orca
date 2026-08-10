@@ -505,10 +505,30 @@ describe('hard-wrapped terminal HTTP clicks', () => {
     const event = mouseEventForRow(0, { plain: true })
 
     mouseDown!(event)
-    expect(terminal.options.mouseEventsRequireAlt).toBe(true)
+    expect(terminal.options.mouseEventsRequireAlt).toBe(false)
     mouseUp!(event)
 
     expect(request).toHaveBeenCalledWith(expect.objectContaining({ kind: 'url' }))
+    expect(openUrlMock).not.toHaveBeenCalled()
+    disposable.dispose()
+  })
+
+  it('does not suppress a plain HTTP link when action popovers are disabled', () => {
+    const { terminal, registrations } = makeTerminal()
+    const disposable = installHttpLinkClickFallback(terminal, {
+      worktreeId: 'wt-1',
+      getLinkActionContext: () => null
+    })
+    const mouseDown = registrations.find(([name]) => name === 'mousedown')?.[1]
+    const mouseUp = registrations.find(
+      ([name, _listener, options]) => name === 'mouseup' && options === undefined
+    )?.[1]
+    const event = mouseEventForRow(0, { plain: true })
+
+    mouseDown!(event)
+    mouseUp!(event)
+
+    expect(terminal.options.mouseEventsRequireAlt).toBe(false)
     expect(openUrlMock).not.toHaveBeenCalled()
     disposable.dispose()
   })

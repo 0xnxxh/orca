@@ -1,5 +1,5 @@
 import type { IDisposable, Terminal } from '@xterm/xterm'
-import { isTerminalOwnedLinkGesture } from './terminal-link-activation'
+import { isTerminalLinkDirectActivation } from './terminal-link-activation'
 
 const CAPTURE_LISTENER_OPTIONS = { capture: true } as const
 
@@ -31,7 +31,7 @@ export function installTerminalLinkPtyMouseSuppression(
     queueMicrotask(restore)
   }
   const handleMouseDown = (event: MouseEvent): void => {
-    if (!isTerminalOwnedLinkGesture(event) || !shouldSuppressMouseEvent(event)) {
+    if (!isTerminalLinkDirectActivation(event) || !shouldSuppressMouseEvent(event)) {
       return
     }
     restore()
