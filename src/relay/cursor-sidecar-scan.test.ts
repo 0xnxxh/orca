@@ -151,6 +151,20 @@ describe('scanCursorSidecars', () => {
     expect(result.truncated.sessionDirs).toBe(false)
   })
 
+  it('does not report session truncation for an already-examined empty bucket', async () => {
+    const root = await createRoot()
+    const chatsRoot = join(root, 'chats')
+    await addSession(chatsRoot, '33333333333333333333333333333333', 'only-session')
+    await mkdir(join(chatsRoot, '44444444444444444444444444444444'))
+    const request = defaultCursorSidecarScanRequest(chatsRoot, [], process.platform)
+    request.maxSessionDirs = 1
+
+    const result = await scanCursorSidecars(request, context)
+
+    expect(result.sidecars).toHaveLength(1)
+    expect(result.truncated.sessionDirs).toBe(false)
+  })
+
   it('prioritizes exact-scope candidates before newer unrelated sidecars at the byte cap', async () => {
     const root = await createRoot()
     const chatsRoot = join(root, 'chats')

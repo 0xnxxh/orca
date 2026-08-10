@@ -171,9 +171,14 @@ async function retainSessions(
       batch.map((bucket) => listBucketSessions(bucket, args, retained.length))
     )
     args.cancellation.throwIfCancelled()
-    for (const { bucket, names, truncated } of listings) {
+    for (let listingIndex = 0; listingIndex < listings.length; listingIndex += 1) {
+      const { bucket, names, truncated } = listings[listingIndex]
       if (retained.length >= args.caps.sessions) {
-        args.response.truncated.sessionDirs = true
+        if (
+          listings.slice(listingIndex).some((listing) => listing.truncated || listing.names.length)
+        ) {
+          args.response.truncated.sessionDirs = true
+        }
         break
       }
       const capacity = args.caps.sessions - retained.length
