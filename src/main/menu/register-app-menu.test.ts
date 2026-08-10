@@ -266,14 +266,16 @@ describe('registerAppMenu', () => {
       registerAppMenu(buildMenuOptions())
 
       const editSubmenu = getSubmenu(getTemplate(), 'Edit')
-      const expectedAccelerator = platform === 'darwin' ? undefined : ''
+      const expectedRegistration = platform === 'darwin' ? undefined : false
+      const undoItem = editSubmenu.find((item) => item.role === 'undo')
+      const redoItem = editSubmenu.find((item) => item.role === 'redo')
 
-      expect(editSubmenu.find((item) => item.role === 'undo')?.accelerator).toBe(
-        expectedAccelerator
-      )
-      expect(editSubmenu.find((item) => item.role === 'redo')?.accelerator).toBe(
-        expectedAccelerator
-      )
+      expect(undoItem?.accelerator).toBeUndefined()
+      expect(redoItem?.accelerator).toBeUndefined()
+      expect(undoItem && 'registerAccelerator' in undoItem).toBe(platform !== 'darwin')
+      expect(redoItem && 'registerAccelerator' in redoItem).toBe(platform !== 'darwin')
+      expect(undoItem?.registerAccelerator).toBe(expectedRegistration)
+      expect(redoItem?.registerAccelerator).toBe(expectedRegistration)
     }
   )
 
