@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { normalizeFeatureInteractions } from '../shared/feature-interactions'
+import type { PersistedState } from '../shared/types'
 
 vi.mock('electron', () => ({
   app: { getPath: () => tmpdir() },
@@ -77,8 +78,11 @@ describe('feature interaction UI broadcast benchmark', () => {
     expect(
       new Store({ dataFile }).getUI().featureInteractions?.['agent-orchestration']?.interactionCount
     ).toBe(INTERACTIONS)
+    const persisted = JSON.parse(readFileSync(dataFile, 'utf8')) as PersistedState
+    expect(persisted.featureInteractionTelemetryBuckets?.['agent-orchestration']).toBe(
+      'count_200_499'
+    )
 
-    // eslint-disable-next-line no-console
     console.log(
       `[bench] ${INTERACTIONS} orchestration interactions: ` +
         `full-state broadcasts ${legacyBroadcasts} -> ${optimizedBroadcasts}; ` +
