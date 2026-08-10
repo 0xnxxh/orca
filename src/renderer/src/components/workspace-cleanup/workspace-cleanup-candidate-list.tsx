@@ -1,6 +1,8 @@
 import React from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import type { WorkspaceCleanupCandidate } from '../../../../shared/workspace-cleanup'
+
+/** Any row shape the flat list renders — raw candidates or enriched facet rows. */
+type WorkspaceCleanupListRow = { worktreeId: string }
 
 // Why: below this count plain rows keep the pre-virtualization DOM (natural
 // flow, no absolute positioning), so the common few-worktrees case is
@@ -19,7 +21,7 @@ const WORKSPACE_CLEANUP_ROW_OVERSCAN = 8
  * no scroll-margin bookkeeping is needed. Lists shorter than
  * WORKSPACE_CLEANUP_VIRTUALIZE_MIN_ROWS render plainly.
  */
-export function WorkspaceCleanupCandidateList({
+export function WorkspaceCleanupCandidateList<Row extends WorkspaceCleanupListRow>({
   rows,
   renderRow,
   // Why: a state-held element, not a ref — the ScrollArea viewport is not
@@ -27,8 +29,8 @@ export function WorkspaceCleanupCandidateList({
   // virtualizer unobserved until some unrelated re-render.
   scrollElement
 }: {
-  rows: readonly WorkspaceCleanupCandidate[]
-  renderRow: (candidate: WorkspaceCleanupCandidate, index: number) => React.ReactNode
+  rows: readonly Row[]
+  renderRow: (row: Row, index: number) => React.ReactNode
   scrollElement: HTMLDivElement | null
 }): React.JSX.Element {
   const virtualize = rows.length >= WORKSPACE_CLEANUP_VIRTUALIZE_MIN_ROWS

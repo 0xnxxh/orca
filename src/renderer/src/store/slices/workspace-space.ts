@@ -14,6 +14,8 @@ export type WorkspaceSpaceSlice = {
   workspaceSpaceScanning: boolean
   applyWorkspaceSpaceProgress: (progress: WorkspaceSpaceScanProgress) => void
   cancelWorkspaceSpaceScan: () => Promise<boolean>
+  /** Stale-while-revalidate seed; true when the persisted analysis filled an empty slice. */
+  hydrateWorkspaceSpaceFromCache: () => Promise<boolean>
   refreshWorkspaceSpace: () => Promise<WorkspaceSpaceAnalysis>
   removeWorkspaceSpaceWorktrees: (worktreeIds: readonly string[]) => void
 }
@@ -104,6 +106,25 @@ export const createWorkspaceSpaceSlice: StateCreator<AppState, [], [], Workspace
       )
     }
     return cancelled
+  },
+  hydrateWorkspaceSpaceFromCache: async () => {
+    const hasLiveAnalysis = (): boolean =>
+      get().workspaceSpaceAnalysis !== null || get().workspaceSpaceScanning || inFlightScan !== null
+    if (hasLiveAnalysis()) {
+      return false
+    }
+    let cached: Awaited<ReturnType<typeof window.api.workspaceSpace.getCachedAnalysis>>
+    try {
+      cached = await window.api.workspaceSpace.getCachedAnalysis()
+    } catch {
+      // Why: hydration is best-effort; a manual scan remains the recovery path.
+      return false
+    }
+    if (cached === null || hasLiveAnalysis()) {
+      return false
+    }
+    set({ workspaceSpaceAnalysis: cached })
+    return true
   },
   refreshWorkspaceSpace: async () => {
     if (inFlightScan) {

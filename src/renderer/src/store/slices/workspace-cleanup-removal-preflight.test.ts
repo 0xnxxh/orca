@@ -237,6 +237,7 @@ describe('workspace cleanup removal and protection', () => {
 
     expect(scan).toHaveBeenCalledWith(
       {
+        includeAllWorkspaces: true,
         skipGitWorktreeIds: expect.arrayContaining([WORKTREE_ID, 'repo1::/tmp/terminal-workspace'])
       },
       expect.any(Function)

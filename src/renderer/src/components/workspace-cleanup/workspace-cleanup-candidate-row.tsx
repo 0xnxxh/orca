@@ -8,6 +8,7 @@ import {
   FileWarning,
   GitBranch,
   GitPullRequest,
+  HardDrive,
   Loader2,
   Search,
   SquareTerminal,
@@ -48,9 +49,13 @@ type CandidateRowProps = {
   deletionPhase?: WorkspaceCleanupDeletionPhase
   expanded: boolean
   failure?: string
+  /** A focused git re-scan is in flight, so "Not checked" is provisional. */
+  gitEvidencePending?: boolean
   last: boolean
   lastActivityLabel: string
   removing?: boolean
+  /** Joined from the workspace-space scan; null when that scan has not run. */
+  sizeLabel?: string | null
   reviewInfo: WorkspaceCleanupReviewInfo
   selected: boolean
   onIgnore: (candidate: WorkspaceCleanupCandidate) => void
@@ -106,9 +111,11 @@ export const CandidateRow = React.memo(function CandidateRow({
   deletionPhase,
   expanded,
   failure,
+  gitEvidencePending = false,
   last,
   lastActivityLabel,
   removing = false,
+  sizeLabel = null,
   reviewInfo,
   selected,
   onIgnore,
@@ -193,7 +200,28 @@ export const CandidateRow = React.memo(function CandidateRow({
               )} ${lastActivityLabel}`}
               value={formatCompactActivityLabel(lastActivityLabel)}
             />
-            {dirtyLabel && showGitMetadataChip ? (
+            {sizeLabel ? (
+              <MetadataIconChip
+                icon={HardDrive}
+                label={translate(
+                  'components.workspace.cleanup.browse.sizeOnDisk',
+                  'Size on disk: {{value0}}',
+                  { value0: sizeLabel }
+                )}
+                value={sizeLabel}
+              />
+            ) : null}
+            {gitEvidencePending ? (
+              <span
+                className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full border border-border bg-background px-1.5 text-[11px] font-medium text-muted-foreground"
+                aria-label={translate(
+                  'components.workspace.cleanup.browse.checkingGitRow',
+                  'Checking git status'
+                )}
+              >
+                <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+              </span>
+            ) : dirtyLabel && showGitMetadataChip ? (
               <MetadataIconChip icon={FileWarning} label={dirtyLabel} tone="destructive" />
             ) : showGitMetadataChip ? (
               <MetadataIconChip

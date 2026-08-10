@@ -15118,7 +15118,12 @@
             "none": "Has none"
           },
           "tierField": "Cleanup tier",
-          "idleSignalField": "Idle signal"
+          "idleSignalField": "Idle signal",
+          "selectionVanishedOne": "1 selected workspace no longer exists.",
+          "selectionVanished": "{{value0}} selected workspaces no longer exist.",
+          "updatedAgo": "Updated {{value0}}",
+          "refreshing": "Refreshing…",
+          "refreshingProgress": "Refreshing {{value0}}/{{value1}}"
         }
       }
     },

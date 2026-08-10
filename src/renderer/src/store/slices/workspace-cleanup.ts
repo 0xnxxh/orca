@@ -22,6 +22,7 @@ import {
   type WorkspaceCleanupScanResult
 } from '../../../../shared/workspace-cleanup'
 import { mapWithConcurrency } from '../../../../shared/map-with-concurrency'
+import { hydrateWorkspaceCleanupScanFromCache } from './workspace-cleanup-cache-hydration'
 import { classifyTitleActivity, isExplicitAgentStatusFresh } from '@/lib/pane-agent-evidence'
 import { translate } from '@/i18n/i18n'
 
@@ -56,6 +57,8 @@ export type WorkspaceCleanupSlice = {
   workspaceCleanupDismissals: Record<string, WorkspaceCleanupDismissal>
   workspaceCleanupViewedCandidates: Record<string, WorkspaceCleanupViewedCandidate>
   scanWorkspaceCleanup: (args?: WorkspaceCleanupScanArgs) => Promise<WorkspaceCleanupScanResult>
+  /** Stale-while-revalidate seed; true when the persisted snapshot filled an empty slice. */
+  hydrateWorkspaceCleanupFromCache: () => Promise<boolean>
   markWorkspaceCleanupCandidateViewed: (candidate: WorkspaceCleanupCandidate) => void
   dismissWorkspaceCleanupCandidates: (
     candidates: readonly WorkspaceCleanupCandidate[]
@@ -158,6 +161,9 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
     }
 
     const scanArgs = {
+      // Why: the dialog renders one flat list of every workspace, so a broad
+      // scan must not stop at the 30-day-idle suggestions.
+      includeAllWorkspaces: true,
       ...args,
       skipGitWorktreeIds: [
         ...new Set([
@@ -234,6 +240,15 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
       }
     }
   },
+
+  hydrateWorkspaceCleanupFromCache: () =>
+    hydrateWorkspaceCleanupScanFromCache({
+      // Why: loading covers an in-flight broad scan whose progress may not have
+      // reached the store yet; the cache must never clobber either.
+      hasLiveScanState: () => get().workspaceCleanupScan !== null || get().workspaceCleanupLoading,
+      enrich: (candidates) => enrichWorkspaceCleanupCandidates(candidates, get()),
+      apply: (scan) => set({ workspaceCleanupScan: scan })
+    }),
 
   markWorkspaceCleanupCandidateViewed: (candidate) => {
     set((state) => ({
@@ -367,6 +382,7 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
 
 function getWorkspaceCleanupScanKey(args: WorkspaceCleanupScanArgs): string {
   return JSON.stringify({
+    includeAllWorkspaces: args.includeAllWorkspaces === true,
     skipGitWorktreeIds: [...new Set(args.skipGitWorktreeIds ?? [])].sort()
   })
 }
@@ -424,11 +440,13 @@ async function applyWorkspaceCleanupProgress(
     return
   }
   const state = getState()
+  // Why: a cached snapshot (or the previous settled scan) may already fill the
+  // list; streamed rows reconcile into it by worktreeId so a refresh never
+  // clears and rebuilds what the user is reading.
   const previousCandidates =
-    progress.candidateMode === 'append' &&
     state.workspaceCleanupProgress?.scanId === progress.scanId
       ? state.workspaceCleanupProgress.candidates
-      : []
+      : (state.workspaceCleanupScan?.candidates ?? [])
   const enrichedProgressCandidates = await enrichWorkspaceCleanupCandidatesForScan(
     progress.candidates,
     state,
@@ -462,7 +480,10 @@ async function applyWorkspaceCleanupProgress(
     }
     return {
       workspaceCleanupScan: {
-        scannedAt: progress.scannedAt,
+        // Why: mid-refresh the list still mixes in rows from the previous
+        // snapshot; the honest "as of" time stays the snapshot's until the new
+        // scan settles and removes vanished rows.
+        scannedAt: state.workspaceCleanupScan?.scannedAt ?? progress.scannedAt,
         candidates,
         errors: progress.errors
       },
@@ -497,11 +518,8 @@ function mergeWorkspaceCleanupProgressCandidates({
   progress: WorkspaceCleanupScanProgress
   scanToken: number
 }): WorkspaceCleanupCandidate[] {
-  if (progress.candidateMode !== 'append') {
-    workspaceCleanupProgressCandidateIndex = null
-    return [...nextCandidates]
-  }
-
+  // Why: snapshot-mode ticks also merge — replacing would drop the
+  // stale-while-revalidate rows this scan has not re-reported yet.
   if (nextCandidates.length === 0) {
     return previousCandidates as WorkspaceCleanupCandidate[]
   }
