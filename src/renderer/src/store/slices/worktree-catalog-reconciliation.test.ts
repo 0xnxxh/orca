@@ -41,4 +41,14 @@ describe('reuseEqualCatalogRows', () => {
 
     expect(reuseEqualCatalogRows(current, incoming)[0]).toBe(incoming[0])
   })
+
+  it('reuses same-ID rows from different hosts independently', () => {
+    const current = [
+      { id: 'repo::/same/path', hostId: 'ssh:a' },
+      { id: 'repo::/same/path', hostId: 'ssh:b' }
+    ]
+    const incoming = structuredClone(current)
+
+    expect(reuseEqualCatalogRows(current, incoming)).toBe(current)
+  })
 })

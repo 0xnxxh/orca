@@ -37,10 +37,21 @@ export function reuseEqualCatalogRows<T extends CatalogRow>(
   if (!current) {
     return [...incoming]
   }
-  const currentById = new Map(current.map((row) => [row.id, row]))
+  const currentById = new Map<string, T[]>()
+  for (const row of current) {
+    const candidates = currentById.get(row.id)
+    if (candidates) {
+      candidates.push(row)
+    } else {
+      currentById.set(row.id, [row])
+    }
+  }
   const reconciled = incoming.map((row) => {
-    const previous = currentById.get(row.id)
-    return previous && catalogValuesEqual(previous, row) ? previous : row
+    const candidates = currentById.get(row.id)
+    const previousIndex = candidates?.findIndex((candidate) => catalogValuesEqual(candidate, row))
+    return previousIndex !== undefined && previousIndex >= 0
+      ? candidates!.splice(previousIndex, 1)[0]
+      : row
   })
   return current.length === reconciled.length &&
     current.every((row, index) => row === reconciled[index])
