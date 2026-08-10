@@ -1,16 +1,4 @@
-/**
- * Live proof for #12967 against a real Docker SSH host with a real relay.
- *
- * A fork added before fork detection existed persists no `upstream`, and the
- * startup backfill used to skip every repo with a `connectionId` — so the fork
- * badge never rendered and GitHub Project rows stayed hidden until someone
- * opened that repo's settings page. This drives the actual user sequence:
- * legacy store state on disk, app launch, SSH connect, badge appears.
- *
- * Deterministic and offline: `getRepoUpstream` reads the `upstream` git remote
- * before it ever shells out to `gh`, so the container's remotes decide the
- * answer — no GitHub auth, no network, no real fork required.
- */
+// Offline proof: a distinct upstream remote resolves before gh, requiring no network or auth.
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 

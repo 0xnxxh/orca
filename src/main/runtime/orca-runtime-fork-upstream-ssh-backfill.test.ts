@@ -1,10 +1,4 @@
-/**
- * A fork on an SSH host used to keep `upstream === undefined` until someone opened
- * its settings page — so its GitHub Project rows stayed hidden and its fork badge
- * never rendered (#12967). Connected is the first published state with a ready
- * provider, so the backfill runs there: best-effort, bounded, generation-safe,
- * and never awaited by callers.
- */
+// Legacy SSH forks backfill only after a ready provider publishes connected (#12967).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Repo } from '../../shared/types'
 import type { SshConnectionState } from '../../shared/ssh-types'
@@ -78,8 +72,7 @@ function notifyDisconnected(runtime: OrcaRuntimeService, targetId: string): void
   runtime.notifySshStateChanged(targetId, sshState(targetId, 'disconnected'))
 }
 
-// Why: the backfill is deliberately fire-and-forget, so tests drain the queue
-// rather than awaiting a handle the production caller never has.
+// Why: fire-and-forget production work exposes no handle, so tests flush its microtask queue.
 async function drainBackfill(): Promise<void> {
   for (let tick = 0; tick < 20; tick += 1) {
     await Promise.resolve()
@@ -129,8 +122,12 @@ describe('fork upstream backfill for SSH repos', () => {
     notifyConnected(runtime, 'ssh-1')
     await drainBackfill()
 
-    expect(repos[0].repoIcon).toMatchObject({ type: 'image', source: 'github' })
-    expect(repos[0].repoIcon).not.toMatchObject({ src: 'https://avatars/fork.png' })
+    expect(repos[0].repoIcon).toEqual({
+      type: 'image',
+      src: 'https://github.com/stablyai.png?size=64',
+      source: 'github',
+      label: 'stablyai/orca'
+    })
     expect(repos[1].repoIcon).toEqual({ type: 'emoji', emoji: '🦈' })
   })
 
