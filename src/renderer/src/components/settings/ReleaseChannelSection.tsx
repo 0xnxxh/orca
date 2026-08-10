@@ -25,7 +25,8 @@ const CHANNEL_DESCRIPTIONS: Record<ReleaseChannel, string> = {
   stable: 'Shipped releases. What everyone else is running.',
   rc: 'Release candidates cut ahead of each stable.',
   hourly: 'macOS only. Unvetted builds from main, built every hour. No tests.',
-  daily: 'macOS only. Unvetted builds from main, cut once a day in the early morning. No tests.',
+  daily:
+    'macOS only. Unvetted builds from main, cut once a day at 14:15 UTC (early morning Pacific). No tests.',
   adhoc: 'macOS only. One-off builds cut from a branch to try a feature before it lands.'
 }
 

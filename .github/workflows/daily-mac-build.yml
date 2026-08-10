@@ -32,14 +32,16 @@ name: Daily macOS Dev Build
 #   HOURLY_RELEASE_APP_ID           the App's numeric id (shared with hourly/adhoc)
 #   HOURLY_RELEASE_APP_PRIVATE_KEY  the App's .pem private key
 #
-# Installation tokens live one hour, which is why this mints twice. Install and
-# build need no token at all, and notarization can hold the publish step for tens
-# of minutes; minting again once the build is done starts the clock at the first
-# call that actually uses it rather than burning a third of it on `pnpm install`.
-# A pathological retry can still outrun the second token, but the release is an
-# unpublished draft until the manifest check passes, so the damage is a stranded
-# invisible draft — and the build-number query counts drafts, so it holds its
-# number and the next run does not reuse it.
+# Installation tokens live one hour, which is why this mints three times. Install
+# and build need no token at all, and notarization can hold the publish step for
+# tens of minutes; minting again once the build is done starts the clock at the
+# first call that actually uses it rather than burning a third of it on
+# `pnpm install`. The upload step's own retry budget (2x45m) can outlive that
+# second token, so a third is minted after it for verify/publish/prune/cleanup —
+# without it a stuck notary run would strand a draft that cleanup gets a 401 on.
+# The release stays an unpublished draft until the manifest check passes, so the
+# worst case is still an invisible draft — and the build-number query counts
+# drafts, so it holds its number and the next run does not reuse it.
 
 on:
   schedule:
@@ -262,6 +264,19 @@ jobs:
           # Kept at 12 even though the title shows 7: the freshness check above
           # parses this back out of the body to decide whether main has moved.
           short_sha="${SHA:0:12}"
+          # Why a file rather than an inline string: the publish step re-asserts
+          # this same body, and the freshness check only works if the two agree
+          # exactly. One source, written once, read twice.
+          notes_file="$RUNNER_TEMP/daily-release-notes.md"
+          cat >"$notes_file" <<EOF
+          Automated daily macOS dev build from commit \`$short_sha\`.
+
+          Built from [\`stablyai/orca@$short_sha\`](https://github.com/stablyai/orca/commit/$SHA).
+
+          **Unvetted.** No tests ran. Signed and notarized like a release, so it
+          installs through Orca's in-app updater and opens from a manual download
+          without a Gatekeeper prompt — but nothing here has been reviewed.
+          EOF
           # Why create it up front: electron-builder then uploads into a known tag
           # rather than inferring one from package.json.
           #
@@ -276,14 +291,9 @@ jobs:
             --repo "$DAILY_REPO" \
             --title "$NAME" \
             --draft \
-            --notes "Automated daily macOS dev build from commit \`$short_sha\`.
-
-          Built from [\`stablyai/orca@$short_sha\`](https://github.com/stablyai/orca/commit/$SHA).
-
-          **Unvetted.** No tests ran. Signed and notarized like a release, so it
-          installs through Orca's in-app updater and opens from a manual download
-          without a Gatekeeper prompt — but nothing here has been reviewed."
+            --notes-file "$notes_file"
           echo "tag=$TAG" >>"$GITHUB_OUTPUT"
+          echo "notes_file=$notes_file" >>"$GITHUB_OUTPUT"
 
       - name: Publish daily macOS artifacts
         if: steps.freshness.outputs.should_build == 'true'
@@ -313,6 +323,23 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
+      # Why a third mint: the upload step above allows two 45-minute attempts, so
+      # it can outlive the one-hour token minted before it. Every remaining step
+      # writes to the daily repo, including the failure path that discards the
+      # draft — a 401 there is exactly the stranded draft nobody can clean up.
+      #
+      # Why always(): a failed or cancelled upload is the case that needs this
+      # most, since the cleanup step below runs only on that path.
+      - name: Re-mint daily repo token for verify and cleanup
+        id: app_token_final
+        if: always() && steps.freshness.outputs.should_build == 'true'
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.HOURLY_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HOURLY_RELEASE_APP_PRIVATE_KEY }}
+          owner: stablyai
+          repositories: orca-daily
+
       # Why: the updater resolves a tag, then fetches latest-mac.yml from it. A
       # release missing that manifest is a tag the picker offers and the download
       # 404s on, so fail loudly instead of leaving a broken entry.
@@ -320,7 +347,7 @@ jobs:
         if: steps.freshness.outputs.should_build == 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.app_token_publish.outputs.token }}
+          GH_TOKEN: ${{ steps.app_token_final.outputs.token }}
           TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
@@ -350,15 +377,20 @@ jobs:
         if: steps.freshness.outputs.should_build == 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.app_token_publish.outputs.token }}
+          GH_TOKEN: ${{ steps.app_token_final.outputs.token }}
           TAG: ${{ steps.release.outputs.tag }}
           NAME: ${{ steps.daily.outputs.name }}
+          NOTES_FILE: ${{ steps.release.outputs.notes_file }}
         run: |
           set -euo pipefail
           # --title again: electron-builder resolves this draft by tag and may
           # rewrite its title on upload. Re-asserting here means the name the
           # picker reads is the one composed above, whatever it did in between.
-          gh release edit "$TAG" --repo "$DAILY_REPO" --draft=false --prerelease --title "$NAME"
+          # --notes-file for the same reason, and it matters more: the next run's
+          # freshness check parses the source commit back out of this body, so a
+          # body the publisher overwrote would rebuild an unchanged main daily.
+          gh release edit "$TAG" --repo "$DAILY_REPO" --draft=false --prerelease \
+            --title "$NAME" --notes-file "$NOTES_FILE"
           echo "Published $TAG as \"$NAME\""
 
       # Why: a draft left behind by a failed publish is invisible to users but still
@@ -376,7 +408,9 @@ jobs:
           steps.publish_live.outcome != 'success'
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.app_token_publish.outputs.token }}
+          # Fall back to the publish token: if the re-mint itself is what failed,
+          # the older token is the only one left and may still have time on it.
+          GH_TOKEN: ${{ steps.app_token_final.outputs.token || steps.app_token_publish.outputs.token }}
           TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -uo pipefail
@@ -392,7 +426,7 @@ jobs:
         if: steps.publish_live.outcome == 'success'
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.app_token_publish.outputs.token }}
+          GH_TOKEN: ${{ steps.app_token_final.outputs.token }}
           # Protect the tag this run just shipped; at the retain cap, a bad sort
           # can otherwise mark the newest release as stale and delete it.
           TAG: ${{ steps.release.outputs.tag }}
