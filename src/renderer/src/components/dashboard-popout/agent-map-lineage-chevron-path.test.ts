@@ -29,6 +29,12 @@ describe('agentMapDirectLineageChevronPath', () => {
     ).toBe('M 0 0')
   })
 
+  it('omits a chevron that cannot fit between trimmed node boundaries', () => {
+    expect(
+      agentMapDirectLineageChevronPath({ x: 0, y: 0, radius: 10 }, { x: 25, y: 0, radius: 10 })
+    ).toBe('M 10 0')
+  })
+
   it('caps decorative chevrons on long links', () => {
     const path = agentMapDirectLineageChevronPath(
       { x: 0, y: 0, radius: 0 },

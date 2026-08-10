@@ -38,7 +38,7 @@ export function agentMapLineageChevronPath(points: AgentMapLineagePoint[]): stri
     segments.push({ start, unitX: dx / length, unitY: dy / length, length })
     totalLength += length
   }
-  if (segments.length === 0) {
+  if (segments.length === 0 || totalLength < CHEVRON_DEPTH * 2) {
     return points[0] ? `M ${svgNumber(points[0].x)} ${svgNumber(points[0].y)}` : ''
   }
 
