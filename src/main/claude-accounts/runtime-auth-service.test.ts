@@ -3857,6 +3857,9 @@ describe('ClaudeRuntimeAuthService', () => {
       null,
       9_999_999_999_999
     )
+    writeFileSync(runtimeCredentialsPath, account1Stale, 'utf-8')
+    testState.scopedKeychainCredentials = account1Stale
+    testState.legacyKeychainCredentials = account1Stale
     const managedAuthPath1 = createManagedClaudeAuth(
       testState.userDataDir,
       'account-1',
@@ -4165,6 +4168,78 @@ describe('ClaudeRuntimeAuthService', () => {
 
       expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(datedRuntime)
       expect(testState.scopedKeychainCredentials).toBe(datedRuntime)
+    })
+
+    it('preserves a re-read unknown-expiry file over stale finite keychain stores', async () => {
+      const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+      const unknownExpiryRuntime = `${JSON.stringify({
+        claudeAiOauth: {
+          email: 'one@example.com',
+          accessToken: 'unknown-new-login',
+          refreshToken: 'unknown-new-login-refresh',
+          expiresAt: '9999999999999'
+        }
+      })}\n`
+      const staleFiniteCredentials = createClaudeCredentialsJson(
+        'one@example.com',
+        'stale-finite',
+        null,
+        1_000
+      )
+      writeFileSync(runtimeCredentialsPath, unknownExpiryRuntime, 'utf-8')
+      testState.scopedKeychainCredentials = staleFiniteCredentials
+      testState.legacyKeychainCredentials = staleFiniteCredentials
+      const managedAuthPath = createManagedClaudeAuth(
+        testState.userDataDir,
+        'account-1',
+        staleFiniteCredentials
+      )
+      const account = createClaudeAccount('account-1', managedAuthPath, {
+        email: 'one@example.com'
+      })
+      const settings = createSettings({
+        claudeManagedAccounts: [account],
+        activeClaudeManagedAccountId: null
+      })
+      const store = createStore(settings)
+      const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+      const service = new ClaudeRuntimeAuthService(store as never) as unknown as {
+        syncForCurrentSelection(): Promise<void>
+        applyMonotonicRuntimeMaterializationGuard(
+          selectedAccount: ClaudeManagedAccount,
+          candidateCredentialsJson: string,
+          observation: undefined,
+          preferCandidateOnEqual: boolean,
+          candidateProvenance: 'unverified' | 'verified-refresh' | 'verified-adoption'
+        ): Promise<string>
+      }
+      await service.syncForCurrentSelection()
+
+      await expect(
+        service.applyMonotonicRuntimeMaterializationGuard(
+          account,
+          staleFiniteCredentials,
+          undefined,
+          true,
+          'unverified'
+        )
+      ).resolves.toBe(unknownExpiryRuntime)
+      await expect(
+        service.applyMonotonicRuntimeMaterializationGuard(
+          account,
+          staleFiniteCredentials,
+          undefined,
+          true,
+          'verified-adoption'
+        )
+      ).resolves.toBe(staleFiniteCredentials)
+
+      store.updateSettings({ activeClaudeManagedAccountId: 'account-1' })
+      await service.syncForCurrentSelection()
+
+      expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(unknownExpiryRuntime)
+      expect(testState.scopedKeychainCredentials).toBe(unknownExpiryRuntime)
+      expect(testState.legacyKeychainCredentials).toBe(unknownExpiryRuntime)
     })
 
     it('uses the freshest of diverged file/keychain stores before materializing', async () => {
@@ -4909,7 +4984,8 @@ describe('ClaudeRuntimeAuthService', () => {
           selectedAccount: ClaudeManagedAccount,
           candidateCredentialsJson: string,
           managedCredentialsJson: string,
-          preferCandidateOnEqual: boolean
+          preferCandidateOnEqual: boolean,
+          candidateProvenance: 'unverified' | 'verified-refresh' | 'verified-adoption'
         ) => string
       }
       writeFileSync(runtimeCredentialsPath, observedRuntime, 'utf-8')
@@ -4921,7 +4997,8 @@ describe('ClaudeRuntimeAuthService', () => {
           account,
           observedRuntime,
           managedCredentials,
-          false
+          false,
+          'unverified'
         )
       ).toBe(concurrentRefresh)
     })
