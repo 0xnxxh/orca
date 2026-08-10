@@ -12,6 +12,7 @@ import {
   type CursorSidecarScanCancellation
 } from './cursor-sidecar-scan-cancellation'
 import {
+  compareCursorSidecarNames,
   CURSOR_DIR_MAX_ENTRIES_EXAMINED,
   listLexicographicDirectoryNames,
   resolveTargetScopePathVariants
@@ -231,7 +232,10 @@ function retainByNewestThenAggregate(
       Number(right.scopeCwd !== null) - Number(left.scopeCwd !== null) ||
       Math.max(right.meta.mtimeMs, right.store.mtimeMs) -
         Math.max(left.meta.mtimeMs, left.store.mtimeMs) ||
-      `${left.name}\0${left.sessionId}`.localeCompare(`${right.name}\0${right.sessionId}`)
+      compareCursorSidecarNames(
+        `${left.name}\0${left.sessionId}`,
+        `${right.name}\0${right.sessionId}`
+      )
   )
   const representatives = new Set<CursorSidecarScanCandidate>()
   const representedBuckets = new Set<string>()

@@ -220,27 +220,33 @@ describe('cursor sidecar directory examination bounds', () => {
     expect(selected).toEqual(['a', 'b', 'm'])
   })
 
-  it('bounds comparisons for reverse-ordered retained names', () => {
-    const originalLocaleCompare = String.prototype.localeCompare
-    let comparisons = 0
-    const localeCompare = vi.spyOn(String.prototype, 'localeCompare').mockImplementation(function (
-      this: string,
-      value: string
-    ) {
-      comparisons += 1
-      return originalLocaleCompare.call(this, value)
-    })
+  it('retains the same Unicode name regardless of directory iteration order', () => {
+    const composedFirst: string[] = []
+    const decomposedFirst: string[] = []
+    for (const name of ['\u00e9', 'e\u0301']) {
+      retainLexicographic(composedFirst, name, 1)
+    }
+    for (const name of ['e\u0301', '\u00e9']) {
+      retainLexicographic(decomposedFirst, name, 1)
+    }
+
+    expect(composedFirst).toEqual(['e\u0301'])
+    expect(decomposedFirst).toEqual(['e\u0301'])
+  })
+
+  it('bounds reverse-ordered retention without locale collation', () => {
+    const localeCompare = vi.spyOn(String.prototype, 'localeCompare')
     const selected: string[] = []
 
     try {
       for (let index = 255; index >= 0; index -= 1) {
         retainLexicographic(selected, String(index).padStart(3, '0'), 64)
       }
+      expect(localeCompare).not.toHaveBeenCalled()
     } finally {
       localeCompare.mockRestore()
     }
 
-    expect(comparisons).toBeLessThan(2_500)
     expect(selected).toEqual(
       Array.from({ length: 64 }, (_, index) => String(index).padStart(3, '0'))
     )

@@ -5,24 +5,29 @@ import { posix, win32 } from 'node:path'
 /** Per-directory dirent examination budget; keeps cold scans hard-bounded. */
 export const CURSOR_DIR_MAX_ENTRIES_EXAMINED = 8_192
 
+// Filesystem keys need identical ordering across host locales.
+export function compareCursorSidecarNames(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
 /** Returns true when `name` caused the retained set to overflow the limit. */
 export function retainLexicographic(selected: string[], name: string, limit: number): boolean {
   if (selected.length < limit) {
     selected.push(name)
     if (selected.length === limit) {
-      selected.sort((left, right) => left.localeCompare(right))
+      selected.sort(compareCursorSidecarNames)
     }
     return false
   }
   const last = selected[limit - 1]
-  if (name.localeCompare(last) >= 0) {
+  if (compareCursorSidecarNames(name, last) >= 0) {
     return true
   }
   let low = 0
   let high = limit
   while (low < high) {
     const middle = Math.floor((low + high) / 2)
-    if (name.localeCompare(selected[middle]) < 0) {
+    if (compareCursorSidecarNames(name, selected[middle]) < 0) {
       high = middle
     } else {
       low = middle + 1
@@ -128,7 +133,7 @@ export async function listLexicographicDirectoryNames(args: {
     truncated = true
   }
   if (selected.length < args.limit) {
-    selected.sort((left, right) => left.localeCompare(right))
+    selected.sort(compareCursorSidecarNames)
   }
   return { names: selected, truncated, entriesExamined }
 }
