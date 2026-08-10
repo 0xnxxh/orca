@@ -251,11 +251,23 @@ export type RuntimeMobileSessionBrowserTab = {
   isActive: boolean
 }
 
+export type RuntimeMobileSessionAgentTab = {
+  type: 'agent-session'
+  id: string
+  title: string
+  sessionId: string
+  agent: 'codex'
+  color?: string | null
+  isPinned?: boolean
+  isActive: boolean
+}
+
 export type RuntimeMobileSessionSnapshotTab =
   | RuntimeMobileSessionTerminalTab
   | RuntimeMobileSessionMarkdownTab
   | RuntimeMobileSessionFileTab
   | RuntimeMobileSessionBrowserTab
+  | RuntimeMobileSessionAgentTab
 
 export type RuntimeMobileSessionTerminalClientTab =
   | (RuntimeMobileSessionTerminalTab & {
@@ -272,6 +284,7 @@ export type RuntimeMobileSessionClientTab =
   | RuntimeMobileSessionMarkdownTab
   | RuntimeMobileSessionFileTab
   | RuntimeMobileSessionBrowserTab
+  | RuntimeMobileSessionAgentTab
 
 export type RuntimeMobileSessionTabGroup = {
   id: string
@@ -328,7 +341,7 @@ export type RuntimeMobileSessionTabsSnapshot = {
   snapshotVersion: number
   activeGroupId: string | null
   activeTabId: string | null
-  activeTabType: 'terminal' | 'markdown' | 'file' | 'browser' | null
+  activeTabType: 'terminal' | 'markdown' | 'file' | 'browser' | 'agent-session' | null
   tabGroups?: RuntimeMobileSessionTabGroup[]
   tabGroupLayout?: TabGroupLayoutNode | null
   tabs: RuntimeMobileSessionSnapshotTab[]
@@ -342,7 +355,7 @@ export type RuntimeMobileSessionTabsResult = {
   navigationIntent?: 'follow'
   activeGroupId: string | null
   activeTabId: string | null
-  activeTabType: 'terminal' | 'markdown' | 'file' | 'browser' | null
+  activeTabType: 'terminal' | 'markdown' | 'file' | 'browser' | 'agent-session' | null
   tabGroups?: RuntimeMobileSessionTabGroup[]
   tabGroupLayout?: TabGroupLayoutNode | null
   tabs: RuntimeMobileSessionClientTab[]

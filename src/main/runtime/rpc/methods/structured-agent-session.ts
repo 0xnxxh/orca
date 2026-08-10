@@ -7,6 +7,10 @@
 // structured session.
 
 import { STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
+import {
+  agentSessionFingerprintConflict,
+  computeAgentSessionPayloadFingerprint
+} from '../../../../shared/agent-session-mutation-envelope'
 import { getStructuredAgentSessionHost } from '../../../native-chat/agent-session-wire/structured-agent-session-registry'
 import type {
   StructuredAgentSessionCaller,
@@ -16,6 +20,8 @@ import { defineMethod, defineStreamingMethod, type RpcAnyMethod, type RpcContext
 import {
   AttachParams,
   CancelParams,
+  CreateParams,
+  CreateSupportParams,
   HistoryParams,
   RespondParams,
   SendParams,
@@ -37,8 +43,15 @@ function supportsStructuredSessions(ctx: RpcContext): boolean {
   )
 }
 
+function requireStructuredCapability(ctx: RpcContext): void {
+  if (!supportsStructuredSessions(ctx)) {
+    throw new Error('structured_agent_session_unsupported')
+  }
+}
+
 function requireHost(ctx: RpcContext): StructuredAgentSessionHost {
-  const host = supportsStructuredSessions(ctx) ? getStructuredAgentSessionHost() : null
+  requireStructuredCapability(ctx)
+  const host = getStructuredAgentSessionHost()
   if (!host) {
     throw new Error('structured_agent_session_unsupported')
   }
@@ -74,11 +87,60 @@ function subscriptionIdFor(ctx: RpcContext, sessionId: string): string {
 
 export const STRUCTURED_AGENT_SESSION_METHODS: RpcAnyMethod[] = [
   defineMethod({
-    name: 'agentSession.create',
-    params: AttachParams,
+    name: 'agentSession.createSupport',
+    params: CreateSupportParams,
     handler: async (params, ctx) => {
+      if (!supportsStructuredSessions(ctx)) {
+        throw new Error('structured_agent_session_unsupported')
+      }
+      return ctx.runtime.getStructuredAgentSessionCreateSupport(params.worktree, params.agent)
+    }
+  }),
+  defineMethod({
+    name: 'agentSession.create',
+    params: CreateParams,
+    handler: async (params, ctx) => {
+      requireStructuredCapability(ctx)
       if (params.envelope.expectedRuntimeFence !== null) {
         throw new Error('agent_session_operation_invalid')
+      }
+      if ('worktree' in params) {
+        const intentFingerprint = computeAgentSessionPayloadFingerprint({
+          method: 'agentSession.create',
+          sessionId: params.envelope.sessionId,
+          fields: { worktree: params.worktree, agent: params.agent }
+        })
+        const conflict = agentSessionFingerprintConflict(params.envelope, intentFingerprint)
+        if (conflict) {
+          return { ok: false, refusal: conflict }
+        }
+        const resolved = await ctx.runtime.resolveStructuredAgentSessionCreateIntent(params)
+        const hostFingerprint = computeAgentSessionPayloadFingerprint({
+          method: 'agentSession.attach',
+          sessionId: params.envelope.sessionId,
+          fields: {
+            location: resolved.location,
+            provider: resolved.provider,
+            agent: resolved.agent,
+            accountHome: resolved.accountHome,
+            runtimeKind: resolved.runtimeKind,
+            expectedRuntimeFence: null
+          }
+        })
+        await ensureHostInstalled(ctx)
+        const result = await requireHost(ctx).attach(callerFor(ctx), {
+          ...resolved,
+          envelope: { ...params.envelope, payloadFingerprint: hostFingerprint }
+        })
+        if (result.ok) {
+          ctx.runtime.publishStructuredAgentSessionTab({
+            workspaceId: resolved.location.workspaceId,
+            sessionId: result.value.sessionId,
+            agent: 'codex',
+            activate: true
+          })
+        }
+        return result
       }
       await ensureHostInstalled(ctx)
       return requireHost(ctx).attach(callerFor(ctx), params)

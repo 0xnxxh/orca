@@ -267,6 +267,7 @@ import { buildHeadlessAutomationWorktreeCreateArgs } from './automations/headles
 import { AgentAwakeService } from './agent-awake-service'
 import { registerSystemResumeBroadcast } from './system-resume-broadcast'
 import { settleTeardownWithinDeadline } from './quit-teardown-deadline'
+import { stopStructuredAgentSessionRuntime } from './runtime/structured-agent-session-runtime'
 import { quitTeardownStartGate } from './quit-teardown-start-gate'
 import { beginSshShutdown } from './ipc/ssh'
 import { PluginService } from './plugins/plugin-service'
@@ -3109,6 +3110,7 @@ app.on('will-quit', (e) => {
   pluginMarketplaceInstaller = null
   const pluginHostShutdown = pluginService?.dispose() ?? Promise.resolve()
   const codexBackfillRecoveryShutdown = stopCodexStateDbBackfillRecoveries()
+  const structuredAgentSessionShutdown = stopStructuredAgentSessionRuntime()
   pluginService = null
   setUnreadDockBadgeCount(0)
   agentHookServer.stop()
@@ -3169,6 +3171,7 @@ app.on('will-quit', (e) => {
     { name: 'ssh', promise: sshShutdown },
     { name: 'plugin-hosts', promise: pluginHostShutdown },
     { name: 'codex-backfill-recovery', promise: codexBackfillRecoveryShutdown },
+    { name: 'structured-agent-session', promise: structuredAgentSessionShutdown },
     { name: 'usage-cache', promise: usageCacheFlush },
     { name: 'stats', promise: statsFlush },
     { name: 'state', promise: storeFlush }

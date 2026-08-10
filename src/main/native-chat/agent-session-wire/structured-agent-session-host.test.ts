@@ -118,6 +118,8 @@ function ensureParams(fence: number): AgentSessionAttachParams {
 let root: string
 let store: AgentSessionRecordStore
 let host: StructuredAgentSessionHost
+let acquire: Mock<StructuredAgentSessionAdapter['acquire']>
+let releaseAcquisition: Mock<NonNullable<StructuredAgentSessionAdapter['releaseAcquisition']>>
 let dispatch: Mock<StructuredAgentSessionAdapter['dispatch']>
 let cancelTurn: Mock<StructuredAgentSessionAdapter['cancelTurn']>
 let answerPrompt: Mock<StructuredAgentSessionAdapter['answerPrompt']>
@@ -134,23 +136,8 @@ function accepted(): AgentSessionDispatchOutcome {
 
 function adapter(): StructuredAgentSessionAdapter {
   return {
-    acquire: async ({ fence }) => ({
-      process: {
-        hostId: 'local',
-        pid: 4242,
-        processStartTimeMs: 1_700_000_000_000,
-        spawnToken: store.getRecord(SESSION)?.lease.reservedSpawnToken ?? 'spawn-a'
-      },
-      link: {
-        linkId: `link-${fence}`,
-        handle: { provider: 'codex', threadId: THREAD },
-        // A restarted host re-proves the thread it inherited; only the first
-        // owner of a session may claim to have created it.
-        origin: store.getRecord(SESSION)?.providerHandleChain.length ? 'resumed' : 'created',
-        mintedAtFence: fence,
-        observedAt: NOW
-      }
-    }),
+    acquire,
+    releaseAcquisition,
     dispatch,
     cancelTurn,
     answerPrompt,
@@ -197,6 +184,24 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'orca-wire-host-'))
   operations = 0
   ordinal = 0
+  acquire = vi.fn(async ({ fence }) => ({
+    process: {
+      hostId: 'local',
+      pid: 4242,
+      processStartTimeMs: 1_700_000_000_000,
+      spawnToken: store.getRecord(SESSION)?.lease.reservedSpawnToken ?? 'spawn-a'
+    },
+    link: {
+      linkId: `link-${fence}`,
+      handle: { provider: 'codex', threadId: THREAD },
+      // A restarted host re-proves the thread it inherited; only the first
+      // owner of a session may claim to have created it.
+      origin: store.getRecord(SESSION)?.providerHandleChain.length ? 'resumed' : 'created',
+      mintedAtFence: fence,
+      observedAt: NOW
+    }
+  }))
+  releaseAcquisition = vi.fn(async () => undefined)
   dispatch = vi.fn(async () => accepted())
   cancelTurn = vi.fn(async () => ({ cancelled: true }))
   answerPrompt = vi.fn(async () => undefined)
@@ -353,6 +358,15 @@ describe('attach', () => {
     expect(await host.attach(CALLER, params)).toMatchObject({ ok: true, replayed: true })
     expect(acquire).toHaveBeenCalledTimes(2)
     expect(store.getRecord(SESSION)?.lease.claimStatus).toBe('live')
+    expect(releaseAcquisition).toHaveBeenCalledWith({ sessionId: SESSION })
+  })
+
+  it('reaps an acquisition when process identity commit fails', async () => {
+    vi.spyOn(store, 'commitProcessIdentity').mockRejectedValueOnce(new Error('commit failed'))
+
+    await expect(host.attach(CALLER, attachParams())).rejects.toThrow('commit failed')
+
+    expect(releaseAcquisition).toHaveBeenCalledWith({ sessionId: SESSION })
   })
 })
 
@@ -658,6 +672,23 @@ describe('restart', () => {
     expect(reattached).toMatchObject({ ok: true })
     expect(store.getRecord(SESSION)?.lease.unreconciled).toBe(false)
     expect(store.getRecord(SESSION)?.lease.ownerProcess?.pid).toBe(4242)
+  })
+
+  it('restores durable journals for read-only history without acquiring a provider', async () => {
+    await attach()
+    const body = message('persisted conversation')
+    await host.send(CALLER, { envelope: envelope('agentSession.send', { body }), body })
+    await reboot(async () => ({ outcome: 'indeterminate', reason: 'read does not need ownership' }))
+    acquire.mockClear()
+
+    await host.restoreReadableSessions()
+
+    expect(host.listSessionTabs()).toEqual([
+      { sessionId: SESSION, workspaceId: 'workspace-1', agent: 'codex' }
+    ])
+    const history = host.history({ sessionId: SESSION, direction: 'tail' })
+    expect(history.ok && history.page.items).not.toHaveLength(0)
+    expect(acquire).not.toHaveBeenCalled()
   })
 
   it("keeps a session whose owner cannot be probed out of a live writer's hands", async () => {

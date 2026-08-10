@@ -91,6 +91,7 @@ describe('readAgentSessionHistory', () => {
     expect(tail.page.items.map((entry) => entry.body)).toEqual([body('item-4'), body('item-5')])
     expect(tail.page.hasOlder).toBe(true)
     expect(tail.page.hasNewer).toBe(false)
+    expect(tail.page.liveCursor).toEqual(journal.cursor())
 
     const older = readAgentSessionHistory(journal, {
       sessionId: 'session-1',

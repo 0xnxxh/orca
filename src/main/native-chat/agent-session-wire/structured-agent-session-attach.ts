@@ -29,6 +29,7 @@ import {
   computeAgentSessionPayloadFingerprint
 } from '../../../shared/agent-session-mutation-envelope'
 import type { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
+import { agentSessionProviderHandleChainHead } from '../../../shared/agent-session-provider-handle'
 import { journalDirectoryFor } from '../agent-session-journal/journal-paths'
 import type { AgentSessionJournal } from '../agent-session-journal/journal-store'
 import {
@@ -50,7 +51,8 @@ export type AgentSessionAttachParams = {
   agent: AgentType
   accountHome: AgentSessionAccountHome
   runtimeKind: AgentSessionOwnerRuntimeKind
-  providerHandle: Exclude<AgentSessionProviderHandle, { kind: 'opaque' }>
+  /** Omitted only for create-by-intent; the adapter proves the durable handle. */
+  providerHandle?: Exclude<AgentSessionProviderHandle, { kind: 'opaque' }>
 }
 
 /** Host-supplied half of the reservation. */
@@ -81,7 +83,7 @@ export function attachFingerprintFields(params: AgentSessionAttachParams): Recor
 export function admitAttachOrRefuse(
   params: AgentSessionAttachParams
 ): { ok: true; fingerprint: string } | { ok: false; refusal: AgentSessionWireRefusal } {
-  if (params.providerHandle.kind !== params.provider) {
+  if (params.providerHandle && params.providerHandle.kind !== params.provider) {
     return {
       ok: false,
       refusal: {
@@ -100,15 +102,26 @@ export function admitAttachOrRefuse(
 }
 
 export function journalIdentityFor(
-  sessionId: string,
+  record: AgentSessionRecord,
   params: AgentSessionAttachParams
 ): AgentSessionJournalIdentity {
+  const head = agentSessionProviderHandleChainHead(record.providerHandleChain)
+  const providerHandle: AgentSessionProviderHandle =
+    head?.handle.provider === 'codex'
+      ? { kind: 'codex', threadId: head.handle.threadId }
+      : head?.handle.provider === 'claude'
+        ? {
+            kind: 'claude',
+            sessionId: head.handle.sessionId,
+            leafUuid: head.handle.leafUuid
+          }
+        : (params.providerHandle ?? { kind: 'opaque', agent: params.agent, value: 'pending' })
   return {
-    sessionId,
+    sessionId: record.sessionId,
     workspaceId: params.location.workspaceId,
     hostId: params.location.executionHostId,
     agent: params.agent,
-    providerHandle: params.providerHandle
+    providerHandle
   }
 }
 
@@ -130,7 +143,7 @@ export async function attachJournal(input: {
   journalRoot: string
   adapter: StructuredAgentSessionAdapter
 }): Promise<AttachedJournal> {
-  const identity = journalIdentityFor(input.record.sessionId, input.params)
+  const identity = journalIdentityFor(input.record, input.params)
   const fence = input.record.lease.runtimeFence
   const historyFilePath = input.adapter.historyFilePath
     ? await input.adapter.historyFilePath({ identity })

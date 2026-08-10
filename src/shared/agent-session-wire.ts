@@ -49,6 +49,8 @@ export type AgentSessionHistoryPage = {
     newest: AgentJournalCursor | null
     nextCursor: AgentJournalCursor
   }
+  /** Current journal head for switching from a bounded page to live subscribe. */
+  liveCursor?: AgentJournalCursor
   hasOlder: boolean
   hasNewer: boolean
 }

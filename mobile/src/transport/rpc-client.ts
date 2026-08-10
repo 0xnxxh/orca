@@ -40,6 +40,7 @@ import { isRpcResponse } from './rpc-response-shape'
 import { createRpcActivityProbe } from './rpc-client-activity-probe'
 import { isStaleForegroundDial } from './rpc-stale-dial'
 import { websocketPayloadToUint8 } from './websocket-payload-bytes'
+import { STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY } from '../../../src/shared/protocol-version'
 
 type PendingRequest = {
   resolve: (response: RpcResponse) => void
@@ -69,6 +70,8 @@ export type SendRequestOptions = {
 
 type SubscribeOptions = {
   onBinaryFrame?: (frame: BrowserScreencastFrame) => void
+  /** Rebuild cursor-bearing params after a transport reconnect. */
+  paramsForReconnect?: () => unknown
 }
 
 type StreamingListener = (result: unknown) => void
@@ -81,6 +84,7 @@ type StreamRequest = {
   subscriptionId?: string
   cancelled?: boolean
   sent?: boolean
+  paramsForReconnect?: () => unknown
 }
 
 export type RpcClient = {
@@ -100,7 +104,7 @@ export type RpcClient = {
     viewport: { cols: number; rows: number }
   ) => void
   getState: () => ConnectionState
-  // 0 means never failed (reset once the handshake authenticates); the UI escalates "Reconnecting…" to "Can't connect" past a threshold.
+  // 0 means never failed; structured streams reset only after proving >5s longevity.
   getReconnectAttempt: () => number
   // Last 'connected' timestamp (ms epoch); null = never connected. Lets the UI tell "never reachable" from "transient blip".
   getLastConnectedAt: () => number | null
@@ -108,6 +112,10 @@ export type RpcClient = {
   // Why: app-resume hook — iOS/Android can kill the TCP path while backgrounded; call on AppState 'active' to recover.
   // The reason routes relay handling (probe vs replace); the direct socket probes regardless.
   notifyForeground: (reason?: ForegroundNudgeReason) => void
+  /** A long-background structured stream must replace the socket immediately. */
+  restartAfterStructuredBackground?: () => void
+  /** A structured stream, not authentication alone, proved the path durable. */
+  confirmStructuredStreamLongevity?: () => void
   close: () => void
 }
 
@@ -231,8 +239,13 @@ export function connect(
     if (next === 'connected') {
       lastConnectedAt = Date.now()
       authenticationGeneration++
-      // Why: only a completed E2EE handshake proves the path is healthy (issue #10119).
-      reconnectAttempt = 0
+      // A structured conversation keeps its attempt count until the resumed
+      // stream itself survives the longevity threshold.
+      if (
+        ![...streamListeners.values()].some((stream) => stream.method === 'agentSession.subscribe')
+      ) {
+        reconnectAttempt = 0
+      }
       // Why: a clean handshake proves the token is valid — reset the auth retry budget.
       authRejectionCount = 0
       for (const waiter of connectWaiters.splice(0)) {
@@ -395,7 +408,11 @@ export function connect(
           const msg = JSON.parse(raw)
           if (msg.type === 'e2ee_ready') {
             emitLog('success', 'Received e2ee_ready', 'Sending device token')
-            sendEncrypted({ type: 'e2ee_auth', deviceToken })
+            sendEncrypted({
+              type: 'e2ee_auth',
+              deviceToken,
+              clientCapabilities: [STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY]
+            })
             return
           }
         } catch {
@@ -437,7 +454,12 @@ export function connect(
               }
               resetTerminalStreamRoutingForRequest(id)
               if (
-                sendEncrypted({ id, deviceToken, method: stream.method, params: stream.params })
+                sendEncrypted({
+                  id,
+                  deviceToken,
+                  method: stream.method,
+                  params: stream.paramsForReconnect?.() ?? stream.params
+                })
               ) {
                 stream.sent = true
               } else {
@@ -1032,7 +1054,8 @@ export function connect(
         method,
         params,
         listener: onData,
-        onBinaryFrame: options?.onBinaryFrame
+        onBinaryFrame: options?.onBinaryFrame,
+        paramsForReconnect: options?.paramsForReconnect
       }
       streamListeners.set(id, stream)
       if (method === 'browser.screencast') {
@@ -1147,6 +1170,24 @@ export function connect(
         // (issue #10119). A redial with no dial to abandon is a genuinely fresh start.
         redialNow(!abandoned)
       }
+    },
+
+    restartAfterStructuredBackground(): void {
+      if (intentionallyClosed) {
+        return
+      }
+      reconnectAttempt = Math.max(1, reconnectAttempt)
+      const connectedSocket = ws
+      if (connectedSocket) {
+        closeAndSynthesize(connectedSocket)
+      } else {
+        setState('reconnecting')
+      }
+      redialNow(false)
+    },
+
+    confirmStructuredStreamLongevity(): void {
+      reconnectAttempt = 0
     },
 
     close() {

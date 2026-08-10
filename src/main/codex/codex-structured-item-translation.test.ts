@@ -79,17 +79,17 @@ describe('codex item identity', () => {
 
   it('assigns an ordinal once and reuses it, so a delta and its completion upsert one row', () => {
     const ordinals = new CodexTurnOrdinals()
-    ordinals.ordinalFor(TURN_ID, 'item-0')
+    ordinals.ordinalFor(THREAD_ID, TURN_ID, 'item-0')
 
-    expect(ordinals.ordinalFor(TURN_ID, 'item-1')).toBe(1)
-    expect(ordinals.ordinalFor(TURN_ID, 'item-0')).toBe(0)
+    expect(ordinals.ordinalFor(THREAD_ID, TURN_ID, 'item-1')).toBe(1)
+    expect(ordinals.ordinalFor(THREAD_ID, TURN_ID, 'item-0')).toBe(0)
   })
 
   it('restarts numbering per turn', () => {
     const ordinals = new CodexTurnOrdinals()
-    ordinals.ordinalFor(TURN_ID, 'item-0')
+    ordinals.ordinalFor(THREAD_ID, TURN_ID, 'item-0')
 
-    expect(ordinals.ordinalFor('turn-2', 'item-1')).toBe(0)
+    expect(ordinals.ordinalFor(THREAD_ID, 'turn-2', 'item-1')).toBe(0)
   })
 
   it('keys a non-message item and a turnless message in the orca namespace', () => {
@@ -119,6 +119,24 @@ describe('codex item bodies', () => {
     ])
     expect(codexMessageBlocks(LIVE_TURN[1] as CodexThreadItem)).toEqual([
       { type: 'text', text: 'Let me look.' }
+    ])
+  })
+
+  it('keeps provider image echoes in mixed user content', () => {
+    expect(
+      codexMessageBlocks({
+        type: 'userMessage',
+        id: 'm',
+        content: [
+          { type: 'text', text: 'look' },
+          { type: 'image', url: 'https://example.test/a.png' },
+          { type: 'localImage', path: '/tmp/a.png' }
+        ]
+      })
+    ).toEqual([
+      { type: 'text', text: 'look' },
+      { type: 'image-ref', url: 'https://example.test/a.png' },
+      { type: 'image-ref', path: '/tmp/a.png' }
     ])
   })
 
@@ -161,6 +179,17 @@ describe('codex item bodies', () => {
     expect(codexItemBody({ type: 'reasoning', id: 'r' })).toBeNull()
     expect(codexItemBody({ type: 'agentMessage', id: 'm', text: '' })).toBeNull()
     expect(codexItemBody({ type: 'webSearch', id: 'w' })).toBeNull()
+  })
+
+  it('renders array-shaped reasoning content', () => {
+    expect(
+      codexItemBody({
+        type: 'reasoning',
+        id: 'r',
+        summary: ['first', 'second'],
+        content: [{ text: 'fallback' }]
+      })
+    ).toEqual({ kind: 'status', text: 'first\nsecond' })
   })
 
   it('refuses a value that is not a thread item at all', () => {

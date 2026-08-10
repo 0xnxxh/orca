@@ -125,6 +125,8 @@ export type AgentJournalQuestionItem = {
   kind: 'question'
   question: string
   options: AgentJournalPromptOption[]
+  /** Present when the provider accepts an answer outside the offered options. */
+  freeTextQuestionId?: string
   resolution: AgentJournalResolution
 }
 

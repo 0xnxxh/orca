@@ -126,7 +126,10 @@ import { dismissTerminalKeyboard } from '../../../../src/terminal/terminal-keybo
 import type { TerminalLiveInputSender } from '../../../../src/terminal/terminal-live-input-sender'
 import { isTerminalSendRpcAccepted } from '../../../../src/terminal/terminal-send-rpc-response'
 import { sendMobileTerminalQueryReply } from '../../../../src/terminal/mobile-terminal-query-reply'
-import { TERMINAL_QUERY_REPLY_INPUT_RUNTIME_CAPABILITY } from '../../../../../src/shared/protocol-version'
+import {
+  STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY,
+  TERMINAL_QUERY_REPLY_INPUT_RUNTIME_CAPABILITY
+} from '../../../../../src/shared/protocol-version'
 import { useTerminalLiveInputCommit } from '../../../../src/terminal/use-terminal-live-input-commit'
 import { resolveMobileTerminalInputGate } from '../../../../src/terminal/terminal-input-connection-gate'
 import {
@@ -154,7 +157,6 @@ import { ActionSheetModal } from '../../../../src/components/ActionSheetModal'
 import { MobileAgentIcon } from '../../../../src/components/MobileAgentIcon'
 import { TextInputModal } from '../../../../src/components/TextInputModal'
 import { ConfirmModal } from '../../../../src/components/ConfirmModal'
-import { MobileRichMarkdownEditor } from '../../../../src/components/MobileRichMarkdownEditor'
 import { MobileSyntaxSegments } from '../../../../src/components/MobileSyntaxSegments'
 import {
   CustomKeyModal,
@@ -224,6 +226,9 @@ import {
 } from '../../../../src/dictation/mobile-dictation-setup'
 import { TerminalPaneView } from '../../../../src/session/TerminalPaneView'
 import { MobileNativeChatOverlay } from '../../../../src/session/MobileNativeChatOverlay'
+import { MobileStructuredAgentSessionView } from '../../../../src/session/MobileStructuredAgentSessionView'
+import { useMobileStructuredSessionEntry } from '../../../../src/session/use-mobile-structured-session-entry'
+import { showMobileStructuredChatChoice } from '../../../../src/session/mobile-structured-session-create'
 import { MobileBrowserTabActionSheet } from '../../../../src/session/MobileBrowserTabActionSheet'
 import { useMobileNativeChatController } from '../../../../src/session/use-mobile-native-chat-controller'
 import { useMobileNativeChatReadability } from '../../../../src/session/use-mobile-native-chat-readability'
@@ -267,7 +272,7 @@ import {
   TERMINAL_GESTURE_INPUT_REFILL_PER_SECOND,
   updateTerminalCwdFromStreamEvent
 } from '../../../../src/session/mobile-session-route-helpers'
-import { resolveMarkdownFloatingActionsBottom } from '../../../../src/session/markdown-floating-actions-layout'
+import { MobileMarkdownReader } from '../../../../src/session/MobileMarkdownReader'
 import { resolveTabStripScrollOffset } from '../../../../src/session/tab-strip-scroll'
 import { activateOpenedSourceControlDiffTab } from '../../../../src/session/opened-mobile-session-tab'
 import {
@@ -275,7 +280,7 @@ import {
   dismissMobileSessionCreateWarningState,
   reconcileMobileSessionCreateWarningState
 } from '../../../../src/session/mobile-session-create-warning-state'
-import { colors, spacing } from '../../../../src/theme/mobile-theme'
+import { colors } from '../../../../src/theme/mobile-theme'
 import { QuickCommandsTabButton } from '../../../../src/session/QuickCommandsTabButton'
 import { styles } from '../../../../src/session/mobile-session-styles'
 import type { DiffComment, TerminalQuickCommand } from '../../../../../src/shared/types'
@@ -301,132 +306,6 @@ import type {
 } from '../../../../src/session/mobile-session-route-types'
 
 const TERMINAL_KEYBOARD_DISMISS_ACTION_SHEET_FALLBACK_MS = 450
-
-function MarkdownReader({
-  documentId,
-  doc,
-  onRefresh,
-  onChange,
-  onSave,
-  onCopy,
-  onDiscard,
-  keyboardLift
-}: {
-  documentId: string
-  doc: MarkdownDocState | undefined
-  onRefresh: () => void
-  onChange: (content: string) => void
-  onSave: () => void
-  onCopy: () => void
-  onDiscard: () => void
-  keyboardLift: number
-}) {
-  // Native Keyboard events under-report the WebView editor's covered area, so prefer the larger WebView-measured inset.
-  const [webviewKeyboardInset, setWebviewKeyboardInset] = useState(0)
-  const effectiveKeyboardLift = Math.max(keyboardLift, webviewKeyboardInset)
-  if (!doc || doc.status === 'loading') {
-    return (
-      <View style={styles.markdownState}>
-        <ActivityIndicator size="small" color={colors.textSecondary} />
-      </View>
-    )
-  }
-  if (doc.status === 'error') {
-    return (
-      <View style={styles.markdownState}>
-        <Text style={styles.markdownError}>{doc.message}</Text>
-        <Pressable style={styles.markdownRefreshButton} onPress={onRefresh}>
-          <RefreshCw size={14} color={colors.textPrimary} />
-          <Text style={styles.markdownRefreshText}>Retry</Text>
-        </Pressable>
-      </View>
-    )
-  }
-
-  const statusText = doc.saveError
-    ? doc.saveError
-    : doc.readOnlyReason
-      ? 'Read only'
-      : doc.stale
-        ? 'Changed on desktop'
-        : null
-  const showRefresh = (doc.stale && !doc.isDirty) || !doc.editable
-  const showCopy = doc.saveError || !doc.editable
-  const showSave = doc.isDirty || doc.saving
-  const showFloatingActions = statusText || showRefresh || showCopy || showSave
-
-  return (
-    <View style={styles.markdownEditor}>
-      <MobileRichMarkdownEditor
-        key={documentId}
-        content={doc.localContent}
-        editable={doc.editable && !doc.saving}
-        onChange={onChange}
-        onKeyboardInsetChange={setWebviewKeyboardInset}
-      />
-      {showFloatingActions ? (
-        <View
-          pointerEvents="box-none"
-          style={[
-            styles.markdownFloatingBar,
-            // Why: editor focus lives in a WebView, so lift native Save/Discard controls instead of resizing it.
-            {
-              bottom: resolveMarkdownFloatingActionsBottom({
-                keyboardLift: effectiveKeyboardLift,
-                restingBottom: spacing.lg,
-                liftedClearance: spacing.md
-              })
-            }
-          ]}
-        >
-          {statusText ? (
-            <Text
-              style={[styles.markdownFloatingStatus, doc.saveError ? styles.markdownError : null]}
-              numberOfLines={2}
-            >
-              {statusText}
-            </Text>
-          ) : null}
-          <View style={styles.markdownFloatingActions}>
-            {showCopy ? (
-              <Pressable style={styles.markdownFloatingButton} onPress={onCopy}>
-                <Text style={styles.markdownFloatingButtonText}>Copy</Text>
-              </Pressable>
-            ) : null}
-            {showRefresh ? (
-              <Pressable style={styles.markdownFloatingButton} onPress={onRefresh}>
-                <RefreshCw size={13} color={colors.textPrimary} />
-                <Text style={styles.markdownFloatingButtonText}>Refresh</Text>
-              </Pressable>
-            ) : null}
-            {doc.isDirty ? (
-              <Pressable style={styles.markdownFloatingButton} onPress={onDiscard}>
-                <Text style={styles.markdownFloatingButtonText}>Discard</Text>
-              </Pressable>
-            ) : null}
-            {showSave ? (
-              <Pressable
-                style={[
-                  styles.markdownFloatingButton,
-                  styles.markdownSaveButton,
-                  (!doc.editable || !doc.isDirty || doc.saving) && styles.markdownButtonDisabled
-                ]}
-                disabled={!doc.editable || !doc.isDirty || doc.saving}
-                onPress={onSave}
-              >
-                {doc.saving ? (
-                  <ActivityIndicator size="small" color={colors.textPrimary} />
-                ) : (
-                  <Text style={styles.markdownFloatingButtonText}>Save</Text>
-                )}
-              </Pressable>
-            ) : null}
-          </View>
-        </View>
-      ) : null}
-    </View>
-  )
-}
 
 function DiffLineRow({
   line,
@@ -1122,6 +1001,7 @@ export default function SessionScreen() {
     null
   )
   const [quickCommandsSupported, setQuickCommandsSupported] = useState<boolean | null>(null)
+  const [structuredAgentSessionSupported, setStructuredAgentSessionSupported] = useState(false)
   // Why: stable callbacks (handleFileTap) read the live value via this ref, since
   // the capability probe resolves after the callbacks are created.
   const browserScreencastSupportedRef = useRef(browserScreencastSupported)
@@ -2424,6 +2304,29 @@ export default function SessionScreen() {
       getApplicationRevision: getSessionTabsApplicationRevision,
       ...sessionTabsFetchReporting
     })
+  const structuredSessionEntry = useMobileStructuredSessionEntry({
+    client,
+    connected: connState === 'connected',
+    drawerOpen: showCreateTabDrawer,
+    hostSupported: structuredAgentSessionSupported,
+    worktreeId,
+    sessionId: activeSessionTab?.type === 'agent-session' ? activeSessionTab.sessionId : null,
+    creationGuardRef: creatingTerminalRef,
+    setCreating,
+    setCreateError,
+    closeDrawer: () => setShowCreateTabDrawer(false),
+    onCreated: (tabId) => {
+      pendingActiveSessionTabIdRef.current = tabId
+      activeSessionTabTypeRef.current = 'agent-session'
+      setActiveSessionTabId(tabId)
+      scheduleDelayedAction(() => void fetchSessionTabs(), 100)
+      scheduleDelayedAction(() => void fetchSessionTabs(), 600)
+    },
+    onError: (message) => {
+      triggerError()
+      showToast(message, 1800)
+    }
+  })
 
   useEffect(() => {
     if (connState === 'connected') {
@@ -2445,6 +2348,7 @@ export default function SessionScreen() {
       setBrowserScreencastSupported(null)
       setAgentSessionHistorySupported(null)
       setQuickCommandsSupported(null)
+      setStructuredAgentSessionSupported(false)
       setShowQuickCommands(false)
       hostQueryReplyInputSupportedRef.current = false
       return
@@ -2454,6 +2358,7 @@ export default function SessionScreen() {
     setBrowserScreencastSupported(null)
     setAgentSessionHistorySupported(null)
     setQuickCommandsSupported(null)
+    setStructuredAgentSessionSupported(false)
     setShowQuickCommands(false)
     hostQueryReplyInputSupportedRef.current = false
     // Why: the probe retries — a relay→direct cutover or request timeout rejects
@@ -2462,6 +2367,9 @@ export default function SessionScreen() {
       setBrowserScreencastSupported(capabilities.includes('browser.screencast.v1'))
       setAgentSessionHistorySupported(capabilities.includes(MOBILE_AI_VAULT_CAPABILITY))
       setQuickCommandsSupported(supportsMobileQuickCommands(capabilities))
+      setStructuredAgentSessionSupported(
+        capabilities.includes(STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY)
+      )
       // Why: hosts without this capability strip inputKind from terminal.send,
       // so a forwarded xterm reply would become floor-stealing shell input.
       hostQueryReplyInputSupportedRef.current = capabilities.includes(
@@ -2952,6 +2860,9 @@ export default function SessionScreen() {
           intent: 'user'
         }).catch(() => {})
       }
+      if (tab.type === 'agent-session') {
+        return
+      }
       if (tab.type === 'browser') {
         return
       }
@@ -3151,7 +3062,7 @@ export default function SessionScreen() {
       setMarkdownActionTarget(tab)
     } else if (tab.type === 'file') {
       setFileActionTarget(tab)
-    } else {
+    } else if (tab.type === 'browser') {
       setBrowserActionTarget(tab)
     }
   }, [])
@@ -4177,6 +4088,13 @@ export default function SessionScreen() {
   const activeMarkdownTab = activeSessionTab?.type === 'markdown' ? activeSessionTab : null
   const activeFileTab = activeSessionTab?.type === 'file' ? activeSessionTab : null
   const activeBrowserTab = activeSessionTab?.type === 'browser' ? activeSessionTab : null
+  const activeStructuredTab = activeSessionTab?.type === 'agent-session' ? activeSessionTab : null
+  const showTerminalCommandDock =
+    !activeMarkdownTab &&
+    !activeFileTab &&
+    !activeBrowserTab &&
+    !activeStructuredTab &&
+    !showNativeChat
   const activePendingTerminalTab =
     activeSessionTab?.type === 'terminal' && typeof activeSessionTab.terminal !== 'string'
       ? activeSessionTab
@@ -4327,6 +4245,20 @@ export default function SessionScreen() {
                 }
               ]
             : []
+  const structuredChatAction = showMobileStructuredChatChoice({
+    hostCapability: structuredAgentSessionSupported,
+    workspaceSupport: structuredSessionEntry.createSupported,
+    agent: createTabAgentOptions.some((option) => option.agent === 'codex') ? 'codex' : ''
+  })
+    ? [
+        {
+          label: 'Chat session',
+          hint: 'Codex · read-only preview',
+          icon: MessageSquare,
+          onPress: structuredSessionEntry.create
+        }
+      ]
+    : []
   const sendDiffNotesAgentActions =
     pendingDiffNotesDelivery === null
       ? []
@@ -4531,6 +4463,9 @@ export default function SessionScreen() {
                       {t.type === 'file' && (
                         <File size={13} color={colors.textSecondary} strokeWidth={2.1} />
                       )}
+                      {t.type === 'agent-session' && (
+                        <MobileAgentIcon agentId={t.agent} size={13} />
+                      )}
                       {t.type === 'terminal' &&
                         (() => {
                           const agentId = resolveMobileTerminalTabAgentId(t)
@@ -4636,7 +4571,7 @@ export default function SessionScreen() {
               </View>
             ) : activeMarkdownTab ? (
               <View style={styles.markdownFrame}>
-                <MarkdownReader
+                <MobileMarkdownReader
                   documentId={activeMarkdownTab.id}
                   doc={markdownDocs.get(activeMarkdownTab.id)}
                   onRefresh={() => void readMarkdownTab(activeMarkdownTab)}
@@ -4697,6 +4632,16 @@ export default function SessionScreen() {
                   </Animated.View>
                 )}
               </View>
+            ) : activeStructuredTab ? (
+              <MobileStructuredAgentSessionView
+                messages={structuredSessionEntry.session.messages}
+                status={structuredSessionEntry.session.status}
+                error={structuredSessionEntry.session.error}
+                hasOlder={structuredSessionEntry.session.hasOlder}
+                loadingOlder={structuredSessionEntry.session.loadingOlder}
+                onLoadOlder={structuredSessionEntry.session.loadOlder}
+                onOpenFile={handleNativeChatFileTap}
+              />
             ) : activePendingTerminalTab ? (
               <View style={styles.emptyState}>
                 <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -4767,7 +4712,7 @@ export default function SessionScreen() {
             )}
 
             {/* Why: translate instead of resize so keyboard toggles don't trigger a server-side PTY viewport change. */}
-            {!activeMarkdownTab && !activeFileTab && !activeBrowserTab && !showNativeChat && (
+            {showTerminalCommandDock && (
               <View
                 style={[
                   styles.commandDock,
@@ -5129,6 +5074,7 @@ export default function SessionScreen() {
         title="New Tab"
         actions={[
           ...createTabAgentActions,
+          ...structuredChatAction,
           {
             label: 'Terminal',
             icon: SquareTerminal,

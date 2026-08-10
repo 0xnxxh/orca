@@ -88,9 +88,13 @@ export function isCodexPromptMethod(method: string): boolean {
  * became.
  */
 export class CodexPromptRegistry {
-  private readonly byPromptKey = new Map<string, CodexPendingPrompt>()
-  /** Journal item id to prompt key. */
+  private readonly byAddress = new Map<string, CodexPendingPrompt>()
+  /** Journal item id to thread-scoped prompt address. */
   private readonly journalItemIds = new Map<string, string>()
+
+  private address(threadId: string, promptKey: string): string {
+    return `${encodeURIComponent(threadId)}:${encodeURIComponent(promptKey)}`
+  }
 
   /** Returns null for a request this build does not model, so the caller can
    *  refuse it instead of leaving Codex blocked on an answer forever. */
@@ -115,33 +119,40 @@ export class CodexPromptRegistry {
         request.method === CODEX_USER_INPUT_METHOD ? readQuestionIds(request.params) : [],
       answers: new Map()
     }
-    this.byPromptKey.set(prompt.promptKey, prompt)
+    this.byAddress.set(this.address(prompt.threadId, prompt.promptKey), prompt)
     return prompt
   }
 
   /** Called by the translation module once the prompt has a journal id. */
-  bindJournalItemId(journalItemId: string, promptKey: string): void {
-    this.journalItemIds.set(journalItemId, promptKey)
+  bindJournalItemId(journalItemId: string, threadId: string, promptKey: string): void {
+    this.journalItemIds.set(journalItemId, this.address(threadId, promptKey))
   }
 
   /** Falls back to treating the id as a prompt key, which is what it is before
    *  any binding exists. */
   find(journalItemId: string): CodexPendingPrompt | null {
-    const promptKey = this.journalItemIds.get(journalItemId) ?? journalItemId
-    return this.byPromptKey.get(promptKey) ?? null
+    const address = this.journalItemIds.get(journalItemId)
+    if (address) {
+      return this.byAddress.get(address) ?? null
+    }
+    const matches = [...this.byAddress.values()].filter(
+      (prompt) => prompt.promptKey === journalItemId
+    )
+    return matches.length === 1 ? matches[0]! : null
   }
 
   forget(prompt: CodexPendingPrompt): void {
-    this.byPromptKey.delete(prompt.promptKey)
-    for (const [journalItemId, promptKey] of this.journalItemIds) {
-      if (promptKey === prompt.promptKey) {
+    const address = this.address(prompt.threadId, prompt.promptKey)
+    this.byAddress.delete(address)
+    for (const [journalItemId, boundAddress] of this.journalItemIds) {
+      if (boundAddress === address) {
         this.journalItemIds.delete(journalItemId)
       }
     }
   }
 
   clear(): void {
-    this.byPromptKey.clear()
+    this.byAddress.clear()
     this.journalItemIds.clear()
   }
 }

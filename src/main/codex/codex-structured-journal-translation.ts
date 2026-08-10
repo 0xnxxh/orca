@@ -19,6 +19,7 @@ import {
   codexQuestionItems
 } from './codex-structured-prompt-items'
 import { CODEX_USER_INPUT_METHOD } from './codex-structured-prompt-replies'
+import { readCodexTurnId } from './codex-structured-thread-facts'
 
 // The one place Codex events become journal rows.
 //
@@ -32,13 +33,14 @@ const AGENT_MESSAGE_DELTA_METHOD = 'item/agentMessage/delta'
 export type CodexJournalTranslatorDeps = {
   sink: StructuredAgentSessionEventSink
   /** Points an answered journal item back at the live Codex request. */
-  bindPromptItemId?: (journalItemId: string, promptKey: string) => void
+  bindPromptItemId?: (journalItemId: string, threadId: string, promptKey: string) => void
   coalesceMs?: number
   schedule?: AgentSessionDeltaCoalescerDeps['schedule']
 }
 
 export type CodexJournalTranslator = {
   handle: (event: CodexStructuredSessionEvent) => void
+  flush: () => void
   dispose: () => void
 }
 
@@ -60,18 +62,47 @@ export function createCodexJournalTranslator(
   const identities = new Map<string, AgentJournalItemIdentity>()
   /** What each announced item is, so an approval can name what it approves. */
   const details = new Map<string, string>()
-  let currentTurnId: string | null = null
+  const currentTurnIds = new Map<string, string>()
+  const latestStreamText = new Map<string, string>()
+  const checkpointLengths = new Map<string, number>()
+
+  const itemKey = (threadId: string, codexItemId: string): string =>
+    `${encodeURIComponent(threadId)}:${encodeURIComponent(codexItemId)}`
+
+  const persistStream = (key: string, text: string, force: boolean): void => {
+    latestStreamText.set(key, text)
+    const checkpointLength = checkpointLengths.get(key) ?? 0
+    const nextLength = Math.max(checkpointLength + 32, Math.ceil(checkpointLength * 1.125))
+    if (!force && checkpointLength > 0 && text.length < nextLength) {
+      return
+    }
+    checkpointLengths.set(key, text.length)
+    const identity = identities.get(key)
+    if (!identity) {
+      return
+    }
+    deps.sink.appendItem(identity, codexStreamingMessageBody(text))
+    deps.sink.publish()
+  }
+
+  const persistLatestStreams = (): void => {
+    for (const [key, text] of latestStreamText) {
+      if (checkpointLengths.get(key) !== text.length) {
+        persistStream(key, text, true)
+      }
+    }
+  }
+
+  const flushStreams = (): void => {
+    coalescer.flushAll()
+    persistLatestStreams()
+  }
 
   const coalescer = createAgentSessionDeltaCoalescer({
     windowMs: deps.coalesceMs,
     schedule: deps.schedule,
-    emit: (codexItemId, text) => {
-      const identity = identities.get(codexItemId)
-      if (!identity) {
-        return
-      }
-      deps.sink.appendItem(identity, codexStreamingMessageBody(text))
-      deps.sink.publish()
+    emit: (key, text) => {
+      persistStream(key, text, false)
     }
   })
 
@@ -80,12 +111,13 @@ export function createCodexJournalTranslator(
     turnId: string | null,
     item: { type: string; id: string }
   ): AgentJournalItemIdentity => {
-    const existing = identities.get(item.id)
+    const key = itemKey(threadId, item.id)
+    const existing = identities.get(key)
     if (existing) {
       return existing
     }
     const identity = codexItemIdentity({ threadId, turnId, item, ordinals })
-    identities.set(item.id, identity)
+    identities.set(key, identity)
     return identity
   }
 
@@ -95,16 +127,18 @@ export function createCodexJournalTranslator(
     if (!item) {
       return
     }
-    const turnId = readString(params, 'turnId') ?? currentTurnId
+    const turnId = readCodexTurnId(event.params) ?? currentTurnIds.get(event.threadId) ?? null
     const identity = identityFor(event.threadId, turnId, item)
     const body = codexItemBody(item)
     const command = readString(item, 'command')
     if (command) {
-      details.set(item.id, command)
+      details.set(itemKey(event.threadId, item.id), command)
     }
     if (event.method === 'item/completed') {
       // The completed body is authoritative; the coalesced text is now stale.
-      coalescer.forget(item.id)
+      coalescer.forget(itemKey(event.threadId, item.id))
+      latestStreamText.delete(itemKey(event.threadId, item.id))
+      checkpointLengths.delete(itemKey(event.threadId, item.id))
     }
     if (!body) {
       return
@@ -129,7 +163,11 @@ export function createCodexJournalTranslator(
         params: event.params
       })) {
         deps.sink.appendItem(question.identity, question.body)
-        deps.bindPromptItemId?.(agentJournalItemKey(question.identity), event.promptKey)
+        deps.bindPromptItemId?.(
+          agentJournalItemKey(question.identity),
+          event.threadId,
+          event.promptKey
+        )
       }
       deps.sink.publish()
       return
@@ -143,17 +181,17 @@ export function createCodexJournalTranslator(
       codexApprovalItem({
         method: event.method,
         params: event.params,
-        detail: details.get(event.codexItemId) ?? null
+        detail: details.get(itemKey(event.threadId, event.codexItemId)) ?? null
       })
     )
-    deps.bindPromptItemId?.(agentJournalItemKey(identity), event.promptKey)
+    deps.bindPromptItemId?.(agentJournalItemKey(identity), event.threadId, event.promptKey)
     deps.sink.publish()
   }
 
   return {
     handle: (event) => {
       if (event.type === 'ended') {
-        coalescer.flushAll()
+        flushStreams()
         return
       }
       if (event.type === 'notification' && event.method === AGENT_MESSAGE_DELTA_METHOD) {
@@ -161,34 +199,41 @@ export function createCodexJournalTranslator(
         const codexItemId = readString(params, 'itemId')
         const delta = params.delta
         if (codexItemId && typeof delta === 'string') {
-          coalescer.append(codexItemId, delta)
+          coalescer.append(itemKey(event.threadId, codexItemId), delta)
         }
         return
       }
       // Lifecycle bypass: nothing may be journaled ahead of the text it follows.
-      coalescer.flushAll()
+      flushStreams()
       if (event.type === 'prompt') {
         handlePrompt(event)
         return
       }
       if (event.method === 'turn/started') {
-        currentTurnId = readString(readRecord(readRecord(event.params).turn), 'id')
+        const turnId = readCodexTurnId(event.params)
+        if (turnId) {
+          currentTurnIds.set(event.threadId, turnId)
+        }
         return
       }
       if (event.method === 'turn/completed') {
         // A later item with no turn of its own belongs to no turn, not to the
         // one that just ended.
-        currentTurnId = null
+        currentTurnIds.delete(event.threadId)
         return
       }
       if (event.method === 'item/started' || event.method === 'item/completed') {
         handleItemEvent(event)
       }
     },
+    flush: flushStreams,
     dispose: () => {
       coalescer.dispose()
       identities.clear()
       details.clear()
+      currentTurnIds.clear()
+      latestStreamText.clear()
+      checkpointLengths.clear()
     }
   }
 }

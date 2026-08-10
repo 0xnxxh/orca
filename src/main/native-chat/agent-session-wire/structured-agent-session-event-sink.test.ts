@@ -84,6 +84,20 @@ describe('deferred structured agent-session event sink', () => {
     ])
   })
 
+  it('buffers replacement-acquisition events while unbound', async () => {
+    const log: Recorded[] = []
+    const deferred = createDeferredStructuredAgentSessionEventSink()
+    deferred.bind(target(1, log))
+    deferred.unbind()
+
+    deferred.sink.appendItem(identity(0), BODY)
+    expect(log).toEqual([])
+    deferred.bind(target(2, log))
+    await deferred.drained()
+
+    expect(log).toEqual([{ call: 'appendItem', fence: 2, ordinal: 0 }])
+  })
+
   it('drops buffered and later writes once closed, and refuses to rebind', async () => {
     const log: Recorded[] = []
     const deferred = createDeferredStructuredAgentSessionEventSink()

@@ -118,6 +118,18 @@ describe('mobile E2EE v2 physical channel', () => {
 
     expect(JSON.parse(ctx.sent[0] as string)).toEqual(ctx.session.hello)
     expect(typeof ctx.sent[1]).toBe('string')
+    const auth = openMobileE2EEV2Frame({
+      frame: Buffer.from(ctx.sent[1] as string, 'base64'),
+      key: ctx.schedule.mobileToDesktopKey,
+      sessionId: ctx.schedule.sessionId,
+      direction: 'mobile-to-desktop',
+      payloadKind: 'text',
+      expectedCounter: 0n
+    })
+    expect(JSON.parse(new TextDecoder().decode(auth))).toMatchObject({
+      type: 'e2ee_auth',
+      clientCapabilities: ['agent-session.structured.v1']
+    })
     expect(ctx.onAuthenticated).toHaveBeenCalledOnce()
     expect(ctx.onError).not.toHaveBeenCalled()
   })

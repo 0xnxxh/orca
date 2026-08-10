@@ -75,10 +75,26 @@ export function codexApprovalItem(input: {
         : input.method === CODEX_COMMAND_APPROVAL_METHOD
           ? 'Run a command?'
           : 'Approve this action?',
-    detail: readString(params, 'reason') ?? input.detail,
+    detail: approvalDetail(params) ?? input.detail,
     options: codexApprovalOptions(input.params),
     resolution: { ...PENDING }
   }
+}
+
+function approvalDetail(params: Record<string, unknown>): string | null {
+  const reason = readString(params, 'reason')
+  if (reason) {
+    return reason
+  }
+  const command = params.command
+  if (typeof command === 'string' && command.length > 0) {
+    return command
+  }
+  if (Array.isArray(command) && command.every((part) => typeof part === 'string')) {
+    return command.join(' ')
+  }
+  const detail = params.grantRoot ?? params.changes
+  return detail === undefined ? null : JSON.stringify(detail)
 }
 
 export type CodexQuestionItem = {
@@ -117,11 +133,21 @@ export function codexQuestionItems(input: {
         kind: 'question',
         question: prompt,
         options: questionOptions(question, questionId),
+        ...(questionAllowsFreeText(question) ? { freeTextQuestionId: questionId } : {}),
         resolution: { ...PENDING }
       }
     })
   }
   return items
+}
+
+function questionAllowsFreeText(question: Record<string, unknown>): boolean {
+  const options = question.options
+  return (
+    !Array.isArray(options) ||
+    options.length === 0 ||
+    options.some((option) => readParams(option).isOther === true)
+  )
 }
 
 function questionOptions(
@@ -134,8 +160,9 @@ function questionOptions(
   }
   const mapped: AgentJournalPromptOption[] = []
   for (const entry of options) {
-    const label = readString(readParams(entry), 'label')
-    if (label !== null) {
+    const option = readParams(entry)
+    const label = readString(option, 'label')
+    if (label !== null && option.isOther !== true) {
       // The option id has to name its question: Codex's reply is a map keyed by
       // question id, and the client only ever hands back an option id.
       mapped.push({ id: encodeCodexQuestionOptionId(questionId, label), label })

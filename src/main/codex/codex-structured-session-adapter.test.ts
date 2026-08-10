@@ -10,6 +10,7 @@ import type {
   CodexAppServerLaunch,
   openCodexAppServerConnection
 } from './codex-app-server-connection'
+import type { StructuredAgentSessionEventSink } from '../native-chat/agent-session-wire/structured-agent-session-event-sink'
 import { CodexAppServerUnsupportedError } from './codex-app-server-session'
 import { CODEX_SPAWN_TOKEN_ENV } from './codex-structured-owner-identity'
 import { encodeCodexQuestionOptionId } from './codex-structured-prompt-replies'
@@ -77,6 +78,7 @@ function fakeCodex(routes: Record<string, Route> = {}): {
       respondWithError: (id, code, message) => connection.replies.push({ id, code, message }),
       close: async () => {
         connection.closeCount += 1
+        connection.closed = true
       }
     }
     connections.push(connection)
@@ -275,6 +277,47 @@ describe('CodexStructuredSessionAdapter.acquire', () => {
     const withoutPath = fakeCodex({ 'thread/start': () => ({ thread: { id: THREAD_ID } }) })
     const bare = await acquired(withoutPath)
     expect(await bare.historyFilePath({ identity: identityFor('session-1') })).toBeNull()
+  })
+
+  it('lets closeAll cancel and reap an acquisition still opening', async () => {
+    const codex = fakeCodex()
+    let releaseOpen = (): void => {}
+    let markOpenEntered = (): void => {}
+    const gate = new Promise<void>((resolve) => {
+      releaseOpen = resolve
+    })
+    const openEntered = new Promise<void>((resolve) => {
+      markOpenEntered = resolve
+    })
+    const openConnection: typeof openCodexAppServerConnection = async (...args) => {
+      markOpenEntered()
+      await gate
+      return codex.openConnection(...args)
+    }
+    const adapter = new CodexStructuredSessionAdapter({
+      resolveLaunch: async () => ({
+        command: 'codex',
+        args: ['app-server'],
+        cwd: '/work/repo',
+        codexHome: null,
+        resumeThreadId: null
+      }),
+      openConnection,
+      readProcessStartTime: async () => 1_700_000_000_000
+    })
+    const acquiring = adapter.acquire({
+      identity: identityFor('session-1'),
+      fence: 7,
+      spawnToken: 'spawn-9'
+    })
+    await openEntered
+
+    const closing = adapter.closeAll()
+    releaseOpen()
+
+    await expect(acquiring).rejects.toThrow('superseded while being acquired')
+    await closing
+    expect(codex.connections[0]?.closeCount).toBe(1)
   })
 })
 
@@ -748,5 +791,41 @@ describe('CodexStructuredSessionAdapter lifecycle', () => {
     })
 
     expect(connection.replies).toEqual([])
+  })
+
+  it('flushes the final coalesced text before a graceful close', async () => {
+    const codex = fakeCodex()
+    const bodies: AgentJournalMessageItem[] = []
+    const sink: StructuredAgentSessionEventSink = {
+      appendItem: (_identity, body) => {
+        if (body.kind === 'message') {
+          bodies.push(body)
+        }
+      },
+      appendTombstone: () => {},
+      publish: () => {}
+    }
+    const adapter = adapterFor(codex)
+    await adapter.acquire({
+      identity: identityFor('session-1'),
+      fence: 7,
+      spawnToken: 'spawn-9',
+      events: sink
+    })
+    const notify = codex.connections[0]!.handlers.onNotification
+    notify?.('turn/started', { threadId: THREAD_ID, turn: { id: 'turn-1' } })
+    notify?.('item/started', {
+      threadId: THREAD_ID,
+      item: { type: 'agentMessage', id: 'item-1', text: '' }
+    })
+    notify?.('item/agentMessage/delta', {
+      threadId: THREAD_ID,
+      itemId: 'item-1',
+      delta: 'last words'
+    })
+
+    await adapter.closeSession('session-1')
+
+    expect(bodies.at(-1)?.blocks).toEqual([{ type: 'text', text: 'last words' }])
   })
 })

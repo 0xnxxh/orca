@@ -274,7 +274,7 @@ describe('cross-version structured agent sessions', () => {
     it('finds no structured method registered on the old build', () => {
       expect(baseline.methodNames.filter((name) => name.startsWith('agentSession.'))).toEqual([])
       expect(current.methodNames.filter((name) => name.startsWith('agentSession.'))).toHaveLength(
-        10
+        11
       )
     })
 

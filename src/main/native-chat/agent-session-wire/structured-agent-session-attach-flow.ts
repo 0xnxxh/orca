@@ -41,6 +41,8 @@ export type AttachFlowInput = {
   /** Handed to the adapter so it can journal what the provider streams. The
    *  host owns it and binds it to the journal inside `onAttached`. */
   eventSink?: StructuredAgentSessionEventSink
+  /** Stops acquisition-window events targeting the superseded journal. */
+  onAcquiring?: () => void
 }
 
 export async function performAttach(
@@ -117,27 +119,37 @@ async function acquireOwner(
   if (!spawnToken) {
     throw new Error('agent_session_ownership_unknown')
   }
+  input.onAcquiring?.()
   const acquired = await input.adapter.acquire({
-    identity: journalIdentityFor(record.sessionId, input.params),
+    identity: journalIdentityFor(record, input.params),
     fence,
     // Retries must recover the original reservation, not mint a second child.
     spawnToken,
     ...(input.eventSink ? { events: input.eventSink } : {})
   })
-  if (record.lease.ownerProcess === null) {
-    await input.store.commitProcessIdentity({
+  try {
+    if (record.lease.ownerProcess === null) {
+      await input.store.commitProcessIdentity({
+        sessionId: record.sessionId,
+        fence,
+        process: acquired.process,
+        now: input.now()
+      })
+    } else if (!isDeepStrictEqual(record.lease.ownerProcess, acquired.process)) {
+      throw new Error('agent_session_ownership_unknown')
+    }
+    return await input.store.proveOwner({
       sessionId: record.sessionId,
       fence,
-      process: acquired.process,
+      link: acquired.link,
       now: input.now()
     })
-  } else if (!isDeepStrictEqual(record.lease.ownerProcess, acquired.process)) {
-    throw new Error('agent_session_ownership_unknown')
+  } catch (error) {
+    try {
+      await input.adapter.releaseAcquisition?.({ sessionId: record.sessionId })
+    } catch {
+      // Preserve the lease failure; cleanup is best-effort and idempotent.
+    }
+    throw error
   }
-  return input.store.proveOwner({
-    sessionId: record.sessionId,
-    fence,
-    link: acquired.link,
-    now: input.now()
-  })
 }

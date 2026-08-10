@@ -72,7 +72,7 @@ describe('CodexPromptRegistry', () => {
   it('addresses a prompt by its journal item id once bound, and forgets both', () => {
     const registry = new CodexPromptRegistry()
     const prompt = registry.register(userInputRequest(['q1']))
-    registry.bindJournalItemId('codex:thread-1:turn-1:2', 'codex-item-1')
+    registry.bindJournalItemId('codex:thread-1:turn-1:2', 'thread-1', 'codex-item-1')
 
     expect(registry.find('codex:thread-1:turn-1:2')).toBe(prompt)
     expect(registry.find('codex-item-1')).toBe(prompt)
@@ -80,6 +80,25 @@ describe('CodexPromptRegistry', () => {
     registry.forget(prompt as NonNullable<typeof prompt>)
     expect(registry.find('codex:thread-1:turn-1:2')).toBeNull()
     expect(registry.find('codex-item-1')).toBeNull()
+  })
+
+  it('keeps identical item ids on different threads independently answerable', () => {
+    const registry = new CodexPromptRegistry()
+    const register = (id: number, threadId: string) =>
+      registry.register({
+        id,
+        method: 'item/commandExecution/requestApproval',
+        params: { itemId: 'item-2', threadId }
+      })
+
+    register(1, 'thread-root')
+    register(2, 'thread-child')
+    registry.bindJournalItemId('journal-root', 'thread-root', 'item-2')
+    registry.bindJournalItemId('journal-child', 'thread-child', 'item-2')
+
+    expect(registry.find('journal-root')?.requestId).toBe(1)
+    expect(registry.find('journal-child')?.requestId).toBe(2)
+    expect(registry.find('item-2')).toBeNull()
   })
 })
 

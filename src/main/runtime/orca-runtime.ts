@@ -70,7 +70,10 @@ import {
   type AgentSessionClaimSigner
 } from './agent-session-claim-identity'
 import { ensureStructuredAgentSessionHost as installStructuredAgentSessionHost } from './structured-agent-session-runtime'
+import { getStructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-registry'
+import type { AgentSessionAttachParams } from '../native-chat/agent-session-wire/structured-agent-session-attach'
 import { getProfileUserDataPath } from '../orca-profiles/profile-storage-paths'
+import { getSystemCodexHomePath } from '../codex/codex-home-paths'
 import {
   agentSessionPtyWriteGate,
   type AgentSessionPtyWriteAdmittance
@@ -337,6 +340,7 @@ import {
   type RuntimeMarkdownReadTabResult,
   type RuntimeMarkdownSaveTabResult,
   type RuntimeMobileSessionCreateTerminalResult,
+  type RuntimeMobileSessionAgentTab,
   type RuntimeMobileSessionClientTab,
   type RuntimeMobileSessionTabCloseResult,
   type RuntimeMobileSessionMarkdownTab,
@@ -8767,6 +8771,25 @@ export class OrcaRuntimeService {
       // Why: clients reorder the sanitized session.tabs.list model; raw groups
       // can still contain stale browser ids hidden from paired web clients.
       .filter((tabId) => returnedIds.has(tabId))
+    const structuredIds = expected.filter((tabId) =>
+      snapshot?.tabs.some((tab) => tab.type === 'agent-session' && tab.id === tabId)
+    )
+    if (structuredIds.some((tabId) => !seen.has(tabId))) {
+      if (structuredIds.some((tabId) => seen.has(tabId))) {
+        throw new Error('invalid_tab_order')
+      }
+      const visibleExpected = expected.filter((tabId) => !structuredIds.includes(tabId))
+      if (
+        normalized.length !== visibleExpected.length ||
+        visibleExpected.some((tabId) => !seen.has(tabId))
+      ) {
+        throw new Error('invalid_tab_order')
+      }
+      for (const tabId of structuredIds) {
+        normalized.splice(Math.min(expected.indexOf(tabId), normalized.length), 0, tabId)
+      }
+      return normalized
+    }
     // Why: reorder is a pure permutation of one existing group. Missing or
     // extra ids would let a paired web client silently move/lose host tabs.
     if (normalized.length !== expected.length || expected.some((tabId) => !seen.has(tabId))) {
@@ -9166,6 +9189,150 @@ export class OrcaRuntimeService {
       resolveWorkspacePath: async (workspaceId) =>
         (await this.resolveRuntimeFileTarget(`id:${workspaceId}`)).worktree.path
     })
+  }
+
+  async getStructuredAgentSessionCreateSupport(
+    worktreeSelector: string,
+    agent: 'codex'
+  ): Promise<{ supported: boolean; reason?: 'agent' | 'remote' | 'wsl' }> {
+    if (agent !== 'codex') {
+      return { supported: false, reason: 'agent' }
+    }
+    const location = await this.resolveStructuredAgentSessionLocation(worktreeSelector)
+    await this.ensureStructuredAgentSessionHost()
+    if (getStructuredAgentSessionHost()?.supportsCreate(location, agent)) {
+      return { supported: true }
+    }
+    return {
+      supported: false,
+      reason:
+        location.executionHostId !== LOCAL_EXECUTION_HOST_ID
+          ? 'remote'
+          : location.wslDistro
+            ? 'wsl'
+            : 'agent'
+    }
+  }
+
+  private async resolveStructuredAgentSessionLocation(worktreeSelector: string) {
+    const target = await this.resolveRuntimeFileTarget(worktreeSelector)
+    const repo = this.store?.getRepo(target.worktree.repoId)
+    const wslDistro =
+      repo && !target.connectionId
+        ? (getLocalProjectWorktreeGitOptions(this.requireStore(), repo).wslDistro ?? null)
+        : null
+    const folderWorkspace = this.store
+      ?.getFolderWorkspaces?.()
+      .some((workspace) => workspace.id === target.worktree.id)
+    return {
+      executionHostId: getRuntimeFileTargetExecutionHostId({
+        worktree: target.worktree,
+        connectionId: target.connectionId
+      }),
+      wslDistro,
+      workspaceId: target.worktree.id,
+      workspaceKind: folderWorkspace ? ('folder' as const) : ('git-worktree' as const)
+    }
+  }
+
+  async resolveStructuredAgentSessionCreateIntent(input: {
+    envelope: { sessionId: string; clientOperationId: string }
+    worktree: string
+    agent: 'codex'
+  }): Promise<AgentSessionAttachParams> {
+    const support = await this.getStructuredAgentSessionCreateSupport(input.worktree, input.agent)
+    if (!support.supported) {
+      throw new Error('structured_agent_session_unsupported')
+    }
+    const settings = this.requireStore().getSettings()
+    const configuredHome = resolveTuiAgentLaunchEnv('codex', settings.agentDefaultEnv).CODEX_HOME
+    const location = await this.resolveStructuredAgentSessionLocation(input.worktree)
+    return {
+      envelope: {
+        sessionId: input.envelope.sessionId,
+        clientOperationId: input.envelope.clientOperationId,
+        expectedRuntimeFence: null,
+        payloadFingerprint: ''
+      },
+      location,
+      provider: 'codex',
+      agent: 'codex',
+      accountHome: {
+        variable: 'CODEX_HOME',
+        path: configuredHome?.trim() || getSystemCodexHomePath()
+      },
+      runtimeKind: 'native'
+    }
+  }
+
+  async restoreStructuredAgentSessionTabs(): Promise<void> {
+    await this.ensureStructuredAgentSessionHost()
+    const host = getStructuredAgentSessionHost()
+    await host?.restoreReadableSessions()
+    for (const session of host?.listSessionTabs() ?? []) {
+      this.publishStructuredAgentSessionTab({ ...session, activate: false, notify: false })
+    }
+  }
+
+  publishStructuredAgentSessionTab(input: {
+    workspaceId: string
+    sessionId: string
+    agent: 'codex'
+    activate: boolean
+    notify?: boolean
+  }): void {
+    const existing = this.mobileSessionTabsByWorktree.get(input.workspaceId)
+    const id = `agent-session:${input.sessionId}`
+    if (existing?.tabs.some((tab) => tab.id === id)) {
+      return
+    }
+    const tab: RuntimeMobileSessionAgentTab = {
+      type: 'agent-session',
+      id,
+      title: 'Codex Chat',
+      sessionId: input.sessionId,
+      agent: input.agent,
+      isActive: input.activate
+    }
+    const tabs = [...(existing?.tabs ?? [])].map((candidate) => ({
+      ...candidate,
+      isActive: input.activate ? false : candidate.isActive
+    }))
+    tabs.push(tab)
+    const priorGroups = existing?.tabGroups ?? [
+      {
+        id: this.getHeadlessMobileSessionGroupId(input.workspaceId),
+        activeTabId: existing?.activeTabId ?? null,
+        tabOrder: []
+      }
+    ]
+    const groupId = priorGroups.some((group) => group.id === existing?.activeGroupId)
+      ? existing!.activeGroupId!
+      : priorGroups[0]!.id
+    const tabGroups = priorGroups.map((group) =>
+      group.id === groupId
+        ? {
+            ...group,
+            activeTabId: input.activate ? id : group.activeTabId,
+            tabOrder: [...group.tabOrder, id]
+          }
+        : group
+    )
+    const snapshot: RuntimeMobileSessionTabsSnapshot = {
+      worktree: input.workspaceId,
+      publicationEpoch: existing?.publicationEpoch ?? `structured:${Date.now().toString(36)}`,
+      snapshotVersion: (existing?.snapshotVersion ?? 0) + 1,
+      activeGroupId: input.activate ? groupId : (existing?.activeGroupId ?? groupId),
+      activeTabId: input.activate ? id : (existing?.activeTabId ?? null),
+      activeTabType: input.activate ? 'agent-session' : (existing?.activeTabType ?? null),
+      tabGroups,
+      ...(existing?.tabGroupLayout ? { tabGroupLayout: existing.tabGroupLayout } : {}),
+      tabs
+    }
+    this.mobileSessionTabsByWorktree.set(input.workspaceId, snapshot)
+    if (input.notify !== false) {
+      this.emitMobileSessionTabsSnapshot(snapshot)
+    }
   }
 
   private async resolveRuntimeGitTarget(worktreeSelector: string): Promise<{
@@ -30010,6 +30177,12 @@ export class OrcaRuntimeService {
     const terminalTabs = tabs.filter(
       (tab): tab is RuntimeMobileSessionTerminalTab => tab.type === 'terminal'
     )
+    const tabGroups = this.mergeMobileSessionTabGroups(
+      snapshot.worktree,
+      snapshot.tabGroups ?? existing.tabGroups ?? [],
+      terminalTabs,
+      activeTab?.type === 'terminal' ? activeTab : null
+    )
     return {
       ...snapshot,
       publicationEpoch: this.getMergedMobileSessionPublicationEpoch(
@@ -30020,14 +30193,38 @@ export class OrcaRuntimeService {
       activeGroupId: snapshot.activeGroupId ?? existing.activeGroupId,
       activeTabId: activeTab?.id ?? null,
       activeTabType: activeTab?.type ?? null,
-      tabGroups: this.mergeMobileSessionTabGroups(
-        snapshot.worktree,
-        snapshot.tabGroups ?? existing.tabGroups ?? [],
-        terminalTabs,
-        activeTab?.type === 'terminal' ? activeTab : null
+      tabGroups: this.mergeStructuredAgentSessionTabGroups(
+        tabGroups,
+        existing.tabGroups ?? [],
+        normalizedPreservedTabs,
+        activeTab?.id ?? null
       ),
       tabs
     }
+  }
+
+  private mergeStructuredAgentSessionTabGroups(
+    groups: readonly RuntimeMobileSessionTabGroup[],
+    existingGroups: readonly RuntimeMobileSessionTabGroup[],
+    preservedTabs: readonly RuntimeMobileSessionSnapshotTab[],
+    activeTabId: string | null
+  ): RuntimeMobileSessionTabGroup[] {
+    const structuredTabs = preservedTabs.filter((tab) => tab.type === 'agent-session')
+    if (structuredTabs.length === 0) {
+      return [...groups]
+    }
+    const next = groups.map((group) => ({ ...group, tabOrder: [...group.tabOrder] }))
+    for (const tab of structuredTabs) {
+      const priorGroupId = existingGroups.find((group) => group.tabOrder.includes(tab.id))?.id
+      const target = next.find((group) => group.id === priorGroupId) ?? next[0]
+      if (target && !target.tabOrder.includes(tab.id)) {
+        target.tabOrder.push(tab.id)
+      }
+      if (target && tab.id === activeTabId) {
+        target.activeTabId = tab.id
+      }
+    }
+    return next
   }
 
   private buildPreservedHeadlessMobileSessionSnapshot(
@@ -30100,6 +30297,9 @@ export class OrcaRuntimeService {
     snapshot: RuntimeMobileSessionTabsSnapshot,
     tab: RuntimeMobileSessionSnapshotTab
   ): boolean {
+    if (tab.type === 'agent-session') {
+      return true
+    }
     // Why: headless offscreen browser tabs exist only server-side, so a renderer-graph merge must keep them, not prune as "not in the graph".
     if (tab.type === 'browser') {
       if (!this.offscreenBrowserBackend) {
@@ -30412,7 +30612,7 @@ export class OrcaRuntimeService {
         })
         continue
       }
-      if (tab.type === 'markdown' || tab.type === 'file') {
+      if (tab.type === 'markdown' || tab.type === 'file' || tab.type === 'agent-session') {
         tabs.push(tab)
         continue
       }

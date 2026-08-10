@@ -14,6 +14,7 @@ import type { RpcRequest, RpcResponse } from '../core'
 import { RpcDispatcher } from '../dispatcher'
 import { ALL_RPC_METHODS } from './index'
 import { STRUCTURED_AGENT_SESSION_METHODS } from './structured-agent-session'
+import { computeAgentSessionPayloadFingerprint } from '../../../../shared/agent-session-mutation-envelope'
 
 const SESSION = 'session-alpha'
 const FINGERPRINT = 'f'.repeat(64)
@@ -60,10 +61,27 @@ function request(method: string, params: unknown): RpcRequest {
 }
 
 let hostCalls: Record<string, ReturnType<typeof vi.fn>>
+let runtimeCalls: Record<string, ReturnType<typeof vi.fn>>
 
 function hostStub(): StructuredAgentSessionHost {
   hostCalls = {
-    attach: vi.fn(async () => ({ ok: true, replayed: false })),
+    attach: vi.fn(async () => ({
+      ok: true,
+      replayed: false,
+      fence: 1,
+      cursor: { epoch: 'epoch-a', sequence: 0 },
+      value: {
+        sessionId: SESSION,
+        fence: 1,
+        snapshot: {
+          sessionId: SESSION,
+          cursor: { epoch: 'epoch-a', sequence: 0 },
+          items: [],
+          submissions: []
+        },
+        unconfirmedClientMessageIds: []
+      }
+    })),
     send: vi.fn(async () => ({ ok: true, replayed: false })),
     cancel: vi.fn(async () => ({ ok: true, replayed: false })),
     respondToPrompt: vi.fn(async () => ({ ok: true, replayed: false })),
@@ -76,11 +94,29 @@ function hostStub(): StructuredAgentSessionHost {
 }
 
 function dispatcher(): RpcDispatcher {
+  runtimeCalls = {
+    getStructuredAgentSessionCreateSupport: vi.fn(async () => ({ supported: true })),
+    resolveStructuredAgentSessionCreateIntent: vi.fn(async (params) => ({
+      envelope: params.envelope,
+      location: {
+        executionHostId: 'local',
+        wslDistro: null,
+        workspaceId: 'workspace-1',
+        workspaceKind: 'git-worktree'
+      },
+      provider: 'codex',
+      agent: 'codex',
+      accountHome: { variable: 'CODEX_HOME', path: '/host/.codex' },
+      runtimeKind: 'native'
+    })),
+    publishStructuredAgentSessionTab: vi.fn()
+  }
   const runtime = {
     getRuntimeId: () => 'runtime-1',
     registerSubscriptionCleanup: vi.fn(),
     cleanupSubscription: vi.fn(),
-    cleanupSubscriptionsByPrefix: vi.fn()
+    cleanupSubscriptionsByPrefix: vi.fn(),
+    ...runtimeCalls
   }
   return new RpcDispatcher({
     runtime: runtime as unknown as OrcaRuntimeService,
@@ -134,7 +170,7 @@ describe('capability gating', () => {
     for (const method of STRUCTURED_AGENT_SESSION_METHODS) {
       expect(names).toContain(method.name)
     }
-    expect(STRUCTURED_AGENT_SESSION_METHODS).toHaveLength(10)
+    expect(STRUCTURED_AGENT_SESSION_METHODS).toHaveLength(11)
   })
 
   it('hides the surface from a declared client that did not advertise it', async () => {
@@ -147,6 +183,32 @@ describe('capability gating', () => {
       error: { message: expect.stringContaining('structured_agent_session_unsupported') }
     })
     expect(hostCalls.send).not.toHaveBeenCalled()
+  })
+
+  it('rejects create intent before resolving host-owned fields for an old client', async () => {
+    const worktree = 'id:workspace-1'
+    const response = await call(
+      'agentSession.create',
+      {
+        envelope: envelope({
+          expectedRuntimeFence: null,
+          payloadFingerprint: computeAgentSessionPayloadFingerprint({
+            method: 'agentSession.create',
+            sessionId: SESSION,
+            fields: { worktree, agent: 'codex' }
+          })
+        }),
+        worktree,
+        agent: 'codex'
+      },
+      { clientKind: 'mobile', clientCapabilities: [] }
+    )
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining('structured_agent_session_unsupported') }
+    })
+    expect(runtimeCalls.resolveStructuredAgentSessionCreateIntent).not.toHaveBeenCalled()
   })
 
   it('serves a client that advertised it', async () => {
@@ -168,6 +230,35 @@ describe('capability gating', () => {
 })
 
 describe('method routing', () => {
+  it('creates from mobile intent while the host resolves paths and provider identity', async () => {
+    const worktree = 'id:workspace-1'
+    const params = {
+      envelope: envelope({
+        expectedRuntimeFence: null,
+        payloadFingerprint: computeAgentSessionPayloadFingerprint({
+          method: 'agentSession.create',
+          sessionId: SESSION,
+          fields: { worktree, agent: 'codex' }
+        })
+      }),
+      worktree,
+      agent: 'codex'
+    }
+    const created = await call('agentSession.create', params, STRUCTURED_CLIENT)
+    expect(created).toMatchObject({ ok: true, result: { ok: true } })
+    expect(runtimeCalls.resolveStructuredAgentSessionCreateIntent).toHaveBeenCalledWith(params)
+    expect(hostCalls.attach).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        accountHome: { variable: 'CODEX_HOME', path: '/host/.codex' }
+      })
+    )
+    expect(hostCalls.attach.mock.calls[0]?.[1]).not.toHaveProperty('providerHandle')
+    expect(runtimeCalls.publishStructuredAgentSessionTab).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: SESSION, activate: true })
+    )
+  })
+
   it('separates create from ensure by the fence the client may declare', async () => {
     const created = await call('agentSession.create', attachParams(), STRUCTURED_CLIENT)
     expect(created).toMatchObject({ ok: true })

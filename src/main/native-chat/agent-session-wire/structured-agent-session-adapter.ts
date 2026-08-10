@@ -12,7 +12,10 @@ import type {
   AgentSessionJournalIdentity
 } from '../../../shared/agent-session-journal-types'
 import type { AgentSessionProviderHandleLink } from '../../../shared/agent-session-provider-handle'
-import type { AgentSessionProcessIdentity } from '../../../shared/agent-session-record'
+import type {
+  AgentSessionExecutionLocation,
+  AgentSessionProcessIdentity
+} from '../../../shared/agent-session-record'
 import type { StructuredAgentSessionEventSink } from './structured-agent-session-event-sink'
 
 /** What a reservation turns into once something is actually running under it:
@@ -30,6 +33,8 @@ export type AgentSessionDispatchOutcome =
   | { state: 'unknown'; reason: string }
 
 export type StructuredAgentSessionAdapter = {
+  /** Provider/runtime support, kept here so remote enablement changes adapter data, not UI logic. */
+  supportsLocation?(location: AgentSessionExecutionLocation): boolean
   /** Makes the reservation real. Called once per reservation, with the spawn
    *  token the lease was reserved under and the fence the handle must be minted
    *  at — the store rejects a link minted at any other fence. */
@@ -43,6 +48,8 @@ export type StructuredAgentSessionAdapter = {
      *  adapter that only answers calls needs no journal at all. */
     events?: StructuredAgentSessionEventSink
   }): Promise<AgentSessionAcquisition>
+  /** Reaps an acquired provider when the host cannot commit or prove its lease. */
+  releaseAcquisition?(input: { sessionId: string }): Promise<void>
   dispatch(input: {
     sessionId: string
     clientMessageId: string

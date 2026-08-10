@@ -55,9 +55,10 @@ export function readCodexThreadItem(value: unknown): CodexThreadItem | null {
 export class CodexTurnOrdinals {
   private readonly turns = new Map<string, Map<string, number>>()
 
-  ordinalFor(turnId: string, codexItemId: string): number {
-    const assigned = this.turns.get(turnId) ?? new Map<string, number>()
-    this.turns.set(turnId, assigned)
+  ordinalFor(threadId: string, turnId: string, codexItemId: string): number {
+    const turnKey = `${encodeURIComponent(threadId)}:${encodeURIComponent(turnId)}`
+    const assigned = this.turns.get(turnKey) ?? new Map<string, number>()
+    this.turns.set(turnKey, assigned)
     const existing = assigned.get(codexItemId)
     if (existing !== undefined) {
       return existing
@@ -92,7 +93,7 @@ export function codexItemIdentity(input: {
       provider: 'codex',
       threadId: input.threadId,
       turnId,
-      ordinal: input.ordinals.ordinalFor(turnId, item.id)
+      ordinal: input.ordinals.ordinalFor(input.threadId, turnId, item.id)
     }
   }
   return { provider: 'orca', clientMessageId: `codex-item:${input.threadId}:${item.id}` }
@@ -101,6 +102,28 @@ export function codexItemIdentity(input: {
 function readString(source: Record<string, unknown>, key: string): string | null {
   const value = source[key]
   return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function readTextContent(source: Record<string, unknown>, key: string): string | null {
+  const direct = readString(source, key)
+  if (direct) {
+    return direct
+  }
+  const value = source[key]
+  if (!Array.isArray(value)) {
+    return null
+  }
+  const parts = value.flatMap((part) => {
+    if (typeof part === 'string') {
+      return part.length > 0 ? [part] : []
+    }
+    if (typeof part !== 'object' || part === null) {
+      return []
+    }
+    const text = readString(part as Record<string, unknown>, 'text')
+    return text ? [text] : []
+  })
+  return parts.length > 0 ? parts.join('\n') : null
 }
 
 /** `userMessage` carries structured content parts; `agentMessage` a flat text. */
@@ -121,6 +144,13 @@ export function codexMessageBlocks(item: CodexThreadItem): NativeChatBlock[] {
     const partText = readString(part as Record<string, unknown>, 'text')
     if (partText !== null) {
       blocks.push({ type: 'text', text: partText })
+      continue
+    }
+    const record = part as Record<string, unknown>
+    if (record.type === 'image' && typeof record.url === 'string') {
+      blocks.push({ type: 'image-ref', url: record.url })
+    } else if (record.type === 'localImage' && typeof record.path === 'string') {
+      blocks.push({ type: 'image-ref', path: record.path })
     }
   }
   return blocks
@@ -179,8 +209,13 @@ export function codexItemBody(item: CodexThreadItem): AgentJournalItemBody | nul
     }
   }
   if (item.type === 'reasoning') {
-    const text = readString(item, 'text') ?? readString(item, 'summary')
-    return text === null ? null : { kind: 'status', text }
+    const text =
+      readTextContent(item, 'text') ??
+      readTextContent(item, 'summary') ??
+      readTextContent(item, 'content')
+    return text === null
+      ? null
+      : { kind: 'status', text: boundInlineText(text, DEFAULT_JOURNAL_PAYLOAD_LIMITS).text }
   }
   return null
 }

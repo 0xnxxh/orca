@@ -12,6 +12,7 @@ import type {
   AgentJournalResolution
 } from '../../../shared/agent-session-journal-types'
 import { parseAgentJournalItemKey } from '../../../shared/agent-session-journal-item-key'
+import { decodeCodexQuestionOptionId } from '../../codex/codex-structured-prompt-replies'
 import type {
   AgentSessionCancelResult,
   AgentSessionOptionResult,
@@ -137,9 +138,11 @@ export async function performCancel(
   return { ok: true, value: { turnId: input.turnId, cancelled } }
 }
 
-function promptBodyOf(
-  body: AgentJournalItemBody
-): { options: readonly { id: string }[]; resolution: AgentJournalResolution } | null {
+function promptBodyOf(body: AgentJournalItemBody): {
+  options: readonly { id: string }[]
+  freeTextQuestionId?: string
+  resolution: AgentJournalResolution
+} | null {
   return body.kind === 'approval' || body.kind === 'question' ? body : null
 }
 
@@ -188,7 +191,13 @@ export async function performPrompt(
       }
     }
   }
-  if (!prompt.options.some((option) => option.id === input.optionId)) {
+  const freeText = decodeCodexQuestionOptionId(input.optionId)
+  const acceptsFreeText =
+    item.body.kind === 'question' &&
+    prompt.freeTextQuestionId !== undefined &&
+    freeText?.questionId === prompt.freeTextQuestionId &&
+    freeText.answer.trim().length > 0
+  if (!acceptsFreeText && !prompt.options.some((option) => option.id === input.optionId)) {
     return invalid(`Option ${input.optionId} is not offered by item ${input.itemId}.`)
   }
   const identity = parseAgentJournalItemKey(input.itemId)

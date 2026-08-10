@@ -140,6 +140,7 @@ function buildPage(input: {
       newest: newest ? { epoch, sequence: newest.sequence } : null,
       nextCursor: input.nextCursor ?? input.fallbackCursor
     },
+    liveCursor: input.snapshot.cursor,
     hasOlder: input.hasOlder,
     hasNewer: input.hasNewer
   }

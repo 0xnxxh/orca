@@ -25,6 +25,10 @@ export type MobileRelayRpcSession = RpcClient & {
   getResumeExpiresAt(): number | null
   getResumeConfirmation(): DeviceResumeConfirmed | null
   getFailure(): Error | null
+  consumeStructuredReconnectSignal?(): {
+    backgroundRestart: boolean
+    streamLongevityConfirmed: boolean
+  }
 }
 
 export function connectMobileRelayRpcSession(args: {
@@ -47,6 +51,8 @@ export function connectMobileRelayRpcSession(args: {
   let resumeExpiresAt: number | null = null
   let resumeConfirmation: DeviceResumeConfirmed | null = null
   let failure: Error | null = null
+  let structuredBackgroundRestart = false
+  let structuredStreamLongevityConfirmed = false
   let closed = false
   const streams = new MobileRelayRpcStreams({
     nextId,
@@ -104,6 +110,16 @@ export function connectMobileRelayRpcSession(args: {
       return () => stateListeners.delete(listener)
     },
     notifyForeground: () => {},
+    restartAfterStructuredBackground() {
+      if (closed) {
+        return
+      }
+      structuredBackgroundRestart = true
+      fail(new Error('structured session background reconnect'))
+    },
+    confirmStructuredStreamLongevity() {
+      structuredStreamLongevityConfirmed = true
+    },
     close() {
       if (closed) {
         return
@@ -117,7 +133,16 @@ export function connectMobileRelayRpcSession(args: {
     getAttachDeadlineAt: () => attachDeadlineAt,
     getResumeExpiresAt: () => resumeExpiresAt,
     getResumeConfirmation: () => resumeConfirmation,
-    getFailure: () => failure
+    getFailure: () => failure,
+    consumeStructuredReconnectSignal() {
+      const signal = {
+        backgroundRestart: structuredBackgroundRestart,
+        streamLongevityConfirmed: structuredStreamLongevityConfirmed
+      }
+      structuredBackgroundRestart = false
+      structuredStreamLongevityConfirmed = false
+      return signal
+    }
   }
   return client
 

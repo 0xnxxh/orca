@@ -40,6 +40,8 @@ export type DeferredStructuredAgentSessionEventSink = {
   /** Drains everything buffered so far, in order, then writes through. Called
    *  again on every re-attach to re-point the sink at the new journal. */
   bind(target: StructuredAgentSessionEventTarget): void
+  /** Queues new provider events until a replacement journal is bound. */
+  unbind(): void
   /** Permanently stops the sink. Queued writes are dropped rather than landing
    *  in a journal the host has already let go of. */
   close(): void
@@ -105,6 +107,9 @@ export function createDeferredStructuredAgentSessionEventSink(
       for (const operation of pending) {
         enqueue(operation)
       }
+    },
+    unbind: () => {
+      target = null
     },
     close: () => {
       closed = true

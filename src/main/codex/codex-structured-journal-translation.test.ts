@@ -20,7 +20,7 @@ type Row = { key: string; body: AgentJournalItemBody }
 
 function recorder() {
   const rows: Row[] = []
-  const bound: [string, string][] = []
+  const bound: [string, string, string][] = []
   let publishes = 0
   const sink: StructuredAgentSessionEventSink = {
     appendItem: (identity: AgentJournalItemIdentity, body) =>
@@ -35,8 +35,8 @@ function recorder() {
     rows,
     bound,
     publishes: () => publishes,
-    bindPromptItemId: (journalItemId: string, promptKey: string) =>
-      bound.push([journalItemId, promptKey])
+    bindPromptItemId: (journalItemId: string, threadId: string, promptKey: string) =>
+      bound.push([journalItemId, threadId, promptKey])
   }
 }
 
@@ -206,7 +206,7 @@ describe('codex journal translation', () => {
     const approval = tap.rows.at(-1)
     expect(approval?.key).toBe('orca:codex-prompt%3Athread-abc%3Aitem-2')
     expect(approval?.body).toMatchObject({ kind: 'approval', detail: 'rm -rf build' })
-    expect(tap.bound).toEqual([['orca:codex-prompt%3Athread-abc%3Aitem-2', 'item-2']])
+    expect(tap.bound).toEqual([['orca:codex-prompt%3Athread-abc%3Aitem-2', THREAD_ID, 'item-2']])
   })
 
   it('journals one row per approval when a tool item asks twice', () => {
@@ -241,7 +241,7 @@ describe('codex journal translation', () => {
     ])
     // Both still name the command the shared item announced.
     expect(approvals.every((row) => (row.body as { detail?: string }).detail === 'ls')).toBe(true)
-    expect(tap.bound.map(([, promptKey]) => promptKey)).toEqual(['approval-a', 'approval-b'])
+    expect(tap.bound.map(([, , promptKey]) => promptKey)).toEqual(['approval-a', 'approval-b'])
   })
 
   it('journals and binds one row per question in a user-input request', () => {
@@ -267,7 +267,7 @@ describe('codex journal translation', () => {
       'orca:codex-prompt%3Athread-abc%3Aitem-3%3Aq1',
       'orca:codex-prompt%3Athread-abc%3Aitem-3%3Aq2'
     ])
-    expect(tap.bound.map(([, promptKey]) => promptKey)).toEqual(['item-3', 'item-3'])
+    expect(tap.bound.map(([, , promptKey]) => promptKey)).toEqual(['item-3', 'item-3'])
   })
 
   it('starts a new turn at ordinal zero and refuses to adopt an ended turn', () => {
@@ -307,6 +307,59 @@ describe('codex journal translation', () => {
     )
 
     expect(tap.rows[0]?.key).toBe('codex:thread-abc:turn-9:0')
+  })
+
+  it('keeps interleaved thread turns, items, and deltas separate', () => {
+    const { translator, tap } = translatorWith()
+    const child = (method: string, params: unknown): CodexStructuredSessionEvent => ({
+      type: 'notification',
+      sessionId: SESSION_ID,
+      threadId: 'thread-child',
+      method,
+      params
+    })
+
+    translator.handle(TURN_STARTED)
+    translator.handle(child('turn/started', { threadId: 'thread-child', turnId: 'turn-child' }))
+    translator.handle(
+      notification('item/completed', {
+        item: { type: 'agentMessage', id: 'item-0', text: 'root' }
+      })
+    )
+    translator.handle(
+      child('item/completed', { item: { type: 'agentMessage', id: 'item-0', text: 'child' } })
+    )
+    translator.handle(child('turn/completed', { turnId: 'turn-child' }))
+    translator.handle(
+      notification('item/completed', {
+        item: { type: 'agentMessage', id: 'item-1', text: 'still root' }
+      })
+    )
+
+    expect(tap.rows.map((row) => row.key)).toEqual([
+      'codex:thread-abc:turn-1:0',
+      'codex:thread-child:turn-child:0',
+      'codex:thread-abc:turn-1:1'
+    ])
+  })
+
+  it('checkpoints long streams geometrically and flushes the final snapshot', () => {
+    const { translator, tap, window } = translatorWith()
+    translator.handle(TURN_STARTED)
+    translator.handle(
+      notification('item/started', { item: { type: 'agentMessage', id: 'item-1', text: '' } })
+    )
+
+    for (let index = 0; index < 512; index += 1) {
+      translator.handle(notification('item/agentMessage/delta', { itemId: 'item-1', delta: 'x' }))
+      window.fire()
+    }
+    translator.flush()
+
+    expect(tap.rows.length).toBeLessThan(40)
+    expect(tap.rows.at(-1)?.body).toMatchObject({
+      blocks: [{ type: 'text', text: 'x'.repeat(512) }]
+    })
   })
 
   it('publishes after every write so a subscriber never trails the journal', () => {

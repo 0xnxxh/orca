@@ -2,6 +2,7 @@ import {
   createWsOutboundBackpressureQueue,
   type WsOutboundBackpressureQueue
 } from '../../../src/shared/ws-outbound-backpressure-queue'
+import { STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY } from '../../../src/shared/protocol-version'
 import type { MobileE2EEV2ClientSession } from './mobile-e2ee-v2-client-session'
 
 type ChannelState = 'awaiting-ready' | 'awaiting-authenticated' | 'ready'
@@ -139,7 +140,8 @@ export class MobileE2EEV2PhysicalChannel {
         type: 'e2ee_auth',
         v: 2,
         transcriptHashB64: this.args.session.transcriptHashB64,
-        deviceToken: this.args.deviceToken
+        deviceToken: this.args.deviceToken,
+        clientCapabilities: [STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY]
       })
     })
   }

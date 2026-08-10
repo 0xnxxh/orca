@@ -67,6 +67,23 @@ describe('codex approval items', () => {
 
     expect(item.detail).toBe('writes outside the workspace')
   })
+
+  it('prefers the approval request command and describes file-change grants', () => {
+    expect(
+      codexApprovalItem({
+        method: CODEX_COMMAND_APPROVAL_METHOD,
+        params: { command: ['git', 'status'] },
+        detail: 'parent command'
+      }).detail
+    ).toBe('git status')
+    expect(
+      codexApprovalItem({
+        method: CODEX_FILE_CHANGE_APPROVAL_METHOD,
+        params: { grantRoot: '/outside' },
+        detail: null
+      }).detail
+    ).toBe('"/outside"')
+  })
 })
 
 describe('codex question items', () => {
@@ -122,6 +139,29 @@ describe('codex question items', () => {
     expect(
       codexQuestionItems({ threadId: THREAD_ID, promptKey: CODEX_ITEM_ID, params: {} })
     ).toEqual([])
+  })
+
+  it('preserves a free-text path for null options and Other', () => {
+    const [withoutOptions, withOther] = codexQuestionItems({
+      threadId: THREAD_ID,
+      promptKey: CODEX_ITEM_ID,
+      params: {
+        questions: [
+          { id: 'q1', question: 'Describe it', options: null },
+          {
+            id: 'q2',
+            question: 'Pick or type',
+            options: [{ label: 'Known' }, { label: 'Other', isOther: true }]
+          }
+        ]
+      }
+    })
+
+    expect(withoutOptions?.body).toMatchObject({ options: [], freeTextQuestionId: 'q1' })
+    expect(withOther?.body).toMatchObject({
+      options: [{ id: 'q2:Known', label: 'Known' }],
+      freeTextQuestionId: 'q2'
+    })
   })
 
   it('keys an approval without a question id', () => {

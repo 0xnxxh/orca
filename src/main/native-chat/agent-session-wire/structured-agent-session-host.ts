@@ -13,7 +13,10 @@ import type {
   AgentJournalMessageItem
 } from '../../../shared/agent-session-journal-types'
 import type { AgentSessionOwnerProbe } from '../../../shared/agent-session-lease-adjudication'
-import type { AgentSessionRecord } from '../../../shared/agent-session-record'
+import type {
+  AgentSessionExecutionLocation,
+  AgentSessionRecord
+} from '../../../shared/agent-session-record'
 import type {
   AgentSessionAttachResult,
   AgentSessionCancelResult,
@@ -53,6 +56,7 @@ import {
   AgentSessionSubscribers,
   type AgentSessionSubscriberEmit
 } from './structured-agent-session-subscribers'
+import { restoreStructuredAgentSessionRead } from './structured-agent-session-read-restore'
 
 export type StructuredAgentSessionCaller = {
   /** Stable per-client identity; scopes the operation ledger and records who
@@ -102,6 +106,45 @@ export class StructuredAgentSessionHost {
     return this.sessions.has(sessionId)
   }
 
+  supportsCreate(location: AgentSessionExecutionLocation, agent: string): boolean {
+    return agent === 'codex' && (this.deps.adapter.supportsLocation?.(location) ?? false)
+  }
+
+  listSessionTabs(): {
+    sessionId: string
+    workspaceId: string
+    agent: 'codex'
+  }[] {
+    return [...this.sessions.entries()].map(([sessionId, session]) => ({
+      sessionId,
+      workspaceId: session.params.location.workspaceId,
+      agent: 'codex' as const
+    }))
+  }
+
+  async restoreReadableSessions(): Promise<void> {
+    await Promise.all(
+      this.deps.store
+        .listRecords()
+        .filter((record) => record.provider === 'codex')
+        .map((record) =>
+          this.serialize(record.sessionId, async () => {
+            if (this.sessions.has(record.sessionId)) {
+              return
+            }
+            const restored = await restoreStructuredAgentSessionRead(
+              this.deps.store,
+              this.deps.journalRoot,
+              record.sessionId
+            )
+            if (restored) {
+              this.sessions.set(record.sessionId, restored)
+            }
+          })
+        )
+    )
+  }
+
   /** Per-session single file. A rejected task must not poison the chain. */
   private serialize<T>(sessionId: string, task: () => Promise<T>): Promise<T> {
     const prior = this.chains.get(sessionId) ?? Promise.resolve()
@@ -133,6 +176,7 @@ export class StructuredAgentSessionHost {
         adapter: this.deps.adapter,
         journalRoot: this.deps.journalRoot,
         eventSink: eventSink.sink,
+        onAcquiring: () => eventSink.unbind(),
         authority: {
           spawnToken: this.deps.mintSpawnToken?.() ?? randomUUID(),
           claimKeyId: this.deps.claimKeyId,
