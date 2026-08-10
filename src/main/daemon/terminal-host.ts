@@ -17,10 +17,11 @@ import { TerminalHostTombstones } from './terminal-host-tombstones'
 import { listLiveTerminalHostSessions } from './terminal-host-session-listing'
 import { createOrAttachTerminalSession } from './terminal-host-session-create'
 import {
-  allocateSessionScrollbackRows,
-  resolveDaemonScrollbackBudgetCells
-} from './daemon-scrollback-budget'
-import { isValidPtySize } from './daemon-pty-size'
+  DAEMON_SCROLLBACK_FULL_ROWS,
+  DAEMON_SCROLLBACK_TRIMMED_PARKED_ROWS,
+  resolveParkedFullDepthCap,
+  selectParkedSessionsToTrim
+} from './daemon-scrollback-retention'
 import { isShellProcess } from '../../shared/agent-detection'
 
 export type { CreateOrAttachOptions, CreateOrAttachResult } from './terminal-host-create-contract'
@@ -40,7 +41,10 @@ export class TerminalHost {
   private disposePromise: Promise<void> | null = null
   private readonly agentSessionOwners = new ClaimedAgentPtyOwnerRegistry()
   private readonly agentSessionGenerations = new TerminalHostAgentSessionGenerations()
-  private readonly scrollbackBudgetCells = resolveDaemonScrollbackBudgetCells()
+  private readonly parkedFullDepthCap = resolveParkedFullDepthCap()
+  // Why: attach order is the LRU signal — output alone must not refresh a parked agent's recency.
+  private readonly retentionRecency = new Map<string, number>()
+  private retentionClock = 0
 
   constructor(opts: TerminalHostOptions) {
     this.spawnSubprocess = opts.spawnSubprocess
@@ -72,8 +76,8 @@ export class TerminalHost {
           onDeadSessionRemoved: (sessionId) => this.agentSessionGenerations.forget(sessionId),
           onSessionCreated: (sessionId, generation, isAlive) => {
             this.agentSessionGenerations.remember(sessionId, generation, isAlive)
-            // Apply synchronously with map insertion so concurrent creates cannot retain full depth.
-            this.applyScrollbackBudget()
+            // Apply synchronously with map insertion so concurrent creates cannot dodge retention.
+            this.noteSessionViewed(sessionId)
           },
           onSessionExit: (sessionId, generation) => {
             this.agentSessionOwners.release(sessionId, generation)
@@ -81,24 +85,33 @@ export class TerminalHost {
             this.reapSession(sessionId)
           }
         })
+        // Attach of an existing session refreshes its recency and restores full depth going forward.
+        this.noteSessionViewed(options.sessionId)
         return result
       }
     })
   }
 
-  // Why: retained grid is O(columns × depth), so keep one width-aware budget across live sessions.
-  private applyScrollbackBudget(proposedSize?: { sessionId: string; columns: number }): void {
-    const sessions = [...this.sessions.entries()]
-    const rowLimits = allocateSessionScrollbackRows(
-      sessions.map(([sessionId, session]) =>
-        sessionId === proposedSize?.sessionId
-          ? proposedSize.columns
-          : (session.getAppliedSize()?.cols ?? 80)
-      ),
-      { budgetCells: this.scrollbackBudgetCells }
-    )
-    for (let index = 0; index < sessions.length; index += 1) {
-      sessions[index][1].setRetainedScrollbackRows(rowLimits[index])
+  private noteSessionViewed(sessionId: string): void {
+    this.retentionClock += 1
+    this.retentionRecency.set(sessionId, this.retentionClock)
+    this.applyScrollbackRetention()
+  }
+
+  // Why: a terminal the user is viewing must never lose reachable scrollback, so retention only trims
+  // PARKED sessions past the LRU cap — the ones least recently viewed. Trimming is one-way for rows
+  // already evicted, but a reattached session returns to full depth for everything it emits afterward.
+  private applyScrollbackRetention(): void {
+    const entries = [...this.sessions.entries()].map(([sessionId, session]) => ({
+      sessionId,
+      attached: session.hasAttachedClients,
+      recency: this.retentionRecency.get(sessionId) ?? 0
+    }))
+    const trimmed = new Set(selectParkedSessionsToTrim(entries, this.parkedFullDepthCap))
+    for (const [sessionId, session] of this.sessions) {
+      session.setRetainedScrollbackRows(
+        trimmed.has(sessionId) ? DAEMON_SCROLLBACK_TRIMMED_PARKED_ROWS : DAEMON_SCROLLBACK_FULL_ROWS
+      )
     }
   }
 
@@ -111,16 +124,7 @@ export class TerminalHost {
   }
 
   resize(sessionId: string, cols: number, rows: number): void {
-    const session = this.getAliveSession(sessionId)
-    if (!isValidPtySize(cols, rows)) {
-      return
-    }
-    const previousColumns = session.getAppliedSize()?.cols
-    if (cols !== previousColumns) {
-      // Tighten before xterm widens its retained lines; loosen before narrowing reflow can drop history.
-      this.applyScrollbackBudget({ sessionId, columns: cols })
-    }
-    session.resize(cols, rows)
+    this.getAliveSession(sessionId).resize(cols, rows)
   }
 
   // Why null-not-throw (unlike write/resize): pause/resume are best-effort hints against a session that may have exited.
@@ -157,7 +161,9 @@ export class TerminalHost {
     }
     session.dispose()
     this.sessions.delete(sessionId)
-    this.applyScrollbackBudget()
+    this.retentionRecency.delete(sessionId)
+    // A freed slot may let the most recent trimmed parked session accumulate full depth again.
+    this.applyScrollbackRetention()
     this.onSessionReaped?.(sessionId)
   }
 
@@ -168,6 +174,8 @@ export class TerminalHost {
   detach(sessionId: string, token: symbol): void {
     const session = this.sessions.get(sessionId)
     session?.detachClient(token)
+    // The session just became parked; it may now fall past the LRU cap.
+    this.applyScrollbackRetention()
   }
 
   async getCwd(sessionId: string): Promise<string | null> {

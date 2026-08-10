@@ -200,6 +200,11 @@ export class Session {
     return this._state !== 'exited'
   }
 
+  /** A viewing client is attached; scrollback retention must never trim this session. */
+  get hasAttachedClients(): boolean {
+    return this.attachedClients.length > 0
+  }
+
   get isTerminating(): boolean {
     return this._isTerminating
   }
