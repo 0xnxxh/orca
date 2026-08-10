@@ -98,10 +98,10 @@ type VerifiedReadTracker = {
       truncated: NonNullable<SessionFileDiscovery['cursorDiscoveryTruncated']>
     }
   >
-  aggregateReturnedBytes: number
-  /** Serializes reserve/read/commit so concurrent parses cannot overshoot the cap. */
-  gate: Promise<void>
+  budgetsByStorageKey: Map<string, VerifiedReadBudget>
 }
+
+type VerifiedReadBudget = { returnedBytes: number; gate: Promise<void> }
 
 function createVerifiedReadTracker(
   discoveries: readonly SessionFileDiscovery[] | undefined
@@ -127,16 +127,16 @@ function createVerifiedReadTracker(
       truncated: discovery.cursorDiscoveryTruncated
     })
   }
-  return { byStorageKey, aggregateReturnedBytes: 0, gate: Promise.resolve() }
+  return { byStorageKey, budgetsByStorageKey: new Map() }
 }
 
 async function withVerifiedReadGate<T>(
-  tracker: VerifiedReadTracker,
+  budget: VerifiedReadBudget,
   run: () => Promise<T>
 ): Promise<T> {
-  const previous = tracker.gate
+  const previous = budget.gate
   let release!: () => void
-  tracker.gate = new Promise<void>((resolve) => {
+  budget.gate = new Promise<void>((resolve) => {
     release = resolve
   })
   await previous
@@ -145,6 +145,16 @@ async function withVerifiedReadGate<T>(
   } finally {
     release()
   }
+}
+
+function verifiedReadBudget(tracker: VerifiedReadTracker, storageKey: string): VerifiedReadBudget {
+  const existing = tracker.budgetsByStorageKey.get(storageKey)
+  if (existing) {
+    return existing
+  }
+  const created = { returnedBytes: 0, gate: Promise.resolve() }
+  tracker.budgetsByStorageKey.set(storageKey, created)
+  return created
 }
 
 async function parseCursorGroups(
@@ -218,6 +228,7 @@ async function parseSidecarWithAggregateCap(
 ): Promise<ParsedCursorCandidate | null> {
   const storageKey = candidate.cursorStorageContextKey ?? 'native'
   const storage = verifiedReads.byStorageKey.get(storageKey)
+  const budget = verifiedReadBudget(verifiedReads, storageKey)
   // Unknown size reserves the per-sidecar max so concurrent admission cannot overshoot.
   const estimatedBytes =
     candidate.file.sizeBytes === undefined
@@ -225,14 +236,14 @@ async function parseSidecarWithAggregateCap(
       : Math.min(Math.max(0, candidate.file.sizeBytes), CURSOR_SIDECAR_MAX_BYTES)
 
   // Gate covers reserve → verified read → commit of actual returned bytes.
-  return withVerifiedReadGate(verifiedReads, async () => {
-    if (verifiedReads.aggregateReturnedBytes >= CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
+  return withVerifiedReadGate(budget, async () => {
+    if (budget.returnedBytes >= CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
       if (storage) {
         storage.truncated.sidecarBytes = true
       }
       return null
     }
-    if (verifiedReads.aggregateReturnedBytes + estimatedBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
+    if (budget.returnedBytes + estimatedBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
       if (storage) {
         storage.truncated.sidecarBytes = true
       }
@@ -252,7 +263,7 @@ async function parseSidecarWithAggregateCap(
         // Count the logical verified-read work even when the payload is dropped.
         storage.counters.boundedReads += 1
       }
-      if (verifiedReads.aggregateReturnedBytes + readBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
+      if (budget.returnedBytes + readBytes > CURSOR_REMOTE_MAX_AGGREGATE_BYTES) {
         if (storage) {
           storage.truncated.sidecarBytes = true
         }
@@ -261,7 +272,7 @@ async function parseSidecarWithAggregateCap(
       if (storage) {
         storage.counters.returnedBytes += readBytes
       }
-      verifiedReads.aggregateReturnedBytes += readBytes
+      budget.returnedBytes += readBytes
     }
 
     if (result.issue) {
