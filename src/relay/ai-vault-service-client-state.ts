@@ -6,7 +6,11 @@ import type {
 } from '../shared/ai-vault-session-title'
 import type { SshAiVaultRelayListParams } from '../shared/ssh-ai-vault-relay'
 import type { RemoteHostPlatform } from '../main/ssh/ssh-remote-platform'
-import type { RelayAiVaultServiceRequest } from './ai-vault-service-protocol'
+import {
+  relayAiVaultServiceLane,
+  type RelayAiVaultServiceLane,
+  type RelayAiVaultServiceRequest
+} from './ai-vault-service-protocol'
 
 export const RELAY_AI_VAULT_READY_TIMEOUT_MS = 5_000
 export const RELAY_AI_VAULT_SCAN_TIMEOUT_MS = 130_000
@@ -30,6 +34,43 @@ export function armRelayAiVaultCancellationTimeout(
 ): void {
   call.timer = setTimeout(onExpired, 2_000)
   call.timer.unref?.()
+}
+
+export function createRelayAiVaultServiceCall(args: {
+  request: RelayAiVaultServiceRequest
+  signal?: AbortSignal
+  resolve: RelayAiVaultServiceCall['resolve']
+  reject: RelayAiVaultServiceCall['reject']
+}): RelayAiVaultServiceCall {
+  return {
+    request: args.request,
+    lane: relayAiVaultServiceLane(args.request.operation),
+    signal: args.signal,
+    forceStart: args.request.operation === 'list' && args.request.params.force === true,
+    resolve: args.resolve,
+    reject: args.reject,
+    timer: null,
+    onAbort: null,
+    settled: false,
+    sent: false,
+    startRetried: false
+  }
+}
+
+/**
+ * A cold start that faults before the request reached the sidecar self-heals on
+ * the scheduled respawn. Requeue once; the caller settles when this returns false.
+ */
+export function requeueRelayAiVaultServiceStart(
+  call: RelayAiVaultServiceCall,
+  queue: RelayAiVaultServiceCall[]
+): boolean {
+  if (call.sent || call.settled || call.startRetried) {
+    return false
+  }
+  call.startRetried = true
+  queue.unshift(call)
+  return true
 }
 
 export function settleRelayAiVaultServiceCall(
@@ -58,6 +99,7 @@ export function settleRelayAiVaultServiceCall(
 
 export type RelayAiVaultServiceCall = {
   request: RelayAiVaultServiceRequest
+  lane: RelayAiVaultServiceLane
   signal?: AbortSignal
   forceStart: boolean
   resolve: (value: AiVaultListResult | AiVaultSessionTitlesResult) => void
@@ -65,6 +107,9 @@ export type RelayAiVaultServiceCall = {
   timer: NodeJS.Timeout | null
   onAbort: (() => void) | null
   settled: boolean
+  /** Whether the sidecar received the request; an unsent call gets no reply. */
+  sent: boolean
+  startRetried: boolean
 }
 
 export type RelayAiVaultServiceApi = {
@@ -112,4 +157,20 @@ export function retireRelayAiVaultServiceChild(child: ChildProcess): void {
   timer.unref?.()
   child.once('exit', () => clearTimeout(timer))
   child.send({ type: 'shutdown' }, () => undefined)
+}
+
+/** Orderly shutdown that never holds relay teardown past the kill deadline. */
+export function shutdownRelayAiVaultServiceChild(child: ChildProcess): Promise<void> {
+  child.send({ type: 'shutdown' }, () => undefined)
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      child.kill()
+      resolve()
+    }, 2_000)
+    timer.unref?.()
+    child.once('exit', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
 }

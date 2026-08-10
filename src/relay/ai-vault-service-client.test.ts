@@ -5,6 +5,7 @@ import {
   readyAiVaultServiceChild
 } from '../main/ai-vault/session-scanner-service-test-child'
 import { RelayAiVaultServiceClient } from './ai-vault-service-client'
+import { RELAY_AI_VAULT_READY_TIMEOUT_MS } from './ai-vault-service-client-state'
 import { relayAiVaultServiceEntryPath } from './ai-vault-service-spawn'
 
 function createClient(
@@ -25,10 +26,28 @@ function createClient(
   })
 }
 
+function relayRequests(child: AiVaultServiceTestChild, operation: string): { id: number }[] {
+  return child.sent.filter(
+    (message) => (message as { operation?: string }).operation === operation
+  ) as { id: number }[]
+}
+
+function relayRequestCount(child: AiVaultServiceTestChild, operation: string): number {
+  return relayRequests(child, operation).length
+}
+
+function relayRequestId(child: AiVaultServiceTestChild, operation: string): number {
+  const request = relayRequests(child, operation).at(-1)
+  if (!request) {
+    throw new Error(`No ${operation} request was sent.`)
+  }
+  return request.id
+}
+
 afterEach(() => vi.useRealTimers())
 
 describe('RelayAiVaultServiceClient', () => {
-  it('serializes list and title calls behind the ready handshake', async () => {
+  it('holds list and title calls behind the ready handshake', async () => {
     const children: AiVaultServiceTestChild[] = []
     const client = createClient(children)
     const list = client.listSessions({ limit: 20 })
@@ -63,35 +82,120 @@ describe('RelayAiVaultServiceClient', () => {
     await disposing
   })
 
+  it('resolves titles while a scan still occupies the cache lane', async () => {
+    const children: AiVaultServiceTestChild[] = []
+    const client = createClient(children)
+    const list = client.listSessions({})
+    const child = children[0]!
+    readyAiVaultServiceChild(child)
+    await Promise.resolve()
+
+    const titles = client.resolveSessionTitles([
+      { agent: 'claude', sessionId: 'session-1', transcriptPath: '/home/ada/session-1.jsonl' }
+    ])
+    await Promise.resolve()
+    child.emit('message', {
+      type: 'result',
+      id: relayRequestId(child, 'titles'),
+      operation: 'titles',
+      value: { titles: [] }
+    })
+
+    await expect(titles).resolves.toEqual({ titles: [] })
+    child.emit('message', {
+      type: 'result',
+      id: relayRequestId(child, 'list'),
+      operation: 'list',
+      value: { sessions: [], issues: [], scannedAt: '2026-08-09T00:00:00.000Z' }
+    })
+    await expect(list).resolves.toMatchObject({ sessions: [] })
+    const disposing = client.dispose()
+    child.emit('exit', 0)
+    await disposing
+  })
+
   it('does not start queued cache work until cancelled work acknowledges', async () => {
     vi.useFakeTimers()
     const children: AiVaultServiceTestChild[] = []
     const client = createClient(children)
     const controller = new AbortController()
     const first = client.listSessions({}, controller.signal)
-    const second = client.resolveSessionTitles([])
+    const second = client.listSessions({ limit: 5 })
     const child = children[0]!
     readyAiVaultServiceChild(child)
     await Promise.resolve()
-    const firstRequest = child.sent.find(
-      (message) => (message as { operation?: string }).operation === 'list'
-    ) as { id: number }
+    const firstRequest = relayRequestId(child, 'list')
 
     controller.abort()
     await expect(first).rejects.toMatchObject({ name: 'AbortError' })
-    expect(child.sent).not.toContainEqual(expect.objectContaining({ operation: 'titles' }))
+    expect(relayRequestCount(child, 'list')).toBe(1)
     child.emit('message', {
       type: 'error',
-      id: firstRequest.id,
+      id: firstRequest,
       message: 'aborted'
     })
     await Promise.resolve()
-    expect(
-      child.sent.some((message) => (message as { operation?: string }).operation === 'titles')
-    ).toBe(true)
+    expect(relayRequestCount(child, 'list')).toBe(2)
     void second.catch(() => undefined)
     const disposing = client.dispose()
     child.emit('exit', 0)
+    await disposing
+  })
+
+  it('drops a call cancelled before the sidecar received it', async () => {
+    vi.useFakeTimers()
+    const children: AiVaultServiceTestChild[] = []
+    const client = createClient(children)
+    const controller = new AbortController()
+    const cancelled = client.listSessions({}, controller.signal)
+    const child = children[0]!
+
+    controller.abort()
+    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
+    expect(child.sent).not.toContainEqual(expect.objectContaining({ type: 'cancel' }))
+
+    readyAiVaultServiceChild(child)
+    const next = client.listSessions({ limit: 5 })
+    await Promise.resolve()
+    child.emit('message', {
+      type: 'result',
+      id: relayRequestId(child, 'list'),
+      operation: 'list',
+      value: { sessions: [], issues: [], scannedAt: '2026-08-09T00:00:00.000Z' }
+    })
+    await expect(next).resolves.toMatchObject({ sessions: [] })
+    vi.advanceTimersByTime(2_000)
+
+    expect(child.killed).toBe(false)
+    const disposing = client.dispose()
+    child.emit('exit', 0)
+    await disposing
+  })
+
+  it('retries a cold-start crash once without faulting the replacement sidecar', async () => {
+    vi.useFakeTimers()
+    const children: AiVaultServiceTestChild[] = []
+    const client = createClient(children)
+    const list = client.listSessions({})
+
+    children[0]!.emit('exit', 1)
+    await Promise.resolve()
+    vi.advanceTimersByTime(250)
+    expect(children).toHaveLength(2)
+    readyAiVaultServiceChild(children[1]!)
+    await Promise.resolve()
+    vi.advanceTimersByTime(RELAY_AI_VAULT_READY_TIMEOUT_MS)
+
+    expect(children[1]!.killed).toBe(false)
+    children[1]!.emit('message', {
+      type: 'result',
+      id: relayRequestId(children[1]!, 'list'),
+      operation: 'list',
+      value: { sessions: [], issues: [], scannedAt: '2026-08-09T00:00:00.000Z' }
+    })
+    await expect(list).resolves.toMatchObject({ sessions: [] })
+    const disposing = client.dispose()
+    children[1]!.emit('exit', 0)
     await disposing
   })
 
@@ -136,7 +240,7 @@ describe('RelayAiVaultServiceClient', () => {
     const children: AiVaultServiceTestChild[] = []
     const client = createClient(children)
     const first = client.listSessions({})
-    const second = client.resolveSessionTitles([])
+    const second = client.listSessions({ limit: 5 })
     readyAiVaultServiceChild(children[0]!)
     await Promise.resolve()
 
@@ -147,16 +251,13 @@ describe('RelayAiVaultServiceClient', () => {
     expect(children).toHaveLength(2)
     readyAiVaultServiceChild(children[1]!)
     await Promise.resolve()
-    const request = children[1]!.sent.find(
-      (message) => (message as { operation?: string }).operation === 'titles'
-    ) as { id: number }
     children[1]!.emit('message', {
       type: 'result',
-      id: request.id,
-      operation: 'titles',
-      value: { titles: [] }
+      id: relayRequestId(children[1]!, 'list'),
+      operation: 'list',
+      value: { sessions: [], issues: [], scannedAt: '2026-08-09T00:00:00.000Z' }
     })
-    await expect(second).resolves.toEqual({ titles: [] })
+    await expect(second).resolves.toMatchObject({ sessions: [] })
     const disposing = client.dispose()
     children[1]!.emit('exit', 0)
     await disposing

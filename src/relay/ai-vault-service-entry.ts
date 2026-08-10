@@ -5,6 +5,7 @@ import { createRelayAiVaultFilesystemProvider } from './ai-vault-service-filesys
 import {
   RELAY_AI_VAULT_SERVICE_PROTOCOL,
   isRelayAiVaultServiceRequest,
+  relayAiVaultServiceLane,
   type RelayAiVaultServiceChildMessage,
   type RelayAiVaultServiceInit,
   type RelayAiVaultServiceParentMessage,
@@ -20,7 +21,8 @@ const cancelled = new Set<number>()
 const pending = new Set<number>()
 const provider = createRelayAiVaultFilesystemProvider()
 let init: RelayAiVaultServiceInit | null = null
-let lane = Promise.resolve()
+let cacheLane = Promise.resolve()
+let interactiveLane = Promise.resolve()
 let shuttingDown = false
 
 function send(message: RelayAiVaultServiceChildMessage): void {
@@ -76,7 +78,7 @@ async function shutdown(): Promise<void> {
   for (const controller of controllers.values()) {
     controller.abort()
   }
-  await lane.catch(() => undefined)
+  await Promise.allSettled([cacheLane, interactiveLane])
   process.disconnect?.()
 }
 
@@ -110,7 +112,11 @@ process.on('message', (raw: RelayAiVaultServiceParentMessage) => {
     return
   }
   pending.add(raw.id)
-  lane = lane.then(() => execute(raw))
+  if (relayAiVaultServiceLane(raw.operation) === 'interactive') {
+    interactiveLane = interactiveLane.then(() => execute(raw))
+    return
+  }
+  cacheLane = cacheLane.then(() => execute(raw))
 })
 
 process.on('disconnect', () => void shutdown())

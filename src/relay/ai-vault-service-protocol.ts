@@ -29,6 +29,16 @@ export type RelayAiVaultServiceRequest =
       requests: AiVaultSessionTitleRequest[]
     }
 
+export type RelayAiVaultServiceLane = 'cache' | 'interactive'
+export type RelayAiVaultServiceOperation = RelayAiVaultServiceRequest['operation']
+
+/** Title reads must not queue behind a full scan; they back interactive UI. */
+export function relayAiVaultServiceLane(
+  operation: RelayAiVaultServiceOperation
+): RelayAiVaultServiceLane {
+  return operation === 'titles' ? 'interactive' : 'cache'
+}
+
 export type RelayAiVaultServiceParentMessage =
   | RelayAiVaultServiceInit
   | RelayAiVaultServiceRequest
