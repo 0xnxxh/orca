@@ -68,14 +68,7 @@ function planAdditionalAgentArgs(
   return { ok: true, args: tokenized.tokens }
 }
 
-// Why: Codex and OpenCode treat --model/-m as a singleton string. When recipe
-// CLI args also pass a model, yargs (OpenCode) or the CLI (Codex) mishandle
-// the duplicate — OpenCode turns it into an array and then crashes on split.
 const SINGLETON_MODEL_OPTION_ALIASES = ['--model', '-m'] as const
-
-function agentUsesSingletonModelOption(agentId: TuiAgent | 'custom'): boolean {
-  return agentId === 'codex' || agentId === 'opencode'
-}
 
 function matchesOption(token: string, aliases: readonly string[]): boolean {
   return aliases.some(
@@ -135,6 +128,68 @@ function applyRecipeOptionOverride(args: {
       ...args.recipeArgs.slice(0, recipeOption.index),
       ...args.recipeArgs.slice(recipeOption.index + recipeOption.consumed)
     ]
+  }
+}
+
+function invalidOpenCodeModelOption(token: string): { ok: false; error: string } {
+  return {
+    ok: false,
+    error: `CLI arguments are invalid: OpenCode model option "${token}" must use -m <value>, -m=<value>, --model <value>, or --model=<value>.`
+  }
+}
+
+function normalizeOpenCodeModelOverride(args: {
+  generatedArgs: string[]
+  recipeArgs: string[]
+}): { ok: true; generatedArgs: string[]; recipeArgs: string[] } | { ok: false; error: string } {
+  const recipeArgs: string[] = []
+  let modelArgs: string[] | undefined
+  for (let index = 0; index < args.recipeArgs.length; index += 1) {
+    const token = args.recipeArgs[index]
+    if (token === '--') {
+      recipeArgs.push(...args.recipeArgs.slice(index))
+      break
+    }
+    if (token === '--model' || token === '-m') {
+      const value = args.recipeArgs[index + 1]
+      if (!value || value.startsWith('-')) {
+        return invalidOpenCodeModelOption(token)
+      }
+      modelArgs = [token, value]
+      index += 1
+      continue
+    }
+    if (token.startsWith('--model=') || token.startsWith('-m=')) {
+      if (!token.slice(token.indexOf('=') + 1)) {
+        return invalidOpenCodeModelOption(token)
+      }
+      modelArgs = [token]
+      continue
+    }
+    if (token.startsWith('-m') && !token.startsWith('--')) {
+      return invalidOpenCodeModelOption(token)
+    }
+    recipeArgs.push(token)
+  }
+  if (!modelArgs) {
+    return { ok: true, generatedArgs: args.generatedArgs, recipeArgs: args.recipeArgs }
+  }
+  const generatedOption = findOptionOccurrence(
+    args.generatedArgs,
+    SINGLETON_MODEL_OPTION_ALIASES,
+    false
+  )
+  if (!generatedOption) {
+    return { ok: true, generatedArgs: args.generatedArgs, recipeArgs: args.recipeArgs }
+  }
+  return {
+    ok: true,
+    generatedArgs: [
+      ...args.generatedArgs.slice(0, generatedOption.index),
+      ...modelArgs,
+      ...args.generatedArgs.slice(generatedOption.index + generatedOption.consumed)
+    ],
+    recipeArgs
   }
 }
 
@@ -234,15 +289,23 @@ export function planCommitMessageGeneration(
   if (!agentArgs.ok) {
     return agentArgs
   }
-  // Why: recipe CLI arguments are the more specific setting; when they include
-  // a model flag, replace Orca's generated --model so CLIs never see duplicates.
-  const overriddenArgs = agentUsesSingletonModelOption(input.agentId)
-    ? applyRecipeOptionOverride({
-        generatedArgs: baseArgs,
-        recipeArgs: agentArgs.args,
-        aliases: SINGLETON_MODEL_OPTION_ALIASES
-      })
-    : { generatedArgs: baseArgs, recipeArgs: agentArgs.args }
+  // Recipe args are more specific, but singleton model options must not be duplicated.
+  const overriddenArgs =
+    input.agentId === 'opencode'
+      ? normalizeOpenCodeModelOverride({ generatedArgs: baseArgs, recipeArgs: agentArgs.args })
+      : input.agentId === 'codex'
+        ? {
+            ok: true as const,
+            ...applyRecipeOptionOverride({
+              generatedArgs: baseArgs,
+              recipeArgs: agentArgs.args,
+              aliases: SINGLETON_MODEL_OPTION_ALIASES
+            })
+          }
+        : { ok: true as const, generatedArgs: baseArgs, recipeArgs: agentArgs.args }
+  if (!overriddenArgs.ok) {
+    return overriddenArgs
+  }
   const args = insertAdditionalAgentArgs({
     baseArgs: overriddenArgs.generatedArgs,
     agentArgs: overriddenArgs.recipeArgs,

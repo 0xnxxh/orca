@@ -315,7 +315,7 @@ describe('planCommitMessageGeneration', () => {
     ['long option', '--model opencode/gpt-5.5', ['--model', 'opencode/gpt-5.5'], []],
     ['short option', '-m opencode/gpt-5.5', ['-m', 'opencode/gpt-5.5'], []],
     ['equals form', '--model=opencode/gpt-5.5', ['--model=opencode/gpt-5.5'], []],
-    ['attached short form', '-mopencode/gpt-5.5', ['-mopencode/gpt-5.5'], []],
+    ['short equals form', '-m=opencode/gpt-5.5', ['-m=opencode/gpt-5.5'], []],
     [
       'sibling arguments',
       '--model opencode/gpt-5.5 --log-level warn',
@@ -358,18 +358,40 @@ describe('planCommitMessageGeneration', () => {
           stdinPayload: 'PROMPT'
         }
       })
-      // Why: OpenCode yargs collapses duplicate --model into an array and then
-      // crashes on split; the plan must never emit more than one model option.
-      const modelFlagCount = (result.ok ? result.plan.args : []).filter(
-        (token) =>
-          token === '--model' ||
-          token === '-m' ||
-          token.startsWith('--model=') ||
-          (token.startsWith('-m') && token.length > 2 && !token.startsWith('--'))
-      ).length
-      expect(modelFlagCount).toBe(1)
     }
   )
+
+  it('keeps only the last repeated OpenCode recipe model option', () => {
+    const result = planCommitMessageGeneration(
+      {
+        agentId: 'opencode',
+        model: 'opencode/gpt-5.4-mini',
+        thinkingLevel: 'high',
+        agentArgs:
+          '--log-level warn --model provider/first -m provider/second --model=provider/final --verbose'
+      },
+      'PROMPT'
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      plan: {
+        args: [
+          'run',
+          '--model=provider/final',
+          '--agent',
+          'build',
+          '--format',
+          'default',
+          '--variant',
+          'high',
+          '--log-level',
+          'warn',
+          '--verbose'
+        ]
+      }
+    })
+  })
 
   it('keeps OpenCode recipe arguments that do not override the model', () => {
     const result = planCommitMessageGeneration(
@@ -400,12 +422,12 @@ describe('planCommitMessageGeneration', () => {
     })
   })
 
-  it('keeps the generated OpenCode model when model-like text follows an option terminator', () => {
+  it('normalizes only OpenCode model options before an option terminator', () => {
     const result = planCommitMessageGeneration(
       {
         agentId: 'opencode',
         model: 'opencode/gpt-5.4-mini',
-        agentArgs: '-- --model literal'
+        agentArgs: '-m provider/before -- --model literal -mprovider/after "value with spaces"'
       },
       'PROMPT'
     )
@@ -415,17 +437,39 @@ describe('planCommitMessageGeneration', () => {
       plan: {
         args: [
           'run',
-          '--model',
-          'opencode/gpt-5.4-mini',
+          '-m',
+          'provider/before',
           '--agent',
           'build',
           '--format',
           'default',
           '--',
           '--model',
-          'literal'
+          'literal',
+          '-mprovider/after',
+          'value with spaces'
         ]
       }
+    })
+  })
+
+  it.each([
+    '--model',
+    '-m',
+    '--model=',
+    '-m=',
+    '--model ""',
+    '-mprovider/model',
+    '--model --verbose'
+  ])('rejects malformed OpenCode model recipe args: %s', (agentArgs) => {
+    const result = planCommitMessageGeneration(
+      { agentId: 'opencode', model: 'opencode/gpt-5.4-mini', agentArgs },
+      'PROMPT'
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('OpenCode model option')
     })
   })
 
