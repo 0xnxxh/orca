@@ -20,12 +20,20 @@ describe('Agent Map glow performance boundary', () => {
 
   it('keeps glow styling free of animated and filtered paint work', () => {
     const css = source('agent-map.css')
-    const glowRules = css.match(/\.agent-map-(?:worktree-status|agent-status)-glow\s*\{[^}]+\}/gs)
+    const baseGlowRules = css.match(
+      /\.agent-map-(?:worktree-status|agent-status)-glow\s*\{[^}]+\}/gs
+    )
+    const glowRules = css.match(
+      /\.agent-map-(?:worktree-status|agent-status)-glow[^{}]*\{[^}]+\}/gs
+    )
 
-    expect(glowRules).toHaveLength(2)
-    for (const rule of glowRules ?? []) {
+    expect(baseGlowRules).toHaveLength(2)
+    for (const rule of baseGlowRules ?? []) {
       expect(rule).toContain('pointer-events: none')
       expect(rule).toContain('vector-effect: non-scaling-stroke')
+    }
+    expect(glowRules).toHaveLength(8)
+    for (const rule of glowRules ?? []) {
       expect(rule).not.toMatch(/filter:|animation:|transition:/)
     }
   })
