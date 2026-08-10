@@ -420,7 +420,10 @@ describe('prepareWslLinkedWorktreeGitRouting', () => {
       releaseStat = resolve
     })
     const fileSystem: WslLinkedWorktreeRoutingFileSystem = {
-      stat: vi.fn().mockResolvedValueOnce(directoryMarker).mockReturnValueOnce(delayedStat),
+      stat: vi
+        .fn<WslLinkedWorktreeRoutingFileSystem['stat']>()
+        .mockResolvedValueOnce(directoryMarker)
+        .mockReturnValueOnce(delayedStat),
       readFile: vi.fn(async () => 'gitdir: C:/main/.git/worktrees/linked\n')
     }
 
