@@ -37,7 +37,7 @@ type PersistSelection = (args: {
 }) => Promise<void> | void
 
 export type NativeChatPtySessionOptionsSurface = SessionOptionsSurface & {
-  recordOutgoingCommand(command: string): void
+  recordOutgoingCommand(command: string, submitted?: Promise<boolean>): void
   reportSessionOptions(values: Record<string, SessionOptionValue>): void
   replaceModels(models: CatalogModel[]): void
 }
@@ -172,6 +172,22 @@ export function createNativeChatPtySessionOptions(
     setTrackedValue
   })
 
+  const recordOutgoingCommand = (command: string): void => {
+    const result = recordNativeChatSessionOptionCommand({
+      catalog,
+      models: activeModels(),
+      record,
+      command,
+      persist
+    })
+    if (result.changed) {
+      publish()
+    }
+    if (result.opensAgentPicker) {
+      args.onAgentPicker?.()
+    }
+  }
+
   return {
     getSnapshot: () => snapshot,
     setOption: appliers.setOption,
@@ -180,20 +196,18 @@ export function createNativeChatPtySessionOptions(
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    recordOutgoingCommand: (command) => {
-      const result = recordNativeChatSessionOptionCommand({
-        catalog,
-        models: activeModels(),
-        record,
-        command,
-        persist
-      })
-      if (result.changed) {
-        publish()
+    recordOutgoingCommand: (command, submitted) => {
+      if (submitted) {
+        void submitted
+          .then((accepted) => {
+            if (accepted) {
+              recordOutgoingCommand(command)
+            }
+          })
+          .catch(() => undefined)
+        return
       }
-      if (result.opensAgentPicker) {
-        args.onAgentPicker?.()
-      }
+      recordOutgoingCommand(command)
     },
     reportSessionOptions: (values) => {
       if (applyNativeChatReportedSessionOptions(record, values)) {

@@ -124,7 +124,7 @@ describe('useNativeChatSessionOptions model reporting', () => {
       })
     )
 
-    result.current.surface?.recordOutgoingCommand('/model')
+    result.current.surface?.recordOutgoingCommand('/model', Promise.resolve(true))
     await result.current.surface?.setOption('model', 'gpt-5.5')
     await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(2))
 
@@ -133,6 +133,74 @@ describe('useNativeChatSessionOptions model reporting', () => {
     expect(
       storeState.settings.nativeChatSessionOptions?.codex?.valuesByModel?.['gpt-5.5']?.effort
     ).toBe('high')
+  })
+
+  it('keeps the override when a typed picker command is canceled before submit', async () => {
+    discoverModels.mockResolvedValue(null)
+    storeState.settings = {
+      nativeChatSessionOptions: { codex: { model: 'gpt-5.2-codex' } }
+    }
+    const onAgentPicker = vi.fn()
+    seedNativeChatAppliedSessionOptions('tab-canceled', 'codex', {
+      model: 'gpt-5.2-codex',
+      effort: 'medium'
+    })
+    const { result } = renderHook(() =>
+      useNativeChatSessionOptions({
+        agent: 'codex',
+        terminalTabId: 'tab-canceled',
+        targetPtyId: 'pty-canceled',
+        dispatchCommand: vi.fn(),
+        onAgentPicker
+      })
+    )
+
+    result.current.surface?.recordOutgoingCommand('/model', Promise.resolve(false))
+    await Promise.resolve()
+
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(onAgentPicker).not.toHaveBeenCalled()
+    expect(storeState.settings.nativeChatSessionOptions?.codex?.model).toBe('gpt-5.2-codex')
+  })
+
+  it('applies rapidly typed picker commands in terminal submission order', async () => {
+    discoverModels.mockResolvedValue(null)
+    storeState.settings = {
+      nativeChatSessionOptions: { codex: { model: 'gpt-5.2-codex' } }
+    }
+    seedNativeChatAppliedSessionOptions('tab-typed-order', 'codex', {
+      model: 'gpt-5.2-codex',
+      effort: 'medium'
+    })
+    const { result } = renderHook(() =>
+      useNativeChatSessionOptions({
+        agent: 'codex',
+        terminalTabId: 'tab-typed-order',
+        targetPtyId: 'pty-typed-order',
+        dispatchCommand: vi.fn()
+      })
+    )
+    let submitPicker: ((submitted: boolean) => void) | undefined
+    let submitExplicit: ((submitted: boolean) => void) | undefined
+    result.current.surface?.recordOutgoingCommand(
+      '/model',
+      new Promise<boolean>((resolve) => {
+        submitPicker = resolve
+      })
+    )
+    result.current.surface?.recordOutgoingCommand(
+      '/model gpt-5.5',
+      new Promise<boolean>((resolve) => {
+        submitExplicit = resolve
+      })
+    )
+
+    submitPicker?.(true)
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledOnce())
+    submitExplicit?.(true)
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(2))
+
+    expect(storeState.settings.nativeChatSessionOptions?.codex?.model).toBe('gpt-5.5')
   })
 
   it('settles picker ownership before handing the pane to Codex', async () => {

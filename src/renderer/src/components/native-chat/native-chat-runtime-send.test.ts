@@ -85,6 +85,7 @@ describe('sendNativeChatMessage', () => {
       buildNativeChatPasteBytes('hi'),
       NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT
     ])
+    expect(handle.submitted?.()).toBe(false)
   })
 
   it('clears leftover unsubmitted body on cancel so the next send cannot glue', async () => {
@@ -108,6 +109,7 @@ describe('sendNativeChatMessage', () => {
   it('does not clear the TUI input when cancel runs after Enter already fired', () => {
     const handle = sendNativeChatMessage(SETTINGS, PTY, 'already submitted')
     vi.advanceTimersByTime(NATIVE_CHAT_SUBMIT_DELAY_MS)
+    expect(handle.submitted?.()).toBe(true)
     sendRuntimePtyInput.mockClear()
     handle.cancel()
 

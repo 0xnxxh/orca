@@ -285,7 +285,10 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
         // mutate session-option state; unknown slash-like text has no such proof.
         if (classification === 'command') {
           onSlashCommand?.(text.trim())
-          sessionOptionsSurface?.recordOutgoingCommand(text.trim())
+          sessionOptionsSurface?.recordOutgoingCommand(
+            text.trim(),
+            pendingHandle?.settled?.then(() => pendingHandle?.submitted?.() ?? true)
+          )
         }
       } else {
         const pendingId = onOptimisticSend?.(text, imagePaths)
