@@ -3,6 +3,7 @@ import { translate } from '@/i18n/i18n'
 import { translateSearchKeyword } from './settings-search-keywords'
 import {
   getBrowserLinkRoutingDescription,
+  getTerminalLinkActionsDescription,
   getLinkRoutingModifierDescription,
   getLinkRoutingModifierTitle
 } from './browser-link-routing-copy'
@@ -135,6 +136,24 @@ export function getBrowserPaneSearchEntries(
         // Why: the row renders live copy but this entry is built with openLinksInApp
         // false, so index the other title too or the row is unfindable by its own text.
         getLinkRoutingModifierTitle(true),
+        platform.isMac ? 'cmd' : 'ctrl'
+      ]
+    },
+    {
+      title: translate(
+        'auto.components.settings.BrowserTerminalLinkActionsSetting.title',
+        'Show terminal link actions'
+      ),
+      description: getTerminalLinkActionsDescription(platform),
+      keywords: [
+        ...translateSearchKeyword('auto.components.settings.browser.search.2d2d995c58', 'browser'),
+        ...translateSearchKeyword('auto.components.settings.browser.search.bea27bac4b', 'links'),
+        'terminal',
+        'click',
+        'actions',
+        'popover',
+        'menu',
+        'disable',
         platform.isMac ? 'cmd' : 'ctrl'
       ]
     },
