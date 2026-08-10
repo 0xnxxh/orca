@@ -10,6 +10,14 @@ function mean(values) {
   return values.reduce((sum, value) => sum + value, 0) / values.length
 }
 
+function linearDriftSamples(schedule, trueDuration, driftPerLaunch) {
+  const samples = { login: [], fast: [] }
+  schedule.flat().forEach((arm, launchIndex) => {
+    samples[arm].push(trueDuration[arm] + launchIndex * driftPerLaunch)
+  })
+  return samples
+}
+
 describe('counterbalanced benchmark schedule', () => {
   it('builds complete ABBA blocks', () => {
     expect(buildCounterbalancedSchedule(4, 'login', 'fast')).toEqual([
@@ -44,10 +52,7 @@ describe('counterbalanced benchmark schedule', () => {
     const schedule = buildCounterbalancedSchedule(20, 'login', 'fast')
     const trueDuration = { login: 100, fast: 80 }
     const driftPerLaunch = 7
-    const samples = { login: [], fast: [] }
-    schedule.flat().forEach((arm, launchIndex) => {
-      samples[arm].push(trueDuration[arm] + launchIndex * driftPerLaunch)
-    })
+    const samples = linearDriftSamples(schedule, trueDuration, driftPerLaunch)
 
     const login = summarizeBenchmarkSamples(samples.login)
     const fast = summarizeBenchmarkSamples(samples.fast)
@@ -57,10 +62,23 @@ describe('counterbalanced benchmark schedule', () => {
     expect(lowerMedian(samples.fast) - lowerMedian(samples.login)).toBe(
       trueDuration.fast - trueDuration.login - driftPerLaunch
     )
+  })
+
+  it('bounds the descriptive p95 bias to one linear-drift launch slot', () => {
+    const schedule = buildCounterbalancedSchedule(20, 'login', 'fast')
+    const trueDuration = { login: 100, fast: 80 }
+    const driftPerLaunch = 7
+    const samples = linearDriftSamples(schedule, trueDuration, driftPerLaunch)
+    const login = summarizeBenchmarkSamples(samples.login)
+    const fast = summarizeBenchmarkSamples(samples.fast)
+
+    expect(fast.p95Ms - login.p95Ms).toBe(trueDuration.fast - trueDuration.login + driftPerLaunch)
     expect(BENCHMARK_SAMPLE_AGGREGATION).toEqual({
       version: 2,
       median: 'average-middle',
-      p95: 'nearest-rank'
+      p95: 'nearest-rank',
+      p95Role: 'descriptive',
+      p95LinearDriftBoundLaunchSlots: 1
     })
   })
 })

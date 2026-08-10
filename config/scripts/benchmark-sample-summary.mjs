@@ -1,7 +1,9 @@
 export const BENCHMARK_SAMPLE_AGGREGATION = Object.freeze({
   version: 2,
   median: 'average-middle',
-  p95: 'nearest-rank'
+  p95: 'nearest-rank',
+  p95Role: 'descriptive',
+  p95LinearDriftBoundLaunchSlots: 1
 })
 
 export function summarizeBenchmarkSamples(samples) {
