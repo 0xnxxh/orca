@@ -72,6 +72,12 @@ export function patchDashboardSnapshotFromAgentStatus(
           ? event.interactivePrompt || undefined
           : card.askSummary
         : undefined,
+    interactiveToolName:
+      bucket === 'attention'
+        ? event.toolName !== undefined
+          ? event.toolName || undefined
+          : card.interactiveToolName
+        : undefined,
     subagents: patchedSubagents(card, event)
   }
   const cards = snapshot.cards.slice()

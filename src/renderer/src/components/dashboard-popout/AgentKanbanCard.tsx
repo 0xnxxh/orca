@@ -126,6 +126,7 @@ function sameCard(a: DashboardCard, b: DashboardCard): boolean {
     a.stateChangedAt === b.stateChangedAt &&
     a.unseen === b.unseen &&
     a.askSummary === b.askSummary &&
+    a.interactiveToolName === b.interactiveToolName &&
     a.conversationName === b.conversationName
   )
 }

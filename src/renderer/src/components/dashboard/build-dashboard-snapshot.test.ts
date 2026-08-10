@@ -555,7 +555,11 @@ describe('buildDashboardSnapshot', () => {
       const snapshot = buildDashboardSnapshot(
         baseState({
           agentStatusByPaneKey: {
-            [PANE_KEY]: entry({ state, interactivePrompt: 'Approve deploy?' })
+            [PANE_KEY]: entry({
+              state,
+              interactivePrompt: 'Approve deploy?',
+              toolName: 'AskUserQuestion'
+            })
           }
         }),
         NOW
@@ -563,6 +567,7 @@ describe('buildDashboardSnapshot', () => {
       expect(snapshot.cards[0].bucket).toBe('attention')
       expect(snapshot.cards[0].dotState).toBe(state)
       expect(snapshot.cards[0].askSummary).toBe('Approve deploy?')
+      expect(snapshot.cards[0].interactiveToolName).toBe('AskUserQuestion')
     }
   )
 

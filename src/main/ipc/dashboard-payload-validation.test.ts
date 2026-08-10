@@ -282,7 +282,8 @@ describe('dashboard payload validation', () => {
           hostKind: 'local',
           viewMode: 'chat',
           sessionId: 'b6e5f0aa-1f1e-4f6c-9f4d-2f3a5c7d9e11',
-          transcriptPath: '/Users/dev/.claude/projects/orca/session.jsonl'
+          transcriptPath: '/Users/dev/.claude/projects/orca/session.jsonl',
+          interactiveToolName: 'AskUserQuestion'
         }
       ]
     }
@@ -293,7 +294,8 @@ describe('dashboard payload validation', () => {
       { hostKind: 'satellite' },
       { viewMode: 'canvas' },
       { sessionId: 42 },
-      { transcriptPath: { path: '/tmp/x' } }
+      { transcriptPath: { path: '/tmp/x' } },
+      { interactiveToolName: 42 }
     ]) {
       expect(
         isDashboardSnapshot({

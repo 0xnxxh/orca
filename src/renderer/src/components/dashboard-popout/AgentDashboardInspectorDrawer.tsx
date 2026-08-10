@@ -19,6 +19,7 @@ import {
   AGENT_DASHBOARD_INSPECTOR_RESIZE_STEP,
   AGENT_DASHBOARD_INSPECTOR_VIEWPORT_GAP
 } from './agent-dashboard-inspector-width'
+import type { NativeChatPtyWriter } from '@/components/native-chat/native-chat-pty-writer'
 
 /** Routing payload for focusing an agent's pane in the main window. */
 export type AgentRevealArgs = DashboardRevealAgentArgs
@@ -29,6 +30,7 @@ type AgentDashboardInspectorDrawerProps = {
   onOpenChange: (open: boolean) => void
   onReveal: (args: AgentRevealArgs) => void
   onWidthChange: (width: number) => void
+  chatPtyWriter?: NativeChatPtyWriter
 }
 
 function viewportWidth(): number {
@@ -41,7 +43,8 @@ export function AgentDashboardInspectorDrawer({
   width,
   onOpenChange,
   onReveal,
-  onWidthChange
+  onWidthChange,
+  chatPtyWriter
 }: AgentDashboardInspectorDrawerProps): React.JSX.Element {
   const [showTerminal, setShowTerminal] = useState(card.viewMode !== 'chat')
   const [currentViewportWidth, setCurrentViewportWidth] = useState(viewportWidth)
@@ -175,6 +178,7 @@ export function AgentDashboardInspectorDrawer({
             card={card}
             onClose={() => onOpenChange(false)}
             onOpenTerminal={() => setShowTerminal(true)}
+            ptyWriter={chatPtyWriter}
             className="m-0 h-full flex-none rounded-none border-0 bg-transparent shadow-none"
           />
         )}

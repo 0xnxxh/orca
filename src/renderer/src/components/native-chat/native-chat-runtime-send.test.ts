@@ -74,6 +74,63 @@ describe('sendNativeChatMessage', () => {
     ])
   })
 
+  it('awaits secondary-renderer acceptance before starting the submit delay', async () => {
+    let acceptBody!: (accepted: boolean) => void
+    const writeAccepted = vi
+      .fn()
+      .mockResolvedValueOnce(true)
+      .mockReturnValueOnce(
+        new Promise<boolean>((resolve) => {
+          acceptBody = resolve
+        })
+      )
+      .mockResolvedValueOnce(true)
+    const writer = {
+      requiresWriteAcceptance: true,
+      write: vi.fn(() => true),
+      writeAccepted
+    }
+
+    const handle = sendNativeChatMessage(SETTINGS, PTY, 'hello', { writer })
+    await vi.advanceTimersByTimeAsync(NATIVE_CHAT_SUBMIT_DELAY_MS)
+    expect(writeAccepted).toHaveBeenCalledTimes(2)
+
+    acceptBody(true)
+    await vi.advanceTimersByTimeAsync(NATIVE_CHAT_SUBMIT_DELAY_MS - 1)
+    expect(writeAccepted).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(writeAccepted.mock.calls.map((call) => call[2])).toEqual([
+      NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT,
+      buildNativeChatPasteBytes('hello'),
+      NATIVE_CHAT_SUBMIT
+    ])
+    await expect(handle.delivered).resolves.toBe(true)
+  })
+
+  it.each([
+    { rejectedWrite: 1, expectedCalls: 1 },
+    { rejectedWrite: 2, expectedCalls: 2 },
+    { rejectedWrite: 3, expectedCalls: 3 }
+  ])(
+    'reports refusal at verified write $rejectedWrite',
+    async ({ rejectedWrite, expectedCalls }) => {
+      const writeAccepted = vi.fn(async () => writeAccepted.mock.calls.length !== rejectedWrite)
+      const handle = sendNativeChatMessage(SETTINGS, PTY, 'hello', {
+        writer: {
+          requiresWriteAcceptance: true,
+          write: vi.fn(() => true),
+          writeAccepted
+        }
+      })
+
+      await vi.runAllTimersAsync()
+
+      expect(writeAccepted).toHaveBeenCalledTimes(expectedCalls)
+      await expect(handle.delivered).resolves.toBe(false)
+    }
+  )
+
   it('cancels the delayed Enter and re-clears an unsubmitted body', () => {
     const handle = sendNativeChatMessage(SETTINGS, PTY, 'hi')
     handle.cancel()

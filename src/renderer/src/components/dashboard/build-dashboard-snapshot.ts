@@ -298,6 +298,7 @@ export function buildDashboardSnapshot(
         // board and the sidebar bold/mute the same agents at the same time.
         unseen,
         askSummary: bucket === 'attention' ? (row.entry.interactivePrompt ?? undefined) : undefined,
+        interactiveToolName: bucket === 'attention' ? (row.entry.toolName ?? undefined) : undefined,
         conversationName: boundedLabelOrUndefined(rowConversationName(row, generatedTitlesEnabled)),
         ...(terminalInput ? { terminalInput } : {})
       })

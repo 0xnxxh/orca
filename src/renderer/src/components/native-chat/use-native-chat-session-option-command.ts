@@ -75,7 +75,8 @@ export function useNativeChatSessionOptionCommand(args: {
           observer = createClaudeModelSwitchConfirmationObserver({
             ptyId: target.ptyId,
             settings: target.settings,
-            expectedModelLabel: options?.expectedChoiceLabel ?? null
+            expectedModelLabel: options?.expectedChoiceLabel ?? null,
+            submitConfirmation: () => target.writer.write(target.settings, target.ptyId, '\r')
           })
           activeObserversRef.current.add(observer)
           await observer.ready
@@ -90,7 +91,8 @@ export function useNativeChatSessionOptionCommand(args: {
           target.settings,
           target.ptyId,
           command,
-          sendController.signal
+          sendController.signal,
+          target.writer
         )
         if (!accepted) {
           throw new Error('The terminal did not accept the command.')

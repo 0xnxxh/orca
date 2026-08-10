@@ -1,21 +1,16 @@
-import { useId, useState } from 'react'
+import { useId } from 'react'
 import { SquareTerminal, XIcon } from 'lucide-react'
 import { AgentStateDot } from '@/components/AgentStateDot'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { NativeChatMessageList } from '@/components/native-chat/NativeChatMessageList'
-import { NativeChatEmptyState } from '@/components/native-chat/NativeChatEmptyState'
 import {
-  buildNativeChatPasteBytes,
-  NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT,
-  NATIVE_CHAT_SUBMIT
-} from '@/components/native-chat/native-chat-send'
-import { useNativeChatLiveSession } from '@/components/native-chat/use-native-chat-live-session'
-import { selectNativeChatViewState } from '@/components/native-chat/native-chat-view-state'
-import { NATIVE_CHAT_SUBMIT_DELAY_MS } from '../../../../shared/native-chat-answer-stepping'
+  NativeChatConversation,
+  type NativeChatConversationLiveState
+} from '@/components/native-chat/NativeChatView'
+import type { NativeChatPtyWriter } from '@/components/native-chat/native-chat-pty-writer'
+import type { NativeChatAttachmentOwner } from '@/components/native-chat/native-chat-attachment-upload'
+import { isAskUserQuestionTool } from '../../../../shared/agent-question-answered-intent'
 import { translate } from '@/i18n/i18n'
 import { formatAgentTypeLabel } from '@/lib/agent-status'
-import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { cn } from '@/lib/utils'
 import {
   dashboardCardDisplayState,
@@ -27,53 +22,38 @@ type AgentChatPanelProps = {
   card: DashboardCard
   onClose: () => void
   onOpenTerminal?: () => void
+  ptyWriter?: NativeChatPtyWriter
   className?: string
+}
+
+const LOCAL_ATTACHMENT_OWNER: NativeChatAttachmentOwner = { kind: 'local' }
+
+function conversationLiveState(card: DashboardCard): NativeChatConversationLiveState {
+  const questionInferenceRequest =
+    card.agentType === 'claude' &&
+    isAskUserQuestionTool(card.interactiveToolName) &&
+    card.statusUpdatedAt !== undefined &&
+    card.lastUserMessage !== undefined
+      ? {
+          paneKey: card.paneKey,
+          baselineUpdatedAt: card.statusUpdatedAt,
+          baselineStateStartedAt: card.stateChangedAt,
+          baselinePrompt: card.lastUserMessage,
+          baselineAgentType: card.agentType
+        }
+      : undefined
+  return {
+    working: card.bucket === 'working',
+    stateStartedAt: card.stateChangedAt || null,
+    lastAssistantMessage: card.lastAgentMessage ?? null,
+    interactivePrompt: card.askSummary ?? null,
+    interactiveToolName: card.interactiveToolName ?? null,
+    ...(questionInferenceRequest ? { questionInferenceRequest } : {})
+  }
 }
 
 function agentName(card: DashboardCard): string {
   return card.conversationName ?? (card.task.trim() || formatAgentTypeLabel(card.agentType))
-}
-
-function AgentChatTranscript({
-  card,
-  sessionId,
-  transcriptPath
-}: {
-  card: DashboardCard
-  sessionId: string
-  transcriptPath: string | null
-}): React.JSX.Element {
-  const session = useNativeChatLiveSession({
-    paneKey: card.paneKey,
-    agent: card.agentType,
-    sessionId,
-    transcriptPath,
-    runtimeEnvironmentId: null
-  })
-  const viewState = selectNativeChatViewState(session)
-  if (viewState.kind === 'loading') {
-    return <NativeChatEmptyState kind="loading" />
-  }
-  if (viewState.kind === 'error') {
-    return <NativeChatEmptyState kind="error" message={viewState.message} />
-  }
-  if (session.messages.length === 0) {
-    return (
-      <p className="grid flex-1 place-items-center px-4 text-center text-xs text-muted-foreground">
-        {translate('dashboardPopout.chat.empty', 'No messages in this transcript yet.')}
-      </p>
-    )
-  }
-  return (
-    <div className="flex min-h-0 flex-1 flex-col px-3">
-      <NativeChatMessageList
-        session={session}
-        isWorking={card.bucket === 'working'}
-        expandSignal={false}
-        fontScale={1}
-      />
-    </div>
-  )
 }
 
 function AgentChatFallback({
@@ -116,130 +96,37 @@ function AgentChatFallback({
   )
 }
 
-function AgentChatComposer({ card }: { card: DashboardCard }): React.JSX.Element {
-  const [draft, setDraft] = useState('')
-  const [sending, setSending] = useState(false)
-  const [failedSend, setFailedSend] = useState<{
-    kind: 'body' | 'submit'
-    ptyId: string
-  } | null>(null)
-  const ptyId = card.ptyId
-
-  if (ptyId === null) {
-    return (
-      <p className="shrink-0 border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
-        {translate(
-          'dashboardPopout.chat.noPane',
-          'No live pane, so a reply cannot reach this agent.'
-        )}
-      </p>
-    )
-  }
-  const failure = failedSend?.ptyId === ptyId ? failedSend.kind : null
-
-  const send = async (): Promise<void> => {
-    const message = draft.trim()
-    if (!message || sending) {
-      return
-    }
-    setSending(true)
-    setFailedSend(null)
-    let bodyAccepted = false
-    try {
-      const cleared = await window.api.terminalPreview.input(
-        ptyId,
-        NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT
-      )
-      if (!cleared) {
-        setFailedSend({ kind: 'body', ptyId })
-        return
-      }
-      const bodySent = await window.api.terminalPreview.input(
-        ptyId,
-        buildNativeChatPasteBytes(message)
-      )
-      if (!bodySent) {
-        setFailedSend({ kind: 'body', ptyId })
-        return
-      }
-      bodyAccepted = true
-      // The accepted body is now in the TUI. Keep it out of retries even if Enter fails.
-      setDraft('')
-      await new Promise((resolve) => setTimeout(resolve, NATIVE_CHAT_SUBMIT_DELAY_MS))
-      const submitted = await window.api.terminalPreview.input(ptyId, NATIVE_CHAT_SUBMIT)
-      if (!submitted) {
-        setFailedSend({ kind: 'submit', ptyId })
-      }
-    } catch {
-      setFailedSend({ kind: bodyAccepted ? 'submit' : 'body', ptyId })
-    } finally {
-      setSending(false)
-    }
-  }
-
-  return (
-    <div className="shrink-0 border-t border-border px-3 py-2.5">
-      <div className="flex items-center gap-2">
-        <Input
-          value={draft}
-          onChange={(event) => {
-            setDraft(event.target.value)
-            setFailedSend(null)
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey && !isImeCompositionKeyDown(event)) {
-              event.preventDefault()
-              void send()
-            }
-          }}
-          disabled={sending || failure === 'submit'}
-          aria-label={translate('dashboardPopout.chat.placeholder', 'Reply to this agent')}
-          placeholder={translate('dashboardPopout.chat.placeholder', 'Reply to this agent')}
-          className="h-8 text-xs"
-        />
-        <Button
-          type="button"
-          size="sm"
-          className="h-8"
-          disabled={sending || failure === 'submit' || draft.trim().length === 0}
-          onClick={() => void send()}
-        >
-          {translate('dashboardPopout.chat.send', 'Send')}
-        </Button>
-      </div>
-      {failure ? (
-        <p className="mt-1.5 text-[11px] text-destructive">
-          {failure === 'submit'
-            ? translate(
-                'dashboardPopout.chat.submitFailed',
-                'The reply is in the terminal but could not be submitted. Open the terminal to finish sending it.'
-              )
-            : translate(
-                'dashboardPopout.chat.sendFailed',
-                'The reply did not reach the agent. Open the terminal to check it.'
-              )}
-        </p>
-      ) : null}
-    </div>
-  )
-}
-
 function AgentChatBody({
   card,
-  mode
+  mode,
+  onSwitchToTerminal,
+  ptyWriter
 }: {
   card: DashboardCard
   mode: AgentChatPanelMode
+  onSwitchToTerminal?: () => void
+  ptyWriter?: NativeChatPtyWriter
 }): React.JSX.Element {
   if (mode.kind === 'degraded') {
     return <AgentChatFallback card={card} reason={mode.reason} />
   }
   return (
-    <AgentChatTranscript
+    <NativeChatConversation
       key={`${card.paneKey}:${mode.sessionId}`}
-      card={card}
+      paneKey={card.paneKey}
+      agent={card.agentType}
       sessionId={mode.sessionId}
       transcriptPath={mode.transcriptPath}
+      targetPtyId={card.ptyId}
+      terminalTabId={card.tabId}
+      onSwitchToTerminal={onSwitchToTerminal}
+      ptyWriter={ptyWriter}
+      attachmentOwner={LOCAL_ATTACHMENT_OWNER}
+      dictationEnabled={false}
+      sessionOptionsEnabled={false}
+      fileDropEnabled={false}
+      fileLinksEnabled={false}
+      liveState={conversationLiveState(card)}
     />
   )
 }
@@ -249,6 +136,7 @@ export function AgentChatPanel({
   card,
   onClose,
   onOpenTerminal,
+  ptyWriter,
   className
 }: AgentChatPanelProps): React.JSX.Element {
   const titleId = useId()
@@ -294,8 +182,12 @@ export function AgentChatPanel({
           <XIcon className="size-4" />
         </button>
       </header>
-      <AgentChatBody card={card} mode={mode} />
-      <AgentChatComposer card={card} />
+      <AgentChatBody
+        card={card}
+        mode={mode}
+        onSwitchToTerminal={onOpenTerminal}
+        ptyWriter={ptyWriter}
+      />
     </section>
   )
 }

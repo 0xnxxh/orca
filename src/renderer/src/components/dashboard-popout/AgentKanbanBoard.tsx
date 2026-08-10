@@ -28,6 +28,7 @@ import './agent-board-transitions.css'
 import { translate } from '@/i18n/i18n'
 import { Button } from '@/components/ui/button'
 import { lazyWithRetry } from '@/lib/lazy-with-retry'
+import type { NativeChatPtyWriter } from '@/components/native-chat/native-chat-pty-writer'
 
 export type AgentDashboardView = 'map' | 'board'
 
@@ -170,6 +171,8 @@ type AgentKanbanBoardProps = {
   /** The shared sidebar workspace menu is available only in the main renderer. */
   workspaceContextMenusEnabled?: boolean
   onWorkspaceContextMenuOpenChange?: (open: boolean) => void
+  /** Authorized native-chat writer for a secondary renderer. */
+  chatPtyWriter?: NativeChatPtyWriter
 }
 
 /** The agent board: status columns fed by a snapshot. Shared by the pop-out
@@ -187,7 +190,8 @@ export function AgentKanbanBoard({
   headerActions,
   onOpenMap,
   workspaceContextMenusEnabled = false,
-  onWorkspaceContextMenuOpenChange
+  onWorkspaceContextMenuOpenChange,
+  chatPtyWriter
 }: AgentKanbanBoardProps): React.JSX.Element {
   const [view, setView] = useState(initialView)
   const visibleBuckets = useMemo(
@@ -420,6 +424,7 @@ export function AgentKanbanBoard({
             onOpenChange={handleInspectorOpenChange}
             onReveal={onRevealAgent}
             onWidthChange={setInspectorWidth}
+            chatPtyWriter={chatPtyWriter}
           />
         ) : null}
       </div>

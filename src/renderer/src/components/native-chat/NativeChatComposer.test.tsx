@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
     onStop?: () => void
     onCompositionStart?: () => void
     onCompositionEnd?: (event: { currentTarget: HTMLTextAreaElement }) => void
+    notice?: string | null
+    disabled?: boolean
+    sendButtonDisabled?: boolean
     sessionOptionsSurface?: SessionOptionsSurface | null
     sessionOptionsSnapshot?: SessionOptionDescriptor[]
   } | null,
@@ -31,7 +34,11 @@ const mocks = vi.hoisted(() => ({
   createClaudeModelSwitchConfirmationObserver: vi.fn(),
   discoverCommitMessageModels: vi.fn(),
   getMainBufferSnapshot: vi.fn(),
-  sendHandle: { cancel: vi.fn(), settleAfterMs: 500 },
+  sendHandle: {
+    cancel: vi.fn(),
+    settleAfterMs: 500,
+    delivered: undefined as Promise<boolean> | undefined
+  },
   sendNativeChatMessage: vi.fn(),
   sendNativeChatMessageVerified: vi.fn(),
   trackPendingSend: vi.fn(),
@@ -92,7 +99,7 @@ vi.mock('./native-chat-draft-cache', () => ({
   readNativeChatDraftCache: () => ''
 }))
 vi.mock('./NativeChatComposerField', () => ({
-  NativeChatComposerField: (props: { onSend?: () => void; onStop?: () => void }) => {
+  NativeChatComposerField: (props: NonNullable<typeof mocks.fieldProps>) => {
     mocks.fieldProps = props
     return null
   }
@@ -182,6 +189,7 @@ describe('NativeChatComposer', () => {
     mocks.sendNativeChatMessage.mockReturnValue(mocks.sendHandle)
     mocks.sendNativeChatMessageVerified.mockResolvedValue(true)
     mocks.sendHandle.settleAfterMs = 500
+    mocks.sendHandle.delivered = undefined
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
@@ -216,6 +224,37 @@ describe('NativeChatComposer', () => {
     )
   })
 
+  it('blocks duplicate Stop writes while secondary acceptance is pending', async () => {
+    let settleStop!: (accepted: boolean) => void
+    const onStop = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          settleStop = resolve
+        })
+    )
+    render(
+      <NativeChatComposer
+        terminalTabId="tab-1"
+        paneKey="tab-1:leaf-1"
+        targetPtyId="pty-1"
+        agent="codex"
+        isWorking
+        onStop={onStop}
+      />
+    )
+
+    act(() => {
+      mocks.fieldProps?.onStop?.()
+      mocks.fieldProps?.onStop?.()
+    })
+
+    expect(onStop).toHaveBeenCalledOnce()
+    expect(mocks.fieldProps?.sendButtonDisabled).toBe(true)
+
+    await act(async () => settleStop(false))
+    expect(mocks.fieldProps?.sendButtonDisabled).toBe(false)
+  })
+
   it('associates a delayed submit with its optimistic cache entry', () => {
     const onOptimisticSend = vi.fn(() => 'pending-1')
     render(
@@ -232,6 +271,41 @@ describe('NativeChatComposer', () => {
 
     expect(onOptimisticSend).toHaveBeenCalledWith('hello', [])
     expect(mocks.trackPendingSend).toHaveBeenCalledWith(mocks.sendHandle, 'pending-1')
+  })
+
+  it('preserves the draft and optimistic state when a secondary writer rejects delivery', async () => {
+    let settleDelivery!: (delivered: boolean) => void
+    mocks.sendHandle.delivered = new Promise<boolean>((resolve) => {
+      settleDelivery = resolve
+    })
+    const onOptimisticSend = vi.fn()
+    render(
+      <NativeChatComposer
+        terminalTabId="tab-1"
+        paneKey="tab-1:leaf-1"
+        targetPtyId="pty-1"
+        agent="codex"
+        ptyWriter={{
+          requiresWriteAcceptance: true,
+          write: vi.fn(() => true),
+          writeAccepted: vi.fn(async () => false)
+        }}
+        onOptimisticSend={onOptimisticSend}
+      />
+    )
+
+    act(() => mocks.fieldProps?.onSend?.())
+    expect(mocks.trackPendingSend).toHaveBeenCalledWith(mocks.sendHandle)
+    expect(mocks.setDraft).not.toHaveBeenCalled()
+    expect(onOptimisticSend).not.toHaveBeenCalled()
+    expect(mocks.fieldProps?.disabled).toBe(true)
+
+    await act(async () => settleDelivery(false))
+
+    expect(mocks.setDraft).not.toHaveBeenCalled()
+    expect(onOptimisticSend).not.toHaveBeenCalled()
+    expect(mocks.fieldProps?.notice).toMatch(/did not accept/)
+    expect(mocks.fieldProps?.disabled).toBe(false)
   })
 
   it('retires the launch-draft seed once a send clears the TUI input line', () => {
@@ -471,15 +545,18 @@ describe('NativeChatComposer', () => {
       {},
       'pty-1',
       '/model opus',
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.any(Object)
     )
     expect(onSlashCommand).toHaveBeenCalledWith('/model opus')
     expect(onOptimisticSend).not.toHaveBeenCalled()
-    expect(mocks.createClaudeModelSwitchConfirmationObserver).toHaveBeenCalledWith({
-      ptyId: 'pty-1',
-      settings: {},
-      expectedModelLabel: 'Opus'
-    })
+    expect(mocks.createClaudeModelSwitchConfirmationObserver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ptyId: 'pty-1',
+        settings: {},
+        expectedModelLabel: 'Opus'
+      })
+    )
     expect(onSwitchToTerminal).not.toHaveBeenCalled()
   })
 
@@ -504,13 +581,16 @@ describe('NativeChatComposer', () => {
       {},
       'pty-1',
       '/model fable',
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.any(Object)
     )
-    expect(mocks.createClaudeModelSwitchConfirmationObserver).toHaveBeenCalledWith({
-      ptyId: 'pty-1',
-      settings: {},
-      expectedModelLabel: 'Fable'
-    })
+    expect(mocks.createClaudeModelSwitchConfirmationObserver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ptyId: 'pty-1',
+        settings: {},
+        expectedModelLabel: 'Fable'
+      })
+    )
     expect(mocks.confirmationObserver?.arm).toHaveBeenCalledOnce()
     expect(mocks.confirmationObserver?.arm.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.sendNativeChatMessageVerified.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
@@ -545,7 +625,8 @@ describe('NativeChatComposer', () => {
       {},
       'pty-1',
       '/model fable',
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.any(Object)
     )
     expect(onSwitchToTerminal).toHaveBeenCalledOnce()
   })
@@ -572,7 +653,8 @@ describe('NativeChatComposer', () => {
       {},
       'pty-1',
       '/model gpt-5.5',
-      expect.any(AbortSignal)
+      expect.any(AbortSignal),
+      expect.any(Object)
     )
     expect(onSwitchToTerminal).not.toHaveBeenCalled()
   })

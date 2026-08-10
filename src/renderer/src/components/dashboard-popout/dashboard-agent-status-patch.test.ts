@@ -35,6 +35,7 @@ function event(overrides: Partial<AgentStatusIpcPayload> = {}): AgentStatusIpcPa
     receivedAt: 300,
     stateStartedAt: 250,
     interactivePrompt: '{"question":"Continue?"}',
+    toolName: 'AskUserQuestion',
     ...overrides
   }
 }
@@ -55,6 +56,7 @@ describe('patchDashboardSnapshotFromAgentStatus', () => {
       task: 'Need a decision',
       lastUserMessage: 'Need a decision',
       askSummary: '{"question":"Continue?"}',
+      interactiveToolName: 'AskUserQuestion',
       stateChangedAt: 250,
       statusUpdatedAt: 300,
       unseen: true
@@ -68,6 +70,7 @@ describe('patchDashboardSnapshotFromAgentStatus', () => {
         bucket: 'attention',
         dotState: 'waiting',
         askSummary: 'Pick one',
+        interactiveToolName: 'AskUserQuestion',
         lastAgentMessage: 'Waiting',
         stateChangedAt: 250,
         unseen: true
@@ -75,15 +78,41 @@ describe('patchDashboardSnapshotFromAgentStatus', () => {
     ])
     const result = patchDashboardSnapshotFromAgentStatus(
       original,
-      event({ state: 'waiting', prompt: '', interactivePrompt: undefined, stateStartedAt: 250 })
+      event({
+        state: 'waiting',
+        prompt: '',
+        interactivePrompt: undefined,
+        toolName: undefined,
+        stateStartedAt: 250
+      })
     )
 
     expect(result.snapshot.cards[0]).toMatchObject({
       task: 'old task',
       askSummary: 'Pick one',
+      interactiveToolName: 'AskUserQuestion',
       lastAgentMessage: 'Waiting',
       unseen: true
     })
+  })
+
+  it('clears interactive question fields when the agent leaves attention', () => {
+    const original = snapshot([
+      card({
+        bucket: 'attention',
+        dotState: 'waiting',
+        askSummary: 'Pick one',
+        interactiveToolName: 'AskUserQuestion'
+      })
+    ])
+
+    const result = patchDashboardSnapshotFromAgentStatus(
+      original,
+      event({ state: 'working', interactivePrompt: '', toolName: '', stateStartedAt: 300 })
+    )
+
+    expect(result.snapshot.cards[0].askSummary).toBeUndefined()
+    expect(result.snapshot.cards[0].interactiveToolName).toBeUndefined()
   })
 
   it('ignores stale, wrong-workspace, and session-only events', () => {

@@ -15158,7 +15158,8 @@
           "max": "Max",
           "on": "On",
           "off": "Off"
-        }
+        },
+        "sendRejected": "The terminal did not accept the message. Try again."
       },
       "tool": {
         "running": "Running…",

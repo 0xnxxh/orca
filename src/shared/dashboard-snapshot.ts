@@ -135,6 +135,8 @@ export type DashboardCard = {
   unseen: boolean
   /** Short summary of the pending question when bucket === 'attention'. */
   askSummary?: string
+  /** Tool discriminator paired with askSummary for registered question parsers. */
+  interactiveToolName?: string
   /** The tab's conversation name, resolved exactly as the sidebar's agent rows
    *  resolve it. Undefined when no usable name exists (status-only titles). */
   conversationName?: string
