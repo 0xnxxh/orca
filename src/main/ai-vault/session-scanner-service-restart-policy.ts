@@ -28,6 +28,11 @@ export class AiVaultServiceRestartPolicy {
       this.circuitUntil = now + AI_VAULT_SERVICE_FAULT_WINDOW_MS
     }
     const delay = AI_VAULT_SERVICE_RESTART_DELAYS_MS[Math.min(this.faults.length - 1, 2)]
+    // Why: a second fault before the pending restart fires would otherwise strand
+    // the old timer, leaving a restart that dispose() can no longer cancel.
+    if (this.timer) {
+      clearTimeout(this.timer)
+    }
     this.timer = setTimeout(() => {
       this.timer = null
       restart()
