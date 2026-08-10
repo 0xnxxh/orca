@@ -276,6 +276,25 @@ describe('AiVaultHandler', () => {
     }
   })
 
+  it('soft-disables the method instead of aborting relay startup when the service is missing', () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      const dispatcher = createMockDispatcher()
+
+      expect(
+        () =>
+          new AiVaultHandler(dispatcher.value, {
+            remoteHome: '/home/ada',
+            hostPlatform: getRemoteHostPlatform('linux-x64')
+          })
+      ).not.toThrow()
+
+      expect(() => dispatcher.call(SSH_AI_VAULT_LIST_SESSIONS_METHOD, {})).toThrow(/No handler/)
+    } finally {
+      stderr.mockRestore()
+    }
+  })
+
   it('stops a relay-local scan when the owning request is cancelled', async () => {
     const dispatcher = createMockDispatcher()
     new AiVaultHandler(dispatcher.value, {

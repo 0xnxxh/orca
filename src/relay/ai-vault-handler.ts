@@ -28,7 +28,6 @@ type AiVaultHandlerOptions = {
 
 export class AiVaultHandler {
   private readonly remoteHome: string
-  private readonly service!: RelayAiVaultServiceApi
   private readonly scanCoordinator = new AiVaultScanCoordinator()
 
   constructor(dispatcher: RelayDispatcher, options: AiVaultHandlerOptions = {}) {
@@ -43,27 +42,28 @@ export class AiVaultHandler {
       )
       return
     }
-    if (!options.service) {
-      throw new Error('Relay AI Vault service is required on supported hosts.')
+    // Why: same reasoning as an unsupported platform. Throwing here would take
+    // relay startup — and every PTY on the host — down over a Vault wiring bug.
+    const service = options.service
+    if (!service) {
+      relayLogLine('[relay] Agent Session History disabled: service unavailable')
+      return
     }
-    this.service = options.service
     dispatcher.onRequest(SSH_AI_VAULT_LIST_SESSIONS_METHOD, (params, context) =>
-      this.listSessions(params, context.signal)
+      this.listSessions(service, params, context.signal)
     )
     dispatcher.onRequest(SSH_AI_VAULT_RESOLVE_SESSION_TITLES_METHOD, (params, context) =>
-      this.resolveSessionTitles(params, context.signal)
+      this.resolveSessionTitles(service, params, context.signal)
     )
   }
 
   private async resolveSessionTitles(
+    service: RelayAiVaultServiceApi,
     rawParams: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<AiVaultSessionTitlesResult> {
     try {
-      return await this.service.resolveSessionTitles(
-        normalizeTitleRequests(rawParams.requests),
-        signal
-      )
+      return await service.resolveSessionTitles(normalizeTitleRequests(rawParams.requests), signal)
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw error
@@ -78,6 +78,7 @@ export class AiVaultHandler {
   }
 
   private async listSessions(
+    service: RelayAiVaultServiceApi,
     rawParams: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<AiVaultListResult> {
@@ -93,7 +94,7 @@ export class AiVaultHandler {
         }),
         force: params.force,
         signal,
-        start: (scanSignal) => this.service.listSessions(params, scanSignal)
+        start: (scanSignal) => service.listSessions(params, scanSignal)
       })
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
