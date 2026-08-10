@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { act, useMemo } from 'react'
+import { act, useLayoutEffect, useMemo } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OpenFile } from '@/store/slices/editor'
@@ -124,6 +124,21 @@ function dispatchExternalChange(file: OpenFile): void {
   })
 }
 
+function ExternalChangeLayoutEmitter({ file }: { file: OpenFile }): null {
+  useLayoutEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent(ORCA_EDITOR_EXTERNAL_FILE_CHANGE_EVENT, {
+        detail: {
+          worktreeId: file.worktreeId,
+          worktreePath: '/repo',
+          relativePath: file.relativePath
+        }
+      })
+    )
+  }, [file])
+  return null
+}
+
 function textDiff(modifiedContent: string): DiffContent {
   return {
     kind: 'text',
@@ -200,6 +215,26 @@ describe('useEditorPanelContentState visibility', () => {
     await vi.waitFor(() =>
       expect(snapshots.get('main')?.fileContents[file.id]?.content).toBe('fresh')
     )
+  })
+
+  it('publishes hidden visibility before a watcher event in the same commit', async () => {
+    const file = makeFile('commit-visibility')
+    mocks.readRuntimeFileContent.mockResolvedValue({ content: 'old', isBinary: false })
+
+    await act(async () => root.render(<Probe activeFile={file} />))
+    await vi.waitFor(() => expect(mocks.readRuntimeFileContent).toHaveBeenCalledOnce())
+
+    await act(async () =>
+      root.render(
+        <>
+          <Probe activeFile={file} isVisible={false} />
+          <ExternalChangeLayoutEmitter file={file} />
+        </>
+      )
+    )
+
+    expect(mocks.readRuntimeFileContent).toHaveBeenCalledOnce()
+    expect(snapshots.get('main')?.fileContents[file.id]).toBeUndefined()
   })
 
   it('shares one post-change read between visible source and preview panels', async () => {
