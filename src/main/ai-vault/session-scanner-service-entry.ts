@@ -93,11 +93,17 @@ async function executeRequest(request: AiVaultServiceRequest): Promise<AiVaultSe
       value: { result, durationMs: performance.now() - startedAt }
     }
   } finally {
+    controllers.delete(request.id)
+    cancelled.delete(request.id)
     for (const path of invalidatedPaths) {
       invalidateSessionParseCacheEntry(path)
     }
-    controllers.delete(request.id)
-    cancelled.delete(request.id)
+    // Why: the re-apply only protects reads that overlapped the invalidation.
+    // Once nothing else is executing it has done its job, and holding the paths
+    // would re-evict them on every later request for the life of the process.
+    if (controllers.size === 0) {
+      invalidatedPaths.clear()
+    }
   }
 }
 
