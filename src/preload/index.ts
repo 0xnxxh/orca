@@ -3208,7 +3208,10 @@ const api = {
       excludePattern?: string
       maxResults?: number
       connectionId?: string
+      requestToken?: string
     }): Promise<SearchResult> => ipcRenderer.invoke('fs:search', args),
+    cancelSearch: (args: { requestToken: string }): Promise<void> =>
+      ipcRenderer.invoke('fs:cancelSearch', args),
     importExternalPaths: (
       args: {
         sourcePaths: string[]

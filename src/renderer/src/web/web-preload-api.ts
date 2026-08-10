@@ -1893,6 +1893,36 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
   }
 }
 
+const webFileSearchAbortControllers = new Map<string, AbortController>()
+
+function startWebFileSearch(requestToken: string): AbortController {
+  const previous = webFileSearchAbortControllers.get(requestToken)
+  const controller = new AbortController()
+  // Why: publish the successor first so predecessor cleanup cannot delete it.
+  webFileSearchAbortControllers.set(requestToken, controller)
+  previous?.abort()
+  return controller
+}
+
+async function callAbortableRuntimeFileSearch(
+  params: unknown,
+  signal: AbortSignal
+): Promise<SearchResult> {
+  const environment = requireActiveEnvironment()
+  const response = await callAbortableRuntimeEnvironment(
+    environment.id,
+    'files.search',
+    params,
+    15_000,
+    signal
+  )
+  updateEnvironmentFromResponse(environment, response)
+  if (!response.ok) {
+    throw new Error(response.error.message)
+  }
+  return response.result as SearchResult
+}
+
 function createFileApi(): NonNullable<Partial<PreloadApi>['fs']> {
   return {
     readDir: async ({ dirPath }) => {
@@ -1985,17 +2015,37 @@ function createFileApi(): NonNullable<Partial<PreloadApi>['fs']> {
       // Why: paired-web lists files over runtime RPC with its own timeout; there's no host-side scan to abort here.
     },
     search: async (args) => {
-      const file = await resolveRuntimeFilePath(args.rootPath)
-      return callRuntimeResult<SearchResult>('files.search', {
-        worktree: toRuntimeWorktreeSelector(file.worktree.id),
-        query: args.query,
-        caseSensitive: args.caseSensitive,
-        wholeWord: args.wholeWord,
-        useRegex: args.useRegex,
-        includePattern: args.includePattern,
-        excludePattern: args.excludePattern,
-        maxResults: args.maxResults
-      })
+      const requestToken = args.requestToken
+      const controller = requestToken ? startWebFileSearch(requestToken) : null
+      try {
+        const file = await resolveRuntimeFilePath(args.rootPath)
+        const params = {
+          worktree: toRuntimeWorktreeSelector(file.worktree.id),
+          query: args.query,
+          caseSensitive: args.caseSensitive,
+          wholeWord: args.wholeWord,
+          useRegex: args.useRegex,
+          includePattern: args.includePattern,
+          excludePattern: args.excludePattern,
+          maxResults: args.maxResults
+        }
+        if (!controller) {
+          return callRuntimeResult<SearchResult>('files.search', params)
+        }
+        const result = await callAbortableRuntimeFileSearch(params, controller.signal)
+        return result
+      } finally {
+        if (requestToken && webFileSearchAbortControllers.get(requestToken) === controller) {
+          webFileSearchAbortControllers.delete(requestToken)
+        }
+      }
+    },
+    cancelSearch: async ({ requestToken }) => {
+      const controller = webFileSearchAbortControllers.get(requestToken)
+      if (webFileSearchAbortControllers.get(requestToken) === controller) {
+        webFileSearchAbortControllers.delete(requestToken)
+      }
+      controller?.abort()
     },
     importExternalPaths: async () => ({ results: [] }),
     stageExternalPathsForRuntimeUpload: async () => ({ sources: [] }),
