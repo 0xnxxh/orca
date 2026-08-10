@@ -681,7 +681,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
           worktrees: batchDeleteWorktrees.map(({ id, instanceId }) => ({ id, instanceId }))
         }
       : folderWorkspaceId
-        ? { kind: 'folder', folderWorkspaceId }
+        ? { kind: 'folder', folderWorkspaceId, executionHostId: worktree.hostId }
         : {
             kind: 'worktree',
             worktree: { id: worktree.id, instanceId: worktree.instanceId }
@@ -693,6 +693,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
     folderWorkspaceId,
     isMultiContext,
     setMenuOpenState,
+    worktree.hostId,
     worktree.id,
     worktree.instanceId
   ])
