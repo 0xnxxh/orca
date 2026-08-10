@@ -9,10 +9,12 @@ function expectSpansCoverTokens(source: string, shell: 'powershell' | 'cmd'): st
   }
   expect(result.spans).toHaveLength(result.tokens.length)
   let previousEnd = 0
-  for (const { start, end } of result.spans) {
+  for (const [index, { start, end }] of result.spans.entries()) {
     expect(start).toBeGreaterThanOrEqual(previousEnd)
     expect(end).toBeGreaterThan(start)
     // Every raw span must re-tokenize to exactly its own token.
+    const slice = tokenizeStartupCommand(source.slice(start, end), shell)
+    expect(slice.ok && slice.tokens).toEqual([result.tokens[index]])
     previousEnd = end
   }
   return result.spans.map(({ start, end }) => source.slice(start, end))
@@ -26,9 +28,9 @@ describe('tokenizeStartupCommand spans (windows shells)', () => {
       ok: true,
       tokens: ['claude', '--msg', 'hello world'],
       spans: [
-        { start: 0, end: 6 },
-        { start: 7, end: 12 },
-        { start: 13, end: 26 }
+        { start: 0, end: 6, bareOperator: false },
+        { start: 7, end: 12, bareOperator: false },
+        { start: 13, end: 26, bareOperator: false }
       ]
     })
   })

@@ -131,8 +131,12 @@ export function truncateDiffForPrompt(
 
 export const CUSTOM_PROMPT_PLACEHOLDER = '{prompt}'
 
-/** Source range of a token: [start, end) offsets into the original string. */
-export type CommandTokenSpan = { start: number; end: number }
+/** Source range of a token: [start, end) offsets into the original string.
+ * `bareOperator` marks a token carrying an unquoted, unescaped shell-active
+ * byte (`;&|<>`, or a word-leading `#` where the shell treats it as a
+ * comment) — the only quote-state-aware signal consumers cannot recover from
+ * the token value alone. */
+export type CommandTokenSpan = { start: number; end: number; bareOperator: boolean }
 
 export type TokenizeCustomCommandResult =
   | { ok: true; tokens: string[]; spans: CommandTokenSpan[] }
@@ -150,6 +154,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
   let current = ''
   let inToken = false
   let tokenStart = 0
+  let bareOperator = false
   let quote: '"' | "'" | null = null
   let i = 0
 
@@ -197,9 +202,10 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
     if (/\s/.test(ch)) {
       if (inToken) {
         tokens.push(current)
-        spans.push({ start: tokenStart, end: i })
+        spans.push({ start: tokenStart, end: i, bareOperator })
         current = ''
         inToken = false
+        bareOperator = false
       }
       i++
       continue
@@ -208,6 +214,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
     if (!inToken) {
       tokenStart = i
     }
+    bareOperator ||= ';&|<>'.includes(ch) || (ch === '#' && !inToken)
     current += ch
     inToken = true
     i++
@@ -218,7 +225,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
   }
   if (inToken) {
     tokens.push(current)
-    spans.push({ start: tokenStart, end: template.length })
+    spans.push({ start: tokenStart, end: template.length, bareOperator })
   }
   return { ok: true, tokens, spans }
 }

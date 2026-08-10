@@ -179,11 +179,42 @@ describe('buildClaudeResumeLaunchCommand', () => {
     'claude --resume stale; echo hi',
     'claude --resume stale;echo hi',
     'claude -c | tee /tmp/log',
-    'claude 2>/tmp/x.log',
-    'claude --resume stale\n--verbose'
+    'claude --resume stale 2>/tmp/x.log',
+    'claude --resume stale\n--verbose',
+    'claude --resume stale # note'
   ])('fails open when the base chains shell syntax after claude: %s', (base) => {
     expect(buildClaudeResumeLaunchCommand(base, RESUME, 'posix')).toBe(
       `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it.each([
+    'claude --resume old "y"; echo hi',
+    "claude --resume old 'y'; echo hi",
+    'claude --resume old --model "sonnet"&&echo hi',
+    'claude --resume old "y"| tee /tmp/x',
+    'claude --resume old \\"; echo hi'
+  ])('fails open when shell syntax hides behind partial quoting: %s', (base) => {
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'posix')).toBe(
+      `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it('fails open on escape-adjacent operators in windows shells', () => {
+    const powershellBase = 'claude --resume old `x; echo hi'
+    expect(buildClaudeResumeLaunchCommand(powershellBase, RESUME, 'powershell')).toBe(
+      `${powershellBase} '--resume' '${SESSION_ID}'`
+    )
+    const cmdBase = 'claude --resume old ^x& echo hi'
+    expect(buildClaudeResumeLaunchCommand(cmdBase, RESUME, 'cmd')).toBe(
+      `${cmdBase} "--resume" "${SESSION_ID}"`
+    )
+  })
+
+  it('still strips next to a caret-escaped literal ampersand on cmd', () => {
+    // ^& is an inactive, literal & in cmd, so the guard may keep working.
+    expect(buildClaudeResumeLaunchCommand('claude --resume old ^&', RESUME, 'cmd')).toBe(
+      `claude ^& "--resume" "${SESSION_ID}"`
     )
   })
 

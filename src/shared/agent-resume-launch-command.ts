@@ -83,10 +83,10 @@ export function buildAgentResumeLaunchCommand(
  * spliced by source span, never re-quoted. */
 export function buildClaudeResumeLaunchCommand(
   baseCommand: string,
-  resumeArgv: readonly string[],
+  resumeArgs: readonly string[],
   shell: AgentStartupShell
 ): string {
-  const quotedResume = resumeArgv.map((arg) => quoteStartupArg(arg, shell)).join(' ')
+  const quotedResume = resumeArgs.map((arg) => quoteStartupArg(arg, shell)).join(' ')
   if (!quotedResume) {
     return baseCommand
   }
@@ -100,13 +100,13 @@ export function buildClaudeResumeLaunchCommand(
   if (claudeIndex === -1) {
     return appended
   }
-  // Why: the tokenizers are not shell-aware, so an unquoted operator or a
-  // newline after the claude token means the base chains further commands;
-  // splicing across that boundary would hand the selector to the wrong one.
+  // Why: the tokenizers are not shell-aware, so a bare operator or comment
+  // byte, or a newline, after the claude token means the base chains further
+  // shell syntax; splicing across that boundary would hand the selector to
+  // the wrong command.
   for (let i = claudeIndex + 1; i < tokens.length; i += 1) {
-    const raw = baseCommand.slice(spans[i].start, spans[i].end)
     const gap = baseCommand.slice(spans[i - 1].end, spans[i].start)
-    if (!/^[ \t]+$/.test(gap) || (raw === tokens[i] && /[;&|<>]/.test(raw))) {
+    if (!/^[ \t]+$/.test(gap) || spans[i].bareOperator) {
       return appended
     }
   }

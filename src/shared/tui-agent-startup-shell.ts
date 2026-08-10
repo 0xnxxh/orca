@@ -14,6 +14,7 @@ function tokenizeWindowsStartupCommand(
   const spans: CommandTokenSpan[] = []
   let token = ''
   let tokenStart = 0
+  let bareOperator = false
   let quote: "'" | '"' | null = null
   let tokenStarted = false
   for (let index = 0; index < value.length; index += 1) {
@@ -51,14 +52,17 @@ function tokenizeWindowsStartupCommand(
     } else if (/\s/.test(char)) {
       if (tokenStarted) {
         tokens.push(token)
-        spans.push({ start: tokenStart, end: index })
+        spans.push({ start: tokenStart, end: index, bareOperator })
         token = ''
         tokenStarted = false
+        bareOperator = false
       }
     } else {
       if (!tokenStarted) {
         tokenStart = index
       }
+      bareOperator ||=
+        ';&|<>'.includes(char) || (shell === 'powershell' && char === '#' && !tokenStarted)
       token += char
       tokenStarted = true
     }
@@ -68,7 +72,7 @@ function tokenizeWindowsStartupCommand(
   }
   if (tokenStarted) {
     tokens.push(token)
-    spans.push({ start: tokenStart, end: value.length })
+    spans.push({ start: tokenStart, end: value.length, bareOperator })
   }
   return { ok: true, tokens, spans }
 }
