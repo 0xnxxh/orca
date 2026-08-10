@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, render } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { Profiler } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import { AgentMap } from './AgentMap'
-import { AGENT_MAP_EXIT_DURATION_MS } from './useAgentMapMotionLayout'
+import { AGENT_MAP_ENTER_DURATION_MS, AGENT_MAP_EXIT_DURATION_MS } from './useAgentMapMotionLayout'
 
 const NOW = 2_000_000_000
 
@@ -59,6 +59,81 @@ describe('Agent Map motion lifecycle', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('keeps agent positioning separate from the animated hover visual', () => {
+    render(<AgentMap cards={[card()]} now={NOW} onOpenTerminal={vi.fn()} />)
+
+    const agent = screen.getByRole('button', { name: /Agent alpha/ })
+    expect(agent).toHaveAttribute('transform', expect.stringMatching(/^translate\(/))
+    expect(agent.querySelector(':scope > .agent-map-agent-visual')).toBeInTheDocument()
+  })
+
+  it('retains created and removed agents for anchored enter and exit motion', () => {
+    const first = card()
+    const added = card({
+      paneKey: 'pane-2',
+      ptyId: 'pty-2',
+      tabId: 'tab-2',
+      leafId: 'leaf-2',
+      conversationName: 'Agent beta'
+    })
+    const view = render(<AgentMap cards={[first]} now={NOW} onOpenTerminal={vi.fn()} />)
+
+    vi.useFakeTimers()
+    view.rerender(<AgentMap cards={[first, added]} now={NOW} onOpenTerminal={vi.fn()} />)
+    const entering = screen.getByRole('button', { name: /Agent beta/ })
+    const position = entering.getAttribute('transform')
+    expect(entering).toHaveClass('is-entering')
+    act(() => vi.advanceTimersByTime(AGENT_MAP_ENTER_DURATION_MS))
+    expect(entering).not.toHaveClass('is-entering')
+
+    view.rerender(<AgentMap cards={[first]} now={NOW} onOpenTerminal={vi.fn()} />)
+    const exiting = view.container.querySelector<SVGGElement>('[aria-label^="Agent beta,"]')
+    expect(exiting).toHaveClass('is-exiting')
+    expect(exiting).toHaveAttribute('transform', position)
+
+    act(() => vi.advanceTimersByTime(AGENT_MAP_EXIT_DURATION_MS))
+    expect(view.container.querySelector('[aria-label^="Agent beta,"]')).not.toBeInTheDocument()
+  })
+
+  it('retains removed worktrees until their exit transition completes', () => {
+    const first = card()
+    const second = card({
+      paneKey: 'pane-2',
+      ptyId: 'pty-2',
+      tabId: 'tab-2',
+      leafId: 'leaf-2',
+      worktreeId: 'worktree-2',
+      worktreeName: 'Motion branch',
+      conversationName: 'Agent beta'
+    })
+    const view = render(<AgentMap cards={[first]} now={NOW} onOpenTerminal={vi.fn()} />)
+
+    vi.useFakeTimers()
+    view.rerender(<AgentMap cards={[first, second]} now={NOW} onOpenTerminal={vi.fn()} />)
+    const enteringGroup = view.container
+      .querySelector('[aria-label="Open Motion branch worktree details"]')
+      ?.closest('.agent-map-worktree-group')
+    expect(enteringGroup).toHaveClass('is-entering')
+    act(() => vi.advanceTimersByTime(AGENT_MAP_ENTER_DURATION_MS))
+    expect(enteringGroup).not.toHaveClass('is-entering')
+
+    view.rerender(<AgentMap cards={[first]} now={NOW} onOpenTerminal={vi.fn()} />)
+    const ring = view.container.querySelector<SVGCircleElement>(
+      '[aria-label="Open Motion branch worktree details"]'
+    )
+    const exitingGroup = ring?.closest('.agent-map-worktree-group')
+    const exitingAgent = exitingGroup?.querySelector('[data-agent-map-agent]')
+    expect(exitingGroup).toHaveClass('is-exiting')
+    expect(exitingGroup).toHaveAttribute('aria-hidden', 'true')
+    expect(exitingAgent).toHaveAttribute('tabindex', '-1')
+    expect(exitingAgent).toHaveAttribute('aria-hidden', 'true')
+
+    act(() => vi.advanceTimersByTime(AGENT_MAP_EXIT_DURATION_MS))
+    expect(
+      view.container.querySelector('[aria-label="Open Motion branch worktree details"]')
+    ).not.toBeInTheDocument()
   })
 
   it('does not restart an exit deadline for metadata-only layout updates', async () => {

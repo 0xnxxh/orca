@@ -13,7 +13,6 @@ import { AgentMap } from './AgentMap'
 import { agentMapAttentionMarkerScale } from './AgentMapWorktreeRingNode'
 import type { AgentMapState } from './agent-map-filter'
 import { AGENT_MAP_AGENT_RADIUS } from './agent-map-layout'
-import { AGENT_MAP_ENTER_DURATION_MS, AGENT_MAP_EXIT_DURATION_MS } from './useAgentMapMotionLayout'
 
 const NOW = 2_000_000_000
 
@@ -125,7 +124,6 @@ describe('AgentMap', () => {
 
   afterEach(() => {
     cleanup()
-    vi.useRealTimers()
     vi.clearAllMocks()
     vi.unstubAllGlobals()
     boundsSpy.mockRestore()
@@ -166,6 +164,23 @@ describe('AgentMap', () => {
     expect(doneNode).toHaveAccessibleName(/unread/)
   })
 
+  it.each([
+    { bucket: 'working', dotState: 'working', unseen: false, glows: true },
+    { bucket: 'attention', dotState: 'waiting', unseen: false, glows: true },
+    { bucket: 'attention', dotState: 'blocked', unseen: false, glows: true },
+    { bucket: 'done', dotState: 'done', unseen: true, glows: false },
+    { bucket: 'idle', dotState: 'idle', unseen: false, glows: false }
+  ] as const)('applies the expected halo for $dotState agents', (state) => {
+    const { container } = renderMap([card(state)])
+    const glow = container.querySelector('[data-agent-map-agent-status-glow]')
+
+    if (state.glows) {
+      expect(glow).toHaveAttribute('data-agent-active-status', state.dotState)
+      return
+    }
+    expect(glow).not.toBeInTheDocument()
+  })
+
   it('lets attention override working on the worktree glow', () => {
     const done = card({
       paneKey: 'done',
@@ -194,9 +209,15 @@ describe('AgentMap', () => {
       name: /Open Finished worktree worktree details/
     })
 
-    expect(workingNode.querySelector('[data-agent-map-agent-working-glow]')).toBeInTheDocument()
-    expect(waitingNode.querySelector('[data-agent-map-agent-working-glow]')).not.toBeInTheDocument()
-    expect(doneNode.querySelector('[data-agent-map-agent-working-glow]')).not.toBeInTheDocument()
+    expect(workingNode.querySelector('[data-agent-map-agent-status-glow]')).toHaveAttribute(
+      'data-agent-active-status',
+      'working'
+    )
+    expect(waitingNode.querySelector('[data-agent-map-agent-status-glow]')).toHaveAttribute(
+      'data-agent-active-status',
+      'waiting'
+    )
+    expect(doneNode.querySelector('[data-agent-map-agent-status-glow]')).not.toBeInTheDocument()
     expect(workingRing).toHaveClass('is-waiting')
     expect(workingRing).not.toHaveClass('is-working')
     expect(doneRing).not.toHaveClass('is-working')
@@ -223,7 +244,7 @@ describe('AgentMap', () => {
     })
     const { container } = renderMap(cards, { selectedPaneKey: 'pane-0' })
 
-    expect(container.querySelectorAll('[data-agent-map-agent-working-glow]')).toHaveLength(60)
+    expect(container.querySelectorAll('[data-agent-map-agent-status-glow]')).toHaveLength(60)
     expect(container.querySelectorAll('[data-agent-map-worktree-status-glow]')).toHaveLength(1)
     expect(container.querySelectorAll('filter')).toHaveLength(0)
   })
@@ -363,11 +384,13 @@ describe('AgentMap', () => {
     expect(workerLink).toHaveClass('agent-map-lineage-link')
     expect(workerLink).toHaveAttribute('data-agent-map-lineage-relation', 'orchestration')
     expect(workerLink).toHaveAttribute('data-parent-pane-key', 'parent')
+    expect(workerLink?.getAttribute('d')?.match(/\bM\b/g)?.length).toBeGreaterThan(1)
     // Why orchestration, not subagent: `nested` is a card, and in-process subagents
     // never become cards — so a grandchild dispatch is still an orchestration edge.
     expect(nestedLink).toHaveClass('agent-map-lineage-link')
     expect(nestedLink).toHaveAttribute('data-agent-map-lineage-relation', 'orchestration')
     expect(nestedLink).toHaveAttribute('data-parent-pane-key', 'child')
+    expect(nestedLink?.getAttribute('d')?.match(/\bM\b/g)?.length).toBeGreaterThan(1)
   })
 
   it('connects spawned workers across worktree rings', () => {
@@ -509,89 +532,6 @@ describe('AgentMap', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Agent alpha/ }))
     expect(onOpenTerminal).toHaveBeenCalledWith(agent)
-  })
-
-  it('keeps agent positioning separate from the animated hover visual', () => {
-    renderMap([card()])
-
-    const agent = screen.getByRole('button', { name: /Agent alpha/ })
-    expect(agent).toHaveAttribute('transform', expect.stringMatching(/^translate\(/))
-    expect(agent.querySelector(':scope > .agent-map-agent-visual')).toBeInTheDocument()
-  })
-
-  it('retains created and removed agents for anchored enter and exit motion', () => {
-    vi.stubGlobal(
-      'matchMedia',
-      vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
-    )
-    const first = card()
-    const added = card({
-      paneKey: 'pane-2',
-      ptyId: 'pty-2',
-      tabId: 'tab-2',
-      leafId: 'leaf-2',
-      conversationName: 'Agent beta'
-    })
-    const view = renderMap([first])
-
-    vi.useFakeTimers()
-    view.rerender(<AgentMap cards={[first, added]} now={NOW} onOpenTerminal={vi.fn()} />)
-    const entering = screen.getByRole('button', { name: /Agent beta/ })
-    const position = entering.getAttribute('transform')
-    expect(entering).toHaveClass('is-entering')
-    act(() => vi.advanceTimersByTime(AGENT_MAP_ENTER_DURATION_MS))
-    expect(entering).not.toHaveClass('is-entering')
-
-    view.rerender(<AgentMap cards={[first]} now={NOW} onOpenTerminal={vi.fn()} />)
-    const exiting = view.container.querySelector<SVGGElement>('[aria-label^="Agent beta,"]')
-    expect(exiting).toHaveClass('is-exiting')
-    expect(exiting).toHaveAttribute('transform', position)
-
-    act(() => vi.advanceTimersByTime(AGENT_MAP_EXIT_DURATION_MS))
-    expect(view.container.querySelector('[aria-label^="Agent beta,"]')).not.toBeInTheDocument()
-  })
-
-  it('retains removed worktrees until their exit transition completes', () => {
-    vi.stubGlobal(
-      'matchMedia',
-      vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
-    )
-    const first = card()
-    const second = card({
-      paneKey: 'pane-2',
-      ptyId: 'pty-2',
-      tabId: 'tab-2',
-      leafId: 'leaf-2',
-      worktreeId: 'worktree-2',
-      worktreeName: 'Motion branch',
-      conversationName: 'Agent beta'
-    })
-    const view = renderMap([first])
-
-    vi.useFakeTimers()
-    view.rerender(<AgentMap cards={[first, second]} now={NOW} onOpenTerminal={vi.fn()} />)
-    const enteringGroup = view.container
-      .querySelector('[aria-label="Open Motion branch worktree details"]')
-      ?.closest('.agent-map-worktree-group')
-    expect(enteringGroup).toHaveClass('is-entering')
-    act(() => vi.advanceTimersByTime(AGENT_MAP_ENTER_DURATION_MS))
-    expect(enteringGroup).not.toHaveClass('is-entering')
-
-    view.rerender(<AgentMap cards={[first]} now={NOW} onOpenTerminal={vi.fn()} />)
-    const ring = view.container.querySelector<SVGCircleElement>(
-      '[aria-label="Open Motion branch worktree details"]'
-    )
-    const exitingGroup = ring?.closest('.agent-map-worktree-group')
-    const exitingAgent = exitingGroup?.querySelector('[data-agent-map-agent]')
-    expect(exitingGroup).toHaveClass('is-exiting')
-    expect(exitingGroup).toHaveAttribute('aria-hidden', 'true')
-    expect(exitingAgent).toHaveAttribute('tabindex', '-1')
-    expect(exitingAgent).toHaveAttribute('aria-hidden', 'true')
-
-    act(() => vi.advanceTimersByTime(AGENT_MAP_EXIT_DURATION_MS))
-    expect(
-      view.container.querySelector('[aria-label="Open Motion branch worktree details"]')
-    ).not.toBeInTheDocument()
   })
 
   it('keeps a selected node visible while compacting around an adjacent terminal', () => {
