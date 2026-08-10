@@ -116,6 +116,7 @@
     "bench:worktree-deletion": "node tests/tools/benchmarks/worktree-deletion-dev-bench.mjs",
     "bench:zustand-selector-fanout": "node config/scripts/zustand-selector-fanout-benchmark.mjs",
     "bench:multi-workspace-typing": "pnpm run ensure:electron-runtime && node config/scripts/run-multi-workspace-typing-bench.mjs",
+    "bench:ai-vault-typing": "pnpm run ensure:electron-runtime && node config/scripts/run-ai-vault-typing-bench.mjs",
     "bench:cold-park-reveal": "pnpm run ensure:electron-runtime && node tests/tools/benchmarks/terminal-cold-park-reveal-bench.mjs",
     "bench:cold-park-resource": "pnpm run ensure:electron-runtime && node tests/tools/benchmarks/terminal-cold-park-resource-bench.mjs",
     "bench:compare": "node config/scripts/compare-benchmark-artifacts.mjs",
