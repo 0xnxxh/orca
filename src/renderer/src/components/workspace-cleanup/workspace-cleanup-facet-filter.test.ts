@@ -50,6 +50,15 @@ describe('facet building', () => {
     expect(makeFacets({ lastVisitedAt: FACET_NOW }).lastVisitedAt).toBe(FACET_NOW)
   })
 
+  it('resolves the visible workspace status without changing statusless filter semantics', () => {
+    expect(makeFacets().workspaceStatus).toBeNull()
+    expect(makeFacets().workspaceStatusLabel).toBe('In progress')
+    expect(makeFacets({ worktree: { workspaceStatus: 'in-review' } }).workspaceStatusLabel).toBe(
+      'In review'
+    )
+    expect(makeFacets({ worktree: null }).workspaceStatusLabel).toBeNull()
+  })
+
   it('only trusts sizes from an ok space scan', () => {
     const scanned = [
       { worktreeId: 'a', status: 'ok', sizeBytes: 10 },

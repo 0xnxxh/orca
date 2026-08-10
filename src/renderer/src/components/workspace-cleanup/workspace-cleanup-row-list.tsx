@@ -72,6 +72,7 @@ export function WorkspaceCleanupRowList(props: WorkspaceCleanupRowListState): Re
             expanded={props.expandedRowIds.has(row.worktreeId)}
             lastActivityLabel={formatWorkspaceCleanupRelativeTime(row.lastActivityAt)}
             sizeLabel={row.sizeBytes === null ? null : formatBytes(row.sizeBytes)}
+            workspaceStatusLabel={row.workspaceStatusLabel}
             gitEvidencePending={props.gitPendingWorktreeIds.has(row.worktreeId)}
             deletionPhase={props.deletionPhaseByWorktreeId[row.worktreeId]}
             // Why: a background rescan must not lock rows; only an actual

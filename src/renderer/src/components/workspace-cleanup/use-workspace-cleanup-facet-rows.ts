@@ -90,6 +90,7 @@ export function useWorkspaceCleanupFacetRows({
     () =>
       buildWorkspaceCleanupFacetList(candidates, {
         worktreeById: buildWorkspaceCleanupWorktreeIndex(sources.worktreesByRepo),
+        workspaceStatuses: sources.workspaceStatuses,
         sizeBytesByWorktreeId: sizeByWorktreeId,
         lastVisitedAtByWorktreeId: sources.lastVisitedAtByWorktreeId,
         liveAgentStatusByWorktreeId: getLiveAgentStatusByWorktreeId(

@@ -48,6 +48,7 @@ function renderRows(rows: readonly WorkspaceCleanupFacets[]): void {
             last={index === rows.length - 1}
             lastActivityLabel="40d ago"
             sizeLabel={row.sizeBytes === null ? null : '4.00 MB'}
+            workspaceStatusLabel={row.workspaceStatusLabel}
             selected={false}
             onIgnore={vi.fn()}
             onRemove={vi.fn()}
@@ -126,11 +127,13 @@ describe('workspace cleanup flat list', () => {
     expect(query().selectableWorktreeIds).not.toContain('repo-1::/repo/protected-one')
   })
 
-  it('shows a measured size on the row and nothing when the space scan never ran', () => {
+  it('shows status and disk-size facts without expanding a row', () => {
     renderRows(query().rows)
 
+    expect(container?.textContent).toContain('In progress')
     expect(container?.textContent).toContain('4.00 MB')
+    expect(container?.textContent).toContain('Not measured')
     const sizedRows = [...(container?.querySelectorAll('[aria-label^="Size on disk"]') ?? [])]
-    expect(sizedRows).toHaveLength(1)
+    expect(sizedRows).toHaveLength(FLEET.length)
   })
 })

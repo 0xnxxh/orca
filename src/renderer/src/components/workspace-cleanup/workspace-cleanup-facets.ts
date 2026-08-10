@@ -1,6 +1,7 @@
 import type { LiveAgentWorktreeStatus } from '@/lib/worktree-activity-state'
 import { LOCAL_EXECUTION_HOST_ID, type ExecutionHostId } from '../../../../shared/execution-host'
-import type { Worktree } from '../../../../shared/types'
+import type { Worktree, WorkspaceStatusDefinition } from '../../../../shared/types'
+import { getWorkspaceStatus } from '../../../../shared/workspace-statuses'
 import type { WorkspaceSpaceWorktree } from '../../../../shared/workspace-space-types'
 import {
   canSelectWorkspaceCleanupCandidate,
@@ -40,6 +41,7 @@ export type WorkspaceCleanupWorktreeFacts = Pick<Worktree, 'id'> &
 
 export type WorkspaceCleanupFacetSources = {
   worktreeById?: ReadonlyMap<string, WorkspaceCleanupWorktreeFacts>
+  workspaceStatuses?: readonly WorkspaceStatusDefinition[]
   /** Absent entry = the space scan never ran for that worktree. */
   sizeBytesByWorktreeId?: ReadonlyMap<string, number>
   lastVisitedAtByWorktreeId?: Readonly<Record<string, number>>
@@ -69,6 +71,7 @@ export type WorkspaceCleanupFacets = {
   lastVisitedAt: number | null
   sizeBytes: number | null
   workspaceStatus: string | null
+  workspaceStatusLabel: string | null
   isArchived: boolean
   isPinned: boolean
   isUnread: boolean
@@ -128,6 +131,7 @@ export function buildWorkspaceCleanupFacets(
     lastVisitedAt: toFiniteOrNull(sources.lastVisitedAtByWorktreeId?.[candidate.worktreeId]),
     sizeBytes: toFiniteOrNull(sources.sizeBytesByWorktreeId?.get(candidate.worktreeId)),
     workspaceStatus: normalizeStatus(worktree?.workspaceStatus),
+    workspaceStatusLabel: getWorkspaceStatusLabel(worktree, sources.workspaceStatuses),
     isArchived: worktree?.isArchived ?? candidate.reasons.includes('archived'),
     isPinned: worktree?.isPinned ?? candidate.blockers.includes('pinned'),
     isUnread: worktree?.isUnread ?? false,
@@ -220,6 +224,7 @@ function buildSearchText(facets: Omit<WorkspaceCleanupFacets, 'searchText'>): st
     facets.path,
     facets.hostId,
     facets.workspaceStatus,
+    facets.workspaceStatusLabel,
     facets.review.label,
     facets.review.title,
     facets.review.provider,
@@ -236,6 +241,17 @@ function buildSearchText(facets: Omit<WorkspaceCleanupFacets, 'searchText'>): st
 function normalizeStatus(status: string | undefined): string | null {
   const trimmed = (status ?? '').trim()
   return trimmed.length > 0 ? trimmed : null
+}
+
+function getWorkspaceStatusLabel(
+  worktree: WorkspaceCleanupWorktreeFacts | null,
+  statuses: readonly WorkspaceStatusDefinition[] | undefined
+): string | null {
+  if (!worktree || !statuses?.length) {
+    return null
+  }
+  const statusId = getWorkspaceStatus({ workspaceStatus: worktree.workspaceStatus }, statuses)
+  return statuses.find((status) => status.id === statusId)?.label ?? statusId
 }
 
 function toFiniteOrNull(value: number | null | undefined): number | null {

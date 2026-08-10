@@ -1,5 +1,6 @@
 import type { LiveAgentWorktreeStatus } from '@/lib/worktree-activity-state'
 import type { WorkspaceCleanupCandidate } from '../../../../shared/workspace-cleanup'
+import { cloneDefaultWorkspaceStatuses } from '../../../../shared/workspace-statuses'
 import {
   buildWorkspaceCleanupFacets,
   type WorkspaceCleanupFacetSources,
@@ -85,6 +86,7 @@ export function makeFacets(input: FacetFixtureInput = {}): WorkspaceCleanupFacet
   const candidate = makeFacetCandidate(input.candidate)
   const id = candidate.worktreeId
   const sources: WorkspaceCleanupFacetSources = {
+    workspaceStatuses: cloneDefaultWorkspaceStatuses(),
     worktreeById:
       input.worktree === null
         ? new Map()
