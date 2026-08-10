@@ -11,6 +11,7 @@ vi.mock('child_process', () => ({
 import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
 import { searchWithGitGrep } from './fs-handler-git-fallback'
+import { GIT_GREP_MAX_RECORD_BYTES } from '../shared/text-search'
 
 function createMockProcess(): ChildProcess {
   const p = new EventEmitter() as unknown as ChildProcess
@@ -55,5 +56,20 @@ describe('relay git grep fallback', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('bounds an SSH relay git grep record', async () => {
+    const proc = createMockProcess()
+    spawnMock.mockReturnValue(proc)
+
+    const promise = searchWithGitGrep('/remote/folder-workspace', 'ok', { maxResults: 100 })
+    const stdout = proc.stdout as unknown as EventEmitter
+    const chunk = 'x'.repeat(1024 * 1024)
+    for (let bytes = 0; bytes <= GIT_GREP_MAX_RECORD_BYTES; bytes += chunk.length) {
+      stdout.emit('data', chunk)
+    }
+
+    expect(proc.kill).toHaveBeenCalledTimes(1)
+    await expect(promise).resolves.toMatchObject({ truncated: true })
   })
 })

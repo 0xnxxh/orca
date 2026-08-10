@@ -55,6 +55,8 @@ function joinSearchRoot(rootPath: string, relPath: string): string {
 export const MAX_MATCHES_PER_FILE = 100
 export const DEFAULT_SEARCH_MAX_RESULTS = 2000
 export const SEARCH_TIMEOUT_MS = 15_000
+// Why: mirror rg's 5 MiB file ceiling with room for path and record metadata.
+export const GIT_GREP_MAX_RECORD_BYTES = 8 * 1024 * 1024
 export const SEARCH_JSON_STRUCTURE_LIMITS = {
   structuralTokens: 32 * 1024,
   nestingDepth: 16

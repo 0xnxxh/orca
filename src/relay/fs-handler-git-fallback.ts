@@ -23,9 +23,11 @@ import {
   buildSubmatchRegex,
   createAccumulator,
   finalize,
+  GIT_GREP_MAX_RECORD_BYTES,
   ingestGitGrepLine,
   SEARCH_TIMEOUT_MS
 } from '../shared/text-search'
+import { SearchSubprocessLineAccumulator } from '../shared/search-subprocess-lines'
 import { buildRelayGitEnv } from './relay-command-env'
 
 /**
@@ -277,7 +279,7 @@ export function searchWithGitGrep(
     const gitArgs = buildGitGrepArgs(query, opts)
     const matchRegex = buildSubmatchRegex(query, opts)
     const acc = createAccumulator()
-    let stdoutBuffer = ''
+    const stdoutLines = new SearchSubprocessLineAccumulator(GIT_GREP_MAX_RECORD_BYTES)
     let done = false
 
     const child = spawn('git', gitArgs, {
@@ -310,11 +312,10 @@ export function searchWithGitGrep(
     }
 
     function handleStdoutData(chunk: string): void {
-      stdoutBuffer += chunk
-      const lines = stdoutBuffer.split('\n')
-      stdoutBuffer = lines.pop() ?? ''
-      for (const l of lines) {
-        processLine(l)
+      if (!stdoutLines.push(chunk, processLine)) {
+        acc.truncated = true
+        child.kill()
+        resolveOnce()
       }
     }
 
@@ -327,8 +328,9 @@ export function searchWithGitGrep(
     }
 
     function handleClose(): void {
-      if (stdoutBuffer) {
-        processLine(stdoutBuffer)
+      const trailingLine = stdoutLines.finish()
+      if (trailingLine !== null) {
+        processLine(trailingLine)
       }
       resolveOnce()
     }
