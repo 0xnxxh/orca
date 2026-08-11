@@ -11735,6 +11735,17 @@
                   }
                 }
               }
+            },
+            "hosted": {
+              "review": {
+                "button": {
+                  "label": {
+                    "96ae7358e0": "Push & Create PR in stack",
+                    "8e8149a0bf": "Create draft PR in stack",
+                    "8df1a05952": "Create PR in stack"
+                  }
+                }
+              }
             }
           },
           "AiVaultPanel": {
@@ -12052,6 +12063,17 @@
             "e3ee2daa32": "Stack #{{value0}}",
             "cb440931b7": "{{value0}} of {{value1}} · {{value2}}",
             "525259fa17": "Stack details are temporarily unavailable."
+          },
+          "CreateHostedReviewBasePicker": {
+            "205ef284fa": "Base branch",
+            "bb4b41d563": "from {{value0}}",
+            "5a9315b61a": "No branches match “{{value0}}”. Press Enter to use it anyway.",
+            "da4d57c9c2": "Leave empty to use {{value0}}."
+          },
+          "CreateHostedReviewComposerFields": {
+            "90cabf6cfc": "Stack this PR above #{{value0}}",
+            "ff81473a57": "Creates a GitHub Stack or extends the parent's existing stack.",
+            "29732f2fb0": "new PR"
           }
         }
       },
