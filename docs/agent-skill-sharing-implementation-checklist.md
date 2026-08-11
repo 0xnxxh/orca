@@ -723,6 +723,11 @@ record before the multi-distro gate.
 
 ## 11. Implement and validate SSH targets
 
+The 2026-08-11 live Orca inventory contains only the connected `windows 2` environment and no
+non-local worktree or repository. Real SSH validation therefore requires registering an isolated
+SSH macOS, Ubuntu 20.04, or supported Windows target; implementation and contract tests continue
+without treating the missing external topology as a product failure.
+
 - [x] Define a host-side installer command that invokes the same installer core and structured
       result contract.
 - [x] Transfer immutable packages through the existing SSH/SFTP provider into bounded private
@@ -766,7 +771,10 @@ record before the multi-distro gate.
       URLs, upload policies, download grants, and credentials.
 - [x] Redact sensitive network values before logger invocation, not after ingestion.
 - [x] Audit authorization and lifecycle events without instruction or script contents.
-- [ ] Verify diagnostics and support bundles preserve the same exclusions.
+- [x] Verify diagnostics and support bundles preserve the same exclusions. Desktop install spans
+      map requests and results to bounded labels before the tracer boundary; regression coverage
+      proves raw paths, filenames, manifests, ACL values, durable share URLs, upload policies,
+      download grants, credentials, and raw error text never enter the collected bundle.
 
 ### Security review
 

@@ -13,6 +13,7 @@ import { downloadSkillPackageGrant } from './skill-package-download'
 import { detectSkillProvidersInWsl } from './skill-wsl-provider-detection'
 import { createWslSkillInstallFilesystem } from './skill-wsl-install-filesystem'
 import { skillInstallFailureFromError } from './skill-install-operation-error'
+import { startSkillInstallOperation } from './skill-operation-observability'
 
 type StagedSkillPackage = {
   archivePath: string
@@ -68,6 +69,21 @@ export async function executeSkillInstallRequest(
   dependencies: SkillInstallRequestDependencies
 ): Promise<SkillInstallResult> {
   const request = SkillInstallRequestSchema.parse(input)
+  const operation = startSkillInstallOperation(request)
+  try {
+    const result = await executeParsedSkillInstallRequest(request, dependencies)
+    operation.complete(result)
+    return result
+  } catch (error) {
+    operation.fail(error)
+    throw error
+  }
+}
+
+async function executeParsedSkillInstallRequest(
+  request: SkillInstallRequest,
+  dependencies: SkillInstallRequestDependencies
+): Promise<SkillInstallResult> {
   const destination = await resolveSkillInstallDestination(
     request.destination,
     dependencies.authority
