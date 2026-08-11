@@ -3,7 +3,10 @@ import { useEffect, useRef } from 'react'
 import { useAppStore, type AppState } from '@/store'
 import { basename, joinPath } from '@/lib/path'
 import { getExternalFileChangeRelativePath } from '@/components/right-sidebar/useFileExplorerWatch'
-import { normalizeRuntimePathForComparison } from '../../../shared/cross-platform-path'
+import {
+  isWindowsAbsolutePathLike,
+  normalizeRuntimePathForComparison
+} from '../../../shared/cross-platform-path'
 import {
   canAutoSaveOpenFile,
   getOpenFilesForExternalFileChange,
@@ -34,6 +37,8 @@ import { markFileChangedOnDisk } from '@/components/editor/editor-changed-on-dis
 import { getDiskBaselineSignature } from '@/components/editor/diff-content-signature'
 import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 import { getFolderWorkspaceConnectionId } from '@/lib/folder-workspace-connection'
+import { isLocalWindowsDesktopClient } from '@/lib/desktop-window-chrome'
+import { parseExecutionHostId } from '../../../shared/execution-host'
 
 // Why: atomic writes burst same-path events; one reload dispatch each fans out into N EditorPanel rebuilds that can wedge the renderer (issue #826), so debounce per (worktreeId+path).
 const EXTERNAL_RELOAD_DEBOUNCE_MS = 75
@@ -71,6 +76,7 @@ type WatchedTarget = {
   worktreePath: string
   connectionId: string | undefined
   runtimeEnvironmentId: string | null
+  allowLocalWindowsWslAliases?: true
 }
 
 type ExternalWatchNotification = {
@@ -78,6 +84,53 @@ type ExternalWatchNotification = {
   worktreePath: string
   relativePath: string
   runtimeEnvironmentId: string | null
+  allowLocalWindowsWslAliases?: true
+}
+
+function localWslAliasOption(
+  target: Pick<WatchedTarget, 'allowLocalWindowsWslAliases'>
+): Pick<ExternalWatchNotification, 'allowLocalWindowsWslAliases'> {
+  return isLocalWindowsDesktopClient() && target.allowLocalWindowsWslAliases === true
+    ? { allowLocalWindowsWslAliases: true }
+    : {}
+}
+
+function isLocalHostStamp(value: string | null | undefined): boolean {
+  if (!value?.trim()) {
+    return true
+  }
+  return parseExecutionHostId(value)?.kind === 'local'
+}
+
+function canWatchLocalWindowsWslAliases(args: {
+  worktreePath: string
+  runtimeEnvironmentId: string | null
+  connectionId: string | null | undefined
+  worktree: AppState['worktreesByRepo'][string][number] | undefined
+  repo: AppState['repos'][number] | undefined
+  folderWorkspace: AppState['folderWorkspaces'][number] | undefined
+  projectGroup: AppState['projectGroups'][number] | undefined
+}): boolean {
+  if (
+    args.runtimeEnvironmentId !== null ||
+    args.connectionId !== null ||
+    !isWindowsAbsolutePathLike(args.worktreePath)
+  ) {
+    return false
+  }
+  if (args.worktree) {
+    return (
+      !!args.repo &&
+      !args.worktree.runtimeOwnerEnvironmentId?.trim() &&
+      isLocalHostStamp(args.worktree.hostId) &&
+      isLocalHostStamp(args.repo.executionHostId)
+    )
+  }
+  return (
+    !!args.folderWorkspace &&
+    isLocalHostStamp(args.folderWorkspace.executionHostId) &&
+    isLocalHostStamp(args.projectGroup?.executionHostId)
+  )
 }
 
 type WatchedTargetsSnapshot = {
@@ -117,7 +170,7 @@ let cachedWatchedTargetsSnapshot: WatchedTargetsSnapshot = { targets: [], target
 
 export function getWatchedTargetKey(target: WatchedTarget): string {
   // Why: include connectionId so a local placeholder watch is replaced by the real SSH watch once an SSH worktree's provider metadata hydrates.
-  return `${target.worktreeId}::${target.worktreePath}::${target.connectionId ?? 'local'}::${target.runtimeEnvironmentId ?? 'client'}`
+  return `${target.worktreeId}::${target.worktreePath}::${target.connectionId ?? 'local'}::${target.runtimeEnvironmentId ?? 'client'}::${target.allowLocalWindowsWslAliases === true ? 'wsl-aliases' : 'literal'}`
 }
 
 function openFileRuntimeOwner(file: Pick<OpenFile, 'runtimeEnvironmentId'>): string | null {
@@ -202,9 +255,14 @@ export function getEditorExternalWatchTargets(
       continue
     }
     const repo = wt ? state.repos.find((r) => r.id === wt.repoId) : undefined
+    const projectGroup = folderWorkspace
+      ? state.projectGroups.find((group) => group.id === folderWorkspace.projectGroupId)
+      : undefined
     const connectionId = folderWorkspace
       ? getFolderWorkspaceConnectionId(state, folderWorkspace.id)
-      : repo?.connectionId
+      : repo
+        ? (repo.connectionId ?? null)
+        : undefined
     if (connectionId === undefined && folderWorkspace) {
       continue
     }
@@ -216,7 +274,18 @@ export function getEditorExternalWatchTargets(
         worktreeId: id,
         worktreePath: wt?.path ?? folderWorkspace!.folderPath,
         connectionId: connectionId ?? undefined,
-        runtimeEnvironmentId: owner
+        runtimeEnvironmentId: owner,
+        ...(canWatchLocalWindowsWslAliases({
+          worktreePath: wt?.path ?? folderWorkspace!.folderPath,
+          runtimeEnvironmentId: owner,
+          connectionId,
+          worktree: wt,
+          repo,
+          folderWorkspace,
+          projectGroup
+        })
+          ? { allowLocalWindowsWslAliases: true as const }
+          : {})
       }
       nextTargets.push(target)
       parts.push(getWatchedTargetKey(target))
@@ -569,7 +638,8 @@ export function createExternalWatchEventHandler(
         worktreeId: target.worktreeId,
         worktreePath: target.worktreePath,
         relativePath,
-        runtimeEnvironmentId: target.runtimeEnvironmentId
+        runtimeEnvironmentId: target.runtimeEnvironmentId,
+        ...localWslAliasOption(target)
       }
       const absolutePath = joinPath(notification.worktreePath, notification.relativePath)
       const matching = getOpenFilesForExternalFileChange(openFilesSnapshot, notification)
@@ -885,7 +955,9 @@ function hasCleanExternalReloadTarget(notification: ExternalWatchNotification): 
 
 export function getOverflowExternalReloadTargets(
   target: Pick<WatchedTarget, 'worktreeId' | 'worktreePath'> & {
+    connectionId?: string
     runtimeEnvironmentId?: string | null
+    allowLocalWindowsWslAliases?: true
   }
 ): ExternalWatchNotification[] {
   const state = useAppStore.getState()
@@ -908,7 +980,10 @@ export function getOverflowExternalReloadTargets(
       worktreeId: target.worktreeId,
       worktreePath: target.worktreePath,
       relativePath: file.relativePath,
-      runtimeEnvironmentId: target.runtimeEnvironmentId ?? null
+      runtimeEnvironmentId: target.runtimeEnvironmentId ?? null,
+      ...localWslAliasOption({
+        allowLocalWindowsWslAliases: target.allowLocalWindowsWslAliases
+      })
     })
   }
 
