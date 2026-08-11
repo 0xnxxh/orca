@@ -378,6 +378,16 @@ describePosix('local PTY shell-ready launch config', () => {
     // Why `builtin`: a user-defined printf function would swallow the marker.
     expect(init).toContain('builtin printf "\\033]777;orca-shell-ready\\007"')
     expect(init).toContain('functions -e __orca_shell_ready_marker')
+    // Why one -C carrying both: fish's support for repeating -C varies by
+    // version, so the wrapper source and the marker share a single init command.
+    expect(config.args).toHaveLength(3)
+    const wrapper = join(userDataPath, 'shell-ready', 'fish', 'orca.fish')
+    expect(init).toContain(`test -f '${wrapper}'; and source '${wrapper}'`)
+    // Why: fish is not POSIX, so it needs its own wrapper file — sourcing the
+    // bash/zsh one is a parse error and Prime status silently vanishes.
+    expect(readFileSync(wrapper, 'utf8')).toContain(
+      'command prime-agent --extension "$ORCA_PRIME_AGENT_STATUS_EXTENSION" $argv'
+    )
   })
 
   it('keeps attribution-only fish spawns unwrapped', async () => {

@@ -1,6 +1,6 @@
 import { wslHookRelayEndpointFilePath } from '../../shared/wsl-hook-relay-contract'
 
-const PRIME_AGENT_SUBCOMMANDS = [
+export const PRIME_AGENT_SUBCOMMANDS = [
   'agents',
   'config',
   'doctor',

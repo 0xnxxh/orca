@@ -18,7 +18,8 @@ import { getPosixOmpShellWrapper } from '../pty/omp-shell-wrapper'
 import { getPosixPrimeAgentShellWrapper } from '../pty/prime-agent-shell-wrapper'
 import { buildStartupCommandSubmission } from '../../shared/startup-command-submission'
 import {
-  getFishShellReadyInitCommand,
+  getFishInitCommand,
+  getFishShellReadyWrapperFileContent,
   getZshEnvTemplate,
   getZshFinalZdotdirRestoreBlock,
   getZshShellReadyMarkerRegistrationBlock,
@@ -57,8 +58,16 @@ function getRequiredShellReadyWrapperPaths(root = getShellReadyWrapperRoot()): s
     `${root}/zsh/.zprofile`,
     `${root}/zsh/.zshrc`,
     `${root}/zsh/.zlogin`,
-    `${root}/bash/rcfile`
+    `${root}/bash/rcfile`,
+    getFishShellReadyWrapperPath(root)
   ]
+}
+
+// Why a file, not an inlined `-C` body: the WSL launch path sources this same
+// wrapper root through /mnt/c, and inlining the body into the wsl.exe argv would
+// make every `$` in it collide with escapeWslShCommandForWindows.
+export function getFishShellReadyWrapperPath(root = getShellReadyWrapperRoot()): string {
+  return `${root}/fish/orca.fish`
 }
 
 function shellReadyWrappersExist(root = getShellReadyWrapperRoot()): boolean {
@@ -320,7 +329,8 @@ ${getZshFinalZdotdirRestoreBlock()}
     [`${zshDir}/.zprofile`, zshProfile],
     [`${zshDir}/.zshrc`, zshRc],
     [`${zshDir}/.zlogin`, zshLogin],
-    [`${bashDir}/rcfile`, bashRc]
+    [`${bashDir}/rcfile`, bashRc],
+    [getFishShellReadyWrapperPath(root), getFishShellReadyWrapperFileContent()]
   ] as const
 
   try {
@@ -404,8 +414,16 @@ function getWrappedShellLaunchConfig(
 
   // Why: mirrors daemon/shell-ready.ts; attribution-only fish stays unwrapped.
   if (shellName === 'fish' && options.emitReadyMarker) {
+    ensureShellReadyWrappers()
     return {
-      args: ['-l', '-C', getFishShellReadyInitCommand(SHELL_READY_MARKER_ESCAPED)],
+      args: [
+        '-l',
+        '-C',
+        getFishInitCommand({
+          wrapperPath: getFishShellReadyWrapperPath(),
+          escapedMarker: SHELL_READY_MARKER_ESCAPED
+        })
+      ],
       env: { ORCA_SHELL_READY_MARKER: '1' },
       supportsReadyMarker: true
     }

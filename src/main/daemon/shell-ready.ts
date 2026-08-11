@@ -13,7 +13,8 @@ import {
 import { getPosixOmpShellWrapper } from '../pty/omp-shell-wrapper'
 import { getPosixPrimeAgentShellWrapper } from '../pty/prime-agent-shell-wrapper'
 import {
-  getFishShellReadyInitCommand,
+  getFishInitCommand,
+  getFishShellReadyWrapperFileContent,
   getZshEnvTemplate,
   getZshFinalZdotdirRestoreBlock,
   getZshShellReadyMarkerRegistrationBlock,
@@ -79,8 +80,16 @@ function getRequiredShellReadyWrapperPaths(root = getShellReadyWrapperRoot()): s
     join(root, 'zsh', '.zprofile'),
     join(root, 'zsh', '.zshrc'),
     join(root, 'zsh', '.zlogin'),
-    join(root, 'bash', 'rcfile')
+    join(root, 'bash', 'rcfile'),
+    getFishShellReadyWrapperPath(root)
   ]
+}
+
+// Why a file, not an inlined `-C` body: mirrors the local provider, and the WSL
+// launch path sources this same wrapper root through /mnt/c where an inlined
+// body's `$` would collide with escapeWslShCommandForWindows.
+function getFishShellReadyWrapperPath(root = getShellReadyWrapperRoot()): string {
+  return join(root, 'fish', 'orca.fish')
 }
 
 function shellReadyWrappersExist(): boolean {
@@ -321,7 +330,8 @@ ${getZshFinalZdotdirRestoreBlock()}
     [join(zshDir, '.zprofile'), zshProfile],
     [join(zshDir, '.zshrc'), zshRc],
     [join(zshDir, '.zlogin'), zshLogin],
-    [join(bashDir, 'rcfile'), bashRc]
+    [join(bashDir, 'rcfile'), bashRc],
+    [getFishShellReadyWrapperPath(root), getFishShellReadyWrapperFileContent()]
   ] as const
 
   try {
@@ -421,8 +431,16 @@ function getWrappedShellLaunchConfig(
 
   // Why: mirrors local-pty-shell-ready.ts; attribution-only fish stays unwrapped.
   if (shellName === 'fish' && options.emitReadyMarker) {
+    ensureShellReadyWrappers()
     return {
-      args: ['-l', '-C', getFishShellReadyInitCommand(SHELL_READY_MARKER)],
+      args: [
+        '-l',
+        '-C',
+        getFishInitCommand({
+          wrapperPath: getFishShellReadyWrapperPath(),
+          escapedMarker: SHELL_READY_MARKER
+        })
+      ],
       env: { ORCA_SHELL_READY_MARKER: '1' },
       supportsReadyMarker: true
     }

@@ -182,7 +182,25 @@ describe('wsl login shell command helpers', () => {
     expect(command).toContain('--rcfile "${_orca_shell_ready_root}/bash/rcfile"')
     expect(command).toContain('zsh)')
     expect(command).toContain('export ZDOTDIR="${_orca_shell_ready_root}/zsh"')
+    // Why: fish is not POSIX, so it can consume neither --rcfile nor ZDOTDIR;
+    // its wrapper rides a single --init-command instead (STA-3927).
+    expect(command).toContain('fish)')
+    expect(command).toContain(
+      'ORCA_FISH_SHELL_READY_WRAPPER="${_orca_shell_ready_root}/fish/orca.fish"'
+    )
+    expect(command).toContain(`-l -C 'source "$ORCA_FISH_SHELL_READY_WRAPPER"`)
     expect(command).toContain('exec "$_orca_wsl_shell" -l')
     expectValidShSyntax(command)
+  })
+
+  it('falls through to a bare fish login when the wrapper file is absent', () => {
+    const command = buildWslInteractiveLoginShellCommand()
+    const fishBranch = command.slice(command.indexOf('  fish)'), command.indexOf('esac'))
+
+    // Why: the wrapper exec sits behind a -f guard so a failed wrapper write
+    // still reaches the shared `exec "$_orca_wsl_shell" -l` at the bottom
+    // rather than erroring on `source`.
+    expect(fishBranch).toContain('[ -f "${_orca_shell_ready_root}/fish/orca.fish" ]')
+    expect(fishBranch.indexOf('if [')).toBeLessThan(fishBranch.indexOf('exec'))
   })
 })

@@ -1,5 +1,6 @@
 // Why: local PTYs and the daemon/SSH path must use identical ZDOTDIR discovery;
 // small drift here breaks different terminal transports in different ways.
+import { getFishPrimeAgentShellWrapper } from './pty/prime-agent-fish-shell-wrapper'
 
 function quotePosixSingle(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
@@ -172,6 +173,31 @@ export function getFishShellReadyInitCommand(escapedMarker: string): string {
     functions -e __orca_shell_ready_marker
   end
 end`
+}
+
+/** Fish single-quoting: only `\` and `'` are special inside `'...'`. */
+export function quoteFishSingle(value: string): string {
+  return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+}
+
+export function getFishShellReadyWrapperFileContent(): string {
+  return `# Orca fish shell-ready wrapper
+${getFishPrimeAgentShellWrapper()}`
+}
+
+/** Single `--init-command` payload for a wrapped fish launch.
+ *
+ *  Why one combined string: fish's support for repeating `-C` varies by version,
+ *  and the wrapper must be sourced from a file rather than inlined — on WSL the
+ *  inline text would have to survive `escapeWslShCommandForWindows`, which
+ *  backslash-escapes every `$`. The `test -f` guard keeps a failed wrapper write
+ *  from printing a `source:` error into the user's first prompt. */
+export function getFishInitCommand(args: { wrapperPath: string; escapedMarker: string }): string {
+  const quoted = quoteFishSingle(args.wrapperPath)
+  return [
+    `test -f ${quoted}; and source ${quoted}`,
+    getFishShellReadyInitCommand(args.escapedMarker)
+  ].join('\n')
 }
 
 export function getZshFinalZdotdirRestoreBlock(homeExpression = '"${ORCA_ORIG_ZDOTDIR:-$HOME}"') {

@@ -61,6 +61,23 @@ export function buildWslInteractiveLoginShellCommand(): string {
     '      export ZDOTDIR="${_orca_shell_ready_root}/zsh"',
     '    fi',
     '    ;;',
+    // Why: fish has no rcfile/ZDOTDIR hook, so its wrapper rides a single
+    // --init-command that sources the file. One -C, not two: multi -C support
+    // varies by fish version. Sourcing a file rather than inlining the body
+    // keeps every `$` out of escapeWslShCommandForWindows.
+    //
+    // Why the env var instead of an interpolated literal: the wrapper root is a
+    // Windows path translated by WSLENV, and fish re-parses a double-quoted
+    // literal (a `$` in the user's profile path would expand) while a
+    // single-quoted one cannot carry an apostrophe. A variable's *value* is
+    // never re-expanded, so this survives both.
+    '  fish)',
+    '    if [ -n "${_orca_shell_ready_root:-}" ] && [ -f "${_orca_shell_ready_root}/fish/orca.fish" ]; then',
+    '      ORCA_FISH_SHELL_READY_WRAPPER="${_orca_shell_ready_root}/fish/orca.fish"',
+    '      export ORCA_FISH_SHELL_READY_WRAPPER',
+    `      exec "$_orca_wsl_shell" -l -C 'source "$ORCA_FISH_SHELL_READY_WRAPPER"; set -e ORCA_FISH_SHELL_READY_WRAPPER'`,
+    '    fi',
+    '    ;;',
     'esac',
     'exec "$_orca_wsl_shell" -l'
   ].join('\n')
