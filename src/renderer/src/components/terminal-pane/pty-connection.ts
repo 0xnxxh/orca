@@ -261,10 +261,12 @@ import {
 } from './hidden-output-restore-scheduler'
 import { resolveHiddenRestoreScrollbackRows } from './terminal-hidden-restore-scrollback'
 import {
+  buildDeferredAltFrameReplayWrites,
   buildMainModelSnapshotReplayWrites,
   hasPositiveTerminalDimensions,
   readProposedTerminalCols,
   resolvePositiveTerminalDimensions,
+  shouldRepaintDeferredAltFrame,
   shouldSkipAltFrameForWidthMismatch
 } from './terminal-snapshot-replay-paint'
 import {
@@ -7338,11 +7340,26 @@ export function connectPanePty(
                 }
               )
               pendingHiddenSnapshotFit = fit
+              let fitCompleted = false
               try {
-                await fit.completion
+                fitCompleted = await fit.completion
               } finally {
                 if (pendingHiddenSnapshotFit === fit) {
                   pendingHiddenSnapshotFit = null
+                }
+              }
+              if (
+                !fitCompleted &&
+                skippedAltFrame &&
+                isCurrentRestore() &&
+                transport.getPtyId() === currentPtyId &&
+                shouldRepaintDeferredAltFrame(pane, snapshot.cols)
+              ) {
+                // Why: the skip is a deferral, not a deletion. No fit landed, and the pulse
+                // repaint lives in that failed continuation, so paint the frame here unless the
+                // pane is hidden (its reveal fit still owes one) or measurably narrower.
+                for (const replayChunk of buildDeferredAltFrameReplayWrites(snapshot)) {
+                  writeReplayData(replayChunk)
                 }
               }
               if (isCurrentRestore()) {

@@ -49,6 +49,9 @@ export type TerminalTabColdParkCandidate = ColdParkableTerminalTab & {
   isVisible: boolean
   hasActivityTerminalPortal: boolean
   hiddenSinceMs: number | null
+  /** Monotonic activation counter (higher = activated more recently); see
+   *  compareColdParkRecencyDesc for why hiddenSinceMs alone cannot rank tabs. */
+  lastActivatedSeq?: number
 }
 
 function getPendingActivationSpawnCount(value: boolean | number | undefined): number {
@@ -198,21 +201,35 @@ export function canParkTerminalTabRenderer(args: {
   return isParkRestorableTerminalPty(tab.ptyId, args.worktreeId, args.restorePolicy)
 }
 
-export type ColdParkRetainCandidate = { id: string; hiddenSinceMs: number }
+export type ColdParkRetainCandidate = {
+  id: string
+  hiddenSinceMs: number
+  lastActivatedSeq?: number
+}
+
+// Why: equal hiddenSinceMs is the common case, not a corner — hiding a view
+// stamps every tab it owns in one pass — and ids are random UUIDs, so ranking
+// recency on them is a coin flip. Recorded activation order decides instead;
+// the id only settles candidates that were never activated (#8262).
+function compareColdParkRecencyDesc(
+  a: ColdParkRetainCandidate,
+  b: ColdParkRetainCandidate
+): number {
+  if (a.hiddenSinceMs !== b.hiddenSinceMs) {
+    return b.hiddenSinceMs - a.hiddenSinceMs
+  }
+  const activationDelta = (b.lastActivatedSeq ?? -1) - (a.lastActivatedSeq ?? -1)
+  return activationDelta === 0 ? a.id.localeCompare(b.id) : activationDelta
+}
 
 // Why: the single most-recently-hidden candidate is the view the user just
 // switched away from; keeping it warm regardless of the TTL or cap means
 // switching back after any absence (a meeting, coffee) is always instant, the
-// remount cost users actually notice. Ties break by id for determinism.
+// remount cost users actually notice.
 function selectLastActiveRetainedId(candidates: ColdParkRetainCandidate[]): string | null {
   let lastActive: ColdParkRetainCandidate | null = null
   for (const candidate of candidates) {
-    if (
-      lastActive === null ||
-      candidate.hiddenSinceMs > lastActive.hiddenSinceMs ||
-      (candidate.hiddenSinceMs === lastActive.hiddenSinceMs &&
-        candidate.id.localeCompare(lastActive.id) < 0)
-    ) {
+    if (lastActive === null || compareColdParkRecencyDesc(candidate, lastActive) < 0) {
       lastActive = candidate
     }
   }
@@ -221,8 +238,7 @@ function selectLastActiveRetainedId(candidates: ColdParkRetainCandidate[]): stri
 
 // Why: hot-retain keeps the most recently hidden ids warm up to the limit;
 // ids hidden past hotRetainMs or beyond the limit cold-park. The last-active
-// id is exempt from both so returning to it never pays a remount. Ties sort by
-// id so the selection is deterministic.
+// id is exempt from both so returning to it never pays a remount.
 export function selectIdsBeyondHotRetain(
   candidates: ColdParkRetainCandidate[],
   args: { nowMs: number; hotRetainMs: number; hotRetainLimit: number }
@@ -240,10 +256,7 @@ export function selectIdsBeyondHotRetain(
       retainedCandidates.push(candidate)
     }
   }
-  retainedCandidates.sort((a, b) => {
-    const recencyDelta = b.hiddenSinceMs - a.hiddenSinceMs
-    return recencyDelta === 0 ? a.id.localeCompare(b.id) : recencyDelta
-  })
+  retainedCandidates.sort(compareColdParkRecencyDesc)
   // Why: the last-active id already holds one slot in the warm working set, so
   // the cap counts it out — the remaining candidates fill hotRetainLimit-1.
   const remainingLimit = lastActiveId === null ? args.hotRetainLimit : args.hotRetainLimit - 1
@@ -322,7 +335,11 @@ export function selectColdParkedTerminalTabs(
     ) {
       continue
     }
-    candidates.push({ id: tab.id, hiddenSinceMs: tab.hiddenSinceMs })
+    candidates.push({
+      id: tab.id,
+      hiddenSinceMs: tab.hiddenSinceMs,
+      lastActivatedSeq: tab.lastActivatedSeq
+    })
   }
   return selectIdsBeyondHotRetain(candidates, {
     nowMs: args.nowMs,

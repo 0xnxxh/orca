@@ -97,6 +97,37 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
     mocks.storeState.runtimeStatusByEnvironmentId = new Map()
   })
 
+  // Why: leaving a worktree hides every one of its tabs against a single
+  // nowMs, so the #8262 keep-warm exemption always lands on a hiddenSince tie.
+  // Broken by the id tie-break, the coin flip can park the very tab the user
+  // returns to (a random-UUID id carries no recency), which is the remount the
+  // exemption exists to prevent.
+  it('exempts the tab the worktree was left on when every tab hides in one pass', () => {
+    // tab-2 is active and lexicographically last, so the id tie-break cannot
+    // stumble into the right answer.
+    const assignments = new Map([
+      ['tab-1', { groupId: 'group-1', isActiveInGroup: false }],
+      ['tab-2', { groupId: 'group-1', isActiveInGroup: true }]
+    ])
+    const { result, rerender } = renderHook(
+      (args: ReturnType<typeof hookArgs> & { isWorktreeActive: boolean }) =>
+        useTerminalTabColdParking(args),
+      { initialProps: { ...hookArgs(false), assignments, isWorktreeActive: true } }
+    )
+    expect(result.current.size).toBe(0)
+
+    // The worktree goes hidden with the clock frozen: both tabs are stamped
+    // with the same hiddenSince, exactly as one commit does in the app.
+    act(() => {
+      rerender({ ...hookArgs(false), assignments, isWorktreeActive: false })
+    })
+    act(() => {
+      vi.advanceTimersByTime(TERMINAL_TAB_HOT_RETAIN_MS + 1)
+    })
+
+    expect(result.current).toEqual(new Set(['tab-1']))
+  })
+
   it('parks paired-runtime tabs only when their exact host advertises restore', () => {
     const environmentId = 'paired-env'
     const remoteArgs = {

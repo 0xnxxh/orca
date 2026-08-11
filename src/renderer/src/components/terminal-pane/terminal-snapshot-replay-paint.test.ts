@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { Terminal } from '@xterm/headless'
+import type { ManagedPane } from '@/lib/pane-manager/pane-manager-types'
 import {
+  buildDeferredAltFrameReplayWrites,
   buildMainModelSnapshotReplayWrites,
   hasPositiveTerminalDimensions,
+  shouldRepaintDeferredAltFrame,
   resolvePositiveTerminalDimensions,
   shouldSkipAltFrameForWidthMismatch
 } from './terminal-snapshot-replay-paint'
@@ -171,5 +174,110 @@ describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
     expect(
       buildMainModelSnapshotReplayWrites({ data: 'shell-output' }, { skipAltFrame: true })
     ).toEqual(['\x1b[2J\x1b[3J\x1b[H', 'shell-output'])
+  })
+})
+
+describe('shouldRepaintDeferredAltFrame', () => {
+  function makePane(args: {
+    rect: { width: number; height: number }
+    proposed: { cols: number; rows: number } | null
+    display?: string
+  }): ManagedPane {
+    const display = args.display ?? 'block'
+    const container = {
+      dataset: {},
+      parentElement: null,
+      ownerDocument: { defaultView: { getComputedStyle: () => ({ display }) } },
+      getBoundingClientRect: () => args.rect
+    }
+    return {
+      id: 1,
+      terminal: { cols: 120, rows: 40, options: {} },
+      container,
+      fitAddon: { proposeDimensions: () => args.proposed }
+    } as unknown as ManagedPane
+  }
+
+  // Why: a visible pane under the 48x24 fit floor (divider clamp, a sliver from
+  // repeated splits) is permanently unmeasurable, so the deferred repaint that
+  // rode the post-replay fit never runs and the frame would be lost for good.
+  it('repaints for a visible pane whose box is below the fit floor', () => {
+    expect(
+      shouldRepaintDeferredAltFrame(
+        makePane({ rect: { width: 4, height: 3 }, proposed: null }),
+        120
+      )
+    ).toBe(true)
+  })
+
+  it('repaints for a visible pane that measures but proposes under the cols floor', () => {
+    expect(
+      shouldRepaintDeferredAltFrame(
+        makePane({ rect: { width: 50, height: 600 }, proposed: { cols: 5, rows: 40 } }),
+        120
+      )
+    ).toBe(true)
+  })
+
+  it('withholds for a display:none pane whose reveal fit still owes the repaint', () => {
+    expect(
+      shouldRepaintDeferredAltFrame(
+        makePane({ rect: { width: 800, height: 600 }, proposed: null, display: 'none' }),
+        120
+      )
+    ).toBe(false)
+  })
+
+  // #13014: a frame wider than the grid a later fit lands on clips instead of reflowing.
+  it('withholds when the pane became measurable and is narrower than the capture grid', () => {
+    expect(
+      shouldRepaintDeferredAltFrame(
+        makePane({ rect: { width: 400, height: 600 }, proposed: { cols: 64, rows: 40 } }),
+        120
+      )
+    ).toBe(false)
+  })
+
+  it('repaints when the measurable grid is at least as wide as the capture grid', () => {
+    expect(
+      shouldRepaintDeferredAltFrame(
+        makePane({ rect: { width: 900, height: 600 }, proposed: { cols: 120, rows: 40 } }),
+        120
+      )
+    ).toBe(true)
+  })
+})
+
+describe('buildDeferredAltFrameReplayWrites', () => {
+  it('repaints only the alt frame, never a second copy of scrollback', () => {
+    expect(
+      buildDeferredAltFrameReplayWrites({
+        data: 'alt-frame'
+      })
+    ).toEqual(['\x1b[0m\x1b[?1049h\x1b[2J\x1b[H', 'alt-frame'])
+  })
+
+  it('lands the withheld frame on the alt buffer, leaving normal history intact', async () => {
+    const terminal = new Terminal({ cols: 12, rows: 5, scrollback: 20 })
+    const snapshot = {
+      data: '\x1b[1;1HFRAME',
+      frameRestoreAnsi: '\x1b[?25l',
+      alternateScreen: true,
+      scrollbackAnsi: 'log'
+    }
+    try {
+      for (const chunk of buildMainModelSnapshotReplayWrites(snapshot, { skipAltFrame: true })) {
+        await writeTerminal(terminal, chunk)
+      }
+      expect(terminal.buffer.active.getLine(0)?.translateToString(true)).toBe('')
+      for (const chunk of buildDeferredAltFrameReplayWrites(snapshot)) {
+        await writeTerminal(terminal, chunk)
+      }
+      expect(terminal.buffer.active.type).toBe('alternate')
+      expect(terminal.buffer.active.getLine(0)?.translateToString(true)).toBe('FRAME')
+      expect(terminal.buffer.normal.getLine(0)?.translateToString(true)).toBe('log')
+    } finally {
+      terminal.dispose()
+    }
   })
 })

@@ -585,6 +585,48 @@ describe('selectColdParkedTerminalTabs', () => {
     expect(selected).toEqual(new Set())
   })
 
+  // Why: tab ids are random UUIDs, so resolving the #8262 exemption by id makes
+  // it a coin flip — and identical hiddenSinceMs is the common case (one pass
+  // stamps every tab a view switch just hid), not a corner.
+  it('resolves an identical-hiddenSinceMs tie by activation order, not by tab id', () => {
+    const hiddenSinceMs = nowMs - TERMINAL_TAB_HOT_RETAIN_MS
+    const selected = selectColdParkedTerminalTabs({
+      worktreeId: 'wt-1',
+      terminalTabs: [
+        { ...localTab('tab-aaa', hiddenSinceMs), lastActivatedSeq: 1 },
+        // Lexicographically last, but the tab the user actually lands on.
+        { ...localTab('tab-zzz', hiddenSinceMs), lastActivatedSeq: 2 }
+      ],
+      pendingStartupByTabId: {},
+      parkingEnabled: true,
+      nowMs,
+      hotRetainLimit: 0
+    })
+
+    expect(selected).toEqual(new Set(['tab-aaa']))
+  })
+
+  // Why: the cap evicts by the same recency ranking, so a tie there must not be
+  // a coin flip either.
+  it('keeps the most recently activated tab warm when the cap evicts a tie', () => {
+    const hiddenSinceMs = nowMs - TERMINAL_TAB_HOT_RETAIN_MS + 1
+    const selected = selectColdParkedTerminalTabs({
+      worktreeId: 'wt-1',
+      terminalTabs: [
+        { ...localTab('tab-aaa', hiddenSinceMs), lastActivatedSeq: 1 },
+        { ...localTab('tab-bbb', hiddenSinceMs), lastActivatedSeq: 3 },
+        { ...localTab('tab-ccc', hiddenSinceMs), lastActivatedSeq: 2 }
+      ],
+      pendingStartupByTabId: {},
+      parkingEnabled: true,
+      nowMs,
+      hotRetainLimit: 2
+    })
+
+    // tab-bbb takes the exemption slot, tab-ccc the remaining warm slot.
+    expect(selected).toEqual(new Set(['tab-aaa']))
+  })
+
   it('selects nothing when the settings kill switch disables parking', () => {
     const selected = selectColdParkedTerminalTabs({
       worktreeId: 'wt-1',

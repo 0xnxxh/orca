@@ -15501,6 +15501,165 @@ describe('connectPanePty', () => {
     disposable.dispose()
   })
 
+  // Drives a hidden->visible alt-screen snapshot restore whose captured grid is
+  // 120 cols wide, letting each case control what the pane measures as.
+  async function restoreAltFrameSnapshotForPaneGeometry(options: {
+    frameMarker: string
+    proposeDimensions: () => { cols: number; rows: number } | null
+    measureRect?: () => { width: number; height: number }
+    onWrite?: (data: string) => void
+  }): Promise<{ writes: string; dispose: () => void }> {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('pty-id')
+    let onData: ConnectCallbacks['onData']
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      onData = callbacks.onData
+      return 'pty-id'
+    })
+    transportFactoryQueue.push(transport)
+    const getMainBufferSnapshot = window.api.pty.getMainBufferSnapshot as unknown as ReturnType<
+      typeof vi.fn
+    >
+    const hidden = 'x'.repeat(2 * 1024 * 1024 + 1)
+    getMainBufferSnapshot.mockResolvedValue({
+      data: options.frameMarker,
+      frameRestoreAnsi: '\x1b[?1004h\x1b[?25l',
+      cols: 120,
+      rows: 40,
+      seq: hidden.length + 1,
+      alternateScreen: true,
+      scrollbackAnsi: 'preserved history'
+    })
+    const pane = createPane(1)
+    ;(
+      pane.fitAddon as unknown as {
+        proposeDimensions: () => { cols: number; rows: number } | null
+      }
+    ).proposeDimensions = vi.fn(options.proposeDimensions)
+    const measureRect = options.measureRect
+    if (measureRect) {
+      Object.defineProperty(pane.container, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => {
+          const { width, height } = measureRect()
+          return { width, height, top: 0, left: 0, right: width, bottom: height, x: 0, y: 0 }
+        }
+      })
+    }
+    const onWrite = options.onWrite
+    if (onWrite) {
+      const originalWrite = pane.terminal.write
+      pane.terminal.write = vi.fn((...args: Parameters<typeof originalWrite>) => {
+        onWrite(args[0])
+        return originalWrite(...args)
+      }) as typeof originalWrite
+    }
+    const deps = createDeps({ isVisibleRef: { current: false } })
+    const disposable = connectPanePty(pane as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks(6)
+    onData?.(hidden, { seq: hidden.length, rawLength: hidden.length })
+    ;(deps.isVisibleRef as { current: boolean }).current = true
+    onData?.('x', { seq: hidden.length + 1, rawLength: 1 })
+    await flushAsyncTicks(20)
+    const readWrites = (): string =>
+      (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]).join('')
+    // Why real time: an unmeasurable visible pane must burn the whole bounded
+    // safe-fit retry budget (40 ticks of rAF + a 16ms layout settle) before the
+    // deferred repaint decision is made, so "absent" only means absent after it.
+    for (
+      let waited = 0;
+      waited < 2_500 && !readWrites().includes(options.frameMarker);
+      waited += 25
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      await flushAsyncTicks(10)
+    }
+    await flushAsyncTicks(20)
+    return { writes: readWrites(), dispose: () => disposable.dispose() }
+  }
+
+  // Why: the E2E's deepest split pane is ~W/256 x ~H/256 px, so it fails the
+  // 48x24 pixel floor and proposes nothing. It is visible and permanently
+  // unmeasurable: no fit ever lands, the skip's pulse repaint never runs, and
+  // the captured frame is lost unless the deferral repaints it here.
+  it('repaints the alt frame for a visible pane whose box is below the fit pixel floor', async () => {
+    const { writes, dispose } = await restoreAltFrameSnapshotForPaneGeometry({
+      frameMarker: 'SUB-FLOOR-ALT-FRAME',
+      proposeDimensions: () => null,
+      measureRect: () => ({ width: 4, height: 3 })
+    })
+    expect(writes).toContain('SUB-FLOOR-ALT-FRAME')
+    expect(writes).toContain('preserved history')
+    // The withheld frame arrives after the frame-restore state, not instead of it.
+    expect(writes.indexOf('\x1b[?1004h\x1b[?25l')).toBeLessThan(
+      writes.indexOf('SUB-FLOOR-ALT-FRAME')
+    )
+    dispose()
+  })
+
+  // The 50px divider clamp: measurable box, but the proposal is under the cols floor.
+  it('repaints the alt frame for a visible pane clamped under the fit cols floor', async () => {
+    const { writes, dispose } = await restoreAltFrameSnapshotForPaneGeometry({
+      frameMarker: 'SLIVER-ALT-FRAME',
+      proposeDimensions: () => ({ cols: 5, rows: 40 }),
+      measureRect: () => ({ width: 50, height: 600 })
+    })
+    expect(writes).toContain('SLIVER-ALT-FRAME')
+    expect(writes).toContain('preserved history')
+    dispose()
+  })
+
+  it('still drops an alt frame captured wider than the grid the fit will land on', async () => {
+    const { writes, dispose } = await restoreAltFrameSnapshotForPaneGeometry({
+      frameMarker: 'TOO-WIDE-ALT-FRAME',
+      proposeDimensions: () => ({ cols: 64, rows: 40 })
+    })
+    expect(writes).not.toContain('TOO-WIDE-ALT-FRAME')
+    expect(writes).toContain('\x1b[?1004h\x1b[?25l')
+    dispose()
+  })
+
+  // #13014 must survive the deferral: a pane that is only transiently
+  // unmeasurable gets its fit inside the retry budget, and that narrower fit
+  // would clip the captured frame — so the repaint must not fire for it.
+  it('keeps a too-wide alt frame withheld when a transiently unmeasurable pane later fits narrower', async () => {
+    let probes = 0
+    const measured = (): boolean => {
+      probes += 1
+      return probes > 3
+    }
+    const { writes, dispose } = await restoreAltFrameSnapshotForPaneGeometry({
+      frameMarker: 'NARROWED-ALT-FRAME',
+      proposeDimensions: () => (probes > 3 ? { cols: 64, rows: 40 } : null),
+      measureRect: () => (measured() ? { width: 400, height: 600 } : { width: 4, height: 3 })
+    })
+    expect(writes).not.toContain('NARROWED-ALT-FRAME')
+    expect(writes).toContain('preserved history')
+    expect(writes).toContain('\x1b[?1004h\x1b[?25l')
+    dispose()
+  })
+
+  // Why: the skip is a deferral. If the pane collapses under the fit floor
+  // between the replay and the post-replay fit, no fit and therefore no pulse
+  // repaint ever lands, so the withheld frame must be painted onto the grid the
+  // pane actually kept.
+  it('repaints a skipped alt frame when the post-replay fit never lands', async () => {
+    let collapsed = false
+    const { writes, dispose } = await restoreAltFrameSnapshotForPaneGeometry({
+      frameMarker: 'COLLAPSED-ALT-FRAME',
+      // The frame was withheld against a 64-col fit; then the divider clamps the pane to a sliver.
+      onWrite: (data) => {
+        collapsed ||= data === '\x1b[?1004h\x1b[?25l'
+      },
+      proposeDimensions: () => (collapsed ? { cols: 5, rows: 40 } : { cols: 64, rows: 40 })
+    })
+    expect(writes).toContain('preserved history')
+    expect(writes.indexOf('\x1b[?1004h\x1b[?25l')).toBeLessThan(
+      writes.indexOf('COLLAPSED-ALT-FRAME')
+    )
+    dispose()
+  })
+
   it('drains foreground output after a renderer-sourced hidden-backlog snapshot without seq', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('pty-id')
