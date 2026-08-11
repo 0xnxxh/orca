@@ -3678,6 +3678,28 @@ describe('shared agent-hook-listener', () => {
       expect(childTool?.payload.toolName).toBe('AskUserQuestion')
     })
 
+    it('keeps a child AskUserQuestion visible through its parallel sibling completion', () => {
+      const question = claudeEvent({
+        hook_event_name: 'PreToolUse',
+        agent_id: 'a1',
+        tool_use_id: 'question-1',
+        tool_name: 'AskUserQuestion',
+        tool_input: { questions: [{ question: 'Pick', options: ['a', 'b'] }] }
+      })
+
+      const siblingCompletion = claudeEvent({
+        hook_event_name: 'PostToolUse',
+        agent_id: 'a1',
+        tool_use_id: 'sibling-1',
+        tool_name: 'Bash',
+        tool_input: { command: 'sleep 5' }
+      })
+
+      expect(siblingCompletion?.payload.state).toBe('waiting')
+      expect(siblingCompletion?.payload.interactivePrompt).toBe(question?.payload.interactivePrompt)
+      expect(siblingCompletion?.payload.toolName).toBe('AskUserQuestion')
+    })
+
     it('preserves the interrupted flag across a gated working window', () => {
       claudeEvent({ hook_event_name: 'UserPromptSubmit', prompt: 'long job' })
       claudeEvent({
