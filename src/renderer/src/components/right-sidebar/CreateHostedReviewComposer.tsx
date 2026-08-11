@@ -50,6 +50,9 @@ export type CreateHostedReviewComposerProps = {
   setBody: (value: string) => void
   draft: boolean
   setDraft: (value: boolean) => void
+  stacked: boolean
+  setStacked: (value: boolean) => void
+  stackedCreationSupported: boolean
   baseQuery: string
   setBaseQuery: (value: string) => void
   baseResults: string[]
@@ -83,6 +86,9 @@ export function CreateHostedReviewComposer({
   setBody,
   draft,
   setDraft,
+  stacked,
+  setStacked,
+  stackedCreationSupported,
   baseQuery,
   setBaseQuery,
   baseResults,
@@ -229,6 +235,9 @@ export function CreateHostedReviewComposer({
           setBody={setBody}
           draft={draft}
           setDraft={setDraft}
+          stacked={stacked}
+          setStacked={setStacked}
+          showStackedMode={provider === 'github' && stackedCreationSupported}
           baseQuery={baseQuery}
           setBaseQuery={setBaseQuery}
           baseResults={baseResults}
@@ -266,6 +275,7 @@ export function CreateHostedReviewComposer({
                 isCreating,
                 pushBeforeCreate,
                 draft,
+                stacked,
                 shortLabel: copy.shortLabel
               })}
             </span>
@@ -335,15 +345,23 @@ function getCreateButtonLabel({
   isCreating,
   pushBeforeCreate,
   draft,
+  stacked,
   shortLabel
 }: {
   isCreating: boolean
   pushBeforeCreate: boolean
   draft: boolean
+  stacked: boolean
   shortLabel: string
 }): string {
   if (isCreating) {
     return translate('auto.components.right.sidebar.SourceControl.26511c22b4', 'Creating...')
+  }
+  if (pushBeforeCreate && stacked) {
+    return translate(
+      'auto.components.right.sidebar.CreateHostedReviewComposer.pushCreateStackedPr',
+      'Push & Create stacked PR'
+    )
   }
   if (pushBeforeCreate) {
     return translate(
@@ -351,6 +369,17 @@ function getCreateButtonLabel({
       'Push & Create {{value0}}',
       { value0: shortLabel }
     )
+  }
+  if (stacked) {
+    return draft
+      ? translate(
+          'auto.components.right.sidebar.CreateHostedReviewComposer.createDraftStackedPr',
+          'Create draft stacked PR'
+        )
+      : translate(
+          'auto.components.right.sidebar.CreateHostedReviewComposer.createStackedPr',
+          'Create stacked PR'
+        )
   }
   if (draft) {
     return translate(

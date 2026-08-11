@@ -10,13 +10,17 @@ type RenderPullRequestComposerOptions = {
   generating?: boolean
   generateDisabled?: boolean
   generateDisabledReason?: string
+  stacked?: boolean
+  stackedCreationSupported?: boolean
 }
 
 function renderPullRequestComposer({
   aiGenerationEnabled = true,
   generating = false,
   generateDisabled = false,
-  generateDisabledReason
+  generateDisabledReason,
+  stacked = false,
+  stackedCreationSupported = true
 }: RenderPullRequestComposerOptions = {}): string {
   const sourceControlInputs = {
     stagedCount: 1,
@@ -44,6 +48,9 @@ function renderPullRequestComposer({
         setBody={vi.fn()}
         draft={false}
         setDraft={vi.fn()}
+        stacked={stacked}
+        setStacked={vi.fn()}
+        stackedCreationSupported={stackedCreationSupported}
         baseQuery=""
         setBaseQuery={vi.fn()}
         baseResults={[]}
@@ -121,5 +128,22 @@ describe('CreateHostedReviewComposer generate tooltip', () => {
 
     expect(button).toContain('data-slot="tooltip-trigger"')
     expect(button).not.toContain('disabled=""')
+  })
+
+  it('shows the parent-child preview and stacked create action', () => {
+    const markup = renderPullRequestComposer({ stacked: true })
+
+    expect(markup).toContain('Stacked PR')
+    expect(markup).toContain('master')
+    expect(markup).toContain('branch-login-issue')
+    expect(markup).toContain('The base branch must have an open PR and be the top of its stack.')
+    expect(markup).toContain('Create stacked PR')
+  })
+
+  it('hides stacked creation when the executing host lacks the capability', () => {
+    const markup = renderPullRequestComposer({ stackedCreationSupported: false })
+
+    expect(markup).not.toContain('Stacked PR')
+    expect(markup).not.toContain('Regular PR')
   })
 })

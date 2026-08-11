@@ -234,6 +234,7 @@ const {
   invalidateAuthorizedRootsCacheMock,
   prepareLocalWorktreeRootForRepoMock,
   createHostedReviewMock,
+  createStackedHostedReviewMock,
   getHostedReviewCreationEligibilityMock,
   getHostedReviewForBranchMock,
   getPRForBranchMock,
@@ -341,6 +342,7 @@ const {
     invalidateAuthorizedRootsCacheMock: vi.fn(),
     prepareLocalWorktreeRootForRepoMock: vi.fn(),
     createHostedReviewMock: vi.fn(),
+    createStackedHostedReviewMock: vi.fn(),
     getHostedReviewCreationEligibilityMock: vi.fn(),
     getHostedReviewForBranchMock: vi.fn(),
     getPRForBranchMock: vi.fn().mockResolvedValue(null),
@@ -511,6 +513,10 @@ vi.mock('../worktree-root-preparation', () => ({
 vi.mock('../source-control/hosted-review-creation', () => ({
   createHostedReview: createHostedReviewMock,
   getHostedReviewCreationEligibility: getHostedReviewCreationEligibilityMock
+}))
+
+vi.mock('../source-control/stacked-hosted-review-creation', () => ({
+  createStackedHostedReview: createStackedHostedReviewMock
 }))
 
 vi.mock('../source-control/hosted-review', () => ({
@@ -731,6 +737,14 @@ function resetRuntimeTestMocks(): void {
     provider: 'github',
     number: 1,
     url: 'https://example.com/pull/1'
+  })
+  createStackedHostedReviewMock.mockReset()
+  createStackedHostedReviewMock.mockResolvedValue({
+    ok: true,
+    number: 2,
+    url: 'https://example.com/pull/2',
+    stackNumber: 10,
+    parentReview: { number: 1, url: 'https://example.com/pull/1' }
   })
   getHostedReviewCreationEligibilityMock.mockReset()
   getHostedReviewCreationEligibilityMock.mockResolvedValue({
@@ -6981,6 +6995,15 @@ describe('OrcaRuntimeService', () => {
       body: '',
       draft: false
     })
+    await runtime.createStackedHostedReview({
+      repoSelector: `id:${TEST_REPO_ID}`,
+      provider: 'github',
+      base: 'stack/parent',
+      head: 'feature/ssh',
+      title: 'Feature SSH',
+      body: '',
+      draft: false
+    })
 
     expect(getHostedReviewCreationEligibilityMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -6997,6 +7020,16 @@ describe('OrcaRuntimeService', () => {
         title: 'Feature SSH'
       }),
       'ssh-1'
+    )
+    expect(createStackedHostedReviewMock).toHaveBeenCalledWith(
+      '/remote/repo',
+      expect.objectContaining({
+        provider: 'github',
+        base: 'stack/parent',
+        head: 'feature/ssh'
+      }),
+      'ssh-1',
+      {}
     )
   })
 
@@ -7060,6 +7093,15 @@ describe('OrcaRuntimeService', () => {
       body: '',
       draft: false
     })
+    await runtime.createStackedHostedReview({
+      repoSelector: `id:${TEST_REPO_ID}`,
+      provider: 'github',
+      base: 'stack/parent',
+      head: 'feature/wsl',
+      title: 'Feature WSL',
+      body: '',
+      draft: false
+    })
 
     expect(getHostedReviewCreationEligibilityMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -7084,6 +7126,16 @@ describe('OrcaRuntimeService', () => {
         provider: 'github',
         head: 'feature/wsl',
         title: 'Feature WSL'
+      }),
+      null,
+      { localGitExecOptions: { wslDistro: 'Ubuntu' } }
+    )
+    expect(createStackedHostedReviewMock).toHaveBeenCalledWith(
+      TEST_REPO_PATH,
+      expect.objectContaining({
+        provider: 'github',
+        base: 'stack/parent',
+        head: 'feature/wsl'
       }),
       null,
       { localGitExecOptions: { wslDistro: 'Ubuntu' } }

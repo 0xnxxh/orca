@@ -1,7 +1,17 @@
-import { ArrowDownUp, Check, ChevronDown, Sparkles, TriangleAlert } from 'lucide-react'
+import {
+  ArrowDownUp,
+  Check,
+  ChevronDown,
+  CornerDownRight,
+  GitPullRequestArrow,
+  Layers3,
+  Sparkles,
+  TriangleAlert
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
 import type { LocalizedHostedReviewCopy } from '@/i18n/hosted-review-localized-copy'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { stripBaseRef } from './useCreatePullRequestDialogFields'
 
 type CreateHostedReviewComposerFieldsProps = {
@@ -14,6 +24,9 @@ type CreateHostedReviewComposerFieldsProps = {
   setBody: (value: string) => void
   draft: boolean
   setDraft: (value: boolean) => void
+  stacked: boolean
+  setStacked: (value: boolean) => void
+  showStackedMode: boolean
   baseQuery: string
   setBaseQuery: (value: string) => void
   baseResults: string[]
@@ -38,6 +51,9 @@ export function CreateHostedReviewComposerFields({
   setBody,
   draft,
   setDraft,
+  stacked,
+  setStacked,
+  showStackedMode,
   baseQuery,
   setBaseQuery,
   baseResults,
@@ -74,6 +90,41 @@ export function CreateHostedReviewComposerFields({
             translate('auto.components.right.sidebar.SourceControl.7a09d7f9d2', 'base')}
         </span>
       </div>
+
+      {showStackedMode ? (
+        <ToggleGroup
+          type="single"
+          value={stacked ? 'stacked' : 'regular'}
+          onValueChange={(value) => {
+            if (value) {
+              setStacked(value === 'stacked')
+            }
+          }}
+          variant="outline"
+          size="sm"
+          disabled={fieldsLocked}
+          aria-label={translate(
+            'auto.components.right.sidebar.CreateHostedReviewComposer.reviewType',
+            'Pull request type'
+          )}
+          className="w-full"
+        >
+          <ToggleGroupItem value="regular" className="h-7 flex-1 text-[11px]">
+            <GitPullRequestArrow className="size-3" />
+            {translate(
+              'auto.components.right.sidebar.CreateHostedReviewComposer.regularPr',
+              'Regular PR'
+            )}
+          </ToggleGroupItem>
+          <ToggleGroupItem value="stacked" className="h-7 flex-1 text-[11px]">
+            <Layers3 className="size-3" />
+            {translate(
+              'auto.components.right.sidebar.CreateHostedReviewComposer.stackedPr',
+              'Stacked PR'
+            )}
+          </ToggleGroupItem>
+        </ToggleGroup>
+      ) : null}
 
       <div className="relative space-y-2">
         <input
@@ -158,6 +209,31 @@ export function CreateHostedReviewComposerFields({
           />
         </div>
       </div>
+
+      {showStackedMode && stacked ? (
+        <div className="rounded-md border border-border bg-muted/30 px-2 py-1.5 text-[11px]">
+          <div className="flex min-w-0 items-center gap-1.5 text-foreground">
+            <GitPullRequestArrow className="size-3 shrink-0 text-muted-foreground" />
+            <span className="truncate font-mono">{normalizedBase}</span>
+          </div>
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 pl-2 text-foreground">
+            <CornerDownRight className="size-3 shrink-0 text-muted-foreground" />
+            <span className="truncate font-mono">{strippedBranch}</span>
+            <span className="shrink-0 text-muted-foreground">
+              {translate(
+                'auto.components.right.sidebar.CreateHostedReviewComposer.newPr',
+                'new PR'
+              )}
+            </span>
+          </div>
+          <p className="mt-1.5 text-muted-foreground">
+            {translate(
+              'auto.components.right.sidebar.CreateHostedReviewComposer.stackRequirement',
+              'The base branch must have an open PR and be the top of its stack.'
+            )}
+          </p>
+        </div>
+      ) : null}
 
       <label
         className={cn(

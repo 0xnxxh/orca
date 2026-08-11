@@ -474,6 +474,7 @@ export default function ChecksPanel(): React.JSX.Element {
     (s) => s.getHostedReviewCreationEligibility
   )
   const createHostedReview = useAppStore((s) => s.createHostedReview)
+  const createStackedHostedReview = useAppStore((s) => s.createStackedHostedReview)
   const enqueueGitHubPRRefresh = useAppStore((s) => s.enqueueGitHubPRRefresh)
   const conflictOperation = useAppStore((s) =>
     activeWorktreeId ? (s.gitConflictOperationByWorktree[activeWorktreeId] ?? 'unknown') : 'unknown'
@@ -1318,6 +1319,9 @@ export default function ChecksPanel(): React.JSX.Element {
     setBody: setPrBody,
     draft: prDraft,
     setDraft: setPrDraft,
+    stacked: prStacked,
+    setStacked: setPrStacked,
+    stackedCreationSupported: prStackedCreationSupported,
     baseQuery: prBaseQuery,
     setBaseQuery: setPrBaseQuery,
     baseResults: prBaseResults,
@@ -4029,7 +4033,7 @@ export default function ChecksPanel(): React.JSX.Element {
         }
         pushed = true
       }
-      const result = await createHostedReview(repo.path, {
+      const createInput = {
         repoId: repo.id,
         provider: hostedReviewCreateProvider,
         base,
@@ -4039,7 +4043,10 @@ export default function ChecksPanel(): React.JSX.Element {
         draft: prDraft,
         worktreePath,
         useTemplate: prCreationDefaults.useTemplate
-      })
+      }
+      const result = prStacked
+        ? await createStackedHostedReview(repo.path, createInput)
+        : await createHostedReview(repo.path, createInput)
       if (!isCurrentCreateRequest()) {
         return
       }
@@ -4060,7 +4067,7 @@ export default function ChecksPanel(): React.JSX.Element {
         }
         return
       }
-      if (result.existingReview?.url) {
+      if ('existingReview' in result && result.existingReview?.url) {
         const number = result.existingReview.number
         toast.success(
           number
@@ -4128,6 +4135,7 @@ export default function ChecksPanel(): React.JSX.Element {
     branch,
     createComposerOpen,
     createHostedReview,
+    createStackedHostedReview,
     createPrPushFirst,
     handlePullRequestCreated,
     hostedReviewCreateCopy.providerName,
@@ -4143,6 +4151,7 @@ export default function ChecksPanel(): React.JSX.Element {
     prCreationDefaults.useTemplate,
     prDraft,
     prGenerating,
+    prStacked,
     prTitle,
     pushBeforeCreatePullRequest,
     repo,
@@ -4300,6 +4309,9 @@ export default function ChecksPanel(): React.JSX.Element {
               setBody={setPrBody}
               draft={prDraft}
               setDraft={setPrDraft}
+              stacked={prStacked}
+              setStacked={setPrStacked}
+              stackedCreationSupported={prStackedCreationSupported}
               baseQuery={prBaseQuery}
               setBaseQuery={setPrBaseQuery}
               baseResults={prBaseResults}

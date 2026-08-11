@@ -10647,7 +10647,15 @@
             "db9cee18f7": "Create {{value0}}"
           },
           "CreateHostedReviewComposer": {
-            "741ff8a0d2": "Push & Create {{value0}}"
+            "741ff8a0d2": "Push & Create {{value0}}",
+            "pushCreateStackedPr": "Push & Create stacked PR",
+            "createDraftStackedPr": "Create draft stacked PR",
+            "createStackedPr": "Create stacked PR",
+            "reviewType": "Pull request type",
+            "regularPr": "Regular PR",
+            "stackedPr": "Stacked PR",
+            "newPr": "new PR",
+            "stackRequirement": "The base branch must have an open PR and be the top of its stack."
           },
           "CreatePullRequestGenerateButton": {
             "4012459f8a": "Generate with AI",

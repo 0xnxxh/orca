@@ -910,6 +910,7 @@ function SourceControlInner(): React.JSX.Element {
     (s) => s.getHostedReviewCreationEligibility
   )
   const createHostedReview = useAppStore((s) => s.createHostedReview)
+  const createStackedHostedReview = useAppStore((s) => s.createStackedHostedReview)
   const updateWorktreeMeta = useAppStore((s) => s.updateWorktreeMeta)
   const fetchPRForBranch = useAppStore((s) => s.fetchPRForBranch)
   const enqueueGitHubPRRefresh = useAppStore((s) => s.enqueueGitHubPRRefresh)
@@ -3020,6 +3021,9 @@ function SourceControlInner(): React.JSX.Element {
     setBody: setPrBody,
     draft: prDraft,
     setDraft: setPrDraft,
+    stacked: prStacked,
+    setStacked: setPrStacked,
+    stackedCreationSupported: prStackedCreationSupported,
     baseQuery: prBaseQuery,
     setBaseQuery: setPrBaseQuery,
     baseResults: prBaseResults,
@@ -3335,7 +3339,7 @@ function SourceControlInner(): React.JSX.Element {
     setCreatePrInFlightByWorktree((prev) => ({ ...prev, [activeWorktreeId]: true }))
     setCreatePrIntentNoticeForWorktree(activeWorktreeId, null)
     try {
-      const result = await createHostedReview(activeRepo.path, {
+      const createInput = {
         repoId: activeRepo.id,
         provider: hostedReviewCreateProvider,
         base,
@@ -3345,7 +3349,10 @@ function SourceControlInner(): React.JSX.Element {
         draft: prDraft,
         worktreePath,
         useTemplate: resolvedPrCreationDefaults.useTemplate
-      })
+      }
+      const result = prStacked
+        ? await createStackedHostedReview(activeRepo.path, createInput)
+        : await createHostedReview(activeRepo.path, createInput)
 
       if (result.ok) {
         setCreatePrIntentNoticeForWorktree(activeWorktreeId, null)
@@ -3360,7 +3367,7 @@ function SourceControlInner(): React.JSX.Element {
         return
       }
 
-      if (result.existingReview?.url) {
+      if ('existingReview' in result && result.existingReview?.url) {
         const number = result.existingReview.number
         toast.success(
           number
@@ -3421,6 +3428,7 @@ function SourceControlInner(): React.JSX.Element {
     activeWorktreeId,
     branchName,
     createHostedReview,
+    createStackedHostedReview,
     handlePullRequestCreated,
     hostedReviewCreation,
     hostedReviewCreateCopy.providerName,
@@ -3431,6 +3439,7 @@ function SourceControlInner(): React.JSX.Element {
     prBody,
     prDraft,
     prGenerating,
+    prStacked,
     prTitle,
     resolvedPrCreationDefaults.openAfterCreate,
     resolvedPrCreationDefaults.useTemplate,
@@ -5827,6 +5836,9 @@ function SourceControlInner(): React.JSX.Element {
                 setBody={setPrBody}
                 draft={prDraft}
                 setDraft={setPrDraft}
+                stacked={prStacked}
+                setStacked={setPrStacked}
+                stackedCreationSupported={prStackedCreationSupported}
                 baseQuery={prBaseQuery}
                 setBaseQuery={setPrBaseQuery}
                 baseResults={prBaseResults}
