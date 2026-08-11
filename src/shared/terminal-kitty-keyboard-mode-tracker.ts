@@ -1,3 +1,5 @@
+import { parseTerminalKittyKeyboardFlags } from './terminal-kitty-keyboard-flags'
+
 // Why: PTY/SSH chunks can split an escape sequence before its final byte.
 // Keep parser state far beyond normal sequence lengths while bounding memory.
 const KITTY_SCAN_TAIL_LIMIT = 4096
@@ -5,6 +7,9 @@ const KITTY_SCAN_TAIL_LIMIT = 4096
 // Why: mirrors xterm's InputHandler cap so a runaway TUI cannot grow the
 // mirrored stacks unboundedly while the renderer's own stacks stay at 16.
 const KITTY_STACK_LIMIT = 16
+
+/** A pushed flags slot plus whether the value it will restore was ever proven. */
+type KittyStackFrame = { flags: number; known: boolean }
 
 /**
  * Mirrors the kitty keyboard protocol flag state (CSI > u push, CSI < u pop,
@@ -27,14 +32,35 @@ export class TerminalKittyKeyboardModeTracker {
   private currentFlags = 0
   private mainFlags = 0
   private altFlags = 0
-  private mainStack: number[] = []
-  private altStack: number[] = []
+  private currentKnown = true
+  private mainKnown = true
+  private altKnown = true
+  private mainStack: KittyStackFrame[] = []
+  private altStack: KittyStackFrame[] = []
+  /** False once a snapshot replaced state whose push history was never observed. */
+  private mainStackComplete = true
+  private altStackComplete = true
   private alternateScreenActive = false
   private alternateScreenSwitchObserved = false
 
-  /** Current effective kitty keyboard flags (0 = protocol inactive). */
+  /**
+   * Current effective kitty keyboard flags. `0` doubles as the conservative
+   * input fallback while the state is unknown — read `snapshotFlags` instead
+   * when the caller must distinguish "proven inactive" from "unproven".
+   */
   get flags(): number {
     return this.currentFlags
+  }
+
+  /**
+   * The active screen's flags only while this tracker can PROVE them. Absent
+   * after a snapshot whose owner published no Kitty metadata, and after any
+   * transition that depends on push history the snapshot could not carry.
+   * Serializers publish this, never `flags`, so an old host's silence is never
+   * republished downstream as a proven zero.
+   */
+  get snapshotFlags(): number | undefined {
+    return this.currentKnown ? this.currentFlags : undefined
   }
 
   get isAlternateScreen(): boolean {
@@ -45,15 +71,52 @@ export class TerminalKittyKeyboardModeTracker {
     return this.alternateScreenSwitchObserved
   }
 
+  /** Full reset to a fresh PTY: known-inactive on both screens. */
   reset(): void {
     this.scanTail = ''
     this.currentFlags = 0
     this.mainFlags = 0
     this.altFlags = 0
+    this.currentKnown = true
+    this.mainKnown = true
+    this.altKnown = true
     this.mainStack = []
     this.altStack = []
+    this.mainStackComplete = true
+    this.altStackComplete = true
     this.alternateScreenActive = false
     this.alternateScreenSwitchObserved = false
+  }
+
+  /**
+   * Start applying a replacement or historical snapshot. Production snapshot
+   * ANSI deliberately omits kitty pushes, so scanning it can never recover a
+   * negotiation that predates the capture: keep `0` as the input fallback but
+   * mark both screens and their stacks unproven until `restoreSnapshotFlags`
+   * or explicit application output proves them again.
+   */
+  resetForSnapshot(): void {
+    this.reset()
+    this.currentKnown = false
+    this.mainKnown = false
+    this.altKnown = false
+    this.mainStackComplete = false
+    this.altStackComplete = false
+  }
+
+  /**
+   * Adopt the effective flags the snapshot owner proved at the snapshot's own
+   * sequence boundary. Only the ACTIVE screen becomes known — the inactive
+   * screen's slot and both push stacks stay unproven because current snapshot
+   * authorities expose neither.
+   */
+  restoreSnapshotFlags(flags: number): void {
+    const parsed = parseTerminalKittyKeyboardFlags(flags)
+    if (parsed === undefined) {
+      return
+    }
+    this.currentFlags = parsed
+    this.currentKnown = true
   }
 
   scan(data: string): void {
@@ -109,8 +172,13 @@ export class TerminalKittyKeyboardModeTracker {
     this.currentFlags = 0
     this.mainFlags = 0
     this.altFlags = 0
+    this.currentKnown = true
+    this.mainKnown = true
+    this.altKnown = true
     this.mainStack = []
     this.altStack = []
+    this.mainStackComplete = true
+    this.altStackComplete = true
   }
 
   private applyScreenSwitch(params: string, enabled: boolean): void {
@@ -123,13 +191,19 @@ export class TerminalKittyKeyboardModeTracker {
       // Why: xterm swaps the current flags with the inactive screen's slot on
       // every 47/1047/1049 transition, without an already-active guard —
       // mirror it exactly so this state matches what the renderer encodes.
+      // Why the known bit rides the numeric slot: a screen whose flags were
+      // never proven must not become proven just by being swapped in.
       if (enabled) {
         this.mainFlags = this.currentFlags
+        this.mainKnown = this.currentKnown
         this.currentFlags = this.altFlags
+        this.currentKnown = this.altKnown
         this.alternateScreenActive = true
       } else {
         this.altFlags = this.currentFlags
+        this.altKnown = this.currentKnown
         this.currentFlags = this.mainFlags
+        this.currentKnown = this.mainKnown
         this.alternateScreenActive = false
       }
     }
@@ -143,26 +217,47 @@ export class TerminalKittyKeyboardModeTracker {
         if (stack.length >= KITTY_STACK_LIMIT) {
           stack.shift()
         }
-        stack.push(this.currentFlags)
+        stack.push({ flags: this.currentFlags, known: this.currentKnown })
       }
+      // A push states the new effective flags absolutely, so they are proven
+      // even when the value it displaced was not.
       this.currentFlags = parsed[0] || 0
+      this.currentKnown = true
       return
     }
     if (prefix === '<') {
       const count = Math.max(1, parsed[0] || 1)
-      for (let i = 0; i < count && stack.length > 0; i++) {
-        this.currentFlags = stack.pop() as number
+      let underflowed = false
+      for (let i = 0; i < count; i++) {
+        const frame = stack.pop()
+        if (!frame) {
+          underflowed = true
+          break
+        }
+        this.currentFlags = frame.flags
+        this.currentKnown = frame.known
       }
       if (stack.length === 0) {
         this.currentFlags = 0
+        if (underflowed) {
+          // Why: xterm zeroes an exhausted stack, but a pop that reached past
+          // history the snapshot never carried proves nothing about that older
+          // frame — stay unknown instead of manufacturing a known zero.
+          this.currentKnown = this.alternateScreenActive
+            ? this.altStackComplete
+            : this.mainStackComplete
+        }
       }
       return
     }
     const flags = parsed[0] || 0
     const mode = parsed.length > 1 && parsed[1] ? parsed[1] : 1
     if (mode === 1) {
+      // An absolute set re-proves the active screen regardless of its baseline.
       this.currentFlags = flags
+      this.currentKnown = true
     } else if (mode === 2) {
+      // Relative updates only preserve knowledge; they cannot create it.
       this.currentFlags |= flags
     } else if (mode === 3) {
       this.currentFlags &= ~flags

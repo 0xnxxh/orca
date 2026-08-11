@@ -1322,6 +1322,23 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       })
     })
 
+    // STA-3887: a proven `0` and an absent field are different facts. Dropping
+    // the zero left consumers unable to tell "the app negotiated nothing" from
+    // "this source could not say", which is what makes Preview guess wrong.
+    it('publishes proven kitty flags including a known zero', async () => {
+      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+      lastSubprocess._simulateData('plain output\r\n')
+
+      await expect(adapter.getBufferSnapshot(id)).resolves.toMatchObject({
+        kittyKeyboardFlags: 0
+      })
+
+      lastSubprocess._simulateData('\x1b[>8u')
+      await expect(adapter.getBufferSnapshot(id)).resolves.toMatchObject({
+        kittyKeyboardFlags: 8
+      })
+    })
+
     it('exposes live state separately from the visible frame', async () => {
       const { id } = await adapter.spawn({ cols: 80, rows: 24 })
       lastSubprocess._simulateData('\x1b[?1049h\x1b[?1004h\x1b[?25lframe')

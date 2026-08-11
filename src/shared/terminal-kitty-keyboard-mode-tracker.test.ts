@@ -147,4 +147,100 @@ describe('TerminalKittyKeyboardModeTracker', () => {
     ranAndExited.scanReplay('\x1b[>1uoutput\x1b[<u')
     expect(ranAndExited.flags).toBe(0)
   })
+
+  // STA-3887: `flags` is the conservative input fallback and `snapshotFlags` is
+  // the provable fact. Collapsing them lets a snapshot that carried no kitty
+  // metadata be republished downstream as "the host proved kitty is inactive",
+  // which is exactly how a Preview on a bit-3 TUI ends up sending legacy text.
+  describe('snapshot provenance', () => {
+    it("separates a fresh PTY's known zero from a snapshot's unproven zero", () => {
+      const fresh = new TerminalKittyKeyboardModeTracker()
+      expect(fresh.flags).toBe(0)
+      expect(fresh.snapshotFlags).toBe(0)
+
+      fresh.resetForSnapshot()
+      expect(fresh.flags).toBe(0)
+      expect(fresh.snapshotFlags).toBeUndefined()
+    })
+
+    it('restores known 0 and known 8 onto the active screen', () => {
+      const inactive = new TerminalKittyKeyboardModeTracker()
+      inactive.resetForSnapshot()
+      inactive.restoreSnapshotFlags(0)
+      expect(inactive.snapshotFlags).toBe(0)
+
+      const negotiated = new TerminalKittyKeyboardModeTracker()
+      negotiated.resetForSnapshot()
+      negotiated.restoreSnapshotFlags(8)
+      expect(negotiated.flags).toBe(8)
+      expect(negotiated.snapshotFlags).toBe(8)
+    })
+
+    it('ignores values that are not non-negative safe integers', () => {
+      const tracker = new TerminalKittyKeyboardModeTracker()
+      tracker.resetForSnapshot()
+      for (const invalid of [-1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 2]) {
+        tracker.restoreSnapshotFlags(invalid)
+        expect(tracker.snapshotFlags).toBeUndefined()
+      }
+    })
+
+    it('re-proves state on an absolute set but not on a relative update', () => {
+      const relative = new TerminalKittyKeyboardModeTracker()
+      relative.resetForSnapshot()
+      relative.scan('\x1b[=8;2u')
+      expect(relative.flags).toBe(8)
+      // An OR against an unproven baseline cannot prove the result.
+      expect(relative.snapshotFlags).toBeUndefined()
+
+      const absolute = new TerminalKittyKeyboardModeTracker()
+      absolute.resetForSnapshot()
+      absolute.scan('\x1b[=8;1u')
+      expect(absolute.snapshotFlags).toBe(8)
+    })
+
+    it('degrades to unknown on a pop that reaches past omitted push history', () => {
+      const tracker = new TerminalKittyKeyboardModeTracker()
+      tracker.resetForSnapshot()
+      tracker.restoreSnapshotFlags(8)
+      tracker.scan('\x1b[<u')
+      // The frame under the restored one was never captured, so zero is a guess.
+      expect(tracker.flags).toBe(0)
+      expect(tracker.snapshotFlags).toBeUndefined()
+    })
+
+    it('keeps a live push/pop pair proven when its baseline was proven', () => {
+      const tracker = new TerminalKittyKeyboardModeTracker()
+      tracker.resetForSnapshot()
+      tracker.restoreSnapshotFlags(0)
+      tracker.scan('\x1b[>8u')
+      expect(tracker.snapshotFlags).toBe(8)
+      tracker.scan('\x1b[<u')
+      expect(tracker.snapshotFlags).toBe(0)
+    })
+
+    it('moves the known bit with the numeric slot across screen switches', () => {
+      const tracker = new TerminalKittyKeyboardModeTracker()
+      tracker.resetForSnapshot()
+      tracker.restoreSnapshotFlags(8)
+      // The alternate screen's saved slot was never captured.
+      tracker.scan('\x1b[?1049h')
+      expect(tracker.snapshotFlags).toBeUndefined()
+      tracker.scan('\x1b[?1049l')
+      expect(tracker.snapshotFlags).toBe(8)
+    })
+
+    it('re-proves everything on RIS and DECSTR', () => {
+      const ris = new TerminalKittyKeyboardModeTracker()
+      ris.resetForSnapshot()
+      ris.scan('\x1bc')
+      expect(ris.snapshotFlags).toBe(0)
+
+      const softReset = new TerminalKittyKeyboardModeTracker()
+      softReset.resetForSnapshot()
+      softReset.restoreSnapshotFlags(8)
+      softReset.scan('\x1b[!p')
+      expect(softReset.snapshotFlags).toBe(0)
+    })
+  })
 })

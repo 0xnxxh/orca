@@ -180,10 +180,10 @@ describe('installTerminalImeNativeTextForwarder', () => {
       )
       dispatchInsertText(textarea, 'á')
 
-      // The keypress is what must be suppressed (it would double-send the ASCII 'a').
-      // The keyup is not: 'á' reached the pty, so the app is owed the matching release.
+      // The keypress must be suppressed (it would double-send the ASCII 'a'), and so must the
+      // keyup — the forwarder owns the whole claimed lifecycle and emits any owed release itself.
       expect(forwarder.claimKeyEvent(keyEvent({ type: 'keyup', key: 'a', code: 'KeyA' }))).toBe(
-        false
+        true
       )
       expect(sendInput).toHaveBeenCalledExactlyOnceWith('á')
     })
@@ -273,13 +273,15 @@ describe('installTerminalImeNativeTextForwarder', () => {
     })
 
     // An app that negotiated kitty `report_event_types` expects a release for every press it
-    // received. The claim now takes every printable keydown, so swallowing the keyup
-    // unconditionally would drop the release for ordinary typing and leave keys stuck down.
-    it('lets the keyup through once the press has reached the pty, so its release still fires', () => {
+    // received, but xterm's own kitty state is defensively reset while the application tracker
+    // stays active — so the forwarder keeps the keyup and encodes the release from the flags it
+    // read at commit time rather than delegating either decision to xterm.
+    it('keeps the keyup inside the forwarder once the press has reached the pty', () => {
       const { forwarder, sendInput } = install()
       expect(forwarder.claimKeyEvent(keyEvent({ key: ',' }))).toBe(true)
       dispatchInsertText(textarea, '，')
-      expect(forwarder.claimKeyEvent(keyEvent({ type: 'keyup', key: ',' }))).toBe(false)
+      expect(forwarder.claimKeyEvent(keyEvent({ type: 'keyup', key: ',' }))).toBe(true)
+      // Flags default to 0 here: no event types negotiated, so no release is owed.
       expect(sendInput).toHaveBeenCalledExactlyOnceWith('，')
     })
 
