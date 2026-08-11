@@ -5,6 +5,7 @@ import type { FolderWorkspace, ProjectGroup, Repo, Worktree } from '../../../../
 import { addHostSectionRows } from './host-section-rows'
 import { buildRows, type Row } from './worktree-list-groups'
 import {
+  buildFolderPathStatusRepoMembershipKey,
   filterFolderWorkspacesForVisibleHosts,
   filterProjectGroupsForVisibleHosts,
   getFolderPathStatusRouteOptionsForRows,
@@ -140,6 +141,35 @@ function folderWorkspace(overrides: Partial<FolderWorkspace> = {}): FolderWorksp
 }
 
 describe('WorktreeList host filtering ownership', () => {
+  it('tracks each same-id repo owner in the folder path-status refresh key', () => {
+    type MembershipRepo = Parameters<typeof buildFolderPathStatusRepoMembershipKey>[0][number]
+    const local: MembershipRepo = {
+      id: 'same:repo',
+      path: '/local:repo',
+      projectGroupId: 'group:local',
+      connectionId: null,
+      executionHostId: 'local'
+    }
+    const runtime: MembershipRepo = {
+      id: 'same:repo',
+      path: '/runtime:repo',
+      projectGroupId: 'group:runtime',
+      connectionId: null,
+      executionHostId: 'runtime:env:1'
+    }
+    const before = buildFolderPathStatusRepoMembershipKey([local, runtime])
+    const after = buildFolderPathStatusRepoMembershipKey([
+      { ...local, projectGroupId: 'group:moved' },
+      runtime
+    ])
+
+    expect(after).not.toBe(before)
+    expect(JSON.parse(before)).toEqual([
+      ['local', 'same:repo', '/local:repo', 'group:local', ''],
+      ['runtime:env:1', 'same:repo', '/runtime:repo', 'group:runtime', '']
+    ])
+  })
+
   it('uses runtime execution host stamps before SSH/default fallbacks for project groups', () => {
     expect(
       getProjectGroupExecutionHostIdForRows(

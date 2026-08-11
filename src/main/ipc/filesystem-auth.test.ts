@@ -298,6 +298,37 @@ describe('filesystem-auth path containment', () => {
     }
   })
 
+  it('keeps connection-free local folders authorized beside legacy SSH folders', () => {
+    const localPath = resolve('/explicit-local-mixed-folder/local')
+    const sshPath = resolve('/explicit-local-mixed-folder/ssh')
+    const projectGroup = makeProjectGroup({
+      parentPath: localPath,
+      connectionId: undefined,
+      executionHostId: 'local'
+    })
+    const store = makeStore([], {
+      projectGroups: [projectGroup],
+      folderWorkspaces: [
+        makeFolderWorkspace({
+          id: 'local-folder',
+          folderPath: localPath,
+          projectGroupId: projectGroup.id,
+          connectionId: undefined,
+          executionHostId: undefined
+        }),
+        makeFolderWorkspace({
+          id: 'ssh-folder',
+          folderPath: sshPath,
+          projectGroupId: projectGroup.id,
+          connectionId: 'ssh-1'
+        })
+      ]
+    })
+
+    expect(isPathAllowed(localPath, store)).toBe(true)
+    expect(isPathAllowed(sshPath, store)).toBe(false)
+  })
+
   it('does not authorize SSH-only folder-backed project group roots as local paths', async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), 'orca-auth-remote-project-group-'))
     try {

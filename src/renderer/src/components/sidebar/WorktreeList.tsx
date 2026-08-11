@@ -322,6 +322,7 @@ import {
 import {
   filterFolderWorkspacesForVisibleHosts,
   filterProjectGroupsForVisibleHosts,
+  buildFolderPathStatusRepoMembershipKey,
   getFolderPathStatusRouteOptionsForRows,
   getVisibleSidebarHostIdSet
 } from './worktree-list-host-filtering'
@@ -731,6 +732,7 @@ type VirtualizedWorktreeViewportProps = {
   workspaceLineageByChildKey: Record<string, WorkspaceLineage>
   // Full canonical repo-id order; must include hidden repos or a reorder silently drops them.
   allRepoIds: string[]
+  folderPathStatusRepoMembershipKey: string
   onReorderHostSections: (orderedHostIds: ExecutionHostId[]) => void
   onHostDragActiveChange: (active: boolean) => void
   prCache: AppState['prCache'] | null
@@ -1464,6 +1466,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   worktreeLineageById,
   workspaceLineageByChildKey,
   allRepoIds,
+  folderPathStatusRepoMembershipKey,
   onReorderHostSections,
   onHostDragActiveChange,
   prCache,
@@ -2022,16 +2025,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       getFreshFolderWorkspacePathStatus: s.getFreshFolderWorkspacePathStatus,
       activeRuntimeEnvironmentId: s.settings?.activeRuntimeEnvironmentId ?? null
     }))
-  )
-  const folderPathStatusRepoMembershipKey = useMemo(
-    () =>
-      allRepoIds
-        .map((repoId) => {
-          const repo = repoMap.get(repoId)
-          return `${repoId}:${repo?.path ?? ''}:${repo?.projectGroupId ?? ''}:${repo?.connectionId ?? ''}`
-        })
-        .join('\0'),
-    [allRepoIds, repoMap]
   )
   const folderPathStatusSshConnectionKey = useMemo(
     () =>
@@ -5936,6 +5929,10 @@ const WorktreeList = React.memo(function WorktreeList({
     })
   }, [filterRepoIds, groupBy, visibleReposForRows, visibleWorktrees, worktreesByRepo])
   const allRepoIds = useMemo(() => repos.map((r) => r.id), [repos])
+  const folderPathStatusRepoMembershipKey = useMemo(
+    () => buildFolderPathStatusRepoMembershipKey(repos),
+    [repos]
+  )
 
   // Why: subscribe on a flat key array (useShallow) so progress ticks don't rebuild the whole row model.
   // Split on first space — creationId is a UUID (no space) so a space-containing repoId stays intact.
@@ -7132,6 +7129,7 @@ const WorktreeList = React.memo(function WorktreeList({
         worktreeLineageById={worktreeLineageById}
         workspaceLineageByChildKey={workspaceLineageByChildKey}
         allRepoIds={allRepoIds}
+        folderPathStatusRepoMembershipKey={folderPathStatusRepoMembershipKey}
         onReorderHostSections={handleReorderHostSections}
         onHostDragActiveChange={setHostDragActive}
         prCache={prCache}

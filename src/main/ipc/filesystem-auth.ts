@@ -171,14 +171,16 @@ function buildFolderAuthIndex(
     }
   }
   for (const workspace of folderWorkspaces) {
-    if (
-      workspace.connectionId === undefined &&
-      !normalizeExecutionHostId(workspace.executionHostId)
-    ) {
-      continue
-    }
     const group = resolveFolderWorkspaceProjectGroupWithLegacySsh(projectGroupIndex, workspace)
     if (!group) {
+      continue
+    }
+    if (
+      workspace.connectionId === undefined &&
+      !normalizeExecutionHostId(workspace.executionHostId) &&
+      group.connectionId === undefined &&
+      !normalizeExecutionHostId(group.executionHostId)
+    ) {
       continue
     }
     const ownerHostId = resolveFolderWorkspaceCatalogOwnerHostIdFromIndex(

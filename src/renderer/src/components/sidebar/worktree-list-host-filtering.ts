@@ -1,5 +1,6 @@
 import {
   ALL_EXECUTION_HOSTS_SCOPE,
+  getRepoExecutionHostId,
   normalizeExecutionHostId,
   parseExecutionHostId,
   toSshExecutionHostId,
@@ -7,7 +8,7 @@ import {
   type ExecutionHostScope
 } from '../../../../shared/execution-host'
 import type { FolderWorkspacePathStatusRequest } from '../../../../shared/folder-workspace-path-status'
-import type { FolderWorkspace, ProjectGroup } from '../../../../shared/types'
+import type { FolderWorkspace, ProjectGroup, Repo } from '../../../../shared/types'
 import {
   buildProjectGroupSidebarIndex,
   findProjectGroupForFolderWorkspace,
@@ -18,6 +19,23 @@ import {
 } from './worktree-list-groups'
 
 export { getFolderWorkspaceExecutionHostIdForRows, getProjectGroupExecutionHostIdForRows }
+
+export function buildFolderPathStatusRepoMembershipKey(
+  repos: readonly Pick<
+    Repo,
+    'id' | 'path' | 'projectGroupId' | 'connectionId' | 'executionHostId'
+  >[]
+): string {
+  return JSON.stringify(
+    repos.map((repo) => [
+      getRepoExecutionHostId(repo),
+      repo.id,
+      repo.path,
+      repo.projectGroupId ?? '',
+      repo.connectionId ?? ''
+    ])
+  )
+}
 
 /** null means "no host filter" — every host is visible. */
 export function getVisibleSidebarHostIdSet(
