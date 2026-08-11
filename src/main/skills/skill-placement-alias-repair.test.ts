@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -52,39 +52,40 @@ function receipt(
   }
 }
 
+function createDirectoryLink(target: string, path: string): Promise<void> {
+  return symlink(target, path, process.platform === 'win32' ? 'junction' : 'dir')
+}
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
 describe('skill provider alias reconciliation', () => {
-  it.runIf(process.platform !== 'win32')(
-    'detects a provider parent already linked to canonical storage',
-    async () => {
-      const value = await fixture()
-      const providerRoot = join(value.root, 'provider')
-      await symlink(value.canonicalRoot, providerRoot, 'dir')
-      expect(await realpath(join(providerRoot, 'private-skill'))).toBe(
-        await realpath(value.canonicalPath)
-      )
+  it('detects a provider parent already linked to canonical storage', async () => {
+    const value = await fixture()
+    const providerRoot = join(value.root, 'provider')
+    await createDirectoryLink(value.canonicalRoot, providerRoot)
+    expect(await realpath(join(providerRoot, 'private-skill'))).toBe(
+      await realpath(value.canonicalPath)
+    )
 
-      const result = await reconcileSkillProviderPlacement({
-        canonicalPath: value.canonicalPath,
-        skillName: 'private-skill',
-        destination: { provider: 'claude', rootPath: providerRoot, readsCanonicalRoot: false },
-        previousReceipt: null,
-        packageDigest: value.packageDigest
-      })
+    const result = await reconcileSkillProviderPlacement({
+      canonicalPath: value.canonicalPath,
+      skillName: 'private-skill',
+      destination: { provider: 'claude', rootPath: providerRoot, readsCanonicalRoot: false },
+      previousReceipt: null,
+      packageDigest: value.packageDigest
+    })
 
-      expect(result).toMatchObject({ topology: 'provider-alias', status: 'unchanged' })
-    }
-  )
+    expect(result).toMatchObject({ topology: 'provider-alias', status: 'unchanged' })
+  })
 
-  it.runIf(process.platform !== 'win32')('repairs a broken Orca-owned alias', async () => {
+  it('repairs a broken Orca-owned alias', async () => {
     const value = await fixture()
     const providerRoot = join(value.root, 'provider')
     const placementPath = join(providerRoot, 'private-skill')
     await mkdir(providerRoot)
-    await symlink('../missing-skill', placementPath, 'dir')
+    await createDirectoryLink(join(value.root, 'missing-skill'), placementPath)
 
     const result = await reconcileSkillProviderPlacement({
       canonicalPath: value.canonicalPath,
@@ -96,5 +97,36 @@ describe('skill provider alias reconciliation', () => {
 
     expect(result).toMatchObject({ topology: 'provider-alias', status: 'installed' })
     expect(await realpath(placementPath)).toBe(await realpath(value.canonicalPath))
+  })
+
+  it.each([
+    ['external', true],
+    ['broken', false]
+  ] as const)('preserves an unowned %s link', async (label, createTarget) => {
+    const value = await fixture()
+    const providerRoot = join(value.root, 'provider')
+    const placementPath = join(providerRoot, 'private-skill')
+    const target = join(value.root, `${label}-target`)
+    await mkdir(providerRoot)
+    if (createTarget) {
+      await mkdir(target)
+      await writeFile(join(target, 'SKILL.md'), 'external skill')
+    }
+    await createDirectoryLink(target, placementPath)
+
+    const result = await reconcileSkillProviderPlacement({
+      canonicalPath: value.canonicalPath,
+      skillName: 'private-skill',
+      destination: { provider: 'claude', rootPath: providerRoot, readsCanonicalRoot: false },
+      previousReceipt: null,
+      packageDigest: value.packageDigest
+    })
+
+    expect(result).toMatchObject({
+      topology: 'provider-alias',
+      status: 'skipped',
+      errorCategory: 'skill-placement-unowned-link'
+    })
+    expect((await lstat(placementPath)).isSymbolicLink()).toBe(true)
   })
 })
