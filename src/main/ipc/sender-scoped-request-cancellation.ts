@@ -20,31 +20,41 @@ export type SenderScopedRequestCancellations = {
  * registers.
  */
 export function createSenderScopedRequestCancellations(): SenderScopedRequestCancellations {
-  const controllers = new Map<string, AbortController>()
-  const keyFor = (event: IpcMainInvokeEvent, requestToken: string): string =>
-    `${event.sender.id}\0${requestToken}`
+  type Sender = IpcMainInvokeEvent['sender']
+  // Why: webContents ids are recycled once a window closes, so an id-derived key
+  // can hand a new renderer the registration slot of a previous one.
+  const controllersBySender = new WeakMap<Sender, Map<string, AbortController>>()
+  const controllersFor = (sender: Sender): Map<string, AbortController> => {
+    const existing = controllersBySender.get(sender)
+    if (existing) {
+      return existing
+    }
+    const created = new Map<string, AbortController>()
+    controllersBySender.set(sender, created)
+    return created
+  }
   return {
     begin: (event, requestToken) => {
       if (!requestToken) {
         return null
       }
-      const key = keyFor(event, requestToken)
-      controllers.get(key)?.abort()
+      const controllers = controllersFor(event.sender)
+      controllers.get(requestToken)?.abort()
       const controller = new AbortController()
-      controllers.set(key, controller)
+      controllers.set(requestToken, controller)
       return controller
     },
     finish: (event, requestToken, controller) => {
       if (!requestToken || !controller) {
         return
       }
-      const key = keyFor(event, requestToken)
-      if (controllers.get(key) === controller) {
-        controllers.delete(key)
+      const controllers = controllersBySender.get(event.sender)
+      if (controllers?.get(requestToken) === controller) {
+        controllers.delete(requestToken)
       }
     },
     cancel: (event, requestToken) => {
-      controllers.get(keyFor(event, requestToken))?.abort()
+      controllersBySender.get(event.sender)?.get(requestToken)?.abort()
     }
   }
 }
