@@ -46,6 +46,8 @@ export function useWorktreeListScrollToTop({
   const [showScrollToTop, setShowScrollToTop] = useState(false)
   const showScrollToTopRef = useRef(false)
   const idleTimerRef = useRef<number | null>(null)
+  const scrollbarDragRef = useRef(false)
+  const touchScrollRef = useRef(false)
   // Why: jump-to-top can still emit a burst of scroll events; ignore them briefly so the button does not reappear.
   const suppressDetectionUntilRef = useRef(0)
 
@@ -162,6 +164,11 @@ export function useWorktreeListScrollToTop({
         return
       }
 
+      // Scroll events do not expose their origin; only velocity-detect gestures we observed directly.
+      if (!scrollbarDragRef.current && !touchScrollRef.current) {
+        return
+      }
+
       const previous = detectorRef.current
       const next = reduceHardScrollUpOnScroll(previous, {
         ...viewport,
@@ -170,11 +177,35 @@ export function useWorktreeListScrollToTop({
       applyDetectorResult(scrollElement, previous, next)
     }
 
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.pointerType === 'touch') {
+        touchScrollRef.current = true
+        return
+      }
+      const rect = scrollElement.getBoundingClientRect()
+      const nativeScrollbarWidth = scrollElement.offsetWidth - scrollElement.clientWidth
+      const scrollbarHitWidth = Math.max(12, nativeScrollbarWidth)
+      scrollbarDragRef.current =
+        event.target === scrollElement && event.clientX >= rect.right - scrollbarHitWidth
+    }
+
+    const onPointerEnd = (): void => {
+      scrollbarDragRef.current = false
+      touchScrollRef.current = false
+    }
+
     scrollElement.addEventListener('wheel', onWheel, { passive: true })
     scrollElement.addEventListener('scroll', onScroll, { passive: true })
+    scrollElement.addEventListener('pointerdown', onPointerDown, { passive: true })
+    window.addEventListener('pointerup', onPointerEnd, { passive: true })
+    window.addEventListener('pointercancel', onPointerEnd, { passive: true })
     return () => {
       scrollElement.removeEventListener('wheel', onWheel)
       scrollElement.removeEventListener('scroll', onScroll)
+      scrollElement.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('pointerup', onPointerEnd)
+      window.removeEventListener('pointercancel', onPointerEnd)
+      onPointerEnd()
       clearIdleTimer()
     }
   }, [applyDetectorResult, clearIdleTimer, publishVisible, scrollElement])
@@ -188,6 +219,7 @@ export function useWorktreeListScrollToTop({
     clearIdleTimer()
     suppressDetectionUntilRef.current = window.performance.now() + 120
     scrollElement.scrollTo({ top: 0, behavior: 'auto' })
+    scrollElement.focus({ preventScroll: true })
   }, [clearIdleTimer, onUserScrollIntent, publishVisible, scrollElement])
 
   return {

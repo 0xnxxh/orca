@@ -113,6 +113,25 @@ describe('reduceHardScrollUpOnWheel', () => {
     expect(state.scrollSamples).toEqual([])
   })
 
+  it('hides after cumulative small downward wheel events', () => {
+    let state = createHardScrollUpDetectorState()
+    for (let i = 0; i < 5; i += 1) {
+      state = reduceHardScrollUpOnWheel(state, {
+        ...DEEP,
+        t: i * 40,
+        deltaY: -160
+      })
+    }
+
+    state = reduceHardScrollUpOnWheel(state, { ...DEEP, t: 220, deltaY: 20 })
+    state = reduceHardScrollUpOnWheel(state, { ...DEEP, t: 260, deltaY: 20 })
+    expect(state.visible).toBe(true)
+    expect(state.lastIntentAt).toBe(160)
+
+    state = reduceHardScrollUpOnWheel(state, { ...DEEP, t: 300, deltaY: 20 })
+    expect(state).toEqual(createHardScrollUpDetectorState())
+  })
+
   it('clears when the user reaches the top', () => {
     let state = createHardScrollUpDetectorState()
     for (let i = 0; i < 5; i += 1) {
@@ -164,6 +183,21 @@ describe('reduceHardScrollUpOnScroll', () => {
       t: 300
     })
     expect(state.visible).toBe(false)
+  })
+
+  it('hides after cumulative small downward scrollbar movement', () => {
+    let state = createHardScrollUpDetectorState()
+    state = reduceHardScrollUpOnScroll(state, { ...DEEP, scrollTop: 1500, t: 0 })
+    state = reduceHardScrollUpOnScroll(state, { ...DEEP, scrollTop: 1000, t: 250 })
+    expect(state.visible).toBe(true)
+
+    state = reduceHardScrollUpOnScroll(state, { ...DEEP, scrollTop: 1020, t: 280 })
+    state = reduceHardScrollUpOnScroll(state, { ...DEEP, scrollTop: 1040, t: 310 })
+    expect(state.visible).toBe(true)
+    expect(state.lastIntentAt).toBe(250)
+
+    state = reduceHardScrollUpOnScroll(state, { ...DEEP, scrollTop: 1060, t: 340 })
+    expect(state).toEqual(createHardScrollUpDetectorState())
   })
 })
 

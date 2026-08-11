@@ -48,6 +48,8 @@ export type HardScrollUpDetectorState = {
   // wheel magnitude is not double-counted with scrollTop deltas.
   wheelSamples: HardScrollUpWheelSample[]
   scrollSamples: HardScrollUpScrollSample[]
+  wheelDownDeltaPx: number
+  scrollDownDeltaPx: number
   visible: boolean
   lastIntentAt: number
 }
@@ -62,6 +64,8 @@ export function createHardScrollUpDetectorState(): HardScrollUpDetectorState {
   return {
     wheelSamples: [],
     scrollSamples: [],
+    wheelDownDeltaPx: 0,
+    scrollDownDeltaPx: 0,
     visible: false,
     lastIntentAt: 0
   }
@@ -168,6 +172,8 @@ function withVisibility(
       !state.visible &&
       state.wheelSamples.length === 0 &&
       state.scrollSamples.length === 0 &&
+      state.wheelDownDeltaPx === 0 &&
+      state.scrollDownDeltaPx === 0 &&
       state.lastIntentAt === 0
     ) {
       return state
@@ -216,36 +222,37 @@ export function reduceHardScrollUpOnWheel(
   const pixelDeltaY = normalizeWheelDeltaY(deltaY, deltaMode)
   // Browser: negative deltaY = scroll up (content moves down, viewport toward top).
   const upDeltaPx = -pixelDeltaY
+  const wheelDownDeltaPx =
+    upDeltaPx < 0
+      ? state.wheelDownDeltaPx + Math.abs(upDeltaPx)
+      : upDeltaPx > 0
+        ? 0
+        : state.wheelDownDeltaPx
 
-  if (upDeltaPx < 0 && Math.abs(upDeltaPx) >= HARD_SCROLL_UP.significantDownDeltaPx) {
+  if (wheelDownDeltaPx >= HARD_SCROLL_UP.significantDownDeltaPx) {
     return createHardScrollUpDetectorState()
   }
 
   const nextWheelSamples = pruneByTime(
-    [
-      ...state.wheelSamples,
-      {
-        t,
-        upDeltaPx: Math.max(upDeltaPx, 0)
-      }
-    ],
+    upDeltaPx > 0 ? [...state.wheelSamples, { t, upDeltaPx }] : [],
     t
   )
   const nextScrollSamples = pruneByTime(state.scrollSamples, t)
 
-  const intent = computeWheelIntent(nextWheelSamples) || computeVelocityIntent(nextScrollSamples, t)
+  const intent = upDeltaPx > 0 && computeWheelIntent(nextWheelSamples)
   return withVisibility(
     {
       ...state,
       wheelSamples: nextWheelSamples,
-      scrollSamples: nextScrollSamples
+      scrollSamples: nextScrollSamples,
+      wheelDownDeltaPx
     },
     { t, scrollTop, maxScroll, intent }
   )
 }
 
 /**
- * Ingest a scroll position sample (scrollbar drag, momentum, programmatic).
+ * Ingest a scroll position sample from an active scrollbar/touch gesture.
  * Velocity-based; ignores tiny no-op scrolls.
  */
 export function reduceHardScrollUpOnScroll(
@@ -262,8 +269,15 @@ export function reduceHardScrollUpOnScroll(
 
   const last = state.scrollSamples.at(-1)
   const downDeltaPx = last ? Math.max(0, scrollTop - last.scrollTop) : 0
+  const upDeltaPx = last ? Math.max(0, last.scrollTop - scrollTop) : 0
+  const scrollDownDeltaPx =
+    downDeltaPx > 0
+      ? state.scrollDownDeltaPx + downDeltaPx
+      : upDeltaPx > 0
+        ? 0
+        : state.scrollDownDeltaPx
 
-  if (downDeltaPx >= HARD_SCROLL_UP.significantDownDeltaPx) {
+  if (scrollDownDeltaPx >= HARD_SCROLL_UP.significantDownDeltaPx) {
     return createHardScrollUpDetectorState()
   }
 
@@ -278,23 +292,18 @@ export function reduceHardScrollUpOnScroll(
   }
 
   const nextScrollSamples = pruneByTime(
-    [
-      ...state.scrollSamples,
-      {
-        t,
-        scrollTop
-      }
-    ],
+    [...(downDeltaPx > 0 ? [] : state.scrollSamples), { t, scrollTop }],
     t
   )
   const nextWheelSamples = pruneByTime(state.wheelSamples, t)
 
-  const intent = computeVelocityIntent(nextScrollSamples, t) || computeWheelIntent(nextWheelSamples)
+  const intent = upDeltaPx > 0 && computeVelocityIntent(nextScrollSamples, t)
   return withVisibility(
     {
       ...state,
       wheelSamples: nextWheelSamples,
-      scrollSamples: nextScrollSamples
+      scrollSamples: nextScrollSamples,
+      scrollDownDeltaPx
     },
     { t, scrollTop, maxScroll, intent }
   )
@@ -314,7 +323,13 @@ export function reduceHardScrollUpOnIdle(
 export function reduceHardScrollUpOnDismiss(
   state: HardScrollUpDetectorState
 ): HardScrollUpDetectorState {
-  if (!state.visible && state.wheelSamples.length === 0 && state.scrollSamples.length === 0) {
+  if (
+    !state.visible &&
+    state.wheelSamples.length === 0 &&
+    state.scrollSamples.length === 0 &&
+    state.wheelDownDeltaPx === 0 &&
+    state.scrollDownDeltaPx === 0
+  ) {
     return state
   }
   return createHardScrollUpDetectorState()

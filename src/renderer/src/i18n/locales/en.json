@@ -5381,6 +5381,9 @@
           "a0f9863597": "Force Delete {{count}} Branches",
           "a0f9863597_one": "Force Delete {{count}} Branch",
           "a0f9863597_other": "Force Delete {{count}} Branches"
+        },
+        "WorktreeListScrollToTopButton": {
+          "jumpToTop": "Jump to top"
         }
       },
       "shared": {
