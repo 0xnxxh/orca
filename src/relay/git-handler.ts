@@ -20,6 +20,7 @@ import {
 } from './git-handler-ops'
 import {
   branchDiffEntryAtPinnedOids,
+  isFullGitObjectId,
   parseOptionalBranchDiffHeadOid
 } from './git-handler-branch-diff-ops'
 import {
@@ -1171,6 +1172,7 @@ export class GitHandler {
       () => {
         if (
           headOid &&
+          isFullGitObjectId(baseRef) &&
           options.includePatch === true &&
           typeof options.filePath === 'string' &&
           options.filePath.length > 0

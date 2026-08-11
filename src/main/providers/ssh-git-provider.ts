@@ -662,7 +662,11 @@ export class SshGitProvider implements IGitProvider {
     options?: { includePatch?: boolean; filePath?: string; oldPath?: string; headOid?: string }
   ): Promise<GitDiffResult[]> {
     const keyOptions = options ?? {}
-    const { headOid, ...relayOptions } = keyOptions
+    const { headOid: rawHeadOid, ...relayOptions } = keyOptions
+    // Why: compare snapshots type headOid as `string | null`, so collapse an
+    // unpinned null to absent instead of putting a field on the wire that a
+    // pinned-OID relay must reject.
+    const headOid = rawHeadOid == null ? undefined : rawHeadOid
     return this.gitDiffReadDedupe.run(
       stableInFlightKey([
         'branchDiff',

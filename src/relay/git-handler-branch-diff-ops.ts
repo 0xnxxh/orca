@@ -9,13 +9,20 @@ function assertFullGitObjectId(value: unknown, label: string): asserts value is 
   }
 }
 
+export function isFullGitObjectId(value: unknown): value is string {
+  return typeof value === 'string' && FULL_GIT_OBJECT_ID_PATTERN.test(value)
+}
+
 export function parseOptionalBranchDiffHeadOid(
   params: Record<string, unknown>
 ): string | undefined {
-  if (!Object.hasOwn(params, 'headOid')) {
+  const { headOid } = params
+  // Why: GitBranchCompareSummary.headOid is `string | null`, so a mixed-version
+  // client can put an explicit null on the wire. Treat it as unpinned rather
+  // than rejecting a request the legacy path would have served.
+  if (headOid == null) {
     return undefined
   }
-  const { headOid } = params
   assertFullGitObjectId(headOid, 'headOid')
   return headOid
 }

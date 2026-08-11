@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RelayContext } from './context'
 import {
   branchDiffEntryAtPinnedOids,
+  isFullGitObjectId,
   parseOptionalBranchDiffHeadOid
 } from './git-handler-branch-diff-ops'
 import { GitHandler } from './git-handler'
@@ -21,6 +22,7 @@ import {
 const BASE_OID = 'a'.repeat(40)
 const HEAD_OID = 'b'.repeat(40)
 const OTHER_HEAD_OID = 'c'.repeat(40)
+const MERGE_BASE_OID = 'd'.repeat(40)
 const FILE_PATH = 'src/file.ts'
 
 type GitBufferTarget = {
@@ -99,11 +101,51 @@ describe('pinned relay branch diff operation', () => {
     expect(pinned).toEqual(legacy)
   })
 
-  it('treats an omitted head OID differently from a supplied invalid value', () => {
-    expect(parseOptionalBranchDiffHeadOid({})).toBeUndefined()
-    expect(() => parseOptionalBranchDiffHeadOid({ headOid: null })).toThrow(
-      'headOid must be a full git object id'
-    )
+  // Why: GitBranchCompareSummary.headOid is `string | null`, so an unpinned
+  // snapshot arrives as an explicit null and must stay servable.
+  it.each([
+    { name: 'absent', params: {} },
+    { name: 'null', params: { headOid: null } },
+    { name: 'undefined', params: { headOid: undefined } }
+  ])('treats a $name head OID as unpinned', ({ params }) => {
+    expect(parseOptionalBranchDiffHeadOid(params)).toBeUndefined()
+  })
+
+  it.each([
+    { name: 'SHA-1', headOid: HEAD_OID },
+    { name: 'SHA-256', headOid: 'b'.repeat(64) }
+  ])('returns a supplied $name head OID', ({ headOid }) => {
+    expect(parseOptionalBranchDiffHeadOid({ headOid })).toBe(headOid)
+  })
+
+  it.each([{ headOid: 'abc123' }, { headOid: '' }, { headOid: 'main' }, { headOid: 123 }])(
+    'rejects the supplied malformed head OID $headOid',
+    ({ headOid }) => {
+      expect(() => parseOptionalBranchDiffHeadOid({ headOid })).toThrow(
+        'headOid must be a full git object id'
+      )
+    }
+  )
+
+  it('recognizes only full object ids', () => {
+    expect(isFullGitObjectId(BASE_OID)).toBe(true)
+    expect(isFullGitObjectId('A'.repeat(64))).toBe(true)
+    for (const value of ['origin/main', 'abc123', '', 'g'.repeat(40), null, undefined, 123, {}]) {
+      expect(isFullGitObjectId(value)).toBe(false)
+    }
+  })
+
+  // Why: the route guards this today, but the export is reachable on its own —
+  // a symbolic ref here would resolve `git show origin/main:<path>` at live HEAD.
+  it('rejects a symbolic ref at the module boundary', async () => {
+    const gitBuffer = vi.fn<GitBufferExec>(async () => Buffer.from(''))
+    await expect(
+      branchDiffEntryAtPinnedOids(gitBuffer, '/repo', 'origin/main', HEAD_OID, FILE_PATH)
+    ).rejects.toThrow('baseRef must be a full git object id')
+    await expect(
+      branchDiffEntryAtPinnedOids(gitBuffer, '/repo', BASE_OID, 'HEAD', FILE_PATH)
+    ).rejects.toThrow('headOid must be a full git object id')
+    expect(gitBuffer).not.toHaveBeenCalled()
   })
 })
 
@@ -129,6 +171,21 @@ describe('GitHandler pinned branch diff route', () => {
       includePatch: true,
       filePath: FILE_PATH,
       ...overrides
+    })
+  }
+
+  function mockLegacyGit(nameStatus = '') {
+    return vi.spyOn(handler as unknown as GitTarget, 'git').mockImplementation(async (args) => {
+      if (args[0] === 'rev-parse' && args.includes('HEAD')) {
+        return { stdout: `${HEAD_OID}\n`, stderr: '' }
+      }
+      if (args[0] === 'rev-parse') {
+        return { stdout: `${BASE_OID}\n`, stderr: '' }
+      }
+      if (args[0] === 'merge-base') {
+        return { stdout: `${MERGE_BASE_OID}\n`, stderr: '' }
+      }
+      return { stdout: nameStatus, stderr: '' }
     })
   }
 
@@ -206,7 +263,7 @@ describe('GitHandler pinned branch diff route', () => {
 
   it('rejects every supplied malformed head OID before running Git', async () => {
     const gitBufferSpy = vi.spyOn(handler as unknown as GitBufferTarget, 'gitBuffer')
-    const invalidHeadOids = [null, 7, {}, '', 'a'.repeat(39), 'g'.repeat(40)]
+    const invalidHeadOids = [7, {}, '', 'a'.repeat(39), 'g'.repeat(40)]
 
     for (const headOid of invalidHeadOids) {
       await expect(request({ headOid })).rejects.toThrow('headOid must be a full git object id')
@@ -230,27 +287,57 @@ describe('GitHandler pinned branch diff route', () => {
     ])
   })
 
-  it('requires a full base OID only on the pinned route', async () => {
+  // Why: a symbolic base ref used to select the pinned route and then throw.
+  it('selects the pinned route only when the base ref is a full object id', async () => {
+    const gitSpy = mockLegacyGit(`M\t${FILE_PATH}\n`)
+    const gitBufferSpy = vi
+      .spyOn(handler as unknown as GitBufferTarget, 'gitBuffer')
+      .mockResolvedValue(Buffer.from('content\n'))
+
+    await expect(request({ baseRef: 'origin/main' })).resolves.toHaveLength(1)
+
+    expect(gitSpy.mock.calls.map(([args]) => args.join(' '))).toEqual([
+      'rev-parse --verify HEAD',
+      'rev-parse --verify origin/main',
+      `merge-base ${BASE_OID} ${HEAD_OID}`,
+      `-c core.quotePath=false diff --name-status -M -C ${MERGE_BASE_OID} ${HEAD_OID}`
+    ])
+    expect(gitBufferSpy.mock.calls.map(([args]) => args[2])).toEqual([
+      `${MERGE_BASE_OID}:${FILE_PATH}`,
+      `${HEAD_OID}:${FILE_PATH}`
+    ])
+
+    gitSpy.mockClear()
+    gitBufferSpy.mockClear()
+    await request()
+
+    expect(gitSpy).not.toHaveBeenCalled()
+    expect(gitBufferSpy.mock.calls.map(([args]) => args[2])).toEqual([
+      `${BASE_OID}:${FILE_PATH}`,
+      `${HEAD_OID}:${FILE_PATH}`
+    ])
+  })
+
+  it('serves an explicitly null head OID through the legacy path', async () => {
+    const gitSpy = mockLegacyGit(`M\t${FILE_PATH}\n`)
     const gitBufferSpy = vi.spyOn(handler as unknown as GitBufferTarget, 'gitBuffer')
 
-    await expect(request({ baseRef: 'main' })).rejects.toThrow(
-      'baseRef must be a full git object id'
-    )
+    await expect(request({ headOid: null, includePatch: false })).resolves.toEqual([
+      {
+        kind: 'text',
+        originalContent: '',
+        modifiedContent: '',
+        originalIsBinary: false,
+        modifiedIsBinary: false
+      }
+    ])
+
+    expect(gitSpy).toHaveBeenCalledTimes(4)
     expect(gitBufferSpy).not.toHaveBeenCalled()
   })
 
   it('uses the legacy path when patch or file-path conditions are not met', async () => {
-    const gitSpy = vi
-      .spyOn(handler as unknown as GitTarget, 'git')
-      .mockImplementation(async (args) => {
-        if (args[0] === 'rev-parse' && args.includes('HEAD')) {
-          return { stdout: `${HEAD_OID}\n`, stderr: '' }
-        }
-        if (args[0] === 'rev-parse' || args[0] === 'merge-base') {
-          return { stdout: `${BASE_OID}\n`, stderr: '' }
-        }
-        return { stdout: '', stderr: '' }
-      })
+    const gitSpy = mockLegacyGit()
     const gitBufferSpy = vi.spyOn(handler as unknown as GitBufferTarget, 'gitBuffer')
 
     await Promise.all([
