@@ -35,9 +35,12 @@ function tokenizeWindowsStartupCommand(
       // Why: cmd strips `^` and hands the bare byte to the child's parser,
       // which re-splits on whitespace and reopens a quote, and keeps the caret
       // literal inside double quotes — either way the token stops matching
-      // argv. PowerShell folds the backtick into the token except for line
+      // argv. PowerShell folds the backtick into the token except for LF line
       // continuations, verbatim single quotes, escape sequences, and a
       // token-leading backtick before whitespace, which it drops entirely.
+      // A bare CR is treated as unmodelable rather than folded: pwsh 7 keeps
+      // it in the token, Windows PowerShell 5.1 is unverified, and failing
+      // open there costs nothing.
       divergesFromShell ||=
         (shell === 'cmd' ? /[\s"]/.test(value[index + 1]) : /[\n\r]/.test(value[index + 1])) ||
         (shell === 'cmd' && quote === '"') ||
