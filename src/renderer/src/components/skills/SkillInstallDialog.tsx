@@ -26,6 +26,7 @@ import {
 } from './SkillInstallReviewContent'
 import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkills'
 import { useSkillInstallProgress } from './skill-install-progress-state'
+import { translate } from '@/i18n/i18n'
 
 export function SkillInstallDialog({
   open,
@@ -215,9 +216,17 @@ export function SkillInstallDialog({
     <Dialog open={open} onOpenChange={(next) => !next && !busy && close()}>
       <DialogContent className="max-h-[calc(100vh-3rem)] overflow-y-auto scrollbar-sleek sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Install shared skill</DialogTitle>
+          <DialogTitle>
+            {translate(
+              'auto.components.skills.SkillInstallDialog.fcbec627cc',
+              'Install shared skill'
+            )}
+          </DialogTitle>
           <DialogDescription>
-            Orca verifies access and package identity before changing the selected machine.
+            {translate(
+              'auto.components.skills.SkillInstallDialog.4a00d133c5',
+              'Orca verifies access and package identity before changing the selected machine.'
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -279,11 +288,14 @@ export function SkillInstallDialog({
         ) : null}
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={close} disabled={busy}>
-            Close
+            {translate('auto.components.skills.SkillInstallDialog.d198ec91e5', 'Close')}
           </Button>
           {busy && installProgress.activeOperationId ? (
             <Button type="button" variant="secondary" onClick={() => void cancelInstall()}>
-              Cancel installation
+              {translate(
+                'auto.components.skills.SkillInstallDialog.05588076a9',
+                'Cancel installation'
+              )}
             </Button>
           ) : null}
           {preview &&
@@ -295,7 +307,17 @@ export function SkillInstallDialog({
               className="w-32"
             >
               {busy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-              {busy ? 'Installing…' : result ? 'Retry install' : 'Install skill'}
+              {busy
+                ? translate('auto.components.skills.SkillInstallDialog.241e72f9d6', 'Installing…')
+                : result
+                  ? translate(
+                      'auto.components.skills.SkillInstallDialog.59c3b76cdd',
+                      'Retry install'
+                    )
+                  : translate(
+                      'auto.components.skills.SkillInstallDialog.39acb9e8f4',
+                      'Install skill'
+                    )}
             </Button>
           ) : null}
         </DialogFooter>

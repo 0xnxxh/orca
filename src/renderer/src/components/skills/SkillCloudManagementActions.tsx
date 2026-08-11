@@ -8,6 +8,7 @@ import type {
   SkillCloudOperation,
   SkillCloudPackageDetails
 } from '../../../../shared/skill-cloud-contract'
+import { translate } from '@/i18n/i18n'
 
 type IdentifiedMember = OrcaOrgMember & { userId: string }
 type SkillCloudManagement = NonNullable<SkillCloudPackageDetails['management']>
@@ -123,16 +124,27 @@ function SkillCloudManagementForm({
   }
 
   return (
-    <section className="space-y-4 border-t border-border pt-3" aria-label="Cloud sharing controls">
+    <section
+      className="space-y-4 border-t border-border pt-3"
+      aria-label={translate(
+        'auto.components.skills.SkillCloudManagementActions.505cd6105c',
+        'Cloud sharing controls'
+      )}
+    >
       <div className="space-y-2">
-        <h4 className="text-xs font-semibold">Access</h4>
+        <h4 className="text-xs font-semibold">
+          {translate('auto.components.skills.SkillCloudManagementActions.2552c12fea', 'Access')}
+        </h4>
         <label className="flex items-center gap-2 text-xs">
           <Checkbox
             checked={shareWithOrganization}
             disabled={!organizationAvailable || busyAction !== null}
             onCheckedChange={(checked) => setShareWithOrganization(checked === true)}
           />
-          Current organization
+          {translate(
+            'auto.components.skills.SkillCloudManagementActions.2b8c569ea7',
+            'Current organization'
+          )}
         </label>
         {members.length > 0 ? (
           <div className="max-h-28 space-y-1 overflow-y-auto scrollbar-sleek rounded-md border border-border p-2">
@@ -156,8 +168,16 @@ function SkillCloudManagementForm({
         ) : null}
         {unknownUserCount > 0 ? (
           <p className="text-xs text-muted-foreground">
-            {unknownUserCount} existing recipient{unknownUserCount === 1 ? '' : 's'} outside the
-            current roster will be preserved.
+            {unknownUserCount}{' '}
+            {translate(
+              'auto.components.skills.SkillCloudManagementActions.3d346ddce8',
+              'existing recipient'
+            )}
+            {unknownUserCount === 1 ? '' : 's'}{' '}
+            {translate(
+              'auto.components.skills.SkillCloudManagementActions.eb603f7888',
+              'outside the current roster will be preserved.'
+            )}
           </p>
         ) : null}
         <Button
@@ -175,17 +195,33 @@ function SkillCloudManagementForm({
           }
         >
           {busyAction === 'access' ? <Loader2 className="size-4 animate-spin" /> : <Save />}
-          Save access
+          {translate(
+            'auto.components.skills.SkillCloudManagementActions.cc8e4ef6ba',
+            'Save access'
+          )}
         </Button>
       </div>
 
       <div className="space-y-2">
-        <h4 className="text-xs font-semibold">Active links</h4>
+        <h4 className="text-xs font-semibold">
+          {translate(
+            'auto.components.skills.SkillCloudManagementActions.8cac3b9362',
+            'Active links'
+          )}
+        </h4>
         <p className="text-xs text-muted-foreground">
-          Unsharing blocks future installs. Copies already installed on any machine remain there.
+          {translate(
+            'auto.components.skills.SkillCloudManagementActions.c7f2b69122',
+            'Unsharing blocks future installs. Copies already installed on any machine remain there.'
+          )}
         </p>
         {management.shares.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No active share links.</p>
+          <p className="text-xs text-muted-foreground">
+            {translate(
+              'auto.components.skills.SkillCloudManagementActions.9e6bd31487',
+              'No active share links.'
+            )}
+          </p>
         ) : (
           management.shares.map((share) => (
             <div
@@ -208,7 +244,15 @@ function SkillCloudManagementForm({
                 }}
               >
                 <Link2Off className="size-4" />
-                {confirmation === `share:${share.id}` ? 'Confirm unshare' : 'Unshare'}
+                {confirmation === `share:${share.id}`
+                  ? translate(
+                      'auto.components.skills.SkillCloudManagementActions.0ac5c175fd',
+                      'Confirm unshare'
+                    )
+                  : translate(
+                      'auto.components.skills.SkillCloudManagementActions.7a80285dad',
+                      'Unshare'
+                    )}
               </Button>
             </div>
           ))
@@ -235,8 +279,14 @@ function SkillCloudManagementForm({
         >
           <Trash2 className="size-4" />
           {confirmation === `version:${selectedVersionId}`
-            ? 'Confirm version deletion'
-            : 'Delete selected Cloud version'}
+            ? translate(
+                'auto.components.skills.SkillCloudManagementActions.bbec37d8f8',
+                'Confirm version deletion'
+              )
+            : translate(
+                'auto.components.skills.SkillCloudManagementActions.6b6adf68c1',
+                'Delete selected Cloud version'
+              )}
         </Button>
         <Button
           size="sm"
@@ -251,7 +301,15 @@ function SkillCloudManagementForm({
           }}
         >
           <Trash2 className="size-4" />
-          {confirmation === 'package' ? 'Confirm package deletion' : 'Delete Cloud package'}
+          {confirmation === 'package'
+            ? translate(
+                'auto.components.skills.SkillCloudManagementActions.640bc6b92e',
+                'Confirm package deletion'
+              )
+            : translate(
+                'auto.components.skills.SkillCloudManagementActions.ed753624c0',
+                'Delete Cloud package'
+              )}
         </Button>
       </div>
       {message ? (

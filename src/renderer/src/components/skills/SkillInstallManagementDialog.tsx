@@ -26,6 +26,7 @@ import type { SkillCloudPackageDetails } from '../../../../shared/skill-cloud-co
 import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkills'
 import { SkillCloudManagementActions } from './SkillCloudManagementActions'
 import { skillInstallResultLabel } from './skill-install-result-label'
+import { skillInstallManagementCopy } from './skill-install-management-copy'
 import { useSkillInstallProgress } from './skill-install-progress-state'
 
 function installKey(install: ManagedSkillInstall): string {
@@ -39,6 +40,7 @@ export function SkillInstallManagementDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }): React.JSX.Element {
+  const copy = skillInstallManagementCopy()
   const runtimeEnvironments = useAppStore((state) => state.runtimeEnvironments)
   const sshConnectionStates = useAppStore((state) => state.sshConnectionStates)
   const sshTargetLabels = useAppStore((state) => state.sshTargetLabels)
@@ -244,17 +246,15 @@ export function SkillInstallManagementDialog({
     <Dialog open={open} onOpenChange={(next) => !next && !busy && close()}>
       <DialogContent className="max-h-[calc(100vh-3rem)] overflow-y-auto scrollbar-sleek sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Manage installed skills</DialogTitle>
-          <DialogDescription>
-            Update, roll back, or safely remove versions installed by Orca.
-          </DialogDescription>
+          <DialogTitle>{copy.title}</DialogTitle>
+          <DialogDescription>{copy.description}</DialogDescription>
         </DialogHeader>
         <Select value={environmentId} onValueChange={setEnvironmentId}>
           <SelectTrigger className="w-full sm:w-64">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="local">This computer</SelectItem>
+            <SelectItem value="local">{copy.localMachine}</SelectItem>
             {runtimeEnvironments.map((environment) => (
               <SelectItem key={environment.id} value={environment.id}>
                 {environment.name}
@@ -266,8 +266,8 @@ export function SkillInstallManagementDialog({
                 value={`ssh:${id}`}
                 disabled={sshConnectionStates.get(id)?.status !== 'connected'}
               >
-                {label}
-                {sshConnectionStates.get(id)?.status === 'connected' ? ' · SSH' : ' — disconnected'}
+                {label}{' '}
+                {sshConnectionStates.get(id)?.status === 'connected' ? copy.ssh : copy.disconnected}
               </SelectItem>
             ))}
           </SelectContent>
@@ -276,7 +276,7 @@ export function SkillInstallManagementDialog({
         {busy && installs.length === 0 ? <Loader2 className="mx-auto size-5 animate-spin" /> : null}
         {!busy && installs.length === 0 ? (
           <p className="rounded-md border border-border p-4 text-sm text-muted-foreground">
-            No Orca-managed skill installs were found on this machine.
+            {copy.noInstalls}
           </p>
         ) : null}
         <div className="grid gap-2 sm:grid-cols-2">
@@ -309,12 +309,12 @@ export function SkillInstallManagementDialog({
             <div>
               <h3 className="text-sm font-semibold">{selected.name}</h3>
               <p className="text-xs text-muted-foreground">
-                Installed version {selected.versionId}
+                {copy.installedVersion} {selected.versionId}
               </p>
             </div>
             <Select value={versionId} onValueChange={setVersionId}>
               <SelectTrigger>
-                <SelectValue placeholder="Choose a version" />
+                <SelectValue placeholder={copy.chooseVersion} />
               </SelectTrigger>
               <SelectContent>
                 {details.versions.map((version) => (
@@ -327,16 +327,14 @@ export function SkillInstallManagementDialog({
             {destructiveConflict ? (
               <div className="space-y-2 rounded-md border border-border p-3" role="alert">
                 <p className="flex items-center gap-2 text-sm font-medium">
-                  <AlertTriangle className="size-4" /> Local files were modified
+                  <AlertTriangle className="size-4" /> {copy.modified}
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  Orca will preserve them unless you explicitly discard the local changes.
-                </p>
+                <p className="text-xs text-muted-foreground">{copy.preserveModified}</p>
                 <Button variant="destructive" size="sm" onClick={() => void installVersion(true)}>
-                  Discard changes and install version
+                  {copy.discardAndInstall}
                 </Button>
                 <Button variant="destructive" size="sm" onClick={() => void remove(true)}>
-                  Discard changes and remove
+                  {copy.discardAndRemove}
                 </Button>
               </div>
             ) : null}
@@ -353,13 +351,11 @@ export function SkillInstallManagementDialog({
                 ) : (
                   <RotateCcw className="size-4" />
                 )}
-                {result?.status === 'partial'
-                  ? 'Retry incomplete coverage'
-                  : 'Install selected version'}
+                {result?.status === 'partial' ? copy.retryCoverage : copy.installVersion}
               </Button>
               {installProgress.activeOperationId ? (
                 <Button variant="secondary" size="sm" onClick={() => void cancelInstall()}>
-                  Cancel installation
+                  {copy.cancelInstall}
                 </Button>
               ) : null}
               <Button
@@ -368,7 +364,7 @@ export function SkillInstallManagementDialog({
                 disabled={busy}
                 onClick={() => void remove()}
               >
-                <Trash2 className="size-4" /> {confirmRemove ? 'Confirm remove' : 'Remove'}
+                <Trash2 className="size-4" /> {confirmRemove ? copy.confirmRemove : copy.remove}
               </Button>
             </div>
             <SkillCloudManagementActions
@@ -401,7 +397,7 @@ export function SkillInstallManagementDialog({
         ) : null}
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={close} disabled={busy}>
-            Close
+            {copy.close}
           </Button>
         </DialogFooter>
       </DialogContent>

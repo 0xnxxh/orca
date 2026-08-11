@@ -28,7 +28,10 @@ export function SkillShareDialogHeader({
         {published
           ? translate('auto.components.skills.SkillShareDialog.ready', 'Skill link ready')
           : publishingNewVersion
-            ? 'Publish new skill version'
+            ? translate(
+                'auto.components.skills.SkillShareReviewContent.2dca0b720b',
+                'Publish new skill version'
+              )
             : translate('auto.components.skills.SkillShareDialog.title', 'Share skill')}
       </DialogTitle>
       <DialogDescription>
@@ -37,12 +40,15 @@ export function SkillShareDialogHeader({
               'auto.components.skills.SkillShareDialog.readyDescription',
               'Recipients authenticate with Orca before they can inspect or install it.'
             )
-          : translate(
-              'auto.components.skills.SkillShareDialog.description',
-              publishingNewVersion
-                ? 'Review the exact files, then publish an immutable version to the existing Cloud package.'
-                : 'Review the exact files, choose who can access them, then publish an immutable version.'
-            )}
+          : publishingNewVersion
+            ? translate(
+                'auto.components.skills.SkillShareDialog.newVersionDescription',
+                'Review the exact files, then publish an immutable version to the existing Cloud package.'
+              )
+            : translate(
+                'auto.components.skills.SkillShareDialog.description',
+                'Review the exact files, choose who can access them, then publish an immutable version.'
+              )}
       </DialogDescription>
     </DialogHeader>
   )
@@ -100,37 +106,81 @@ export function SkillSharePreparationReview({
           </div>
         </div>
         <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-          <Badge variant="outline">{preview.fileCount} files</Badge>
+          <Badge variant="outline">
+            {preview.fileCount}{' '}
+            {translate('auto.components.skills.SkillShareReviewContent.3121f44358', 'files')}
+          </Badge>
           <Badge variant="outline">{byteLabel(preview.totalBytes)}</Badge>
-          <Badge variant="outline">{preview.scriptPaths.length} scripts</Badge>
-          <Badge variant="outline">{preview.executablePaths.length} executable</Badge>
+          <Badge variant="outline">
+            {preview.scriptPaths.length}{' '}
+            {translate('auto.components.skills.SkillShareReviewContent.8edd32622f', 'scripts')}
+          </Badge>
+          <Badge variant="outline">
+            {preview.executablePaths.length}{' '}
+            {translate('auto.components.skills.SkillShareReviewContent.77f636eac3', 'executable')}
+          </Badge>
         </div>
         <p className="truncate font-mono text-[11px] text-muted-foreground">
-          SHA-256 {preview.packageDigest}
+          {translate('auto.components.skills.SkillShareReviewContent.b3b1d4b911', 'SHA-256')}{' '}
+          {preview.packageDigest}
         </p>
       </section>
 
       <section className="space-y-2">
         <div className="space-y-1">
-          <Label>Access</Label>
+          <Label>
+            {translate('auto.components.skills.SkillShareReviewContent.78d863235c', 'Access')}
+          </Label>
           <p className="text-xs text-muted-foreground">
             {author
-              ? `Publishing as ${author}${organization ? ` in ${organization}` : ''}.`
-              : 'A connected Orca Cloud account is required.'}
+              ? translate(
+                  'auto.components.skills.SkillShareReviewContent.266527d295',
+                  'Publishing as {{value0}}{{value1}}.',
+                  { value0: author, value1: organization ? ` in ${organization}` : '' }
+                )
+              : translate(
+                  'auto.components.skills.SkillShareReviewContent.c15d90c10b',
+                  'A connected Orca Cloud account is required.'
+                )}
           </p>
         </div>
         <Tabs
           value={audience}
           onValueChange={(value) => onAudienceChange(value as typeof audience)}
         >
-          <TabsList aria-label="Skill access">
+          <TabsList
+            aria-label={translate(
+              'auto.components.skills.SkillShareReviewContent.6817a7f6f8',
+              'Skill access'
+            )}
+          >
             <TabsTrigger value="organization" disabled={!organization}>
-              Organization
+              {translate(
+                'auto.components.skills.SkillShareReviewContent.0a49d901ab',
+                'Organization'
+              )}
             </TabsTrigger>
-            <TabsTrigger value="people">Selected people</TabsTrigger>
+            <TabsTrigger value="people">
+              {translate(
+                'auto.components.skills.SkillShareReviewContent.f25429e266',
+                'Selected people'
+              )}
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="organization" className="pt-2 text-xs text-muted-foreground">
-            Everyone currently in {organization || 'the organization'} can access the link.
+            {translate(
+              'auto.components.skills.SkillShareReviewContent.0cd4b3e396',
+              'Everyone currently in'
+            )}{' '}
+            {organization ||
+              translate(
+                'auto.components.skills.SkillShareReviewContent.fe204e06f0',
+                'the organization'
+              )}{' '}
+            {translate(
+              'auto.components.skills.SkillShareReviewContent.8188f5d765',
+              'can access the link.'
+            )}
           </TabsContent>
           <TabsContent value="people" className="space-y-2 pt-2">
             {members.length > 0 ? (
@@ -160,20 +210,30 @@ export function SkillSharePreparationReview({
                 })}
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground">No teammates are available.</p>
+              <p className="text-xs text-muted-foreground">
+                {translate(
+                  'auto.components.skills.SkillShareReviewContent.4895d3e0ee',
+                  'No teammates are available.'
+                )}
+              </p>
             )}
           </TabsContent>
         </Tabs>
       </section>
 
       <section className="space-y-2">
-        <Label htmlFor="skill-release-notes">Release notes</Label>
+        <Label htmlFor="skill-release-notes">
+          {translate('auto.components.skills.SkillShareReviewContent.f0c0411549', 'Release notes')}
+        </Label>
         <textarea
           id="skill-release-notes"
           value={releaseNotes}
           onChange={(event) => onReleaseNotesChange(event.target.value)}
           maxLength={10_000}
-          placeholder="What changed in this version?"
+          placeholder={translate(
+            'auto.components.skills.SkillShareReviewContent.bf02d6ed9e',
+            'What changed in this version?'
+          )}
           className="min-h-20 w-full resize-y rounded-md border border-border bg-input px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
         />
       </section>
@@ -182,7 +242,15 @@ export function SkillSharePreparationReview({
         <section className="space-y-2" aria-live="polite">
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>
-              {progress?.phase === 'finalizing' ? 'Validating and publishing…' : 'Uploading…'}
+              {progress?.phase === 'finalizing'
+                ? translate(
+                    'auto.components.skills.SkillShareReviewContent.ad940367a5',
+                    'Validating and publishing…'
+                  )
+                : translate(
+                    'auto.components.skills.SkillShareReviewContent.0142581727',
+                    'Uploading…'
+                  )}
             </span>
             <span>{progress?.phase === 'finalizing' ? '100%' : `${progressPercent}%`}</span>
           </div>
@@ -208,12 +276,15 @@ export function SkillSharePublishedLink({
         </div>
         <p className="min-w-0 flex-1 truncate font-mono text-xs">{shareUrl}</p>
         <Button type="button" variant="outline" size="sm" onClick={onCopy}>
-          <Clipboard className="size-4" /> Copy link
+          <Clipboard className="size-4" />{' '}
+          {translate('auto.components.skills.SkillShareReviewContent.6d6233a3a4', 'Copy link')}
         </Button>
       </div>
       <p className="text-xs leading-5 text-muted-foreground">
-        Revoking this link blocks future access. It does not remove copies already installed on
-        recipients’ machines.
+        {translate(
+          'auto.components.skills.SkillShareReviewContent.e3caf6baeb',
+          'Revoking this link blocks future access. It does not remove copies already installed on recipients’ machines.'
+        )}
       </p>
     </div>
   )

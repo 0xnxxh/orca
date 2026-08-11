@@ -227,10 +227,12 @@ export default function SkillsPage(): React.JSX.Element {
             setInstallOpen(true)
           }}
         >
-          <Download className="size-3.5" /> Install from link
+          <Download className="size-3.5" />{' '}
+          {translate('auto.components.skills.SkillsPage.aee7b99cc6', 'Install from link')}
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={() => setManagementOpen(true)}>
-          <History className="size-3.5" /> Manage installs
+          <History className="size-3.5" />{' '}
+          {translate('auto.components.skills.SkillsPage.c13b82793c', 'Manage installs')}
         </Button>
       </header>
 

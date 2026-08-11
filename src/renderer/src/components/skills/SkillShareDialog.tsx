@@ -268,7 +268,9 @@ export function SkillShareDialog({
         ) : null}
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={() => void close()} disabled={publishing}>
-            {shareUrl ? 'Done' : 'Cancel'}
+            {shareUrl
+              ? translate('auto.components.skills.SkillShareDialog.3af85f6add', 'Done')
+              : translate('auto.components.skills.SkillShareDialog.30985d4fc0', 'Cancel')}
           </Button>
           {!shareUrl ? (
             publishing ? (
@@ -278,12 +280,25 @@ export function SkillShareDialog({
                 disabled={cancelling}
                 onClick={() => void cancelPublish()}
               >
-                {cancelling ? 'Cancelling…' : 'Cancel upload'}
+                {cancelling
+                  ? translate('auto.components.skills.SkillShareDialog.e9d652ae3d', 'Cancelling…')
+                  : translate(
+                      'auto.components.skills.SkillShareDialog.3a51d0f34f',
+                      'Cancel upload'
+                    )}
               </Button>
             ) : (
               <Button type="button" disabled={!preview || preparing} onClick={() => void publish()}>
                 <Share2 className="size-4" />
-                {publishingNewVersion ? 'Publish new version' : 'Publish skill'}
+                {publishingNewVersion
+                  ? translate(
+                      'auto.components.skills.SkillShareDialog.7aa4ba0dba',
+                      'Publish new version'
+                    )
+                  : translate(
+                      'auto.components.skills.SkillShareDialog.0f07fa2a79',
+                      'Publish skill'
+                    )}
               </Button>
             )
           ) : null}

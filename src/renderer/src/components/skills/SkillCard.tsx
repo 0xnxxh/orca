@@ -82,7 +82,7 @@ export function SkillCard({
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="top" sideOffset={4}>
-                  Share skill
+                  {translate('auto.components.skills.SkillCard.d25a1b8ae6', 'Share skill')}
                 </TooltipContent>
               </Tooltip>
             ) : null}

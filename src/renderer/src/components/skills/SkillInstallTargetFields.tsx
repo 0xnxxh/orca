@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/select'
 import { SKILL_INSTALL_CAPABILITY } from '../../../../shared/skill-install-capability'
 import type { SkillInstallWorkspaceChoice } from './skill-install-workspace-choices'
+import { translate } from '@/i18n/i18n'
 
 export function SkillInstallTargetFields(props: {
   environmentId: string
@@ -55,7 +56,9 @@ export function SkillInstallTargetFields(props: {
     <>
       <section className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label>Machine</Label>
+          <Label>
+            {translate('auto.components.skills.SkillInstallTargetFields.b8a0b706ad', 'Machine')}
+          </Label>
           <Select
             value={props.environmentId}
             onValueChange={(value) => {
@@ -68,7 +71,12 @@ export function SkillInstallTargetFields(props: {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="local">This computer</SelectItem>
+              <SelectItem value="local">
+                {translate(
+                  'auto.components.skills.SkillInstallTargetFields.8562dd1e6e',
+                  'This computer'
+                )}
+              </SelectItem>
               {props.runtimeEnvironments.map((environment) => {
                 const status = props.runtimeStatus.get(environment.id)?.status
                 const unsupported =
@@ -77,8 +85,13 @@ export function SkillInstallTargetFields(props: {
                   status.capabilities?.includes(SKILL_INSTALL_CAPABILITY) !== true
                 return (
                   <SelectItem key={environment.id} value={environment.id} disabled={unsupported}>
-                    {environment.name}
-                    {unsupported ? ' — update required' : ''}
+                    {environment.name}{' '}
+                    {unsupported
+                      ? translate(
+                          'auto.components.skills.SkillInstallTargetFields.0785d0a503',
+                          '— update required'
+                        )
+                      : ''}
                   </SelectItem>
                 )
               })}
@@ -88,15 +101,25 @@ export function SkillInstallTargetFields(props: {
                   value={`ssh:${connection.id}`}
                   disabled={!connection.connected}
                 >
-                  {connection.label}
-                  {!connection.connected ? ' — disconnected' : ' · SSH'}
+                  {connection.label}{' '}
+                  {!connection.connected
+                    ? translate(
+                        'auto.components.skills.SkillInstallTargetFields.71eefd7660',
+                        '— disconnected'
+                      )
+                    : translate(
+                        'auto.components.skills.SkillInstallTargetFields.85d85880df',
+                        '· SSH'
+                      )}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
         <div className="space-y-2">
-          <Label>Destination</Label>
+          <Label>
+            {translate('auto.components.skills.SkillInstallTargetFields.63cc9e31fe', 'Destination')}
+          </Label>
           <Select
             value={props.scope}
             onValueChange={(value) => props.onScopeChange(value as 'global' | 'workspace')}
@@ -105,8 +128,18 @@ export function SkillInstallTargetFields(props: {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="global">Global skills</SelectItem>
-              <SelectItem value="workspace">One workspace</SelectItem>
+              <SelectItem value="global">
+                {translate(
+                  'auto.components.skills.SkillInstallTargetFields.c779621aa0',
+                  'Global skills'
+                )}
+              </SelectItem>
+              <SelectItem value="workspace">
+                {translate(
+                  'auto.components.skills.SkillInstallTargetFields.a4dfd33095',
+                  'One workspace'
+                )}
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -114,7 +147,12 @@ export function SkillInstallTargetFields(props: {
 
       {props.scope === 'global' && wslDistros.length > 0 ? (
         <section className="space-y-2">
-          <Label>Execution environment</Label>
+          <Label>
+            {translate(
+              'auto.components.skills.SkillInstallTargetFields.cb47652227',
+              'Execution environment'
+            )}
+          </Label>
           <Select
             value={props.executionTarget?.distro ?? 'host'}
             onValueChange={(value) =>
@@ -127,10 +165,16 @@ export function SkillInstallTargetFields(props: {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="host">Host operating system</SelectItem>
+              <SelectItem value="host">
+                {translate(
+                  'auto.components.skills.SkillInstallTargetFields.e5b0d15e64',
+                  'Host operating system'
+                )}
+              </SelectItem>
               {wslDistros.map((distro) => (
                 <SelectItem key={distro} value={distro}>
-                  WSL · {distro}
+                  {translate('auto.components.skills.SkillInstallTargetFields.0c10a406fb', 'WSL ·')}{' '}
+                  {distro}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -140,22 +184,41 @@ export function SkillInstallTargetFields(props: {
 
       {props.scope === 'workspace' ? (
         <section className="space-y-2">
-          <Label>Workspace</Label>
+          <Label>
+            {translate('auto.components.skills.SkillInstallTargetFields.0e5b43a9e3', 'Workspace')}
+          </Label>
           <Select value={props.workspace} onValueChange={props.onWorkspaceChange}>
             <SelectTrigger>
-              <SelectValue placeholder="Choose a worktree or folder" />
+              <SelectValue
+                placeholder={translate(
+                  'auto.components.skills.SkillInstallTargetFields.5845cfe543',
+                  'Choose a worktree or folder'
+                )}
+              />
             </SelectTrigger>
             <SelectContent>
               {props.workspaceChoices.map((choice) => (
                 <SelectItem key={`${choice.kind}:${choice.id}`} value={choice.id}>
-                  {choice.label} · {choice.kind === 'worktree' ? 'Git worktree' : 'Folder'}
+                  {choice.label} ·{' '}
+                  {choice.kind === 'worktree'
+                    ? translate(
+                        'auto.components.skills.SkillInstallTargetFields.d628c416a2',
+                        'Git worktree'
+                      )
+                    : translate(
+                        'auto.components.skills.SkillInstallTargetFields.7a366323e7',
+                        'Folder'
+                      )}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
           {props.workspaceChoices.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              No workspaces are known on this machine.
+              {translate(
+                'auto.components.skills.SkillInstallTargetFields.8e6a972229',
+                'No workspaces are known on this machine.'
+              )}
             </p>
           ) : null}
         </section>
