@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../../shared/native-chat-types'
 import { useAppStore } from '@/store'
-import { NATIVE_CHAT_INITIAL_LIMIT } from './native-chat-pagination'
+import { NATIVE_CHAT_INITIAL_LIMIT, nextNativeChatLimit } from './native-chat-pagination'
 
 const { resetTransport, subscriptions, transport } = vi.hoisted(() => {
   type Subscription = {
@@ -295,6 +295,66 @@ describe('useNativeChatLiveSession visibility', () => {
     expect(transport.readSession).toHaveBeenCalledTimes(2)
     expect(transport.subscribe).toHaveBeenCalledTimes(2)
     expect(latest?.messages.map((message) => message.id)).toEqual(['session-b'])
+  })
+
+  it('reveals with the paged window and restarts it only on a source change', async () => {
+    const pagedLimit = nextNativeChatLimit(NATIVE_CHAT_INITIAL_LIMIT)
+    transport.readSession.mockResolvedValue({ messages: [assistant('read', 0)] })
+    const initialMessages = Array.from({ length: NATIVE_CHAT_INITIAL_LIMIT }, (_unused, index) =>
+      assistant(`old-${index}`, index)
+    )
+
+    await render(BASE_ARGS)
+    await emit(0, { type: 'snapshot', messages: initialMessages, hasMore: true })
+    await act(async () => {
+      latest?.loadEarlier()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(transport.readSession.mock.calls[1]?.[2]).toBe(pagedLimit)
+
+    await render({ ...BASE_ARGS, enabled: false })
+    await render(BASE_ARGS)
+
+    expect(transport.readSession.mock.calls[2]?.[2]).toBe(pagedLimit)
+    expect(transport.subscribe.mock.calls[1]?.[0]?.limit).toBe(pagedLimit)
+
+    await render({ ...BASE_ARGS, sessionId: 'session-2', transcriptPath: '/remote/session-2.jsonl' })
+
+    expect(transport.readSession.mock.calls[3]?.[2]).toBe(NATIVE_CHAT_INITIAL_LIMIT)
+  })
+
+  it('lets the pending read repair a stream error frame', async () => {
+    const seed = deferred<{ messages: NativeChatMessage[] }>()
+    transport.readSession.mockImplementationOnce(() => seed.promise)
+
+    await render(BASE_ARGS)
+    await emit(0, { type: 'snapshot', messages: [], hasMore: false, error: 'stream failed' })
+    expect(latest?.status).toBe('error')
+
+    await act(async () => {
+      seed.resolve({ messages: [assistant('seeded', 1)] })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(latest?.readPhase).toBe('ready')
+    expect(latest?.messages.map((message) => message.id)).toEqual(['seeded'])
+  })
+
+  it('keeps the retained transcript when the reveal stream errors', async () => {
+    await render(BASE_ARGS)
+    await emit(0, {
+      type: 'snapshot',
+      messages: [assistant('committed', 1)],
+      hasMore: false
+    })
+    await render({ ...BASE_ARGS, enabled: false })
+    await render(BASE_ARGS)
+    await emit(1, { type: 'snapshot', messages: [], hasMore: false, error: 'stream failed' })
+
+    expect(latest?.messages.map((message) => message.id)).toEqual(['committed'])
+    expect(latest?.status).not.toBe('error')
   })
 
   it('fences pagination started before a rapid hide and reveal', async () => {

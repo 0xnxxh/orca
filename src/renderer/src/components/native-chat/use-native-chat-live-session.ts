@@ -134,6 +134,7 @@ export function useNativeChatLiveSession(
     retainedSourceKeyRef.current = sourceKey
     if (!enabled) {
       if (sourceChanged) {
+        limitRef.current = NATIVE_CHAT_INITIAL_LIMIT
         transcriptLifecycleControl.reset()
         setRead({ phase: 'loading' })
         replaceList(appendMergerRef.current, [])
@@ -159,7 +160,10 @@ export function useNativeChatLiveSession(
     const retryStartedAt = Date.now()
     // Re-bound as a const: TS drops the `!sessionId` narrowing inside the hoisted nested function.
     const activeSessionId = sessionId
-    limitRef.current = NATIVE_CHAT_INITIAL_LIMIT
+    // Why: a reveal re-reads the same source, so keep the window the user paged in; only a new source starts over.
+    if (sourceChanged) {
+      limitRef.current = NATIVE_CHAT_INITIAL_LIMIT
+    }
     setRead({ phase: 'loading' })
     replaceList(appendMergerRef.current, [])
     setAppended([])
@@ -215,13 +219,14 @@ export function useNativeChatLiveSession(
         }
         if (frame.type === 'snapshot' || frame.type === 'replacement') {
           // Why: snapshots and inode replacements are authoritative generations; older pagination must not repaint them.
-          frameArrived = true
           transcriptEpochRef.current += 1
           setLoadingEarlier(false)
           if ('error' in frame && frame.error) {
+            // Why: an error frame carries no transcript, so it must not consume the seed — a healthy read still has to repair the pane.
             setRead({ phase: 'error', error: frame.error })
             return
           }
+          frameArrived = true
           transcriptLifecycleControl.replace(frame.lifecycle)
           replaceList(appendMergerRef.current, frame.messages)
           setAppended([])
