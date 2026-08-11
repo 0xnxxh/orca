@@ -6,7 +6,7 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `55498588b6` on `skills-share` (pushed; no PR).
+- Orca implementation: `92c8c6a4c6` on `skills-share` (pushed; no PR).
 - Orca Cloud: `81a581d` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
@@ -25,7 +25,8 @@ Validated so far:
 - Exact portable package digest and archive SHA-256 goldens passed on macOS and native Windows
   despite different bundled zlib versions (`1.2.12` and `1.3.1`).
 - The focused deterministic package suite passed 26/26 tests in Debian Bullseye/glibc 2.31 on
-  native Linux ARM64 and emulated Linux x64; dependencies remained isolated from the macOS tree.
+  native Linux ARM64 and emulated Linux x64, plus the real Ubuntu 24.04 WSL distro on `windows 2`;
+  every host produced the same package digest and archive SHA-256 golden.
 - Real native Windows global, linked Git-worktree, and plain folder installs with spaces and
   non-ASCII paths, plus privacy-safe install diagnostics and owner-private staging tests.
 - Isolated staging bucket, IAM, secret container, log metrics, dashboard, and alerts in
@@ -212,7 +213,8 @@ does not mean the surrounding phase is complete.
       with bounded deterministic stored DEFLATE blocks.
 - [ ] Repeat the portable package golden on native Linux and inside WSL.
       The focused golden passed in Debian Bullseye/glibc 2.31 containers on native ARM64 and
-      emulated x64 at `55498588b6`; a native Linux host and the real WSL distro remain required.
+      emulated x64, and inside the real Ubuntu 24.04 WSL distro, at `92c8c6a4c6`; a native Linux
+      host remains required for this stricter gate.
 - [x] Test source changes during packaging.
 - [x] Test CRLF/LF behavior explicitly and document whether byte identity changes.
 - [x] Test executable-mode preservation and Windows's mode limitations.
@@ -226,7 +228,7 @@ does not mean the surrounding phase is complete.
 ### Phase 2 package gate
 
 - [x] Prove invalid archive classes fail before destination mutation.
-- [ ] Prove the same source bytes produce the same digest on macOS, Linux, native Windows, and WSL.
+- [x] Prove the same source bytes produce the same digest on macOS, Linux, native Windows, and WSL.
 - [x] Prove package creation and extraction require no `npx`, external Node installation, or
       upstream CLI runtime.
 
@@ -672,6 +674,11 @@ through the selected distro after converting UNC verification paths to distro-na
 run passed both cases: Linux case sensitivity was preserved, regular files were `0600`, executable
 files were `0700`, and the packaged script executed successfully. Existing real transaction
 coverage also verified POSIX provider alias creation inside the distro.
+
+At commit `92c8c6a4c6`, the exact portable package golden passed 26/26 focused tests from a native
+WSL filesystem using an isolated user-owned Node 24 toolchain. The package digest and archive
+SHA-256 matched macOS, native Windows, and Linux container results; the temporary WSL toolchain,
+source snapshot, dependencies, and package-manager store were removed after the run.
 
 ### Host preparation
 
