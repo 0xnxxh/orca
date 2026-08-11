@@ -89,10 +89,13 @@ function capabilityStrings(module: Record<string, unknown>): readonly string[] {
 }
 
 async function loadWorkingTreeBuild(): Promise<AgentSessionWireBuild> {
-  const [protocol, dispatcher, structured] = await Promise.all([
+  const [protocol, dispatcher, structured, aiVault, sessionTabs, terminal] = await Promise.all([
     import('../../../src/shared/protocol-version'),
     import('../../../src/main/runtime/rpc/dispatcher'),
-    import('../../../src/main/runtime/rpc/methods/structured-agent-session')
+    import('../../../src/main/runtime/rpc/methods/structured-agent-session'),
+    import('../../../src/main/runtime/rpc/methods/ai-vault'),
+    import('../../../src/main/runtime/rpc/methods/session-tabs'),
+    import('../../../src/main/runtime/rpc/methods/terminal')
   ])
   const module = dispatcher as unknown as DispatcherModule
   return {
@@ -104,7 +107,12 @@ async function loadWorkingTreeBuild(): Promise<AgentSessionWireBuild> {
     createDispatcher: (runtime) =>
       new module.RpcDispatcher({
         runtime,
-        methods: structured.STRUCTURED_AGENT_SESSION_METHODS as unknown[]
+        methods: [
+          ...(structured.STRUCTURED_AGENT_SESSION_METHODS as unknown[]),
+          ...(aiVault.AI_VAULT_METHODS as unknown[]),
+          ...(sessionTabs.SESSION_TAB_METHODS as unknown[]),
+          ...(terminal.TERMINAL_METHODS as unknown[])
+        ]
       })
   }
 }
