@@ -10,6 +10,11 @@ import { callRuntimeEnvironment } from '../ipc/runtime-environment-transport-rou
 import { transferSkillPackageToRuntime } from './skill-client-mediated-transfer'
 import { SkillInstallFailureSchema } from '../../shared/skill-install-failure'
 import { SkillInstallOperationError } from './skill-install-operation-error'
+import { retrySkillTransferRpc } from './skill-transfer-rpc-retry'
+import {
+  isRecoverableRemoteRuntimeConnectionError,
+  toRemoteRuntimeClientErrorLike
+} from '../../shared/remote-runtime-client-error-classification'
 
 const DIRECT_DOWNLOAD_FAILURE = 'skill-download-transport-failed'
 const DEVELOPMENT_DOWNLOAD_POLICY_FAILURES = new Set([
@@ -58,7 +63,11 @@ function remoteFailure(response: RuntimeRpcResponse<unknown>): Error {
   const failure = SkillInstallFailureSchema.safeParse(response.error.data)
   return failure.success
     ? new SkillInstallOperationError(failure.data)
-    : new Error(`skill-install-remote-${response.error.code}`)
+    : new Error('skill-install-remote-failed')
+}
+
+function retryableRemoteInstallTransportError(error: unknown): boolean {
+  return isRecoverableRemoteRuntimeConnectionError(toRemoteRuntimeClientErrorLike(error))
 }
 
 export async function installSkillOnRemoteRuntime(input: {
@@ -72,7 +81,12 @@ export async function installSkillOnRemoteRuntime(input: {
   if (input.request.ingress.kind !== 'download-grant') {
     throw new Error('skill-install-remote-ingress-invalid')
   }
-  const direct = await install(input.userDataPath, input.environmentId, input.request)
+  const grant = input.request.ingress
+  const direct = await retrySkillTransferRpc({
+    signal: input.signal,
+    retryable: retryableRemoteInstallTransportError,
+    call: () => install(input.userDataPath, input.environmentId, input.request)
+  })
   if (!isDirectDownloadUnavailable(direct, input.requireHttps)) {
     if (direct.ok !== true) {
       throw remoteFailure(direct)
@@ -83,25 +97,31 @@ export async function installSkillOnRemoteRuntime(input: {
     throw new Error('skill-install-remote-download-unavailable')
   }
 
-  const transfer = await transferSkillPackageToRuntime({
-    userDataPath: input.userDataPath,
-    environmentId: input.environmentId,
-    transferId: input.request.operationId,
-    package: input.request.package,
-    grant: input.request.ingress,
-    requireHttps: input.requireHttps,
-    signal: input.signal
-  })
-  try {
-    const staged = await install(input.userDataPath, input.environmentId, {
-      ...input.request,
-      ingress: { kind: 'staged-upload', uploadId: transfer.uploadId }
-    })
-    if (staged.ok !== true) {
-      throw remoteFailure(staged)
+  return retrySkillTransferRpc({
+    signal: input.signal,
+    retryable: retryableRemoteInstallTransportError,
+    call: async () => {
+      const transfer = await transferSkillPackageToRuntime({
+        userDataPath: input.userDataPath,
+        environmentId: input.environmentId,
+        transferId: input.request.operationId,
+        package: input.request.package,
+        grant,
+        requireHttps: input.requireHttps,
+        signal: input.signal
+      })
+      try {
+        const staged = await install(input.userDataPath, input.environmentId, {
+          ...input.request,
+          ingress: { kind: 'staged-upload', uploadId: transfer.uploadId }
+        })
+        if (staged.ok !== true) {
+          throw remoteFailure(staged)
+        }
+        return SkillInstallResultSchema.parse(staged.result)
+      } finally {
+        await transfer.cleanup().catch(() => undefined)
+      }
     }
-    return SkillInstallResultSchema.parse(staged.result)
-  } finally {
-    await transfer.cleanup().catch(() => undefined)
-  }
+  })
 }

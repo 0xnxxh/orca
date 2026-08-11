@@ -71,6 +71,13 @@ function shouldUseClientTransfer(error: unknown, requireHttps: boolean): boolean
   )
 }
 
+function retryableSshTransportError(error: unknown): boolean {
+  return (
+    typeof (error as { code?: unknown })?.code !== 'number' &&
+    (error as Error)?.name !== 'AbortError'
+  )
+}
+
 async function capabilities(client: SkillSshRelayClient): Promise<string[]> {
   const status = (await client('relay.status', {}, { timeoutMs: 15_000 })) as {
     capabilities?: unknown
@@ -100,11 +107,16 @@ export async function installSkillOnSshHost(input: {
   }
   try {
     return SkillInstallResultSchema.parse(
-      await client(
-        SKILL_SSH_RELAY_INSTALL_METHOD,
-        { request: input.request, workspace: input.workspace },
-        { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
-      )
+      await retrySkillTransferRpc({
+        signal: input.signal,
+        retryable: retryableSshTransportError,
+        call: () =>
+          client(
+            SKILL_SSH_RELAY_INSTALL_METHOD,
+            { request: input.request, workspace: input.workspace },
+            { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
+          )
+      })
     )
   } catch (error) {
     if (
@@ -117,24 +129,30 @@ export async function installSkillOnSshHost(input: {
   if (!supported.includes(SKILL_UPLOAD_CAPABILITY)) {
     throw new Error('skill-install-ssh-download-unavailable')
   }
-  const uploadId = await transferSkillPackageToSshHost(client, input)
-  try {
-    return SkillInstallResultSchema.parse(
-      await client(
-        SKILL_SSH_RELAY_INSTALL_METHOD,
-        {
-          request: {
-            ...input.request,
-            ingress: { kind: 'staged-upload', uploadId }
-          },
-          workspace: input.workspace
-        },
-        { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
-      )
-    )
-  } finally {
-    await client(SKILL_SSH_RELAY_CANCEL_UPLOAD_METHOD, { uploadId }).catch(() => undefined)
-  }
+  return retrySkillTransferRpc({
+    signal: input.signal,
+    retryable: retryableSshTransportError,
+    call: async () => {
+      const uploadId = await transferSkillPackageToSshHost(client, input)
+      try {
+        return SkillInstallResultSchema.parse(
+          await client(
+            SKILL_SSH_RELAY_INSTALL_METHOD,
+            {
+              request: {
+                ...input.request,
+                ingress: { kind: 'staged-upload', uploadId }
+              },
+              workspace: input.workspace
+            },
+            { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
+          )
+        )
+      } finally {
+        await client(SKILL_SSH_RELAY_CANCEL_UPLOAD_METHOD, { uploadId }).catch(() => undefined)
+      }
+    }
+  })
 }
 
 export async function previewSkillInstallOnSshHost(input: {
@@ -224,9 +242,7 @@ async function transferSkillPackageToSshHost(
       await retrySkillTransferRpc({
         signal: input.signal,
         checkCancellationAfterSuccess: false,
-        retryable: (error) =>
-          typeof (error as { code?: unknown })?.code !== 'number' &&
-          (error as Error)?.name !== 'AbortError',
+        retryable: retryableSshTransportError,
         call: () =>
           client(
             SKILL_SSH_RELAY_BEGIN_UPLOAD_METHOD,
@@ -258,9 +274,7 @@ async function transferSkillPackageToSshHost(
         }
         const acknowledged = (await retrySkillTransferRpc({
           signal: input.signal,
-          retryable: (error) =>
-            typeof (error as { code?: unknown })?.code !== 'number' &&
-            (error as Error)?.name !== 'AbortError',
+          retryable: retryableSshTransportError,
           call: () =>
             client(
               SKILL_SSH_RELAY_UPLOAD_CHUNK_METHOD,
@@ -278,9 +292,7 @@ async function transferSkillPackageToSshHost(
     }
     await retrySkillTransferRpc({
       signal: input.signal,
-      retryable: (error) =>
-        typeof (error as { code?: unknown })?.code !== 'number' &&
-        (error as Error)?.name !== 'AbortError',
+      retryable: retryableSshTransportError,
       call: () =>
         client(
           SKILL_SSH_RELAY_COMMIT_UPLOAD_METHOD,

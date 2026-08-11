@@ -183,7 +183,12 @@ export async function recoverSkillRemovalTransaction(
     await rm(skillRemovalJournalPath(stateDirectory, canonicalPath), { force: true })
     return
   }
-  for (const move of journal.moves.slice(0, journal.movedCount).toReversed()) {
+  const moved = journal.moves.slice(0, journal.movedCount)
+  for (let index = moved.length - 1; index >= 0; index -= 1) {
+    const move = moved[index]
+    if (!move) {
+      continue
+    }
     if (
       (await skillRemovalPathExists(move.backupPath)) &&
       !(await skillRemovalPathExists(move.sourcePath))

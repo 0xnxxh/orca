@@ -29,6 +29,17 @@ export type SkillPackageExtractionResult = {
   compressedBytes: number
 }
 
+function normalizeArchiveReadError(error: unknown): Error {
+  if (!(error instanceof Error)) {
+    return new Error(String(error))
+  }
+  const code = (error as NodeJS.ErrnoException).code
+  if (code?.startsWith('Z_') || code?.startsWith('ERR_ZLIB_')) {
+    return new Error('skill-package-gzip-invalid', { cause: error })
+  }
+  return error
+}
+
 async function consumeZeroPadding(reader: TarByteReader, size: number): Promise<void> {
   const padding = (SKILL_TAR_BLOCK_BYTES - (size % SKILL_TAR_BLOCK_BYTES)) % SKILL_TAR_BLOCK_BYTES
   if (padding === 0) {
@@ -212,7 +223,7 @@ export async function extractSkillPackageArchive(input: {
     }
     return { manifest, skillDirectory, ...archiveIdentity }
   } catch (error) {
-    const failure = error instanceof Error ? error : new Error(String(error))
+    const failure = normalizeArchiveReadError(error)
     archive.abort(failure)
     await archive.archiveIdentity.catch(() => undefined)
     if (destinationCreated) {

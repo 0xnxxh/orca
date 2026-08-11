@@ -65,7 +65,7 @@ describe('installSkillOnSshHost', () => {
       if (method === 'skills.install') {
         const ingress = (params as { request: ReturnType<typeof request> }).request.ingress
         if (ingress.kind === 'download-grant') {
-          throw new Error('skill-download-transport-failed')
+          throw Object.assign(new Error('skill-download-transport-failed'), { code: -32000 })
         }
         return result()
       }
@@ -143,6 +143,82 @@ describe('installSkillOnSshHost', () => {
     expect(requestHostRpc).toHaveBeenCalledOnce()
   })
 
+  it('retries an idempotent direct install after its response is lost', async () => {
+    const bytes = Buffer.from('private skill archive')
+    let installAttempts = 0
+    const requestHostRpc = vi.fn(async (method: string) => {
+      if (method === 'relay.status') {
+        return { capabilities: ['skills.install.v1', 'skills.upload.v1'] }
+      }
+      if (method === 'skills.install') {
+        installAttempts += 1
+        if (installAttempts === 1) {
+          throw new Error('connection dropped after host commit')
+        }
+        return { ...result(), status: 'unchanged' }
+      }
+      throw new Error(`unexpected method ${method}`)
+    })
+
+    await expect(
+      installSkillOnSshHost({
+        provider: { requestHostRpc } as unknown as IPtyProvider,
+        userDataPath: await userDataPath(),
+        request: request(bytes),
+        requireHttps: true
+      })
+    ).resolves.toMatchObject({ status: 'unchanged' })
+    expect(installAttempts).toBe(2)
+  })
+
+  it('rebuilds a staged transfer after the install response is lost', async () => {
+    const bytes = Buffer.from('private skill archive')
+    let uploadSequence = 0
+    let stagedInstallAttempts = 0
+    const requestHostRpc = vi.fn(async (method: string, params: unknown) => {
+      if (method === 'relay.status') {
+        return { capabilities: ['skills.install.v1', 'skills.upload.v1'] }
+      }
+      if (method === 'skills.install') {
+        const ingress = (params as { request: ReturnType<typeof request> }).request.ingress
+        if (ingress.kind === 'download-grant') {
+          throw Object.assign(new Error('skill-download-transport-failed'), { code: -32000 })
+        }
+        stagedInstallAttempts += 1
+        if (stagedInstallAttempts === 1) {
+          throw new Error('connection dropped after staged host commit')
+        }
+        return { ...result(), status: 'unchanged' }
+      }
+      if (method === 'skills.beginUpload') {
+        uploadSequence += 1
+        return { uploadId: `upload_${uploadSequence}`, chunkBytes: 256 * 1024 }
+      }
+      if (method === 'skills.uploadChunk') {
+        const chunk = params as { offset: number; bytesBase64: string }
+        return {
+          acknowledgedOffset: chunk.offset + Buffer.from(chunk.bytesBase64, 'base64').length
+        }
+      }
+      return { ok: true }
+    })
+
+    await expect(
+      installSkillOnSshHost({
+        provider: { requestHostRpc } as unknown as IPtyProvider,
+        userDataPath: await userDataPath(),
+        request: request(bytes),
+        requireHttps: true,
+        fetcher: vi.fn(
+          async () =>
+            new Response(bytes, { headers: { 'content-type': SKILL_PACKAGE_CONTENT_TYPE } })
+        ) as typeof fetch
+      })
+    ).resolves.toMatchObject({ status: 'unchanged' })
+    expect(uploadSequence).toBe(2)
+    expect(stagedInstallAttempts).toBe(2)
+  })
+
   it('uses a configured development origin through the client', async () => {
     const bytes = Buffer.from('private development archive')
     const requestHostRpc = vi.fn(async (method: string, params: unknown) => {
@@ -152,7 +228,7 @@ describe('installSkillOnSshHost', () => {
       if (method === 'skills.install') {
         const ingress = (params as { request: ReturnType<typeof request> }).request.ingress
         if (ingress.kind === 'download-grant') {
-          throw new Error('skill-download-url-rejected')
+          throw Object.assign(new Error('skill-download-url-rejected'), { code: -32000 })
         }
         return result()
       }

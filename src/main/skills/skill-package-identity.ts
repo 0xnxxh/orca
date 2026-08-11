@@ -286,7 +286,11 @@ export function matchingKnownSnapshot(
   officialPaths: ReadonlySet<string>
 ): SkillKnownSnapshot | null {
   const observedByPath = new Map(observed.files.map((file) => [file.path, file]))
-  for (const snapshot of snapshots.toReversed()) {
+  for (let index = snapshots.length - 1; index >= 0; index -= 1) {
+    const snapshot = snapshots[index]
+    if (!snapshot) {
+      continue
+    }
     const listed = new Set(snapshot.files.map((file) => file.path))
     const launders = observed.files.some(
       (file) => !listed.has(file.path) && officialPaths.has(file.path)

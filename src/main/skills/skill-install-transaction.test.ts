@@ -215,6 +215,40 @@ describe('skill install transaction', () => {
     )
   })
 
+  it.each([
+    ['EACCES', true],
+    ['ENOSPC', false]
+  ] as const)(
+    'preserves the old version after a %s filesystem failure',
+    async (code, retryable) => {
+      const root = await temporaryDirectory()
+      const first = await packageVersion(root, 'version_1', '# First')
+      const second = await packageVersion(root, 'version_2', '# Second')
+      await installLocalSkillPackage(installInput(root, first))
+      const failingFilesystem = {
+        ...nativeSkillInstallFilesystem,
+        rename: async (source: string, target: string): Promise<void> => {
+          if (target.includes('.orca-backup-')) {
+            throw Object.assign(new Error(`injected ${code}`), { code })
+          }
+          await nativeSkillInstallFilesystem.rename(source, target)
+        }
+      }
+
+      const result = await installLocalSkillPackage(
+        installInput(root, second, { filesystem: failingFilesystem })
+      )
+
+      expect(result).toMatchObject({
+        status: 'failed',
+        failure: { category: 'filesystem', retryable }
+      })
+      expect(await readFile(join(root, 'skills', 'test-skill', 'SKILL.md'), 'utf8')).toContain(
+        '# First'
+      )
+    }
+  )
+
   it('returns a retryable failure when another process owns the destination lock', async () => {
     const root = await temporaryDirectory()
     const archive = await packageVersion(root, 'version_1', '# First')

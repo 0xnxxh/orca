@@ -41,6 +41,10 @@ import {
 import { listManagedSkillInstalls } from '../main/skills/skill-install-provenance'
 import { executeSkillInstallRequest } from '../main/skills/skill-install-request-service'
 import { SkillUploadSessionService } from '../main/skills/skill-upload-session-service'
+import {
+  SkillInstallOperationError,
+  skillInstallFailureFromError
+} from '../main/skills/skill-install-operation-error'
 
 const SSH_SKILL_ENVIRONMENT_ID = 'ssh-host'
 
@@ -76,31 +80,37 @@ export class SkillInstallHandler {
   private registerHandlers(): void {
     this.dispatcher.onRequest(SKILL_SSH_RELAY_INSTALL_METHOD, async (params, context) => {
       const input = SkillSshInstallParamsSchema.parse(params)
-      return executeSkillInstallRequest(input.request, {
-        authority: this.authority(input.workspace),
-        stateDirectory: this.stateDirectory,
-        allowedDownloadOrigins: ['https://storage.googleapis.com'],
-        requireHttps: true,
-        resolveStagedUpload: (uploadId, identity) => this.uploads.take(uploadId, identity),
-        detectProviders: this.detectProviders,
-        signal: context.signal
-      })
+      return this.executeSkillOperation(() =>
+        executeSkillInstallRequest(input.request, {
+          authority: this.authority(input.workspace),
+          stateDirectory: this.stateDirectory,
+          allowedDownloadOrigins: ['https://storage.googleapis.com'],
+          requireHttps: true,
+          resolveStagedUpload: (uploadId, identity) => this.uploads.take(uploadId, identity),
+          detectProviders: this.detectProviders,
+          signal: context.signal
+        })
+      )
     })
     this.dispatcher.onRequest(SKILL_SSH_RELAY_PREVIEW_METHOD, async (params) => {
       const input = SkillSshPreviewParamsSchema.parse(params)
-      return previewSharedSkillInstall(input.request, {
-        authority: this.authority(input.workspace),
-        stateDirectory: this.stateDirectory,
-        detectProviders: this.detectProviders
-      })
+      return this.executeSkillOperation(() =>
+        previewSharedSkillInstall(input.request, {
+          authority: this.authority(input.workspace),
+          stateDirectory: this.stateDirectory,
+          detectProviders: this.detectProviders
+        })
+      )
     })
     this.dispatcher.onRequest(SKILL_SSH_RELAY_REMOVE_METHOD, async (params) => {
       const input = SkillSshRemoveParamsSchema.parse(params)
-      return removeSharedSkillInstall(input.request, {
-        authority: this.authority(input.workspace),
-        stateDirectory: this.stateDirectory,
-        detectProviders: this.detectProviders
-      })
+      return this.executeSkillOperation(() =>
+        removeSharedSkillInstall(input.request, {
+          authority: this.authority(input.workspace),
+          stateDirectory: this.stateDirectory,
+          detectProviders: this.detectProviders
+        })
+      )
     })
     this.dispatcher.onRequest(SKILL_SSH_RELAY_LIST_METHOD, async (params) => {
       const input = SkillSshListParamsSchema.parse(params)
@@ -129,6 +139,18 @@ export class SkillInstallHandler {
         workspace?.kind === 'worktree' && workspace.id === id ? workspace : null,
       resolveFolderWorkspace: async (id) =>
         workspace?.kind === 'folder' && workspace.id === id ? workspace : null
+    }
+  }
+
+  private async executeSkillOperation<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation()
+    } catch (error) {
+      const failure = skillInstallFailureFromError(error)
+      if (!failure) {
+        throw error
+      }
+      throw new SkillInstallOperationError(failure, { cause: error })
     }
   }
 

@@ -66,6 +66,27 @@ describe('installSkillOnRemoteRuntime', () => {
     expect(mocks.transferSkillPackageToRuntime).not.toHaveBeenCalled()
   })
 
+  it('retries an idempotent direct install after a lost response', async () => {
+    mocks.callRuntimeEnvironment
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Remote Orca runtime connection closed'), {
+          code: 'remote_runtime_unavailable'
+        })
+      )
+      .mockResolvedValueOnce(success({ ...result, status: 'unchanged' }))
+
+    await expect(
+      installSkillOnRemoteRuntime({
+        userDataPath: '/state',
+        environmentId: 'environment-1',
+        request,
+        capabilities: ['skills.install.v1', 'skills.upload.v1'],
+        requireHttps: true
+      })
+    ).resolves.toMatchObject({ status: 'unchanged' })
+    expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(2)
+  })
+
   it('falls back to a staged client transfer and always cleans it up', async () => {
     const cleanup = vi.fn(async () => undefined)
     mocks.callRuntimeEnvironment
@@ -91,6 +112,39 @@ describe('installSkillOnRemoteRuntime', () => {
       ingress: { kind: 'staged-upload', uploadId: 'upload-1' }
     })
     expect(cleanup).toHaveBeenCalledOnce()
+  })
+
+  it('rebuilds the staged transfer after an install response is lost', async () => {
+    const firstCleanup = vi.fn(async () => undefined)
+    const secondCleanup = vi.fn(async () => undefined)
+    mocks.callRuntimeEnvironment
+      .mockResolvedValueOnce({
+        id: 'rpc-1',
+        ok: false,
+        error: { code: 'runtime_error', message: 'skill-download-transport-failed' }
+      })
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Remote Orca runtime connection closed'), {
+          code: 'remote_runtime_unavailable'
+        })
+      )
+      .mockResolvedValueOnce(success({ ...result, status: 'unchanged' }))
+    mocks.transferSkillPackageToRuntime
+      .mockResolvedValueOnce({ uploadId: 'upload-1', cleanup: firstCleanup })
+      .mockResolvedValueOnce({ uploadId: 'upload-2', cleanup: secondCleanup })
+
+    await expect(
+      installSkillOnRemoteRuntime({
+        userDataPath: '/state',
+        environmentId: 'environment-1',
+        request,
+        capabilities: ['skills.install.v1', 'skills.upload.v1'],
+        requireHttps: true
+      })
+    ).resolves.toMatchObject({ status: 'unchanged' })
+    expect(mocks.transferSkillPackageToRuntime).toHaveBeenCalledTimes(2)
+    expect(firstCleanup).toHaveBeenCalledOnce()
+    expect(secondCleanup).toHaveBeenCalledOnce()
   })
 
   it('does not call upload RPCs when the runtime lacks the upload capability', async () => {
@@ -135,7 +189,7 @@ describe('installSkillOnRemoteRuntime', () => {
         capabilities: ['skills.install.v1', 'skills.upload.v1'],
         requireHttps: true
       })
-    ).rejects.toThrow('skill-install-remote-runtime_error')
+    ).rejects.toThrow('skill-install-remote-failed')
     expect(cleanup).toHaveBeenCalledOnce()
   })
 
@@ -178,7 +232,7 @@ describe('installSkillOnRemoteRuntime', () => {
         capabilities: ['skills.install.v1', 'skills.upload.v1'],
         requireHttps: true
       })
-    ).rejects.toThrow('skill-install-remote-runtime_error')
+    ).rejects.toThrow('skill-install-remote-failed')
     expect(mocks.transferSkillPackageToRuntime).not.toHaveBeenCalled()
   })
 })

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -95,5 +96,40 @@ describe('SkillInstallHandler', () => {
       'skills.upload.v1',
       'skills.manage.v1'
     ])
+  })
+
+  it('exposes invalid staged archives through the stable SSH failure contract', async () => {
+    const { call } = await fixture()
+    const bytes = Buffer.from('not a skill archive')
+    const packageIdentity = {
+      packageId: 'package_1',
+      versionId: 'version_1',
+      packageDigest: 'a'.repeat(64),
+      archiveSha256: createHash('sha256').update(bytes).digest('hex'),
+      compressedBytes: bytes.length
+    }
+    const begun = (await call(SKILL_SSH_RELAY_BEGIN_UPLOAD_METHOD, {
+      package: packageIdentity
+    })) as { uploadId: string }
+    await call(SKILL_SSH_RELAY_UPLOAD_CHUNK_METHOD, {
+      uploadId: begun.uploadId,
+      offset: 0,
+      bytesBase64: bytes.toString('base64')
+    })
+    await call(SKILL_SSH_RELAY_COMMIT_UPLOAD_METHOD, { uploadId: begun.uploadId })
+
+    await expect(
+      call(SKILL_SSH_RELAY_INSTALL_METHOD, {
+        request: {
+          operationId: 'operation_invalid',
+          package: packageIdentity,
+          ingress: { kind: 'staged-upload', uploadId: begun.uploadId },
+          destination: { scope: 'global', executionTarget: { kind: 'host' } }
+        }
+      })
+    ).rejects.toMatchObject({
+      code: 'skill_install_failure',
+      data: { category: 'archive', retryable: false }
+    })
   })
 })

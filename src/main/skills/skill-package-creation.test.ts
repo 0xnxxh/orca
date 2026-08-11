@@ -263,6 +263,19 @@ describe('skill package creation and extraction', () => {
     ).rejects.toThrow('skill-package-tar-truncated')
   })
 
+  it('maps invalid gzip bytes to a stable archive failure', async () => {
+    const root = await temporaryDirectory()
+    const archivePath = join(root, 'invalid-gzip.tar.gz')
+    await writeFile(archivePath, 'not a gzip stream')
+
+    await expect(
+      extractSkillPackageArchive({
+        archivePath,
+        destinationDirectory: join(root, 'invalid-gzip')
+      })
+    ).rejects.toThrow('skill-package-gzip-invalid')
+  })
+
   it('cancels during streamed extraction and removes partial bytes', async () => {
     const root = await temporaryDirectory()
     const created = await createSkillPackageArchive({
