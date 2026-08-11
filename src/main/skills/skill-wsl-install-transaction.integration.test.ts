@@ -187,4 +187,42 @@ describe.runIf(RUN_REAL_WSL)('real WSL skill install transactions', () => {
       ).status
     ).toBe('removed')
   })
+
+  it('installs and removes within a Windows-backed WSL workspace', async () => {
+    const archive = await packageVersion('drvfs-version', 'DrvFS workspace')
+    const windowsWorkspace = join(localRoot, 'windows-workspace')
+    await mkdir(windowsWorkspace)
+    const filesystem = createWslSkillInstallFilesystem({
+      distro: DISTRO,
+      homeDirectory,
+      workspaceDirectory: windowsWorkspace
+    })
+    const input = {
+      ...installInput(archive, 'workspace', filesystem),
+      workspaceDirectory: windowsWorkspace,
+      orcaStateDirectory: join(localRoot, 'state-drvfs')
+    }
+
+    expect((await installSharedSkill(input)).status).toBe('installed')
+    expect(
+      await readFile(
+        join(windowsWorkspace, '.agents', 'skills', 'real-wsl-skill', 'SKILL.md'),
+        'utf8'
+      )
+    ).toContain('# DrvFS workspace')
+    expect(
+      (
+        await removeSharedSkill({
+          operationId: 'remove-drvfs',
+          skillName: 'real-wsl-skill',
+          scope: 'workspace',
+          homeDirectory,
+          workspaceDirectory: windowsWorkspace,
+          orcaStateDirectory: join(localRoot, 'state-drvfs'),
+          detectedProviders: ['codex', 'claude'],
+          filesystem
+        })
+      ).status
+    ).toBe('removed')
+  })
 })
