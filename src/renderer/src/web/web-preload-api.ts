@@ -3698,11 +3698,13 @@ function getStoredSettings(): GlobalSettings {
       // Keep readJson's invalid-JSON fallback non-destructive.
     }
   }
+  // Why only floatingTerminal: desktop-only chrome. Do not override
+  // rightSidebarOpenByDefault — shared defaults keep it open so new web profiles
+  // match desktop and discover the explorer panel.
   return mergeSettings(
     {
       ...defaults,
       floatingTerminalEnabled: false,
-      rightSidebarOpenByDefault: false,
       activeRuntimeEnvironmentId: null
     },
     migratedStored
