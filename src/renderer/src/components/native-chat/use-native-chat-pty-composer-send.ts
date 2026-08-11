@@ -6,6 +6,7 @@ import { emitNativeChatMessageSent } from '@/lib/native-chat-telemetry'
 import {
   sendNativeChatMessage,
   sendNativeChatMessageWithImageAttachments,
+  sendNativeChatTypedCommand,
   submitNativeChatPrompt
 } from './native-chat-runtime-send'
 import type { NativeChatSendHandle } from './native-chat-runtime-send'
@@ -13,6 +14,7 @@ import { resolveNativeChatLaunchDraftSend } from './native-chat-launch-draft-sen
 import { nativeChatComposerTargetIsRemote } from './native-chat-composer-target'
 import type { NativeChatResolvedTarget } from './native-chat-composer-target'
 import { pushHistory, type HistoryState } from './native-chat-composer-state'
+import { isSlashCommandDraft } from '../../../../shared/native-chat-slash-commands'
 import type { NativeChatPickerState } from './use-native-chat-picker-state'
 import type { NativeChatSendLifecycle } from './use-native-chat-send-lifecycle'
 import type { NativeChatPtySessionOptionsSurface } from './native-chat-pty-session-options'
@@ -64,7 +66,10 @@ export function useNativeChatPtyComposerSend(args: {
     let pendingHandle: NativeChatSendHandle | null = null
     // Why: slash-like text must not silently drop its attached images.
     if (classification !== 'chat' && imagePaths.length === 0) {
-      pendingHandle = sendNativeChatMessage(target.settings, target.ptyId, text, sendOptions)
+      pendingHandle =
+        args.agent === 'codex' && isSlashCommandDraft(text)
+          ? sendNativeChatTypedCommand(target.settings, target.ptyId, text)
+          : sendNativeChatMessage(target.settings, target.ptyId, text, sendOptions)
     } else if (imagePaths.length > 0) {
       pendingHandle = sendNativeChatMessageWithImageAttachments(
         target.settings,
