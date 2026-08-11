@@ -6,12 +6,12 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `8963bb3bef` on `skills-share` (pushed; no PR).
+- Orca implementation: `149d2dc2b5` on `skills-share` (pending push; no PR).
 - Orca Cloud: `499856c` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
 
-- Local Node and web typechecks, changed-code quality gates, 93 skill-domain files with 761 tests
+- Local Node and web typechecks, changed-code quality gates, 94 skill-domain files with 770 tests
   passed and 3 skipped, 125 Orca Cloud API tests, the full Cloud monorepo test/typecheck/lint/build
   gates, and Terraform validation.
 - Native Windows package/install/recovery/copy-fallback tests and Node typecheck on `windows 2`.
@@ -201,7 +201,7 @@ does not mean the surrounding phase is complete.
 - [x] Test CRLF/LF behavior explicitly and document whether byte identity changes.
 - [x] Test executable-mode preservation and Windows's mode limitations.
 - [x] Test missing, malformed, and identity-mismatched `SKILL.md` files.
-- [ ] Test every size, count, and depth boundary at limit, one below, and one above.
+- [x] Test every size, count, and depth boundary at limit, one below, and one above.
 - [x] Test traversal, absolute paths, drive paths, Unicode/case collisions, duplicate paths, all
       rejected link and special-file types, and encrypted entries.
 - [x] Test truncated archives and invalid tar and content checksums.
@@ -632,17 +632,28 @@ runtime ID `68b5e70d-baaf-40a5-b384-be09cc088880`. Validation used the isolated 
 `C:\Users\neil\orca\skills-share-validation` and WSL distro `Ubuntu-24.04`; no production skill
 directory was used for destructive failure injection.
 
+The 2026-08-11 host inventory recorded Windows 11 Pro `10.0.26200` build `26200`, x64, healthy
+NTFS, Windows Defender, `LongPathsEnabled=0`, no Developer Mode registry grant, and an expected
+`UnauthorizedAccessException` for an unprivileged directory-symlink probe. The current user home
+is `C:\Users\neil` and the temp root is under that profile. WSL `2.7.11.0` uses kernel
+`6.18.33.2-microsoft-standard-WSL2`; its only installed distro is the running default
+`Ubuntu-24.04` WSL2 instance, with default user `neil`, home `/home/neil`, x86_64, and an ext-family
+distro filesystem. No standalone Orca CLI is installed inside that distro; WSL skill operations
+are owned by the connected Windows Orca runtime. A reproducible second-distro setup is
+`wsl --install -d Debian --no-launch`, followed by first launch and an isolated Orca test user/home
+record before the multi-distro gate.
+
 ### Host preparation
 
 - [x] Confirm `windows 2` is saved and reachable through `orca environment list` and
       `orca status --environment "windows 2" --json`.
 - [x] Confirm the host provides both a native Git checkout and a native plain folder workspace.
-- [ ] Record Windows edition/build, architecture, filesystem type, long-path policy, current user
+- [x] Record Windows edition/build, architecture, filesystem type, long-path policy, current user
       home, temp root, antivirus status, and developer-mode/symlink policy without collecting
       secrets.
-- [ ] Discover installed WSL version and distros, each distro's running state, default user, home,
+- [x] Discover installed WSL version and distros, each distro's running state, default user, home,
       filesystem, and Orca host support.
-- [ ] Ensure at least two WSL distros are available or record a reproducible second-distro setup
+- [x] Ensure at least two WSL distros are available or record a reproducible second-distro setup
       for the multi-distro test.
 - [x] Create isolated test skills and destination roots under explicit test workspaces; never use
       production user skill directories for destructive failure injection.
