@@ -3629,7 +3629,7 @@
           },
           "CaffeinateStatusSegment": {
             "on": "On",
-            "auto": "Auto",
+            "auto": "Agent",
             "off": "Off",
             "active": "Active",
             "inactive": "Inactive",
@@ -9500,8 +9500,8 @@
           "95d3031db2": "Keeps this computer and display awake while agents are working. Lid-close behavior follows this device's power settings.",
           "a42f6fbdd8": "Keeps this computer and display awake while agents are working. Orca also asks this device to stay awake when the lid is closed, subject to its power policy.",
           "modeTitle": "Keep computer awake",
-          "modeDescriptionWindows": "Choose On, Auto while agents are working, or Off. Lid-close behavior follows this device's power settings.",
-          "modeDescriptionDefault": "Choose On, Auto while agents are working, or Off. Orca also asks this device to stay awake when the lid is closed, subject to its power policy."
+          "modeDescriptionWindows": "Choose On, Agent, or Off. Agent mode stays awake while agents are working; lid-close behavior follows this device's power settings.",
+          "modeDescriptionDefault": "Choose On, Agent, or Off. Agent mode stays awake while agents are working. Orca also asks this device to stay awake when the lid is closed, subject to its power policy."
         },
         "agent-status-hooks-copy": {
           "7707c15abb": "Agent status hooks",
@@ -10563,7 +10563,7 @@
         },
         "AgentAwakeSetting": {
           "on": "On",
-          "auto": "Auto",
+          "auto": "Agent",
           "off": "Off"
         }
       },
