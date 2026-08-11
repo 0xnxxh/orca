@@ -109,13 +109,15 @@ function InteractiveBaseComposer({
   baseSearchPending = false,
   stackParentReview = null,
   repoDefaultBase = 'main',
-  initialBase = 'main'
+  initialBase = 'main',
+  onPrimaryAction
 }: {
   baseResults?: string[]
   baseSearchPending?: boolean
   stackParentReview?: HostedReviewStackParent | null
   repoDefaultBase?: string | null
   initialBase?: string
+  onPrimaryAction?: (stacked: boolean) => void
 }) {
   const [base, setBase] = useState(initialBase)
   const [baseQuery, setBaseQuery] = useState('')
@@ -130,7 +132,8 @@ function InteractiveBaseComposer({
     setBaseResults,
     baseSearchPending,
     stackParentReview,
-    repoDefaultBase
+    repoDefaultBase,
+    ...(onPrimaryAction ? { onPrimaryAction } : {})
   })
 }
 
@@ -354,6 +357,32 @@ describe('CreateHostedReviewComposer generate tooltip', () => {
     fireEvent.change(input, { target: { value: '' } })
     fireEvent.blur(input)
     expect((input as HTMLInputElement).value).toBe('feature/parent')
+  })
+
+  it('drops a stack choice when the base moves off the parent it was made for', () => {
+    // The choice is keyed to base+parent, so a base change can never submit a stacked
+    // create for a parent the composer is no longer showing.
+    const onPrimaryAction = vi.fn()
+    renderDom(
+      <InteractiveBaseComposer
+        initialBase="feature/parent"
+        baseResults={['release/candidate']}
+        stackParentReview={{ number: 13741, url: 'https://github.com/stablyai/orca/pull/13741' }}
+        onPrimaryAction={onPrimaryAction}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /Stack this PR above #13741/ }))
+    expect(screen.getByRole('button', { name: /Create PR in stack/ })).toBeTruthy()
+
+    const input = screen.getByRole('combobox', { name: 'Pull Request base branch' })
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'release/candidate' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(screen.queryByRole('button', { name: /in stack/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Create PR$/ }))
+    expect(onPrimaryAction).toHaveBeenCalledWith(false)
   })
 
   it('hides the stack option while the base search is open', () => {

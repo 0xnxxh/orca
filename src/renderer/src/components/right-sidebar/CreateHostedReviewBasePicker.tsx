@@ -156,13 +156,13 @@ export function CreateHostedReviewBasePicker({
           className="shrink-0 whitespace-nowrap text-[11px] font-medium text-muted-foreground"
         >
           {translate(
-            'auto.components.right.sidebar.CreateHostedReviewComposer.baseBranchLabel',
+            'auto.components.right.sidebar.CreateHostedReviewBasePicker.205ef284fa',
             'Base branch'
           )}
         </Label>
         <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={strippedBranch}>
           {translate(
-            'auto.components.right.sidebar.CreateHostedReviewComposer.baseFromHead',
+            'auto.components.right.sidebar.CreateHostedReviewBasePicker.bb4b41d563',
             'from {{value0}}',
             { value0: strippedBranch }
           )}
@@ -254,7 +254,7 @@ export function CreateHostedReviewBasePicker({
       {showRepoDefaultHint ? (
         <p className="px-2 text-[11px] text-muted-foreground">
           {translate(
-            'auto.components.right.sidebar.CreateHostedReviewComposer.baseEmptyResetsToDefault',
+            'auto.components.right.sidebar.CreateHostedReviewBasePicker.da4d57c9c2',
             'Leave empty to use {{value0}}.',
             { value0: trimmedRepoDefault }
           )}
@@ -264,7 +264,7 @@ export function CreateHostedReviewBasePicker({
       {showNoResults ? (
         <p className="px-2 text-[11px] text-muted-foreground">
           {translate(
-            'auto.components.right.sidebar.CreateHostedReviewComposer.baseNoMatches',
+            'auto.components.right.sidebar.CreateHostedReviewBasePicker.5a9315b61a',
             'No branches match “{{value0}}”. Press Enter to use it anyway.',
             { value0: trimmedQuery }
           )}

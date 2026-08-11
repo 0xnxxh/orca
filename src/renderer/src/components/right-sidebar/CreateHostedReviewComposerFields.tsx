@@ -168,7 +168,7 @@ export function CreateHostedReviewComposerFields({
               >
                 <span className="text-foreground">
                   {translate(
-                    'auto.components.right.sidebar.CreateHostedReviewComposer.stackAbovePr',
+                    'auto.components.right.sidebar.CreateHostedReviewComposerFields.90cabf6cfc',
                     'Stack this PR above #{{value0}}',
                     { value0: stackParentReview.number }
                   )}
@@ -176,7 +176,7 @@ export function CreateHostedReviewComposerFields({
                 {stacked ? null : (
                   <span className="text-[11px] font-normal text-muted-foreground">
                     {translate(
-                      'auto.components.right.sidebar.CreateHostedReviewComposer.stackBehavior',
+                      'auto.components.right.sidebar.CreateHostedReviewComposerFields.ff81473a57',
                       "Creates a GitHub Stack or extends the parent's existing stack."
                     )}
                   </span>
@@ -206,7 +206,7 @@ export function CreateHostedReviewComposerFields({
                   <span className="truncate text-foreground">{strippedBranch}</span>
                   <span className="shrink-0 text-muted-foreground">
                     {translate(
-                      'auto.components.right.sidebar.CreateHostedReviewComposer.newPr',
+                      'auto.components.right.sidebar.CreateHostedReviewComposerFields.29732f2fb0',
                       'new PR'
                     )}
                   </span>

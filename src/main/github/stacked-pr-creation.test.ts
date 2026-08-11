@@ -231,6 +231,27 @@ describe('registerGitHubStackedPullRequest', () => {
     expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(2)
   })
 
+  it('does not claim registration when the stack no longer holds the parent', async () => {
+    // A concurrent stack edit can drop the parent while the child sits at index 0.
+    // Reading index 0 off a findIndex miss would report that pair as registered.
+    ghExecFileAsyncMock
+      .mockResolvedValueOnce({ stdout: JSON.stringify([stack(50, [42])]) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify([stack(50, [42])]) })
+
+    const result = await registerGitHubStackedPullRequest({
+      repoPath: '/repo',
+      repository,
+      parentReview,
+      currentReview
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'The pull request already belongs to a different GitHub stack.',
+      createdReview: currentReview
+    })
+  })
+
   it('preserves the created PR when registration fails', async () => {
     ghExecFileAsyncMock
       .mockResolvedValueOnce({ stdout: '[]' })

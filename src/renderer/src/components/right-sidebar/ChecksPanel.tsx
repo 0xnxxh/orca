@@ -4120,6 +4120,19 @@ export default function ChecksPanel(): React.JSX.Element {
             return
           }
         }
+        // Why: stacked creation can create the pull request and still fail to register
+        // the stack. Link the review that exists before surfacing the stack failure, or
+        // the workspace stays unaware of a PR the user can already see on GitHub.
+        if ('createdReview' in result && result.createdReview?.url) {
+          const { number, url } = result.createdReview
+          if (number) {
+            await handlePullRequestCreated({
+              provider: hostedReviewCreateProvider,
+              number,
+              url
+            })
+          }
+        }
         setCreatePrError(formatCreateError(result, pushed, hostedReviewCreateCopy.shortLabel))
       } catch (error) {
         if (!isCurrentCreateRequest()) {
