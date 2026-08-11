@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Repo } from '../../../shared/types'
+import type { FolderWorkspace, ProjectGroup, Repo } from '../../../shared/types'
 import { folderWorkspaceKey } from '../../../shared/workspace-scope'
 import { getAgentDetectionTargetKeyForWorktree } from './useAgentDetectionTarget'
 
@@ -25,22 +25,43 @@ describe('getAgentDetectionTargetKeyForWorktree', () => {
       })
       return repo
     })
+    const projectGroups: ProjectGroup[] = [
+      {
+        id: 'runtime-group',
+        name: 'workspace',
+        parentPath: '/workspace',
+        connectionId: null,
+        executionHostId: 'runtime:owner-env',
+        parentGroupId: null,
+        createdFrom: 'folder-scan',
+        tabOrder: 0,
+        isCollapsed: false,
+        color: null,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    const folderWorkspaces: FolderWorkspace[] = [
+      {
+        id: 'runtime-folder',
+        projectGroupId: 'runtime-group',
+        name: 'workspace',
+        folderPath: '/workspace',
+        linkedTask: null,
+        comment: '',
+        isArchived: false,
+        isUnread: false,
+        isPinned: false,
+        sortOrder: 0,
+        lastActivityAt: 1,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
     const state = {
       settings: { activeRuntimeEnvironmentId: 'focused-env' },
-      folderWorkspaces: [
-        {
-          id: 'runtime-folder',
-          projectGroupId: 'runtime-group',
-          folderPath: '/workspace'
-        }
-      ],
-      projectGroups: [
-        {
-          id: 'runtime-group',
-          connectionId: null,
-          executionHostId: 'runtime:owner-env'
-        }
-      ],
+      folderWorkspaces,
+      projectGroups,
       repos,
       worktreesByRepo: {}
     } as Parameters<typeof getAgentDetectionTargetKeyForWorktree>[0]
