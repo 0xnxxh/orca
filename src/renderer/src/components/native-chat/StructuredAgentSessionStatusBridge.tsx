@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { AgentSessionHistoryResult } from '../../../../shared/agent-session-wire'
 import {
@@ -14,7 +14,7 @@ import {
 import type { Tab } from '../../../../shared/types'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import { useAppStore } from '@/store'
-import { getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
+import { getActiveRuntimeTarget, type RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
 import {
   callStructuredAgentSession,
   subscribeStructuredAgentSession
@@ -50,9 +50,7 @@ function projectStatus(tab: StructuredTab, state: StructuredAgentSessionState): 
   )
 }
 
-function startStatusProjection(tab: StructuredTab): () => void {
-  const environmentId = getRuntimeEnvironmentIdForWorktree(useAppStore.getState(), tab.worktreeId)
-  const target = getActiveRuntimeTarget({ activeRuntimeEnvironmentId: environmentId })
+function startStatusProjection(tab: StructuredTab, target: RuntimeClientTarget): () => void {
   let state = EMPTY_STRUCTURED_AGENT_SESSION
   let stopped = false
   let connected = false
@@ -84,6 +82,7 @@ function startStatusProjection(tab: StructuredTab): () => void {
     unsubscribe()
     unsubscribe = (): void => {}
     try {
+      let closedDuringOpen = false
       const handle = await subscribeStructuredAgentSession(
         target,
         { sessionId: tab.entityId, ...(state.cursor ? { cursor: state.cursor } : {}) },
@@ -95,18 +94,28 @@ function startStatusProjection(tab: StructuredTab): () => void {
             return
           }
           if (event.type === 'end') {
+            closedDuringOpen = true
             connected = false
             scheduleReconnect()
           }
           apply({ type: 'event', event })
         },
         () => {
+          closedDuringOpen = true
+          connected = false
+          scheduleReconnect()
+        },
+        () => {
+          closedDuringOpen = true
           connected = false
           scheduleReconnect()
         }
       )
-      if (stopped) {
+      if (stopped || closedDuringOpen) {
         handle.unsubscribe()
+        if (!stopped) {
+          scheduleReconnect()
+        }
       } else {
         connected = true
         unsubscribe = handle.unsubscribe
@@ -154,7 +163,19 @@ function startStatusProjection(tab: StructuredTab): () => void {
   }
 }
 
-export function StructuredAgentSessionStatusBridge(): null {
+function StructuredAgentSessionStatusProjection({ tab }: { tab: StructuredTab }): null {
+  const environmentId = useAppStore((state) =>
+    getRuntimeEnvironmentIdForWorktree(state, tab.worktreeId)
+  )
+  const target = useMemo(
+    () => getActiveRuntimeTarget({ activeRuntimeEnvironmentId: environmentId }),
+    [environmentId]
+  )
+  useEffect(() => startStatusProjection(tab, target), [tab, target])
+  return null
+}
+
+export function StructuredAgentSessionStatusBridge(): React.JSX.Element {
   const tabs = useAppStore(
     useShallow((state) =>
       Object.values(state.unifiedTabsByWorktree)
@@ -162,9 +183,11 @@ export function StructuredAgentSessionStatusBridge(): null {
         .filter((tab): tab is StructuredTab => tab.contentType === 'agent-session')
     )
   )
-  useEffect(() => {
-    const stops = tabs.map(startStatusProjection)
-    return () => stops.forEach((stop) => stop())
-  }, [tabs])
-  return null
+  return (
+    <>
+      {tabs.map((tab) => (
+        <StructuredAgentSessionStatusProjection key={`${tab.id}:${tab.entityId}`} tab={tab} />
+      ))}
+    </>
+  )
 }

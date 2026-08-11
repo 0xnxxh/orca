@@ -30,6 +30,7 @@ import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner
 import { browserWorkspaceHasRemoteOwner } from '@/runtime/remote-browser-tab-ownership'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { toRuntimeWorktreeSelector } from '@/runtime/runtime-worktree-selector'
+import { activateStructuredAgentSessionTab } from '@/lib/structured-agent-session-tab-activation'
 
 export function recordTerminalTabGroupSplit(createdTerminal: TerminalTab | null | undefined): void {
   if (!createdTerminal) {
@@ -486,29 +487,9 @@ export function useTabGroupWorkspaceModel({
 
   const activateAgentSession = useCallback(
     (tabId: string) => {
-      const item = groupTabs.find(
-        (candidate) => candidate.id === tabId && candidate.contentType === 'agent-session'
-      )
-      if (!item) {
-        return
-      }
-      focusGroup(worktreeId, groupId)
-      activateTab(item.id)
-      setActiveTabType('agent-session')
-      const runtimeEnvironmentId = getRuntimeEnvironmentIdForWorktree(
-        useAppStore.getState(),
-        worktreeId
-      )
-      void callRuntimeRpc(
-        getActiveRuntimeTarget({ activeRuntimeEnvironmentId: runtimeEnvironmentId }),
-        'session.tabs.activate',
-        {
-          worktree: toRuntimeWorktreeSelector(worktreeId),
-          tabId: `agent-session:${item.entityId}`
-        }
-      )
+      activateStructuredAgentSessionTab({ worktreeId, tabId })
     },
-    [activateTab, focusGroup, groupId, groupTabs, setActiveTabType, worktreeId]
+    [worktreeId]
   )
 
   const createSplitGroup = useCallback(

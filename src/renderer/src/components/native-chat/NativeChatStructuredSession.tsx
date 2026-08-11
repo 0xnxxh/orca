@@ -13,6 +13,8 @@ import { NativeChatMessageList } from './NativeChatMessageList'
 import { NativeChatQuestionCard } from './NativeChatQuestionCard'
 import { selectNativeChatViewState } from './native-chat-view-state'
 import { useNativeChatFontScale } from './use-native-chat-font-scale'
+import { useNativeChatFileLinkClick } from './use-native-chat-file-link-click'
+import { useNativeChatFileLinkContext } from './use-native-chat-file-link-context'
 import { useStructuredAgentSession } from './use-structured-agent-session'
 import { translate } from '@/i18n/i18n'
 
@@ -63,6 +65,8 @@ export function NativeChatStructuredSession(props: {
   )
   const viewState = selectNativeChatViewState(session)
   const fontScale = useNativeChatFontScale(viewState.kind === 'ready')
+  const fileLinkContext = useNativeChatFileLinkContext(props.tabId)
+  const fileLinkClick = useNativeChatFileLinkClick(props.allowFileUriLinks ? fileLinkContext : null)
   const prompt = controller.prompts[0] ?? null
   const questionBody = prompt?.body.kind === 'question' ? prompt.body : null
   const retryableOutboxEntry =
@@ -108,7 +112,8 @@ export function NativeChatStructuredSession(props: {
             isWorking={controller.isWorking}
             expandSignal={false}
             fontScale={fontScale.scale}
-            allowFileUriLinks={props.allowFileUriLinks}
+            onLinkClick={fileLinkClick}
+            allowFileUriLinks={fileLinkClick !== undefined}
           />
         )}
       </div>

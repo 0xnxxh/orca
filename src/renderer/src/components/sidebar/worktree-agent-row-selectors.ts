@@ -89,7 +89,7 @@ function getLiveTabIdToWorktreeId(
   unifiedTabsByWorktree: WorktreeAgentRowsState['unifiedTabsByWorktree']
 ): Map<string, string> {
   const tabIdToWorktreeId = new Map(getTabIdToWorktreeId(tabsByWorktree))
-  for (const [worktreeId, tabs] of Object.entries(unifiedTabsByWorktree ?? EMPTY_RECORD)) {
+  for (const [worktreeId, tabs] of Object.entries(unifiedTabsByWorktree ?? {})) {
     for (const tab of tabs) {
       if (tab.contentType === 'agent-session') {
         tabIdToWorktreeId.set(tab.id, worktreeId)

@@ -80,6 +80,7 @@ export function useStructuredAgentSessionRead(args: {
       unsubscribe = (): void => {}
       try {
         const cursor = resumeCursorRef.current
+        let closedDuringOpen = false
         const handle = await subscribeStructuredAgentSession(
           target,
           { sessionId, ...(cursor ? { cursor } : {}) },
@@ -92,19 +93,29 @@ export function useStructuredAgentSessionRead(args: {
             ) {
               resumeCursorRef.current = event.batch.cursor
             } else if (event.type === 'end') {
+              closedDuringOpen = true
               connected = false
               reconnectScheduler.schedule()
             }
             coalescer.push(event)
           },
           (error) => {
+            closedDuringOpen = true
             connected = false
             dispatch({ type: 'error', message: String(error) })
             reconnectScheduler.schedule()
+          },
+          () => {
+            closedDuringOpen = true
+            connected = false
+            reconnectScheduler.schedule()
           }
         )
-        if (stopped) {
+        if (stopped || closedDuringOpen) {
           handle.unsubscribe()
+          if (!stopped) {
+            reconnectScheduler.schedule()
+          }
         } else {
           connected = true
           unsubscribe = handle.unsubscribe

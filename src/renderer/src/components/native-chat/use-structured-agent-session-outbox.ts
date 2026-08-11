@@ -76,6 +76,7 @@ export function useStructuredAgentSessionOutbox(args: {
   )
   const outboxRef = useRef(outbox)
   const dispatchingRef = useRef(false)
+  const dispatchGenerationRef = useRef(0)
   const blockedIdRef = useRef<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -84,9 +85,19 @@ export function useStructuredAgentSessionOutbox(args: {
   }, [outbox])
 
   useEffect(() => {
+    dispatchGenerationRef.current += 1
     dispatchingRef.current = false
     blockedIdRef.current = null
-  }, [fence])
+    const current = outboxRef.current
+    const next = current.map((entry) =>
+      entry.state === 'dispatching' ? { ...entry, state: 'queued' as const } : entry
+    )
+    if (next.some((entry, index) => entry !== current[index])) {
+      outboxRef.current = next
+      setOutbox(next)
+      writeOutbox(sessionId, next)
+    }
+  }, [fence, sessionId, target])
 
   useEffect(() => {
     const next = reconcileStructuredAgentSessionOutbox(outboxRef.current, submissions)
@@ -112,6 +123,7 @@ export function useStructuredAgentSessionOutbox(args: {
       return
     }
     dispatchingRef.current = true
+    const dispatchGeneration = dispatchGenerationRef.current
     const staged = [
       { ...next, state: 'dispatching' as const, lastAttemptAt: Date.now() },
       ...outbox.slice(1)
@@ -130,6 +142,9 @@ export function useStructuredAgentSessionOutbox(args: {
       structuredAgentSessionSendRequest(next, fence)
     )
       .then((result) => {
+        if (dispatchGenerationRef.current !== dispatchGeneration) {
+          return
+        }
         if (!result.ok) {
           throw new Error(result.refusal.message)
         }
@@ -159,6 +174,9 @@ export function useStructuredAgentSessionOutbox(args: {
         writeOutbox(sessionId, updated)
       })
       .catch((caught) => {
+        if (dispatchGenerationRef.current !== dispatchGeneration) {
+          return
+        }
         const failure = classifyStructuredAgentSessionSendFailure(caught, isDesktopDeliveryUnknown)
         if (failure === 'failed') {
           blockedIdRef.current = next.clientMessageId
@@ -180,7 +198,9 @@ export function useStructuredAgentSessionOutbox(args: {
         writeOutbox(sessionId, updated)
       })
       .finally(() => {
-        dispatchingRef.current = false
+        if (dispatchGenerationRef.current === dispatchGeneration) {
+          dispatchingRef.current = false
+        }
       })
   }, [fence, outbox, sessionId, target])
 

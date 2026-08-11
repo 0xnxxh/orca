@@ -15,7 +15,8 @@ export async function subscribeStructuredAgentSession(
   target: RuntimeClientTarget,
   params: unknown,
   onEvent: (event: AgentSessionSubscribeEvent) => void,
-  onError: (error: unknown) => void
+  onError: (error: unknown) => void,
+  onClose: () => void
 ): Promise<{ unsubscribe: () => void }> {
   const onResponse = (response: RuntimeRpcResponse<unknown>): void => {
     if (!response.ok) {
@@ -35,6 +36,6 @@ export async function subscribeStructuredAgentSession(
       timeoutMs: 15_000,
       expectedEnvironmentPairingRevision: getRuntimeEnvironmentRevision(target.environmentId)
     },
-    { onResponse, onError }
+    { onResponse, onError, onClose }
   )
 }
