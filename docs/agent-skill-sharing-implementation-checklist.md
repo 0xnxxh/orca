@@ -6,7 +6,7 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `af5f8d1fe2` on `skills-share` (pushed; no PR).
+- Orca implementation: `8be6301811` on `skills-share` (pushed; no PR).
 - Orca Cloud: `81a581d` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
@@ -32,6 +32,9 @@ Validated so far:
 - Docker-backed SSH relay installation from the real Electron client passed global, remote Git
   worktree, and remote plain-folder scopes, including client-mediated upload, unchanged preview,
   managed-install listing, safe removal, and remote-target Cloud authorization.
+- Real paired-runtime installation passed from an isolated Electron client to both a headed
+  desktop host and headless `orca serve` host. The host owned global and Git-worktree installs;
+  the headed host also owned a plain-folder install. The client's home remained untouched.
 - Isolated staging bucket, IAM, secret container, log metrics, dashboard, and alerts in
   `onorca-cloud-staging`.
 
@@ -634,6 +637,12 @@ does not mean the surrounding phase is complete.
 - [x] Never pass the desktop's local path as a remote package source.
 - [x] Preserve the same inspection, transaction, provenance, and result behavior for both
       transports.
+- [x] Run the real Electron client against a paired desktop host for global, Git-worktree, and
+      plain-folder install, unchanged preview, inventory, and removal.
+- [x] Run the same contract against a paired headless `orca serve` host for global and
+      Git-worktree install, unchanged preview, inventory, and removal.
+- [x] Verify paired installation creates files only in host-owned roots and never falls back to the
+      client's isolated home.
 - [ ] Test connection loss and resumption or restart behavior at every transfer boundary.
 
 ### Mixed versions
@@ -889,6 +898,9 @@ still require the listed split metrics, latency panels, and alerts.
       floor.
 - [x] Run native Windows and WSL scenarios on `windows 2`.
 - [ ] Run local and remote Git worktrees and plain folder workspaces.
+- [x] Run same-build paired desktop and headless runtimes through client-mediated transfer; headed
+      coverage includes global, Git-worktree, and plain-folder scopes, while headless coverage
+      includes global and Git-worktree scopes.
 - [ ] Run paired runtimes with both client-newer and server-newer combinations.
 - [ ] Run supported SSH-only macOS, Linux, and Windows targets.
 - [ ] Run a remote target without outbound Cloud connectivity through chunk transfer.

@@ -1,6 +1,6 @@
 # Agent skill sharing and installation plan
 
-Status: proposed.
+Status: implementation and validation in progress.
 
 Last updated: 2026-08-11.
 
@@ -36,6 +36,19 @@ Orca will:
 The first release will support Orca package sources only. Arbitrary Git, npm, and community
 registry sources remain delegated to existing tools until there is a product need to own
 that larger package-manager surface.
+
+## Current execution status
+
+Orca implementation through `8be6301811` and Orca Cloud implementation through `81a581d` are
+pushed on feature branches without an Orca pull request. Local, Windows, WSL, paired-runtime, and
+Docker-backed SSH validation are substantially complete; the implementation checklist records the
+exact evidence and remaining physical-host and failure-recovery gates.
+
+The dedicated staging bucket, IAM, secret container, metrics, dashboard, and alerts exist in
+`onorca-cloud-staging`. Staging Cloud SQL is shared with Auth and Relay and is intentionally
+stopped. Review a fresh Terraform plan after refreshing `gcloud` authentication, then wake staging
+only through the supported Relay power workflow if the reviewed skill changes require the
+database. Keep skill routes disabled until migrations and staging smoke tests pass.
 
 ## Research baseline
 
