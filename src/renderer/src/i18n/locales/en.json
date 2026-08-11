@@ -769,6 +769,9 @@
             "additionalErrors": "{{count}} additional images could not be attached."
           }
         }
+      },
+      "ephemeralVmWorktreeCreation": {
+        "sparseCheckoutUnsupported": "Provisioned-root recipes do not support sparse checkout."
       }
     },
     "hooks": {

@@ -107,6 +107,50 @@ describe('runEphemeralVmRecipeStart', () => {
     })
   })
 
+  it('requires the versioned result handshake for provisioned-root recipes', async () => {
+    const repoPath = makeRepo()
+    const scriptPath = join(repoPath, 'start.js')
+    writeFileSync(
+      scriptPath,
+      [
+        'console.log(JSON.stringify({',
+        '  schemaVersion: Number(process.env.RESULT_VERSION),',
+        '  ...(process.env.RESULT_VERSION === "2" ? { checkoutMode: "provisioned-root" } : {}),',
+        `  pairingCode: ${JSON.stringify(makePairingCode())},`,
+        "  projectRoot: '/workspace/repo'",
+        '}))'
+      ].join('\n')
+    )
+    const recipe = {
+      id: 'cloud-sandbox',
+      name: 'Cloud Sandbox',
+      checkoutMode: 'provisioned-root' as const,
+      create: nodeCommand(scriptPath)
+    }
+
+    const legacy = await runEphemeralVmRecipeStart({
+      repoPath,
+      recipe,
+      env: { RESULT_VERSION: '1' }
+    })
+    expect(legacy).toMatchObject({
+      ok: false,
+      error:
+        'Provisioned-root recipes must return schemaVersion 2 with checkoutMode "provisioned-root".',
+      recipeResult: { schemaVersion: 1 }
+    })
+
+    const versioned = await runEphemeralVmRecipeStart({
+      repoPath,
+      recipe,
+      env: { RESULT_VERSION: '2' }
+    })
+    expect(versioned).toMatchObject({
+      ok: true,
+      result: { schemaVersion: 2, checkoutMode: 'provisioned-root' }
+    })
+  })
+
   it('returns a process failure when the recipe exits nonzero', async () => {
     const repoPath = makeRepo()
     const scriptPath = join(repoPath, 'start.js')

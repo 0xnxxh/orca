@@ -2614,6 +2614,9 @@ export type PreloadApi = {
       projectId?: string
       workspaceId?: string
       provisionId?: string
+      repoUrl?: string
+      branch?: string
+      ref?: string
     }) => Promise<
       | {
           ok: true

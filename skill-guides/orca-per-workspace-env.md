@@ -587,11 +587,26 @@ Once the authenticated snapshot exists, this runs on every workspace create. Def
 environmentRecipes:
   - id: cloud-sandbox
     name: Cloud Sandbox
+    checkoutMode: provisioned-root
     create: ./scripts/orca-vm/cloud-sandbox-create.sh
     suspend: ./scripts/orca-vm/cloud-sandbox-suspend.sh
     resume: ./scripts/orca-vm/cloud-sandbox-resume.sh
     destroy: ./scripts/orca-vm/cloud-sandbox-destroy.sh
 ```
+
+`checkoutMode` controls who creates the checkout:
+
+- `orca-worktree` (default) imports `projectRoot` as a repo and creates a child Git worktree.
+- `provisioned-root` adopts `projectRoot` itself as the workspace and never runs `git worktree add`.
+
+Use `provisioned-root` only when `create` materializes the exact checkout. `projectRoot` must be the
+absolute main Git checkout root, and the recipe should use `ORCA_REPO_URL`, `ORCA_REPO_REF`, and
+`ORCA_REPO_BRANCH` to clone/check out the requested source. Orca verifies the root before adoption;
+removing the workspace removes its project and invokes `destroy`.
+
+Provisioned-root `create` and `resume` results must use `schemaVersion: 2` and include
+`checkoutMode: "provisioned-root"`. This explicit result handshake makes older Orca versions reject the
+recipe instead of silently creating a child worktree. Other recipes continue to use schema version 1.
 
 `create` runs **locally from the repo root** and prints **one** JSON object to stdout. Its shape depends
 on the connection mode chosen in §1:
@@ -600,18 +615,21 @@ on the connection mode chosen in §1:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "checkoutMode": "provisioned-root",
   "pairingCode": "orca-pairing-code-or-url",
   "projectRoot": "/absolute/path/to/repo/on/remote",
   "userData": { "provider": "example", "resourceId": "provider-resource-id" }
 }
 ```
 
-Here `pairingCode` (from `orca serve --recipe-json`) and `projectRoot` are required; `schemaVersion` (`1`)
-and `userData` are optional.
+Here `pairingCode` (from `orca serve --recipe-json`) and `projectRoot` are required. The wrapper around
+`orca serve` must replace schema version 1 with the provisioned-root version 2 handshake shown above;
+`userData` is optional.
 
 **SSH mode** — do **not** run `orca serve`; print the `connection.type:"ssh"` block instead (full shape +
-worked script in §7g). `pairingCode` is **not** used in SSH mode.
+worked script in §7g), but set top-level `schemaVersion: 2` and
+`checkoutMode: "provisioned-root"`. `pairingCode` is **not** used in SSH mode.
 
 Lifecycle hooks (all run locally):
 

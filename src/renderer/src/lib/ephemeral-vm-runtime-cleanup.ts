@@ -21,6 +21,9 @@ export async function cleanupEphemeralVmRuntimesForDeleted(args: {
 }): Promise<string[]> {
   const destroyedSshTargetIds: string[] = []
   try {
+    if (!window.api.ephemeralVm?.listRuntimes) {
+      return destroyedSshTargetIds
+    }
     const workspaceIdSet = new Set(args.workspaceIds ?? [])
     const sshTargetIdSet = new Set(
       (args.runtimeOwnedSshTargetIds ?? []).filter((id) => isRuntimeOwnedSshTargetId(id))

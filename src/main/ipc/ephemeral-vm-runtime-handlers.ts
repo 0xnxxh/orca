@@ -7,8 +7,10 @@ import {
 import type { EphemeralVmRuntimeRecord } from '../../shared/ephemeral-vm-runtimes'
 import {
   getEphemeralVmRecipeResultConnection,
-  getEphemeralVmRecipeResultPairingCode
+  getEphemeralVmRecipeResultPairingCode,
+  getEphemeralVmRecipeResultProjectRoot
 } from '../../shared/ephemeral-vm-recipes'
+import { normalizeRuntimePathForComparison } from '../../shared/cross-platform-path'
 import {
   removeEnvironment,
   updateEnvironmentFromPairingCode
@@ -173,6 +175,20 @@ export function registerEphemeralVmRuntimeHandlers(store: Store): void {
       if (!result.ok) {
         throw new Error(result.error)
       }
+      if (
+        runtime.recipe?.checkoutMode === 'provisioned-root' &&
+        normalizeRuntimePathForComparison(
+          getEphemeralVmRecipeResultProjectRoot(runtime.recipeResult)
+        ) !==
+          normalizeRuntimePathForComparison(
+            getEphemeralVmRecipeResultProjectRoot(result.runtime.recipeResult)
+          )
+      ) {
+        updateEphemeralVmRuntimeStatus(userDataPath, result.runtime.id, {
+          status: 'resume_failed'
+        })
+        throw new Error('A provisioned-root recipe must keep projectRoot stable after resume.')
+      }
       if (!result.skipped && runtime.runtimeEnvironmentId) {
         const pairingCode = getEphemeralVmRecipeResultPairingCode(result.runtime.recipeResult)
         if (!pairingCode) {
@@ -218,6 +234,10 @@ export function registerEphemeralVmRuntimeHandlers(store: Store): void {
           projectId: resolved.runtime.projectId,
           workspaceId: resolved.runtime.workspaceId,
           workspaceName: resolved.runtime.workspaceName,
+          repoUrl: resolved.runtime.repoUrl,
+          branch: resolved.runtime.branch,
+          ref: resolved.runtime.ref,
+          orcaVersion: resolved.runtime.orcaVersion,
           repoPath: resolved.repo.repo.path
         },
         recipeResult: resolved.runtime.recipeResult

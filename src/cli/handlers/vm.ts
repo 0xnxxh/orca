@@ -146,6 +146,14 @@ async function doctorRecipeWithProvision(
 
   const start = await runEphemeralVmRecipeStart({ repoPath, recipe })
   if (!start.ok) {
+    const cleanup = start.recipeResult
+      ? await runEphemeralVmRecipeCleanup({
+          repoPath,
+          recipe,
+          context: start.context,
+          recipeResult: start.recipeResult
+        })
+      : null
     return {
       ...baseline,
       ok: false,
@@ -167,7 +175,17 @@ async function doctorRecipeWithProvision(
           stdout: capTranscriptStream(start.stdout),
           stderr: capTranscriptStream(start.stderr),
           parseError: start.error
-        }
+        },
+        ...(cleanup
+          ? {
+              destroy: {
+                exitCode: cleanup.exitCode,
+                signal: cleanup.signal,
+                stdout: capTranscriptStream(cleanup.stdout),
+                stderr: capTranscriptStream(cleanup.stderr)
+              }
+            }
+          : {})
       }
     }
   }

@@ -112,6 +112,17 @@ export async function provisionEphemeralVmRuntime(
     onStderr: args.onStderr
   })
   if (!start.ok) {
+    if (start.recipeResult) {
+      await runEphemeralVmRecipeCleanup({
+        repoPath: args.repoPath,
+        recipe: args.recipe,
+        context: start.context,
+        recipeResult: start.recipeResult,
+        signal: args.signal,
+        onStdout: args.onStdout,
+        onStderr: args.onStderr
+      }).catch(() => undefined)
+    }
     return { ok: false, start }
   }
 
@@ -125,6 +136,10 @@ export async function provisionEphemeralVmRuntime(
     ...(args.projectId ? { projectId: args.projectId } : {}),
     ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
     ...(args.workspaceName ? { workspaceName: args.workspaceName } : {}),
+    ...(args.repoUrl ? { repoUrl: args.repoUrl } : {}),
+    ...(args.branch ? { branch: args.branch } : {}),
+    ...(args.ref ? { ref: args.ref } : {}),
+    ...(args.orcaVersion ? { orcaVersion: args.orcaVersion } : {}),
     status: 'running',
     connectionMode: connection.type,
     cleanupStatus: args.recipe.destroyDisabled ? 'disabled' : 'not_started',
@@ -263,6 +278,10 @@ function contextFromRuntime(
     projectId: runtime.projectId,
     workspaceId: runtime.workspaceId,
     workspaceName: runtime.workspaceName,
+    repoUrl: runtime.repoUrl,
+    branch: runtime.branch,
+    ref: runtime.ref,
+    orcaVersion: runtime.orcaVersion,
     repoPath
   }
 }

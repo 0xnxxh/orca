@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import type { OrcaVmRecipe } from './types'
 import { parseEphemeralVmRecipeResult, type EphemeralVmRecipeResult } from './ephemeral-vm-recipes'
+import { getEphemeralVmRecipeCheckoutModeError } from './ephemeral-vm-recipe-checkout-mode'
 import { runRecipeCommand } from './ephemeral-vm-recipe-process'
 import {
   buildEphemeralVmRecipeCleanupPayload,
@@ -56,6 +57,7 @@ export type EphemeralVmRecipeStartFailure = {
   stderr: string
   exitCode: number | null
   signal: NodeJS.Signals | null
+  recipeResult?: EphemeralVmRecipeResult
 }
 
 export type EphemeralVmRecipeStartResult =
@@ -131,6 +133,16 @@ export async function runEphemeralVmRecipeStart(
       ok: false,
       context,
       error: parsed.error,
+      ...processResult
+    }
+  }
+  const checkoutModeError = getEphemeralVmRecipeCheckoutModeError(args.recipe, parsed.result)
+  if (checkoutModeError) {
+    return {
+      ok: false,
+      context,
+      error: checkoutModeError,
+      recipeResult: parsed.result,
       ...processResult
     }
   }
@@ -260,6 +272,17 @@ export async function runEphemeralVmRecipeResume(
       skipped: false,
       context: args.context,
       error: parsed.error,
+      ...processResult
+    }
+  }
+  const checkoutModeError = getEphemeralVmRecipeCheckoutModeError(args.recipe, parsed.result)
+  if (checkoutModeError) {
+    return {
+      ok: false,
+      skipped: false,
+      context: args.context,
+      error: checkoutModeError,
+      recipeResult: parsed.result,
       ...processResult
     }
   }

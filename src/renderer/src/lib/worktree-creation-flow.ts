@@ -10,6 +10,7 @@ import { ensureAgentStartupInTerminal } from '@/lib/new-workspace'
 import { queueWorkspaceActivationTerminalFocus } from '@/lib/workspace-activation-terminal-focus'
 import {
   attachEphemeralVmRuntimeToWorkspace,
+  adoptEphemeralVmProvisionedRoot,
   cleanupEphemeralVmRuntimeForFailedCreate,
   prepareRequestForCreate
 } from '@/lib/ephemeral-vm-worktree-creation'
@@ -106,47 +107,50 @@ async function executeWorktreeCreation(
   let result: CreateWorktreeResult
   try {
     const backendStartup = resolveBackendDraftStartup(preparedRequest)
-    result = await useAppStore
-      .getState()
-      .createWorktree(
-        preparedRequest.repoId,
-        preparedRequest.name,
-        preparedRequest.baseBranch,
-        preparedRequest.setupDecision,
-        preparedRequest.sparseCheckout,
-        preparedRequest.telemetrySource,
-        preparedRequest.displayName,
-        preparedRequest.linkedIssue,
-        preparedRequest.linkedPR,
-        preparedRequest.pushTarget,
-        preparedRequest.agent ?? undefined,
-        preparedRequest.linkedLinearIssue,
-        preparedRequest.branchNameOverride,
-        preparedRequest.workspaceStatus,
-        preparedRequest.linkedGitLabMR,
-        preparedRequest.linkedGitLabIssue,
-        backendStartup,
-        preparedRequest.pendingFirstAgentMessageRename,
-        creationId,
-        preparedRequest.linkedLinearIssueWorkspaceId,
-        preparedRequest.linkedLinearIssueOrganizationUrlKey,
-        preparedRequest.linkedBitbucketPR,
-        preparedRequest.linkedAzureDevOpsPR,
-        preparedRequest.linkedGiteaPR,
-        preparedRequest.compareBaseRef,
-        {
-          ...(preparedRequest.linkedWorkItem !== undefined
-            ? { linkedWorkItem: preparedRequest.linkedWorkItem }
-            : {}),
-          ...(preparedRequest.linkedTaskSourceContext !== undefined
-            ? { linkedTaskSourceContext: preparedRequest.linkedTaskSourceContext }
-            : {}),
-          // Why: the remote host must own task-draft startup so its initial terminal is the agent, not an idle fallback shell.
-          ...(!backendStartup && preparedRequest.agent && preparedRequest.launchDraftPrompt
-            ? { startupDraft: preparedRequest.launchDraftPrompt }
-            : {})
-        }
-      )
+    result =
+      preparedRequest.ephemeralVmCheckoutMode === 'provisioned-root'
+        ? await adoptEphemeralVmProvisionedRoot(preparedRequest)
+        : await useAppStore
+            .getState()
+            .createWorktree(
+              preparedRequest.repoId,
+              preparedRequest.name,
+              preparedRequest.baseBranch,
+              preparedRequest.setupDecision,
+              preparedRequest.sparseCheckout,
+              preparedRequest.telemetrySource,
+              preparedRequest.displayName,
+              preparedRequest.linkedIssue,
+              preparedRequest.linkedPR,
+              preparedRequest.pushTarget,
+              preparedRequest.agent ?? undefined,
+              preparedRequest.linkedLinearIssue,
+              preparedRequest.branchNameOverride,
+              preparedRequest.workspaceStatus,
+              preparedRequest.linkedGitLabMR,
+              preparedRequest.linkedGitLabIssue,
+              backendStartup,
+              preparedRequest.pendingFirstAgentMessageRename,
+              creationId,
+              preparedRequest.linkedLinearIssueWorkspaceId,
+              preparedRequest.linkedLinearIssueOrganizationUrlKey,
+              preparedRequest.linkedBitbucketPR,
+              preparedRequest.linkedAzureDevOpsPR,
+              preparedRequest.linkedGiteaPR,
+              preparedRequest.compareBaseRef,
+              {
+                ...(preparedRequest.linkedWorkItem !== undefined
+                  ? { linkedWorkItem: preparedRequest.linkedWorkItem }
+                  : {}),
+                ...(preparedRequest.linkedTaskSourceContext !== undefined
+                  ? { linkedTaskSourceContext: preparedRequest.linkedTaskSourceContext }
+                  : {}),
+                // Why: the remote host must own task-draft startup so its initial terminal is the agent, not an idle fallback shell.
+                ...(!backendStartup && preparedRequest.agent && preparedRequest.launchDraftPrompt
+                  ? { startupDraft: preparedRequest.launchDraftPrompt }
+                  : {})
+              }
+            )
   } catch (error) {
     // Why: a missing entry means the user cancelled mid-flight — abandon
     // silently rather than surfacing an error for work they already dismissed.

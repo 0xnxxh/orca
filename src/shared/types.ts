@@ -2198,6 +2198,7 @@ export type OrcaVmRecipe = {
   id: string
   name: string
   create: string
+  checkoutMode?: 'orca-worktree' | 'provisioned-root'
   description?: string
   suspend?: string
   resume?: string
