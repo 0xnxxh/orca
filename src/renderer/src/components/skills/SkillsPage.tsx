@@ -24,6 +24,7 @@ import { SkillInstallManagementDialog } from './SkillInstallManagementDialog'
 import { pluralize, sourceLabels } from './skill-display-labels'
 import { countSkillsBySource, filterSkills, type SkillsFilterState } from './skills-filter'
 import { translate } from '@/i18n/i18n'
+import { INSTALLED_AGENT_SKILLS_CHANGED_EVENT } from '@/hooks/installed-agent-skills-change-event'
 
 const EMPTY_SKILLS: DiscoveredSkill[] = []
 
@@ -127,6 +128,12 @@ export default function SkillsPage(): React.JSX.Element {
 
   useEffect(() => {
     void loadSkills()
+  }, [loadSkills])
+
+  useEffect(() => {
+    const refresh = (): void => void loadSkills()
+    window.addEventListener(INSTALLED_AGENT_SKILLS_CHANGED_EVENT, refresh)
+    return () => window.removeEventListener(INSTALLED_AGENT_SKILLS_CHANGED_EVENT, refresh)
   }, [loadSkills])
 
   useEffect(() => {

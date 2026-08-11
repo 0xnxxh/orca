@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -9,6 +9,8 @@ import {
   type LocalSkillInstallInput
 } from './skill-install-transaction'
 import { nativeSkillInstallFilesystem } from './skill-install-filesystem'
+import { acquireSkillInstallLock } from './skill-install-lock'
+import { skillInstallStateKey } from './skill-install-provenance'
 
 const temporaryDirectories: string[] = []
 
@@ -146,5 +148,90 @@ describe('skill install transaction', () => {
     expect(await readFile(join(root, 'skills', 'test-skill', 'SKILL.md'), 'utf8')).toContain(
       '# Second'
     )
+  })
+
+  it('returns a retryable failure when another process owns the destination lock', async () => {
+    const root = await temporaryDirectory()
+    const archive = await packageVersion(root, 'version_1', '# First')
+    const canonicalPath = join(root, 'skills', 'test-skill')
+    const lockPath = join(root, 'state', 'locks', `${skillInstallStateKey(canonicalPath)}.lock`)
+    const release = await acquireSkillInstallLock({ path: lockPath })
+    try {
+      const result = await installLocalSkillPackage(
+        installInput(root, archive, { lockTimeoutMs: 1 })
+      )
+      expect(result).toMatchObject({
+        status: 'failed',
+        errorCategory: 'skill-install-busy',
+        failure: { category: 'filesystem', retryable: true }
+      })
+      expect(
+        (await readdir(join(root, 'skills'))).filter((name) => name.includes('extract'))
+      ).toEqual([])
+    } finally {
+      await release()
+    }
+  })
+
+  it('invalidates a plan when destination state changes immediately before commit', async () => {
+    const root = await temporaryDirectory()
+    const archive = await packageVersion(root, 'version_1', '# Cloud')
+    const canonicalPath = join(root, 'skills', 'test-skill')
+    let injected = false
+    const changingFilesystem = {
+      ...nativeSkillInstallFilesystem,
+      rename: async (source: string, target: string): Promise<void> => {
+        await nativeSkillInstallFilesystem.rename(source, target)
+        if (!injected && target.includes('.orca-staging-')) {
+          injected = true
+          await mkdir(canonicalPath)
+          await writeFile(join(canonicalPath, 'SKILL.md'), 'local content')
+        }
+      }
+    }
+
+    const result = await installLocalSkillPackage(
+      installInput(root, archive, { filesystem: changingFilesystem })
+    )
+
+    expect(result).toMatchObject({
+      status: 'conflict',
+      errorCategory: 'skill-install-conflict-stale-preview'
+    })
+    expect(await readFile(join(canonicalPath, 'SKILL.md'), 'utf8')).toBe('local content')
+    expect((await readdir(join(root, 'skills'))).filter((name) => name.includes('.orca-'))).toEqual(
+      []
+    )
+  })
+
+  it('restores the old version when cancellation arrives before canonical placement', async () => {
+    const root = await temporaryDirectory()
+    const first = await packageVersion(root, 'version_1', '# First')
+    const second = await packageVersion(root, 'version_2', '# Second')
+    await installLocalSkillPackage(installInput(root, first))
+    const controller = new AbortController()
+    const cancellingFilesystem = {
+      ...nativeSkillInstallFilesystem,
+      rename: async (source: string, target: string): Promise<void> => {
+        await nativeSkillInstallFilesystem.rename(source, target)
+        if (target.includes('.orca-backup-')) {
+          controller.abort()
+        }
+      }
+    }
+
+    const result = await installLocalSkillPackage(
+      installInput(root, second, { filesystem: cancellingFilesystem, signal: controller.signal })
+    )
+
+    expect(result).toMatchObject({
+      status: 'cancelled',
+      failure: { category: 'cancelled', retryable: true }
+    })
+    expect(await readFile(join(root, 'skills', 'test-skill', 'SKILL.md'), 'utf8')).toContain(
+      '# First'
+    )
+    await expect(lstat(join(root, 'state', 'journals'))).resolves.toBeDefined()
+    expect(await readdir(join(root, 'state', 'journals'))).toEqual([])
   })
 })

@@ -10,6 +10,8 @@ import { reconcileSkillProviderPlacement } from './skill-placement-reconciliatio
 import { resolveSkillProviderDestinations } from './skill-provider-destinations'
 import { removeLocalSharedSkill } from './skill-remove-transaction'
 import type { SkillInstallFilesystem } from './skill-install-filesystem'
+import { verifySkillInstallDiscovery } from './skill-install-discovery-verification'
+import type { SkillDiscoveryResult } from '../../shared/skills'
 
 export type SkillInstallServiceInput = Omit<
   LocalSkillInstallInput,
@@ -22,6 +24,8 @@ export type SkillInstallServiceInput = Omit<
   detectedProviders: readonly string[]
   filesystem?: SkillInstallFilesystem
   wslDistro?: string
+  discover?: () => Promise<SkillDiscoveryResult>
+  signal?: AbortSignal
 }
 
 export type SkillRemoveServiceInput = {
@@ -63,7 +67,8 @@ function localInput(input: SkillInstallServiceInput): LocalSkillInstallInput {
     expectedVersionId: input.expectedVersionId,
     conflictResolution: input.conflictResolution,
     filesystem: input.filesystem,
-    wslDistro: input.wslDistro
+    wslDistro: input.wslDistro,
+    signal: input.signal
   }
 }
 
@@ -86,7 +91,12 @@ export async function installSharedSkill(
     preview.canonicalPath
   )
   const result = await installLocalSkillPackage(request)
-  if (!result.canonicalPath || result.status === 'conflict' || result.status === 'failed') {
+  if (
+    !result.canonicalPath ||
+    result.status === 'conflict' ||
+    result.status === 'failed' ||
+    result.status === 'cancelled'
+  ) {
     return result
   }
   const placements: SkillPlacementResult[] = [canonicalPlacement(result)]
@@ -97,6 +107,21 @@ export async function installSharedSkill(
     detectedProviders: input.detectedProviders
   })
   for (const destination of destinations) {
+    if (input.signal?.aborted) {
+      placements.push({
+        provider: destination.provider,
+        path: join(destination.rootPath, result.name),
+        topology: 'independent-copy',
+        status: 'skipped',
+        errorCategory: 'skill-placement-cancelled',
+        failure: {
+          category: 'cancelled',
+          code: 'skill-placement-cancelled',
+          retryable: true
+        }
+      })
+      continue
+    }
     const placement = await reconcileSkillProviderPlacement({
       canonicalPath: result.canonicalPath,
       skillName: result.name,
@@ -118,7 +143,14 @@ export async function installSharedSkill(
   const incomplete = placements.some(
     (placement) => placement.status === 'failed' || placement.status === 'skipped'
   )
-  return { ...result, status: incomplete ? 'partial' : result.status, placements }
+  return verifySkillInstallDiscovery({
+    result: { ...result, status: incomplete ? 'partial' : result.status, placements },
+    scope: input.scope,
+    homeDirectory: input.homeDirectory,
+    workspaceDirectory: input.workspaceDirectory,
+    wslDistro: input.wslDistro,
+    discover: input.discover
+  })
 }
 
 export async function removeSharedSkill(

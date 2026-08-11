@@ -12,7 +12,10 @@ export function skillInstallResultLabel(result: SkillInstallResult): string {
       return 'Installed, but one or more agent placements need attention.'
     case 'removed':
       return 'Removed.'
-    default:
+    case 'cancelled':
+      return 'Installation cancelled.'
+    case 'conflict':
+    case 'failed':
       return 'Installation did not complete.'
   }
 }

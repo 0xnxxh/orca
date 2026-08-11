@@ -1,5 +1,5 @@
 import { lstat, readFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import {
   skillInstallStateKey,
   writeSkillInstallReceipt,
@@ -26,6 +26,9 @@ export type SkillInstallJournalV1 = {
   extractionPath: string
   stagingPath: string
   backupPath: string
+  backupDigest: string | null
+  stagingFileModes: SkillInstalledFileMode[]
+  backupFileModes: SkillInstalledFileMode[]
   receipt: SkillInstallReceiptV1
 }
 
@@ -42,15 +45,33 @@ function isInstallJournal(value: unknown, canonicalPath: string): value is Skill
     return false
   }
   const journal = value as Partial<SkillInstallJournalV1>
+  const parent = dirname(resolve(canonicalPath))
+  const name = basename(canonicalPath)
+  const ownedPath = (path: unknown, prefix: string): path is string =>
+    typeof path === 'string' &&
+    dirname(resolve(path)) === parent &&
+    basename(path).startsWith(prefix)
   return (
     journal.schemaVersion === 1 &&
     journal.operation === 'install' &&
     typeof journal.phase === 'string' &&
     journal.canonicalPath === canonicalPath &&
-    typeof journal.extractionPath === 'string' &&
-    typeof journal.stagingPath === 'string' &&
-    typeof journal.backupPath === 'string' &&
-    Boolean(journal.receipt)
+    ownedPath(journal.extractionPath, '.orca-skill-extract-') &&
+    ownedPath(journal.stagingPath, `.${name}.orca-staging-`) &&
+    ownedPath(journal.backupPath, `.${name}.orca-backup-`) &&
+    journal.extractionPath !== journal.stagingPath &&
+    journal.extractionPath !== journal.backupPath &&
+    journal.stagingPath !== journal.backupPath &&
+    (journal.backupDigest === null ||
+      (typeof journal.backupDigest === 'string' && /^[a-f0-9]{64}$/.test(journal.backupDigest))) &&
+    Array.isArray(journal.stagingFileModes) &&
+    Array.isArray(journal.backupFileModes) &&
+    [...journal.stagingFileModes, ...journal.backupFileModes].every(
+      (file) => typeof file.path === 'string' && typeof file.executable === 'boolean'
+    ) &&
+    Boolean(journal.receipt) &&
+    journal.receipt?.canonicalPath === canonicalPath &&
+    typeof journal.receipt?.packageDigest === 'string'
   )
 }
 
@@ -92,8 +113,36 @@ export async function cleanSkillInstallJournalFiles(
   filesystem: SkillInstallFilesystem = nativeSkillInstallFilesystem
 ): Promise<void> {
   await filesystem.remove(journal.extractionPath)
-  await filesystem.remove(journal.stagingPath)
-  await filesystem.remove(journal.backupPath)
+  await removeJournalOwnedSkill(
+    journal.stagingPath,
+    journal.receipt.packageDigest,
+    journal.stagingFileModes,
+    filesystem
+  )
+  await removeJournalOwnedSkill(
+    journal.backupPath,
+    journal.backupDigest,
+    journal.backupFileModes,
+    filesystem
+  )
+}
+
+async function removeJournalOwnedSkill(
+  path: string,
+  expectedDigest: string | null,
+  files: readonly SkillInstalledFileMode[],
+  filesystem: SkillInstallFilesystem
+): Promise<void> {
+  if (!(await skillInstallPathExists(path))) {
+    return
+  }
+  if (
+    !expectedDigest ||
+    !(await skillInstallDestinationMatches(path, expectedDigest, filesystem, files))
+  ) {
+    throw new Error('skill-install-recovery-conflict')
+  }
+  await filesystem.remove(path)
 }
 
 export async function recoverSkillInstallTransaction(
@@ -123,6 +172,17 @@ export async function recoverSkillInstallTransaction(
     return
   }
   if (!destinationExists && backupExists) {
+    if (
+      !journal.backupDigest ||
+      !(await skillInstallDestinationMatches(
+        journal.backupPath,
+        journal.backupDigest,
+        filesystem,
+        journal.backupFileModes
+      ))
+    ) {
+      throw new Error('skill-install-recovery-conflict')
+    }
     await filesystem.rename(journal.backupPath, canonicalPath)
     await filesystem.remove(journal.extractionPath)
     await filesystem.remove(journal.stagingPath)

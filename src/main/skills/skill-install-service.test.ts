@@ -84,6 +84,24 @@ describe('skill install service', () => {
     expect(await readFile(join(claude, 'SKILL.md'), 'utf8')).toBe('unowned')
   })
 
+  it('does not report success when normal skill discovery cannot observe the canonical copy', async () => {
+    const { root, input } = await fixture()
+
+    const result = await installSharedSkill({
+      ...input,
+      discover: async () => ({ skills: [], sources: [], scannedAt: Date.now() })
+    })
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      errorCategory: 'skill-discovery-canonical-missing',
+      failure: { category: 'provider-placement', retryable: true }
+    })
+    expect(
+      await readFile(join(root, 'home', '.agents', 'skills', 'test-skill', 'SKILL.md'), 'utf8')
+    ).toContain('# Test')
+  })
+
   it('removes the canonical skill and its owned provider alias', async () => {
     const { root, input } = await fixture()
     await installSharedSkill(input)

@@ -212,6 +212,9 @@ Rules:
 - `skill/SKILL.md` is required and must parse successfully.
 - The installed folder receives only the contents of `skill/`.
 - Paths use `/` in the manifest and are converted with the executing host's path API.
+- LF and CRLF non-executable text share one normalized package identity, while each immutable
+  archive retains and hashes its exact source bytes; executable and binary files always use exact
+  bytes for identity.
 - Names are normalized once during publication. Installation never silently renames a conflict.
 - V1 rejects symlinks and special files. A later package-builder feature may safely dereference
   internal links after proving they remain within the source root.
@@ -636,6 +639,8 @@ and test the same contract accurately.
 - Share creation, resolution, revocation, and access management.
 - Download grant creation.
 - Package catalog and version lookup.
+- Manager-only package details include current user/organization access and active, unexpired
+  share records; non-managers never receive that management metadata.
 
 Exact files follow the repository that owns Orca Cloud APIs; desktop contracts stay provider
 neutral.
@@ -652,6 +657,8 @@ neutral.
 
 - Share preview and access dialog.
 - Share completion dialog with copyable durable link.
+- Access editing, active-link revocation, immutable-version deletion, and Cloud-package deletion
+  with explicit confirmation and copy explaining that installed copies remain local.
 - Install preview with destination, scope, coverage, and conflict state.
 - Install progress and structured outcome.
 - Installed version, update, removal, and incomplete-coverage actions on the Skills page.
@@ -840,7 +847,8 @@ staging bytes.
 4. If bytes match the receipt, use the normal installation transaction.
 5. If bytes were modified, offer:
    - Keep local version.
-   - Export local bytes as a new package version when authorized.
+   - Publish local bytes as a new immutable version when exactly one non-missing Orca-managed
+     install matches the skill name and scope; Cloud rechecks ownership of that stable package ID.
    - Replace and discard local changes after explicit confirmation.
 6. Reconcile all recorded aliases and fallback copies.
 7. Preserve the previous package version in Cloud; rollback is a normal install of that immutable

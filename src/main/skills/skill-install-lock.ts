@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rm, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { SKILL_INSTALL_BUSY_FAILURE } from '../../shared/skill-install-failure'
+import { SkillInstallOperationError } from './skill-install-operation-error'
 
 const LOCK_RETRY_MS = 50
 const LOCK_STALE_MS = 30 * 60 * 1000
@@ -74,7 +76,7 @@ export async function acquireSkillInstallLock(input: {
       }
       await removeStaleLock(input.path)
       if (Date.now() >= deadline) {
-        throw new Error('skill-install-busy')
+        throw new SkillInstallOperationError(SKILL_INSTALL_BUSY_FAILURE)
       }
       await new Promise<void>((resolve) => setTimeout(resolve, LOCK_RETRY_MS))
     }

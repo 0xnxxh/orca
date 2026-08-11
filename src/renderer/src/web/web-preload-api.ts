@@ -3085,11 +3085,20 @@ function createSkillsApi(): NonNullable<Partial<PreloadApi>['skills']> {
     installShare: () => Promise.reject(new Error('Skill installation requires the desktop app.')),
     installPackageVersion: () =>
       Promise.reject(new Error('Skill installation requires the desktop app.')),
+    cancelInstall: () => Promise.resolve({ cancelled: false }),
     previewInstall: () => Promise.reject(new Error('Skill installation requires the desktop app.')),
     removeInstall: () => Promise.reject(new Error('Skill installation requires the desktop app.')),
     listManagedInstalls: () =>
       Promise.reject(new Error('Skill installation requires the desktop app.')),
     getPackage: () => Promise.reject(new Error('Skill installation requires the desktop app.')),
+    replacePackageAccess: () =>
+      Promise.reject(new Error('Skill package management requires the desktop app.')),
+    revokeShare: () =>
+      Promise.reject(new Error('Skill package management requires the desktop app.')),
+    deletePackageVersion: () =>
+      Promise.reject(new Error('Skill package management requires the desktop app.')),
+    deletePackage: () =>
+      Promise.reject(new Error('Skill package management requires the desktop app.')),
     listWslDistros: () => Promise.resolve([]),
     onShareProgress: () => () => {},
     onUpdateRun: () => () => {}

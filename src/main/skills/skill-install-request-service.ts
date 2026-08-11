@@ -12,6 +12,7 @@ import { installSharedSkill } from './skill-install-service'
 import { downloadSkillPackageGrant } from './skill-package-download'
 import { detectSkillProvidersInWsl } from './skill-wsl-provider-detection'
 import { createWslSkillInstallFilesystem } from './skill-wsl-install-filesystem'
+import { skillInstallFailureFromError } from './skill-install-operation-error'
 
 type StagedSkillPackage = {
   archivePath: string
@@ -71,8 +72,9 @@ export async function executeSkillInstallRequest(
     request.destination,
     dependencies.authority
   )
-  const ingress = await resolveIngress(request, dependencies)
+  let ingress: StagedSkillPackage | null = null
   try {
+    ingress = await resolveIngress(request, dependencies)
     const detectedProviders = destination.wslDistro
       ? await detectSkillProvidersInWsl(destination.wslDistro)
       : await dependencies.detectProviders()
@@ -99,9 +101,24 @@ export async function executeSkillInstallRequest(
       expectedVersionId: request.package.versionId,
       conflictResolution: request.conflictResolution,
       filesystem,
-      wslDistro: destination.wslDistro
+      wslDistro: destination.wslDistro,
+      signal: dependencies.signal
     })
+  } catch (error) {
+    const failure = skillInstallFailureFromError(error)
+    if (failure?.category !== 'cancelled') {
+      throw error
+    }
+    return {
+      operationId: request.operationId,
+      status: 'cancelled',
+      name: request.package.packageId,
+      packageDigest: request.package.packageDigest,
+      placements: [],
+      errorCategory: failure.code,
+      failure
+    }
   } finally {
-    await ingress.cleanup()
+    await ingress?.cleanup()
   }
 }

@@ -9,8 +9,7 @@ import {
   readSkillInstallReceipt,
   skillInstallStateKey,
   writeSkillInstallReceipt,
-  writeSkillStateFile,
-  type SkillInstallReceiptV1
+  writeSkillStateFile
 } from './skill-install-provenance'
 import { extractSkillPackageArchive } from './skill-package-extraction'
 import { recoverSkillRemovalTransaction } from './skill-remove-transaction'
@@ -26,6 +25,14 @@ import {
   nativeSkillInstallFilesystem,
   type SkillInstallFilesystem
 } from './skill-install-filesystem'
+import { SKILL_INSTALL_CANCELLED_FAILURE } from '../../shared/skill-install-failure'
+import { SkillInstallOperationError } from './skill-install-operation-error'
+import {
+  createSkillInstallReceipt,
+  skillInstallConflictResult,
+  skillInstallFailureResult,
+  skillInstallReplacementAllowed
+} from './skill-install-transaction-result'
 
 export { recoverSkillInstallTransaction } from './skill-install-recovery'
 
@@ -44,6 +51,8 @@ export type LocalSkillInstallInput = {
   conflictResolution?: 'replace-unmodified' | 'replace-and-discard-local' | 'cancel'
   filesystem?: SkillInstallFilesystem
   wslDistro?: string
+  signal?: AbortSignal
+  lockTimeoutMs?: number
 }
 
 export type LocalSkillInstallPreview = {
@@ -54,31 +63,6 @@ export type LocalSkillInstallPreview = {
 
 function lockPath(stateDirectory: string, canonicalPath: string): string {
   return join(stateDirectory, 'locks', `${skillInstallStateKey(canonicalPath)}.lock`)
-}
-
-function conflictResult(
-  operationId: string,
-  manifest: SkillPackageManifestV1,
-  state: SkillCanonicalState
-): SkillInstallResult {
-  const kind =
-    state.kind === 'modified' ||
-    state.kind === 'unowned' ||
-    state.kind === 'external-link' ||
-    state.kind === 'name-collision'
-      ? state.kind
-      : 'modified'
-  return {
-    operationId,
-    status: 'conflict',
-    name: manifest.name,
-    packageDigest: manifest.packageDigest,
-    placements: [],
-    conflict: {
-      kind,
-      ...('digest' in state && state.digest ? { existingDigest: state.digest } : {})
-    }
-  }
 }
 
 async function inspectExtractedPackage(input: LocalSkillInstallInput): Promise<{
@@ -95,9 +79,16 @@ async function inspectExtractedPackage(input: LocalSkillInstallInput): Promise<{
     expectedPackageDigest: input.expectedPackageDigest,
     expectedPackageId: input.expectedPackageId,
     expectedVersionId: input.expectedVersionId,
-    filesystem: input.filesystem
+    filesystem: input.filesystem,
+    signal: input.signal
   })
   return { extractionPath, manifest: extracted.manifest, archiveSha256: extracted.archiveSha256 }
+}
+
+function throwIfCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new SkillInstallOperationError(SKILL_INSTALL_CANCELLED_FAILURE)
+  }
 }
 
 export async function previewLocalSkillPackage(
@@ -121,64 +112,23 @@ export async function previewLocalSkillPackage(
   }
 }
 
-function replacementAllowed(state: SkillCanonicalState, input: LocalSkillInstallInput): boolean {
-  if (state.kind === 'missing' || state.kind === 'clean-update') {
-    return input.conflictResolution !== 'cancel'
-  }
-  return (
-    (state.kind === 'modified' || state.kind === 'unowned') &&
-    input.conflictResolution === 'replace-and-discard-local'
-  )
-}
-
-function createReceipt(input: {
-  request: LocalSkillInstallInput
-  manifest: SkillPackageManifestV1
-  archiveSha256: string
-  canonicalPath: string
-  previous: SkillInstallReceiptV1 | null
-}): SkillInstallReceiptV1 {
-  return {
-    schemaVersion: 1,
-    packageId: input.manifest.packageId,
-    versionId: input.manifest.versionId,
-    packageDigest: input.manifest.packageDigest,
-    archiveSha256: input.archiveSha256,
-    scope: input.request.scope,
-    destinationIdentity: input.request.destinationIdentity,
-    canonicalPath: input.canonicalPath,
-    placements: [
-      {
-        provider: 'agent-skills',
-        path: input.canonicalPath,
-        topology: 'canonical-copy',
-        status: 'installed'
-      }
-    ],
-    ...(input.previous ? { previousVersionId: input.previous.versionId } : {}),
-    installedAt: new Date().toISOString(),
-    hostIdentity: input.request.hostIdentity,
-    fileModes: input.manifest.files.map((file) => ({
-      path: file.path,
-      executable: file.executable
-    })),
-    ...(input.request.wslDistro ? { wslDistro: input.request.wslDistro } : {})
-  }
-}
-
 export async function installLocalSkillPackage(
   input: LocalSkillInstallInput
 ): Promise<SkillInstallResult> {
   const filesystem = input.filesystem ?? nativeSkillInstallFilesystem
   const extracted = await inspectExtractedPackage(input)
   const canonicalPath = join(input.destinationRoot, extracted.manifest.name)
-  const releaseLock = await acquireSkillInstallLock({
-    path: lockPath(input.stateDirectory, canonicalPath)
-  })
+  let releaseLock: (() => Promise<void>) | null = null
   let journal: SkillInstallJournalV1 | null = null
   try {
+    throwIfCancelled(input.signal)
+    releaseLock = await acquireSkillInstallLock({
+      path: lockPath(input.stateDirectory, canonicalPath),
+      timeoutMs: input.lockTimeoutMs
+    })
     await recoverSkillRemovalTransaction(input.stateDirectory, canonicalPath, filesystem)
     await recoverSkillInstallTransaction(input.stateDirectory, canonicalPath, filesystem)
+    throwIfCancelled(input.signal)
     const previous = await readSkillInstallReceipt(input.stateDirectory, canonicalPath)
     const state = await inspectSkillCanonicalState({
       canonicalPath,
@@ -186,7 +136,7 @@ export async function installLocalSkillPackage(
       receipt: previous,
       filesystem
     })
-    const receipt = createReceipt({
+    const receipt = createSkillInstallReceipt({
       request: input,
       manifest: extracted.manifest,
       archiveSha256: extracted.archiveSha256,
@@ -194,6 +144,7 @@ export async function installLocalSkillPackage(
       previous
     })
     if (state.kind === 'unchanged') {
+      throwIfCancelled(input.signal)
       await writeSkillInstallReceipt(input.stateDirectory, receipt)
       return {
         operationId: input.operationId,
@@ -207,9 +158,10 @@ export async function installLocalSkillPackage(
         }))
       }
     }
-    if (!replacementAllowed(state, input)) {
-      return conflictResult(input.operationId, extracted.manifest, state)
+    if (!skillInstallReplacementAllowed(state, input)) {
+      return skillInstallConflictResult(input.operationId, extracted.manifest, state)
     }
+    throwIfCancelled(input.signal)
     const transactionId = randomUUID()
     const stagingPath = join(
       input.destinationRoot,
@@ -219,6 +171,11 @@ export async function installLocalSkillPackage(
       input.destinationRoot,
       `.${extracted.manifest.name}.orca-backup-${transactionId}`
     )
+    const destinationExists = await skillInstallPathExists(canonicalPath)
+    const backupDigest = 'digest' in state ? (state.digest ?? null) : null
+    if (destinationExists && !backupDigest) {
+      return skillInstallConflictResult(input.operationId, extracted.manifest, state)
+    }
     await filesystem.rename(join(extracted.extractionPath, 'skill'), stagingPath)
     journal = {
       schemaVersion: 1,
@@ -228,14 +185,35 @@ export async function installLocalSkillPackage(
       extractionPath: extracted.extractionPath,
       stagingPath,
       backupPath,
+      backupDigest,
+      stagingFileModes: extracted.manifest.files,
+      backupFileModes: previous?.fileModes ?? extracted.manifest.files,
       receipt
     }
     const statePath = skillInstallJournalPath(input.stateDirectory, canonicalPath)
     await writeSkillStateFile(statePath, journal)
-    if (await skillInstallPathExists(canonicalPath)) {
+    throwIfCancelled(input.signal)
+    const commitState = await inspectSkillCanonicalState({
+      canonicalPath,
+      manifest: extracted.manifest,
+      receipt: previous,
+      filesystem
+    })
+    if (JSON.stringify(commitState) !== JSON.stringify(state)) {
+      await recoverSkillInstallTransaction(input.stateDirectory, canonicalPath, filesystem)
+      journal = null
+      return skillInstallConflictResult(
+        input.operationId,
+        extracted.manifest,
+        commitState,
+        'skill-install-conflict-stale-preview'
+      )
+    }
+    if (destinationExists) {
       await filesystem.rename(canonicalPath, backupPath)
       journal.phase = 'backup-created'
       await writeSkillStateFile(statePath, journal)
+      throwIfCancelled(input.signal)
     }
     await filesystem.rename(stagingPath, canonicalPath)
     journal.phase = 'canonical-placed'
@@ -271,9 +249,13 @@ export async function installLocalSkillPackage(
         () => undefined
       )
     }
+    const result = skillInstallFailureResult(input, extracted.manifest, canonicalPath, error)
+    if (result) {
+      return result
+    }
     throw error
   } finally {
     await filesystem.remove(extracted.extractionPath)
-    await releaseLock()
+    await releaseLock?.()
   }
 }

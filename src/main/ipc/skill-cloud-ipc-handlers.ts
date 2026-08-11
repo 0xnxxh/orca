@@ -7,11 +7,7 @@ import {
   SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE
 } from '../../shared/skill-install-capability'
 import {
-  ManagedSkillInstallListSchema,
   SkillInstallDestinationSchema,
-  SkillInstallPreviewSchema,
-  SkillInstallResultSchema,
-  SkillPackageIdentitySchema,
   type SkillInstallRequest
 } from '../../shared/skill-install-contract'
 import { SkillDiscoveryTargetSchema, type SkillDiscoveryResult } from '../../shared/skills'
@@ -20,15 +16,14 @@ import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import { installSkillOnRemoteRuntime } from '../skills/skill-remote-install-service'
 import { classifySkillCloudInstallTarget } from '../skills/skill-cloud-install-target'
 import { SkillSharePreparationService } from '../skills/skill-share-preparation-service'
-import { supportsSkillRuntimeManagement } from '../skills/skill-runtime-capability'
-import { listWslDistrosAsync } from '../wsl'
+import { skillInstallFailureFromError } from '../skills/skill-install-operation-error'
 import {
   callRuntimeEnvironment,
   getRuntimeEnvironmentStatus
 } from './runtime-environment-transport-routing'
+import { registerSkillInstallManagementIpcHandlers } from './skill-install-management-ipc-handlers'
 
 const environmentIdSchema = z.string().min(1).max(128)
-const skillNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)
 
 const sharePrepareSchema = z
   .object({
@@ -48,6 +43,7 @@ const sharePublishSchema = z
   .strict()
 
 const installDestinationFields = {
+  operationId: z.string().min(1).max(128).optional(),
   environmentId: environmentIdSchema.optional(),
   destination: SkillInstallDestinationSchema,
   conflictResolution: z
@@ -71,21 +67,18 @@ const packageVersionInstallSchema = z
   })
   .strict()
 
-const installPreviewSchema = z
+const replaceAccessSchema = z
   .object({
-    environmentId: environmentIdSchema.optional(),
-    package: SkillPackageIdentitySchema,
-    name: skillNameSchema,
-    destination: SkillInstallDestinationSchema
+    packageId: z.string().min(1).max(128),
+    userIds: z.array(z.string().min(1).max(128)).max(100),
+    shareWithOrganization: z.boolean()
   })
   .strict()
 
-const removeSchema = z
+const packageVersionSchema = z
   .object({
-    environmentId: environmentIdSchema.optional(),
-    name: skillNameSchema,
-    destination: SkillInstallDestinationSchema,
-    conflictResolution: z.enum(['replace-and-discard-local', 'cancel']).optional()
+    packageId: z.string().min(1).max(128),
+    versionId: z.string().min(1).max(128)
   })
   .strict()
 
@@ -95,7 +88,7 @@ async function installGrant(
   input: z.infer<typeof shareInstallSchema> | z.infer<typeof packageVersionInstallSchema>
 ) {
   const request: SkillInstallRequest = {
-    operationId: randomUUID(),
+    operationId: input.operationId ?? randomUUID(),
     package: {
       packageId: grant.version.packageId,
       versionId: grant.version.versionId,
@@ -111,26 +104,45 @@ async function installGrant(
     destination: input.destination,
     conflictResolution: input.conflictResolution
   }
-  if (!input.environmentId) {
-    return { status: 'ok' as const, value: await runtime.installSharedSkillRequest(request) }
-  }
-  const userDataPath = app.getPath('userData')
-  const status = await getRuntimeEnvironmentStatus(userDataPath, input.environmentId, 15_000)
-  if (
-    status.ok !== true ||
-    status.result.capabilities?.includes(SKILL_INSTALL_CAPABILITY) !== true
-  ) {
-    return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
-  }
-  return {
-    status: 'ok' as const,
-    value: await installSkillOnRemoteRuntime({
-      userDataPath,
-      environmentId: input.environmentId,
-      request,
-      capabilities: status.result.capabilities ?? [],
-      requireHttps: app.isPackaged
-    })
+  try {
+    if (!input.environmentId) {
+      return { status: 'ok' as const, value: await runtime.installSharedSkillRequest(request) }
+    }
+    const userDataPath = app.getPath('userData')
+    const status = await getRuntimeEnvironmentStatus(userDataPath, input.environmentId, 15_000)
+    if (
+      status.ok !== true ||
+      status.result.capabilities?.includes(SKILL_INSTALL_CAPABILITY) !== true
+    ) {
+      return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
+    }
+    return {
+      status: 'ok' as const,
+      value: await installSkillOnRemoteRuntime({
+        userDataPath,
+        environmentId: input.environmentId,
+        request,
+        capabilities: status.result.capabilities ?? [],
+        requireHttps: app.isPackaged
+      })
+    }
+  } catch (error) {
+    const failure = skillInstallFailureFromError(error)
+    if (!failure) {
+      throw error
+    }
+    return {
+      status: 'ok' as const,
+      value: {
+        operationId: request.operationId,
+        status: failure.category === 'cancelled' ? ('cancelled' as const) : ('failed' as const),
+        name: grant.version.name,
+        packageDigest: request.package.packageDigest,
+        placements: [],
+        errorCategory: failure.code,
+        failure
+      }
+    }
   }
 }
 
@@ -198,108 +210,52 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
     )
     return grant.status === 'ok' ? installGrant(runtime, grant.value, input) : grant
   })
-  ipcMain.handle('skills:getPackage', (_event, packageId: unknown) =>
-    runtime.getSkillPackage(z.string().min(1).max(128).parse(packageId), {})
-  )
-}
-
-function registerInstallManagementHandlers(runtime: OrcaRuntimeService): void {
-  ipcMain.handle('skills:listWslDistros', async (_event, environmentIdValue: unknown) => {
-    const environmentId = environmentIdSchema.optional().parse(environmentIdValue)
-    if (!environmentId) {
-      return listWslDistrosAsync()
+  ipcMain.handle('skills:cancelInstall', async (_event, value: unknown) => {
+    const input = z
+      .object({
+        operationId: z.string().min(1).max(128),
+        environmentId: environmentIdSchema.optional()
+      })
+      .strict()
+      .parse(value)
+    if (!input.environmentId || input.environmentId.startsWith('ssh:')) {
+      return { cancelled: runtime.cancelSharedSkillInstall(input.operationId) }
     }
     const response = await callRuntimeEnvironment(
       app.getPath('userData'),
-      environmentId,
-      'host.wsl.listDistros',
-      {},
+      input.environmentId,
+      'skills.cancelInstall',
+      { operationId: input.operationId },
       15_000
     )
-    return response.ok === true && Array.isArray(response.result)
-      ? response.result.filter((distro): distro is string => typeof distro === 'string')
-      : []
+    return response.ok === true && response.result && typeof response.result === 'object'
+      ? { cancelled: (response.result as { cancelled?: unknown }).cancelled === true }
+      : { cancelled: false }
   })
-  ipcMain.handle('skills:previewInstall', async (_event, value: unknown) => {
-    const input = installPreviewSchema.parse(value)
-    const request = { package: input.package, name: input.name, destination: input.destination }
-    if (!input.environmentId) {
-      return {
-        status: 'ok' as const,
-        value: await runtime.previewSharedSkillInstallRequest(request)
-      }
-    }
-    const userDataPath = app.getPath('userData')
-    if (!(await supportsSkillRuntimeManagement(userDataPath, input.environmentId))) {
-      return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
-    }
-    const response = await callRuntimeEnvironment(
-      userDataPath,
-      input.environmentId,
-      'skills.previewInstall',
-      request,
-      30_000
+  ipcMain.handle('skills:getPackage', (_event, packageId: unknown) =>
+    runtime.getSkillPackage(z.string().min(1).max(128).parse(packageId), {})
+  )
+  ipcMain.handle('skills:replacePackageAccess', (_event, value: unknown) => {
+    const input = replaceAccessSchema.parse(value)
+    return runtime.replaceSkillPackageAccess(
+      input.packageId,
+      {
+        userIds: input.userIds,
+        shareWithOrganization: input.shareWithOrganization
+      },
+      {}
     )
-    if (response.ok !== true) {
-      throw new Error(`skill-preview-remote-${response.error.code}`)
-    }
-    return { status: 'ok' as const, value: SkillInstallPreviewSchema.parse(response.result) }
   })
-  ipcMain.handle('skills:removeInstall', async (_event, value: unknown) => {
-    const input = removeSchema.parse(value)
-    const request = {
-      operationId: randomUUID(),
-      name: input.name,
-      destination: input.destination,
-      conflictResolution: input.conflictResolution
-    }
-    if (!input.environmentId) {
-      return {
-        status: 'ok' as const,
-        value: await runtime.removeSharedSkillInstallRequest(request)
-      }
-    }
-    const userDataPath = app.getPath('userData')
-    if (!(await supportsSkillRuntimeManagement(userDataPath, input.environmentId))) {
-      return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
-    }
-    const response = await callRuntimeEnvironment(
-      userDataPath,
-      input.environmentId,
-      'skills.removeInstall',
-      request,
-      5 * 60_000
-    )
-    if (response.ok !== true) {
-      throw new Error(`skill-remove-remote-${response.error.code}`)
-    }
-    return { status: 'ok' as const, value: SkillInstallResultSchema.parse(response.result) }
+  ipcMain.handle('skills:revokeShare', (_event, shareId: unknown) =>
+    runtime.revokeSkillShare(z.string().min(1).max(128).parse(shareId), {})
+  )
+  ipcMain.handle('skills:deletePackageVersion', (_event, value: unknown) => {
+    const input = packageVersionSchema.parse(value)
+    return runtime.deleteSkillPackageVersion(input.packageId, input.versionId, {})
   })
-  ipcMain.handle('skills:listManagedInstalls', async (_event, environmentIdValue: unknown) => {
-    const environmentId = environmentIdSchema.optional().parse(environmentIdValue)
-    if (!environmentId) {
-      return { status: 'ok' as const, value: await runtime.listManagedSkillInstalls() }
-    }
-    if (environmentId.startsWith('ssh:')) {
-      const value = await runtime.listManagedSkillInstalls(environmentId.slice('ssh:'.length))
-      return { status: 'ok' as const, value }
-    }
-    const userDataPath = app.getPath('userData')
-    if (!(await supportsSkillRuntimeManagement(userDataPath, environmentId))) {
-      return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
-    }
-    const response = await callRuntimeEnvironment(
-      userDataPath,
-      environmentId,
-      'skills.listManagedInstalls',
-      {},
-      30_000
-    )
-    if (response.ok !== true) {
-      throw new Error(`skill-list-managed-remote-${response.error.code}`)
-    }
-    return { status: 'ok' as const, value: ManagedSkillInstallListSchema.parse(response.result) }
-  })
+  ipcMain.handle('skills:deletePackage', (_event, packageId: unknown) =>
+    runtime.deleteSkillPackage(z.string().min(1).max(128).parse(packageId), {})
+  )
 }
 
 export function registerSkillCloudIpcHandlers(
@@ -308,5 +264,5 @@ export function registerSkillCloudIpcHandlers(
 ): void {
   registerSharingHandlers(runtime, discover)
   registerCloudInstallHandlers(runtime)
-  registerInstallManagementHandlers(runtime)
+  registerSkillInstallManagementIpcHandlers(runtime)
 }

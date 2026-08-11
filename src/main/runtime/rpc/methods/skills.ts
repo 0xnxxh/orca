@@ -1,4 +1,5 @@
 import { defineMethod, type RpcMethod } from '../core'
+import { z } from 'zod'
 import { SkillDiscoveryTargetSchema } from '../../../../shared/skills'
 import {
   SkillInstallPreviewRequestSchema,
@@ -14,6 +15,7 @@ import {
   discoverSkillsOnTarget,
   resolveSkillDiscoveryTarget
 } from '../../../skills/skill-discovery-target'
+import { SKILL_INSTALL_RESULT_V2_CAPABILITY } from '../../../../shared/skill-install-capability'
 
 export const SKILL_METHODS: RpcMethod[] = [
   defineMethod({
@@ -35,7 +37,28 @@ export const SKILL_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'skills.install',
     params: SkillInstallRequestSchema,
-    handler: (params, { runtime, signal }) => runtime.installSharedSkillRequest(params, signal)
+    handler: async (params, { runtime, signal, clientCapabilities }) => {
+      const result = await runtime.installSharedSkillRequest(params, signal)
+      if (
+        result.status === 'cancelled' &&
+        !clientCapabilities?.includes(SKILL_INSTALL_RESULT_V2_CAPABILITY)
+      ) {
+        return {
+          ...result,
+          status: 'failed' as const,
+          errorCategory: result.failure?.code ?? 'skill-install-cancelled',
+          failure: undefined
+        }
+      }
+      return result
+    }
+  }),
+  defineMethod({
+    name: 'skills.cancelInstall',
+    params: z.object({ operationId: z.string().min(1).max(128) }).strict(),
+    handler: (params, { runtime }) => ({
+      cancelled: runtime.cancelSharedSkillInstall(params.operationId)
+    })
   }),
   defineMethod({
     name: 'skills.previewInstall',

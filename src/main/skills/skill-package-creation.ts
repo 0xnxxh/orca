@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import {
   computeSkillPackageDigest,
   parseSkillPackageManifest,
+  validateSkillPackageName,
   type SkillPackageManifestV1
 } from '../../shared/skill-package-manifest'
 import { summarizeSkillMarkdown } from '../../shared/skill-metadata'
@@ -18,6 +19,10 @@ export type CreatedSkillPackage = {
   archivePath: string
   archiveSha256: string
   compressedBytes: number
+}
+
+export type SkillPackageCreationDependencies = {
+  afterSourceObserved?: () => Promise<void>
 }
 
 function observationsMatch(left: ObservedSkillPackage, right: ObservedSkillPackage): boolean {
@@ -65,14 +70,21 @@ function packageManifest(input: {
   })
 }
 
-export async function createSkillPackageArchive(input: {
-  sourceDirectory: string
-  archivePath: string
-  packageId: string
-  versionId: string
-  createdAt?: string
-}): Promise<CreatedSkillPackage> {
+export async function createSkillPackageArchive(
+  input: {
+    sourceDirectory: string
+    archivePath: string
+    packageId: string
+    versionId: string
+    createdAt?: string
+  },
+  dependencies: SkillPackageCreationDependencies = {}
+): Promise<CreatedSkillPackage> {
   const sourceObservation = await observeSkillPackage(input.sourceDirectory)
+  if (!sourceObservation.files.some((file) => file.path === 'SKILL.md')) {
+    throw new Error('skill-package-skill-markdown-required')
+  }
+  await dependencies.afterSourceObserved?.()
   const workDirectory = await mkdtemp(join(tmpdir(), 'orca-skill-package-'))
   const stagedSkill = join(workDirectory, 'skill')
   const verificationDirectory = join(workDirectory, 'verification')
@@ -92,6 +104,7 @@ export async function createSkillPackageArchive(input: {
     if (!summary.name) {
       throw new Error('skill-package-skill-name-required')
     }
+    validateSkillPackageName(summary.name)
     const manifest = packageManifest({
       packageId: input.packageId,
       versionId: input.versionId,

@@ -43,6 +43,16 @@ export type SkillCloudPackageDetails = {
   createdAt: string
   canManage: boolean
   versions: SkillCloudVersion[]
+  management?: {
+    userIds: string[]
+    shareWithOrganization: boolean
+    shares: {
+      id: string
+      pinnedVersionId?: string
+      createdAt: string
+      expiresAt?: string
+    }[]
+  }
 }
 
 export type SkillCloudPublishRequest = SkillCloudOptions & {

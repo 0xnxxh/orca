@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle, Check, Download, Loader2, ShieldCheck } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
+import { Download, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -10,8 +9,6 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { useAppStore } from '@/store'
 import type {
   SkillInstallDestination,
@@ -19,10 +16,15 @@ import type {
   SkillInstallResult
 } from '../../../../shared/skill-install-contract'
 import { parseSkillShareId } from './skill-share-link'
-import { skillInstallResultLabel } from './skill-install-result-label'
 import { skillInstallWorkspaceChoices } from './skill-install-workspace-choices'
-import { summarizeSkillShareVersion, type ResolvedSkillShare } from './skill-share-version-summary'
+import type { ResolvedSkillShare } from './skill-share-version-summary'
 import { SkillInstallTargetFields } from './SkillInstallTargetFields'
+import {
+  SkillInstallOutcome,
+  SkillInstallReview,
+  SkillShareLinkInputForm
+} from './SkillInstallReviewContent'
+import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkills'
 
 export function SkillInstallDialog({
   open,
@@ -52,6 +54,7 @@ export function SkillInstallDialog({
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<SkillInstallResult | null>(null)
   const [destinationPreview, setDestinationPreview] = useState<SkillInstallPreview | null>(null)
+  const [activeOperationId, setActiveOperationId] = useState<string | null>(null)
 
   const workspaceChoices = useMemo(
     () => skillInstallWorkspaceChoices({ environmentId, folderWorkspaces, repos, worktreesByRepo }),
@@ -149,8 +152,11 @@ export function SkillInstallDialog({
           return
         }
       }
+      const operationId = crypto.randomUUID()
+      setActiveOperationId(operationId)
       const operation = await window.api.skills.installShare({
         shareId: preview.shareId,
+        operationId,
         ...(environmentId === 'local' || environmentId.startsWith('ssh:') ? {} : { environmentId }),
         destination,
         ...(discardLocal ? { conflictResolution: 'replace-and-discard-local' } : {})
@@ -168,11 +174,28 @@ export function SkillInstallDialog({
         return
       }
       setResult(operation.value)
+      if (!['conflict', 'failed', 'cancelled'].includes(operation.value.status)) {
+        notifyInstalledAgentSkillsChanged()
+      }
     } catch (cause) {
       console.warn('[skills] install failed:', cause)
       setError('Installation failed before Orca could verify the requested version.')
     } finally {
+      setActiveOperationId(null)
       setBusy(false)
+    }
+  }
+
+  const cancelInstall = async (): Promise<void> => {
+    if (!activeOperationId) {
+      return
+    }
+    const cancelled = await window.api.skills.cancelInstall({
+      operationId: activeOperationId,
+      ...(environmentId === 'local' || environmentId.startsWith('ssh:') ? {} : { environmentId })
+    })
+    if (!cancelled.cancelled) {
+      setError('The destination had already finished this installation.')
     }
   }
 
@@ -187,9 +210,6 @@ export function SkillInstallDialog({
     onOpenChange(false)
   }
 
-  const version = preview?.version
-  const versionSummary = summarizeSkillShareVersion(version)
-
   return (
     <Dialog open={open} onOpenChange={(next) => !next && !busy && close()}>
       <DialogContent className="max-h-[calc(100vh-3rem)] overflow-y-auto scrollbar-sleek sm:max-w-xl">
@@ -201,95 +221,22 @@ export function SkillInstallDialog({
         </DialogHeader>
 
         {!preview ? (
-          <form
-            className="space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void inspect()
-            }}
-          >
-            <div className="space-y-2">
-              <Label htmlFor="skill-share-link">Orca skill link</Label>
-              <Input
-                id="skill-share-link"
-                value={link}
-                onChange={(event) => setLink(event.target.value)}
-                placeholder="https://app.orca.dev/skills/share/…"
-                className="font-mono text-xs"
-                autoFocus
-              />
-              <p className="text-xs text-muted-foreground">
-                Opening the link does not install anything. Review the immutable version first.
-              </p>
-            </div>
-            <Button type="submit" disabled={busy || !link.trim()} className="w-32">
-              {busy ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <ShieldCheck className="size-4" />
-              )}
-              {busy ? 'Checking…' : 'Inspect skill'}
-            </Button>
-          </form>
+          <SkillShareLinkInputForm
+            link={link}
+            busy={busy}
+            onLinkChange={setLink}
+            onSubmit={() => void inspect()}
+          />
         ) : result && result.status !== 'conflict' ? (
-          <div className="space-y-3">
-            <div className="flex items-center gap-3 rounded-md border border-border p-3">
-              <div className="flex size-8 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
-                <Check className="size-4" />
-              </div>
-              <div>
-                <p className="text-sm font-medium">{skillInstallResultLabel(result)}</p>
-                <p className="text-xs text-muted-foreground">
-                  {result.placements.length} placement{result.placements.length === 1 ? '' : 's'}{' '}
-                  checked.
-                </p>
-              </div>
-            </div>
-            {result.status === 'partial' ? (
-              <div className="space-y-1 text-xs text-muted-foreground">
-                {result.placements
-                  .filter((item) => item.status === 'failed' || item.status === 'skipped')
-                  .map((item) => (
-                    <p key={`${item.provider}:${item.path}`}>
-                      {item.provider}: {item.errorCategory || item.status}
-                    </p>
-                  ))}
-              </div>
-            ) : null}
-          </div>
+          <SkillInstallOutcome result={result} />
         ) : (
-          <div className="space-y-5">
-            <section className="space-y-2">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold">{version?.name}</h3>
-                  <p className="text-xs leading-5 text-muted-foreground">{version?.description}</p>
-                </div>
-                <Badge variant="outline">Immutable version</Badge>
-              </div>
-              <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                <Badge variant="outline">{version?.manifest.files.length} files</Badge>
-                <Badge variant="outline">{versionSummary.scriptCount} scripts</Badge>
-                <Badge variant="outline">{versionSummary.executableCount} executable</Badge>
-              </div>
-              <p className="truncate font-mono text-[11px] text-muted-foreground">
-                SHA-256 {version?.packageDigest}
-              </p>
-              {version?.publisher ? (
-                <p className="text-xs text-muted-foreground">
-                  Published by Orca user {version.publisher.userId}
-                  {version.publisher.organizationId
-                    ? ` in organization ${version.publisher.organizationId}`
-                    : ''}
-                  .
-                </p>
-              ) : null}
-              <p className="text-xs leading-5 text-muted-foreground">
-                A skill contains instructions and may include scripts. Treat it as code from its
-                author.
-              </p>
-            </section>
-
+          <SkillInstallReview
+            preview={preview}
+            destinationPreview={destinationPreview}
+            result={result}
+            busy={busy}
+            onDiscard={() => void install(true)}
+          >
             <SkillInstallTargetFields
               environmentId={environmentId}
               onEnvironmentChange={(value) => {
@@ -316,34 +263,7 @@ export function SkillInstallDialog({
               sshConnections={sshConnections}
               workspaceChoices={workspaceChoices}
             />
-
-            {result?.status === 'conflict' ||
-            (destinationPreview &&
-              ['modified', 'unowned', 'external-link', 'name-collision'].includes(
-                destinationPreview.currentState
-              )) ? (
-              <section className="space-y-2 rounded-md border border-border p-3" role="alert">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <AlertTriangle className="size-4" /> Local copy needs a decision
-                </div>
-                <p className="text-xs leading-5 text-muted-foreground">
-                  Orca found{' '}
-                  {result?.conflict?.kind || destinationPreview?.currentState || 'changed'} content
-                  and left it untouched. Keep it, or explicitly discard and replace it with this
-                  version.
-                </p>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => void install(true)}
-                >
-                  Discard and replace
-                </Button>
-              </section>
-            ) : null}
-          </div>
+          </SkillInstallReview>
         )}
 
         {error ? (
@@ -355,7 +275,12 @@ export function SkillInstallDialog({
           <Button type="button" variant="ghost" onClick={close} disabled={busy}>
             Close
           </Button>
-          {preview && (!result || result.status === 'conflict') ? (
+          {busy && activeOperationId ? (
+            <Button type="button" variant="secondary" onClick={() => void cancelInstall()}>
+              Cancel installation
+            </Button>
+          ) : null}
+          {preview && (!result || ['conflict', 'failed', 'cancelled'].includes(result.status)) ? (
             <Button
               type="button"
               disabled={busy || (scope === 'workspace' && !workspace)}
@@ -363,7 +288,7 @@ export function SkillInstallDialog({
               className="w-32"
             >
               {busy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-              {busy ? 'Installing…' : 'Install skill'}
+              {busy ? 'Installing…' : result ? 'Retry install' : 'Install skill'}
             </Button>
           ) : null}
         </DialogFooter>

@@ -23,6 +23,9 @@ import type {
   SkillInstallResult
 } from '../../../../shared/skill-install-contract'
 import type { SkillCloudPackageDetails } from '../../../../shared/skill-cloud-contract'
+import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkills'
+import { SkillCloudManagementActions } from './SkillCloudManagementActions'
+import { skillInstallResultLabel } from './skill-install-result-label'
 
 function installKey(install: ManagedSkillInstall): string {
   return `${install.destinationIdentity}:${install.name}:${install.packageId}`
@@ -47,6 +50,8 @@ export function SkillInstallManagementDialog({
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [result, setResult] = useState<SkillInstallResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [activeOperationId, setActiveOperationId] = useState<string | null>(null)
 
   const selected = useMemo(
     () => installs.find((install) => installKey(install) === selectedKey) ?? null,
@@ -70,6 +75,7 @@ export function SkillInstallManagementDialog({
       setInstalls(operation.value)
       setSelectedKey('')
       setDetails(null)
+      setNotice(null)
     } catch (cause) {
       console.warn('[skills] managed install listing failed:', cause)
       setError('Orca could not inspect managed installs on this machine.')
@@ -86,6 +92,7 @@ export function SkillInstallManagementDialog({
     setSelectedKey(installKey(install))
     setBusy(true)
     setError(null)
+    setNotice(null)
     setResult(null)
     setConfirmRemove(false)
     try {
@@ -108,16 +115,42 @@ export function SkillInstallManagementDialog({
     }
   }
 
+  const refreshPackageDetails = async (): Promise<void> => {
+    if (!selected) {
+      return
+    }
+    const operation = await window.api.skills.getPackage(selected.packageId)
+    if (operation.status !== 'ok') {
+      throw new Error(operation.status)
+    }
+    setDetails(operation.value)
+    setVersionId((current) =>
+      operation.value.versions.some((version) => version.versionId === current)
+        ? current
+        : (operation.value.versions[0]?.versionId ?? '')
+    )
+  }
+
+  const packageDeleted = (): void => {
+    setDetails(null)
+    setVersionId('')
+    setNotice('Cloud package deleted. The installed copy remains on this machine.')
+  }
+
   const installVersion = async (discardLocal = false): Promise<void> => {
     if (!selected || !versionId) {
       return
     }
     setBusy(true)
     setError(null)
+    setNotice(null)
+    const operationId = crypto.randomUUID()
+    setActiveOperationId(operationId)
     try {
       const operation = await window.api.skills.installPackageVersion({
         packageId: selected.packageId,
         versionId,
+        operationId,
         ...(environmentId === 'local' || environmentId.startsWith('ssh:') ? {} : { environmentId }),
         destination: selected.destination,
         ...(discardLocal ? { conflictResolution: 'replace-and-discard-local' } : {})
@@ -131,14 +164,29 @@ export function SkillInstallManagementDialog({
         return
       }
       setResult(operation.value)
-      if (operation.value.status !== 'conflict') {
+      if (!['conflict', 'failed', 'cancelled'].includes(operation.value.status)) {
+        notifyInstalledAgentSkillsChanged()
         await load()
       }
     } catch (cause) {
       console.warn('[skills] version installation failed:', cause)
       setError('Orca could not verify the requested version.')
     } finally {
+      setActiveOperationId(null)
       setBusy(false)
+    }
+  }
+
+  const cancelInstall = async (): Promise<void> => {
+    if (!activeOperationId) {
+      return
+    }
+    const cancelled = await window.api.skills.cancelInstall({
+      operationId: activeOperationId,
+      ...(environmentId === 'local' || environmentId.startsWith('ssh:') ? {} : { environmentId })
+    })
+    if (!cancelled.cancelled) {
+      setError('The destination had already finished this installation.')
     }
   }
 
@@ -152,6 +200,7 @@ export function SkillInstallManagementDialog({
     }
     setBusy(true)
     setError(null)
+    setNotice(null)
     try {
       const operation = await window.api.skills.removeInstall({
         ...(environmentId === 'local' || environmentId.startsWith('ssh:') ? {} : { environmentId }),
@@ -164,7 +213,8 @@ export function SkillInstallManagementDialog({
         return
       }
       setResult(operation.value)
-      if (operation.value.status !== 'conflict') {
+      if (!['conflict', 'failed', 'cancelled'].includes(operation.value.status)) {
+        notifyInstalledAgentSkillsChanged()
         await load()
       }
     } catch (cause) {
@@ -179,6 +229,7 @@ export function SkillInstallManagementDialog({
     setSelectedKey('')
     setDetails(null)
     setError(null)
+    setNotice(null)
     setResult(null)
     setConfirmRemove(false)
     onOpenChange(false)
@@ -299,6 +350,11 @@ export function SkillInstallManagementDialog({
                 )}
                 Install selected version
               </Button>
+              {activeOperationId ? (
+                <Button variant="secondary" size="sm" onClick={() => void cancelInstall()}>
+                  Cancel installation
+                </Button>
+              ) : null}
               <Button
                 variant={confirmRemove ? 'destructive' : 'outline'}
                 size="sm"
@@ -308,11 +364,27 @@ export function SkillInstallManagementDialog({
                 <Trash2 className="size-4" /> {confirmRemove ? 'Confirm remove' : 'Remove'}
               </Button>
             </div>
+            <SkillCloudManagementActions
+              details={details}
+              selectedVersionId={versionId}
+              onChanged={refreshPackageDetails}
+              onPackageDeleted={packageDeleted}
+            />
           </section>
+        ) : null}
+        {result ? (
+          <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+            {skillInstallResultLabel(result)}
+          </p>
         ) : null}
         {error ? (
           <p className="text-xs text-destructive" role="alert">
             {error}
+          </p>
+        ) : null}
+        {notice ? (
+          <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+            {notice}
           </p>
         ) : null}
         <DialogFooter>

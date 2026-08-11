@@ -50,6 +50,7 @@ export type SkillShareProgress = {
 
 export type SkillShareInstallInput = {
   shareId: string
+  operationId?: string
   versionId?: string
   environmentId?: string
   destination: SkillInstallDestination
@@ -88,6 +89,11 @@ export type SkillRemoveInput = {
 export type SkillRemoveOperation =
   | { status: 'ok'; value: SkillInstallResult }
   | { status: 'unsupported'; message: string }
+
+export type SkillInstallCancelInput = {
+  operationId: string
+  environmentId?: string
+}
 
 export type ManagedSkillInstallListOperation =
   | { status: 'ok'; value: ManagedSkillInstall[] }

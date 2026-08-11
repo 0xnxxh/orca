@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -89,5 +89,24 @@ describe('executeSkillInstallRequest', () => {
         dependencies
       )
     ).rejects.toThrow('skill-install-local-ingress-rejected')
+  })
+
+  it('returns a structured cancelled result without leaving partial ingress bytes', async () => {
+    const { request, dependencies } = await fixture()
+    const controller = new AbortController()
+    controller.abort()
+
+    const result = await executeSkillInstallRequest(request, {
+      ...dependencies,
+      signal: controller.signal
+    })
+
+    expect(result).toMatchObject({
+      status: 'cancelled',
+      errorCategory: 'skill-download-cancelled',
+      failure: { category: 'cancelled', retryable: true }
+    })
+    const downloads = join(dependencies.stateDirectory, 'skill-installs', 'downloads')
+    expect(await readdir(downloads).catch(() => [])).toEqual([])
   })
 })

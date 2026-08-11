@@ -59,6 +59,7 @@ function installApi(previewInstall: ReturnType<typeof vi.fn>) {
         placements: []
       }
     }),
+    cancelInstall: vi.fn().mockResolvedValue({ cancelled: true }),
     listWslDistros: vi.fn().mockResolvedValue([])
   }
 }
@@ -133,5 +134,72 @@ describe('SkillInstallDialog', () => {
       'Update the selected Orca host'
     )
     expect(skills.installShare).not.toHaveBeenCalled()
+  })
+
+  it('invalidates skill discovery after a verified install', async () => {
+    const previewInstall = vi.fn().mockResolvedValue({
+      status: 'ok',
+      value: {
+        name: 'private-skill',
+        packageDigest: DIGEST,
+        destinationIdentity: 'local:global',
+        currentState: 'missing',
+        providers: []
+      }
+    })
+    const skills = installApi(previewInstall)
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    const changed = vi.fn()
+    window.addEventListener('orca:installed-agent-skills-changed', changed)
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+    await inspectSkill()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install skill' }))
+
+    await screen.findByText('Installed and verified.')
+    expect(changed).toHaveBeenCalledOnce()
+    window.removeEventListener('orca:installed-agent-skills-changed', changed)
+  })
+
+  it('cancels an active destination-owned install and renders the structured result', async () => {
+    const previewInstall = vi.fn().mockResolvedValue({
+      status: 'ok',
+      value: {
+        name: 'private-skill',
+        packageDigest: DIGEST,
+        destinationIdentity: 'local:global',
+        currentState: 'missing',
+        providers: []
+      }
+    })
+    let settleInstall: ((value: unknown) => void) | undefined
+    const skills = installApi(previewInstall)
+    skills.installShare.mockImplementation(
+      () => new Promise((resolve) => (settleInstall = resolve)) as never
+    )
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+    await inspectSkill()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install skill' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel installation' }))
+
+    await waitFor(() => expect(skills.cancelInstall).toHaveBeenCalledOnce())
+    const operationId = skills.installShare.mock.calls[0]?.[0].operationId
+    expect(skills.cancelInstall).toHaveBeenCalledWith({ operationId })
+    settleInstall?.({
+      status: 'ok',
+      value: {
+        operationId,
+        status: 'cancelled',
+        name: 'private-skill',
+        packageDigest: DIGEST,
+        placements: [],
+        errorCategory: 'skill-install-cancelled',
+        failure: { category: 'cancelled', code: 'skill-install-cancelled', retryable: true }
+      }
+    })
+    await screen.findByText('Installation cancelled.')
+    expect(screen.getByRole('button', { name: 'Retry install' })).toBeDefined()
   })
 })

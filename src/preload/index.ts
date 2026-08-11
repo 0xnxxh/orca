@@ -143,6 +143,7 @@ import type {
   SkillRemoveOperation,
   SkillShareInstallInput,
   SkillShareInstallOperation,
+  SkillInstallCancelInput,
   SkillSharePreview,
   SkillShareProgress,
   SkillSharePublishInput,
@@ -2537,6 +2538,8 @@ const api = {
       input: SkillPackageVersionInstallInput
     ): Promise<SkillShareInstallOperation> =>
       ipcRenderer.invoke('skills:installPackageVersion', input),
+    cancelInstall: (input: SkillInstallCancelInput): Promise<{ cancelled: boolean }> =>
+      ipcRenderer.invoke('skills:cancelInstall', input),
     previewInstall: (input: SkillInstallPreviewInput): Promise<SkillInstallPreviewOperation> =>
       ipcRenderer.invoke('skills:previewInstall', input),
     removeInstall: (input: SkillRemoveInput): Promise<SkillRemoveOperation> =>
@@ -2545,6 +2548,21 @@ const api = {
       ipcRenderer.invoke('skills:listManagedInstalls', environmentId),
     getPackage: (packageId: string): Promise<SkillCloudOperation<SkillCloudPackageDetails>> =>
       ipcRenderer.invoke('skills:getPackage', packageId),
+    replacePackageAccess: (input: {
+      packageId: string
+      userIds: string[]
+      shareWithOrganization: boolean
+    }): Promise<SkillCloudOperation<void>> =>
+      ipcRenderer.invoke('skills:replacePackageAccess', input),
+    revokeShare: (shareId: string): Promise<SkillCloudOperation<void>> =>
+      ipcRenderer.invoke('skills:revokeShare', shareId),
+    deletePackageVersion: (input: {
+      packageId: string
+      versionId: string
+    }): Promise<SkillCloudOperation<void>> =>
+      ipcRenderer.invoke('skills:deletePackageVersion', input),
+    deletePackage: (packageId: string): Promise<SkillCloudOperation<void>> =>
+      ipcRenderer.invoke('skills:deletePackage', packageId),
     listWslDistros: (environmentId?: string): Promise<string[]> =>
       ipcRenderer.invoke('skills:listWslDistros', environmentId),
     onShareProgress: (callback: (progress: SkillShareProgress) => void): (() => void) => {

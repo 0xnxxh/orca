@@ -111,6 +111,57 @@ describe('skills.install RPC', () => {
     await installMethod().handler(request, { runtime } as unknown as RpcContext)
     expect(installSharedSkillRequest).toHaveBeenCalledWith(request, undefined)
   })
+
+  it('downgrades cancelled results for clients without the additive result capability', async () => {
+    const cancelled = {
+      operationId: 'operation_1',
+      status: 'cancelled' as const,
+      name: 'example',
+      packageDigest: 'a'.repeat(64),
+      placements: [],
+      failure: {
+        category: 'cancelled' as const,
+        code: 'skill-install-cancelled',
+        retryable: true
+      }
+    }
+    const runtime = { installSharedSkillRequest: vi.fn(async () => cancelled) }
+    const request = {
+      operationId: 'operation_1',
+      package: {
+        packageId: 'package_1',
+        versionId: 'version_1',
+        packageDigest: 'a'.repeat(64),
+        archiveSha256: 'b'.repeat(64),
+        compressedBytes: 100
+      },
+      ingress: {
+        kind: 'download-grant' as const,
+        url: 'https://storage.googleapis.com/package',
+        expiresAt: '2026-08-11T12:00:00.000Z'
+      },
+      destination: { scope: 'global' as const }
+    }
+
+    await expect(
+      installMethod().handler(request, { runtime, clientCapabilities: [] } as unknown as RpcContext)
+    ).resolves.toMatchObject({ status: 'failed', errorCategory: 'skill-install-cancelled' })
+    await expect(
+      installMethod().handler(request, {
+        runtime,
+        clientCapabilities: ['skills.install-result.v2']
+      } as unknown as RpcContext)
+    ).resolves.toMatchObject({ status: 'cancelled', failure: { category: 'cancelled' } })
+  })
+
+  it('routes cancellation to the destination runtime by operation ID', async () => {
+    const cancelSharedSkillInstall = vi.fn(() => true)
+    const result = await method('skills.cancelInstall').handler({ operationId: 'operation_1' }, {
+      runtime: { cancelSharedSkillInstall }
+    } as unknown as RpcContext)
+    expect(result).toEqual({ cancelled: true })
+    expect(cancelSharedSkillInstall).toHaveBeenCalledWith('operation_1')
+  })
 })
 
 describe('skill management RPC', () => {

@@ -5,6 +5,8 @@ import {
   SKILL_PACKAGE_CONTENT_TYPE,
   SKILL_PACKAGE_MAX_COMPRESSED_BYTES
 } from '../../shared/skill-package-manifest'
+import { SKILL_INSTALL_CANCELLED_FAILURE } from '../../shared/skill-install-failure'
+import { SkillInstallOperationError } from './skill-install-operation-error'
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 const MAX_REDIRECTS = 3
@@ -59,7 +61,10 @@ function validateUrl(
 
 function throwIfUnavailable(input: SkillPackageDownloadInput, expiresAt: number): void {
   if (input.signal?.aborted) {
-    throw new Error('skill-download-cancelled')
+    throw new SkillInstallOperationError({
+      ...SKILL_INSTALL_CANCELLED_FAILURE,
+      code: 'skill-download-cancelled'
+    })
   }
   if (input.now!() >= expiresAt) {
     throw new Error('skill-download-grant-expired')
@@ -83,7 +88,10 @@ async function fetchWithoutCredentialRedirect(
       })
     } catch {
       if (input.signal?.aborted) {
-        throw new Error('skill-download-cancelled')
+        throw new SkillInstallOperationError({
+          ...SKILL_INSTALL_CANCELLED_FAILURE,
+          code: 'skill-download-cancelled'
+        })
       }
       throw new Error('skill-download-transport-failed')
     }
@@ -173,7 +181,10 @@ export async function downloadSkillPackageGrant(
     } catch (error) {
       await reader.cancel().catch(() => undefined)
       if (input.signal?.aborted) {
-        throw new Error('skill-download-cancelled')
+        throw new SkillInstallOperationError({
+          ...SKILL_INSTALL_CANCELLED_FAILURE,
+          code: 'skill-download-cancelled'
+        })
       }
       throw error
     } finally {

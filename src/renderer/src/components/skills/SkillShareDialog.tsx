@@ -1,44 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Clipboard, FileCode2, Loader2, Share2 } from 'lucide-react'
+import { Loader2, Share2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog'
-import { Label } from '@/components/ui/label'
-import { Progress } from '@/components/ui/progress'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
 import { translate } from '@/i18n/i18n'
-import type { OrcaOrgMember } from '../../../../shared/orca-profiles'
 import type {
   SkillSharePreview,
   SkillShareProgress
 } from '../../../../shared/skill-sharing-contract'
+import type { ManagedSkillInstall } from '../../../../shared/skill-install-contract'
 import type { DiscoveredSkill } from '../../../../shared/skills'
+import {
+  SkillShareDialogHeader,
+  SkillSharePreparationReview,
+  SkillSharePublishedLink,
+  type SelectableOrgMember
+} from './SkillShareReviewContent'
+import { matchingManagedSkillInstall } from './skill-share-package-selection'
 
 type SkillShareDialogProps = {
   skill: DiscoveredSkill | null
   open: boolean
   onOpenChange: (open: boolean) => void
-}
-
-type SelectableOrgMember = OrcaOrgMember & { userId: string }
-
-function byteLabel(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function operationError(status: string): string {
@@ -70,7 +53,10 @@ export function SkillShareDialog({
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
+  const [publishingNewVersion, setPublishingNewVersion] = useState(false)
   const generation = useRef(0)
+  const cancellationRequested = useRef(false)
 
   useEffect(() => {
     if (!open || !skill) {
@@ -81,17 +67,34 @@ export function SkillShareDialog({
     setShareUrl(null)
     setProgress(null)
     setError(null)
+    setPublishingNewVersion(false)
     setPreparing(true)
-    void Promise.all([
-      window.api.skills.prepareShare({ skillId: skill.id }),
-      window.api.orcaProfiles.authStatus()
-    ])
-      .then(async ([nextPreview, auth]) => {
+    void (async () => {
+      let managedInstall: ManagedSkillInstall | null = null
+      try {
+        const operation = await window.api.skills.listManagedInstalls()
+        if (operation.status === 'ok') {
+          managedInstall = matchingManagedSkillInstall(skill, operation.value)
+        }
+      } catch (cause) {
+        console.warn('[skills] managed install lookup failed during share:', cause)
+      }
+      const [nextPreview, auth] = await Promise.all([
+        window.api.skills.prepareShare({
+          skillId: skill.id,
+          ...(managedInstall ? { packageId: managedInstall.packageId } : {})
+        }),
+        window.api.orcaProfiles.authStatus()
+      ])
+      return { nextPreview, auth, managedInstall }
+    })()
+      .then(async ({ nextPreview, auth, managedInstall }) => {
         if (generation.current !== current) {
           await window.api.skills.releaseShare(nextPreview.preparationId)
           return
         }
         setPreview(nextPreview)
+        setPublishingNewVersion(managedInstall !== null)
         const cloud = auth.cloud
         setAuthor(cloud?.displayName || cloud?.email || '')
         setOrganization(cloud?.activeOrgName || '')
@@ -168,6 +171,7 @@ export function SkillShareDialog({
       return
     }
     setPublishing(true)
+    cancellationRequested.current = false
     setError(null)
     try {
       const result = await window.api.skills.publishShare({
@@ -184,13 +188,35 @@ export function SkillShareDialog({
     } catch (cause) {
       console.warn('[skills] publish failed:', cause)
       setError(
-        translate(
-          'auto.components.skills.SkillShareDialog.publishFailed',
-          'Could not publish this skill. The prepared copy is still available to retry.'
-        )
+        cancellationRequested.current
+          ? translate(
+              'auto.components.skills.SkillShareDialog.publishCancelled',
+              'Upload cancelled. The prepared copy is still available to retry.'
+            )
+          : translate(
+              'auto.components.skills.SkillShareDialog.publishFailed',
+              'Could not publish this skill. The prepared copy is still available to retry.'
+            )
       )
     } finally {
+      cancellationRequested.current = false
+      setCancelling(false)
       setPublishing(false)
+    }
+  }
+
+  const cancelPublish = async (): Promise<void> => {
+    if (!preview || cancelling) {
+      return
+    }
+    cancellationRequested.current = true
+    setCancelling(true)
+    try {
+      await window.api.skills.cancelShare(preview.preparationId)
+    } catch {
+      cancellationRequested.current = false
+      setCancelling(false)
+      setError('Orca could not send the cancellation request. The upload may still finish.')
     }
   }
 
@@ -205,24 +231,10 @@ export function SkillShareDialog({
   return (
     <Dialog open={open} onOpenChange={(next) => !next && !publishing && void close()}>
       <DialogContent className="max-h-[calc(100vh-3rem)] overflow-y-auto scrollbar-sleek sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>
-            {shareUrl
-              ? translate('auto.components.skills.SkillShareDialog.ready', 'Skill link ready')
-              : translate('auto.components.skills.SkillShareDialog.title', 'Share skill')}
-          </DialogTitle>
-          <DialogDescription>
-            {shareUrl
-              ? translate(
-                  'auto.components.skills.SkillShareDialog.readyDescription',
-                  'Recipients authenticate with Orca before they can inspect or install it.'
-                )
-              : translate(
-                  'auto.components.skills.SkillShareDialog.description',
-                  'Review the exact files, choose who can access them, then publish an immutable version.'
-                )}
-          </DialogDescription>
-        </DialogHeader>
+        <SkillShareDialogHeader
+          published={Boolean(shareUrl)}
+          publishingNewVersion={publishingNewVersion}
+        />
 
         {preparing ? (
           <div className="flex min-h-40 items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -230,124 +242,23 @@ export function SkillShareDialog({
             {translate('auto.components.skills.SkillShareDialog.preparing', 'Preparing preview…')}
           </div>
         ) : preview && !shareUrl ? (
-          <div className="space-y-5">
-            <section className="space-y-2">
-              <div className="flex items-start gap-3">
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-background">
-                  <FileCode2 className="size-4 text-muted-foreground" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h3 className="truncate text-sm font-semibold">{preview.name}</h3>
-                  <p className="text-xs leading-5 text-muted-foreground">{preview.description}</p>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                <Badge variant="outline">{preview.fileCount} files</Badge>
-                <Badge variant="outline">{byteLabel(preview.totalBytes)}</Badge>
-                <Badge variant="outline">{preview.scriptPaths.length} scripts</Badge>
-                <Badge variant="outline">{preview.executablePaths.length} executable</Badge>
-              </div>
-              <p className="truncate font-mono text-[11px] text-muted-foreground">
-                SHA-256 {preview.packageDigest}
-              </p>
-            </section>
-
-            <section className="space-y-2">
-              <div className="space-y-1">
-                <Label>Access</Label>
-                <p className="text-xs text-muted-foreground">
-                  {author
-                    ? `Publishing as ${author}${organization ? ` in ${organization}` : ''}.`
-                    : 'A connected Orca Cloud account is required.'}
-                </p>
-              </div>
-              <Tabs
-                value={audience}
-                onValueChange={(value) => setAudience(value as typeof audience)}
-              >
-                <TabsList aria-label="Skill access">
-                  <TabsTrigger value="organization" disabled={!organization}>
-                    Organization
-                  </TabsTrigger>
-                  <TabsTrigger value="people">Selected people</TabsTrigger>
-                </TabsList>
-                <TabsContent value="organization" className="pt-2 text-xs text-muted-foreground">
-                  Everyone currently in {organization || 'the organization'} can access the link.
-                </TabsContent>
-                <TabsContent value="people" className="space-y-2 pt-2">
-                  {members.length > 0 ? (
-                    <div className="max-h-32 space-y-1 overflow-y-auto scrollbar-sleek rounded-md border border-border p-2">
-                      {members.map((member) => {
-                        const checked = selectedUserIds.includes(member.userId)
-                        return (
-                          <label
-                            key={member.userId}
-                            className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent"
-                          >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={(next) =>
-                                setSelectedUserIds((current) =>
-                                  next
-                                    ? [...new Set([...current, member.userId])]
-                                    : current.filter((id) => id !== member.userId)
-                                )
-                              }
-                            />
-                            <span className="min-w-0 truncate text-xs">
-                              {member.displayName || member.email}
-                            </span>
-                          </label>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No teammates are available.</p>
-                  )}
-                </TabsContent>
-              </Tabs>
-            </section>
-
-            <section className="space-y-2">
-              <Label htmlFor="skill-release-notes">Release notes</Label>
-              <textarea
-                id="skill-release-notes"
-                value={releaseNotes}
-                onChange={(event) => setReleaseNotes(event.target.value)}
-                maxLength={10_000}
-                placeholder="What changed in this version?"
-                className="min-h-20 w-full resize-y rounded-md border border-border bg-input px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              />
-            </section>
-
-            {publishing ? (
-              <section className="space-y-2" aria-live="polite">
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>
-                    {progress?.phase === 'finalizing' ? 'Validating and publishing…' : 'Uploading…'}
-                  </span>
-                  <span>{progress?.phase === 'finalizing' ? '100%' : `${progressPercent}%`}</span>
-                </div>
-                <Progress value={progress?.phase === 'finalizing' ? 100 : progressPercent} />
-              </section>
-            ) : null}
-          </div>
+          <SkillSharePreparationReview
+            preview={preview}
+            author={author}
+            organization={organization}
+            audience={audience}
+            onAudienceChange={setAudience}
+            members={members}
+            selectedUserIds={selectedUserIds}
+            onSelectedUserIdsChange={setSelectedUserIds}
+            releaseNotes={releaseNotes}
+            onReleaseNotesChange={setReleaseNotes}
+            publishing={publishing}
+            progress={progress}
+            progressPercent={progressPercent}
+          />
         ) : shareUrl ? (
-          <div className="space-y-4">
-            <div className="flex items-center gap-3 rounded-md border border-border p-3">
-              <div className="flex size-8 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
-                <Check className="size-4" />
-              </div>
-              <p className="min-w-0 flex-1 truncate font-mono text-xs">{shareUrl}</p>
-              <Button type="button" variant="outline" size="sm" onClick={() => void copyLink()}>
-                <Clipboard className="size-4" /> Copy link
-              </Button>
-            </div>
-            <p className="text-xs leading-5 text-muted-foreground">
-              Revoking this link blocks future access. It does not remove copies already installed
-              on recipients’ machines.
-            </p>
-          </div>
+          <SkillSharePublishedLink shareUrl={shareUrl} onCopy={() => void copyLink()} />
         ) : null}
 
         {error ? (
@@ -364,13 +275,15 @@ export function SkillShareDialog({
               <Button
                 type="button"
                 variant="secondary"
-                onClick={() => preview && window.api.skills.cancelShare(preview.preparationId)}
+                disabled={cancelling}
+                onClick={() => void cancelPublish()}
               >
-                Cancel upload
+                {cancelling ? 'Cancelling…' : 'Cancel upload'}
               </Button>
             ) : (
               <Button type="button" disabled={!preview || preparing} onClick={() => void publish()}>
-                <Share2 className="size-4" /> Publish skill
+                <Share2 className="size-4" />
+                {publishingNewVersion ? 'Publish new version' : 'Publish skill'}
               </Button>
             )
           ) : null}

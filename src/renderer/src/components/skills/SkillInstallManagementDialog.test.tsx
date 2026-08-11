@@ -8,6 +8,7 @@ import type {
   SkillCloudVersion
 } from '../../../../shared/skill-cloud-contract'
 import { useAppStore } from '@/store'
+import { INSTALLED_AGENT_SKILLS_CHANGED_EVENT } from '@/hooks/installed-agent-skills-change-event'
 import { SkillInstallManagementDialog } from './SkillInstallManagementDialog'
 
 const DIGEST = 'a'.repeat(64)
@@ -62,10 +63,14 @@ function packageDetails(versions: SkillCloudVersion[]): SkillCloudPackageDetails
   }
 }
 
-function skillsApi(installed: ManagedSkillInstall, versions: SkillCloudVersion[]) {
+function skillsApi(
+  installed: ManagedSkillInstall,
+  versions: SkillCloudVersion[],
+  details = packageDetails(versions)
+) {
   return {
     listManagedInstalls: vi.fn().mockResolvedValue({ status: 'ok', value: [installed] }),
-    getPackage: vi.fn().mockResolvedValue({ status: 'ok', value: packageDetails(versions) }),
+    getPackage: vi.fn().mockResolvedValue({ status: 'ok', value: details }),
     installPackageVersion: vi.fn().mockResolvedValue({
       status: 'ok',
       value: {
@@ -85,7 +90,11 @@ function skillsApi(installed: ManagedSkillInstall, versions: SkillCloudVersion[]
         packageDigest: DIGEST,
         placements: []
       }
-    })
+    }),
+    replacePackageAccess: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
+    revokeShare: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
+    deletePackageVersion: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
+    deletePackage: vi.fn().mockResolvedValue({ status: 'ok', value: undefined })
   }
 }
 
@@ -115,6 +124,8 @@ describe('SkillInstallManagementDialog', () => {
       version('ver_2', '2026-08-12T00:00:00.000Z'),
       version('ver_1', '2026-08-11T00:00:00.000Z')
     ])
+    const changed = vi.fn()
+    window.addEventListener(INSTALLED_AGENT_SKILLS_CHANGED_EVENT, changed)
     Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
     render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
     await selectInstall('ver_1')
@@ -125,6 +136,36 @@ describe('SkillInstallManagementDialog', () => {
     expect(skills.installPackageVersion).toHaveBeenCalledWith(
       expect.objectContaining({ packageId: 'pkg_1', versionId: 'ver_2' })
     )
+    expect(changed).toHaveBeenCalledOnce()
+    window.removeEventListener(INSTALLED_AGENT_SKILLS_CHANGED_EVENT, changed)
+  })
+
+  it('does not invalidate discovery after a failed local mutation', async () => {
+    const skills = skillsApi(install('ver_1'), [
+      version('ver_2', '2026-08-12T00:00:00.000Z'),
+      version('ver_1', '2026-08-11T00:00:00.000Z')
+    ])
+    skills.installPackageVersion.mockResolvedValue({
+      status: 'ok',
+      value: {
+        operationId: 'operation_failed',
+        status: 'failed',
+        name: 'private-skill',
+        packageDigest: DIGEST,
+        placements: []
+      }
+    })
+    const changed = vi.fn()
+    window.addEventListener(INSTALLED_AGENT_SKILLS_CHANGED_EVENT, changed)
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
+    await selectInstall('ver_1')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install selected version' }))
+
+    await waitFor(() => expect(skills.installPackageVersion).toHaveBeenCalledOnce())
+    expect(changed).not.toHaveBeenCalled()
+    window.removeEventListener(INSTALLED_AGENT_SKILLS_CHANGED_EVENT, changed)
   })
 
   it('rolls an installed skill back to an older immutable version', async () => {
@@ -158,5 +199,34 @@ describe('SkillInstallManagementDialog', () => {
     expect(skills.removeInstall).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'private-skill', destination: { scope: 'global' } })
     )
+  })
+
+  it('keeps the local install visible after deleting its Cloud package', async () => {
+    const versions = [version('ver_2', '2026-08-12T00:00:00.000Z')]
+    const details: SkillCloudPackageDetails = {
+      ...packageDetails(versions),
+      management: {
+        userIds: [],
+        shareWithOrganization: false,
+        shares: []
+      }
+    }
+    const skills = skillsApi(install('ver_2'), versions, details)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        skills,
+        orcaProfiles: { authStatus: vi.fn().mockResolvedValue({ cloud: undefined }) }
+      }
+    })
+    render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
+    await selectInstall('ver_2')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Cloud package' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm package deletion' }))
+
+    await screen.findByText('Cloud package deleted. The installed copy remains on this machine.')
+    expect(skills.deletePackage).toHaveBeenCalledWith('pkg_1')
+    expect(screen.getByText('global · ver_2')).toBeTruthy()
   })
 })

@@ -8,6 +8,8 @@ import {
 import { SKILL_UPLOAD_CAPABILITY } from '../../shared/skill-install-capability'
 import { callRuntimeEnvironment } from '../ipc/runtime-environment-transport-routing'
 import { transferSkillPackageToRuntime } from './skill-client-mediated-transfer'
+import { SkillInstallFailureSchema } from '../../shared/skill-install-failure'
+import { SkillInstallOperationError } from './skill-install-operation-error'
 
 const DIRECT_DOWNLOAD_FAILURE = 'skill-download-transport-failed'
 
@@ -26,11 +28,24 @@ async function install(
 }
 
 function isDownloadTransportFailure(response: RuntimeRpcResponse<unknown>): boolean {
+  const structured =
+    response.ok === false ? SkillInstallFailureSchema.safeParse(response.error.data) : null
   return (
     response.ok === false &&
     (response.error.code === DIRECT_DOWNLOAD_FAILURE ||
-      response.error.message === DIRECT_DOWNLOAD_FAILURE)
+      response.error.message === DIRECT_DOWNLOAD_FAILURE ||
+      (structured?.success === true && structured.data.code === DIRECT_DOWNLOAD_FAILURE))
   )
+}
+
+function remoteFailure(response: RuntimeRpcResponse<unknown>): Error {
+  if (response.ok === true) {
+    return new Error('skill-install-remote-response-invalid')
+  }
+  const failure = SkillInstallFailureSchema.safeParse(response.error.data)
+  return failure.success
+    ? new SkillInstallOperationError(failure.data)
+    : new Error(`skill-install-remote-${response.error.code}`)
 }
 
 export async function installSkillOnRemoteRuntime(input: {
@@ -46,7 +61,7 @@ export async function installSkillOnRemoteRuntime(input: {
   const direct = await install(input.userDataPath, input.environmentId, input.request)
   if (!isDownloadTransportFailure(direct)) {
     if (direct.ok !== true) {
-      throw new Error(`skill-install-remote-${direct.error.code}`)
+      throw remoteFailure(direct)
     }
     return SkillInstallResultSchema.parse(direct.result)
   }
@@ -67,7 +82,7 @@ export async function installSkillOnRemoteRuntime(input: {
       ingress: { kind: 'staged-upload', uploadId: transfer.uploadId }
     })
     if (staged.ok !== true) {
-      throw new Error(`skill-install-remote-${staged.error.code}`)
+      throw remoteFailure(staged)
     }
     return SkillInstallResultSchema.parse(staged.result)
   } finally {

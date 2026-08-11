@@ -28,6 +28,10 @@ function manifest(files: SkillPackageFile[] = [file]): unknown {
   }
 }
 
+function packageFile(path: string, size = 0): SkillPackageFile {
+  return { ...file, path, size }
+}
+
 describe('skill package manifest', () => {
   it('parses a canonical manifest', () => {
     expect(parseSkillPackageManifest(manifest()).name).toBe('test-skill')
@@ -53,5 +57,84 @@ describe('skill package manifest', () => {
     expect(() =>
       parseSkillPackageManifest({ ...(manifest() as object), packageDigest: 'c'.repeat(64) })
     ).toThrow('skill-package-digest-mismatch')
+  })
+
+  it('requires one identity-matched SKILL.md in canonical path order', () => {
+    expect(() => parseSkillPackageManifest(manifest([packageFile('README.md')]))).toThrow(
+      'skill-package-skill-markdown-required'
+    )
+    expect(() => parseSkillPackageManifest(manifest([file, { ...file }]))).toThrow(
+      'skill-package-manifest-path-order'
+    )
+    expect(() =>
+      parseSkillPackageManifest({ ...(manifest() as object), schemaVersion: 2 })
+    ).toThrow('skill-package-manifest-invalid')
+  })
+
+  it('enforces path depth at, below, and above the V1 limit', () => {
+    const path = (depth: number): string =>
+      [...Array.from({ length: depth - 1 }, (_, index) => `d${index}`), 'SKILL.md'].join('/')
+    expect(() => validateSkillPackagePath(path(15))).not.toThrow()
+    expect(() => validateSkillPackagePath(path(16))).not.toThrow()
+    expect(() => validateSkillPackagePath(path(17))).toThrow('skill-package-path-invalid')
+  })
+
+  it('enforces file count at, below, and above the V1 limit', () => {
+    const files = (count: number): SkillPackageFile[] => [
+      file,
+      ...Array.from({ length: count - 1 }, (_, index) =>
+        packageFile(`file-${index.toString().padStart(3, '0')}.md`)
+      )
+    ]
+    expect(() => parseSkillPackageManifest(manifest(files(511)))).not.toThrow()
+    expect(() => parseSkillPackageManifest(manifest(files(512)))).not.toThrow()
+    expect(() => parseSkillPackageManifest(manifest(files(513)))).toThrow(
+      'skill-package-manifest-invalid'
+    )
+  })
+
+  it('enforces per-file and total extracted bytes around both V1 limits', () => {
+    const fourMiB = 4 * 1024 * 1024
+    expect(() =>
+      parseSkillPackageManifest(manifest([{ ...file, size: fourMiB - 1 }]))
+    ).not.toThrow()
+    expect(() => parseSkillPackageManifest(manifest([{ ...file, size: fourMiB }]))).not.toThrow()
+    expect(() => parseSkillPackageManifest(manifest([{ ...file, size: fourMiB + 1 }]))).toThrow(
+      'skill-package-manifest-invalid'
+    )
+    const total = (extra: number): SkillPackageFile[] => [
+      { ...file, size: 0 },
+      ...Array.from({ length: 8 }, (_, index) => packageFile(`payload-${index}.bin`, fourMiB)),
+      ...(extra ? [packageFile('z-extra.bin', extra)] : [])
+    ]
+    expect(() => parseSkillPackageManifest(manifest(total(0)))).not.toThrow()
+    expect(() => parseSkillPackageManifest(manifest(total(1)))).toThrow(
+      'skill-package-total-size-limit'
+    )
+  })
+
+  it('rejects Unicode normalization and case-fold collisions', () => {
+    expect(() => validateSkillPackagePath('references/e\u0301.md')).toThrow(
+      'skill-package-path-invalid'
+    )
+    expect(() =>
+      parseSkillPackageManifest(
+        manifest([file, packageFile('references/É.md'), packageFile('references/é.md')])
+      )
+    ).toThrow('skill-package-case-collision')
+  })
+
+  it('fuzzes path normalization without accepting traversal or platform syntax', () => {
+    let state = 0x5eed
+    const random = (): number => {
+      state = (state * 1103515245 + 12345) & 0x7fffffff
+      return state
+    }
+    const hazards = ['..', '.', '', 'C:', '\\server', 'nul', 'x.', 'x ', 'x\u0000y']
+    for (let index = 0; index < 1_000; index += 1) {
+      const hazard = hazards[random() % hazards.length]
+      const path = `safe/${hazard}/file-${random()}.md`
+      expect(() => validateSkillPackagePath(path)).toThrow('skill-package-path-invalid')
+    }
   })
 })

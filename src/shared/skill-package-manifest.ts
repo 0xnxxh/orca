@@ -43,6 +43,12 @@ export const SkillPackageManifestV1Schema = z
 
 export type SkillPackageManifestV1 = z.infer<typeof SkillPackageManifestV1Schema>
 
+export function validateSkillPackageName(name: string): void {
+  if (!SKILL_NAME_PATTERN.test(name)) {
+    throw new Error('skill-package-skill-name-invalid')
+  }
+}
+
 export function validateSkillPackagePath(path: string): void {
   if (path !== path.normalize('NFC') || Buffer.byteLength(path, 'utf8') > 1024) {
     throw new Error('skill-package-path-invalid')
@@ -51,7 +57,10 @@ export function validateSkillPackagePath(path: string): void {
     throw new Error('skill-package-path-invalid')
   }
   const segments = path.split('/')
-  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
+  if (
+    segments.length > 16 ||
+    segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) {
     throw new Error('skill-package-path-invalid')
   }
   for (const segment of segments) {

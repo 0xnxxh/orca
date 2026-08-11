@@ -19,6 +19,8 @@ import {
   nativeSkillInstallFilesystem,
   type SkillInstallFilesystem
 } from './skill-install-filesystem'
+import { SKILL_INSTALL_CANCELLED_FAILURE } from '../../shared/skill-install-failure'
+import { SkillInstallOperationError } from './skill-install-operation-error'
 
 export type SkillPackageExtractionResult = {
   manifest: SkillPackageManifestV1
@@ -40,7 +42,8 @@ async function consumeZeroPadding(reader: TarByteReader, size: number): Promise<
 async function extractFile(
   reader: TarByteReader,
   destination: string,
-  expected: SkillPackageFile
+  expected: SkillPackageFile,
+  signal?: AbortSignal
 ): Promise<void> {
   await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
   const handle = await open(destination, 'wx', expected.executable ? 0o700 : 0o600)
@@ -48,6 +51,9 @@ async function extractFile(
   let offset = 0
   try {
     while (offset < expected.size) {
+      if (signal?.aborted) {
+        throw new SkillInstallOperationError(SKILL_INSTALL_CANCELLED_FAILURE)
+      }
       const bytes = await reader.readExact(Math.min(64 * 1024, expected.size - offset))
       hash.update(bytes)
       let chunkOffset = 0
@@ -143,11 +149,15 @@ export async function extractSkillPackageArchive(input: {
   expectedPackageId?: string
   expectedVersionId?: string
   filesystem?: SkillInstallFilesystem
+  signal?: AbortSignal
 }): Promise<SkillPackageExtractionResult> {
   const filesystem = input.filesystem ?? nativeSkillInstallFilesystem
   const archive = await openSkillTarGzip(input.archivePath)
   let destinationCreated = false
   try {
+    if (input.signal?.aborted) {
+      throw new SkillInstallOperationError(SKILL_INSTALL_CANCELLED_FAILURE)
+    }
     const manifest = await readManifest(archive.reader)
     if (
       (input.expectedPackageDigest && manifest.packageDigest !== input.expectedPackageDigest) ||
@@ -161,6 +171,9 @@ export async function extractSkillPackageArchive(input: {
     const skillDirectory = join(input.destinationDirectory, 'skill')
     await mkdir(skillDirectory, { mode: 0o700 })
     for (const expected of manifest.files) {
+      if (input.signal?.aborted) {
+        throw new SkillInstallOperationError(SKILL_INSTALL_CANCELLED_FAILURE)
+      }
       const header = parseSkillTarHeader(await archive.reader.readExact(SKILL_TAR_BLOCK_BYTES))
       if (
         !header ||
@@ -170,9 +183,17 @@ export async function extractSkillPackageArchive(input: {
       ) {
         throw new Error('skill-package-file-envelope-mismatch')
       }
-      await extractFile(archive.reader, join(skillDirectory, ...expected.path.split('/')), expected)
+      await extractFile(
+        archive.reader,
+        join(skillDirectory, ...expected.path.split('/')),
+        expected,
+        input.signal
+      )
     }
     await requireArchiveEnd(archive.reader)
+    if (input.signal?.aborted) {
+      throw new SkillInstallOperationError(SKILL_INSTALL_CANCELLED_FAILURE)
+    }
     const archiveIdentity = await archive.archiveIdentity
     if (
       input.expectedArchiveSha256 &&

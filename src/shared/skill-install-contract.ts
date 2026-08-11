@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SkillInstallFailureSchema, type SkillInstallFailure } from './skill-install-failure'
 
 export const SkillPackageIdentitySchema = z
   .object({
@@ -25,6 +26,8 @@ const SkillInstallIngressSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('staged-upload'), uploadId: z.string().min(1).max(128) }).strict(),
   z.object({ kind: z.literal('local-file'), path: z.string().min(1) }).strict()
 ])
+
+const SkillNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)
 
 export const SkillInstallDestinationSchema = z.discriminatedUnion('scope', [
   z
@@ -61,8 +64,6 @@ export const SkillInstallRequestSchema = z
       .optional()
   })
   .strict()
-
-const SkillNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)
 
 export const SkillInstallPreviewRequestSchema = z
   .object({
@@ -160,11 +161,20 @@ export type SkillPlacementResult = {
   topology: 'canonical-copy' | 'provider-alias' | 'independent-copy'
   status: 'installed' | 'unchanged' | 'removed' | 'skipped' | 'failed'
   errorCategory?: string
+  failure?: SkillInstallFailure
 }
 
 export type SkillInstallResult = {
   operationId: string
-  status: 'installed' | 'updated' | 'unchanged' | 'removed' | 'conflict' | 'partial' | 'failed'
+  status:
+    | 'installed'
+    | 'updated'
+    | 'unchanged'
+    | 'removed'
+    | 'conflict'
+    | 'partial'
+    | 'cancelled'
+    | 'failed'
   name: string
   packageDigest: string
   canonicalPath?: string
@@ -174,11 +184,21 @@ export type SkillInstallResult = {
     existingDigest?: string
   }
   errorCategory?: string
+  failure?: SkillInstallFailure
 }
 
 export const SkillInstallResultSchema: z.ZodType<SkillInstallResult> = z.object({
   operationId: z.string(),
-  status: z.enum(['installed', 'updated', 'unchanged', 'removed', 'conflict', 'partial', 'failed']),
+  status: z.enum([
+    'installed',
+    'updated',
+    'unchanged',
+    'removed',
+    'conflict',
+    'partial',
+    'cancelled',
+    'failed'
+  ]),
   name: z.string(),
   packageDigest: z.string(),
   canonicalPath: z.string().optional(),
@@ -188,7 +208,8 @@ export const SkillInstallResultSchema: z.ZodType<SkillInstallResult> = z.object(
       path: z.string(),
       topology: z.enum(['canonical-copy', 'provider-alias', 'independent-copy']),
       status: z.enum(['installed', 'unchanged', 'removed', 'skipped', 'failed']),
-      errorCategory: z.string().optional()
+      errorCategory: z.string().optional(),
+      failure: SkillInstallFailureSchema.optional()
     })
   ),
   conflict: z
@@ -197,5 +218,6 @@ export const SkillInstallResultSchema: z.ZodType<SkillInstallResult> = z.object(
       existingDigest: z.string().optional()
     })
     .optional(),
-  errorCategory: z.string().optional()
+  errorCategory: z.string().optional(),
+  failure: SkillInstallFailureSchema.optional()
 })

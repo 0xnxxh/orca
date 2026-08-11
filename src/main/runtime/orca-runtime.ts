@@ -3291,6 +3291,7 @@ export class OrcaRuntimeService {
   private artifactService: ArtifactCloudService | null = null
   private skillCloudService: SkillCloudService | null = null
   private skillUploadSessions: SkillUploadSessionService | null = null
+  private readonly skillInstallOperations = new Map<string, AbortController>()
   private readonly claudeAgentTeams = new ClaudeAgentTeamsService()
   private mobileDictation: {
     id: string
@@ -4649,6 +4650,37 @@ export class OrcaRuntimeService {
   async installSharedSkillRequest(
     request: SkillInstallRequest,
     signal?: AbortSignal
+  ): Promise<SkillInstallResult> {
+    if (this.skillInstallOperations.has(request.operationId)) {
+      throw new Error('skill-install-operation-in-progress')
+    }
+    const controller = new AbortController()
+    const abort = (): void => controller.abort()
+    if (signal?.aborted) {
+      abort()
+    } else {
+      signal?.addEventListener('abort', abort, { once: true })
+    }
+    this.skillInstallOperations.set(request.operationId, controller)
+    try {
+      return await this.executeSharedSkillInstall(request, controller.signal)
+    } finally {
+      signal?.removeEventListener('abort', abort)
+      if (this.skillInstallOperations.get(request.operationId) === controller) {
+        this.skillInstallOperations.delete(request.operationId)
+      }
+    }
+  }
+
+  cancelSharedSkillInstall(operationId: string): boolean {
+    const operation = this.skillInstallOperations.get(operationId)
+    operation?.abort()
+    return Boolean(operation)
+  }
+
+  private async executeSharedSkillInstall(
+    request: SkillInstallRequest,
+    signal: AbortSignal
   ): Promise<SkillInstallResult> {
     const runtimeId = this.getStatus().runtimeId
     const sshTarget = await this.resolveSkillSshTarget(request.destination)
