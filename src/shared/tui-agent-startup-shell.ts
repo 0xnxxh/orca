@@ -21,6 +21,11 @@ function tokenizeWindowsStartupCommand(
     const char = value[index]
     const escape = shell === 'cmd' ? '^' : '`'
     if (char === escape && index + 1 < value.length) {
+      // Why: cmd keeps `^` literal inside double quotes and PowerShell keeps
+      // backticks literal inside single quotes; this branch consumes them
+      // anyway, so the token value stops matching the real shell's argv.
+      divergesFromShell ||=
+        (shell === 'cmd' && quote === '"') || (shell === 'powershell' && quote === "'")
       token += value[index + 1]
       if (!tokenStarted) {
         tokenStart = index

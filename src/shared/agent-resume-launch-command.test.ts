@@ -144,6 +144,53 @@ describe('buildClaudeResumeLaunchCommand', () => {
     ).toBe(`nix develop /Users/me/src/claude -c claude --resume OLD '--resume' '${SESSION_ID}'`)
   })
 
+  it.each(['claude "\\--resume" old', 'claude "\\-r" old', 'claude --model "\\--resume"'])(
+    'fails open on a double-quoted backslash the shell keeps literal: %s',
+    (base) => {
+      expect(buildClaudeResumeLaunchCommand(base, RESUME, 'posix')).toBe(
+        `${base} '--resume' '${SESSION_ID}'`
+      )
+    }
+  )
+
+  it('still strips when a double-quoted backslash is shell-consumed', () => {
+    expect(
+      buildClaudeResumeLaunchCommand('claude --model "a\\"b" --resume old', RESUME, 'posix')
+    ).toBe(`claude --model "a\\"b" '--resume' '${SESSION_ID}'`)
+  })
+
+  it('fails open on a posix line continuation hiding a selector', () => {
+    const base = 'claude --model x \\\n--resume old'
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'posix')).toBe(
+      `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it('fails open on escape characters the windows shells keep literal', () => {
+    // cmd keeps ^ literal inside double quotes; PowerShell keeps ` literal
+    // inside single quotes, so these tokens are not really selectors.
+    expect(buildClaudeResumeLaunchCommand('claude "-^-resume" old', RESUME, 'cmd')).toBe(
+      `claude "-^-resume" old "--resume" "${SESSION_ID}"`
+    )
+    expect(buildClaudeResumeLaunchCommand("claude '-`-resume' old", RESUME, 'powershell')).toBe(
+      `claude '-\`-resume' old '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it('fails open on an unclosed expansion opened before claude', () => {
+    const base = '$(x; npx -- claude --resume stale)'
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'posix')).toBe(
+      `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it('fails open when the executable token itself is unmodelable', () => {
+    // cmd has no single-quote syntax, so 'claude' is not the claude executable.
+    expect(buildClaudeResumeLaunchCommand("'claude' --resume old", RESUME, 'cmd')).toBe(
+      `'claude' --resume old "--resume" "${SESSION_ID}"`
+    )
+  })
+
   it.each(['cmd', 'powershell'] as const)(
     'fails open on a posix-style assignment prefix under %s',
     (shell) => {

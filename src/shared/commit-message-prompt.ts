@@ -163,6 +163,9 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
     const ch = template[i]
     if (quote) {
       if (ch === '\\' && quote === '"' && i + 1 < template.length) {
+        // Why: inside double quotes the shell only consumes the backslash
+        // before these; elsewhere it stays a literal byte this tokenizer drops.
+        divergesFromShell ||= !'$`"\\\n'.includes(template[i + 1])
         current += template[i + 1]
         i += 2
         continue
@@ -196,6 +199,9 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
     }
 
     if (ch === '\\' && i + 1 < template.length) {
+      // Why: an unquoted line continuation joins words the shell splits, so a
+      // selector can hide inside the joined token and skip the gap check.
+      divergesFromShell ||= template[i + 1] === '\n'
       current += template[i + 1]
       if (!inToken) {
         tokenStart = i

@@ -12,9 +12,6 @@ function isClaudeResumeSelector(token: string): boolean {
   if (token === '--continue' || token.startsWith('--continue=')) {
     return true
   }
-  if (token.startsWith('--')) {
-    return false
-  }
   // Why: the joined -r<id> form is deliberately NOT matched — any `-r…` token
   // is ambiguous with another option's dash-leading value (`--agent -review`),
   // and no arity table can keep up with the CLI. Only exact selector shapes
@@ -102,20 +99,26 @@ export function buildClaudeResumeLaunchCommand(
   if (claudeIndex === -1) {
     return appended
   }
-  // Why: the tokenizers are not shell-aware, so a bare operator, comment, or
-  // multi-token expansion byte, or a newline, after the claude token means
-  // the base carries shell syntax the splice cannot model; cutting there
-  // could hand the selector to the wrong command or break a construct.
-  for (let i = claudeIndex + 1; i < tokens.length; i += 1) {
-    const gap = baseCommand.slice(spans[i - 1].end, spans[i].start)
-    if (!/^[ \t]+$/.test(gap) || spans[i].divergesFromShell) {
+  // Why: any token the tokenizer cannot model for this shell — an operator,
+  // comment, expansion, or cmd single-quoted region — means the splice could
+  // cut live syntax or misread a literal as a selector. The whole base must
+  // be modelable, including the executable itself; only PowerShell's leading
+  // call operator is a known-safe divergent token.
+  for (let i = 0; i < tokens.length; i += 1) {
+    const isCallOperator = shell === 'powershell' && i === 0 && tokens[i] === '&'
+    const gap = i === 0 ? '' : baseCommand.slice(spans[i - 1].end, spans[i].start)
+    if ((i > 0 && !/^[ \t]+$/.test(gap)) || (spans[i].divergesFromShell && !isCallOperator)) {
       return appended
     }
   }
-  if (!/^[ \t]*$/.test(baseCommand.slice(spans[tokens.length - 1].end))) {
+  const lastSpanEnd = spans.at(-1)?.end ?? baseCommand.length
+  if (
+    !/^[ \t]*$/.test(baseCommand.slice(0, spans[0].start)) ||
+    !/^[ \t]*$/.test(baseCommand.slice(lastSpanEnd))
+  ) {
     return appended
   }
-  const cuts: { start: number; end: number; floor: number }[] = []
+  const cuts: { start: number; end: number }[] = []
   let terminatorStart: number | null = null
   for (let i = claudeIndex + 1; i < tokens.length; i += 1) {
     const token = tokens[i]
@@ -130,10 +133,12 @@ export function buildClaudeResumeLaunchCommand(
     if (!isClaudeResumeSelector(token)) {
       continue
     }
-    const selectorStart = spans[i].start
-    // Why: the separator backoff below must never cross into the previous
-    // token, whose span can end with an escaped-space byte.
-    const floor = spans[i - 1].end
+    // Why: absorb the separator before the selector, but never cross into the
+    // previous token, whose span can end with an escaped-space byte.
+    let start = spans[i].start
+    while (start > spans[i - 1].end && ' \t'.includes(baseCommand[start - 1])) {
+      start -= 1
+    }
     let end = spans[i].end
     const next = tokens[i + 1]
     if ((token === '--resume' || token === '-r') && next !== undefined && !next.startsWith('-')) {
@@ -141,18 +146,14 @@ export function buildClaudeResumeLaunchCommand(
       end = spans[i + 1].end
       i += 1
     }
-    cuts.push({ start: selectorStart, end, floor })
+    cuts.push({ start, end })
   }
   let result = baseCommand
   if (terminatorStart !== null) {
     result = `${result.slice(0, terminatorStart)}${quotedResume} ${result.slice(terminatorStart)}`
   }
   for (let i = cuts.length - 1; i >= 0; i -= 1) {
-    let { start } = cuts[i]
-    while (start > cuts[i].floor && (result[start - 1] === ' ' || result[start - 1] === '\t')) {
-      start -= 1
-    }
-    result = `${result.slice(0, start)}${result.slice(cuts[i].end)}`
+    result = `${result.slice(0, cuts[i].start)}${result.slice(cuts[i].end)}`
   }
   return terminatorStart !== null ? result : `${result} ${quotedResume}`
 }

@@ -285,6 +285,13 @@ describe('tokenizeCustomCommandTemplate', () => {
     expect(r).toEqual({ ok: true, tokens: ['foo', 'abc'], spans: expect.any(Array) })
   })
 
+  it('always reports one span per token', () => {
+    for (const source of ['claude -p', 'claude --msg "hello world"', 'foo a"b"c', '   \t  ']) {
+      const r = tokenizeCustomCommandTemplate(source)
+      expect(r.ok && r.spans.length).toBe(r.ok && r.tokens.length)
+    }
+  })
+
   it('reports source spans covering each raw token including quotes', () => {
     const source = 'claude --msg "hello world"'
     const r = tokenizeCustomCommandTemplate(source)
