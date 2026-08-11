@@ -47,7 +47,11 @@ import { getProjectGroupSubtreeIds } from '../../../../shared/project-groups'
 import { isPathInsideOrEqual } from '../../../../shared/cross-platform-path'
 import { getRepoIdFromWorktreeId } from '../../../../shared/worktree-id'
 import { selectProjectGroupRemovalTargets } from './project-group-removal-targets'
-import { reconcileFetchedRepos } from './repo-identity-reconcile'
+import {
+  areValuesEqual,
+  reconcileCatalogRows,
+  reconcileFetchedRepos
+} from './repo-identity-reconcile'
 import { retainValidFilterRepoIds } from './repo-filter-selection'
 import {
   mergeSshRepoReadoptions,
@@ -944,50 +948,29 @@ function mergeFetchedProjectCompatibilityForHost({
       !fetchedProjectIds.has(project.id) &&
       (!previousProjectHostIds(project).has(hostId) || projectHasCurrentOwnerOutsideHost(project))
   )
+  // Why: both merges always allocate (sourceRepoIds is rebuilt per project, and fetched setups
+  // arrive freshly cloned over IPC), so reconcile against `previous` to recover identity when a
+  // refresh changed nothing. Each key is what the producing merge already dedups by.
   return {
-    projects: mergeProjectCompatibilityProjects(
-      preservedProjects.map((project) => {
-        const sourceRepoIds = getSourceRepoIdsOutsideHost(project, reposById, hostId)
-        return sourceRepoIds.length === project.sourceRepoIds.length
-          ? project
-          : { ...project, sourceRepoIds }
-      }),
-      fetchedProjects
+    projects: reconcileCatalogRows(
+      previous.projects,
+      mergeProjectCompatibilityProjects(
+        preservedProjects.map((project) => {
+          const sourceRepoIds = getSourceRepoIdsOutsideHost(project, reposById, hostId)
+          return sourceRepoIds.length === project.sourceRepoIds.length
+            ? project
+            : { ...project, sourceRepoIds }
+        }),
+        fetchedProjects
+      ),
+      (project) => project.id
     ),
-    projectHostSetups
-  }
-}
-
-function isPlainCatalogObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null) {
-    return false
-  }
-  const prototype = Object.getPrototypeOf(value)
-  return prototype === Object.prototype || prototype === null
-}
-
-// Why: catalog fetches rebuild every entry from IPC, so identity alone never matches;
-// structural equality is what lets an unchanged refetch stay a no-op.
-function areCatalogEntriesEqual(a: unknown, b: unknown): boolean {
-  if (a === b) {
-    return true
-  }
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return (
-      Array.isArray(a) &&
-      Array.isArray(b) &&
-      a.length === b.length &&
-      a.every((entry, index) => areCatalogEntriesEqual(entry, b[index]))
+    projectHostSetups: reconcileCatalogRows(
+      previous.projectHostSetups,
+      projectHostSetups,
+      getProjectHostSetupOwnerKey
     )
   }
-  if (!isPlainCatalogObject(a) || !isPlainCatalogObject(b)) {
-    return false
-  }
-  const keys = Object.keys(a)
-  if (keys.length !== Object.keys(b).length) {
-    return false
-  }
-  return keys.every((key) => Object.hasOwn(b, key) && areCatalogEntriesEqual(a[key], b[key]))
 }
 
 // Why: returning `base` unchanged keeps referential-equality selectors quiet, so a
@@ -1009,7 +992,7 @@ function mergeByIdentity<T>(
       changed = true
       continue
     }
-    if (areCatalogEntriesEqual(merged[index], entry)) {
+    if (areValuesEqual(merged[index], entry)) {
       continue
     }
     merged[index] = entry
@@ -1300,7 +1283,7 @@ function filterSetupsForPrunedRepoRows(
   setups: readonly ProjectHostSetup[],
   mergedRepos: readonly Repo[],
   reconciledRepos: readonly Repo[]
-): ProjectHostSetup[] {
+): readonly ProjectHostSetup[] {
   const survivingOwners = new Set(
     reconciledRepos.map((repo) => `${getRepoExecutionHostId(repo)}:${repo.id}`)
   )
@@ -1309,12 +1292,15 @@ function filterSetupsForPrunedRepoRows(
       .filter((repo) => !survivingOwners.has(`${getRepoExecutionHostId(repo)}:${repo.id}`))
       .map((repo) => `${getRepoExecutionHostId(repo)}:${repo.id}`)
   )
+  // Why: this result feeds the compat merge as `previous`, so an unconditional copy would discard
+  // the identity that merge is about to try to preserve.
   if (prunedOwners.size === 0) {
-    return [...setups]
+    return setups
   }
-  return setups.filter(
+  const filtered = setups.filter(
     (setup) => !setup.repoId || !prunedOwners.has(`${setup.hostId}:${setup.repoId}`)
   )
+  return filtered.length === setups.length ? setups : filtered
 }
 
 function reconcileReadoptedSshWorktreeState(
@@ -1787,8 +1773,8 @@ function getFolderWorkspacePathStatusRequestSnapshotForRead(
 
 export type RepoSlice = {
   repos: readonly Repo[]
-  projects: Project[]
-  projectHostSetups: ProjectHostSetup[]
+  projects: readonly Project[]
+  projectHostSetups: readonly ProjectHostSetup[]
   projectGroups: readonly ProjectGroup[]
   folderWorkspaces: readonly FolderWorkspace[]
   folderWorkspacePathStatuses: Record<string, FolderWorkspacePathStatusCacheEntry>
