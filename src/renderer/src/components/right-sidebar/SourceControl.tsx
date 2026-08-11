@@ -5844,6 +5844,7 @@ function SourceControlInner(): React.JSX.Element {
                 provider={hostedReviewCreateProvider}
                 branch={branchName}
                 base={prBase}
+                repoDefaultBase={prRepoDefaultBaseRef}
                 setBase={setPrBase}
                 title={prTitle}
                 setTitle={setPrTitle}

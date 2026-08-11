@@ -10655,6 +10655,7 @@
             "baseBranchLabel": "Base branch",
             "baseFromHead": "from {{value0}}",
             "baseNoMatches": "No branches match “{{value0}}”. Press Enter to use it anyway.",
+            "baseEmptyResetsToDefault": "Press Enter to use {{value0}}.",
             "stackAbovePr": "Stack this PR above #{{value0}}",
             "stackBehavior": "Creates a GitHub Stack or extends the parent's existing stack."
           },

@@ -24,6 +24,7 @@ type RenderPullRequestComposerOptions = {
   baseResults?: string[]
   setBaseResults?: (value: string[]) => void
   baseSearchPending?: boolean
+  repoDefaultBase?: string | null
   onPrimaryAction?: (stacked: boolean) => void
 }
 
@@ -43,6 +44,7 @@ function pullRequestComposerElement({
   baseResults = [],
   setBaseResults = vi.fn(),
   baseSearchPending = false,
+  repoDefaultBase = 'main',
   onPrimaryAction = vi.fn()
 }: RenderPullRequestComposerOptions = {}): React.JSX.Element {
   const sourceControlInputs = {
@@ -65,6 +67,7 @@ function pullRequestComposerElement({
         branch="branch-login-issue"
         base={base}
         setBase={setBase}
+        repoDefaultBase={repoDefaultBase}
         title="Ready to create"
         setTitle={vi.fn()}
         body=""
@@ -104,13 +107,17 @@ function renderPullRequestComposer(options: RenderPullRequestComposerOptions = {
 function InteractiveBaseComposer({
   baseResults = EMPTY_BASE_RESULTS,
   baseSearchPending = false,
-  stackParentReview = null
+  stackParentReview = null,
+  repoDefaultBase = 'main',
+  initialBase = 'main'
 }: {
   baseResults?: string[]
   baseSearchPending?: boolean
   stackParentReview?: HostedReviewStackParent | null
+  repoDefaultBase?: string | null
+  initialBase?: string
 }) {
-  const [base, setBase] = useState('main')
+  const [base, setBase] = useState(initialBase)
   const [baseQuery, setBaseQuery] = useState('')
   const [results, setBaseResults] = useState(baseResults)
 
@@ -122,7 +129,8 @@ function InteractiveBaseComposer({
     baseResults: results,
     setBaseResults,
     baseSearchPending,
-    stackParentReview
+    stackParentReview,
+    repoDefaultBase
   })
 }
 
@@ -284,6 +292,41 @@ describe('CreateHostedReviewComposer generate tooltip', () => {
     fireEvent.focus(input)
     fireEvent.change(input, { target: { value: 'nope' } })
     expect(screen.getByText(/No branches match “nope”/)).toBeTruthy()
+  })
+
+  it('commits the repo default when the base field is cleared', () => {
+    renderDom(<InteractiveBaseComposer initialBase="feature/parent" repoDefaultBase="main" />)
+    const input = screen.getByRole('combobox', { name: 'Pull Request base branch' })
+
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: '' } })
+    expect(screen.getByText('Press Enter to use main.')).toBeTruthy()
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect((input as HTMLInputElement).value).toBe('main')
+  })
+
+  it('restores the committed base when an emptied field is cancelled', () => {
+    renderDom(<InteractiveBaseComposer initialBase="feature/parent" repoDefaultBase="main" />)
+    const input = screen.getByRole('combobox', { name: 'Pull Request base branch' })
+
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect((input as HTMLInputElement).value).toBe('feature/parent')
+  })
+
+  it('keeps the committed base when no repo default has resolved yet', () => {
+    renderDom(<InteractiveBaseComposer initialBase="feature/parent" repoDefaultBase={null} />)
+    const input = screen.getByRole('combobox', { name: 'Pull Request base branch' })
+
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: '' } })
+    expect(screen.queryByText(/Press Enter to use/)).toBeNull()
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect((input as HTMLInputElement).value).toBe('feature/parent')
   })
 
   it('hides the stack option while the base search is open', () => {

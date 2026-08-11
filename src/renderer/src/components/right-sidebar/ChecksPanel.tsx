@@ -4317,6 +4317,7 @@ export default function ChecksPanel(): React.JSX.Element {
               provider={hostedReviewCreateProvider}
               branch={branch}
               base={prBase}
+              repoDefaultBase={prRepoDefaultBaseRef}
               setBase={handlePrBaseChange}
               title={prTitle}
               setTitle={handlePrTitleChange}

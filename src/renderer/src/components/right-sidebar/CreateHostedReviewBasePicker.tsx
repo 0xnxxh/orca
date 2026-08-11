@@ -13,6 +13,8 @@ type CreateHostedReviewBasePickerProps = {
   copy: LocalizedHostedReviewCopy
   base: string
   setBase: (value: string) => void
+  /** The repo's default branch, where an emptied field lands. Null until resolved. */
+  repoDefaultBase: string | null
   editing: boolean
   setEditing: (value: boolean) => void
   baseQuery: string
@@ -34,6 +36,7 @@ export function CreateHostedReviewBasePicker({
   copy,
   base,
   setBase,
+  repoDefaultBase,
   editing,
   setEditing,
   baseQuery,
@@ -52,7 +55,11 @@ export function CreateHostedReviewBasePicker({
   const resultsId = useId()
 
   const trimmedQuery = baseQuery.trim()
+  const trimmedRepoDefault = repoDefaultBase?.trim() ?? ''
   const showResults = editing && baseResults.length > 0
+  // Why: emptying the field is how you say "not this branch"; surface where Enter
+  // lands so the reset isn't an invisible behaviour.
+  const showRepoDefaultHint = editing && trimmedQuery.length === 0 && trimmedRepoDefault.length > 0
   // Why: only claim "no branches match" once a search has actually settled, so the
   // debounce window can't report an absence the app hasn't observed yet.
   const showNoResults =
@@ -70,7 +77,10 @@ export function CreateHostedReviewBasePicker({
   }
 
   const commitSearch = (value: string): void => {
-    const nextBase = value.trim()
+    // Why: an emptied field commits the repo default rather than silently restoring
+    // the branch the user just cleared. With no default resolved yet there is nothing
+    // honest to fall back to, so the committed base stands.
+    const nextBase = value.trim() || trimmedRepoDefault
     if (nextBase) {
       setBase(nextBase)
     }
@@ -165,7 +175,12 @@ export function CreateHostedReviewBasePicker({
             setActiveResult(-1)
           }}
           onKeyDown={handleKeyDown}
-          placeholder={translate('auto.components.right.sidebar.SourceControl.e64a632456', 'main')}
+          // Why: the placeholder is where an emptied field lands, so it has to be the
+          // repo's real default — a hardcoded "main" lies on a trunk-named repo.
+          placeholder={
+            trimmedRepoDefault ||
+            translate('auto.components.right.sidebar.SourceControl.e64a632456', 'main')
+          }
           className={cn(COMPOSER_FIELD_CLASS, 'pl-2 pr-7 font-mono')}
         />
         <ChevronDown
@@ -206,6 +221,16 @@ export function CreateHostedReviewBasePicker({
             )
           })}
         </div>
+      ) : null}
+
+      {showRepoDefaultHint ? (
+        <p className="px-2 text-[11px] text-muted-foreground">
+          {translate(
+            'auto.components.right.sidebar.CreateHostedReviewComposer.baseEmptyResetsToDefault',
+            'Press Enter to use {{value0}}.',
+            { value0: trimmedRepoDefault }
+          )}
+        </p>
       ) : null}
 
       {showNoResults ? (

@@ -27,6 +27,7 @@ import { stripBaseRef } from './useCreatePullRequestDialogFields'
 import type { HostedReviewStackParent } from './useHostedReviewStackParent'
 import type { DropdownActionKind, DropdownEntry } from './source-control-dropdown-items'
 import { CreateHostedReviewComposerFields } from './CreateHostedReviewComposerFields'
+import { getCreateButtonLabel } from './create-hosted-review-button-label'
 import {
   RIGHT_SIDEBAR_MORPHING_PRIMARY_BUTTON_CLASS,
   RIGHT_SIDEBAR_PRIMARY_BUTTON_LABEL_CLASS,
@@ -46,6 +47,7 @@ export type CreateHostedReviewComposerProps = {
   branch: string
   base: string
   setBase: (value: string) => void
+  repoDefaultBase: string | null
   title: string
   setTitle: (value: string) => void
   body: string
@@ -82,6 +84,7 @@ export function CreateHostedReviewComposer({
   branch,
   base,
   setBase,
+  repoDefaultBase,
   title,
   setTitle,
   body,
@@ -246,6 +249,7 @@ export function CreateHostedReviewComposer({
           copy={copy}
           base={base}
           setBase={setBase}
+          repoDefaultBase={repoDefaultBase}
           title={title}
           setTitle={setTitle}
           body={body}
@@ -357,56 +361,4 @@ export function CreateHostedReviewComposer({
       </div>
     </div>
   )
-}
-
-function getCreateButtonLabel({
-  isCreating,
-  pushBeforeCreate,
-  draft,
-  stacked,
-  shortLabel
-}: {
-  isCreating: boolean
-  pushBeforeCreate: boolean
-  draft: boolean
-  stacked: boolean
-  shortLabel: string
-}): string {
-  if (isCreating) {
-    return translate('auto.components.right.sidebar.SourceControl.26511c22b4', 'Creating...')
-  }
-  if (pushBeforeCreate && stacked) {
-    return translate(
-      'auto.components.right.sidebar.CreateHostedReviewComposer.pushCreateStackedPr',
-      'Push & Create PR in stack'
-    )
-  }
-  if (pushBeforeCreate) {
-    return translate(
-      'auto.components.right.sidebar.CreateHostedReviewComposer.741ff8a0d2',
-      'Push & Create {{value0}}',
-      { value0: shortLabel }
-    )
-  }
-  if (stacked) {
-    return draft
-      ? translate(
-          'auto.components.right.sidebar.CreateHostedReviewComposer.createDraftStackedPr',
-          'Create draft PR in stack'
-        )
-      : translate(
-          'auto.components.right.sidebar.CreateHostedReviewComposer.createStackedPr',
-          'Create PR in stack'
-        )
-  }
-  if (draft) {
-    return translate(
-      'auto.components.right.sidebar.SourceControl.aaf1451654',
-      'Create draft {{value0}}',
-      { value0: shortLabel }
-    )
-  }
-  return translate('auto.components.right.sidebar.SourceControl.5acbcedc1a', 'Create {{value0}}', {
-    value0: shortLabel
-  })
 }

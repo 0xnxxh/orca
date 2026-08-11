@@ -19,6 +19,7 @@ type CreateHostedReviewComposerFieldsProps = {
   copy: LocalizedHostedReviewCopy
   base: string
   setBase: (value: string) => void
+  repoDefaultBase: string | null
   title: string
   setTitle: (value: string) => void
   body: string
@@ -47,6 +48,7 @@ export function CreateHostedReviewComposerFields({
   copy,
   base,
   setBase,
+  repoDefaultBase,
   title,
   setTitle,
   body,
@@ -133,6 +135,7 @@ export function CreateHostedReviewComposerFields({
         copy={copy}
         base={base}
         setBase={setBase}
+        repoDefaultBase={repoDefaultBase}
         editing={baseEditing}
         setEditing={setBaseEditing}
         baseQuery={baseQuery}
