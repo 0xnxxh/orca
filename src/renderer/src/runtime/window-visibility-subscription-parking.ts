@@ -5,6 +5,8 @@ import {
 } from '@/components/terminal-pane/stale-document-visibility'
 
 export const WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS = 500
+// Why: resuming re-enumerates every host, so repeated short hides must widen the park delay instead of paying that cost each cycle.
+export const WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_BACKOFF_LIMIT = 8
 export const WINDOW_VISIBILITY_SUBSCRIPTION_RETRY_INITIAL_MS = 1_000
 const WINDOW_VISIBILITY_SUBSCRIPTION_RETRY_MAX_MS = 30_000
 const WINDOW_VISIBILITY_SUBSCRIPTION_RETRY_JITTER_MS = 250
@@ -52,10 +54,13 @@ export function installWindowVisibilitySubscriptionParking(
   options: WindowVisibilitySubscriptionParkingOptions = {}
 ): () => void {
   const parkDelayMs = options.parkDelayMs ?? WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS
+  const maxParkDelayMs = parkDelayMs * WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_BACKOFF_LIMIT
   let disposed = false
   let effectiveVisible = getWindowVisible()
   let visibilityGeneration = effectiveVisible ? 0 : 1
   let parkTimer: ReturnType<typeof setTimeout> | null = null
+  let currentParkDelayMs = parkDelayMs
+  let hiddenSinceMs: number | null = null
   const entries: SubscriptionEntry[] = specs.map(() => ({
     desired: false,
     generation: 0,
@@ -240,8 +245,17 @@ export function installWindowVisibilitySubscriptionParking(
   const reconcileVisibility = (): void => {
     if (getWindowVisible()) {
       cancelPark()
+      const hiddenMs = hiddenSinceMs === null ? null : Date.now() - hiddenSinceMs
+      hiddenSinceMs = null
       if (!effectiveVisible) {
         effectiveVisible = true
+        if (hiddenMs !== null) {
+          // Why: a park that the user undoes quickly costs more than it saves, so back off until one hide outlasts the ceiling.
+          currentParkDelayMs =
+            hiddenMs >= maxParkDelayMs
+              ? parkDelayMs
+              : Math.min(currentParkDelayMs * 2, maxParkDelayMs)
+        }
         startAll(visibilityGeneration > 0)
       }
       return
@@ -249,6 +263,7 @@ export function installWindowVisibilitySubscriptionParking(
     if (!effectiveVisible || parkTimer !== null) {
       return
     }
+    hiddenSinceMs = Date.now()
     parkTimer = setTimeout(() => {
       parkTimer = null
       if (getWindowVisible()) {
@@ -258,7 +273,7 @@ export function installWindowVisibilitySubscriptionParking(
       effectiveVisible = false
       visibilityGeneration += 1
       stopAll()
-    }, parkDelayMs)
+    }, currentParkDelayMs)
   }
 
   if (effectiveVisible) {

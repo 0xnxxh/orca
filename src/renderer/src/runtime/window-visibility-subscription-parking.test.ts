@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetStaleDocumentVisibilityForTesting } from '@/components/terminal-pane/stale-document-visibility'
 import {
   installWindowVisibilitySubscriptionParking,
+  WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_BACKOFF_LIMIT,
   WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS,
   WINDOW_VISIBILITY_SUBSCRIPTION_RETRY_INITIAL_MS,
   type WindowVisibilitySubscriptionSpec
@@ -108,6 +109,38 @@ describe('installWindowVisibilitySubscriptionParking', () => {
     dispose()
   })
 
+  it('widens the park delay after a quickly undone park and resets it after a long hide', async () => {
+    const harness = resolvedSpec()
+    const dispose = installWindowVisibilitySubscriptionParking([harness.spec])
+    await settle()
+
+    setDocumentVisibility('hidden')
+    vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
+    setDocumentVisibility('visible')
+    await settle()
+    expect(harness.subscribe).toHaveBeenCalledTimes(2)
+
+    setDocumentVisibility('hidden')
+    vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
+    expect(harness.unsubscribes[1]).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
+    expect(harness.unsubscribes[1]).toHaveBeenCalledTimes(1)
+
+    const longHideMs =
+      WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS *
+      WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_BACKOFF_LIMIT
+    vi.advanceTimersByTime(longHideMs)
+    setDocumentVisibility('visible')
+    await settle()
+    expect(harness.subscribe).toHaveBeenCalledTimes(3)
+
+    setDocumentVisibility('hidden')
+    vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
+    expect(harness.unsubscribes[2]).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
   it('reports each visibility generation before restarting its subscriptions', async () => {
     const first = resolvedSpec()
     const second = resolvedSpec()
@@ -168,7 +201,7 @@ describe('installWindowVisibilitySubscriptionParking', () => {
     expect(vi.getTimerCount()).toBe(0)
 
     setDocumentVisibility('hidden')
-    vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
+    vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS * 2)
     setDocumentVisibility('visible')
     dispose()
     vi.advanceTimersByTime(100)
@@ -181,17 +214,19 @@ describe('installWindowVisibilitySubscriptionParking', () => {
     const first = resolvedSpec()
     const active = resolvedSpec()
     const third = resolvedSpec()
+    const parkDelayMs = 100
     const dispose = installWindowVisibilitySubscriptionParking(
       [first.spec, active.spec, third.spec],
       {
         getVisibilityResumePriority: (index) => (index === 1 ? 0 : 1),
+        parkDelayMs,
         visibilityResumeStaggerMs: 1_000
       }
     )
     await settle()
 
     setDocumentVisibility('hidden')
-    vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
+    vi.advanceTimersByTime(parkDelayMs)
     setDocumentVisibility('visible')
     await settle()
     expect(
@@ -199,7 +234,7 @@ describe('installWindowVisibilitySubscriptionParking', () => {
     ).toEqual([1, 2, 1])
 
     setDocumentVisibility('hidden')
-    vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
+    vi.advanceTimersByTime(parkDelayMs)
     vi.advanceTimersByTime(5_000)
     expect(
       [first.subscribe, active.subscribe, third.subscribe].map((mock) => mock.mock.calls.length)
@@ -280,7 +315,7 @@ describe('installWindowVisibilitySubscriptionParking', () => {
     expect(harness.subscribe).toHaveBeenCalledTimes(2)
 
     setDocumentVisibility('hidden')
-    vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
+    vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS * 2)
     expect(harness.unsubscribes[1]).toHaveBeenCalledTimes(1)
     dispose()
   })
@@ -365,7 +400,7 @@ describe('installWindowVisibilitySubscriptionParking', () => {
     expect(subscribe).toHaveBeenCalledTimes(3)
 
     setDocumentVisibility('hidden')
-    vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS)
+    vi.advanceTimersByTime(WINDOW_VISIBILITY_SUBSCRIPTION_PARK_DELAY_MS * 2)
     setDocumentVisibility('visible')
     await settle()
     expect(subscribe).toHaveBeenCalledTimes(4)

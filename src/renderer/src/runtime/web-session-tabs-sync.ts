@@ -131,6 +131,7 @@ type VisibilityResumeOmission = {
   environmentId: string
   inventoryReceivedFrame: number
   superseded: boolean
+  visibilityGeneration: number
 }
 
 const latestSessionTabsSnapshotByWorktree = new Map<string, SnapshotFreshness>()
@@ -396,6 +397,8 @@ function removeWebSessionTabsEnvironment(environmentId: string, worktreeId: stri
   }
 }
 
+// Why: omission means removal only because `listAllMobileSessionTabs` publishes every worktree it knows unfiltered; if a host ever
+// scopes that map, this turns live worktrees into tombstones, so the fence below is deliberately short-lived.
 function buildMissingWebSessionTabsRemovals(
   environmentId: string,
   trackedWorktrees: readonly TrackedWebSessionTabsWorktree[],
@@ -3501,7 +3504,8 @@ export function useWebSessionTabsSync(): void {
           baseline: missing.trackedWorktree.freshness,
           environmentId,
           inventoryReceivedFrame,
-          superseded: false
+          superseded: false,
+          visibilityGeneration
         })
         recordReceivedWebSessionTabsRemoval(
           environmentId,
@@ -3520,8 +3524,12 @@ export function useWebSessionTabsSync(): void {
       restartingSpecIndexes: readonly number[]
     }): void => {
       const activeRuntimeWorktreeKey = activeRuntimeWorktreeKeyRef.current
-      for (const key of visibilityResumeOmissionsByKey.keys()) {
-        if (key !== activeRuntimeWorktreeKey) {
+      for (const [key, omission] of visibilityResumeOmissionsByKey) {
+        // Why: the active worktree's scoped stream resumes before its host inventory, so its fence outlives exactly one resume - never more.
+        if (
+          key !== activeRuntimeWorktreeKey ||
+          omission.visibilityGeneration < visibilityGeneration - 1
+        ) {
           visibilityResumeOmissionsByKey.delete(key)
         }
       }
@@ -3608,13 +3616,14 @@ export function useWebSessionTabsSync(): void {
                 if (event.type === 'snapshots') {
                   const skipUnchangedResumeWork = awaitingVisibilityResumeInventory && !replayed
                   awaitingVisibilityResumeInventory = false
-                  // Why: exact resume inventories prove presence without needing orphan recovery or a redundant store replay.
+                  // Why: an unchanged epoch/version proves the host published nothing while parked, so there is no missed frame to recover or replay.
                   const unchangedVisibilityResumeSnapshots = event.snapshots.map((snapshot) => {
-                    const freshness = latestSessionTabsSnapshotByWorktree.get(
-                      sessionTabsFreshnessKey(environmentId, snapshot.worktree)
-                    )
+                    const key = sessionTabsFreshnessKey(environmentId, snapshot.worktree)
+                    const freshness = latestSessionTabsSnapshotByWorktree.get(key)
                     return Boolean(
                       skipUnchangedResumeWork &&
+                      // Why: an armed replay is an outstanding repair request, so that worktree must be rebuilt even when the host looks unchanged.
+                      !replayableSessionTabsSnapshotByWorktree.has(key) &&
                       freshness?.publicationEpoch === snapshot.publicationEpoch &&
                       freshness.snapshotVersion === snapshot.snapshotVersion
                     )
