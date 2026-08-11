@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import {
   CalendarClock,
   GitBranch,
@@ -9,7 +9,13 @@ import {
 } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { translate } from '@/i18n/i18n'
+import { getIndexedAllWorktrees } from '@/store/worktree-repo-index'
 import { FilterToggleRow } from './FilterToggleRow'
+import {
+  getPairedDeviceIdsByEnvironment,
+  isFolderWorkspaceFromOtherDevice,
+  isWorkspaceFromOtherDevice
+} from './workspace-creator-visibility'
 
 const SidebarWorkspaceFilterSection = React.memo(function SidebarWorkspaceFilterSection() {
   const showSleepingWorkspaces = useAppStore((s) => s.showSleepingWorkspaces)
@@ -26,10 +32,41 @@ const SidebarWorkspaceFilterSection = React.memo(function SidebarWorkspaceFilter
   const setHideDetachedHeadWorkspaces = useAppStore((s) => s.setHideDetachedHeadWorkspaces)
   const hideWorkspacesFromOtherDevices = useAppStore((s) => s.hideWorkspacesFromOtherDevices)
   const setHideWorkspacesFromOtherDevices = useAppStore((s) => s.setHideWorkspacesFromOtherDevices)
+  const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
+  const folderWorkspaces = useAppStore((s) => s.folderWorkspaces)
+  const runtimeEnvironments = useAppStore((s) => s.runtimeEnvironments)
+  const runtimeStatusByEnvironmentId = useAppStore((s) => s.runtimeStatusByEnvironmentId)
   const alwaysShowDefaultBranchWorkspace = useAppStore((s) => s.alwaysShowDefaultBranchWorkspace)
   const setAlwaysShowDefaultBranchWorkspace = useAppStore(
     (s) => s.setAlwaysShowDefaultBranchWorkspace
   )
+  const showOtherClientFilter = useMemo(() => {
+    if (hideWorkspacesFromOtherDevices) {
+      return true
+    }
+    const pairedDeviceIds = getPairedDeviceIdsByEnvironment(
+      runtimeEnvironments,
+      runtimeStatusByEnvironmentId
+    )
+    const worktrees = getIndexedAllWorktrees(worktreesByRepo)
+    return (
+      worktrees.some(
+        (worktree) => !worktree.isArchived && isWorkspaceFromOtherDevice(worktree, pairedDeviceIds)
+      ) ||
+      folderWorkspaces.some((workspace) => {
+        if (workspace.isArchived) {
+          return false
+        }
+        return isFolderWorkspaceFromOtherDevice(workspace, pairedDeviceIds)
+      })
+    )
+  }, [
+    folderWorkspaces,
+    hideWorkspacesFromOtherDevices,
+    runtimeEnvironments,
+    runtimeStatusByEnvironmentId,
+    worktreesByRepo
+  ])
 
   return (
     <>
@@ -92,15 +129,21 @@ const SidebarWorkspaceFilterSection = React.memo(function SidebarWorkspaceFilter
         checked={hideCliCreatedWorkspaces}
         onChange={setHideCliCreatedWorkspaces}
       />
-      <FilterToggleRow
-        icon={<MonitorSmartphone className="size-3.5" />}
-        label={translate(
-          'auto.components.sidebar.SidebarWorkspaceFilterSection.otherDevices',
-          'Hide other-device workspaces'
-        )}
-        checked={hideWorkspacesFromOtherDevices}
-        onChange={setHideWorkspacesFromOtherDevices}
-      />
+      {showOtherClientFilter && (
+        <FilterToggleRow
+          icon={<MonitorSmartphone className="size-3.5" />}
+          label={translate(
+            'auto.components.sidebar.SidebarWorkspaceFilterSection.otherClients',
+            'Hide other-client workspaces'
+          )}
+          ariaLabel={translate(
+            'auto.components.sidebar.SidebarWorkspaceFilterSection.otherClientsAria',
+            'Hide workspaces created from other Orca clients on shared remote servers'
+          )}
+          checked={hideWorkspacesFromOtherDevices}
+          onChange={setHideWorkspacesFromOtherDevices}
+        />
+      )}
       <FilterToggleRow
         icon={<GitCommitHorizontal className="size-3.5" />}
         label={translate(

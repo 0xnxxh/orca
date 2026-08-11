@@ -1,6 +1,7 @@
 import type { RuntimeStatus } from '../../../../shared/runtime-types'
 import type { PublicKnownRuntimeEnvironment } from '../../../../shared/runtime-environments'
-import type { Worktree } from '../../../../shared/types'
+import type { FolderWorkspace, Worktree } from '../../../../shared/types'
+import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
 import { normalizeWorkspaceCreatorProvenance } from '../../../../shared/workspace-creator-provenance'
 
 type RuntimeStatusEntry = { status: RuntimeStatus | null }
@@ -39,4 +40,23 @@ export function isWorkspaceFromOtherDevice(
     return false
   }
   return creator.kind !== 'paired-device' || creator.deviceId !== pairedDeviceId
+}
+
+export function isFolderWorkspaceFromOtherDevice(
+  workspace: FolderWorkspace,
+  pairedDeviceIdsByEnvironment: ReadonlyMap<string, string>
+): boolean {
+  return isWorkspaceFromOtherDevice(
+    folderWorkspaceToWorktree(workspace),
+    pairedDeviceIdsByEnvironment
+  )
+}
+
+export function filterFolderWorkspacesFromOtherDevices(
+  workspaces: readonly FolderWorkspace[],
+  pairedDeviceIdsByEnvironment: ReadonlyMap<string, string>
+): FolderWorkspace[] {
+  return workspaces.filter(
+    (workspace) => !isFolderWorkspaceFromOtherDevice(workspace, pairedDeviceIdsByEnvironment)
+  )
 }

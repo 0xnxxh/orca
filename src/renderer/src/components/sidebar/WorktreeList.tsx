@@ -126,6 +126,7 @@ import {
 } from './visible-worktrees'
 import {
   EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
+  filterFolderWorkspacesFromOtherDevices,
   getPairedDeviceIdsByEnvironment
 } from './workspace-creator-visibility'
 import {
@@ -5315,6 +5316,13 @@ const WorktreeList = React.memo(function WorktreeList({
   const sshConnectionStates = useAppStore((s) => s.sshConnectionStates)
   const runtimeEnvironments = useAppStore((s) => s.runtimeEnvironments)
   const runtimeStatusByEnvironmentId = useAppStore((s) => s.runtimeStatusByEnvironmentId)
+  const pairedDeviceIdsByEnvironment = useMemo(
+    () =>
+      hideWorkspacesFromOtherDevices
+        ? getPairedDeviceIdsByEnvironment(runtimeEnvironments, runtimeStatusByEnvironmentId)
+        : EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
+    [hideWorkspacesFromOtherDevices, runtimeEnvironments, runtimeStatusByEnvironmentId]
+  )
 
   const sortEpoch = useAppStore((s) => s.sortEpoch)
 
@@ -5516,9 +5524,7 @@ const WorktreeList = React.memo(function WorktreeList({
       hideCliCreatedWorkspaces,
       hideDetachedHeadWorkspaces,
       hideWorkspacesFromOtherDevices,
-      pairedDeviceIdsByEnvironment: hideWorkspacesFromOtherDevices
-        ? getPairedDeviceIdsByEnvironment(runtimeEnvironments, runtimeStatusByEnvironmentId)
-        : EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
+      pairedDeviceIdsByEnvironment,
       alwaysShowDefaultBranchWorkspace,
       repoMap,
       workspaceHostScope,
@@ -5550,8 +5556,7 @@ const WorktreeList = React.memo(function WorktreeList({
     worktreeMap,
     worktreeLineageById,
     worktreesByRepo,
-    runtimeEnvironments,
-    runtimeStatusByEnvironmentId
+    pairedDeviceIdsByEnvironment
   ])
   // Why: agentStatusEpoch bumps recompute this memo even when membership and
   // order are unchanged; keeping the previous identity stops the whole
@@ -5640,16 +5645,28 @@ const WorktreeList = React.memo(function WorktreeList({
     () => filterProjectGroupsForVisibleHosts(projectGroups, visibleHostIdSet, defaultHostId),
     [defaultHostId, projectGroups, visibleHostIdSet]
   )
-  const visibleFolderWorkspacesForRows = useMemo(
-    () =>
-      filterFolderWorkspacesForVisibleHosts(
-        folderWorkspaces,
-        projectGroups,
-        visibleHostIdSet,
-        defaultHostId
-      ),
-    [defaultHostId, folderWorkspaces, projectGroups, visibleHostIdSet]
-  )
+  const visibleFolderWorkspacesForRows = useMemo(() => {
+    const hostVisibleWorkspaces = filterFolderWorkspacesForVisibleHosts(
+      folderWorkspaces,
+      projectGroups,
+      visibleHostIdSet,
+      defaultHostId
+    )
+    if (!hideWorkspacesFromOtherDevices) {
+      return hostVisibleWorkspaces
+    }
+    return filterFolderWorkspacesFromOtherDevices(
+      hostVisibleWorkspaces,
+      pairedDeviceIdsByEnvironment
+    )
+  }, [
+    defaultHostId,
+    folderWorkspaces,
+    hideWorkspacesFromOtherDevices,
+    pairedDeviceIdsByEnvironment,
+    projectGroups,
+    visibleHostIdSet
+  ])
   const repoOrder = useMemo(() => {
     return getLogicalRepoOrderRankById(repos.map((repo) => repo.id))
   }, [repos])
