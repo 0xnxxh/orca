@@ -116,7 +116,7 @@ describe('TabBarCreateEntry search behavior', () => {
     )
   })
 
-  it('requires an explicit choice before searching while the file index is unresolved', () => {
+  it('searches a phrase on Enter while the file index is still loading', () => {
     fileListMock.current = { files: [], loading: true, loadError: null }
     const onOpenEntry = vi.fn().mockResolvedValue(undefined)
     renderEntry({ onOpenEntry })
@@ -125,6 +125,19 @@ describe('TabBarCreateEntry search behavior', () => {
     expect(container.querySelectorAll('[role="option"]')).toHaveLength(1)
     expect(container.querySelector('[role="option"]')?.textContent).toContain('Search Google')
     expect(container.querySelector('[role="status"]')?.textContent).toContain('Loading files...')
+    expect(container.querySelector('[aria-selected="true"]')).not.toBeNull()
+
+    submit()
+    expect(onOpenEntry).toHaveBeenCalledOnce()
+  })
+
+  it('requires an explicit choice for text the loading index could still match', () => {
+    fileListMock.current = { files: [], loading: true, loadError: null }
+    const onOpenEntry = vi.fn().mockResolvedValue(undefined)
+    renderEntry({ onOpenEntry })
+    setQuery('notes.md draft')
+
+    expect(container.querySelector('[role="option"]')?.textContent).toContain('Search Google')
     expect(container.querySelector('[aria-selected="true"]')).toBeNull()
 
     submit()
@@ -134,6 +147,19 @@ describe('TabBarCreateEntry search behavior', () => {
     press('ArrowDown')
     submit()
     expect(onOpenEntry).toHaveBeenCalledOnce()
+  })
+
+  it('arms network actions once the index fails, since no file match can arrive', () => {
+    fileListMock.current = { files: [], loading: false, loadError: 'scan failed' }
+    const onOpenEntry = vi.fn().mockResolvedValue(undefined)
+    renderEntry({ onOpenEntry })
+    setQuery('example.com')
+
+    expect(container.querySelector('[aria-selected="true"]')?.textContent).toContain('Open URL')
+    submit()
+    expect(onOpenEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ classification: expect.objectContaining({ kind: 'host-url' }) })
+    )
   })
 
   it('does not auto-open a host-like filename while the file index is unresolved', () => {

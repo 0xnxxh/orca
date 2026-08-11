@@ -204,6 +204,7 @@ function TabBarCreateEntrySession({
   ]
   const { activeSelectedIndex, selectedActiveOption } = useNetworkSafeTabEntrySelection({
     activeOptions,
+    fileIndexFailed: Boolean(fileList.loadError),
     fileIndexReady: !fileList.loading && !fileList.loadError,
     forcedSearch: forcedSearch.forced,
     menuOpen,

@@ -127,9 +127,9 @@ describe('tab create entry classification', () => {
       relativePath: 'src/components/Button.tsx'
     })
     expect(classifyTabEntryQuery('btn', files)).toEqual({
-      kind: 'search',
-      engine: 'google',
-      query: 'btn'
+      kind: 'existing-file',
+      matchKind: 'fuzzy',
+      relativePath: 'src/components/Button.tsx'
     })
   })
 
@@ -157,18 +157,53 @@ describe('tab create entry classification', () => {
     ])
   })
 
-  it('ranks search before fuzzy files and ordinary create-file actions', () => {
+  it('keeps single-token quick-open matches ahead of search, but not phrases', () => {
     expect(
       getTabEntryOptions('typescript', readyFiles(['docs/typescript-guide.md'])).map(
         (option) => option.classification
       )
     ).toEqual([
-      { kind: 'search', engine: 'google', query: 'typescript' },
       {
         kind: 'existing-file',
         matchKind: 'fuzzy',
         relativePath: 'docs/typescript-guide.md'
       },
+      { kind: 'search', engine: 'google', query: 'typescript' },
+      { kind: 'new-file', relativePath: 'typescript' }
+    ])
+    expect(
+      getTabEntryOptions('type script', readyFiles(['docs/typescript-guide.md'])).map(
+        (option) => option.classification.kind
+      )
+    ).toEqual(['search', 'new-file'])
+  })
+
+  // Fuzzy matching is a subsequence scan, so a short token matches broadly.
+  it('keeps a search slot when fuzzy matches would fill the whole list', () => {
+    const files = [
+      'src/components/Button.tsx',
+      'src/lib/bootstrap-nav.ts',
+      'docs/build-notes.md',
+      'src/base/tone.ts',
+      'src/bin/tune.ts'
+    ]
+    expect(getTabEntryOptions('btn', readyFiles(files)).map((o) => o.classification.kind)).toEqual([
+      'existing-file',
+      'existing-file',
+      'existing-file',
+      'search'
+    ])
+    // A one-slot list still answers with the file, so Enter keeps quick-open.
+    expect(
+      getTabEntryOptions('btn', readyFiles(files), 1).map((o) => o.classification.kind)
+    ).toEqual(['existing-file'])
+  })
+
+  it('ranks search before ordinary create-file actions', () => {
+    expect(
+      getTabEntryOptions('typescript', readyFiles([])).map((option) => option.classification)
+    ).toEqual([
+      { kind: 'search', engine: 'google', query: 'typescript' },
       { kind: 'new-file', relativePath: 'typescript' }
     ])
   })
@@ -251,6 +286,11 @@ describe('tab create entry classification', () => {
     ).toEqual(['loading'])
     expect(
       getTabEntryOptions('query', readyFiles(['query.md']), 1).map(
+        (option) => option.classification.kind
+      )
+    ).toEqual(['existing-file'])
+    expect(
+      getTabEntryOptions('query text', readyFiles(['query.md']), 1).map(
         (option) => option.classification.kind
       )
     ).toEqual(['search'])

@@ -1,4 +1,4 @@
-import { isQuickOpenQueryTooLarge, prepareQuickOpenFiles } from '../quick-open-search'
+import { getPreparedQuickOpenFiles, isQuickOpenQueryTooLarge } from '../quick-open-search'
 import type { RuntimeFileListState } from '../quick-open-file-list'
 import { translate } from '@/i18n/i18n'
 import { DEFAULT_SEARCH_ENGINE, type SearchEngine } from '../../../../shared/browser-url'
@@ -223,7 +223,7 @@ export function getTabEntryOptions(
   const actionLimit = clampActionLimit(limit)
   const existingFiles = findExistingFileMatches(
     trimmed,
-    prepareQuickOpenFiles(fileList.files),
+    getPreparedQuickOpenFiles(fileList.files),
     Math.max(actionLimit, 1)
   )
   const exactExistingFiles = existingFiles.filter((file) => file.matchKind !== 'fuzzy')
@@ -252,7 +252,18 @@ export function getTabEntryOptions(
       )
     ]
   }
-  return isLikelyNewFileIntent(trimmed)
-    ? toOptions([newFile, search, ...fuzzyExistingFiles], actionLimit)
-    : toOptions([search, ...fuzzyExistingFiles, newFile], actionLimit)
+  if (isLikelyNewFileIntent(trimmed)) {
+    return toOptions([newFile, search, ...fuzzyExistingFiles], actionLimit)
+  }
+  if (/\s/.test(trimmed)) {
+    return toOptions([search, ...fuzzyExistingFiles, newFile], actionLimit)
+  }
+  // Why: a single token is still a quick-open attempt ("btn" → Button.tsx), so
+  // only phrases promote web search over fuzzy matches. Fuzzy matching is a
+  // subsequence scan that fills every slot in a real repo, so hold one back —
+  // otherwise search silently disappears from the list it should always offer.
+  return toOptions(
+    [...fuzzyExistingFiles.slice(0, Math.max(actionLimit - 1, 1)), search, newFile],
+    actionLimit
+  )
 }
