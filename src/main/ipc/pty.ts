@@ -5430,8 +5430,7 @@ export function registerPtyHandlers(
     },
     write: (ptyId, data) => {
       try {
-        getProviderForPty(ptyId).write(ptyId, data)
-        return true
+        return getProviderForPty(ptyId).write(ptyId, data) !== false
       } catch {
         return false
       }
