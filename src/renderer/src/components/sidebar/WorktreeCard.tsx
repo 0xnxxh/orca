@@ -115,6 +115,7 @@ type WorktreeCardProps = {
   isActiveSurface?: boolean
   activeSurfaceVariant?: ActiveSurfaceVariant
   isMultiSelected?: boolean
+  selectionId?: string
   revealHighlight?: boolean
   revealHighlightTone?: 'default' | 'ai'
   selectedWorktrees?: readonly Worktree[]
@@ -136,7 +137,8 @@ type WorktreeCardProps = {
   onSelectionGesture?: (event: React.MouseEvent<HTMLElement>, worktreeId: string) => boolean
   onContextMenuSelect?: (
     event: React.MouseEvent<HTMLElement>,
-    worktree: Worktree
+    worktree: Worktree,
+    selectionId: string
   ) => readonly Worktree[]
   onAssignWorkspaceStatus?: (worktreeIds: readonly string[], status: WorkspaceStatus) => void
   onCardDragStart?: (
@@ -215,6 +217,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
   isActiveSurface = isActive,
   activeSurfaceVariant = 'primary',
   isMultiSelected = false,
+  selectionId,
   revealHighlight = false,
   revealHighlightTone = 'default',
   selectedWorktrees,
@@ -865,7 +868,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
       }
       const selectionOnly = affiliateListMode
         ? false
-        : (onSelectionGesture?.(event, worktree.id) ?? false)
+        : (onSelectionGesture?.(event, selectionId ?? worktree.id) ?? false)
       if (selectionOnly) {
         event.preventDefault()
         event.stopPropagation()
@@ -902,7 +905,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
       isSshDisconnected,
       onActivate,
       onImmediateActivate,
-      onSelectionGesture
+      onSelectionGesture,
+      selectionId
     ]
   )
 
@@ -1077,8 +1081,9 @@ const WorktreeCard = React.memo(function WorktreeCard({
   )
 
   const handleContextMenuSelect = useCallback(
-    (event: React.MouseEvent<HTMLElement>) => onContextMenuSelect?.(event, worktree) ?? [worktree],
-    [onContextMenuSelect, worktree]
+    (event: React.MouseEvent<HTMLElement>) =>
+      onContextMenuSelect?.(event, worktree, selectionId ?? worktree.id) ?? [worktree],
+    [onContextMenuSelect, selectionId, worktree]
   )
 
   const stopQuickActionPointerPropagation = useCallback(

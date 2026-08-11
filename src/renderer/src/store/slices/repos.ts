@@ -49,15 +49,13 @@ import {
   getProjectGroupIdentity,
   getProjectGroupOwnerHostId,
   getProjectGroupOwnerIdentity,
+  getProjectGroupOwnerSubtreeIdentities,
   getProjectGroupSubtreeIds,
-  resolveProjectGroupOwner
+  resolveProjectGroupOwner,
+  type ProjectGroupOwnerIndex
 } from '../../../../shared/project-groups'
 import { isPathInsideOrEqual } from '../../../../shared/cross-platform-path'
 import { getRepoIdFromWorktreeId } from '../../../../shared/worktree-id'
-import {
-  getProjectGroupRemovalFolderWorkspaceIdentity,
-  selectProjectGroupRemovalTargets
-} from './project-group-removal-targets'
 import { reconcileFetchedRepos } from './repo-identity-reconcile'
 import {
   mergeSshRepoReadoptions,
@@ -117,6 +115,97 @@ import {
   FolderWorkspaceUpdateCoordinator,
   type FolderWorkspaceUpdateTicket
 } from './folder-workspace-update-coordinator'
+
+type ProjectGroupRemovalProjectTarget = {
+  projectId: string
+  ownerHostId: ExecutionHostId
+  identity: string
+}
+
+type ProjectGroupRemovalTargets = {
+  groupExists: boolean
+  ownerHostId: ExecutionHostId | null
+  deletedGroupIds: Set<string>
+  deletedGroupIdentities: Set<string>
+  projectIds: string[]
+  projectTargets: ProjectGroupRemovalProjectTarget[]
+  folderWorkspaceIdentities: Set<string>
+}
+
+function getProjectGroupRemovalFolderWorkspaceIdentity(
+  index: ProjectGroupOwnerIndex,
+  workspace: Pick<FolderWorkspace, 'id' | 'projectGroupId' | 'connectionId' | 'executionHostId'>
+): string | null {
+  const group = resolveFolderWorkspaceProjectGroupWithLegacySsh(index, workspace)
+  return group ? JSON.stringify([getProjectGroupOwnerHostId(group), workspace.id]) : null
+}
+
+export function selectProjectGroupRemovalTargets(
+  projectGroups: readonly ProjectGroup[],
+  repos: readonly Repo[],
+  groupId: string,
+  ownerHostId?: ExecutionHostId,
+  folderWorkspaces: readonly FolderWorkspace[] = []
+): ProjectGroupRemovalTargets {
+  const index = buildProjectGroupOwnerIndex(projectGroups)
+  const rootGroup = resolveProjectGroupOwner(index, groupId, ownerHostId)
+  if (!rootGroup) {
+    return {
+      groupExists: false,
+      ownerHostId: null,
+      deletedGroupIds: new Set(),
+      deletedGroupIdentities: new Set(),
+      projectIds: [],
+      projectTargets: [],
+      folderWorkspaceIdentities: new Set()
+    }
+  }
+
+  const selectedOwnerHostId = getProjectGroupOwnerHostId(rootGroup)
+  const deletedGroupIdentities = getProjectGroupOwnerSubtreeIdentities(projectGroups, rootGroup)
+  const deletedGroupIds = new Set(
+    projectGroups.flatMap((group) =>
+      deletedGroupIdentities.has(
+        getProjectGroupIdentity(group.id, getProjectGroupOwnerHostId(group))
+      )
+        ? [group.id]
+        : []
+    )
+  )
+  const projectTargets: ProjectGroupRemovalProjectTarget[] = []
+  const seenProjectIdentities = new Set<string>()
+  for (const repo of repos) {
+    if (!repo.projectGroupId) {
+      continue
+    }
+    const repoOwnerHostId = getRepoExecutionHostId(repo)
+    const groupIdentity = getProjectGroupIdentity(repo.projectGroupId, repoOwnerHostId)
+    const identity = getRepoHostIdentity(repo)
+    if (deletedGroupIdentities.has(groupIdentity) && !seenProjectIdentities.has(identity)) {
+      seenProjectIdentities.add(identity)
+      projectTargets.push({ projectId: repo.id, ownerHostId: repoOwnerHostId, identity })
+    }
+  }
+  const folderWorkspaceIdentities = new Set<string>()
+  for (const workspace of folderWorkspaces) {
+    const group = resolveFolderWorkspaceProjectGroupWithLegacySsh(index, workspace)
+    if (group && deletedGroupIdentities.has(getProjectGroupOwnerIdentity(group))) {
+      folderWorkspaceIdentities.add(
+        JSON.stringify([getProjectGroupOwnerHostId(group), workspace.id])
+      )
+    }
+  }
+
+  return {
+    groupExists: true,
+    ownerHostId: selectedOwnerHostId,
+    deletedGroupIds,
+    deletedGroupIdentities,
+    projectIds: projectTargets.map((target) => target.projectId),
+    projectTargets,
+    folderWorkspaceIdentities
+  }
+}
 
 const ERROR_TOAST_DURATION = 60_000
 const SAFE_AUTO_FORK_SYNC_COOLDOWN_MS = 10 * 60 * 1000
@@ -3046,6 +3135,17 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       if (!deleted) {
         return false
       }
+      const stateBeforeDelete = get()
+      const removalGroupIndex = buildProjectGroupOwnerIndex(stateBeforeDelete.projectGroups)
+      const removedFolderWorkspaceIds = new Set(
+        stateBeforeDelete.folderWorkspaces.flatMap((workspace) =>
+          targets.folderWorkspaceIdentities.has(
+            getProjectGroupRemovalFolderWorkspaceIdentity(removalGroupIndex, workspace) ?? ''
+          )
+            ? [workspace.id]
+            : []
+        )
+      )
       set((s) => {
         const projectTargetIdentities = new Set(
           targets.projectTargets.map((projectTarget) => projectTarget.identity)
@@ -3069,6 +3169,29 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           folderWorkspacePathStatuses: {}
         }
       })
+      for (const folderWorkspaceId of removedFolderWorkspaceIds) {
+        if (!get().folderWorkspaces.some((workspace) => workspace.id === folderWorkspaceId)) {
+          get().purgeWorktreeTerminalState([folderWorkspaceKey(folderWorkspaceId)])
+        }
+      }
+      const activeWorkspaceScope = parseWorkspaceKey(stateBeforeDelete.activeWorktreeId ?? '')
+      if (activeWorkspaceScope?.type === 'folder') {
+        const activeOwnerIdentity = stateBeforeDelete.activeWorkspaceExecutionHostId
+          ? getFolderWorkspaceIdentity(
+              activeWorkspaceScope.folderWorkspaceId,
+              stateBeforeDelete.activeWorkspaceExecutionHostId
+            )
+          : null
+        const removedActiveOwner = activeOwnerIdentity
+          ? targets.folderWorkspaceIdentities.has(activeOwnerIdentity)
+          : removedFolderWorkspaceIds.has(activeWorkspaceScope.folderWorkspaceId) &&
+            !get().folderWorkspaces.some(
+              (workspace) => workspace.id === activeWorkspaceScope.folderWorkspaceId
+            )
+        if (removedActiveOwner) {
+          get().setActiveWorktree(null)
+        }
+      }
       return true
     } catch (err) {
       console.error('Failed to delete project group:', err)

@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { FolderWorkspace, ProjectGroup } from '../../../../shared/types'
+import type { FolderWorkspace, ProjectGroup, Repo } from '../../../../shared/types'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
+import {
+  getFolderWorkspaceCandidateRepos,
+  getFolderWorkspaceConnectionId
+} from '../../lib/folder-workspace-connection'
 import { createTestStore } from './store-test-helpers'
 
 function makeGroup(overrides: Partial<ProjectGroup> = {}): ProjectGroup {
@@ -307,5 +311,47 @@ describe('same-id cross-host folder workspace identity', () => {
       'Local current',
       'SSH persisted'
     ])
+  })
+
+  it('resolves connection consumers through the exact active folder owner', () => {
+    const localGroup = makeGroup({ executionHostId: 'local', parentPath: '/local' })
+    const sshGroup = makeGroup({ connectionId: 'builder', parentPath: '/remote' })
+    const localFolder = makeFolder({ executionHostId: 'local', folderPath: '/local/folder' })
+    const sshFolder = makeFolder({ connectionId: 'builder', folderPath: '/remote/folder' })
+    const localRepo: Repo = {
+      id: 'same-repo',
+      path: '/local/folder/repo',
+      displayName: 'Local repo',
+      badgeColor: '#000',
+      addedAt: 1,
+      projectGroupId: localGroup.id,
+      executionHostId: 'local'
+    }
+    const sshRepo: Repo = {
+      ...localRepo,
+      path: '/remote/folder/repo',
+      displayName: 'SSH repo',
+      connectionId: 'builder',
+      executionHostId: undefined
+    }
+    const state = {
+      folderWorkspaces: [localFolder, sshFolder],
+      projectGroups: [localGroup, sshGroup],
+      repos: [localRepo, sshRepo]
+    }
+
+    expect(getFolderWorkspaceConnectionId(state, 'same-id')).toBeUndefined()
+    expect(getFolderWorkspaceConnectionId(state, 'same-id', 'local')).toBeNull()
+    expect(getFolderWorkspaceConnectionId(state, 'same-id', 'ssh:builder')).toBe('builder')
+    expect(
+      getFolderWorkspaceCandidateRepos(
+        {
+          ...state,
+          activeWorktreeId: 'folder:same-id',
+          activeWorkspaceExecutionHostId: 'ssh:builder'
+        },
+        'same-id'
+      )
+    ).toEqual([sshRepo])
   })
 })

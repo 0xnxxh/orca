@@ -6,9 +6,9 @@ import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/worksp
 import {
   buildProjectGroupSidebarIndex,
   findProjectGroupForSidebarOwner,
-  findProjectGroupParentForSidebar
-} from './project-group-sidebar-identity'
-import { getProjectGroupHeaderKey } from './worktree-list-groups'
+  findProjectGroupParentForSidebar,
+  getProjectGroupHeaderKey
+} from './worktree-list-groups'
 
 function findFolderWorkspaceByKey(
   worktreeId: string,

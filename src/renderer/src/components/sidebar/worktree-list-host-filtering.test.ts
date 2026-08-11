@@ -244,5 +244,58 @@ describe('runtime folder host section rows', () => {
       'host:runtime:env-2',
       'folder-workspace:runtime%3Aenv-2:folder-1'
     ])
+    expect(
+      sectioned.flatMap((row) => (row.type === 'host-header' ? [[row.hostId, row.count]] : []))
+    ).toEqual([
+      ['local', 1],
+      ['runtime:env-2', 1]
+    ])
+  })
+
+  it('counts folder-only collapsed group headers per host', () => {
+    const rows: Row[] = [
+      {
+        type: 'header',
+        key: 'project-group:same-group',
+        label: 'Folders',
+        count: 2,
+        tone: 'default',
+        hostWorktreeCounts: new Map([
+          ['local', 1],
+          ['runtime:env-2', 1]
+        ]),
+        hostWorktreeIds: new Map([
+          ['local', []],
+          ['runtime:env-2', []]
+        ]),
+        hostFolderWorkspaceIds: new Map([
+          ['local', ['local-folder']],
+          ['runtime:env-2', ['runtime-folder']]
+        ])
+      }
+    ]
+    const sectioned = addHostSectionRows({
+      rows,
+      hostOptions: [
+        { id: 'local', kind: 'local', label: 'Local', detail: '', health: 'local' },
+        {
+          id: 'runtime:env-2',
+          kind: 'runtime',
+          label: 'env-2',
+          detail: '',
+          health: 'available'
+        }
+      ],
+      workspaceHostScope: 'all',
+      visibleWorkspaceHostIds: ['local', 'runtime:env-2'],
+      defaultHostId: 'local'
+    })
+
+    expect(
+      sectioned.flatMap((row) => (row.type === 'host-header' ? [[row.hostId, row.count]] : []))
+    ).toEqual([
+      ['local', 1],
+      ['runtime:env-2', 1]
+    ])
   })
 })

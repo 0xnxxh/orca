@@ -83,9 +83,15 @@ describe('project group deletion store routing', () => {
     }
     projectGroupsDelete.mockResolvedValue(true)
     const store = createTestStore()
+    const purgeWorktreeTerminalState = vi.fn()
+    const setActiveWorktree = vi.fn()
     store.setState({
       projectGroups: [projectGroup, childGroup, siblingGroup],
       folderWorkspaces: [childWorkspace],
+      activeWorktreeId: 'folder:folder-workspace-1',
+      activeWorkspaceExecutionHostId: 'local',
+      purgeWorktreeTerminalState,
+      setActiveWorktree,
       repos: [
         { ...remoteRepo, id: 'direct', projectGroupId: projectGroup.id },
         { ...remoteRepo, id: 'nested', projectGroupId: childGroup.id },
@@ -102,6 +108,8 @@ describe('project group deletion store routing', () => {
       { id: 'nested', projectGroupId: null },
       { id: 'sibling', projectGroupId: siblingGroup.id }
     ])
+    expect(purgeWorktreeTerminalState).toHaveBeenCalledWith(['folder:folder-workspace-1'])
+    expect(setActiveWorktree).toHaveBeenCalledWith(null)
   })
 
   it('uses the remote delete response shape before mutating local state', async () => {
@@ -180,11 +188,17 @@ describe('project group deletion store routing', () => {
       _meta: { runtimeId: 'runtime-remote' }
     })
     const store = createTestStore()
+    const purgeWorktreeTerminalState = vi.fn()
+    const setActiveWorktree = vi.fn()
     store.setState({
       settings: { activeRuntimeEnvironmentId: null } as never,
       projectGroups: [localGroup, runtimeGroup],
       folderWorkspaces: [localFolder, runtimeFolder],
-      repos: [localRepo, runtimeRepo]
+      repos: [localRepo, runtimeRepo],
+      activeWorktreeId: 'folder:same-folder',
+      activeWorkspaceExecutionHostId: 'local',
+      purgeWorktreeTerminalState,
+      setActiveWorktree
     })
 
     await expect(
@@ -200,6 +214,8 @@ describe('project group deletion store routing', () => {
     expect(store.getState().projectGroups).toEqual([localGroup])
     expect(store.getState().folderWorkspaces).toEqual([localFolder])
     expect(store.getState().repos).toEqual([localRepo, { ...runtimeRepo, projectGroupId: null }])
+    expect(purgeWorktreeTerminalState).not.toHaveBeenCalled()
+    expect(setActiveWorktree).not.toHaveBeenCalled()
     expect(projectGroupsDelete).not.toHaveBeenCalled()
   })
 

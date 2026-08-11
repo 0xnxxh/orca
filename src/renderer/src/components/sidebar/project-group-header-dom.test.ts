@@ -3,18 +3,20 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import { getFolderWorkspaceRowKey } from '../../../../shared/folder-workspaces'
+import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
 import type { FolderWorkspace, ProjectGroup, Repo, Worktree } from '../../../../shared/types'
 import {
+  buildRows,
   buildProjectGroupSidebarIndex,
   findProjectGroupForSidebarOwner,
   getAmbiguousFolderWorkspaceSidebarIds,
   getProjectGroupMutationSelector,
   getProjectGroupSidebarIdentity,
+  getSidebarWorktreeSelectionId,
   getSingleProjectGroupMutationOwner,
   hasSingleProjectGroupMutationOwner,
   parseProjectGroupSidebarHeaderKey
-} from './project-group-sidebar-identity'
-import { buildRows } from './worktree-list-groups'
+} from './worktree-list-groups'
 import { getRenderRowKey } from './worktree-list-virtual-rows'
 
 function readWorktreeListSource(): string {
@@ -151,6 +153,30 @@ describe('project-group sidebar identity', () => {
         { id: 'unique-id', projectGroupId: runtime.id, executionHostId: 'runtime:env-1' }
       ])
     ).toEqual(new Set(['same-id']))
+  })
+
+  it('keeps same-id folder selection distinct across owners', () => {
+    const local = folderWorkspaceToWorktree({
+      id: 'same-id',
+      projectGroupId: 'same-group',
+      name: 'Local',
+      folderPath: '/local',
+      executionHostId: 'local',
+      linkedTask: null,
+      comment: '',
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 0,
+      lastActivityAt: 0,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const runtime = { ...local, hostId: 'runtime:env-1' as const }
+
+    expect(getSidebarWorktreeSelectionId(local, undefined, 'local')).not.toBe(
+      getSidebarWorktreeSelectionId(runtime, undefined, 'local')
+    )
   })
 
   it('does not fall back to a foreign group for an explicit stale owner', () => {

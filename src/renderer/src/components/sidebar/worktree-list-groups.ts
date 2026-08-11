@@ -27,6 +27,8 @@ import {
 } from './workspace-status-icons'
 import {
   getEffectiveProjectGroupManualRank,
+  getProjectGroupOwnerHostId as getSharedProjectGroupOwnerHostId,
+  getProjectGroupOwnerIdentity,
   UNGROUPED_PROJECT_GROUP_KEY
 } from '../../../../shared/project-groups'
 import { getFolderWorkspaceRowKey } from '../../../../shared/folder-workspaces'
@@ -40,6 +42,7 @@ import {
   LOCAL_EXECUTION_HOST_ID,
   getRepoExecutionHostId,
   getWorktreeExecutionHostId,
+  normalizeExecutionHostId,
   toSshExecutionHostId,
   type ExecutionHostId
 } from '../../../../shared/execution-host'
@@ -52,19 +55,6 @@ import {
   getCyclicProjectedWorktreeLineageIds,
   getLineageRenderInfo
 } from './worktree-lineage-projection'
-import {
-  getFolderWorkspaceExecutionHostIdForRows,
-  getProjectGroupExecutionHostIdForRows
-} from './worktree-list-host-filtering'
-import {
-  buildProjectGroupSidebarIndex,
-  findProjectGroupForFolderWorkspace,
-  findProjectGroupForRepo,
-  findProjectGroupParentForSidebar,
-  getAmbiguousFolderWorkspaceSidebarIds,
-  getProjectGroupOwnerHostId,
-  getProjectGroupSidebarIdentity
-} from './project-group-sidebar-identity'
 
 export { getLineageRenderInfo } from './worktree-lineage-projection'
 
@@ -72,6 +62,227 @@ export { branchName }
 
 export type WorktreeGroupBy = 'none' | 'workspace-status' | 'repo' | 'pr-status'
 export type PinnedWorktreeDisplayPolicy = 'single-location' | 'duplicate-in-groups'
+
+export function getSidebarWorktreeSelectionId(
+  worktree: Worktree,
+  repo: Repo | undefined,
+  defaultHostId: ExecutionHostId
+): string {
+  return JSON.stringify([getWorktreeExecutionHostId(worktree, repo, defaultHostId), worktree.id])
+}
+
+export type ProjectGroupSidebarIdentity = string
+
+export type ProjectGroupMutationSelector = {
+  groupId: string
+  ownerHostId: ExecutionHostId
+}
+
+export function getProjectGroupOwnerHostId(
+  group: Pick<ProjectGroup, 'connectionId' | 'executionHostId'>
+): ExecutionHostId {
+  return getSharedProjectGroupOwnerHostId(group)
+}
+
+export function getProjectGroupSidebarIdentity(
+  group: Pick<ProjectGroup, 'id' | 'connectionId' | 'executionHostId'>
+): ProjectGroupSidebarIdentity {
+  return getProjectGroupOwnerIdentity(group)
+}
+
+export function getProjectGroupMutationSelector(
+  group: Pick<ProjectGroup, 'id' | 'connectionId' | 'executionHostId'>
+): ProjectGroupMutationSelector {
+  return { groupId: group.id, ownerHostId: getProjectGroupOwnerHostId(group) }
+}
+
+export function hasSingleProjectGroupMutationOwner(
+  groups: readonly ProjectGroup[],
+  routedHostId: ExecutionHostId
+): boolean {
+  return (
+    groups.length > 0 && groups.every((group) => getProjectGroupOwnerHostId(group) === routedHostId)
+  )
+}
+
+export function getSingleProjectGroupMutationOwner(
+  groups: readonly ProjectGroup[]
+): ExecutionHostId | null {
+  const ownerHostId = groups[0] ? getProjectGroupOwnerHostId(groups[0]) : null
+  if (!ownerHostId || !hasSingleProjectGroupMutationOwner(groups, ownerHostId)) {
+    return null
+  }
+  return new Set(groups.map((group) => group.id)).size === groups.length ? ownerHostId : null
+}
+
+export function parseProjectGroupSidebarHeaderKey(
+  key: string
+): { groupId: string; ownerHostId?: ExecutionHostId } | null {
+  const prefix = 'project-group:'
+  if (!key.startsWith(prefix)) {
+    return null
+  }
+  const value = key.slice(prefix.length)
+  const separator = value.indexOf(':')
+  if (separator === -1) {
+    return { groupId: value }
+  }
+  try {
+    const ownerHostId = normalizeExecutionHostId(decodeURIComponent(value.slice(0, separator)))
+    const groupId = decodeURIComponent(value.slice(separator + 1))
+    return ownerHostId ? { ownerHostId, groupId } : null
+  } catch {
+    return null
+  }
+}
+
+export type ProjectGroupSidebarIndex = {
+  byIdentity: ReadonlyMap<ProjectGroupSidebarIdentity, ProjectGroup>
+  byUnambiguousId: ReadonlyMap<string, ProjectGroup>
+  ambiguousIds: ReadonlySet<string>
+}
+
+export function buildProjectGroupSidebarIndex(
+  projectGroups: readonly ProjectGroup[]
+): ProjectGroupSidebarIndex {
+  const byIdentity = new Map<ProjectGroupSidebarIdentity, ProjectGroup>()
+  const byUnambiguousId = new Map<string, ProjectGroup>()
+  const ambiguousIds = new Set<string>()
+  for (const group of projectGroups) {
+    byIdentity.set(getProjectGroupSidebarIdentity(group), group)
+    if (ambiguousIds.has(group.id)) {
+      continue
+    }
+    const existing = byUnambiguousId.get(group.id)
+    if (
+      existing &&
+      getProjectGroupSidebarIdentity(existing) !== getProjectGroupSidebarIdentity(group)
+    ) {
+      byUnambiguousId.delete(group.id)
+      ambiguousIds.add(group.id)
+    } else {
+      byUnambiguousId.set(group.id, group)
+    }
+  }
+  return { byIdentity, byUnambiguousId, ambiguousIds }
+}
+
+export function findProjectGroupForSidebarOwner(
+  index: ProjectGroupSidebarIndex,
+  groupId: string | null | undefined,
+  ownerHostId?: ExecutionHostId | null
+): ProjectGroup | undefined {
+  if (!groupId) {
+    return undefined
+  }
+  return ownerHostId
+    ? index.byIdentity.get(JSON.stringify([ownerHostId, groupId]))
+    : index.byUnambiguousId.get(groupId)
+}
+
+export function findProjectGroupForRepo(
+  index: ProjectGroupSidebarIndex,
+  repo: Pick<Repo, 'connectionId' | 'executionHostId' | 'projectGroupId'> | undefined,
+  defaultHostId: ExecutionHostId
+): ProjectGroup | undefined {
+  if (!repo?.projectGroupId) {
+    return undefined
+  }
+  const ownerHostId =
+    repo.connectionId || repo.executionHostId ? getRepoExecutionHostId(repo) : defaultHostId
+  return findProjectGroupForSidebarOwner(index, repo.projectGroupId, ownerHostId)
+}
+
+export function findProjectGroupForFolderWorkspace(
+  index: ProjectGroupSidebarIndex,
+  workspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId' | 'projectGroupId'>
+): ProjectGroup | undefined {
+  const explicitHostId = normalizeExecutionHostId(workspace.executionHostId)
+  const ownerHostId =
+    explicitHostId ??
+    (workspace.connectionId
+      ? toSshExecutionHostId(workspace.connectionId)
+      : workspace.connectionId === null
+        ? LOCAL_EXECUTION_HOST_ID
+        : undefined)
+  return findProjectGroupForSidebarOwner(index, workspace.projectGroupId, ownerHostId)
+}
+
+export function getAmbiguousFolderWorkspaceSidebarIds(
+  index: ProjectGroupSidebarIndex,
+  workspaces: readonly Pick<
+    FolderWorkspace,
+    'id' | 'connectionId' | 'executionHostId' | 'projectGroupId'
+  >[]
+): ReadonlySet<string> {
+  const ownerById = new Map<string, ExecutionHostId>()
+  const ambiguousIds = new Set<string>()
+  for (const workspace of workspaces) {
+    const group = findProjectGroupForFolderWorkspace(index, workspace)
+    if (!group || ambiguousIds.has(workspace.id)) {
+      continue
+    }
+    const ownerHostId = getProjectGroupOwnerHostId(group)
+    const existingOwnerHostId = ownerById.get(workspace.id)
+    if (existingOwnerHostId && existingOwnerHostId !== ownerHostId) {
+      ownerById.delete(workspace.id)
+      ambiguousIds.add(workspace.id)
+    } else {
+      ownerById.set(workspace.id, ownerHostId)
+    }
+  }
+  return ambiguousIds
+}
+
+export function findProjectGroupParentForSidebar(
+  index: ProjectGroupSidebarIndex,
+  group: ProjectGroup
+): ProjectGroup | undefined {
+  return findProjectGroupForSidebarOwner(
+    index,
+    group.parentGroupId,
+    getProjectGroupOwnerHostId(group)
+  )
+}
+
+export function getProjectGroupExecutionHostIdForRows(
+  group: Pick<ProjectGroup, 'connectionId' | 'executionHostId'>,
+  defaultHostId: ExecutionHostId
+): ExecutionHostId {
+  const executionHostId = normalizeExecutionHostId(group.executionHostId)
+  if (executionHostId) {
+    return executionHostId
+  }
+  return group.connectionId ? toSshExecutionHostId(group.connectionId) : defaultHostId
+}
+
+export function getFolderWorkspaceExecutionHostIdForRows({
+  folderWorkspace,
+  projectGroup,
+  defaultHostId
+}: {
+  folderWorkspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId'>
+  projectGroup: Pick<ProjectGroup, 'connectionId' | 'executionHostId'> | undefined
+  defaultHostId: ExecutionHostId
+}): ExecutionHostId {
+  const explicitFolderHostId = normalizeExecutionHostId(folderWorkspace.executionHostId)
+  if (explicitFolderHostId) {
+    return explicitFolderHostId
+  }
+  if (projectGroup) {
+    const explicitProjectGroupHostId = normalizeExecutionHostId(projectGroup.executionHostId)
+    if (explicitProjectGroupHostId) {
+      return explicitProjectGroupHostId
+    }
+    const projectGroupHostId = getProjectGroupExecutionHostIdForRows(projectGroup, defaultHostId)
+    if (projectGroupHostId !== defaultHostId || !folderWorkspace.connectionId) {
+      return projectGroupHostId
+    }
+  }
+  return folderWorkspace.connectionId
+    ? toSshExecutionHostId(folderWorkspace.connectionId)
+    : defaultHostId
+}
 
 export function getPinnedWorktreeDisplayPolicy(
   settings?: { showPinnedWorktreesInGroups?: boolean } | null

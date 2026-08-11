@@ -26,7 +26,7 @@ const createdWorktree = {
   displayName: 'Automation worktree',
   path: '/repo/worktree'
 }
-type TestWorktree = typeof createdWorktree
+type TestWorktree = typeof createdWorktree & { selectedCheckout?: boolean; hostId?: string }
 type TestRepo = {
   id: string
   connectionId: string | null
@@ -37,6 +37,7 @@ type TestRepo = {
 const state = {
   activeView: 'terminal' as const,
   activeWorktreeId: 'wt-active',
+  activeWorkspaceExecutionHostId: 'local' as string | null,
   activeTabId: 'tab-active',
   activeTabType: 'terminal' as const,
   repos: [{ id: 'repo-1', connectionId: null, executionHostId: null, path: '/repo' }] as TestRepo[],
@@ -45,6 +46,7 @@ const state = {
     projectGroupId: string
     folderPath: string
     connectionId: string | null
+    executionHostId?: string | null
   }[],
   projectGroups: [] as {
     id: string
@@ -55,7 +57,9 @@ const state = {
   detectedWorktreesByRepo: {},
   agentStatusByPaneKey: {},
   allWorktrees: vi.fn<() => TestWorktree[]>(() => []),
-  getKnownWorktreeById: vi.fn<(worktreeId: string) => TestWorktree | undefined>(() => undefined),
+  getKnownWorktreeById: vi.fn<
+    (worktreeId: string, executionHostId?: string) => TestWorktree | undefined
+  >(() => undefined),
   createWorktree: mockCreateWorktree,
   subscribe: vi.fn(() => () => {}),
   setActiveView: vi.fn(),
@@ -164,6 +168,7 @@ describe('useAutomationDispatchEvents setup launch', () => {
     vi.clearAllMocks()
     state.activeView = 'terminal'
     state.activeWorktreeId = 'wt-active'
+    state.activeWorkspaceExecutionHostId = 'local'
     state.activeTabId = 'tab-active'
     state.activeTabType = 'terminal'
     state.repos = [{ id: 'repo-1', connectionId: null, executionHostId: null, path: '/repo' }]
@@ -339,7 +344,7 @@ describe('useAutomationDispatchEvents setup launch', () => {
       displayName: 'Existing workspace',
       path: '/repo/existing'
     }
-    state.allWorktrees.mockReturnValue([existingWorktree])
+    state.getKnownWorktreeById.mockReturnValue(existingWorktree)
 
     await registerAndDispatch(
       makeAutomation({
@@ -481,7 +486,8 @@ describe('useAutomationDispatchEvents setup launch', () => {
       id: 'wt-detected',
       repoId: 'repo-1',
       displayName: 'Detected',
-      path: '/repo/detected'
+      path: '/repo/detected',
+      selectedCheckout: false
     })
 
     await registerAndDispatch(
@@ -491,11 +497,79 @@ describe('useAutomationDispatchEvents setup launch', () => {
       })
     )
 
-    expect(state.getKnownWorktreeById).not.toHaveBeenCalled()
+    expect(state.getKnownWorktreeById).toHaveBeenCalledWith('wt-detected', 'local')
     expect(mockLaunchAgentBackgroundSession).not.toHaveBeenCalled()
     expect(mockMarkDispatchResult).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'skipped_unavailable' })
     )
+  })
+
+  it('uses the run host for same-id lookup and restores the prior same-id owner', async () => {
+    const runtimeFolder = {
+      id: 'folder:same-id',
+      repoId: 'folder-workspace:same-group',
+      displayName: 'Runtime folder',
+      path: '/runtime/folder',
+      hostId: 'runtime:env-1'
+    }
+    state.activeWorktreeId = runtimeFolder.id
+    state.activeWorkspaceExecutionHostId = 'local'
+    state.repos = [
+      { id: 'repo-1', connectionId: null, executionHostId: 'local', path: '/local/repo' },
+      {
+        id: 'repo-1',
+        connectionId: null,
+        executionHostId: 'runtime:env-1',
+        path: '/runtime/repo'
+      }
+    ]
+    state.folderWorkspaces = [
+      {
+        id: 'same-id',
+        projectGroupId: 'same-group',
+        folderPath: '/local/folder',
+        connectionId: null,
+        executionHostId: 'local'
+      },
+      {
+        id: 'same-id',
+        projectGroupId: 'same-group',
+        folderPath: '/runtime/folder',
+        connectionId: null,
+        executionHostId: 'runtime:env-1'
+      }
+    ]
+    state.projectGroups = [
+      { id: 'same-group', connectionId: null, executionHostId: 'local' },
+      { id: 'same-group', connectionId: null, executionHostId: 'runtime:env-1' }
+    ]
+    state.getKnownWorktreeById.mockImplementation((_worktreeId, hostId) =>
+      hostId === 'runtime:env-1' ? runtimeFolder : undefined
+    )
+    mockLaunchAgentBackgroundSession.mockImplementation(async () => {
+      state.activeWorkspaceExecutionHostId = 'runtime:env-1'
+      return {
+        tabId: 'agent-tab',
+        paneKey: 'agent-tab:7c6fb4e5-3bf1-4ff4-8259-03f7ae81c40d',
+        ptyId: 'agent-pty',
+        startupPlan: {},
+        terminalOwnership: {
+          finalize: mockFinalizeTerminalOwnership,
+          release: mockReleaseTerminalOwnership
+        }
+      }
+    })
+
+    await registerAndDispatch(
+      makeAutomation({
+        workspaceMode: 'existing',
+        workspaceId: runtimeFolder.id,
+        runContext: { repoId: 'repo-1', hostId: 'runtime:env-1' }
+      })
+    )
+
+    expect(state.getKnownWorktreeById).toHaveBeenCalledWith(runtimeFolder.id, 'runtime:env-1')
+    expect(state.setActiveWorktree).toHaveBeenCalledWith(runtimeFolder.id, 'local')
   })
 
   it('finalizes a fresh non-reuse terminal only after completed result persistence', async () => {

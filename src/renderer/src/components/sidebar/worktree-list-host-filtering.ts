@@ -10,8 +10,12 @@ import type { FolderWorkspacePathStatusRequest } from '../../../../shared/folder
 import type { FolderWorkspace, ProjectGroup } from '../../../../shared/types'
 import {
   buildProjectGroupSidebarIndex,
-  findProjectGroupForFolderWorkspace
-} from './project-group-sidebar-identity'
+  findProjectGroupForFolderWorkspace,
+  getFolderWorkspaceExecutionHostIdForRows,
+  getProjectGroupExecutionHostIdForRows
+} from './worktree-list-groups'
+
+export { getFolderWorkspaceExecutionHostIdForRows, getProjectGroupExecutionHostIdForRows }
 
 /** null means "no host filter" — every host is visible. */
 export function getVisibleSidebarHostIdSet(
@@ -58,45 +62,6 @@ export function filterFolderWorkspacesForVisibleHosts(
       })
     )
   )
-}
-
-export function getProjectGroupExecutionHostIdForRows(
-  group: Pick<ProjectGroup, 'connectionId' | 'executionHostId'>,
-  defaultHostId: ExecutionHostId
-): ExecutionHostId {
-  const executionHostId = normalizeExecutionHostId(group.executionHostId)
-  if (executionHostId) {
-    return executionHostId
-  }
-  return group.connectionId ? toSshExecutionHostId(group.connectionId) : defaultHostId
-}
-
-export function getFolderWorkspaceExecutionHostIdForRows({
-  folderWorkspace,
-  projectGroup,
-  defaultHostId
-}: {
-  folderWorkspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId'>
-  projectGroup: Pick<ProjectGroup, 'connectionId' | 'executionHostId'> | undefined
-  defaultHostId: ExecutionHostId
-}): ExecutionHostId {
-  const explicitFolderHostId = normalizeExecutionHostId(folderWorkspace.executionHostId)
-  if (explicitFolderHostId) {
-    return explicitFolderHostId
-  }
-  if (projectGroup) {
-    const explicitProjectGroupHostId = normalizeExecutionHostId(projectGroup.executionHostId)
-    if (explicitProjectGroupHostId) {
-      return explicitProjectGroupHostId
-    }
-    const projectGroupHostId = getProjectGroupExecutionHostIdForRows(projectGroup, defaultHostId)
-    if (projectGroupHostId !== defaultHostId || !folderWorkspace.connectionId) {
-      return projectGroupHostId
-    }
-  }
-  return folderWorkspace.connectionId
-    ? toSshExecutionHostId(folderWorkspace.connectionId)
-    : defaultHostId
 }
 
 export function getRuntimeEnvironmentIdForFolderPathStatusHost(

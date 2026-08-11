@@ -43,6 +43,7 @@ import {
 } from './worktree-header-section-boundaries'
 import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
 import { resolveFolderWorkspaceCatalogOwnerHostId } from '../../../../shared/folder-workspaces'
+import { selectProjectGroupRemovalTargets } from '@/store/slices/repos'
 import { PendingWorktreeRow } from './PendingWorktreeRow'
 import { SUPPRESS_WORKTREE_LIST_SCROLL_ADJUSTMENT_EVENT } from './WorktreeCardAgents'
 import { Button } from '@/components/ui/button'
@@ -89,10 +90,18 @@ import {
   ALL_GROUP_KEY,
   PINNED_GROUP_KEY,
   buildRows,
+  buildProjectGroupSidebarIndex,
+  getAmbiguousFolderWorkspaceSidebarIds,
   getProjectGroupHeaderKey,
+  getProjectGroupMutationSelector,
+  getProjectGroupSidebarIdentity,
+  getSidebarWorktreeSelectionId,
+  getSingleProjectGroupMutationOwner,
   getGroupKeysForWorktree,
   getLineageGroupKey,
   getPinnedWorktreeDisplayPolicy,
+  parseProjectGroupSidebarHeaderKey,
+  type ProjectGroupMutationSelector,
   type PinnedWorktreeDisplayPolicy
 } from './worktree-list-groups'
 import {
@@ -240,7 +249,6 @@ import { getRepositoryIconSectionId } from '@/components/settings/repository-set
 import { keybindingMatchesAction } from '../../../../shared/keybindings'
 import { ProjectGroupNameDialog } from './ProjectGroupNameDialog'
 import { ProjectGroupDeleteDialog } from './ProjectGroupDeleteDialog'
-import { selectProjectGroupRemovalTargets } from '@/store/slices/project-group-removal-targets'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
 import {
   effectiveExternalWorktreeVisibility,
@@ -312,16 +320,6 @@ import {
 import { getFolderWorkspaceCardPrDisplay } from './folder-workspace-card-pr-display'
 import { getRenderedWorktreesInSidebarOrder } from './worktree-sidebar-row-preference'
 import { getCyclableWorktreeIds, resolveCycledWorktreeId } from './worktree-keyboard-cycle'
-import {
-  buildProjectGroupSidebarIndex,
-  getAmbiguousFolderWorkspaceSidebarIds,
-  getProjectGroupMutationSelector,
-  getProjectGroupSidebarIdentity,
-  getSingleProjectGroupMutationOwner,
-  parseProjectGroupSidebarHeaderKey,
-  type ProjectGroupMutationSelector
-} from './project-group-sidebar-identity'
-
 export {
   getScrollTopToRevealBounds,
   WORKTREE_SIDEBAR_REVEAL_TOP_INSET
@@ -716,7 +714,8 @@ type VirtualizedWorktreeViewportProps = {
   onImmediateWorktreeActivate: (worktreeId: string, rowKey: string | undefined) => void
   onContextMenuSelect: (
     event: React.MouseEvent<HTMLElement>,
-    worktree: Worktree
+    worktree: Worktree,
+    selectionId: string
   ) => readonly Worktree[]
   repoMap: Map<string, Repo>
   defaultHostId: ExecutionHostId
@@ -1234,6 +1233,56 @@ export function getPinnedWorktreeRevealCollapsedGroupKeys({
 
 function uniqueWorktreeIds(ids: readonly string[]): string[] {
   return Array.from(new Set(ids))
+}
+
+function getRenderedSidebarSelectionEntries(
+  rows: readonly HostSectionRow[],
+  defaultHostId: ExecutionHostId,
+  pinnedDisplayPolicy: PinnedWorktreeDisplayPolicy
+): { selectionId: string; worktree: Worktree }[] {
+  const naturalSelectionIds = new Set(
+    rows.flatMap((row) => {
+      if (row.type !== 'item' || row.sectionKey === PINNED_GROUP_KEY) {
+        return []
+      }
+      return [getSidebarWorktreeSelectionId(row.worktree, row.repo, defaultHostId)]
+    })
+  )
+  const seen = new Set<string>()
+  const entries: { selectionId: string; worktree: Worktree }[] = []
+  for (const row of rows) {
+    let worktree: Worktree
+    if (row.type === 'item') {
+      worktree = {
+        ...row.worktree,
+        hostId: getWorktreeExecutionHostId(row.worktree, row.repo, defaultHostId)
+      }
+    } else if (row.type === 'folder-workspace') {
+      worktree = {
+        ...folderWorkspaceToWorktree(row.folderWorkspace),
+        hostId: getProjectGroupMutationSelector(row.projectGroup).ownerHostId
+      }
+    } else {
+      continue
+    }
+    const selectionId = getSidebarWorktreeSelectionId(
+      worktree,
+      row.type === 'item' ? row.repo : undefined,
+      defaultHostId
+    )
+    if (
+      seen.has(selectionId) ||
+      (pinnedDisplayPolicy === 'duplicate-in-groups' &&
+        row.type === 'item' &&
+        row.sectionKey === PINNED_GROUP_KEY &&
+        naturalSelectionIds.has(selectionId))
+    ) {
+      continue
+    }
+    seen.add(selectionId)
+    entries.push({ selectionId, worktree })
+  }
+  return entries
 }
 
 function buildRenderableRows(rows: HostSectionRow[]): RenderRow[] {
@@ -3201,7 +3250,12 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   )
 
   const handleWorktreeRowPointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>, worktreeId: string, rowKey: string) => {
+    (
+      event: React.PointerEvent<HTMLDivElement>,
+      worktreeId: string,
+      rowKey: string,
+      selectionId: string
+    ) => {
       if (event.button !== 0 || event.pointerType === 'touch') {
         return
       }
@@ -3225,9 +3279,12 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       ) {
         return
       }
+      const selectedIds = selectedWorktrees.map((worktree) => worktree.id)
       const draggedIds =
-        selectedWorktreeIds.has(worktreeId) && selectedWorktrees.length > 1
-          ? selectedWorktrees.map((worktree) => worktree.id)
+        selectedWorktreeIds.has(selectionId) &&
+        selectedIds.length > 1 &&
+        new Set(selectedIds).size === selectedIds.length
+          ? selectedIds
           : [worktreeId]
       const reorderDraggedIds = getReorderDraggedIds(draggedIds)
       const reorderUnitDraggedIds = getReorderUnitDraggedIds(sourceGroupKey, reorderDraggedIds)
@@ -4929,6 +4986,11 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                 : undefined
               const worktreeDragGroupKey = groupKeyByRowKey.get(itemRow.rowKey)
               const worktreeDragGroupIndex = groupIndexByRowKey.get(itemRow.rowKey)
+              const worktreeSelectionId = getSidebarWorktreeSelectionId(
+                itemRow.worktree,
+                itemRow.repo,
+                defaultHostId
+              )
               const revealHighlightTone =
                 agentSendTargetWorktreeId === itemRow.worktree.id ? 'ai' : 'default'
               const isLineageDropTarget =
@@ -4944,7 +5006,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                   key={itemRow.rowKey}
                   id={getWorktreeOptionId(itemRow.rowKey)}
                   role="option"
-                  aria-selected={selectedWorktreeIds.has(itemRow.worktree.id)}
+                  aria-selected={selectedWorktreeIds.has(worktreeSelectionId)}
                   aria-current={isActiveWorktree ? 'page' : undefined}
                   data-worktree-id={itemRow.worktree.id}
                   data-worktree-row-key={itemRow.rowKey}
@@ -4971,7 +5033,12 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                     if (nested) {
                       event.stopPropagation()
                     }
-                    handleWorktreeRowPointerDown(event, itemRow.worktree.id, itemRow.rowKey)
+                    handleWorktreeRowPointerDown(
+                      event,
+                      itemRow.worktree.id,
+                      itemRow.rowKey,
+                      worktreeSelectionId
+                    )
                   }}
                   style={{
                     paddingLeft: surfaceInset > 0 ? `${surfaceInset}px` : undefined
@@ -4987,7 +5054,8 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                     activeSurfaceVariant={
                       isActiveWorktree && !forceActiveSurface ? activeSurfaceVariant : 'primary'
                     }
-                    isMultiSelected={selectedWorktreeIds.has(itemRow.worktree.id)}
+                    isMultiSelected={selectedWorktreeIds.has(worktreeSelectionId)}
+                    selectionId={worktreeSelectionId}
                     revealHighlight={highlightedRevealRowKey === itemRow.rowKey}
                     revealHighlightTone={revealHighlightTone}
                     selectedWorktrees={selectedWorktrees}
@@ -5177,6 +5245,11 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                 ...folderWorkspaceToWorktree(folderWorkspaceRow.folderWorkspace),
                 hostId: folderOwnerHostId
               }
+              const folderSelectionId = getSidebarWorktreeSelectionId(
+                folderWorktree,
+                undefined,
+                defaultHostId
+              )
               const folderSidebarRowKey = getFolderWorkspaceSidebarRowKey(
                 folderWorkspaceRow.folderWorkspace.id,
                 folderWorkspaceRow.key
@@ -5219,7 +5292,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                   key={vItem.key}
                   id={getWorktreeOptionId(folderSidebarRowKey)}
                   role="option"
-                  aria-selected={selectedWorktreeIds.has(folderWorktree.id)}
+                  aria-selected={selectedWorktreeIds.has(folderSelectionId)}
                   aria-current={isFolderWorkspaceActive ? 'page' : undefined}
                   data-worktree-id={folderWorktree.id}
                   data-worktree-row-key={folderSidebarRowKey}
@@ -5232,7 +5305,12 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                   style={{ transform: getVirtualRowTransform(vItem.start) }}
                   onClickCapture={handleWorktreeRowClickCapture}
                   onPointerDown={(event) =>
-                    handleWorktreeRowPointerDown(event, folderWorktree.id, folderSidebarRowKey)
+                    handleWorktreeRowPointerDown(
+                      event,
+                      folderWorktree.id,
+                      folderSidebarRowKey,
+                      folderSelectionId
+                    )
                   }
                 >
                   <div
@@ -5248,6 +5326,9 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                       }
                       contentIndent={cardContentIndent}
                       flushSurface
+                      isMultiSelected={selectedWorktreeIds.has(folderSelectionId)}
+                      selectionId={folderSelectionId}
+                      selectedWorktrees={selectedWorktrees}
                       nativeDragEnabled={false}
                       onImmediateActivate={
                         folderWorkspaceActivationDisabled
@@ -6023,13 +6104,23 @@ const WorktreeList = React.memo(function WorktreeList({
       [renderedWorktrees]
     )
   )
+  const renderedWorktreeSelectionEntries = useMemo(
+    () => getRenderedSidebarSelectionEntries(sectionRows, defaultHostId, pinnedDisplayPolicy),
+    [defaultHostId, pinnedDisplayPolicy, sectionRows]
+  )
+  const renderedWorktreeSelectionIds = useReusedArrayIdentity(
+    useMemo(
+      () => renderedWorktreeSelectionEntries.map((entry) => entry.selectionId),
+      [renderedWorktreeSelectionEntries]
+    )
+  )
   const [selectedWorktreeIds, setSelectedWorktreeIds] = useState<Set<string>>(new Set())
   const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null)
 
   const prunedSelection = pruneWorktreeSelection(
     selectedWorktreeIds,
     selectionAnchorId,
-    renderedWorktreeIds
+    renderedWorktreeSelectionIds
   )
   // Why: filters/grouping can hide selected cards; prune during render so nothing sees stale ids for unrendered worktrees.
   if (!areWorktreeSelectionsEqual(selectedWorktreeIds, prunedSelection.selectedIds)) {
@@ -6048,13 +6139,13 @@ const WorktreeList = React.memo(function WorktreeList({
         return []
       }
       const selected = new Map<string, Worktree>()
-      for (const worktree of renderedWorktrees) {
-        if (selectedWorktreeIds.has(worktree.id) && !selected.has(worktree.id)) {
-          selected.set(worktree.id, worktree)
+      for (const { selectionId, worktree } of renderedWorktreeSelectionEntries) {
+        if (selectedWorktreeIds.has(selectionId) && !selected.has(selectionId)) {
+          selected.set(selectionId, worktree)
         }
       }
       return Array.from(selected.values())
-    }, [renderedWorktrees, selectedWorktreeIds])
+    }, [renderedWorktreeSelectionEntries, selectedWorktreeIds])
   )
 
   useEffect(() => {
@@ -6079,13 +6170,13 @@ const WorktreeList = React.memo(function WorktreeList({
   }, [selectedWorktreeIds.size])
 
   const updateSelectionForGesture = useCallback(
-    (event: React.MouseEvent<HTMLElement>, worktreeId: string): boolean => {
+    (event: React.MouseEvent<HTMLElement>, selectionId: string): boolean => {
       const intent = getWorktreeSelectionIntent(event, navigator.userAgent.includes('Mac'))
       const result = updateWorktreeSelection({
-        visibleIds: renderedWorktreeIds,
+        visibleIds: renderedWorktreeSelectionIds,
         previousSelectedIds: selectedWorktreeIds,
         previousAnchorId: selectionAnchorId,
-        targetId: worktreeId,
+        targetId: selectionId,
         intent
       })
       setSelectedWorktreeIds(result.selectedIds)
@@ -6093,16 +6184,20 @@ const WorktreeList = React.memo(function WorktreeList({
       // Plain click navigates; modifier gestures are selection-only so a batch can build without switching away.
       return intent !== 'replace'
     },
-    [renderedWorktreeIds, selectedWorktreeIds, selectionAnchorId]
+    [renderedWorktreeSelectionIds, selectedWorktreeIds, selectionAnchorId]
   )
 
   const selectForContextMenu = useCallback(
-    (_event: React.MouseEvent<HTMLElement>, worktree: Worktree): readonly Worktree[] => {
-      if (selectedWorktreeIds.has(worktree.id) && selectedWorktreeIds.size > 1) {
+    (
+      _event: React.MouseEvent<HTMLElement>,
+      worktree: Worktree,
+      selectionId: string
+    ): readonly Worktree[] => {
+      if (selectedWorktreeIds.has(selectionId) && selectedWorktreeIds.size > 1) {
         return selectedWorktrees
       }
-      setSelectedWorktreeIds(new Set([worktree.id]))
-      setSelectionAnchorId(worktree.id)
+      setSelectedWorktreeIds(new Set([selectionId]))
+      setSelectionAnchorId(selectionId)
       return [worktree]
     },
     [selectedWorktreeIds, selectedWorktrees]
