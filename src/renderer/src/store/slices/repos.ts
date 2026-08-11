@@ -48,6 +48,7 @@ import { isPathInsideOrEqual } from '../../../../shared/cross-platform-path'
 import { getRepoIdFromWorktreeId } from '../../../../shared/worktree-id'
 import { selectProjectGroupRemovalTargets } from './project-group-removal-targets'
 import { reconcileFetchedRepos } from './repo-identity-reconcile'
+import { retainValidFilterRepoIds } from './repo-filter-selection'
 import {
   mergeSshRepoReadoptions,
   reconcileReadoptedSshRepoRows,
@@ -2102,7 +2103,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
             ? {}
             : { folderWorkspacePathStatuses: {} }),
           activeRepoId: s.activeRepoId && validRepoIds.has(s.activeRepoId) ? s.activeRepoId : null,
-          filterRepoIds: s.filterRepoIds.filter((projectId) => validRepoIds.has(projectId)),
+          filterRepoIds: retainValidFilterRepoIds(s.filterRepoIds, validRepoIds),
           setupScriptPromptDismissedRepoIds: filterSetupScriptPromptDismissalsToValidRepos(
             s.setupScriptPromptDismissedRepoIds,
             validRepoHostIdentities
@@ -2186,7 +2187,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           ...reconcileReadoptedSshWorktreeState(s, s.pendingSshRepoReadoptions),
           ...mergedProjectCompatibility,
           activeRepoId: s.activeRepoId && validRepoIds.has(s.activeRepoId) ? s.activeRepoId : null,
-          filterRepoIds: s.filterRepoIds.filter((projectId) => validRepoIds.has(projectId)),
+          filterRepoIds: retainValidFilterRepoIds(s.filterRepoIds, validRepoIds),
           setupScriptPromptDismissedRepoIds: filterSetupScriptPromptDismissalsToValidRepos(
             s.setupScriptPromptDismissedRepoIds,
             validRepoHostIdentities
@@ -2268,7 +2269,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         const validRepoHostIdentities = new Set(s.repos.map(getRepoHostIdentity))
         return {
           activeRepoId: s.activeRepoId && validRepoIds.has(s.activeRepoId) ? s.activeRepoId : null,
-          filterRepoIds: s.filterRepoIds.filter((projectId) => validRepoIds.has(projectId)),
+          filterRepoIds: retainValidFilterRepoIds(s.filterRepoIds, validRepoIds),
           setupScriptPromptDismissedRepoIds: filterSetupScriptPromptDismissalsToValidRepos(
             s.setupScriptPromptDismissedRepoIds,
             validRepoHostIdentities
