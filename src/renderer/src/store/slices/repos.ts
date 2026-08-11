@@ -792,6 +792,81 @@ function getExplicitProjectHostIds(
   return hostIds
 }
 
+function indexProjectHostSetupsByProjectId(
+  setups: readonly ProjectHostSetup[]
+): Map<string, ProjectHostSetup[]> {
+  const setupsByProjectId = new Map<string, ProjectHostSetup[]>()
+  for (const setup of setups) {
+    const existing = setupsByProjectId.get(setup.projectId)
+    if (existing) {
+      existing.push(setup)
+    } else {
+      setupsByProjectId.set(setup.projectId, [setup])
+    }
+  }
+  return setupsByProjectId
+}
+
+function getProjectSourceRepos(
+  project: Project,
+  reposById: ReadonlyMap<string, readonly Repo[]>
+): Repo[] {
+  const sourceRepos: Repo[] = []
+  for (const repoId of project.sourceRepoIds) {
+    for (const repo of reposById.get(repoId) ?? []) {
+      sourceRepos.push(repo)
+    }
+  }
+  return sourceRepos
+}
+
+// Why: the host-id resolvers rescan every setup and repo per project; feeding them the project's own slices keeps a catalog refresh linear.
+function createProjectHostIdIndex(
+  setups: readonly ProjectHostSetup[],
+  reposById: ReadonlyMap<string, readonly Repo[]>,
+  resolveHostIds: (
+    project: Project,
+    setups: readonly ProjectHostSetup[],
+    repos: readonly Repo[]
+  ) => Set<string>
+): (project: Project) => ReadonlySet<string> {
+  const noSetups: readonly ProjectHostSetup[] = []
+  const hostIdsByProject = new Map<Project, ReadonlySet<string>>()
+  let setupsByProjectId: Map<string, ProjectHostSetup[]> | null = null
+  return (project) => {
+    const cached = hostIdsByProject.get(project)
+    if (cached) {
+      return cached
+    }
+    setupsByProjectId ??= indexProjectHostSetupsByProjectId(setups)
+    const hostIds = resolveHostIds(
+      project,
+      setupsByProjectId.get(project.id) ?? noSetups,
+      getProjectSourceRepos(project, reposById)
+    )
+    hostIdsByProject.set(project, hostIds)
+    return hostIds
+  }
+}
+
+// Why: mergePreviousProjectMetadata scans the whole catalog's repo key set; a view holding only this pair's repos keeps that scan per-project.
+function restrictReposToProjectPair(
+  previous: Project,
+  current: Project,
+  reposById: ReadonlyMap<string, readonly Repo[]>
+): Map<string, readonly Repo[]> {
+  const restricted = new Map<string, readonly Repo[]>()
+  for (const project of [previous, current]) {
+    for (const repoId of project.sourceRepoIds) {
+      const matches = reposById.get(repoId)
+      if (matches) {
+        restricted.set(repoId, matches)
+      }
+    }
+  }
+  return restricted
+}
+
 function mergeFetchedProjectCompatibilityForHost({
   previous,
   fetched,
@@ -819,33 +894,54 @@ function mergeFetchedProjectCompatibilityForHost({
   const previousProjectById = new Map(previous.projects.map((project) => [project.id, project]))
   const reposById = getReposById(repos)
   const currentRepoIds = new Set(repos.map((repo) => repo.id))
-  const projectHasHost = (project: Project, setups: readonly ProjectHostSetup[]): boolean =>
-    getProjectHostIds(project, setups, repos).has(hostId)
-  const projectHasCurrentOwnerOutsideHost = (project: Project): boolean =>
-    [...getExplicitProjectHostIds(project, projectHostSetups, repos)].some(
-      (ownerHostId) => ownerHostId !== hostId
-    )
+  const fetchedProjectHostIds = createProjectHostIdIndex(
+    fetched.projectHostSetups,
+    reposById,
+    getProjectHostIds
+  )
+  const previousProjectHostIds = createProjectHostIdIndex(
+    previous.projectHostSetups,
+    reposById,
+    getProjectHostIds
+  )
+  const currentProjectOwnerHostIds = createProjectHostIdIndex(
+    projectHostSetups,
+    reposById,
+    getExplicitProjectHostIds
+  )
+  const projectHasCurrentOwnerOutsideHost = (project: Project): boolean => {
+    for (const ownerHostId of currentProjectOwnerHostIds(project)) {
+      if (ownerHostId !== hostId) {
+        return true
+      }
+    }
+    return false
+  }
   const fetchedProjects = fetched.projects
     .filter((project) => {
       const previousProject = previousProjectById.get(project.id)
       // Why: repo-derived compatibility projects include every host; a one-host refresh should only reconcile or prune that host's ownership.
       return (
-        projectHasHost(project, fetched.projectHostSetups) ||
-        (previousProject ? projectHasHost(previousProject, previous.projectHostSetups) : false)
+        fetchedProjectHostIds(project).has(hostId) ||
+        (previousProject ? previousProjectHostIds(previousProject).has(hostId) : false)
       )
     })
     .map((project) => {
       const previousProject = previousProjectById.get(project.id)
       return previousProject
-        ? mergePreviousProjectMetadata(previousProject, project, reposById, hostId)
+        ? mergePreviousProjectMetadata(
+            previousProject,
+            project,
+            restrictReposToProjectPair(previousProject, project, reposById),
+            hostId
+          )
         : projectWithCurrentSourceRepoIds(project, currentRepoIds)
     })
   const fetchedProjectIds = new Set(fetchedProjects.map((project) => project.id))
   const preservedProjects = previous.projects.filter(
     (project) =>
       !fetchedProjectIds.has(project.id) &&
-      (!getProjectHostIds(project, previous.projectHostSetups, repos).has(hostId) ||
-        projectHasCurrentOwnerOutsideHost(project))
+      (!previousProjectHostIds(project).has(hostId) || projectHasCurrentOwnerOutsideHost(project))
   )
   return {
     projects: mergeProjectCompatibilityProjects(
