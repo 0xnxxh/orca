@@ -137,6 +137,7 @@ afterEach(() => {
   })
   container.remove()
   document.body.innerHTML = ''
+  vi.resetModules()
 })
 
 async function renderDialog(): Promise<void> {
@@ -364,25 +365,48 @@ describe('WorktreeVisibilityDialog', () => {
     expect(document.querySelector('[role="alert"]')).toBeNull()
   })
 
-  it('keeps a reopened repo locked until its earlier row action settles', async () => {
+  it('keeps a remounted repo locked until its earlier row action settles', async () => {
     const update = deferred<boolean>()
     mocks.state.updateRepo.mockReturnValueOnce(update.promise)
     await renderDialog()
     mocks.state.fetchWorktrees.mockClear()
     await click(buttonWithText('Show'))
 
-    mocks.state.activeModal = null
-    await renderDialog()
-    mocks.state.activeModal = 'worktree-visibility'
+    await act(async () => root.render(null))
     await renderDialog()
 
     expect(document.body.textContent).toContain('Hidden worktrees (1)')
     expect(buttonWithText('Showing…').disabled).toBe(true)
     expect(mocks.state.fetchWorktrees).not.toHaveBeenCalled()
 
-    update.resolve(false)
-    await act(async () => update.promise)
+    await act(async () => {
+      update.resolve(false)
+      await update.promise
+      await Promise.resolve()
+    })
     expect(buttonWithText('Show').disabled).toBe(false)
+  })
+
+  it('keeps a remounted repo locked until its earlier toggle settles', async () => {
+    const update = deferred<boolean>()
+    mocks.state.updateRepo.mockReturnValueOnce(update.promise)
+    await renderDialog()
+    mocks.state.fetchWorktrees.mockClear()
+    await click(alwaysShowSwitch())
+
+    await act(async () => root.render(null))
+    await renderDialog()
+
+    expect(alwaysShowSwitch().disabled).toBe(true)
+    expect(buttonWithText('Show').disabled).toBe(true)
+    expect(mocks.state.fetchWorktrees).not.toHaveBeenCalled()
+
+    await act(async () => {
+      update.resolve(false)
+      await update.promise
+      await Promise.resolve()
+    })
+    expect(alwaysShowSwitch().disabled).toBe(false)
   })
 
   it('reports a failed persistent visibility update without starting a refresh', async () => {

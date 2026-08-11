@@ -29,6 +29,13 @@ import {
   type NewExternalWorktreesInboxActionState
 } from './new-external-worktrees-inbox-actions'
 import WorktreeVisibilityHelpPopover from './WorktreeVisibilityHelpPopover'
+import {
+  finishVisibilityMutation,
+  getActiveVisibilityMutation,
+  startVisibilityMutation,
+  subscribeToVisibilityMutation,
+  type ActiveVisibilityMutation
+} from './worktree-visibility-mutation-fence'
 
 export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const activeModal = useAppStore((s) => s.activeModal)
@@ -49,9 +56,10 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const isOpen = activeModal === 'worktree-visibility'
   const repoId = typeof modalData.repoId === 'string' ? modalData.repoId : ''
   const currentRepoIdRef = useRef(repoId)
-  const activeMutationByRepoRef = useRef(
-    new Map<string, { kind: 'row'; path: string } | { kind: 'toggle' }>()
-  )
+  const activeMutation = getActiveVisibilityMutation(repoId)
+  const effectiveBusyPath =
+    busyPath ?? (activeMutation?.kind === 'row' ? activeMutation.path : null)
+  const effectivelyToggling = isToggling || activeMutation?.kind === 'toggle'
   const repo = repos.find((candidate) => candidate.id === repoId) ?? null
   const detected = repoId ? detectedWorktreesByRepo[repoId] : undefined
   const showOther = repo
@@ -79,11 +87,28 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   }, [repoId])
 
   useEffect(() => {
-    const activeMutation = activeMutationByRepoRef.current.get(repoId)
+    const activeMutation = getActiveVisibilityMutation(repoId)
     setActionState(null)
     setBusyPath(activeMutation?.kind === 'row' ? activeMutation.path : null)
     setIsToggling(activeMutation?.kind === 'toggle')
-  }, [repoId])
+    if (!activeMutation) {
+      return
+    }
+    let cancelled = false
+    const unsubscribe = subscribeToVisibilityMutation(repoId, () => {
+      void fetchWorktrees(repoId, { requireAuthoritative: true }).then((refreshed) => {
+        if (!cancelled && currentRepoIdRef.current === repoId) {
+          setListState(refreshed ? 'ready' : 'failed')
+          setBusyPath(null)
+          setIsToggling(false)
+        }
+      })
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [fetchWorktrees, repoId])
 
   // Why: recovery must not trust a stale or fallback snapshot — an empty one
   // would read as "nothing hidden" for a worktree that is sitting on disk (#10324).
@@ -92,7 +117,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
       return
     }
     // Why: reopening mid-write must not start a scan that can absorb the mutation's confirmation refresh.
-    if (activeMutationByRepoRef.current.has(repoId)) {
+    if (getActiveVisibilityMutation(repoId)) {
       return
     }
     let cancelled = false
@@ -123,29 +148,33 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
       if (!repo) {
         return
       }
-      activeMutationByRepoRef.current.set(repo.id, { kind: 'row', path: worktreePath })
+      const mutation: ActiveVisibilityMutation = { kind: 'row', path: worktreePath }
+      startVisibilityMutation(repo.id, mutation)
       setBusyPath(worktreePath)
-      await importNewExternalWorktreeInboxPaths({
-        projectId: repo.id,
-        repo,
-        worktreePaths: [worktreePath],
-        updateRepo,
-        fetchWorktrees,
-        setInboxState: (_projectId, state) => {
-          if (currentRepoIdRef.current !== repo.id) {
-            return
+      try {
+        await importNewExternalWorktreeInboxPaths({
+          projectId: repo.id,
+          repo,
+          worktreePaths: [worktreePath],
+          updateRepo,
+          fetchWorktrees,
+          setInboxState: (_projectId, state) => {
+            if (currentRepoIdRef.current !== repo.id) {
+              return
+            }
+            setActionState(state)
+            // Why: a null state is only reachable after a successful authoritative
+            // refetch, which supersedes an earlier failed open-time scan.
+            if (state === null) {
+              setListState('ready')
+            }
           }
-          setActionState(state)
-          // Why: a null state is only reachable after a successful authoritative
-          // refetch, which supersedes an earlier failed open-time scan.
-          if (state === null) {
-            setListState('ready')
-          }
+        })
+      } finally {
+        finishVisibilityMutation(repo.id, mutation)
+        if (currentRepoIdRef.current === repo.id) {
+          setBusyPath(null)
         }
-      })
-      activeMutationByRepoRef.current.delete(repo.id)
-      if (currentRepoIdRef.current === repo.id) {
-        setBusyPath(null)
       }
     },
     [fetchWorktrees, repo, updateRepo]
@@ -156,7 +185,8 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
       if (!repoId || checked === alwaysShow) {
         return
       }
-      activeMutationByRepoRef.current.set(repoId, { kind: 'toggle' })
+      const mutation: ActiveVisibilityMutation = { kind: 'toggle' }
+      startVisibilityMutation(repoId, mutation)
       setActionState(null)
       setIsToggling(true)
       try {
@@ -186,7 +216,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           setListState(refreshed ? 'ready' : 'failed')
         }
       } finally {
-        activeMutationByRepoRef.current.delete(repoId)
+        finishVisibilityMutation(repoId, mutation)
         if (currentRepoIdRef.current === repoId) {
           setIsToggling(false)
         }
@@ -253,7 +283,9 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
             <Switch
               id={alwaysShowSwitchId}
               checked={alwaysShow}
-              disabled={busyPath !== null || isToggling || listState === 'checking'}
+              disabled={
+                effectiveBusyPath !== null || effectivelyToggling || listState === 'checking'
+              }
               onCheckedChange={(checked) => void handleAlwaysShowChange(checked)}
             />
           </Label>
@@ -277,7 +309,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
               type="button"
               variant="outline"
               size="sm"
-              disabled={busyPath !== null || isToggling}
+              disabled={effectiveBusyPath !== null || effectivelyToggling}
               onClick={handleRetryList}
             >
               {translate(
@@ -346,10 +378,14 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
                           type="button"
                           variant="outline"
                           size="sm"
-                          disabled={busyPath !== null || isToggling || listState === 'checking'}
+                          disabled={
+                            effectiveBusyPath !== null ||
+                            effectivelyToggling ||
+                            listState === 'checking'
+                          }
                           onClick={() => void handleShowWorktree(worktree.path)}
                         >
-                          {busyPath === worktree.path
+                          {effectiveBusyPath === worktree.path
                             ? translate(
                                 'auto.components.sidebar.WorktreeVisibilityDialog.2f80cd4b97',
                                 'Showing…'
