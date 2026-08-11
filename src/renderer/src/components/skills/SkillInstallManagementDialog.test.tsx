@@ -68,6 +68,9 @@ function skillsApi(
   versions: SkillCloudVersion[],
   details = packageDetails(versions)
 ) {
+  let progressListener:
+    | ((progress: { operationId: string; phase: 'authorizing' | 'installing' }) => void)
+    | null = null
   return {
     listManagedInstalls: vi.fn().mockResolvedValue({ status: 'ok', value: [installed] }),
     getPackage: vi.fn().mockResolvedValue({ status: 'ok', value: details }),
@@ -94,7 +97,16 @@ function skillsApi(
     replacePackageAccess: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
     revokeShare: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
     deletePackageVersion: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
-    deletePackage: vi.fn().mockResolvedValue({ status: 'ok', value: undefined })
+    deletePackage: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
+    cancelInstall: vi.fn().mockResolvedValue({ cancelled: true }),
+    onInstallProgress: vi.fn((listener) => {
+      progressListener = listener
+      return () => {
+        progressListener = null
+      }
+    }),
+    emitInstallProgress: (progress: { operationId: string; phase: 'authorizing' | 'installing' }) =>
+      progressListener?.(progress)
   }
 }
 
@@ -228,5 +240,42 @@ describe('SkillInstallManagementDialog', () => {
     await screen.findByText('Cloud package deleted. The installed copy remains on this machine.')
     expect(skills.deletePackage).toHaveBeenCalledWith('pkg_1')
     expect(screen.getByText('global · ver_2')).toBeTruthy()
+  })
+
+  it('retries incomplete coverage for the currently installed version', async () => {
+    const skills = skillsApi(install('ver_1'), [
+      version('ver_2', '2026-08-12T00:00:00.000Z'),
+      version('ver_1', '2026-08-11T00:00:00.000Z')
+    ])
+    skills.installPackageVersion.mockResolvedValue({
+      status: 'ok',
+      value: {
+        operationId: 'operation_partial',
+        status: 'partial',
+        name: 'private-skill',
+        packageDigest: DIGEST,
+        placements: [
+          {
+            provider: 'codex',
+            path: '/redacted-in-ui',
+            topology: 'provider-alias',
+            status: 'failed',
+            errorCategory: 'skill-placement-permission-denied'
+          }
+        ]
+      }
+    })
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
+    await selectInstall('ver_1')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install selected version' }))
+    await screen.findByRole('button', { name: 'Retry incomplete coverage' })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry incomplete coverage' }))
+
+    await waitFor(() => expect(skills.installPackageVersion).toHaveBeenCalledTimes(2))
+    expect(skills.installPackageVersion.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ packageId: 'pkg_1', versionId: 'ver_2' })
+    )
   })
 })

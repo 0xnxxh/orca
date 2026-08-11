@@ -107,6 +107,9 @@ export async function installSharedSkill(
     detectedProviders: input.detectedProviders
   })
   for (const destination of destinations) {
+    if (destination.readsCanonicalRoot) {
+      continue
+    }
     if (input.signal?.aborted) {
       placements.push({
         provider: destination.provider,

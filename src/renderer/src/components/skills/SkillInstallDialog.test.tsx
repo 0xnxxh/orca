@@ -44,6 +44,9 @@ function version(): SkillCloudVersion {
 }
 
 function installApi(previewInstall: ReturnType<typeof vi.fn>) {
+  let progressListener:
+    | ((progress: { operationId: string; phase: 'authorizing' | 'installing' }) => void)
+    | null = null
   return {
     resolveShare: vi
       .fn()
@@ -60,7 +63,15 @@ function installApi(previewInstall: ReturnType<typeof vi.fn>) {
       }
     }),
     cancelInstall: vi.fn().mockResolvedValue({ cancelled: true }),
-    listWslDistros: vi.fn().mockResolvedValue([])
+    listWslDistros: vi.fn().mockResolvedValue([]),
+    onInstallProgress: vi.fn((listener) => {
+      progressListener = listener
+      return () => {
+        progressListener = null
+      }
+    }),
+    emitInstallProgress: (progress: { operationId: string; phase: 'authorizing' | 'installing' }) =>
+      progressListener?.(progress)
   }
 }
 
@@ -201,5 +212,52 @@ describe('SkillInstallDialog', () => {
     })
     await screen.findByText('Installation cancelled.')
     expect(screen.getByRole('button', { name: 'Retry install' })).toBeDefined()
+  })
+
+  it('announces install phases and allows incomplete provider coverage to retry', async () => {
+    const previewInstall = vi.fn().mockResolvedValue({
+      status: 'ok',
+      value: {
+        name: 'private-skill',
+        packageDigest: DIGEST,
+        destinationIdentity: 'local:global',
+        currentState: 'missing',
+        providers: []
+      }
+    })
+    let settleInstall: ((value: unknown) => void) | undefined
+    const skills = installApi(previewInstall)
+    skills.installShare.mockImplementation(
+      () => new Promise((resolve) => (settleInstall = resolve)) as never
+    )
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+    await inspectSkill()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install skill' }))
+    await screen.findByText('Authorizing package access…')
+    const operationId = skills.installShare.mock.calls[0]?.[0].operationId
+    skills.emitInstallProgress({ operationId, phase: 'installing' })
+    await screen.findByText('Downloading, verifying, and installing…')
+    settleInstall?.({
+      status: 'ok',
+      value: {
+        operationId,
+        status: 'partial',
+        name: 'private-skill',
+        packageDigest: DIGEST,
+        placements: [
+          {
+            provider: 'codex',
+            path: '/redacted-in-ui',
+            topology: 'provider-alias',
+            status: 'failed',
+            errorCategory: 'skill-placement-permission-denied'
+          }
+        ]
+      }
+    })
+
+    await screen.findByRole('button', { name: 'Retry install' })
   })
 })

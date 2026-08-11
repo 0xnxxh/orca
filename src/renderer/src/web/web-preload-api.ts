@@ -3100,6 +3100,7 @@ function createSkillsApi(): NonNullable<Partial<PreloadApi>['skills']> {
     deletePackage: () =>
       Promise.reject(new Error('Skill package management requires the desktop app.')),
     listWslDistros: () => Promise.resolve([]),
+    onInstallProgress: () => () => {},
     onShareProgress: () => () => {},
     onUpdateRun: () => () => {}
   }

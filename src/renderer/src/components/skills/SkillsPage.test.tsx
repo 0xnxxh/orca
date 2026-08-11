@@ -37,6 +37,10 @@ function discoveryResult(names: string[]): SkillDiscoveryResult {
   return { skills: names.map(skill), sources: [], scannedAt: 1 }
 }
 
+function skillsApi(discover: ReturnType<typeof vi.fn>) {
+  return { discover, onInstallProgress: () => () => undefined }
+}
+
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((resolvePromise) => {
@@ -115,7 +119,7 @@ describe('SkillsPage', () => {
     )
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { skills: { discover }, runtimeEnvironments: { call } }
+      value: { skills: skillsApi(discover), runtimeEnvironments: { call } }
     })
     setRuntimeOwner('env-1')
 
@@ -142,7 +146,7 @@ describe('SkillsPage', () => {
     )
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { skills: { discover }, runtimeEnvironments: { call } }
+      value: { skills: skillsApi(discover), runtimeEnvironments: { call } }
     })
 
     await renderPage()
@@ -164,7 +168,7 @@ describe('SkillsPage', () => {
     const call = vi.fn()
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { skills: { discover }, runtimeEnvironments: { call } }
+      value: { skills: skillsApi(discover), runtimeEnvironments: { call } }
     })
     useAppStore.setState({ runtimeEnvironmentCatalogSettled: false })
 

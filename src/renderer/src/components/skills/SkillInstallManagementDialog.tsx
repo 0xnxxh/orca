@@ -26,6 +26,7 @@ import type { SkillCloudPackageDetails } from '../../../../shared/skill-cloud-co
 import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkills'
 import { SkillCloudManagementActions } from './SkillCloudManagementActions'
 import { skillInstallResultLabel } from './skill-install-result-label'
+import { useSkillInstallProgress } from './skill-install-progress-state'
 
 function installKey(install: ManagedSkillInstall): string {
   return `${install.destinationIdentity}:${install.name}:${install.packageId}`
@@ -51,7 +52,7 @@ export function SkillInstallManagementDialog({
   const [result, setResult] = useState<SkillInstallResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [activeOperationId, setActiveOperationId] = useState<string | null>(null)
+  const installProgress = useSkillInstallProgress()
 
   const selected = useMemo(
     () => installs.find((install) => installKey(install) === selectedKey) ?? null,
@@ -145,7 +146,7 @@ export function SkillInstallManagementDialog({
     setError(null)
     setNotice(null)
     const operationId = crypto.randomUUID()
-    setActiveOperationId(operationId)
+    installProgress.begin(operationId)
     try {
       const operation = await window.api.skills.installPackageVersion({
         packageId: selected.packageId,
@@ -166,23 +167,25 @@ export function SkillInstallManagementDialog({
       setResult(operation.value)
       if (!['conflict', 'failed', 'cancelled'].includes(operation.value.status)) {
         notifyInstalledAgentSkillsChanged()
-        await load()
+        if (operation.value.status !== 'partial') {
+          await load()
+        }
       }
     } catch (cause) {
       console.warn('[skills] version installation failed:', cause)
       setError('Orca could not verify the requested version.')
     } finally {
-      setActiveOperationId(null)
+      installProgress.finish()
       setBusy(false)
     }
   }
 
   const cancelInstall = async (): Promise<void> => {
-    if (!activeOperationId) {
+    if (!installProgress.activeOperationId) {
       return
     }
     const cancelled = await window.api.skills.cancelInstall({
-      operationId: activeOperationId,
+      operationId: installProgress.activeOperationId,
       ...(environmentId === 'local' || environmentId.startsWith('ssh:') ? {} : { environmentId })
     })
     if (!cancelled.cancelled) {
@@ -340,7 +343,9 @@ export function SkillInstallManagementDialog({
             <div className="flex flex-wrap gap-2">
               <Button
                 size="sm"
-                disabled={busy || versionId === selected.versionId}
+                disabled={
+                  busy || (versionId === selected.versionId && result?.status !== 'partial')
+                }
                 onClick={() => void installVersion()}
               >
                 {busy ? (
@@ -348,9 +353,11 @@ export function SkillInstallManagementDialog({
                 ) : (
                   <RotateCcw className="size-4" />
                 )}
-                Install selected version
+                {result?.status === 'partial'
+                  ? 'Retry incomplete coverage'
+                  : 'Install selected version'}
               </Button>
-              {activeOperationId ? (
+              {installProgress.activeOperationId ? (
                 <Button variant="secondary" size="sm" onClick={() => void cancelInstall()}>
                   Cancel installation
                 </Button>
@@ -375,6 +382,11 @@ export function SkillInstallManagementDialog({
         {result ? (
           <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
             {skillInstallResultLabel(result)}
+          </p>
+        ) : null}
+        {installProgress.phaseLabel ? (
+          <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+            {installProgress.phaseLabel}
           </p>
         ) : null}
         {error ? (

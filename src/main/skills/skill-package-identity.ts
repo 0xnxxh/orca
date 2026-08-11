@@ -234,6 +234,9 @@ export async function observeSkillPackage(
         }
         await visit(absolutePath, depth + 1)
       } else if (fileStat.isFile()) {
+        if (fileStat.nlink !== 1) {
+          throw new Error('skill-package-link')
+        }
         if (files.length >= limits.maximumFiles) {
           throw new Error('skill-package-file-count-limit')
         }

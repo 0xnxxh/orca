@@ -59,9 +59,9 @@ does not mean the surrounding phase is complete.
 - [x] Decide Orca will not depend on the upstream CLI or an unsupported programmatic API.
 - [x] Decide V1 accepts Orca package sources only; Git, npm, and community registries remain with
       existing tools.
-- [ ] Add an architecture decision record covering the reference-only boundary and review it with
+- [ ] Review the architecture decision record covering the reference-only boundary with
       engineering and legal owners.
-- [ ] Add a review check that flags any proposed copied or mechanically translated upstream
+- [x] Add a review check that flags any proposed copied or mechanically translated upstream
       material so attribution and licensing can be reconsidered before merge.
 - [ ] Assign desktop, runtime, Cloud API, Terraform, security, design, and release owners.
 - [ ] Confirm the first release ends after WSL and SSH support; keep team reconciliation as a later
@@ -95,12 +95,12 @@ does not mean the surrounding phase is complete.
 - [x] Inventory current desktop IPC and remote skill RPC registration.
 - [x] Inventory existing SSH execution and file-transfer providers and identify the host-side
       installer entry point.
-- [ ] Research official documentation for every initially supported agent's global and project
+- [x] Research official documentation for every initially supported agent's global and project
       skill directories.
 - [ ] Verify each provider path with a real installation on every supported platform.
-- [ ] Record whether each provider reads `.agents/skills` directly, how it is detected, and which
+- [x] Record whether each provider reads `.agents/skills` directly, how it is detected, and which
       alias mechanisms it supports.
-- [ ] Add a normal reviewed maintenance process for provider registry changes; do not create an
+- [x] Add a normal reviewed maintenance process for provider registry changes; do not create an
       upstream synchronization job.
 
 ## 1. Define package and install contracts
@@ -201,10 +201,10 @@ does not mean the surrounding phase is complete.
 - [x] Test executable-mode preservation and Windows's mode limitations.
 - [x] Test missing, malformed, and identity-mismatched `SKILL.md` files.
 - [ ] Test every size, count, and depth boundary at limit, one below, and one above.
-- [ ] Test traversal, absolute paths, drive paths, Unicode/case collisions, duplicate paths, all
+- [x] Test traversal, absolute paths, drive paths, Unicode/case collisions, duplicate paths, all
       rejected link and special-file types, and encrypted entries.
 - [x] Test truncated archives and invalid tar and content checksums.
-- [ ] Fuzz archive path normalization and envelope parsing with bounded resources.
+- [x] Fuzz archive path normalization and envelope parsing with bounded resources.
 
 ### Phase 2 package gate
 
@@ -231,7 +231,7 @@ does not mean the surrounding phase is complete.
 
 - [x] Add `src/main/skills/skill-package-download.ts`.
 - [x] Add `src/main/skills/skill-install-service.ts`.
-- [ ] Validate request shape, schema, capability, package identity, scope, destination, and policy
+- [x] Validate request shape, schema, capability, package identity, scope, destination, and policy
       before download or mutation.
 - [x] Recover prior journals for the same destination before planning a new operation.
 - [x] Acquire a filesystem-backed cross-process lock keyed by canonical destination.
@@ -303,7 +303,7 @@ does not mean the surrounding phase is complete.
 - [x] Add `src/main/skills/skill-provider-destinations.ts`.
 - [x] Add data-only records for Orca agent ID, canonical-root support, global/project resolvers,
       detection evidence, and platform alias support.
-- [ ] Populate only provider paths independently verified from official documentation and real
+- [x] Populate only provider paths independently verified from official documentation and real
       installations.
 - [x] Detect an agent before creating its provider-specific configuration root.
 - [x] Avoid modifying roots for agents that consume `.agents/skills` directly.
@@ -356,14 +356,14 @@ does not mean the surrounding phase is complete.
 
 ### Recovery failure injection
 
-- [ ] Inject failure before and after every journal transition.
+- [x] Inject failure before and after every journal transition.
 - [x] Verify partial downloads and extraction staging are deleted.
 - [x] Verify a moved destination is restored from backup.
 - [x] Verify a placed destination without a receipt is completed or restored according to journal
       state.
 - [x] Verify a published receipt with an incomplete journal is finalized safely.
-- [ ] Verify interrupted placement reconciliation preserves the canonical install and retries.
-- [ ] Test cancellation during download, extraction, staging copy, commit, provenance, and
+- [x] Verify interrupted placement reconciliation preserves the canonical install and retries.
+- [x] Test cancellation during download, extraction, staging copy, commit, provenance, and
       placement reconciliation.
 
 ## 6. Provision GCP infrastructure
@@ -393,10 +393,11 @@ does not mean the surrounding phase is complete.
 - [x] Keep object versioning disabled and record object generations in PostgreSQL.
 - [x] Add a one-day deletion lifecycle for `uploads/` quarantine objects only.
 - [x] Add exact approved production and development Orca origins to CORS; never use `*`.
-- [ ] Allow only required signed POST upload and GET/HEAD download behavior and response headers.
+- [x] Allow only required signed POST upload and GET/HEAD download behavior and response headers.
 - [x] Keep the bucket off public custom domains.
 - [x] Define immutable final keys as
-      `packages/v1/sha256/<prefix>/<package-digest>/package.tar.gz`.
+      `packages/v1/sha256/<prefix>/<archive-sha256>/package.tar.gz`, with the logical package digest
+      verified in object metadata and PostgreSQL.
 - [x] Define tenant-bound random quarantine keys as `uploads/<upload-id>/package.tar.gz`.
 
 ### Database and secret
@@ -428,13 +429,13 @@ does not mean the surrounding phase is complete.
 - [ ] Extend `orca-cloud-api` in `us-central1`; do not create a separate V1 worker service.
 - [x] Configure bucket, 40 MiB compressed limit, 15-minute upload TTL, five-minute download TTL,
       fixed finalize concurrency, and skill database URL.
-- [ ] Reuse existing auth base URL and application CORS configuration.
-- [ ] Stream validation with fixed buffers under the existing 512 MiB memory limit.
+- [x] Reuse existing auth base URL and application CORS configuration.
+- [x] Stream validation with fixed buffers under the existing 512 MiB memory limit.
 - [x] Add a small per-instance finalization semaphore and retryable `429` or `503` with
       `Retry-After` when saturated.
-- [ ] Preserve current service scaling initially and tune only from measured CPU, latency,
+- [x] Preserve current service scaling initially and tune only from measured CPU, latency,
       database, and error data.
-- [ ] Define criteria for splitting finalization into a worker service if it harms existing API
+- [x] Define criteria for splitting finalization into a worker service if it harms existing API
       traffic.
 
 ### Terraform review and apply
@@ -495,7 +496,7 @@ does not mean the surrounding phase is complete.
 - [x] Stream once to calculate archive SHA-256 and validate envelope, manifest, paths, limits, and
       package digest.
 - [x] Promote with an if-absent generation precondition to the content-addressed final key.
-- [ ] If the final key exists, verify recorded identity without exposing cross-tenant
+- [x] If the final key exists, verify recorded identity without exposing cross-tenant
       deduplication.
 - [x] Publish the version and complete the upload in a PostgreSQL transaction.
 - [x] Delete quarantine bytes after success and rely on lifecycle cleanup for abandonment.
@@ -519,15 +520,15 @@ does not mean the surrounding phase is complete.
 - [x] Set only response content type and safe attachment filename overrides.
 - [x] Grant no list or write capability.
 - [x] Return expected archive identity and byte count beside the grant for runtime verification.
-- [ ] Test revocation immediately blocks new grants while already issued URLs expire within five
+- [x] Test revocation immediately blocks new grants while already issued URLs expire within five
       minutes.
 
 ### Cloud tests
 
 - [x] Test organization, user, pinned-link, expiry, and revocation ACL behavior.
-- [ ] Test membership removal between preview, grant, and download.
+- [x] Test membership removal between preview, grant, and download.
 - [x] Test expired, reused, wrong-tenant, wrong-key, wrong-size, and wrong-hash uploads.
-- [ ] Test malformed, oversized, and resource-exhausting archives during finalization.
+- [x] Test malformed, oversized, and resource-exhausting archives during finalization.
 - [x] Test finalization semaphore saturation and retry behavior.
 - [x] Test concurrent idempotent mutations and partial database/GCS failures.
 - [ ] Test deduplication without cross-tenant timing or response disclosure.
@@ -568,10 +569,10 @@ does not mean the surrounding phase is complete.
 - [x] Allow selection of connected machine, Git worktree, or plain folder workspace.
 - [x] Show detected-agent coverage and canonical/provider topology before commit.
 - [x] Show installed-state conflicts and explicit resolution choices.
-- [ ] Show phase progress without exposing grants or local private paths.
+- [x] Show phase progress without exposing grants or local private paths.
 - [x] Render installed, unchanged, updated, partial, conflict, unsupported, cancelled, and failed
       results with actionable recovery.
-- [ ] Add incomplete-coverage retry.
+- [x] Add incomplete-coverage retry.
 
 ### Skills page lifecycle
 
@@ -618,7 +619,7 @@ does not mean the surrounding phase is complete.
 - [x] Hide or disable remote install when `skills.install.v1` is absent.
 - [x] Show a specific host-update-required message instead of attempting the RPC.
 - [x] Test new client/old server and old client/new server.
-- [ ] Test optional-field omission in both directions.
+- [x] Test optional-field omission in both directions.
 - [x] Test a capability changing after preview but before execution.
 - [x] Confirm older servers retain skill discovery and ignore no unknown stream opcode because none
       is introduced.
@@ -770,11 +771,11 @@ directory was used for destructive failure injection.
 
 - [x] Add independent server-side flags for upload grants, download grants, and remote
       installation.
-- [ ] Verify disabling Cloud grants does not break skill discovery or already installed skills.
+- [x] Verify disabling Cloud grants does not break skill discovery or already installed skills.
 - [x] Document finalization saturation, GCS/IAM signing failure, database outage, corrupt package,
       orphan reconciliation, and rollback response.
 - [x] Document coordinated PostgreSQL point-in-time and GCS generation/soft-delete restoration.
-- [ ] Document package/share deletion, organization departure, legal retention, and audit handling.
+- [x] Document package/share deletion, organization departure, legal retention, and audit handling.
 - [x] Document how and when to split finalization into its own service.
 
 ## 13. Complete automated and end-to-end validation

@@ -224,6 +224,9 @@ export function parseSkillTarHeader(header: Buffer): SkillTarReadEntry | null {
     return null
   }
   validateTarChecksum(header)
+  if (readString(header, 257, 6) !== 'ustar' || readString(header, 263, 2) !== '00') {
+    throw new Error('skill-package-tar-format-invalid')
+  }
   const type = header[156]
   if (type !== 0 && type !== '0'.charCodeAt(0)) {
     throw new Error('skill-package-tar-entry-type')

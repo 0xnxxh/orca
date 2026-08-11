@@ -202,4 +202,83 @@ describe('skill install service', () => {
     })
     expect(retried.status).toBe('removed')
   })
+
+  it('preserves the committed canonical install when cancellation reaches provider placement', async () => {
+    const { root, input } = await fixture()
+    const controller = new AbortController()
+    const canonical = join(root, 'home', '.agents', 'skills', 'test-skill')
+    const cancellingFilesystem = {
+      ...nativeSkillInstallFilesystem,
+      rename: async (source: string, target: string): Promise<void> => {
+        await nativeSkillInstallFilesystem.rename(source, target)
+        if (target === canonical) {
+          controller.abort()
+        }
+      }
+    }
+
+    const interrupted = await installSharedSkill({
+      ...input,
+      filesystem: cancellingFilesystem,
+      signal: controller.signal
+    })
+
+    expect(interrupted.status).toBe('partial')
+    expect(interrupted.placements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ provider: 'agent-skills', status: 'installed' }),
+        expect.objectContaining({
+          provider: 'claude',
+          status: 'skipped',
+          errorCategory: 'skill-placement-cancelled'
+        })
+      ])
+    )
+    expect(interrupted.placements.some((placement) => placement.provider === 'codex')).toBe(false)
+    expect(await readFile(join(canonical, 'SKILL.md'), 'utf8')).toContain('# Test')
+
+    const retried = await installSharedSkill({ ...input, operationId: 'operation_retry' })
+    expect(retried.status).toBe('unchanged')
+    expect(await realpath(join(root, 'home', '.claude', 'skills', 'test-skill'))).toBe(
+      await realpath(canonical)
+    )
+  })
+
+  it('cleans an interrupted provider copy and repairs coverage on retry', async () => {
+    const { root, input } = await fixture()
+    const canonical = join(root, 'home', '.agents', 'skills', 'test-skill')
+    const claude = join(root, 'home', '.claude', 'skills', 'test-skill')
+    let deniedCopyObservation = false
+    const interruptedFilesystem = {
+      ...nativeSkillInstallFilesystem,
+      createAlias: async () => {
+        throw new Error('injected-alias-denial')
+      },
+      observeSkill: async (path: string) => {
+        if (path === claude && !deniedCopyObservation) {
+          deniedCopyObservation = true
+          throw new Error('injected-copy-interruption')
+        }
+        return nativeSkillInstallFilesystem.observeSkill(path)
+      }
+    }
+
+    const interrupted = await installSharedSkill({ ...input, filesystem: interruptedFilesystem })
+    expect(interrupted).toMatchObject({
+      status: 'partial',
+      placements: expect.arrayContaining([
+        expect.objectContaining({
+          provider: 'claude',
+          status: 'failed',
+          errorCategory: 'skill-placement-create-failed'
+        })
+      ])
+    })
+    await expect(lstat(claude)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(canonical, 'SKILL.md'), 'utf8')).toContain('# Test')
+
+    const retried = await installSharedSkill({ ...input, operationId: 'operation_retry' })
+    expect(retried.status).toBe('unchanged')
+    expect(await realpath(claude)).toBe(await realpath(canonical))
+  })
 })

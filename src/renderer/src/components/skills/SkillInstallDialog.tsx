@@ -25,6 +25,7 @@ import {
   SkillShareLinkInputForm
 } from './SkillInstallReviewContent'
 import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkills'
+import { useSkillInstallProgress } from './skill-install-progress-state'
 
 export function SkillInstallDialog({
   open,
@@ -54,7 +55,7 @@ export function SkillInstallDialog({
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<SkillInstallResult | null>(null)
   const [destinationPreview, setDestinationPreview] = useState<SkillInstallPreview | null>(null)
-  const [activeOperationId, setActiveOperationId] = useState<string | null>(null)
+  const installProgress = useSkillInstallProgress()
 
   const workspaceChoices = useMemo(
     () => skillInstallWorkspaceChoices({ environmentId, folderWorkspaces, repos, worktreesByRepo }),
@@ -153,7 +154,7 @@ export function SkillInstallDialog({
         }
       }
       const operationId = crypto.randomUUID()
-      setActiveOperationId(operationId)
+      installProgress.begin(operationId)
       const operation = await window.api.skills.installShare({
         shareId: preview.shareId,
         operationId,
@@ -181,17 +182,17 @@ export function SkillInstallDialog({
       console.warn('[skills] install failed:', cause)
       setError('Installation failed before Orca could verify the requested version.')
     } finally {
-      setActiveOperationId(null)
+      installProgress.finish()
       setBusy(false)
     }
   }
 
   const cancelInstall = async (): Promise<void> => {
-    if (!activeOperationId) {
+    if (!installProgress.activeOperationId) {
       return
     }
     const cancelled = await window.api.skills.cancelInstall({
-      operationId: activeOperationId,
+      operationId: installProgress.activeOperationId,
       ...(environmentId === 'local' || environmentId.startsWith('ssh:') ? {} : { environmentId })
     })
     if (!cancelled.cancelled) {
@@ -271,16 +272,22 @@ export function SkillInstallDialog({
             {error}
           </p>
         ) : null}
+        {installProgress.phaseLabel ? (
+          <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
+            {installProgress.phaseLabel}
+          </p>
+        ) : null}
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={close} disabled={busy}>
             Close
           </Button>
-          {busy && activeOperationId ? (
+          {busy && installProgress.activeOperationId ? (
             <Button type="button" variant="secondary" onClick={() => void cancelInstall()}>
               Cancel installation
             </Button>
           ) : null}
-          {preview && (!result || ['conflict', 'failed', 'cancelled'].includes(result.status)) ? (
+          {preview &&
+          (!result || ['conflict', 'partial', 'failed', 'cancelled'].includes(result.status)) ? (
             <Button
               type="button"
               disabled={busy || (scope === 'workspace' && !workspace)}

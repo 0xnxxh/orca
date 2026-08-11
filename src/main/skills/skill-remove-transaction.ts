@@ -38,6 +38,13 @@ export type LocalSkillRemovalInput = {
   filesystem?: SkillInstallFilesystem
 }
 
+export type SkillRemovalTransactionDependencies = {
+  onJournalTransition?: (
+    phase: SkillRemovalJournalV1['phase'],
+    boundary: 'before' | 'after'
+  ) => Promise<void>
+}
+
 function lockPath(stateDirectory: string, canonicalPath: string): string {
   return join(stateDirectory, 'locks', `${skillInstallStateKey(canonicalPath)}.lock`)
 }
@@ -84,8 +91,19 @@ async function inspectCanonicalRemoval(
   return observed?.observedDigest === receipt.packageDigest ? 'owned' : 'modified'
 }
 
+async function persistRemovalJournal(
+  path: string,
+  journal: SkillRemovalJournalV1,
+  dependencies: SkillRemovalTransactionDependencies
+): Promise<void> {
+  await dependencies.onJournalTransition?.(journal.phase, 'before')
+  await writeSkillStateFile(path, journal)
+  await dependencies.onJournalTransition?.(journal.phase, 'after')
+}
+
 export async function removeLocalSharedSkill(
-  input: LocalSkillRemovalInput
+  input: LocalSkillRemovalInput,
+  dependencies: SkillRemovalTransactionDependencies = {}
 ): Promise<SkillInstallResult> {
   const filesystem = input.filesystem ?? nativeSkillInstallFilesystem
   const releaseLock = await acquireSkillInstallLock({
@@ -178,17 +196,17 @@ export async function removeLocalSharedSkill(
       allowedProviderRoots: [...input.allowedProviderRoots]
     }
     const statePath = skillRemovalJournalPath(input.stateDirectory, input.canonicalPath)
-    await writeSkillStateFile(statePath, journal)
+    await persistRemovalJournal(statePath, journal, dependencies)
     for (const move of moves) {
       journal.movedCount += 1
       journal.phase = 'moving'
-      await writeSkillStateFile(statePath, journal)
+      await persistRemovalJournal(statePath, journal, dependencies)
       await filesystem.rename(move.sourcePath, move.backupPath)
       removedPlacements.push({ ...move.placement, status: 'removed' })
     }
     await removeSkillInstallReceipt(input.stateDirectory, input.canonicalPath)
     journal.phase = 'receipt-removed'
-    await writeSkillStateFile(statePath, journal)
+    await persistRemovalJournal(statePath, journal, dependencies)
     await recoverSkillRemovalTransaction(input.stateDirectory, input.canonicalPath, filesystem)
     return {
       operationId: input.operationId,

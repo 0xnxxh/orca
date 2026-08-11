@@ -10,6 +10,7 @@ import {
   SkillInstallDestinationSchema,
   type SkillInstallRequest
 } from '../../shared/skill-install-contract'
+import type { SkillInstallProgress } from '../../shared/skill-sharing-contract'
 import { SkillDiscoveryTargetSchema, type SkillDiscoveryResult } from '../../shared/skills'
 import type { SkillCloudDownloadGrant } from '../../shared/skill-cloud-contract'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
@@ -17,6 +18,7 @@ import { installSkillOnRemoteRuntime } from '../skills/skill-remote-install-serv
 import { classifySkillCloudInstallTarget } from '../skills/skill-cloud-install-target'
 import { SkillSharePreparationService } from '../skills/skill-share-preparation-service'
 import { skillInstallFailureFromError } from '../skills/skill-install-operation-error'
+import { supportsSkillRuntimeInstall } from '../skills/skill-runtime-capability'
 import {
   callRuntimeEnvironment,
   getRuntimeEnvironmentStatus
@@ -191,23 +193,53 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
   ipcMain.handle('skills:createDownloadGrant', (_event, shareId: unknown) =>
     runtime.createSkillDownloadGrant(z.string().min(1).max(128).parse(shareId), {})
   )
-  ipcMain.handle('skills:installShare', async (_event, value: unknown) => {
-    const input = shareInstallSchema.parse(value)
+  const sendProgress = (
+    event: Electron.IpcMainInvokeEvent,
+    progress: SkillInstallProgress
+  ): void => {
+    if (!event.sender.isDestroyed()) {
+      event.sender.send('skills:installProgress', progress)
+    }
+  }
+  ipcMain.handle('skills:installShare', async (event, value: unknown) => {
+    const parsed = shareInstallSchema.parse(value)
+    const input = { ...parsed, operationId: parsed.operationId ?? randomUUID() }
+    sendProgress(event, { operationId: input.operationId, phase: 'authorizing' })
+    if (
+      input.environmentId &&
+      !(await supportsSkillRuntimeInstall(app.getPath('userData'), input.environmentId))
+    ) {
+      return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
+    }
     const installTarget = await classifySkillCloudInstallTarget(runtime, input)
     const grant = await runtime.createSkillDownloadGrant(input.shareId, {
       versionId: input.versionId,
       installTarget
     })
+    if (grant.status === 'ok') {
+      sendProgress(event, { operationId: input.operationId, phase: 'installing' })
+    }
     return grant.status === 'ok' ? installGrant(runtime, grant.value, input) : grant
   })
-  ipcMain.handle('skills:installPackageVersion', async (_event, value: unknown) => {
-    const input = packageVersionInstallSchema.parse(value)
+  ipcMain.handle('skills:installPackageVersion', async (event, value: unknown) => {
+    const parsed = packageVersionInstallSchema.parse(value)
+    const input = { ...parsed, operationId: parsed.operationId ?? randomUUID() }
+    sendProgress(event, { operationId: input.operationId, phase: 'authorizing' })
+    if (
+      input.environmentId &&
+      !(await supportsSkillRuntimeInstall(app.getPath('userData'), input.environmentId))
+    ) {
+      return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
+    }
     const installTarget = await classifySkillCloudInstallTarget(runtime, input)
     const grant = await runtime.createSkillPackageVersionDownloadGrant(
       input.packageId,
       input.versionId,
       { installTarget }
     )
+    if (grant.status === 'ok') {
+      sendProgress(event, { operationId: input.operationId, phase: 'installing' })
+    }
     return grant.status === 'ok' ? installGrant(runtime, grant.value, input) : grant
   })
   ipcMain.handle('skills:cancelInstall', async (_event, value: unknown) => {

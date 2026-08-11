@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -89,6 +89,65 @@ describe('executeSkillInstallRequest', () => {
         dependencies
       )
     ).rejects.toThrow('skill-install-local-ingress-rejected')
+  })
+
+  it('rejects invalid shape, identity, scope, destination, and ingress policy before download', async () => {
+    const { request, dependencies, archive, home } = await fixture()
+    const cases: { input: unknown; error: string }[] = [
+      { input: { ...request, unexpected: true }, error: 'Unrecognized key' },
+      {
+        input: { ...request, package: { ...request.package, packageDigest: 'invalid' } },
+        error: 'Invalid string'
+      },
+      {
+        input: {
+          ...request,
+          destination: {
+            scope: 'workspace',
+            worktreeId: 'worktree_1',
+            folderWorkspaceId: 'folder_1'
+          }
+        },
+        error: 'Invalid input'
+      },
+      {
+        input: { ...request, destination: { scope: 'global', environmentId: 'other' } },
+        error: 'skill-install-environment-mismatch'
+      },
+      {
+        input: {
+          ...request,
+          destination: {
+            scope: 'global',
+            executionTarget: { kind: 'ssh', connectionId: 'ssh_1' }
+          }
+        },
+        error: 'skill-install-ssh-dispatch-required'
+      },
+      {
+        input: { ...request, ingress: { kind: 'local-file', path: archive.archivePath } },
+        error: 'skill-install-local-ingress-rejected'
+      },
+      {
+        input: {
+          ...request,
+          ingress: {
+            ...request.ingress,
+            url: 'https://untrusted.test/package.tar.gz'
+          }
+        },
+        error: 'skill-download-origin-rejected'
+      }
+    ]
+
+    for (const sample of cases) {
+      vi.mocked(dependencies.fetcher).mockClear()
+      await expect(executeSkillInstallRequest(sample.input, dependencies)).rejects.toThrow(
+        sample.error
+      )
+      expect(dependencies.fetcher).not.toHaveBeenCalled()
+      await expect(lstat(join(home, '.agents'))).rejects.toMatchObject({ code: 'ENOENT' })
+    }
   })
 
   it('returns a structured cancelled result without leaving partial ingress bytes', async () => {

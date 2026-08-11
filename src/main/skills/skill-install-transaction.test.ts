@@ -234,4 +234,98 @@ describe('skill install transaction', () => {
     await expect(lstat(join(root, 'state', 'journals'))).resolves.toBeDefined()
     expect(await readdir(join(root, 'state', 'journals'))).toEqual([])
   })
+
+  it('removes staging bytes when cancellation arrives after the staging move', async () => {
+    const root = await temporaryDirectory()
+    const archive = await packageVersion(root, 'version_1', '# First')
+    const controller = new AbortController()
+    const cancellingFilesystem = {
+      ...nativeSkillInstallFilesystem,
+      rename: async (source: string, target: string): Promise<void> => {
+        await nativeSkillInstallFilesystem.rename(source, target)
+        if (target.includes('.orca-staging-')) {
+          controller.abort()
+        }
+      }
+    }
+
+    const result = await installLocalSkillPackage(
+      installInput(root, archive, { filesystem: cancellingFilesystem, signal: controller.signal })
+    )
+
+    expect(result).toMatchObject({
+      status: 'cancelled',
+      failure: { category: 'cancelled', retryable: true }
+    })
+    await expect(lstat(join(root, 'skills', 'test-skill'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    expect((await readdir(join(root, 'skills'))).filter((name) => name.includes('.orca-'))).toEqual(
+      []
+    )
+  })
+
+  it('finishes provenance safely when cancellation arrives after canonical commit', async () => {
+    const root = await temporaryDirectory()
+    const archive = await packageVersion(root, 'version_1', '# First')
+    const controller = new AbortController()
+
+    const result = await installLocalSkillPackage(
+      installInput(root, archive, { signal: controller.signal }),
+      {
+        onJournalTransition: async (phase, boundary) => {
+          if (phase === 'receipt-published' && boundary === 'before') {
+            controller.abort()
+          }
+        }
+      }
+    )
+
+    expect(result.status).toBe('installed')
+    expect(await readFile(join(root, 'skills', 'test-skill', 'SKILL.md'), 'utf8')).toContain(
+      '# First'
+    )
+    await expect(
+      readFile(
+        join(
+          root,
+          'state',
+          'receipts',
+          `${skillInstallStateKey(join(root, 'skills', 'test-skill'))}.json`
+        ),
+        'utf8'
+      )
+    ).resolves.toContain('version_1')
+  })
+
+  it.each(
+    ['prepared', 'backup-created', 'canonical-placed', 'receipt-published', 'complete'].flatMap(
+      (phase) => ['before', 'after'].map((boundary) => [phase, boundary] as const)
+    )
+  )('recovers failure %s the %s journal transition', async (phase, boundary) => {
+    const root = await temporaryDirectory()
+    const first = await packageVersion(root, 'version_1', '# First')
+    const second = await packageVersion(root, 'version_2', '# Second')
+    await installLocalSkillPackage(installInput(root, first))
+
+    await expect(
+      installLocalSkillPackage(installInput(root, second), {
+        onJournalTransition: async (currentPhase, currentBoundary) => {
+          if (currentPhase === phase && currentBoundary === boundary) {
+            throw new Error(`injected-${phase}-${boundary}`)
+          }
+        }
+      })
+    ).rejects.toThrow(`injected-${phase}-${boundary}`)
+
+    const skillMarkdown = await readFile(join(root, 'skills', 'test-skill', 'SKILL.md'), 'utf8')
+    expect(skillMarkdown.includes('# First') || skillMarkdown.includes('# Second')).toBe(true)
+    expect((await readdir(join(root, 'skills'))).filter((name) => name.includes('.orca-'))).toEqual(
+      []
+    )
+    expect(await readdir(join(root, 'state', 'journals'))).toEqual([])
+    await expect(installLocalSkillPackage(installInput(root, second))).resolves.toMatchObject({
+      status: expect.stringMatching(/^(updated|unchanged)$/)
+    })
+  })
 })

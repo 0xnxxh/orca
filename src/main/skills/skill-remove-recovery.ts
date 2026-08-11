@@ -3,7 +3,11 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import type { SkillPlacementResult } from '../../shared/skill-install-contract'
 import type { SkillInstallFilesystem } from './skill-install-filesystem'
 import { nativeSkillInstallFilesystem } from './skill-install-filesystem'
-import { skillInstallStateKey, type SkillInstallReceiptV1 } from './skill-install-provenance'
+import {
+  skillInstallStateKey,
+  writeSkillInstallReceipt,
+  type SkillInstallReceiptV1
+} from './skill-install-provenance'
 
 export type RemovalMove = {
   sourcePath: string
@@ -190,5 +194,6 @@ export async function recoverSkillRemovalTransaction(
       await filesystem.rename(move.backupPath, move.sourcePath)
     }
   }
+  await writeSkillInstallReceipt(stateDirectory, journal.receipt)
   await rm(skillRemovalJournalPath(stateDirectory, canonicalPath), { force: true })
 }

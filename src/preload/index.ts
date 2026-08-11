@@ -144,6 +144,7 @@ import type {
   SkillShareInstallInput,
   SkillShareInstallOperation,
   SkillInstallCancelInput,
+  SkillInstallProgress,
   SkillSharePreview,
   SkillShareProgress,
   SkillSharePublishInput,
@@ -2565,6 +2566,12 @@ const api = {
       ipcRenderer.invoke('skills:deletePackage', packageId),
     listWslDistros: (environmentId?: string): Promise<string[]> =>
       ipcRenderer.invoke('skills:listWslDistros', environmentId),
+    onInstallProgress: (callback: (progress: SkillInstallProgress) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: SkillInstallProgress): void =>
+        callback(progress)
+      ipcRenderer.on('skills:installProgress', listener)
+      return () => ipcRenderer.removeListener('skills:installProgress', listener)
+    },
     onShareProgress: (callback: (progress: SkillShareProgress) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: SkillShareProgress): void =>
         callback(progress)

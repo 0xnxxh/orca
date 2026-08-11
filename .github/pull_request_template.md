@@ -24,6 +24,10 @@ Confirm that the review explicitly checked cross-platform compatibility for macO
 
 Provide a basic security audit summary from your AI coding agent. Call out any input handling, command execution, path handling, auth, secrets, dependency, or IPC risks that were reviewed, plus any follow-up needed.
 
+## Agent skill upstream boundary
+
+- [ ] Not applicable, or this change follows `docs/reference/agent-skill-sharing-upstream-boundary.md` and copies or mechanically translates no upstream skill-installer source, tests, fixtures, registry entries, path tables, comments, or documentation.
+
 ## Notes
 
 Call out any platform-specific behavior, risks, or follow-up work.

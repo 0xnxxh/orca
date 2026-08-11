@@ -416,6 +416,7 @@ import type {
   SkillShareInstallInput,
   SkillShareInstallOperation,
   SkillInstallCancelInput,
+  SkillInstallProgress,
   SkillSharePreview,
   SkillShareProgress,
   SkillSharePublishInput,
@@ -2598,6 +2599,7 @@ export type PreloadApi = {
     }) => Promise<SkillCloudOperation<void>>
     deletePackage: (packageId: string) => Promise<SkillCloudOperation<void>>
     listWslDistros: (environmentId?: string) => Promise<string[]>
+    onInstallProgress: (callback: (progress: SkillInstallProgress) => void) => () => void
     onShareProgress: (callback: (progress: SkillShareProgress) => void) => () => void
     onUpdateRun: (callback: (run: SkillUpdateRun) => void) => () => void
   }

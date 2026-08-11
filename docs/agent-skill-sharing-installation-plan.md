@@ -7,6 +7,12 @@ Last updated: 2026-08-11.
 Implementation checklist:
 [Agent skill sharing implementation checklist](./agent-skill-sharing-implementation-checklist.md).
 
+Architecture decision:
+[Agent skill sharing upstream boundary](./reference/agent-skill-sharing-upstream-boundary.md).
+
+Provider registry:
+[Agent skill provider paths](./reference/agent-skill-provider-paths.md).
+
 ## Decision summary
 
 Orca will own a focused skill packaging and installation pipeline for private sharing.
@@ -295,7 +301,7 @@ switch without disrupting existing artifact links.
 ```text
 gs://onorca-cloud-skill-packages/
   uploads/<upload-id>/package.tar.gz
-  packages/v1/sha256/<first-two-hex>/<package-digest>/package.tar.gz
+  packages/v1/sha256/<first-two-hex>/<archive-sha256>/package.tar.gz
 ```
 
 Rules:
@@ -306,7 +312,8 @@ Rules:
 - The database records the final object's GCS generation, compressed size, archive SHA-256, and
   package digest.
 - Final objects are never overwritten. Promotion uses a generation-match precondition.
-- If a final key already exists, finalization verifies its recorded identity before reusing it.
+- If a final key already exists, finalization verifies its archive SHA-256 and logical package
+  digest metadata before reusing it.
 - Internal deduplication never changes tenant-scoped API responses or reveals that another
   organization already stored the same digest.
 - GCS object versioning remains off; immutable keys plus stored generations prevent accidental

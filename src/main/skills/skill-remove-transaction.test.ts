@@ -11,6 +11,7 @@ import {
 import { installLocalSkillPackage } from './skill-install-transaction'
 import {
   recoverSkillRemovalTransaction,
+  removeLocalSharedSkill,
   skillRemovalJournalPath,
   type SkillRemovalJournalV1
 } from './skill-remove-transaction'
@@ -151,5 +152,49 @@ describe('skill removal recovery', () => {
       recoverSkillRemovalTransaction(fixture.stateDirectory, fixture.canonicalPath)
     ).rejects.toThrow('skill-removal-recovery-conflict')
     expect(await readFile(join(backupPath, 'local.md'), 'utf8')).toBe('changed')
+  })
+
+  it.each(
+    ['prepared', 'moving', 'receipt-removed'].flatMap((phase) =>
+      ['before', 'after'].map((boundary) => [phase, boundary] as const)
+    )
+  )('recovers failure %s the %s journal transition', async (phase, boundary) => {
+    const fixture = await installedFixture()
+    await expect(
+      removeLocalSharedSkill(
+        {
+          operationId: 'remove',
+          canonicalPath: fixture.canonicalPath,
+          stateDirectory: fixture.stateDirectory,
+          allowedProviderRoots: []
+        },
+        {
+          onJournalTransition: async (currentPhase, currentBoundary) => {
+            if (currentPhase === phase && currentBoundary === boundary) {
+              throw new Error(`injected-${phase}-${boundary}`)
+            }
+          }
+        }
+      )
+    ).rejects.toThrow(`injected-${phase}-${boundary}`)
+
+    const canonicalExists = await readFile(join(fixture.canonicalPath, 'SKILL.md'), 'utf8')
+      .then(() => true)
+      .catch(() => false)
+    const receipt = await readSkillInstallReceipt(fixture.stateDirectory, fixture.canonicalPath)
+    expect(Boolean(receipt)).toBe(canonicalExists)
+    await expect(
+      readFile(skillRemovalJournalPath(fixture.stateDirectory, fixture.canonicalPath))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    if (canonicalExists) {
+      await expect(
+        removeLocalSharedSkill({
+          operationId: 'retry-remove',
+          canonicalPath: fixture.canonicalPath,
+          stateDirectory: fixture.stateDirectory,
+          allowedProviderRoots: []
+        })
+      ).resolves.toMatchObject({ status: 'removed' })
+    }
   })
 })
