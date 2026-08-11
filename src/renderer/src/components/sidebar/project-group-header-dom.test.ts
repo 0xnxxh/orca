@@ -12,6 +12,7 @@ import type { FolderWorkspace, ProjectGroup, Repo, Worktree } from '../../../../
 import {
   buildRows,
   buildProjectGroupSidebarIndex,
+  findProjectGroupForFolderWorkspace,
   findProjectGroupForRepo,
   findProjectGroupForSidebarOwner,
   getAmbiguousFolderWorkspaceSidebarIds,
@@ -164,6 +165,71 @@ describe('project-group sidebar identity', () => {
     expect(findProjectGroupForSidebarOwner(index, 'same-id', 'local')).toBe(local)
     expect(findProjectGroupForSidebarOwner(index, 'same-id', 'runtime:env-1')).toBe(runtime)
     expect(getProjectGroupSidebarIdentity(local)).not.toBe(getProjectGroupSidebarIdentity(runtime))
+  })
+
+  it('renders a legacy SSH folder under its unambiguous local-stamped Project Group', () => {
+    const group: ProjectGroup = {
+      ...sidebarIdentityGroup('group-root', 'local'),
+      name: 'Platform',
+      parentPath: '/monorepo',
+      createdFrom: 'folder-scan'
+    }
+    const folderWorkspace: FolderWorkspace = {
+      id: 'folder-workspace-1',
+      projectGroupId: group.id,
+      name: 'Refund fix',
+      folderPath: '/monorepo',
+      connectionId: 'builder',
+      executionHostId: 'ssh:builder',
+      linkedTask: null,
+      comment: '',
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 10,
+      lastActivityAt: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    const rows = buildRows(
+      'repo',
+      [],
+      new Map(),
+      null,
+      new Set(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      [group],
+      new Set(),
+      new Map(),
+      new Map(),
+      [],
+      undefined,
+      [folderWorkspace]
+    )
+
+    expect(rows).toMatchObject([
+      { type: 'header', key: 'project-group:group-root', count: 1 },
+      {
+        type: 'folder-workspace',
+        folderWorkspace: { id: 'folder-workspace-1' },
+        projectGroup: { id: 'group-root' },
+        groupDepth: 1
+      }
+    ])
+    const collidingGroup = { ...group, executionHostId: 'runtime:env-1' }
+    expect(
+      findProjectGroupForFolderWorkspace(
+        buildProjectGroupSidebarIndex([group, collidingGroup]),
+        folderWorkspace
+      )
+    ).toBeUndefined()
   })
 
   it('keeps folder-backed card geometry scoped to the repo owner', () => {

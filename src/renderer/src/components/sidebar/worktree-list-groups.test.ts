@@ -6,9 +6,7 @@ import { getExecutionHostLabel } from '../../../../shared/execution-host'
 import { projectHostSetupProjectionFromRepos } from '../../../../shared/project-host-setup-projection'
 import {
   ALL_GROUP_META,
-  buildProjectGroupSidebarIndex,
   buildRows,
-  findProjectGroupForFolderWorkspace,
   getGroupKeyForWorktree,
   getGroupKeysForWorktree,
   getLineageGroupKey,
@@ -3156,12 +3154,11 @@ describe('project groups', () => {
     })
   })
 
-  it('renders a legacy SSH folder under its unambiguous local-stamped Project Group', () => {
+  it('renders folder workspaces under their owning folder-backed Project Group', () => {
     const group: ProjectGroup = {
       id: 'group-root',
       name: 'Platform',
       parentPath: '/monorepo',
-      executionHostId: 'local',
       parentGroupId: null,
       createdFrom: 'folder-scan',
       tabOrder: 0,
@@ -3175,8 +3172,6 @@ describe('project groups', () => {
       projectGroupId: group.id,
       name: 'Refund fix',
       folderPath: '/monorepo',
-      connectionId: 'builder',
-      executionHostId: 'ssh:builder',
       linkedTask: null,
       comment: '',
       isArchived: false,
@@ -3223,13 +3218,6 @@ describe('project groups', () => {
         groupDepth: 1
       }
     ])
-    const collidingGroup = { ...group, executionHostId: 'runtime:env-1' }
-    expect(
-      findProjectGroupForFolderWorkspace(
-        buildProjectGroupSidebarIndex([group, collidingGroup]),
-        folderWorkspace
-      )
-    ).toBeUndefined()
   })
 
   it('preserves nested Project Group depth for folder workspace rows', () => {
