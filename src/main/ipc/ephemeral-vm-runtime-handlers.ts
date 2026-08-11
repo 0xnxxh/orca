@@ -7,10 +7,8 @@ import {
 import type { EphemeralVmRuntimeRecord } from '../../shared/ephemeral-vm-runtimes'
 import {
   getEphemeralVmRecipeResultConnection,
-  getEphemeralVmRecipeResultPairingCode,
-  getEphemeralVmRecipeResultProjectRoot
+  getEphemeralVmRecipeResultPairingCode
 } from '../../shared/ephemeral-vm-recipes'
-import { normalizeRuntimePathForComparison } from '../../shared/cross-platform-path'
 import {
   removeEnvironment,
   updateEnvironmentFromPairingCode
@@ -20,6 +18,7 @@ import {
   resumeEphemeralVmRuntime,
   suspendEphemeralVmRuntime
 } from '../ephemeral-vm-runtime-service'
+import { attachEphemeralVmRuntimeToWorkspace } from '../ephemeral-vm-runtime-attachment'
 import {
   buildEphemeralVmRecipeCleanupCommand,
   buildEphemeralVmRecipeCleanupPayload
@@ -55,8 +54,9 @@ export function registerEphemeralVmRuntimeHandlers(store: Store): void {
   ipcMain.handle(
     'ephemeralVm:attachWorkspace',
     (_event, args: { runtimeId: string; workspaceId: string }): EphemeralVmRuntimeRecord => {
-      return updateEphemeralVmRuntimeStatus(app.getPath('userData'), args.runtimeId, {
-        status: 'running',
+      return attachEphemeralVmRuntimeToWorkspace({
+        userDataPath: app.getPath('userData'),
+        runtimeId: args.runtimeId,
         workspaceId: args.workspaceId
       })
     }
@@ -174,20 +174,6 @@ export function registerEphemeralVmRuntimeHandlers(store: Store): void {
       })
       if (!result.ok) {
         throw new Error(result.error)
-      }
-      if (
-        runtime.recipe?.checkoutMode === 'provisioned-root' &&
-        normalizeRuntimePathForComparison(
-          getEphemeralVmRecipeResultProjectRoot(runtime.recipeResult)
-        ) !==
-          normalizeRuntimePathForComparison(
-            getEphemeralVmRecipeResultProjectRoot(result.runtime.recipeResult)
-          )
-      ) {
-        updateEphemeralVmRuntimeStatus(userDataPath, result.runtime.id, {
-          status: 'resume_failed'
-        })
-        throw new Error('A provisioned-root recipe must keep projectRoot stable after resume.')
       }
       if (!result.skipped && runtime.runtimeEnvironmentId) {
         const pairingCode = getEphemeralVmRecipeResultPairingCode(result.runtime.recipeResult)

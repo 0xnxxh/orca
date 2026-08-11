@@ -52,6 +52,7 @@ import {
 } from '../../runtime/runtime-rpc-client'
 import {
   TASK_SOURCE_CONTEXT_RUNTIME_CAPABILITY,
+  WORKTREE_EPHEMERAL_VM_CHECKOUT_MODE_RUNTIME_CAPABILITY,
   WORKTREE_LINKED_WORK_ITEM_CONTEXT_RUNTIME_CAPABILITY
 } from '../../../../shared/protocol-version'
 import { toRuntimeWorktreeSelector } from '../../runtime/runtime-worktree-selector'
@@ -1700,6 +1701,13 @@ async function persistWorktreeMeta(
       target.environmentId,
       TASK_SOURCE_CONTEXT_RUNTIME_CAPABILITY,
       'Update the remote runtime to link Linear issues'
+    )
+  }
+  if (target.kind === 'environment' && 'ephemeralVmCheckoutMode' in updates) {
+    await assertRuntimeEnvironmentCapability(
+      target.environmentId,
+      WORKTREE_EPHEMERAL_VM_CHECKOUT_MODE_RUNTIME_CAPABILITY,
+      'Update the remote runtime before using a provisioned-root recipe'
     )
   }
   await callRuntimeRpc(
@@ -4156,11 +4164,22 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         typeof window !== 'undefined' &&
         window.api?.ephemeralVm?.cleanup
       ) {
-        void window.api.ephemeralVm
-          .cleanup({ runtimeId: entry.request.ephemeralVmRuntimeId })
-          .catch(() => {
-            // Best effort: cancellation shouldn't block on provider cleanup; Settings still exposes retry/manual cleanup.
-          })
+        const runtimeId = entry.request.ephemeralVmRuntimeId
+        const cleanupCancelledRuntime = async (): Promise<void> => {
+          const setupId = entry.request.workspaceRunContext?.projectHostSetupId
+          if (setupId) {
+            const deleted = await get()
+              .deleteProjectHostSetup({ setupId })
+              .catch(() => null)
+            if (!deleted) {
+              return
+            }
+          }
+          await window.api.ephemeralVm.cleanup({ runtimeId })
+        }
+        void cleanupCancelledRuntime().catch(() => {
+          // Best effort: cancellation shouldn't block on provider cleanup; Settings still exposes retry/manual cleanup.
+        })
       }
       const { [creationId]: _removed, ...rest } = s.pendingWorktreeCreations
       return {
@@ -4321,11 +4340,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         backendOwnsPtyTeardown: true
       })
       // Why: dispose the SSH relay AFTER terminal teardown so a still-mounted pane can't hit a gone relay and toast "SSH not active".
-      const destroyedRuntimeSshTargetIds = await cleanupEphemeralVmRuntimesForDeleted({
+      const runtimeCleanup = await cleanupEphemeralVmRuntimesForDeleted({
         workspaceIds: [worktreeId]
       })
       // Remove the orphaned project for the destroyed SSH target so it can't surface as a dead project in the composer.
-      await purgeOrphanedRuntimeSshProjects(get, destroyedRuntimeSshTargetIds)
+      await purgeOrphanedRuntimeSshProjects(get, runtimeCleanup.sshTargetIds)
       const tabs = get().tabsByWorktree[worktreeId] ?? []
       const tabIds = new Set(tabs.map((t) => t.id))
 

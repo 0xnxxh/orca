@@ -92,6 +92,7 @@ describe('provisioned-root adoption', () => {
       'repo-runtime::C:\\workspace\\repo',
       expect.objectContaining({
         displayName: 'Feature workspace',
+        ephemeralVmCheckoutMode: 'provisioned-root',
         baseRef: 'origin/main',
         linkedIssue: 13044,
         workspaceStatus: 'in-progress'

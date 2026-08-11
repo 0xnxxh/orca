@@ -65,6 +65,7 @@ export function updateEphemeralVmRuntimeStatus(
     runtimeEnvironmentId?: string
     sshTargetId?: string | null
     recipeResult?: EphemeralVmRuntimeRecord['recipeResult']
+    provisionedProjectRoot?: string
     updatedAt?: number
   }
 ): EphemeralVmRuntimeRecord {
@@ -103,6 +104,7 @@ export function updateEphemeralVmRuntimeStatus(
         ? { sshTargetId: args.sshTargetId }
         : {}),
     ...(args.recipeResult ? { recipeResult: args.recipeResult } : {}),
+    ...(args.provisionedProjectRoot ? { provisionedProjectRoot: args.provisionedProjectRoot } : {}),
     updatedAt: args.updatedAt ?? Date.now()
   })
   writeEphemeralVmRuntimeStore(userDataPath, {

@@ -6657,6 +6657,37 @@ describe('worktree remote runtime mutations', () => {
     expect(store.getState().worktreesByRepo.repo1[0]?.comment).toBe('remote note')
   })
 
+  it('fails provisioned-root metadata closed on an older remote runtime', async () => {
+    const store = createTestStore()
+    const wt = makeWorktree({ id: 'repo1::/path/wt1', repoId: 'repo1', path: '/path/wt1' })
+    const oldStatus = createCompatibleRuntimeStatusResponse('runtime-old')
+    if (!oldStatus.ok) {
+      throw new Error('Expected a compatible runtime status fixture')
+    }
+    oldStatus.result.capabilities = (oldStatus.result.capabilities ?? []).filter(
+      (capability) => capability !== 'worktree.ephemeral-vm-checkout-mode.v1'
+    )
+    runtimeEnvironmentTransportCall.mockImplementation((args: RuntimeEnvironmentCallRequest) =>
+      args.method === 'status.get' ? oldStatus : runtimeEnvironmentCall(args)
+    )
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
+      worktreesByRepo: { repo1: [wt] }
+    } as Partial<AppState>)
+
+    const result = await store
+      .getState()
+      .updateWorktreeMeta(wt.id, { ephemeralVmCheckoutMode: 'provisioned-root' })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('Update the remote runtime')
+    })
+    expect(runtimeEnvironmentCall.mock.calls.some(([args]) => args.method === 'worktree.set')).toBe(
+      false
+    )
+  })
+
   it('force-deletes a preserved HUB-owned SSH branch through its HUB', async () => {
     const store = createTestStore()
     const wt = makeWorktree({
@@ -10267,22 +10298,63 @@ describe('pending worktree creation state', () => {
     expect(store.getState().pendingWorktreeCreations.c1).toBeUndefined()
   })
 
-  it('removePendingWorktreeCreation cleans up a provisioned VM runtime', () => {
+  it('removePendingWorktreeCreation removes the imported setup before its VM runtime', async () => {
     const store = createTestStore()
+    const deleteProjectHostSetup = vi.fn().mockResolvedValue({})
+    store.setState({ deleteProjectHostSetup } as unknown as Partial<AppState>)
     store.getState().beginPendingWorktreeCreation(
       makePendingCreation('c1', {
         phase: 'fetching',
         request: {
           ...makePendingCreation('c1').request,
-          ephemeralVmRuntimeId: 'runtime-1'
+          ephemeralVmRuntimeId: 'runtime-1',
+          workspaceRunContext: {
+            kind: 'workspace-run',
+            projectId: 'project-1',
+            hostId: 'runtime:env-1',
+            projectHostSetupId: 'setup-1',
+            repoId: 'repo-runtime',
+            path: '/workspace/repo'
+          }
         }
       })
     )
 
     store.getState().removePendingWorktreeCreation('c1')
 
+    await vi.waitFor(() => expect(mockApi.ephemeralVm.cleanup).toHaveBeenCalled())
+    expect(deleteProjectHostSetup).toHaveBeenCalledWith({ setupId: 'setup-1' })
     expect(mockApi.ephemeralVm.cleanup).toHaveBeenCalledWith({ runtimeId: 'runtime-1' })
+    expect(deleteProjectHostSetup.mock.invocationCallOrder[0]).toBeLessThan(
+      mockApi.ephemeralVm.cleanup.mock.invocationCallOrder[0]!
+    )
     expect(store.getState().pendingWorktreeCreations.c1).toBeUndefined()
+  })
+
+  it('keeps a cancelled VM runtime when imported setup deletion fails', async () => {
+    const store = createTestStore()
+    store.setState({ deleteProjectHostSetup: vi.fn().mockResolvedValue(null) } as never)
+    store.getState().beginPendingWorktreeCreation(
+      makePendingCreation('c1', {
+        request: {
+          ...makePendingCreation('c1').request,
+          ephemeralVmRuntimeId: 'runtime-1',
+          workspaceRunContext: {
+            kind: 'workspace-run',
+            projectId: 'project-1',
+            hostId: 'runtime:env-1',
+            projectHostSetupId: 'setup-1',
+            repoId: 'repo-runtime',
+            path: '/workspace/repo'
+          }
+        }
+      })
+    )
+
+    store.getState().removePendingWorktreeCreation('c1')
+
+    await vi.waitFor(() => expect(store.getState().pendingWorktreeCreations.c1).toBeUndefined())
+    expect(mockApi.ephemeralVm.cleanup).not.toHaveBeenCalled()
   })
 
   it('removePendingWorktreeCreation can drop a completed VM creation without cleanup', () => {

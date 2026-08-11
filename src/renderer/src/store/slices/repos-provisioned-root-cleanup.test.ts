@@ -61,4 +61,72 @@ describe('provisioned-root project cleanup', () => {
       ephemeralVmCleanup.mock.invocationCallOrder[0]!
     )
   })
+
+  it('destroys the runtime when its remote project removal fails', async () => {
+    runtimeEnvironmentCall.mockRejectedValue(new Error('runtime unavailable'))
+    const worktreeId = `${remoteRepo.id}::${remoteRepo.path}`
+    ephemeralVmListRuntimes.mockResolvedValue([
+      {
+        id: 'recipe-runtime-1',
+        recipeId: 'cloud-sandbox',
+        workspaceId: worktreeId,
+        status: 'running',
+        cleanupStatus: 'not_started'
+      }
+    ])
+    const store = createTestStore()
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
+      repos: [remoteRepo],
+      worktreesByRepo: {
+        [remoteRepo.id]: [
+          makeWorktree({
+            id: worktreeId,
+            repoId: remoteRepo.id,
+            path: remoteRepo.path,
+            isMainWorktree: true
+          })
+        ]
+      }
+    })
+
+    await store.getState().removeProject(remoteRepo.id)
+
+    expect(ephemeralVmCleanup).toHaveBeenCalledWith({ runtimeId: 'recipe-runtime-1' })
+    expect(store.getState().repos).not.toContainEqual(
+      expect.objectContaining({ id: remoteRepo.id })
+    )
+    expect(store.getState().worktreesByRepo[remoteRepo.id]).toBeUndefined()
+  })
+
+  it('cancels an in-flight VM workspace before removing its imported project', async () => {
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-remove-pending-project',
+      ok: true,
+      result: { removed: true },
+      _meta: { runtimeId: 'runtime-remote' }
+    })
+    const store = createTestStore()
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
+      repos: [remoteRepo],
+      pendingWorktreeCreations: {
+        'creation-1': {
+          creationId: 'creation-1',
+          phase: 'fetching',
+          status: 'creating',
+          request: {
+            repoId: remoteRepo.id,
+            ephemeralVmRuntimeId: 'recipe-runtime-1',
+            workspaceRunContext: { hostId: 'local' }
+          }
+        } as never
+      }
+    })
+
+    await store.getState().removeProject(remoteRepo.id)
+
+    expect(store.getState().pendingWorktreeCreations).toEqual({})
+    expect(ephemeralVmCleanup).toHaveBeenCalledWith({ runtimeId: 'recipe-runtime-1' })
+  })
 })

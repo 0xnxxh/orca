@@ -151,6 +151,11 @@ async function executeWorktreeCreation(
                   : {})
               }
             )
+    if (!useAppStore.getState().pendingWorktreeCreations[creationId]) {
+      await cleanupEphemeralVmRuntimeForFailedCreate(preparedRequest)
+      return
+    }
+    await attachEphemeralVmRuntimeToWorkspace(preparedRequest, result.worktree.id)
   } catch (error) {
     // Why: a missing entry means the user cancelled mid-flight — abandon
     // silently rather than surfacing an error for work they already dismissed.
@@ -182,8 +187,6 @@ async function executeWorktreeCreation(
   if (!useAppStore.getState().pendingWorktreeCreations[creationId]) {
     return
   }
-  await attachEphemeralVmRuntimeToWorkspace(preparedRequest, worktree.id)
-
   const backendSpawned = result.startupTerminal?.spawned === true
   if (preparedRequest.startupPlan && !backendSpawned && !preparedRequest.startupPlan.launchToken) {
     // Why: delayed delivery must target the exact pane spawned from this queued

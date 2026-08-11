@@ -5,7 +5,7 @@ import {
   type RuntimeEnvironmentCallRequest
 } from '../../runtime/runtime-compatibility-test-fixture'
 import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rpc-client'
-import { createTestStore } from './store-test-helpers'
+import { createTestStore, makeWorktree } from './store-test-helpers'
 
 const projectsCreateHostSetup = vi.fn()
 const projectsUpdateHostSetup = vi.fn()
@@ -177,6 +177,70 @@ describe('repo slice project host setup lifecycle', () => {
       params: { setupId: runtimeSetup.id },
       timeoutMs: 15_000
     })
+  })
+
+  it('purges worktree state when deleting an imported runtime setup', async () => {
+    const attachedSetup = { ...runtimeSetup, repoId: runtimeRepo.id }
+    const worktree = makeWorktree({
+      id: `${runtimeRepo.id}::${runtimeRepo.path}`,
+      repoId: runtimeRepo.id,
+      path: runtimeRepo.path,
+      hostId: 'runtime:env-1'
+    })
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-delete-imported-setup',
+      ok: true,
+      result: { result: { project, setup: attachedSetup, repo: runtimeRepo } },
+      _meta: { runtimeId: 'runtime-remote' }
+    })
+    const store = createTestStore()
+    store.setState({
+      projects: [project],
+      projectHostSetups: [attachedSetup],
+      repos: [runtimeRepo],
+      worktreesByRepo: { [runtimeRepo.id]: [worktree] },
+      tabsByWorktree: { [worktree.id]: [] },
+      settings: { activeRuntimeEnvironmentId: null } as never
+    })
+
+    await store.getState().deleteProjectHostSetup({ setupId: attachedSetup.id })
+
+    expect(store.getState().repos).toEqual([])
+    expect(store.getState().worktreesByRepo[runtimeRepo.id]).toBeUndefined()
+    expect(store.getState().tabsByWorktree[worktree.id]).toBeUndefined()
+  })
+
+  it('preserves worktree state for a same-id checkout retained on another host', async () => {
+    const attachedSetup = { ...runtimeSetup, repoId: runtimeRepo.id }
+    const worktreeId = `${runtimeRepo.id}::${runtimeRepo.path}`
+    const runtimeWorktree = makeWorktree({
+      id: worktreeId,
+      repoId: runtimeRepo.id,
+      path: runtimeRepo.path,
+      hostId: 'runtime:env-1'
+    })
+    const localWorktree = { ...runtimeWorktree, hostId: 'local' as const }
+    const localRepo = { ...runtimeRepo, executionHostId: 'local' as const }
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-delete-host-collision',
+      ok: true,
+      result: { result: { project, setup: attachedSetup, repo: runtimeRepo } },
+      _meta: { runtimeId: 'runtime-remote' }
+    })
+    const store = createTestStore()
+    store.setState({
+      projects: [project],
+      projectHostSetups: [attachedSetup],
+      repos: [runtimeRepo, localRepo],
+      worktreesByRepo: { [runtimeRepo.id]: [runtimeWorktree, localWorktree] },
+      tabsByWorktree: { [worktreeId]: [] },
+      settings: { activeRuntimeEnvironmentId: null } as never
+    })
+
+    await store.getState().deleteProjectHostSetup({ setupId: attachedSetup.id })
+
+    expect(store.getState().worktreesByRepo[runtimeRepo.id]).toEqual([localWorktree])
+    expect(store.getState().tabsByWorktree[worktreeId]).toEqual([])
   })
 
   it('preserves runtime-fetched setup-only states during repo hydration', async () => {

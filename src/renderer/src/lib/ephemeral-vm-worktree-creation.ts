@@ -165,18 +165,14 @@ export async function attachEphemeralVmRuntimeToWorkspace(
   if (!request.ephemeralVmRuntimeId) {
     return
   }
-  try {
-    await window.api.ephemeralVm.attachWorkspace({
-      runtimeId: request.ephemeralVmRuntimeId,
-      workspaceId
-    })
-    if (request.ephemeralVmRuntimeEnvironmentId) {
-      void useAppStore
-        .getState()
-        .refreshRuntimeEnvironmentStatus(request.ephemeralVmRuntimeEnvironmentId)
-    }
-  } catch (error) {
-    console.error('Failed to attach ephemeral VM runtime to workspace:', error)
+  await window.api.ephemeralVm.attachWorkspace({
+    runtimeId: request.ephemeralVmRuntimeId,
+    workspaceId
+  })
+  if (request.ephemeralVmRuntimeEnvironmentId) {
+    void useAppStore
+      .getState()
+      .refreshRuntimeEnvironmentStatus(request.ephemeralVmRuntimeEnvironmentId)
   }
 }
 
@@ -214,6 +210,7 @@ export async function adoptEphemeralVmProvisionedRoot(
   const now = Date.now()
   const metadata: Partial<WorktreeMeta> = {
     displayName: request.displayName ?? request.name,
+    ephemeralVmCheckoutMode: 'provisioned-root',
     lastActivityAt: now,
     createdAt: now,
     ...(refreshedStore.sortBy === 'manual' ? { manualOrder: now } : {}),
@@ -284,6 +281,18 @@ export async function cleanupEphemeralVmRuntimeForFailedCreate(
 ): Promise<void> {
   if (!request.ephemeralVmRuntimeId) {
     return
+  }
+  const setupId = request.workspaceRunContext?.projectHostSetupId
+  if (setupId) {
+    try {
+      const deleted = await useAppStore.getState().deleteProjectHostSetup({ setupId })
+      if (!deleted) {
+        return
+      }
+    } catch (error) {
+      console.error('Failed to remove ephemeral VM project setup after creation failed:', error)
+      return
+    }
   }
   try {
     await window.api.ephemeralVm.cleanup({ runtimeId: request.ephemeralVmRuntimeId })

@@ -42,6 +42,42 @@ function nodeCommand(scriptPath: string): string {
 }
 
 describe('runEphemeralVmRecipeStart', () => {
+  it.each([
+    { checkoutMode: undefined, expected: '1' },
+    { checkoutMode: 'provisioned-root' as const, expected: '2' }
+  ])(
+    'advertises result schema $expected for checkout mode $checkoutMode',
+    async ({ checkoutMode, expected }) => {
+      const repoPath = makeRepo()
+      const scriptPath = join(repoPath, 'start.js')
+      writeFileSync(
+        scriptPath,
+        [
+          'console.log(JSON.stringify({',
+          '  schemaVersion: Number(process.env.ORCA_RECIPE_RESULT_SCHEMA_VERSION),',
+          '  ...(process.env.ORCA_RECIPE_RESULT_SCHEMA_VERSION === "2"',
+          '    ? { checkoutMode: "provisioned-root" }',
+          '    : {}),',
+          `  pairingCode: ${JSON.stringify(makePairingCode())},`,
+          "  projectRoot: '/workspace/repo'",
+          '}))'
+        ].join('\n')
+      )
+
+      const result = await runEphemeralVmRecipeStart({
+        repoPath,
+        recipe: {
+          id: 'cloud-sandbox',
+          name: 'Cloud Sandbox',
+          checkoutMode,
+          create: nodeCommand(scriptPath)
+        }
+      })
+
+      expect(result).toMatchObject({ ok: true, result: { schemaVersion: Number(expected) } })
+    }
+  )
+
   it('runs a recipe from the repo root and parses its JSON result', async () => {
     const repoPath = makeRepo()
     const scriptPath = join(repoPath, 'start.js')

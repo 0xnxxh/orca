@@ -698,17 +698,21 @@ describe('registerEphemeralVmHandlers', () => {
       ].join('\n')
     )
 
-    await expect(
-      handlers.get('ephemeralVm:resumeWorkspace')?.(null, {
-        workspaceId: 'workspace-1'
-      } as never)
-    ).rejects.toThrow('must keep projectRoot stable')
+    const resumeWorkspace = handlers.get('ephemeralVm:resumeWorkspace')!
+    await expect(resumeWorkspace(null, { workspaceId: 'workspace-1' } as never)).rejects.toThrow(
+      'must keep projectRoot stable'
+    )
     const runtimes = (await handlers.get('ephemeralVm:listRuntimes')?.(
       null,
       undefined as never
-    )) as { id: string; status: string }[]
-    expect(runtimes.find((runtime) => runtime.id === provisioned.runtime.id)?.status).toBe(
-      'resume_failed'
+    )) as { id: string; recipeResult: { projectRoot: string } }[]
+    expect(runtimes.find((runtime) => runtime.id === provisioned.runtime.id)).toMatchObject({
+      status: 'resume_failed',
+      provisionedProjectRoot: '/workspace/repo',
+      recipeResult: { projectRoot: '/workspace/moved' }
+    })
+    await expect(resumeWorkspace(null, { workspaceId: 'workspace-1' } as never)).rejects.toThrow(
+      'must keep projectRoot stable'
     )
   })
 

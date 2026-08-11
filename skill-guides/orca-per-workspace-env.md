@@ -80,7 +80,7 @@ a long time, or need the user at the keyboard. Never create an Orca workspace or
    - **Coding-agent CLI + account:** which agent runs in the VM (`codex`, `claude`, …) and that the user
      has an account for it — it gets logged in during the Phase-3 auth snapshot (§4).
    - **Git auth:** the token source for cloning a private repo (`GH_TOKEN`/`GITHUB_TOKEN` or `gh auth
-     token`; §5).
+token`; §5).
 3. **Check prerequisites (§2)** — detect the provider CLI + auth and confirm the items above are in
    place before any paid step.
 4. **Scaffold scripts + state file** from §7 (worked Vercel example: §7f; SSH host: §7g; Docker SSH:
@@ -226,9 +226,9 @@ reserve stdout for the final JSON and log progress to stderr. Include a shared `
 
 - **Local-side** (`create`/`suspend`/`resume`/`destroy` + the base-snapshot/auth scripts the user
   invokes) runs **on the user's desktop**, so it must run on their OS. macOS/Linux: `#!/usr/bin/env
-  bash`, `set -euo pipefail`, quoted paths. **Windows:** a bare `.sh` won't run — scaffold `.ps1`/`.cmd`
+bash`, `set -euo pipefail`, quoted paths. **Windows:** a bare `.sh` won't run — scaffold `.ps1`/`.cmd`
   or require WSL/Git-Bash and point `orca.yaml` at the right launcher.
-- **Remote-side** (commands you `exec` *inside* the Linux VM) always runs in the VM's Linux shell, so
+- **Remote-side** (commands you `exec` _inside_ the Linux VM) always runs in the VM's Linux shell, so
   bash is fine there regardless of the user's OS.
 
 ### 7a. Base-snapshot (`<provider>-base-snapshot.sh`) — Phase 2
@@ -276,6 +276,9 @@ set -euo pipefail
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
+# provisioned-root only — run before step 1; omit for orca-worktree recipes:
+[ "${ORCA_RECIPE_RESULT_SCHEMA_VERSION:-1}" = 2 ] \
+  || { echo "Upgrade Orca before using this provisioned-root recipe" >&2; exit 1; }
 # read authenticated snapshotId/scope/project/port/project_root from state; for provisioned-root source
 # intent, read ORCA_REPO_URL/ORCA_REPO_REF/ORCA_REPO_BRANCH from the inherited environment first
 # fail clearly if snapshotId is missing (point back to Phases 2–3)
@@ -311,7 +314,11 @@ There is **no `--host` flag**. `--project-root` must be an absolute directory on
 keeps serving:
 
 ```json
-{ "schemaVersion": 1, "pairingCode": "<orca pairing URL>", "projectRoot": "<the --project-root you passed>" }
+{
+  "schemaVersion": 1,
+  "pairingCode": "<orca pairing URL>",
+  "projectRoot": "<the --project-root you passed>"
+}
 ```
 
 `pairingCode` is the pairing URL, already pointing at whatever you passed as `--pairing-address` — so set
@@ -331,6 +338,8 @@ payload="$(cat)"                       # Orca passes lifecycle JSON on stdin
 resource_id="$(node -e 'const d=JSON.parse(process.argv[1]); process.stdout.write(d.recipeResult?.userData?.resourceId ?? "")' "$payload")"
 [ -n "$resource_id" ] || { echo "No resource id in lifecycle payload" >&2; exit 1; }
 # suspend: provider suspend "$resource_id"
+# resume (provisioned-root only): before waking the provider, require
+#         [ "${ORCA_RECIPE_RESULT_SCHEMA_VERSION:-1}" = 2 ] or fail with an upgrade message.
 # resume:  provider resume "$resource_id"; then RE-EMIT fresh recipe JSON (pairing may change). A
 #          provisioned-root result must keep the exact same projectRoot and v2 checkoutMode handshake.
 # destroy: provider remove "$resource_id"   (or set destroy: none in orca.yaml)
@@ -384,6 +393,8 @@ new_id="$(printf '%s\n' "$out" | sed -nE 's/.*(snap_[A-Za-z0-9]+).*/\1/p' | tail
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
+[ "${ORCA_RECIPE_RESULT_SCHEMA_VERSION:-1}" = 2 ] \
+  || { echo "Upgrade Orca before using this provisioned-root recipe" >&2; exit 1; }
 # resolve snapshot_id/scope/project/port/project_root from state. Resolve repo_url/repo_ref from
 # ORCA_REPO_URL/ORCA_REPO_REF first, then state; repo_branch comes from ORCA_REPO_BRANCH and is required.
 vercel_args=(); [ -n "$scope" ] && vercel_args+=(--scope "$scope"); [ -n "$project" ] && vercel_args+=(--project "$project")
@@ -459,7 +470,7 @@ SSH mode is **fundamentally different from §7c/§7f**, not a relabeling of them
 - The result uses a `connection` block with `type: "ssh"` and a `target`, **not** the flat
   `pairingCode`/`projectRoot` shape. The reusable-host `orca-worktree` example below uses schema version
   1. A one-machine-per-workspace provisioned root uses the same `connection` block under the v2 fields
-  shown after the example.
+     shown after the example.
 
 ```json
 {
@@ -499,7 +510,7 @@ For an ephemeral machine that is itself the workspace, configure `checkoutMode: 
 }
 ```
 
-**Networking → which `target` fields to set** (how *your desktop* reaches the box — there is no
+**Networking → which `target` fields to set** (how _your desktop_ reaches the box — there is no
 `orca serve` URL in SSH mode):
 
 - Public IP / DNS, or a Tailscale/VPN address → `host`; SSH port → `port` (usually 22).
@@ -512,7 +523,7 @@ For an ephemeral machine that is itself the workspace, configure `checkoutMode: 
   reconnect grace window.
 
 **Toolchain & agent auth on a persistent (no-snapshot) host — do this ONCE, by hand, before wiring the
-recipe** (there's no base image to bake; the host *is* the base). Run the §7f Phase-2 install steps and
+recipe** (there's no base image to bake; the host _is_ the base). Run the §7f Phase-2 install steps and
 the §7f Phase-3 `<agent> login --device-auth` **directly over SSH on the host** (interactive, e.g.
 `ssh -t user@host '<agent> login --device-auth'`). After that the host stays ready across workspaces.
 
@@ -625,6 +636,10 @@ Windows runs recipes through its command shell; invoke it explicitly in `orca.ya
 ```powershell
 #requires -Version 5
 $ErrorActionPreference = 'Stop'
+# Provisioned-root scripts only; omit this block for orca-worktree recipes.
+if ($env:ORCA_RECIPE_RESULT_SCHEMA_VERSION -ne '2') {
+  throw 'Upgrade Orca before using this provisioned-root recipe'
+}
 # resolve env→state→fallback; run the provider CLI / ssh the same way;
 # capture provider output; build the result object for the chosen mode and write ONE line of JSON to stdout.
 # First build either the Orca-server or SSH connection fields (see §7c/§7g).
@@ -634,7 +649,7 @@ $ErrorActionPreference = 'Stop'
 # progress/errors → Write-Error / the error stream, never stdout.
 ```
 
-The remote-side commands you run *inside* the Linux VM stay bash regardless of the desktop OS.
+The remote-side commands you run _inside_ the Linux VM stay bash regardless of the desktop OS.
 
 ---
 
@@ -666,9 +681,11 @@ removing the workspace removes its project and invokes `destroy`.
 
 Orca exports source intent to every recipe command:
 
-- `ORCA_REPO_URL`: source repository remote URL.
+- `ORCA_REPO_URL`: source repository remote URL; Orca strips embedded HTTP credentials, all query
+  parameters, and fragments, so configure clone/fetch authentication separately.
 - `ORCA_REPO_REF`: requested starting ref (branch, remote ref, or commit).
 - `ORCA_REPO_BRANCH`: branch name the new workspace should have.
+- `ORCA_RECIPE_RESULT_SCHEMA_VERSION`: result schema supported for this recipe (`1` or `2`).
 - `ORCA_VERSION`: creating Orca version, for diagnostics or an explicit compatibility gate.
 
 For provisioned-root, fetch `ORCA_REPO_REF` and check it out as `ORCA_REPO_BRANCH`; do not use the ref
@@ -681,6 +698,9 @@ Provisioned-root `create` and `resume` results must use `schemaVersion: 2` and i
 `checkoutMode: "provisioned-root"`. This explicit result handshake makes older Orca versions reject the
 recipe instead of silently creating a child worktree. `resume` must return the same `projectRoot` as
 `create`; pairing/SSH connection details may change. Other recipes continue to use schema version 1.
+Before provisioning or resuming a paid resource, a provisioned-root script must also require
+`ORCA_RECIPE_RESULT_SCHEMA_VERSION=2`; older Orca versions do not export it, so this prevents creating or
+waking a resource that the old desktop cannot adopt.
 
 `create` runs **locally from the repo root** and prints **one** JSON object to stdout. Its shape depends
 on the connection mode chosen in §1:
@@ -718,7 +738,10 @@ externally reachable address so the emitted `pairingCode` is reachable; tunnelin
 script's job.
 
 Backward compatibility: `command`→`create`, `cleanup`→`destroy`, `cleanup: none`→`destroy: none`.
-Prefer the lifecycle names.
+Prefer the lifecycle names. Existing schema-v1 recipes continue to work on newer Orca versions.
+Provisioned-root recipes require a desktop that exports `ORCA_RECIPE_RESULT_SCHEMA_VERSION=2`; do not
+downgrade Orca while one of their runtimes is active because older versions cannot read schema-v2
+runtime records.
 
 ---
 
@@ -741,16 +764,20 @@ environment back down** (so the test leaves nothing running, as long as `destroy
 cloud money, so get the user's OK **once** before starting — that one approval covers the whole loop
 below; do not re-ask before each run.
 
+For provisioned-root, set `ORCA_REPO_URL`, `ORCA_REPO_REF`, and `ORCA_REPO_BRANCH` in the doctor's
+environment to representative source values. The doctor forwards them through the same credential
+stripping and recipe environment contract as desktop provisioning.
+
 On failure, the JSON result includes a `provisionTranscript` with the **complete** captured output of
 each stage so you can self-diagnose without asking the user to relay logs:
 
 ```json
 {
   "ok": false,
-  "checks": [ { "id": "recipe.provision", "status": "fail", "message": "…" } ],
+  "checks": [{ "id": "recipe.provision", "status": "fail", "message": "…" }],
   "provisionTranscript": {
     "provision": { "exitCode": 0, "signal": null, "stdout": "…", "stderr": "…", "parseError": "…" },
-    "destroy":   { "exitCode": 0, "signal": null, "stdout": "…", "stderr": "…" }
+    "destroy": { "exitCode": 0, "signal": null, "stdout": "…", "stderr": "…" }
   }
 }
 ```
@@ -788,7 +815,7 @@ startup-only `docker run` before the full clone/install path.
 - **Agent verified as "not logged in" despite a good login.** `codex login status` (and similar) print
   "Logged in …" to **stderr**; an stdout-only `grep` misses it. Prefer the status **exit code**; if you
   grep, fold stderr first (`status 2>&1 | grep …`) and match the exact success line — not `grep -qi
-  'logged in'`, which also matches "not logged in".
+'logged in'`, which also matches "not logged in".
 - **Headless agent login hangs.** Plain OAuth `login` starts a loopback callback server on a VM/container
   port the host browser can't reach. Use the **device-auth** flow (`login --device-auth`) — it prints a
   URL + code the user opens on the host.

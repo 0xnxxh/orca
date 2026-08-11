@@ -55,6 +55,7 @@ export const EphemeralVmRuntimeRecordSchema = z.object({
   branch: z.string().min(1).optional(),
   ref: z.string().min(1).optional(),
   orcaVersion: z.string().min(1).optional(),
+  provisionedProjectRoot: z.string().min(1).optional(),
   connectionMode: EphemeralVmRuntimeConnectionModeSchema.optional(),
   runtimeEnvironmentId: z.string().min(1).optional(),
   sshTargetId: z.string().min(1).optional(),
