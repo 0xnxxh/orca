@@ -756,7 +756,7 @@ function CheckRunDetails({
           <ViewFullCheckDetailsButton label={fullDetailsLabel} onClick={handleOpenFullDetails} />
         </div>
       )}
-      {state?.loading ? (
+      {state?.loading && !state.error ? (
         <div role="status" aria-live="polite" className="flex min-w-0 flex-col gap-2 py-1.5">
           <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
             <LoaderCircle className="size-3.5 animate-spin" />
@@ -824,13 +824,17 @@ function CheckRunDetails({
                 variant="outline"
                 size="xs"
                 className="shrink-0"
+                disabled={state.loading}
+                aria-busy={state.loading}
                 onClick={onRetry}
               >
-                <RefreshCw className="size-3" />
-                {translate(
-                  'auto.components.right.sidebar.checks.panel.content.dcb3c546fe',
-                  'Retry'
-                )}
+                <RefreshCw className={cn('size-3', state.loading && 'animate-spin')} />
+                {state.loading
+                  ? translate('githubChecks.retrying', 'Retrying…')
+                  : translate(
+                      'auto.components.right.sidebar.checks.panel.content.dcb3c546fe',
+                      'Retry'
+                    )}
               </Button>
             </div>
           )}
@@ -1143,16 +1147,17 @@ export function ChecksList({
       }
       const requestContextKey = checkDetailsContextKey
       const requestId = createCheckRunDetailsRequestId()
+      const retryError = detailsByCheckKey[row.key]?.error ?? null
       setDetailsByCheckKey((current) => ({
         ...current,
-        [row.key]: { requestId, loading: true, details: null, error: null }
+        [row.key]: { requestId, loading: true, details: null, error: retryError }
       }))
       if (resolvedWorktreeId) {
         patchOpenCheckRunDetails(resolvedWorktreeId, requestContextKey, row.check, {
           requestId,
           details: null,
           loading: true,
-          error: null,
+          error: retryError,
           githubRepository: githubRepository ?? null,
           gitlabProjectRef: getGitLabProjectRef?.() ?? null
         })

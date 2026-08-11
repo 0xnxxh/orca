@@ -3575,21 +3575,24 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       repoPath,
       options?.sourceContext
     )
-    return requestContext.target.kind === 'environment'
-      ? await callRuntimeRpc<PRCheckRunDetails | null>(
-          { kind: 'environment', environmentId: requestContext.target.environmentId },
-          'github.prCheckDetails',
-          {
-            repo: requestContext.target.runtimeRepoId,
-            checkRunId: args.checkRunId,
-            workflowRunId: args.workflowRunId,
-            checkName: args.checkName,
-            url: args.url,
-            prRepo: args.prRepo ?? null
-          },
-          { timeoutMs: 30_000 }
+    const requestTarget = requestContext.target
+    return requestTarget.kind === 'environment'
+      ? await withGitHubCheckDetailsTimeout((signal) =>
+          callRuntimeRpc<PRCheckRunDetails | null>(
+            { kind: 'environment', environmentId: requestTarget.environmentId },
+            'github.prCheckDetails',
+            {
+              repo: requestTarget.runtimeRepoId,
+              checkRunId: args.checkRunId,
+              workflowRunId: args.workflowRunId,
+              checkName: args.checkName,
+              url: args.url,
+              prRepo: args.prRepo ?? null
+            },
+            { timeoutMs: 30_000, signal }
+          )
         )
-      : await withGitHubCheckDetailsTimeout(
+      : await withGitHubCheckDetailsTimeout(() =>
           window.api.gh.prCheckDetails({
             repoPath,
             repoId,

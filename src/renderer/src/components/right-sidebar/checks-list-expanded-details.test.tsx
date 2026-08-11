@@ -280,10 +280,14 @@ describe('ChecksList expanded check details', () => {
   })
 
   it('retries an inline details error', async () => {
+    let resolveRetry: (details: PRCheckRunDetails) => void = () => {}
+    const retryRequest = new Promise<PRCheckRunDetails>((resolve) => {
+      resolveRetry = resolve
+    })
     const onLoadCheckDetails = vi
       .fn<() => Promise<PRCheckRunDetails | null>>()
       .mockRejectedValueOnce(new Error('GitHub request failed'))
-      .mockResolvedValueOnce(checkDetails)
+      .mockReturnValueOnce(retryRequest)
     renderChecksList({ onLoadCheckDetails })
 
     await act(async () => {
@@ -293,14 +297,25 @@ describe('ChecksList expanded check details', () => {
     const retry = [...container.querySelectorAll('button')].find(
       (candidate) => candidate.textContent?.trim() === 'Retry'
     )
+    retry!.focus()
 
     await act(async () => {
       retry!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
-      await Promise.resolve()
     })
 
     expect(onLoadCheckDetails).toHaveBeenCalledTimes(2)
+    expect(document.activeElement).toBe(retry)
+    expect(retry?.disabled).toBe(true)
+    expect(retry?.textContent).toContain('Retrying…')
+    expect(retry?.getAttribute('aria-busy')).toBe('true')
+    expect(container.textContent).toContain('GitHub request failed')
+
+    await act(async () => {
+      resolveRetry(checkDetails)
+      await retryRequest
+    })
+
     expect(container.textContent).toContain('Verify failed')
   })
 

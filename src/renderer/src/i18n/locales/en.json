@@ -34,6 +34,9 @@
       "failed": "The browser page stopped unexpectedly. Retry to restore it."
     }
   },
+  "githubChecks": {
+    "retrying": "Retrying…"
+  },
   "settings": {
     "appearance": {
       "language": {
@@ -1126,7 +1129,10 @@
           "activity": "Activity",
           "noActivity": "No activity yet."
         },
-        "checkActionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked."
+        "checkActionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked.",
+        "e15a8b77ef": "No inline details are available for this check.",
+        "e45324fbed": "Failed to load check details.",
+        "dcb3c546fe": "Retry"
       },
       "GitLabItemDialog": {
         "65e784c1f1": "Reopen",
@@ -1615,7 +1621,10 @@
         "8ff5ae8866": "Assignees",
         "82c87eceb9": "Edit assignees",
         "1ff5d979df": "No one assigned",
-        "checkActionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked."
+        "checkActionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked.",
+        "6b1d5ee3e4": "No inline details are available for this check.",
+        "e04c027d98": "Failed to load check details.",
+        "5df7c41d2a": "Retry"
       },
       "QuickOpen": {
         "1dbd3f59ff": "Move",
