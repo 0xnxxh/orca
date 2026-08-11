@@ -110,6 +110,19 @@ describe('terminalQuickCommandMatchesWorkspaceProject', () => {
     ).toBe(false)
   })
 
+  it('does not infer a missing target setup from another host repo id', () => {
+    const projectHostSetups = [setup('local', LOCAL_REPO_ID), setup('ssh:builder', WINDOWS_REPO_ID)]
+
+    expect(
+      terminalQuickCommandMatchesWorkspaceProject(command(LOCAL_REPO_ID), {
+        commandHostId: 'local',
+        projectHostSetups,
+        targetHostId: 'runtime:windows-2',
+        targetRepoId: WINDOWS_REPO_ID
+      })
+    ).toBe(false)
+  })
+
   it('preserves exact repo-id matching when legacy project metadata is unavailable', () => {
     expect(
       terminalQuickCommandMatchesWorkspaceProject(command(LOCAL_REPO_ID), {

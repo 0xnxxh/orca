@@ -17,12 +17,15 @@ type ProjectResolution =
 function resolveProject(
   setups: TerminalQuickCommandProjectContext['projectHostSetups'],
   hostId: ExecutionHostId,
-  repoId: string
+  repoId: string,
+  allowAnyHostFallback: boolean
 ): ProjectResolution {
   const hostMatches = setups.filter((setup) => setup.hostId === hostId && setup.repoId === repoId)
   // Why: commands belong to a settings host, while its repo can execute through that host's SSH.
   const candidates =
-    hostMatches.length > 0 ? hostMatches : setups.filter((s) => s.repoId === repoId)
+    hostMatches.length > 0 || !allowAnyHostFallback
+      ? hostMatches
+      : setups.filter((s) => s.repoId === repoId)
   const projectIds = new Set(candidates.map((setup) => setup.projectId))
   if (projectIds.size === 0) {
     return { kind: 'unknown' }
@@ -51,12 +54,14 @@ export function terminalQuickCommandMatchesWorkspaceProject(
   const commandProject = resolveProject(
     context.projectHostSetups,
     context.commandHostId,
-    scope.repoId
+    scope.repoId,
+    true
   )
   const targetProject = resolveProject(
     context.projectHostSetups,
     context.targetHostId,
-    context.targetRepoId
+    context.targetRepoId,
+    false
   )
   if (commandProject.kind === 'ambiguous' || targetProject.kind === 'ambiguous') {
     return false
