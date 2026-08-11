@@ -14,6 +14,7 @@ import { SESSION_TAB_CLOSE_METHODS } from './session-tab-close-methods'
 import { projectSessionTabAgentStatus } from './session-tab-agent-status-projection'
 import { restoreStructuredTabsIfSupported } from './structured-session-tab-restore'
 import { MOBILE_MARKDOWN_TAB_METHODS } from './mobile-markdown-tab-methods'
+import { assertLegacyAiVaultResumeCommandAllowed } from '../../../ai-vault/structured-session-ownership'
 
 export const SESSION_TAB_METHODS: RpcAnyMethod[] = [
   defineMethod({
@@ -59,8 +60,13 @@ export const SESSION_TAB_METHODS: RpcAnyMethod[] = [
   defineMethod({
     name: 'session.tabs.createTerminal',
     params: CreateTerminalTab,
-    handler: async (params, { runtime, signal, clientKind, pairedDeviceId }) =>
-      runtime.createMobileSessionTerminal(params.worktree, {
+    handler: async (params, { runtime, signal, clientKind, pairedDeviceId }) => {
+      if (params.command) {
+        await assertLegacyAiVaultResumeCommandAllowed(params.command, () =>
+          runtime.ensureStructuredAgentSessionHost()
+        )
+      }
+      return runtime.createMobileSessionTerminal(params.worktree, {
         afterTabId: params.afterTabId,
         targetGroupId: params.targetGroupId,
         command: params.command,
@@ -86,6 +92,7 @@ export const SESSION_TAB_METHODS: RpcAnyMethod[] = [
         // of running down the timeout and rolling back a live tab (#7718).
         signal
       })
+    }
   }),
   defineMethod({
     name: 'session.tabs.move',

@@ -94,7 +94,7 @@ export class StructuredAgentSessionHost {
   private readonly eventSinks = new Map<string, DeferredStructuredAgentSessionEventSink>()
   private readonly reconcileLeases: (sessionId: string) => Promise<AgentSessionWireRefusal | null>
 
-  constructor(private readonly deps: StructuredAgentSessionHostDeps) {
+  constructor(readonly deps: StructuredAgentSessionHostDeps) {
     this.reconcileLeases = createRestartReconciler({
       store: deps.store,
       probe: (record) => this.probeRecord(record),

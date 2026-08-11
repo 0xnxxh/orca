@@ -162,6 +162,7 @@ function runtimeStub(): unknown {
   const cleanups = new Map<string, () => void>()
   return {
     getRuntimeId: () => 'runtime-1',
+    ensureStructuredAgentSessionHost: async () => undefined,
     getStructuredAgentSessionCreateSupport: async () => ({ supported: true }),
     resolveStructuredAgentSessionCreateIntent: async () => {
       const {
@@ -318,6 +319,176 @@ describe('cross-version structured agent sessions', () => {
           error: { code: 'method_not_found' }
         })
       }
+    })
+  })
+
+  describe('an old client against a structured-owned AI Vault row', () => {
+    let root: string
+    let store: AgentSessionRecordStore
+    let runtime: ReturnType<typeof runtimeStub> & Record<string, unknown>
+    let createMobileSessionTerminal: ReturnType<typeof vi.fn>
+
+    beforeEach(async () => {
+      root = await mkdtemp(join(tmpdir(), 'orca-cross-version-ai-vault-'))
+      store = await AgentSessionRecordStore.open({
+        directory: join(root, 'store'),
+        hostId: 'local'
+      })
+      const host = new StructuredAgentSessionHost({
+        store,
+        adapter: {
+          acquire: async ({ fence }) => ({
+            process: {
+              hostId: 'local',
+              pid: 4242,
+              processStartTimeMs: NOW,
+              spawnToken: store.getRecord(SESSION)?.lease.reservedSpawnToken ?? 'spawn-vault'
+            },
+            link: {
+              linkId: `link-${fence}`,
+              handle: { provider: 'codex', threadId: THREAD },
+              origin: 'created',
+              mintedAtFence: fence,
+              observedAt: NOW
+            }
+          }),
+          dispatch: async () => ({ state: 'accepted' }),
+          cancelTurn: async () => ({ cancelled: true }),
+          answerPrompt: async () => undefined,
+          setOption: async () => undefined
+        },
+        journalRoot: root,
+        claimKeyId: 'key-1',
+        mintSpawnToken: () => 'spawn-vault',
+        now: () => NOW
+      })
+      setStructuredAgentSessionHost(host)
+      const attached = await host.attach({ callerKey: 'test' }, attachParams(null) as never)
+      expect(attached.ok).toBe(true)
+      createMobileSessionTerminal = vi.fn()
+      runtime = {
+        ...(runtimeStub() as Record<string, unknown>),
+        listAiVaultSessions: vi.fn(async () => ({
+          sessions: [
+            {
+              id: `local:codex:${THREAD}:/home/dev/.codex/sessions/rollout-${THREAD}.jsonl`,
+              executionHostId: 'local',
+              agent: 'codex',
+              sessionId: THREAD,
+              title: 'Owned thread',
+              cwd: '/repo',
+              branch: null,
+              model: null,
+              filePath: `/home/dev/.codex/sessions/rollout-${THREAD}.jsonl`,
+              codexHome: '/home/dev/.codex',
+              createdAt: null,
+              updatedAt: null,
+              modifiedAt: '2026-08-11T00:00:00.000Z',
+              messageCount: 1,
+              totalTokens: 0,
+              previewMessages: [],
+              queuedMessageCount: 0,
+              subagentTranscriptCount: 0,
+              resumeCommand: `codex resume '${THREAD}'`,
+              subagent: null
+            }
+          ],
+          issues: [],
+          scannedAt: '2026-08-11T00:00:00.000Z'
+        })),
+        prepareAiVaultSessionResume: vi.fn(),
+        createMobileSessionTerminal
+      }
+    })
+
+    afterEach(async () => {
+      setStructuredAgentSessionHost(null)
+      await rm(root, { recursive: true, force: true })
+    })
+
+    it('hides the row from the old client and annotates it for a capable client', async () => {
+      const oldReply = (
+        await callBuild(
+          current,
+          'aiVault.listSessions',
+          {},
+          {
+            clientKind: 'mobile',
+            clientCapabilities: baseline.capabilities
+          },
+          runtime
+        )
+      )[0]
+      expect(oldReply).toMatchObject({ ok: true, result: { sessions: [] } })
+
+      const capableReply = (
+        await callBuild(
+          current,
+          'aiVault.listSessions',
+          {},
+          {
+            clientKind: 'mobile',
+            clientCapabilities: [STRUCTURED_AGENT_SESSION_RUNTIME_CAPABILITY]
+          },
+          runtime
+        )
+      )[0]
+      expect(capableReply).toMatchObject({
+        ok: true,
+        result: {
+          sessions: [
+            {
+              structuredSession: { sessionId: SESSION, workspaceId: WORKSPACE }
+            }
+          ]
+        }
+      })
+    })
+
+    it('refuses cached prepare and both legacy launch deliveries before a second writer starts', async () => {
+      const params = {
+        agent: 'codex',
+        filePath: `/home/dev/.codex/sessions/rollout-${THREAD}.jsonl`,
+        codexHome: '/home/dev/.codex'
+      }
+      expect(
+        (
+          await callBuild(
+            current,
+            'aiVault.prepareSessionResume',
+            params,
+            {
+              clientKind: 'mobile',
+              clientCapabilities: baseline.capabilities
+            },
+            runtime
+          )
+        )[0]
+      ).toMatchObject({ ok: false, error: { code: 'agent_session_conflict' } })
+
+      expect(
+        (
+          await callBuild(
+            current,
+            'session.tabs.createTerminal',
+            { worktree: `id:${WORKSPACE}`, command: `codex resume '${THREAD}'` },
+            { clientKind: 'mobile', clientCapabilities: baseline.capabilities },
+            runtime
+          )
+        )[0]
+      ).toMatchObject({ ok: false, error: { code: 'agent_session_conflict' } })
+      expect(
+        (
+          await callBuild(
+            current,
+            'terminal.send',
+            { terminal: 'terminal-1', text: `codex resume '${THREAD}'`, enter: true },
+            { clientKind: 'mobile', clientCapabilities: baseline.capabilities },
+            runtime
+          )
+        )[0]
+      ).toMatchObject({ ok: false, error: { code: 'agent_session_conflict' } })
+      expect(createMobileSessionTerminal).not.toHaveBeenCalled()
     })
   })
 

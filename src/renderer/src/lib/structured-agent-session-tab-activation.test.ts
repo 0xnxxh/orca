@@ -30,7 +30,10 @@ vi.mock('@/runtime/runtime-worktree-selector', () => ({
   toRuntimeWorktreeSelector: (worktreeId: string) => `id:${worktreeId}`
 }))
 
-import { activateStructuredAgentSessionTab } from './structured-agent-session-tab-activation'
+import {
+  activateStructuredAgentSessionById,
+  activateStructuredAgentSessionTab
+} from './structured-agent-session-tab-activation'
 
 describe('activateStructuredAgentSessionTab', () => {
   beforeEach(() => {
@@ -65,6 +68,18 @@ describe('activateStructuredAgentSessionTab', () => {
     expect(mocks.focusGroup).toHaveBeenCalledWith('wt-1', 'group-1')
     expect(mocks.activateTab).toHaveBeenCalledWith('structured-tab-1', { worktreeId: 'wt-1' })
     expect(mocks.setActiveTabType).toHaveBeenCalledWith('agent-session')
+    expect(mocks.callRuntimeRpc).toHaveBeenCalledWith(
+      { kind: 'environment', environmentId: 'env-1' },
+      'session.tabs.activate',
+      { worktree: 'id:wt-1', tabId: 'agent-session:session-1' }
+    )
+  })
+
+  it('routes a provider-owned vault row through its structured session id', () => {
+    expect(activateStructuredAgentSessionById({ worktreeId: 'wt-1', sessionId: 'session-1' })).toBe(
+      true
+    )
+    expect(mocks.activateTab).toHaveBeenCalledWith('structured-tab-1', { worktreeId: 'wt-1' })
     expect(mocks.callRuntimeRpc).toHaveBeenCalledWith(
       { kind: 'environment', environmentId: 'env-1' },
       'session.tabs.activate',
