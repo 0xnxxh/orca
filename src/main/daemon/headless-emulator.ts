@@ -10,7 +10,7 @@ import {
 import { advancePartialEscapeTail } from '../../shared/terminal-partial-escape-tail'
 import type { TerminalViewAttributes } from '../../shared/terminal-view-attributes'
 import { collectHeadlessOscLinkRanges } from './headless-osc-link-ranges'
-import { applyRetainedScrollbackRows, readTerminalModes } from './headless-emulator-modes'
+import { readTerminalModes } from './headless-emulator-modes'
 import { buildRehydrateSequences } from './terminal-mode-rehydrate-sequences'
 import { TerminalMouseModeMirror } from './terminal-mouse-mode-mirror'
 import { TerminalOscCwdTitleScanner } from './terminal-osc-cwd-title-scanner'
@@ -332,13 +332,6 @@ export class HeadlessEmulator {
   }
 
   // Why: xterm trims the normal buffer on assignment, so lowering this frees retained rows immediately.
-  setRetainedScrollbackRows(rows: number): void {
-    if (this.disposed) {
-      return
-    }
-    this.restoredOscLinks = applyRetainedScrollbackRows(this.terminal, this.restoredOscLinks, rows)
-  }
-
   dispose(): void {
     this.disposed = true
     this.terminal.dispose()

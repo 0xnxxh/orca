@@ -88,16 +88,3 @@ function getOscLinkIdAtCell(line: { getCell: (col: number) => unknown }, col: nu
   // Why: OSC link IDs live in extended cell attrs; missing attrs means no link.
   return cell?.hasExtendedAttrs?.() && cell.extended?.urlId ? cell.extended.urlId : 0
 }
-
-/** Restored-link rows are buffer-absolute, so rows trimmed off the top shift every survivor up. */
-export function shiftOscLinkRangesForTrimmedRows(
-  links: readonly TerminalOscLinkRange[],
-  trimmedRows: number
-): TerminalOscLinkRange[] {
-  if (trimmedRows <= 0) {
-    return [...links]
-  }
-  return links
-    .filter((link) => link.row >= trimmedRows)
-    .map((link) => ({ ...link, row: link.row - trimmedRows }))
-}

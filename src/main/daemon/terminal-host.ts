@@ -16,10 +16,6 @@ import { resolveTerminalHostSessionCwd } from './terminal-host-session-cwd'
 import { TerminalHostTombstones } from './terminal-host-tombstones'
 import { listLiveTerminalHostSessions } from './terminal-host-session-listing'
 import { createOrAttachTerminalSession } from './terminal-host-session-create'
-import {
-  applySessionScrollbackRetention,
-  resolveParkedFullDepthCap
-} from './daemon-scrollback-retention'
 import { isShellProcess } from '../../shared/agent-detection'
 
 export type { CreateOrAttachOptions, CreateOrAttachResult } from './terminal-host-create-contract'
@@ -39,10 +35,6 @@ export class TerminalHost {
   private disposePromise: Promise<void> | null = null
   private readonly agentSessionOwners = new ClaimedAgentPtyOwnerRegistry()
   private readonly agentSessionGenerations = new TerminalHostAgentSessionGenerations()
-  private readonly parkedFullDepthCap = resolveParkedFullDepthCap()
-  // Why: attach order is the LRU signal — output alone must not refresh a parked agent's recency.
-  private readonly retentionRecency = new Map<string, number>()
-  private retentionClock = 0
 
   constructor(opts: TerminalHostOptions) {
     this.spawnSubprocess = opts.spawnSubprocess
@@ -72,38 +64,17 @@ export class TerminalHost {
           spawnSubprocess: this.spawnSubprocess,
           creationFenced: this.creationFenced,
           onDeadSessionRemoved: (sessionId) => this.agentSessionGenerations.forget(sessionId),
-          onSessionCreated: (sessionId, generation, isAlive) => {
-            this.agentSessionGenerations.remember(sessionId, generation, isAlive)
-            // Apply synchronously with map insertion so concurrent creates cannot dodge retention.
-            this.noteSessionViewed(sessionId)
-          },
+          onSessionCreated: (sessionId, generation, isAlive) =>
+            this.agentSessionGenerations.remember(sessionId, generation, isAlive),
           onSessionExit: (sessionId, generation) => {
             this.agentSessionOwners.release(sessionId, generation)
             this.agentSessionGenerations.forget(sessionId, generation)
             this.reapSession(sessionId)
           }
         })
-        if (result.isNew) {
-          // Creation already advanced recency; re-apply now that the initial client is attached.
-          this.applyScrollbackRetention()
-        } else {
-          this.noteSessionViewed(options.sessionId)
-        }
         return result
       }
     })
-  }
-
-  private noteSessionViewed(sessionId: string): void {
-    this.retentionClock += 1
-    this.retentionRecency.set(sessionId, this.retentionClock)
-    this.applyScrollbackRetention()
-  }
-
-  // Why: a terminal the user is viewing must never lose reachable scrollback — only parked sessions
-  // past the LRU cap are trimmed. Trimming is one-way for evicted rows; reattach restores depth forward.
-  private applyScrollbackRetention(): void {
-    applySessionScrollbackRetention(this.sessions, this.retentionRecency, this.parkedFullDepthCap)
   }
 
   write(sessionId: string, data: string): void {
@@ -152,9 +123,6 @@ export class TerminalHost {
     }
     session.dispose()
     this.sessions.delete(sessionId)
-    this.retentionRecency.delete(sessionId)
-    // A freed slot may let the most recent trimmed parked session accumulate full depth again.
-    this.applyScrollbackRetention()
     this.onSessionReaped?.(sessionId)
   }
 
@@ -170,8 +138,6 @@ export class TerminalHost {
     for (const { sessionId, token } of attachments) {
       this.sessions.get(sessionId)?.detachClient(token)
     }
-    // Newly parked sessions may now fall past the LRU cap.
-    this.applyScrollbackRetention()
   }
 
   async getCwd(sessionId: string): Promise<string | null> {

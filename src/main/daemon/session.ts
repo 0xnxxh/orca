@@ -474,13 +474,6 @@ export class Session {
     return this.subprocess.confirmForegroundProcess?.() ?? this.subprocess.getForegroundProcess()
   }
 
-  setRetainedScrollbackRows(rows: number): void {
-    if (this._disposed) {
-      return
-    }
-    this.emulator.setRetainedScrollbackRows(rows)
-  }
-
   clearScrollback(): void {
     if (this._disposed) {
       return
