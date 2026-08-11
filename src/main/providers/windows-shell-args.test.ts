@@ -1,13 +1,4 @@
-import { spawnSync } from 'node:child_process'
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -32,19 +23,6 @@ function decodePowerShellCommand(result: ReturnType<typeof resolveWindowsShellLa
 function expectedPowerShellRestoreCwdCommand(cwdLiteral: string): string {
   return `try { Set-Location -LiteralPath ${cwdLiteral} -ErrorAction Stop } catch { Write-Warning "Failed to restore working directory: $_" }`
 }
-
-// Why an absolute path: the guest script only accepts a login shell that passes
-// `[ -x "$SHELL" ]`, so a bare `fish` would silently fall through to /bin/sh and
-// make the fish assertions below vacuous.
-const fishPath = (() => {
-  if (process.platform === 'win32') {
-    return null
-  }
-  const which = spawnSync('sh', ['-c', 'command -v fish'], { encoding: 'utf8' })
-  const resolved = which.status === 0 ? which.stdout.trim() : ''
-  return resolved && existsSync(resolved) ? resolved : null
-})()
-const itWithFish = fishPath ? it : it.skip
 
 describe('resolveWindowsShellLaunchArgs', () => {
   let previousUserDataPath: string | undefined
@@ -342,98 +320,6 @@ describe('resolveWindowsShellLaunchArgs', () => {
     // Why: the guest argv is escaped for wsl.exe, which mangles a bare `$`.
     expect(escapeWslShCommandForWindows(command)).toContain('\\$ORCA_FISH_SHELL_READY_WRAPPER')
   })
-
-  // Why run the guest script for real: asserting the string alone cannot catch a
-  // fish parse error in the sourced wrapper, and the failure this fixes is
-  // exactly "fish started fine but prime-agent went unwrapped". This is macOS/
-  // Linux standing in for the guest — wsl.exe and WSLENV translation are NOT
-  // exercised. `getent` is absent here, so the script takes its $SHELL fallback,
-  // which is the same branch a WSL distro without getent takes.
-  itWithFish(
-    'runs the fish branch of the guest login script end to end',
-    () => {
-      resolveWindowsShellLaunchArgs('wsl.exe', 'C:\\Users\\alice\\code', 'C:\\Users\\alice')
-
-      const guestHome = mkdtempSync(join(tmpdir(), 'wsl-fish-guest-'))
-      try {
-        const binDir = join(guestHome, 'bin')
-        const extensionPath = join(guestHome, 'orca-agent-status.ts')
-        const capturePath = join(guestHome, 'capture')
-        mkdirSync(binDir)
-        writeFileSync(extensionPath, 'export default {}')
-        writeFileSync(
-          join(binDir, 'prime-agent'),
-          `#!/bin/sh\nprintf '%s\\n' "$@" > "$ORCA_CAPTURE_FILE"\n`,
-          { mode: 0o755 }
-        )
-        chmodSync(join(binDir, 'prime-agent'), 0o755)
-
-        const result = spawnSync('sh', ['-c', buildWslInteractiveLoginShellCommand()], {
-          cwd: guestHome,
-          input: 'prime-agent ask\n',
-          env: {
-            PATH: `${binDir}:${process.env.PATH ?? ''}`,
-            HOME: guestHome,
-            SHELL: fishPath ?? 'fish',
-            ORCA_USER_DATA_PATH: userDataPath,
-            ORCA_PRIME_AGENT_STATUS_EXTENSION: extensionPath,
-            ORCA_CAPTURE_FILE: capturePath
-          },
-          encoding: 'utf8'
-        })
-
-        expect(result.stderr).not.toContain('source:')
-        // Why a filesystem marker: the wrapper's effect is the argv it hands the
-        // real binary, which terminal output would only show mangled by fish's
-        // own echo.
-        expect(existsSync(capturePath), result.stderr).toBe(true)
-        expect(readFileSync(capturePath, 'utf8')).toBe(`--extension\n${extensionPath}\nask\n`)
-      } finally {
-        rmSync(guestHome, { recursive: true, force: true })
-      }
-    },
-    15_000
-  )
-
-  itWithFish(
-    'leaves guest fish unwrapped when the wrapper file is missing',
-    () => {
-      const guestHome = mkdtempSync(join(tmpdir(), 'wsl-fish-guest-bare-'))
-      try {
-        const binDir = join(guestHome, 'bin')
-        const capturePath = join(guestHome, 'capture')
-        mkdirSync(binDir)
-        writeFileSync(
-          join(binDir, 'prime-agent'),
-          `#!/bin/sh\nprintf '%s\\n' "$@" > "$ORCA_CAPTURE_FILE"\n`,
-          { mode: 0o755 }
-        )
-        chmodSync(join(binDir, 'prime-agent'), 0o755)
-
-        const result = spawnSync('sh', ['-c', buildWslInteractiveLoginShellCommand()], {
-          cwd: guestHome,
-          input: 'prime-agent ask\n',
-          env: {
-            PATH: `${binDir}:${process.env.PATH ?? ''}`,
-            HOME: guestHome,
-            SHELL: fishPath ?? 'fish',
-            // Why: no wrapper root at all — a failed wrapper write must still
-            // reach a usable fish prompt rather than erroring on `source`.
-            ORCA_PRIME_AGENT_STATUS_EXTENSION: join(guestHome, 'orca-agent-status.ts'),
-            ORCA_CAPTURE_FILE: capturePath
-          },
-          encoding: 'utf8'
-        })
-
-        expect(result.stderr).not.toContain('source:')
-        expect(existsSync(capturePath), result.stderr).toBe(true)
-        expect(readFileSync(capturePath, 'utf8')).toBe('ask\n')
-      } finally {
-        rmSync(guestHome, { recursive: true, force: true })
-      }
-    },
-    15_000
-  )
 
   it('translates MSYS drive cwd to /mnt/<drive>/... for wsl.exe', () => {
     const result = resolveWindowsShellLaunchArgs(

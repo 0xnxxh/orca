@@ -412,8 +412,12 @@ function getWrappedShellLaunchConfig(
     }
   }
 
-  // Why: mirrors daemon/shell-ready.ts; attribution-only fish stays unwrapped.
-  if (shellName === 'fish' && options.emitReadyMarker) {
+  // Why attribution-only fish is wrapped too (it used to launch bare): the init
+  // command carries the Prime wrapper as well as the marker, and a markerless
+  // pane is exactly where a user types `prime-agent` by hand. bash and zsh
+  // already return their wrapper unconditionally; the marker itself stays gated
+  // on ORCA_SHELL_READY_MARKER inside the init text.
+  if (shellName === 'fish') {
     ensureShellReadyWrappers()
     return {
       args: [
@@ -424,8 +428,8 @@ function getWrappedShellLaunchConfig(
           escapedMarker: SHELL_READY_MARKER_ESCAPED
         })
       ],
-      env: { ORCA_SHELL_READY_MARKER: '1' },
-      supportsReadyMarker: true
+      env: { ORCA_SHELL_READY_MARKER: options.emitReadyMarker ? '1' : '0' },
+      supportsReadyMarker: options.emitReadyMarker
     }
   }
 

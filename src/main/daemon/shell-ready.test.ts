@@ -241,12 +241,17 @@ describePosix('daemon shell-ready launch config', () => {
     expect(init).toContain('functions -e __orca_shell_ready_marker')
   })
 
-  it('keeps attribution-only fish spawns unwrapped', async () => {
+  it('wraps attribution-only fish spawns without arming the marker', async () => {
     const { getAttributionShellLaunchConfig } = await importFreshShellReady()
 
     const config = getAttributionShellLaunchConfig('/opt/homebrew/bin/fish')
 
-    expect(config).toEqual({ args: null, env: {}, supportsReadyMarker: false })
+    // Why wrapped at all: a markerless pane is where a user types `prime-agent`
+    // by hand, and bash/zsh already get their wrapper on this path.
+    const wrapper = join(userDataPath, 'shell-ready', 'fish', 'orca.fish')
+    expect(config.args?.[2] ?? '').toContain(`source '${wrapper}'`)
+    expect(config.supportsReadyMarker).toBe(false)
+    expect(config.env).toEqual({ ORCA_SHELL_READY_MARKER: '0' })
   })
 
   it('rewrites the fish wrapper when a long-lived daemon finds it missing', async () => {

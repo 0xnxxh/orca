@@ -429,8 +429,11 @@ function getWrappedShellLaunchConfig(
     }
   }
 
-  // Why: mirrors local-pty-shell-ready.ts; attribution-only fish stays unwrapped.
-  if (shellName === 'fish' && options.emitReadyMarker) {
+  // Why attribution-only fish is wrapped too (it used to launch bare): mirrors
+  // local-pty-shell-ready.ts — the init command carries the Prime wrapper as
+  // well as the marker, and a markerless pane is exactly where a user types
+  // `prime-agent` by hand. The marker stays gated on ORCA_SHELL_READY_MARKER.
+  if (shellName === 'fish') {
     ensureShellReadyWrappers()
     return {
       args: [
@@ -441,8 +444,8 @@ function getWrappedShellLaunchConfig(
           escapedMarker: SHELL_READY_MARKER
         })
       ],
-      env: { ORCA_SHELL_READY_MARKER: '1' },
-      supportsReadyMarker: true
+      env: { ORCA_SHELL_READY_MARKER: options.emitReadyMarker ? '1' : '0' },
+      supportsReadyMarker: options.emitReadyMarker
     }
   }
 

@@ -390,12 +390,30 @@ describePosix('local PTY shell-ready launch config', () => {
     )
   })
 
-  it('keeps attribution-only fish spawns unwrapped', async () => {
+  it('wraps attribution-only fish spawns without arming the marker', async () => {
     const { getAttributionShellLaunchConfig } = await importFreshLocalPtyShellReady()
 
     const config = getAttributionShellLaunchConfig('/opt/homebrew/bin/fish')
 
-    expect(config).toEqual({ args: null, env: {}, supportsReadyMarker: false })
+    // Why wrapped at all: this is the path a plain fish pane takes, and it is
+    // exactly where a user types `prime-agent` by hand. bash/zsh already return
+    // their wrapper here; fish used to launch bare and lose Prime status.
+    const wrapper = join(userDataPath, 'shell-ready', 'fish', 'orca.fish')
+    expect(config.args?.[2] ?? '').toContain(`source '${wrapper}'`)
+    expect(config.supportsReadyMarker).toBe(false)
+    expect(config.env).toEqual({ ORCA_SHELL_READY_MARKER: '0' })
+  })
+
+  // Why: the marker text ships in both configs but must stay inert when the
+  // caller did not ask for it, or a markerless pane would resolve the startup
+  // barrier early.
+  it('leaves the marker registration inert in the attribution fish init', async () => {
+    const { getAttributionShellLaunchConfig } = await importFreshLocalPtyShellReady()
+
+    const config = getAttributionShellLaunchConfig('/opt/homebrew/bin/fish')
+
+    expect(config.args?.[2] ?? '').toContain('if test "$ORCA_SHELL_READY_MARKER" = 1')
+    expect(config.env.ORCA_SHELL_READY_MARKER).toBe('0')
   })
 
   it('falls back to HOME for ORCA_ORIG_ZDOTDIR when inherited ZDOTDIR points at a wrapper dir', async () => {

@@ -183,9 +183,10 @@ jobs:
         with:
           persist-credentials: false
 
-      # Why fish: shell-ready.test.ts gates its live fish test on the binary being
-      # present, so without this the fish barrier is only covered by config-shape
-      # assertions and never actually exercised.
+      # Why fish: every live-fish suite gates on the binary being present, so
+      # without this they skip silently and fish is covered only by config-shape
+      # assertions. Any new test that spawns a real fish MUST be listed in both
+      # the run list below and the shard --exclude list, or it never executes.
       - name: Install zsh and fish
         run: sudo apt-get update && sudo apt-get install -y zsh fish
 
@@ -197,10 +198,14 @@ jobs:
         run: |
           pnpm exec vitest run --config config/vitest.config.ts \
             src/main/daemon/shell-ready.test.ts \
+            src/main/daemon/shell-ready-fish.node-pty.test.ts \
             src/main/daemon/node-pty-fd-leak.test.ts \
             src/main/providers/local-pty-shell-ready.test.ts \
+            src/main/providers/wsl-fish-login-shell.test.ts \
             src/main/providers/__tests__/shell-ready-framework-example.test.ts \
             src/main/pty/omp-shell-wrapper.node-pty.test.ts \
+            src/main/pty/prime-agent-fish-shell-wrapper.test.ts \
+            src/main/pty/prime-agent-shell-wrapper-parity.test.ts \
             src/shared/posix-command-path-lookup.test.ts
 
   test:
@@ -231,10 +236,14 @@ jobs:
         run: |
           pnpm exec vitest run --config config/vitest.config.ts \
             --exclude=src/main/daemon/shell-ready.test.ts \
+            --exclude=src/main/daemon/shell-ready-fish.node-pty.test.ts \
             --exclude=src/main/daemon/node-pty-fd-leak.test.ts \
             --exclude=src/main/providers/local-pty-shell-ready.test.ts \
+            --exclude=src/main/providers/wsl-fish-login-shell.test.ts \
             --exclude=src/main/providers/__tests__/shell-ready-framework-example.test.ts \
             --exclude=src/main/pty/omp-shell-wrapper.node-pty.test.ts \
+            --exclude=src/main/pty/prime-agent-fish-shell-wrapper.test.ts \
+            --exclude=src/main/pty/prime-agent-shell-wrapper-parity.test.ts \
             --exclude=src/shared/posix-command-path-lookup.test.ts \
             --exclude=tests/e2e/cross-version-wire/** \
             --shard=${{ matrix.shard }}/${{ matrix.shard_total }}
