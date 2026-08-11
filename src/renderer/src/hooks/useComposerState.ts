@@ -852,9 +852,22 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     connectionId: folderTargetConnectionId,
     status: folderTargetSshState?.status ?? null
   })
+  const composerPathStatusProjectGroup = useMemo(
+    () =>
+      selectedProjectGroup
+        ? {
+            ...selectedProjectGroup,
+            id: getNewWorkspaceProjectGroupOptionId(
+              selectedProjectGroup.id,
+              getNewWorkspaceProjectGroupHostId(selectedProjectGroup)
+            )
+          }
+        : null,
+    [selectedProjectGroup]
+  )
   const { pathStatusBlocksCreate: folderPathStatusBlocksCreate, pathStatusProjectError } =
     useFolderWorkspaceComposerPathStatus(
-      selectedProjectGroup,
+      composerPathStatusProjectGroup,
       true,
       folderTargetRuntimeEnvironmentId
     )

@@ -5011,18 +5011,21 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   updateWorktreeMeta: async (worktreeId, updates, options) => {
     const shouldApplyUpdate = options?.shouldApply
     const stateBeforeUpdate = get()
+    const workspaceScope = parseWorkspaceKey(worktreeId)
     const modalExecutionHostId =
       stateBeforeUpdate.activeModal === 'edit-meta' &&
       stateBeforeUpdate.modalData.worktreeId === worktreeId &&
       typeof stateBeforeUpdate.modalData.executionHostId === 'string'
         ? parseExecutionHostId(stateBeforeUpdate.modalData.executionHostId)?.id
         : undefined
-    const executionHostId = options?.executionHostId ?? modalExecutionHostId
+    const executionHostId =
+      workspaceScope?.type === 'folder'
+        ? (workspaceScope.ownerHostId ?? modalExecutionHostId)
+        : modalExecutionHostId
     const existingWorktree = get().getKnownWorktreeById(worktreeId, executionHostId)
     if (shouldApplyUpdate && !shouldApplyUpdate(existingWorktree)) {
       return { ok: true }
     }
-    const workspaceScope = parseWorkspaceKey(worktreeId)
     if (workspaceScope?.type === 'folder') {
       const folderUpdates = getFolderWorkspaceMetaUpdates(updates)
       if (Object.keys(folderUpdates).length === 0) {

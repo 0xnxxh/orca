@@ -70,7 +70,11 @@ export function getRuntimeEnvironmentIdForWorktree(
   }
   const workspaceScope = parseWorkspaceKey(worktreeId)
   if (workspaceScope?.type === 'folder') {
-    return getRuntimeEnvironmentIdForFolderWorkspace(state, workspaceScope.folderWorkspaceId)
+    return getRuntimeEnvironmentIdForFolderWorkspace(
+      state,
+      workspaceScope.folderWorkspaceId,
+      workspaceScope.ownerHostId
+    )
   }
   const indexedOwner = resolveIndexedWorktreeOwner(state.worktreesByRepo, worktreeId)
   if (indexedOwner.kind === 'ambiguous') {
@@ -121,7 +125,8 @@ export function getExplicitRuntimeEnvironmentIdForWorktree(
   if (workspaceScope?.type === 'folder') {
     return getExplicitRuntimeEnvironmentIdForFolderWorkspace(
       state,
-      workspaceScope.folderWorkspaceId
+      workspaceScope.folderWorkspaceId,
+      workspaceScope.ownerHostId
     )
   }
   const hasDetectedOwner = hasIndexedDetectedWorktree(state.detectedWorktreesByRepo, worktreeId)
@@ -172,7 +177,11 @@ export function getExecutionHostIdForWorktree(
   }
   const workspaceScope = parseWorkspaceKey(worktreeId)
   if (workspaceScope?.type === 'folder') {
-    return getExecutionHostIdForFolderWorkspace(state, workspaceScope.folderWorkspaceId)
+    return getExecutionHostIdForFolderWorkspace(
+      state,
+      workspaceScope.folderWorkspaceId,
+      workspaceScope.ownerHostId
+    )
   }
   const hasDetectedOwner = hasIndexedDetectedWorktree(state.detectedWorktreesByRepo, worktreeId)
   if (hasDetectedOwner) {

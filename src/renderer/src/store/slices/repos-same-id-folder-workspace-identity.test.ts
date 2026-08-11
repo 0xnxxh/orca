@@ -4,6 +4,18 @@ import { getFolderWorkspaceRowKey } from '../../../../shared/folder-workspaces'
 import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import { buildHostIdByWorktreeId } from '../../lib/workspace-session-host-persistence'
 import { computeRenderedSidebarWorktreeOrder } from '../../components/sidebar/rendered-sidebar-worktree-order'
+import { getContextMenuWorktreeMetaId } from '../../components/sidebar/WorktreeContextMenu'
+import { collectActiveDashboardWorkspaces } from '../../components/dashboard/dashboard-snapshot-workspaces'
+import {
+  getAgentMapFolderComposerProjectGroupId,
+  resolveAgentMapProjectContextTarget
+} from '../../components/dashboard-popout/AgentMapProjectContextMenu'
+import {
+  getExecutionHostIdForWorktree,
+  getExplicitRuntimeEnvironmentIdForWorktree,
+  getRuntimeEnvironmentIdForWorktree
+} from '../../lib/worktree-runtime-owner'
+import { resolveWorktreeOperationRouteResult } from '../../lib/worktree-operation-route'
 import {
   getFolderWorkspaceCandidateRepos,
   getFolderWorkspaceConnectionId
@@ -397,6 +409,78 @@ describe('same-id cross-host folder workspace identity', () => {
     expect(getHostId(runtimeKey)).toBe('runtime:env-1')
   })
 
+  it('routes inactive owner-qualified folder sessions through their exact owner', () => {
+    const store = createTestStore()
+    const localKey = folderWorkspaceKey('same-id', 'local')
+    const runtimeKey = folderWorkspaceKey('same-id', 'runtime:env-1')
+    store.setState({
+      projectGroups: [
+        makeGroup({ executionHostId: 'local', parentPath: '/local' }),
+        makeGroup({ executionHostId: 'runtime:env-1', parentPath: '/runtime' })
+      ],
+      folderWorkspaces: [
+        makeFolder({ executionHostId: 'local', folderPath: '/local/folder' }),
+        makeFolder({ executionHostId: 'runtime:env-1', folderPath: '/runtime/folder' })
+      ],
+      activeWorktreeId: null,
+      activeWorkspaceExecutionHostId: null
+    })
+    const state = store.getState()
+
+    expect(getRuntimeEnvironmentIdForWorktree(state, localKey)).toBeNull()
+    expect(getRuntimeEnvironmentIdForWorktree(state, runtimeKey)).toBe('env-1')
+    expect(getExplicitRuntimeEnvironmentIdForWorktree(state, runtimeKey)).toBe('env-1')
+    expect(getExecutionHostIdForWorktree(state, localKey)).toBe('local')
+    expect(getExecutionHostIdForWorktree(state, runtimeKey)).toBe('runtime:env-1')
+    expect(resolveWorktreeOperationRouteResult(state, runtimeKey)).toEqual({
+      kind: 'resolved',
+      route: { executionHostId: 'runtime:env-1', runtimeEnvironmentId: 'env-1' }
+    })
+  })
+
+  it('keeps same-id dashboard folder projects and composer targets owner-qualified', () => {
+    const localGroup = makeGroup({ executionHostId: 'local', parentPath: '/local' })
+    const runtimeGroup = makeGroup({ executionHostId: 'runtime:env-1', parentPath: '/runtime' })
+    const state = {
+      repos: [],
+      worktreesByRepo: {},
+      projectGroups: [localGroup, runtimeGroup],
+      folderWorkspaces: [
+        makeFolder({ executionHostId: 'local', folderPath: '/local/folder' }),
+        makeFolder({ executionHostId: 'runtime:env-1', folderPath: '/runtime/folder' })
+      ]
+    }
+    const workspaces = collectActiveDashboardWorkspaces(state)
+
+    expect(workspaces.map((workspace) => workspace.projectId)).toEqual([
+      `folder-workspace:${getAgentMapFolderComposerProjectGroupId(localGroup)}`,
+      `folder-workspace:${getAgentMapFolderComposerProjectGroupId(runtimeGroup)}`
+    ])
+    expect(workspaces.map((workspace) => workspace.worktree.id)).toEqual([
+      folderWorkspaceKey('same-id', 'local'),
+      folderWorkspaceKey('same-id', 'runtime:env-1')
+    ])
+    expect(
+      workspaces.map((workspace) =>
+        resolveAgentMapProjectContextTarget({
+          projectId: workspace.projectId,
+          repos: [],
+          projectGroups: state.projectGroups
+        })
+      )
+    ).toEqual([
+      { kind: 'folder', group: localGroup },
+      { kind: 'folder', group: runtimeGroup }
+    ])
+    expect(
+      resolveAgentMapProjectContextTarget({
+        projectId: `folder-workspace:${localGroup.id}`,
+        repos: [],
+        projectGroups: [localGroup]
+      })
+    ).toEqual({ kind: 'folder', group: localGroup })
+  })
+
   it('keeps legacy bare folder ids containing colons intact', () => {
     expect(parseWorkspaceKey('folder:legacy:id')).toEqual({
       type: 'folder',
@@ -450,15 +534,10 @@ describe('same-id cross-host folder workspace identity', () => {
       folderWorkspaces: [local, ssh]
     })
     vi.stubGlobal('window', { api: { folderWorkspaces: { update } } })
-
     await expect(
-      store.getState().updateWorktreeMeta(
-        'folder:same-id',
-        { comment: 'SSH note' },
-        {
-          executionHostId: 'ssh:builder'
-        }
-      )
+      store
+        .getState()
+        .updateWorktreeMeta(folderWorkspaceKey('same-id', 'ssh:builder'), { comment: 'SSH note' })
     ).resolves.toEqual({ ok: true })
 
     expect(update).toHaveBeenCalledWith({
@@ -466,6 +545,12 @@ describe('same-id cross-host folder workspace identity', () => {
       ownerHostId: 'ssh:builder',
       updates: { comment: 'SSH note', lastActivityAt: expect.any(Number) }
     })
+  })
+
+  it('qualifies context-menu metadata keys with the selected row owner', () => {
+    expect(getContextMenuWorktreeMetaId({ id: 'folder:same-id', hostId: 'runtime:env-1' })).toBe(
+      folderWorkspaceKey('same-id', 'runtime:env-1')
+    )
   })
 
   it('forwards the selected folder owner through local update IPC', async () => {

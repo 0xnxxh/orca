@@ -1,9 +1,6 @@
 import { stat as statLocalPath } from 'node:fs/promises'
 import { isPathInsideOrEqual } from '../../shared/cross-platform-path'
-import type {
-  FolderWorkspacePathStatus,
-  FolderWorkspacePathStatusRequest
-} from '../../shared/folder-workspace-path-status'
+import type { FolderWorkspacePathStatus } from '../../shared/folder-workspace-path-status'
 import {
   buildProjectGroupOwnerIndex,
   getFolderWorkspaceProjectGroupOwnerHostId,
@@ -15,6 +12,7 @@ import {
 import { getRepoExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
 import type { FolderWorkspace, ProjectGroup, Repo } from '../../shared/types'
 import {
+  type OwnerQualifiedFolderWorkspacePathStatusRequest,
   resolveFolderWorkspaceCatalogOwnerHostIdFromIndex,
   resolveLegacySshFolderWorkspaceProjectGroup
 } from '../../shared/folder-workspaces'
@@ -163,7 +161,7 @@ export async function getFolderWorkspacePathStatusForPath(
 
 export function resolveFolderWorkspaceStatusPath(args: {
   store: FolderWorkspacePathStatusStore
-  request: FolderWorkspacePathStatusRequest
+  request: OwnerQualifiedFolderWorkspacePathStatusRequest
 }): {
   folderPath: string
   projectGroupId: string | null
@@ -226,7 +224,7 @@ export function resolveFolderWorkspaceStatusPath(args: {
 
 export async function getFolderWorkspacePathStatus(
   store: FolderWorkspacePathStatusStore,
-  request: FolderWorkspacePathStatusRequest,
+  request: OwnerQualifiedFolderWorkspacePathStatusRequest,
   deps: FolderWorkspacePathStatusDeps
 ): Promise<FolderWorkspacePathStatus> {
   const scope = resolveFolderWorkspaceStatusPath({ store, request })

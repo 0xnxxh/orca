@@ -96,10 +96,15 @@ import {
 } from '../../../../shared/execution-host'
 import { isRemovedRuntimeHostId } from './stale-runtime-host-rows'
 import { cleanupEphemeralVmRuntimesForDeleted } from '@/lib/ephemeral-vm-runtime-cleanup'
-import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
+import {
+  folderWorkspaceKey,
+  parseProjectGroupSelectorKey,
+  parseWorkspaceKey
+} from '../../../../shared/workspace-scope'
 import {
   getFolderWorkspaceIdentity,
   getFolderWorkspaceOwnerIdentity,
+  type OwnerQualifiedFolderWorkspacePathStatusRequest,
   resolveFolderWorkspaceCatalogOwnerHostId,
   resolveFolderWorkspaceCatalogOwnerHostIdFromIndex,
   resolveFolderWorkspaceProjectGroupWithLegacySsh
@@ -115,6 +120,38 @@ import {
   FolderWorkspaceUpdateCoordinator,
   type FolderWorkspaceUpdateTicket
 } from './folder-workspace-update-coordinator'
+
+type WithOptionalOwner<T> = T & { ownerHostId?: ExecutionHostId }
+
+type OwnerQualifiedLocalCatalogApi = {
+  projectGroups: {
+    update: (
+      args: WithOptionalOwner<Parameters<typeof window.api.projectGroups.update>[0]>
+    ) => ReturnType<typeof window.api.projectGroups.update>
+    delete: (
+      args: WithOptionalOwner<Parameters<typeof window.api.projectGroups.delete>[0]>
+    ) => ReturnType<typeof window.api.projectGroups.delete>
+    moveProject: (
+      args: WithOptionalOwner<Parameters<typeof window.api.projectGroups.moveProject>[0]>
+    ) => ReturnType<typeof window.api.projectGroups.moveProject>
+  }
+  folderWorkspaces: {
+    getPathStatus: (
+      args: OwnerQualifiedFolderWorkspacePathStatusRequest
+    ) => ReturnType<typeof window.api.folderWorkspaces.getPathStatus>
+    update: (
+      args: WithOptionalOwner<Parameters<typeof window.api.folderWorkspaces.update>[0]>
+    ) => ReturnType<typeof window.api.folderWorkspaces.update>
+    delete: (
+      args: WithOptionalOwner<Parameters<typeof window.api.folderWorkspaces.delete>[0]>
+    ) => ReturnType<typeof window.api.folderWorkspaces.delete>
+  }
+}
+
+function getOwnerQualifiedLocalCatalogApi(): OwnerQualifiedLocalCatalogApi {
+  // Why: owner qualification is a local additive IPC extension; paired runtime wires stay legacy-shaped.
+  return window.api
+}
 
 type ProjectGroupRemovalProjectTarget = {
   projectId: string
@@ -1529,7 +1566,9 @@ function settingsForRepoOwner(
   return state.settings
 }
 
-function getFolderWorkspacePathStatusScopeKey(request: FolderWorkspacePathStatusRequest): string {
+function getFolderWorkspacePathStatusScopeKey(
+  request: OwnerQualifiedFolderWorkspacePathStatusRequest
+): string {
   if (request.scope === 'project-group') {
     return request.ownerHostId
       ? `project-group:${getProjectGroupIdentity(request.projectGroupId, request.ownerHostId)}`
@@ -1640,7 +1679,7 @@ async function fetchRuntimeAddProjectPathStatus(args: {
 
 function getFolderWorkspaceStatusRequestSnapshot(
   state: Pick<AppState, 'projectGroups' | 'folderWorkspaces' | 'repos' | 'sshConnectionStates'>,
-  request: FolderWorkspacePathStatusRequest
+  request: OwnerQualifiedFolderWorkspacePathStatusRequest
 ): string | null {
   if (request.scope === 'path') {
     const candidateRepos = state.repos.filter((repo) =>
@@ -1917,9 +1956,19 @@ function getFreshFolderWorkspacePathStatusFromCache(args: {
 }
 
 function getOwnerQualifiedFolderWorkspacePathStatusRequest(
-  request: FolderWorkspacePathStatusRequest,
+  request: OwnerQualifiedFolderWorkspacePathStatusRequest,
   options: FolderWorkspacePathStatusRouteOptions | undefined
-): FolderWorkspacePathStatusRequest {
+): OwnerQualifiedFolderWorkspacePathStatusRequest {
+  if (request.scope === 'project-group') {
+    const selector = parseProjectGroupSelectorKey(request.projectGroupId)
+    if (selector?.ownerHostId) {
+      return {
+        scope: 'project-group',
+        projectGroupId: selector.groupId,
+        ownerHostId: selector.ownerHostId
+      }
+    }
+  }
   if (
     (request.scope === 'project-group' || request.scope === 'folder-workspace') &&
     options?.ownerHostId
@@ -1929,9 +1978,21 @@ function getOwnerQualifiedFolderWorkspacePathStatusRequest(
   return request
 }
 
+function getRuntimeFolderWorkspacePathStatusRequest(
+  request: OwnerQualifiedFolderWorkspacePathStatusRequest
+): FolderWorkspacePathStatusRequest {
+  if (request.scope === 'project-group') {
+    return { scope: request.scope, projectGroupId: request.projectGroupId }
+  }
+  if (request.scope === 'folder-workspace') {
+    return { scope: request.scope, folderWorkspaceId: request.folderWorkspaceId }
+  }
+  return request
+}
+
 function getFolderWorkspacePathStatusRequestSnapshotForRead(
   state: AppState,
-  request: FolderWorkspacePathStatusRequest
+  request: OwnerQualifiedFolderWorkspacePathStatusRequest
 ): string | null {
   return getFolderWorkspaceStatusRequestSnapshot(state, request)
 }
@@ -2009,15 +2070,15 @@ export type RepoSlice = {
     options?: FolderWorkspacePathStatusRouteOptions
   ) => Promise<FolderWorkspace | null>
   getFolderWorkspacePathStatusCacheKey: (
-    request: FolderWorkspacePathStatusRequest,
+    request: OwnerQualifiedFolderWorkspacePathStatusRequest,
     options?: FolderWorkspacePathStatusRouteOptions
   ) => string
   getFreshFolderWorkspacePathStatus: (
-    request: FolderWorkspacePathStatusRequest,
+    request: OwnerQualifiedFolderWorkspacePathStatusRequest,
     options?: FolderWorkspacePathStatusRouteOptions
   ) => FolderWorkspacePathStatus | null
   fetchFolderWorkspacePathStatus: (
-    request: FolderWorkspacePathStatusRequest,
+    request: OwnerQualifiedFolderWorkspacePathStatusRequest,
     options?: { force?: boolean } & FolderWorkspacePathStatusRouteOptions
   ) => Promise<FolderWorkspacePathStatus | null>
   updateFolderWorkspace: (
@@ -2695,12 +2756,12 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       )
       const status =
         target.kind === 'local'
-          ? await window.api.folderWorkspaces.getPathStatus(ownedRequest)
+          ? await getOwnerQualifiedLocalCatalogApi().folderWorkspaces.getPathStatus(ownedRequest)
           : (
               await callRuntimeRpc<{ status: FolderWorkspacePathStatus }>(
                 target,
                 'folderWorkspace.getPathStatus',
-                request,
+                getRuntimeFolderWorkspacePathStatusRequest(ownedRequest),
                 { timeoutMs: 15_000 }
               )
             ).status
@@ -2953,7 +3014,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     try {
       const updated =
         target.kind === 'local'
-          ? await window.api.folderWorkspaces.update({
+          ? await getOwnerQualifiedLocalCatalogApi().folderWorkspaces.update({
               folderWorkspaceId,
               ...(includeOwnerHostId ? { ownerHostId } : {}),
               updates
@@ -3042,7 +3103,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       const target = getActiveRuntimeTarget({ activeRuntimeEnvironmentId: runtimeEnvironmentId })
       const deleted =
         target.kind === 'local'
-          ? await window.api.folderWorkspaces.delete({
+          ? await getOwnerQualifiedLocalCatalogApi().folderWorkspaces.delete({
               folderWorkspaceId,
               ...(includeOwnerHostId ? { ownerHostId } : {})
             })
@@ -3101,9 +3162,10 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       }
       const ownerHostId = getProjectGroupOwnerHostId(group)
       const target = getProjectGroupRuntimeTarget(ownerHostId)
+      const updateArgs = { groupId, updates, ownerHostId }
       const updated =
         target.kind === 'local'
-          ? await window.api.projectGroups.update({ groupId, updates, ownerHostId })
+          ? await getOwnerQualifiedLocalCatalogApi().projectGroups.update(updateArgs)
           : (
               await callRuntimeRpc<{ group: ProjectGroup | null }>(
                 target,
@@ -3143,12 +3205,10 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         return false
       }
       const target = getProjectGroupRuntimeTarget(targets.ownerHostId)
+      const deleteArgs = { groupId, ownerHostId: targets.ownerHostId }
       const deleted =
         target.kind === 'local'
-          ? await window.api.projectGroups.delete({
-              groupId,
-              ownerHostId: targets.ownerHostId
-            })
+          ? await getOwnerQualifiedLocalCatalogApi().projectGroups.delete(deleteArgs)
           : (
               await callRuntimeRpc<{ deleted: boolean }>(
                 target,
@@ -3351,7 +3411,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         groupId !== null && get().projectGroups.filter((group) => group.id === groupId).length > 1
       const moved =
         target.kind === 'local'
-          ? await window.api.projectGroups.moveProject({
+          ? await getOwnerQualifiedLocalCatalogApi().projectGroups.moveProject({
               projectId,
               groupId,
               order,

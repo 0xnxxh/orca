@@ -7,7 +7,7 @@ import {
   type ExecutionHostId,
   type ExecutionHostScope
 } from '../../../../shared/execution-host'
-import type { FolderWorkspacePathStatusRequest } from '../../../../shared/folder-workspace-path-status'
+import type { OwnerQualifiedFolderWorkspacePathStatusRequest } from '../../../../shared/folder-workspaces'
 import type { FolderWorkspace, ProjectGroup, Repo } from '../../../../shared/types'
 import {
   buildProjectGroupSidebarIndex,
@@ -134,7 +134,7 @@ export function getFolderPathStatusRouteOptionsForRows({
   projectGroupsById,
   folderWorkspacesById
 }: {
-  request: FolderWorkspacePathStatusRequest
+  request: OwnerQualifiedFolderWorkspacePathStatusRequest
   projectGroupsById: ReadonlyMap<string, ProjectGroup>
   folderWorkspacesById: ReadonlyMap<string, FolderWorkspace>
 }): { runtimeEnvironmentId: string | null } | undefined {

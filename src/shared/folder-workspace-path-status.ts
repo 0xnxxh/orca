@@ -1,5 +1,3 @@
-import type { ExecutionHostId } from './execution-host'
-
 export type FolderWorkspacePathStatusReason =
   | 'missing'
   | 'not-directory'
@@ -9,8 +7,8 @@ export type FolderWorkspacePathStatusReason =
 export const FOLDER_WORKSPACE_PATH_STATUS_TTL_MS = 10_000
 
 export type FolderWorkspacePathStatusRequest =
-  | { scope: 'folder-workspace'; folderWorkspaceId: string; ownerHostId?: ExecutionHostId }
-  | { scope: 'project-group'; projectGroupId: string; ownerHostId?: ExecutionHostId }
+  | { scope: 'folder-workspace'; folderWorkspaceId: string }
+  | { scope: 'project-group'; projectGroupId: string }
   | { scope: 'path'; path: string; connectionId?: string | null }
 
 export type FolderWorkspacePathStatus = {

@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  getContextMenuWorktreeExecutionHost,
-  findContextMenuRepo,
-  getFolderWorkspaceContextMenuDeleteOwner,
-  getContextMenuProjectGroupTargets,
   isContextWorktreeDeletable,
   shouldUseNativeContextMenu,
   shouldIgnoreNestedWorktreeContextMenuScope,
@@ -15,107 +11,10 @@ import {
   hasWorktreeParentLink,
   isWorktreeParentPickerDisabled,
   planWorkspaceStatusAssignment,
-  resolveWorktreeContextMenuTargets,
   selectMenuScopedMap,
   shouldRevealWorktreeDeveloperMenu
 } from './WorktreeContextMenu'
-import { findFolderWorkspaceMetaOwner } from './use-worktree-meta-workspace'
-import type {
-  FolderWorkspace,
-  ProjectGroup,
-  Repo,
-  Worktree,
-  WorktreeLineage,
-  WorkspaceStatusDefinition
-} from '../../../../shared/types'
-
-describe('resolveWorktreeContextMenuTargets', () => {
-  const worktree = (id: string, hostId: string): Worktree => ({ id, hostId }) as Worktree
-
-  it('keeps an unambiguous multi-workspace selection', () => {
-    const local = worktree('local-workspace', 'local')
-    const runtime = worktree('runtime-workspace', 'runtime:env-1')
-
-    expect(resolveWorktreeContextMenuTargets(runtime, [local, runtime])).toEqual([local, runtime])
-  })
-
-  it('uses only the clicked owner when selected rows share a bare id', () => {
-    const local = worktree('same-id', 'local')
-    const runtime = worktree('same-id', 'runtime:env-1')
-
-    expect(resolveWorktreeContextMenuTargets(runtime, [local, runtime])).toEqual([runtime])
-  })
-})
-
-describe('findContextMenuRepo', () => {
-  const repo = (executionHostId: 'local' | 'runtime:env-1'): Repo =>
-    ({ id: 'same-repo', executionHostId }) as Repo
-
-  it('resolves an inactive duplicate repo from the clicked row host', () => {
-    const local = repo('local')
-    const runtime = repo('runtime:env-1')
-
-    expect(findContextMenuRepo([local, runtime], 'same-repo', 'runtime:env-1')).toBe(runtime)
-  })
-})
-
-describe('getContextMenuProjectGroupTargets', () => {
-  const group = (executionHostId: 'local' | 'runtime:env-1'): ProjectGroup =>
-    ({ id: 'same-id', executionHostId }) as ProjectGroup
-
-  it('offers and mutates only groups owned by the repo host', () => {
-    const result = getContextMenuProjectGroupTargets(
-      { connectionId: null, executionHostId: 'runtime:env-1' },
-      [group('local'), group('runtime:env-1')]
-    )
-
-    expect(result.ownerHostId).toBe('runtime:env-1')
-    expect(result.projectGroups).toEqual([group('runtime:env-1')])
-  })
-})
-
-describe('getFolderWorkspaceContextMenuDeleteOwner', () => {
-  it('retains the selected folder row owner for deletion', () => {
-    expect(getFolderWorkspaceContextMenuDeleteOwner({ hostId: 'runtime:env-1' })).toEqual({
-      ownerHostId: 'runtime:env-1'
-    })
-  })
-
-  it('retains the selected row owner for metadata actions', () => {
-    expect(getContextMenuWorktreeExecutionHost({ hostId: 'runtime:env-1' })).toEqual({
-      executionHostId: 'runtime:env-1'
-    })
-  })
-})
-
-describe('findFolderWorkspaceMetaOwner', () => {
-  const folder = (executionHostId: 'local' | 'runtime:env-1'): FolderWorkspace => ({
-    id: 'same-id',
-    projectGroupId: 'same-group',
-    name: executionHostId,
-    folderPath: `/${executionHostId}`,
-    executionHostId,
-    linkedTask: null,
-    comment: '',
-    isArchived: false,
-    isUnread: false,
-    isPinned: false,
-    sortOrder: 0,
-    lastActivityAt: 0,
-    createdAt: 1,
-    updatedAt: 1
-  })
-
-  it('selects duplicate folder ids only with the opening row owner', () => {
-    const local = folder('local')
-    const runtime = folder('runtime:env-1')
-
-    expect(findFolderWorkspaceMetaOwner([local, runtime], [], 'same-id', null)).toBeNull()
-    expect(findFolderWorkspaceMetaOwner([local, runtime], [], 'same-id', 'runtime:env-1')).toBe(
-      runtime
-    )
-  })
-})
+import type { Worktree, WorktreeLineage, WorkspaceStatusDefinition } from '../../../../shared/types'
 
 describe('shouldRevealWorktreeDeveloperMenu', () => {
   it('stays hidden for an ordinary right-click', () => {

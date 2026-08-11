@@ -63,7 +63,11 @@ import {
 import { WorkspaceSleepMenuItems } from './WorkspaceSleepMenuItems'
 import { isEventTargetInsideCurrentTarget } from './worktree-card-dom-events'
 import { translate } from '@/i18n/i18n'
-import { parseWorkspaceKey, worktreeWorkspaceKey } from '../../../../shared/workspace-scope'
+import {
+  folderWorkspaceKey,
+  parseWorkspaceKey,
+  worktreeWorkspaceKey
+} from '../../../../shared/workspace-scope'
 import {
   getRepoExecutionHostId,
   LOCAL_EXECUTION_HOST_ID,
@@ -159,11 +163,12 @@ export function getFolderWorkspaceContextMenuDeleteOwner(
   return ownerHostId ? { ownerHostId } : undefined
 }
 
-export function getContextMenuWorktreeExecutionHost(
-  worktree: Pick<Worktree, 'hostId'>
-): { executionHostId: ExecutionHostId } | undefined {
+export function getContextMenuWorktreeMetaId(worktree: Pick<Worktree, 'id' | 'hostId'>): string {
+  const workspaceScope = parseWorkspaceKey(worktree.id)
   const executionHostId = normalizeExecutionHostId(worktree.hostId)
-  return executionHostId ? { executionHostId } : undefined
+  return workspaceScope?.type === 'folder' && executionHostId
+    ? folderWorkspaceKey(workspaceScope.folderWorkspaceId, executionHostId)
+    : worktree.id
 }
 
 // Why: the Developer submenu is hidden by default and revealed only by holding
@@ -616,20 +621,14 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   }, [worktree.path])
 
   const handleToggleRead = useCallback(() => {
-    updateWorktreeMeta(
-      worktree.id,
-      { isUnread: !worktree.isUnread },
-      getContextMenuWorktreeExecutionHost(worktree)
-    )
+    updateWorktreeMeta(getContextMenuWorktreeMetaId(worktree), { isUnread: !worktree.isUnread })
   }, [worktree, updateWorktreeMeta])
 
   const handleTogglePin = useCallback(() => {
     if (parseWorkspaceKey(worktree.id)?.type === 'folder') {
-      void updateWorktreeMeta(
-        worktree.id,
-        { isPinned: !worktree.isPinned },
-        getContextMenuWorktreeExecutionHost(worktree)
-      )
+      void updateWorktreeMeta(getContextMenuWorktreeMetaId(worktree), {
+        isPinned: !worktree.isPinned
+      })
       return
     }
     setWorktreesPinnedAndReveal([worktree.id], !worktree.isPinned)
@@ -702,11 +701,7 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
         activeContextWorktrees
           .filter((item) => getWorkspaceStatus(item, workspaceStatuses) !== status)
           .map((item) =>
-            updateWorktreeMeta(
-              item.id,
-              { workspaceStatus: status },
-              getContextMenuWorktreeExecutionHost(item)
-            )
+            updateWorktreeMeta(getContextMenuWorktreeMetaId(item), { workspaceStatus: status })
           )
       )
     },

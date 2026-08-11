@@ -1345,15 +1345,13 @@ export type PreloadApi = {
     }) => Promise<ProjectGroup>
     update: (args: {
       groupId: string
-      ownerHostId?: ExecutionHostId
       updates: Partial<Pick<ProjectGroup, 'name' | 'isCollapsed' | 'tabOrder' | 'color'>>
     }) => Promise<ProjectGroup | null>
-    delete: (args: { groupId: string; ownerHostId?: ExecutionHostId }) => Promise<boolean>
+    delete: (args: { groupId: string }) => Promise<boolean>
     moveProject: (args: {
       projectId: string
       groupId: string | null
       order?: number
-      ownerHostId?: ExecutionHostId
     }) => Promise<Repo | null>
     scanNested: (args: {
       path: string
@@ -1388,7 +1386,6 @@ export type PreloadApi = {
     }) => Promise<FolderWorkspace>
     update: (args: {
       folderWorkspaceId: string
-      ownerHostId?: ExecutionHostId
       updates: Partial<
         Pick<
           FolderWorkspace,
@@ -1409,7 +1406,7 @@ export type PreloadApi = {
         >
       >
     }) => Promise<FolderWorkspace | null>
-    delete: (args: { folderWorkspaceId: string; ownerHostId?: ExecutionHostId }) => Promise<boolean>
+    delete: (args: { folderWorkspaceId: string }) => Promise<boolean>
   }
   sparsePresets: {
     list: (args: { repoId: string }) => Promise<SparsePreset[]>

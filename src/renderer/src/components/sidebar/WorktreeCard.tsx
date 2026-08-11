@@ -82,7 +82,7 @@ import {
 } from './worktree-list-indentation'
 import { translate } from '@/i18n/i18n'
 import { recordRendererCrashBreadcrumb } from '@/lib/crash-diagnostics'
-import { parseWorkspaceKey } from '../../../../shared/workspace-scope'
+import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import {
   getRepoExecutionHostId,
   isRuntimeOwnedSshTargetId,
@@ -421,6 +421,10 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const workspaceScope = parseWorkspaceKey(worktree.id)
   const folderWorkspaceId =
     workspaceScope?.type === 'folder' ? workspaceScope.folderWorkspaceId : null
+  const worktreeMetaId =
+    folderWorkspaceId && worktreeExecutionHostId
+      ? folderWorkspaceKey(folderWorkspaceId, worktreeExecutionHostId)
+      : worktree.id
   const isFolder = repo ? isFolderRepo(repo) : folderWorkspaceId !== null
   // Why: project groups gate folder workspaces, so folder paths stay hidden from identity surfaces until that capability exists.
   const hasProjectGroups = projectGroups.length > 0
@@ -914,13 +918,9 @@ const WorktreeCard = React.memo(function WorktreeCard({
     // Inline rename has no surface for the failure; the store already logs and
     // refetches, which reverts the optimistic title in place.
     async (displayName: string): Promise<void> => {
-      await updateWorktreeMeta(
-        worktree.id,
-        { displayName },
-        { executionHostId: worktreeExecutionHostId }
-      )
+      await updateWorktreeMeta(worktreeMetaId, { displayName })
     },
-    [updateWorktreeMeta, worktree.id, worktreeExecutionHostId]
+    [updateWorktreeMeta, worktreeMetaId]
   )
 
   const handleDoubleClick = useCallback(
@@ -958,13 +958,9 @@ const WorktreeCard = React.memo(function WorktreeCard({
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault()
       event.stopPropagation()
-      updateWorktreeMeta(
-        worktree.id,
-        { isUnread: !worktree.isUnread },
-        { executionHostId: worktreeExecutionHostId }
-      )
+      updateWorktreeMeta(worktreeMetaId, { isUnread: !worktree.isUnread })
     },
-    [worktree.id, worktree.isUnread, updateWorktreeMeta, worktreeExecutionHostId]
+    [worktree.isUnread, updateWorktreeMeta, worktreeMetaId]
   )
   // Why: delete is destructive, so it only appears while holding Option/Alt, not in the ordinary hover chrome.
   const showDeleteQuickAction =
@@ -1175,45 +1171,25 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const handleUnlinkReview = useCallback(() => {
     switch (hoverReviewProvider) {
       case 'github':
-        void updateWorktreeMeta(
-          worktree.id,
-          { linkedPR: null },
-          { executionHostId: worktreeExecutionHostId }
-        )
+        void updateWorktreeMeta(worktreeMetaId, { linkedPR: null })
         return
       case 'gitlab':
-        void updateWorktreeMeta(
-          worktree.id,
-          { linkedGitLabMR: null },
-          { executionHostId: worktreeExecutionHostId }
-        )
+        void updateWorktreeMeta(worktreeMetaId, { linkedGitLabMR: null })
         return
       case 'bitbucket':
-        void updateWorktreeMeta(
-          worktree.id,
-          { linkedBitbucketPR: null },
-          { executionHostId: worktreeExecutionHostId }
-        )
+        void updateWorktreeMeta(worktreeMetaId, { linkedBitbucketPR: null })
         return
       case 'azure-devops':
-        void updateWorktreeMeta(
-          worktree.id,
-          { linkedAzureDevOpsPR: null },
-          { executionHostId: worktreeExecutionHostId }
-        )
+        void updateWorktreeMeta(worktreeMetaId, { linkedAzureDevOpsPR: null })
         return
       case 'gitea':
-        void updateWorktreeMeta(
-          worktree.id,
-          { linkedGiteaPR: null },
-          { executionHostId: worktreeExecutionHostId }
-        )
+        void updateWorktreeMeta(worktreeMetaId, { linkedGiteaPR: null })
         break
       case 'unsupported':
       case undefined:
         break
     }
-  }, [hoverReviewProvider, updateWorktreeMeta, worktree.id, worktreeExecutionHostId])
+  }, [hoverReviewProvider, updateWorktreeMeta, worktreeMetaId])
   const handleOpenLinearIssueInOrca = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()

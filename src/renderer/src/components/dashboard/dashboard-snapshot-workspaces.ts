@@ -8,8 +8,15 @@ import type {
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import { getWorktreeExecutionHostId, type ExecutionHostId } from '../../../../shared/execution-host'
 import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
+import {
+  buildProjectGroupOwnerIndex,
+  getFolderWorkspaceProjectGroupOwnerHostId,
+  getProjectGroupOwnerHostId
+} from '../../../../shared/project-groups'
+import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from '../../../../shared/folder-workspaces'
 import { isFolderRepo } from '../../../../shared/repo-kind'
 import { parseAppSshPtyId } from '../../../../shared/ssh-pty-id'
+import { folderWorkspaceKey, getProjectGroupSelectorKey } from '../../../../shared/workspace-scope'
 
 export type ActiveDashboardWorkspace = {
   projectId: string
@@ -61,26 +68,53 @@ export function collectActiveDashboardWorkspaces(
     }
   }
 
-  const projectGroupsById = new Map(
-    (state.projectGroups ?? []).map((projectGroup) => [projectGroup.id, projectGroup])
-  )
+  const projectGroupIndex = buildProjectGroupOwnerIndex(state.projectGroups ?? [])
+  const folderOwnersById = new Map<string, Set<ExecutionHostId>>()
   for (const folderWorkspace of state.folderWorkspaces ?? []) {
-    const worktree = folderWorkspaceToWorktree(folderWorkspace)
+    const ownerHostId = getFolderWorkspaceProjectGroupOwnerHostId(
+      folderWorkspace,
+      projectGroupIndex
+    )
+    const owners = folderOwnersById.get(folderWorkspace.id) ?? new Set<ExecutionHostId>()
+    owners.add(ownerHostId)
+    folderOwnersById.set(folderWorkspace.id, owners)
+  }
+  for (const folderWorkspace of state.folderWorkspaces ?? []) {
+    const projectGroup = resolveFolderWorkspaceProjectGroupWithLegacySsh(
+      projectGroupIndex,
+      folderWorkspace
+    )
+    if (!projectGroup) {
+      continue
+    }
+    const ownerHostId = getFolderWorkspaceProjectGroupOwnerHostId(
+      folderWorkspace,
+      projectGroupIndex
+    )
+    const worktree = {
+      ...folderWorkspaceToWorktree(folderWorkspace),
+      id: folderWorkspaceKey(
+        folderWorkspace.id,
+        (folderOwnersById.get(folderWorkspace.id)?.size ?? 0) > 1 ? ownerHostId : undefined
+      )
+    }
     if (folderWorkspace.isArchived || seenWorkspaceIds.has(worktree.id)) {
       continue
     }
-    const projectGroup = projectGroupsById.get(folderWorkspace.projectGroupId)
     workspaces.push({
-      projectId: `folder-workspace:${folderWorkspace.projectGroupId}`,
-      projectName: projectGroup?.name ?? folderWorkspace.name,
+      projectId: `folder-workspace:${getProjectGroupSelectorKey(
+        projectGroup.id,
+        getProjectGroupOwnerHostId(projectGroup)
+      )}`,
+      projectName: projectGroup.name,
       repo: null,
       repoIcon: null,
       worktree,
       workspaceKind: 'folder',
       remoteHostKind: includeMapMetadata
         ? remoteHostKind(
-            folderWorkspace.connectionId ?? projectGroup?.connectionId,
-            worktree.hostId ?? projectGroup?.executionHostId
+            folderWorkspace.connectionId ?? projectGroup.connectionId,
+            worktree.hostId ?? projectGroup.executionHostId
           )
         : null
     })

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectGroup } from '../../../../shared/types'
 import { useAppStore } from '@/store'
 import { useFolderWorkspaceComposerPathStatus } from './folder-workspace-composer-path-status'
+import { getProjectGroupSelectorKey } from '../../../../shared/workspace-scope'
 
 const initialState = useAppStore.getInitialState()
 
@@ -37,7 +38,11 @@ function HookProbe(): null {
 
 function RuntimeHookProbe(): null {
   useFolderWorkspaceComposerPathStatus(
-    { ...projectGroup, id: 'same-id', executionHostId: 'runtime:env-1' },
+    {
+      ...projectGroup,
+      id: getProjectGroupSelectorKey('same-id', 'runtime:env-1'),
+      executionHostId: 'runtime:env-1'
+    },
     true,
     'env-1'
   )
@@ -72,8 +77,7 @@ describe('useFolderWorkspaceComposerPathStatus', () => {
     expect(fetchFolderWorkspacePathStatus).toHaveBeenCalledWith(
       {
         scope: 'project-group',
-        projectGroupId: 'same-id',
-        ownerHostId: 'runtime:env-1'
+        projectGroupId: getProjectGroupSelectorKey('same-id', 'runtime:env-1')
       },
       { force: true, runtimeEnvironmentId: 'env-1' }
     )
@@ -82,11 +86,7 @@ describe('useFolderWorkspaceComposerPathStatus', () => {
   it('blocks creation while an expired path status refresh is pending', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(20_000)
-    const request = {
-      scope: 'project-group' as const,
-      projectGroupId: projectGroup.id,
-      ownerHostId: 'local' as const
-    }
+    const request = { scope: 'project-group' as const, projectGroupId: projectGroup.id }
     const cacheKey = useAppStore.getState().getFolderWorkspacePathStatusCacheKey(request)
     const fetchFolderWorkspacePathStatus = vi.fn().mockResolvedValue(null)
     useAppStore.setState({
@@ -153,11 +153,7 @@ describe('useFolderWorkspaceComposerPathStatus', () => {
   })
 
   it('unblocks creation when the first path status check settles without cache', async () => {
-    const request = {
-      scope: 'project-group' as const,
-      projectGroupId: projectGroup.id,
-      ownerHostId: 'local' as const
-    }
+    const request = { scope: 'project-group' as const, projectGroupId: projectGroup.id }
     const fetchFolderWorkspacePathStatus = vi.fn().mockResolvedValue(null)
     useAppStore.setState({
       projectGroups: [projectGroup],
@@ -199,11 +195,7 @@ describe('useFolderWorkspaceComposerPathStatus', () => {
   })
 
   it('blocks creation while the first path status check is unknown', () => {
-    const request = {
-      scope: 'project-group' as const,
-      projectGroupId: projectGroup.id,
-      ownerHostId: 'local' as const
-    }
+    const request = { scope: 'project-group' as const, projectGroupId: projectGroup.id }
     const fetchFolderWorkspacePathStatus = vi.fn()
     useAppStore.setState({
       projectGroups: [projectGroup],
@@ -234,11 +226,7 @@ describe('useFolderWorkspaceComposerPathStatus', () => {
   it('does not block creation for an unavailable path status', () => {
     vi.useFakeTimers()
     vi.setSystemTime(20_000)
-    const request = {
-      scope: 'project-group' as const,
-      projectGroupId: projectGroup.id,
-      ownerHostId: 'local' as const
-    }
+    const request = { scope: 'project-group' as const, projectGroupId: projectGroup.id }
     const cacheKey = useAppStore.getState().getFolderWorkspacePathStatusCacheKey(request)
     useAppStore.setState({
       projectGroups: [projectGroup],
@@ -275,11 +263,7 @@ describe('useFolderWorkspaceComposerPathStatus', () => {
   it('blocks while refreshing after a cached blocking path status expires', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(20_000)
-    const request = {
-      scope: 'project-group' as const,
-      projectGroupId: projectGroup.id,
-      ownerHostId: 'local' as const
-    }
+    const request = { scope: 'project-group' as const, projectGroupId: projectGroup.id }
     const cacheKey = useAppStore.getState().getFolderWorkspacePathStatusCacheKey(request)
     useAppStore.setState({
       projectGroups: [projectGroup],

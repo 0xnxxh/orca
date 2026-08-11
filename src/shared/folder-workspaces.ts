@@ -13,6 +13,7 @@ import {
   type ProjectGroupOwnerIndex
 } from './project-groups'
 import type { FolderWorkspace, ProjectGroup } from './types'
+import type { FolderWorkspacePathStatusRequest } from './folder-workspace-path-status'
 import { folderWorkspaceKey } from './workspace-scope'
 import { isTuiAgent } from './tui-agent-config'
 import { normalizeStoredTaskSourceContext } from './task-source-context'
@@ -20,6 +21,15 @@ import { normalizeWorkspaceLinkedItem } from './workspace-linked-item'
 import { isWorkspaceLinkedItemSourceContextMatch } from './workspace-linked-item-source-context'
 
 const projectGroupOwnerIndexCache = new WeakMap<readonly ProjectGroup[], ProjectGroupOwnerIndex>()
+
+export type OwnerQualifiedFolderWorkspacePathStatusRequest =
+  | Extract<FolderWorkspacePathStatusRequest, { scope: 'path' }>
+  | (Extract<FolderWorkspacePathStatusRequest, { scope: 'folder-workspace' }> & {
+      ownerHostId?: ExecutionHostId
+    })
+  | (Extract<FolderWorkspacePathStatusRequest, { scope: 'project-group' }> & {
+      ownerHostId?: ExecutionHostId
+    })
 
 export function resolveFolderWorkspaceProjectGroupWithLegacySsh(
   index: ProjectGroupOwnerIndex,
