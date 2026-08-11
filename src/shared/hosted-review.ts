@@ -1,4 +1,10 @@
-import type { CheckStatus, PRConflictSummary, PRMergeableState, PRReviewDecision } from './types'
+import type {
+  CheckStatus,
+  GitHubRepositoryIdentity,
+  PRConflictSummary,
+  PRMergeableState,
+  PRReviewDecision
+} from './types'
 
 export type HostedReviewProvider =
   | 'github'
@@ -9,6 +15,12 @@ export type HostedReviewProvider =
   | 'unsupported'
 
 export type HostedReviewState = 'open' | 'closed' | 'merged' | 'draft'
+
+// Why: Bitbucket Cloud's API has no draft pull requests, so offering the toggle
+// there would either publish a live PR or fail at submit.
+export function hostedReviewProviderSupportsDraft(provider: HostedReviewProvider): boolean {
+  return provider !== 'bitbucket'
+}
 
 /** A linked review is identified by a positive integer PR/MR number. */
 export function isPositiveHostedReviewNumber(value: unknown): value is number {
@@ -30,6 +42,8 @@ export type HostedReviewInfo = {
   mergeQueueRequired?: boolean | null
   mergeStateStatus?: string | null
   headSha?: string
+  /** GitHub repository that owns the PR; absent on older runtimes and other providers. */
+  githubRepository?: GitHubRepositoryIdentity
   // Why: mirrors PRInfo.confirmedContainedHeadOid so merged-review staleness
   // checks accept a worktree head confirmed to be part of the merged PR.
   confirmedContainedHeadOid?: string

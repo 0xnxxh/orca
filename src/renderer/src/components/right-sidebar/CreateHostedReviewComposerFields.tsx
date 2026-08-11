@@ -26,6 +26,7 @@ type CreateHostedReviewComposerFieldsProps = {
   setBody: (value: string) => void
   draft: boolean
   setDraft: (value: boolean) => void
+  supportsDraft: boolean
   stacked: boolean
   setStacked: (value: boolean) => void
   stackParentReview: HostedReviewStackParent | null
@@ -55,6 +56,7 @@ export function CreateHostedReviewComposerFields({
   setBody,
   draft,
   setDraft,
+  supportsDraft,
   stacked,
   setStacked,
   stackParentReview,
@@ -216,18 +218,23 @@ export function CreateHostedReviewComposerFields({
           </div>
         ) : null}
 
-        <div className="flex items-center gap-2">
-          <Checkbox
-            id={draftFieldId}
-            checked={draft}
-            disabled={fieldsLocked}
-            onCheckedChange={(value) => setDraft(value === true)}
-            className={COMPOSER_CHECKBOX_CLASS}
-          />
-          <Label htmlFor={draftFieldId} className="min-w-0 flex-1 truncate text-xs">
-            {translate('auto.components.right.sidebar.SourceControl.78ddfd0bb4', 'Create as draft')}
-          </Label>
-        </div>
+        {supportsDraft ? (
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id={draftFieldId}
+              checked={draft}
+              disabled={fieldsLocked}
+              onCheckedChange={(value) => setDraft(value === true)}
+              className={COMPOSER_CHECKBOX_CLASS}
+            />
+            <Label htmlFor={draftFieldId} className="min-w-0 flex-1 truncate text-xs">
+              {translate(
+                'auto.components.right.sidebar.SourceControl.78ddfd0bb4',
+                'Create as draft'
+              )}
+            </Label>
+          </div>
+        ) : null}
       </div>
 
       {generateError || createError ? (

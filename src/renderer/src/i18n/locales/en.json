@@ -34,6 +34,9 @@
       "failed": "The browser page stopped unexpectedly. Retry to restore it."
     }
   },
+  "githubChecks": {
+    "retrying": "Retrying…"
+  },
   "settings": {
     "appearance": {
       "language": {
@@ -251,7 +254,8 @@
           "51f15c37d3": "Cannot open directory: {{value0}}",
           "f2e00db373": "File not found: {{value0}}",
           "checkRunDetailsUnavailable": "No details are available for this check.",
-          "checkRunDetailsLoadFailed": "Failed to load check details."
+          "checkRunDetailsLoadFailed": "Failed to load check details.",
+          "checkRunDetailsRepoUnavailable": "Repository details are unavailable for this check."
         },
         "github": {
           "f129c42773": "GitHub did not return the new comment.",
@@ -1125,7 +1129,10 @@
           "activity": "Activity",
           "noActivity": "No activity yet."
         },
-        "checkActionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked."
+        "checkActionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked.",
+        "e15a8b77ef": "No inline details are available for this check.",
+        "e45324fbed": "Failed to load check details.",
+        "dcb3c546fe": "Retry"
       },
       "GitLabItemDialog": {
         "65e784c1f1": "Reopen",
@@ -1614,7 +1621,10 @@
         "8ff5ae8866": "Assignees",
         "82c87eceb9": "Edit assignees",
         "1ff5d979df": "No one assigned",
-        "checkActionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked."
+        "checkActionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked.",
+        "6b1d5ee3e4": "No inline details are available for this check.",
+        "e04c027d98": "Failed to load check details.",
+        "5df7c41d2a": "Retry"
       },
       "QuickOpen": {
         "1dbd3f59ff": "Move",
@@ -2827,7 +2837,8 @@
             "a7e2fd2699": "file an issue",
             "5c8ce20be6": "If this persists, please",
             "cc6d997c65": "Restart the terminal daemon from here to clear stale daemon state.",
-            "7ee11bc0db": "Orca couldn't confirm whether this terminal's previous session is still running, so it left the session untouched. Reopen this pane to retry."
+            "7ee11bc0db": "Orca couldn't confirm whether this terminal's previous session is still running, so it left the session untouched. Reopen this pane to retry.",
+            "e16012e31e": "The terminal daemon that owned this session exited, so the session and its scrollback could not be recovered. Open a new terminal to continue."
           },
           "TerminalPane": {
             "ac112e9036": "Remove title",
@@ -2846,7 +2857,11 @@
             "openTaskTerminal": "Open task terminal",
             "systemBrowser": "System Browser",
             "orcaBrowser": "Orca Browser",
-            "terminalLinkSettings": "Terminal link settings"
+            "terminalLinkSettings": "Terminal link settings",
+            "copyLink": "Copy link",
+            "copied": "Copied",
+            "copiedLink": "Copied link",
+            "copyLinkFailed": "Failed to copy link"
           },
           "TerminalSessionStateSaveFailureDialog": {
             "6bee0c8f17": "Open Disk Space Analyzer",
@@ -3132,7 +3147,12 @@
             "c781f992e4": "destructive",
             "be8f0ff166": "Delete",
             "f3a8c2d1e7": "Search quick commands...",
-            "b4e7f9a2c1": "No commands match"
+            "b4e7f9a2c1": "No commands match",
+            "8d525e5f15": "Copied",
+            "53b17a4b1b": "Couldn't copy",
+            "a9a564b7e7": "Copy {{value0}}",
+            "69a1441a21": "Nothing to copy",
+            "192a4616a5": "Quick command actions"
           },
           "shell": {
             "icons": {
@@ -3629,7 +3649,7 @@
           },
           "CaffeinateStatusSegment": {
             "on": "On",
-            "auto": "Auto",
+            "auto": "Agent",
             "off": "Off",
             "active": "Active",
             "inactive": "Inactive",
@@ -4526,7 +4546,9 @@
           "cliCreated": "Hide CLI-created",
           "detachedHead": "Hide detached HEAD",
           "keepDefaultBranch": "Except default branch",
-          "keepDefaultBranchAria": "Keep the default branch visible while hiding sleeping workspaces"
+          "keepDefaultBranchAria": "Keep the default branch visible while hiding sleeping workspaces",
+          "otherClients": "Hide other-client workspaces",
+          "otherClientsAria": "Hide workspaces created from other Orca clients on shared remote servers"
         },
         "sidebarHostOptions": {
           "3e102f111c": "All hosts",
@@ -6771,7 +6793,11 @@
           "f2bf411640": "Could not load commands from this host.",
           "7ecfee5b8e": "Retry",
           "601d6af51f": "Loading commands…",
-          "923ba89646": "Could not refresh commands from this host. Showing the last loaded commands."
+          "923ba89646": "Could not refresh commands from this host. Showing the last loaded commands.",
+          "8d525e5f15": "Copied",
+          "53b17a4b1b": "Couldn't copy",
+          "a9a564b7e7": "Copy {{value0}}",
+          "69a1441a21": "Nothing to copy"
         },
         "RecentTabOrderControl": {
           "3b17c81ede": "Tab strip order",
@@ -8712,7 +8738,9 @@
             "41ccade05c": "gh",
             "b79c21bd42": "github",
             "7166b9090c": "GitHub authentication via the gh CLI.",
-            "f16e41cc72": "GitHub Integration"
+            "f16e41cc72": "GitHub Integration",
+            "760e2446e0": "Bitbucket Cloud authentication with a saved API token or environment variables.",
+            "af5ae87847": "access token"
           }
         },
         "jira": {
@@ -9500,8 +9528,8 @@
           "95d3031db2": "Keeps this computer and display awake while agents are working. Lid-close behavior follows this device's power settings.",
           "a42f6fbdd8": "Keeps this computer and display awake while agents are working. Orca also asks this device to stay awake when the lid is closed, subject to its power policy.",
           "modeTitle": "Keep computer awake",
-          "modeDescriptionWindows": "Choose On, Auto while agents are working, or Off. Lid-close behavior follows this device's power settings.",
-          "modeDescriptionDefault": "Choose On, Auto while agents are working, or Off. Orca also asks this device to stay awake when the lid is closed, subject to its power policy."
+          "modeDescriptionWindows": "Choose On, Agent, or Off. Agent mode stays awake while agents are working; lid-close behavior follows this device's power settings.",
+          "modeDescriptionDefault": "Choose On, Agent, or Off. Agent mode stays awake while agents are working. Orca also asks this device to stay awake when the lid is closed, subject to its power policy."
         },
         "agent-status-hooks-copy": {
           "7707c15abb": "Agent status hooks",
@@ -10563,8 +10591,53 @@
         },
         "AgentAwakeSetting": {
           "on": "On",
-          "auto": "Auto",
+          "auto": "Agent",
           "off": "Off"
+        },
+        "bitbucket": {
+          "credentials": {
+            "dialog": {
+              "connectFailed": "Connection failed",
+              "title": "Connect Bitbucket",
+              "description": "Use a Bitbucket Cloud credential to browse pull requests and build statuses. Orca verifies it before saving.",
+              "remoteRuntime": "Bitbucket credentials saved here are stored on this local machine only. Set ORCA_BITBUCKET_* environment variables on the remote runtime instead.",
+              "environmentManaged": "Bitbucket is already configured through ORCA_BITBUCKET_* environment variables, which take precedence. Unset them to save a credential in Orca.",
+              "authModeLabel": "Bitbucket authentication method",
+              "modeBasic": "Email & API token",
+              "modeToken": "Access token",
+              "accessToken": "Access token",
+              "accessTokenPlaceholder": "Repository, project, or workspace access token",
+              "email": "Atlassian account email",
+              "emailPlaceholder": "you@example.com",
+              "apiToken": "API token",
+              "apiTokenPlaceholder": "Atlassian API token",
+              "baseUrl": "API base URL (optional)",
+              "baseUrlPlaceholder": "https://api.bitbucket.org/2.0",
+              "tokenHint": "Repository, project, and workspace access tokens are created from the matching Bitbucket settings page and need read access to pull requests.",
+              "basicHint": "Create an Atlassian API token for your account, then pair it with the email address that owns it.",
+              "docsLink": "Bitbucket API token docs",
+              "storageNote": "Stored on this machine with encrypted storage when the OS keychain is available. ORCA_BITBUCKET_* environment variables always take precedence over what you save here.",
+              "cancel": "Cancel",
+              "verifying": "Verifying...",
+              "connect": "Connect"
+            }
+          },
+          "integration": {
+            "card": {
+              "description": "Pull requests and build statuses for Bitbucket Cloud.",
+              "edit": "Edit credentials",
+              "connect": "Connect",
+              "accountUnknown": "Bitbucket Cloud",
+              "authModeToken": "Access token",
+              "authModeBasic": "Email & API token",
+              "disconnect": "Disconnect Bitbucket",
+              "envManaged": "Configured via environment variables. Unset the ORCA_BITBUCKET_* variables to manage this credential in Orca.",
+              "storedAuthFailed": "The saved Bitbucket credential could not authenticate. Edit it, or check that the token still has pull request access.",
+              "storedCredential": "Saved in Orca on this machine. ORCA_BITBUCKET_* environment variables take precedence when set.",
+              "notConfigured": "Connect a Bitbucket Cloud account with an Atlassian API token or an access token. ORCA_BITBUCKET_* environment variables work too and take precedence.",
+              "disconnectFailed": "Could not remove the saved Bitbucket credential."
+            }
+          }
         }
       },
       "right": {
@@ -10699,7 +10772,8 @@
             "f9d7ca753d": "Copy Paths",
             "3161c4e425": "folder",
             "e887fa4b2e": "Open in Terminal",
-            "1d8e182c32": "View File"
+            "1d8e182c32": "View File",
+            "clipboardStagingUnavailable": "Could not copy the file because Orca's temporary storage is unavailable"
           },
           "FileExplorerToolbar": {
             "d238264654": "Show Git Ignored Files",
@@ -11166,6 +11240,7 @@
                 "checksUnresolvedChip": "unresolved",
                 "checksUnresolvedStripHint": "These checks finished without a pass or fail verdict.",
                 "e15a8b77ef": "No inline details are available for this check.",
+                "dcb3c546fe": "Retry",
                 "679bf2093c": "Copy log excerpt",
                 "d713f500b2": "Log excerpt",
                 "a916648574": "Open details",
@@ -11232,7 +11307,7 @@
                 "actionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked.",
                 "b3195cba33": "Unmark author as bot",
                 "f588b46a6c": "Mark author as bot",
-                "checkDetailsLoadFailed": "Failed to load check details."
+                "e45324fbed": "Failed to load check details."
               },
               "empty": {
                 "state": {
@@ -15003,6 +15078,9 @@
         "loadFailed": "Failed to load the GitLab job log.",
         "emptyTrace": "No log is available for this GitLab job.",
         "timedOut": "Timed out loading the GitLab job log."
+      },
+      "githubCheckDetailsTimeout": {
+        "timedOut": "Timed out loading check details."
       }
     },
     "ssh": {

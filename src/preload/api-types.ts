@@ -10,6 +10,10 @@ import type {
   HostedReviewInfo,
   HostedReviewProvider
 } from '../shared/hosted-review'
+import type {
+  BitbucketConnectArgs,
+  BitbucketConnectionStatus
+} from '../shared/bitbucket-credentials'
 import type { NativeFileDropPayload } from '../shared/native-file-drop'
 import type { ComputerAwakeStatus } from '../shared/computer-awake-mode'
 import type { BrowserFindSource } from '../shared/browser-find-source'
@@ -1148,6 +1152,9 @@ export type PreloadApi = {
     get: () => {
       platform: NodeJS.Platform
       osRelease: string
+      arch: string
+      /** Login shell or ComSpec when available. */
+      shell: string
       displayServer: 'wayland' | 'x11' | null
     }
   }
@@ -2126,6 +2133,13 @@ export type PreloadApi = {
         type: 'issue' | 'mr'
       }
     ) => Promise<Omit<GitLabWorkItem, 'repoId'> | null>
+  }
+  bitbucket: {
+    connect: (
+      args: BitbucketConnectArgs
+    ) => Promise<{ ok: true; account: string | null } | { ok: false; error: string }>
+    disconnect: () => Promise<void>
+    status: () => Promise<BitbucketConnectionStatus>
   }
   linear: {
     connect: (args: {
