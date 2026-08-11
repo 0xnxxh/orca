@@ -1525,6 +1525,7 @@ function makeRuntimeStoreWithWorkspaceSession(
             }
           }
         }
+        return true
       }
     )
   }
@@ -14757,6 +14758,172 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
+  it('keeps a persisted split when mounted renderer adoption rejects', async () => {
+    const tabId = 'persisted-mounted-tab'
+    const ptyId = 'persisted-mounted-pty'
+    const splitPtyId = 'persisted-mounted-split-pty'
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        tabsByWorktree: {
+          [TEST_WORKTREE_ID]: [
+            {
+              id: tabId,
+              ptyId,
+              worktreeId: TEST_WORKTREE_ID,
+              title: 'Persisted terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          [tabId]: makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: ptyId })
+        }
+      })
+    )
+    const revealTerminalSession = vi.fn().mockRejectedValue(new Error('renderer rejected'))
+    const kill = vi.fn(() => true)
+    let resolveSpawn!: (result: { id: string }) => void
+    const spawn = vi.fn(
+      (_args: unknown) =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSpawn = resolve
+        })
+    )
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill,
+      getForegroundProcess: async () => null
+    })
+    runtime.setNotifier({ revealTerminalSession } as never)
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+    runtime.registerPty(ptyId, TEST_WORKTREE_ID, null, {
+      tabId,
+      leafId: HEADLESS_LEAF_ID,
+      incarnationId: 'live-source-incarnation'
+    })
+    const internals = runtime as unknown as {
+      issuePtyHandle: (pty: unknown) => string
+      ptysById: Map<string, unknown>
+    }
+    const handle = internals.issuePtyHandle(internals.ptysById.get(ptyId))
+    const split = runtime.splitTerminal(handle, { direction: 'horizontal' })
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    const splitSpawn = spawn.mock.calls[0]?.[0] as
+      | { expectedSourceBinding?: { incarnationId?: string } }
+      | undefined
+    expect(splitSpawn?.expectedSourceBinding).not.toHaveProperty('incarnationId')
+
+    runtime.syncWindowGraph(1, {
+      tabs: [
+        {
+          tabId,
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Persisted terminal',
+          activeLeafId: HEADLESS_LEAF_ID,
+          layout: { type: 'leaf', leafId: HEADLESS_LEAF_ID }
+        }
+      ],
+      leaves: [
+        {
+          tabId,
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: HEADLESS_LEAF_ID,
+          paneRuntimeId: 1,
+          ptyId
+        }
+      ]
+    })
+    resolveSpawn({ id: splitPtyId })
+
+    await expect(split).resolves.toMatchObject({
+      tabId,
+      handle: expect.stringMatching(/^term_/)
+    })
+
+    expect(revealTerminalSession).toHaveBeenCalledOnce()
+    expect(kill).not.toHaveBeenCalled()
+    expect(getSession().terminalLayoutsByTabId[tabId]?.root).toMatchObject({
+      type: 'split',
+      direction: 'horizontal'
+    })
+  })
+
+  it('rejects a persisted split closed during spawn without recreating its tab', async () => {
+    const tabId = 'closing-persisted-tab'
+    const ptyId = 'closing-persisted-pty'
+    const { runtimeStore, getSession, setSession } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        tabsByWorktree: {
+          [TEST_WORKTREE_ID]: [
+            {
+              id: tabId,
+              ptyId,
+              worktreeId: TEST_WORKTREE_ID,
+              title: 'Closing terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          [tabId]: makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: ptyId })
+        }
+      })
+    )
+    let resolveSpawn!: (result: { id: string }) => void
+    const spawn = vi.fn(
+      (_args: unknown) =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSpawn = resolve
+        })
+    )
+    const kill = vi.fn(() => false)
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill,
+      getForegroundProcess: async () => null
+    })
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+    runtime.registerPty(ptyId, TEST_WORKTREE_ID, null, {
+      tabId,
+      leafId: HEADLESS_LEAF_ID
+    })
+    const internals = runtime as unknown as {
+      issuePtyHandle: (pty: unknown) => string
+      ptysById: Map<string, unknown>
+    }
+    const handle = internals.issuePtyHandle(internals.ptysById.get(ptyId))
+    const split = runtime.splitTerminal(handle, { direction: 'vertical' })
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+
+    setSession(getDefaultWorkspaceSession())
+    runtimeStore.persistPtyBinding.mockReturnValue(false)
+    resolveSpawn({ id: 'rejected-split-pty' })
+
+    await expect(split).rejects.toThrow('terminal_split_source_not_found')
+    expect(spawn.mock.calls[0]?.[0]).toMatchObject({
+      persistHostSessionBinding: true,
+      expectedSourceBinding: {
+        worktreeId: TEST_WORKTREE_ID,
+        tabId,
+        leafId: HEADLESS_LEAF_ID,
+        ptyId
+      }
+    })
+    expect(kill).toHaveBeenCalledWith('rejected-split-pty')
+    expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toBeUndefined()
+    expect(getSession().terminalLayoutsByTabId[tabId]).toBeUndefined()
+  })
+
   it('splits folder workspace pty-backed terminal sessions with folder cwd and env', async () => {
     const folderPath = await mkdtemp(join(tmpdir(), 'orca-runtime-folder-split-'))
     const spawn = vi
@@ -14832,6 +14999,80 @@ describe('OrcaRuntimeService', () => {
       leafId: splitLeafId,
       splitFromLeafId: sourceLeafId,
       splitDirection: 'vertical'
+    })
+  })
+
+  it('atomically admits persisted SSH splits in the SSH host partition', async () => {
+    const tabId = 'ssh-split-tab'
+    const sourcePtyId = 'ssh:ssh-1@@source-pty'
+    const splitPtyId = 'ssh:ssh-1@@split-pty'
+    const remoteRepo = { ...store.getRepo(TEST_REPO_ID)!, connectionId: 'ssh-1' }
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        tabsByWorktree: {
+          [TEST_WORKTREE_ID]: [
+            {
+              id: tabId,
+              ptyId: sourcePtyId,
+              worktreeId: TEST_WORKTREE_ID,
+              title: 'SSH terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          [tabId]: makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: sourcePtyId })
+        }
+      }),
+      'ssh:ssh-1'
+    )
+    const spawn = vi.fn().mockResolvedValue({ id: splitPtyId })
+    const runtime = new OrcaRuntimeService({
+      ...runtimeStore,
+      getRepos: () => [remoteRepo],
+      getRepo: (id: string) => (id === TEST_REPO_ID ? remoteRepo : undefined)
+    } as never)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+    runtime.registerPty(sourcePtyId, TEST_WORKTREE_ID, 'ssh-1', {
+      tabId,
+      leafId: HEADLESS_LEAF_ID
+    })
+    const internals = runtime as unknown as {
+      issuePtyHandle: (pty: unknown) => string
+      ptysById: Map<string, unknown>
+    }
+    const handle = internals.issuePtyHandle(internals.ptysById.get(sourcePtyId))
+
+    await expect(runtime.splitTerminal(handle, { direction: 'vertical' })).resolves.toMatchObject({
+      tabId,
+      handle: expect.stringMatching(/^term_/)
+    })
+
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionId: 'ssh-1',
+        worktreeId: TEST_WORKTREE_ID,
+        persistHostSessionBinding: true,
+        expectedSourceBinding: expect.objectContaining({
+          worktreeId: TEST_WORKTREE_ID,
+          tabId,
+          leafId: HEADLESS_LEAF_ID,
+          ptyId: sourcePtyId
+        })
+      })
+    )
+    expect(getSession().terminalLayoutsByTabId[tabId]?.root).toMatchObject({
+      type: 'split',
+      direction: 'vertical'
     })
   })
 
