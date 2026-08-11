@@ -6,20 +6,22 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `6d3ce582aa` on `skills-share` (pushed; no PR).
-- Orca Cloud: `499856c` on `skills-share-cloud` (pushed; no PR).
+- Orca implementation: `38202d3c1b` on `skills-share` (pushed; no PR).
+- Orca Cloud: `69b388e` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
 
 - Local Node and web typechecks, changed-code quality gates, 94 skill-domain files with 770 tests
-  passed and 3 skipped, 125 Orca Cloud API tests, the full Cloud monorepo test/typecheck/lint/build
+  passed and 3 skipped, 129 Orca Cloud API tests, the full Cloud monorepo test/typecheck/lint/build
   gates, and Terraform validation.
 - Native Windows package/install/recovery/copy-fallback tests and Node typecheck on `windows 2`;
-  the current slice passed 292 tests with 19 platform skips across 43 files at `41bede4c78`.
+  the current slice passed 284 tests with 21 intentional platform skips across 43 files.
 - Native Windows transaction validation passed all 21 cases at `6d3ce582aa`, including a real
   canonical install beyond `MAX_PATH` while the host's `LongPathsEnabled` policy remained disabled.
 - Real Ubuntu 24.04 WSL global, guest-workspace, and `/mnt/c` workspace transactions, including
   alias placement, interrupted update recovery, conflict preservation, update, and removal.
+- Real native Windows global, linked Git-worktree, and plain folder installs with spaces and
+  non-ASCII paths, plus privacy-safe install diagnostics and owner-private staging tests.
 - Isolated staging bucket, IAM, secret container, log metrics, dashboard, and alerts in
   `onorca-cloud-staging`.
 
@@ -768,8 +770,15 @@ without treating the missing external topology as a product failure.
 - [ ] Add GCS quarantine/published bytes, object count, and lifecycle failure panels and alerts.
 - [ ] Add PostgreSQL connection, storage, query latency, migration, and transaction panels and
       alerts.
-- [ ] Add signed-policy/URL generation and IAM Credentials failure alerts.
+- [x] Add signed-policy/URL generation and IAM Credentials failure alerts. Grant-signing failures
+      are mapped to a stable application category so the alert does not depend on project-wide
+      Data Access audit logging; evidence is in Orca Cloud `69b388e`.
 - [ ] Add budget alerts for GCS storage/egress, Cloud Run growth, and Cloud SQL storage.
+
+Partial dashboard evidence in Orca Cloud `69b388e`: upload-grant, finalize, share, and
+download-grant success; bounded security failures; Cloud Run CPU, memory, instances, and latency;
+GCS bytes and object count; and Cloud SQL connections and disk use. The broader unchecked items
+still require the listed split metrics, latency panels, and alerts.
 
 ### Logging and privacy
 
