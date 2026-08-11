@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { toRuntimeExecutionHostId, toSshExecutionHostId } from '../../../shared/execution-host'
-import { folderWorkspaceKey } from '../../../shared/workspace-scope'
-import { openWorkspaceBrowserTab, resolveWorkspaceBrowserOwner } from './workspace-browser-tab-open'
+import { openWorkspaceBrowserTab } from './workspace-browser-tab-open'
 
 const mocks = vi.hoisted(() => ({
   createRemote: vi.fn(),
@@ -38,118 +37,6 @@ beforeEach(() => {
   mocks.createRemote.mockReset().mockResolvedValue(true)
   mocks.getState.mockReset().mockImplementation(() => mocks.state)
   mocks.state = {}
-})
-
-describe('resolveWorkspaceBrowserOwner', () => {
-  it('preserves client-local and direct-SSH ownership', () => {
-    expect(
-      resolveWorkspaceBrowserOwner(
-        { activeWorktreeId: WORKSPACE_ID, activeWorkspaceExecutionHostId: 'local' },
-        WORKSPACE_ID
-      )
-    ).toEqual({
-      status: 'resolved',
-      owner: { kind: 'client', workspaceExecutionHostId: 'local' }
-    })
-    const sshHost = toSshExecutionHostId('ssh-target')
-    expect(resolveWorkspaceBrowserOwner(ownerState(sshHost) as never, WORKSPACE_ID)).toEqual({
-      status: 'resolved',
-      owner: { kind: 'client', workspaceExecutionHostId: sshHost }
-    })
-  })
-
-  it('preserves proxied hosts and synthesizes only absent legacy runtime hosts', () => {
-    const sshHost = toSshExecutionHostId('private-target')
-    expect(
-      resolveWorkspaceBrowserOwner(ownerState(sshHost, 'hub-a') as never, WORKSPACE_ID)
-    ).toEqual({
-      status: 'resolved',
-      owner: {
-        kind: 'runtime',
-        environmentId: 'hub-a',
-        workspaceExecutionHostId: sshHost
-      }
-    })
-    expect(
-      resolveWorkspaceBrowserOwner(ownerState(undefined, 'hub-a') as never, WORKSPACE_ID)
-    ).toEqual({
-      status: 'resolved',
-      owner: {
-        kind: 'runtime',
-        environmentId: 'hub-a',
-        workspaceExecutionHostId: toRuntimeExecutionHostId('hub-a')
-      }
-    })
-  })
-
-  it('rejects missing, malformed, and mismatched ownership', () => {
-    expect(resolveWorkspaceBrowserOwner({}, WORKSPACE_ID)).toEqual({
-      status: 'unresolved',
-      reason: 'missing'
-    })
-    expect(
-      resolveWorkspaceBrowserOwner(ownerState('not-a-host', 'hub-a') as never, WORKSPACE_ID)
-    ).toEqual({ status: 'unresolved', reason: 'invalid-workspace-host' })
-    expect(
-      resolveWorkspaceBrowserOwner(
-        ownerState(toRuntimeExecutionHostId('hub-b'), 'hub-a') as never,
-        WORKSPACE_ID
-      )
-    ).toEqual({ status: 'unresolved', reason: 'invalid-workspace-host' })
-  })
-
-  it('uses canonical folder and competing-HUB route behavior', () => {
-    const folderKey = folderWorkspaceKey('folder-1')
-    expect(
-      resolveWorkspaceBrowserOwner(
-        {
-          folderWorkspaces: [
-            {
-              id: 'folder-1',
-              projectGroupId: 'group-1',
-              connectionId: null,
-              executionHostId: 'local'
-            }
-          ]
-        },
-        folderKey
-      )
-    ).toEqual({
-      status: 'resolved',
-      owner: { kind: 'client', workspaceExecutionHostId: 'local' }
-    })
-
-    const sshHost = toSshExecutionHostId('private-target')
-    const competing = {
-      worktreesByRepo: {
-        'repo-1': [
-          ...((ownerState(sshHost, 'hub-a').worktreesByRepo as Record<string, unknown[]>)[
-            'repo-1'
-          ] ?? []),
-          ...((ownerState(sshHost, 'hub-b').worktreesByRepo as Record<string, unknown[]>)[
-            'repo-1'
-          ] ?? [])
-        ]
-      }
-    }
-    expect(resolveWorkspaceBrowserOwner(competing as never, WORKSPACE_ID)).toEqual({
-      status: 'unresolved',
-      reason: 'ambiguous'
-    })
-    expect(
-      resolveWorkspaceBrowserOwner(
-        {
-          ...competing,
-          activeWorktreeId: WORKSPACE_ID,
-          activeWorkspaceExecutionHostId: sshHost
-        } as never,
-        WORKSPACE_ID
-      )
-    ).toEqual({
-      status: 'resolved',
-      owner: { kind: 'client', workspaceExecutionHostId: sshHost }
-    })
-  })
 })
 
 describe('openWorkspaceBrowserTab', () => {
@@ -215,6 +102,11 @@ describe('openWorkspaceBrowserTab', () => {
 
   it('fails closed for invalid targets and unresolved owners, then falls back locally', async () => {
     const secretUrl = 'https://example.com/?q=secret-value'
+    const request = {
+      workspaceId: WORKSPACE_ID,
+      url: secretUrl,
+      intent: { kind: 'search' as const, engine: 'kagi' as const }
+    }
     mocks.state = {}
     await expect(
       openWorkspaceBrowserTab({
@@ -225,14 +117,16 @@ describe('openWorkspaceBrowserTab', () => {
     ).rejects.toThrow('Unable to open URL.')
     expect(mocks.getState).not.toHaveBeenCalled()
 
-    await expect(
-      openWorkspaceBrowserTab({
-        workspaceId: WORKSPACE_ID,
-        url: secretUrl,
-        intent: { kind: 'search', engine: 'kagi' }
-      })
-    ).rejects.toThrow('Unable to search with Kagi.')
+    await expect(openWorkspaceBrowserTab(request)).rejects.toThrow('Unable to search with Kagi.')
     expect(mocks.createRemote).not.toHaveBeenCalled()
+
+    for (const state of [
+      ownerState('not-a-host', 'hub-a'),
+      ownerState(toRuntimeExecutionHostId('hub-b'), 'hub-a')
+    ]) {
+      mocks.state = state
+      await expect(openWorkspaceBrowserTab(request)).rejects.toThrow('Unable to search with Kagi.')
+    }
 
     mocks.state = {
       ...ownerState(toRuntimeExecutionHostId('hub-a')),
@@ -241,11 +135,7 @@ describe('openWorkspaceBrowserTab', () => {
       defaultBrowserSessionProfileIdByHostId: { local: 'local-profile' }
     }
     mocks.createRemote.mockResolvedValue(false)
-    await openWorkspaceBrowserTab({
-      workspaceId: WORKSPACE_ID,
-      url: secretUrl,
-      intent: { kind: 'search', engine: 'kagi' }
-    })
+    await openWorkspaceBrowserTab(request)
     expect(mocks.state.createBrowserTab).toHaveBeenCalledWith(WORKSPACE_ID, secretUrl, {
       activate: true,
       browserRuntimeEnvironmentId: null,

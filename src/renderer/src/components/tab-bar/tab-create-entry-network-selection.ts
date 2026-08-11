@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { getActiveOptionId, type ActiveOption } from './tab-create-entry-active-option'
 
 type NetworkSelectionArgs = {
@@ -24,31 +24,20 @@ export function useNetworkSafeTabEntrySelection({
   const pinnedOptionIndex = pinnedOptionId
     ? activeOptions.findIndex((option) => getActiveOptionId(option) === pinnedOptionId)
     : -1
-  const policyRef = useRef({ allowed: fileIndexReady, fileIndexReady, menuOpen, query })
-  const policy = policyRef.current
-  let networkActionAllowed =
-    policy.fileIndexReady === fileIndexReady &&
-    policy.menuOpen === menuOpen &&
-    policy.query === query
-      ? policy.allowed
-      : fileIndexReady
   const rankedOption = pinnedOptionIndex < 0 ? activeOptions[0] : undefined
   const rankedNetworkAction =
     !forcedSearch &&
     rankedOption?.kind === 'entry' &&
     (rankedOption.option.classification.kind === 'search' ||
       rankedOption.option.classification.kind === 'host-url')
-  if (rankedOption && !rankedNetworkAction && networkActionAllowed) {
-    networkActionAllowed = false
-  }
-  if (
-    policy.allowed !== networkActionAllowed ||
-    policy.fileIndexReady !== fileIndexReady ||
-    policy.menuOpen !== menuOpen ||
-    policy.query !== query
-  ) {
-    policyRef.current = { allowed: networkActionAllowed, fileIndexReady, menuOpen, query }
-  }
+  const rankingKey = `${menuOpen}:${query}`
+  const blockedNetworkRankingRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (fileIndexReady && rankedOption && !rankedNetworkAction) {
+      blockedNetworkRankingRef.current = rankingKey
+    }
+  }, [fileIndexReady, rankedNetworkAction, rankedOption, rankingKey])
+  const networkActionAllowed = fileIndexReady && blockedNetworkRankingRef.current !== rankingKey
   const activeSelectedIndex =
     pinnedOptionIndex >= 0
       ? pinnedOptionIndex

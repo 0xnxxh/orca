@@ -15,7 +15,10 @@ import {
   type SearchUrlOptions
 } from '../../../../shared/browser-url'
 import type { RuntimeFileListState } from '../quick-open-file-list'
-import { openWorkspaceBrowserTab } from '@/lib/workspace-browser-tab-open'
+import {
+  openWorkspaceBrowserTab,
+  type OpenWorkspaceBrowserTabRequest
+} from '@/lib/workspace-browser-tab-open'
 import {
   classifyTabEntryQuery,
   TAB_ENTRY_ABSOLUTE_PATH_REMOTE_BLOCKED_MESSAGE,
@@ -144,6 +147,37 @@ async function openExistingFile(args: {
   )
 }
 
+type NetworkTabEntryClassification = Extract<
+  TabEntryActionClassification,
+  { kind: 'explicit-url' | 'host-url' | 'search' }
+>
+
+function isNetworkTabEntry(
+  classification: TabEntryActionClassification
+): classification is NetworkTabEntryClassification {
+  return (
+    classification.kind === 'explicit-url' ||
+    classification.kind === 'host-url' ||
+    classification.kind === 'search'
+  )
+}
+
+function getNetworkTabRequest(
+  classification: NetworkTabEntryClassification,
+  { worktreeId, groupId }: Pick<TabCreateEntryArgs, 'worktreeId' | 'groupId'>,
+  searchUrlOptions?: SearchUrlOptions
+): OpenWorkspaceBrowserTabRequest {
+  const target = { workspaceId: worktreeId, targetGroupId: groupId }
+  if (classification.kind === 'search') {
+    return {
+      ...target,
+      url: buildSearchUrl(classification.query, classification.engine, searchUrlOptions),
+      intent: { kind: 'search', engine: classification.engine }
+    }
+  }
+  return { ...target, url: classification.url, intent: { kind: 'url' } }
+}
+
 export async function openTabEntryWithOperations({
   allowAbsolutePaths,
   classification: selectedClassification,
@@ -165,23 +199,10 @@ export async function openTabEntryWithOperations({
     throw new Error(classification.message)
   }
 
-  if (classification.kind === 'explicit-url' || classification.kind === 'host-url') {
-    await operations.openWorkspaceBrowserTab({
-      workspaceId: worktreeId,
-      targetGroupId: groupId,
-      url: classification.url,
-      intent: { kind: 'url' }
-    })
-    return
-  }
-
-  if (classification.kind === 'search') {
-    await operations.openWorkspaceBrowserTab({
-      workspaceId: worktreeId,
-      targetGroupId: groupId,
-      url: buildSearchUrl(classification.query, classification.engine, searchUrlOptions),
-      intent: { kind: 'search', engine: classification.engine }
-    })
+  if (isNetworkTabEntry(classification)) {
+    await operations.openWorkspaceBrowserTab(
+      getNetworkTabRequest(classification, { worktreeId, groupId }, searchUrlOptions)
+    )
     return
   }
 
@@ -239,29 +260,9 @@ export async function openTabEntryWithOperations({
 
 export async function openTabBarEntry(args: TabCreateEntryArgs): Promise<void> {
   const state = useAppStore.getState()
-  if (
-    args.classification?.kind === 'explicit-url' ||
-    args.classification?.kind === 'host-url' ||
-    args.classification?.kind === 'search'
-  ) {
-    const classification = args.classification
-    await openWorkspaceBrowserTab(
-      classification.kind === 'search'
-        ? {
-            workspaceId: args.worktreeId,
-            targetGroupId: args.groupId,
-            url: buildSearchUrl(classification.query, classification.engine, {
-              kagiSessionLink: state.browserKagiSessionLink
-            }),
-            intent: { kind: 'search', engine: classification.engine }
-          }
-        : {
-            workspaceId: args.worktreeId,
-            targetGroupId: args.groupId,
-            url: classification.url,
-            intent: { kind: 'url' }
-          }
-    )
+  const searchUrlOptions = { kagiSessionLink: state.browserKagiSessionLink }
+  if (args.classification && isNetworkTabEntry(args.classification)) {
+    await openWorkspaceBrowserTab(getNetworkTabRequest(args.classification, args, searchUrlOptions))
     return
   }
   const searchEngine = state.browserDefaultSearchEngine ?? DEFAULT_SEARCH_ENGINE
@@ -282,7 +283,7 @@ export async function openTabBarEntry(args: TabCreateEntryArgs): Promise<void> {
     allowAbsolutePaths,
     localPlatform,
     searchEngine,
-    searchUrlOptions: { kagiSessionLink: state.browserKagiSessionLink },
+    searchUrlOptions,
     classification: args.classification,
     operations: {
       createRuntimePath,

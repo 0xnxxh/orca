@@ -3,7 +3,6 @@ import { ORCA_BROWSER_BLANK_URL } from './constants'
 import {
   buildSearchUrl,
   classifySchemeLessLocalDevAddress,
-  encodeSearchQueryComponent,
   isEligibleLocalCertificateHost,
   normalizeKagiSessionLink,
   normalizeBrowserNavigationUrl,
@@ -232,8 +231,9 @@ describe('browser-url helpers', () => {
   })
 
   it('replaces unmatched surrogates without changing valid pairs', () => {
-    expect(encodeSearchQueryComponent('\ud800a\udc00😀')).toBe('%EF%BF%BDa%EF%BF%BD%F0%9F%98%80')
-    expect(() => buildSearchUrl('\ud800', 'google')).not.toThrow()
+    expect(buildSearchUrl('\ud800a\udc00😀', 'google')).toBe(
+      'https://www.google.com/search?q=%EF%BF%BDa%EF%BF%BD%F0%9F%98%80'
+    )
     expect(buildSearchUrl('\ud800', 'google')).toBe('https://www.google.com/search?q=%EF%BF%BD')
   })
 

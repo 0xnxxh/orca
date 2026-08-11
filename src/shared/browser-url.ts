@@ -223,28 +223,7 @@ export function buildSearchUrl(
       return sessionSearchUrl
     }
   }
-  return `${SEARCH_ENGINE_URLS[engine]}${encodeSearchQueryComponent(query)}`
-}
-
-export function encodeSearchQueryComponent(query: string): string {
-  let normalized = ''
-  for (let index = 0; index < query.length; index += 1) {
-    const codeUnit = query.charCodeAt(index)
-    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
-      const next = query.charCodeAt(index + 1)
-      if (next >= 0xdc00 && next <= 0xdfff) {
-        normalized += query[index] + query[index + 1]
-        index += 1
-      } else {
-        normalized += '\ufffd'
-      }
-    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
-      normalized += '\ufffd'
-    } else {
-      normalized += query[index]
-    }
-  }
-  return encodeURIComponent(normalized)
+  return `${SEARCH_ENGINE_URLS[engine]}${encodeURIComponent(query.toWellFormed())}`
 }
 
 export function looksLikeSearchQuery(input: string): boolean {

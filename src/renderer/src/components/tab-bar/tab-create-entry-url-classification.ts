@@ -105,14 +105,7 @@ export function classifyExplicitUrl(query: string): ExplicitUrlClassification | 
   if (/\s/.test(query)) {
     return null
   }
-  try {
-    const url = new URL(query)
-    return url.protocol === 'http:' || url.protocol === 'https:'
-      ? parseHttpUrl(query)
-      : invalidUrl()
-  } catch {
-    return invalidUrl()
-  }
+  return invalidUrl()
 }
 
 export function classifyHostUrl(query: string): HostUrlClassification | null {

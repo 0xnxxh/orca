@@ -40,7 +40,11 @@ import {
 } from './tab-create-entry-empty-options'
 import type { TabBarCreateEntryProps } from './tab-create-entry-props'
 
-export default function TabBarCreateEntry({
+export default function TabBarCreateEntry(props: TabBarCreateEntryProps): React.JSX.Element {
+  return <TabBarCreateEntrySession key={String(props.menuOpen)} {...props} />
+}
+
+function TabBarCreateEntrySession({
   agentOptions = EMPTY_AGENT_OPTIONS,
   groupId,
   menuOpen,
@@ -61,9 +65,14 @@ export default function TabBarCreateEntry({
   const [selectionGuidance, setSelectionGuidance] = useState<string | null>(null)
   // null = follow ranking (deferred tabs can prepend); set on arrow keys only.
   const [pinnedOptionId, setPinnedOptionId] = useState<string | null>(null)
-  const [lastMenuOpen, setLastMenuOpen] = useState(menuOpen)
   const inputRef = useRef<HTMLInputElement>(null)
   const submissionIdRef = useRef(0)
+  useEffect(
+    () => () => {
+      submissionIdRef.current += 1
+    },
+    []
+  )
   const fileList = useRuntimeFileListForWorktree({ enabled: menuOpen, worktreeId })
   const rawQueryOversized = isQuickOpenQueryTooLarge(query)
   const forcedSearch = parseForcedSearchQuery(query)
@@ -172,19 +181,6 @@ export default function TabBarCreateEntry({
         : findMatchingTabAgentLaunchOptions(query, agentOptions),
     [agentOptions, query, terminalQueryMode]
   )
-
-  if (lastMenuOpen !== menuOpen) {
-    setLastMenuOpen(menuOpen)
-    if (!menuOpen) {
-      submissionIdRef.current += 1
-      setQuery('')
-      setPending(false)
-      setError(null)
-      setSwitchError(null)
-      setSelectionGuidance(null)
-      setPinnedOptionId(null)
-    }
-  }
 
   const disabled = !onOpenEntry
   const hasQuery = query.trim().length > 0
