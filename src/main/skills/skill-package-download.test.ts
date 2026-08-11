@@ -79,6 +79,17 @@ describe('downloadSkillPackageGrant', () => {
     await expect(downloadSkillPackageGrant(insecure)).rejects.toThrow('skill-download-url-rejected')
   })
 
+  it.each([
+    'https://storage.test.attacker.test/package.tar.gz',
+    'https://storage.test:444/package.tar.gz',
+    'https://storage.test@attacker.test/package.tar.gz'
+  ])('rejects host-confusion grant URL %s before fetch', async (url) => {
+    const confused = await input({ url })
+
+    await expect(downloadSkillPackageGrant(confused)).rejects.toThrow(/skill-download-.*-rejected/)
+    expect(confused.fetcher).not.toHaveBeenCalled()
+  })
+
   it('allows same-origin redirects but rejects signed cross-origin redirects', async () => {
     const sameOriginFetch = fetcher(async (url) =>
       url.includes('/first')
@@ -108,6 +119,18 @@ describe('downloadSkillPackageGrant', () => {
         })
       )
     ).rejects.toThrow('skill-download-cross-origin-redirect')
+  })
+
+  it('rejects protocol-relative host-confusion redirects', async () => {
+    const confused = await input({
+      fetcher: fetcher(async () =>
+        response(null, { status: 307, headers: { location: '//storage.test.attacker.test/file' } })
+      )
+    })
+
+    await expect(downloadSkillPackageGrant(confused)).rejects.toThrow(
+      'skill-download-origin-rejected'
+    )
   })
 
   it('deletes partial bytes after size and digest failures', async () => {
