@@ -12,6 +12,7 @@ import type { FolderWorkspace, ProjectGroup, Repo, Worktree } from '../../../../
 import {
   buildRows,
   buildProjectGroupSidebarIndex,
+  findProjectGroupForRepo,
   findProjectGroupForSidebarOwner,
   getAmbiguousFolderWorkspaceSidebarIds,
   getProjectGroupMutationSelector,
@@ -163,6 +164,22 @@ describe('project-group sidebar identity', () => {
     expect(findProjectGroupForSidebarOwner(index, 'same-id', 'local')).toBe(local)
     expect(findProjectGroupForSidebarOwner(index, 'same-id', 'runtime:env-1')).toBe(runtime)
     expect(getProjectGroupSidebarIdentity(local)).not.toBe(getProjectGroupSidebarIdentity(runtime))
+  })
+
+  it('keeps folder-backed card geometry scoped to the repo owner', () => {
+    const local = { ...sidebarIdentityGroup('same-id', 'local'), createdFrom: 'manual' as const }
+    const runtime = {
+      ...sidebarIdentityGroup('same-id', 'runtime:env-1'),
+      createdFrom: 'folder-scan' as const
+    }
+    const index = buildProjectGroupSidebarIndex([local, runtime])
+
+    expect(findProjectGroupForRepo(index, ownerHeaderRepo('local-repo', 'local'), 'local')).toBe(
+      local
+    )
+    expect(
+      findProjectGroupForRepo(index, ownerHeaderRepo('runtime-repo', 'runtime:env-1'), 'local')
+    ).toBe(runtime)
   })
 
   it('carries the exact owner from a rendered header into mutations', () => {

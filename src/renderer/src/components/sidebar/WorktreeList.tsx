@@ -91,6 +91,7 @@ import {
   PINNED_GROUP_KEY,
   buildRows,
   buildProjectGroupSidebarIndex,
+  findProjectGroupForRepo,
   getAmbiguousFolderWorkspaceSidebarIds,
   getProjectGroupHeaderKey,
   getProjectGroupMutationSelector,
@@ -1477,13 +1478,13 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   scrollAnchorRef
 }: VirtualizedWorktreeViewportProps) {
   const activeWorkspaceExecutionHostId = useAppStore((s) => s.activeWorkspaceExecutionHostId)
+  const projectGroupSidebarIndex = useMemo(
+    () => buildProjectGroupSidebarIndex(projectGroups),
+    [projectGroups]
+  )
   const ambiguousFolderWorkspaceIds = useMemo(
-    () =>
-      getAmbiguousFolderWorkspaceSidebarIds(
-        buildProjectGroupSidebarIndex(projectGroups),
-        folderWorkspaces
-      ),
-    [folderWorkspaces, projectGroups]
+    () => getAmbiguousFolderWorkspaceSidebarIds(projectGroupSidebarIndex, folderWorkspaces),
+    [folderWorkspaces, projectGroupSidebarIndex]
   )
   const scrollRef = useRef<HTMLDivElement>(null)
   const suppressMeasurementAdjustmentUntilRef = useRef(0)
@@ -1599,15 +1600,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   const settings = useAppStore((s) => s.settings)
   const newCardStyle = settings?.experimentalNewWorktreeCardStyle === true
   const reorderRepos = useAppStore((s) => s.reorderRepos)
-  const folderBackedProjectGroupIds = useMemo(
-    () =>
-      new Set(
-        projectGroups
-          .filter((group) => group.createdFrom === 'folder-scan')
-          .map((group) => group.id)
-      ),
-    [projectGroups]
-  )
   const projectGroupByIdForHeaderDrag = useMemo(
     () => new Map(renderedProjectGroupsForHeaderDrag.map((group) => [group.id, group])),
     [renderedProjectGroupsForHeaderDrag]
@@ -4930,10 +4922,10 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
               const lineageToggleGroupKey = itemRow.lineageGroupKey
               const experimentalNewWorktreeCardStyle =
                 settings?.experimentalNewWorktreeCardStyle === true
-              const projectGroupId = itemRow.repo?.projectGroupId
               const isFolderBackedRepoChild =
                 groupBy === 'repo' &&
-                Boolean(projectGroupId && folderBackedProjectGroupIds.has(projectGroupId))
+                findProjectGroupForRepo(projectGroupSidebarIndex, itemRow.repo, defaultHostId)
+                  ?.createdFrom === 'folder-scan'
               // Why: experimental in-card lineage inherits the parent surface; legacy cards keep depth-based nested geometry.
               const paddingDepth = nested ? Math.max(0, itemRow.depth - 1) : itemRow.depth
               const getCardContentIndent = (lineageDepth: number): number =>
