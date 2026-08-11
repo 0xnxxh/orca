@@ -104,6 +104,63 @@ describe('getEditorExternalWatchTargets', () => {
     ])
   })
 
+  it('enables WSL aliases for a proven-local Windows drive watcher', () => {
+    const repo = makeRepo('repo-local-drive')
+    const worktree = makeWorktree(repo.id, 'wt-local-drive')
+    worktree.path = 'C:\\repo'
+
+    expect(
+      getEditorExternalWatchTargets(
+        makeState({ repo, worktree, openFiles: [makeOpenFile(worktree.id)] })
+      ).targets
+    ).toEqual([
+      {
+        worktreeId: 'wt-local-drive',
+        worktreePath: 'C:\\repo',
+        connectionId: undefined,
+        runtimeEnvironmentId: null,
+        allowLocalWindowsWslAliases: true
+      }
+    ])
+  })
+
+  it('does not infer a local alias owner while repo metadata is missing', () => {
+    const repo = makeRepo('repo-unresolved')
+    const worktree = makeWorktree(repo.id, 'wt-unresolved')
+    worktree.path = 'C:\\repo'
+    const state = makeState({ repo, worktree, openFiles: [makeOpenFile(worktree.id)] })
+    state.repos = []
+
+    expect(getEditorExternalWatchTargets(state).targets).toEqual([
+      {
+        worktreeId: 'wt-unresolved',
+        worktreePath: 'C:\\repo',
+        connectionId: undefined,
+        runtimeEnvironmentId: null
+      }
+    ])
+  })
+
+  it.each(['worktree', 'repo'] as const)(
+    'does not grant local aliases for an unknown %s host stamp',
+    (stampOwner) => {
+      const repo = makeRepo('repo-unknown-host')
+      const worktree = makeWorktree(repo.id, 'wt-unknown-host')
+      worktree.path = 'C:\\repo'
+      if (stampOwner === 'worktree') {
+        worktree.hostId = 'future:host' as never
+      } else {
+        repo.executionHostId = 'future:host' as never
+      }
+
+      const target = getEditorExternalWatchTargets(
+        makeState({ repo, worktree, openFiles: [makeOpenFile(worktree.id)] })
+      ).targets[0]
+
+      expect(target).not.toHaveProperty('allowLocalWindowsWslAliases')
+    }
+  )
+
   it('does not watch the active worktree while the sidebar is hidden', () => {
     const repo = makeRepo('repo-active')
     const worktree = makeWorktree(repo.id, 'wt-active')

@@ -58,14 +58,17 @@ export function mapTerminalFilePath(
   worktreePath: string,
   wslDistro?: string | null
 ): string {
-  // Why: //wsl.localhost/... and \\wsl.localhost\... are the same file. Keep the
-  // backslash form so open tabs and file watchers match the Files sidebar (#13349).
+  const distro =
+    wslDistro === null ? null : wslDistro?.trim() || parseWslUncPath(worktreePath)?.distro
+  if (!distro || !filePath.startsWith('/')) {
+    return filePath
+  }
+  // Why: only a proven local WSL pane may reinterpret this POSIX-looking path; SSH/runtime paths stay literal.
   const alreadyUnc = parseWslUncPath(filePath)
   if (alreadyUnc) {
     return toWindowsWslPath(alreadyUnc.linuxPath, alreadyUnc.distro)
   }
-  const distro = wslDistro?.trim() || parseWslUncPath(worktreePath)?.distro
-  if (!distro || !filePath.startsWith('/')) {
+  if (filePath.startsWith('//')) {
     return filePath
   }
   // Why: /mnt/<drive> is a Windows drive mounted into WSL — reach it directly
@@ -78,8 +81,8 @@ export function mapTerminalFilePath(
 export function terminalLinkWslDistro(
   wslDistro: string | null | undefined,
   runtimeEnvironmentId: string | null | undefined
-): string | null {
-  return runtimeEnvironmentId ? null : (wslDistro ?? null)
+): string | null | undefined {
+  return runtimeEnvironmentId ? null : wslDistro
 }
 
 export function shouldOpenTerminalFileWithSystemDefault(

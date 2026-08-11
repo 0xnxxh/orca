@@ -778,7 +778,8 @@ describe('handleOscLink', () => {
       {
         ...deps,
         startupCwd: '/root/workspace/myrepo',
-        worktreePath: '\\\\wsl.localhost\\Ubuntu\\home\\repo'
+        worktreePath: '\\\\wsl.localhost\\Ubuntu\\home\\repo',
+        wslDistro: 'Ubuntu'
       }
     )
     await flushAsyncWork()
@@ -810,7 +811,8 @@ describe('handleOscLink', () => {
       { metaKey: false, ctrlKey: true },
       {
         ...deps,
-        worktreePath: '\\\\wsl.localhost\\Ubuntu\\home\\repo'
+        worktreePath: '\\\\wsl.localhost\\Ubuntu\\home\\repo',
+        wslDistro: 'Ubuntu'
       }
     )
     await flushAsyncWork()
@@ -952,6 +954,24 @@ describe('handleOscLink', () => {
     )
   })
 
+  it('keeps WSL-looking paths literal for a direct SSH pane', async () => {
+    setPlatform('Windows')
+    vi.mocked(getConnectionId).mockReturnValue('ssh-1')
+    const literalPath = '//wsl.localhost/Ubuntu/repo/file.ts'
+
+    openDetectedFilePath(literalPath, null, null, {
+      worktreeId: 'wt-1',
+      worktreePath: '//wsl.localhost/Ubuntu/repo',
+      wslDistro: null
+    })
+    await flushAsyncWork()
+
+    expect(statMock).toHaveBeenCalledWith({ filePath: literalPath, connectionId: 'ssh-1' })
+    expect(openFileMock).toHaveBeenCalledWith(expect.objectContaining({ filePath: literalPath }), {
+      forceContentReload: true
+    })
+  })
+
   it('pins SSH links outside the worktree to their target host', async () => {
     setPlatform('Macintosh')
     vi.mocked(getConnectionId).mockReturnValue('ssh-1')
@@ -994,6 +1014,12 @@ describe('handleOscLink', () => {
     })
     await flushAsyncWork()
 
+    expect(openFileMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filePath: '//wsl.localhost/ubuntu/home/Alice/repo/src/main.ts'
+      }),
+      { forceContentReload: true }
+    )
     expect(openFileMock).toHaveBeenCalledWith(
       expect.not.objectContaining({ externalSshTargetId: expect.anything() }),
       { forceContentReload: true }
@@ -1665,6 +1691,7 @@ describe('createFilePathLinkProvider range bounds', () => {
         worktreeId: 'wt-1',
         worktreePath: '\\\\wsl.localhost\\Ubuntu\\home\\repo',
         runtimeEnvironmentId: null,
+        wslDistro: 'Ubuntu',
         pathExistsCache: new Map([
           ['active\0\\\\wsl.localhost\\Ubuntu\\root\\workspace\\myrepo\\README.md', true]
         ])
@@ -1880,7 +1907,7 @@ describe('createFilePathLinkProvider range bounds', () => {
     const { provider, linkTooltip } = createProviderSetup(
       [makeBufferLine('/root/workspace/myrepo/README.md:5:3')],
       new Map(),
-      { worktreePath, startupCwd: '/root/workspace/myrepo' }
+      { worktreePath, wslDistro: 'Ubuntu', startupCwd: '/root/workspace/myrepo' }
     )
 
     const links = await new Promise<ILink[]>((resolve) => {
@@ -1918,6 +1945,7 @@ describe('createFilePathLinkProvider range bounds', () => {
     )
     const { provider } = createProviderSetup([makeBufferLine('README.md:5')], new Map(), {
       worktreePath: '\\\\wsl.localhost\\Ubuntu\\home\\repo',
+      wslDistro: 'Ubuntu',
       startupCwd: '/stale',
       getPaneLinkCwd: () => '/root/workspace/myrepo'
     })
@@ -1943,6 +1971,9 @@ describe('createFilePathLinkProvider range bounds', () => {
     expect(
       mapTerminalFilePath('\\\\server\\share\\file.md', '\\\\wsl.localhost\\Ubuntu\\repo')
     ).toBe('\\\\server\\share\\file.md')
+    expect(mapTerminalFilePath('//server/share/file.md', '\\\\wsl.localhost\\Ubuntu\\repo')).toBe(
+      '//server/share/file.md'
+    )
     expect(mapTerminalFilePath('C:/repo/file.md', '\\\\wsl.localhost\\Ubuntu\\repo')).toBe(
       'C:/repo/file.md'
     )
@@ -1951,6 +1982,19 @@ describe('createFilePathLinkProvider range bounds', () => {
   it('does not map POSIX paths for a native Windows worktree', () => {
     expect(mapTerminalFilePath('/repo/file.md', 'C:\\repo')).toBe('/repo/file.md')
     expect(mapTerminalFilePath('/mnt/c/repo/file.md', '/Users/a/repo')).toBe('/mnt/c/repo/file.md')
+  })
+
+  it('keeps WSL-looking paths literal without a local WSL owner', () => {
+    expect(mapTerminalFilePath('//wsl.localhost/Ubuntu/repo/file.md', '/remote/repo')).toBe(
+      '//wsl.localhost/Ubuntu/repo/file.md'
+    )
+    expect(
+      mapTerminalFilePath(
+        '//wsl.localhost/Ubuntu/repo/file.md',
+        '\\\\wsl.localhost\\Ubuntu\\repo',
+        null
+      )
+    ).toBe('//wsl.localhost/Ubuntu/repo/file.md')
   })
 
   it('maps POSIX paths with the pane WSL distro when the worktree is on a Windows drive', () => {
