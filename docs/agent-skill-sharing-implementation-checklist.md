@@ -6,7 +6,7 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `8be7275d0d` on `skills-share` (pushed; no PR).
+- Orca implementation: `55498588b6` on `skills-share` (pushed; no PR).
 - Orca Cloud: `81a581d` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
@@ -24,6 +24,8 @@ Validated so far:
   `0600` regular files, and `0700` executable files.
 - Exact portable package digest and archive SHA-256 goldens passed on macOS and native Windows
   despite different bundled zlib versions (`1.2.12` and `1.3.1`).
+- The focused deterministic package suite passed 26/26 tests in Debian Bullseye/glibc 2.31 on
+  native Linux ARM64 and emulated Linux x64; dependencies remained isolated from the macOS tree.
 - Real native Windows global, linked Git-worktree, and plain folder installs with spaces and
   non-ASCII paths, plus privacy-safe install diagnostics and owner-private staging tests.
 - Isolated staging bucket, IAM, secret container, log metrics, dashboard, and alerts in
@@ -209,6 +211,8 @@ does not mean the surrounding phase is complete.
       golden passed on both hosts at `8be7275d0d` after replacing zlib-dependent streaming output
       with bounded deterministic stored DEFLATE blocks.
 - [ ] Repeat the portable package golden on native Linux and inside WSL.
+      The focused golden passed in Debian Bullseye/glibc 2.31 containers on native ARM64 and
+      emulated x64 at `55498588b6`; a native Linux host and the real WSL distro remain required.
 - [x] Test source changes during packaging.
 - [x] Test CRLF/LF behavior explicitly and document whether byte identity changes.
 - [x] Test executable-mode preservation and Windows's mode limitations.
