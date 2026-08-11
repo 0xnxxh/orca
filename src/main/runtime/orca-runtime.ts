@@ -27361,15 +27361,13 @@ export class OrcaRuntimeService {
     }
 
     try {
-      if (
-        sourceAuthority.persisted &&
-        !this.resolveTerminalSplitSourceAuthority(
-          workspace.id,
-          parentTabId,
-          parsedPaneKey.leafId,
-          pty.ptyId
-        )?.persisted
-      ) {
+      const revalidatedAuthority = this.resolveTerminalSplitSourceAuthority(
+        workspace.id,
+        parentTabId,
+        parsedPaneKey.leafId,
+        pty.ptyId
+      )
+      if (!revalidatedAuthority || (sourceAuthority.persisted && !revalidatedAuthority.persisted)) {
         throw new Error('terminal_split_source_not_found')
       }
       if (!sourceAuthority.persisted) {
@@ -27476,7 +27474,7 @@ export class OrcaRuntimeService {
             tab.type === 'terminal' &&
             tab.parentTabId === tabId &&
             tab.leafId === leafId &&
-            tab.ptyId === ptyId
+            (tab.ptyId === ptyId || tab.parentLayout?.ptyIdsByLeafId?.[leafId] === ptyId)
         )
     )
     if (!rendererMounted && !projected) {
