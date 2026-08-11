@@ -7,12 +7,12 @@ Last updated: 2026-08-11.
 Implementation baselines captured by this checklist update:
 
 - Orca implementation: `6ba6107dba` on `skills-share` (pushed; no PR).
-- Orca Cloud: `9356b6e` on `main` (merged through `stablyai/orca-cloud#307`).
+- Orca Cloud: `41ef335` on `main` (merged through `stablyai/orca-cloud#307`-`#312`).
 
 Validated so far:
 
 - Local Node and web typechecks, changed-code quality gates, 94 skill-domain files with 770 tests
-  passed and 3 skipped, 133 Orca Cloud API tests with one opt-in integration skip, the full Cloud
+  passed and 3 skipped, 134 Orca Cloud API tests with one opt-in integration skip, the full Cloud
   monorepo test/typecheck/lint/build gates, and isolated Terraform formatting and validation.
 - Final Orca validation passed repository-wide lint, all Node/CLI/web typechecks, the production
   desktop/native build, the Node 18 Relay bundle contract, 78 focused skill files with 557 tests
@@ -50,8 +50,9 @@ Validated so far:
   and Docker SSH journeys. Focused failure injection also proves invalid gzip classification,
   old-version preservation after `EACCES` and `ENOSPC`, bounded recovery from a lost final install
   response, and validated structured SSH failure data without arbitrary error-data disclosure.
-- Isolated staging bucket, IAM, secret container, log metrics, dashboard, and alerts in
-  `onorca-cloud-staging`.
+- Isolated staging bucket, IAM, `orca_skills` database and principal, enabled secret version, 11
+  log metrics, four alerts, and one dashboard in `onorca-cloud-staging`. The complete targeted
+  skill-infrastructure plan is zero-diff at Cloud `41ef335`.
 - PostgreSQL migration startup is serialized by a transaction-scoped advisory lock. Transactional
   DDL rollback and eight concurrent startup callers passed against ephemeral PostgreSQL 16 and 17,
   with exactly one recorded schema version.
@@ -59,13 +60,21 @@ Validated so far:
   one approved skill-database secret, and rejects secret, Cloud SQL, service-account, scaling,
   CPU, memory, volume, mount, probe, or unexpected-environment drift before traffic promotion.
   Both staging and production workflows explicitly carry all four skill controls as `false`.
-- Orca Cloud `main` verification run `31518125253` passed its Terraform and full code jobs after
-  merge commit `9356b6e`.
+- Staging API revision `orca-cloud-api-staging-00039-rek` serves 100% of traffic with the exact
+  skill secret and Cloud SQL attachment, all four controls false, two database-ready startup
+  events, zero revision error logs, existing artifact authorization at `401`, and skill routes at
+  `404`. The API service is zero-diff; known shared SQL and artifact-bucket drift remains excluded.
+- Orca Cloud `main` verification run `31529170760` passed its Terraform and full code jobs after
+  merge commit `41ef335`.
+- Guarded sleep run `31529587719` emitted `staging_relay_slept` for all three cells. Read-only
+  status run `31530386310` then verified Cloud SQL policy `NEVER`, every Relay MIG target at zero,
+  and both staging Cloud Run services with zero active-revision minimums.
 
-Rollout gate: staging Cloud SQL is shared with Auth/Relay and intentionally stopped. Do not create
-the skills database/user/secret version or deploy Cloud Run routes until the supported staging SQL
-power workflow deliberately wakes it and the reviewed plan still shows no unrelated changes.
-`gcloud` currently requires `gcloud auth login jinwoo@stably.ai` before that fresh plan can run.
+Rollout gate: staging infrastructure, the route-disabled API, and startup migrations are deployed;
+the shared staging data plane is back in its low-cost asleep state.
+Do not enable route registration until an environment-scoped short-lived smoke access token is
+available and the authenticated upload/finalize/download, denial, expiry, revocation, deletion,
+and cleanup journey passes. Production remains untouched.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
 
@@ -457,9 +466,9 @@ does not mean the surrounding phase is complete.
 - [x] Declare database `orca_skills` on existing regional PostgreSQL 17 instance
       `orca-cloud-auth-db`.
 - [x] Declare dedicated principal `orca_skills_app` with access only to `orca_skills`.
-- [ ] Store its connection URL in Secret Manager as `orca-cloud-skills-database-url`.
-- [ ] Attach the existing Cloud SQL instance to `orca-cloud-api` without replacing the service.
-- [ ] Inject only the skill database secret into the API service.
+- [x] Store its connection URL in Secret Manager as `orca-cloud-skills-database-url`.
+- [x] Attach the existing Cloud SQL instance to `orca-cloud-api` without replacing the service.
+- [x] Inject only the skill database secret into the API service.
 - [ ] Verify backups and point-in-time recovery cover the new database.
 
 ### IAM
@@ -469,7 +478,7 @@ does not mean the surrounding phase is complete.
 - [x] Grant the API service account `roles/cloudsql.client` for the existing instance.
 - [x] Grant service-account-scoped IAM Credentials `signBlob` for self-signing V4 policies and
       URLs.
-- [ ] Grant Secret Manager accessor only for skill-specific secrets.
+- [x] Grant Secret Manager accessor only for skill-specific secrets.
 - [x] Verify bucket IAM contains neither `allUsers` nor `allAuthenticatedUsers`.
 - [x] Do not grant desktop, remote runtime, or end-user identities direct bucket IAM.
 - [x] Do not create or distribute long-lived GCP service-account keys.
@@ -478,7 +487,7 @@ does not mean the surrounding phase is complete.
 
 ### Cloud Run configuration
 
-- [ ] Extend `orca-cloud-api` in `us-central1`; do not create a separate V1 worker service.
+- [x] Extend `orca-cloud-api` in `us-central1`; do not create a separate V1 worker service.
 - [x] Configure bucket, 40 MiB compressed limit, 15-minute upload TTL, five-minute download TTL,
       fixed finalize concurrency, and skill database URL.
 - [x] Reuse existing auth base URL and application CORS configuration.
@@ -502,7 +511,7 @@ does not mean the surrounding phase is complete.
 - [x] Produce and review a staging plan.
 - [x] Verify the plan does not replace the existing artifact bucket, Cloud SQL instance, Cloud Run
       services, or unrelated IAM.
-- [ ] Apply to staging and capture resource and IAM verification evidence.
+- [x] Apply to staging and capture resource and IAM verification evidence.
 - [ ] Produce and review the production plan after staging gates pass.
 - [ ] Apply the approved production plan only during the rollout phase.
 - [ ] Verify production with read-only bucket, Cloud Run, database, IAM, lifecycle, and CORS
@@ -883,7 +892,7 @@ This does not substitute for physical SSH macOS/Windows or the supported Linux f
       Data Access audit logging; evidence is in Orca Cloud `69b388e`.
 - [ ] Add budget alerts for GCS storage/egress, Cloud Run growth, and Cloud SQL storage.
 
-Partial dashboard evidence in Orca Cloud `69b388e`: upload-grant, finalize, share, and
+Partial dashboard evidence in Orca Cloud `41ef335`: upload-grant, finalize, share, and
 download-grant success; bounded security failures; Cloud Run CPU, memory, instances, and latency;
 GCS bytes and object count; and Cloud SQL connections and disk use. The broader unchecked items
 still require the listed split metrics, latency panels, and alerts.
@@ -988,8 +997,8 @@ still require the listed split metrics, latency panels, and alerts.
 
 ### Staging
 
-- [ ] Apply reviewed Terraform and migrations to staging.
-- [ ] Deploy `orca-cloud-api` skill routes disabled by server-side flags.
+- [x] Apply reviewed Terraform and migrations to staging.
+- [x] Deploy `orca-cloud-api` skill routes disabled by server-side flags.
 - [ ] Run upload/finalize/download tests for expiry, denial, oversize, corruption, deduplication,
       revocation, deletion, and cleanup.
 - [ ] Run desktop-to-local, paired-runtime, `windows 2`, WSL, and SSH journeys in staging.

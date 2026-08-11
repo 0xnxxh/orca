@@ -40,8 +40,9 @@ that larger package-manager surface.
 ## Current execution status
 
 Orca implementation through `6ba6107dba` is pushed on `skills-share` without an Orca pull request.
-Orca Cloud implementation is merged on `main` through `9356b6e` (`stablyai/orca-cloud#307`) without
-applying infrastructure or deploying a service. Local, Windows, WSL, paired-runtime, and
+Orca Cloud implementation is merged on `main` through `41ef335`
+(`stablyai/orca-cloud#307`-`#312`). Staging infrastructure and a route-disabled API are deployed;
+production remains untouched. Local, Windows, WSL, paired-runtime, and
 Docker-backed SSH validation are substantially complete; the implementation checklist records the
 exact evidence and remaining physical-host and failure-recovery gates.
 
@@ -52,18 +53,28 @@ SSH now carries only schema-validated structured skill failures through optional
 when it is absent. Invalid gzip input has a stable archive category, and deterministic `EACCES`
 and `ENOSPC` injection proves failed updates preserve the previous installed version.
 
-The dedicated staging bucket, IAM, secret container, metrics, dashboard, and alerts exist in
-`onorca-cloud-staging`. Staging Cloud SQL is shared with Auth and Relay and is intentionally
-stopped. Review a fresh Terraform plan after refreshing `gcloud` authentication, then wake staging
-only through the supported Relay power workflow if the reviewed skill changes require the
-database. Keep skill routes disabled until migrations and staging smoke tests pass.
+The dedicated staging bucket, IAM, database, principal, enabled secret version, metrics, dashboard,
+and alerts exist in `onorca-cloud-staging`. The complete skill-infrastructure target is zero-diff.
+The API service is also zero-diff after excluding gcloud-owned release metadata; the known shared
+Cloud SQL and artifact-bucket drift was never applied. Staging was awakened only through the
+supported Relay power workflow before database provisioning. Guarded sleep run `31529587719`
+returned all three Relay cells to zero and Cloud SQL to activation policy `NEVER`; read-only status
+run `31530386310` independently confirmed the asleep state and zero active-revision minimums.
 
 The API release workflow now deploys an immutable no-traffic candidate with the complete artifact
 and skill environment plus exactly one approved skill-database secret. It verifies the inherited
 Terraform runtime identity, Cloud SQL attachment, scaling, resources, volumes, mounts, ports, and
 probes before promotion, and rolls back to a re-smoked prior revision on failure. All four skill
 controls remain explicitly disabled. Database migration startup uses a transaction-scoped advisory
-lock; transactional rollback and eight concurrent callers pass against PostgreSQL 16 and 17.
+lock; transactional rollback and eight concurrent callers pass against PostgreSQL 16 and 17. The
+serving staging revision completed migrate-only startup twice with zero error logs while skill
+routes remained `404` and existing artifact authorization remained `401`.
+
+The remaining staging gate is authenticated skill API testing. The completed deployment did not
+receive a smoke access token, so it proved anonymous boundaries and canonical health but did not
+exercise upload, finalize, download, ACL denial, expiry, revocation, deletion, or cleanup. Keep
+route registration off until a subsequent run receives the short-lived token and the full journey
+passes.
 
 ## Research baseline
 
@@ -547,16 +558,20 @@ policies, signed URLs, or ACL membership.
    configuration, dashboards, alerts, and budget thresholds to Terraform.
 4. Run Terraform formatting, validation, and a reviewed plan. The expected production plan contains
    no replacement of the existing artifact bucket, Cloud SQL instance, or Cloud Run services.
-5. Apply in staging and run upload/finalize/download tests, including expired policies, ACL denial,
-   oversized uploads, corrupt archives, deduplication, revocation, and object cleanup.
-6. Apply the PostgreSQL migrations before routing package traffic to the new API handlers.
-7. Deploy `orca-cloud-api` with endpoints disabled by a server-side feature flag.
-8. Run a staging desktop-to-runtime installation and verify logs contain no grants or private
+5. Apply the reviewed skill-only infrastructure plan in staging without shared-resource drift.
+6. Deploy `orca-cloud-api` with all skill controls disabled. When the database secret is present,
+   startup applies PostgreSQL migrations without registering the skill routes.
+7. Verify the migration-ready event, zero error logs, ordinary artifact behavior, and `404` skill
+   route boundary before changing any control.
+8. Enable route registration for the staging test cohort and run upload/finalize/download tests,
+   including expired policies, ACL denial, oversized uploads, corrupt archives, deduplication,
+   revocation, and object cleanup.
+9. Run a staging desktop-to-runtime installation and verify logs contain no grants or private
    contents.
-9. Apply the reviewed production Terraform plan.
-10. Run migrations, deploy the API, and enable internal accounts only.
-11. Observe at least one complete soft-delete, upload-expiry, update, rollback, and revoke journey.
-12. Expand the feature flag gradually, retaining separate kill switches for upload grants,
+10. Apply the reviewed production Terraform plan.
+11. Run migrations, deploy the API, and enable internal accounts only.
+12. Observe at least one complete soft-delete, upload-expiry, update, rollback, and revoke journey.
+13. Expand the feature flag gradually, retaining separate kill switches for upload grants,
     download grants, and remote installation.
 
 Production verification uses read-only commands such as:
