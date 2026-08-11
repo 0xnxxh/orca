@@ -7,7 +7,8 @@ Last updated: 2026-08-11.
 Implementation baselines captured by this checklist update:
 
 - Orca implementation: `6ba6107dba` on `skills-share` (pushed; no PR).
-- Orca Cloud: `41ef335` on `main` (merged through `stablyai/orca-cloud#307`-`#312`).
+- Orca Cloud: `4e91cf9` on `main` (skill OIDC smoke in `stablyai/orca-cloud#313` and
+  release-metadata convergence in `#314`).
 
 Validated so far:
 
@@ -56,25 +57,37 @@ Validated so far:
 - PostgreSQL migration startup is serialized by a transaction-scoped advisory lock. Transactional
   DDL rollback and eight concurrent startup callers passed against ephemeral PostgreSQL 16 and 17,
   with exactly one recorded schema version.
-- The immutable API deploy path now stamps every artifact and skill literal variable plus exactly
-  one approved skill-database secret, and rejects secret, Cloud SQL, service-account, scaling,
-  CPU, memory, volume, mount, probe, or unexpected-environment drift before traffic promotion.
-  Both staging and production workflows explicitly carry all four skill controls as `false`.
-- Staging API revision `orca-cloud-api-staging-00039-rek` serves 100% of traffic with the exact
-  skill secret and Cloud SQL attachment, all four controls false, two database-ready startup
-  events, zero revision error logs, existing artifact authorization at `401`, and skill routes at
-  `404`. The API service is zero-diff; known shared SQL and artifact-bucket drift remains excluded.
-- Orca Cloud `main` verification run `31529170760` passed its Terraform and full code jobs after
-  merge commit `41ef335`.
-- Guarded sleep run `31529587719` emitted `staging_relay_slept` for all three cells. Read-only
-  status run `31530386310` then verified Cloud SQL policy `NEVER`, every Relay MIG target at zero,
-  and both staging Cloud Run services with zero active-revision minimums.
+- The immutable API deploy path stamps every artifact and skill literal variable plus exactly one
+  approved skill-database secret, and rejects secret, Cloud SQL, service-account, scaling, CPU,
+  memory, volume, mount, probe, or unexpected-environment drift before traffic promotion.
+  Staging intentionally carries all four skill controls as `true`; production remains `false`.
+- The route-disabled baseline, API revision `orca-cloud-api-staging-00039-rek`, first proved the
+  database-ready startup and anonymous `401`/`404` boundaries with zero revision errors.
+- Cloud PR `#313` passed run `31533988351`, merged as `d0bf926`, and passed `main` run
+  `31534229437`. Guarded wake run `31534564230` restored exactly the two configured Relay cells.
+- Auth deploy run `31535179937` promoted revision `orca-cloud-auth-staging-00017-dug` at 100%
+  traffic. Health, JWKS, exact GitHub OIDC claim constraints, and zero deployment-window errors
+  passed.
+- API deploy run `31535438327` promoted revision `orca-cloud-api-staging-00042-hef` at 100%
+  traffic with `authenticatedSmoke: true` and `skillSmoke: true`. The smoke covered artifact
+  lifecycle; skill upload/finalize/download; two immutable versions; recipient and outsider
+  authorization; local and remote grants; rollback selection; expiry; revocation; package
+  deletion; and signed-object cleanup.
+- The serving API has all four controls `true`, zero revision errors, and privacy-safe structured
+  request logs. The log field inventory contains no principals, credentials, signed URLs, object
+  paths, or private contents; a sensitive-value scan returned zero matches.
+- Cloud PR `#314` removed deploy-owned Auth release metadata from Terraform ownership, passed run
+  `31536141357`, merged as `4e91cf9`, and passed `main` run `31536329459`. The targeted Auth/API
+  plan then reported zero intended changes. Known SQL and artifact-bucket drift was excluded and
+  never applied.
+- Guarded sleep run `31536547916` stopped all three Relay cells. Read-only status run
+  `31537525219` verified Cloud SQL policy `NEVER`, every MIG target at zero, and both managed Cloud
+  Run active-revision minimums at zero.
 
-Rollout gate: staging infrastructure, the route-disabled API, and startup migrations are deployed;
-the shared staging data plane is back in its low-cost asleep state.
-Do not enable route registration until an environment-scoped short-lived smoke access token is
-available and the authenticated upload/finalize/download, denial, expiry, revocation, deletion,
-and cleanup journey passes. Production remains untouched.
+Rollout gate: staging infrastructure, OIDC identity exchange, route registration, and the
+authenticated artifact/skill lifecycle smoke passed. The shared staging data plane is back in its
+low-cost asleep state. Production remains untouched; physical staging install journeys, load,
+quarantine lifecycle, and soft-delete recovery gates remain.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
 
@@ -502,8 +515,8 @@ does not mean the surrounding phase is complete.
       environment and the exact `ORCA_SKILLS_DATABASE_URL` Secret Manager reference.
 - [x] Reject serving or candidate drift in the runtime service account, Cloud SQL attachment,
       scaling, CPU, memory, volumes, mounts, ports, and probes before moving traffic.
-- [x] Keep all four skill controls explicitly disabled in staging and production deploy workflows
-      until their rollout gates are intentionally changed.
+- [x] Keep all four skill controls explicit in both deploy workflows. Staging changed to `true`
+      only with the authenticated OIDC smoke gate; production remains `false`.
 
 ### Terraform review and apply
 
@@ -999,9 +1012,14 @@ still require the listed split metrics, latency panels, and alerts.
 
 - [x] Apply reviewed Terraform and migrations to staging.
 - [x] Deploy `orca-cloud-api` skill routes disabled by server-side flags.
+- [x] Enable all four staging controls and pass the GitHub OIDC-authenticated artifact and skill
+      lifecycle smoke, including authorization, immutable versions, local/remote grants, rollback,
+      expiry, revocation, deletion, and object cleanup.
 - [ ] Run upload/finalize/download tests for expiry, denial, oversize, corruption, deduplication,
       revocation, deletion, and cleanup.
 - [ ] Run desktop-to-local, paired-runtime, `windows 2`, WSL, and SSH journeys in staging.
+- [x] Verify staging skill request logs contain only route, method, status, duration, and standard
+      process/request metadata, with zero credential or private-content matches.
 - [ ] Verify logs, metrics, traces, diagnostics, and support bundles contain no grants or private
       package data.
 - [ ] Load-test finalization and choose the fixed semaphore from observed memory, CPU, request

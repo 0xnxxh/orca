@@ -40,9 +40,10 @@ that larger package-manager surface.
 ## Current execution status
 
 Orca implementation through `6ba6107dba` is pushed on `skills-share` without an Orca pull request.
-Orca Cloud implementation is merged on `main` through `41ef335`
-(`stablyai/orca-cloud#307`-`#312`). Staging infrastructure and a route-disabled API are deployed;
-production remains untouched. Local, Windows, WSL, paired-runtime, and
+Orca Cloud implementation is merged on `main` through `4e91cf9`. The authenticated OIDC smoke
+landed in `stablyai/orca-cloud#313`; the narrow Auth release-metadata convergence follow-up landed
+in `#314`. Staging infrastructure and skill routes are deployed and validated; production remains
+untouched. Local, Windows, WSL, paired-runtime, and
 Docker-backed SSH validation are substantially complete; the implementation checklist records the
 exact evidence and remaining physical-host and failure-recovery gates.
 
@@ -55,26 +56,28 @@ and `ENOSPC` injection proves failed updates preserve the previous installed ver
 
 The dedicated staging bucket, IAM, database, principal, enabled secret version, metrics, dashboard,
 and alerts exist in `onorca-cloud-staging`. The complete skill-infrastructure target is zero-diff.
-The API service is also zero-diff after excluding gcloud-owned release metadata; the known shared
-Cloud SQL and artifact-bucket drift was never applied. Staging was awakened only through the
-supported Relay power workflow before database provisioning. Guarded sleep run `31529587719`
-returned all three Relay cells to zero and Cloud SQL to activation policy `NEVER`; read-only status
-run `31530386310` independently confirmed the asleep state and zero active-revision minimums.
+After `#314`, the targeted Auth/API plan also reports zero intended changes. Known shared Cloud SQL
+and artifact-bucket drift was excluded and never applied. Staging was awakened only through guarded
+run `31534564230`. Sleep run `31536547916` returned all three cells to zero; read-only status run
+`31537525219` independently confirmed SQL policy `NEVER`, zero MIG targets, and zero managed Cloud
+Run active-revision minimums.
 
 The API release workflow now deploys an immutable no-traffic candidate with the complete artifact
 and skill environment plus exactly one approved skill-database secret. It verifies the inherited
 Terraform runtime identity, Cloud SQL attachment, scaling, resources, volumes, mounts, ports, and
-probes before promotion, and rolls back to a re-smoked prior revision on failure. All four skill
-controls remain explicitly disabled. Database migration startup uses a transaction-scoped advisory
-lock; transactional rollback and eight concurrent callers pass against PostgreSQL 16 and 17. The
-serving staging revision completed migrate-only startup twice with zero error logs while skill
-routes remained `404` and existing artifact authorization remained `401`.
+probes before promotion, and rolls back to a re-smoked prior revision on failure. Staging now has
+all four controls enabled; production keeps all four disabled. Database migration startup uses a
+transaction-scoped advisory lock; transactional rollback and eight concurrent callers pass against
+PostgreSQL 16 and 17.
 
-The remaining staging gate is authenticated skill API testing. The completed deployment did not
-receive a smoke access token, so it proved anonymous boundaries and canonical health but did not
-exercise upload, finalize, download, ACL denial, expiry, revocation, deletion, or cleanup. Keep
-route registration off until a subsequent run receives the short-lived token and the full journey
-passes.
+Auth deploy run `31535179937` promoted `orca-cloud-auth-staging-00017-dug` with exact staging-only
+GitHub OIDC constraints, healthy JWKS, and zero deployment-window errors. API run `31535438327`
+promoted `orca-cloud-api-staging-00042-hef` with `authenticatedSmoke: true` and `skillSmoke: true`.
+The ten-minute, non-refreshable smoke principals exercised artifact CRUD and skill upload,
+finalize, immutable versions, recipient/outsider authorization, local and remote grants, rollback,
+expiry, revocation, deletion, and signed-object cleanup. Structured skill logs exposed only
+privacy-safe request metadata and produced zero sensitive-value matches. Remaining staging gates
+are end-user install journeys, load, quarantine lifecycle deletion, and soft-delete recovery.
 
 ## Research baseline
 
