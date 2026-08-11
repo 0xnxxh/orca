@@ -11130,7 +11130,7 @@
                 "checksUnresolvedChip": "unresolved",
                 "checksUnresolvedStripHint": "These checks finished without a pass or fail verdict.",
                 "e15a8b77ef": "No inline details are available for this check.",
-                "retryCheckDetails": "Retry",
+                "dcb3c546fe": "Retry",
                 "679bf2093c": "Copy log excerpt",
                 "d713f500b2": "Log excerpt",
                 "a916648574": "Open details",
@@ -11197,7 +11197,7 @@
                 "actionRequiredHint": "This check needs a manual action on GitHub (for example, approving the workflow run) before merging is unblocked.",
                 "b3195cba33": "Unmark author as bot",
                 "f588b46a6c": "Mark author as bot",
-                "checkDetailsLoadFailed": "Failed to load check details."
+                "e45324fbed": "Failed to load check details."
               },
               "empty": {
                 "state": {

@@ -828,7 +828,7 @@ function CheckRunDetails({
               >
                 <RefreshCw className="size-3" />
                 {translate(
-                  'auto.components.right.sidebar.checks.panel.content.retryCheckDetails',
+                  'auto.components.right.sidebar.checks.panel.content.dcb3c546fe',
                   'Retry'
                 )}
               </Button>
@@ -1207,7 +1207,7 @@ export function ChecksList({
             err instanceof Error
               ? err.message
               : translate(
-                  'auto.components.right.sidebar.checks.panel.content.checkDetailsLoadFailed',
+                  'auto.components.right.sidebar.checks.panel.content.e45324fbed',
                   'Failed to load check details.'
                 )
           if (resolvedWorktreeId) {

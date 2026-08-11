@@ -3112,12 +3112,13 @@ describe('createEditorSlice conflict status reconciliation', () => {
   })
 
   it('stops loading when an open check-details tab loses its repository', async () => {
+    const fetchPRCheckDetails = vi.fn()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const store = createStore<any>()((...args: any[]) => ({
       activeWorktreeId: 'wt-1',
       repos: [],
       worktreesByRepo: {},
-      fetchPRCheckDetails: vi.fn(),
+      fetchPRCheckDetails,
       ...createEditorSlice(...(args as Parameters<typeof createEditorSlice>))
     })) as unknown as StoreApi<AppState>
     const check = {
@@ -3135,6 +3136,7 @@ describe('createEditorSlice conflict status reconciliation', () => {
     })
     await store.getState().reloadOpenCheckRunDetailsTab('wt-1::check-details::check-run:42')
 
+    expect(fetchPRCheckDetails).not.toHaveBeenCalled()
     expect(store.getState().openFiles).toContainEqual(
       expect.objectContaining({
         id: 'wt-1::check-details::check-run:42',
