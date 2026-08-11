@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { WebSocket } from 'ws'
+
+const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }))
+
+vi.mock('../telemetry/client', () => ({ track: trackMock }))
+
 import { DeviceRegistry } from './device-registry'
 import type { OrcaRuntimeService } from './orca-runtime'
 import type { RpcDispatchStreamingOptions } from './rpc/dispatcher-stream-options'
@@ -44,7 +49,7 @@ describe('runtime RPC outbound overflow', () => {
       dispatchStreaming: vi.fn(async (_request, _reply, options) => {
         dispatchSignal = options?.signal
         expect(dispatchSignal?.aborted).toBe(false)
-        options?.onOutboundReplyOverflow?.()
+        options?.onOutboundReplyOverflow?.({ method: 'status.get' })
         expect(dispatchSignal?.aborted).toBe(true)
       })
     }
@@ -67,6 +72,12 @@ describe('runtime RPC outbound overflow', () => {
       expect(closeForOutboundReplyOverflow).toHaveBeenCalledWith(ws)
       expect(ws.listenerCount('close')).toBe(0)
       expect(ws.listenerCount('error')).toBe(0)
+      expect(trackMock.mock.calls.filter(([event]) => event === 'remote_reply_overflow')).toEqual([
+        [
+          'remote_reply_overflow',
+          { method: 'status.get', transport: 'direct', client_kind: 'runtime' }
+        ]
+      ])
     } finally {
       await server.stop()
       await rm(userDataPath, { recursive: true, force: true })

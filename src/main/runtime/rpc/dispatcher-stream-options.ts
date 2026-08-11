@@ -9,8 +9,10 @@ export type RpcDispatchStreamingOptions = {
   pairedDeviceId?: string
   clientKind?: 'mobile' | 'runtime'
   clientCapabilities?: readonly RuntimeCapability[]
-  onOutboundReplyOverflow?: () => void
-  suppressRepliesAfterAbort?: boolean
+  onOutboundReplyOverflow?: (context: { method: string }) => void
+  // Why: socket-terminal conditions only — keying this off signal.aborted would silently
+  // swallow the reply for any future per-request cancel and hang the caller.
+  shouldSuppressReplies?: () => boolean
   pairing?: PairingRpcContext
   sendBinary?: (bytes: Uint8Array<ArrayBufferLike>) => boolean | void
   registerBinaryStreamHandler?: (

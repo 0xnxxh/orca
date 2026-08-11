@@ -2137,6 +2137,49 @@ describe('OrcaRuntimeRpcServer', () => {
     }
   })
 
+  // Why: an abort alone must not swallow the reply — only an unwritable socket may.
+  it('still delivers a long-poll reply aborted while the socket is open', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
+    const runtime = new OrcaRuntimeService()
+    const db = new OrchestrationDb(':memory:')
+    runtime.setOrchestrationDb(db)
+    const server = new OrcaRuntimeRpcServer({ runtime, userDataPath, enableWebSocket: false })
+    server['deviceRegistry'] = new DeviceRegistry(userDataPath)
+    const entry = server['deviceRegistry']!.addDevice('runtime-test', 'runtime')
+    const ws = new FakeWebSocket()
+    server['mobileSocketWiring'] = {
+      getConnectionId: () => 'conn-test'
+    } as unknown as NonNullable<(typeof server)['mobileSocketWiring']>
+    const replies: Record<string, unknown>[] = []
+
+    try {
+      const pending = server['handleWebSocketMessage'](
+        JSON.stringify(
+          withCurrentOrchestrationContract({
+            id: 'req_wait',
+            method: 'orchestration.check',
+            deviceToken: entry.token,
+            params: { terminal: 'term_wait', wait: true, timeoutMs: 10_000 }
+          })
+        ),
+        (response) => replies.push(JSON.parse(response) as Record<string, unknown>),
+        () => {},
+        undefined,
+        ws as unknown as WebSocket
+      )
+
+      await waitFor(() => server['activeLongPolls'] === 1)
+      server['abortWebSocketDispatches'](ws as unknown as WebSocket)
+      await pending
+
+      expect(server['activeLongPolls']).toBe(0)
+      expect(replies).toContainEqual(expect.objectContaining({ id: 'req_wait' }))
+    } finally {
+      db.close()
+      await server.stop()
+    }
+  })
+
   it('applies the ask sub-cap on the WebSocket path and releases both counters on close', async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
     const runtime = new OrcaRuntimeService()

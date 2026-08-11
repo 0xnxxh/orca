@@ -52,6 +52,7 @@ import {
   decodeTerminalStreamFrame,
   type TerminalStreamFrame
 } from '../../shared/terminal-stream-protocol'
+import { track } from '../telemetry/client'
 
 const DEFAULT_WS_PORT = 6768
 
@@ -1716,13 +1717,26 @@ export class OrcaRuntimeRpcServer {
         // Why: gates the mobile-only payload diet so full-screen web/desktop clients aren't truncated.
         clientKind: device.scope,
         clientCapabilities: authenticatedSocket?.clientCapabilities,
-        onOutboundReplyOverflow: () => {
-          if (ws) {
-            this.abortWebSocketDispatches(ws)
-            this.mobileSocketWiring?.closeForOutboundReplyOverflow(ws)
-          }
-        },
-        suppressRepliesAfterAbort: Boolean(ws),
+        ...(ws
+          ? {
+              onOutboundReplyOverflow: ({ method }) => {
+                console.warn(
+                  `[runtime-rpc] outbound reply exceeded the remote JSON limit for ${method}; closing socket`
+                )
+                track('remote_reply_overflow', {
+                  method,
+                  transport:
+                    authenticatedSocket?.transport.transport === 'relay' ? 'relay' : 'direct',
+                  client_kind: device.scope
+                })
+                this.abortWebSocketDispatches(ws)
+                this.mobileSocketWiring?.closeForOutboundReplyOverflow(ws)
+              },
+              // Why: the only abort sources are socket close/error and overflow, so "not OPEN" is
+              // the condition we actually mean; see registerWebSocketDispatchAbort.
+              shouldSuppressReplies: () => ws.readyState !== ws.OPEN
+            }
+          : {}),
         pairing: pairingContext,
         signal: abortRegistration?.signal,
         sendBinary,

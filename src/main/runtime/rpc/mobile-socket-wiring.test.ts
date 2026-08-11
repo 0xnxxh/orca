@@ -196,6 +196,51 @@ describe('MobileSocketWiring', () => {
     expect(wiring.connectionCount).toBe(0)
   })
 
+  it('does not resurrect a channel from frames buffered behind an overflow close', () => {
+    vi.useFakeTimers()
+    const desktop = generateKeyPair()
+    const phone = generateKeyPair()
+    const ws = new FakeSocket()
+    const transport = new FakeTransport()
+    const wiring = new MobileSocketWiring({
+      deviceRegistry: registryFor('device-1', 'valid-token'),
+      e2eeKeypair: {
+        publicKey: desktop.publicKey,
+        secretKey: desktop.secretKey,
+        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64')
+      },
+      onText: vi.fn(),
+      onBinary: vi.fn(),
+      onClose: vi.fn()
+    })
+    wiring.attachTransport(transport)
+
+    transport.receive(
+      ws,
+      JSON.stringify({
+        type: 'e2ee_hello',
+        publicKeyB64: Buffer.from(phone.publicKey).toString('base64')
+      })
+    )
+    const connectionId = wiring.getConnectionId(ws as unknown as WebSocket)
+    wiring.closeForOutboundReplyOverflow(ws as unknown as WebSocket)
+    ws.close.mockClear()
+
+    transport.receive(
+      ws,
+      JSON.stringify({
+        type: 'e2ee_hello',
+        publicKeyB64: Buffer.from(phone.publicKey).toString('base64')
+      })
+    )
+    vi.advanceTimersByTime(11_000)
+
+    expect(wiring.channelCount).toBe(0)
+    expect(wiring.getConnectionId(ws as unknown as WebSocket)).toBe(connectionId)
+    expect(ws.close).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
   it('closes an unknown-token socket even when reporting the failure throws', () => {
     const desktop = generateKeyPair()
     const phone = generateKeyPair()

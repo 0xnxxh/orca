@@ -390,6 +390,31 @@ const runtimeRpcStartFailedSchema = z
   .object({ error_class: runtimeRpcStartErrorClassSchema })
   .strict()
 
+// Why: the 1013 overflow close kills a remote user's whole session, and no emission site is
+// instrumented today — incidence is unmeasurable, so producer caps have no acceptance signal.
+// `method` is a developer-defined RPC identifier: closed set, no paths or user content.
+const remoteReplyOverflowSchema = z
+  .object({
+    method: z.string().max(64),
+    transport: z.enum(['relay', 'direct']),
+    client_kind: z.enum(['mobile', 'runtime'])
+  })
+  .strict()
+
+// Why: a size rejection is a producer bug; a queue overflow is a wedged link.
+const remoteOutboundBudgetCloseSchema = z
+  .object({
+    emitter: z.enum([
+      'legacy_queue',
+      'v2_queue',
+      'legacy_size',
+      'v2_size',
+      'binary_size',
+      'control_frame'
+    ])
+  })
+  .strict()
+
 // Why: a deadlocked main thread never crashes, so it produces no crash report and no user report
 // beyond "it froze" — incidence has been unmeasurable. `self_recovered` splits stalls that cleared
 // from ones that never did, which is the number that decides whether auto-recovery is ever safe to
@@ -1451,6 +1476,8 @@ export const eventSchemas = {
   daemon_lifecycle: daemonLifecycleSchema,
   daemon_audit_eligibility: daemonAuditEligibilitySchema,
   runtime_rpc_start_failed: runtimeRpcStartFailedSchema,
+  remote_reply_overflow: remoteReplyOverflowSchema,
+  remote_outbound_budget_close: remoteOutboundBudgetCloseSchema,
 
   codex_trust_grant: codexTrustGrantSchema,
 

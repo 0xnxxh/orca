@@ -11,7 +11,6 @@ import {
 
 import type { FeatureInteractionId } from '../../../shared/feature-interactions'
 import { REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES } from '../../../shared/remote-runtime-capacity-limits'
-import { tryStringifyJsonWithinByteLimit } from '../../../shared/node-bounded-json-stringify'
 import { errorResponse, successResponse } from './errors'
 import { ALL_RPC_METHODS } from './methods'
 import { emulatorProbe, emulatorProbeError } from '../../emulator/emulator-probe'
@@ -143,25 +142,29 @@ export class RpcDispatcher {
     const meta = this.meta()
     let outboundReplyOverflowed = false
     const repliesSuppressed = (): boolean =>
-      outboundReplyOverflowed ||
-      Boolean(options?.suppressRepliesAfterAbort && options.signal?.aborted)
+      outboundReplyOverflowed || options?.shouldSuppressReplies?.() === true
     const replyResponse = (response: RpcResponse): void => {
       if (repliesSuppressed()) {
         return
       }
-      const serialized = tryStringifyJsonWithinByteLimit(
-        response,
-        REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES
-      )
-      if (!serialized.ok) {
+      const serialized = JSON.stringify(response)
+      // Why: same constant and UTF-8 measure as the channel's size admission
+      // (mobile-e2ee-outbound-admission.ts), so the two size checks cannot disagree. This is a
+      // backstop — producers cap themselves — so it favours a fast admit over a bounded reject.
+      if (Buffer.byteLength(serialized, 'utf8') > REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES) {
         if (!options?.onOutboundReplyOverflow) {
-          throw serialized.error
+          throw new Error(
+            `Outbound RPC reply exceeds ${REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES} bytes`
+          )
         }
         outboundReplyOverflowed = true
-        options.onOutboundReplyOverflow()
+        // Why: an unregistered method name is client-supplied; keep it out of logs and telemetry.
+        options.onOutboundReplyOverflow({
+          method: this.registry.get(request.method) ? request.method : 'unknown'
+        })
         return
       }
-      reply(serialized.serialized)
+      reply(serialized)
     }
     const method = this.registry.get(request.method)
     if (!method) {
@@ -248,9 +251,6 @@ export class RpcDispatcher {
 
     const recordedStreamingFeatureInteractions = new Set<FeatureInteractionId>()
     const emit = (result: unknown): void => {
-      if (repliesSuppressed()) {
-        return
-      }
       recordRuntimeFeatureInteraction(
         this.runtime,
         request.method,
@@ -258,6 +258,10 @@ export class RpcDispatcher {
         recordedStreamingFeatureInteractions,
         request.params
       )
+      // Why: a dead socket suppresses the send, not the local feature-usage record.
+      if (repliesSuppressed()) {
+        return
+      }
       const response = successResponse(request.id, meta, result)
       response.streaming = true
       replyResponse(response)

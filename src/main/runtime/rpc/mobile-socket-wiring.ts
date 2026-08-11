@@ -76,6 +76,7 @@ export class MobileSocketWiring {
   private readonly channels = new Map<WebSocket, E2EEChannel>()
   private readonly connectionIds = new Map<WebSocket, string>()
   private readonly authenticatedSockets = new Map<WebSocket, AuthenticatedMobileSocket>()
+  private readonly terminatedSockets = new WeakSet<WebSocket>()
   private readonly transports = new Set<MobileSocketTransport>()
   private readonly outboundMemoryBudget = createMobileE2EEOutboundMemoryBudget()
 
@@ -140,6 +141,11 @@ export class MobileSocketWiring {
     message: MobileSocketPayload,
     metadata: MobileSocketTransportMetadata
   ): void {
+    // Why: ws.close() is async, so frames already buffered on a closing socket must not mint a
+    // second E2EEChannel + connectionId behind the authenticated one.
+    if (this.terminatedSockets.has(ws)) {
+      return
+    }
     let channel = this.channels.get(ws)
     if (!channel) {
       const connectionId = randomBytes(8).toString('hex')
@@ -213,6 +219,9 @@ export class MobileSocketWiring {
     if (!channel) {
       return
     }
+    // Why: only after we know we're closing this socket — marking a channel-less socket would
+    // blackhole its frames forever without ever calling ws.close().
+    this.terminatedSockets.add(ws)
     channel.destroy()
     this.channels.delete(ws)
     ws.close(code, reason)

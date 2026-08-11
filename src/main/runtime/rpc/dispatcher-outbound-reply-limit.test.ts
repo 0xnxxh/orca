@@ -1,12 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import {
-  JsonStringifyByteLimitError,
-  stringifyJsonWithinByteLimit
-} from '../../../shared/node-bounded-json-stringify'
-import { REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES } from '../../../shared/remote-runtime-memory-limits'
+import { REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES } from '../../../shared/remote-runtime-capacity-limits'
 import type { OrcaRuntimeService } from '../orca-runtime'
 import { defineMethod, defineStreamingMethod, type RpcRequest } from './core'
 import { RpcDispatcher } from './dispatcher'
+// Test-only: pins the dispatcher pre-filter to the channel admission it must never disagree with.
+import { isMobileE2EETextPayloadWithinLimit } from './mobile-e2ee-outbound-admission'
 
 const REQUEST: RpcRequest = {
   id: 'req-1',
@@ -72,10 +70,23 @@ describe('RpcDispatcher outbound reply limit', () => {
     })
 
     expect(replies).toEqual([])
-    expect(onOutboundReplyOverflow).toHaveBeenCalledOnce()
+    expect(onOutboundReplyOverflow).toHaveBeenCalledExactlyOnceWith({ method: REQUEST.method })
   })
 
-  it('rejects an oversized error response without serializing a replacement reply', async () => {
+  it('reports an unregistered method as "unknown" so a client string cannot reach telemetry', async () => {
+    const onOutboundReplyOverflow = vi.fn()
+    const dispatcher = new RpcDispatcher({ runtime: stubRuntime(), methods: [] })
+
+    await dispatcher.dispatchStreaming(
+      { ...REQUEST, method: 'x'.repeat(REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES) },
+      vi.fn(),
+      { onOutboundReplyOverflow }
+    )
+
+    expect(onOutboundReplyOverflow).toHaveBeenCalledExactlyOnceWith({ method: 'unknown' })
+  })
+
+  it('rejects an oversized error response without emitting a replacement reply', async () => {
     const replies: string[] = []
     const onOutboundReplyOverflow = vi.fn()
     const dispatcher = new RpcDispatcher({
@@ -174,8 +185,7 @@ describe('RpcDispatcher outbound reply limit', () => {
 
     await dispatcher.dispatchStreaming(REQUEST, (reply) => replies.push(reply), {
       onOutboundReplyOverflow,
-      signal: abortController.signal,
-      suppressRepliesAfterAbort: true
+      shouldSuppressReplies: () => abortController.signal.aborted
     })
     abortController.abort()
     lateEmit!({ toJSON })
@@ -185,15 +195,7 @@ describe('RpcDispatcher outbound reply limit', () => {
     expect(onOutboundReplyOverflow).not.toHaveBeenCalled()
   })
 
-  it.each([
-    [
-      'a caller-created byte-limit error',
-      () => {
-        throw new JsonStringifyByteLimitError(2, 1)
-      }
-    ],
-    ['a nested bounded-stringify error', () => stringifyJsonWithinByteLimit('nested', 1)]
-  ])('preserves the small runtime error for %s', async (_label, throwFromToJSON) => {
+  it('maps a toJSON throw to a small runtime_error reply', async () => {
     const replies: string[] = []
     const onOutboundReplyOverflow = vi.fn()
     const dispatcher = new RpcDispatcher({
@@ -202,7 +204,11 @@ describe('RpcDispatcher outbound reply limit', () => {
         defineMethod({
           name: REQUEST.method,
           params: null,
-          handler: async () => ({ toJSON: throwFromToJSON })
+          handler: async () => ({
+            toJSON: () => {
+              throw new Error('toJSON failed')
+            }
+          })
         })
       ]
     })
@@ -219,34 +225,113 @@ describe('RpcDispatcher outbound reply limit', () => {
     expect(onOutboundReplyOverflow).not.toHaveBeenCalled()
   })
 
-  it('does not read Symbol.toStringTag beyond native JSON behavior', async () => {
+  it('measures UTF-8 bytes, not string length', async () => {
     const replies: string[] = []
-    const readToStringTag = vi.fn(() => {
-      throw new Error('unexpected Symbol.toStringTag read')
+    const onOutboundReplyOverflow = vi.fn()
+    // 3 UTF-8 bytes each, so `.length` stays far below the limit the byte count blows past.
+    const result = '€'.repeat(2 * 1024 * 1024)
+    const dispatcher = new RpcDispatcher({
+      runtime: stubRuntime(),
+      methods: [defineMethod({ name: REQUEST.method, params: null, handler: async () => result })]
     })
-    const result = {
-      value: 1,
-      get [Symbol.toStringTag]() {
-        return readToStringTag()
-      }
-    }
+
+    expect(result.length).toBeLessThan(REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES)
+    await dispatcher.dispatchStreaming(REQUEST, (reply) => replies.push(reply), {
+      onOutboundReplyOverflow
+    })
+
+    expect(replies).toEqual([])
+    expect(onOutboundReplyOverflow).toHaveBeenCalledOnce()
+  })
+
+  it('agrees with the E2EE channel admission at the byte boundary', async () => {
+    const replies: string[] = []
+    const rejected: string[] = []
+    const dispatcher = (bytes: number): RpcDispatcher =>
+      new RpcDispatcher({
+        runtime: stubRuntime(),
+        methods: [
+          defineMethod({
+            name: REQUEST.method,
+            params: null,
+            handler: async () => asciiResultForEnvelopeBytes(bytes)
+          })
+        ]
+      })
+
+    await dispatcher(REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES).dispatchStreaming(
+      REQUEST,
+      (reply) => replies.push(reply),
+      { onOutboundReplyOverflow: vi.fn() }
+    )
+    await dispatcher(REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES + 1).dispatchStreaming(
+      REQUEST,
+      (reply) => replies.push(reply),
+      { onOutboundReplyOverflow: () => rejected.push('overflow') }
+    )
+
+    expect(isMobileE2EETextPayloadWithinLimit(replies[0]!)).toBe(true)
+    expect(rejected).toHaveLength(1)
+    expect(
+      isMobileE2EETextPayloadWithinLimit(
+        JSON.stringify({
+          id: REQUEST.id,
+          ok: true,
+          result: asciiResultForEnvelopeBytes(REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES + 1),
+          _meta: { runtimeId: 'test-runtime' }
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('still replies when the reply channel is open', async () => {
+    const replies: string[] = []
+    const abortController = new AbortController()
+    abortController.abort()
     const dispatcher = new RpcDispatcher({
       runtime: stubRuntime(),
       methods: [
-        defineMethod({
-          name: REQUEST.method,
-          params: null,
-          handler: async () => result
-        })
+        defineMethod({ name: REQUEST.method, params: null, handler: async () => ({ ok: true }) })
       ]
     })
 
     await dispatcher.dispatchStreaming(REQUEST, (reply) => replies.push(reply), {
-      onOutboundReplyOverflow: vi.fn()
+      onOutboundReplyOverflow: vi.fn(),
+      signal: abortController.signal,
+      shouldSuppressReplies: () => false
     })
 
-    expect(readToStringTag).not.toHaveBeenCalled()
-    expect(JSON.parse(replies[0]!)).toMatchObject({ ok: true, result: { value: 1 } })
+    expect(replies).toHaveLength(1)
+    expect(JSON.parse(replies[0]!)).toMatchObject({ ok: true, result: { ok: true } })
+  })
+
+  it('records the streaming feature interaction even when replies are suppressed', async () => {
+    const recordFeatureInteraction = vi.fn()
+    const replies: string[] = []
+    const dispatcher = new RpcDispatcher({
+      runtime: {
+        getRuntimeId: () => 'test-runtime',
+        recordFeatureInteraction
+      } as unknown as OrcaRuntimeService,
+      methods: [
+        defineStreamingMethod({
+          name: 'orchestration.stream-test',
+          params: null,
+          handler: async (_params, _context, emit) => {
+            emit({ chunk: 'suppressed' })
+          }
+        })
+      ]
+    })
+
+    await dispatcher.dispatchStreaming(
+      { ...REQUEST, method: 'orchestration.stream-test' },
+      (reply) => replies.push(reply),
+      { shouldSuppressReplies: () => true }
+    )
+
+    expect(recordFeatureInteraction).toHaveBeenCalledWith('agent-orchestration')
+    expect(replies).toEqual([])
   })
 
   it('preserves the existing small error reply for non-size serialization failures', async () => {
