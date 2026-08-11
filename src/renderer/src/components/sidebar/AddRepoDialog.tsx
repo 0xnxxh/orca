@@ -18,6 +18,7 @@ import {
   useAddRepoHostedController,
   type AddRepoDialogHostedController
 } from './use-add-repo-hosted-controller'
+import { routeAddRepoBrowse } from './add-repo-browse-authority'
 
 export default React.memo(function AddRepoDialog({
   hosted
@@ -332,12 +333,12 @@ export default React.memo(function AddRepoDialog({
         createRuntimeParentStatus={createRuntimeParentStatus}
         createParentDefaultPending={createParentDefaultPending}
         manualCreateParentEntry={isRuntimeEnvironmentActive || selectedHostKind === 'ssh'}
-        onBrowse={
-          selectedHostKind === 'ssh'
-            ? () => void handleOpenRemoteStep(hostSelection.selectedSshTargetId)
-            : selectedHostKind === 'runtime'
-              ? () => setStep('server-path')
-              : handleBrowse
+        onBrowse={() =>
+          routeAddRepoBrowse(hostSelection.selectedParsedHost, {
+            browseLocal: () => void handleBrowse(),
+            browseRuntime: () => setStep('server-path'),
+            browseSsh: (targetId) => void handleOpenRemoteStep(targetId)
+          })
         }
         onOpenCloneStep={() => {
           setCloneError(null)
