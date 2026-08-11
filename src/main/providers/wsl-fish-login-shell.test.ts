@@ -79,7 +79,7 @@ function makeGuestFixture(loginShell: string): GuestFixture {
 function runGuestLogin(
   fixture: GuestFixture,
   env: NodeJS.ProcessEnv
-): ReturnType<typeof spawnSync<string>> {
+): { stderr: string; stdout: string } {
   return spawnSync('sh', ['-c', buildWslInteractiveLoginShellCommand()], {
     cwd: fixture.home,
     // Why piped stdin: the script execs an interactive fish, which reads and
