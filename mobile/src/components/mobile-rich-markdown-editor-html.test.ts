@@ -11,9 +11,7 @@ function editorScript(): string {
   return script ?? ''
 }
 
-function extractFunctionSource(script: string, name: string): string {
-  const start = script.indexOf(`function ${name}`)
-  expect(start).toBeGreaterThanOrEqual(0)
+function extractBracedSource(script: string, start: number, label: string): string {
   const bodyStart = script.indexOf('{', start)
   let depth = 0
   for (let index = bodyStart; index < script.length; index += 1) {
@@ -28,7 +26,19 @@ function extractFunctionSource(script: string, name: string): string {
       }
     }
   }
-  throw new Error(`Could not extract ${name}`)
+  throw new Error(`Could not extract ${label}`)
+}
+
+function extractFunctionSource(script: string, name: string): string {
+  const start = script.indexOf(`function ${name}`)
+  expect(start).toBeGreaterThanOrEqual(0)
+  return extractBracedSource(script, start, name)
+}
+
+function extractEditorListenerSource(script: string, type: string): string {
+  const start = script.indexOf(`editor.addEventListener('${type}'`)
+  expect(start).toBeGreaterThanOrEqual(0)
+  return `${extractBracedSource(script, start, `${type} listener`)});`
 }
 
 function runtimeMarkdownToHtml(markdown: string, editable: boolean): string {
@@ -84,12 +94,21 @@ function createFakeRange(container: unknown): FakeRange {
   return range
 }
 
-// Drives the editor's real selection functions against a stub DOM whose blur drops
-// the selection, the way WebKit does.
+type FakeClickEvent = {
+  clientX: number
+  clientY: number
+  target: { closest: (selector: string) => unknown }
+  preventDefault: () => void
+}
+
+// Drives the editor's real selection and click handling against a stub DOM whose blur
+// drops the selection, the way WebKit does.
 function createSelectionRuntime(caretContainer: string | null) {
   const liveNodes = new Set(caretContainer ? [caretContainer] : [])
+  const listeners = new Map<string, (event: FakeClickEvent) => void>()
   let focused = caretContainer != null
   let ranges: FakeRange[] = caretContainer ? [createFakeRange(caretContainer)] : []
+  let caretAtPoint: string | null = null
 
   const editor = {
     contains: (node: unknown) => typeof node === 'string' && liveNodes.has(node),
@@ -101,11 +120,19 @@ function createSelectionRuntime(caretContainer: string | null) {
       focused = false
       fakeDocument.activeElement = null
       ranges = []
+    },
+    addEventListener: (type: string, handler: (event: FakeClickEvent) => void) => {
+      listeners.set(type, handler)
     }
   }
-  const fakeDocument: { activeElement: unknown; createRange: () => FakeRange } = {
+  const fakeDocument: {
+    activeElement: unknown
+    createRange: () => FakeRange
+    caretRangeFromPoint: () => FakeRange | null
+  } = {
     activeElement: focused ? editor : null,
-    createRange: () => createFakeRange('detached')
+    createRange: () => createFakeRange('detached'),
+    caretRangeFromPoint: () => (caretAtPoint ? createFakeRange(caretAtPoint) : null)
   }
   const fakeWindow = {
     getSelection: () => ({
@@ -127,13 +154,18 @@ function createSelectionRuntime(caretContainer: string | null) {
     'var editor = arguments[0];',
     'var document = arguments[1];',
     'var window = arguments[2];',
+    'var editable = true;',
     'var savedSelectionRange = null;',
     'var selectionDroppedOnBlur = false;',
+    'function post() {}',
+    'function emitChange() {}',
     extractFunctionSource(script, 'focusEditor'),
     extractFunctionSource(script, 'rememberSelection'),
     extractFunctionSource(script, 'applySelectionRange'),
+    extractFunctionSource(script, 'caretRangeAtPoint'),
     extractFunctionSource(script, 'dismissKeyboard'),
     extractFunctionSource(script, 'restoreSelectionOrEnd'),
+    extractEditorListenerSource(script, 'click'),
     'return { dismissKeyboard: dismissKeyboard, restoreSelectionOrEnd: restoreSelectionOrEnd };'
   ].join('\n')
   const api = new Function(sources)(editor, fakeDocument, fakeWindow) as {
@@ -144,6 +176,19 @@ function createSelectionRuntime(caretContainer: string | null) {
   return {
     dismissKeyboard: api.dismissKeyboard,
     restoreSelectionOrEnd: api.restoreSelectionOrEnd,
+    tapAt: (container: string, options?: { uneditableAncestor?: string }) => {
+      liveNodes.add(container)
+      caretAtPoint = container
+      listeners.get('click')?.({
+        clientX: 12,
+        clientY: 34,
+        target: {
+          closest: (selector: string) =>
+            selector === '[contenteditable="false"]' ? (options?.uneditableAncestor ?? null) : null
+        },
+        preventDefault: () => {}
+      })
+    },
     detachEditorContent: () => liveNodes.clear(),
     selectedContainer: () => {
       if (ranges.length === 0) {
@@ -338,21 +383,23 @@ describe('mobile rich markdown editor HTML', () => {
   })
 
   it('reclaims editor focus at the tapped caret after keyboard dismissal', () => {
-    const script = editorScript()
+    const runtime = createSelectionRuntime('paragraph-3')
 
-    expect(script).toContain('var caret = caretRangeAtPoint(event.clientX, event.clientY);')
-    expect(script).toContain(
-      'if (caret && editor.contains(caret.commonAncestorContainer)) applySelectionRange(caret);'
-    )
+    runtime.dismissKeyboard()
+    runtime.tapAt('paragraph-7')
+
+    expect(runtime.focused).toBe(true)
+    expect(runtime.selectedContainer()).toBe('paragraph-7')
   })
 
   it('leaves task-list label taps to the checkbox instead of refocusing the editor', () => {
-    const script = editorScript()
+    const runtime = createSelectionRuntime('paragraph-3')
 
-    expect(script).toContain(
-      'var uneditable = event.target && event.target.closest && event.target.closest(\'[contenteditable="false"]\');'
-    )
-    expect(script).toContain('if (uneditable && uneditable !== editor) return;')
+    runtime.dismissKeyboard()
+    runtime.tapAt('paragraph-7', { uneditableAncestor: 'task-label' })
+
+    expect(runtime.focused).toBe(false)
+    expect(runtime.selectedContainer()).toBe(null)
   })
 
   it('restores the pre-dismissal caret so commands do not insert at the document end', () => {
