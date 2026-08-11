@@ -1,27 +1,35 @@
-const RETENTION_MS = 60_000
+export const CODEX_SESSION_MIGRATION_LEASE_RETENTION_MS = 60_000
 const MAX_ENTRIES = 256
 
 type RecentPtyExit = { sequence: number; recordedAt: number }
+
+// Why: one aging policy for every lease-keyed migration map, so none can grow for the process lifetime.
+export function evictStaleLeaseEntries<T extends { recordedAt: number }>(
+  entries: Map<string, T>,
+  now: number
+): void {
+  for (const [leaseId, entry] of entries) {
+    if (now - entry.recordedAt > CODEX_SESSION_MIGRATION_LEASE_RETENTION_MS) {
+      entries.delete(leaseId)
+    }
+  }
+  while (entries.size > MAX_ENTRIES) {
+    const oldestLeaseId = entries.keys().next().value
+    if (oldestLeaseId === undefined) {
+      break
+    }
+    entries.delete(oldestLeaseId)
+  }
+}
 
 export class CodexSessionMigrationRecentExits {
   private readonly exits = new Map<string, RecentPtyExit>()
 
   record(leaseId: string, sequence: number): void {
     const now = Date.now()
-    for (const [id, exit] of this.exits) {
-      if (now - exit.recordedAt > RETENTION_MS) {
-        this.exits.delete(id)
-      }
-    }
     this.exits.delete(leaseId)
     this.exits.set(leaseId, { sequence, recordedAt: now })
-    while (this.exits.size > MAX_ENTRIES) {
-      const oldestLeaseId = this.exits.keys().next().value
-      if (oldestLeaseId === undefined) {
-        break
-      }
-      this.exits.delete(oldestLeaseId)
-    }
+    evictStaleLeaseEntries(this.exits, now)
   }
 
   consumeAfter(leaseId: string, startedSequence: number | undefined): RecentPtyExit | null {
@@ -31,7 +39,7 @@ export class CodexSessionMigrationRecentExits {
       !exit ||
       startedSequence === undefined ||
       exit.sequence <= startedSequence ||
-      Date.now() - exit.recordedAt > RETENTION_MS
+      Date.now() - exit.recordedAt > CODEX_SESSION_MIGRATION_LEASE_RETENTION_MS
     ) {
       return null
     }
@@ -43,7 +51,7 @@ export class CodexSessionMigrationRecentExits {
     if (!exit) {
       return false
     }
-    if (Date.now() - exit.recordedAt > RETENTION_MS) {
+    if (Date.now() - exit.recordedAt > CODEX_SESSION_MIGRATION_LEASE_RETENTION_MS) {
       this.exits.delete(leaseId)
       return false
     }

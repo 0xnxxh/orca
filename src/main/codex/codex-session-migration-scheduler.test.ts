@@ -572,7 +572,35 @@ describe('createCodexSessionMigrationScheduler', () => {
     )
   })
 
-  it('matches every late duplicate ignored callback without poisoning reuse', async () => {
+  it('releases a stranded active launch once the ignored incarnation ages out', async () => {
+    const startBackfill = vi.fn().mockResolvedValue({ stopped: false })
+    const scheduler = createCodexSessionMigrationScheduler({
+      isEligible: () => true,
+      isQuitting: () => false,
+      resolveSystemCodexHomePathOverride: () => undefined,
+      startBackfill,
+      startIndexHeal: vi.fn().mockResolvedValue(null),
+      initialDelayMs: 1_000
+    })
+
+    // The ignored incarnation never reports its exit, so only the newer launch ever finishes.
+    scheduler.ignoreLaunch('stable-pty', 1)
+    scheduler.beginLaunch('stable-pty', false, new Date(), 2)
+    await vi.advanceTimersByTimeAsync(61_000)
+    expect(startBackfill).toHaveBeenLastCalledWith(
+      expect.objectContaining({ writeCompletionMarker: false }),
+      undefined
+    )
+
+    scheduler.finishLaunch('stable-pty', 3)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(startBackfill).toHaveBeenLastCalledWith(
+      expect.objectContaining({ writeCompletionMarker: true }),
+      undefined
+    )
+  })
+
+  it('keeps late duplicate ignored callbacks from poisoning reuse', async () => {
     const startBackfill = vi.fn().mockResolvedValue({ stopped: false })
     const scheduler = createCodexSessionMigrationScheduler({
       isEligible: () => true,
@@ -585,8 +613,8 @@ describe('createCodexSessionMigrationScheduler', () => {
 
     scheduler.ignoreLaunch('stable-pty', 1)
     scheduler.finishLaunch('stable-pty', 3)
-    expect(scheduler.matchesIgnoredLaunchExit('stable-pty', 2)).toBe(true)
-    expect(scheduler.matchesIgnoredLaunchExit('stable-pty', 2)).toBe(true)
+    scheduler.ignoreLaunch('stable-pty', 2)
+    scheduler.ignoreLaunch('stable-pty', 2)
     scheduler.beginLaunch('stable-pty', false, new Date(), 4)
     await vi.advanceTimersByTimeAsync(1_000)
     expect(startBackfill).toHaveBeenCalledTimes(1)

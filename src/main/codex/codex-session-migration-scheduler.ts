@@ -1,4 +1,5 @@
 import { getCodexSessionBackfillDate } from './codex-session-backfill-date'
+import { CodexSessionMigrationIgnoredLaunches } from './codex-session-migration-ignored-launches'
 import { CodexSessionMigrationRecentExits } from './codex-session-migration-recent-exits'
 import type {
   CodexSessionBackfillDate,
@@ -18,7 +19,6 @@ export type CodexSessionMigrationScheduler = {
     startedSequence?: number
   ): void
   ignoreLaunch(leaseId: string, startedSequence: number): void
-  matchesIgnoredLaunchExit(leaseId: string, startedSequence: number): boolean
   finishLaunch(leaseId: string, exitSequence?: number): void
   scheduleInitialRun(): void
   scheduleRun(fullScanRequired?: boolean): void
@@ -45,7 +45,7 @@ export function createCodexSessionMigrationScheduler(args: {
   let migrationTask: Promise<void> | null = null
   const activeLaunches = new Map<string, Date>()
   // Why: non-shared reattach exits must not masquerade as exit-before-begin races for a reused id.
-  const ignoredLaunches = new Set<string>()
+  const ignoredLaunches = new CodexSessionMigrationIgnoredLaunches()
   const ignoredPtyExits = new CodexSessionMigrationRecentExits()
   const earlyPtyExits = new CodexSessionMigrationRecentExits()
   let activeRunStopObserved = false
@@ -215,9 +215,6 @@ export function createCodexSessionMigrationScheduler(args: {
         return
       }
       ignoredLaunches.add(leaseId)
-    },
-    matchesIgnoredLaunchExit(leaseId, startedSequence): boolean {
-      return ignoredPtyExits.matchesAfter(leaseId, startedSequence)
     },
     finishLaunch(leaseId, exitSequence): void {
       if (ignoredLaunches.delete(leaseId)) {

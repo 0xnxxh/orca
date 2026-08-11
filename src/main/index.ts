@@ -420,13 +420,6 @@ function handleCodexHomePtySpawned(args: {
       codexSessionMigration.ignoreLaunch(args.id, args.startedSequence)
       return
     }
-    if (
-      !paneAccount &&
-      homeRoute === undefined &&
-      codexSessionMigration?.matchesIgnoredLaunchExit(args.id, args.startedSequence)
-    ) {
-      return
-    }
   }
   const fullScanRequired =
     codexRuntimeHome?.beginHostSystemDefaultSessionMigrationLaunch(args.codexHomePath, {
