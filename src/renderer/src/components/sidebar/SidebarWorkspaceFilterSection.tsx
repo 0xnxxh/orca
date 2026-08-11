@@ -96,7 +96,7 @@ const SidebarWorkspaceFilterSection = React.memo(function SidebarWorkspaceFilter
         icon={<MonitorSmartphone className="size-3.5" />}
         label={translate(
           'auto.components.sidebar.SidebarWorkspaceFilterSection.otherDevices',
-          'Hide workspaces from other devices'
+          'Hide other-device workspaces'
         )}
         checked={hideWorkspacesFromOtherDevices}
         onChange={setHideWorkspacesFromOtherDevices}
