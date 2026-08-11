@@ -2347,7 +2347,8 @@ function App(): React.JSX.Element {
                       )
                     ) : null}
                     <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden">
-                      {stackedSidebarOpen ? (
+                      {/* Why: automations owns its page header; the stacked titlebar would be an empty 36px stripe. */}
+                      {stackedSidebarOpen && activeView !== 'automations' ? (
                         <div className="titlebar">{titlebarMainStrip}</div>
                       ) : null}
                       <div className="relative flex flex-1 min-w-0 min-h-0 overflow-hidden">
