@@ -75,10 +75,8 @@ jobs:
                   prerelease: expectedPrerelease,
                   make_latest: expectedPrerelease ? "false" : "legacy",
                 });
-                if (expectedPrerelease) {
-                  await restoreLatestStable();
-                }
               }
+              await restoreLatestStable();
               return;
             }
 
