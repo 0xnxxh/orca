@@ -1,24 +1,47 @@
 import * as path from 'node:path'
 import { resolveWorktreeAddBaseRef } from '../shared/worktree-base-ref'
+import {
+  WORKTREE_ADD_TIMEOUT_MS,
+  WORKTREE_CREATE_AUXILIARY_GIT_TIMEOUT_MS,
+  WORKTREE_MATERIALIZATION_TIMEOUT_MS
+} from '../shared/worktree-create-timeouts'
+import { WORKTREE_REMOVAL_PREFLIGHT_TIMEOUT_MS } from '../shared/worktree-removal-timeouts'
 import type { GitExec } from './git-handler-ops'
 export { removeWorktreeOp } from './git-handler-worktree-remove'
 export { readRelayWorktreeList } from './git-handler-worktree-list'
+
+function shouldPropagateBaseProbeError(error: unknown, signal?: AbortSignal): boolean {
+  const details = error as {
+    name?: unknown
+    code?: unknown
+    killed?: unknown
+    signal?: unknown
+  } | null
+  return (
+    signal?.aborted === true ||
+    details?.name === 'AbortError' ||
+    details?.code === 'ETIMEDOUT' ||
+    details?.killed === true ||
+    details?.signal === 'SIGTERM'
+  )
+}
 
 async function persistRelayWorktreeCreationBase(
   git: GitExec,
   targetDir: string,
   branchName: string,
-  effectiveBase: string
+  effectiveBase: string,
+  options: { signal?: AbortSignal; timeout: number }
 ): Promise<void> {
   const configKey = `branch.${branchName}.base`
   try {
-    await git(['config', '--local', '--replace-all', configKey, effectiveBase], targetDir)
+    await git(['config', '--local', '--replace-all', configKey, effectiveBase], targetDir, options)
   } catch (error) {
     console.warn(`relay addWorktree: failed to set ${configKey} for ${targetDir}`, error)
     try {
       // Why: SSH worktree creation shares branch config by name; clear stale
       // metadata if replacing an old same-name base fails.
-      await git(['config', '--local', '--unset-all', configKey], targetDir)
+      await git(['config', '--local', '--unset-all', configKey], targetDir, options)
     } catch (unsetError) {
       console.warn(
         `relay addWorktree: failed to unset stale ${configKey} for ${targetDir}`,
@@ -28,13 +51,21 @@ async function persistRelayWorktreeCreationBase(
   }
 }
 
-export async function addWorktreeOp(git: GitExec, params: Record<string, unknown>): Promise<void> {
+export async function addWorktreeOp(
+  git: GitExec,
+  params: Record<string, unknown>,
+  options: { signal?: AbortSignal } = {}
+): Promise<void> {
   const repoPath = params.repoPath as string
   const branchName = params.branchName as string
   const targetDir = params.targetDir as string
   const base = params.base as string | undefined
   const checkoutExistingBranch = params.checkoutExistingBranch === true
   const noCheckout = params.noCheckout === true
+  const auxiliaryOptions = {
+    ...options,
+    timeout: WORKTREE_CREATE_AUXILIARY_GIT_TIMEOUT_MS
+  }
 
   // Why: a branchName starting with '-' would be interpreted as a git flag,
   // potentially changing the command's semantics (e.g. "--detach").
@@ -54,32 +85,48 @@ export async function addWorktreeOp(git: GitExec, params: Record<string, unknown
     base && !checkoutExistingBranch
       ? await resolveWorktreeAddBaseRef(base, async (qualifiedRef) => {
           try {
-            await git(['rev-parse', '--verify', '--quiet', `${qualifiedRef}^{commit}`], repoPath)
+            await git(
+              ['rev-parse', '--verify', '--quiet', `${qualifiedRef}^{commit}`],
+              repoPath,
+              auxiliaryOptions
+            )
             return true
-          } catch {
+          } catch (error) {
+            if (shouldPropagateBaseProbeError(error, options.signal)) {
+              throw error
+            }
             return false
           }
         })
       : undefined
 
-  const args = checkoutExistingBranch
-    ? ['worktree', 'add', targetDir, branchName]
-    : ['worktree', 'add', '--no-track', '-b', branchName, targetDir]
+  const args = ['worktree', 'add']
   if (!checkoutExistingBranch && noCheckout) {
-    args.splice(3, 0, '--no-checkout')
+    args.push('--no-checkout')
+  }
+  if (checkoutExistingBranch) {
+    args.push(targetDir, branchName)
+  } else {
+    args.push('--no-track', '-b', branchName, targetDir)
   }
   if (effectiveBase) {
     args.push(effectiveBase)
   }
 
-  await git(args, repoPath)
+  await git(args, repoPath, { ...options, timeout: WORKTREE_ADD_TIMEOUT_MS })
 
   if (checkoutExistingBranch) {
     return
   }
 
   if (effectiveBase) {
-    await persistRelayWorktreeCreationBase(git, targetDir, branchName, effectiveBase)
+    await persistRelayWorktreeCreationBase(
+      git,
+      targetDir,
+      branchName,
+      effectiveBase,
+      auxiliaryOptions
+    )
   }
 
   // Why: best-effort write so a deliberate user value (any scope) is
@@ -91,7 +138,7 @@ export async function addWorktreeOp(git: GitExec, params: Record<string, unknown
   try {
     let alreadySet = false
     try {
-      await git(['config', '--get', 'push.autoSetupRemote'], targetDir)
+      await git(['config', '--get', 'push.autoSetupRemote'], targetDir, auxiliaryOptions)
       alreadySet = true
     } catch (readError) {
       // Why: `git config --get` exits 1 only when the key is unset at every
@@ -104,11 +151,36 @@ export async function addWorktreeOp(git: GitExec, params: Record<string, unknown
       }
     }
     if (!alreadySet) {
-      await git(['config', '--local', 'push.autoSetupRemote', 'true'], targetDir)
+      await git(['config', '--local', 'push.autoSetupRemote', 'true'], targetDir, auxiliaryOptions)
     }
   } catch (error) {
     console.warn(`relay addWorktree: failed to set push.autoSetupRemote for ${targetDir}`, error)
   }
+}
+
+export async function materializeWorktreeCheckoutOp(
+  git: GitExec,
+  params: Record<string, unknown>,
+  options: { signal?: AbortSignal } = {}
+): Promise<void> {
+  const worktreePath = params.worktreePath
+  const branchName = params.branchName
+  const sparseDirectories = params.sparseDirectories
+  if (
+    typeof worktreePath !== 'string' ||
+    typeof branchName !== 'string' ||
+    branchName.startsWith('-') ||
+    !Array.isArray(sparseDirectories) ||
+    sparseDirectories.length === 0 ||
+    sparseDirectories.some((entry) => typeof entry !== 'string' || entry.length === 0)
+  ) {
+    throw new Error('Invalid sparse worktree materialization request')
+  }
+
+  const execOptions = { ...options, timeout: WORKTREE_MATERIALIZATION_TIMEOUT_MS }
+  await git(['sparse-checkout', 'init', '--cone'], worktreePath, execOptions)
+  await git(['sparse-checkout', 'set', '--', ...sparseDirectories], worktreePath, execOptions)
+  await git(['checkout', '--force', branchName], worktreePath, execOptions)
 }
 
 function isPosixAbsolutePath(value: string): boolean {
@@ -138,13 +210,21 @@ export function areRelayWorktreePathsEqual(leftPath: string, rightPath: string):
 
 export async function worktreeIsCleanOp(
   git: GitExec,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  options: { signal?: AbortSignal } = {}
 ): Promise<{ clean: boolean; stdout?: string }> {
   const worktreePath = params.worktreePath as string
   const includeUntracked = params.includeUntracked !== false
+  const execOptions = {
+    ...(options.signal ? { signal: options.signal } : {}),
+    timeout: includeUntracked
+      ? WORKTREE_REMOVAL_PREFLIGHT_TIMEOUT_MS
+      : WORKTREE_CREATE_AUXILIARY_GIT_TIMEOUT_MS
+  }
   const { stdout } = await git(
     ['status', '--porcelain', includeUntracked ? '--untracked-files=all' : '--untracked-files=no'],
-    worktreePath
+    worktreePath,
+    execOptions
   )
   const clean = !stdout.trim()
   return { clean, stdout: clean ? undefined : stdout }

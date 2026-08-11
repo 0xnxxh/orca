@@ -32,12 +32,24 @@ import {
 } from '../git/max-buffer-overflow'
 import { InFlightPromiseDedupe, stableInFlightKey } from '../../shared/in-flight-promise-dedupe'
 import { gitExecMutatesRepository } from '../../shared/git-exec-mutation'
+import {
+  WORKTREE_ADD_TRANSPORT_TIMEOUT_MS,
+  WORKTREE_LOCAL_BASE_REF_CHECK_TRANSPORT_TIMEOUT_MS,
+  WORKTREE_LOCAL_BASE_REF_REFRESH_TRANSPORT_TIMEOUT_MS,
+  WORKTREE_MATERIALIZATION_COMMAND_TRANSPORT_TIMEOUT_MS,
+  WORKTREE_MATERIALIZATION_TRANSPORT_TIMEOUT_MS
+} from '../../shared/worktree-create-timeouts'
 
 type NonInteractiveExecQueueEntry = {
   started: boolean
   canceled: boolean
   done: Promise<void>
   release: () => void
+}
+
+function isLegacyRelaySparseCheckoutRestricted(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /git subcommand not allowed:\s*sparse-checkout/i.test(message)
 }
 
 const NON_INTERACTIVE_TRANSPORT_TIMEOUT_MARGIN_MS = 5_000
@@ -717,16 +729,97 @@ export class SshGitProvider implements IGitProvider {
     repoPath: string,
     branchName: string,
     targetDir: string,
-    options?: { base?: string; checkoutExistingBranch?: boolean; noCheckout?: boolean }
+    options?: {
+      base?: string
+      checkoutExistingBranch?: boolean
+      noCheckout?: boolean
+      signal?: AbortSignal
+    }
   ): Promise<void> {
+    const { signal, ...relayOptions } = options ?? {}
     await this.runWithDiffDedupeClear(async () => {
-      await this.mux.request('git.addWorktree', {
-        repoPath,
-        branchName,
-        targetDir,
-        ...options
-      })
+      await this.mux.request(
+        'git.addWorktree',
+        {
+          repoPath,
+          branchName,
+          targetDir,
+          ...relayOptions
+        },
+        {
+          ...(signal ? { signal } : {}),
+          timeoutMs: WORKTREE_ADD_TRANSPORT_TIMEOUT_MS
+        }
+      )
     })
+  }
+
+  async materializeWorktreeCheckout(
+    worktreePath: string,
+    branchName: string,
+    sparseDirectories: readonly string[],
+    options: { signal?: AbortSignal } = {}
+  ): Promise<void> {
+    const requestOptions = {
+      ...(options.signal ? { signal: options.signal } : {}),
+      timeoutMs: WORKTREE_MATERIALIZATION_TRANSPORT_TIMEOUT_MS
+    }
+    try {
+      await this.runWithDiffDedupeClear(async () => {
+        await this.mux.request(
+          'git.materializeWorktreeCheckout',
+          { worktreePath, branchName, sparseDirectories: [...sparseDirectories] },
+          requestOptions
+        )
+      })
+    } catch (error) {
+      if (!isJsonRpcMethodNotFoundError(error)) {
+        throw error
+      }
+      const legacyOptions = {
+        ...(options.signal ? { signal: options.signal } : {}),
+        timeoutMs: WORKTREE_MATERIALIZATION_COMMAND_TRANSPORT_TIMEOUT_MS
+      }
+      try {
+        await this.runWithDiffDedupeClear(async () => {
+          await requestGitStreamable(
+            this.mux,
+            'git.exec',
+            { args: ['sparse-checkout', 'init', '--cone'], cwd: worktreePath },
+            legacyOptions
+          )
+          await requestGitStreamable(
+            this.mux,
+            'git.exec',
+            {
+              args: ['sparse-checkout', 'set', '--', ...sparseDirectories],
+              cwd: worktreePath
+            },
+            legacyOptions
+          )
+          await requestGitStreamable(
+            this.mux,
+            'git.exec',
+            { args: ['checkout', branchName], cwd: worktreePath },
+            legacyOptions
+          )
+        })
+      } catch (fallbackError) {
+        if (
+          options.signal?.aborted ||
+          (fallbackError as { name?: unknown } | null)?.name === 'AbortError'
+        ) {
+          throw fallbackError
+        }
+        if (isLegacyRelaySparseCheckoutRestricted(fallbackError)) {
+          throw new Error(
+            'This SSH host is running an older Orca relay that cannot materialize sparse worktrees. Reconnect to deploy the latest relay, then try again.',
+            { cause: fallbackError }
+          )
+        }
+        throw fallbackError
+      }
+    }
   }
 
   async removeWorktree(
@@ -746,13 +839,16 @@ export class SshGitProvider implements IGitProvider {
 
   async worktreeIsClean(
     worktreePath: string,
-    options: { includeUntracked?: boolean } = {}
+    options: { includeUntracked?: boolean; signal?: AbortSignal } = {}
   ): Promise<{ clean: boolean; stdout?: string }> {
     try {
-      const result = (await this.mux.request('git.worktreeIsClean', {
+      const params = {
         worktreePath,
         ...(options.includeUntracked === false ? { includeUntracked: false } : {})
-      })) as {
+      }
+      const result = (await (options.signal
+        ? this.mux.request('git.worktreeIsClean', params, { signal: options.signal })
+        : this.mux.request('git.worktreeIsClean', params))) as {
         clean: boolean
         stdout?: string
       }
@@ -768,6 +864,9 @@ export class SshGitProvider implements IGitProvider {
       if (!isJsonRpcMethodNotFoundError(error)) {
         throw error
       }
+      if (options.signal?.aborted) {
+        throw error
+      }
       if (!this.loggedWorktreeIsCleanFallback) {
         this.loggedWorktreeIsCleanFallback = true
         console.warn(
@@ -776,7 +875,10 @@ export class SshGitProvider implements IGitProvider {
       }
       // Why: existing SSH relays may predate git.worktreeIsClean, but git.status
       // is a narrow relay RPC and avoids the generic git.exec allowlist.
-      const status = await this.getStatus(worktreePath)
+      const status = await this.getStatus(
+        worktreePath,
+        options.signal ? { signal: options.signal } : undefined
+      )
       const entries =
         options.includeUntracked === false
           ? status.entries.filter((entry) => entry.area !== 'untracked')
@@ -786,15 +888,23 @@ export class SshGitProvider implements IGitProvider {
     }
   }
 
-  async refreshLocalBaseRefForWorktreeCreate(args: {
-    repoPath: string
-    fullRef: string
-    remoteTrackingRef: string
-    ownerWorktreePath?: string
-    checkOnly?: boolean
-  }): Promise<void> {
+  async refreshLocalBaseRefForWorktreeCreate(
+    args: {
+      repoPath: string
+      fullRef: string
+      remoteTrackingRef: string
+      ownerWorktreePath?: string
+      checkOnly?: boolean
+    },
+    options: { signal?: AbortSignal } = {}
+  ): Promise<void> {
     await this.runWithDiffDedupeClear(async () => {
-      await this.mux.request('git.refreshLocalBaseRefForWorktreeCreate', args)
+      await this.mux.request('git.refreshLocalBaseRefForWorktreeCreate', args, {
+        ...(options.signal ? { signal: options.signal } : {}),
+        timeoutMs: args.checkOnly
+          ? WORKTREE_LOCAL_BASE_REF_CHECK_TRANSPORT_TIMEOUT_MS
+          : WORKTREE_LOCAL_BASE_REF_REFRESH_TRANSPORT_TIMEOUT_MS
+      })
     })
   }
 

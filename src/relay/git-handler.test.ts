@@ -10,6 +10,11 @@ import { execFileSync } from 'node:child_process'
 import { MAX_RENDERED_DIFF_COMBINED_CHARACTERS } from '../shared/large-diff-render-limit'
 import { reviewHeadRemoteRefComponent } from '../shared/review-head-tracking-ref'
 import {
+  WORKTREE_ADD_TIMEOUT_MS,
+  WORKTREE_CREATE_AUXILIARY_GIT_TIMEOUT_MS,
+  WORKTREE_MATERIALIZATION_TIMEOUT_MS
+} from '../shared/worktree-create-timeouts'
+import {
   createMockDispatcher,
   gitInit,
   gitCommit,
@@ -2426,9 +2431,12 @@ describe('GitHandler', () => {
 
       expect(gitMock).toHaveBeenCalledWith(
         ['merge-base', '--is-ancestor', 'old-local-oid', 'remote-oid'],
-        '/repo'
+        '/repo',
+        { timeout: WORKTREE_CREATE_AUXILIARY_GIT_TIMEOUT_MS }
       )
-      expect(gitMock).toHaveBeenCalledWith(['reset', '--hard', 'remote-oid'], '/repo')
+      expect(gitMock).toHaveBeenCalledWith(['reset', '--hard', 'remote-oid'], '/repo', {
+        timeout: WORKTREE_MATERIALIZATION_TIMEOUT_MS
+      })
       expect(gitMock.mock.calls.map((call) => call[0])).not.toContainEqual([
         'update-ref',
         'refs/heads/main',
@@ -2494,7 +2502,7 @@ describe('GitHandler', () => {
           (
             args: string[],
             cwd: string,
-            opts?: { maxBuffer?: number }
+            opts?: { maxBuffer?: number; signal?: AbortSignal; timeout?: number }
           ) => Promise<{ stdout: string; stderr: string }>
         >()
       ;(handler as unknown as { git: typeof gitMock }).git = gitMock
@@ -2545,7 +2553,7 @@ describe('GitHandler', () => {
       expect(gitMock.mock.calls[4]?.[1]).toBe('/relay/wt')
     })
 
-    it('checks out a selected existing local branch without creating a new branch', async () => {
+    it('checks out an existing branch without overriding checkout workers', async () => {
       const { localDispatcher, gitMock } = setupMockedHandler(['/relay/repo', '/relay/wt'])
       gitMock.mockResolvedValueOnce({ stdout: '', stderr: '' }) // worktree add
 
@@ -2559,6 +2567,63 @@ describe('GitHandler', () => {
 
       expect(gitMock.mock.calls.map((c) => c[0])).toEqual([
         ['worktree', 'add', '/relay/wt', 'feature/test']
+      ])
+    })
+
+    it('forwards request cancellation and bounds the checkout subprocess', async () => {
+      const { localDispatcher, gitMock } = setupMockedHandler(['/relay/repo', '/relay/wt'])
+      const controller = new AbortController()
+      gitMock.mockResolvedValueOnce({ stdout: '', stderr: '' })
+
+      await localDispatcher.callRequest(
+        'git.addWorktree',
+        {
+          repoPath: '/relay/repo',
+          branchName: 'feature/test',
+          targetDir: '/relay/wt',
+          checkoutExistingBranch: true
+        },
+        { isStale: () => false, signal: controller.signal }
+      )
+
+      expect(gitMock).toHaveBeenCalledWith(
+        ['worktree', 'add', '/relay/wt', 'feature/test'],
+        '/relay/repo',
+        { signal: controller.signal, timeout: WORKTREE_ADD_TIMEOUT_MS }
+      )
+    })
+
+    it('dispatches bounded sparse materialization with request cancellation', async () => {
+      const { localDispatcher, gitMock } = setupMockedHandler(['/relay/wt'])
+      const controller = new AbortController()
+      gitMock.mockResolvedValue({ stdout: '', stderr: '' })
+
+      await localDispatcher.callRequest(
+        'git.materializeWorktreeCheckout',
+        {
+          worktreePath: '/relay/wt',
+          branchName: 'feature/test',
+          sparseDirectories: ['apps/web']
+        },
+        { isStale: () => false, signal: controller.signal }
+      )
+
+      expect(gitMock.mock.calls).toEqual([
+        [
+          ['sparse-checkout', 'init', '--cone'],
+          '/relay/wt',
+          { signal: controller.signal, timeout: WORKTREE_MATERIALIZATION_TIMEOUT_MS }
+        ],
+        [
+          ['sparse-checkout', 'set', '--', 'apps/web'],
+          '/relay/wt',
+          { signal: controller.signal, timeout: WORKTREE_MATERIALIZATION_TIMEOUT_MS }
+        ],
+        [
+          ['checkout', '--force', 'feature/test'],
+          '/relay/wt',
+          { signal: controller.signal, timeout: WORKTREE_MATERIALIZATION_TIMEOUT_MS }
+        ]
       ])
     })
 
@@ -2646,8 +2711,8 @@ describe('GitHandler', () => {
       expect(gitMock.mock.calls[1]?.[0]).toEqual([
         'worktree',
         'add',
-        '--no-track',
         '--no-checkout',
+        '--no-track',
         '-b',
         'feature/sparse',
         '/relay/wt',

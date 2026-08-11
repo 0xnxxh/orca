@@ -200,6 +200,10 @@ export type WorktreeSlice = {
       linkedTaskSourceContext?: TaskSourceContext | null
       /** Lets the owning runtime launch and prefill a task agent without first creating an idle shell. */
       startupDraft?: string
+      /** Requests local terminal preparation during checkout; paired runtimes omit it. */
+      startTerminalEarly?: boolean
+      /** Controls early-terminal focus; paired runtimes omit it. */
+      focusEarlyTerminal?: boolean
     }
   ) => Promise<CreateWorktreeResult>
   /** Register an in-flight background creation and make it the active surface. */
@@ -219,7 +223,10 @@ export type WorktreeSlice = {
   ) => void
   /** Drop a pending entry, clearing the active surface if it pointed at this
    *  creation. VM cleanup is for cancellation/dismissal, not successful handoff. */
-  removePendingWorktreeCreation: (creationId: string, options?: { cleanupVm?: boolean }) => void
+  removePendingWorktreeCreation: (
+    creationId: string,
+    options?: { cleanupVm?: boolean }
+  ) => Promise<void>
   /** Point the content panel at a pending creation (or clear it with null). */
   setActivePendingWorktreeCreation: (creationId: string | null) => void
   prefetchWorktreeCreateBase: (repoId: string, baseBranch?: string) => Promise<void>

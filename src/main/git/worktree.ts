@@ -6,6 +6,12 @@ import {
   getBranchCleanupTargetRefs
 } from '../../shared/git-branch-cleanup'
 import { resolveWorktreeAddBaseRef } from '../../shared/worktree-base-ref'
+import {
+  WORKTREE_ADD_TIMEOUT_MS,
+  WORKTREE_CREATE_AUXILIARY_GIT_TIMEOUT_MS,
+  WORKTREE_CREATE_ROLLBACK_TIMEOUT_MS
+} from '../../shared/worktree-create-timeouts'
+import { WORKTREE_REMOVAL_PREFLIGHT_TIMEOUT_MS } from '../../shared/worktree-removal-timeouts'
 import { withSpan } from '../observability/tracer'
 import { withWorktreeRemoveStageSpan } from '../observability/instrumentation'
 import {
@@ -40,7 +46,7 @@ export type AddWorktreeResult = {
   localBaseRefUpdateSuggestion?: LocalBaseRefUpdateSuggestion
 }
 
-type SparseWorktreeCreateError = Error & {
+export type FailedWorktreeCreateError = Error & {
   cleanupFailed?: boolean
 }
 
@@ -66,6 +72,7 @@ export type AddWorktreeOptions = GitWorktreeExecOptions & {
 
 export type RemoveWorktreeOptions = GitWorktreeExecOptions & {
   deleteBranch?: boolean
+  deferDirectoryDeletion?: boolean
   forceBranchDelete?: boolean
   knownRemovedWorktree?: Pick<GitWorktreeInfo, 'branch' | 'head' | 'locked' | 'lockReason'>
 }
@@ -91,9 +98,8 @@ const SPARSE_CHECKOUT_DETECTION_CONCURRENCY = 8
 
 const PRUNABLE_EXISTENCE_PROBE_CONCURRENCY = 8
 
-// Why: bound `git worktree add` so a OneDrive cloud-placeholder stall fails fast (STA-1292); generous enough for a legit large checkout (#7225).
-export const WORKTREE_ADD_TIMEOUT_MS = 180_000
-export const WORKTREE_REMOVAL_PREFLIGHT_TIMEOUT_MS = 30_000
+export { WORKTREE_ADD_TIMEOUT_MS } from '../../shared/worktree-create-timeouts'
+export { WORKTREE_REMOVAL_PREFLIGHT_TIMEOUT_MS } from '../../shared/worktree-removal-timeouts'
 export const WORKTREE_REMOVAL_REGISTRATION_TIMEOUT_MS = 30_000
 // Why: one wedged shared scan otherwise hangs every later list, including create's post-add re-list.
 export const WORKTREE_LIST_TIMEOUT_MS = 30_000
@@ -353,8 +359,11 @@ async function unsetWorktreeCreationBase(
     await gitExecFileAsync(['config', '--local', '--unset-all', `branch.${branch}.base`], {
       ...gitExecOptions(worktreePath, options)
     })
-  } catch {
-    // Best-effort cleanup; leave the original sparse-setup error as the actionable failure.
+  } catch (error) {
+    // Git returns 5 when the optional key is absent; other failures leave rollback state uncertain.
+    if (getErrorCode(error) !== '5') {
+      throw error
+    }
   }
 }
 
@@ -943,6 +952,13 @@ async function performAddWorktree(
 ): Promise<AddWorktreeResult> {
   let localBaseRefRefresh: LocalBaseRefRefreshResult | undefined
   let localBaseRefUpdateSuggestion: LocalBaseRefUpdateSuggestion | undefined
+  let localBaseRefUpdateSuggestionPromise:
+    | Promise<LocalBaseRefUpdateSuggestion | undefined>
+    | undefined
+  let localBaseRefUpdateSuggestionSettlementPromise:
+    | Promise<PromiseSettledResult<LocalBaseRefUpdateSuggestion | undefined>[]>
+    | undefined
+  let localBaseRefUpdateSuggestionAbort: AbortController | undefined
   const args = ['worktree', 'add']
   let effectiveBase: string | undefined
   if (noCheckout) {
@@ -968,22 +984,43 @@ async function performAddWorktree(
           options
         )
       } else if (options.suggestLocalBaseRefUpdate) {
-        localBaseRefUpdateSuggestion = await getLocalBaseRefUpdateSuggestionForWorktreeCreate(
+        // Why: this is advisory and read-only, so checkout need not wait for its
+        // worktree/status probes. The result is still joined before returning.
+        const advisoryTimeout =
+          options.timeout !== undefined && options.timeout > 0
+            ? Math.min(options.timeout, WORKTREE_CREATE_AUXILIARY_GIT_TIMEOUT_MS)
+            : WORKTREE_CREATE_AUXILIARY_GIT_TIMEOUT_MS
+        localBaseRefUpdateSuggestionAbort = new AbortController()
+        const advisorySignal = options.signal
+          ? AbortSignal.any([options.signal, localBaseRefUpdateSuggestionAbort.signal])
+          : localBaseRefUpdateSuggestionAbort.signal
+        localBaseRefUpdateSuggestionPromise = getLocalBaseRefUpdateSuggestionForWorktreeCreate(
           repoPath,
           baseBranch,
           effectiveBase,
           options.remoteTrackingBase,
-          options
+          { ...options, signal: advisorySignal, timeout: advisoryTimeout }
         )
+        localBaseRefUpdateSuggestionSettlementPromise = Promise.allSettled([
+          localBaseRefUpdateSuggestionPromise
+        ])
       }
       args.push(effectiveBase)
     }
   }
-  await gitExecFileAsync(args, {
-    ...gitExecOptions(repoPath, options),
-    // Why: bound the checkout so a OneDrive cloud-placeholder stall (STA-1292) fails fast instead of hanging.
-    timeout: WORKTREE_ADD_TIMEOUT_MS
-  })
+  try {
+    await gitExecFileAsync(args, {
+      ...gitExecOptions(repoPath, options),
+      // Why: bound the checkout so a OneDrive cloud-placeholder stall (STA-1292) fails fast instead of hanging.
+      timeout: WORKTREE_ADD_TIMEOUT_MS
+    })
+  } catch (error) {
+    localBaseRefUpdateSuggestionAbort?.abort()
+    if (localBaseRefUpdateSuggestionSettlementPromise) {
+      await localBaseRefUpdateSuggestionSettlementPromise
+    }
+    throw error
+  }
 
   if (options.checkoutExistingBranch) {
     return localBaseRefRefresh ? { localBaseRefRefresh } : {}
@@ -1021,10 +1058,75 @@ async function performAddWorktree(
   } catch (error) {
     console.warn(`addWorktree: failed to set push.autoSetupRemote for ${worktreePath}`, error)
   }
+  localBaseRefUpdateSuggestion = await localBaseRefUpdateSuggestionPromise
   return {
     ...(localBaseRefRefresh ? { localBaseRefRefresh } : {}),
     ...(localBaseRefUpdateSuggestion ? { localBaseRefUpdateSuggestion } : {})
   }
+}
+
+export async function materializeWorktreeCheckout(
+  worktreePath: string,
+  branch: string,
+  sparseDirectories: readonly string[] = [],
+  options: GitWorktreeExecOptions = {}
+): Promise<void> {
+  await runWithGitReadCacheInvalidation(async () => {
+    const execOptions = {
+      ...gitExecOptions(worktreePath, options),
+      timeout: options.timeout ?? WORKTREE_ADD_TIMEOUT_MS
+    }
+    if (sparseDirectories.length > 0) {
+      await gitExecFileAsync(['sparse-checkout', 'init', '--cone'], execOptions)
+      await gitExecFileAsync(['sparse-checkout', 'set', '--', ...sparseDirectories], execOptions)
+    }
+    await gitExecFileAsync(['checkout', '--force', branch], execOptions)
+  })
+}
+
+export async function rollbackFailedWorktreeCreate(
+  repoPath: string,
+  worktreePath: string,
+  branch: string,
+  error: unknown,
+  options: AddWorktreeOptions = {}
+): Promise<FailedWorktreeCreateError> {
+  const wrapped: FailedWorktreeCreateError =
+    error instanceof Error ? (error as FailedWorktreeCreateError) : new Error(String(error))
+  // Why: checkout cancellation must not pre-cancel rollback, so cleanup owns a fresh bounded signal.
+  const cleanupAbort = new AbortController()
+  const cleanupTimer = setTimeout(() => cleanupAbort.abort(), WORKTREE_CREATE_ROLLBACK_TIMEOUT_MS)
+  const cleanupGitOptions: GitWorktreeExecOptions = {
+    ...(options.wslDistro ? { wslDistro: options.wslDistro } : {}),
+    signal: cleanupAbort.signal,
+    timeout: WORKTREE_CREATE_ROLLBACK_TIMEOUT_MS
+  }
+  try {
+    let creationBaseCleanupFailed = false
+    if (!options.checkoutExistingBranch) {
+      try {
+        await unsetWorktreeCreationBase(worktreePath, branch, cleanupGitOptions)
+      } catch {
+        creationBaseCleanupFailed = true
+      }
+    }
+    const removal = await removeWorktree(repoPath, worktreePath, true, {
+      deleteBranch: !options.checkoutExistingBranch,
+      deferDirectoryDeletion: false,
+      forceBranchDelete: !options.checkoutExistingBranch,
+      knownRemovedWorktree: { branch, head: '' },
+      ...cleanupGitOptions
+    })
+    if (creationBaseCleanupFailed || removal.preservedBranch) {
+      throw new Error('failed_worktree_create_cleanup_incomplete')
+    }
+  } catch {
+    wrapped.cleanupFailed = true
+    wrapped.message = `${wrapped.message} (cleanup also failed — the partially created worktree at "${worktreePath}" may need manual removal)`
+  } finally {
+    clearTimeout(cleanupTimer)
+  }
+  return wrapped
 }
 
 export async function addSparseWorktree(
@@ -1049,37 +1151,13 @@ export async function addSparseWorktree(
       options
     )
     created = true
-    await gitExecFileAsync(
-      ['sparse-checkout', 'init', '--cone'],
-      gitExecOptions(worktreePath, options)
-    )
-    await gitExecFileAsync(
-      ['sparse-checkout', 'set', '--', ...directories],
-      gitExecOptions(worktreePath, options)
-    )
-    await gitExecFileAsync(['checkout', branch], gitExecOptions(worktreePath, options))
+    await materializeWorktreeCheckout(worktreePath, branch, directories, options)
     return addResult
   } catch (error) {
-    const wrapped: SparseWorktreeCreateError =
-      error instanceof Error ? (error as SparseWorktreeCreateError) : new Error(String(error))
     if (created) {
-      if (!options.checkoutExistingBranch) {
-        await unsetWorktreeCreationBase(worktreePath, branch, options)
-      }
-      try {
-        await removeWorktree(repoPath, worktreePath, true, {
-          deleteBranch: !options.checkoutExistingBranch,
-          // Why: failed-creation rollback — the fresh branch has no user commits, so force-delete rather than orphan it.
-          forceBranchDelete: !options.checkoutExistingBranch,
-          ...(options.wslDistro ? { wslDistro: options.wslDistro } : {})
-        })
-      } catch {
-        wrapped.cleanupFailed = true
-        // Why: surface that manual cleanup may be needed, else a half-created worktree lingers silently on disk.
-        wrapped.message = `${wrapped.message} (cleanup also failed — the partially created worktree at "${worktreePath}" may need manual removal)`
-      }
+      throw await rollbackFailedWorktreeCreate(repoPath, worktreePath, branch, error, options)
     }
-    throw wrapped
+    throw error
   }
 }
 
@@ -1187,6 +1265,9 @@ async function tryRemoveWorktreeWithDeferredDirectoryDeletion(
   force: boolean,
   options: RemoveWorktreeOptions
 ): Promise<boolean> {
+  if (options.deferDirectoryDeletion === false) {
+    return false
+  }
   // Why: WSL-owned checkouts are deleted inside the distro, so Node on Windows must not rename them.
   if (options.wslDistro || parseWslPath(worktreePath)) {
     return false
@@ -1268,7 +1349,9 @@ async function deleteBranchAfterWorktreeRemoval(
       options
     )
     if (branchDeleteResult === 'checked-out') {
-      return {}
+      return options.forceBranchDelete
+        ? { preservedBranch: { branchName, ...(branchHead ? { head: branchHead } : {}) } }
+        : {}
     }
     return {}
   } catch (error) {

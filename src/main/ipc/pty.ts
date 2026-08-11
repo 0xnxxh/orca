@@ -4694,12 +4694,12 @@ export function registerPtyHandlers(
         }
       }
       let ptySpawnCommitReported = false
-      const reportPtySpawnCommitted = (): void => {
+      const reportPtySpawnCommitted = (ptyId?: string): void => {
         if (ptySpawnCommitReported) {
           return
         }
         ptySpawnCommitReported = true
-        args.onPtySpawnCommitted?.()
+        args.onPtySpawnCommitted?.(ptyId)
       }
       spawnOptions.envToDelete = mergePtyEnvDeletions(
         authEnvToDelete,
@@ -4860,7 +4860,13 @@ export function registerPtyHandlers(
       let preparedProvisionalExecutionContext = false
       let releaseWorktreeSpawn: (() => void) | undefined
       try {
-        releaseWorktreeSpawn = await runtime?.acquireWorktreeTerminalSpawn?.(args.worktreeId)
+        releaseWorktreeSpawn = await runtime?.acquireWorktreeTerminalSpawn?.(
+          args.worktreeId,
+          args.worktreeTerminalCreationPermit,
+          cwd,
+          preAdoptedStablePane?.result.id,
+          args.connectionId ?? null
+        )
         try {
           if (args.preAllocatedHandle) {
             trustedTerminalHandleEnv.add(args.preAllocatedHandle)
@@ -4921,7 +4927,7 @@ export function registerPtyHandlers(
                 providerResult = await provider.spawn(spawnOptions)
                 rejectedRegistrationCandidate = providerResult
                 // Why: a successful lower-owner return proves physical work committed even if admission sees an early exit.
-                reportPtySpawnCommitted()
+                reportPtySpawnCommitted(providerResult.id)
                 assertSpawnReplyWasLive(providerResult)
                 runtime?.assertPtyRegistrationAllowed?.(
                   providerResult.id,
@@ -4981,7 +4987,7 @@ export function registerPtyHandlers(
                       args.worktreeId,
                       args.connectionId
                     ),
-                  onFreshSpawn: reportPtySpawnCommitted
+                  onFreshSpawn: (freshResult) => reportPtySpawnCommitted(freshResult.id)
                 })
             result = stablePaneSpawn.result
             stablePaneOwner = stablePaneSpawn.owner
@@ -6371,7 +6377,13 @@ export function registerPtyHandlers(
         if (preSpawnHiddenMarkId !== null) {
           transitionSpawnHiddenRendererPtyDeliveryState(preSpawnHiddenMarkId, true)
         }
-        releaseWorktreeSpawn = await runtime?.acquireWorktreeTerminalSpawn?.(args.worktreeId)
+        releaseWorktreeSpawn = await runtime?.acquireWorktreeTerminalSpawn?.(
+          args.worktreeId,
+          undefined,
+          cwd,
+          preAdoptedStablePane?.result.id,
+          args.connectionId ?? null
+        )
         try {
           if (preAllocatedHandle) {
             trustedTerminalHandleEnv.add(preAllocatedHandle)

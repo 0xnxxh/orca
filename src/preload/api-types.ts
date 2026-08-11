@@ -138,6 +138,8 @@ import type {
   BrowserSessionProfileScope,
   BrowserSessionProfileSource,
   BrowserViewportOverride,
+  CancelWorktreeCreateArgs,
+  CancelWorktreeCreateResult,
   ClaudeRateLimitAccountsState,
   ClassifiedError,
   CodexRateLimitAccountsState,
@@ -1437,6 +1439,7 @@ export type PreloadApi = {
     cancelListDetected?: (args: { providerRequestId: ProviderRequestId }) => Promise<void>
     listAll: () => Promise<Worktree[]>
     create: (args: CreateWorktreeArgs) => Promise<CreateWorktreeResult>
+    cancelCreate: (args: CancelWorktreeCreateArgs) => Promise<CancelWorktreeCreateResult>
     /** Two-phase progress for a background `create`, correlated by `creationId`. The remote/runtime
      *  create path emits nothing, so the surface falls back to an indeterminate spinner. */
     onCreateProgress: (

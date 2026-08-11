@@ -516,6 +516,7 @@ describe('LocalPtyProvider', () => {
       ).rejects.toThrow('post-spawn publication failed')
       expect(spawnMock).toHaveBeenCalledOnce()
       expect(committed).toHaveBeenCalledOnce()
+      expect(committed).toHaveBeenCalledWith(expect.any(String))
     })
 
     it('invokes buildSpawnEnv callback to customize environment', async () => {
@@ -1294,7 +1295,9 @@ describe('LocalPtyProvider', () => {
         await provider.spawn({
           cols: 80,
           rows: 24,
-          cwd: 'C:\\Users\\jin\\repo'
+          cwd: 'C:\\Users\\jin\\repo',
+          env: { BASH_ENV: 'C:\\premature\\bash-env', ENV: 'C:\\premature\\env' },
+          envToDelete: ['BASH_ENV', 'ENV']
         })
       } finally {
         if (platform) {
@@ -1318,6 +1321,9 @@ describe('LocalPtyProvider', () => {
           })
         })
       )
+      const spawnedEnv = spawnMock.mock.calls.at(-1)![2].env
+      expect(spawnedEnv.BASH_ENV).toBeUndefined()
+      expect(spawnedEnv.ENV).toBeUndefined()
     })
   })
 

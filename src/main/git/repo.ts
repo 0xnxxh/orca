@@ -15,6 +15,10 @@ type LocalGitExecOptions = {
   wslDistro?: string
 }
 
+type BranchConflictOptions = LocalGitExecOptions & {
+  knownLocalBranchExists?: boolean
+}
+
 type LocalDefaultBaseRefGitOptions = {
   cwd: string
   wslDistro?: string
@@ -993,17 +997,23 @@ export async function getBranchConflictKind(
   path: string,
   branchName: string,
   allowedBaseRef?: string,
-  options: LocalGitExecOptions = {}
+  options: BranchConflictOptions = {}
 ): Promise<BranchConflictKind | null> {
-  if (await hasGitRefAsync(path, `refs/heads/${branchName}`, options)) {
+  const { knownLocalBranchExists, ...gitOptions } = options
+  if (
+    knownLocalBranchExists ??
+    (await hasGitRefAsync(path, `refs/heads/${branchName}`, gitOptions))
+  ) {
     return 'local'
   }
 
   try {
-    const remoteNames = (await listRemoteNames(path, options)).sort((a, b) => b.length - a.length)
+    const remoteNames = (await listRemoteNames(path, gitOptions)).sort(
+      (a, b) => b.length - a.length
+    )
     const { stdout } = await gitExecFileAsync(
       ['for-each-ref', '--format=%(refname)', 'refs/remotes'],
-      gitExecOptions(path, options)
+      gitExecOptions(path, gitOptions)
     )
     const hasRemoteConflict = stdout.split('\n').some((ref) => {
       const trimmed = ref.trim()

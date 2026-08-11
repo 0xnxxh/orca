@@ -122,6 +122,7 @@ const forgetRemovedForExecutionHostMock = vi.fn<
 const mockApi = {
   worktrees: {
     create: vi.fn(),
+    cancelCreate: vi.fn().mockResolvedValue({ cancelled: true }),
     prefetchCreateBase: vi.fn().mockResolvedValue(undefined),
     list: worktreeListMock,
     listDetected: listDetectedMock,
@@ -4588,6 +4589,26 @@ describe('createWorktree base status merge', () => {
     })
   })
 
+  it('passes the early-terminal opt-in only through local desktop create IPC', async () => {
+    const store = createTestStore()
+    const wt = makeWorktree({
+      id: 'repo1::/path/feature',
+      repoId: 'repo1',
+      path: '/path/feature'
+    })
+    mockApi.worktrees.create.mockResolvedValue({ worktree: wt })
+    const createWorktree = store.getState().createWorktree
+    const args: Parameters<typeof createWorktree> = ['repo1', 'feature']
+    args[25] = { startTerminalEarly: true, focusEarlyTerminal: false }
+
+    await createWorktree(...args)
+
+    expect(mockApi.worktrees.create).toHaveBeenCalledWith(
+      expect.objectContaining({ startTerminalEarly: true, focusEarlyTerminal: false })
+    )
+    expect(runtimeEnvironmentTransportCall).not.toHaveBeenCalled()
+  })
+
   it('stamps the owning runtime host onto worktrees created on a remote runtime', async () => {
     const store = createTestStore()
     const created = makeWorktree({
@@ -5757,6 +5778,41 @@ describe('worktree remote runtime mutations', () => {
     })
     expect(mockApi.worktrees.create).not.toHaveBeenCalled()
     expect(store.getState().worktreesByRepo.repo1).toEqual([wt])
+  })
+
+  it('omits the local-only early-terminal opt-in from paired-runtime create RPC', async () => {
+    const store = createTestStore()
+    const wt = makeWorktree({
+      id: 'repo1::/path/feature',
+      repoId: 'repo1',
+      path: '/path/feature'
+    })
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-create',
+      ok: true,
+      result: { worktree: wt },
+      _meta: { runtimeId: 'runtime-remote' }
+    })
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
+      worktreesByRepo: { repo1: [] }
+    } as Partial<AppState>)
+    const createWorktree = store.getState().createWorktree
+    const args: Parameters<typeof createWorktree> = ['repo1', 'feature']
+    args[25] = { startTerminalEarly: true, focusEarlyTerminal: false }
+
+    await createWorktree(...args)
+
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'worktree.create',
+        params: expect.not.objectContaining({
+          startTerminalEarly: expect.anything(),
+          focusEarlyTerminal: expect.anything()
+        })
+      })
+    )
+    expect(mockApi.worktrees.create).not.toHaveBeenCalled()
   })
 
   it('persists Jira item and source context through paired-runtime create', async () => {
@@ -9980,6 +10036,118 @@ describe('pending worktree creation state', () => {
 
     store.getState().removePendingWorktreeCreation('c2')
     expect(store.getState().activePendingCreationId).toBeNull()
+  })
+
+  it('keeps an active local early create visible until cancellation is accepted', async () => {
+    const store = createTestStore()
+    let resolveCancellation!: (result: { cancelled: boolean }) => void
+    mockApi.worktrees.cancelCreate.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCancellation = resolve
+      })
+    )
+    store.getState().beginPendingWorktreeCreation(
+      makePendingCreation('c1', {
+        request: {
+          ...makePendingCreation('c1').request,
+          startTerminalEarly: true,
+          worktreeCreateProgressMode: 'stepped'
+        }
+      })
+    )
+
+    const removal = store.getState().removePendingWorktreeCreation('c1')
+
+    expect(mockApi.worktrees.cancelCreate).toHaveBeenCalledWith({ creationId: 'c1' })
+    expect(store.getState().pendingWorktreeCreations.c1).toBeDefined()
+    expect(store.getState().activePendingCreationId).toBe('c1')
+
+    resolveCancellation({ cancelled: true })
+    await removal
+
+    expect(store.getState().pendingWorktreeCreations.c1).toBeUndefined()
+    expect(store.getState().activePendingCreationId).toBeNull()
+  })
+
+  it.each([
+    ['main already committed startup', () => Promise.resolve({ cancelled: false })],
+    ['cancellation IPC failed', () => Promise.reject(new Error('ipc unavailable'))]
+  ])('retains an early create when %s', async (_label, cancel) => {
+    const store = createTestStore()
+    mockApi.worktrees.cancelCreate.mockImplementationOnce(cancel)
+    store.getState().beginPendingWorktreeCreation(
+      makePendingCreation('c1', {
+        request: {
+          ...makePendingCreation('c1').request,
+          startTerminalEarly: true,
+          worktreeCreateProgressMode: 'stepped'
+        }
+      })
+    )
+
+    await store.getState().removePendingWorktreeCreation('c1')
+
+    expect(store.getState().pendingWorktreeCreations.c1).toBeDefined()
+    expect(store.getState().activePendingCreationId).toBe('c1')
+  })
+
+  it('does not let a delayed cancellation remove a retried attempt', async () => {
+    const store = createTestStore()
+    let resolveCancellation!: (result: { cancelled: boolean }) => void
+    mockApi.worktrees.cancelCreate.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCancellation = resolve
+      })
+    )
+    store.getState().beginPendingWorktreeCreation(
+      makePendingCreation('c1', {
+        request: {
+          ...makePendingCreation('c1').request,
+          startTerminalEarly: true,
+          worktreeCreateProgressMode: 'stepped'
+        }
+      })
+    )
+    const removal = store.getState().removePendingWorktreeCreation('c1')
+    store.getState().updatePendingWorktreeCreation('c1', { startedAt: 2000 })
+
+    resolveCancellation({ cancelled: true })
+    await removal
+
+    expect(store.getState().pendingWorktreeCreations.c1.startedAt).toBe(2000)
+  })
+
+  it.each([
+    ['paired runtime', { worktreeCreateProgressMode: 'indeterminate' as const }],
+    [
+      'SSH host',
+      {
+        worktreeCreateProgressMode: 'stepped' as const,
+        workspaceRunContext: {
+          kind: 'workspace-run' as const,
+          projectId: 'project-1',
+          hostId: 'ssh:target' as const,
+          projectHostSetupId: 'setup-1',
+          repoId: 'repo1',
+          path: '/repo'
+        }
+      }
+    ]
+  ])('does not send desktop early-create cancellation for a %s', (_label, requestPatch) => {
+    const store = createTestStore()
+    store.getState().beginPendingWorktreeCreation(
+      makePendingCreation('c1', {
+        request: {
+          ...makePendingCreation('c1').request,
+          startTerminalEarly: true,
+          ...requestPatch
+        }
+      })
+    )
+
+    store.getState().removePendingWorktreeCreation('c1')
+
+    expect(mockApi.worktrees.cancelCreate).not.toHaveBeenCalled()
   })
 
   it('removePendingWorktreeCreation cancels active VM provisioning', () => {

@@ -790,6 +790,8 @@ const api = {
 
     create: (args) => ipcRenderer.invoke('worktrees:create', args),
 
+    cancelCreate: (args) => ipcRenderer.invoke('worktrees:cancelCreate', args),
+
     onCreateProgress: (
       callback: (data: { creationId?: string; phase: 'fetching' | 'creating' }) => void
     ): (() => void) => {

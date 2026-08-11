@@ -27,8 +27,8 @@ export type WorktreeTeardownDeps = {
   runtime?: OrcaRuntimeService
   /** Authoritative id for callers whose selector no longer resolves (orphaned workspace). */
   resolvedWorktreeId?: string
-  /** SSH connection owning `resolvedWorktreeId`; prevents same-id cross-host graph matches. */
-  resolvedConnectionId?: string
+  /** Connection owning `resolvedWorktreeId`; null denotes the local/WSL host. */
+  resolvedConnectionId?: string | null
   /** Runtime environment owning a mirrored `resolvedWorktreeId`. */
   resolvedRuntimeEnvironmentId?: string
   localProvider: IPtyProvider
@@ -130,7 +130,7 @@ export async function killAllProcessesForWorktree(
             deadline,
             stopPty,
             ...(deps.resolvedWorktreeId ? { resolvedWorktreeId: deps.resolvedWorktreeId } : {}),
-            ...(deps.resolvedConnectionId
+            ...(deps.resolvedConnectionId !== undefined
               ? { resolvedConnectionId: deps.resolvedConnectionId }
               : {}),
             ...(deps.resolvedRuntimeEnvironmentId

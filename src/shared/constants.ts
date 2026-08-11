@@ -368,6 +368,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     agentHibernationIdleMs: 30 * 60 * 1000,
     experimentalNewWorktreeCardStyle: false,
     experimentalEphemeralVms: false,
+    experimentalEarlyWorktreeTerminal: false,
     compactWorktreeCards: false,
     // Why: local desktop stays the default until the user picks a saved runtime environment.
     activeRuntimeEnvironmentId: null,

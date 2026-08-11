@@ -3990,6 +3990,8 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     const linkedWorkItem = options?.linkedWorkItem
     const linkedTaskSourceContext = options?.linkedTaskSourceContext
     const startupDraft = options?.startupDraft
+    const startTerminalEarly = options?.startTerminalEarly === true
+    const focusEarlyTerminal = options?.focusEarlyTerminal
     try {
       for (let attempt = 0; attempt < CLIENT_WORKTREE_CREATE_MAX_ATTEMPTS; attempt += 1) {
         const candidateName = getClientWorktreeCreateCandidate(name, attempt)
@@ -4040,6 +4042,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             ...(linkedWorkItem !== undefined ? { linkedWorkItem } : {}),
             ...(linkedTaskSourceContext !== undefined ? { linkedTaskSourceContext } : {}),
             ...(startup ? { startup } : {}),
+            ...(startTerminalEarly ? { startTerminalEarly: true } : {}),
+            ...(startTerminalEarly && focusEarlyTerminal !== undefined
+              ? { focusEarlyTerminal }
+              : {}),
             ...(creationId ? { creationId } : {}),
             ...(automationProvenanceRequest ? { automationProvenanceRequest } : {})
           }
@@ -4212,39 +4218,67 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     })
   },
 
-  removePendingWorktreeCreation: (creationId, options) => {
-    set((s) => {
-      const entry = s.pendingWorktreeCreations[creationId]
-      if (!entry) {
-        return {}
+  removePendingWorktreeCreation: async (creationId, options) => {
+    const entry = get().pendingWorktreeCreations[creationId]
+    if (!entry) {
+      return
+    }
+    const cleanupVm = options?.cleanupVm ?? true
+    const needsEarlyCreateCancellation =
+      cleanupVm &&
+      entry.status === 'creating' &&
+      entry.request.startTerminalEarly === true &&
+      (entry.request.workspaceRunContext?.hostId ?? 'local') === 'local' &&
+      entry.request.worktreeCreateProgressMode !== 'indeterminate'
+    if (needsEarlyCreateCancellation) {
+      if (typeof window === 'undefined' || !window.api?.worktrees?.cancelCreate) {
+        return
       }
-      const cleanupVm = options?.cleanupVm ?? true
-      if (
-        cleanupVm &&
-        entry.phase === 'provisioning-vm' &&
-        typeof window !== 'undefined' &&
-        window.api?.ephemeralVm?.cancelProvision
-      ) {
-        void window.api.ephemeralVm.cancelProvision({ provisionId: creationId }).catch(() => {
-          // Best effort: dismissing the pending surface shouldn't block on a finished or unreachable provisioning process.
+      try {
+        const result = await window.api.worktrees.cancelCreate({ creationId })
+        if (!result.cancelled) {
+          return
+        }
+      } catch {
+        return
+      }
+    }
+
+    const currentEntry = get().pendingWorktreeCreations[creationId]
+    if (!currentEntry || currentEntry.startedAt !== entry.startedAt) {
+      return
+    }
+    if (
+      cleanupVm &&
+      currentEntry.phase === 'provisioning-vm' &&
+      typeof window !== 'undefined' &&
+      window.api?.ephemeralVm?.cancelProvision
+    ) {
+      void window.api.ephemeralVm.cancelProvision({ provisionId: creationId }).catch(() => {
+        // Best effort: dismissal should not block on unreachable VM provisioning.
+      })
+    }
+    if (
+      cleanupVm &&
+      currentEntry.request.ephemeralVmRuntimeId &&
+      typeof window !== 'undefined' &&
+      window.api?.ephemeralVm?.cleanup
+    ) {
+      void window.api.ephemeralVm
+        .cleanup({ runtimeId: currentEntry.request.ephemeralVmRuntimeId })
+        .catch(() => {
+          // Best effort: Settings still exposes retry and manual cleanup.
         })
-      }
-      if (
-        cleanupVm &&
-        entry.request.ephemeralVmRuntimeId &&
-        typeof window !== 'undefined' &&
-        window.api?.ephemeralVm?.cleanup
-      ) {
-        void window.api.ephemeralVm
-          .cleanup({ runtimeId: entry.request.ephemeralVmRuntimeId })
-          .catch(() => {
-            // Best effort: cancellation shouldn't block on provider cleanup; Settings still exposes retry/manual cleanup.
-          })
+    }
+    set((s) => {
+      const latest = s.pendingWorktreeCreations[creationId]
+      if (!latest || latest.startedAt !== entry.startedAt) {
+        return {}
       }
       const { [creationId]: _removed, ...rest } = s.pendingWorktreeCreations
       return {
         pendingWorktreeCreations: rest,
-        // Why: only clear the active surface if it pointed here, so dismissing a background creation doesn't yank the user away.
+        // Why: dismissing a background creation must not yank a different active surface away.
         ...(s.activePendingCreationId === creationId ? { activePendingCreationId: null } : {})
       }
     })

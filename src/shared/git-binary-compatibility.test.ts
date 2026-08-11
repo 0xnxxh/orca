@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -148,6 +148,26 @@ describeBinaryCompatibility('real Git binary compatibility', () => {
     const remaining = await runGit(['worktree', 'list', '--porcelain'])
     expect(remaining.stdout).not.toContain('deferred-wt')
     await rm(join(repoPath, 'deferred-trash'), { recursive: true, force: true })
+  })
+
+  it('materializes a worktree created without checkout', async () => {
+    const worktreeDirectory = 'two-phase-wt'
+    const worktreePath = join(repoPath, worktreeDirectory)
+    await runGit([
+      'worktree',
+      'add',
+      '--no-checkout',
+      '-b',
+      'compat-two-phase',
+      worktreeDirectory,
+      'HEAD'
+    ])
+    await expect(readFile(join(worktreePath, 'tracked.txt'), 'utf8')).rejects.toThrow()
+
+    await runGit(['-C', worktreeDirectory, 'checkout', '--force', 'compat-two-phase'])
+    await expect(readFile(join(worktreePath, 'tracked.txt'), 'utf8')).resolves.toBe(
+      'compatibility\n'
+    )
   })
 
   it('recognizes ref and merge-tree compatibility boundaries', async () => {

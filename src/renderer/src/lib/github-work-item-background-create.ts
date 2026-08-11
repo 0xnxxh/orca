@@ -93,8 +93,9 @@ const DEFAULT_DEPS: BackgroundGitHubWorkItemCreateDeps = {
     store.setActiveView('terminal')
     store.setSidebarOpen(true)
   },
-  removePendingCreate: (creationId) =>
-    useAppStore.getState().removePendingWorktreeCreation(creationId),
+  removePendingCreate: (creationId) => {
+    void useAppStore.getState().removePendingWorktreeCreation(creationId)
+  },
   setActiveView: (view) => useAppStore.getState().setActiveView(view),
   toastError: (message) => toast.error(message)
 }

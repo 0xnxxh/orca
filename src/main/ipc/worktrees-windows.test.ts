@@ -5,6 +5,7 @@ const {
   handleMock,
   removeHandlerMock,
   listWorktreesMock,
+  listWorktreeGraphMock,
   assertWorktreeCleanForRemovalMock,
   addWorktreeMock,
   removeWorktreeMock,
@@ -35,6 +36,7 @@ const {
   handleMock: vi.fn(),
   removeHandlerMock: vi.fn(),
   listWorktreesMock: vi.fn(),
+  listWorktreeGraphMock: vi.fn(),
   assertWorktreeCleanForRemovalMock: vi.fn(),
   addWorktreeMock: vi.fn(),
   removeWorktreeMock: vi.fn(),
@@ -72,6 +74,7 @@ vi.mock('electron', () => ({
 
 vi.mock('../git/worktree', () => ({
   listWorktrees: listWorktreesMock,
+  listWorktreeGraph: listWorktreeGraphMock,
   listWorktreesStrict: listWorktreesMock,
   assertWorktreeCleanForRemoval: assertWorktreeCleanForRemovalMock,
   addWorktree: addWorktreeMock,
@@ -165,6 +168,7 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
     handleMock.mockReset()
     removeHandlerMock.mockReset()
     listWorktreesMock.mockReset()
+    listWorktreeGraphMock.mockReset()
     assertWorktreeCleanForRemovalMock.mockReset()
     addWorktreeMock.mockReset()
     removeWorktreeMock.mockReset()
@@ -250,6 +254,7 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
     computeWorktreePathMock.mockReturnValue('C:\\workspaces\\improve-dashboard')
     ensurePathWithinWorkspaceMock.mockReturnValue('C:\\workspaces\\improve-dashboard')
     listWorktreesMock.mockResolvedValue([])
+    listWorktreeGraphMock.mockImplementation((...args) => listWorktreesMock(...args))
     assertWorktreeCleanForRemovalMock.mockResolvedValue(undefined)
     killAllProcessesForWorktreeMock.mockResolvedValue({
       runtimeStopped: 0,
@@ -299,7 +304,9 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
       'C:\\workspaces\\improve-dashboard',
       'improve-dashboard',
       'origin/main',
-      false
+      false,
+      false,
+      undefined
     )
     expect(resolveLocalGitUsernameMock).not.toHaveBeenCalled()
     expect(store.setWorktreeMeta).toHaveBeenCalledWith(
@@ -346,7 +353,9 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
       'C:\\workspaces\\improve-dashboard',
       'octocat/improve-dashboard',
       'origin/main',
-      false
+      false,
+      false,
+      undefined
     )
   })
 

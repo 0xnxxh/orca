@@ -25,16 +25,13 @@ import {
 } from '@/lib/pending-worktree-creation'
 import { createBrowserUuid } from '@/lib/browser-uuid'
 import { seedAgentTabStateAfterWorktreeCreate } from '@/lib/worktree-creation-agent-seeds'
-import { resolveBackendDraftStartup } from '@/lib/worktree-draft-startup-view-mode'
 import {
   buildWorktreeCreationStartupOpt,
   getInitialWorktreeCreationPhase,
-  getWorktreeCreationIndeterminate
+  getWorktreeCreationIndeterminate,
+  isBackendOwnedWorktreeCreationStartup,
+  resolveWorktreeCreationStartups
 } from '@/lib/worktree-creation-flow-startup'
-
-type ContinueBackgroundWorktreeCreationOptions = {
-  revealCreationSurface?: boolean
-}
 
 // Why: activePendingCreationId can outlive the terminal route when the user
 // switches app views; only the terminal route renders the creation panel.
@@ -103,9 +100,9 @@ async function executeWorktreeCreation(
     return
   }
 
+  const { backendStartup, createStartup } = resolveWorktreeCreationStartups(preparedRequest)
   let result: CreateWorktreeResult
   try {
-    const backendStartup = resolveBackendDraftStartup(preparedRequest)
     result = await useAppStore
       .getState()
       .createWorktree(
@@ -125,7 +122,7 @@ async function executeWorktreeCreation(
         preparedRequest.workspaceStatus,
         preparedRequest.linkedGitLabMR,
         preparedRequest.linkedGitLabIssue,
-        backendStartup,
+        createStartup,
         preparedRequest.pendingFirstAgentMessageRename,
         creationId,
         preparedRequest.linkedLinearIssueWorkspaceId,
@@ -144,6 +141,12 @@ async function executeWorktreeCreation(
           // Why: the remote host must own task-draft startup so its initial terminal is the agent, not an idle fallback shell.
           ...(!backendStartup && preparedRequest.agent && preparedRequest.launchDraftPrompt
             ? { startupDraft: preparedRequest.launchDraftPrompt }
+            : {}),
+          ...(preparedRequest.startTerminalEarly === true
+            ? {
+                startTerminalEarly: true,
+                focusEarlyTerminal: preparedRequest.focusEarlyTerminal !== false
+              }
             : {})
         }
       )
@@ -170,6 +173,11 @@ async function executeWorktreeCreation(
     return
   }
 
+  if (result.earlyStartupCancelled) {
+    void useAppStore.getState().removePendingWorktreeCreation(creationId, { cleanupVm: false })
+    return
+  }
+
   const worktree = result.worktree
   // Why: if the user dismissed/cancelled while the create was in flight, the entry
   // is gone. Git already made the worktree on disk, but don't auto-provision (trust
@@ -181,6 +189,7 @@ async function executeWorktreeCreation(
   await attachEphemeralVmRuntimeToWorkspace(preparedRequest, worktree.id)
 
   const backendSpawned = result.startupTerminal?.spawned === true
+  const backendOwnedStartup = isBackendOwnedWorktreeCreationStartup(backendStartup, backendSpawned)
   if (preparedRequest.startupPlan && !backendSpawned && !preparedRequest.startupPlan.launchToken) {
     // Why: delayed delivery must target the exact pane spawned from this queued
     // startup, so both halves of the handoff share one renderer-session token.
@@ -188,7 +197,7 @@ async function executeWorktreeCreation(
   }
   const startupOpt = buildWorktreeCreationStartupOpt(preparedRequest, backendSpawned)
 
-  if (worktree.path) {
+  if (worktree.path && !backendSpawned) {
     const repoConnectionId =
       useAppStore.getState().repos.find((repo) => repo.id === worktree.repoId)?.connectionId ?? null
     await preflightAgentTrust(preparedRequest, worktree.path, repoConnectionId)
@@ -237,7 +246,7 @@ async function executeWorktreeCreation(
 
   // Why: clearing synchronously right after activation lets React commit the
   // panel→terminal swap in one frame — no two-row flicker, no empty-terminal flash.
-  useAppStore.getState().removePendingWorktreeCreation(creationId, { cleanupVm: false })
+  void useAppStore.getState().removePendingWorktreeCreation(creationId, { cleanupVm: false })
   seedAgentTabStateAfterWorktreeCreate({
     request: preparedRequest,
     worktreeId: worktree.id,
@@ -245,10 +254,10 @@ async function executeWorktreeCreation(
     startupTerminalTabId: result.startupTerminal?.tabId,
     backendSpawned
   })
-  if (preparedRequest.startupPlan && !backendSpawned) {
+  if (preparedRequest.startupPlan && !backendOwnedStartup) {
     void ensureAgentStartupInTerminal({
       worktreeId: worktree.id,
-      primaryTabId,
+      primaryTabId: result.startupTerminal?.tabId ?? primaryTabId,
       startup: preparedRequest.startupPlan
     })
   }
@@ -306,7 +315,7 @@ export function beginBackgroundWorktreePreparation(request: WorktreeCreationRequ
 export function continueBackgroundWorktreeCreation(
   creationId: string,
   request: WorktreeCreationRequest,
-  options: ContinueBackgroundWorktreeCreationOptions = {}
+  options: { revealCreationSurface?: boolean } = {}
 ): boolean {
   const store = useAppStore.getState()
   if (!store.pendingWorktreeCreations[creationId]) {

@@ -14,6 +14,7 @@ const STALE_DAEMON_CWD_MARKERS = [
 ]
 // Thrown by ipc/pty.ts when a persisted pane owner can't be proven alive or dead (STA-3536).
 const PANE_OWNER_UNVERIFIED_MARKER = 'terminal_pane_owner_unverified'
+const WORKTREE_CHECKOUT_IN_PROGRESS_MARKER = 'worktree_checkout_in_progress'
 
 function isSshError(error: string): boolean {
   return error.startsWith(SSH_PREFIX) || error.includes(SSH_RELAY_LOST_MARKER)
@@ -44,18 +45,27 @@ export function shouldOfferDaemonRestart(error: string): boolean {
   )
 }
 
-/** Swaps the raw pane-owner-unverified code for copy a user can act on. */
 export function humanizeTerminalError(error: string): string {
-  if (!error.includes(PANE_OWNER_UNVERIFIED_MARKER)) {
-    return error
-  }
-  return error.replace(
-    PANE_OWNER_UNVERIFIED_MARKER,
-    translate(
-      'auto.components.terminal.pane.TerminalErrorToast.7ee11bc0db',
-      "Orca couldn't confirm whether this terminal's previous session is still running, so it left the session untouched. Reopen this pane to retry."
+  let displayError = error
+  if (displayError.includes(WORKTREE_CHECKOUT_IN_PROGRESS_MARKER)) {
+    displayError = displayError.replace(
+      WORKTREE_CHECKOUT_IN_PROGRESS_MARKER,
+      translate(
+        'auto.components.terminal.pane.TerminalErrorToast.0e30340156',
+        'This workspace is still being prepared. New terminals will be available when it is ready.'
+      )
     )
-  )
+  }
+  if (displayError.includes(PANE_OWNER_UNVERIFIED_MARKER)) {
+    displayError = displayError.replace(
+      PANE_OWNER_UNVERIFIED_MARKER,
+      translate(
+        'auto.components.terminal.pane.TerminalErrorToast.7ee11bc0db',
+        "Orca couldn't confirm whether this terminal's previous session is still running, so it left the session untouched. Reopen this pane to retry."
+      )
+    )
+  }
+  return displayError
 }
 
 export function TerminalErrorToast({
@@ -68,6 +78,7 @@ export function TerminalErrorToast({
   onRestartDaemon?: () => void
 }): React.JSX.Element {
   const ssh = isSshError(error)
+  const checkoutInProgress = error.includes(WORKTREE_CHECKOUT_IN_PROGRESS_MARKER)
   const showDaemonRestart = !ssh && onRestartDaemon && shouldOfferDaemonRestart(error)
   const displayError = humanizeTerminalError(error)
 
@@ -101,7 +112,7 @@ export function TerminalErrorToast({
                 'Restart the terminal daemon from here to clear stale daemon state.'
               )}
             </>
-          ) : !ssh ? (
+          ) : !ssh && !checkoutInProgress ? (
             <>
               {'\n'}
               {translate(

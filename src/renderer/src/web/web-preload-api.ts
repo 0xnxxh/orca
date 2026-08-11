@@ -1807,6 +1807,8 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
         worktree: withRuntimeWorktreeOwner(owned.result.worktree, owned.hostId)
       }
     },
+    // Early-create cancellation is desktop-local and intentionally absent from paired-runtime RPC.
+    cancelCreate: async () => ({ cancelled: false }),
     // Why: the runtime create path emits no two-phase progress, so the panel falls back to an indeterminate spinner.
     onCreateProgress: () => noopUnsubscribe,
     prefetchCreateBase: async ({ repoId, baseBranch }) => {

@@ -15,6 +15,7 @@ import {
 } from '@/lib/github-links'
 import { activateAndRevealWorktree, type AgentStartedTelemetry } from '@/lib/worktree-activation'
 import { runBackgroundWorktreeCreation } from '@/lib/worktree-creation-flow'
+import { buildEarlyTerminalRendererDeliveryStartup } from '@/lib/worktree-creation-flow-startup'
 import {
   findPendingLinkedWorkItemCreationId,
   type WorktreeCreationRequest
@@ -208,6 +209,7 @@ import { isWorkspaceLinkedItemSourceContextMatch } from '../../../shared/workspa
 import { resolveJiraSourceHostId } from '@/lib/jira-source-host'
 import { buildTrustedComposerIssueCommand } from '@/lib/composer-issue-command'
 import { settleComposerSubmit } from '@/lib/composer-submit-cancellation'
+import { isWebClientLocation } from '@/lib/web-client-location'
 
 const NEVER_CANCEL_COMPOSER_SUBMIT = (): boolean => false
 
@@ -3798,6 +3800,21 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
               telemetry: composerTelemetry
             }
           : undefined
+      const startTerminalEarly =
+        selectedRepoIsGit &&
+        !isWebClientLocation() &&
+        !selectedRepoIsRemote &&
+        getActiveRuntimeTarget(selectedRepoSettings).kind === 'local' &&
+        settings?.experimentalEarlyWorktreeTerminal === true
+      const rendererDeliveryStartup =
+        startTerminalEarly && !backendStartup
+          ? buildEarlyTerminalRendererDeliveryStartup({
+              plan: startupPlan,
+              agent: tuiAgent,
+              telemetry: composerTelemetry
+            })
+          : undefined
+      const createStartup = backendStartup ?? rendererDeliveryStartup
       const startupPolicySettlement = await settleComposerSubmit(
         persistSetupAgentStartupPolicy(),
         isSubmissionCancelled
@@ -3838,7 +3855,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         resolvedInitialWorkspaceStatus,
         smartGitHubResolution.kind === 'none' ? (linkedGitLabMR ?? undefined) : undefined,
         smartGitHubResolution.kind === 'none' ? (linkedGitLabIssue ?? undefined) : undefined,
-        backendStartup,
+        createStartup,
         pendingFirstAgentMessageRename,
         undefined,
         linkedLinearIssueWorkspaceId,
@@ -3852,7 +3869,8 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
           linkedTaskSourceContext: taskSourceContext,
           ...(!backendStartup && startupPlan?.draftPrompt
             ? { startupDraft: startupPlan.draftPrompt }
-            : {})
+            : {}),
+          ...(startTerminalEarly ? { startTerminalEarly: true, focusEarlyTerminal: true } : {})
         }
       )
       const worktree = result.worktree
@@ -3871,6 +3889,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
             }
           : undefined
       const backendSpawnedStartup = result.startupTerminal?.spawned === true
+      const backendOwnedStartup = Boolean(backendStartup && backendSpawnedStartup)
       if (startupPlan && !backendSpawnedStartup && !startupPlan.launchToken) {
         // Why: delayed delivery must target the exact pane from this queued startup, so both halves share one renderer-session token.
         startupPlan.launchToken = createBrowserUuid()
@@ -3913,10 +3932,12 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
           seedNativeChatAppliedSessionOptions(optionScopeKey, tuiAgent, startupPlan.sessionOptions)
         }
       }
-      if (startupPlan && !backendSpawnedStartup) {
+      if (startupPlan && !backendOwnedStartup) {
         void ensureAgentStartupInTerminal({
           worktreeId: worktree.id,
-          primaryTabId: activation === false ? null : activation.primaryTabId,
+          primaryTabId:
+            result.startupTerminal?.tabId ??
+            (activation === false ? null : activation.primaryTabId),
           startup: startupPlan
         })
       }
@@ -3972,6 +3993,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     selectedRepoAgentLaunchPlatform,
     selectedRepoExecutionHostId,
     selectedRepoIsRemote,
+    selectedRepoSettings,
     selectedRepoStartupShell,
     selectedRepoIsGit,
     selectedRepoRequiresConnection,
@@ -3980,6 +4002,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     settings?.agentDefaultArgs,
     settings?.agentDefaultEnv,
     settings?.autoRenameBranchFromWork,
+    settings?.experimentalEarlyWorktreeTerminal,
     settings?.nativeChatSessionOptions,
     smartNameMode,
     setSidebarOpen,
@@ -4484,6 +4507,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
             ? { linkedGitLabIssue }
             : {}),
           ...(backendStartup ? { startup: backendStartup } : {}),
+          ...(selectedRepoIsGit && settings?.experimentalEarlyWorktreeTerminal === true
+            ? { startTerminalEarly: true, focusEarlyTerminal: !createMultiple }
+            : {}),
           ...(issueCommand ? { issueCommand } : {}),
           pendingFirstAgentMessageRename,
           note: trimmedNote,
@@ -4562,6 +4588,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       settings?.agentDefaultArgs,
       settings?.agentDefaultEnv,
       settings?.autoRenameBranchFromWork,
+      settings?.experimentalEarlyWorktreeTerminal,
       settings?.nativeChatSessionOptions,
       smartNameMode,
       sourceIntentBlocksCreate,

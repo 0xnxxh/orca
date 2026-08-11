@@ -2511,7 +2511,9 @@ describe('createPtySubprocess', () => {
         cols: 80,
         rows: 24,
         cwd: 'C:\\Users\\jin\\repo',
-        shellOverride: 'C:\\PortableGit\\bin\\bash.exe'
+        shellOverride: 'C:\\PortableGit\\bin\\bash.exe',
+        env: { BASH_ENV: 'C:\\premature\\bash-env', ENV: 'C:\\premature\\env' },
+        envToDelete: ['BASH_ENV', 'ENV']
       })
     } finally {
       if (platform) {
@@ -2527,6 +2529,9 @@ describe('createPtySubprocess', () => {
         env: expect.objectContaining({ CHERE_INVOKING: '1' })
       })
     )
+    const spawnedEnv = spawnMock.mock.calls.at(-1)![2].env
+    expect(spawnedEnv.BASH_ENV).toBeUndefined()
+    expect(spawnedEnv.ENV).toBeUndefined()
   })
 
   it('rejects a missing explicit native Windows cwd before node-pty spawn', () => {

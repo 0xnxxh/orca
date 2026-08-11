@@ -56,6 +56,7 @@ import {
   listWorktrees,
   removeWorktree,
   _resetWorktreeScanCacheForTests,
+  WORKTREE_ADD_TIMEOUT_MS,
   WORKTREE_LIST_TIMEOUT_MS,
   WORKTREE_REMOVAL_PREFLIGHT_TIMEOUT_MS,
   WORKTREE_REMOVAL_REGISTRATION_TIMEOUT_MS
@@ -1536,7 +1537,7 @@ describe('addSparseWorktree', () => {
 
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
       ['sparse-checkout', 'set', '--', '-docs', 'src'],
-      { cwd: '/repo-feature' }
+      { cwd: '/repo-feature', timeout: WORKTREE_ADD_TIMEOUT_MS }
     )
   })
 

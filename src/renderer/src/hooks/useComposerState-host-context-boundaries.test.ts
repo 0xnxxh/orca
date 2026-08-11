@@ -882,4 +882,27 @@ describe('useComposerState host-context boundaries', () => {
     expect(cardPropsSection).toContain('selectedEphemeralVmRecipeId:')
     expect(cardPropsSection).toContain('ephemeralVmRecipeError:')
   })
+
+  it('captures the early-terminal experiment only for Git worktree creates', () => {
+    const fullSubmit = sourceBetween(
+      HOOK_SOURCE,
+      'const submit = useCallback',
+      'const submitQuick = useCallback'
+    )
+    const quickSubmit = sourceBetween(
+      HOOK_SOURCE,
+      'const submitQuick = useCallback',
+      'const createGateInput'
+    )
+
+    for (const submitSource of [fullSubmit, quickSubmit]) {
+      expect(submitSource).toContain('settings?.experimentalEarlyWorktreeTerminal === true')
+      expect(submitSource).toContain('startTerminalEarly: true')
+      expect(submitSource.indexOf('if (isProjectGroupTarget)')).toBeLessThan(
+        submitSource.indexOf('startTerminalEarly: true')
+      )
+    }
+    expect(fullSubmit).toContain('buildEarlyTerminalRendererDeliveryStartup')
+    expect(quickSubmit).toContain('focusEarlyTerminal: !createMultiple')
+  })
 })
