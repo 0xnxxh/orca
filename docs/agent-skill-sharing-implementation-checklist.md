@@ -646,6 +646,14 @@ are owned by the connected Windows Orca runtime. A reproducible second-distro se
 `wsl --install -d Debian --no-launch`, followed by first launch and an isolated Orca test user/home
 record before the multi-distro gate.
 
+At commit `1e2d2e806f`, the opt-in real-Windows workspace harness created an actual Git linked
+worktree and a plain non-Git folder under owner-controlled temporary roots containing spaces and
+non-ASCII characters. It installed globally and into both workspace kinds through host-owned IDs,
+then removed the complete fixture tree. The full native `src/main/skills` slice passed 284 tests
+with 21 intentional platform skips across 43 files, and the Node typecheck passed. Two discovery
+fixtures uncovered by that run now use Windows junctions instead of privileged directory symlinks,
+matching Orca's supported Windows placement topology.
+
 ### Host preparation
 
 - [x] Confirm `windows 2` is saved and reachable through `orca environment list` and
@@ -667,11 +675,11 @@ record before the multi-distro gate.
 - [ ] Package on macOS and install on native Windows; compare manifest and digest.
 - [ ] Package on native Windows and install on macOS/Linux; compare identity and executable-mode
       policy.
-- [ ] Test global home resolution without constructing the path on the macOS client.
-- [ ] Test the discovered Git checkout and plain folder workspace independently.
+- [x] Test global home resolution without constructing the path on the macOS client.
+- [x] Test a host-owned real Git worktree and plain folder workspace independently.
 - [ ] Test path joining, drive prefixes, UNC rejection/handling policy, reserved names, trailing
       dots/spaces, long paths, Unicode normalization, and case collisions.
-- [ ] Test source and destination paths containing spaces and non-ASCII characters.
+- [x] Test source and destination paths containing spaces and non-ASCII characters.
 - [x] Test junction creation succeeds for a detected provider.
 - [x] Force junction denial and verify an independently copied, digest-verified fallback.
 - [ ] Test an unowned junction, external link, broken junction, and provider parent that is already
