@@ -6,7 +6,7 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `cdafe43542` on `skills-share` (pushed; no PR).
+- Orca implementation: `8be7275d0d` on `skills-share` (pushed; no PR).
 - Orca Cloud: `81a581d` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
@@ -22,6 +22,8 @@ Validated so far:
   alias placement, interrupted update recovery, conflict preservation, update, and removal.
 - Real Ubuntu 24.04 WSL provider detection and POSIX semantics, including case-sensitive names,
   `0600` regular files, and `0700` executable files.
+- Exact portable package digest and archive SHA-256 goldens passed on macOS and native Windows
+  despite different bundled zlib versions (`1.2.12` and `1.3.1`).
 - Real native Windows global, linked Git-worktree, and plain folder installs with spaces and
   non-ASCII paths, plus privacy-safe install diagnostics and owner-private staging tests.
 - Isolated staging bucket, IAM, secret container, log metrics, dashboard, and alerts in
@@ -203,7 +205,10 @@ does not mean the surrounding phase is complete.
 
 ### Package tests
 
-- [ ] Test deterministic manifests, archives, and digests on every target operating system.
+- [x] Test deterministic manifests, archives, and digests on macOS and native Windows. The exact
+      golden passed on both hosts at `8be7275d0d` after replacing zlib-dependent streaming output
+      with bounded deterministic stored DEFLATE blocks.
+- [ ] Repeat the portable package golden on native Linux and inside WSL.
 - [x] Test source changes during packaging.
 - [x] Test CRLF/LF behavior explicitly and document whether byte identity changes.
 - [x] Test executable-mode preservation and Windows's mode limitations.
