@@ -391,6 +391,90 @@ describe('shared agent-hook-listener', () => {
     expect(next?.payload.interactivePrompt).toBeUndefined()
   })
 
+  it('keeps AskUserQuestion visible through a late parallel sibling completion', () => {
+    const questions = { questions: [{ question: 'Pick', options: ['a', 'b'] }] }
+    const question = normalizeHookPayload(
+      state,
+      'claude',
+      {
+        paneKey: PANE_KEY,
+        payload: {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_use_id: 'tool-question',
+          tool_input: questions
+        }
+      },
+      'production'
+    )
+    normalizeHookPayload(
+      state,
+      'claude',
+      {
+        paneKey: PANE_KEY,
+        payload: {
+          hook_event_name: 'PermissionRequest',
+          tool_name: 'AskUserQuestion',
+          tool_input: questions
+        }
+      },
+      'production'
+    )
+    const siblingCompletion = normalizeHookPayload(
+      state,
+      'claude',
+      {
+        paneKey: PANE_KEY,
+        payload: {
+          hook_event_name: 'PostToolUse',
+          tool_name: 'Bash',
+          tool_use_id: 'tool-sibling',
+          tool_input: { command: 'sleep 5' }
+        }
+      },
+      'production'
+    )
+
+    expect(siblingCompletion?.payload).toMatchObject({
+      state: 'waiting',
+      toolName: 'AskUserQuestion',
+      interactivePrompt: question?.payload.interactivePrompt
+    })
+  })
+
+  it('clears AskUserQuestion when its own PostToolUse arrives', () => {
+    normalizeHookPayload(
+      state,
+      'claude',
+      {
+        paneKey: PANE_KEY,
+        payload: {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_use_id: 'tool-question',
+          tool_input: { questions: [{ question: 'Pick', options: ['a', 'b'] }] }
+        }
+      },
+      'production'
+    )
+    const answered = normalizeHookPayload(
+      state,
+      'claude',
+      {
+        paneKey: PANE_KEY,
+        payload: {
+          hook_event_name: 'PostToolUse',
+          tool_name: 'AskUserQuestion',
+          tool_use_id: 'tool-question'
+        }
+      },
+      'production'
+    )
+
+    expect(answered?.payload.state).toBe('working')
+    expect(answered?.payload.interactivePrompt).toBeUndefined()
+  })
+
   it('does not re-assert the AskUserQuestion prompt on PostToolUse', () => {
     // The question was answered, so PostToolUse must clear the live card instead
     // of re-deriving the `{questions}` prompt from the carried tool input.
