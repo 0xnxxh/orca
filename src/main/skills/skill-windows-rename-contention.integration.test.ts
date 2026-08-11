@@ -11,18 +11,25 @@ const roots: string[] = []
 const lockers: ChildProcessWithoutNullStreams[] = []
 
 const LOCK_SCRIPT = [
-  '$stream = [System.IO.File]::Open($args[0], [System.IO.FileMode]::Open,',
+  '$stream = [System.IO.File]::Open($env:ORCA_SKILL_LOCK_PATH, [System.IO.FileMode]::Open,',
   '  [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)',
   "[Console]::Out.WriteLine('LOCKED')",
-  'Start-Sleep -Milliseconds ([int]$args[1])',
+  'Start-Sleep -Milliseconds ([int]$env:ORCA_SKILL_LOCK_DURATION_MS)',
   '$stream.Dispose()'
 ].join('\n')
 
 function holdFile(path: string, durationMs: number) {
   const child = spawn(
     'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', LOCK_SCRIPT, path, String(durationMs)],
-    { windowsHide: true }
+    ['-NoProfile', '-NonInteractive', '-Command', LOCK_SCRIPT],
+    {
+      windowsHide: true,
+      env: {
+        ...process.env,
+        ORCA_SKILL_LOCK_PATH: path,
+        ORCA_SKILL_LOCK_DURATION_MS: String(durationMs)
+      }
+    }
   )
   lockers.push(child)
   let ready = false
