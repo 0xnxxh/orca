@@ -6534,17 +6534,18 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
       _meta: { runtimeId: 'remote-runtime' }
     })
     const store = createTestStore()
+    const repos: AppState['repos'] = [
+      {
+        id: 'runtime-repo-id',
+        path: '/server/repo',
+        displayName: 'repo',
+        badgeColor: 'blue',
+        addedAt: 1
+      }
+    ]
     store.setState({
       settings: { activeRuntimeEnvironmentId: 'env-1' },
-      repos: [
-        {
-          id: 'runtime-repo-id',
-          path: '/server/repo',
-          displayName: 'repo',
-          badgeColor: 'blue',
-          addedAt: 1
-        }
-      ]
+      repos
     } as Partial<AppState>)
 
     await store.getState().fetchWorkItems('caller-repo-id', '/server/repo', 24, 'is:open', {
@@ -6634,17 +6635,18 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
       _meta: { runtimeId: 'source-runtime' }
     })
     const store = createTestStore()
+    const repos: AppState['repos'] = [
+      {
+        id: 'local-repo-id',
+        path: '/server/repo',
+        displayName: 'repo',
+        badgeColor: 'blue',
+        addedAt: 1
+      }
+    ]
     store.setState({
       settings: { activeRuntimeEnvironmentId: 'focused-runtime' },
-      repos: [
-        {
-          id: 'local-repo-id',
-          path: '/server/repo',
-          displayName: 'repo',
-          badgeColor: 'blue',
-          addedAt: 1
-        }
-      ]
+      repos
     } as Partial<AppState>)
 
     const sourceContext = {
