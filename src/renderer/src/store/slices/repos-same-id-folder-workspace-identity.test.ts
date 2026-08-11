@@ -279,6 +279,115 @@ describe('same-id cross-host folder workspace identity', () => {
     })
   })
 
+  it('routes unread and activity metadata to only the active same-id folder owner', async () => {
+    const local = { ...makeFolder({ executionHostId: 'local' }), isUnread: true }
+    const ssh = makeFolder({
+      connectionId: 'builder',
+      executionHostId: undefined,
+      folderPath: '/remote/folder'
+    })
+    const update = vi
+      .fn()
+      .mockImplementation(
+        async ({
+          ownerHostId,
+          updates
+        }: {
+          ownerHostId: string
+          updates: Partial<FolderWorkspace>
+        }) => ({ ...(ownerHostId === 'local' ? local : ssh), ...updates })
+      )
+    const store = createTestStore()
+    const workspaceKey = folderWorkspaceKey('same-id')
+    store.setState({
+      projectGroups: [
+        makeGroup({ executionHostId: 'local' }),
+        makeGroup({ connectionId: 'builder', parentPath: '/remote' })
+      ],
+      folderWorkspaces: [local, ssh],
+      activeWorktreeId: workspaceKey,
+      activeWorkspaceExecutionHostId: 'local'
+    })
+    vi.stubGlobal('window', { api: { folderWorkspaces: { update } } })
+
+    store.getState().clearWorktreeUnread(workspaceKey)
+    expect(store.getState().folderWorkspaces.map((workspace) => workspace.isUnread)).toEqual([
+      false,
+      false
+    ])
+
+    store.setState({ activeWorkspaceExecutionHostId: 'ssh:builder' })
+    store.getState().markWorktreeUnread(workspaceKey)
+    store.getState().bumpWorktreeActivity(workspaceKey)
+    store.getState().bumpWorktreeActivity(workspaceKey)
+    store.setState({ activeWorkspaceExecutionHostId: 'local' })
+
+    const [updatedLocal, updatedSsh] = store.getState().folderWorkspaces
+    expect(updatedLocal).toMatchObject({ isUnread: false, lastActivityAt: 1 })
+    expect(updatedSsh).toMatchObject({ isUnread: true })
+    expect(updatedSsh?.lastActivityAt).toBeGreaterThan(1)
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(4), { timeout: 1_500 })
+    expect(update.mock.calls.map(([args]) => args.ownerHostId)).toEqual([
+      'local',
+      'ssh:builder',
+      'ssh:builder',
+      'ssh:builder'
+    ])
+  })
+
+  it('fails closed for passive folder metadata when a same-id owner is not active', () => {
+    const local = { ...makeFolder({ executionHostId: 'local' }), isUnread: true }
+    const ssh = makeFolder({
+      connectionId: 'builder',
+      executionHostId: undefined,
+      folderPath: '/remote/folder'
+    })
+    const updateFolderWorkspace = vi.fn()
+    const store = createTestStore()
+    const workspaceKey = folderWorkspaceKey('same-id')
+    store.setState({ folderWorkspaces: [local, ssh], updateFolderWorkspace })
+
+    store.getState().clearWorktreeUnread(workspaceKey)
+    store.getState().markWorktreeUnread(workspaceKey)
+    store.getState().bumpWorktreeActivity(workspaceKey)
+
+    expect(store.getState().folderWorkspaces).toEqual([local, ssh])
+    expect(updateFolderWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('clears unread on only the owner selected by generic folder activation', async () => {
+    const local = { ...makeFolder({ executionHostId: 'local' }), isUnread: true }
+    const ssh = {
+      ...makeFolder({
+        connectionId: 'builder',
+        executionHostId: undefined,
+        folderPath: '/remote/folder'
+      }),
+      isUnread: true
+    }
+    const update = vi.fn().mockResolvedValue({ ...ssh, isUnread: false })
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [
+        makeGroup({ executionHostId: 'local' }),
+        makeGroup({ connectionId: 'builder', parentPath: '/remote' })
+      ],
+      folderWorkspaces: [local, ssh]
+    })
+    vi.stubGlobal('window', { api: { folderWorkspaces: { update } } })
+
+    expect(store.getState().setActiveWorktree(folderWorkspaceKey('same-id'), 'ssh:builder')).toBe(
+      true
+    )
+
+    expect(store.getState().folderWorkspaces.map((workspace) => workspace.isUnread)).toEqual([
+      true,
+      false
+    ])
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0]?.[0]).toMatchObject({ ownerHostId: 'ssh:builder' })
+  })
+
   it('reconciles a failed same-id update from the selected owner row', async () => {
     const local = makeFolder({ name: 'Local current', executionHostId: 'local' })
     const ssh = makeFolder({
