@@ -1042,9 +1042,9 @@ function canReuseLocalWslAlias(
     runtimeOwnerKey(runtimeEnvironmentId) === null &&
     !existing.externalSshTargetId?.trim() &&
     !file.externalSshTargetId?.trim() &&
+    areLocalWindowsWslPathAliases(existing.filePath, file.filePath) &&
     getConnectionIdForFileFromState(state, file.worktreeId, file.filePath) === null &&
-    getConnectionIdForFileFromState(state, existing.worktreeId, existing.filePath) === null &&
-    areLocalWindowsWslPathAliases(existing.filePath, file.filePath)
+    getConnectionIdForFileFromState(state, existing.worktreeId, existing.filePath) === null
   )
 }
 
