@@ -1,4 +1,9 @@
 import { REMOTE_SERVER_UPDATE_CAPABILITY } from './remote-server-update'
+import {
+  SKILL_INSTALL_CAPABILITY,
+  SKILL_MANAGEMENT_CAPABILITY,
+  SKILL_UPLOAD_CAPABILITY
+} from './skill-install-capability'
 
 // Why: declares the Orca runtime RPC compatibility contract. Desktop,
 // headless server, CLI, and mobile builds may drift in app version, but
@@ -118,7 +123,10 @@ export const RUNTIME_CAPABILITIES = [
   AGENT_SESSION_OMP_RESUME_PATH_RUNTIME_CAPABILITY,
   FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY,
   ACCOUNT_IMPORT_RUNTIME_CAPABILITY,
-  CODEX_RESET_CREDIT_RUNTIME_CAPABILITY
+  CODEX_RESET_CREDIT_RUNTIME_CAPABILITY,
+  SKILL_INSTALL_CAPABILITY,
+  SKILL_UPLOAD_CAPABILITY,
+  SKILL_MANAGEMENT_CAPABILITY
 ] as const
 
 export type RuntimeCapability = (typeof RUNTIME_CAPABILITIES)[number] | (string & {})

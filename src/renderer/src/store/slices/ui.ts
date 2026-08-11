@@ -762,6 +762,9 @@ export type UISlice = {
   closeSpacePage: () => void
   openSkillsPage: () => void
   closeSkillsPage: () => void
+  pendingSkillShareId: string | null
+  openSkillShare: (shareId: string) => void
+  clearPendingSkillShare: () => void
   openArtifactsPage: () => void
   closeArtifactsPage: () => void
   openMobilePage: () => void
@@ -1258,6 +1261,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
   previousViewBeforeAutomations: 'terminal',
   previousViewBeforeSpace: 'terminal',
   previousViewBeforeSkills: 'terminal',
+  pendingSkillShareId: null,
   previousViewBeforeMobile: 'terminal',
   previousViewBeforeArtifacts: 'terminal',
   setActiveView: (view) => set({ activeView: view }),
@@ -1507,6 +1511,14 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     set((state) => ({
       activeView: state.previousViewBeforeSkills
     })),
+  openSkillShare: (shareId) =>
+    set((state) => ({
+      activeView: 'skills',
+      previousViewBeforeSkills:
+        state.activeView === 'skills' ? state.previousViewBeforeSkills : state.activeView,
+      pendingSkillShareId: shareId
+    })),
+  clearPendingSkillShare: () => set({ pendingSkillShareId: null }),
   openArtifactsPage: () =>
     set((state) => ({
       activeView: 'artifacts',

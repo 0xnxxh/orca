@@ -1,0 +1,6 @@
+export const SKILL_INSTALL_CAPABILITY = 'skills.install.v1' as const
+export const SKILL_UPLOAD_CAPABILITY = 'skills.upload.v1' as const
+export const SKILL_MANAGEMENT_CAPABILITY = 'skills.manage.v1' as const
+
+export const SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE =
+  'Update Orca on the selected machine to install shared skills.'

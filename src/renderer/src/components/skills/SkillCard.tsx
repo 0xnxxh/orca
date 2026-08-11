@@ -1,4 +1,4 @@
-import { BookOpen, Clock, FolderOpen } from 'lucide-react'
+import { BookOpen, Clock, FolderOpen, Share2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,7 +25,13 @@ function formatUpdatedAt(value: number | null): string {
   return value ? dateFormatter.format(new Date(value)) : 'Unknown'
 }
 
-export function SkillCard({ skill }: { skill: DiscoveredSkill }): React.JSX.Element {
+export function SkillCard({
+  skill,
+  onShare
+}: {
+  skill: DiscoveredSkill
+  onShare?: () => void
+}): React.JSX.Element {
   const revealSkill = async (): Promise<void> => {
     const result = await window.api.shell.openInFileManager(skill.skillFilePath)
     if (!result.ok) {
@@ -67,24 +73,37 @@ export function SkillCard({ skill }: { skill: DiscoveredSkill }): React.JSX.Elem
               </p>
             )}
           </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="shrink-0"
-                onClick={() => {
-                  void revealSkill()
-                }}
-              >
-                <FolderOpen className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="top" sideOffset={4}>
-              {translate('auto.components.skills.SkillsPage.dc4c3328ee', 'Reveal file')}
-            </TooltipContent>
-          </Tooltip>
+          <div className="flex shrink-0 items-center gap-1">
+            {onShare ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button type="button" variant="ghost" size="icon-sm" onClick={onShare}>
+                    <Share2 className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={4}>
+                  Share skill
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => {
+                    void revealSkill()
+                  }}
+                >
+                  <FolderOpen className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={4}>
+                {translate('auto.components.skills.SkillsPage.dc4c3328ee', 'Reveal file')}
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </div>
 
         <div className="grid gap-2 text-[11px] text-muted-foreground md:grid-cols-[1fr_auto_auto] md:items-center">

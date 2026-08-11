@@ -402,6 +402,26 @@ import type {
 } from '../shared/shell-open-types'
 import type { SkillDiscoveryResult, SkillDiscoveryTarget } from '../shared/skills'
 import type {
+  SkillCloudDownloadGrant,
+  SkillCloudOperation,
+  SkillCloudPackageDetails
+} from '../shared/skill-cloud-contract'
+import type {
+  SkillInstallPreviewInput,
+  SkillInstallPreviewOperation,
+  ManagedSkillInstallListOperation,
+  SkillPackageVersionInstallInput,
+  SkillRemoveInput,
+  SkillRemoveOperation,
+  SkillShareInstallInput,
+  SkillShareInstallOperation,
+  SkillSharePreview,
+  SkillShareProgress,
+  SkillSharePublishInput,
+  SkillSharePublishOperation,
+  SkillShareResolvedOperation
+} from '../shared/skill-sharing-contract'
+import type {
   SkillFreshnessInventory,
   SkillUpdateRun,
   SkillUpdateStartResult
@@ -2546,6 +2566,26 @@ export type PreloadApi = {
     cancelUpdateRun: () => Promise<void>
     acknowledgeUpdateRun: () => Promise<void>
     getUpdateRun: () => Promise<SkillUpdateRun>
+    prepareShare: (input: {
+      skillId: string
+      target?: SkillDiscoveryTarget
+      packageId?: string
+    }) => Promise<SkillSharePreview>
+    publishShare: (input: SkillSharePublishInput) => Promise<SkillSharePublishOperation>
+    cancelShare: (preparationId: string) => Promise<void>
+    releaseShare: (preparationId: string) => Promise<void>
+    resolveShare: (shareId: string) => Promise<SkillShareResolvedOperation>
+    createDownloadGrant: (shareId: string) => Promise<SkillCloudOperation<SkillCloudDownloadGrant>>
+    installShare: (input: SkillShareInstallInput) => Promise<SkillShareInstallOperation>
+    installPackageVersion: (
+      input: SkillPackageVersionInstallInput
+    ) => Promise<SkillShareInstallOperation>
+    previewInstall: (input: SkillInstallPreviewInput) => Promise<SkillInstallPreviewOperation>
+    removeInstall: (input: SkillRemoveInput) => Promise<SkillRemoveOperation>
+    listManagedInstalls: (environmentId?: string) => Promise<ManagedSkillInstallListOperation>
+    getPackage: (packageId: string) => Promise<SkillCloudOperation<SkillCloudPackageDetails>>
+    listWslDistros: (environmentId?: string) => Promise<string[]>
+    onShareProgress: (callback: (progress: SkillShareProgress) => void) => () => void
     onUpdateRun: (callback: (run: SkillUpdateRun) => void) => () => void
   }
   pet: {
@@ -3103,6 +3143,8 @@ export type PreloadApi = {
     onOpenSettings: (callback: () => void) => () => void
     /** Consumes a one-shot tray/menu-bar "open settings" intent queued before mount. */
     consumePendingOpenSettings: () => Promise<boolean>
+    onOpenSkillShare: (callback: (shareId: string) => void) => () => void
+    consumePendingSkillShare: () => Promise<string | null>
     onOpenSetupGuide: (callback: () => void) => () => void
     onOpenFeatureTour: (callback: () => void) => () => void
     onOpenCrashReport: (callback: () => void) => () => void

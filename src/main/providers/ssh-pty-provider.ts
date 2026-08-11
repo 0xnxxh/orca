@@ -39,6 +39,12 @@ export class SshPtyProvider implements IPtyProvider {
   private spawnExitRaces = new SshPtySpawnExitRaceTracker()
   private readonly outputState: SshPtyProviderOutputState
 
+  requestHostRpc = (
+    method: string,
+    params: unknown,
+    options?: { signal?: AbortSignal; timeoutMs?: number }
+  ): Promise<unknown> => this.mux.request(method, params as Record<string, unknown>, options)
+
   constructor(
     connectionId: string,
     mux: SshChannelMultiplexer,

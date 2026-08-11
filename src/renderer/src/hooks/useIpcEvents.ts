@@ -1160,12 +1160,27 @@ export function useIpcEvents(): void {
       })
     )
 
+    unsubs.push(
+      window.api.ui.onOpenSkillShare((shareId) => {
+        useAppStore.getState().openSkillShare(shareId)
+      })
+    )
+
     // Why: a tray "Settings…" click can fire before this attaches; consume any queued intent (?. guards stale preload).
     void window.api.ui
       .consumePendingOpenSettings?.()
       .then((open) => {
         if (open) {
           useAppStore.getState().openSettingsPage()
+        }
+      })
+      .catch(() => {})
+
+    void window.api.ui
+      .consumePendingSkillShare()
+      .then((shareId) => {
+        if (shareId) {
+          useAppStore.getState().openSkillShare(shareId)
         }
       })
       .catch(() => {})

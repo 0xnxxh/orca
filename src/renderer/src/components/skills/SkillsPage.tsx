@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, BookOpen, Loader2, RefreshCw, Search } from 'lucide-react'
+import { ArrowLeft, BookOpen, Download, History, Loader2, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,9 @@ import { useActiveSkillDiscoveryRuntimeTarget } from '@/hooks/use-active-skill-d
 import { useMountedRef } from '@/hooks/useMountedRef'
 import type { DiscoveredSkill, SkillDiscoveryResult } from '../../../../shared/skills'
 import { SkillCard } from './SkillCard'
+import { SkillShareDialog } from './SkillShareDialog'
+import { SkillInstallDialog } from './SkillInstallDialog'
+import { SkillInstallManagementDialog } from './SkillInstallManagementDialog'
 import { pluralize, sourceLabels } from './skill-display-labels'
 import { countSkillsBySource, filterSkills, type SkillsFilterState } from './skills-filter'
 import { translate } from '@/i18n/i18n'
@@ -74,9 +77,15 @@ function EmptyState({
 
 export default function SkillsPage(): React.JSX.Element {
   const closeSkillsPage = useAppStore((s) => s.closeSkillsPage)
+  const pendingSkillShareId = useAppStore((s) => s.pendingSkillShareId)
+  const clearPendingSkillShare = useAppStore((s) => s.clearPendingSkillShare)
   const runtimeTarget = useActiveSkillDiscoveryRuntimeTarget()
   const [result, setResult] = useState<SkillDiscoveryResult | null>(null)
   const [loading, setLoading] = useState(true)
+  const [shareSkill, setShareSkill] = useState<DiscoveredSkill | null>(null)
+  const [installOpen, setInstallOpen] = useState(false)
+  const [installLink, setInstallLink] = useState('')
+  const [managementOpen, setManagementOpen] = useState(false)
   const [filters, setFilters] = useState<SkillsFilterState>({
     query: '',
     sourceKind: 'all',
@@ -119,6 +128,15 @@ export default function SkillsPage(): React.JSX.Element {
   useEffect(() => {
     void loadSkills()
   }, [loadSkills])
+
+  useEffect(() => {
+    if (!pendingSkillShareId) {
+      return
+    }
+    setInstallLink(`https://app.orca.dev/skills/share/${pendingSkillShareId}`)
+    setInstallOpen(true)
+    clearPendingSkillShare()
+  }, [clearPendingSkillShare, pendingSkillShareId])
 
   useEffect(() => {
     const hasVisibleOverlay = (): boolean =>
@@ -193,6 +211,20 @@ export default function SkillsPage(): React.JSX.Element {
             </p>
           </div>
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setInstallLink('')
+            setInstallOpen(true)
+          }}
+        >
+          <Download className="size-3.5" /> Install from link
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => setManagementOpen(true)}>
+          <History className="size-3.5" /> Manage installs
+        </Button>
       </header>
 
       <section className="flex shrink-0 flex-col gap-3 border-b border-border px-5 py-4">
@@ -295,7 +327,17 @@ export default function SkillsPage(): React.JSX.Element {
         {visibleSkills.length > 0 ? (
           <div className="mx-auto flex max-w-5xl flex-col gap-3">
             {visibleSkills.map((skill) => (
-              <SkillCard key={skill.id} skill={skill} />
+              <SkillCard
+                key={skill.id}
+                skill={skill}
+                onShare={
+                  runtimeTarget?.kind === 'local' &&
+                  skill.installed &&
+                  (skill.sourceKind === 'home' || skill.sourceKind === 'repo')
+                    ? () => setShareSkill(skill)
+                    : undefined
+                }
+              />
             ))}
           </div>
         ) : (
@@ -306,6 +348,23 @@ export default function SkillsPage(): React.JSX.Element {
           />
         )}
       </section>
+      <SkillShareDialog
+        skill={shareSkill}
+        open={shareSkill !== null}
+        onOpenChange={(nextOpen) => !nextOpen && setShareSkill(null)}
+      />
+      <SkillInstallDialog
+        key={installLink || 'manual-install'}
+        open={installOpen}
+        initialLink={installLink}
+        onOpenChange={(next) => {
+          setInstallOpen(next)
+          if (!next) {
+            setInstallLink('')
+          }
+        }}
+      />
+      <SkillInstallManagementDialog open={managementOpen} onOpenChange={setManagementOpen} />
     </main>
   )
 }

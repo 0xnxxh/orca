@@ -166,7 +166,8 @@ function matchesFileIdentity(
 
 export async function observeSkillPackage(
   packageRoot: string,
-  limits: SkillPackageObservationLimits = SKILL_PACKAGE_OBSERVATION_LIMITS
+  limits: SkillPackageObservationLimits = SKILL_PACKAGE_OBSERVATION_LIMITS,
+  executablePaths?: ReadonlySet<string>
 ): Promise<ObservedSkillPackage> {
   const files: ObservedSkillFile[] = []
   const treeEntries: SkillGitTreeFileEntry[] = []
@@ -242,7 +243,9 @@ export async function observeSkillPackage(
           limits.maximumSingleFileBytes
         )
         totalBytes += bytes.length
-        const executable = (fileStat.mode & 0o111) !== 0
+        const executable = executablePaths
+          ? executablePaths.has(manifestPath)
+          : (fileStat.mode & 0o111) !== 0
         files.push(describeObservedSkillFile(manifestPath, bytes, executable))
         treeEntries.push({ path: manifestPath, executable, blobSha: gitBlobSha(bytes) })
       } else {

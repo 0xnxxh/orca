@@ -176,7 +176,7 @@ export function registerCoreHandlers(
   registerTerminalRenderDesyncEvidenceHandler()
   registerComputerUsePermissionHandlers()
   registerSettingsHandlers(store, agentAwakeService)
-  registerSkillsHandlers(store)
+  registerSkillsHandlers(store, runtime)
   if (automations) {
     registerAutomationHandlers(store, automations)
   }

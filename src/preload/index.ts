@@ -130,6 +130,26 @@ import type {
 } from '../shared/shell-open-types'
 import type { SkillDiscoveryResult, SkillDiscoveryTarget } from '../shared/skills'
 import type {
+  SkillCloudDownloadGrant,
+  SkillCloudOperation,
+  SkillCloudPackageDetails
+} from '../shared/skill-cloud-contract'
+import type {
+  SkillInstallPreviewInput,
+  SkillInstallPreviewOperation,
+  ManagedSkillInstallListOperation,
+  SkillPackageVersionInstallInput,
+  SkillRemoveInput,
+  SkillRemoveOperation,
+  SkillShareInstallInput,
+  SkillShareInstallOperation,
+  SkillSharePreview,
+  SkillShareProgress,
+  SkillSharePublishInput,
+  SkillSharePublishOperation,
+  SkillShareResolvedOperation
+} from '../shared/skill-sharing-contract'
+import type {
   SkillFreshnessInventory,
   SkillUpdateRun,
   SkillUpdateStartResult
@@ -2496,6 +2516,43 @@ const api = {
     cancelUpdateRun: (): Promise<void> => ipcRenderer.invoke('skills:cancelUpdateRun'),
     acknowledgeUpdateRun: (): Promise<void> => ipcRenderer.invoke('skills:acknowledgeUpdateRun'),
     getUpdateRun: (): Promise<SkillUpdateRun> => ipcRenderer.invoke('skills:getUpdateRun'),
+    prepareShare: (input: {
+      skillId: string
+      target?: SkillDiscoveryTarget
+      packageId?: string
+    }): Promise<SkillSharePreview> => ipcRenderer.invoke('skills:prepareShare', input),
+    publishShare: (input: SkillSharePublishInput): Promise<SkillSharePublishOperation> =>
+      ipcRenderer.invoke('skills:publishShare', input),
+    cancelShare: (preparationId: string): Promise<void> =>
+      ipcRenderer.invoke('skills:cancelShare', preparationId),
+    releaseShare: (preparationId: string): Promise<void> =>
+      ipcRenderer.invoke('skills:releaseShare', preparationId),
+    resolveShare: (shareId: string): Promise<SkillShareResolvedOperation> =>
+      ipcRenderer.invoke('skills:resolveShare', shareId),
+    createDownloadGrant: (shareId: string): Promise<SkillCloudOperation<SkillCloudDownloadGrant>> =>
+      ipcRenderer.invoke('skills:createDownloadGrant', shareId),
+    installShare: (input: SkillShareInstallInput): Promise<SkillShareInstallOperation> =>
+      ipcRenderer.invoke('skills:installShare', input),
+    installPackageVersion: (
+      input: SkillPackageVersionInstallInput
+    ): Promise<SkillShareInstallOperation> =>
+      ipcRenderer.invoke('skills:installPackageVersion', input),
+    previewInstall: (input: SkillInstallPreviewInput): Promise<SkillInstallPreviewOperation> =>
+      ipcRenderer.invoke('skills:previewInstall', input),
+    removeInstall: (input: SkillRemoveInput): Promise<SkillRemoveOperation> =>
+      ipcRenderer.invoke('skills:removeInstall', input),
+    listManagedInstalls: (environmentId?: string): Promise<ManagedSkillInstallListOperation> =>
+      ipcRenderer.invoke('skills:listManagedInstalls', environmentId),
+    getPackage: (packageId: string): Promise<SkillCloudOperation<SkillCloudPackageDetails>> =>
+      ipcRenderer.invoke('skills:getPackage', packageId),
+    listWslDistros: (environmentId?: string): Promise<string[]> =>
+      ipcRenderer.invoke('skills:listWslDistros', environmentId),
+    onShareProgress: (callback: (progress: SkillShareProgress) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: SkillShareProgress): void =>
+        callback(progress)
+      ipcRenderer.on('skills:shareProgress', listener)
+      return () => ipcRenderer.removeListener('skills:shareProgress', listener)
+    },
     onUpdateRun: (callback: (run: SkillUpdateRun) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, run: SkillUpdateRun): void =>
         callback(run)
@@ -3509,6 +3566,14 @@ const api = {
     },
     consumePendingOpenSettings: (): Promise<boolean> =>
       ipcRenderer.invoke('ui:consumePendingOpenSettings'),
+    onOpenSkillShare: (callback: (shareId: string) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, shareId: string): void =>
+        callback(shareId)
+      ipcRenderer.on('ui:openSkillShare', listener)
+      return () => ipcRenderer.removeListener('ui:openSkillShare', listener)
+    },
+    consumePendingSkillShare: (): Promise<string | null> =>
+      ipcRenderer.invoke('ui:consumePendingSkillShare'),
     onOpenSetupGuide: (callback: () => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent) => callback()
       ipcRenderer.on('ui:openSetupGuide', listener)
