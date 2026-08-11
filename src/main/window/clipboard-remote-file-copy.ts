@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { app } from 'electron'
 
 import { getRuntimePathBasename } from '../../shared/cross-platform-path'
+import { startSpan } from '../observability/tracer'
 import { requireSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import {
   writeFileToClipboard,
@@ -45,7 +46,20 @@ export async function writeRemoteFileToClipboard({
   }
 
   const tempRoot = app.getPath('temp')
-  const tempDir = await createRemoteClipboardTransferDirectory(tempRoot, Date.now(), randomUUID())
+  let tempDir: string
+  try {
+    tempDir = await createRemoteClipboardTransferDirectory(tempRoot, Date.now(), randomUUID())
+  } catch (error) {
+    const span = startSpan('clipboard.remote_staging_init', {
+      attributes: {
+        operation: 'create',
+        platform: process.platform,
+        failure_category: getStagingFailureCategory(error)
+      }
+    })
+    span.fail(error instanceof Error ? error : String(error))
+    return { ok: false, reason: 'staging-unavailable' }
+  }
   const localPath = join(
     tempDir,
     sanitizeLocalClipboardFilename(getRuntimePathBasename(remotePath))
@@ -117,4 +131,18 @@ function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
   if (typeof timer === 'object' && 'unref' in timer) {
     timer.unref()
   }
+}
+
+function getStagingFailureCategory(error: unknown): string {
+  if (error instanceof Error && error.message.includes('staging root is unsafe')) {
+    return 'unsafe-root'
+  }
+  const code = error instanceof Error && 'code' in error ? String(error.code) : undefined
+  if (code === 'EACCES' || code === 'EPERM') {
+    return 'permissions'
+  }
+  if (code === 'EEXIST' || code === 'ENOTDIR') {
+    return 'path-conflict'
+  }
+  return 'unavailable'
 }
