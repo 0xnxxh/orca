@@ -1,18 +1,18 @@
-import {
-  ArrowDownUp,
-  Check,
-  ChevronDown,
-  CornerDownRight,
-  GitPullRequestArrow,
-  Layers3,
-  Sparkles,
-  TriangleAlert
-} from 'lucide-react'
-import { useId, useRef, useState } from 'react'
+import { CornerDownRight, GitPullRequestArrow, Sparkles } from 'lucide-react'
+import { useId, useState } from 'react'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
 import type { LocalizedHostedReviewCopy } from '@/i18n/hosted-review-localized-copy'
-import { stripBaseRef } from './useCreatePullRequestDialogFields'
+import { CreateHostedReviewBasePicker } from './CreateHostedReviewBasePicker'
+import { CreateHostedReviewComposerMessage } from './CreateHostedReviewComposerMessage'
+import {
+  COMPOSER_CHECKBOX_CLASS,
+  COMPOSER_FIELD_CLASS,
+  COMPOSER_TEXTAREA_CLASS
+} from './create-hosted-review-composer-field-class'
 import type { HostedReviewStackParent } from './useHostedReviewStackParent'
 
 type CreateHostedReviewComposerFieldsProps = {
@@ -32,6 +32,7 @@ type CreateHostedReviewComposerFieldsProps = {
   setBaseQuery: (value: string) => void
   baseResults: string[]
   setBaseResults: (value: string[]) => void
+  baseSearchPending: boolean
   baseSearchError: string | null
   generateError: string | null
   createError: string | null
@@ -59,6 +60,7 @@ export function CreateHostedReviewComposerFields({
   setBaseQuery,
   baseResults,
   setBaseResults,
+  baseSearchPending,
   baseSearchError,
   generateError,
   createError,
@@ -68,51 +70,16 @@ export function CreateHostedReviewComposerFields({
   strippedBranch,
   baseSameAsBranch
 }: CreateHostedReviewComposerFieldsProps): React.JSX.Element {
+  // Why: owned here, not in the picker — the stack option steps aside while the
+  // base list is open so results never overlap an option about that same base.
   const [baseEditing, setBaseEditing] = useState(false)
-  const baseInputRef = useRef<HTMLInputElement>(null)
-  const baseResultsId = useId()
-
-  const closeBaseSearch = (): void => {
-    setBaseEditing(false)
-    setBaseQuery('')
-    setBaseResults([])
-  }
-
-  const commitBaseSearch = (value: string): void => {
-    const nextBase = value.trim()
-    if (nextBase) {
-      setBase(nextBase)
-    }
-    closeBaseSearch()
-    baseInputRef.current?.blur()
-  }
+  const draftFieldId = useId()
+  const stackFieldId = useId()
 
   return (
     <>
-      {/* Why: a single line that shows the head->base flow plain-language so
-          the user can sanity-check the merge direction at a glance. */}
-      <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-        <span className="truncate font-mono text-foreground" title={strippedBranch}>
-          {strippedBranch}
-        </span>
-        <ArrowDownUp className="size-3 rotate-90 shrink-0 opacity-60" aria-hidden="true" />
-        <span
-          className={cn(
-            'truncate font-mono',
-            baseSameAsBranch ? 'text-destructive' : 'text-foreground'
-          )}
-          title={
-            normalizedBase ||
-            translate('auto.components.right.sidebar.SourceControl.7a09d7f9d2', 'base')
-          }
-        >
-          {normalizedBase ||
-            translate('auto.components.right.sidebar.SourceControl.7a09d7f9d2', 'base')}
-        </span>
-      </div>
-
-      <div className="relative space-y-2">
-        <input
+      <div className="relative space-y-1.5">
+        <Input
           aria-label={translate(
             'auto.components.right.sidebar.SourceControl.a6eda33521',
             '{{value0}} title',
@@ -122,7 +89,7 @@ export function CreateHostedReviewComposerFields({
           disabled={fieldsLocked}
           onChange={(event) => setTitle(event.target.value)}
           placeholder={translate('auto.components.right.sidebar.SourceControl.7d6a8f0082', 'Title')}
-          className="h-8 w-full min-w-0 rounded-md border border-border bg-background px-2 text-xs font-medium text-foreground outline-none placeholder:text-muted-foreground/70 focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+          className={cn(COMPOSER_FIELD_CLASS, 'px-2 font-medium')}
         />
 
         <textarea
@@ -139,7 +106,7 @@ export function CreateHostedReviewComposerFields({
             'auto.components.right.sidebar.SourceControl.a0dc20fc93',
             'Description (optional)'
           )}
-          className="min-h-[7.5rem] w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground/70 focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 scrollbar-sleek"
+          className={cn(COMPOSER_TEXTAREA_CLASS, 'min-h-[7rem] resize-y scrollbar-sleek')}
         />
 
         {generating ? (
@@ -149,7 +116,7 @@ export function CreateHostedReviewComposerFields({
             className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md bg-background/40"
             aria-hidden="true"
           >
-            <div className="pointer-events-auto flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground shadow-sm">
+            <div className="pointer-events-auto flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground shadow-xs">
               <Sparkles className="size-3 animate-pulse text-foreground" />
               <span>
                 {translate(
@@ -162,224 +129,114 @@ export function CreateHostedReviewComposerFields({
         ) : null}
       </div>
 
-      {/* Why: base picker as its own labeled row so the title input can use
-          the full width. The dropdown chevron makes the picker affordance
-          obvious; the inline label clarifies that this is the merge target. */}
-      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
-        <span className="shrink-0 text-[11px] text-muted-foreground">
-          {translate('auto.components.right.sidebar.SourceControl.1f7119f604', 'Base')}
-        </span>
-        <div className="relative min-w-0 flex-1">
-          <input
-            ref={baseInputRef}
-            aria-label={translate(
-              'auto.components.right.sidebar.SourceControl.6055949c50',
-              '{{value0}} base branch',
-              { value0: copy.titleLabel }
-            )}
-            role="combobox"
-            aria-autocomplete="list"
-            aria-expanded={baseEditing && baseResults.length > 0}
-            aria-controls={baseResultsId}
-            value={baseEditing ? baseQuery : base}
-            disabled={fieldsLocked}
-            onFocus={(event) => {
-              setBaseEditing(true)
-              setBaseQuery(event.currentTarget.value)
-            }}
-            onBlur={closeBaseSearch}
-            onChange={(event) => setBaseQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault()
-                commitBaseSearch(baseQuery)
-              } else if (event.key === 'Escape') {
-                event.preventDefault()
-                closeBaseSearch()
-                baseInputRef.current?.blur()
-              }
-            }}
-            placeholder={translate(
-              'auto.components.right.sidebar.SourceControl.e64a632456',
-              'main'
-            )}
-            className="h-7 w-full min-w-0 rounded-md border border-border bg-background px-2 pr-6 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/70 focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
-          />
-          <ChevronDown
-            className="pointer-events-none absolute right-1.5 top-1.5 size-3.5 text-muted-foreground"
-            aria-hidden="true"
-          />
-        </div>
+      <CreateHostedReviewBasePicker
+        copy={copy}
+        base={base}
+        setBase={setBase}
+        editing={baseEditing}
+        setEditing={setBaseEditing}
+        baseQuery={baseQuery}
+        setBaseQuery={setBaseQuery}
+        baseResults={baseResults}
+        setBaseResults={setBaseResults}
+        baseSearchPending={baseSearchPending}
+        baseSearchError={baseSearchError}
+        fieldsLocked={fieldsLocked}
+        strippedBranch={strippedBranch}
+        baseSameAsBranch={baseSameAsBranch}
+      />
 
-        {baseEditing && baseResults.length > 0 ? (
-          <div
-            id={baseResultsId}
-            role="listbox"
-            className="col-start-2 max-h-28 overflow-auto rounded-md border border-border p-1 scrollbar-sleek"
-          >
-            {baseResults.map((ref) => (
-              <button
-                key={ref}
-                type="button"
-                role="option"
-                aria-selected={stripBaseRef(base) === ref}
+      <div className="space-y-2.5">
+        {stackParentReview && !baseEditing ? (
+          <div className="space-y-1.5">
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id={stackFieldId}
+                checked={stacked}
                 disabled={fieldsLocked}
-                className={cn(
-                  'flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-left font-mono text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent',
-                  stripBaseRef(base) === ref && 'bg-accent text-accent-foreground'
-                )}
-                onMouseDown={(event) => {
-                  event.preventDefault()
-                  commitBaseSearch(ref)
-                }}
+                onCheckedChange={(value) => setStacked(value === true)}
+                className={cn(COMPOSER_CHECKBOX_CLASS, 'mt-px')}
+              />
+              {/* Why: the base field one row up already names the parent branch, so the
+                  helper explains the effect instead of repeating the ref. */}
+              <Label
+                htmlFor={stackFieldId}
+                className="min-w-0 flex-1 flex-col items-start gap-0.5 text-xs leading-snug"
               >
-                <span className="truncate">{ref}</span>
-                {stripBaseRef(base) === ref ? <Check className="size-3" /> : null}
-              </button>
-            ))}
+                <span className="text-foreground">
+                  {translate(
+                    'auto.components.right.sidebar.CreateHostedReviewComposer.stackAbovePr',
+                    'Stack this PR above #{{value0}}',
+                    { value0: stackParentReview.number }
+                  )}
+                </span>
+                {stacked ? null : (
+                  <span className="text-[11px] font-normal text-muted-foreground">
+                    {translate(
+                      'auto.components.right.sidebar.CreateHostedReviewComposer.stackBehavior',
+                      "Creates a GitHub Stack or extends the parent's existing stack."
+                    )}
+                  </span>
+                )}
+              </Label>
+            </div>
+
+            {stacked ? (
+              // Why: a single hairline instead of a nested card — the relation reads as
+              // detail of the checkbox above it, not as its own framed section.
+              <div className="ml-6 space-y-1 border-l border-border pl-2 text-[11px]">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <GitPullRequestArrow
+                    className="size-3 shrink-0 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <span className="shrink-0 text-muted-foreground">
+                    #{stackParentReview.number}
+                  </span>
+                  <span className="truncate font-mono text-foreground">{normalizedBase}</span>
+                </div>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <CornerDownRight
+                    className="size-3 shrink-0 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <span className="truncate font-mono text-foreground">{strippedBranch}</span>
+                  <span className="shrink-0 text-muted-foreground">
+                    {translate(
+                      'auto.components.right.sidebar.CreateHostedReviewComposer.newPr',
+                      'new PR'
+                    )}
+                  </span>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
+
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id={draftFieldId}
+            checked={draft}
+            disabled={fieldsLocked}
+            onCheckedChange={(value) => setDraft(value === true)}
+            className={COMPOSER_CHECKBOX_CLASS}
+          />
+          <Label htmlFor={draftFieldId} className="min-w-0 flex-1 truncate text-xs">
+            {translate('auto.components.right.sidebar.SourceControl.78ddfd0bb4', 'Create as draft')}
+          </Label>
+        </div>
       </div>
 
-      {stackParentReview && !baseEditing ? (
-        <label
-          className={cn(
-            'flex items-start gap-2 rounded-md border border-border bg-background px-2 py-1.5 text-foreground transition-colors',
-            fieldsLocked
-              ? 'cursor-not-allowed opacity-60'
-              : 'cursor-pointer hover:bg-accent hover:text-accent-foreground'
-          )}
-        >
-          <input
-            type="checkbox"
-            checked={stacked}
-            disabled={fieldsLocked}
-            onChange={(event) => setStacked(event.target.checked)}
-            className="mt-0.5 size-3.5 shrink-0 rounded border-border accent-primary"
-          />
-          <span className="min-w-0 flex-1">
-            <span className="flex items-center gap-1.5 text-xs font-medium">
-              <Layers3 className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-              {translate(
-                'auto.components.right.sidebar.CreateHostedReviewComposer.stackAbovePr',
-                'Stack this PR above #{{value0}}',
-                { value0: stackParentReview.number }
-              )}
-            </span>
-            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-              {translate(
-                'auto.components.right.sidebar.CreateHostedReviewComposer.stackParentBranch',
-                '{{value0}} is the parent branch.',
-                { value0: normalizedBase }
-              )}
-            </span>
-          </span>
-        </label>
-      ) : null}
-
-      {stackParentReview && !baseEditing && stacked ? (
-        <div className="rounded-md border border-border bg-muted/30 px-2 py-1.5 text-[11px]">
-          <div className="flex min-w-0 items-center gap-1.5 text-foreground">
-            <GitPullRequestArrow className="size-3 shrink-0 text-muted-foreground" />
-            <span className="shrink-0 text-muted-foreground">#{stackParentReview.number}</span>
-            <span className="truncate font-mono">{normalizedBase}</span>
-          </div>
-          <div className="mt-1 flex min-w-0 items-center gap-1.5 pl-2 text-foreground">
-            <CornerDownRight className="size-3 shrink-0 text-muted-foreground" />
-            <span className="truncate font-mono">{strippedBranch}</span>
-            <span className="shrink-0 text-muted-foreground">
-              {translate(
-                'auto.components.right.sidebar.CreateHostedReviewComposer.newPr',
-                'new PR'
-              )}
-            </span>
-          </div>
-          <p className="mt-1.5 text-muted-foreground">
-            {translate(
-              'auto.components.right.sidebar.CreateHostedReviewComposer.stackBehavior',
-              "Creates a GitHub Stack or extends the parent's existing stack."
-            )}
-          </p>
+      {generateError || createError ? (
+        <div className="space-y-1">
+          {generateError ? (
+            <CreateHostedReviewComposerMessage>{generateError}</CreateHostedReviewComposerMessage>
+          ) : null}
+          {createError ? (
+            <CreateHostedReviewComposerMessage>{createError}</CreateHostedReviewComposerMessage>
+          ) : null}
         </div>
       ) : null}
-
-      <label
-        className={cn(
-          'flex h-7 items-center gap-2 rounded-md border border-border bg-background px-2 text-xs text-foreground transition-colors',
-          fieldsLocked
-            ? 'cursor-not-allowed opacity-60'
-            : 'cursor-pointer hover:bg-accent hover:text-accent-foreground'
-        )}
-      >
-        <input
-          type="checkbox"
-          checked={draft}
-          disabled={fieldsLocked}
-          onChange={(event) => setDraft(event.target.checked)}
-          className="size-3.5 shrink-0 rounded border-border accent-primary"
-        />
-        <span className="min-w-0 flex-1 truncate">
-          {translate('auto.components.right.sidebar.SourceControl.78ddfd0bb4', 'Create as draft')}
-        </span>
-      </label>
-
-      <CreateHostedReviewComposerMessages
-        copy={copy}
-        baseSameAsBranch={baseSameAsBranch}
-        baseSearchError={baseSearchError}
-        generateError={generateError}
-        createError={createError}
-      />
     </>
-  )
-}
-
-function CreateHostedReviewComposerMessages({
-  copy,
-  baseSameAsBranch,
-  baseSearchError,
-  generateError,
-  createError
-}: {
-  copy: LocalizedHostedReviewCopy
-  baseSameAsBranch: boolean
-  baseSearchError: string | null
-  generateError: string | null
-  createError: string | null
-}): React.JSX.Element {
-  return (
-    <>
-      {baseSameAsBranch ? (
-        <CreateHostedReviewComposerMessage>
-          {translate(
-            'auto.components.right.sidebar.SourceControl.ae743199cd',
-            'Choose a different base branch before creating a {{value0}}.',
-            { value0: copy.reviewLabel }
-          )}
-        </CreateHostedReviewComposerMessage>
-      ) : null}
-      {baseSearchError ? (
-        <CreateHostedReviewComposerMessage>{baseSearchError}</CreateHostedReviewComposerMessage>
-      ) : null}
-      {generateError ? (
-        <CreateHostedReviewComposerMessage>{generateError}</CreateHostedReviewComposerMessage>
-      ) : null}
-      {createError ? (
-        <CreateHostedReviewComposerMessage>{createError}</CreateHostedReviewComposerMessage>
-      ) : null}
-    </>
-  )
-}
-
-function CreateHostedReviewComposerMessage({
-  children
-}: {
-  children: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <p className="flex items-start gap-1 text-[11px] text-destructive">
-      <TriangleAlert className="mt-px size-3 shrink-0" aria-hidden="true" />
-      <span>{children}</span>
-    </p>
   )
 }

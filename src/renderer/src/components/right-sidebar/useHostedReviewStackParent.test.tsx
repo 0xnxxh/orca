@@ -24,7 +24,7 @@ const baseOptions = {
   repoPath: '/repo/orca',
   repoId: 'repo-1',
   base: 'feature/parent',
-  defaultBase: 'main',
+  repoDefaultBase: 'main',
   head: 'feature/child'
 }
 
@@ -55,10 +55,30 @@ describe('useHostedReviewStackParent', () => {
     })
   })
 
+  it('looks up the worktree base branch a child forked from', async () => {
+    vi.useFakeTimers()
+    const fetchHostedReviewForBranch = vi.fn(async () => makeReview())
+    const { result } = renderHook(() =>
+      useHostedReviewStackParent({
+        ...baseOptions,
+        // The worktree was created off feature/parent, so eligibility reports it as
+        // the default base; the repo default is still main and stacking still applies.
+        base: 'feature/parent',
+        repoDefaultBase: 'main',
+        fetchHostedReviewForBranch
+      })
+    )
+
+    await act(async () => vi.runAllTimers())
+
+    expect(fetchHostedReviewForBranch).toHaveBeenCalledTimes(1)
+    expect(result.current?.number).toBe(13741)
+  })
+
   it.each([
-    { base: 'origin/main', defaultBase: 'main', head: 'feature/child' },
-    { base: 'refs/heads/feature/child', defaultBase: 'main', head: 'feature/child' },
-    { base: '', defaultBase: 'main', head: 'feature/child' }
+    { base: 'origin/main', repoDefaultBase: 'main', head: 'feature/child' },
+    { base: 'refs/heads/feature/child', repoDefaultBase: 'main', head: 'feature/child' },
+    { base: '', repoDefaultBase: 'main', head: 'feature/child' }
   ])('skips ineligible base $base', async (options) => {
     vi.useFakeTimers()
     const fetchHostedReviewForBranch = vi.fn(async () => makeReview())

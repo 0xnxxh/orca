@@ -1321,10 +1321,12 @@ export default function ChecksPanel(): React.JSX.Element {
     draft: prDraft,
     setDraft: setPrDraft,
     stackedCreationSupported: prStackedCreationSupported,
+    repoDefaultBaseRef: prRepoDefaultBaseRef,
     baseQuery: prBaseQuery,
     setBaseQuery: setPrBaseQuery,
     baseResults: prBaseResults,
     setBaseResults: setPrBaseResults,
+    baseSearchPending: prBaseSearchPending,
     baseSearchError: prBaseSearchError,
     generating: prGenerating,
     generateError: prGenerateError,
@@ -1366,7 +1368,9 @@ export default function ChecksPanel(): React.JSX.Element {
     repoPath: repo?.path ?? '',
     repoId: repo?.id ?? null,
     base: prBase,
-    defaultBase: hostedReviewCreation?.defaultBaseRef,
+    // Why: the repo default, not eligibility's defaultBaseRef — that one resolves to
+    // the worktree's own base, which is exactly the branch a stacked PR targets.
+    repoDefaultBase: prRepoDefaultBaseRef,
     head: branch,
     fetchHostedReviewForBranch
   })
@@ -4326,6 +4330,7 @@ export default function ChecksPanel(): React.JSX.Element {
               setBaseQuery={setPrBaseQuery}
               baseResults={prBaseResults}
               setBaseResults={setPrBaseResults}
+              baseSearchPending={prBaseSearchPending}
               baseSearchError={prBaseSearchError}
               aiGenerationEnabled={sourceControlAiActionsVisible && prAiGenerationEnabled}
               generating={prGenerating}

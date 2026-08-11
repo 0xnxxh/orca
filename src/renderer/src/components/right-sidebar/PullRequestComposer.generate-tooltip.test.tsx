@@ -23,6 +23,7 @@ type RenderPullRequestComposerOptions = {
   setBaseQuery?: (value: string) => void
   baseResults?: string[]
   setBaseResults?: (value: string[]) => void
+  baseSearchPending?: boolean
   onPrimaryAction?: (stacked: boolean) => void
 }
 
@@ -41,6 +42,7 @@ function pullRequestComposerElement({
   setBaseQuery = vi.fn(),
   baseResults = [],
   setBaseResults = vi.fn(),
+  baseSearchPending = false,
   onPrimaryAction = vi.fn()
 }: RenderPullRequestComposerOptions = {}): React.JSX.Element {
   const sourceControlInputs = {
@@ -75,6 +77,7 @@ function pullRequestComposerElement({
         setBaseQuery={setBaseQuery}
         baseResults={baseResults}
         setBaseResults={setBaseResults}
+        baseSearchPending={baseSearchPending}
         baseSearchError={null}
         aiGenerationEnabled={aiGenerationEnabled}
         generating={generating}
@@ -98,7 +101,15 @@ function renderPullRequestComposer(options: RenderPullRequestComposerOptions = {
   return renderToStaticMarkup(pullRequestComposerElement(options))
 }
 
-function InteractiveBaseComposer({ baseResults = EMPTY_BASE_RESULTS }: { baseResults?: string[] }) {
+function InteractiveBaseComposer({
+  baseResults = EMPTY_BASE_RESULTS,
+  baseSearchPending = false,
+  stackParentReview = null
+}: {
+  baseResults?: string[]
+  baseSearchPending?: boolean
+  stackParentReview?: HostedReviewStackParent | null
+}) {
   const [base, setBase] = useState('main')
   const [baseQuery, setBaseQuery] = useState('')
   const [results, setBaseResults] = useState(baseResults)
@@ -109,7 +120,9 @@ function InteractiveBaseComposer({ baseResults = EMPTY_BASE_RESULTS }: { baseRes
     baseQuery,
     setBaseQuery,
     baseResults: results,
-    setBaseResults
+    setBaseResults,
+    baseSearchPending,
+    stackParentReview
   })
 }
 
@@ -188,6 +201,11 @@ describe('CreateHostedReviewComposer generate tooltip', () => {
       })
     )
 
+    // Unchecked, the helper explains the effect rather than repeating the base ref.
+    expect(container.innerHTML).toContain(
+      "Creates a GitHub Stack or extends the parent's existing stack."
+    )
+
     fireEvent.click(screen.getByRole('checkbox', { name: /Stack this PR above #13741/ }))
 
     const markup = container.innerHTML
@@ -195,11 +213,91 @@ describe('CreateHostedReviewComposer generate tooltip', () => {
     expect(markup).toContain('#13741')
     expect(markup).toContain('master')
     expect(markup).toContain('branch-login-issue')
-    expect(markup).toContain("Creates a GitHub Stack or extends the parent's existing stack.")
     expect(markup).toContain('Create PR in stack')
 
     fireEvent.click(screen.getByRole('button', { name: /Create PR in stack/ }))
     expect(onPrimaryAction).toHaveBeenCalledWith(true)
+  })
+
+  it('drives both options through the shadcn Checkbox primitive', () => {
+    const { container } = renderDom(
+      pullRequestComposerElement({
+        stackParentReview: { number: 13741, url: 'https://github.com/stablyai/orca/pull/13741' }
+      })
+    )
+
+    expect(container.querySelectorAll('[data-slot="checkbox"]')).toHaveLength(2)
+    // Radix keeps a hidden native input for form participation; nothing browser-native renders.
+    for (const native of container.querySelectorAll('input[type="checkbox"]')) {
+      expect(native.getAttribute('aria-hidden')).toBe('true')
+    }
+  })
+
+  it('labels the base field above a full-width combobox and names the head branch', () => {
+    renderDom(<InteractiveBaseComposer />)
+    const input = screen.getByRole('combobox', { name: 'Pull Request base branch' })
+
+    expect(screen.getByText('Base branch').getAttribute('for')).toBe(input.id)
+    expect(input.className).toContain('w-full')
+    expect(screen.getByText('from branch-login-issue')).toBeTruthy()
+  })
+
+  it('marks the base field invalid when it matches the head branch', () => {
+    const { container } = renderDom(pullRequestComposerElement({ base: 'branch-login-issue' }))
+    const input = screen.getByRole('combobox', { name: 'Pull Request base branch' })
+
+    expect(input.getAttribute('aria-invalid')).toBe('true')
+    expect(container.innerHTML).toContain(
+      'Choose a different base branch before creating a pull request.'
+    )
+  })
+
+  it('moves through base results with the arrow keys and commits the highlighted ref', () => {
+    renderDom(
+      <InteractiveBaseComposer
+        baseResults={['release/candidate', 'release/next', 'release/prev']}
+      />
+    )
+    const input = screen.getByRole('combobox', { name: 'Pull Request base branch' })
+
+    fireEvent.focus(input)
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(input.getAttribute('aria-activedescendant')).toBe(
+      screen.getByRole('option', { name: 'release/next' }).id
+    )
+
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect((input as HTMLInputElement).value).toBe('release/candidate')
+  })
+
+  it('withholds the empty-result message until the base search settles', () => {
+    const { rerender } = renderDom(<InteractiveBaseComposer baseSearchPending />)
+    const input = screen.getByRole('combobox', { name: 'Pull Request base branch' })
+
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'nope' } })
+    expect(screen.queryByText(/No branches match/)).toBeNull()
+
+    rerender(<InteractiveBaseComposer baseSearchPending={false} />)
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'nope' } })
+    expect(screen.getByText(/No branches match “nope”/)).toBeTruthy()
+  })
+
+  it('hides the stack option while the base search is open', () => {
+    renderDom(
+      <InteractiveBaseComposer
+        baseResults={['release/candidate']}
+        stackParentReview={{ number: 13741, url: 'https://github.com/stablyai/orca/pull/13741' }}
+      />
+    )
+
+    expect(screen.getByRole('checkbox', { name: /Stack this PR above #13741/ })).toBeTruthy()
+
+    fireEvent.focus(screen.getByRole('combobox', { name: 'Pull Request base branch' }))
+    expect(screen.queryByRole('checkbox', { name: /Stack this PR above/ })).toBeNull()
   })
 
   it('hides stacked creation when the executing host lacks the capability', () => {

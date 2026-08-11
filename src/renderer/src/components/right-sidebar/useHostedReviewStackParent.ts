@@ -15,7 +15,13 @@ type UseHostedReviewStackParentOptions = {
   repoPath: string
   repoId?: string | null
   base: string
-  defaultBase?: string | null
+  /**
+   * The repo's own default branch — not the worktree's base. Stacking on the
+   * repo default is meaningless, so that one case skips the lookup; every other
+   * base still gets one, including the worktree base a child branch forked from
+   * (the case stacking exists for).
+   */
+  repoDefaultBase?: string | null
   head: string
   fetchHostedReviewForBranch: FetchHostedReviewForBranch
 }
@@ -32,12 +38,12 @@ export function useHostedReviewStackParent({
   repoPath,
   repoId,
   base,
-  defaultBase,
+  repoDefaultBase,
   head,
   fetchHostedReviewForBranch
 }: UseHostedReviewStackParentOptions): HostedReviewStackParent | null {
   const normalizedBase = normalizeHostedReviewBaseRef(base).trim()
-  const normalizedDefault = normalizeHostedReviewBaseRef(defaultBase ?? '').trim()
+  const normalizedDefault = normalizeHostedReviewBaseRef(repoDefaultBase ?? '').trim()
   const normalizedHead = normalizeHostedReviewBaseRef(head).trim()
   const canLookup =
     enabled &&

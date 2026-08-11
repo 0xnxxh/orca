@@ -3023,10 +3023,12 @@ function SourceControlInner(): React.JSX.Element {
     draft: prDraft,
     setDraft: setPrDraft,
     stackedCreationSupported: prStackedCreationSupported,
+    repoDefaultBaseRef: prRepoDefaultBaseRef,
     baseQuery: prBaseQuery,
     setBaseQuery: setPrBaseQuery,
     baseResults: prBaseResults,
     setBaseResults: setPrBaseResults,
+    baseSearchPending: prBaseSearchPending,
     baseSearchError: prBaseSearchError,
     generating: prGenerating,
     generateError: prGenerateError,
@@ -3068,7 +3070,9 @@ function SourceControlInner(): React.JSX.Element {
     repoPath: activeRepo?.path ?? '',
     repoId: activeRepo?.id ?? null,
     base: prBase,
-    defaultBase: hostedReviewCreation?.defaultBaseRef,
+    // Why: the repo default, not eligibility's defaultBaseRef — that one resolves to
+    // the worktree's own base, which is exactly the branch a stacked PR targets.
+    repoDefaultBase: prRepoDefaultBaseRef,
     head: branchName,
     fetchHostedReviewForBranch
   })
@@ -5853,6 +5857,7 @@ function SourceControlInner(): React.JSX.Element {
                 setBaseQuery={setPrBaseQuery}
                 baseResults={prBaseResults}
                 setBaseResults={setPrBaseResults}
+                baseSearchPending={prBaseSearchPending}
                 baseSearchError={prBaseSearchError}
                 aiGenerationEnabled={sourceControlAiActionsVisible && prAiGenerationEnabled}
                 generating={prGenerating}

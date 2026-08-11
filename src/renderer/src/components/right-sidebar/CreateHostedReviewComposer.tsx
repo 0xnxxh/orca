@@ -58,6 +58,7 @@ export type CreateHostedReviewComposerProps = {
   setBaseQuery: (value: string) => void
   baseResults: string[]
   setBaseResults: (value: string[]) => void
+  baseSearchPending: boolean
   baseSearchError: string | null
   aiGenerationEnabled: boolean
   generating: boolean
@@ -93,6 +94,7 @@ export function CreateHostedReviewComposer({
   setBaseQuery,
   baseResults,
   setBaseResults,
+  baseSearchPending,
   baseSearchError,
   aiGenerationEnabled,
   generating,
@@ -210,7 +212,9 @@ export function CreateHostedReviewComposer({
 
   return (
     <div className={cn('px-3 pb-2', className)}>
-      <div className="space-y-2.5">
+      {/* Why: one gap between groups, tighter gaps inside them — the form reads as
+          content → merge target → options → action instead of a stack of boxes. */}
+      <div className="space-y-3">
         <div className="flex min-w-0 items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5 text-xs">
             <ReviewIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -255,6 +259,7 @@ export function CreateHostedReviewComposer({
           setBaseQuery={setBaseQuery}
           baseResults={baseResults}
           setBaseResults={setBaseResults}
+          baseSearchPending={baseSearchPending}
           baseSearchError={baseSearchError}
           generateError={generateError}
           createError={createError}
@@ -265,14 +270,14 @@ export function CreateHostedReviewComposer({
           baseSameAsBranch={baseSameAsBranch}
         />
 
-        <div className={cn(RIGHT_SIDEBAR_SPLIT_ACTION_ROW_CLASS, 'pt-0.5')}>
+        <div className={RIGHT_SIDEBAR_SPLIT_ACTION_ROW_CLASS}>
           <Button
             type="button"
             size="xs"
             disabled={createDisabled}
             onClick={() => onPrimaryAction(effectiveStacked)}
             className={cn(
-              'h-7 px-3 text-xs',
+              'h-8 px-3 text-xs',
               showDropdown && 'rounded-r-none',
               RIGHT_SIDEBAR_MORPHING_PRIMARY_BUTTON_CLASS
             )}
@@ -300,7 +305,7 @@ export function CreateHostedReviewComposer({
                   type="button"
                   size="xs"
                   className={cn(
-                    'h-7 rounded-l-none border-l border-primary-foreground/20 px-1.5 shrink-0',
+                    'h-8 rounded-l-none border-l border-primary-foreground/20 px-1.5 shrink-0',
                     createDisabled && 'opacity-50'
                   )}
                   aria-label={translate(

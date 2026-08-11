@@ -10652,8 +10652,10 @@
             "createDraftStackedPr": "Create draft PR in stack",
             "createStackedPr": "Create PR in stack",
             "newPr": "new PR",
+            "baseBranchLabel": "Base branch",
+            "baseFromHead": "from {{value0}}",
+            "baseNoMatches": "No branches match “{{value0}}”. Press Enter to use it anyway.",
             "stackAbovePr": "Stack this PR above #{{value0}}",
-            "stackParentBranch": "{{value0}} is the parent branch.",
             "stackBehavior": "Creates a GitHub Stack or extends the parent's existing stack."
           },
           "CreatePullRequestGenerateButton": {
