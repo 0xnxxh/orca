@@ -137,10 +137,7 @@ export function CaffeinateStatusSegment({
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuRadioGroup value={mode} onValueChange={setMode}>
-          <DropdownMenuRadioItem
-            value="on"
-            className="items-start py-1.5 [&>span:first-child]:translate-y-[3px]"
-          >
+          <DropdownMenuRadioItem value="on" className="py-1.5">
             <span className="flex flex-col">
               <span>{modeLabel('on')}</span>
               <span className="text-[11px] font-normal text-muted-foreground">
@@ -151,10 +148,7 @@ export function CaffeinateStatusSegment({
               </span>
             </span>
           </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem
-            value="auto"
-            className="items-start py-1.5 [&>span:first-child]:translate-y-[3px]"
-          >
+          <DropdownMenuRadioItem value="auto" className="py-1.5">
             <span className="flex flex-col">
               <span>{modeLabel('auto')}</span>
               <span className="text-[11px] font-normal text-muted-foreground">
@@ -165,10 +159,7 @@ export function CaffeinateStatusSegment({
               </span>
             </span>
           </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem
-            value="off"
-            className="items-start py-1.5 [&>span:first-child]:translate-y-[3px]"
-          >
+          <DropdownMenuRadioItem value="off" className="py-1.5">
             <span className="flex flex-col">
               <span>{modeLabel('off')}</span>
               <span className="text-[11px] font-normal text-muted-foreground">
