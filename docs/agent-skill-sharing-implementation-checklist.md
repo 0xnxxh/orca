@@ -7,7 +7,7 @@ Last updated: 2026-08-11.
 Implementation baselines captured by this checklist update:
 
 - Orca implementation: `6ba6107dba` on `skills-share` (pushed; no PR).
-- Orca Cloud: `cdf22de` on `skills-share-cloud` (pushed; no PR).
+- Orca Cloud: `9356b6e` on `main` (merged through `stablyai/orca-cloud#307`).
 
 Validated so far:
 

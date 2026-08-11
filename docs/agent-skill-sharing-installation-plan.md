@@ -39,8 +39,9 @@ that larger package-manager surface.
 
 ## Current execution status
 
-Orca implementation through `6ba6107dba` and Orca Cloud implementation through `cdf22de` are
-pushed on feature branches without an Orca pull request. Local, Windows, WSL, paired-runtime, and
+Orca implementation through `6ba6107dba` is pushed on `skills-share` without an Orca pull request.
+Orca Cloud implementation is merged on `main` through `9356b6e` (`stablyai/orca-cloud#307`) without
+applying infrastructure or deploying a service. Local, Windows, WSL, paired-runtime, and
 Docker-backed SSH validation are substantially complete; the implementation checklist records the
 exact evidence and remaining physical-host and failure-recovery gates.
 
