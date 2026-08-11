@@ -6,7 +6,7 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `41bede4c78` on `skills-share` (pushed; no PR).
+- Orca implementation: `6d3ce582aa` on `skills-share` (pushed; no PR).
 - Orca Cloud: `499856c` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
@@ -16,6 +16,8 @@ Validated so far:
   gates, and Terraform validation.
 - Native Windows package/install/recovery/copy-fallback tests and Node typecheck on `windows 2`;
   the current slice passed 292 tests with 19 platform skips across 43 files at `41bede4c78`.
+- Native Windows transaction validation passed all 21 cases at `6d3ce582aa`, including a real
+  canonical install beyond `MAX_PATH` while the host's `LongPathsEnabled` policy remained disabled.
 - Real Ubuntu 24.04 WSL global, guest-workspace, and `/mnt/c` workspace transactions, including
   alias placement, interrupted update recovery, conflict preservation, update, and removal.
 - Isolated staging bucket, IAM, secret container, log metrics, dashboard, and alerts in
@@ -227,7 +229,7 @@ does not mean the surrounding phase is complete.
 - [x] Resolve WSL home, paths, and target distro inside the selected distro.
 - [x] Keep all path joins platform-native and reject destination escapes after realpath-aware
       containment checks.
-- [ ] Support long Windows paths and case-insensitive destination collision checks.
+- [x] Support long Windows paths and case-insensitive destination collision checks.
 
 ### Admission, locking, and ingress
 
