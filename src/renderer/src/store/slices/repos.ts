@@ -47,7 +47,7 @@ import { getProjectGroupSubtreeIds } from '../../../../shared/project-groups'
 import { isPathInsideOrEqual } from '../../../../shared/cross-platform-path'
 import { getRepoIdFromWorktreeId } from '../../../../shared/worktree-id'
 import { selectProjectGroupRemovalTargets } from './project-group-removal-targets'
-import { reconcileFetchedRepos } from './repo-identity-reconcile'
+import { reconcileFetchedEntries, reconcileFetchedRepos } from './repo-identity-reconcile'
 import {
   mergeSshRepoReadoptions,
   reconcileReadoptedSshRepoRows,
@@ -741,7 +741,7 @@ function getProjectHostSetupOwnerKey(setup: ProjectHostSetup): string {
 function mergeProjectHostSetupsByOwner(
   base: readonly ProjectHostSetup[],
   overlay: readonly ProjectHostSetup[]
-): ProjectHostSetup[] {
+): readonly ProjectHostSetup[] {
   const merged = [...base]
   const indexByOwner = new Map(
     merged.map((entry, index) => [getProjectHostSetupOwnerKey(entry), index])
@@ -790,6 +790,81 @@ function getExplicitProjectHostIds(
   return hostIds
 }
 
+function indexProjectHostSetupsByProjectId(
+  setups: readonly ProjectHostSetup[]
+): Map<string, ProjectHostSetup[]> {
+  const setupsByProjectId = new Map<string, ProjectHostSetup[]>()
+  for (const setup of setups) {
+    const existing = setupsByProjectId.get(setup.projectId)
+    if (existing) {
+      existing.push(setup)
+    } else {
+      setupsByProjectId.set(setup.projectId, [setup])
+    }
+  }
+  return setupsByProjectId
+}
+
+function getProjectSourceRepos(
+  project: Project,
+  reposById: ReadonlyMap<string, readonly Repo[]>
+): Repo[] {
+  const sourceRepos: Repo[] = []
+  for (const repoId of project.sourceRepoIds) {
+    for (const repo of reposById.get(repoId) ?? []) {
+      sourceRepos.push(repo)
+    }
+  }
+  return sourceRepos
+}
+
+// Why: the host-id resolvers rescan every setup and repo per project; feeding them the project's own slices keeps a catalog refresh linear.
+function createProjectHostIdIndex(
+  setups: readonly ProjectHostSetup[],
+  reposById: ReadonlyMap<string, readonly Repo[]>,
+  resolveHostIds: (
+    project: Project,
+    setups: readonly ProjectHostSetup[],
+    repos: readonly Repo[]
+  ) => Set<string>
+): (project: Project) => ReadonlySet<string> {
+  const noSetups: readonly ProjectHostSetup[] = []
+  const hostIdsByProject = new Map<Project, ReadonlySet<string>>()
+  let setupsByProjectId: Map<string, ProjectHostSetup[]> | null = null
+  return (project) => {
+    const cached = hostIdsByProject.get(project)
+    if (cached) {
+      return cached
+    }
+    setupsByProjectId ??= indexProjectHostSetupsByProjectId(setups)
+    const hostIds = resolveHostIds(
+      project,
+      setupsByProjectId.get(project.id) ?? noSetups,
+      getProjectSourceRepos(project, reposById)
+    )
+    hostIdsByProject.set(project, hostIds)
+    return hostIds
+  }
+}
+
+// Why: mergePreviousProjectMetadata reads the whole catalog's key set; a view holding only this pair's repos keeps that scan per-project.
+function restrictReposToProjectPair(
+  previous: Project,
+  current: Project,
+  reposById: ReadonlyMap<string, readonly Repo[]>
+): Map<string, readonly Repo[]> {
+  const restricted = new Map<string, readonly Repo[]>()
+  for (const project of [previous, current]) {
+    for (const repoId of project.sourceRepoIds) {
+      const matches = reposById.get(repoId)
+      if (matches) {
+        restricted.set(repoId, matches)
+      }
+    }
+  }
+  return restricted
+}
+
 function mergeFetchedProjectCompatibilityForHost({
   previous,
   fetched,
@@ -817,45 +892,77 @@ function mergeFetchedProjectCompatibilityForHost({
   const previousProjectById = new Map(previous.projects.map((project) => [project.id, project]))
   const reposById = getReposById(repos)
   const currentRepoIds = new Set(repos.map((repo) => repo.id))
-  const projectHasHost = (project: Project, setups: readonly ProjectHostSetup[]): boolean =>
-    getProjectHostIds(project, setups, repos).has(hostId)
-  const projectHasCurrentOwnerOutsideHost = (project: Project): boolean =>
-    [...getExplicitProjectHostIds(project, projectHostSetups, repos)].some(
-      (ownerHostId) => ownerHostId !== hostId
-    )
+  const fetchedProjectHostIds = createProjectHostIdIndex(
+    fetched.projectHostSetups,
+    reposById,
+    getProjectHostIds
+  )
+  const previousProjectHostIds = createProjectHostIdIndex(
+    previous.projectHostSetups,
+    reposById,
+    getProjectHostIds
+  )
+  const currentProjectOwnerHostIds = createProjectHostIdIndex(
+    projectHostSetups,
+    reposById,
+    getExplicitProjectHostIds
+  )
+  const projectHasCurrentOwnerOutsideHost = (project: Project): boolean => {
+    for (const ownerHostId of currentProjectOwnerHostIds(project)) {
+      if (ownerHostId !== hostId) {
+        return true
+      }
+    }
+    return false
+  }
   const fetchedProjects = fetched.projects
     .filter((project) => {
       const previousProject = previousProjectById.get(project.id)
       // Why: repo-derived compatibility projects include every host; a one-host refresh should only reconcile or prune that host's ownership.
       return (
-        projectHasHost(project, fetched.projectHostSetups) ||
-        (previousProject ? projectHasHost(previousProject, previous.projectHostSetups) : false)
+        fetchedProjectHostIds(project).has(hostId) ||
+        (previousProject ? previousProjectHostIds(previousProject).has(hostId) : false)
       )
     })
     .map((project) => {
       const previousProject = previousProjectById.get(project.id)
       return previousProject
-        ? mergePreviousProjectMetadata(previousProject, project, reposById, hostId)
+        ? mergePreviousProjectMetadata(
+            previousProject,
+            project,
+            restrictReposToProjectPair(previousProject, project, reposById),
+            hostId
+          )
         : projectWithCurrentSourceRepoIds(project, currentRepoIds)
     })
   const fetchedProjectIds = new Set(fetchedProjects.map((project) => project.id))
   const preservedProjects = previous.projects.filter(
     (project) =>
       !fetchedProjectIds.has(project.id) &&
-      (!getProjectHostIds(project, previous.projectHostSetups, repos).has(hostId) ||
-        projectHasCurrentOwnerOutsideHost(project))
+      (!previousProjectHostIds(project).has(hostId) || projectHasCurrentOwnerOutsideHost(project))
   )
+  // Why: the merges above always allocate (sourceRepoIds is rebuilt per project, and fetched setups
+  // arrive freshly cloned over IPC), so reconcile against `previous` to recover identity when a
+  // refresh changed nothing. Keys match what each merge already dedups by.
   return {
-    projects: mergeProjectCompatibilityProjects(
-      preservedProjects.map((project) => {
-        const sourceRepoIds = getSourceRepoIdsOutsideHost(project, reposById, hostId)
-        return sourceRepoIds.length === project.sourceRepoIds.length
-          ? project
-          : { ...project, sourceRepoIds }
-      }),
-      fetchedProjects
+    projects: reconcileFetchedEntries(
+      previous.projects,
+      mergeProjectCompatibilityProjects(
+        preservedProjects.map((project) => {
+          const sourceRepoIds = getSourceRepoIdsOutsideHost(project, reposById, hostId)
+          return sourceRepoIds.length === project.sourceRepoIds.length
+            ? project
+            : { ...project, sourceRepoIds }
+        }),
+        fetchedProjects
+      ),
+      (project) => project.id
     ),
-    projectHostSetups
+    projectHostSetups: reconcileFetchedEntries(
+      previous.projectHostSetups,
+      projectHostSetups,
+      getProjectHostSetupOwnerKey
+    )
   }
 }
 
@@ -1134,7 +1241,7 @@ function filterSetupsForPrunedRepoRows(
   setups: readonly ProjectHostSetup[],
   mergedRepos: readonly Repo[],
   reconciledRepos: readonly Repo[]
-): ProjectHostSetup[] {
+): readonly ProjectHostSetup[] {
   const survivingOwners = new Set(
     reconciledRepos.map((repo) => `${getRepoExecutionHostId(repo)}:${repo.id}`)
   )
@@ -1143,12 +1250,15 @@ function filterSetupsForPrunedRepoRows(
       .filter((repo) => !survivingOwners.has(`${getRepoExecutionHostId(repo)}:${repo.id}`))
       .map((repo) => `${getRepoExecutionHostId(repo)}:${repo.id}`)
   )
+  // Why: this result feeds the compat merge as `previous`, so an unconditional copy here would
+  // discard the identity that merge is about to try to preserve.
   if (prunedOwners.size === 0) {
-    return [...setups]
+    return setups
   }
-  return setups.filter(
+  const filtered = setups.filter(
     (setup) => !setup.repoId || !prunedOwners.has(`${setup.hostId}:${setup.repoId}`)
   )
+  return filtered.length === setups.length ? setups : filtered
 }
 
 function reconcileReadoptedSshWorktreeState(
@@ -1612,6 +1722,25 @@ function getFreshFolderWorkspacePathStatusFromCache(args: {
   return Date.now() - entry.checkedAt < FOLDER_WORKSPACE_PATH_STATUS_TTL_MS ? entry.status : null
 }
 
+// Why: catalog fetches drop this cache defensively, but entries already self-invalidate on
+// requestSnapshot drift and TTL. Keep the identity when there is nothing to drop, so a no-op
+// refresh stops re-rendering every sidebar row that shallow-selects this map.
+function clearedFolderWorkspacePathStatuses(
+  current: Record<string, FolderWorkspacePathStatusCacheEntry>
+): Record<string, FolderWorkspacePathStatusCacheEntry> {
+  return Object.keys(current).length === 0 ? current : {}
+}
+
+// Why: App.tsx and five other components select this array by identity, so a refresh that prunes
+// nothing must hand back the input rather than an equal copy.
+function pruneFilterRepoIds(
+  filterRepoIds: readonly string[],
+  validRepoIds: ReadonlySet<string>
+): readonly string[] {
+  const pruned = filterRepoIds.filter((projectId) => validRepoIds.has(projectId))
+  return pruned.length === filterRepoIds.length ? filterRepoIds : pruned
+}
+
 function getFolderWorkspacePathStatusRequestSnapshotForRead(
   state: AppState,
   request: FolderWorkspacePathStatusRequest
@@ -1621,8 +1750,8 @@ function getFolderWorkspacePathStatusRequestSnapshotForRead(
 
 export type RepoSlice = {
   repos: readonly Repo[]
-  projects: Project[]
-  projectHostSetups: ProjectHostSetup[]
+  projects: readonly Project[]
+  projectHostSetups: readonly ProjectHostSetup[]
   projectGroups: ProjectGroup[]
   folderWorkspaces: FolderWorkspace[]
   folderWorkspacePathStatuses: Record<string, FolderWorkspacePathStatusCacheEntry>
@@ -1933,9 +2062,11 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           pendingSshRepoReadoptions: reconciliation.pendingReadoptions,
           ...reconcileReadoptedSshWorktreeState(s, s.pendingSshRepoReadoptions),
           ...mergedProjectCompatibility,
-          folderWorkspacePathStatuses: {},
+          folderWorkspacePathStatuses: clearedFolderWorkspacePathStatuses(
+            s.folderWorkspacePathStatuses
+          ),
           activeRepoId: s.activeRepoId && validRepoIds.has(s.activeRepoId) ? s.activeRepoId : null,
-          filterRepoIds: s.filterRepoIds.filter((projectId) => validRepoIds.has(projectId)),
+          filterRepoIds: pruneFilterRepoIds(s.filterRepoIds, validRepoIds),
           setupScriptPromptDismissedRepoIds: filterSetupScriptPromptDismissalsToValidRepos(
             s.setupScriptPromptDismissedRepoIds,
             validRepoHostIdentities
@@ -2019,7 +2150,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           ...reconcileReadoptedSshWorktreeState(s, s.pendingSshRepoReadoptions),
           ...mergedProjectCompatibility,
           activeRepoId: s.activeRepoId && validRepoIds.has(s.activeRepoId) ? s.activeRepoId : null,
-          filterRepoIds: s.filterRepoIds.filter((projectId) => validRepoIds.has(projectId)),
+          filterRepoIds: pruneFilterRepoIds(s.filterRepoIds, validRepoIds),
           setupScriptPromptDismissedRepoIds: filterSetupScriptPromptDismissalsToValidRepos(
             s.setupScriptPromptDismissedRepoIds,
             validRepoHostIdentities
@@ -2084,7 +2215,9 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           pendingSshRepoReadoptions: reconciliation.pendingReadoptions,
           ...reconcileReadoptedSshWorktreeState(s, s.pendingSshRepoReadoptions),
           ...mergedProjectCompatibility,
-          folderWorkspacePathStatuses: {},
+          folderWorkspacePathStatuses: clearedFolderWorkspacePathStatuses(
+            s.folderWorkspacePathStatuses
+          ),
           activeRepoId: s.activeRepoId,
           filterRepoIds: s.filterRepoIds,
           setupScriptPromptDismissedRepoIds: s.setupScriptPromptDismissedRepoIds
@@ -2099,7 +2232,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         const validRepoHostIdentities = new Set(s.repos.map(getRepoHostIdentity))
         return {
           activeRepoId: s.activeRepoId && validRepoIds.has(s.activeRepoId) ? s.activeRepoId : null,
-          filterRepoIds: s.filterRepoIds.filter((projectId) => validRepoIds.has(projectId)),
+          filterRepoIds: pruneFilterRepoIds(s.filterRepoIds, validRepoIds),
           setupScriptPromptDismissedRepoIds: filterSetupScriptPromptDismissalsToValidRepos(
             s.setupScriptPromptDismissedRepoIds,
             validRepoHostIdentities
@@ -2171,7 +2304,9 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           ? {
               projectGroups: mergeFetchedProjectGroupCatalog(catalog, current.projectGroups)
                 .projectGroups,
-              folderWorkspacePathStatuses: {}
+              folderWorkspacePathStatuses: clearedFolderWorkspacePathStatuses(
+                current.folderWorkspacePathStatuses
+              )
             }
           : current
       )
@@ -2191,7 +2326,9 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           ? {
               projectGroups: mergeFetchedProjectGroupCatalog(catalog, s.projectGroups)
                 .projectGroups,
-              folderWorkspacePathStatuses: {}
+              folderWorkspacePathStatuses: clearedFolderWorkspacePathStatuses(
+                s.folderWorkspacePathStatuses
+              )
             }
           : s
       )
@@ -2252,7 +2389,12 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           current.folderWorkspaces,
           current.projectGroups
         )
-        return { folderWorkspaces, folderWorkspacePathStatuses: {} }
+        return {
+          folderWorkspaces,
+          folderWorkspacePathStatuses: clearedFolderWorkspacePathStatuses(
+            current.folderWorkspacePathStatuses
+          )
+        }
       })
     } catch (err) {
       console.error('Failed to fetch folder workspaces:', err)
@@ -2286,7 +2428,9 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
             current.folderWorkspaces,
             current.projectGroups
           ).folderWorkspaces,
-          folderWorkspacePathStatuses: {}
+          folderWorkspacePathStatuses: clearedFolderWorkspacePathStatuses(
+            current.folderWorkspacePathStatuses
+          )
         }
       })
     }
