@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { computeVisibleWorktreeIds } from './visible-worktrees'
+import { getPairedDeviceIdsByEnvironment } from './workspace-creator-visibility'
 import type { Repo, TerminalTab, Worktree, WorktreeLineage } from '../../../../shared/types'
 import { LOCAL_EXECUTION_HOST_ID } from '../../../../shared/execution-host'
 
@@ -90,6 +91,22 @@ function visibleOptions(overrides: Partial<VisibleOptions> = {}): VisibleOptions
 }
 
 describe('computeVisibleWorktreeIds', () => {
+  it('prefers the authenticated live device id over cached pairing metadata', () => {
+    const deviceIds = getPairedDeviceIdsByEnvironment(
+      [{ id: 'env-1', pairedDeviceId: 'cached-device' } as never],
+      new Map([
+        [
+          'env-1',
+          {
+            status: { pairedDeviceId: 'authenticated-device' } as never
+          }
+        ]
+      ])
+    )
+
+    expect(deviceIds.get('env-1')).toBe('authenticated-device')
+  })
+
   it('hides only known workspaces created by another device', () => {
     const own = {
       ...makeWorktree('own'),

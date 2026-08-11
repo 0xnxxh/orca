@@ -5,6 +5,8 @@ import { normalizeWorkspaceCreatorProvenance } from '../../../../shared/workspac
 
 type RuntimeStatusEntry = { status: RuntimeStatus | null }
 
+export const EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT: ReadonlyMap<string, string> = new Map()
+
 export function getPairedDeviceIdsByEnvironment(
   environments: readonly PublicKnownRuntimeEnvironment[],
   statuses: ReadonlyMap<string, RuntimeStatusEntry>
@@ -12,7 +14,7 @@ export function getPairedDeviceIdsByEnvironment(
   const result = new Map<string, string>()
   for (const environment of environments) {
     const deviceId =
-      environment.pairedDeviceId ?? statuses.get(environment.id)?.status?.pairedDeviceId
+      statuses.get(environment.id)?.status?.pairedDeviceId ?? environment.pairedDeviceId
     if (deviceId) {
       result.set(environment.id, deviceId)
     }

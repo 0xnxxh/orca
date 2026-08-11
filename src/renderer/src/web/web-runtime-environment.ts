@@ -37,9 +37,18 @@ export function readStoredWebRuntimeEnvironment(): StoredWebRuntimeEnvironment |
           (environmentId): environmentId is string => typeof environmentId === 'string'
         )
       : []
-    const { compatibleEnvironmentIds: _unvalidatedIds, ...environment } = parsed
+    const pairedDeviceId =
+      typeof parsed.pairedDeviceId === 'string' && parsed.pairedDeviceId.trim().length > 0
+        ? parsed.pairedDeviceId.trim()
+        : null
+    const {
+      compatibleEnvironmentIds: _unvalidatedIds,
+      pairedDeviceId: _unvalidatedDeviceId,
+      ...environment
+    } = parsed
     return {
       ...environment,
+      ...(pairedDeviceId ? { pairedDeviceId } : {}),
       ...(compatibleEnvironmentIds.length > 0 ? { compatibleEnvironmentIds } : {})
     }
   } catch {

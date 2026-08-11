@@ -1,5 +1,4 @@
 import type { StateCreator } from 'zustand'
-import { toast } from 'sonner'
 import type { AppState } from '../types'
 import type { PublicKnownRuntimeEnvironment } from '../../../../shared/runtime-environments'
 import type { RuntimeStatus } from '../../../../shared/runtime-types'
@@ -9,8 +8,11 @@ import {
   unwrapRuntimeRpcResult
 } from '@/runtime/runtime-rpc-client'
 import { replaceRuntimeEnvironmentRevisions } from '@/runtime/runtime-environment-revision'
-import { translate } from '@/i18n/i18n'
 import { bumpProviderRuntimeSessionGeneration } from '@/lib/provider-runtime-context'
+import {
+  dismissRuntimeDisconnectedToast,
+  showRuntimeDisconnectedToast
+} from './runtime-environment-disconnect-toast'
 
 /** Live status for one saved runtime environment, as last observed by the
  * renderer. `status === null` records a probe that failed or timed out so the
@@ -64,85 +66,6 @@ export type RuntimeStatusSlice = {
 }
 
 const connectionGenerationByEnvironment = new Map<string, number>()
-const activeRuntimeDisconnectedToasts = new Map<string, symbol>()
-const RUNTIME_DISCONNECTED_TOAST_DURATION_MS = 4_000
-
-function getRuntimeDisconnectedToastId(environmentId: string): string {
-  return `runtime-environment-disconnected:${environmentId}`
-}
-
-function showRuntimeDisconnectedToast(environmentId: string, getState: () => AppState): void {
-  const environment = getState().runtimeEnvironments.find((entry) => entry.id === environmentId)
-  const toastId = getRuntimeDisconnectedToastId(environmentId)
-  const activation = Symbol(toastId)
-  const title = environment?.name
-    ? translate(
-        'auto.store.slices.runtime.status.runtimeHostUnreachableNamed',
-        "Can't reach {{hostName}}",
-        { hostName: environment.name }
-      )
-    : translate(
-        'auto.store.slices.runtime.status.runtimeHostUnreachable',
-        "Can't reach Orca server"
-      )
-  activeRuntimeDisconnectedToasts.set(toastId, activation)
-  const clearActiveToast = (): void => {
-    if (activeRuntimeDisconnectedToasts.get(toastId) === activation) {
-      activeRuntimeDisconnectedToasts.delete(toastId)
-    }
-  }
-  let retrying = false
-  const showToast = (duration = RUNTIME_DISCONNECTED_TOAST_DURATION_MS): void => {
-    toast.warning(title, {
-      id: toastId,
-      description: translate(
-        'auto.store.slices.runtime.status.runtimeHostDisconnectedDescription',
-        'Check that Orca is running on this server and that your network connection is working, then try again.'
-      ),
-      duration,
-      action: {
-        label: translate('auto.store.slices.runtime.status.tryAgain', 'Try again'),
-        onClick: (event) => {
-          // Why: Sonner otherwise deletes the keyed toast after the action callback.
-          event.preventDefault()
-          if (retrying) {
-            return
-          }
-          retrying = true
-          showToast(Number.POSITIVE_INFINITY)
-          void getState()
-            .refreshRuntimeEnvironmentStatus(environmentId)
-            .then((reachable) => {
-              const stillSaved = getState().runtimeEnvironments.some(
-                (entry) => entry.id === environmentId
-              )
-              if (
-                !reachable &&
-                stillSaved &&
-                activeRuntimeDisconnectedToasts.get(toastId) === activation
-              ) {
-                showToast()
-              }
-            })
-            .finally(() => {
-              retrying = false
-            })
-        }
-      },
-      onDismiss: clearActiveToast,
-      onAutoClose: clearActiveToast
-    })
-  }
-  showToast()
-}
-
-function dismissRuntimeDisconnectedToast(environmentId: string): void {
-  const toastId = getRuntimeDisconnectedToastId(environmentId)
-  if (!activeRuntimeDisconnectedToasts.delete(toastId)) {
-    return
-  }
-  toast.dismiss?.(toastId)
-}
 
 export function getRuntimeEnvironmentConnectionGeneration(environmentId: string): number {
   return connectionGenerationByEnvironment.get(environmentId) ?? 0
@@ -254,6 +177,7 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
 
   setRuntimeEnvironmentStatus: (environmentId, status, options) => {
     const previous = get().runtimeStatusByEnvironmentId.get(environmentId)
+    const pairedDeviceId = status.status?.pairedDeviceId?.trim()
     // Why: a non-null status proves the runtime just answered, so drop any stale
     // "offline" compat failure before this online transition fires the
     // reuse-flagged background refetches — a recovered host must re-probe.
@@ -279,7 +203,20 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
         ...status,
         connectionGeneration
       })
-      return { runtimeStatusByEnvironmentId: next }
+      const environmentIndex = pairedDeviceId
+        ? s.runtimeEnvironments.findIndex((environment) => environment.id === environmentId)
+        : -1
+      const runtimeEnvironments =
+        environmentIndex >= 0 &&
+        s.runtimeEnvironments[environmentIndex].pairedDeviceId !== pairedDeviceId
+          ? s.runtimeEnvironments.map((environment, index) =>
+              index === environmentIndex ? { ...environment, pairedDeviceId } : environment
+            )
+          : s.runtimeEnvironments
+      return {
+        runtimeStatusByEnvironmentId: next,
+        ...(runtimeEnvironments !== s.runtimeEnvironments ? { runtimeEnvironments } : {})
+      }
     })
     if (options?.suppressDisconnectToast) {
       dismissRuntimeDisconnectedToast(environmentId)

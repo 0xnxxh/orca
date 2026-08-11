@@ -379,6 +379,21 @@ describe('web runtime environment identity', () => {
     ).rejects.toThrow('Unknown Orca runtime environment: web-server-old')
   })
 
+  it('ignores malformed persisted paired device identity', async () => {
+    const globals = installBrowserGlobals('Linux')
+    writeStoredRuntimeEnvironment(globals.storage)
+    const stored = JSON.parse(
+      globals.storage.getItem('orca.web.runtimeEnvironment.v1') ?? '{}'
+    ) as Record<string, unknown>
+    stored.pairedDeviceId = { invalid: true }
+    globals.storage.setItem('orca.web.runtimeEnvironment.v1', JSON.stringify(stored))
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+
+    const [environment] = await globals.window.api.runtimeEnvironments.list()
+    expect(environment).not.toHaveProperty('pairedDeviceId')
+  })
+
   it('keeps pairing while manual disconnect fences passive reconnects', async () => {
     const calls: string[] = []
     const close = vi.fn()

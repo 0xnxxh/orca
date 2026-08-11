@@ -22,6 +22,7 @@ import {
 import { computeRenderedSidebarWorktreeOrder } from './rendered-sidebar-worktree-order'
 import { getWorktreeGitIdentityDisplay } from '@/lib/worktree-git-identity-display'
 import {
+  EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
   getPairedDeviceIdsByEnvironment,
   isWorkspaceFromOtherDevice
 } from './workspace-creator-visibility'
@@ -433,10 +434,12 @@ export function getVisibleWorktreeIds(): string[] {
     hideCliCreatedWorkspaces: state.hideCliCreatedWorkspaces,
     hideDetachedHeadWorkspaces: state.hideDetachedHeadWorkspaces,
     hideWorkspacesFromOtherDevices: state.hideWorkspacesFromOtherDevices,
-    pairedDeviceIdsByEnvironment: getPairedDeviceIdsByEnvironment(
-      state.runtimeEnvironments,
-      state.runtimeStatusByEnvironmentId
-    ),
+    pairedDeviceIdsByEnvironment: state.hideWorkspacesFromOtherDevices
+      ? getPairedDeviceIdsByEnvironment(
+          state.runtimeEnvironments,
+          state.runtimeStatusByEnvironmentId
+        )
+      : EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
     alwaysShowDefaultBranchWorkspace: state.alwaysShowDefaultBranchWorkspace,
     repoMap,
     workspaceHostScope: state.workspaceHostScope,

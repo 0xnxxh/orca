@@ -55,6 +55,7 @@ import {
   isSleepingSweepExemptWorkspace
 } from '@/components/sidebar/visible-worktrees'
 import {
+  EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
   getPairedDeviceIdsByEnvironment,
   isWorkspaceFromOtherDevice
 } from '@/components/sidebar/workspace-creator-visibility'
@@ -754,8 +755,11 @@ function WorktreeJumpPaletteContent({
     [agentStatusByPaneKey, tabsByWorktree]
   )
   const pairedDeviceIdsByEnvironment = useMemo(
-    () => getPairedDeviceIdsByEnvironment(runtimeEnvironments, runtimeStatusByEnvironmentId),
-    [runtimeEnvironments, runtimeStatusByEnvironmentId]
+    () =>
+      hideWorkspacesFromOtherDevices
+        ? getPairedDeviceIdsByEnvironment(runtimeEnvironments, runtimeStatusByEnvironmentId)
+        : EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
+    [hideWorkspacesFromOtherDevices, runtimeEnvironments, runtimeStatusByEnvironmentId]
   )
 
   // Why: empty-query mirrors sidebar filters so Search opens on the same quiet list; typed search widens to global non-archived scope.

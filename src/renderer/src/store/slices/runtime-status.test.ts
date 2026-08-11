@@ -15,6 +15,7 @@ import {
   getRuntimeEnvironmentConnectionGeneration
 } from './runtime-status'
 import { getProviderRuntimeContextKey } from '@/lib/provider-runtime-context'
+import { getPairedDeviceIdsByEnvironment } from '@/components/sidebar/workspace-creator-visibility'
 
 vi.mock('sonner', () => ({
   toast: { warning: vi.fn(), dismiss: vi.fn() }
@@ -171,6 +172,23 @@ describe('runtime-status slice', () => {
     const map = store.getState().runtimeStatusByEnvironmentId
     expect(map.size).toBe(1)
     expect(map.get('env-a')).toEqual({ status: null, checkedAt: 5, connectionGeneration: 1 })
+  })
+
+  it('retains a learned paired device id after disconnecting a legacy environment', () => {
+    const store = createSliceStore()
+    store.getState().setRuntimeEnvironments([makeEnvironment()])
+    store.getState().setRuntimeEnvironmentStatus('env-a', {
+      status: makeStatus({ pairedDeviceId: 'client-device' }),
+      checkedAt: 1
+    })
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: null, checkedAt: 2 })
+
+    expect(
+      getPairedDeviceIdsByEnvironment(
+        store.getState().runtimeEnvironments,
+        store.getState().runtimeStatusByEnvironmentId
+      ).get('env-a')
+    ).toBe('client-device')
   })
 
   it('does not toast when the first probe finds a saved server offline', () => {

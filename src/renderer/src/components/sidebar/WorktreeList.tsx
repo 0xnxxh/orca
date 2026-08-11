@@ -124,7 +124,10 @@ import {
   setVisibleWorktreeIds,
   sidebarHasActiveFilters
 } from './visible-worktrees'
-import { getPairedDeviceIdsByEnvironment } from './workspace-creator-visibility'
+import {
+  EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
+  getPairedDeviceIdsByEnvironment
+} from './workspace-creator-visibility'
 import {
   getCyclicProjectedWorktreeLineageIds,
   getWorktreeLineageAncestors
@@ -5513,10 +5516,9 @@ const WorktreeList = React.memo(function WorktreeList({
       hideCliCreatedWorkspaces,
       hideDetachedHeadWorkspaces,
       hideWorkspacesFromOtherDevices,
-      pairedDeviceIdsByEnvironment: getPairedDeviceIdsByEnvironment(
-        runtimeEnvironments,
-        runtimeStatusByEnvironmentId
-      ),
+      pairedDeviceIdsByEnvironment: hideWorkspacesFromOtherDevices
+        ? getPairedDeviceIdsByEnvironment(runtimeEnvironments, runtimeStatusByEnvironmentId)
+        : EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
       alwaysShowDefaultBranchWorkspace,
       repoMap,
       workspaceHostScope,
