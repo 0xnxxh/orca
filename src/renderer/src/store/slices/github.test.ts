@@ -5428,6 +5428,46 @@ describe('createGitHubSlice.refreshAllGitHub', () => {
     resetRemoteRuntimeMocks()
   })
 
+  it('publishes no store update when the cache sweep changes nothing', () => {
+    const store = createTestStore()
+    store.setState({
+      repos: [{ id: 'repo-1', path: '/repo', name: 'repo', kind: 'git' }],
+      groupBy: 'repo',
+      worktreeCardProperties: ['comment'],
+      rightSidebarOpen: false,
+      worktreesByRepo: { 'repo-1': [makePRRefreshWorktree()] }
+    } as unknown as Partial<AppState>)
+    let publications = 0
+    const unsubscribe = store.subscribe(() => {
+      publications += 1
+    })
+
+    store.getState().refreshAllGitHub()
+    unsubscribe()
+
+    expect(publications).toBe(0)
+  })
+
+  it('still clears populated comments when no workspace refresh is needed', () => {
+    const store = createTestStore()
+    store.setState({
+      commentsCache: { cached: { data: [], fetchedAt: 1 } },
+      groupBy: 'repo',
+      worktreeCardProperties: ['comment'],
+      rightSidebarOpen: false
+    } as unknown as Partial<AppState>)
+    let publications = 0
+    const unsubscribe = store.subscribe(() => {
+      publications += 1
+    })
+
+    store.getState().refreshAllGitHub()
+    unsubscribe()
+
+    expect(store.getState().commentsCache).toEqual({})
+    expect(publications).toBe(1)
+  })
+
   it('skips repo and worktree identity reads when no GitHub decoration is visible', () => {
     const store = createTestStore()
     const repoId = 'repo-idle'

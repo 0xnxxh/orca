@@ -4433,15 +4433,28 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
 
   refreshAllGitHub: () => {
     // Clear comments cache; evict stale entries to bound long-session growth across repos/branches.
-    set((s) => ({
-      commentsCache: {},
-      prCache: evictStaleEntries(s.prCache),
-      issueCache: evictStaleEntries(s.issueCache),
-      checksCache: evictStaleEntries(s.checksCache),
-      workItemsCache: evictStaleEntries(s.workItemsCache),
-      projectViewCache: evictStaleEntries(s.projectViewCache),
-      prRefreshStates: pruneExpiredPRRefreshStates(s.prRefreshStates)
-    }))
+    set((s) => {
+      const next = {
+        commentsCache: Object.keys(s.commentsCache).length === 0 ? s.commentsCache : {},
+        prCache: evictStaleEntries(s.prCache),
+        issueCache: evictStaleEntries(s.issueCache),
+        checksCache: evictStaleEntries(s.checksCache),
+        workItemsCache: evictStaleEntries(s.workItemsCache),
+        projectViewCache: evictStaleEntries(s.projectViewCache),
+        prRefreshStates: pruneExpiredPRRefreshStates(s.prRefreshStates)
+      }
+      // Why: each eviction helper returns its input untouched when nothing changed, so an
+      // unchanged sweep can return `s` and avoid waking every subscriber on window resume.
+      return next.commentsCache === s.commentsCache &&
+        next.prCache === s.prCache &&
+        next.issueCache === s.issueCache &&
+        next.checksCache === s.checksCache &&
+        next.workItemsCache === s.workItemsCache &&
+        next.projectViewCache === s.projectViewCache &&
+        next.prRefreshStates === s.prRefreshStates
+        ? s
+        : next
+    })
 
     // Why: don't prune prRequestGenerations here — deleting a live generation makes its response look stale.
 
