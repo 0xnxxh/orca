@@ -6,13 +6,13 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `38202d3c1b` on `skills-share` (pushed; no PR).
-- Orca Cloud: `69b388e` on `skills-share-cloud` (pushed; no PR).
+- Orca implementation: `534abb8908` on `skills-share` (pushed; no PR).
+- Orca Cloud: `81a581d` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
 
 - Local Node and web typechecks, changed-code quality gates, 94 skill-domain files with 770 tests
-  passed and 3 skipped, 129 Orca Cloud API tests, the full Cloud monorepo test/typecheck/lint/build
+  passed and 3 skipped, 130 Orca Cloud API tests, the full Cloud monorepo test/typecheck/lint/build
   gates, and Terraform validation.
 - Native Windows package/install/recovery/copy-fallback tests and Node typecheck on `windows 2`;
   the current slice passed 284 tests with 21 intentional platform skips across 43 files.
@@ -801,10 +801,13 @@ still require the listed split metrics, latency panels, and alerts.
       acceptance as separate human gates.
 - [ ] Verify owner-private staging permissions on supported hosts.
 - [x] Rate-limit uploads, finalization, downloads, share resolution, and remote transfer sessions.
-- [ ] Test malicious redirects, DNS/host confusion, expired grants, mismatched generations, and
-      oversized streaming bodies.
-- [ ] Test archive and filesystem race conditions, including source drift and destination changes
-      after preview.
+- [x] Test malicious redirects, DNS/host confusion, expired grants, mismatched generations, and
+      oversized streaming bodies. Exact HTTPS origins, manual same-origin redirects, URL
+      credentials, suffix/port confusion, streamed byte bounds, expiry-before-fetch, and immutable
+      GCS generation pinning are covered in Orca `534abb8908` and Orca Cloud `81a581d`.
+- [x] Test archive and filesystem race conditions, including source drift and destination changes
+      after preview. Package creation re-observes staged bytes, and install commit re-observes the
+      locked canonical destination before its first destructive rename.
 - [ ] Review organization departure, deletion, retention, soft-delete, and operator recovery.
 - [ ] Complete privacy and security sign-off before external rollout.
 
