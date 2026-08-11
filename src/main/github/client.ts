@@ -2960,10 +2960,7 @@ async function getRestPRByNumber(
     { ...ghOptions, ...githubHostExecOptions(ownerRepo) }
   )
   const parsed = JSON.parse(stdout) as unknown
-  if (
-    options.requireUsableStackMetadata &&
-    (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
-  ) {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error('invalid response shape')
   }
   const restData = parsed as RestPullRequest
