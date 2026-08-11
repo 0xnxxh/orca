@@ -6,13 +6,13 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca: `ed2781fbc1` on `skills-share` (pushed; no PR).
-- Orca Cloud: `69da8ed` on `skills-share-cloud` (pushed; no PR).
+- Orca implementation: `4eeb30ddc8` on `skills-share` (pushed; no PR).
+- Orca Cloud: `8b30d85` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
 
-- Local Node and web typechecks, Relay build, lint, 239 broad skill tests, focused renderer tests,
-  and 93 Orca Cloud tests.
+- Local Node and web typechecks, changed-code quality gates, 56 skill-domain files with 411 tests
+  passed and 3 skipped, 95 Orca Cloud tests, Cloud API build, and Terraform validation.
 - Native Windows package/install/recovery/copy-fallback tests and Node typecheck on `windows 2`.
 - Real Ubuntu 24.04 WSL global, guest-workspace, and `/mnt/c` workspace transactions, including
   alias placement, interrupted update recovery, conflict preservation, update, and removal.
@@ -145,7 +145,7 @@ does not mean the surrounding phase is complete.
 - [x] Define preview output for destination, current state, provider coverage, conflicts, and trust
       metadata.
 - [x] Define structured installed, updated, unchanged, conflict, partial, and failed results.
-- [ ] Define stable error categories for admission, transport, archive, filesystem, conflict,
+- [x] Define stable error categories for admission, transport, archive, filesystem, conflict,
       recovery, provider placement, and compatibility failures.
 - [x] Ensure responses never include grants, credentials, ACL membership, or private package
       contents.
@@ -165,7 +165,7 @@ does not mean the surrounding phase is complete.
 
 - [ ] Review package, ingress, conflict, result, and capability contracts before implementing
       filesystem mutation or Cloud APIs.
-- [ ] Freeze stable V1 error categories used by desktop, runtime, SSH, and Cloud tests.
+- [x] Freeze stable V1 error categories used by desktop, runtime, SSH, and Cloud tests.
 
 ## 2. Build and validate packages
 
@@ -196,14 +196,14 @@ does not mean the surrounding phase is complete.
 ### Package tests
 
 - [ ] Test deterministic manifests, archives, and digests on every target operating system.
-- [ ] Test source changes during packaging.
-- [ ] Test CRLF/LF behavior explicitly and document whether byte identity changes.
+- [x] Test source changes during packaging.
+- [x] Test CRLF/LF behavior explicitly and document whether byte identity changes.
 - [x] Test executable-mode preservation and Windows's mode limitations.
-- [ ] Test missing, malformed, and identity-mismatched `SKILL.md` files.
+- [x] Test missing, malformed, and identity-mismatched `SKILL.md` files.
 - [ ] Test every size, count, and depth boundary at limit, one below, and one above.
 - [ ] Test traversal, absolute paths, drive paths, Unicode/case collisions, duplicate paths, all
       rejected link and special-file types, and encrypted entries.
-- [ ] Test truncated archives and invalid tar and content checksums.
+- [x] Test truncated archives and invalid tar and content checksums.
 - [ ] Fuzz archive path normalization and envelope parsing with bounded resources.
 
 ### Phase 2 package gate
@@ -235,7 +235,7 @@ does not mean the surrounding phase is complete.
       before download or mutation.
 - [x] Recover prior journals for the same destination before planning a new operation.
 - [x] Acquire a filesystem-backed cross-process lock keyed by canonical destination.
-- [ ] Bound lock wait time and return a retryable busy result.
+- [x] Bound lock wait time and return a retryable busy result.
 - [x] Stream ingress to an owner-private bounded temporary file and hash it while downloading.
 - [x] Require HTTPS whenever the configured Cloud endpoint uses HTTPS.
 - [x] Allow only configured Orca skill-bucket origins and reject credential-bearing cross-host
@@ -254,7 +254,7 @@ does not mean the surrounding phase is complete.
 - [x] Return an unowned conflict when a destination exists without Orca provenance.
 - [x] Return topology conflicts for files, external links, broken links, and name collisions.
 - [x] Classify every requested provider placement independently.
-- [ ] Repeat current-state inspection immediately before commit and invalidate stale previews.
+- [x] Repeat current-state inspection immediately before commit and invalidate stale previews.
 - [x] Require explicit confirmation before discarding local modifications or unowned content.
 
 ### Durable commit and recovery
@@ -271,7 +271,7 @@ does not mean the surrounding phase is complete.
       antivirus or indexing.
 - [x] Observe the committed destination and require the requested digest.
 - [x] Restore the backup after failed commit and retain sufficient journal state after a crash.
-- [ ] Never remove a path based only on a filename pattern; require journal ownership,
+- [x] Never remove a path based only on a filename pattern; require journal ownership,
       containment, and expected identities.
 - [x] Run bounded recovery at startup and before later operations for the destination.
 
@@ -290,10 +290,10 @@ does not mean the surrounding phase is complete.
 
 ### Verification and discovery
 
-- [ ] Re-run skill discovery on the destination after commit.
-- [ ] Verify the canonical skill and successful provider placements are observable.
-- [ ] Determine success from installed bytes and discovery, not process exit alone.
-- [ ] Invalidate renderer skill caches and refresh the Skills page.
+- [x] Re-run skill discovery on the destination after commit.
+- [x] Verify the canonical skill and successful provider placements are observable.
+- [x] Determine success from installed bytes and discovery, not process exit alone.
+- [x] Invalidate renderer skill caches and refresh the Skills page.
 - [x] Return canonical success with `partial` when an optional provider placement fails.
 
 ## 4. Implement provider placements
@@ -313,12 +313,12 @@ does not mean the surrounding phase is complete.
 - [x] Add `src/main/skills/skill-placement-reconciliation.ts`.
 - [x] Create relative directory aliases from real parent directories on POSIX.
 - [x] Create directory junctions with absolute canonical targets on Windows.
-- [ ] Detect provider parents already linked to canonical storage.
+- [x] Detect provider parents already linked to canonical storage.
 - [x] Fall back to an independently copied and verified directory when aliases are unavailable or
       denied and policy allows it.
 - [x] Record each canonical copy, provider alias, junction, or independent-copy topology.
 - [x] Reconcile placements idempotently after install and update.
-- [ ] Repair broken Orca-owned aliases.
+- [x] Repair broken Orca-owned aliases.
 - [x] Leave unowned or modified provider placements untouched unless explicitly replaced.
 - [x] Preserve canonical success when a provider placement fails and make coverage retryable.
 
@@ -334,11 +334,11 @@ does not mean the surrounding phase is complete.
 
 ### Update and rollback
 
-- [ ] Resolve the latest accessible immutable Cloud version without mutating local state.
+- [x] Resolve the latest accessible immutable Cloud version without mutating local state.
 - [x] Compare the requested digest with provenance and observe current bytes before offering an
       update.
 - [x] Route clean updates through the same install transaction.
-- [ ] Offer keep-local, authorized publish-as-new-version, and explicit discard-and-replace choices
+- [x] Offer keep-local, authorized publish-as-new-version, and explicit discard-and-replace choices
       for modified installs.
 - [x] Reconcile recorded aliases, junctions, and independent copies during updates.
 - [x] Implement rollback as installation of a selected retained immutable version.
@@ -359,9 +359,9 @@ does not mean the surrounding phase is complete.
 - [ ] Inject failure before and after every journal transition.
 - [x] Verify partial downloads and extraction staging are deleted.
 - [x] Verify a moved destination is restored from backup.
-- [ ] Verify a placed destination without a receipt is completed or restored according to journal
+- [x] Verify a placed destination without a receipt is completed or restored according to journal
       state.
-- [ ] Verify a published receipt with an incomplete journal is finalized safely.
+- [x] Verify a published receipt with an incomplete journal is finalized safely.
 - [ ] Verify interrupted placement reconciliation preserves the canonical install and retries.
 - [ ] Test cancellation during download, extraction, staging copy, commit, provenance, and
       placement reconciliation.
@@ -542,7 +542,7 @@ does not mean the surrounding phase is complete.
 - [x] Add typed calls for upload grants, GCS upload, finalization, package/version catalog,
       ACL/access management, share creation/resolution/revocation, and download grants.
 - [x] Keep desktop contracts storage-provider-neutral.
-- [ ] Implement bounded progress, cancellation, retry, and idempotency behavior.
+- [x] Implement bounded progress, cancellation, retry, and idempotency behavior.
 - [x] Redact signed policies, URLs, credentials, private paths, and package contents at creation.
 
 ### Share experience
@@ -554,10 +554,10 @@ does not mean the surrounding phase is complete.
 - [x] Let the author choose organization or selected-person access.
 - [x] Accept optional release label and notes.
 - [x] Package the exact previewed bytes and invalidate preview after source drift.
-- [ ] Show bounded upload and finalization progress with cancellation.
+- [x] Show bounded upload and finalization progress with cancellation.
 - [x] Return a copyable durable Orca URL after publication.
-- [ ] Add access editing, version publishing, unshare, and package deletion actions.
-- [ ] Make clear that unsharing blocks future installs but does not remove installed copies.
+- [x] Add access editing, version publishing, unshare, and package deletion actions.
+- [x] Make clear that unsharing blocks future installs but does not remove installed copies.
 
 ### Install experience
 
@@ -569,13 +569,13 @@ does not mean the surrounding phase is complete.
 - [x] Show detected-agent coverage and canonical/provider topology before commit.
 - [x] Show installed-state conflicts and explicit resolution choices.
 - [ ] Show phase progress without exposing grants or local private paths.
-- [ ] Render installed, unchanged, updated, partial, conflict, unsupported, cancelled, and failed
+- [x] Render installed, unchanged, updated, partial, conflict, unsupported, cancelled, and failed
       results with actionable recovery.
 - [ ] Add incomplete-coverage retry.
 
 ### Skills page lifecycle
 
-- [ ] Show installed package/version identity and update availability.
+- [x] Show installed package/version identity and update availability.
 - [x] Offer clean update, modified-copy choices, prior-version rollback, and safe local removal.
 - [x] Show whether a package came from Orca Cloud and its accessible version history.
 - [x] Refresh discovery and installation state after local or remote actions.
