@@ -6,13 +6,14 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `4eeb30ddc8` on `skills-share` (pushed; no PR).
-- Orca Cloud: `8b30d85` on `skills-share-cloud` (pushed; no PR).
+- Orca implementation: `8963bb3bef` on `skills-share` (pushed; no PR).
+- Orca Cloud: `499856c` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
 
-- Local Node and web typechecks, changed-code quality gates, 56 skill-domain files with 411 tests
-  passed and 3 skipped, 95 Orca Cloud tests, Cloud API build, and Terraform validation.
+- Local Node and web typechecks, changed-code quality gates, 93 skill-domain files with 761 tests
+  passed and 3 skipped, 125 Orca Cloud API tests, the full Cloud monorepo test/typecheck/lint/build
+  gates, and Terraform validation.
 - Native Windows package/install/recovery/copy-fallback tests and Node typecheck on `windows 2`.
 - Real Ubuntu 24.04 WSL global, guest-workspace, and `/mnt/c` workspace transactions, including
   alias placement, interrupted update recovery, conflict preservation, update, and removal.

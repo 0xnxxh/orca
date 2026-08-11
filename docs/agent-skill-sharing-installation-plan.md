@@ -308,7 +308,7 @@ Rules:
 
 - `uploads/` is quarantine storage and is never downloadable through a share.
 - Upload IDs are random, single-use, tenant-bound, and expire in PostgreSQL as well as GCS.
-- Final package keys are derived from the validated package digest.
+- Final package keys are derived from the validated archive SHA-256.
 - The database records the final object's GCS generation, compressed size, archive SHA-256, and
   package digest.
 - Final objects are never overwritten. Promotion uses a generation-match precondition.
