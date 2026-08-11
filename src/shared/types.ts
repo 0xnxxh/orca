@@ -913,6 +913,8 @@ export type TerminalTab = {
    *  PTY and tab icon stay stable even if the default shell setting changes
    *  later. Older persisted tabs may omit this field. */
   shellOverride?: string
+  /** Keeps an ephemeral host fallback out of the active project's runtime. */
+  forceHostRuntime?: boolean
   /** Why: explorer-created terminals can start below the workspace root while
    *  still belonging to that workspace for tab/session ownership. */
   startupCwd?: string
@@ -1255,6 +1257,30 @@ export type GitHubPRMergeMethodSettings = {
   allowedMethods: Record<GitHubPRMergeMethod, boolean>
 }
 
+export type GitHubPRStackEntry = {
+  position: number
+  number: number
+  title: string
+  url: string
+  updatedAt?: string
+  state: PRState
+  checksStatus: CheckStatus
+  mergeable: PRMergeableState
+  reviewDecision?: PRReviewDecision | null
+  mergeStateStatus?: string | null
+  headRefName?: string
+  headSha?: string
+}
+
+export type GitHubPRStack = {
+  number: number
+  position: number
+  size: number
+  baseRefName: string
+  baseSha?: string
+  entries?: GitHubPRStackEntry[]
+}
+
 export type PRInfo = {
   number: number
   title: string
@@ -1269,6 +1295,8 @@ export type PRInfo = {
   mergeQueueRequired?: boolean | null
   mergeMethodSettings?: GitHubPRMergeMethodSettings
   mergeStateStatus?: string | null
+  /** GitHub-registered stack metadata. Absent for ordinary dependent PR chains. */
+  stack?: GitHubPRStack
   // Why: check-runs are keyed by the PR head commit, not the mutable branch name.
   // Keeping the head SHA in cached PR metadata lets the checks panel poll the
   // correct commit without re-querying GitHub or guessing from local branch refs.
