@@ -14082,10 +14082,10 @@
             "756bfc25c9": "Open",
             "09a9489aa5": "Show",
             "2a4c4b8e1f": "Copy",
-            "googleCookieMismatchTitle": "Google sign-in hit a stale-cookie error",
-            "googleCookieMismatchDescription": "Reset Orca's Google cookies to sign in again — other sites are unaffected.",
-            "googleCookieMismatchAction": "Reset Google cookies",
-            "googleCookieMismatchFailed": "Couldn't reset Google cookies"
+            "381861c274": "Google sign-in hit a stale-cookie error",
+            "41da63c3f5": "Reset Orca's Google cookies to sign in again — other sites are unaffected.",
+            "4efe542903": "Reset Google cookies",
+            "76fe482422": "Couldn't reset Google cookies"
           },
           "BrowserToolbarMenu": {
             "429ef481f9": "Cancel",

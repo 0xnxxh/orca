@@ -267,6 +267,8 @@ export class BrowserManager {
   private readonly grabSessionController = new BrowserGrabSessionController()
   private readonly googleCookieMismatchPromptThrottle = new GoogleCookieMismatchPromptThrottle()
   private readonly googleCookieMismatchUrlByGuestId = new Map<number, string>()
+  private readonly googleCookieMismatchPromptSessionByGuestId = new Map<number, object>()
+  private suppressGoogleCookieMismatchPromptPromotion = false
 
   setDictationShortcutForwardingPredicate(predicate: (() => boolean) | null): void {
     this.shouldForwardDictationShortcut = predicate
@@ -959,20 +961,64 @@ export class BrowserManager {
   // offers the fix; cookies are cleared in recoverFromGoogleCookieMismatch, on the user's click.
   private maybePromptGoogleCookieMismatchRecovery(guest: Electron.WebContents, url: string): void {
     if (!isGoogleCookieMismatchUrl(url)) {
+      this.clearGoogleCookieMismatchRecovery(guest)
       return
     }
     // Why: stash the mismatch URL so the click recovers to the flow's own continue target —
     // the renderer never gets to name a navigation target.
     this.googleCookieMismatchUrlByGuestId.set(guest.id, url)
-    if (!this.googleCookieMismatchPromptThrottle.shouldPrompt(guest.session)) {
-      return
-    }
     const browserPageId = this.tabIdByWebContentsId.get(guest.id)
     if (!browserPageId) {
       return
     }
     const renderer = this.resolveRendererForBrowserTab(browserPageId)
-    renderer?.send('browser:google-cookie-mismatch-detected', { browserPageId })
+    if (!renderer || !this.googleCookieMismatchPromptThrottle.shouldPrompt(guest.session)) {
+      return
+    }
+    this.googleCookieMismatchPromptSessionByGuestId.set(guest.id, guest.session)
+    renderer.send('browser:google-cookie-mismatch-detected', { browserPageId, active: true })
+  }
+
+  private clearGoogleCookieMismatchRecovery(
+    guest: Electron.WebContents,
+    promotePendingPrompt = true
+  ): void {
+    if (!this.googleCookieMismatchUrlByGuestId.delete(guest.id)) {
+      return
+    }
+    const promptSession = this.googleCookieMismatchPromptSessionByGuestId.get(guest.id)
+    if (!promptSession) {
+      return
+    }
+    this.googleCookieMismatchPromptSessionByGuestId.delete(guest.id)
+    this.googleCookieMismatchPromptThrottle.reset(promptSession)
+    const browserPageId = this.tabIdByWebContentsId.get(guest.id)
+    if (!browserPageId) {
+      return
+    }
+    this.resolveRendererForBrowserTab(browserPageId)?.send(
+      'browser:google-cookie-mismatch-detected',
+      { browserPageId, active: false }
+    )
+    if (promotePendingPrompt) {
+      this.promptPendingGoogleCookieMismatchRecovery(promptSession)
+    }
+  }
+
+  private promptPendingGoogleCookieMismatchRecovery(session: object): void {
+    for (const [guestId, mismatchUrl] of this.googleCookieMismatchUrlByGuestId) {
+      const guest = webContents.fromId(guestId)
+      if (!guest || guest.isDestroyed()) {
+        this.googleCookieMismatchUrlByGuestId.delete(guestId)
+        continue
+      }
+      if (guest.session === session) {
+        this.maybePromptGoogleCookieMismatchRecovery(guest, mismatchUrl)
+        if (this.googleCookieMismatchPromptSessionByGuestId.has(guestId)) {
+          return
+        }
+      }
+    }
   }
 
   // Why: user-initiated only — this is the destructive half, reached from the toast action.
@@ -989,14 +1035,14 @@ export class BrowserManager {
     if (!guest || guest.isDestroyed()) {
       return false
     }
-    this.googleCookieMismatchUrlByGuestId.delete(webContentsId)
+    this.clearGoogleCookieMismatchRecovery(guest, false)
     try {
       await clearGoogleCookies(guest.session.cookies)
     } catch (error) {
       // Why: navigate anyway — a persisting mismatch just shows Google's page again.
       console.error('[browser-manager] Google CookieMismatch cookie clear failed', error)
     }
-    if (guest.isDestroyed()) {
+    if (guest.isDestroyed() || this.webContentsIdByTabId.get(browserPageId) !== webContentsId) {
       return false
     }
     await guest.loadURL(googleCookieMismatchRecoveryUrl(mismatchUrl)).catch(() => {
@@ -1186,6 +1232,20 @@ export class BrowserManager {
     this.pendingPermissionEventsByGuestId.delete(guestWebContentsId)
     this.pendingPopupEventsByGuestId.delete(guestWebContentsId)
     this.googleCookieMismatchUrlByGuestId.delete(guestWebContentsId)
+    const promptSession = this.googleCookieMismatchPromptSessionByGuestId.get(guestWebContentsId)
+    if (promptSession) {
+      if (browserTabId) {
+        this.resolveRendererForBrowserTab(browserTabId)?.send(
+          'browser:google-cookie-mismatch-detected',
+          { browserPageId: browserTabId, active: false }
+        )
+      }
+      this.googleCookieMismatchPromptThrottle.reset(promptSession)
+      this.googleCookieMismatchPromptSessionByGuestId.delete(guestWebContentsId)
+      if (!this.suppressGoogleCookieMismatchPromptPromotion) {
+        this.promptPendingGoogleCookieMismatchRecovery(promptSession)
+      }
+    }
     this.cancelPendingDownloadsForGuest(guestWebContentsId)
   }
 
@@ -1255,6 +1315,10 @@ export class BrowserManager {
     this.flushPendingPermissionEvents(browserTabId, webContentsId)
     this.flushPendingPopupEvents(browserTabId, webContentsId)
     this.flushPendingDownloadRequests(browserTabId, webContentsId)
+    const pendingMismatchUrl = this.googleCookieMismatchUrlByGuestId.get(webContentsId)
+    if (pendingMismatchUrl) {
+      this.maybePromptGoogleCookieMismatchRecovery(guest, pendingMismatchUrl)
+    }
     return true
   }
 
@@ -1359,9 +1423,11 @@ export class BrowserManager {
       this.cancelDownloadInternal(downloadId, 'Orca is shutting down.')
     }
     browserDownloadDestinationReservations.clear()
+    this.suppressGoogleCookieMismatchPromptPromotion = true
     for (const browserTabId of this.webContentsIdByTabId.keys()) {
       this.unregisterGuest(browserTabId)
     }
+    this.suppressGoogleCookieMismatchPromptPromotion = false
     this.policyAttachedGuestIds.clear()
     this.offscreenGuestIds.clear()
     // Why: unregisterGuest skips guests that were policy-attached but never registered; invoke their cleanup closures here.
@@ -1383,6 +1449,7 @@ export class BrowserManager {
     this.pendingPermissionEventsByGuestId.clear()
     this.pendingPopupEventsByGuestId.clear()
     this.googleCookieMismatchUrlByGuestId.clear()
+    this.googleCookieMismatchPromptSessionByGuestId.clear()
     this.pendingDownloadIdsByGuestId.clear()
     this.mouseWheelZoomCleanupByTabId.clear()
     this.annotationViewportBridgeOpsByTabId.clear()

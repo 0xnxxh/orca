@@ -348,6 +348,9 @@ export function registerBrowserHandlers(): void {
       if (!isTrustedBrowserRenderer(event.sender) || typeof args?.browserPageId !== 'string') {
         return false
       }
+      if (!browserManager.getAuthorizedGuest(args.browserPageId, event.sender.id)) {
+        return false
+      }
       return browserManager.recoverFromGoogleCookieMismatch(args.browserPageId)
     }
   )

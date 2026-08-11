@@ -2582,10 +2582,12 @@ const api = {
     },
 
     onGoogleCookieMismatchDetected: (
-      callback: (event: { browserPageId: string }) => void
+      callback: (event: { browserPageId: string; active: boolean }) => void
     ): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, data: { browserPageId: string }) =>
-        callback(data)
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { browserPageId: string; active: boolean }
+      ) => callback(data)
       ipcRenderer.on('browser:google-cookie-mismatch-detected', listener)
       return () => ipcRenderer.removeListener('browser:google-cookie-mismatch-detected', listener)
     },

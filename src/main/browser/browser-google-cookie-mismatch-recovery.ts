@@ -92,4 +92,8 @@ export class GoogleCookieMismatchPromptThrottle {
     this.lastPromptBySession.set(session, this.now())
     return true
   }
+
+  reset(session: object): void {
+    this.lastPromptBySession.delete(session)
+  }
 }

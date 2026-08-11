@@ -55,6 +55,7 @@ function createPartition(): Partition {
 function createGuest(id: number, session: Partition = createPartition()): Guest {
   const handlers = new Map<string, ((...args: unknown[]) => void)[]>()
   const loadURL = vi.fn().mockResolvedValue(undefined)
+  let currentUrl = 'about:blank'
   const webContents = {
     id,
     isDestroyed: vi.fn(() => false),
@@ -62,7 +63,7 @@ function createGuest(id: number, session: Partition = createPartition()): Guest 
     setBackgroundThrottling: vi.fn(),
     setWindowOpenHandler: vi.fn(),
     openDevTools: vi.fn(),
-    getURL: vi.fn(() => MISMATCH_URL),
+    getURL: vi.fn(() => currentUrl),
     loadURL,
     on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
       handlers.set(event, [...(handlers.get(event) ?? []), handler])
@@ -73,6 +74,9 @@ function createGuest(id: number, session: Partition = createPartition()): Guest 
   return {
     webContents,
     emit: (event, ...args) => {
+      if (event === 'did-navigate' && typeof args[1] === 'string') {
+        currentUrl = args[1]
+      }
       for (const handler of handlers.get(event) ?? []) {
         handler(...args)
       }
@@ -116,7 +120,8 @@ describe('browserManager Google CookieMismatch prompt', () => {
     guest.emit('did-navigate', {}, MISMATCH_URL)
 
     expect(rendererSendMock).toHaveBeenCalledWith('browser:google-cookie-mismatch-detected', {
-      browserPageId: 'browser-1'
+      browserPageId: 'browser-1',
+      active: true
     })
     // The destructive half waits for the user's click.
     expect(guest.cookieRemove).not.toHaveBeenCalled()
@@ -169,6 +174,97 @@ describe('browserManager Google CookieMismatch prompt', () => {
     ).toHaveLength(2)
   })
 
+  it('does not consume the partition prompt throttle before a renderer is eligible', () => {
+    const partition = createPartition()
+    const unregistered = createGuest(710, partition)
+    const registered = createGuest(711, partition)
+    mount([unregistered, registered])
+    browserManager.attachGuestPolicies(unregistered.webContents)
+    register(registered, 'browser-2')
+
+    unregistered.emit('did-navigate', {}, MISMATCH_URL)
+    registered.emit('did-navigate', {}, MISMATCH_URL)
+
+    expect(rendererSendMock).toHaveBeenCalledWith('browser:google-cookie-mismatch-detected', {
+      browserPageId: 'browser-2',
+      active: true
+    })
+  })
+
+  it('prompts when a guest registers after committing the mismatch page', () => {
+    const guest = createGuest(712)
+    mount([guest])
+    browserManager.attachGuestPolicies(guest.webContents)
+    guest.emit('did-navigate', {}, MISMATCH_URL)
+
+    browserManager.registerGuest({
+      browserPageId: 'browser-1',
+      webContentsId: guest.webContents.id,
+      rendererWebContentsId: RENDERER_WEB_CONTENTS_ID
+    })
+
+    expect(rendererSendMock).toHaveBeenCalledWith('browser:google-cookie-mismatch-detected', {
+      browserPageId: 'browser-1',
+      active: true
+    })
+  })
+
+  it('invalidates the reset and dismisses its prompt after navigating away', async () => {
+    const guest = createGuest(713)
+    mount([guest])
+    register(guest, 'browser-1')
+    guest.emit('did-navigate', {}, MISMATCH_URL)
+    rendererSendMock.mockClear()
+
+    guest.emit('did-navigate', {}, 'https://example.com/')
+
+    expect(rendererSendMock).toHaveBeenCalledWith('browser:google-cookie-mismatch-detected', {
+      browserPageId: 'browser-1',
+      active: false
+    })
+    await expect(browserManager.recoverFromGoogleCookieMismatch('browser-1')).resolves.toBe(false)
+    expect(guest.cookieRemove).not.toHaveBeenCalled()
+    expect(guest.loadURL).not.toHaveBeenCalled()
+  })
+
+  it('moves the partition prompt to another mismatched tab when its owner leaves', () => {
+    const partition = createPartition()
+    const first = createGuest(715, partition)
+    const second = createGuest(716, partition)
+    mount([first, second])
+    register(first, 'browser-1')
+    register(second, 'browser-2')
+    first.emit('did-navigate', {}, MISMATCH_URL)
+    second.emit('did-navigate', {}, MISMATCH_URL)
+    rendererSendMock.mockClear()
+
+    first.emit('did-navigate', {}, 'https://example.com/')
+
+    expect(rendererSendMock.mock.calls).toEqual([
+      ['browser:google-cookie-mismatch-detected', { browserPageId: 'browser-1', active: false }],
+      ['browser:google-cookie-mismatch-detected', { browserPageId: 'browser-2', active: true }]
+    ])
+  })
+
+  it('moves the partition prompt when its owning guest is torn down', () => {
+    const partition = createPartition()
+    const first = createGuest(717, partition)
+    const second = createGuest(718, partition)
+    mount([first, second])
+    register(first, 'browser-1')
+    register(second, 'browser-2')
+    first.emit('did-navigate', {}, MISMATCH_URL)
+    second.emit('did-navigate', {}, MISMATCH_URL)
+    rendererSendMock.mockClear()
+
+    browserManager.unregisterGuest('browser-1')
+
+    expect(rendererSendMock.mock.calls).toEqual([
+      ['browser:google-cookie-mismatch-detected', { browserPageId: 'browser-1', active: false }],
+      ['browser:google-cookie-mismatch-detected', { browserPageId: 'browser-2', active: true }]
+    ])
+  })
+
   it('clears only Google cookies and reloads the flow when the user accepts', async () => {
     const guest = createGuest(707)
     mount([guest])
@@ -209,5 +305,24 @@ describe('browserManager Google CookieMismatch prompt', () => {
 
     await expect(browserManager.recoverFromGoogleCookieMismatch('browser-1')).resolves.toBe(false)
     expect(guest.cookieRemove).not.toHaveBeenCalled()
+  })
+
+  it('does not navigate a retired guest after an in-flight cookie clear', async () => {
+    let resolveCookies: ((cookies: Cookie[]) => void) | undefined
+    const partition = createPartition()
+    partition.cookies.get.mockImplementation(
+      () => new Promise<Cookie[]>((resolve) => (resolveCookies = resolve))
+    )
+    const guest = createGuest(714, partition)
+    mount([guest])
+    register(guest, 'browser-1')
+    guest.emit('did-navigate', {}, MISMATCH_URL)
+
+    const recovery = browserManager.recoverFromGoogleCookieMismatch('browser-1')
+    browserManager.unregisterGuest('browser-1')
+    resolveCookies?.([])
+
+    await expect(recovery).resolves.toBe(false)
+    expect(guest.loadURL).not.toHaveBeenCalled()
   })
 })

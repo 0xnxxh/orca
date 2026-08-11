@@ -125,6 +125,15 @@ describe('GoogleCookieMismatchPromptThrottle', () => {
     expect(throttle.shouldPrompt(session)).toBe(true)
   })
 
+  it('allows a new prompt after the prior recovery is no longer actionable', () => {
+    const throttle = new GoogleCookieMismatchPromptThrottle(() => 0)
+    const session = {}
+
+    expect(throttle.shouldPrompt(session)).toBe(true)
+    throttle.reset(session)
+    expect(throttle.shouldPrompt(session)).toBe(true)
+  })
+
   it('tracks partitions independently', () => {
     const throttle = new GoogleCookieMismatchPromptThrottle(() => 0)
     const sessionA = {}

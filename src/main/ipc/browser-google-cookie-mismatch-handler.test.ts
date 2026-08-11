@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { handleMock, recoverFromGoogleCookieMismatchMock } = vi.hoisted(() => ({
-  handleMock: vi.fn(),
-  recoverFromGoogleCookieMismatchMock: vi.fn()
-}))
+const { getAuthorizedGuestMock, handleMock, recoverFromGoogleCookieMismatchMock } = vi.hoisted(
+  () => ({
+    getAuthorizedGuestMock: vi.fn(),
+    handleMock: vi.fn(),
+    recoverFromGoogleCookieMismatchMock: vi.fn()
+  })
+)
 
 vi.mock('electron', () => ({
   BrowserWindow: { fromWebContents: vi.fn() },
@@ -20,7 +23,7 @@ vi.mock('../browser/browser-manager', () => ({
     getGuestWebContentsId: vi.fn(),
     getWebContentsIdByTabId: vi.fn(() => new Map()),
     getWorktreeIdForTab: vi.fn(),
-    getAuthorizedGuest: vi.fn(),
+    getAuthorizedGuest: getAuthorizedGuestMock,
     setGrabMode: vi.fn(),
     openDevTools: vi.fn(),
     setAnnotationViewportBridge: vi.fn(),
@@ -49,6 +52,8 @@ describe('browser:recoverGoogleCookieMismatch', () => {
   beforeEach(() => {
     vi.stubEnv('ELECTRON_RENDERER_URL', '')
     handleMock.mockReset()
+    getAuthorizedGuestMock.mockReset()
+    getAuthorizedGuestMock.mockReturnValue({})
     recoverFromGoogleCookieMismatchMock.mockReset()
     recoverFromGoogleCookieMismatchMock.mockResolvedValue(true)
     registerBrowserHandlers()
@@ -62,6 +67,17 @@ describe('browser:recoverGoogleCookieMismatch', () => {
       true
     )
     expect(recoverFromGoogleCookieMismatchMock).toHaveBeenCalledWith('page-1')
+    expect(getAuthorizedGuestMock).toHaveBeenCalledWith('page-1', trustedSender.id)
+  })
+
+  it('rejects a trusted renderer that does not own the requested page', async () => {
+    getAuthorizedGuestMock.mockReturnValue(null)
+
+    await expect(recover({ sender: trustedSender }, { browserPageId: 'page-1' })).resolves.toBe(
+      false
+    )
+
+    expect(recoverFromGoogleCookieMismatchMock).not.toHaveBeenCalled()
   })
 
   it('rejects untrusted senders and malformed arguments', async () => {

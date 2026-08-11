@@ -2910,35 +2910,41 @@ function BrowserPagePane({
   // Why: the reset is destructive, so it stays the user's call — the toast offers it and
   // waits (main clears nothing on its own). Fixed id keeps a recurring mismatch to one toast.
   useEffect(() => {
-    return window.api.browser.onGoogleCookieMismatchDetected((event) => {
+    const toastId = `google-cookie-mismatch-${browserTab.id}`
+    const unsubscribe = window.api.browser.onGoogleCookieMismatchDetected((event) => {
       if (event.browserPageId !== browserTab.id) {
+        return
+      }
+      if (!event.active) {
+        toast.dismiss(toastId)
         return
       }
       toast.warning(
         translate(
-          'auto.components.browser.pane.BrowserPane.googleCookieMismatchTitle',
+          'auto.components.browser.pane.BrowserPane.381861c274',
           'Google sign-in hit a stale-cookie error'
         ),
         {
-          id: `google-cookie-mismatch-${browserTab.id}`,
+          id: toastId,
           duration: Infinity,
           description: translate(
-            'auto.components.browser.pane.BrowserPane.googleCookieMismatchDescription',
+            'auto.components.browser.pane.BrowserPane.41da63c3f5',
             "Reset Orca's Google cookies to sign in again — other sites are unaffected."
           ),
           action: {
             label: translate(
-              'auto.components.browser.pane.BrowserPane.googleCookieMismatchAction',
+              'auto.components.browser.pane.BrowserPane.4efe542903',
               'Reset Google cookies'
             ),
             onClick: () => {
+              toast.dismiss(toastId)
               void window.api.browser
                 .recoverGoogleCookieMismatch({ browserPageId: browserTab.id })
                 .then((ok) => {
                   if (!ok) {
                     toast.error(
                       translate(
-                        'auto.components.browser.pane.BrowserPane.googleCookieMismatchFailed',
+                        'auto.components.browser.pane.BrowserPane.76fe482422',
                         "Couldn't reset Google cookies"
                       )
                     )
@@ -2949,6 +2955,10 @@ function BrowserPagePane({
         }
       )
     })
+    return () => {
+      unsubscribe()
+      toast.dismiss(toastId)
+    }
   }, [browserTab.id])
 
   useEffect(() => {
