@@ -138,7 +138,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
 
   return (
     <Dialog open onOpenChange={(open) => !open && closeModal()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {translate(
@@ -228,13 +228,14 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
               <h3 className="text-sm font-medium">
                 {translate(
                   'auto.components.sidebar.WorktreeVisibilityDialog.7d21c5e848',
-                  'Hidden worktrees'
+                  'Hidden worktrees ({{value0}})',
+                  { value0: hiddenImportable.length }
                 )}
               </h3>
               <p className="text-xs text-muted-foreground">
                 {translate(
                   'auto.components.sidebar.WorktreeVisibilityDialog.9b53f7a160',
-                  'Show a single worktree without importing all of them; agent-created worktrees can only be shown here.'
+                  "Choose which hidden worktrees to show in the sidebar. Agent-created worktrees aren't affected by Always show."
                 )}
               </p>
             </div>

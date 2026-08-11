@@ -156,7 +156,10 @@ describe('WorktreeVisibilityDialog', () => {
   it('lists a hidden agent worktree the toggle cannot reveal, with a repo-relative path', async () => {
     await renderDialog()
 
-    expect(document.body.textContent).toContain('Hidden worktrees')
+    expect(document.body.textContent).toContain('Hidden worktrees (1)')
+    expect(document.body.textContent).toContain(
+      "Choose which hidden worktrees to show in the sidebar. Agent-created worktrees aren't affected by Always show."
+    )
     expect(document.body.textContent).toContain('scratch-1')
     expect(document.body.textContent).toContain('.claude/worktrees/scratch-1')
     expect(document.body.textContent).not.toContain('/repo/.claude')
