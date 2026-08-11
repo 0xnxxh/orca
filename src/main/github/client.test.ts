@@ -4603,6 +4603,15 @@ describe('GitHub GraphQL rate-limit guard', () => {
       expectedOptions: { cwd: '/repo-root', host: 'github.com' }
     },
     {
+      failure: 'GitHub Enterprise transport failure',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: new Error('enterprise stack metadata unavailable'),
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'enterprise stack metadata unavailable',
+      expectedOptions: { cwd: '/repo-root', host: 'github.enterprise.test' }
+    },
+    {
       failure: 'unparsable probe response over SSH',
       repoPath: '/remote/repo-root',
       connectionId: 'ssh-1',
