@@ -10,7 +10,10 @@ import {
   RUNTIME_PROTOCOL_VERSION
 } from '../../../../shared/protocol-version'
 import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rpc-client'
-import { RUNTIME_CATALOG_STALE_MS } from './runtime-status-hydration'
+import {
+  RUNTIME_CATALOG_STALE_MS,
+  resetRuntimeCatalogListingForTests
+} from './runtime-status-hydration'
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }))
 vi.mock('@/lib/agent-status', async (importOriginal) => {
@@ -66,6 +69,7 @@ function deferred<T>() {
 beforeEach(() => {
   delete (globalThis as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__
   clearRuntimeCompatibilityCacheForTests()
+  resetRuntimeCatalogListingForTests()
   vi.clearAllMocks()
   runtimeEnvironmentGetStatus.mockResolvedValue({
     id: 'status-rpc-1',
@@ -830,9 +834,8 @@ describe('fetchSettings runtime catalog probe', () => {
     expect(runtimeEnvironmentList).toHaveBeenCalledTimes(1)
   })
 
-  it('re-lists the catalog once the listing goes stale even though coverage still matches', async () => {
-    const environments = [makeRuntimeEnvironment('env-a')]
-    runtimeEnvironmentList.mockResolvedValue(environments)
+  it('picks up an externally added host once the listing goes stale', async () => {
+    runtimeEnvironmentList.mockResolvedValue([makeRuntimeEnvironment('env-a')])
     const store = createTestStore()
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
 
@@ -840,12 +843,24 @@ describe('fetchSettings runtime catalog probe', () => {
       await store.getState().fetchSettings()
       await vi.waitFor(() => expect(store.getState().runtimeStatusByEnvironmentId.size).toBe(1))
 
+      // Another client adds a host; coverage still matches, so only staleness can reveal it.
+      runtimeEnvironmentList.mockResolvedValue([
+        makeRuntimeEnvironment('env-a'),
+        makeRuntimeEnvironment('env-b')
+      ])
       await store.getState().fetchSettings()
       expect(runtimeEnvironmentList).toHaveBeenCalledTimes(1)
+      expect(store.getState().runtimeEnvironments.map(({ id }) => id)).toEqual(['env-a'])
 
       now.mockReturnValue(1_000_000 + RUNTIME_CATALOG_STALE_MS + 1)
       await store.getState().fetchSettings()
-      await vi.waitFor(() => expect(runtimeEnvironmentList).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() =>
+        expect(store.getState().runtimeEnvironments.map(({ id }) => id)).toEqual(['env-a', 'env-b'])
+      )
+      await vi.waitFor(() =>
+        expect(store.getState().runtimeStatusByEnvironmentId.has('env-b')).toBe(true)
+      )
+      expect(runtimeEnvironmentList).toHaveBeenCalledTimes(2)
     } finally {
       now.mockRestore()
     }

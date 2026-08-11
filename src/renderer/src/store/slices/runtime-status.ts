@@ -326,6 +326,8 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
 
   refreshRuntimeEnvironmentStatus: (environmentId, timeoutMs = 10_000) =>
     refreshRuntimeEnvironmentStatus(environmentId, timeoutMs, (status) => {
+      // Why: setRuntimeEnvironmentStatus drops any stale compat failure on a non-null
+      // (reachable) status, so a recovered host's reuse-flagged refetches re-probe.
       get().setRuntimeEnvironmentStatus(environmentId, { status, checkedAt: Date.now() })
     }),
 

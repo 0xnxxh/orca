@@ -136,6 +136,17 @@ async function persistSettingsUpdates(
   }))
 }
 
+/** Every known host has a recorded status entry, and no entry survives for a host that is gone. */
+function hasCompleteRuntimeStatusCoverage(
+  runtimeEnvironments: AppState['runtimeEnvironments'],
+  runtimeStatusByEnvironmentId: AppState['runtimeStatusByEnvironmentId']
+): boolean {
+  return (
+    new Set(runtimeEnvironments.map(({ id }) => id)).size === runtimeStatusByEnvironmentId.size &&
+    runtimeEnvironments.every(({ id }) => runtimeStatusByEnvironmentId.has(id))
+  )
+}
+
 async function verifyRuntimeEnvironmentReachable(environmentId: string | null): Promise<void> {
   if (!environmentId) {
     return
@@ -164,13 +175,11 @@ export const createSettingsSlice: StateCreator<AppState, [], [], SettingsSlice> 
     }
     const { runtimeEnvironmentCatalogHydrated, runtimeEnvironments, runtimeStatusByEnvironmentId } =
       get()
-    const runtimeEnvironmentIds = new Set(runtimeEnvironments.map(({ id }) => id))
     // Why: settings refreshes are frequent, but only incomplete host coverage needs
     // the all-host boot probe. A recorded null still means the host was checked.
     if (
       !runtimeEnvironmentCatalogHydrated ||
-      runtimeEnvironmentIds.size !== runtimeStatusByEnvironmentId.size ||
-      runtimeEnvironments.some(({ id }) => !runtimeStatusByEnvironmentId.has(id)) ||
+      !hasCompleteRuntimeStatusCoverage(runtimeEnvironments, runtimeStatusByEnvironmentId) ||
       // Why: coverage is blind to catalog edits from another client or the orca CLI.
       isRuntimeCatalogListingStale()
     ) {
