@@ -199,6 +199,24 @@ describe('buildClaudeResumeLaunchCommand', () => {
     }
   )
 
+  it('fails open on the powershell stop-parsing token', () => {
+    // After a bare --%, PowerShell hands the rest of the line to the child
+    // literally, so an appended quoted selector would arrive as literal bytes.
+    const base = 'claude --% --resume stale --model sonnet'
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'powershell')).toBe(
+      `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it('still strips when --% is quoted or on cmd, where it is an ordinary token', () => {
+    expect(
+      buildClaudeResumeLaunchCommand('claude "--%" --resume stale', RESUME, 'powershell')
+    ).toBe(`claude "--%" '--resume' '${SESSION_ID}'`)
+    expect(buildClaudeResumeLaunchCommand('claude --% --resume stale', RESUME, 'cmd')).toBe(
+      `claude --% "--resume" "${SESSION_ID}"`
+    )
+  })
+
   it('still strips with parens safely inside quotes on powershell', () => {
     expect(
       buildClaudeResumeLaunchCommand(

@@ -110,7 +110,15 @@ export function buildClaudeResumeLaunchCommand(
     if (!/^[ \t]*$/.test(baseCommand.slice(gapStart, gapEnd))) {
       return appended
     }
-    if (i < tokens.length && spans[i].divergesFromShell) {
+    if (i === tokens.length) {
+      break
+    }
+    // Why: bare `--%` makes PowerShell pass the rest of the line to the child
+    // literally, so appended quoting would arrive as literal bytes.
+    if (shell === 'powershell' && baseCommand.slice(spans[i].start, spans[i].end) === '--%') {
+      return appended
+    }
+    if (spans[i].divergesFromShell) {
       const isCallOperator = shell === 'powershell' && i === 0 && tokens[i] === '&'
       if (!isCallOperator) {
         return appended
