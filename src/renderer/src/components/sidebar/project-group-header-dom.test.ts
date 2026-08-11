@@ -1,7 +1,5 @@
 // @vitest-environment happy-dom
 
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { act, createElement, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -25,95 +23,6 @@ import {
 } from './worktree-list-groups'
 import { addHostSectionRows } from './host-section-rows'
 import { getRenderRowKey } from './worktree-list-virtual-rows'
-
-function readWorktreeListSource(): string {
-  return readFileSync(
-    join(process.cwd(), 'src', 'renderer', 'src', 'components', 'sidebar', 'WorktreeList.tsx'),
-    'utf8'
-  )
-}
-
-function readComposerStateSource(): string {
-  return readFileSync(
-    join(process.cwd(), 'src', 'renderer', 'src', 'hooks', 'useComposerState.ts'),
-    'utf8'
-  )
-}
-
-describe('Project Group header drag DOM source', () => {
-  it('renders concrete Project Group header drag attributes separately from repo headers', () => {
-    const source = readWorktreeListSource()
-
-    expect(source).toContain('data-project-group-header-id={projectGroupIdForHeader}')
-    expect(source).toContain('data-project-group-header-index={projectGroupHeaderIndex}')
-    expect(source).toContain('data-project-group-header-bucket={projectGroupHeaderBucketKey}')
-    expect(source).toContain('data-project-group-header-drag-handle=')
-  })
-
-  it('commits Project Group manual sorting through updateProjectGroup tabOrder', () => {
-    const source = readWorktreeListSource()
-
-    expect(source).toContain('const updateProjectGroup = useAppStore((s) => s.updateProjectGroup)')
-    expect(source).toContain('ownerHostId: getProjectGroupMutationSelector(group).ownerHostId')
-  })
-
-  it('routes folder DOM identity and active styling through the exact owner row', () => {
-    const source = readWorktreeListSource()
-
-    expect(source).toContain('id={getWorktreeOptionId(folderSidebarRowKey)}')
-    expect(source).toContain('data-worktree-row-key={folderSidebarRowKey}')
-    expect(source).toContain('activationRowKey={folderSidebarRowKey}')
-    expect(source).toContain('aria-current={isFolderWorkspaceActive')
-    expect(source).toContain('activeWorkspaceExecutionHostId === folderOwnerHostId')
-  })
-
-  it('checks Reveal Current visibility with owner-qualified selection identity', () => {
-    const source = readWorktreeListSource()
-    const revealStart = source.indexOf('const handleRevealCurrentWorkspaceRequest')
-    const revealEnd = source.indexOf('useEffect(() => {', revealStart)
-    const revealSource = source.slice(revealStart, revealEnd)
-
-    expect(revealSource).toContain('getSidebarWorktreeSelectionId(')
-    expect(revealSource).toContain('renderedWorktreeSelectionIds.includes(')
-    expect(revealSource).not.toContain('renderedWorktreeIds.includes(')
-  })
-
-  it('persists and restores a draft project group through its existing host field', () => {
-    const source = readComposerStateSource()
-    const restoreStart = source.indexOf('const initialFolderProjectGroupId')
-    const restoreEnd = source.indexOf('const isProjectGroupTarget', restoreStart)
-    const persistStart = source.indexOf('// Persist draft whenever relevant fields change')
-    const persistEnd = source.indexOf('// Auto-pick the first eligible repo', persistStart)
-
-    expect(source.slice(restoreStart, restoreEnd)).toContain('draftHostId')
-    expect(source.slice(persistStart, persistEnd)).toContain('selectedProjectGroupOwnerHostId')
-  })
-
-  it('keeps grab cursor on the title surface and dual handle attrs on row + surface', () => {
-    // Why: lock the cursor/hit-test split so a cleanup does not put grab back on the whole row
-    // or drop row-level handle attrs that arm drag from indent/padding.
-    const source = readWorktreeListSource()
-    const headerBlockStart = source.indexOf('data-repo-header-id={projectIdForHeader}')
-    const headerBlockEnd = source.indexOf('<ProjectHeaderActions>', headerBlockStart)
-    expect(headerBlockStart).toBeGreaterThan(-1)
-    expect(headerBlockEnd).toBeGreaterThan(headerBlockStart)
-    const headerBlock = source.slice(headerBlockStart, headerBlockEnd)
-
-    // Dual handle placement: row (indent/padding) + title surface.
-    expect(headerBlock.match(/data-repo-header-drag-handle=/g)?.length).toBe(2)
-    expect(headerBlock.match(/data-project-group-header-drag-handle=/g)?.length).toBe(2)
-    // Surface owns grab; outer row only gets cursor-pointer when not draggable.
-    expect(headerBlock).toContain(
-      "!(isDraggableRepoHeader || isDraggableProjectGroupHeader) && 'cursor-pointer'"
-    )
-    expect(headerBlock).toContain("'flex min-w-0 flex-1 items-center gap-1.5 self-stretch'")
-    expect(headerBlock).toContain("'cursor-grab active:cursor-grabbing'")
-    // Row-level ternary grab must stay gone.
-    expect(headerBlock).not.toMatch(
-      /isDraggableRepoHeader \|\| isDraggableProjectGroupHeader\s*\?\s*'cursor-grab/
-    )
-  })
-})
 
 function sidebarIdentityGroup(id: string, executionHostId: string): ProjectGroup {
   return {

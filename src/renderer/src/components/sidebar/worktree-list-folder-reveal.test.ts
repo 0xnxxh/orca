@@ -151,10 +151,9 @@ describe('worktree list folder reveal', () => {
     ).toEqual([])
     expect(
       getFolderWorkspaceRevealGroupKeys(
-        workspaceKey,
+        folderWorkspaceKey(runtimeFolder.id, 'runtime:env-1'),
         [localFolder, runtimeFolder],
-        [localChild, runtimeChild, localRoot, runtimeRoot],
-        'runtime:env-1'
+        [localChild, runtimeChild, localRoot, runtimeRoot]
       )
     ).toEqual([
       getProjectGroupHeaderKey(runtimeRoot.id, 'runtime:env-1'),
@@ -225,8 +224,8 @@ describe('worktree list folder reveal', () => {
   it('clears the deleted active folder owner', () => {
     expect(
       shouldClearActiveFolderWorkspaceAfterDelete({
-        activeWorktreeId: 'folder:same-id',
-        activeOwnerHostId: 'runtime:env-1',
+        activeWorktreeId: folderWorkspaceKey('same-id', 'runtime:env-1'),
+        activeOwnerHostId: null,
         deletedFolderWorkspaceId: 'same-id',
         deletedOwnerHostId: 'runtime:env-1'
       })

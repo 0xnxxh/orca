@@ -4509,14 +4509,20 @@ export class Store {
     )
     const removedFolderWorkspaceKeys = new Set<string>()
     for (const workspace of removedFolderWorkspaces) {
-      if (!remainingFolderWorkspaceIds.has(workspace.id)) {
-        removedFolderWorkspaceKeys.add(folderWorkspaceKey(workspace.id))
-        this.state.workspaceSession = removeWorkspaceSessionOwner(
-          this.state.workspaceSession,
-          folderWorkspaceKey(workspace.id)
-        )!
-        this.removeWorkspaceLineageForFolderParent(workspace.id)
+      const ownerHostId = resolveFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups)
+      const workspaceKeys: string[] = []
+      if (ownerHostId) {
+        workspaceKeys.push(folderWorkspaceKey(workspace.id, ownerHostId))
       }
+      const removeBareKey = !remainingFolderWorkspaceIds.has(workspace.id)
+      if (removeBareKey) {
+        workspaceKeys.push(folderWorkspaceKey(workspace.id))
+      }
+      for (const key of workspaceKeys) {
+        removedFolderWorkspaceKeys.add(key)
+        this.removeWorkspaceSessionStateForWorktree(key, ownerHostId)
+      }
+      this.removeWorkspaceLineageForFolderParent(workspace.id, ownerHostId, removeBareKey)
     }
     this.pruneMobileClientTabSelections((worktreeId) => removedFolderWorkspaceKeys.has(worktreeId))
     this.scheduleSave()
@@ -4705,14 +4711,23 @@ export class Store {
     this.state.folderWorkspaces = (this.state.folderWorkspaces ?? []).filter(
       (candidate) => candidate !== workspace
     )
-    if (!this.state.folderWorkspaces.some((candidate) => candidate.id === id)) {
-      this.state.workspaceSession = removeWorkspaceSessionOwner(
-        this.state.workspaceSession,
-        folderWorkspaceKey(id)
-      )!
-      this.removeWorkspaceLineageForFolderParent(id)
-      this.pruneMobileClientTabSelections((worktreeId) => worktreeId === folderWorkspaceKey(id))
+    const resolvedOwnerHostId =
+      ownerHostId ??
+      resolveFolderWorkspaceCatalogOwnerHostId(workspace, this.state.projectGroups ?? []) ??
+      undefined
+    const removeBareKey = !this.state.folderWorkspaces.some((candidate) => candidate.id === id)
+    const keys = new Set<string>()
+    if (resolvedOwnerHostId) {
+      keys.add(folderWorkspaceKey(id, resolvedOwnerHostId))
     }
+    if (removeBareKey) {
+      keys.add(folderWorkspaceKey(id))
+    }
+    for (const key of keys) {
+      this.removeWorkspaceSessionStateForWorktree(key, resolvedOwnerHostId)
+    }
+    this.removeWorkspaceLineageForFolderParent(id, resolvedOwnerHostId, removeBareKey)
+    this.pruneMobileClientTabSelections((worktreeId) => keys.has(worktreeId))
     this.scheduleSave()
     return true
   }
@@ -5851,10 +5866,20 @@ export class Store {
     this.scheduleSave()
   }
 
-  private removeWorkspaceLineageForFolderParent(folderWorkspaceId: string): void {
-    const parentKey = folderWorkspaceKey(folderWorkspaceId)
+  private removeWorkspaceLineageForFolderParent(
+    folderWorkspaceId: string,
+    ownerHostId?: ExecutionHostId | null,
+    removeBareKey = true
+  ): void {
+    const parentKeys = new Set<string>()
+    if (ownerHostId) {
+      parentKeys.add(folderWorkspaceKey(folderWorkspaceId, ownerHostId))
+    }
+    if (removeBareKey) {
+      parentKeys.add(folderWorkspaceKey(folderWorkspaceId))
+    }
     for (const [childKey, lineage] of Object.entries(this.state.workspaceLineageByChildKey)) {
-      if (lineage.parentWorkspaceKey === parentKey) {
+      if (parentKeys.has(lineage.parentWorkspaceKey)) {
         delete this.state.workspaceLineageByChildKey[childKey as WorkspaceKey]
       }
     }

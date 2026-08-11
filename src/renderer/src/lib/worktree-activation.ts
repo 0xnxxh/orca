@@ -1,6 +1,5 @@
 /* eslint-disable max-lines -- Why: worktree activation is a single ordered flow spanning startup, setup, issue commands, and default tabs; splitting it would obscure sequencing guarantees. */
 import type {
-  FolderWorkspace,
   GlobalSettings,
   SetupSplitDirection,
   Tab,
@@ -192,11 +191,10 @@ export type ActivateAndRevealResult = {
 }
 
 function ensureFolderWorkspaceInitialTerminal(
-  folderWorkspace: FolderWorkspace,
+  workspaceKey: string,
   startup?: WorktreeStartupPayload
 ): string | null {
   const state = useAppStore.getState()
-  const workspaceKey = folderWorkspaceKey(folderWorkspace.id)
   const primaryTabId = ensureWorktreeHasInitialTerminal(
     state,
     workspaceKey,
@@ -265,13 +263,22 @@ export function activateAndRevealFolderWorkspace(
 
   state.setActiveFolderWorkspace(folderWorkspaceId, ownerHostId)
 
-  const workspaceKey = folderWorkspaceKey(folderWorkspaceId)
+  const activatedState = useAppStore.getState()
+  const activeScope = parseWorkspaceKey(activatedState.activeWorktreeId ?? '')
+  if (
+    activeScope?.type !== 'folder' ||
+    activeScope.folderWorkspaceId !== folderWorkspaceId ||
+    activatedState.activeWorkspaceExecutionHostId !== ownerHostId
+  ) {
+    return false
+  }
+  const workspaceKey = folderWorkspaceKey(folderWorkspaceId, activeScope.ownerHostId)
   state.markWorktreeVisited(workspaceKey)
   if (!state.isNavigatingHistory) {
     state.recordWorktreeVisit(workspaceKey)
   }
   resumeSleepingAgentSessionsForWorktree(workspaceKey)
-  const primaryTabId = ensureFolderWorkspaceInitialTerminal(folderWorkspace, opts?.startup)
+  const primaryTabId = ensureFolderWorkspaceInitialTerminal(workspaceKey, opts?.startup)
 
   if (opts?.sidebarRevealBehavior) {
     state.revealWorktreeInSidebar(workspaceKey, { behavior: opts.sidebarRevealBehavior })
@@ -754,7 +761,10 @@ function queueSetupAndIssueCommands(
 export function activateAndRevealWorkspace(workspaceId: string): ActivateAndRevealResult | false {
   const workspaceScope = parseWorkspaceKey(workspaceId)
   if (workspaceScope?.type === 'folder') {
-    return activateAndRevealFolderWorkspace(workspaceScope.folderWorkspaceId)
+    return activateAndRevealFolderWorkspace(
+      workspaceScope.folderWorkspaceId,
+      workspaceScope.ownerHostId ? { executionHostId: workspaceScope.ownerHostId } : undefined
+    )
   }
   return activateAndRevealWorktree(workspaceId)
 }

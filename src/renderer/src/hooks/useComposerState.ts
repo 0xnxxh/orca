@@ -747,9 +747,13 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       ? resolvedInitialWorkspaceTarget.target.projectHostSetupId
       : null
   )
-  const initialFolderProjectGroupId = initialProjectGroupId ?? draftProjectGroupId
+  const initialProjectGroupSelector = initialProjectGroupId
+    ? getProjectGroupSelectorFromNewWorkspaceOptionId(initialProjectGroupId)
+    : null
+  const initialFolderProjectGroupId =
+    initialProjectGroupSelector?.groupId ?? initialProjectGroupId ?? draftProjectGroupId
   const initialFolderProjectGroupOwnerHostId = initialProjectGroupId
-    ? initialProjectGroupOwnerHostId
+    ? (initialProjectGroupSelector?.ownerHostId ?? initialProjectGroupOwnerHostId)
     : (draftHostId ?? undefined)
   const initialFolderProjectGroup = findActionableFolderProjectGroup({
     projectGroups,

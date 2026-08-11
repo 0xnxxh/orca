@@ -1767,16 +1767,22 @@ export function buildRows(
     for (const child of childGroupsByParentIdentity.get(identity) ?? []) {
       const childMetrics = getProjectGroupHostMetrics(getProjectGroupSidebarIdentity(child))
       metrics.count += childMetrics.count
-      metrics.worktreeIds.push(...childMetrics.worktreeIds)
-      metrics.folderWorkspaceIds.push(...childMetrics.folderWorkspaceIds)
+      for (const worktreeId of childMetrics.worktreeIds) {
+        metrics.worktreeIds.push(worktreeId)
+      }
+      for (const folderWorkspaceId of childMetrics.folderWorkspaceIds) {
+        metrics.folderWorkspaceIds.push(folderWorkspaceId)
+      }
       for (const [hostId, count] of childMetrics.hostCounts) {
         incrementHostCount(hostId, count)
-        metrics.hostWorktreeIds
-          .get(hostId)!
-          .push(...(childMetrics.hostWorktreeIds.get(hostId) ?? []))
-        metrics.hostFolderWorkspaceIds
-          .get(hostId)!
-          .push(...(childMetrics.hostFolderWorkspaceIds.get(hostId) ?? []))
+        const hostWorktreeIds = metrics.hostWorktreeIds.get(hostId)!
+        for (const worktreeId of childMetrics.hostWorktreeIds.get(hostId) ?? []) {
+          hostWorktreeIds.push(worktreeId)
+        }
+        const hostFolderWorkspaceIds = metrics.hostFolderWorkspaceIds.get(hostId)!
+        for (const folderWorkspaceId of childMetrics.hostFolderWorkspaceIds.get(hostId) ?? []) {
+          hostFolderWorkspaceIds.push(folderWorkspaceId)
+        }
       }
     }
     if (metrics.hostCounts.size === 0 && projectGroup) {
@@ -1857,7 +1863,9 @@ export function buildRows(
     }
     // Why: startup can have repos from hosts whose project-group metadata was
     // not fetched yet; missing metadata must not make those repos disappear.
-    remainingRepoEntries.push(...entries)
+    for (const entry of entries) {
+      remainingRepoEntries.push(entry)
+    }
   }
   appendOrderedGroups(
     withRepoSectionDisplayLabels(sortRepoEntriesWithinGroup(remainingRepoEntries)),

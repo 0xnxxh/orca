@@ -104,6 +104,7 @@ import {
   worktreeWorkspaceKey
 } from '../../../../shared/workspace-scope'
 import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
+import { resolveFolderWorkspaceCatalogOwnerHostId } from '../../../../shared/folder-workspaces'
 import {
   CLIENT_WORKTREE_CREATE_MAX_ATTEMPTS,
   getClientWorktreeCreateCandidate,
@@ -916,15 +917,116 @@ function folderWorkspaceMatchesHost(
   return getFolderWorkspaceExecutionHostId(workspace) === executionHostId
 }
 
+type FolderWorkspaceSessionTarget = {
+  folderWorkspace: FolderWorkspace
+  ownerHostId: ExecutionHostId
+  workspaceKey: ReturnType<typeof folderWorkspaceKey>
+  aliasKey: ReturnType<typeof folderWorkspaceKey>
+  canMigrateAlias: boolean
+}
+
+function resolveFolderWorkspaceSessionTarget(
+  state: Pick<
+    AppState,
+    | 'folderWorkspaces'
+    | 'projectGroups'
+    | 'activeWorktreeId'
+    | 'activeWorkspaceKey'
+    | 'activeWorkspaceExecutionHostId'
+    | 'restoredRuntimeHostIdByWorkspaceSessionKey'
+  >,
+  folderWorkspaceId: string,
+  preferredHostId?: ExecutionHostId
+): FolderWorkspaceSessionTarget | null {
+  const matches = state.folderWorkspaces.filter((workspace) => workspace.id === folderWorkspaceId)
+  const ownerOf = (workspace: FolderWorkspace): ExecutionHostId | null =>
+    resolveFolderWorkspaceCatalogOwnerHostId(workspace, state.projectGroups)
+  const candidates = preferredHostId
+    ? matches.filter((workspace) => ownerOf(workspace) === preferredHostId)
+    : matches
+  if (candidates.length !== 1) {
+    return null
+  }
+  const folderWorkspace = candidates[0]
+  const ownerHostId = ownerOf(folderWorkspace)
+  if (!ownerHostId) {
+    return null
+  }
+  const owners = matches.map(ownerOf)
+  const ambiguous =
+    matches.length > 1 && (owners.some((owner) => owner === null) || new Set(owners).size > 1)
+  const workspaceKey = folderWorkspaceKey(folderWorkspaceId, ambiguous ? ownerHostId : undefined)
+  const aliasKey = folderWorkspaceKey(folderWorkspaceId, ambiguous ? undefined : ownerHostId)
+  const aliasOwnerIsProven =
+    !ambiguous ||
+    ((state.activeWorktreeId === aliasKey || state.activeWorkspaceKey === aliasKey) &&
+      state.activeWorkspaceExecutionHostId === ownerHostId) ||
+    state.restoredRuntimeHostIdByWorkspaceSessionKey[aliasKey] === ownerHostId
+  return {
+    folderWorkspace,
+    ownerHostId,
+    workspaceKey,
+    aliasKey,
+    canMigrateAlias: aliasOwnerIsProven && aliasKey !== workspaceKey
+  }
+}
+
+function hasWorkspaceSessionIdentity(state: AppState, workspaceKey: string): boolean {
+  return (
+    state.activeWorktreeId === workspaceKey ||
+    state.activeWorkspaceKey === workspaceKey ||
+    workspaceKey in state.tabsByWorktree ||
+    workspaceKey in state.activeFileIdByWorktree ||
+    workspaceKey in state.browserTabsByWorktree ||
+    workspaceKey in state.unifiedTabsByWorktree ||
+    workspaceKey in state.groupsByWorktree ||
+    workspaceKey in state.layoutByWorktree ||
+    workspaceKey in state.restoredRuntimeHostIdByWorkspaceSessionKey ||
+    state.openFiles.some((file) => file.worktreeId === workspaceKey)
+  )
+}
+
+function migrateFolderWorkspaceSessionAlias(
+  set: Parameters<StateCreator<AppState>>[0],
+  target: FolderWorkspaceSessionTarget,
+  state: AppState
+): void {
+  if (
+    !target.canMigrateAlias ||
+    !hasWorkspaceSessionIdentity(state, target.aliasKey) ||
+    hasWorkspaceSessionIdentity(state, target.workspaceKey)
+  ) {
+    return
+  }
+  set((current) => {
+    const renamed = buildWorktreeRenameState(current, target.aliasKey, target.workspaceKey)
+    const worktreeNavHistory = current.worktreeNavHistory.map((entry) =>
+      entry === target.aliasKey ? target.workspaceKey : entry
+    )
+    return {
+      ...renamed,
+      ...(current.activeWorkspaceKey === target.aliasKey
+        ? { activeWorkspaceKey: target.workspaceKey }
+        : {}),
+      ...(worktreeNavHistory.some((entry, index) => entry !== current.worktreeNavHistory[index])
+        ? { worktreeNavHistory }
+        : {})
+    }
+  })
+}
+
 function findFolderWorkspaceMetadataOwner(
   state: Pick<AppState, 'folderWorkspaces' | 'activeWorktreeId' | 'activeWorkspaceExecutionHostId'>,
-  folderWorkspaceId: string
+  folderWorkspaceId: string,
+  preferredHostId?: ExecutionHostId
 ): FolderWorkspace | null {
   const matches = state.folderWorkspaces.filter((workspace) => workspace.id === folderWorkspaceId)
+  const activeScope = parseWorkspaceKey(state.activeWorktreeId ?? '')
   const activeExecutionHostId =
-    state.activeWorktreeId === folderWorkspaceKey(folderWorkspaceId)
-      ? state.activeWorkspaceExecutionHostId
-      : null
+    preferredHostId ??
+    (activeScope?.type === 'folder' && activeScope.folderWorkspaceId === folderWorkspaceId
+      ? (activeScope.ownerHostId ?? state.activeWorkspaceExecutionHostId)
+      : null)
   if (activeExecutionHostId) {
     return (
       matches.find((workspace) => folderWorkspaceMatchesHost(workspace, activeExecutionHostId)) ??
@@ -963,16 +1065,22 @@ function persistFolderWorkspaceMetadata(
 }
 
 function findKnownWorktreeById(
-  state: Pick<AppState, 'worktreesByRepo' | 'detectedWorktreesByRepo' | 'folderWorkspaces'>,
+  state: Pick<
+    AppState,
+    'worktreesByRepo' | 'detectedWorktreesByRepo' | 'folderWorkspaces' | 'projectGroups'
+  >,
   worktreeId: string,
   executionHostId?: ExecutionHostId
 ): Worktree | DetectedWorktreeListResult['worktrees'][number] | undefined {
   const workspaceScope = parseWorkspaceKey(worktreeId)
   if (workspaceScope?.type === 'folder') {
+    const preferredHostId = executionHostId ?? workspaceScope.ownerHostId
     const matches = state.folderWorkspaces.filter(
       (workspace) =>
         workspace.id === workspaceScope.folderWorkspaceId &&
-        (!executionHostId || folderWorkspaceMatchesHost(workspace, executionHostId))
+        (!preferredHostId ||
+          resolveFolderWorkspaceCatalogOwnerHostId(workspace, state.projectGroups) ===
+            preferredHostId)
     )
     const folderWorkspace = matches.length === 1 ? matches[0] : null
     if (!folderWorkspace) {
@@ -2374,7 +2482,8 @@ const WORKTREE_ID_KEYED_MAP_KEYS = [
   'expandedDirs',
   'lastVisitedAtByWorktreeId',
   'defaultTerminalTabsAppliedByWorktreeId',
-  'recentlyClosedTabKindsByWorktree'
+  'recentlyClosedTabKindsByWorktree',
+  'restoredRuntimeHostIdByWorkspaceSessionKey'
 ] as const satisfies readonly (keyof AppState)[]
 
 /**
@@ -2507,10 +2616,11 @@ function buildWorktreeRenameState(
       ? { sleepingAgentSessionsByPaneKey }
       : {}),
     ...(s.activeWorktreeId === oldWorktreeId ? { activeWorktreeId: newWorktreeId } : {}),
-    // The active workspace key derives from the worktree id, so keep it in sync when the active worktree is renamed.
-    ...(s.activeWorkspaceKey === worktreeWorkspaceKey(oldWorktreeId)
-      ? { activeWorkspaceKey: worktreeWorkspaceKey(newWorktreeId) }
-      : {}),
+    ...(s.activeWorkspaceKey === oldWorktreeId
+      ? { activeWorkspaceKey: newWorktreeId as AppState['activeWorkspaceKey'] }
+      : s.activeWorkspaceKey === worktreeWorkspaceKey(oldWorktreeId)
+        ? { activeWorkspaceKey: worktreeWorkspaceKey(newWorktreeId) }
+        : {}),
     ...(s.renamingWorktreeId?.worktreeId === oldWorktreeId
       ? { renamingWorktreeId: { ...s.renamingWorktreeId, worktreeId: newWorktreeId } }
       : {})
@@ -3762,6 +3872,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     // Why: folder workspaces persist tabs under `folder:<id>` keys that authoritative repo scans never return.
     for (const workspace of get().folderWorkspaces ?? []) {
       validIds.add(folderWorkspaceKey(workspace.id))
+      const ownerHostId = resolveFolderWorkspaceCatalogOwnerHostId(workspace, get().projectGroups)
+      if (ownerHostId) {
+        validIds.add(folderWorkspaceKey(workspace.id, ownerHostId))
+      }
     }
     for (const key of Object.keys(get().restoredRuntimeHostIdByWorkspaceSessionKey ?? {})) {
       if (parseWorkspaceKey(key)?.type === 'folder') {
@@ -4091,7 +4205,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           const activeScope = parseWorkspaceKey(get().activeWorkspaceKey ?? '')
           const parentWorkspace =
             activeScope?.type === 'folder'
-              ? folderWorkspaceKey(activeScope.folderWorkspaceId)
+              ? folderWorkspaceKey(activeScope.folderWorkspaceId, activeScope.ownerHostId)
               : undefined
           const createArgs = {
             repoId,
@@ -4896,7 +5010,15 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
   updateWorktreeMeta: async (worktreeId, updates, options) => {
     const shouldApplyUpdate = options?.shouldApply
-    const existingWorktree = get().getKnownWorktreeById(worktreeId, options?.executionHostId)
+    const stateBeforeUpdate = get()
+    const modalExecutionHostId =
+      stateBeforeUpdate.activeModal === 'edit-meta' &&
+      stateBeforeUpdate.modalData.worktreeId === worktreeId &&
+      typeof stateBeforeUpdate.modalData.executionHostId === 'string'
+        ? parseExecutionHostId(stateBeforeUpdate.modalData.executionHostId)?.id
+        : undefined
+    const executionHostId = options?.executionHostId ?? modalExecutionHostId
+    const existingWorktree = get().getKnownWorktreeById(worktreeId, executionHostId)
     if (shouldApplyUpdate && !shouldApplyUpdate(existingWorktree)) {
       return { ok: true }
     }
@@ -4912,7 +5034,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         const updated = await get().updateFolderWorkspace(
           workspaceScope.folderWorkspaceId,
           folderUpdates,
-          options?.executionHostId ? { executionHostId: options.executionHostId } : undefined
+          executionHostId ? { executionHostId } : undefined
         )
         return updated
           ? { ok: true }
@@ -5268,7 +5390,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     const workspaceScope = parseWorkspaceKey(worktreeId)
     if (workspaceScope?.type === 'folder') {
       const folderWorkspaceId = workspaceScope.folderWorkspaceId
-      const folderWorkspace = findFolderWorkspaceMetadataOwner(get(), folderWorkspaceId)
+      const folderWorkspace = findFolderWorkspaceMetadataOwner(
+        get(),
+        folderWorkspaceId,
+        workspaceScope.ownerHostId
+      )
       if (!folderWorkspace || folderWorkspace.isUnread) {
         return
       }
@@ -5415,7 +5541,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     const workspaceScope = parseWorkspaceKey(worktreeId)
     if (workspaceScope?.type === 'folder') {
       const folderWorkspaceId = workspaceScope.folderWorkspaceId
-      const folderWorkspace = findFolderWorkspaceMetadataOwner(get(), folderWorkspaceId)
+      const folderWorkspace = findFolderWorkspaceMetadataOwner(
+        get(),
+        folderWorkspaceId,
+        workspaceScope.ownerHostId
+      )
       if (!folderWorkspace?.isUnread) {
         return
       }
@@ -5477,7 +5607,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       // Why: folder meta lives on the FolderWorkspace record — persistWorktreeMeta would write a
       // worktreeMeta['folder:…'] row that folderWorkspaces:list never reads back (#10251).
       const folderWorkspaceId = workspaceScope.folderWorkspaceId
-      const folderWorkspace = findFolderWorkspaceMetadataOwner(get(), folderWorkspaceId)
+      const folderWorkspace = findFolderWorkspaceMetadataOwner(
+        get(),
+        folderWorkspaceId,
+        workspaceScope.ownerHostId
+      )
       if (!folderWorkspace) {
         return
       }
@@ -5702,6 +5836,21 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   },
 
   setActiveWorktree: (worktreeId, executionHostId, options) => {
+    const requestedScope = worktreeId ? parseWorkspaceKey(worktreeId) : null
+    if (requestedScope?.type === 'folder') {
+      const target = resolveFolderWorkspaceSessionTarget(
+        get(),
+        requestedScope.folderWorkspaceId,
+        executionHostId ?? requestedScope.ownerHostId
+      )
+      if (!target) {
+        return false
+      }
+      migrateFolderWorkspaceSessionAlias(set, target, get())
+      if (target.workspaceKey !== worktreeId || executionHostId !== target.ownerHostId) {
+        return get().setActiveWorktree(target.workspaceKey, target.ownerHostId, options)
+      }
+    }
     const stateTransition = options?.stateTransition?.(get())
     if (stateTransition && !stateTransition.activate) {
       if (Object.keys(stateTransition.patch).length > 0) {
@@ -6034,7 +6183,8 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       if (workspaceScope?.type === 'folder') {
         const folderWorkspace = findFolderWorkspaceMetadataOwner(
           get(),
-          workspaceScope.folderWorkspaceId
+          workspaceScope.folderWorkspaceId,
+          workspaceScope.ownerHostId ?? executionHostId
         )
         if (folderWorkspace) {
           persistFolderWorkspaceMetadata(
@@ -6057,16 +6207,13 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   },
 
   setActiveFolderWorkspace: (folderWorkspaceId, executionHostId) => {
-    const matchingWorkspaces = get().folderWorkspaces.filter(
-      (workspace) =>
-        workspace.id === folderWorkspaceId &&
-        (!executionHostId || folderWorkspaceMatchesHost(workspace, executionHostId))
-    )
-    if (matchingWorkspaces.length !== 1) {
+    const target = resolveFolderWorkspaceSessionTarget(get(), folderWorkspaceId, executionHostId)
+    if (!target) {
       return
     }
-    const workspaceKey = folderWorkspaceKey(folderWorkspaceId)
-    const workspace = findKnownWorktreeById(get(), workspaceKey, executionHostId)
+    migrateFolderWorkspaceSessionAlias(set, target, get())
+    const { ownerHostId, workspaceKey } = target
+    const workspace = findKnownWorktreeById(get(), workspaceKey, ownerHostId)
     if (!workspace) {
       return
     }
@@ -6152,7 +6299,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         activeRepoId: null,
         activeWorktreeId: workspaceKey,
         activeWorkspaceKey: workspaceKey,
-        activeWorkspaceExecutionHostId: executionHostId ?? null,
+        activeWorkspaceExecutionHostId: ownerHostId,
         activePendingCreationId: null,
         activeFileId,
         activeBrowserTabId,
@@ -6166,7 +6313,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         folderWorkspaces: workspace.isUnread
           ? s.folderWorkspaces.map((entry) =>
               entry.id === folderWorkspaceId &&
-              (!executionHostId || folderWorkspaceMatchesHost(entry, executionHostId))
+              resolveFolderWorkspaceCatalogOwnerHostId(entry, s.projectGroups) === ownerHostId
                 ? { ...entry, isUnread: false }
                 : entry
             )
@@ -6177,7 +6324,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       void get().updateFolderWorkspace(
         folderWorkspaceId,
         { isUnread: false },
-        executionHostId ? { executionHostId } : undefined
+        { executionHostId: ownerHostId }
       )
     }
   },

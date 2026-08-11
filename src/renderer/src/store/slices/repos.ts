@@ -1319,7 +1319,13 @@ function clearRestoredFolderWorkspaceSessionOwners(
       next[key] = hostId
       continue
     }
-    const matches = state.folderWorkspaces.filter((entry) => entry.id === scope.folderWorkspaceId)
+    const matches = state.folderWorkspaces.filter(
+      (entry) =>
+        entry.id === scope.folderWorkspaceId &&
+        (!scope.ownerHostId ||
+          resolveFolderWorkspaceCatalogOwnerHostId(entry, state.projectGroups) ===
+            scope.ownerHostId)
+    )
     const workspace = matches.length === 1 ? matches[0] : undefined
     if (workspace && !state.projectGroups.some((group) => group.id === workspace.projectGroupId)) {
       // Why: ownership resolves via the project group; if that catalog is still missing, keep the restored host owner so a session write doesn't move runtime tabs local.
@@ -1462,9 +1468,12 @@ async function reconcileFailedFolderWorkspaceUpdate(args: {
       const remainingSameId = args
         .get()
         .folderWorkspaces.some((workspace) => workspace.id === args.folderWorkspaceId)
-      if (!remainingSameId) {
-        args.get().purgeWorktreeTerminalState([folderWorkspaceKey(args.folderWorkspaceId)])
-      }
+      args
+        .get()
+        .purgeWorktreeTerminalState([
+          folderWorkspaceKey(args.folderWorkspaceId, args.ownerHostId),
+          ...(!remainingSameId ? [folderWorkspaceKey(args.folderWorkspaceId)] : [])
+        ])
     }
   } catch (err) {
     console.warn('Failed to reconcile folder workspace after update failure:', err)
@@ -2883,9 +2892,11 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
   updateFolderWorkspace: async (folderWorkspaceId, updates, options) => {
     const folderWorkspaceUpdates = getFolderWorkspaceUpdateCoordinator(get)
     const state = get()
+    const activeWorkspaceScope = parseWorkspaceKey(state.activeWorktreeId ?? '')
     const executionHostId =
       options?.executionHostId ??
-      (state.activeWorktreeId === folderWorkspaceKey(folderWorkspaceId)
+      (activeWorkspaceScope?.type === 'folder' &&
+      activeWorkspaceScope.folderWorkspaceId === folderWorkspaceId
         ? (state.activeWorkspaceExecutionHostId ?? undefined)
         : undefined)
     const owner = findFolderWorkspaceOwner(state, folderWorkspaceId, executionHostId)
@@ -3054,9 +3065,10 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       const remainingSameId = get().folderWorkspaces.some(
         (workspace) => workspace.id === folderWorkspaceId
       )
-      if (!remainingSameId) {
-        get().purgeWorktreeTerminalState([folderWorkspaceKey(folderWorkspaceId)])
-      }
+      get().purgeWorktreeTerminalState([
+        folderWorkspaceKey(folderWorkspaceId, ownerHostId),
+        ...(!remainingSameId ? [folderWorkspaceKey(folderWorkspaceId)] : [])
+      ])
       return true
     } catch (err) {
       console.error('Failed to delete folder workspace:', err)
@@ -3137,14 +3149,23 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       }
       const stateBeforeDelete = get()
       const removalGroupIndex = buildProjectGroupOwnerIndex(stateBeforeDelete.projectGroups)
-      const removedFolderWorkspaceIds = new Set(
-        stateBeforeDelete.folderWorkspaces.flatMap((workspace) =>
-          targets.folderWorkspaceIdentities.has(
-            getProjectGroupRemovalFolderWorkspaceIdentity(removalGroupIndex, workspace) ?? ''
-          )
-            ? [workspace.id]
-            : []
+      const removedFolderWorkspaces = stateBeforeDelete.folderWorkspaces.flatMap((workspace) =>
+        targets.folderWorkspaceIdentities.has(
+          getProjectGroupRemovalFolderWorkspaceIdentity(removalGroupIndex, workspace) ?? ''
         )
+          ? [
+              {
+                id: workspace.id,
+                ownerHostId: resolveFolderWorkspaceCatalogOwnerHostId(
+                  workspace,
+                  stateBeforeDelete.projectGroups
+                )
+              }
+            ]
+          : []
+      )
+      const removedFolderWorkspaceIds = new Set(
+        removedFolderWorkspaces.map((workspace) => workspace.id)
       )
       set((s) => {
         const projectTargetIdentities = new Set(
@@ -3169,10 +3190,16 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           folderWorkspacePathStatuses: {}
         }
       })
-      for (const folderWorkspaceId of removedFolderWorkspaceIds) {
-        if (!get().folderWorkspaces.some((workspace) => workspace.id === folderWorkspaceId)) {
-          get().purgeWorktreeTerminalState([folderWorkspaceKey(folderWorkspaceId)])
-        }
+      for (const removedWorkspace of removedFolderWorkspaces) {
+        const remainingSameId = get().folderWorkspaces.some(
+          (workspace) => workspace.id === removedWorkspace.id
+        )
+        get().purgeWorktreeTerminalState([
+          ...(removedWorkspace.ownerHostId
+            ? [folderWorkspaceKey(removedWorkspace.id, removedWorkspace.ownerHostId)]
+            : []),
+          ...(!remainingSameId ? [folderWorkspaceKey(removedWorkspace.id)] : [])
+        ])
       }
       const activeWorkspaceScope = parseWorkspaceKey(stateBeforeDelete.activeWorktreeId ?? '')
       if (activeWorkspaceScope?.type === 'folder') {

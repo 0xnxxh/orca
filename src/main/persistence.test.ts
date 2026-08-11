@@ -3798,6 +3798,15 @@ describe('Store', () => {
       ]
     })
     const store = await createStore()
+    const localKey = folderWorkspaceKey('same-folder', 'local')
+    const sshKey = folderWorkspaceKey('same-folder', 'ssh:builder')
+    store.setWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: {
+        [localKey]: [makeTerminalTab({ id: 'local-tab', worktreeId: localKey })],
+        [sshKey]: [makeTerminalTab({ id: 'ssh-tab', worktreeId: sshKey })]
+      }
+    })
 
     expect(store.getFolderWorkspace('same-folder')).toBeUndefined()
     expect(store.updateFolderWorkspace('same-folder', { name: 'Ambiguous' })).toBeNull()
@@ -3807,6 +3816,8 @@ describe('Store', () => {
     expect(store.removeFolderWorkspace('same-folder')).toBe(false)
     expect(store.removeFolderWorkspace('same-folder', 'local')).toBe(true)
     expect(store.getFolderWorkspace('same-folder', 'ssh:builder')?.name).toBe('Remote')
+    expect(store.getWorkspaceSession().tabsByWorktree[localKey]).toBeUndefined()
+    expect(store.getWorkspaceSession().tabsByWorktree[sshKey]).toHaveLength(1)
   })
 
   it('loads a persisted legacy SSH folder under one unstamped group', async () => {

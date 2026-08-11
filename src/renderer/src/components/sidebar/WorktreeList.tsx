@@ -153,6 +153,7 @@ import {
   type VirtualizedScrollAnchor
 } from '@/hooks/useVirtualizedScrollAnchor'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
+import { getNewWorkspaceProjectGroupOptionId } from '@/lib/new-workspace-project-options'
 import { useFolderWorkspacePathStatusCacheExpiryTick } from '@/lib/folder-workspace-path-status-cache-expiry'
 import {
   getFolderWorkspacePathStatusDescription,
@@ -300,7 +301,11 @@ import { buildSidebarHostOptions } from './sidebar-host-options'
 import { HostSectionHeaderMenu } from './HostSectionHeaderMenu'
 import { ProjectHeaderActions } from './ProjectHeaderActions'
 import { translate } from '@/i18n/i18n'
-import { folderWorkspaceKey, getActiveSidebarWorkspaceId } from '../../../../shared/workspace-scope'
+import {
+  folderWorkspaceKey,
+  getActiveSidebarWorkspaceId,
+  parseWorkspaceKey
+} from '../../../../shared/workspace-scope'
 import { getHostDisplayLabelOverrides } from '../../../../shared/host-setting-overrides'
 import {
   isConfirmedStaleFolderPathStatus,
@@ -1099,11 +1104,13 @@ export function renderRowContainsWorktree(
     return false
   }
   if (row.type === 'folder-workspace') {
+    const workspaceScope = parseWorkspaceKey(worktreeId)
     return (
-      folderWorkspaceKey(row.folderWorkspace.id) === worktreeId &&
-      (!ownerHostId ||
+      workspaceScope?.type === 'folder' &&
+      workspaceScope.folderWorkspaceId === row.folderWorkspace.id &&
+      (!(ownerHostId ?? workspaceScope.ownerHostId) ||
         resolveFolderWorkspaceCatalogOwnerHostId(row.folderWorkspace, [row.projectGroup]) ===
-          ownerHostId)
+          (ownerHostId ?? workspaceScope.ownerHostId))
     )
   }
   if (row.type === 'lineage-group') {
@@ -5240,6 +5247,12 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                 ) ?? getProjectGroupMutationSelector(folderWorkspaceRow.projectGroup).ownerHostId
               const folderWorktree = {
                 ...folderWorkspaceToWorktree(folderWorkspaceRow.folderWorkspace),
+                id: folderWorkspaceKey(
+                  folderWorkspaceRow.folderWorkspace.id,
+                  ambiguousFolderWorkspaceIds.has(folderWorkspaceRow.folderWorkspace.id)
+                    ? folderOwnerHostId
+                    : undefined
+                ),
                 hostId: folderOwnerHostId
               }
               const folderSelectionId = getSidebarWorktreeSelectionId(
@@ -6589,9 +6602,9 @@ const WorktreeList = React.memo(function WorktreeList({
       if (!projectGroup.parentPath) {
         return
       }
+      const ownerHostId = getProjectGroupMutationSelector(projectGroup).ownerHostId
       openModal('new-workspace-composer', {
-        initialProjectGroupId: projectGroup.id,
-        initialProjectGroupOwnerHostId: getProjectGroupMutationSelector(projectGroup).ownerHostId,
+        initialProjectGroupId: getNewWorkspaceProjectGroupOptionId(projectGroup.id, ownerHostId),
         telemetrySource: 'sidebar'
       })
     },

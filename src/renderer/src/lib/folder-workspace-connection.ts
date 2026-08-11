@@ -15,7 +15,7 @@ import {
   parseExecutionHostId,
   type ExecutionHostId
 } from '../../../shared/execution-host'
-import { folderWorkspaceKey } from '../../../shared/workspace-scope'
+import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 
 export type FolderWorkspaceConnectionState = {
   folderWorkspaces: FolderWorkspace[]
@@ -76,9 +76,10 @@ function findFolderWorkspaceScope(
   folderWorkspaceId: string,
   ownerHostId?: ExecutionHostId
 ): { workspace: FolderWorkspace; projectGroup: ProjectGroup; ownerHostId: ExecutionHostId } | null {
+  const activeScope = parseWorkspaceKey(state.activeWorktreeId ?? '')
   const activeOwnerHostId =
-    state.activeWorktreeId === folderWorkspaceKey(folderWorkspaceId)
-      ? state.activeWorkspaceExecutionHostId
+    activeScope?.type === 'folder' && activeScope.folderWorkspaceId === folderWorkspaceId
+      ? (activeScope.ownerHostId ?? state.activeWorkspaceExecutionHostId)
       : undefined
   const requestedOwnerHostId = ownerHostId ?? activeOwnerHostId ?? undefined
   const candidates = state.folderWorkspaces.filter((entry) => entry.id === folderWorkspaceId)

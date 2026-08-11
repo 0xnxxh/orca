@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { useAppStore } from '@/store'
 import { findIndexedWorktreeOwner } from '@/lib/worktree-runtime-owner-index'
 import type { FolderWorkspace, Worktree } from '../../../../shared/types'
-import type { ExecutionHostId } from '../../../../shared/execution-host'
+import { normalizeExecutionHostId, type ExecutionHostId } from '../../../../shared/execution-host'
 import { getFolderWorkspaceCatalogOwnerHostId } from '../../../../shared/folder-workspaces'
 import { parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
@@ -32,7 +32,6 @@ export function useWorktreeMetaWorkspace(args: {
   worktreeId: string
   /** The repo bucket the opening row belongs to, when it knows. */
   ownerRepoId: string | null
-  executionHostId: ExecutionHostId | null
 }): {
   worktree: Worktree | undefined
   linkedIssue: number | null
@@ -44,8 +43,15 @@ export function useWorktreeMetaWorkspace(args: {
   /** Link state as it stands now, for save-time displacement decisions. */
   liveLinks: WorktreeMetaLiveLinks
 } {
-  const { worktreeId, ownerRepoId, executionHostId } = args
+  const { worktreeId, ownerRepoId } = args
   const workspaceScope = useMemo(() => parseWorkspaceKey(worktreeId), [worktreeId])
+  const executionHostId = useAppStore((s) =>
+    s.activeModal === 'edit-meta' && s.modalData.worktreeId === worktreeId
+      ? normalizeExecutionHostId(
+          typeof s.modalData.executionHostId === 'string' ? s.modalData.executionHostId : null
+        )
+      : null
+  )
   const indexedWorktree = useAppStore((s) => {
     // Why: the same workspace ID can exist under two hosts, which the owner index
     // reports as ambiguous rather than guessing. The row that opened the dialog

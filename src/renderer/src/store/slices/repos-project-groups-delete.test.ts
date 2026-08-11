@@ -7,6 +7,7 @@ import {
 } from '../../runtime/runtime-compatibility-test-fixture'
 import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rpc-client'
 import { getRepoExecutionHostId } from '../../../../shared/execution-host'
+import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
 
 const remoteRepo: Repo = {
   id: 'remote-repo',
@@ -108,7 +109,10 @@ describe('project group deletion store routing', () => {
       { id: 'nested', projectGroupId: null },
       { id: 'sibling', projectGroupId: siblingGroup.id }
     ])
-    expect(purgeWorktreeTerminalState).toHaveBeenCalledWith(['folder:folder-workspace-1'])
+    expect(purgeWorktreeTerminalState).toHaveBeenCalledWith([
+      folderWorkspaceKey('folder-workspace-1', 'local'),
+      folderWorkspaceKey('folder-workspace-1')
+    ])
     expect(setActiveWorktree).toHaveBeenCalledWith(null)
   })
 
@@ -249,7 +253,9 @@ describe('project group deletion store routing', () => {
     expect(store.getState().projectGroups).toEqual([localGroup])
     expect(store.getState().folderWorkspaces).toEqual([localFolder])
     expect(store.getState().repos).toEqual([localRepo, { ...runtimeRepo, projectGroupId: null }])
-    expect(purgeWorktreeTerminalState).not.toHaveBeenCalled()
+    expect(purgeWorktreeTerminalState).toHaveBeenCalledWith([
+      folderWorkspaceKey('same-folder', 'runtime:env-1')
+    ])
     expect(setActiveWorktree).not.toHaveBeenCalled()
     expect(projectGroupsDelete).not.toHaveBeenCalled()
   })

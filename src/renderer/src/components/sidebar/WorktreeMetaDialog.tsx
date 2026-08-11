@@ -20,7 +20,6 @@ import {
 } from './worktree-meta-updates'
 import { useWorktreeIssueLink } from './use-worktree-issue-link'
 import { useWorktreeMetaWorkspace } from './use-worktree-meta-workspace'
-import { normalizeExecutionHostId } from '../../../../shared/execution-host'
 import { WorktreeIssueLinkField } from './WorktreeIssueLinkField'
 import { getScreenSubmitShortcutLabel, isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
 import { useMountedRef } from '@/hooks/useMountedRef'
@@ -70,9 +69,6 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
   // Why: the opening row names its repo bucket for workspace IDs the owner index
   // reads as ambiguous across hosts.
   const ownerRepoId = typeof modalData.repoId === 'string' ? modalData.repoId : null
-  const executionHostId = normalizeExecutionHostId(
-    typeof modalData.executionHostId === 'string' ? modalData.executionHostId : null
-  )
   const {
     worktree,
     linkedIssue,
@@ -81,9 +77,7 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
     currentProvider,
     isFolderWorkspace,
     liveLinks
-  } = useWorktreeMetaWorkspace({ worktreeId, ownerRepoId, executionHostId })
-  const worktreeExecutionHostId =
-    executionHostId ?? normalizeExecutionHostId(worktree?.hostId) ?? undefined
+  } = useWorktreeMetaWorkspace({ worktreeId, ownerRepoId })
   // Why: ChecksPanel seeds the PR it is looking at, which may not be linked yet.
   const currentPR =
     typeof modalData.currentPR === 'number'
@@ -230,11 +224,7 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
     try {
       const updates = buildWorktreeMetaUpdates(draft, snapshot, liveLinks)
 
-      const result = await updateWorktreeMeta(
-        worktreeId,
-        updates,
-        worktreeExecutionHostId ? { executionHostId: worktreeExecutionHostId } : undefined
-      )
+      const result = await updateWorktreeMeta(worktreeId, updates)
       // Why: a failed save refetches and reverts the optimistic write. Closing
       // here would report success for an edit that silently undid itself, and
       // would discard the name, comment and PR changes in the same payload.
@@ -259,7 +249,6 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
     }
   }, [
     worktreeId,
-    worktreeExecutionHostId,
     canSave,
     draft,
     snapshot,

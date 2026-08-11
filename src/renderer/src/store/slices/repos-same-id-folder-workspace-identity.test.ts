@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FolderWorkspace, ProjectGroup, Repo } from '../../../../shared/types'
-import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
+import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
+import { buildHostIdByWorktreeId } from '../../lib/workspace-session-host-persistence'
 import {
   getFolderWorkspaceCandidateRepos,
   getFolderWorkspaceConnectionId
@@ -105,7 +106,9 @@ describe('same-id cross-host folder workspace identity', () => {
       folderWorkspaceId: 'same-id',
       ownerHostId: 'local'
     })
-    expect(purgeWorktreeTerminalState).not.toHaveBeenCalled()
+    expect(purgeWorktreeTerminalState).toHaveBeenCalledWith([
+      folderWorkspaceKey('same-id', 'local')
+    ])
     expect(Object.keys(store.getState().folderWorkspacePathStatuses)).toEqual([
       'local:folder-workspace:["runtime:env-1","same-id"]'
     ])
@@ -172,9 +175,10 @@ describe('same-id cross-host folder workspace identity', () => {
     expect(state.activeTabId).toBe('legacy-tab')
   })
 
-  it('activates an ambiguous folder id only with an exact owner', () => {
+  it('does not reuse an unowned legacy session when an id becomes ambiguous', () => {
     const store = createTestStore()
     const bareKey = folderWorkspaceKey('same-id')
+    const localKey = folderWorkspaceKey('same-id', 'local')
     store.setState({
       projectGroups: [
         makeGroup({ id: 'same-group', executionHostId: 'local', parentPath: '/local' }),
@@ -212,10 +216,144 @@ describe('same-id cross-host folder workspace identity', () => {
     })
 
     store.getState().setActiveFolderWorkspace('same-id', 'local')
-    expect(store.getState().activeWorkspaceKey).toBe(bareKey)
-    expect(store.getState().activeWorktreeId).toBe(bareKey)
+    expect(store.getState().activeWorkspaceKey).toBe(localKey)
+    expect(store.getState().activeWorktreeId).toBe(localKey)
     expect(store.getState().activeWorkspaceExecutionHostId).toBe('local')
     expect(store.getState().tabsByWorktree[bareKey]?.[0]?.id).toBe('legacy-tab')
+    expect(store.getState().tabsByWorktree[localKey]).toBeUndefined()
+  })
+
+  it('migrates a legacy session when its active owner proves the alias', () => {
+    const store = createTestStore()
+    const bareKey = folderWorkspaceKey('same-id')
+    const localKey = folderWorkspaceKey('same-id', 'local')
+    store.setState({
+      projectGroups: [
+        makeGroup({ executionHostId: 'local', parentPath: '/local' }),
+        makeGroup({ executionHostId: 'runtime:env-1', parentPath: '/runtime' })
+      ],
+      folderWorkspaces: [
+        makeFolder({ executionHostId: 'local', folderPath: '/local/folder' }),
+        makeFolder({ executionHostId: 'runtime:env-1', folderPath: '/runtime/folder' })
+      ],
+      activeWorktreeId: bareKey,
+      activeWorkspaceKey: bareKey,
+      activeWorkspaceExecutionHostId: 'local',
+      tabsByWorktree: { [bareKey]: [] },
+      activeFileIdByWorktree: { [bareKey]: null },
+      browserTabsByWorktree: { [bareKey]: [] },
+      groupsByWorktree: { [bareKey]: [] },
+      unifiedTabsByWorktree: { [bareKey]: [] }
+    })
+
+    store.getState().setActiveFolderWorkspace('same-id', 'local')
+
+    const state = store.getState()
+    expect(state.activeWorktreeId).toBe(localKey)
+    expect(state.tabsByWorktree).toHaveProperty(localKey)
+    expect(state.activeFileIdByWorktree).toHaveProperty(localKey)
+    expect(state.browserTabsByWorktree).toHaveProperty(localKey)
+    expect(state.groupsByWorktree).toHaveProperty(localKey)
+    expect(state.unifiedTabsByWorktree).toHaveProperty(localKey)
+    expect(state.tabsByWorktree).not.toHaveProperty(bareKey)
+  })
+
+  it('does not overwrite a canonical owner session with a proven legacy alias', () => {
+    const store = createTestStore()
+    const bareKey = folderWorkspaceKey('same-id')
+    const localKey = folderWorkspaceKey('same-id', 'local')
+    store.setState({
+      projectGroups: [
+        makeGroup({ executionHostId: 'local', parentPath: '/local' }),
+        makeGroup({ executionHostId: 'runtime:env-1', parentPath: '/runtime' })
+      ],
+      folderWorkspaces: [
+        makeFolder({ executionHostId: 'local', folderPath: '/local/folder' }),
+        makeFolder({ executionHostId: 'runtime:env-1', folderPath: '/runtime/folder' })
+      ],
+      activeWorktreeId: bareKey,
+      activeWorkspaceKey: bareKey,
+      activeWorkspaceExecutionHostId: 'local',
+      tabsByWorktree: {
+        [bareKey]: [],
+        [localKey]: [
+          {
+            id: 'canonical-tab',
+            ptyId: 'pty-canonical',
+            worktreeId: localKey,
+            title: 'Canonical',
+            customTitle: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 1
+          }
+        ]
+      },
+      ptyIdsByTabId: { 'canonical-tab': ['pty-canonical'] }
+    })
+
+    store.getState().setActiveFolderWorkspace('same-id', 'local')
+
+    expect(store.getState().activeWorktreeId).toBe(localKey)
+    expect(store.getState().tabsByWorktree[localKey]?.[0]?.id).toBe('canonical-tab')
+    expect(store.getState().tabsByWorktree).toHaveProperty(bareKey)
+  })
+
+  it('keeps same-id owner sessions isolated', () => {
+    const store = createTestStore()
+    const localKey = folderWorkspaceKey('same-id', 'local')
+    const runtimeKey = folderWorkspaceKey('same-id', 'runtime:env-1')
+    store.setState({
+      projectGroups: [
+        makeGroup({ executionHostId: 'local', parentPath: '/local' }),
+        makeGroup({ executionHostId: 'runtime:env-1', parentPath: '/runtime' })
+      ],
+      folderWorkspaces: [
+        makeFolder({ executionHostId: 'local', folderPath: '/local/folder' }),
+        makeFolder({ executionHostId: 'runtime:env-1', folderPath: '/runtime/folder' })
+      ],
+      tabsByWorktree: { [localKey]: [], [runtimeKey]: [] }
+    })
+
+    store.getState().setActiveFolderWorkspace('same-id', 'local')
+    expect(store.getState().activeWorktreeId).toBe(localKey)
+    store.getState().setActiveFolderWorkspace('same-id', 'runtime:env-1')
+    expect(store.getState().activeWorktreeId).toBe(runtimeKey)
+    expect(Object.keys(store.getState().tabsByWorktree).sort()).toEqual(
+      [localKey, runtimeKey].sort()
+    )
+  })
+
+  it('round-trips owner-qualified keys and persists each runtime owner separately', () => {
+    const localKey = folderWorkspaceKey('same:id', 'local')
+    const runtimeKey = folderWorkspaceKey('same:id', 'runtime:env-1')
+    expect(parseWorkspaceKey(runtimeKey)).toEqual({
+      type: 'folder',
+      folderWorkspaceId: 'same:id',
+      ownerHostId: 'runtime:env-1'
+    })
+    const getHostId = buildHostIdByWorktreeId({
+      repos: [],
+      projectGroups: [
+        { id: 'same-group', executionHostId: 'local' },
+        { id: 'same-group', executionHostId: 'runtime:env-1' }
+      ],
+      folderWorkspaces: [
+        { id: 'same:id', projectGroupId: 'same-group', executionHostId: 'local' },
+        { id: 'same:id', projectGroupId: 'same-group', executionHostId: 'runtime:env-1' }
+      ],
+      worktreesByRepo: {}
+    })
+
+    expect(getHostId(localKey)).toBe('local')
+    expect(getHostId(runtimeKey)).toBe('runtime:env-1')
+  })
+
+  it('keeps legacy bare folder ids containing colons intact', () => {
+    expect(parseWorkspaceKey('folder:legacy:id')).toEqual({
+      type: 'folder',
+      folderWorkspaceId: 'legacy:id'
+    })
   })
 
   it('routes folder metadata writes through the selected owner', async () => {
@@ -353,6 +491,18 @@ describe('same-id cross-host folder workspace identity', () => {
 
     expect(store.getState().folderWorkspaces).toEqual([local, ssh])
     expect(updateFolderWorkspace).not.toHaveBeenCalled()
+
+    store.getState().markWorktreeUnread(folderWorkspaceKey('same-id', 'ssh:builder'))
+
+    expect(store.getState().folderWorkspaces.map((workspace) => workspace.isUnread)).toEqual([
+      true,
+      true
+    ])
+    expect(updateFolderWorkspace).toHaveBeenCalledWith(
+      'same-id',
+      expect.objectContaining({ isUnread: true }),
+      { executionHostId: 'ssh:builder' }
+    )
   })
 
   it('clears unread on only the owner selected by generic folder activation', async () => {
@@ -456,11 +606,21 @@ describe('same-id cross-host folder workspace identity', () => {
       getFolderWorkspaceCandidateRepos(
         {
           ...state,
-          activeWorktreeId: 'folder:same-id',
+          activeWorktreeId: folderWorkspaceKey('same-id', 'ssh:builder'),
           activeWorkspaceExecutionHostId: 'ssh:builder'
         },
         'same-id'
       )
     ).toEqual([sshRepo])
+    expect(
+      getFolderWorkspaceConnectionId(
+        {
+          ...state,
+          activeWorktreeId: folderWorkspaceKey('same-id', 'ssh:builder'),
+          activeWorkspaceExecutionHostId: 'ssh:builder'
+        },
+        'same-id'
+      )
+    ).toBe('builder')
   })
 })

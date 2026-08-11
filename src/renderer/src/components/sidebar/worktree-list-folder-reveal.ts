@@ -25,11 +25,13 @@ function findFolderWorkspaceByKey(
   const candidates = folderWorkspaces.filter(
     (workspace) => workspace.id === scope.folderWorkspaceId
   )
-  if (ownerHostId) {
+  const effectiveOwnerHostId = ownerHostId ?? scope.ownerHostId
+  if (effectiveOwnerHostId) {
     return (
       candidates.find(
         (workspace) =>
-          resolveFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups) === ownerHostId
+          resolveFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups) ===
+          effectiveOwnerHostId
       ) ?? null
     )
   }
@@ -49,14 +51,19 @@ export function shouldClearActiveFolderWorkspaceAfterDelete(args: {
   deletedOwnerHostId?: ExecutionHostId
   sameIdWorkspaceStillExists?: boolean
 }): boolean {
-  if (args.activeWorktreeId !== folderWorkspaceKey(args.deletedFolderWorkspaceId)) {
+  const activeScope = parseWorkspaceKey(args.activeWorktreeId ?? '')
+  if (
+    activeScope?.type !== 'folder' ||
+    activeScope.folderWorkspaceId !== args.deletedFolderWorkspaceId
+  ) {
     return false
   }
   if (!args.deletedOwnerHostId) {
     return true
   }
-  return args.activeOwnerHostId
-    ? args.activeOwnerHostId === args.deletedOwnerHostId
+  const activeOwnerHostId = args.activeOwnerHostId ?? activeScope.ownerHostId
+  return activeOwnerHostId
+    ? activeOwnerHostId === args.deletedOwnerHostId
     : !args.sameIdWorkspaceStillExists
 }
 
