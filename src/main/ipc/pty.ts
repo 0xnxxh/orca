@@ -96,7 +96,11 @@ import {
 import { resolveWslSessionContext } from '../daemon/wsl-session-context'
 import { addNodePtyRecoveryHint } from '../daemon/node-pty-error-hints'
 import { recordDaemonStreamBacklogEvent } from '../daemon/daemon-stream-backlog-probe'
-import { TerminalSessionOwnerUnverifiedError } from '../daemon/daemon-errors'
+import {
+  isDaemonEndpointGoneError,
+  TerminalHostGoneError,
+  TerminalSessionOwnerUnverifiedError
+} from '../daemon/daemon-errors'
 import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
 import type { ClaudeAccountSelectionTarget } from '../claude-accounts/runtime-selection'
 import { CLAUDE_AUTH_ENV_VARS, hasClaudeAuthEnvConflict } from '../claude-accounts/environment'
@@ -847,6 +851,10 @@ async function attachStablePaneOwner(
   } catch (error) {
     if (error instanceof TerminalSessionOwnerUnverifiedError) {
       throw new Error('terminal_pane_owner_unverified')
+    }
+    // Why: translate before paired-runtime RPC strips the socket error's code and syscall.
+    if (isDaemonEndpointGoneError(error)) {
+      throw new TerminalHostGoneError()
     }
     if (!isPtyAlreadyGoneError(error)) {
       throw error
