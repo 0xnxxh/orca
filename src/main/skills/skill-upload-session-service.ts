@@ -17,6 +17,7 @@ type UploadSession = {
   path: string
   package: SkillUploadBeginRequest['package']
   handle: FileHandle | null
+  idleTimer: ReturnType<typeof setTimeout> | null
   bytesReceived: number
   touchedAt: number
   committed: boolean
@@ -25,8 +26,14 @@ type UploadSession = {
 export class SkillUploadSessionService {
   private readonly sessions = new Map<string, UploadSession>()
   private initialized: Promise<void> | null = null
+  private readonly idleMs: number
 
-  constructor(private readonly root: string) {}
+  constructor(
+    private readonly root: string,
+    options: { idleMs?: number } = {}
+  ) {
+    this.idleMs = options.idleMs ?? SESSION_IDLE_MS
+  }
 
   async begin(request: SkillUploadBeginRequest): Promise<{ uploadId: string; chunkBytes: number }> {
     await this.initialize()
@@ -37,20 +44,23 @@ export class SkillUploadSessionService {
     const id = randomUUID()
     const path = join(this.root, `${id}.tar.gz`)
     const handle = await open(path, 'wx+', 0o600)
-    this.sessions.set(id, {
+    const session: UploadSession = {
       id,
       path,
       package: request.package,
       handle,
+      idleTimer: null,
       bytesReceived: 0,
       touchedAt: Date.now(),
       committed: false
-    })
+    }
+    this.sessions.set(id, session)
+    this.touch(session)
     return { uploadId: id, chunkBytes: SKILL_UPLOAD_CHUNK_MAX_BYTES }
   }
 
   async append(request: SkillUploadChunkRequest): Promise<{ acknowledgedOffset: number }> {
-    const session = this.requireActive(request.uploadId)
+    const session = await this.requireActive(request.uploadId)
     const bytes = Buffer.from(request.bytesBase64, 'base64')
     if (
       bytes.length === 0 ||
@@ -71,7 +81,7 @@ export class SkillUploadSessionService {
       if (read.bytesRead !== bytes.length || !existing.equals(bytes)) {
         throw new Error('skill-upload-retry-mismatch')
       }
-      session.touchedAt = Date.now()
+      this.touch(session)
       return { acknowledgedOffset: session.bytesReceived }
     }
     if (session.bytesReceived + bytes.length > session.package.compressedBytes) {
@@ -82,17 +92,21 @@ export class SkillUploadSessionService {
       throw new Error('skill-upload-write-incomplete')
     }
     session.bytesReceived += bytes.length
-    session.touchedAt = Date.now()
+    this.touch(session)
     return { acknowledgedOffset: session.bytesReceived }
   }
 
   async commit(uploadId: string): Promise<{ uploadId: string }> {
     const session = this.sessions.get(uploadId)
-    if (!session || Date.now() - session.touchedAt > SESSION_IDLE_MS) {
+    if (!session) {
+      throw new Error('skill-upload-session-unavailable')
+    }
+    if (this.expired(session)) {
+      await this.cancel(uploadId)
       throw new Error('skill-upload-session-unavailable')
     }
     if (session.committed) {
-      session.touchedAt = Date.now()
+      this.touch(session)
       return { uploadId }
     }
     if (session.bytesReceived !== session.package.compressedBytes || !session.handle) {
@@ -107,7 +121,7 @@ export class SkillUploadSessionService {
       throw new Error('skill-upload-archive-hash-mismatch')
     }
     session.committed = true
-    session.touchedAt = Date.now()
+    this.touch(session)
     return { uploadId }
   }
 
@@ -116,13 +130,28 @@ export class SkillUploadSessionService {
     identity: SkillUploadBeginRequest['package']
   ): Promise<{ archivePath: string; cleanup(): Promise<void> }> {
     const session = this.sessions.get(uploadId)
-    if (!session?.committed || JSON.stringify(session.package) !== JSON.stringify(identity)) {
+    if (!session) {
       throw new Error('skill-upload-session-unavailable')
     }
-    session.touchedAt = Date.now()
+    if (this.expired(session)) {
+      await this.cancel(uploadId)
+      throw new Error('skill-upload-session-unavailable')
+    }
+    if (!session.committed || JSON.stringify(session.package) !== JSON.stringify(identity)) {
+      throw new Error('skill-upload-session-unavailable')
+    }
+    this.sessions.delete(uploadId)
+    this.clearIdleTimer(session)
+    let cleaned = false
     return {
       archivePath: session.path,
-      cleanup: () => this.cancel(uploadId)
+      cleanup: async () => {
+        if (cleaned) {
+          return
+        }
+        cleaned = true
+        await rm(session.path, { force: true })
+      }
     }
   }
 
@@ -132,16 +161,41 @@ export class SkillUploadSessionService {
       return
     }
     this.sessions.delete(uploadId)
+    this.clearIdleTimer(session)
     await session.handle?.close().catch(() => undefined)
     await rm(session.path, { force: true })
   }
 
-  private requireActive(uploadId: string): UploadSession {
+  private async requireActive(uploadId: string): Promise<UploadSession> {
     const session = this.sessions.get(uploadId)
-    if (!session || session.committed || Date.now() - session.touchedAt > SESSION_IDLE_MS) {
+    if (!session || session.committed) {
+      throw new Error('skill-upload-session-unavailable')
+    }
+    if (this.expired(session)) {
+      await this.cancel(uploadId)
       throw new Error('skill-upload-session-unavailable')
     }
     return session
+  }
+
+  private expired(session: UploadSession): boolean {
+    return Date.now() - session.touchedAt >= this.idleMs
+  }
+
+  private touch(session: UploadSession): void {
+    session.touchedAt = Date.now()
+    this.clearIdleTimer(session)
+    session.idleTimer = setTimeout(() => {
+      void this.cancel(session.id).catch(() => undefined)
+    }, this.idleMs)
+    session.idleTimer.unref()
+  }
+
+  private clearIdleTimer(session: UploadSession): void {
+    if (session.idleTimer) {
+      clearTimeout(session.idleTimer)
+      session.idleTimer = null
+    }
   }
 
   private async initialize(): Promise<void> {
@@ -154,7 +208,7 @@ export class SkillUploadSessionService {
 
   private async prune(): Promise<void> {
     const expired = [...this.sessions.values()]
-      .filter((session) => Date.now() - session.touchedAt > SESSION_IDLE_MS)
+      .filter((session) => this.expired(session))
       .map((session) => session.id)
     await Promise.all(expired.map((id) => this.cancel(id)))
   }

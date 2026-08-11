@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SkillUploadSessionService } from './skill-upload-session-service'
 
 const roots: string[] = []
@@ -66,6 +66,45 @@ describe('SkillUploadSessionService', () => {
     await expect(service.commit(begun.uploadId)).resolves.toEqual({ uploadId: begun.uploadId })
     const staged = await service.take(begun.uploadId, packageIdentity)
     await expect(readFile(staged.archivePath)).resolves.toEqual(bytes)
+    await staged.cleanup()
+    await expect(readFile(staged.archivePath)).rejects.toThrow()
+  })
+
+  it('removes an abandoned upload when its idle lifetime expires', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skill-upload-session-'))
+    roots.push(root)
+    const uploads = join(root, 'uploads')
+    const service = new SkillUploadSessionService(uploads, { idleMs: 20 })
+    const begun = await service.begin({ package: identity(Buffer.from('abandoned')) })
+    await service.append({ uploadId: begun.uploadId, offset: 0, bytesBase64: 'YQ==' })
+
+    await vi.waitFor(async () => expect(await readdir(uploads)).toEqual([]))
+    await expect(
+      service.append({ uploadId: begun.uploadId, offset: 1, bytesBase64: 'Yg==' })
+    ).rejects.toThrow('skill-upload-session-unavailable')
+  })
+
+  it('keeps a taken archive until its new owner cleans it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skill-upload-session-'))
+    roots.push(root)
+    const service = new SkillUploadSessionService(join(root, 'uploads'), { idleMs: 20 })
+    const bytes = Buffer.from('owned package')
+    const packageIdentity = identity(bytes)
+    const begun = await service.begin({ package: packageIdentity })
+    await service.append({
+      uploadId: begun.uploadId,
+      offset: 0,
+      bytesBase64: bytes.toString('base64')
+    })
+    await service.commit(begun.uploadId)
+    const staged = await service.take(begun.uploadId, packageIdentity)
+
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    await expect(readFile(staged.archivePath)).resolves.toEqual(bytes)
+    await expect(service.take(begun.uploadId, packageIdentity)).rejects.toThrow(
+      'skill-upload-session-unavailable'
+    )
+    await staged.cleanup()
     await staged.cleanup()
     await expect(readFile(staged.archivePath)).rejects.toThrow()
   })
