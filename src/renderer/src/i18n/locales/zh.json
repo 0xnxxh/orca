@@ -7,6 +7,9 @@
       "webDescription": "重试 Web 客户端或重新连接到配对的运行时。"
     }
   },
+  "githubChecks": {
+    "retrying": "正在重试..."
+  },
   "settings": {
     "appearance": {
       "language": {

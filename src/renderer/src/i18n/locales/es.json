@@ -7,6 +7,9 @@
       "webDescription": "Vuelva a cargar el cliente web o vuelva a conectarse al servidor Orca vinculado."
     }
   },
+  "githubChecks": {
+    "retrying": "Reintentando…"
+  },
   "settings": {
     "appearance": {
       "language": {

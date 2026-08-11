@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { PRCheckDetail } from '../../../shared/types'
+import type { PRCheckDetail, PRCheckRunDetails } from '../../../shared/types'
 import {
   beginGitHubChecksTabDetails,
   createGitHubChecksTabState,
@@ -16,6 +16,21 @@ const check = (name: string): PRCheckDetail => ({
   conclusion: 'success',
   url: null
 })
+
+const checkRunDetails: PRCheckRunDetails = {
+  name: 'unit',
+  status: 'completed',
+  conclusion: 'failure',
+  url: null,
+  detailsUrl: null,
+  startedAt: null,
+  completedAt: null,
+  title: 'Unit tests',
+  summary: null,
+  text: null,
+  annotations: [],
+  jobs: []
+}
 
 describe('github checks tab state', () => {
   it('preserves local check state while the source checks reference is unchanged', () => {
@@ -142,6 +157,24 @@ describe('github checks tab state', () => {
       loading: true,
       details: null,
       error: 'first failure'
+    })
+  })
+
+  it('clears loaded details when a retry starts after a successful load', () => {
+    const sourceChecks = [check('unit')]
+    const loaded = settleGitHubChecksTabDetails(
+      beginGitHubChecksTabDetails(createGitHubChecksTabState(sourceChecks, 'repo-a'), 'unit', 1),
+      'unit',
+      1,
+      { loading: false, details: checkRunDetails, error: null }
+    )
+
+    expect(loaded.detailsByCheckKey.unit.details).toBe(checkRunDetails)
+    expect(beginGitHubChecksTabDetails(loaded, 'unit', 2).detailsByCheckKey.unit).toEqual({
+      requestId: 2,
+      loading: true,
+      details: null,
+      error: null
     })
   })
 

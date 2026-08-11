@@ -3608,6 +3608,12 @@ function ChecksTab({
         return
       }
       const requestId = ++nextCheckDetailsRequestIdRef.current
+      const commit = (next: Omit<CheckDetailsLoadState, 'requestId'>): void => {
+        if (!mountedRef.current) {
+          return
+        }
+        setChecksState((current) => settleGitHubChecksTabDetails(current, key, requestId, next))
+      }
       setChecksState((current) => beginGitHubChecksTabDetails(current, key, requestId))
       const detailsRequest = withGitHubCheckDetailsTimeout((signal) =>
         runtimeHost
@@ -3637,39 +3643,29 @@ function ChecksTab({
       )
       void detailsRequest
         .then((details) => {
-          if (!mountedRef.current) {
-            return
-          }
-          setChecksState((current) =>
-            settleGitHubChecksTabDetails(current, key, requestId, {
-              loading: false,
-              details,
-              error: details
-                ? null
-                : translate(
-                    'auto.components.PullRequestPage.6b1d5ee3e4',
-                    'No inline details are available for this check.'
-                  )
-            })
-          )
+          commit({
+            loading: false,
+            details,
+            error: details
+              ? null
+              : translate(
+                  'auto.components.PullRequestPage.6b1d5ee3e4',
+                  'No inline details are available for this check.'
+                )
+          })
         })
         .catch((err) => {
-          if (!mountedRef.current) {
-            return
-          }
-          setChecksState((current) =>
-            settleGitHubChecksTabDetails(current, key, requestId, {
-              loading: false,
-              details: null,
-              error:
-                err instanceof Error
-                  ? err.message
-                  : translate(
-                      'auto.components.PullRequestPage.e04c027d98',
-                      'Failed to load check details.'
-                    )
-            })
-          )
+          commit({
+            loading: false,
+            details: null,
+            error:
+              err instanceof Error
+                ? err.message
+                : translate(
+                    'auto.components.PullRequestPage.e04c027d98',
+                    'Failed to load check details.'
+                  )
+          })
         })
     },
     [

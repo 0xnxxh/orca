@@ -7,6 +7,9 @@
       "webDescription": "Web クライアントを再試行するか、ペアリングされたランタイムに再接続します。"
     }
   },
+  "githubChecks": {
+    "retrying": "再試行中…"
+  },
   "settings": {
     "appearance": {
       "language": {

@@ -7,6 +7,9 @@
       "webDescription": "웹 클라이언트를 다시 시도하거나 페어링된 런타임에 다시 연결하세요."
     }
   },
+  "githubChecks": {
+    "retrying": "재시도 중…"
+  },
   "settings": {
     "appearance": {
       "language": {
