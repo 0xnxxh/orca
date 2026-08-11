@@ -138,4 +138,47 @@ describe('installSkillOnRemoteRuntime', () => {
     ).rejects.toThrow('skill-install-remote-runtime_error')
     expect(cleanup).toHaveBeenCalledOnce()
   })
+
+  it('uses the client for a configured development origin rejected by the host', async () => {
+    const cleanup = vi.fn(async () => undefined)
+    mocks.callRuntimeEnvironment
+      .mockResolvedValueOnce({
+        id: 'rpc-1',
+        ok: false,
+        error: { code: 'runtime_error', message: 'skill-download-origin-rejected' }
+      })
+      .mockResolvedValueOnce(success(result))
+    mocks.transferSkillPackageToRuntime.mockResolvedValue({ uploadId: 'upload-1', cleanup })
+
+    await expect(
+      installSkillOnRemoteRuntime({
+        userDataPath: '/state',
+        environmentId: 'environment-1',
+        request,
+        capabilities: ['skills.install.v1', 'skills.upload.v1'],
+        requireHttps: false
+      })
+    ).resolves.toEqual(result)
+    expect(mocks.transferSkillPackageToRuntime).toHaveBeenCalledOnce()
+    expect(cleanup).toHaveBeenCalledOnce()
+  })
+
+  it('preserves packaged-host policy rejection without attempting transfer', async () => {
+    mocks.callRuntimeEnvironment.mockResolvedValue({
+      id: 'rpc-1',
+      ok: false,
+      error: { code: 'runtime_error', message: 'skill-download-origin-rejected' }
+    })
+
+    await expect(
+      installSkillOnRemoteRuntime({
+        userDataPath: '/state',
+        environmentId: 'environment-1',
+        request,
+        capabilities: ['skills.install.v1', 'skills.upload.v1'],
+        requireHttps: true
+      })
+    ).rejects.toThrow('skill-install-remote-runtime_error')
+    expect(mocks.transferSkillPackageToRuntime).not.toHaveBeenCalled()
+  })
 })

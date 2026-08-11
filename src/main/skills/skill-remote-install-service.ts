@@ -12,6 +12,10 @@ import { SkillInstallFailureSchema } from '../../shared/skill-install-failure'
 import { SkillInstallOperationError } from './skill-install-operation-error'
 
 const DIRECT_DOWNLOAD_FAILURE = 'skill-download-transport-failed'
+const DEVELOPMENT_DOWNLOAD_POLICY_FAILURES = new Set([
+  'skill-download-url-rejected',
+  'skill-download-origin-rejected'
+])
 
 async function install(
   userDataPath: string,
@@ -27,14 +31,23 @@ async function install(
   )) as RuntimeRpcResponse<unknown>
 }
 
-function isDownloadTransportFailure(response: RuntimeRpcResponse<unknown>): boolean {
+function isDirectDownloadUnavailable(
+  response: RuntimeRpcResponse<unknown>,
+  requireHttps: boolean
+): boolean {
   const structured =
     response.ok === false ? SkillInstallFailureSchema.safeParse(response.error.data) : null
+  if (response.ok === true) {
+    return false
+  }
+  const codes = [
+    response.error.code,
+    response.error.message,
+    ...(structured?.success === true ? [structured.data.code] : [])
+  ]
   return (
-    response.ok === false &&
-    (response.error.code === DIRECT_DOWNLOAD_FAILURE ||
-      response.error.message === DIRECT_DOWNLOAD_FAILURE ||
-      (structured?.success === true && structured.data.code === DIRECT_DOWNLOAD_FAILURE))
+    codes.includes(DIRECT_DOWNLOAD_FAILURE) ||
+    (!requireHttps && codes.some((code) => DEVELOPMENT_DOWNLOAD_POLICY_FAILURES.has(code)))
   )
 }
 
@@ -60,7 +73,7 @@ export async function installSkillOnRemoteRuntime(input: {
     throw new Error('skill-install-remote-ingress-invalid')
   }
   const direct = await install(input.userDataPath, input.environmentId, input.request)
-  if (!isDownloadTransportFailure(direct)) {
+  if (!isDirectDownloadUnavailable(direct, input.requireHttps)) {
     if (direct.ok !== true) {
       throw remoteFailure(direct)
     }

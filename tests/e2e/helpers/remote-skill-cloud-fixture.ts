@@ -8,13 +8,13 @@ import {
 } from '../../../src/main/skills/skill-package-creation'
 import { SKILL_PACKAGE_CONTENT_TYPE } from '../../../src/shared/skill-package-manifest'
 
-export const SSH_SKILL_CLOUD_PORT = Number(process.env.ORCA_E2E_SKILL_CLOUD_PORT ?? '43961')
-export const SSH_SKILL_CLOUD_ORIGIN = `http://127.0.0.1:${SSH_SKILL_CLOUD_PORT}`
-export const SSH_SKILL_PACKAGE_ID = 'package_ssh_e2e'
-export const SSH_SKILL_VERSION_ID = 'version_ssh_e2e'
-export const SSH_SKILL_NAME = 'ssh-e2e-skill'
+export const REMOTE_SKILL_CLOUD_PORT = Number(process.env.ORCA_E2E_SKILL_CLOUD_PORT ?? '43961')
+export const REMOTE_SKILL_CLOUD_ORIGIN = `http://127.0.0.1:${REMOTE_SKILL_CLOUD_PORT}`
+export const REMOTE_SKILL_PACKAGE_ID = 'package_remote_e2e'
+export const REMOTE_SKILL_VERSION_ID = 'version_remote_e2e'
+export const REMOTE_SKILL_NAME = 'remote-e2e-skill'
 
-export type SshSkillCloudFixture = {
+export type RemoteSkillCloudFixture = {
   archive: CreatedSkillPackage
   bytes: Buffer
   requests: { method: string; path: string; body: unknown }[]
@@ -22,25 +22,25 @@ export type SshSkillCloudFixture = {
   server: Server
 }
 
-export async function startSshSkillCloudFixture(): Promise<SshSkillCloudFixture> {
-  const root = await mkdtemp(join(tmpdir(), 'orca-ssh-skill-cloud-'))
+export async function startRemoteSkillCloudFixture(): Promise<RemoteSkillCloudFixture> {
+  const root = await mkdtemp(join(tmpdir(), 'orca-remote-skill-cloud-'))
   const source = join(root, 'source')
   await mkdir(source)
   await writeFile(
     join(source, 'SKILL.md'),
-    '---\nname: ssh-e2e-skill\ndescription: SSH relay integration\n---\n\n# SSH E2E\n'
+    '---\nname: remote-e2e-skill\ndescription: Remote installation integration\n---\n\n# Remote E2E\n'
   )
   const archive = await createSkillPackageArchive({
     sourceDirectory: source,
     archivePath: join(root, 'package.tar.gz'),
-    packageId: SSH_SKILL_PACKAGE_ID,
-    versionId: SSH_SKILL_VERSION_ID,
+    packageId: REMOTE_SKILL_PACKAGE_ID,
+    versionId: REMOTE_SKILL_VERSION_ID,
     createdAt: '2026-08-11T12:00:00.000Z'
   })
   const bytes = await readFile(archive.archivePath)
-  const requests: SshSkillCloudFixture['requests'] = []
+  const requests: RemoteSkillCloudFixture['requests'] = []
   const server = createServer((request, response) => {
-    void handleSshSkillCloudRequest({ request, response, archive, bytes, requests }).catch(
+    void handleRemoteSkillCloudRequest({ request, response, archive, bytes, requests }).catch(
       (error) => {
         response.writeHead(500, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ code: 'fixture_failed', message: String(error) }))
@@ -49,24 +49,24 @@ export async function startSshSkillCloudFixture(): Promise<SshSkillCloudFixture>
   })
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
-    server.listen(SSH_SKILL_CLOUD_PORT, '127.0.0.1', resolve)
+    server.listen(REMOTE_SKILL_CLOUD_PORT, '127.0.0.1', resolve)
   })
   return { archive, bytes, requests, root, server }
 }
 
-export async function stopSshSkillCloudFixture(fixture: SshSkillCloudFixture): Promise<void> {
+export async function stopRemoteSkillCloudFixture(fixture: RemoteSkillCloudFixture): Promise<void> {
   await new Promise<void>((resolve) => fixture.server.close(() => resolve()))
   await rm(fixture.root, { recursive: true, force: true })
 }
 
-async function handleSshSkillCloudRequest(input: {
+async function handleRemoteSkillCloudRequest(input: {
   request: IncomingMessage
   response: ServerResponse
   archive: CreatedSkillPackage
   bytes: Buffer
-  requests: SshSkillCloudFixture['requests']
+  requests: RemoteSkillCloudFixture['requests']
 }): Promise<void> {
-  const path = new URL(input.request.url ?? '/', SSH_SKILL_CLOUD_ORIGIN).pathname
+  const path = new URL(input.request.url ?? '/', REMOTE_SKILL_CLOUD_ORIGIN).pathname
   if (input.request.method === 'GET' && path === '/package.tar.gz') {
     input.requests.push({ method: 'GET', path, body: null })
     input.response.writeHead(200, {
@@ -79,7 +79,7 @@ async function handleSshSkillCloudRequest(input: {
   if (
     input.request.method === 'POST' &&
     path ===
-      `/v1/skill-packages/${SSH_SKILL_PACKAGE_ID}/versions/${SSH_SKILL_VERSION_ID}/download-grants`
+      `/v1/skill-packages/${REMOTE_SKILL_PACKAGE_ID}/versions/${REMOTE_SKILL_VERSION_ID}/download-grants`
   ) {
     const body = JSON.parse(await readRequestBody(input.request)) as unknown
     input.requests.push({ method: 'POST', path, body })
@@ -94,14 +94,14 @@ async function handleSshSkillCloudRequest(input: {
 function downloadGrant(archive: CreatedSkillPackage, compressedBytes: number) {
   return {
     grant: {
-      url: `${SSH_SKILL_CLOUD_ORIGIN}/package.tar.gz`,
+      url: `${REMOTE_SKILL_CLOUD_ORIGIN}/package.tar.gz`,
       expiresAt: '2099-01-01T00:00:00.000Z'
     },
     version: {
-      packageId: SSH_SKILL_PACKAGE_ID,
-      versionId: SSH_SKILL_VERSION_ID,
-      name: SSH_SKILL_NAME,
-      description: 'SSH relay integration',
+      packageId: REMOTE_SKILL_PACKAGE_ID,
+      versionId: REMOTE_SKILL_VERSION_ID,
+      name: REMOTE_SKILL_NAME,
+      description: 'Remote installation integration',
       packageDigest: archive.manifest.packageDigest,
       archiveSha256: archive.archiveSha256,
       compressedBytes,

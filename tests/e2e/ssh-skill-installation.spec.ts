@@ -10,40 +10,40 @@ import {
 import { connectDockerSshRelayTarget } from './helpers/docker-ssh-relay-connection'
 import { waitForActiveWorktree, waitForSessionReady } from './helpers/store'
 import {
-  SSH_SKILL_CLOUD_ORIGIN,
-  SSH_SKILL_NAME,
-  SSH_SKILL_PACKAGE_ID,
-  SSH_SKILL_VERSION_ID,
-  startSshSkillCloudFixture,
-  stopSshSkillCloudFixture,
-  type SshSkillCloudFixture
-} from './helpers/ssh-skill-cloud-fixture'
+  REMOTE_SKILL_CLOUD_ORIGIN,
+  REMOTE_SKILL_NAME,
+  REMOTE_SKILL_PACKAGE_ID,
+  REMOTE_SKILL_VERSION_ID,
+  startRemoteSkillCloudFixture,
+  stopRemoteSkillCloudFixture,
+  type RemoteSkillCloudFixture
+} from './helpers/remote-skill-cloud-fixture'
 
 const RUN_DOCKER_SSH = process.env.ORCA_E2E_SSH_DOCKER === '1'
 const REMOTE_FOLDER = '/tmp/orca-skill-folder-workspace'
 
-let cloud: SshSkillCloudFixture | null = null
+let cloud: RemoteSkillCloudFixture | null = null
 
 test.use({
   orcaAppExtraEnv: {
-    ORCA_ARTIFACTS_API_URL: SSH_SKILL_CLOUD_ORIGIN,
-    ORCA_CLOUD_API_URL: SSH_SKILL_CLOUD_ORIGIN,
+    ORCA_ARTIFACTS_API_URL: REMOTE_SKILL_CLOUD_ORIGIN,
+    ORCA_CLOUD_API_URL: REMOTE_SKILL_CLOUD_ORIGIN,
     ORCA_CLOUD_CLIENT_ID: 'skills-e2e-client',
     ORCA_CLOUD_DEV_AUTH: '1',
     ORCA_CLOUD_ALLOW_PLAINTEXT_SESSION: '1',
-    ORCA_SKILL_PACKAGE_DOWNLOAD_ORIGINS: SSH_SKILL_CLOUD_ORIGIN
+    ORCA_SKILL_PACKAGE_DOWNLOAD_ORIGINS: REMOTE_SKILL_CLOUD_ORIGIN
   }
 })
 
 test.beforeAll(async () => {
-  cloud = await startSshSkillCloudFixture()
+  cloud = await startRemoteSkillCloudFixture()
 })
 
 test.afterAll(async () => {
   if (!cloud) {
     return
   }
-  await stopSshSkillCloudFixture(cloud)
+  await stopRemoteSkillCloudFixture(cloud)
   cloud = null
 })
 
@@ -74,7 +74,7 @@ test.describe('SSH skill installation', () => {
         orcaPage,
         target,
         globalDestination,
-        '/root/.agents/skills/ssh-e2e-skill'
+        '/root/.agents/skills/remote-e2e-skill'
       )
       const globalInstalls = await orcaPage.evaluate(
         (environmentId) => window.api.skills.listManagedInstalls(environmentId),
@@ -84,7 +84,7 @@ test.describe('SSH skill installation', () => {
         status: 'ok',
         value: [
           {
-            name: SSH_SKILL_NAME,
+            name: REMOTE_SKILL_NAME,
             destination: {
               scope: 'global',
               executionTarget: { kind: 'ssh', connectionId: remote.targetId }
@@ -97,14 +97,14 @@ test.describe('SSH skill installation', () => {
         orcaPage,
         target,
         globalDestination,
-        '/root/.agents/skills/ssh-e2e-skill'
+        '/root/.agents/skills/remote-e2e-skill'
       )
 
       const worktreeDestination: SkillInstallDestination = {
         scope: 'workspace',
         worktreeId: remote.worktreeId
       }
-      const worktreePath = '/tmp/orca-docker-relay-perf-repo/.agents/skills/ssh-e2e-skill'
+      const worktreePath = '/tmp/orca-docker-relay-perf-repo/.agents/skills/remote-e2e-skill'
       await installAndVerify(orcaPage, target, worktreeDestination, worktreePath)
       await removeAndVerify(orcaPage, target, worktreeDestination, worktreePath)
 
@@ -113,7 +113,7 @@ test.describe('SSH skill installation', () => {
         scope: 'workspace',
         folderWorkspaceId
       }
-      const folderPath = `${REMOTE_FOLDER}/.agents/skills/ssh-e2e-skill`
+      const folderPath = `${REMOTE_FOLDER}/.agents/skills/remote-e2e-skill`
       await installAndVerify(orcaPage, target, folderDestination, folderPath)
       await removeAndVerify(orcaPage, target, folderDestination, folderPath)
 
@@ -136,7 +136,7 @@ test.describe('SSH skill installation', () => {
   })
 })
 
-function requireCloudFixture(): SshSkillCloudFixture {
+function requireCloudFixture(): RemoteSkillCloudFixture {
   if (!cloud) {
     throw new Error('skill Cloud fixture unavailable')
   }
@@ -158,16 +158,16 @@ async function installAndVerify(
       }),
     {
       destination,
-      packageId: SSH_SKILL_PACKAGE_ID,
-      versionId: SSH_SKILL_VERSION_ID
+      packageId: REMOTE_SKILL_PACKAGE_ID,
+      versionId: REMOTE_SKILL_VERSION_ID
     }
   )
   expect(operation, JSON.stringify(operation, null, 2)).toMatchObject({
     status: 'ok',
-    value: { status: 'installed', name: SSH_SKILL_NAME }
+    value: { status: 'installed', name: REMOTE_SKILL_NAME }
   })
   const contents = execDockerSshRelayTargetCommand(target, `cat ${remotePath}/SKILL.md`)
-  expect(contents).toContain('# SSH E2E')
+  expect(contents).toContain('# Remote E2E')
 }
 
 async function previewUnchanged(page: Page, destination: SkillInstallDestination): Promise<void> {
@@ -181,7 +181,7 @@ async function previewUnchanged(page: Page, destination: SkillInstallDestination
       }),
     {
       destination,
-      name: SSH_SKILL_NAME,
+      name: REMOTE_SKILL_NAME,
       packageIdentity: {
         packageId: fixture.archive.manifest.packageId,
         versionId: fixture.archive.manifest.versionId,
@@ -202,7 +202,7 @@ async function removeAndVerify(
 ): Promise<void> {
   const operation = await page.evaluate(
     ({ destination, name }) => window.api.skills.removeInstall({ name, destination }),
-    { destination, name: SSH_SKILL_NAME }
+    { destination, name: REMOTE_SKILL_NAME }
   )
   expect(operation).toMatchObject({ status: 'ok', value: { status: 'removed' } })
   expect(execDockerSshRelayTargetCommand(target, `test ! -e ${remotePath} && echo removed`)).toBe(
