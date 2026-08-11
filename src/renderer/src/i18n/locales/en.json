@@ -5847,7 +5847,8 @@
           "a3f8c2d1e0b4": "Imported {{value0}} cookies from {{value1}} ({{value2}}) into {{value3}}.",
           "b4e9d3f2a1c5": "Imported {{value0}} cookies from {{value1}} into {{value2}}.",
           "c5a273a809": "From {{value0}}",
-          "b5c0479e21": "Unmodified user agent"
+          "b5c0479e21": "Unmodified user agent",
+          "654a0c2073": "Google requires signing in directly - imports skip it."
         },
         "BrowserUseComputerUseNotice": {
           "15b5e680ba": "Open Computer Use",
@@ -14195,7 +14196,8 @@
             "bf648471c5": "Creating…",
             "53bbe3dab4": "Imported {{value0}} cookies from file.",
             "c5f0e4d3b2a1": "Imported {{value0}} cookies from {{value1}} ({{value2}}).",
-            "d6a1f5e4c3b2": "Imported {{value0}} cookies from {{value1}}."
+            "d6a1f5e4c3b2": "Imported {{value0}} cookies from {{value1}}.",
+            "c186b4d890": "Google requires signing in directly - imports skip it."
           },
           "GrabConfirmationSheet": {
             "314a0aaa5b": "Attach to AI",
