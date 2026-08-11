@@ -98,8 +98,8 @@ describe('startup ordering', () => {
   it('reconciles retained Codex homes after authoritative daemon inventory', () => {
     const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
     const daemonInitIndex = source.indexOf('await initDaemonPtyProvider(signal')
-    const routeGateIndex = source.indexOf(
-      'codexRuntimeHome?.isHostSystemDefaultRealHome()',
+    const retainedPaneGateIndex = source.indexOf(
+      'hasRecordedManagedHostCodexPane()',
       daemonInitIndex
     )
     const inventoryIndex = source.indexOf('await listLiveDaemonPtyIds()', daemonInitIndex)
@@ -113,8 +113,9 @@ describe('startup ordering', () => {
     const desktopIndex = source.indexOf('Promise.resolve(openMainWindow())', serveIndex)
 
     expect(daemonInitIndex).toBeGreaterThanOrEqual(0)
+    expect(retainedPaneGateIndex).toBeGreaterThan(daemonInitIndex)
     expect(inventoryIndex).toBeGreaterThan(daemonInitIndex)
-    expect(routeGateIndex).toBeGreaterThan(inventoryIndex)
+    expect(inventoryIndex).toBeGreaterThan(retainedPaneGateIndex)
     expect(hookReconciliationIndex).toBeGreaterThan(inventoryIndex)
     expect(hookReconciliationIndex).toBeLessThan(reconciliationIndex)
     expect(reconciliationIndex).toBeGreaterThan(inventoryIndex)

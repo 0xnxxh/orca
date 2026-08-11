@@ -39,7 +39,7 @@ import {
   shutdownDaemon
 } from './daemon/daemon-init'
 import {
-  hasRecordedLegacySharedCodexPane,
+  hasRecordedManagedHostCodexPane,
   reconcileCodexPaneAccountsWithLivePtys
 } from './codex/codex-pane-account-registry'
 import { closeAllWatchers } from './ipc/filesystem-watcher'
@@ -919,19 +919,19 @@ function startTerminalRuntimeStartupServices(): Promise<void> {
         macosLoginSessionWatch: process.platform === 'darwin' && !isServeMode
       })
       // Why: a retained shell keeps its launch-time Codex home even when the current routing lane changes.
-      const livePtyIds = await listLiveDaemonPtyIds()
-      if (livePtyIds && codexRuntimeHome) {
-        if (codexRuntimeHome.isHostSystemDefaultRealHome() && hasRecordedLegacySharedCodexPane()) {
+      if (codexRuntimeHome && hasRecordedManagedHostCodexPane()) {
+        const livePtyIds = await listLiveDaemonPtyIds()
+        if (livePtyIds) {
           reconcileCodexPaneAccountsWithLivePtys(livePtyIds)
+          const settings = store?.getSettings()
+          reconcileRetainedCodexHookHomes({
+            hookService: codexHookService,
+            hooksEnabled:
+              isAgentStatusHooksEnabled(settings) &&
+              settings?.disabledTuiAgents.includes('codex') !== true,
+            runtimeHomePaths: codexRuntimeHome.getRetainedHostCodexHookHomePaths(livePtyIds)
+          })
         }
-        const settings = store?.getSettings()
-        reconcileRetainedCodexHookHomes({
-          hookService: codexHookService,
-          hooksEnabled:
-            isAgentStatusHooksEnabled(settings) &&
-            settings?.disabledTuiAgents.includes('codex') !== true,
-          runtimeHomePaths: codexRuntimeHome.getRetainedHostCodexHookHomePaths(livePtyIds)
-        })
       }
       // Why: retained shells can invoke Codex immediately after the startup gate.
       codexRuntimeHome?.reconcileLegacySharedHomeForRetainedPanes()
