@@ -32,7 +32,12 @@ import {
 } from 'lucide-react'
 import { useAppStore } from '@/store'
 import type { AppState } from '@/store/types'
-import { useAllWorktrees, useRepoById, useRepoMap, useWorktreeMap } from '@/store/selectors'
+import {
+  selectRepoByIdForActiveWorkspace,
+  useAllWorktrees,
+  useRepoMap,
+  useWorktreeMap
+} from '@/store/selectors'
 import { cn } from '@/lib/utils'
 import type {
   ProjectGroup,
@@ -66,6 +71,7 @@ import { translate } from '@/i18n/i18n'
 import { parseWorkspaceKey, worktreeWorkspaceKey } from '../../../../shared/workspace-scope'
 import {
   getRepoExecutionHostId,
+  LOCAL_EXECUTION_HOST_ID,
   normalizeExecutionHostId,
   type ExecutionHostId
 } from '../../../../shared/execution-host'
@@ -95,6 +101,17 @@ const DELETE_POSITION_RESTORE_STABLE_FRAMES = 6
 // Why: the picker is unmounted on close, which would cut PopoverContent's
 // data-[state=closed] exit animation short; hold the subtree for its duration.
 const PARENT_PICKER_EXIT_ANIMATION_MS = 200
+
+export function findContextMenuRepo(
+  repos: Repo[],
+  repoId: string,
+  executionHostId: ExecutionHostId
+): Repo | null {
+  return selectRepoByIdForActiveWorkspace(
+    { repos, activeRepoId: repoId, activeWorkspaceExecutionHostId: executionHostId },
+    repoId
+  )
+}
 
 // Why: stable empty sentinels let closed menu wrappers subscribe to a referentially
 // stable value instead of the high-churn maps that delete teardown replaces. The
@@ -368,7 +385,10 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
   const moveProjectToGroup = useAppStore((s) => s.moveProjectToGroup)
   const deleteFolderWorkspace = useAppStore((s) => s.deleteFolderWorkspace)
   const setActiveWorktree = useAppStore((s) => s.setActiveWorktree)
-  const repo = useRepoById(worktree.repoId, normalizeExecutionHostId(worktree.hostId) ?? undefined)
+  const repo = useAppStore((s) => {
+    const executionHostId = normalizeExecutionHostId(worktree.hostId) ?? LOCAL_EXECUTION_HOST_ID
+    return findContextMenuRepo(s.repos, worktree.repoId, executionHostId)
+  })
   const projectGroupTargets = useMemo(
     () => (repo ? getContextMenuProjectGroupTargets(repo, projectGroups) : null),
     [projectGroups, repo]

@@ -274,12 +274,9 @@ export function activateAndRevealFolderWorkspace(
   const primaryTabId = ensureFolderWorkspaceInitialTerminal(folderWorkspace, opts?.startup)
 
   if (opts?.sidebarRevealBehavior) {
-    state.revealWorktreeInSidebar(workspaceKey, {
-      behavior: opts.sidebarRevealBehavior,
-      ownerHostId
-    })
+    state.revealWorktreeInSidebar(workspaceKey, { behavior: opts.sidebarRevealBehavior })
   } else {
-    state.revealWorktreeInSidebar(workspaceKey, { ownerHostId })
+    state.revealWorktreeInSidebar(workspaceKey)
   }
 
   return { primaryTabId }

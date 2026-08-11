@@ -333,7 +333,9 @@ describe('duplicate project-group header identity (#12532)', () => {
       new Set(['same-folder'])
     )
 
-    expect(rows.find((row) => row.type === 'folder-workspace')?.key).toBe(
+    const folderRow = rows.find((row) => row.type === 'folder-workspace')
+    expect(folderRow?.key).toBe('folder-workspace:runtime%3Aenv-1:same-folder')
+    expect(folderRow && getRenderRowKey(folderRow)).toBe(
       'folder-workspace:runtime%3Aenv-1:same-folder'
     )
   })

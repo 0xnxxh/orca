@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   getContextMenuWorktreeExecutionHost,
+  findContextMenuRepo,
   getFolderWorkspaceContextMenuDeleteOwner,
   getContextMenuProjectGroupTargets,
   isContextWorktreeDeletable,
@@ -21,10 +22,23 @@ import { findFolderWorkspaceMetaOwner } from './use-worktree-meta-workspace'
 import type {
   FolderWorkspace,
   ProjectGroup,
+  Repo,
   Worktree,
   WorktreeLineage,
   WorkspaceStatusDefinition
 } from '../../../../shared/types'
+
+describe('findContextMenuRepo', () => {
+  const repo = (executionHostId: 'local' | 'runtime:env-1'): Repo =>
+    ({ id: 'same-repo', executionHostId }) as Repo
+
+  it('resolves an inactive duplicate repo from the clicked row host', () => {
+    const local = repo('local')
+    const runtime = repo('runtime:env-1')
+
+    expect(findContextMenuRepo([local, runtime], 'same-repo', 'runtime:env-1')).toBe(runtime)
+  })
+})
 
 describe('getContextMenuProjectGroupTargets', () => {
   const group = (executionHostId: 'local' | 'runtime:env-1'): ProjectGroup =>

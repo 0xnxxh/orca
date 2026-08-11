@@ -1298,7 +1298,6 @@ describe('createUISlice hydratePersistedUI', () => {
 
     store.getState().revealWorktreeInSidebar('repo1::/feature', {
       behavior: 'smooth',
-      ownerHostId: 'runtime:env-1',
       highlight: true,
       beginRename: true
     })
@@ -1306,7 +1305,6 @@ describe('createUISlice hydratePersistedUI', () => {
     expect(store.getState().pendingRevealWorktree).toEqual({
       worktreeId: 'repo1::/feature',
       behavior: 'smooth',
-      ownerHostId: 'runtime:env-1',
       highlight: true,
       beginRename: true
     })

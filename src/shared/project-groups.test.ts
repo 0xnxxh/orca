@@ -188,6 +188,18 @@ describe('project-groups', () => {
     ).toHaveLength(1)
   })
 
+  it('does not reinterpret explicit local provenance as a unique SSH owner', () => {
+    const ssh = projectGroup({ id: 'same-id', connectionId: 'builder' })
+    const index = buildProjectGroupOwnerIndex([ssh])
+
+    expect(
+      resolveFolderWorkspaceProjectGroup(index, {
+        projectGroupId: 'same-id',
+        connectionId: null
+      })
+    ).toBeNull()
+  })
+
   it('rejects folder workspaces stamped for missing foreign owners', () => {
     const local = projectGroup({
       id: 'same-id',

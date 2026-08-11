@@ -103,9 +103,9 @@ import {
   getFolderWorkspaceIdentity,
   getFolderWorkspaceOwnerIdentity,
   resolveFolderWorkspaceCatalogOwnerHostId,
-  resolveFolderWorkspaceCatalogOwnerHostIdFromIndex
+  resolveFolderWorkspaceCatalogOwnerHostIdFromIndex,
+  resolveFolderWorkspaceProjectGroupWithLegacySsh
 } from '../../../../shared/folder-workspaces'
-import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from '../../../../shared/folder-workspace-project-group-resolution'
 import { formatFolderWorkspaceCreateError } from '../../lib/folder-workspace-path-status'
 import { getEnvironmentSshStateGeneration } from './runtime-environment-ssh'
 import { getRuntimeEnvironmentConnectionGeneration } from './runtime-status'

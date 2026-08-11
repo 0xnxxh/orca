@@ -230,7 +230,6 @@ import {
   resolveProjectGroupMembership,
   resolveProjectGroupOwner
 } from '../shared/project-groups'
-import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from '../shared/folder-workspace-project-group-resolution'
 import { createNestedProjectGroupResolver } from './project-groups/nested-repo-import'
 import {
   mergeLegacyCommitMessageAiIntoSourceControlAi,
@@ -264,7 +263,8 @@ import { ActiveViewPreference } from './active-view-preference'
 import {
   resolveFolderWorkspaceCatalogOwnerHostId,
   normalizeFolderWorkspaceName,
-  normalizeFolderWorkspaces
+  normalizeFolderWorkspaces,
+  resolveFolderWorkspaceProjectGroupWithLegacySsh
 } from '../shared/folder-workspaces'
 import {
   folderWorkspaceKey,

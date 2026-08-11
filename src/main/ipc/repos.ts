@@ -111,7 +111,7 @@ import {
   getProjectGroupOwnerHostId,
   resolveProjectGroupOwner
 } from '../../shared/project-groups'
-import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from '../../shared/folder-workspace-project-group-resolution'
+import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from '../../shared/folder-workspaces'
 import { joinRemotePath } from '../ssh/ssh-remote-platform'
 import {
   assertFolderWorkspacePathUsable,

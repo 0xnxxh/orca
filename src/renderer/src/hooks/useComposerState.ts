@@ -133,6 +133,7 @@ import {
   findActionableFolderProjectGroup,
   getNewWorkspaceProjectGroupOptionId,
   getNewWorkspaceProjectGroupHostId,
+  getNewWorkspaceProjectGroupsForOwner,
   getProjectGroupSelectorFromNewWorkspaceOptionId,
   type NewWorkspaceProjectOption
 } from '@/lib/new-workspace-project-options'
@@ -809,9 +810,16 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     selectedProjectGroupId
   ])
   const isProjectGroupTarget = selectedProjectGroup !== null
+  const selectedProjectGroupCatalog = useMemo(
+    () =>
+      selectedProjectGroup
+        ? getNewWorkspaceProjectGroupsForOwner(projectGroups, selectedProjectGroup)
+        : projectGroups,
+    [projectGroups, selectedProjectGroup]
+  )
   const folderSourceRepos = useMemo(
-    () => getFolderSourceRepos(repos, projectGroups, selectedProjectGroup),
-    [projectGroups, repos, selectedProjectGroup]
+    () => getFolderSourceRepos(repos, selectedProjectGroupCatalog, selectedProjectGroup),
+    [repos, selectedProjectGroup, selectedProjectGroupCatalog]
   )
   const parsedFolderTargetHost = parseExecutionHostId(selectedProjectGroup?.executionHostId)
   const folderTargetRuntimeEnvironmentId =
@@ -2838,7 +2846,11 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
           )
           return
         }
-        const nextSourceRepo = getFolderSourceRepos(repos, projectGroups, nextProjectGroup)[0]
+        const nextSourceRepo = getFolderSourceRepos(
+          repos,
+          getNewWorkspaceProjectGroupsForOwner(projectGroups, nextProjectGroup),
+          nextProjectGroup
+        )[0]
         setSelectedProjectGroupId(nextProjectGroup.id)
         setSelectedProjectGroupOwnerHostId(getNewWorkspaceProjectGroupHostId(nextProjectGroup))
         setProjectError(null)

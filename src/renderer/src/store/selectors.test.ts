@@ -10,7 +10,6 @@ import {
   getWorktreeMapFromState,
   resetFloatingVisibleTabCountSelectorCacheForTest,
   selectRepoByIdForActiveWorkspace,
-  selectRepoByIdForExecutionHost,
   selectFloatingVisibleTabCount,
   selectFloatingWorkspaceHasUnread
 } from './selectors'
@@ -318,29 +317,6 @@ describe('store selectors', () => {
       'hub-repo'
     )
     expect(activeRepo ? isGitRepoKind(activeRepo) : false).toBe(true)
-  })
-
-  it('resolves an inactive duplicate repo from the clicked row host', () => {
-    const local = makeRepo({
-      id: 'same-repo',
-      path: '/local/repo',
-      displayName: 'local',
-      executionHostId: 'local'
-    })
-    const runtime = makeRepo({
-      id: 'same-repo',
-      path: '/runtime/repo',
-      displayName: 'runtime',
-      executionHostId: toRuntimeExecutionHostId('env-1')
-    })
-
-    expect(
-      selectRepoByIdForExecutionHost(
-        { repos: [local, runtime] },
-        'same-repo',
-        toRuntimeExecutionHostId('env-1')
-      )
-    ).toBe(runtime)
   })
 
   it('fails a paired-hub repo fallback closed when rival HUB rows share the repo ID', () => {

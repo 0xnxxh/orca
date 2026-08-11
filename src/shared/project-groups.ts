@@ -97,11 +97,7 @@ export function resolveFolderWorkspaceProjectGroup(
     const ownerHostId = workspace.connectionId
       ? toSshExecutionHostId(workspace.connectionId)
       : LOCAL_EXECUTION_HOST_ID
-    const group = resolveProjectGroupMembership(index, workspace.projectGroupId, ownerHostId)
-    // Why: null predates owner stamps; a named SSH owner is authoritative.
-    return workspace.connectionId === null
-      ? (group ?? resolveProjectGroupOwner(index, workspace.projectGroupId))
-      : group
+    return resolveProjectGroupMembership(index, workspace.projectGroupId, ownerHostId)
   }
   return resolveProjectGroupOwner(index, workspace.projectGroupId)
 }

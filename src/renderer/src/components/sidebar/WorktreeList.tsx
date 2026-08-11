@@ -2213,13 +2213,17 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     if (!pendingRevealWorktree) {
       return
     }
+    const pendingRevealOwnerHostId =
+      pendingRevealWorktree.worktreeId === activeWorktreeId
+        ? (activeWorkspaceExecutionHostId ?? undefined)
+        : undefined
 
     if (agentSendTargetWorktreeId !== pendingRevealWorktree.worktreeId) {
       const folderGroupKeys = getFolderWorkspaceRevealGroupKeys(
         pendingRevealWorktree.worktreeId,
         folderWorkspaces,
         projectGroups,
-        pendingRevealWorktree.ownerHostId
+        pendingRevealOwnerHostId
       )
       if (folderGroupKeys.length > 0) {
         for (const groupKey of folderGroupKeys) {
@@ -2283,13 +2287,13 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
         worktrees,
         folderWorkspaces,
         projectGroups,
-        pendingRevealWorktree.ownerHostId
+        pendingRevealOwnerHostId
       )
       const targetIndex = findPreferredRenderRowIndexForWorktree(
         renderRows,
         pendingRevealWorktree.worktreeId,
         pinnedDisplayPolicy,
-        pendingRevealWorktree.ownerHostId
+        pendingRevealOwnerHostId
       )
       const outcome = resolvePendingSidebarReveal({ targetIndex, targetWorktreeStillExists })
       if (outcome === 'scroll-and-clear') {
@@ -2372,6 +2376,8 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     }
   }, [
     pendingRevealWorktree,
+    activeWorktreeId,
+    activeWorkspaceExecutionHostId,
     agentSendTargetWorktreeId,
     groupBy,
     worktrees,
@@ -6804,7 +6810,6 @@ const WorktreeList = React.memo(function WorktreeList({
       }
       revealWorktreeInSidebar(currentSidebarWorktreeId, {
         behavior: 'smooth',
-        ...(activeWorkspaceExecutionHostId ? { ownerHostId: activeWorkspaceExecutionHostId } : {}),
         highlight: true,
         beginRename: (detail as { beginRename?: boolean } | undefined)?.beginRename === true
       })

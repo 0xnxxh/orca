@@ -8,9 +8,9 @@ import {
   buildProjectGroupOwnerIndex,
   getFolderWorkspaceProjectGroupOwnerHostId,
   resolveFolderWorkspaceProjectGroup,
+  resolveProjectGroupOwner,
   type ProjectGroupOwnerIndex
 } from './project-groups'
-import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from './folder-workspace-project-group-resolution'
 import type { FolderWorkspace, ProjectGroup } from './types'
 import { isTuiAgent } from './tui-agent-config'
 import { normalizeStoredTaskSourceContext } from './task-source-context'
@@ -18,6 +18,22 @@ import { normalizeWorkspaceLinkedItem } from './workspace-linked-item'
 import { isWorkspaceLinkedItemSourceContextMatch } from './workspace-linked-item-source-context'
 
 const projectGroupOwnerIndexCache = new WeakMap<readonly ProjectGroup[], ProjectGroupOwnerIndex>()
+
+export function resolveFolderWorkspaceProjectGroupWithLegacySsh(
+  index: ProjectGroupOwnerIndex,
+  workspace: Pick<FolderWorkspace, 'connectionId' | 'executionHostId' | 'projectGroupId'>
+): ProjectGroup | null {
+  const strict = resolveFolderWorkspaceProjectGroup(index, workspace)
+  if (strict || !workspace.connectionId) {
+    return strict
+  }
+  const group = resolveProjectGroupOwner(index, workspace.projectGroupId)
+  return group &&
+    group.connectionId === undefined &&
+    !normalizeExecutionHostId(group.executionHostId)
+    ? group
+    : null
+}
 
 function getProjectGroupOwnerIndex(projectGroups: readonly ProjectGroup[]): ProjectGroupOwnerIndex {
   const cached = projectGroupOwnerIndexCache.get(projectGroups)

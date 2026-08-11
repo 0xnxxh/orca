@@ -9,7 +9,7 @@ import {
   resolveProjectGroupOwner,
   type ProjectGroupOwnerIndex
 } from '../../../../shared/project-groups'
-import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from '../../../../shared/folder-workspace-project-group-resolution'
+import { resolveFolderWorkspaceProjectGroupWithLegacySsh } from '../../../../shared/folder-workspaces'
 import { getRepoHostIdentity } from './repo-host-identity'
 
 export type ProjectGroupRemovalProjectTarget = {

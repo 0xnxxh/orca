@@ -204,6 +204,16 @@ export function getNewWorkspaceProjectGroupHostId(group: ProjectGroup): Executio
   return connectionId ? toSshExecutionHostId(connectionId) : LOCAL_EXECUTION_HOST_ID
 }
 
+export function getNewWorkspaceProjectGroupsForOwner(
+  projectGroups: readonly ProjectGroup[],
+  projectGroup: ProjectGroup
+): ProjectGroup[] {
+  const ownerHostId = getNewWorkspaceProjectGroupHostId(projectGroup)
+  return projectGroups.filter(
+    (candidate) => getNewWorkspaceProjectGroupHostId(candidate) === ownerHostId
+  )
+}
+
 /**
  * A folder workspace can only be backed by a group whose host is still actionable — a removed
  * or unreachable host must not be selectable, restorable from a draft, or kept once selected.

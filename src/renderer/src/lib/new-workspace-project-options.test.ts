@@ -4,6 +4,7 @@ import {
   buildNewWorkspaceFolderSourceOptions,
   buildNewWorkspaceProjectOptions,
   findActionableFolderProjectGroup,
+  getNewWorkspaceProjectGroupsForOwner,
   getRepoIdFromNewWorkspaceFolderSourceOptionId,
   isNewWorkspaceProjectOptionQueryTooLarge,
   searchNewWorkspaceProjectOptions,
@@ -587,5 +588,23 @@ describe('findActionableFolderProjectGroup', () => {
         actionableHostIds
       })
     ).toBe(duplicates[1])
+  })
+
+  it('limits folder source traversal to the selected group owner', () => {
+    const localRoot = group({ id: 'root', executionHostId: 'local' })
+    const localUnrelated = group({ id: 'foreign-child', executionHostId: 'local' })
+    const runtimeRoot = group({ id: 'root', executionHostId: 'runtime:env-1' })
+    const runtimeChild = group({
+      id: 'foreign-child',
+      executionHostId: 'runtime:env-1',
+      parentGroupId: 'root'
+    })
+
+    expect(
+      getNewWorkspaceProjectGroupsForOwner(
+        [localRoot, localUnrelated, runtimeRoot, runtimeChild],
+        localRoot
+      )
+    ).toEqual([localRoot, localUnrelated])
   })
 })

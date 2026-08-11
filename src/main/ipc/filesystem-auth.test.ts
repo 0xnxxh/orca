@@ -141,6 +141,20 @@ describe('filesystem auth worktree roots', () => {
 })
 
 describe('filesystem-auth path containment', () => {
+  it('does not authorize a runtime-owned repo path on the local filesystem', () => {
+    const runtimePath = resolve('/runtime-only/repo')
+    const store = makeStore([
+      {
+        ...repo,
+        path: runtimePath,
+        connectionId: null,
+        executionHostId: 'runtime:env-1'
+      }
+    ])
+
+    expect(isPathAllowed(runtimePath, store)).toBe(false)
+  })
+
   it('authorizes missing nested descendants under an allowed repo', async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), 'orca-auth-missing-'))
     try {

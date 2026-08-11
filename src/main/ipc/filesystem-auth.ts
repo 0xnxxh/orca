@@ -61,7 +61,7 @@ export function invalidateAuthorizedRootsCache(): void {
 
 function getLocalRepos(store: Store) {
   // Why: SSH repo paths are remote-host paths; treating them as local roots could authorize unrelated local folders or probe SSH-only paths.
-  return store.getRepos().filter((repo) => !repo.connectionId)
+  return store.getRepos().filter((repo) => getRepoExecutionHostId(repo) === LOCAL_EXECUTION_HOST_ID)
 }
 
 type FolderAuthIndex = {

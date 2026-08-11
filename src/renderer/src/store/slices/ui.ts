@@ -137,7 +137,6 @@ import { getRepoHostIdentity } from './repo-host-identity'
 export type PendingSidebarWorktreeReveal = {
   worktreeId: string
   behavior: 'auto' | 'smooth'
-  ownerHostId?: ExecutionHostId
   highlight?: boolean
   beginRename?: boolean
 }
@@ -963,7 +962,6 @@ export type UISlice = {
     worktreeId: string,
     options?: {
       behavior?: PendingSidebarWorktreeReveal['behavior']
-      ownerHostId?: ExecutionHostId
       highlight?: boolean
       beginRename?: boolean
     }
@@ -2374,7 +2372,6 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       pendingRevealWorktree: {
         worktreeId,
         behavior: options?.behavior ?? 'smooth',
-        ...(options?.ownerHostId ? { ownerHostId: options.ownerHostId } : {}),
         ...(options?.highlight ? { highlight: true } : {}),
         ...(options?.beginRename ? { beginRename: true } : {})
       }

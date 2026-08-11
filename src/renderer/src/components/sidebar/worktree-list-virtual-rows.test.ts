@@ -63,16 +63,6 @@ const stickyHeaderIndexes = getStickyHeaderIndexes(rows)
 const virtualItems = rows.map((_, index) => virtualItem(index, index * 100))
 
 describe('getRenderRowKey', () => {
-  it('preserves owner-qualified folder workspace keys across hosts', () => {
-    const folderRow = (key: string): RenderRow =>
-      ({ type: 'folder-workspace', key }) as unknown as RenderRow
-
-    expect([
-      getRenderRowKey(folderRow('folder-workspace:local:same-id')),
-      getRenderRowKey(folderRow('folder-workspace:runtime%3Aenv-1:same-id'))
-    ]).toEqual(['folder-workspace:local:same-id', 'folder-workspace:runtime%3Aenv-1:same-id'])
-  })
-
   it('scopes repeated group headers to their host section', () => {
     expect(getRenderRowKey(groupRow('workspace-status:in-progress', 'local'))).toBe(
       'hdr:local:workspace-status:in-progress'
