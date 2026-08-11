@@ -6,6 +6,17 @@ export type StartupCommandTokens =
   | { ok: true; tokens: string[]; spans: CommandTokenSpan[] }
   | { ok: false; error: string }
 
+/** True when an odd run of backslashes precedes this quote, which makes it a
+ * literal byte to the child's CommandLineToArgvW parser rather than a
+ * delimiter — so cmd's word boundaries stop matching this tokenizer's. */
+function hasOddBackslashRun(value: string, quoteIndex: number): boolean {
+  let backslashes = 0
+  while (value[quoteIndex - 1 - backslashes] === '\\') {
+    backslashes += 1
+  }
+  return backslashes % 2 === 1
+}
+
 function tokenizeWindowsStartupCommand(
   value: string,
   shell: Exclude<AgentStartupShell, 'posix'>
@@ -21,13 +32,11 @@ function tokenizeWindowsStartupCommand(
     const char = value[index]
     const escape = shell === 'cmd' ? '^' : '`'
     if (char === escape && index + 1 < value.length) {
-      // Why: cmd keeps `^` literal inside double quotes and PowerShell keeps
-      // backticks literal inside single quotes; this branch consumes them
-      // anyway, so the token value stops matching the real shell's argv.
-      // Why: cmd strips `^` and hands the bare byte to the child's own parser,
-      // which re-splits on whitespace and reopens a quote — so the escaped
-      // byte changes argv. PowerShell's backtick folds into the token instead,
-      // and only its line continuation disappears.
+      // Why: cmd strips `^` and hands the bare byte to the child's parser,
+      // which re-splits on whitespace and reopens a quote, and keeps the caret
+      // literal inside double quotes — either way the token stops matching
+      // argv. PowerShell folds the backtick into the token, so only its line
+      // continuation and its verbatim single quotes diverge.
       divergesFromShell ||=
         (shell === 'cmd' ? /[\s"]/.test(value[index + 1]) : value[index + 1] === '\n') ||
         (shell === 'cmd' && quote === '"') ||
@@ -49,6 +58,7 @@ function tokenizeWindowsStartupCommand(
         char === '$' &&
         (value[index + 1] === '(' || value[index + 1] === '{')
       if (char === quote) {
+        divergesFromShell ||= shell === 'cmd' && char === '"' && hasOddBackslashRun(value, index)
         if (shell === 'powershell' && quote === "'" && value[index + 1] === "'") {
           token += "'"
           index += 1
@@ -62,6 +72,7 @@ function tokenizeWindowsStartupCommand(
       continue
     }
     if (char === "'" || char === '"') {
+      divergesFromShell ||= shell === 'cmd' && char === '"' && hasOddBackslashRun(value, index)
       quote = char
       // Why: cmd.exe has no single-quote syntax, so this tokenizer's grouping
       // of a single-quoted region diverges from what cmd actually parses;

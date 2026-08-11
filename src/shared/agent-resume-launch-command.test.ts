@@ -179,7 +179,7 @@ describe('buildClaudeResumeLaunchCommand', () => {
     expectSingleAuthoritativeResume(command, 'posix')
   })
 
-  it.each(['claude a^" --resume ^"b', 'claude ^"--resume^" old'])(
+  it.each(['claude a^" --resume ^"b', 'claude ^"x --resume^" --resume old'])(
     'fails open when a cmd caret escapes a quote: %s',
     (base) => {
       // cmd strips the caret and the child's parser reads a bare quote
@@ -225,6 +225,26 @@ describe('buildClaudeResumeLaunchCommand', () => {
         'powershell'
       )
     ).toBe(`claude --allowedTools "Bash(git:*)" '--resume' '${SESSION_ID}'`)
+  })
+
+  it.each([
+    'claude "--add-dir" "C:\\a\\" "--" "--out" "D:\\x\\"',
+    'claude --add-dir "C:\\repo\\" --resume old'
+  ])('fails open when a cmd backslash run makes a quote literal: %s', (base) => {
+    // An odd run of backslashes makes the quote a literal byte to the child's
+    // CommandLineToArgvW parser, so tokenizer boundaries stop matching argv.
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'cmd')).toBe(
+      `${base} "--resume" "${SESSION_ID}"`
+    )
+  })
+
+  it.each([
+    'claude --add-dir "C:\\Users\\me\\repo" --resume old',
+    'claude --add-dir "C:\\Program Files (x86)\\x" --resume old'
+  ])('still strips for ordinary quoted windows paths: %s', (base) => {
+    const command = buildClaudeResumeLaunchCommand(base, RESUME, 'cmd')
+    expect(command).not.toContain('--resume old')
+    expectSingleAuthoritativeResume(command, 'cmd')
   })
 
   it('fails open when a cmd caret escapes a real argument separator', () => {
