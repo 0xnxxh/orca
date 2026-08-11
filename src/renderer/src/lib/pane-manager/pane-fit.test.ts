@@ -529,8 +529,9 @@ describe('deferred metric flush inside safeFit', () => {
   })
 
   it('reports an owner override even while the pane is unmeasurable', () => {
+    const resize = vi.fn()
     const pane = {
-      terminal: { cols: 80, rows: 24, options: {} },
+      terminal: { cols: 80, rows: 24, options: {}, resize },
       container: {
         dataset: { ptyId: 'pty-override' },
         getBoundingClientRect: () => ({ width: 0, height: 0 })
@@ -542,6 +543,8 @@ describe('deferred metric flush inside safeFit', () => {
     try {
       expect(readProposedPaneFitDimensions(pane)).toEqual({ cols: 49, rows: 20 })
       expect(pane.fitAddon.proposeDimensions).not.toHaveBeenCalled()
+      expect(safeFit(pane)).toBe(false)
+      expect(resize).not.toHaveBeenCalled()
     } finally {
       setFitOverride('pty-override', 'desktop-fit', 0, 0)
     }

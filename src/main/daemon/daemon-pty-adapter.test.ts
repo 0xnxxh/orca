@@ -1518,18 +1518,16 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(result.snapshot).toContain('prompt$')
     })
 
-    it('marks the alt-frame boundary without duplicating the snapshot payload', async () => {
+    it('publishes the alt-frame payload as explicit strings', async () => {
       const sessionId = 'alt-frame-boundary'
       await adapter.spawn({ cols: 80, rows: 24, sessionId })
       lastSubprocess._simulateData('\x1b[?1049h\x1b[HSTATIC-ALT-FRAME')
       await new Promise((r) => setTimeout(r, 50))
 
       const result = await adapter.spawn({ cols: 80, rows: 24, sessionId })
-      const frameStart = result.snapshotFrameStart
-
-      expect(typeof frameStart).toBe('number')
-      expect(result.snapshot?.slice(0, frameStart)).toContain('\x1b[?1049h')
-      expect(result.snapshot?.slice(frameStart)).toContain('STATIC-ALT-FRAME')
+      expect(result.snapshotPrefixAnsi).toContain('\x1b[?1049h')
+      expect(result.snapshotFrameAnsi).toContain('STATIC-ALT-FRAME')
+      expect(result.snapshot).toBe([result.snapshotPrefixAnsi, result.snapshotFrameAnsi].join(''))
       expect(result.snapshotFrameRestoreAnsi).not.toContain('STATIC-ALT-FRAME')
     })
 

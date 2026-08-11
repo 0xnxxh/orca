@@ -35,8 +35,8 @@ export function resolvePositiveTerminalDimensions(
  * The column count the post-replay fit will land on. Why not terminal.cols: a
  * pane that has not been fitted yet still reads xterm's 80-column default, so
  * comparing against it would drop frames whose width actually matches the
- * container. Returns undefined when the pane cannot be measured; live callers
- * can clear and defer repaint, while cold/offline callers keep their frame.
+ * container. Returns undefined when the pane cannot be measured; callers with
+ * a repaint owner can clear and defer, while offline preconnect paint cannot.
  */
 export function readProposedTerminalCols(pane: ManagedPane): number | undefined {
   return readProposedPaneFitDimensions(pane)?.cols

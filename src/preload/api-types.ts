@@ -1566,7 +1566,8 @@ export type PreloadApi = {
       snapshot?: string
       snapshotCols?: number
       snapshotRows?: number
-      snapshotFrameStart?: number
+      snapshotPrefixAnsi?: string
+      snapshotFrameAnsi?: string
       snapshotFrameRestoreAnsi?: string
       isReattach?: boolean
       isAlternateScreen?: boolean

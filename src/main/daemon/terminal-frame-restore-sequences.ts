@@ -87,7 +87,7 @@ function buildTerminalFrameRestoreSequences(
 }
 
 function serializeCurrentSgrState(serializer: SerializeAddon, terminal: Terminal): string {
-  // An out-of-range row emits no cells; SerializeAddon still appends its authoritative pen-state diff.
+  // Unsupported addon behavior under our vendored patch: an out-of-range row emits only its authoritative pen-state diff.
   const emptyRow = terminal.buffer.normal.length
   return serializer.serialize({
     range: { start: emptyRow, end: emptyRow },

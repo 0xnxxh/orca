@@ -7324,6 +7324,10 @@ export function connectPanePty(
                     ? pane.terminal.cols !== snapshot.cols || pane.terminal.rows !== snapshot.rows
                     : pane.terminal.cols !== colsBeforeReplay ||
                       pane.terminal.rows !== rowsBeforeReplay
+                  if (skippedAltFrame) {
+                    pulseVisibleLocalPtySizeForTuiRepaint(currentPtyId)
+                    return
+                  }
                   if (replayChangedDimensions && isRendererPtyResizeAuthoritative()) {
                     transport.resize(pane.terminal.cols, pane.terminal.rows)
                     if (!isRemoteRuntimePtyId(currentPtyId)) {
@@ -8203,7 +8207,18 @@ export function connectPanePty(
           return
         }
         if (connectResult?.snapshot) {
-          rememberReattachPayloadAgentSignal(connectResult.snapshot, { fullScreenReplay: true })
+          const snapshotPrefixAnsi = connectResult.snapshotPrefixAnsi
+          const snapshotFrameAnsi = connectResult.snapshotFrameAnsi
+          const snapshotFrameRestoreAnsi = connectResult.snapshotFrameRestoreAnsi
+          const hasSplitDaemonAltFrame =
+            typeof snapshotPrefixAnsi === 'string' &&
+            snapshotPrefixAnsi.length > 0 &&
+            typeof snapshotFrameAnsi === 'string' &&
+            snapshotFrameAnsi.length > 0
+          const daemonSnapshotReplay = hasSplitDaemonAltFrame
+            ? snapshotPrefixAnsi + snapshotFrameAnsi
+            : connectResult.snapshot
+          rememberReattachPayloadAgentSignal(daemonSnapshotReplay, { fullScreenReplay: true })
           // Why: replay at the snapshot's own dimensions to avoid rewrapping soft-wrapped rows at a different column count (#7279); suppress the PTY forward so this layout-only resize doesn't SIGWINCH the remote TUI.
           const snapshotDimensions = resolvePositiveTerminalDimensions(
             connectResult.snapshotCols,
@@ -8223,19 +8238,13 @@ export function connectPanePty(
           }
           writeReplayData('\x1b[2J\x1b[3J\x1b[H')
           // Why: re-arm the kitty keyboard mirror from the snapshot preamble so Option chords keep their encoding after a window reload.
-          kittyKeyboardModes.scanReplay(connectResult.snapshot)
+          kittyKeyboardModes.scanReplay(daemonSnapshotReplay)
           // A narrower fit clips the fixed-grid alt frame; drop it and let SIGWINCH repaint.
-          // Why not on a cold restore: its owner is gone, so nothing would repaint —
-          // a stale frame beats a blank pane.
-          const snapshotFrameStart = connectResult.snapshotFrameStart
-          const snapshotFrameRestoreAnsi = connectResult.snapshotFrameRestoreAnsi
+          // A dead-owner restore keeps history plus its restored-session treatment;
+          // a frozen foreign-width frame would look live when no owner remains.
           const daemonAltFrameSkippable =
-            typeof snapshotFrameStart === 'number' &&
+            hasSplitDaemonAltFrame &&
             typeof snapshotFrameRestoreAnsi === 'string' &&
-            Number.isInteger(snapshotFrameStart) &&
-            snapshotFrameStart >= 0 &&
-            snapshotFrameStart <= connectResult.snapshot.length &&
-            !connectResult.coldRestore &&
             shouldSkipAltFrameForWidthMismatch(
               connectResult.snapshotCols,
               readProposedTerminalCols(pane),
@@ -8243,13 +8252,12 @@ export function connectPanePty(
             )
           writeReplayData(
             daemonAltFrameSkippable
-              ? connectResult.snapshot.slice(0, snapshotFrameStart) + snapshotFrameRestoreAnsi
-              : connectResult.snapshot
+              ? snapshotPrefixAnsi + snapshotFrameRestoreAnsi
+              : daemonSnapshotReplay
           )
-          // Snapshot reattach keeps a live session, so drop only renderer-owned state instead of the broader mode reset — unless this is a cold restore, whose owner is gone.
           writeReplayData(
             reattachReplayResetSequence(
-              connectResult.snapshot,
+              daemonSnapshotReplay,
               Boolean(connectResult.coldRestore),
               connectResult.isAlternateScreen
             )
@@ -8304,11 +8312,13 @@ export function connectPanePty(
             // the ?1049h marker when splitting scrollbackAnsi) — inlined here
             // because nesting structuralReplayCoordinator would deadlock.
             for (const replayChunk of buildMainModelSnapshotReplayWrites(modelSnapshot, {
-              skipAltFrame:
-                !connectResult?.coldRestore &&
-                shouldSkipAltFrameForWidthMismatch(modelCols, readProposedTerminalCols(pane), {
+              skipAltFrame: shouldSkipAltFrameForWidthMismatch(
+                modelCols,
+                readProposedTerminalCols(pane),
+                {
                   skipIfTargetUnknown: true
-                })
+                }
+              )
             })) {
               writeReplayData(replayChunk)
             }

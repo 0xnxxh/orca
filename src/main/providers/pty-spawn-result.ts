@@ -32,11 +32,11 @@ export type PtySpawnResult = {
    *  writing the snapshot so ANSI cursor positions land correctly. */
   snapshotCols?: number
   snapshotRows?: number
-  /** UTF-16 index where the alt frame begins in `snapshot`. Optional so older
-   *  clients keep reading the merged snapshot and newer clients can omit only
-   *  a mismatched frame without duplicating the payload over IPC. */
-  snapshotFrameStart?: number
-  /** Live state to append when omitting the alt frame at `snapshotFrameStart`. */
+  /** Normal-buffer history and mode preamble before an alternate-screen frame. */
+  snapshotPrefixAnsi?: string
+  /** Visual alternate-screen frame, separate so newer clients can omit it safely. */
+  snapshotFrameAnsi?: string
+  /** Live state to append when omitting `snapshotFrameAnsi`. */
   snapshotFrameRestoreAnsi?: string
   /** Provider sequence at the attach boundary. `reset` starts a new provider
    *  generation; `continued` resumes the existing absolute domain. */

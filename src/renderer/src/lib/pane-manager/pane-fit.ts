@@ -88,10 +88,12 @@ function performSafeFit(pane: ManagedPane): boolean {
   if (deferTerminalGeometryMutationDuringRebuild(pane.terminal, 'safe-fit', () => safeFit(pane))) {
     return false
   }
-  // Why here: replay width gates share this helper, so they compare against the
-  // same post-metric grid that fit will actually apply.
-  const proposedDimensions = readProposedPaneFitDimensions(pane)
-  if (!proposedDimensions) {
+  if (!canMeasurePaneForFit(pane)) {
+    return false
+  }
+  // Why here: metric options deferred while the pane was unmeasurable must land
+  // before this fit reads dimensions, then the fit floor must be checked again.
+  if (flushDeferredPaneMetricOptions(pane) && !canMeasurePaneForFit(pane)) {
     return false
   }
   let scrollIntent = null as ReturnType<typeof captureTerminalStructuralScrollIntent>
@@ -121,7 +123,7 @@ function performSafeFit(pane: ManagedPane): boolean {
       return true
     }
 
-    const dims = proposedDimensions
+    const dims = getProposedPaneDimensions(pane)
     if (dims && dims.cols === pane.terminal.cols && dims.rows === pane.terminal.rows) {
       // Why: divider drags often stay within one cell; avoid needless clear/refresh churn.
       resumePendingFitScrollRestoreAfterFit(pane.terminal)

@@ -61,10 +61,11 @@ export type PtyConnectResult = {
   snapshot?: string
   snapshotCols?: number
   snapshotRows?: number
-  /** UTF-16 index where the alt frame begins in `snapshot`. Absent from older
-   *  hosts, so readers must fall back to the merged snapshot. */
-  snapshotFrameStart?: number
-  /** Live state to append when omitting the alt frame at `snapshotFrameStart`. */
+  /** Normal-buffer history and mode preamble before an alternate-screen frame. */
+  snapshotPrefixAnsi?: string
+  /** Visual alternate-screen frame. Both fields are absent on older hosts. */
+  snapshotFrameAnsi?: string
+  /** Live state to append when omitting `snapshotFrameAnsi`. */
   snapshotFrameRestoreAnsi?: string
   isAlternateScreen?: boolean
   sessionExpired?: boolean
