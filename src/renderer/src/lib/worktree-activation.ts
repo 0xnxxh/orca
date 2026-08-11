@@ -237,12 +237,16 @@ export function activateAndRevealFolderWorkspace(
     opts && 'runtimeEnvironmentId' in opts
       ? (opts.runtimeEnvironmentId ?? null)
       : getRuntimeEnvironmentIdForFolderWorkspace(state, folderWorkspaceId, ownerHostId)
+  const pathStatusOwnerHostId =
+    state.folderWorkspaces.filter((workspace) => workspace.id === folderWorkspaceId).length > 1
+      ? ownerHostId
+      : undefined
   const pathStatus = state.getFreshFolderWorkspacePathStatus(
     {
       scope: 'folder-workspace',
       folderWorkspaceId
     },
-    { runtimeEnvironmentId, ownerHostId }
+    { runtimeEnvironmentId, ownerHostId: pathStatusOwnerHostId }
   )
   if (folderWorkspaceActivationBlocked(pathStatus)) {
     const title =

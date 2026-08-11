@@ -6324,7 +6324,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       void get().updateFolderWorkspace(
         folderWorkspaceId,
         { isUnread: false },
-        { executionHostId: ownerHostId }
+        folderWorkspaceMutationOptions(get().folderWorkspaces, folderWorkspaceId, ownerHostId)
       )
     }
   },

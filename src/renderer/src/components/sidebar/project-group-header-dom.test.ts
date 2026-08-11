@@ -6,6 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import { getFolderWorkspaceRowKey } from '../../../../shared/folder-workspaces'
 import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
+import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
 import type { FolderWorkspace, ProjectGroup, Repo, Worktree } from '../../../../shared/types'
 import {
   buildRows,
@@ -14,16 +15,27 @@ import {
   findProjectGroupForRepo,
   findProjectGroupForSidebarOwner,
   getAmbiguousFolderWorkspaceSidebarIds,
+  getFolderWorkspaceRenderRowKey,
   getProjectGroupMutationSelector,
   getProjectGroupHeaderKey,
   getProjectGroupSidebarIdentity,
+  getSidebarWorkspaceActivationId,
   getSidebarWorktreeSelectionId,
   getSingleProjectGroupMutationOwner,
   hasSingleProjectGroupMutationOwner,
   parseProjectGroupSidebarHeaderKey
 } from './worktree-list-groups'
 import { addHostSectionRows } from './host-section-rows'
-import { getRenderRowKey } from './worktree-list-virtual-rows'
+import {
+  getRenderRowKey as getVirtualRenderRowKey,
+  type RenderRow
+} from './worktree-list-virtual-rows'
+
+function getRenderRowKey(row: RenderRow): string {
+  return row.type === 'folder-workspace'
+    ? getFolderWorkspaceRenderRowKey(row)
+    : getVirtualRenderRowKey(row)
+}
 
 function sidebarIdentityGroup(id: string, executionHostId: string): ProjectGroup {
   return {
@@ -227,6 +239,12 @@ describe('project-group sidebar identity', () => {
 
     expect(getSidebarWorktreeSelectionId(local, undefined, 'local')).not.toBe(
       getSidebarWorktreeSelectionId(runtime, undefined, 'local')
+    )
+    expect(getSidebarWorkspaceActivationId(local, 'local', new Set(['same-id']))).toBe(
+      folderWorkspaceKey('same-id', 'local')
+    )
+    expect(getSidebarWorkspaceActivationId(runtime, 'runtime:env-1', new Set(['same-id']))).toBe(
+      folderWorkspaceKey('same-id', 'runtime:env-1')
     )
   })
 
@@ -507,7 +525,7 @@ describe('duplicate project-group header identity (#12532)', () => {
 
     const folderRow = rows.find((row) => row.type === 'folder-workspace')
     expect(folderRow?.key).toBe('folder-workspace:@owner:runtime%3Aenv-1:same-folder')
-    expect(folderRow && getRenderRowKey(folderRow)).toBe(
+    expect(folderRow && getFolderWorkspaceRenderRowKey(folderRow)).toBe(
       'folder-workspace:@owner:runtime%3Aenv-1:same-folder'
     )
   })

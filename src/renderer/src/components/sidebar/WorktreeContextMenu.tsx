@@ -32,12 +32,7 @@ import {
 } from 'lucide-react'
 import { useAppStore } from '@/store'
 import type { AppState } from '@/store/types'
-import {
-  selectRepoByIdForActiveWorkspace,
-  useAllWorktrees,
-  useRepoMap,
-  useWorktreeMap
-} from '@/store/selectors'
+import { useAllWorktrees, useRepoMap, useWorktreeMap } from '@/store/selectors'
 import { cn } from '@/lib/utils'
 import type {
   ProjectGroup,
@@ -103,14 +98,14 @@ const DELETE_POSITION_RESTORE_STABLE_FRAMES = 6
 const PARENT_PICKER_EXIT_ANIMATION_MS = 200
 
 export function findContextMenuRepo(
-  repos: Repo[],
+  repos: readonly Repo[] | undefined,
   repoId: string,
   executionHostId: ExecutionHostId
 ): Repo | null {
-  return selectRepoByIdForActiveWorkspace(
-    { repos, activeRepoId: repoId, activeWorkspaceExecutionHostId: executionHostId },
-    repoId
+  const matches = (repos ?? []).filter(
+    (repo) => repo.id === repoId && getRepoExecutionHostId(repo) === executionHostId
   )
+  return matches.length === 1 ? matches[0] : null
 }
 
 export function resolveWorktreeContextMenuTargets(

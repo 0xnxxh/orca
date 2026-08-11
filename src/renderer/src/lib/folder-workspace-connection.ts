@@ -4,7 +4,8 @@ import {
   buildProjectGroupOwnerIndex,
   getProjectGroupIdentity,
   getProjectGroupOwnerHostId,
-  getProjectGroupOwnerSubtreeIdentities
+  getProjectGroupOwnerSubtreeIdentities,
+  getProjectGroupSubtreeIds
 } from '../../../shared/project-groups'
 import {
   resolveFolderWorkspaceCatalogOwnerHostId,
@@ -29,6 +30,7 @@ function getFolderScopeCandidateRepos(args: {
   folderPath: string
   projectGroup: ProjectGroup
   ownerHostId: ExecutionHostId
+  inferLegacyOwner: boolean
   connectionId?: string | null
   projectGroups: readonly ProjectGroup[]
   repos: readonly Repo[]
@@ -37,22 +39,21 @@ function getFolderScopeCandidateRepos(args: {
     args.projectGroups,
     args.projectGroup
   )
-  const groupRepos = args.repos.filter(
-    (repo) =>
-      typeof repo.projectGroupId === 'string' &&
-      groupIdentities.has(
-        getProjectGroupIdentity(repo.projectGroupId, getRepoExecutionHostId(repo))
-      )
-  )
+  const legacyGroupIds = args.inferLegacyOwner
+    ? getProjectGroupSubtreeIds(args.projectGroups, args.projectGroup.id)
+    : null
+  const repoIsInGroup = (repo: Repo): boolean =>
+    typeof repo.projectGroupId === 'string' &&
+    (legacyGroupIds
+      ? legacyGroupIds.has(repo.projectGroupId)
+      : groupIdentities.has(
+          getProjectGroupIdentity(repo.projectGroupId, getRepoExecutionHostId(repo))
+        ))
+  const groupRepos = args.repos.filter((repo) => repoIsInGroup(repo))
   const pathRepos = args.repos.filter(
     (repo) =>
-      getRepoExecutionHostId(repo) === args.ownerHostId &&
-      !(
-        typeof repo.projectGroupId === 'string' &&
-        groupIdentities.has(
-          getProjectGroupIdentity(repo.projectGroupId, getRepoExecutionHostId(repo))
-        )
-      ) &&
+      (args.inferLegacyOwner || getRepoExecutionHostId(repo) === args.ownerHostId) &&
+      !repoIsInGroup(repo) &&
       isPathInsideOrEqual(args.folderPath, repo.path)
   )
   if (args.connectionId) {
@@ -75,14 +76,20 @@ function findFolderWorkspaceScope(
   state: FolderWorkspaceConnectionState,
   folderWorkspaceId: string,
   ownerHostId?: ExecutionHostId
-): { workspace: FolderWorkspace; projectGroup: ProjectGroup; ownerHostId: ExecutionHostId } | null {
+): {
+  workspace: FolderWorkspace
+  projectGroup: ProjectGroup
+  ownerHostId: ExecutionHostId
+  inferLegacyOwner: boolean
+} | null {
+  const candidates = state.folderWorkspaces.filter((entry) => entry.id === folderWorkspaceId)
   const activeScope = parseWorkspaceKey(state.activeWorktreeId ?? '')
   const activeOwnerHostId =
     activeScope?.type === 'folder' && activeScope.folderWorkspaceId === folderWorkspaceId
-      ? (activeScope.ownerHostId ?? state.activeWorkspaceExecutionHostId)
+      ? (activeScope.ownerHostId ??
+        (candidates.length > 1 ? state.activeWorkspaceExecutionHostId : undefined))
       : undefined
   const requestedOwnerHostId = ownerHostId ?? activeOwnerHostId ?? undefined
-  const candidates = state.folderWorkspaces.filter((entry) => entry.id === folderWorkspaceId)
   const workspace = requestedOwnerHostId
     ? candidates.find(
         (entry) =>
@@ -95,17 +102,16 @@ function findFolderWorkspaceScope(
   if (!workspace) {
     return null
   }
-  const projectGroup = resolveFolderWorkspaceProjectGroupWithLegacySsh(
-    buildProjectGroupOwnerIndex(state.projectGroups),
-    workspace
-  )
+  const projectGroupIndex = buildProjectGroupOwnerIndex(state.projectGroups)
+  const projectGroup = resolveFolderWorkspaceProjectGroupWithLegacySsh(projectGroupIndex, workspace)
   if (!projectGroup) {
     return null
   }
   return {
     workspace,
     projectGroup,
-    ownerHostId: getProjectGroupOwnerHostId(projectGroup)
+    ownerHostId: getProjectGroupOwnerHostId(projectGroup),
+    inferLegacyOwner: projectGroupIndex.byId.get(projectGroup.id)?.length === 1
   }
 }
 
@@ -122,6 +128,7 @@ export function getFolderWorkspaceCandidateRepos(
     folderPath: scope.workspace.folderPath,
     projectGroup: scope.projectGroup,
     ownerHostId: scope.ownerHostId,
+    inferLegacyOwner: scope.inferLegacyOwner,
     connectionId: scope.workspace.connectionId ?? scope.projectGroup.connectionId ?? null,
     projectGroups: state.projectGroups,
     repos: state.repos

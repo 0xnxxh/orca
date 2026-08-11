@@ -3,6 +3,7 @@ import type { FolderWorkspace, ProjectGroup, Repo } from '../../../../shared/typ
 import { getFolderWorkspaceRowKey } from '../../../../shared/folder-workspaces'
 import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import { buildHostIdByWorktreeId } from '../../lib/workspace-session-host-persistence'
+import { computeRenderedSidebarWorktreeOrder } from '../../components/sidebar/rendered-sidebar-worktree-order'
 import {
   getFolderWorkspaceCandidateRepos,
   getFolderWorkspaceConnectionId
@@ -49,6 +50,25 @@ function makeFolder(overrides: Partial<FolderWorkspace> = {}): FolderWorkspace {
 describe('same-id cross-host folder workspace identity', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  it('keeps both owner-qualified folders in closed-sidebar shortcut order', () => {
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [
+        makeGroup({ executionHostId: 'local', parentPath: '/local' }),
+        makeGroup({ executionHostId: 'runtime:env-1', parentPath: '/runtime' })
+      ],
+      folderWorkspaces: [
+        makeFolder({ executionHostId: 'local', folderPath: '/local/folder' }),
+        makeFolder({ executionHostId: 'runtime:env-1', folderPath: '/runtime/folder' })
+      ]
+    })
+
+    expect(computeRenderedSidebarWorktreeOrder(store.getState(), [])).toEqual([
+      folderWorkspaceKey('same-id', 'local'),
+      folderWorkspaceKey('same-id', 'runtime:env-1')
+    ])
   })
 
   it('deletes only the owner-qualified folder row and its session keys', async () => {

@@ -96,7 +96,12 @@ export function resolveFolderWorkspaceCatalogOwnerHostIdFromIndex(
   if (group) {
     return getFolderWorkspaceProjectGroupOwnerHostId(workspace, index)
   }
-  return workspace.connectionId ? toSshExecutionHostId(workspace.connectionId) : null
+  if (workspace.connectionId !== undefined) {
+    return workspace.connectionId
+      ? toSshExecutionHostId(workspace.connectionId)
+      : LOCAL_EXECUTION_HOST_ID
+  }
+  return null
 }
 
 export function getFolderWorkspaceOwnerIdentity(

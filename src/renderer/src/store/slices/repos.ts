@@ -2932,7 +2932,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     const target = getActiveRuntimeTarget({ activeRuntimeEnvironmentId: runtimeEnvironmentId })
     const updateIdentity = getFolderWorkspaceUpdateIdentity(ownerHostId, folderWorkspaceId)
     const includeOwnerHostId =
-      executionHostId !== undefined ||
+      options?.executionHostId !== undefined ||
       state.folderWorkspaces.filter((workspace) => workspace.id === folderWorkspaceId).length > 1
     // Why: same gate as folderWorkspace.create — an older paired runtime would drop the Jira link silently.
     if (

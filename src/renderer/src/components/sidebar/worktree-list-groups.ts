@@ -32,7 +32,9 @@ import {
   UNGROUPED_PROJECT_GROUP_KEY
 } from '../../../../shared/project-groups'
 import {
+  folderWorkspaceKey,
   getProjectGroupSelectorKey,
+  parseWorkspaceKey,
   parseProjectGroupSelectorKey
 } from '../../../../shared/workspace-scope'
 import {
@@ -76,6 +78,17 @@ export function getSidebarWorktreeSelectionId(
   defaultHostId: ExecutionHostId
 ): string {
   return JSON.stringify([getWorktreeExecutionHostId(worktree, repo, defaultHostId), worktree.id])
+}
+
+export function getSidebarWorkspaceActivationId(
+  worktree: Worktree,
+  ownerHostId: ExecutionHostId,
+  ambiguousFolderWorkspaceIds: ReadonlySet<string>
+): string {
+  const scope = parseWorkspaceKey(worktree.id)
+  return scope?.type === 'folder' && ambiguousFolderWorkspaceIds.has(scope.folderWorkspaceId)
+    ? folderWorkspaceKey(scope.folderWorkspaceId, ownerHostId)
+    : worktree.id
 }
 
 export type ProjectGroupSidebarIdentity = string
@@ -373,6 +386,10 @@ export type FolderWorkspaceRow = {
   projectGroup: ProjectGroup
   depth: number
   groupDepth: number
+}
+
+export function getFolderWorkspaceRenderRowKey(row: Pick<FolderWorkspaceRow, 'key'>): string {
+  return row.key
 }
 
 /** Minimal shape buildRows needs for an in-flight create. Deliberately not the

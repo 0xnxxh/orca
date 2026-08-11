@@ -99,8 +99,10 @@ import {
   getSidebarWorktreeSelectionId,
   getSingleProjectGroupMutationOwner,
   getGroupKeysForWorktree,
+  getFolderWorkspaceRenderRowKey,
   getLineageGroupKey,
   getPinnedWorktreeDisplayPolicy,
+  getSidebarWorkspaceActivationId,
   parseProjectGroupSidebarHeaderKey,
   type ProjectGroupMutationSelector,
   type PinnedWorktreeDisplayPolicy
@@ -110,7 +112,7 @@ import {
   estimateRenderRowSize,
   extractWorktreeVirtualRowIndexes,
   getActiveStickyIndexesForScroll,
-  getRenderRowKey,
+  getRenderRowKey as getVirtualRenderRowKey,
   getStickyHeaderIndexes,
   getVirtualRowTransform,
   HOST_STICKY_GROUP_TOP_PX,
@@ -324,7 +326,6 @@ import {
   getVisibleSidebarHostIdSet
 } from './worktree-list-host-filtering'
 import { getFolderWorkspaceCardPrDisplay } from './folder-workspace-card-pr-display'
-import { getRenderedWorktreesInSidebarOrder } from './worktree-sidebar-row-preference'
 import { getCyclableWorktreeIds, resolveCycledWorktreeId } from './worktree-keyboard-cycle'
 export {
   getScrollTopToRevealBounds,
@@ -1240,10 +1241,6 @@ export function getPinnedWorktreeRevealCollapsedGroupKeys({
   return keys
 }
 
-function uniqueWorktreeIds(ids: readonly string[]): string[] {
-  return Array.from(new Set(ids))
-}
-
 function getRenderedSidebarSelectionEntries(
   rows: readonly HostSectionRow[],
   defaultHostId: ExecutionHostId,
@@ -1331,9 +1328,11 @@ function buildRenderableRows(rows: HostSectionRow[]): RenderRow[] {
   return renderRows
 }
 
-// Why: getRenderRowKey lives with the other virtual-row helpers now; keep the
-// long-standing import path working for callers that reach for it here.
-export { getRenderRowKey }
+export function getRenderRowKey(row: RenderRow): string {
+  return row.type === 'folder-workspace'
+    ? getFolderWorkspaceRenderRowKey(row)
+    : getVirtualRenderRowKey(row)
+}
 
 export function getWorktreeDragGroups(rows: HostSectionRow[]): WorktreeDragGroup[] {
   const groups: WorktreeDragGroup[] = []
@@ -6106,23 +6105,27 @@ const WorktreeList = React.memo(function WorktreeList({
   const visibleHostResetKey = visibleWorkspaceHostIds?.join(',') ?? 'all'
   const viewportResetKey = `group:${groupBy}:host:${visibleHostResetKey}:lineage`
 
-  // Why: derive order from the built rows, not the flat worktrees array, so Cmd+1–9 match visual positions when grouping reorders cards.
-  const renderedWorktrees = useMemo(
-    () => getRenderedWorktreesInSidebarOrder(sectionRows, pinnedDisplayPolicy),
-    [pinnedDisplayPolicy, sectionRows]
-  )
-  // Why: order-preserving sectionRows rebuilds must not give this array a new
-  // identity — updateSelectionForGesture depends on it, and a fresh identity
-  // there defeats React.memo bail-out for every WorktreeCard on epoch bumps.
-  const renderedWorktreeIds = useReusedArrayIdentity(
-    useMemo(
-      () => uniqueWorktreeIds(renderedWorktrees.map((worktree) => worktree.id)),
-      [renderedWorktrees]
-    )
-  )
   const renderedWorktreeSelectionEntries = useMemo(
     () => getRenderedSidebarSelectionEntries(sectionRows, defaultHostId, pinnedDisplayPolicy),
     [defaultHostId, pinnedDisplayPolicy, sectionRows]
+  )
+  // Why: shortcut activation needs the same owner-qualified folder identity as selection when same ids collide.
+  const renderedWorktreeIds = useReusedArrayIdentity(
+    useMemo(
+      () =>
+        Array.from(
+          new Set(
+            renderedWorktreeSelectionEntries.map(({ worktree }) =>
+              getSidebarWorkspaceActivationId(
+                worktree,
+                getWorktreeExecutionHostId(worktree, undefined, defaultHostId),
+                ownerQualifiedFolderWorkspaceIds
+              )
+            )
+          )
+        ),
+      [defaultHostId, ownerQualifiedFolderWorkspaceIds, renderedWorktreeSelectionEntries]
+    )
   )
   const renderedWorktreeSelectionIds = useReusedArrayIdentity(
     useMemo(

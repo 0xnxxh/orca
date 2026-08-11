@@ -155,6 +155,20 @@ describe('filesystem-auth path containment', () => {
     expect(isPathAllowed(runtimePath, store)).toBe(false)
   })
 
+  it('does not authorize an SSH repo when stale host metadata says local', () => {
+    const sshPath = resolve('/ssh-only/repo')
+    const store = makeStore([
+      {
+        ...repo,
+        path: sshPath,
+        connectionId: 'ssh-target',
+        executionHostId: 'local'
+      }
+    ])
+
+    expect(isPathAllowed(sshPath, store)).toBe(false)
+  })
+
   it('authorizes missing nested descendants under an allowed repo', async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), 'orca-auth-missing-'))
     try {
