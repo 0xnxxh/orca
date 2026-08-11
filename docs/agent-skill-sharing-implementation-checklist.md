@@ -6,7 +6,7 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `b4f5b6c119` on `skills-share` (pushed; no PR).
+- Orca implementation: `cdafe43542` on `skills-share` (pushed; no PR).
 - Orca Cloud: `81a581d` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
@@ -20,6 +20,8 @@ Validated so far:
   canonical install beyond `MAX_PATH` while the host's `LongPathsEnabled` policy remained disabled.
 - Real Ubuntu 24.04 WSL global, guest-workspace, and `/mnt/c` workspace transactions, including
   alias placement, interrupted update recovery, conflict preservation, update, and removal.
+- Real Ubuntu 24.04 WSL provider detection and POSIX semantics, including case-sensitive names,
+  `0600` regular files, and `0700` executable files.
 - Real native Windows global, linked Git-worktree, and plain folder installs with spaces and
   non-ASCII paths, plus privacy-safe install diagnostics and owner-private staging tests.
 - Isolated staging bucket, IAM, secret container, log metrics, dashboard, and alerts in
@@ -656,6 +658,12 @@ with 21 intentional platform skips across 43 files, and the Node typecheck passe
 fixtures uncovered by that run now use Windows junctions instead of privileged directory symlinks,
 matching Orca's supported Windows placement topology.
 
+At commit `cdafe43542`, the opt-in WSL semantics harness used real provider detection and installed
+through the selected distro after converting UNC verification paths to distro-native paths. The
+run passed both cases: Linux case sensitivity was preserved, regular files were `0600`, executable
+files were `0700`, and the packaged script executed successfully. Existing real transaction
+coverage also verified POSIX provider alias creation inside the distro.
+
 ### Host preparation
 
 - [x] Confirm `windows 2` is saved and reachable through `orca environment list` and
@@ -707,10 +715,16 @@ matching Orca's supported Windows placement topology.
 - [x] Prove the Windows client never constructs a Linux home or mutates the distro through a
       translated Windows path.
 - [ ] Test global installs for at least two distros with different default users/homes.
-- [ ] Test Linux case sensitivity and executable modes inside each distro.
+- [x] Test Linux case sensitivity and executable modes inside the installed distro. Real
+      `Ubuntu-24.04` coverage passed at `cdafe43542` with `0600` regular files and `0700`
+      executable files.
+- [ ] Repeat Linux case-sensitivity and executable-mode coverage in the second distro after its
+      isolated setup.
 - [ ] Test a distro-owned Git worktree and plain folder workspace.
 - [x] Test a workspace on the distro filesystem and document behavior for `/mnt/c` separately.
-- [ ] Test provider detection and POSIX alias creation inside the distro.
+- [x] Test provider detection and POSIX alias creation inside the distro. Real `Ubuntu-24.04`
+      provider detection passed at `cdafe43542`; the transaction harness also verified the Claude
+      placement as a distro-owned POSIX symlink.
 - [ ] Test concurrent native Windows and WSL installs of the same package without provenance or
       lock collision across host identities.
 - [ ] Test distro stopped, distro removed, default user changed, home moved, and runtime restarted
