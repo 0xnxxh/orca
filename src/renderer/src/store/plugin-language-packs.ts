@@ -29,8 +29,13 @@ export const usePluginLanguagePackStore = create<PluginLanguagePackState>()((set
     try {
       const response = await api.listLanguagePacks()
       const packs = Array.isArray(response) ? response.filter(isPluginLanguagePackRegistration) : []
-      if (!Array.isArray(response) || packs.length !== response.length) {
-        console.warn('[plugins] Ignoring malformed language-pack list')
+      // Why: a non-array response and a rejected member are different upstream bugs; keep them distinguishable in the log.
+      if (!Array.isArray(response)) {
+        console.warn(`[plugins] Ignoring non-array language-pack list (${typeof response})`)
+      } else if (packs.length !== response.length) {
+        console.warn(
+          `[plugins] Ignoring ${response.length - packs.length} of ${response.length} malformed language packs`
+        )
       }
       if (generation === requestGeneration) {
         set({ packs, loaded: true })
