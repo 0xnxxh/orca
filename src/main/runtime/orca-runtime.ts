@@ -9172,13 +9172,18 @@ export class OrcaRuntimeService {
         })
         return owner.transcriptPath ? { transcriptPath: owner.transcriptPath } : {}
       },
-      waitForTuiIdle: async (owner, signal) =>
-        (
+      waitForTuiIdle: async (owner, signal) => {
+        const explicit = this.getFreshExplicitAgentStatusForHandle(owner.terminal.handle)
+        if (explicit) {
+          return explicit.status === 'idle'
+        }
+        return (
           await this.waitForTerminal(owner.terminal.handle, {
             condition: 'tui-idle',
             signal
           })
-        ).satisfied,
+        ).satisfied
+      },
       reproveTuiOwner: async ({ record, owner }) => {
         const persisted = record.lease.ownerProcess
         if (
@@ -9288,6 +9293,10 @@ export class OrcaRuntimeService {
   }
 
   private structuredTuiStatus(handle: string): 'idle' | 'busy' {
+    const explicit = this.getFreshExplicitAgentStatusForHandle(handle)
+    if (explicit) {
+      return explicit.status === 'idle' ? 'idle' : 'busy'
+    }
     const pty = this.getLivePtyForHandle(handle)
     if (pty) {
       const text = buildTerminalWaitText(

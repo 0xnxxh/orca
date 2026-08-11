@@ -34,18 +34,32 @@ function notifier(revealTerminalSession: ReturnType<typeof vi.fn>) {
 
 describe('structured TUI launch tab binding', () => {
   it('proves the published launch tab before returning its revealed renderer binding', async () => {
+    let explicitStatus: {
+      state: 'working' | 'done'
+      prompt: string
+      receivedAt: number
+      stateStartedAt: number
+      paneKey: string
+      terminalHandle: string
+    } | null = null
     const revealTerminalSession = vi.fn(
       (_worktreeId: string, _options: { tabId?: string; leafId?: string; ptyId?: string }) =>
         Promise.resolve({ tabId: 'tab-renderer' })
     )
-    const runtime = new OrcaRuntimeService({
-      getSettings: () => ({
-        disabledTuiAgents: [],
-        agentCmdOverrides: {},
-        agentDefaultArgs: {},
-        agentDefaultEnv: {}
-      })
-    } as never)
+    const runtime = new OrcaRuntimeService(
+      {
+        getSettings: () => ({
+          disabledTuiAgents: [],
+          agentCmdOverrides: {},
+          agentDefaultArgs: {},
+          agentDefaultEnv: {}
+        })
+      } as never,
+      undefined,
+      {
+        getAgentStatusSnapshot: () => (explicitStatus ? [explicitStatus as never] : [])
+      }
+    )
     runtime.setNotifier(notifier(revealTerminalSession) as never)
     runtime.setPtyController({
       spawn: vi.fn().mockResolvedValue({ id: 'pty-structured', pid: 4242 }),
@@ -133,6 +147,21 @@ describe('structured TUI launch tab binding', () => {
     expect(waitForStructuredTuiProof.mock.invocationCallOrder[0]).toBeLessThan(
       revealTerminalSession.mock.invocationCallOrder[0]!
     )
+
+    explicitStatus = {
+      state: 'working',
+      prompt: '',
+      receivedAt: Date.now(),
+      stateStartedAt: Date.now(),
+      paneKey: owner.terminal.paneKey,
+      terminalHandle: owner.terminal.handle
+    }
+    expect(transport.tuiStatus(owner)).toBe('busy')
+    await expect(transport.waitForTuiIdle(owner, new AbortController().signal)).resolves.toBe(false)
+
+    explicitStatus = { ...explicitStatus, state: 'done', receivedAt: Date.now() }
+    expect(transport.tuiStatus(owner)).toBe('idle')
+    await expect(transport.waitForTuiIdle(owner, new AbortController().signal)).resolves.toBe(true)
 
     const pty = (
       runtime as unknown as {
