@@ -3146,11 +3146,14 @@ export function useWebSessionTabsSync(): void {
     return environment ? (environment.pairingRevision ?? environment.createdAt) : undefined
   })
   const workspaceSessionReady = useAppStore((state) => state.workspaceSessionReady)
-  activeRuntimeEnvironmentIdRef.current = activeWorktreeRuntimeEnvironmentId?.trim() || null
-  activeRuntimeWorktreeKeyRef.current =
-    activeWorktreeRuntimeEnvironmentId && activeWorktreeId
-      ? sessionTabsFreshnessKey(activeWorktreeRuntimeEnvironmentId, activeWorktreeId)
-      : null
+  // Why: declared first so the refs commit before the effects whose resume callbacks read them.
+  useEffect(() => {
+    activeRuntimeEnvironmentIdRef.current = activeWorktreeRuntimeEnvironmentId?.trim() || null
+    activeRuntimeWorktreeKeyRef.current =
+      activeWorktreeRuntimeEnvironmentId && activeWorktreeId
+        ? sessionTabsFreshnessKey(activeWorktreeRuntimeEnvironmentId, activeWorktreeId)
+        : null
+  }, [activeWorktreeId, activeWorktreeRuntimeEnvironmentId])
 
   useEffect(
     () => () => {
