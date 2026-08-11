@@ -3,7 +3,7 @@ import type { Repo } from '../../../../shared/types'
 import { getRepoExecutionHostId, toSshExecutionHostId } from '../../../../shared/execution-host'
 
 export type SshRepoReconciliation = {
-  repos: Repo[]
+  repos: readonly Repo[]
   pendingReadoptions: SshRepoReadoption[]
 }
 
@@ -56,7 +56,7 @@ export function reconcileReadoptedSshRepoRows(
   // Why: pruning nothing must hand back the input array, or the copy alone would defeat the
   // referential stability reconcileFetchedRepos just established upstream.
   if (prunedOwners.size === 0) {
-    return { repos: repos as Repo[], pendingReadoptions }
+    return { repos, pendingReadoptions }
   }
   return {
     repos: repos.filter(

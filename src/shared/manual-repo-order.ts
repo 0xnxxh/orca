@@ -41,12 +41,12 @@ export function getManualRepoOrder(repos: readonly Repo[]): ManualRepoOrderEntry
 export function applyManualRepoOrder(
   repos: readonly Repo[],
   order: readonly ManualRepoOrderEntry[] | null | undefined
-): Repo[] {
+): readonly Repo[] {
   const normalized = normalizeManualRepoOrder(order)
   // Why: results flow straight back into `repos`, so a reorder that moves nothing must return
   // the input — a fresh array would invalidate every identity-keyed repo memo downstream.
   if (normalized.length === 0) {
-    return repos as Repo[]
+    return repos
   }
   const rankByKey = new Map(normalized.map((entry, index) => [getEntryKey(entry), index]))
   const ordered = repos
@@ -68,5 +68,5 @@ export function applyManualRepoOrder(
       return a.rank - b.rank || a.index - b.index
     })
     .map(({ repo }) => repo)
-  return ordered.every((repo, index) => repo === repos[index]) ? (repos as Repo[]) : ordered
+  return ordered.every((repo, index) => repo === repos[index]) ? repos : ordered
 }

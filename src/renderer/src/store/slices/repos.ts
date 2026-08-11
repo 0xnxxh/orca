@@ -880,9 +880,9 @@ function mergeByIdentity<T>(
 
 function mergeFetchedReposForHost(
   previous: readonly Repo[],
-  fetched: Repo[],
+  fetched: readonly Repo[],
   hostId: string
-): Repo[] {
+): readonly Repo[] {
   const fetchedWithProjectGroups = applyInheritedProjectGroups(previous, fetched)
   const fetchedIdentities = new Set(fetchedWithProjectGroups.map(getRepoHostIdentity))
   const preserved = previous.filter((repo) => {
@@ -1049,7 +1049,7 @@ function mergeFetchedFolderWorkspacesForHost({
 }
 
 type FetchedRepoCatalog = {
-  repos: Repo[]
+  repos: readonly Repo[]
   projectHostSetupCompatibility: ProjectHostSetupProjection
   hostId: ReturnType<typeof getRuntimeTargetHostId>
 }
@@ -1110,7 +1110,7 @@ function mergeFetchedRepoCatalog(
   catalog: FetchedRepoCatalog,
   currentRepos: readonly Repo[]
 ): {
-  repos: Repo[]
+  repos: readonly Repo[]
   projectHostSetupCompatibility: ProjectHostSetupProjection
   hostId: ReturnType<typeof getRuntimeTargetHostId>
 } {
@@ -1619,7 +1619,7 @@ function getFolderWorkspacePathStatusRequestSnapshotForRead(
 }
 
 export type RepoSlice = {
-  repos: Repo[]
+  repos: readonly Repo[]
   projects: Project[]
   projectHostSetups: ProjectHostSetup[]
   projectGroups: ProjectGroup[]

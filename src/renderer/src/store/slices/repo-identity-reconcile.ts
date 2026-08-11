@@ -27,7 +27,10 @@ function areReposEqual(a: Repo, b: Repo): boolean {
   return true
 }
 
-export function reconcileFetchedRepos(previous: readonly Repo[], next: Repo[]): Repo[] {
+export function reconcileFetchedRepos(
+  previous: readonly Repo[],
+  next: readonly Repo[]
+): readonly Repo[] {
   const previousById = new Map(previous.map((repo) => [getRepoHostIdentity(repo), repo]))
   let identical = next.length === previous.length
   const reconciled = next.map((repo, index) => {
@@ -41,5 +44,5 @@ export function reconcileFetchedRepos(previous: readonly Repo[], next: Repo[]): 
     identical = false
     return repo
   })
-  return identical ? (previous as Repo[]) : reconciled
+  return identical ? previous : reconciled
 }
