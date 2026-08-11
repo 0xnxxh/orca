@@ -5,12 +5,16 @@ import {
   registerStaleDocumentVisibilityRecovery
 } from '@/components/terminal-pane/stale-document-visibility'
 
+// Why the stale-latch term is load-bearing: macOS can wedge document.visibilityState at 'hidden'
+// with no further visibilitychange, so a window the user is looking at would park its stream
+// forever (same bug class as the field report of 78MB of terminal bytes dropped on visible ptys).
 function getWindowVisibleSnapshot(): boolean {
   return isWindowVisible() || isDocumentVisibilityProvenStale()
 }
 
 function subscribeWindowVisible(onChange: () => void): () => void {
   document.addEventListener('visibilitychange', onChange)
+  // Why: the stale latch flips to proven-visible without emitting a visibilitychange.
   const unregisterStaleRecovery = registerStaleDocumentVisibilityRecovery(onChange)
   return () => {
     document.removeEventListener('visibilitychange', onChange)

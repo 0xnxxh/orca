@@ -100,4 +100,20 @@ describe('useRemoteBrowserStreamActivation', () => {
     await act(async () => harness.rerender({ active: true }))
     expect(harness.open).toHaveBeenCalledTimes(2)
   })
+
+  // Closing a tab while parked leaves no effect cleanup to run, so unmount must not resurrect the
+  // stream when the window comes back — the pane's lifecycle is already disposed by then.
+  it('stays closed when its tab is closed while the stream is parked', async () => {
+    const harness = renderActivation()
+
+    await act(async () => setDocumentVisibility('hidden'))
+    await act(async () => vi.advanceTimersByTime(WINDOW_STREAM_PARK_DELAY_MS))
+    expect(harness.closeStream).toHaveBeenCalledTimes(1)
+
+    await act(async () => harness.unmount())
+    await act(async () => setDocumentVisibility('visible'))
+
+    expect(harness.open).toHaveBeenCalledTimes(1)
+    expect(harness.closeStream).toHaveBeenCalledTimes(1)
+  })
 })
