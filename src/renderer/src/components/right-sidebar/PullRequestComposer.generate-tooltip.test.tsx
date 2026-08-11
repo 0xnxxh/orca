@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { renderToStaticMarkup } from 'react-dom/server'
+import { useState } from 'react'
 import { cleanup, fireEvent, render as renderDom, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -16,8 +17,16 @@ type RenderPullRequestComposerOptions = {
   generateDisabledReason?: string
   stackedCreationSupported?: boolean
   stackParentReview?: HostedReviewStackParent | null
+  base?: string
+  setBase?: (value: string) => void
+  baseQuery?: string
+  setBaseQuery?: (value: string) => void
+  baseResults?: string[]
+  setBaseResults?: (value: string[]) => void
   onPrimaryAction?: (stacked: boolean) => void
 }
+
+const EMPTY_BASE_RESULTS: string[] = []
 
 function pullRequestComposerElement({
   aiGenerationEnabled = true,
@@ -26,6 +35,12 @@ function pullRequestComposerElement({
   generateDisabledReason,
   stackedCreationSupported = true,
   stackParentReview = null,
+  base = 'master',
+  setBase = vi.fn(),
+  baseQuery = '',
+  setBaseQuery = vi.fn(),
+  baseResults = [],
+  setBaseResults = vi.fn(),
   onPrimaryAction = vi.fn()
 }: RenderPullRequestComposerOptions = {}): React.JSX.Element {
   const sourceControlInputs = {
@@ -46,8 +61,8 @@ function pullRequestComposerElement({
       <CreateHostedReviewComposer
         provider="github"
         branch="branch-login-issue"
-        base="master"
-        setBase={vi.fn()}
+        base={base}
+        setBase={setBase}
         title="Ready to create"
         setTitle={vi.fn()}
         body=""
@@ -56,10 +71,10 @@ function pullRequestComposerElement({
         setDraft={vi.fn()}
         stackedCreationSupported={stackedCreationSupported}
         stackParentReview={stackParentReview}
-        baseQuery=""
-        setBaseQuery={vi.fn()}
-        baseResults={[]}
-        setBaseResults={vi.fn()}
+        baseQuery={baseQuery}
+        setBaseQuery={setBaseQuery}
+        baseResults={baseResults}
+        setBaseResults={setBaseResults}
         baseSearchError={null}
         aiGenerationEnabled={aiGenerationEnabled}
         generating={generating}
@@ -81,6 +96,21 @@ function pullRequestComposerElement({
 
 function renderPullRequestComposer(options: RenderPullRequestComposerOptions = {}): string {
   return renderToStaticMarkup(pullRequestComposerElement(options))
+}
+
+function InteractiveBaseComposer({ baseResults = EMPTY_BASE_RESULTS }: { baseResults?: string[] }) {
+  const [base, setBase] = useState('main')
+  const [baseQuery, setBaseQuery] = useState('')
+  const [results, setBaseResults] = useState(baseResults)
+
+  return pullRequestComposerElement({
+    base,
+    setBase,
+    baseQuery,
+    setBaseQuery,
+    baseResults: results,
+    setBaseResults
+  })
 }
 
 function elementByLabel(markup: string, tagName: string, label: string): string {
@@ -179,5 +209,32 @@ describe('CreateHostedReviewComposer generate tooltip', () => {
     })
 
     expect(markup).not.toContain('Stack this PR above #13741')
+  })
+
+  it('keeps temporary base search text separate from the committed branch', () => {
+    renderDom(<InteractiveBaseComposer />)
+    const input = screen.getByRole('combobox', { name: 'Pull Request base branch' })
+
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: '' } })
+    expect((input as HTMLInputElement).value).toBe('')
+
+    fireEvent.change(input, { target: { value: 'release/candidate' } })
+    expect((input as HTMLInputElement).value).toBe('release/candidate')
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect((input as HTMLInputElement).value).toBe('main')
+
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'release/candidate' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect((input as HTMLInputElement).value).toBe('release/candidate')
+  })
+
+  it('places base search results directly under the combobox', () => {
+    const { container } = renderDom(<InteractiveBaseComposer baseResults={['release/candidate']} />)
+    fireEvent.focus(screen.getByRole('combobox', { name: 'Pull Request base branch' }))
+
+    const markup = container.innerHTML
+    expect(markup.indexOf('release/candidate')).toBeLessThan(markup.indexOf('Create as draft'))
   })
 })

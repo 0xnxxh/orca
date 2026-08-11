@@ -8,6 +8,7 @@ import {
   Sparkles,
   TriangleAlert
 } from 'lucide-react'
+import { useId, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
 import type { LocalizedHostedReviewCopy } from '@/i18n/hosted-review-localized-copy'
@@ -67,6 +68,25 @@ export function CreateHostedReviewComposerFields({
   strippedBranch,
   baseSameAsBranch
 }: CreateHostedReviewComposerFieldsProps): React.JSX.Element {
+  const [baseEditing, setBaseEditing] = useState(false)
+  const baseInputRef = useRef<HTMLInputElement>(null)
+  const baseResultsId = useId()
+
+  const closeBaseSearch = (): void => {
+    setBaseEditing(false)
+    setBaseQuery('')
+    setBaseResults([])
+  }
+
+  const commitBaseSearch = (value: string): void => {
+    const nextBase = value.trim()
+    if (nextBase) {
+      setBase(nextBase)
+    }
+    closeBaseSearch()
+    baseInputRef.current?.blur()
+  }
+
   return (
     <>
       {/* Why: a single line that shows the head->base flow plain-language so
@@ -145,22 +165,39 @@ export function CreateHostedReviewComposerFields({
       {/* Why: base picker as its own labeled row so the title input can use
           the full width. The dropdown chevron makes the picker affordance
           obvious; the inline label clarifies that this is the merge target. */}
-      <div className="flex items-center gap-2">
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
         <span className="shrink-0 text-[11px] text-muted-foreground">
           {translate('auto.components.right.sidebar.SourceControl.1f7119f604', 'Base')}
         </span>
         <div className="relative min-w-0 flex-1">
           <input
+            ref={baseInputRef}
             aria-label={translate(
               'auto.components.right.sidebar.SourceControl.6055949c50',
               '{{value0}} base branch',
               { value0: copy.titleLabel }
             )}
-            value={baseQuery || base}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={baseEditing && baseResults.length > 0}
+            aria-controls={baseResultsId}
+            value={baseEditing ? baseQuery : base}
             disabled={fieldsLocked}
-            onChange={(event) => {
-              setBaseQuery(event.target.value)
-              setBase(event.target.value)
+            onFocus={(event) => {
+              setBaseEditing(true)
+              setBaseQuery(event.currentTarget.value)
+            }}
+            onBlur={closeBaseSearch}
+            onChange={(event) => setBaseQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                commitBaseSearch(baseQuery)
+              } else if (event.key === 'Escape') {
+                event.preventDefault()
+                closeBaseSearch()
+                baseInputRef.current?.blur()
+              }
             }}
             placeholder={translate(
               'auto.components.right.sidebar.SourceControl.e64a632456',
@@ -173,9 +210,38 @@ export function CreateHostedReviewComposerFields({
             aria-hidden="true"
           />
         </div>
+
+        {baseEditing && baseResults.length > 0 ? (
+          <div
+            id={baseResultsId}
+            role="listbox"
+            className="col-start-2 max-h-28 overflow-auto rounded-md border border-border p-1 scrollbar-sleek"
+          >
+            {baseResults.map((ref) => (
+              <button
+                key={ref}
+                type="button"
+                role="option"
+                aria-selected={stripBaseRef(base) === ref}
+                disabled={fieldsLocked}
+                className={cn(
+                  'flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-left font-mono text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent',
+                  stripBaseRef(base) === ref && 'bg-accent text-accent-foreground'
+                )}
+                onMouseDown={(event) => {
+                  event.preventDefault()
+                  commitBaseSearch(ref)
+                }}
+              >
+                <span className="truncate">{ref}</span>
+                {stripBaseRef(base) === ref ? <Check className="size-3" /> : null}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
 
-      {stackParentReview ? (
+      {stackParentReview && !baseEditing ? (
         <label
           className={cn(
             'flex items-start gap-2 rounded-md border border-border bg-background px-2 py-1.5 text-foreground transition-colors',
@@ -211,7 +277,7 @@ export function CreateHostedReviewComposerFields({
         </label>
       ) : null}
 
-      {stackParentReview && stacked ? (
+      {stackParentReview && !baseEditing && stacked ? (
         <div className="rounded-md border border-border bg-muted/30 px-2 py-1.5 text-[11px]">
           <div className="flex min-w-0 items-center gap-1.5 text-foreground">
             <GitPullRequestArrow className="size-3 shrink-0 text-muted-foreground" />
@@ -256,33 +322,6 @@ export function CreateHostedReviewComposerFields({
           {translate('auto.components.right.sidebar.SourceControl.78ddfd0bb4', 'Create as draft')}
         </span>
       </label>
-
-      {baseResults.length > 0 ? (
-        <div className="max-h-28 overflow-auto rounded-md border border-border p-1 scrollbar-sleek">
-          {baseResults.map((ref) => (
-            <button
-              key={ref}
-              type="button"
-              disabled={fieldsLocked}
-              className={cn(
-                'flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-left font-mono text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent',
-                stripBaseRef(base) === ref && 'bg-accent text-accent-foreground'
-              )}
-              onClick={() => {
-                if (fieldsLocked) {
-                  return
-                }
-                setBase(ref)
-                setBaseQuery('')
-                setBaseResults([])
-              }}
-            >
-              <span className="truncate">{ref}</span>
-              {stripBaseRef(base) === ref ? <Check className="size-3" /> : null}
-            </button>
-          ))}
-        </div>
-      ) : null}
 
       <CreateHostedReviewComposerMessages
         copy={copy}
