@@ -48,16 +48,16 @@ function runWriteBundle(plugin: Plugin, dir: string, code = ''): void {
   )
 }
 
-function runCloseBundle(plugin: Plugin): void {
+async function runCloseBundle(plugin: Plugin): Promise<void> {
   const hook = plugin.closeBundle
   if (typeof hook !== 'function') {
     throw new Error('Expected closeBundle hook')
   }
-  hook.call({} as never)
+  await hook.call({} as never)
 }
 
 describe('plain Node entry guard', () => {
-  it('smoke-loads the daemon after output files are written', () => {
+  it('smoke-loads the daemon after output files are written', async () => {
     const dir = createOutputDir()
     const plugin = createPlainNodeEntryGuardPlugin()
 
@@ -67,17 +67,17 @@ describe('plain Node entry guard', () => {
       'console.error("Usage: daemon-entry <socket>"); process.exit(1)\n'
     )
 
-    expect(() => runCloseBundle(plugin)).not.toThrow()
+    await expect(runCloseBundle(plugin)).resolves.toBeUndefined()
   })
 
-  it('runs the deferred smoke from closeBundle', () => {
+  it('runs the deferred smoke from closeBundle', async () => {
     const dir = createOutputDir()
     const plugin = createPlainNodeEntryGuardPlugin()
 
     runWriteBundle(plugin, dir)
     writeFileSync(join(dir, 'daemon-entry.js'), "require('./missing-module')\n")
 
-    expect(() => runCloseBundle(plugin)).toThrow('failed to load under plain Node')
+    await expect(runCloseBundle(plugin)).rejects.toThrow('failed to load under plain Node')
   })
 
   it('rejects Electron imports during the static bundle scan', () => {
@@ -96,15 +96,30 @@ describe('plain Node entry guard', () => {
     )
   })
 
-  it('fails the smoke when the daemon exits zero on an empty argv', () => {
+  it('fails the smoke when the daemon exits zero on an empty argv', async () => {
     const dir = createOutputDir()
     const plugin = createPlainNodeEntryGuardPlugin()
 
     runWriteBundle(plugin, dir)
     writeFileSync(join(dir, 'daemon-entry.js'), 'console.error("Usage: daemon-entry <socket>")\n')
 
-    expect(() => runCloseBundle(plugin)).toThrow('did not reject an empty argv')
+    await expect(runCloseBundle(plugin)).rejects.toThrow('did not reject an empty argv')
   })
+
+  // daemon-entry installs a SIGTERM handler, so the smoke deadline only holds if
+  // it escalates to SIGKILL — spawnSync's own timeout would block here forever.
+  it('kills a daemon that traps SIGTERM and never exits', async () => {
+    const dir = createOutputDir()
+    const plugin = createPlainNodeEntryGuardPlugin({ timeoutMs: 250, killGraceMs: 250 })
+
+    runWriteBundle(plugin, dir)
+    writeFileSync(
+      join(dir, 'daemon-entry.js'),
+      "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)\n"
+    )
+
+    await expect(runCloseBundle(plugin)).rejects.toThrow('did not exit within 250ms')
+  }, 10_000)
 })
 
 // Why: writeBundle skips names absent from the bundle, so a renamed rollup input
