@@ -6,14 +6,18 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `8be6301811` on `skills-share` (pushed; no PR).
-- Orca Cloud: `81a581d` on `skills-share-cloud` (pushed; no PR).
+- Orca implementation: `e6737e5068` on `skills-share` (pushed; no PR).
+- Orca Cloud: `ddbd4e2` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
 
 - Local Node and web typechecks, changed-code quality gates, 94 skill-domain files with 770 tests
-  passed and 3 skipped, 130 Orca Cloud API tests, the full Cloud monorepo test/typecheck/lint/build
+  passed and 3 skipped, 132 Orca Cloud API tests, the full Cloud monorepo test/typecheck/lint/build
   gates, and Terraform validation.
+- Remote upload sessions actively expire abandoned bytes after their bounded idle lifetime, and
+  begin/chunk/commit retries resume from the host-acknowledged offset under one stable transfer ID.
+- Identical archives are deduplicated only within an owner tenant. PostgreSQL object identity and
+  tenant-hashed GCS keys prevent cross-tenant existence or finalization-timing disclosure.
 - Native Windows package/install/recovery/copy-fallback tests and Node typecheck on `windows 2`;
   the current slice passed 284 tests with 21 intentional platform skips across 43 files.
 - Native Windows transaction validation passed all 21 cases at `6d3ce582aa`, including a real
@@ -421,8 +425,8 @@ does not mean the surrounding phase is complete.
 - [x] Allow only required signed POST upload and GET/HEAD download behavior and response headers.
 - [x] Keep the bucket off public custom domains.
 - [x] Define immutable final keys as
-      `packages/v1/sha256/<prefix>/<archive-sha256>/package.tar.gz`, with the logical package digest
-      verified in object metadata and PostgreSQL.
+      `packages/v1/tenants/<tenant-hash>/sha256/<prefix>/<archive-sha256>/package.tar.gz`, with the
+      logical package digest verified in object metadata and PostgreSQL.
 - [x] Define tenant-bound random quarantine keys as `uploads/<upload-id>/package.tar.gz`.
 
 ### Database and secret
@@ -489,7 +493,7 @@ does not mean the surrounding phase is complete.
 - [x] Add unpredictable, revocable, optionally version-pinned `skill_share_records`.
 - [x] Add bounded `skill_package_audit_events` without contents, filenames, or signed values.
 - [x] Add unique package slug per organization, immutable version and digest constraints, and
-      unique final GCS key/generation constraints.
+      tenant-scoped archive and final GCS key/generation constraints.
 - [x] Add active-share, ACL-principal, and pending-upload expiration indexes.
 - [x] Add foreign keys preventing blob-reference deletion while a published version uses it.
 - [ ] Test forward migration, rollback strategy, backup restoration, and migration compatibility
@@ -520,9 +524,10 @@ does not mean the surrounding phase is complete.
 - [x] Validate GCS key, size, type, metadata, tenant, generation, and expiry before streaming.
 - [x] Stream once to calculate archive SHA-256 and validate envelope, manifest, paths, limits, and
       package digest.
-- [x] Promote with an if-absent generation precondition to the content-addressed final key.
-- [x] If the final key exists, verify recorded identity without exposing cross-tenant
-      deduplication.
+- [x] Promote with an if-absent generation precondition to the tenant-scoped,
+      content-addressed final key.
+- [x] If the tenant's final key exists, verify recorded identity without exposing cross-tenant
+      package existence.
 - [x] Publish the version and complete the upload in a PostgreSQL transaction.
 - [x] Delete quarantine bytes after success and rely on lifecycle cleanup for abandonment.
 - [x] Make all mutating endpoints accept idempotency keys.
@@ -556,7 +561,9 @@ does not mean the surrounding phase is complete.
 - [x] Test malformed, oversized, and resource-exhausting archives during finalization.
 - [x] Test finalization semaphore saturation and retry behavior.
 - [x] Test concurrent idempotent mutations and partial database/GCS failures.
-- [ ] Test deduplication without cross-tenant timing or response disclosure.
+- [x] Test tenant-scoped deduplication without cross-tenant timing or response disclosure. Orca
+      Cloud `ddbd4e2` proves identical archives use distinct tenant-hashed GCS keys and independent
+      PostgreSQL object identities.
 - [x] Test quota and rate limits.
 - [x] Test durable shares resolving intended latest and pinned immutable versions.
 - [ ] Test update, rollback, revocation, deletion, soft-delete recovery, and orphan reconciliation.
@@ -625,8 +632,10 @@ does not mean the surrounding phase is complete.
 - [x] Keep transfer separate from installation so grants, relayed chunks, and local files converge
       at the validated ingress boundary.
 - [x] Make upload sessions bounded by count, total bytes, idle lifetime, and chunk size.
-- [x] Require monotonic offsets and idempotent acknowledged-chunk retry or full restart.
-- [x] Release staging bytes after cancellation, disconnect, timeout, and runtime restart.
+- [x] Require monotonic offsets and idempotent acknowledged-chunk retry or full restart. A stable
+      transfer ID and host-acknowledged offset resume a lost begin response or interrupted upload.
+- [x] Release staging bytes after cancellation, disconnect, timeout, and runtime restart. Active
+      idle timers remove abandoned archives even when no later upload arrives.
 
 ### Direct and client-mediated transfer
 

@@ -39,7 +39,7 @@ that larger package-manager surface.
 
 ## Current execution status
 
-Orca implementation through `8be6301811` and Orca Cloud implementation through `81a581d` are
+Orca implementation through `e6737e5068` and Orca Cloud implementation through `ddbd4e2` are
 pushed on feature branches without an Orca pull request. Local, Windows, WSL, paired-runtime, and
 Docker-backed SSH validation are substantially complete; the implementation checklist records the
 exact evidence and remaining physical-host and failure-recovery gates.
@@ -314,21 +314,22 @@ switch without disrupting existing artifact links.
 ```text
 gs://onorca-cloud-skill-packages/
   uploads/<upload-id>/package.tar.gz
-  packages/v1/sha256/<first-two-hex>/<archive-sha256>/package.tar.gz
+  packages/v1/tenants/<tenant-hash>/sha256/<first-two-hex>/<archive-sha256>/package.tar.gz
 ```
 
 Rules:
 
 - `uploads/` is quarantine storage and is never downloadable through a share.
 - Upload IDs are random, single-use, tenant-bound, and expire in PostgreSQL as well as GCS.
-- Final package keys are derived from the validated archive SHA-256.
+- Final package keys are derived from a one-way owner-tenant hash and the validated archive
+  SHA-256. Raw tenant identifiers never appear in object names.
 - The database records the final object's GCS generation, compressed size, archive SHA-256, and
   package digest.
 - Final objects are never overwritten. Promotion uses a generation-match precondition.
-- If a final key already exists, finalization verifies its archive SHA-256 and logical package
-  digest metadata before reusing it.
-- Internal deduplication never changes tenant-scoped API responses or reveals that another
-  organization already stored the same digest.
+- If a tenant's final key already exists, finalization verifies its archive SHA-256 and logical
+  package digest metadata before reusing it.
+- Deduplication is tenant-scoped in both GCS and PostgreSQL, so another tenant's matching archive
+  cannot change publication timing or reveal that the digest already exists.
 - GCS object versioning remains off; immutable keys plus stored generations prevent accidental
   replacement, while seven-day soft delete provides operator recovery.
 - Deleting the final database reference deletes the object only after a transaction proves no
@@ -425,7 +426,7 @@ Required constraints and indexes include:
 
 - Unique package slug within its owning organization.
 - Unique immutable version ID and package digest identity.
-- Unique final GCS object key/generation pair.
+- Tenant-scoped archive identity and final GCS object key/generation pair.
 - Share lookup by unpredictable ID and active/revoked state.
 - ACL lookup by package and principal.
 - Pending-upload lookup by owner and expiration.
