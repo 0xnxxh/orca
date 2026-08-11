@@ -1,5 +1,6 @@
 import type { ManagedPane } from '@/lib/pane-manager/pane-manager-types'
 import { readProposedPaneFitDimensions } from '@/lib/pane-manager/pane-fit'
+import { isManagedPaneDisplayNone } from '@/lib/pane-manager/pane-display-visibility'
 
 /**
  * Shared guards and write choreography for painting a main-model snapshot into
@@ -40,6 +41,32 @@ export function resolvePositiveTerminalDimensions(
  */
 export function readProposedTerminalCols(pane: ManagedPane): number | undefined {
   return readProposedPaneFitDimensions(pane)?.cols
+}
+
+/**
+ * Whether a withheld alt frame must be painted now, asked once the post-replay
+ * fit has already failed to land.
+ *
+ * Why display:none rather than "is the target still unknown": the skip is a
+ * deferral whose repaint rides that fit continuation, and only a hidden pane
+ * still owes one — its continuation is parked for the reveal (which is also why
+ * its completion resolves false immediately). A visible pane gets no second
+ * chance, so a permanently unmeasurable one (display:none never applied, but a
+ * box under the 48x24 fit floor: the divider clamp, a sliver from repeated
+ * splits) would lose the frame forever.
+ *
+ * The width re-check keeps #13014: if the pane did become measurable and is
+ * genuinely narrower than the capture grid, a later fit would clip the frame,
+ * so leave it withheld.
+ */
+export function shouldRepaintDeferredAltFrame(
+  pane: ManagedPane,
+  snapshotCols: number | undefined
+): boolean {
+  if (isManagedPaneDisplayNone(pane)) {
+    return false
+  }
+  return !shouldSkipAltFrameForWidthMismatch(snapshotCols, readProposedTerminalCols(pane))
 }
 
 export function shouldSkipAltFrameForWidthMismatch(
@@ -104,4 +131,14 @@ export function buildMainModelSnapshotReplayWrites(
   // blank cells; clear the alt buffer so the pre-hide frame can't bleed
   // through blank cells (spares normal-buffer scrollback).
   return ['\x1b[0m\x1b[?1049h\x1b[2J\x1b[H', ...altFrame]
+}
+
+/**
+ * Paints a frame a previous skipAltFrame replay withheld, once it is known no
+ * fit will move the grid off the capture grid. Only the alt-screen half: the
+ * normal buffer and its scrollback were already rebuilt by that replay and must
+ * not be replayed a second time.
+ */
+export function buildDeferredAltFrameReplayWrites(snapshot: { data: string }): string[] {
+  return buildMainModelSnapshotReplayWrites({ data: snapshot.data, alternateScreen: true })
 }

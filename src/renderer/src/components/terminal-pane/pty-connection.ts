@@ -261,10 +261,12 @@ import {
 } from './hidden-output-restore-scheduler'
 import { resolveHiddenRestoreScrollbackRows } from './terminal-hidden-restore-scrollback'
 import {
+  buildDeferredAltFrameReplayWrites,
   buildMainModelSnapshotReplayWrites,
   hasPositiveTerminalDimensions,
   readProposedTerminalCols,
   resolvePositiveTerminalDimensions,
+  shouldRepaintDeferredAltFrame,
   shouldSkipAltFrameForWidthMismatch
 } from './terminal-snapshot-replay-paint'
 import {
@@ -4078,7 +4080,7 @@ export function connectPanePty(
     }
   )
 
-  const forwardPtyInput = (data: string): void => {
+  const onDataDisposable = pane.terminal.onData((data) => {
     // Why: xterm auto-replies to embedded query sequences (DA1, DECRQM,
     // OSC 10/11, focus, CPR) via onData. When we replay recorded PTY bytes
     // into xterm for scrollback/cold-restore/snapshot, those queries would
@@ -4213,13 +4215,6 @@ export function connectPanePty(
       clearPendingTerminalInputIntent()
       requestRecoveryForUndeliverableInput()
     }
-  }
-  const onDataDisposable = pane.terminal.onData((data) => {
-    if (deps.deferPtyInput) {
-      deps.deferPtyInput(pane.id, data, forwardPtyInput)
-      return
-    }
-    forwardPtyInput(data)
   })
   const imeCompositionRouteDisposable = installTerminalImeCompositionRoute({
     terminalElement: pane.terminal.element,
@@ -7345,11 +7340,26 @@ export function connectPanePty(
                 }
               )
               pendingHiddenSnapshotFit = fit
+              let fitCompleted = false
               try {
-                await fit.completion
+                fitCompleted = await fit.completion
               } finally {
                 if (pendingHiddenSnapshotFit === fit) {
                   pendingHiddenSnapshotFit = null
+                }
+              }
+              if (
+                !fitCompleted &&
+                skippedAltFrame &&
+                isCurrentRestore() &&
+                transport.getPtyId() === currentPtyId &&
+                shouldRepaintDeferredAltFrame(pane, snapshot.cols)
+              ) {
+                // Why: the skip is a deferral, not a deletion. No fit landed, and the pulse
+                // repaint lives in that failed continuation, so paint the frame here unless the
+                // pane is hidden (its reveal fit still owes one) or measurably narrower.
+                for (const replayChunk of buildDeferredAltFrameReplayWrites(snapshot)) {
+                  writeReplayData(replayChunk)
                 }
               }
               if (isCurrentRestore()) {
