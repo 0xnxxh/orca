@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -104,8 +104,9 @@ describe.runIf(RUN_REAL_WINDOWS)('real Windows rename contention', () => {
         code: expect.stringMatching(/^(EACCES|EBUSY|EPERM)$/)
       }
     )
-    expect(await readFile(value.file, 'utf8')).toBe('private skill')
+    expect((await stat(value.source)).isDirectory()).toBe(true)
     await lock.released
+    expect(await readFile(value.file, 'utf8')).toBe('private skill')
 
     await expect(
       renameSkillPathWithWindowsRetry(value.source, value.target)
