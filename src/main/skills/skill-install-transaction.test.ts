@@ -119,6 +119,42 @@ describe('skill install transaction', () => {
     expect(await readFile(join(destination, 'SKILL.md'), 'utf8')).toContain('# Cloud')
   })
 
+  it('rejects a case-insensitive sibling collision before destination mutation', async () => {
+    const root = await temporaryDirectory()
+    const archive = await packageVersion(root, 'version_1', '# Cloud')
+    const collision = join(root, 'skills', 'TEST-SKILL')
+    await mkdir(collision, { recursive: true })
+    await writeFile(join(collision, 'SKILL.md'), 'existing case variant')
+
+    const result = await installLocalSkillPackage(installInput(root, archive))
+
+    expect(result).toMatchObject({ status: 'conflict', conflict: { kind: 'name-collision' } })
+    expect(await readFile(join(collision, 'SKILL.md'), 'utf8')).toBe('existing case variant')
+  })
+
+  it.runIf(process.platform === 'win32')(
+    'installs through a canonical Windows path longer than MAX_PATH',
+    async () => {
+      const root = await temporaryDirectory()
+      const archive = await packageVersion(root, 'version_1', '# Long path')
+      const destinationRoot = join(
+        root,
+        ...Array.from({ length: 6 }, (_, index) => `segment-${index}-${'x'.repeat(32)}`),
+        'skills'
+      )
+      await mkdir(destinationRoot, { recursive: true })
+      const canonicalPath = join(destinationRoot, 'test-skill')
+      expect(canonicalPath.length).toBeGreaterThan(260)
+
+      const result = await installLocalSkillPackage(
+        installInput(root, archive, { destinationRoot })
+      )
+
+      expect(result.status).toBe('installed')
+      expect(await readFile(join(canonicalPath, 'SKILL.md'), 'utf8')).toContain('# Long path')
+    }
+  )
+
   it('restores the previous version when commit is interrupted after backup', async () => {
     const root = await temporaryDirectory()
     const first = await packageVersion(root, 'version_1', '# First')
