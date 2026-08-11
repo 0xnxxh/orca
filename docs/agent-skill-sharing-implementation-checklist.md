@@ -6,7 +6,7 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `c7c8a2e32d` on `skills-share` (pushed; no PR).
+- Orca implementation: `b4f5b6c119` on `skills-share` (pushed; no PR).
 - Orca Cloud: `81a581d` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
@@ -687,7 +687,9 @@ matching Orca's supported Windows placement topology.
 - [x] Test an unowned junction, external link, broken junction, and provider parent that is already
       linked. All four real NTFS junction cases passed on `windows 2` at `c7c8a2e32d`; Orca repairs
       only its receipt-owned broken junction and preserves unowned links.
-- [ ] Test copy-fallback drift during update and removal.
+- [x] Test copy-fallback drift during update and removal. Real Windows coverage at `b4f5b6c119`
+      proves a locally modified independent copy is skipped during reconciliation and refused
+      during removal without changing its bytes.
 - [x] Hold destination files open to simulate antivirus/indexer contention and verify bounded
       `EPERM`, `EACCES`, and `EBUSY` rename retries. A real `FileShare.None` lock on `windows 2`
       proved transient recovery and bounded exhaustion at `18fe31f107`.
