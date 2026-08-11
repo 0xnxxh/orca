@@ -105,12 +105,18 @@ describe('startup ordering', () => {
     const inventoryIndex = source.indexOf('await listLiveDaemonPtyIds()', daemonInitIndex)
     const reconciliation = 'codexRuntimeHome?.reconcileLegacySharedHomeForRetainedPanes()'
     const reconciliationIndex = source.indexOf(reconciliation, inventoryIndex)
+    const hookReconciliationIndex = source.indexOf(
+      'reconcileRetainedCodexHookHomes({',
+      inventoryIndex
+    )
     const serveIndex = source.indexOf('if (serveOptions) {', reconciliationIndex)
     const desktopIndex = source.indexOf('Promise.resolve(openMainWindow())', serveIndex)
 
     expect(daemonInitIndex).toBeGreaterThanOrEqual(0)
-    expect(routeGateIndex).toBeGreaterThan(daemonInitIndex)
-    expect(inventoryIndex).toBeGreaterThan(routeGateIndex)
+    expect(inventoryIndex).toBeGreaterThan(daemonInitIndex)
+    expect(routeGateIndex).toBeGreaterThan(inventoryIndex)
+    expect(hookReconciliationIndex).toBeGreaterThan(inventoryIndex)
+    expect(hookReconciliationIndex).toBeLessThan(reconciliationIndex)
     expect(reconciliationIndex).toBeGreaterThan(inventoryIndex)
     expect(serveIndex).toBeGreaterThan(reconciliationIndex)
     expect(desktopIndex).toBeGreaterThan(serveIndex)

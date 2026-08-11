@@ -216,6 +216,7 @@ import {
 } from './codex-accounts/runtime-selection'
 import { normalizeClaudeRuntimeSelection } from './claude-accounts/runtime-selection'
 import { codexHookService, setSystemCodexHomeHookSweepSuppressed } from './codex/hook-service'
+import { reconcileRetainedCodexHookHomes } from './codex/retained-codex-hook-state'
 import {
   ensureRealHomeCodexHookState,
   isRealHomeCodexHookLaneUsable
@@ -917,11 +918,20 @@ function startTerminalRuntimeStartupServices(): Promise<void> {
       await initDaemonPtyProvider(signal, {
         macosLoginSessionWatch: process.platform === 'darwin' && !isServeMode
       })
-      if (codexRuntimeHome?.isHostSystemDefaultRealHome() && hasRecordedLegacySharedCodexPane()) {
-        const livePtyIds = await listLiveDaemonPtyIds()
-        if (livePtyIds) {
+      // Why: a retained shell keeps its launch-time Codex home even when the current routing lane changes.
+      const livePtyIds = await listLiveDaemonPtyIds()
+      if (livePtyIds && codexRuntimeHome) {
+        if (codexRuntimeHome.isHostSystemDefaultRealHome() && hasRecordedLegacySharedCodexPane()) {
           reconcileCodexPaneAccountsWithLivePtys(livePtyIds)
         }
+        const settings = store?.getSettings()
+        reconcileRetainedCodexHookHomes({
+          hookService: codexHookService,
+          hooksEnabled:
+            isAgentStatusHooksEnabled(settings) &&
+            settings?.disabledTuiAgents.includes('codex') !== true,
+          runtimeHomePaths: codexRuntimeHome.getRetainedHostCodexHookHomePaths(livePtyIds)
+        })
       }
       // Why: retained shells can invoke Codex immediately after the startup gate.
       codexRuntimeHome?.reconcileLegacySharedHomeForRetainedPanes()
