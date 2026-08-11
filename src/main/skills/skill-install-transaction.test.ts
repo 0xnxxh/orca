@@ -186,6 +186,35 @@ describe('skill install transaction', () => {
     )
   })
 
+  it('returns a retryable result after rename exhaustion preserves the old version', async () => {
+    const root = await temporaryDirectory()
+    const first = await packageVersion(root, 'version_1', '# First')
+    const second = await packageVersion(root, 'version_2', '# Second')
+    await installLocalSkillPackage(installInput(root, first))
+    const busyFilesystem = {
+      ...nativeSkillInstallFilesystem,
+      rename: async (source: string, target: string): Promise<void> => {
+        if (target.includes('.orca-backup-')) {
+          throw Object.assign(new Error('locked by scanner'), { code: 'EBUSY' })
+        }
+        await nativeSkillInstallFilesystem.rename(source, target)
+      }
+    }
+
+    const result = await installLocalSkillPackage(
+      installInput(root, second, { filesystem: busyFilesystem })
+    )
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      errorCategory: 'skill-install-filesystem-failed',
+      failure: { category: 'filesystem', retryable: true }
+    })
+    expect(await readFile(join(root, 'skills', 'test-skill', 'SKILL.md'), 'utf8')).toContain(
+      '# First'
+    )
+  })
+
   it('returns a retryable failure when another process owns the destination lock', async () => {
     const root = await temporaryDirectory()
     const archive = await packageVersion(root, 'version_1', '# First')

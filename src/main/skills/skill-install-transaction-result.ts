@@ -40,7 +40,7 @@ export function skillInstallFailureResult(
   error: unknown
 ): SkillInstallResult | null {
   const failure = skillInstallFailureFromError(error)
-  if (!failure || (failure.code !== 'skill-install-busy' && failure.category !== 'cancelled')) {
+  if (!failure || !['filesystem', 'recovery', 'cancelled'].includes(failure.category)) {
     return null
   }
   return {
