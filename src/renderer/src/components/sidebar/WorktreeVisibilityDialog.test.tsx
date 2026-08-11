@@ -163,6 +163,9 @@ describe('WorktreeVisibilityDialog', () => {
     expect(document.body.textContent).toContain('scratch-1')
     expect(document.body.textContent).toContain('.claude/worktrees/scratch-1')
     expect(document.body.textContent).not.toContain('/repo/.claude')
+    expect(
+      document.querySelector('button[aria-label="Which worktrees are hidden by default?"]')
+    ).not.toBeNull()
   })
 
   it('recovers a hidden worktree per path through the existing import exception', async () => {

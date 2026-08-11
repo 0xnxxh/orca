@@ -4688,6 +4688,12 @@
           "bff3bdd00c": "Cambiar nombre del espacio de trabajo",
           "8df295a78d": "No se pudo cambiar el nombre del espacio de trabajo."
         },
+        "WorktreeVisibilityHelpPopover": {
+          "c41f2d7e90": "¿Qué worktrees se ocultan de forma predeterminada?",
+          "8db4e19a26": "Este ajuste nunca oculta los worktrees creados mediante Orca.",
+          "54a7c2f183": "En los repositorios recién añadidos, los worktrees creados manualmente o con otra herramienta se ocultan de forma predeterminada para evitar elementos inesperados en la barra lateral. «Mostrar siempre» incluye estos worktrees, tanto actuales como futuros.",
+          "b9e0d43675": "Los worktrees temporales de agentes en .claude/worktrees/* y .gsd-workspaces/* permanecen ocultos aunque se active «Mostrar siempre» porque son espacios de trabajo temporales de herramientas. Usa «Mostrar» abajo para añadir uno."
+        },
         "WorktreeVisibilityDialog": {
           "83a5ba8dd1": "Worktrees que no son de Orca",
           "f1f71b9f02": "Mostrar siempre",

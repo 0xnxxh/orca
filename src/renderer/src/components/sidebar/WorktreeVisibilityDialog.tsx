@@ -27,6 +27,7 @@ import {
   importNewExternalWorktreeInboxPaths,
   type NewExternalWorktreesInboxActionState
 } from './new-external-worktrees-inbox-actions'
+import WorktreeVisibilityHelpPopover from './WorktreeVisibilityHelpPopover'
 
 export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const activeModal = useAppStore((s) => s.activeModal)
@@ -140,12 +141,15 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
     <Dialog open onOpenChange={(open) => !open && closeModal()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>
-            {translate(
-              'auto.components.sidebar.WorktreeVisibilityDialog.83a5ba8dd1',
-              'Non-Orca worktrees'
-            )}
-          </DialogTitle>
+          <div className="flex items-center gap-1.5">
+            <DialogTitle>
+              {translate(
+                'auto.components.sidebar.WorktreeVisibilityDialog.83a5ba8dd1',
+                'Non-Orca worktrees'
+              )}
+            </DialogTitle>
+            <WorktreeVisibilityHelpPopover />
+          </div>
           <DialogDescription>{repo.displayName}</DialogDescription>
         </DialogHeader>
 
