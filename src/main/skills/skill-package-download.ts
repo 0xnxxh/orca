@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
-import { mkdir, mkdtemp, open, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, open, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   SKILL_PACKAGE_CONTENT_TYPE,
@@ -146,6 +146,9 @@ export async function downloadSkillPackageGrant(
   }
 
   await mkdir(input.temporaryRoot, { recursive: true, mode: 0o700 })
+  if (process.platform !== 'win32') {
+    await chmod(input.temporaryRoot, 0o700)
+  }
   const temporaryDirectory = await mkdtemp(join(input.temporaryRoot, '.orca-skill-download-'))
   const archivePath = join(temporaryDirectory, 'package.tar.gz')
   try {

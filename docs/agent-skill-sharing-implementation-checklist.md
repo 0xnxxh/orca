@@ -786,9 +786,10 @@ without treating the missing external topology as a product failure.
 
 ### Security review
 
-- [ ] Threat-model package creation, archive ingestion, manifest trust, path containment, local
+- [x] Threat-model package creation, archive ingestion, manifest trust, path containment, local
       conflicts, grants, redirects/SSRF, authorization, tenant isolation, and instruction/script
-      trust.
+      trust in `docs/reference/agent-skill-sharing-threat-model.md`; keep approval and residual-risk
+      acceptance as separate human gates.
 - [ ] Verify owner-private staging permissions on supported hosts.
 - [x] Rate-limit uploads, finalization, downloads, share resolution, and remote transfer sessions.
 - [ ] Test malicious redirects, DNS/host confusion, expired grants, mismatched generations, and

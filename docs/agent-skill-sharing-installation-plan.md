@@ -925,6 +925,9 @@ The calling client owns:
 
 ## Security and privacy controls
 
+The detailed threat register and residual release gates live in
+[`docs/reference/agent-skill-sharing-threat-model.md`](./reference/agent-skill-sharing-threat-model.md).
+
 - Treat `SKILL.md` and packaged scripts as executable code for trust messaging.
 - Show author, organization, version, digest, file summary, and executable files before install.
 - Require authentication for private share resolution and every download grant.

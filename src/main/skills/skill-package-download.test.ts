@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SKILL_PACKAGE_CONTENT_TYPE } from '../../shared/skill-package-manifest'
 import { downloadSkillPackageGrant } from './skill-package-download'
@@ -48,10 +48,19 @@ async function input(overrides: Record<string, unknown> = {}) {
 
 describe('downloadSkillPackageGrant', () => {
   it('streams a verified package into an owner-private temporary file', async () => {
-    const result = await downloadSkillPackageGrant(await input())
+    const downloadInput = await input()
+    if (process.platform !== 'win32') {
+      await chmod(downloadInput.temporaryRoot, 0o755)
+    }
+    const result = await downloadSkillPackageGrant(downloadInput)
     expect(await readFile(result.archivePath)).toEqual(bytes)
     expect(result.archiveSha256).toBe(digest)
     expect(result.compressedBytes).toBe(bytes.length)
+    if (process.platform !== 'win32') {
+      expect((await stat(downloadInput.temporaryRoot)).mode & 0o777).toBe(0o700)
+      expect((await stat(dirname(result.archivePath))).mode & 0o777).toBe(0o700)
+      expect((await stat(result.archivePath)).mode & 0o777).toBe(0o600)
+    }
     await result.cleanup()
     await expect(readFile(result.archivePath)).rejects.toMatchObject({ code: 'ENOENT' })
   })

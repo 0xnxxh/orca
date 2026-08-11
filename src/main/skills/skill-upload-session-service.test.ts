@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -42,6 +42,12 @@ describe('SkillUploadSessionService', () => {
     const bytes = Buffer.from('immutable skill package')
     const packageIdentity = identity(bytes)
     const begun = await service.begin({ package: packageIdentity })
+    if (process.platform !== 'win32') {
+      expect((await stat(join(root, 'uploads'))).mode & 0o777).toBe(0o700)
+      expect((await stat(join(root, 'uploads', `${begun.uploadId}.tar.gz`))).mode & 0o777).toBe(
+        0o600
+      )
+    }
     const first = bytes.subarray(0, 8)
     const second = bytes.subarray(8)
 

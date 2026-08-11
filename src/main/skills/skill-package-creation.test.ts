@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gunzipSync, gzipSync } from 'node:zlib'
@@ -70,6 +70,15 @@ describe('skill package creation and extraction', () => {
     expect(await readFile(join(extracted.skillDirectory, 'scripts', 'run.sh'), 'utf8')).toContain(
       'echo test'
     )
+    if (process.platform !== 'win32') {
+      expect((await stat(created.archivePath)).mode & 0o777).toBe(0o600)
+      expect((await stat(join(root, 'extracted'))).mode & 0o777).toBe(0o700)
+      expect((await stat(extracted.skillDirectory)).mode & 0o777).toBe(0o700)
+      expect((await stat(join(extracted.skillDirectory, 'SKILL.md'))).mode & 0o777).toBe(0o600)
+      expect((await stat(join(extracted.skillDirectory, 'scripts', 'run.sh'))).mode & 0o777).toBe(
+        0o700
+      )
+    }
   })
 
   it('creates deterministic archives for fixed publication metadata', async () => {
