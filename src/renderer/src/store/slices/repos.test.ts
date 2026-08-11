@@ -52,6 +52,31 @@ describe('repo slice runtime routing', () => {
     expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
   })
 
+  it('keeps the repos array identity across a refetch that changes nothing', async () => {
+    reposList.mockResolvedValue([localRepo])
+    const store = createTestStore()
+    await store.getState().fetchRepos()
+    const reposRef = store.getState().repos
+
+    await store.getState().fetchRepos()
+
+    // Why: identity-keyed renderer memos (repo lookup index, selectors) rebuild on a new array.
+    expect(store.getState().repos).toBe(reposRef)
+  })
+
+  it('replaces the repos array identity when a refetch adds a repo', async () => {
+    reposList.mockResolvedValue([localRepo])
+    const store = createTestStore()
+    await store.getState().fetchRepos()
+    const reposRef = store.getState().repos
+    reposList.mockResolvedValue([localRepo, { ...localRepo, id: 'second', path: '/second' }])
+
+    await store.getState().fetchRepos()
+
+    expect(store.getState().repos).not.toBe(reposRef)
+    expect(store.getState().repos).toHaveLength(2)
+  })
+
   it('fetches repos from the active remote runtime environment', async () => {
     runtimeEnvironmentCall.mockResolvedValue({
       id: 'rpc-1',
