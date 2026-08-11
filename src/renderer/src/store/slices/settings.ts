@@ -14,6 +14,7 @@ import { normalizeTerminalCustomThemes } from '../../../../shared/terminal-custo
 import { normalizeTaskProviderSettings } from '../../../../shared/task-providers'
 import { normalizeOpenInApplications } from '../../../../shared/open-in-applications'
 import { createSettingsSearchState, type SettingsSearchState } from './settings-search-state'
+import { isRuntimeCatalogListingStale } from './runtime-status-hydration'
 import { normalizeDisabledTuiAgents } from '../../../../shared/tui-agent-selection'
 import {
   normalizeTuiAgentArgsRecord,
@@ -169,7 +170,9 @@ export const createSettingsSlice: StateCreator<AppState, [], [], SettingsSlice> 
     if (
       !runtimeEnvironmentCatalogHydrated ||
       runtimeEnvironmentIds.size !== runtimeStatusByEnvironmentId.size ||
-      runtimeEnvironments.some(({ id }) => !runtimeStatusByEnvironmentId.has(id))
+      runtimeEnvironments.some(({ id }) => !runtimeStatusByEnvironmentId.has(id)) ||
+      // Why: coverage is blind to catalog edits from another client or the orca CLI.
+      isRuntimeCatalogListingStale()
     ) {
       void get().hydrateRuntimeEnvironmentStatuses()
     }

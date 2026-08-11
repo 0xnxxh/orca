@@ -1,5 +1,16 @@
 import type { PublicKnownRuntimeEnvironment } from '../../../../shared/runtime-environments'
 
+/** Matches the renderer's other catalog-style cache TTLs (checks, work items, Jira). */
+export const RUNTIME_CATALOG_STALE_MS = 60_000
+
+let lastCatalogListedAt = 0
+
+/** Why: status coverage cannot observe catalog edits made by another client or the
+ * orca CLI, so an old-enough listing must be re-read even when coverage looks complete. */
+export function isRuntimeCatalogListingStale(): boolean {
+  return Date.now() - lastCatalogListedAt > RUNTIME_CATALOG_STALE_MS
+}
+
 type RuntimeStatusHydrationDependencies = {
   listEnvironments: () => Promise<PublicKnownRuntimeEnvironment[]>
   getCurrentEnvironments: () => PublicKnownRuntimeEnvironment[]
@@ -67,6 +78,7 @@ export function createRuntimeStatusHydration({
           markCatalogSettled()
           return
         }
+        lastCatalogListedAt = Date.now()
         if (!revisionsMatch(getCurrentEnvironments(), revisionsAtListStart)) {
           rerunRequested = true
           continue

@@ -10,6 +10,7 @@ import {
   RUNTIME_PROTOCOL_VERSION
 } from '../../../../shared/protocol-version'
 import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rpc-client'
+import { RUNTIME_CATALOG_STALE_MS } from './runtime-status-hydration'
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }))
 vi.mock('@/lib/agent-status', async (importOriginal) => {
@@ -827,5 +828,26 @@ describe('fetchSettings runtime catalog probe', () => {
     await vi.waitFor(() => expect(store.getState().runtimeStatusByEnvironmentId.size).toBe(0))
 
     expect(runtimeEnvironmentList).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-lists the catalog once the listing goes stale even though coverage still matches', async () => {
+    const environments = [makeRuntimeEnvironment('env-a')]
+    runtimeEnvironmentList.mockResolvedValue(environments)
+    const store = createTestStore()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+
+    try {
+      await store.getState().fetchSettings()
+      await vi.waitFor(() => expect(store.getState().runtimeStatusByEnvironmentId.size).toBe(1))
+
+      await store.getState().fetchSettings()
+      expect(runtimeEnvironmentList).toHaveBeenCalledTimes(1)
+
+      now.mockReturnValue(1_000_000 + RUNTIME_CATALOG_STALE_MS + 1)
+      await store.getState().fetchSettings()
+      await vi.waitFor(() => expect(runtimeEnvironmentList).toHaveBeenCalledTimes(2))
+    } finally {
+      now.mockRestore()
+    }
   })
 })
