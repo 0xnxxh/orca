@@ -563,13 +563,13 @@
               "64555d0014": "未找到基础分支"
             }
           }
-        }
-      },
-      "browser": {
-        "tab": {
-          "open": {
-            "urlFailed": "无法打开网址。",
-            "searchFailed": "无法使用 {{value0}} 搜索。"
+        },
+        "browser": {
+          "tab": {
+            "open": {
+              "urlFailed": "无法打开网址。",
+              "searchFailed": "无法使用 {{value0}} 搜索。"
+            }
           }
         }
       },

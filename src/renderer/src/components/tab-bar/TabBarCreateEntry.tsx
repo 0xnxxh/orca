@@ -345,7 +345,11 @@ function TabBarCreateEntrySession({
             setSwitchError(null)
             setSelectionGuidance(null)
           }}
-          disabled={disabled || pending}
+          // Why: disabling the focused input would hand focus to the body and
+          // break arrow/Escape navigation until the submission settles.
+          disabled={disabled}
+          readOnly={pending}
+          aria-busy={pending || undefined}
           role="combobox"
           aria-expanded={!error && activeOptions.length > 0}
           aria-controls={!error && activeOptions.length > 0 ? RESULT_LISTBOX_ID : undefined}

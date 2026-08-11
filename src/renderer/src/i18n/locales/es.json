@@ -563,13 +563,13 @@
               "64555d0014": "No se encontró ninguna rama base"
             }
           }
-        }
-      },
-      "browser": {
-        "tab": {
-          "open": {
-            "urlFailed": "No se pudo abrir la URL.",
-            "searchFailed": "No se pudo buscar con {{value0}}."
+        },
+        "browser": {
+          "tab": {
+            "open": {
+              "urlFailed": "No se pudo abrir la URL.",
+              "searchFailed": "No se pudo buscar con {{value0}}."
+            }
           }
         }
       },

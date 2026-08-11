@@ -186,14 +186,18 @@ describe('TabBarCreateEntry search behavior', () => {
     setQuery('react hooks')
     submit()
 
-    expect(container.querySelector('input')?.disabled).toBe(true)
+    // Read-only rather than disabled so the pending input keeps keyboard focus.
+    expect(container.querySelector('input')?.disabled).toBe(false)
+    expect(container.querySelector('input')?.readOnly).toBe(true)
+    expect(container.querySelector('input')?.getAttribute('aria-busy')).toBe('true')
     expect(container.querySelector<HTMLButtonElement>('[role="option"]')?.disabled).toBe(true)
     expect(container.querySelector('[role="option"] .animate-spin')).not.toBeNull()
 
     await act(async () => rejectOpen?.(new Error('Search failed safely.')))
 
     const input = container.querySelector('input')!
-    expect(input.disabled).toBe(false)
+    expect(input.readOnly).toBe(false)
+    expect(input.getAttribute('aria-busy')).toBeNull()
     expect(input.getAttribute('aria-expanded')).toBe('false')
     expect(input.getAttribute('aria-errormessage')).toBe('tab-create-entry-error')
     expect(container.querySelector('#tab-create-entry-error')?.textContent).toContain(
@@ -219,7 +223,7 @@ describe('TabBarCreateEntry search behavior', () => {
     await act(async () => resolveOpen?.())
 
     expect(onDidOpenEntry).not.toHaveBeenCalled()
-    expect(container.querySelector('input')?.disabled).toBe(false)
+    expect(container.querySelector('input')?.readOnly).toBe(false)
   })
 
   it('does not arm ordinary search when a ranked file disappears asynchronously', () => {

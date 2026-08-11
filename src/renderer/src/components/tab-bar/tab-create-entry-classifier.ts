@@ -83,6 +83,14 @@ function blockedOption(id: string, message: string): TabEntryOption {
   return { id, classification: { kind: 'blocked', message } }
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function invalidPathOption(error: unknown): TabEntryOption {
+  return blockedOption('invalid-path', errorMessage(error))
+}
+
 function fileListStatusOption(fileList: RuntimeFileListState): TabEntryOption | null {
   if (fileList.loading) {
     return blockedOption(
@@ -173,12 +181,7 @@ export function getTabEntryOptions(
       const filePath = validateNewTabEntryAbsolutePath(trimmed, context.localPlatform)
       return toOptions([{ kind: 'absolute-file', filePath }], limit)
     } catch (error) {
-      return [
-        blockedOption(
-          'invalid-absolute-path',
-          error instanceof Error ? error.message : String(error)
-        )
-      ]
+      return [blockedOption('invalid-absolute-path', errorMessage(error))]
     }
   }
 
@@ -210,12 +213,7 @@ export function getTabEntryOptions(
       return [fileStatus]
     }
     if (pathError) {
-      return [
-        blockedOption(
-          'invalid-path',
-          pathError instanceof Error ? pathError.message : String(pathError)
-        )
-      ]
+      return [invalidPathOption(pathError)]
     }
     return toOptions([search], limit, fileStatus)
   }
@@ -245,12 +243,7 @@ export function getTabEntryOptions(
     return toOptions([hostUrl, ...fuzzyExistingFiles], actionLimit)
   }
   if (pathError || !newFile) {
-    return [
-      blockedOption(
-        'invalid-path',
-        pathError instanceof Error ? pathError.message : String(pathError)
-      )
-    ]
+    return [invalidPathOption(pathError)]
   }
   if (isLikelyNewFileIntent(trimmed)) {
     return toOptions([newFile, search, ...fuzzyExistingFiles], actionLimit)

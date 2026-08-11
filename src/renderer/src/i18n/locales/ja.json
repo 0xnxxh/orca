@@ -563,13 +563,13 @@
               "64555d0014": "ベースブランチが見つかりません"
             }
           }
-        }
-      },
-      "browser": {
-        "tab": {
-          "open": {
-            "urlFailed": "URLを開けませんでした。",
-            "searchFailed": "{{value0}} で検索できませんでした。"
+        },
+        "browser": {
+          "tab": {
+            "open": {
+              "urlFailed": "URLを開けませんでした。",
+              "searchFailed": "{{value0}} で検索できませんでした。"
+            }
           }
         }
       },

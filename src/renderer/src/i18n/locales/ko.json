@@ -563,13 +563,13 @@
               "64555d0014": "기본 브랜치를 찾을 수 없습니다."
             }
           }
-        }
-      },
-      "browser": {
-        "tab": {
-          "open": {
-            "urlFailed": "URL을 열 수 없습니다.",
-            "searchFailed": "{{value0}}에서 검색할 수 없습니다."
+        },
+        "browser": {
+          "tab": {
+            "open": {
+              "urlFailed": "URL을 열 수 없습니다.",
+              "searchFailed": "{{value0}}에서 검색할 수 없습니다."
+            }
           }
         }
       },
