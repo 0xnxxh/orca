@@ -1,14 +1,18 @@
 import { useMemo, useState } from 'react'
-import { LoaderCircle, RotateCcw, Send, Square } from 'lucide-react'
-import { dispatchStructuredAgentSessionComposerCommand } from '../../../../shared/structured-agent-session-composer'
+import { RotateCcw } from 'lucide-react'
 import type { AgentType } from '../../../../shared/agent-status-types'
+import { dispatchStructuredAgentSessionComposerCommand } from '../../../../shared/structured-agent-session-composer'
+import { structuredAgentSessionPaneKey } from '../../../../shared/structured-agent-session-projection'
 import type { NativeChatLiveSession } from './use-native-chat-live-session'
 import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
 import { Button } from '@/components/ui/button'
 import { NativeChatApprovalCard } from './NativeChatApprovalCard'
+import { NativeChatComposer } from './NativeChatComposer'
+import { NativeChatEmptyState } from './NativeChatEmptyState'
 import { NativeChatMessageList } from './NativeChatMessageList'
 import { NativeChatQuestionCard } from './NativeChatQuestionCard'
-import { NativeChatSessionOptionPickers } from './NativeChatSessionOptionPickers'
+import { selectNativeChatViewState } from './native-chat-view-state'
+import { useNativeChatFontScale } from './use-native-chat-font-scale'
 import { useStructuredAgentSession } from './use-structured-agent-session'
 import { translate } from '@/i18n/i18n'
 
@@ -16,17 +20,19 @@ function encodeQuestionAnswer(questionId: string, answer: string): string {
   return `${encodeURIComponent(questionId)}:${encodeURIComponent(answer)}`
 }
 
-export function DesktopStructuredAgentSessionView(props: {
+export function NativeChatStructuredSession(props: {
+  tabId: string
   sessionId: string
   target: RuntimeClientTarget
   agent: AgentType
   allowFileUriLinks: boolean
 }): React.JSX.Element {
   const controller = useStructuredAgentSession(props)
-  const [draft, setDraft] = useState('')
   const [composerError, setComposerError] = useState<string | null>(null)
-  const agentLabel =
-    props.agent === 'codex' ? 'Codex' : props.agent === 'claude' ? 'Claude' : props.agent
+  const paneKey = useMemo(
+    () => structuredAgentSessionPaneKey(props.tabId, props.sessionId),
+    [props.sessionId, props.tabId]
+  )
   const session = useMemo<NativeChatLiveSession>(
     () => ({
       messages: controller.messages,
@@ -55,6 +61,8 @@ export function DesktopStructuredAgentSessionView(props: {
     }),
     [controller, props.agent, props.sessionId]
   )
+  const viewState = selectNativeChatViewState(session)
+  const fontScale = useNativeChatFontScale(viewState.kind === 'ready')
   const prompt = controller.prompts[0] ?? null
   const questionBody = prompt?.body.kind === 'question' ? prompt.body : null
   const retryableOutboxEntry =
@@ -63,35 +71,47 @@ export function DesktopStructuredAgentSessionView(props: {
       (entry) => entry.clientMessageId === controller.blockedClientMessageId
     ) ??
     null
-  const submit = async (): Promise<void> => {
-    const command = await dispatchStructuredAgentSessionComposerCommand(draft, {
-      agent: props.agent,
-      snapshot: controller.optionSnapshot,
-      invokeAction: async () => false,
-      setOption: controller.setStructuredOption
-    })
-    if (command.handled) {
-      setComposerError(command.error)
-      if (command.accepted) {
-        setDraft('')
-      }
-      return
-    }
-    if (controller.send(draft)) {
-      setDraft('')
-      setComposerError(null)
-    }
-  }
+  const structuredTransport = useMemo(
+    () => ({
+      send: controller.send,
+      dispatchCommand: (text: string) =>
+        dispatchStructuredAgentSessionComposerCommand(text, {
+          agent: props.agent,
+          snapshot: controller.optionSnapshot,
+          invokeAction: async () => false,
+          setOption: controller.setStructuredOption
+        }),
+      optionsSurface: controller.optionSurface,
+      optionSnapshot: controller.optionSnapshot,
+      onError: setComposerError,
+      runtime: (props.target.kind === 'local' ? 'local' : 'remote') as 'local' | 'remote'
+    }),
+    [controller, props.agent, props.target.kind]
+  )
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <NativeChatMessageList
-        session={session}
-        isWorking={controller.isWorking}
-        expandSignal={false}
-        fontScale={1}
-        allowFileUriLinks={props.allowFileUriLinks}
-      />
+    <div
+      data-native-chat-root="true"
+      tabIndex={-1}
+      className="flex h-full min-h-0 w-full flex-col bg-background focus:outline-none"
+    >
+      <div className="flex min-h-0 flex-1 flex-col">
+        {viewState.kind === 'loading' ? (
+          <NativeChatEmptyState kind="loading" />
+        ) : viewState.kind === 'error' ? (
+          <NativeChatEmptyState kind="error" message={viewState.message} />
+        ) : viewState.kind === 'empty' ? (
+          <NativeChatEmptyState kind="empty" agent={props.agent} />
+        ) : (
+          <NativeChatMessageList
+            session={session}
+            isWorking={controller.isWorking}
+            expandSignal={false}
+            fontScale={fontScale.scale}
+            allowFileUriLinks={props.allowFileUriLinks}
+          />
+        )}
+      </div>
       {prompt?.body.kind === 'approval' ? (
         <NativeChatApprovalCard
           approval={{
@@ -142,11 +162,11 @@ export function DesktopStructuredAgentSessionView(props: {
           <span>
             {retryableOutboxEntry.state === 'unconfirmed'
               ? translate(
-                  'auto.components.native.chat.DesktopStructuredAgentSessionView.1f772bb5d0',
+                  'auto.components.native.chat.NativeChatStructuredSession.1f772bb5d0',
                   'Message delivery is unconfirmed.'
                 )
               : translate(
-                  'auto.components.native.chat.DesktopStructuredAgentSessionView.93ef441197',
+                  'auto.components.native.chat.NativeChatStructuredSession.93ef441197',
                   'Message was not sent.'
                 )}
           </span>
@@ -158,83 +178,33 @@ export function DesktopStructuredAgentSessionView(props: {
           >
             <RotateCcw className="size-3" />
             {translate(
-              'auto.components.native.chat.DesktopStructuredAgentSessionView.a5e7f14068',
+              'auto.components.native.chat.NativeChatStructuredSession.a5e7f14068',
               'Retry'
             )}
           </Button>
         </div>
       ) : null}
-      <div className="shrink-0 border-t border-border bg-background px-3 py-3 sm:px-4">
-        <div className="mx-auto w-full max-w-4xl rounded-lg border border-input bg-card shadow-xs">
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                void submit()
-              }
-            }}
-            disabled={Boolean(prompt)}
-            placeholder={
-              prompt
-                ? translate(
-                    'auto.components.native.chat.DesktopStructuredAgentSessionView.1b1ea0a0ab',
-                    'Answer the question above'
-                  )
-                : translate(
-                    'auto.components.native.chat.DesktopStructuredAgentSessionView.0b88a4e5e9',
-                    'Message {{value0}}',
-                    { value0: agentLabel }
-                  )
+      {controller.error || composerError ? (
+        <p className="mx-auto w-full max-w-4xl px-4 py-1 text-xs text-destructive">
+          {controller.error ?? composerError}
+        </p>
+      ) : null}
+      {prompt ? null : (
+        <NativeChatComposer
+          terminalTabId={props.tabId}
+          paneKey={paneKey}
+          targetPtyId={null}
+          agent={props.agent}
+          canSend={!prompt}
+          isWorking={controller.isWorking}
+          onStop={() => {
+            if (controller.turnId) {
+              void controller.cancel(controller.turnId)
             }
-            className="min-h-20 w-full resize-none bg-transparent px-3.5 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground/60 disabled:opacity-50"
-          />
-          <div className="flex items-center justify-between gap-2 border-t border-border/60 px-2 py-1.5">
-            <NativeChatSessionOptionPickers
-              surface={controller.optionSurface}
-              snapshot={controller.optionSnapshot}
-              isWorking={controller.isWorking}
-            />
-            {controller.isWorking && controller.turnId ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="icon-sm"
-                aria-label={translate(
-                  'auto.components.native.chat.DesktopStructuredAgentSessionView.a78fc7cbde',
-                  'Stop response'
-                )}
-                onClick={() => void controller.cancel(controller.turnId!)}
-              >
-                <Square className="size-3.5 fill-current" />
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                size="icon-sm"
-                aria-label={translate(
-                  'auto.components.native.chat.DesktopStructuredAgentSessionView.25189835dc',
-                  'Send message'
-                )}
-                disabled={!draft.trim() || Boolean(prompt)}
-                onClick={() => void submit()}
-              >
-                {controller.status === 'loading' ? (
-                  <LoaderCircle className="size-3.5 animate-spin" />
-                ) : (
-                  <Send className="size-3.5" />
-                )}
-              </Button>
-            )}
-          </div>
-        </div>
-        {controller.error || composerError ? (
-          <p className="mx-auto mt-1.5 w-full max-w-4xl text-xs text-destructive">
-            {controller.error ?? composerError}
-          </p>
-        ) : null}
-      </div>
+          }}
+          structuredTransport={structuredTransport}
+        />
+      )}
     </div>
   )
 }

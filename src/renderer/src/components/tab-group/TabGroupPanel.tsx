@@ -19,7 +19,7 @@ import { resolveGroupTabFromVisibleId } from './tab-group-visible-id'
 import { getTabPaneBodyDroppableId, type HoveredTabInsertion } from './useTabDragSplit'
 import { tabGroupBodyAnchorName } from './tab-group-body-anchor'
 import { translate } from '@/i18n/i18n'
-import { DesktopStructuredAgentSessionView } from '../native-chat/DesktopStructuredAgentSessionView'
+import NativeChatView from '../native-chat/NativeChatView'
 import {
   getExecutionHostIdForWorktree,
   getRuntimeEnvironmentIdForWorktree
@@ -367,8 +367,10 @@ export default function TabGroupPanel({
 
         {activeTab?.contentType === 'agent-session' ? (
           <div className="absolute inset-0 flex min-h-0 min-w-0">
-            <DesktopStructuredAgentSessionView
+            <NativeChatView
               key={activeTab.entityId}
+              mode="structured"
+              tabId={activeTab.id}
               sessionId={activeTab.entityId}
               agent={activeTab.agentSessionAgent ?? 'codex'}
               target={structuredRuntimeTarget}

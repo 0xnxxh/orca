@@ -15097,14 +15097,10 @@
       },
       "native": {
         "chat": {
-          "DesktopStructuredAgentSessionView": {
+          "NativeChatStructuredSession": {
             "1f772bb5d0": "Message delivery is unconfirmed.",
             "93ef441197": "Message was not sent.",
-            "a5e7f14068": "Retry",
-            "1b1ea0a0ab": "Answer the question above",
-            "0b88a4e5e9": "Message {{value0}}",
-            "a78fc7cbde": "Stop response",
-            "25189835dc": "Send message"
+            "a5e7f14068": "Retry"
           }
         }
       }

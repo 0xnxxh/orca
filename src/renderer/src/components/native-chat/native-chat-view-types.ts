@@ -1,7 +1,10 @@
 import type { TuiAgent } from '../../../../shared/types'
+import type { AgentType } from '../../../../shared/agent-status-types'
+import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
 import type { NativeChatContextMenuActions } from './use-native-chat-context-menu'
 
-export type NativeChatViewProps = {
+export type NativeChatBridgeViewProps = {
+  mode?: 'bridge'
   /** The terminal tab hosting the agent. paneKey is `${tabId}:${leafId}`. */
   terminalTabId: string
   /** Specific split leaf this chat surface replaces. */
@@ -18,3 +21,14 @@ export type NativeChatViewProps = {
   readTerminalScreen?: () => string | null
   contextMenuActions?: Omit<NativeChatContextMenuActions, 'onPaste'>
 }
+
+export type NativeChatStructuredViewProps = {
+  mode: 'structured'
+  tabId: string
+  sessionId: string
+  target: RuntimeClientTarget
+  agent: AgentType
+  allowFileUriLinks: boolean
+}
+
+export type NativeChatViewProps = NativeChatBridgeViewProps | NativeChatStructuredViewProps
