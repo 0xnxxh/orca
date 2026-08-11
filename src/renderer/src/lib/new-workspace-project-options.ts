@@ -9,6 +9,10 @@ import {
   type ExecutionHostId
 } from '../../../shared/execution-host'
 import {
+  getProjectGroupSelectorKey,
+  parseProjectGroupSelectorKey
+} from '../../../shared/workspace-scope'
+import {
   getDuplicateProjectDetailsById,
   type ProjectSetupDirectory
 } from './new-workspace-duplicate-project-details'
@@ -149,7 +153,7 @@ export function getNewWorkspaceProjectGroupOptionId(
   projectGroupId: string,
   ownerHostId: ExecutionHostId
 ): string {
-  return `${NEW_WORKSPACE_PROJECT_GROUP_OPTION_PREFIX}${encodeURIComponent(ownerHostId)}:${encodeURIComponent(projectGroupId)}`
+  return getProjectGroupSelectorKey(projectGroupId, ownerHostId)
 }
 
 function getFolderSourceOptionId(repoId: string): string {
@@ -169,26 +173,7 @@ export function getProjectGroupIdFromNewWorkspaceOptionId(optionId: string): str
 export function getProjectGroupSelectorFromNewWorkspaceOptionId(
   optionId: string
 ): { groupId: string; ownerHostId?: ExecutionHostId } | null {
-  if (!optionId.startsWith(NEW_WORKSPACE_PROJECT_GROUP_OPTION_PREFIX)) {
-    return null
-  }
-  const value = optionId.slice(NEW_WORKSPACE_PROJECT_GROUP_OPTION_PREFIX.length)
-  const separator = value.indexOf(':')
-  if (separator === -1) {
-    return value ? { groupId: value } : null
-  }
-  try {
-    const parsedOwner = parseExecutionHostId(decodeURIComponent(value.slice(0, separator)))
-    if (!parsedOwner) {
-      return null
-    }
-    return {
-      ownerHostId: parsedOwner.id,
-      groupId: decodeURIComponent(value.slice(separator + 1))
-    }
-  } catch {
-    return null
-  }
+  return parseProjectGroupSelectorKey(optionId)
 }
 
 function getProjectGroupDetail(group: ProjectGroup): string {

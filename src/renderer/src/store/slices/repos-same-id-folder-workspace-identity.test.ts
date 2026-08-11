@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FolderWorkspace, ProjectGroup, Repo } from '../../../../shared/types'
+import { getFolderWorkspaceRowKey } from '../../../../shared/folder-workspaces'
 import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import { buildHostIdByWorktreeId } from '../../lib/workspace-session-host-persistence'
 import {
@@ -131,6 +132,33 @@ describe('same-id cross-host folder workspace identity', () => {
     expect(localKey).not.toBe(remoteKey)
     expect(localKey).toContain('["local","same-id"]')
     expect(remoteKey).toContain('["runtime:env-1","same-id"]')
+  })
+
+  it('keeps restored ownership until the matching same-id group catalog arrives', async () => {
+    const remoteKey = folderWorkspaceKey('same-id', 'runtime:env-1')
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [makeGroup({ executionHostId: 'local' })],
+      folderWorkspaces: [
+        makeFolder({
+          executionHostId: 'runtime:env-1',
+          folderPath: '/remote/folder'
+        })
+      ],
+      restoredRuntimeHostIdByWorkspaceSessionKey: { [remoteKey]: 'runtime:env-1' }
+    })
+    vi.stubGlobal('window', {
+      api: {
+        folderWorkspaces: { list: vi.fn().mockResolvedValue([]) },
+        runtimeEnvironments: { list: vi.fn().mockResolvedValue([]) }
+      }
+    })
+
+    await store.getState().fetchFolderWorkspacesForAllHosts()
+
+    expect(store.getState().restoredRuntimeHostIdByWorkspaceSessionKey).toEqual({
+      [remoteKey]: 'runtime:env-1'
+    })
   })
 
   it('keeps the legacy bare folder session identity on unambiguous activation', () => {
@@ -354,6 +382,35 @@ describe('same-id cross-host folder workspace identity', () => {
       type: 'folder',
       folderWorkspaceId: 'legacy:id'
     })
+  })
+
+  it('keeps host-shaped legacy ids distinct from owner-qualified keys', () => {
+    const legacyKey = folderWorkspaceKey('local:same-id')
+    const qualifiedKey = folderWorkspaceKey('same-id', 'local')
+    const legacyRowKey = getFolderWorkspaceRowKey(makeFolder({ id: 'local:same-id' }))
+    const qualifiedRowKey = getFolderWorkspaceRowKey(
+      makeFolder({ executionHostId: 'local' }),
+      [],
+      true
+    )
+
+    expect(legacyKey).not.toBe(qualifiedKey)
+    expect(legacyRowKey).not.toBe(qualifiedRowKey)
+    expect(parseWorkspaceKey(legacyKey)).toEqual({
+      type: 'folder',
+      folderWorkspaceId: 'local:same-id'
+    })
+    expect(parseWorkspaceKey(qualifiedKey)).toEqual({
+      type: 'folder',
+      folderWorkspaceId: 'same-id',
+      ownerHostId: 'local'
+    })
+    for (const reservedId of ['@owner:raw', '@id:raw']) {
+      expect(parseWorkspaceKey(folderWorkspaceKey(reservedId))).toEqual({
+        type: 'folder',
+        folderWorkspaceId: reservedId
+      })
+    }
   })
 
   it('routes folder metadata writes through the selected owner', async () => {

@@ -32,6 +32,10 @@ import {
   UNGROUPED_PROJECT_GROUP_KEY
 } from '../../../../shared/project-groups'
 import {
+  getProjectGroupSelectorKey,
+  parseProjectGroupSelectorKey
+} from '../../../../shared/workspace-scope'
+import {
   getFolderWorkspaceCatalogOwnerHostId,
   getFolderWorkspaceRowKey
 } from '../../../../shared/folder-workspaces'
@@ -121,22 +125,7 @@ export function getSingleProjectGroupMutationOwner(
 export function parseProjectGroupSidebarHeaderKey(
   key: string
 ): { groupId: string; ownerHostId?: ExecutionHostId } | null {
-  const prefix = 'project-group:'
-  if (!key.startsWith(prefix)) {
-    return null
-  }
-  const value = key.slice(prefix.length)
-  const separator = value.indexOf(':')
-  if (separator === -1) {
-    return { groupId: value }
-  }
-  try {
-    const ownerHostId = normalizeExecutionHostId(decodeURIComponent(value.slice(0, separator)))
-    const groupId = decodeURIComponent(value.slice(separator + 1))
-    return ownerHostId ? { ownerHostId, groupId } : null
-  } catch {
-    return null
-  }
+  return parseProjectGroupSelectorKey(key)
 }
 
 export type ProjectGroupSidebarIndex = {
@@ -629,9 +618,7 @@ export function getProjectGroupHeaderKey(
   if (!groupId) {
     return UNGROUPED_PROJECT_GROUP_KEY
   }
-  return ownerHostId
-    ? `project-group:${encodeURIComponent(ownerHostId)}:${encodeURIComponent(groupId)}`
-    : `project-group:${groupId}`
+  return getProjectGroupSelectorKey(groupId, ownerHostId)
 }
 
 export const PINNED_GROUP_KEY = 'pinned'

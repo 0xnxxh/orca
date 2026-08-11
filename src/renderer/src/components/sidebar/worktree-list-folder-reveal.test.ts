@@ -205,9 +205,9 @@ describe('worktree list folder reveal', () => {
     expect(
       getFolderWorkspaceSidebarRowKey(
         'folder-workspace-1',
-        'folder-workspace:runtime%3Aenv-1:folder-workspace-1'
+        'folder-workspace:@owner:runtime%3Aenv-1:folder-workspace-1'
       )
-    ).toBe('folder-workspace:runtime%3Aenv-1:folder-workspace-1')
+    ).toBe('folder-workspace:@owner:runtime%3Aenv-1:folder-workspace-1')
   })
 
   it('keeps the surviving same-id owner active after deleting its sibling', () => {

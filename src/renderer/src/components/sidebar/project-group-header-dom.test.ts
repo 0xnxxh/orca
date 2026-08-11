@@ -15,6 +15,7 @@ import {
   findProjectGroupForSidebarOwner,
   getAmbiguousFolderWorkspaceSidebarIds,
   getProjectGroupMutationSelector,
+  getProjectGroupHeaderKey,
   getProjectGroupSidebarIdentity,
   getSidebarWorktreeSelectionId,
   getSingleProjectGroupMutationOwner,
@@ -61,7 +62,7 @@ describe('project-group sidebar identity', () => {
 
     expect(getFolderWorkspaceRowKey(workspace)).toBe('folder-workspace:same-id')
     expect(getFolderWorkspaceRowKey(workspace, [], true)).toBe(
-      'folder-workspace:runtime%3Aenv-1:same-id'
+      'folder-workspace:@owner:runtime%3Aenv-1:same-id'
     )
   })
 
@@ -164,10 +165,31 @@ describe('project-group sidebar identity', () => {
       groupId: 'same-id',
       ownerHostId: 'runtime:env-1'
     })
-    expect(parseProjectGroupSidebarHeaderKey('project-group:runtime%3Aenv-1:same-id')).toEqual({
+    expect(
+      parseProjectGroupSidebarHeaderKey(getProjectGroupHeaderKey('same-id', 'runtime:env-1'))
+    ).toEqual({
       groupId: 'same-id',
       ownerHostId: 'runtime:env-1'
     })
+  })
+
+  it('keeps host-shaped group ids distinct from owner-qualified header keys', () => {
+    const legacyKey = getProjectGroupHeaderKey('local:same-id')
+    const qualifiedKey = getProjectGroupHeaderKey('same-id', 'local')
+
+    expect(legacyKey).not.toBe(qualifiedKey)
+    expect(parseProjectGroupSidebarHeaderKey(legacyKey)).toEqual({
+      groupId: 'local:same-id'
+    })
+    expect(parseProjectGroupSidebarHeaderKey(qualifiedKey)).toEqual({
+      groupId: 'same-id',
+      ownerHostId: 'local'
+    })
+    for (const reservedId of ['@owner:raw', '@id:raw']) {
+      expect(parseProjectGroupSidebarHeaderKey(getProjectGroupHeaderKey(reservedId))).toEqual({
+        groupId: reservedId
+      })
+    }
   })
 
   it('marks folder row ids ambiguous only across owners', () => {
@@ -378,7 +400,7 @@ describe('duplicate project-group header identity (#12532)', () => {
       },
       {
         type: 'header',
-        key: 'project-group:runtime%3Aenv-1:same-id',
+        key: getProjectGroupHeaderKey('same-id', 'runtime:env-1'),
         label: emptyGroup.name,
         count: 0,
         tone: 'text-foreground',
@@ -414,7 +436,7 @@ describe('duplicate project-group header identity (#12532)', () => {
     expect(sectioned).toContainEqual(
       expect.objectContaining({
         type: 'header',
-        key: 'project-group:runtime%3Aenv-1:same-id',
+        key: getProjectGroupHeaderKey('same-id', 'runtime:env-1'),
         count: 0,
         hostId: 'runtime:env-1'
       })
@@ -428,20 +450,20 @@ describe('duplicate project-group header identity (#12532)', () => {
     const rows = buildOwnerRows(['local', 'runtime:env-1'])
 
     expect(projectGroupHeaderKeys(rows)).toEqual([
-      'project-group:local:same-id',
-      'project-group:runtime%3Aenv-1:same-id'
+      getProjectGroupHeaderKey('same-id', 'local'),
+      getProjectGroupHeaderKey('same-id', 'runtime:env-1')
     ])
     const renderKeys = rows.map(getRenderRowKey)
     expect(new Set(renderKeys).size).toBe(renderKeys.length)
   })
 
   it('collapses only the selected owner and stays unique after rebuild', () => {
-    const collapsed = new Set(['project-group:runtime%3Aenv-1:same-id'])
+    const collapsed = new Set([getProjectGroupHeaderKey('same-id', 'runtime:env-1')])
     const rows = buildOwnerRows(['local', 'runtime:env-1'], collapsed)
 
     expect(projectGroupHeaderKeys(rows)).toEqual([
-      'project-group:local:same-id',
-      'project-group:runtime%3Aenv-1:same-id'
+      getProjectGroupHeaderKey('same-id', 'local'),
+      getProjectGroupHeaderKey('same-id', 'runtime:env-1')
     ])
     expect(rows.filter((row) => row.type === 'item')).toHaveLength(1)
     const renderKeys = rows.map(getRenderRowKey)
@@ -451,7 +473,9 @@ describe('duplicate project-group header identity (#12532)', () => {
   it('keeps a host-filter rebuild owner-qualified without disabling the visible owner', () => {
     const rows = buildOwnerRows(['runtime:env-1'])
 
-    expect(projectGroupHeaderKeys(rows)).toEqual(['project-group:runtime%3Aenv-1:same-id'])
+    expect(projectGroupHeaderKeys(rows)).toEqual([
+      getProjectGroupHeaderKey('same-id', 'runtime:env-1')
+    ])
     const renderKeys = rows.map(getRenderRowKey)
     expect(new Set(renderKeys).size).toBe(renderKeys.length)
   })
@@ -482,9 +506,9 @@ describe('duplicate project-group header identity (#12532)', () => {
     )
 
     const folderRow = rows.find((row) => row.type === 'folder-workspace')
-    expect(folderRow?.key).toBe('folder-workspace:runtime%3Aenv-1:same-folder')
+    expect(folderRow?.key).toBe('folder-workspace:@owner:runtime%3Aenv-1:same-folder')
     expect(folderRow && getRenderRowKey(folderRow)).toBe(
-      'folder-workspace:runtime%3Aenv-1:same-folder'
+      'folder-workspace:@owner:runtime%3Aenv-1:same-folder'
     )
   })
 })

@@ -13,6 +13,7 @@ import {
   type ProjectGroupOwnerIndex
 } from './project-groups'
 import type { FolderWorkspace, ProjectGroup } from './types'
+import { folderWorkspaceKey } from './workspace-scope'
 import { isTuiAgent } from './tui-agent-config'
 import { normalizeStoredTaskSourceContext } from './task-source-context'
 import { normalizeWorkspaceLinkedItem } from './workspace-linked-item'
@@ -121,10 +122,10 @@ export function getFolderWorkspaceRowKey(
   qualifyOwner = false
 ): string {
   if (!qualifyOwner) {
-    return `folder-workspace:${workspace.id}`
+    return folderWorkspaceKey(workspace.id).replace(/^folder:/, 'folder-workspace:')
   }
   const ownerHostId = getFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups)
-  return `folder-workspace:${encodeURIComponent(ownerHostId)}:${encodeURIComponent(workspace.id)}`
+  return folderWorkspaceKey(workspace.id, ownerHostId).replace(/^folder:/, 'folder-workspace:')
 }
 
 export function normalizeFolderWorkspaceName(

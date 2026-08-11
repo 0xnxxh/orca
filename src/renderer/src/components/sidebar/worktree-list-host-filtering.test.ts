@@ -300,7 +300,7 @@ describe('runtime folder host section rows', () => {
     const rows: Row[] = [
       {
         type: 'folder-workspace',
-        key: 'folder-workspace:local:local-folder',
+        key: 'folder-workspace:@owner:local:local-folder',
         folderWorkspace: localFolder,
         projectGroup: localGroup,
         depth: 0,
@@ -308,7 +308,7 @@ describe('runtime folder host section rows', () => {
       },
       {
         type: 'folder-workspace',
-        key: 'folder-workspace:runtime%3Aenv-2:folder-1',
+        key: 'folder-workspace:@owner:runtime%3Aenv-2:folder-1',
         folderWorkspace: runtimeFolder,
         projectGroup: runtimeGroup,
         depth: 0,
@@ -341,9 +341,9 @@ describe('runtime folder host section rows', () => {
 
     expect(sectioned.map((row) => (row.type === 'item' ? row.rowKey : row.key))).toEqual([
       'host:local',
-      'folder-workspace:local:local-folder',
+      'folder-workspace:@owner:local:local-folder',
       'host:runtime:env-2',
-      'folder-workspace:runtime%3Aenv-2:folder-1'
+      'folder-workspace:@owner:runtime%3Aenv-2:folder-1'
     ])
     expect(
       sectioned.flatMap((row) => (row.type === 'host-header' ? [[row.hostId, row.count]] : []))
