@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- Why: preload is the audited renderer/Electron IPC contract; co-locating the surface eases security and type-drift review. */
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import { release as getOsRelease } from 'node:os'
 import { preloadE2EConfig } from './e2e-config'
 import { glApi } from './gitlab'
 import type { AppIdentity } from '../shared/app-identity'
@@ -570,8 +571,11 @@ const api = {
     get: () => ({
       platform: process.platform,
       osRelease:
-        (process as NodeJS.Process & { getSystemVersion?: () => string }).getSystemVersion?.() ??
-        '',
+        (process as NodeJS.Process & { getSystemVersion?: () => string }).getSystemVersion?.() ||
+        getOsRelease(),
+      arch: process.arch,
+      // Why: these identify the default shell without probing user config files.
+      shell: process.env.SHELL?.trim() || process.env.ComSpec?.trim() || '',
       displayServer: getLinuxDisplayServer()
     })
   } satisfies PreloadApi['platform'],
