@@ -9172,24 +9172,39 @@ export class OrcaRuntimeService {
         })
         return owner.transcriptPath ? { transcriptPath: owner.transcriptPath } : {}
       },
+      waitForTuiIdle: async (owner, signal) =>
+        (
+          await this.waitForTerminal(owner.terminal.handle, {
+            condition: 'tui-idle',
+            signal
+          })
+        ).satisfied,
       reproveTuiOwner: async ({ record, owner }) => {
+        const persisted = record.lease.ownerProcess
+        if (
+          !persisted ||
+          persisted.hostId !== owner.process.hostId ||
+          persisted.pid !== owner.process.pid ||
+          persisted.processStartTimeMs !== owner.process.processStartTimeMs ||
+          persisted.spawnToken !== owner.process.spawnToken
+        ) {
+          throw new Error('The owning terminal does not match the persisted launch identity.')
+        }
         const proof = await probeAgentSessionProcessIdentity({ identity: owner.process })
         if (proof.outcome !== 'identity-matched' || proof.matchedOn.length === 0) {
           throw new Error('The owning Codex child process could not be re-proved.')
         }
         const head = record.providerHandleChain.at(-1)
-        if (head?.handle.provider !== 'codex') {
+        if (
+          head?.handle.provider !== 'codex' ||
+          (record.lease.provenHandleLinkId !== null &&
+            owner.link.linkId !== record.lease.provenHandleLinkId) ||
+          owner.link.handle.provider !== 'codex' ||
+          owner.link.handle.threadId !== head.handle.threadId
+        ) {
           throw new Error('agent_session_identity_required')
         }
-        const tuiProof = await this.waitForStructuredTuiProof({
-          handle: owner.terminal.handle,
-          paneKey: owner.terminal.paneKey,
-          threadId: head.handle.threadId,
-          spawnToken: owner.process.spawnToken,
-          codexHome: record.accountHome.path,
-          sessionId: record.sessionId
-        })
-        return { ...owner, transcriptPath: tuiProof.transcriptPath }
+        return owner
       },
       recoverTuiOwner: async (record) => {
         const identity = record.lease.ownerProcess

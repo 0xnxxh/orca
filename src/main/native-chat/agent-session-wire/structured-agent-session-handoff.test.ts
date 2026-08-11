@@ -33,11 +33,15 @@ let journal: Awaited<ReturnType<typeof openAgentSessionJournal>>
 let coordinator: StructuredAgentSessionHandoffCoordinator
 let statuses: AgentSessionHandoffStatus[]
 let tuiIdle: boolean
+let tuiTurnComplete: boolean
 let importFailure: Error | null
 let nativeAcquireFailure: Error | null
 let launchTui: ReturnType<typeof vi.fn<StructuredAgentSessionHandoffTransport['launchTui']>>
 let waitForTuiExit: ReturnType<
   typeof vi.fn<StructuredAgentSessionHandoffTransport['waitForTuiExit']>
+>
+let waitForTuiIdle: ReturnType<
+  typeof vi.fn<StructuredAgentSessionHandoffTransport['waitForTuiIdle']>
 >
 let reproveTuiOwner: ReturnType<
   typeof vi.fn<StructuredAgentSessionHandoffTransport['reproveTuiOwner']>
@@ -188,6 +192,7 @@ function createCoordinator(): StructuredAgentSessionHandoffCoordinator {
       },
       stopRecoveredOwner,
       waitForTuiExit,
+      waitForTuiIdle,
       tuiStatus: () => (tuiIdle ? 'idle' : 'busy'),
       stopFailedTuiLaunch
     },
@@ -238,6 +243,7 @@ beforeEach(async () => {
   operations = 0
   statuses = []
   tuiIdle = true
+  tuiTurnComplete = true
   importFailure = null
   nativeAcquireFailure = null
   acquireNativeCalls = 0
@@ -256,7 +262,14 @@ beforeEach(async () => {
   })
   launchTui = vi.fn(async ({ fence, spawnToken }) => makeTuiOwner(fence, spawnToken))
   waitForTuiExit = vi.fn(async (owner) => ({ transcriptPath: owner.transcriptPath }))
-  reproveTuiOwner = vi.fn(async ({ owner }) => owner)
+  waitForTuiIdle = vi.fn(async () => tuiTurnComplete)
+  reproveTuiOwner = vi.fn(async ({ record, owner }) => {
+    expect(record.lease.ownerProcess).toEqual(owner.process)
+    if (record.lease.provenHandleLinkId !== null) {
+      expect(record.lease.provenHandleLinkId).toBe(owner.link.linkId)
+    }
+    return owner
+  })
   stopFailedTuiLaunch = vi.fn(async () => undefined)
   acquireNativeStop = vi.fn(async () => true)
   coordinator = createCoordinator()
@@ -275,7 +288,8 @@ describe('structured session ownership handoff', () => {
       { fence: 1 }
     )
     await moveToTui()
-    expect(store.getRecord(SESSION)?.lease).toMatchObject({
+    const forwardRecord = store.getRecord(SESSION)!
+    expect(forwardRecord.lease).toMatchObject({
       runtimeKind: 'tui',
       claimStatus: 'live',
       handoffStage: null
@@ -283,6 +297,19 @@ describe('structured session ownership handoff', () => {
 
     expect(await submit(request('to-native', 'after-turn'))).toMatchObject({ ok: true })
     await vi.waitFor(() => expect(coordinator.status(SESSION)).toMatchObject({ owner: 'native' }))
+
+    expect(reproveTuiOwner).toHaveBeenCalledWith({
+      record: expect.objectContaining({
+        lease: expect.objectContaining({
+          ownerProcess: forwardRecord.lease.ownerProcess,
+          provenHandleLinkId: forwardRecord.lease.provenHandleLinkId
+        })
+      }),
+      owner: expect.objectContaining({
+        process: forwardRecord.lease.ownerProcess,
+        link: expect.objectContaining({ linkId: forwardRecord.lease.provenHandleLinkId })
+      })
+    })
 
     const messages = journal.snapshot().items.filter((item) => item.body.kind === 'message')
     expect(messages).toHaveLength(2)
@@ -482,14 +509,17 @@ describe('structured session ownership handoff', () => {
     )
   })
 
-  it('queues a busy TUI from host status instead of trusting a stale journal', async () => {
+  it('fires a queued TUI transfer from the turn-completion waiter', async () => {
     await moveToTui()
     tuiIdle = false
+    tuiTurnComplete = false
     expect(await submit(request('to-native', 'after-turn'))).toMatchObject({ ok: true })
     expect(coordinator.status(SESSION).phase).toBe('queued')
     expect(waitForTuiExit).not.toHaveBeenCalled()
-    tuiIdle = true
+    tuiTurnComplete = true
     await vi.waitFor(() => expect(waitForTuiExit).toHaveBeenCalledOnce())
+    expect(tuiIdle).toBe(false)
+    expect(waitForTuiIdle).toHaveBeenCalled()
   })
 
   it('re-proves the current TUI handle before accepting its exit and importing history', async () => {

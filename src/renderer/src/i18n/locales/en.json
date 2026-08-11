@@ -769,6 +769,9 @@
             "additionalErrors": "{{count}} additional images could not be attached."
           }
         }
+      },
+      "activateAiVaultStructuredSession": {
+        "unavailable": "The structured agent session is not available yet. Retry in a moment."
       }
     },
     "hooks": {

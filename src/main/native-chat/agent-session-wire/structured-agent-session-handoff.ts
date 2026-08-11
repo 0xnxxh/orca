@@ -199,10 +199,7 @@ export class StructuredAgentSessionHandoffCoordinator {
     })
   }
 
-  private success(
-    sessionId: string,
-    replayed: boolean
-  ): AgentSessionMutationResult<AgentSessionHandoffResult> {
+  private success(sessionId: string, replayed: boolean) {
     return structuredHandoffSuccess(this.deps, sessionId, replayed, this.status(sessionId))
   }
 
@@ -220,14 +217,17 @@ export class StructuredAgentSessionHandoffCoordinator {
       operationId: params.envelope.clientOperationId,
       hostLabel: this.deps.transport?.hostLabel
     })
+    const tuiOwner = this.tuiOwners.get(sessionId)
     this.queue.enqueue(
       sessionId,
-      () =>
+      (signal) =>
         params.direction === 'to-tui'
           ? !activeStructuredAgentSessionTurnId(
               this.deps.session(sessionId).journal.snapshot().items
             )
-          : this.tuiStatus(sessionId) === 'idle',
+          : tuiOwner
+            ? (this.deps.transport?.waitForTuiIdle(tuiOwner, signal) ?? false)
+            : false,
       () => {
         const next = { ...params, mode: 'now' as const }
         this.begin(callerKey, next, null, fingerprint)

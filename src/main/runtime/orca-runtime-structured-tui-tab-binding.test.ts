@@ -2,9 +2,16 @@ import { describe, expect, it, vi } from 'vitest'
 import type { StructuredAgentSessionHandoffTransport } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
 import { OrcaRuntimeService } from './orca-runtime'
 
-const readStructuredTuiProcessIdentity = vi.hoisted(() => vi.fn())
+const { probeAgentSessionProcessIdentity, readStructuredTuiProcessIdentity } = vi.hoisted(() => ({
+  probeAgentSessionProcessIdentity: vi.fn(),
+  readStructuredTuiProcessIdentity: vi.fn()
+}))
 
 vi.mock('./structured-tui-process-identity', () => ({ readStructuredTuiProcessIdentity }))
+vi.mock('./agent-session-process-identity-probe', async (importOriginal) => ({
+  ...(await importOriginal()),
+  probeAgentSessionProcessIdentity
+}))
 
 const WORKTREE_ID = 'repo-1::/tmp/structured-handoff'
 
@@ -91,6 +98,10 @@ describe('structured TUI launch tab binding', () => {
       processStartTimeMs: 10,
       spawnToken: 'spawn-token'
     })
+    probeAgentSessionProcessIdentity.mockResolvedValue({
+      outcome: 'identity-matched',
+      matchedOn: ['process-start-time']
+    })
 
     const transport = internal.createStructuredAgentSessionHandoffTransport()
     const owner = await transport.launchTui({
@@ -122,5 +133,22 @@ describe('structured TUI launch tab binding', () => {
     expect(waitForStructuredTuiProof.mock.invocationCallOrder[0]).toBeLessThan(
       revealTerminalSession.mock.invocationCallOrder[0]!
     )
+
+    const pty = (
+      runtime as unknown as {
+        ptysById: Map<string, { launchToken: string | null }>
+      }
+    ).ptysById.get('pty-structured')!
+    pty.launchToken = null
+    const persistedRecord = {
+      sessionId: 'session-1',
+      providerHandleChain: [{ handle: { provider: 'codex', threadId: 'thread-1' }, observedAt: 1 }],
+      lease: { ownerProcess: owner.process, provenHandleLinkId: owner.link.linkId }
+    } as never
+
+    await expect(transport.reproveTuiOwner({ record: persistedRecord, owner })).resolves.toEqual(
+      owner
+    )
+    expect(waitForStructuredTuiProof).toHaveBeenCalledOnce()
   })
 })

@@ -179,7 +179,12 @@ export default function AiVaultSessionDropLayer({
       if (payload.structuredSession) {
         const { sessionId, workspaceId } = payload.structuredSession
         if (!activateStructuredAgentSessionById({ worktreeId: workspaceId, sessionId })) {
-          toast.error('The structured agent session is not available yet. Retry in a moment.')
+          toast.error(
+            translate(
+              'auto.lib.activateAiVaultStructuredSession.unavailable',
+              'The structured agent session is not available yet. Retry in a moment.'
+            )
+          )
         }
         return true
       }
