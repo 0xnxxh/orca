@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { toRuntimeExecutionHostId, toSshExecutionHostId } from '../../../../shared/execution-host'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
-import { folderWorkspaceBrowserContentBelongsToRemovedOwner } from './folder-workspace-content-removal-snapshot'
-import { folderWorkspaceEditorFileBelongsToRemovedOwner } from './folder-workspace-content-removal-snapshot'
+import {
+  folderWorkspaceBrowserContentBelongsToRemovedOwner,
+  folderWorkspaceEditorFileBelongsToRemovedOwner
+} from './folder-workspace-content-removal-snapshot'
 import { pruneFolderWorkspaceContentState } from './folder-workspace-content-state-pruning'
 import { createTestStore } from './store-test-helpers'
 

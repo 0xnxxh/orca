@@ -29,7 +29,6 @@ import {
   type ProjectHostSetupProjection
 } from '../../../../shared/project-host-setup-projection'
 import {
-  FOLDER_WORKSPACE_BACKEND_TEARDOWN_RUNTIME_CAPABILITY,
   FOLDER_WORKSPACE_OWNER_QUALIFIED_DELETE_RUNTIME_CAPABILITY,
   FOLDER_WORKSPACE_PATH_STATUS_RUNTIME_CAPABILITY,
   PROJECT_HOST_SETUP_RUNTIME_CAPABILITY,
@@ -118,7 +117,7 @@ import {
 } from './folder-workspace-renderer-teardown'
 import { getRemovedFolderWorkspaceKeys } from './folder-workspace-catalog-removal'
 import {
-  closeFolderWorkspaceRuntimeTerminalHandles,
+  isLegacyRuntimeFolderWorkspaceDeletionBlocked,
   type FolderWorkspaceRuntimeTerminalRemoval
 } from './folder-workspace-legacy-terminal-close'
 
@@ -1684,15 +1683,6 @@ function snapshotLegacyFolderWorkspaceRuntimeTerminals(
   }
 }
 
-async function closeLegacyFolderWorkspaceRuntimeTerminals(
-  removal: FolderWorkspaceRuntimeTerminalRemoval
-): Promise<void> {
-  const failed = await closeFolderWorkspaceRuntimeTerminalHandles(removal)
-  if (failed > 0) {
-    console.warn('Failed to close deleted legacy folder workspace terminals:', { failed })
-  }
-}
-
 async function reconcileFailedFolderWorkspaceUpdate(args: {
   target: ReturnType<typeof getActiveRuntimeTarget>
   folderWorkspaceId: string
@@ -3218,6 +3208,32 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
               options?.expectedEnvironmentPairingRevision
             )
           : undefined
+      const legacyTerminalRemoval =
+        target.kind === 'environment'
+          ? snapshotLegacyFolderWorkspaceRuntimeTerminals(
+              state,
+              target.environmentId,
+              [folderWorkspaceKey(folderWorkspaceId)],
+              expectedEnvironmentPairingRevision
+            )
+          : null
+      if (await isLegacyRuntimeFolderWorkspaceDeletionBlocked(legacyTerminalRemoval)) {
+        console.warn('Folder workspace deletion requires backend terminal teardown support.')
+        toast.error(
+          translate(
+            'auto.components.sidebar.DeleteWorktreeDialog.4f6750ca7b',
+            'Failed to delete workspace'
+          ),
+          {
+            description: translate(
+              'auto.components.sidebar.sleep.worktree.flow.legacy.unverified',
+              'The older host runtime could not confirm terminal shutdown. The workspace was kept open; update the host and try again.'
+            ),
+            duration: ERROR_TOAST_DURATION
+          }
+        )
+        return false
+      }
       const deleteExecutionHostId =
         target.kind === 'environment'
           ? getFolderWorkspaceRuntimeMutationHostId(owner, state.projectGroups, targetHostId)
@@ -3232,27 +3248,6 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       if (supportsOwnerQualifiedDelete && !deleteExecutionHostId) {
         console.warn('Folder workspace deletion has ambiguous remote owner provenance')
         return false
-      }
-      const legacyTerminalRemoval =
-        target.kind === 'environment'
-          ? snapshotLegacyFolderWorkspaceRuntimeTerminals(
-              state,
-              target.environmentId,
-              [folderWorkspaceKey(folderWorkspaceId)],
-              expectedEnvironmentPairingRevision
-            )
-          : null
-      if (
-        target.kind === 'environment' &&
-        legacyTerminalRemoval &&
-        legacyTerminalRemoval.terminalHandles.length > 0 &&
-        !(await runtimeEnvironmentSupportsCapability(
-          target.environmentId,
-          FOLDER_WORKSPACE_BACKEND_TEARDOWN_RUNTIME_CAPABILITY,
-          { timeoutMs: 15_000, expectedEnvironmentPairingRevision }
-        ))
-      ) {
-        await closeLegacyFolderWorkspaceRuntimeTerminals(legacyTerminalRemoval)
       }
       const deleteState = get()
       const preserveRendererWorkspaceKey = deleteState.folderWorkspaces.some(
@@ -3451,6 +3446,19 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
               options?.expectedEnvironmentPairingRevision
             )
           : undefined
+      const legacyTerminalRemoval =
+        target.kind === 'environment'
+          ? snapshotLegacyFolderWorkspaceRuntimeTerminals(
+              initialState,
+              target.environmentId,
+              targetWorkspaceKeys,
+              expectedEnvironmentPairingRevision
+            )
+          : null
+      if (await isLegacyRuntimeFolderWorkspaceDeletionBlocked(legacyTerminalRemoval)) {
+        console.warn('Project group deletion requires backend terminal teardown support.')
+        return false
+      }
       const deleteExecutionHostId =
         target.kind === 'environment'
           ? getProjectGroupRuntimeMutationHostId(selectedRootGroup, targetHostId)
@@ -3471,27 +3479,6 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       if (supportsOwnerQualifiedDelete && !deleteExecutionHostId) {
         console.warn('Project group deletion has ambiguous remote owner provenance')
         return false
-      }
-      const legacyTerminalRemoval =
-        target.kind === 'environment'
-          ? snapshotLegacyFolderWorkspaceRuntimeTerminals(
-              initialState,
-              target.environmentId,
-              targetWorkspaceKeys,
-              expectedEnvironmentPairingRevision
-            )
-          : null
-      if (
-        target.kind === 'environment' &&
-        legacyTerminalRemoval &&
-        legacyTerminalRemoval.terminalHandles.length > 0 &&
-        !(await runtimeEnvironmentSupportsCapability(
-          target.environmentId,
-          FOLDER_WORKSPACE_BACKEND_TEARDOWN_RUNTIME_CAPABILITY,
-          { timeoutMs: 15_000, expectedEnvironmentPairingRevision }
-        ))
-      ) {
-        await closeLegacyFolderWorkspaceRuntimeTerminals(legacyTerminalRemoval)
       }
       const deleteState = get()
       const deletedGroupIds = new Set([

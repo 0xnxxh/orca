@@ -244,97 +244,57 @@ beforeEach(() => {
 })
 
 describe('folder workspace pairing revision fences', () => {
-  it('keeps explicit folder close and delete on one pairing revision', async () => {
+  it('binds legacy folder deletion rejection to one pairing revision', async () => {
     const group = makeGroup()
     const workspace = makeWorkspace('folder-explicit', group.id)
-    const close = deferred<ReturnType<typeof runtimeResponse>>()
-    let currentRevision = CAPTURED_REVISION
     runtimeEnvironmentCall.mockImplementation((request: RuntimeCall) => {
       if (request.method === 'status.get') {
         return statusResponse()
       }
-      if (request.method === 'terminal.close') {
-        return close.promise
-      }
-      if (request.expectedEnvironmentPairingRevision !== currentRevision) {
-        return revisionFailure(request.method)
-      }
-      return runtimeResponse(request.method, { deleted: true })
+      throw new Error(`Unexpected runtime method: ${request.method}`)
     })
     const store = createTestStore()
     seedRuntimeWorkspace(store, [group], [workspace])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    const deletion = store.getState().deleteFolderWorkspace(workspace.id, { hostId: OWNER_HOST_ID })
-    await vi.waitFor(() =>
-      expect(runtimeEnvironmentCall).toHaveBeenCalledWith(
-        expect.objectContaining({ method: 'terminal.close' })
-      )
-    )
-    currentRevision = REPLACEMENT_REVISION
-    setRevision(REPLACEMENT_REVISION)
-    close.resolve(runtimeResponse('terminal.close', { close: { closed: true } }))
-
-    await expect(deletion).resolves.toBe(false)
+    await expect(
+      store.getState().deleteFolderWorkspace(workspace.id, { hostId: OWNER_HOST_ID })
+    ).resolves.toBe(false)
     expect(runtimeEnvironmentCall.mock.calls.map(([request]) => request.method)).toEqual([
-      'status.get',
-      'terminal.close',
-      'folderWorkspace.delete'
+      'status.get'
     ])
     expectCallsBoundToCapturedRevision()
     expect(store.getState().folderWorkspaces).toEqual([workspace])
+    warn.mockRestore()
   })
 
-  it('keeps every project-group close and delete on one pairing revision', async () => {
+  it('binds legacy project-group deletion rejection to one pairing revision', async () => {
     const root = makeGroup()
     const child = makeGroup('group-child', root.id)
     const workspaces = [
       makeWorkspace('folder-root', root.id),
       makeWorkspace('folder-child', child.id)
     ]
-    const closes = [
-      deferred<ReturnType<typeof runtimeResponse>>(),
-      deferred<ReturnType<typeof runtimeResponse>>()
-    ]
-    let closeIndex = 0
-    let currentRevision = CAPTURED_REVISION
     runtimeEnvironmentCall.mockImplementation((request: RuntimeCall) => {
       if (request.method === 'status.get') {
         return statusResponse()
       }
-      if (request.method === 'terminal.close') {
-        return closes[closeIndex++]!.promise
-      }
-      if (request.expectedEnvironmentPairingRevision !== currentRevision) {
-        return revisionFailure(request.method)
-      }
-      return runtimeResponse(request.method, { deleted: true })
+      throw new Error(`Unexpected runtime method: ${request.method}`)
     })
     const store = createTestStore()
     seedRuntimeWorkspace(store, [root, child], workspaces)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    const deletion = store.getState().deleteProjectGroup(root.id, { hostId: OWNER_HOST_ID })
-    await vi.waitFor(() =>
-      expect(
-        runtimeEnvironmentCall.mock.calls.filter(([request]) => request.method === 'terminal.close')
-      ).toHaveLength(2)
-    )
-    currentRevision = REPLACEMENT_REVISION
-    setRevision(REPLACEMENT_REVISION)
-    closes.forEach((pending) =>
-      pending.resolve(runtimeResponse('terminal.close', { close: { closed: true } }))
-    )
-
-    await expect(deletion).resolves.toBe(false)
+    await expect(
+      store.getState().deleteProjectGroup(root.id, { hostId: OWNER_HOST_ID })
+    ).resolves.toBe(false)
     expectCallsBoundToCapturedRevision()
-    expect(
-      runtimeEnvironmentCall.mock.calls
-        .filter(([request]) => request.method === 'terminal.close')
-        .map(([request]) => request.params?.terminal)
-        .sort()
-    ).toEqual(['handle-folder-child', 'handle-folder-root'])
-    expect(runtimeEnvironmentCall.mock.calls.at(-1)?.[0].method).toBe('projectGroup.delete')
+    expect(runtimeEnvironmentCall.mock.calls.map(([request]) => request.method)).toEqual([
+      'status.get'
+    ])
     expect(store.getState().projectGroups).toEqual([root, child])
     expect(store.getState().folderWorkspaces).toEqual(workspaces)
+    warn.mockRestore()
   })
 
   it('deletes a same-ID folder only from its explicit host', async () => {

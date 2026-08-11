@@ -232,7 +232,11 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
     try {
       const updates = buildWorktreeMetaUpdates(draft, snapshot, liveLinks)
 
-      const result = await updateWorktreeMeta(worktreeId, updates)
+      const result = await updateWorktreeMeta(
+        worktreeId,
+        updates,
+        ownerExecutionHostId ? { executionHostId: ownerExecutionHostId } : undefined
+      )
       // Why: a failed save refetches and reverts the optimistic write. Closing
       // here would report success for an edit that silently undid itself, and
       // would discard the name, comment and PR changes in the same payload.
@@ -261,6 +265,7 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
     draft,
     snapshot,
     liveLinks,
+    ownerExecutionHostId,
     updateWorktreeMeta,
     closeModal,
     afterSave,

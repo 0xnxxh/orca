@@ -170,7 +170,9 @@ describe('rich markdown image paste', () => {
     await flushPromises()
     expect(window.api.ui.saveClipboardImageAsTempFile).not.toHaveBeenCalled()
     expect(insertRichMarkdownImageFromPath).not.toHaveBeenCalled()
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Reopen the file'))
+    expect(toast.error).toHaveBeenCalledWith(
+      "Couldn't determine which host owns this file. Check the workspace connection and try again."
+    )
   })
 
   it('does not insert a pasted image after the editor is destroyed', async () => {

@@ -211,7 +211,7 @@ describe('project group deletion store routing', () => {
     expect(projectGroupsDelete).not.toHaveBeenCalled()
   })
 
-  it('deletes a unique group through an owner-unqualified legacy runtime', async () => {
+  it('deletes a unique group through an owner-unqualified runtime with backend teardown', async () => {
     const oldRuntimeStatus = createCompatibleRuntimeStatusResponse('runtime-remote')
     if (oldRuntimeStatus.ok) {
       oldRuntimeStatus.result.capabilities = oldRuntimeStatus.result.capabilities?.filter(
@@ -246,7 +246,7 @@ describe('project group deletion store routing', () => {
     expect(store.getState().projectGroups).toEqual([])
   })
 
-  it('closes exact descendant folder terminals before deleting through a legacy runtime', async () => {
+  it('refuses to delete a group with open terminals through a legacy runtime', async () => {
     const folderWorkspace: FolderWorkspace = {
       id: 'folder-legacy',
       projectGroupId: projectGroup.id,
@@ -290,20 +290,24 @@ describe('project group deletion store routing', () => {
       ptyIdsByTabId: { [tab.id]: [ptyId] }
     })
 
-    await expect(store.getState().deleteProjectGroup(projectGroup.id)).resolves.toBe(true)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    expect(runtimeEnvironmentCall.mock.calls.map(([request]) => request.method)).toEqual([
-      'terminal.close',
-      'projectGroup.delete'
+    await expect(store.getState().deleteProjectGroup(projectGroup.id)).resolves.toBe(false)
+
+    expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(
+      'Project group deletion requires backend terminal teardown support.'
+    )
+    expect(store.getState().projectGroups).toEqual([
+      { ...projectGroup, executionHostId: 'runtime:env-1' }
     ])
-    expect(
-      runtimeEnvironmentCall.mock.calls.find(
-        ([request]) => request.method === 'terminal.close'
-      )?.[0].params
-    ).toEqual({ terminal: 'legacy-pty' })
+    expect(store.getState().folderWorkspaces).toEqual([folderWorkspace])
+    expect(store.getState().tabsByWorktree[workspaceKey]).toEqual([tab])
+    expect(store.getState().ptyIdsByTabId[tab.id]).toEqual([ptyId])
+    warn.mockRestore()
   })
 
-  it('keeps same-id sibling-host state during contained deletion through a legacy runtime', async () => {
+  it('keeps the whole same-id subtree when legacy runtime teardown is unavailable', async () => {
     const targetRoot = { ...projectGroup, executionHostId: 'runtime:env-1' as const }
     const siblingRoot = {
       ...projectGroup,
@@ -388,39 +392,37 @@ describe('project group deletion store routing', () => {
       }
     })
 
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
     await expect(
       store.getState().deleteProjectGroupWithContainedProjects(targetRoot.id, {
         removeContainedProjects: true
       })
     ).resolves.toEqual({
-      status: 'deleted-group',
+      status: 'group-delete-failed',
       groupId: targetRoot.id,
       requestedProjectIds: [targetRepo.id],
-      removedProjectIds: [targetRepo.id],
+      removedProjectIds: [],
       failedProjectRemovals: []
     })
 
-    expect(runtimeEnvironmentCall.mock.calls.map(([request]) => request.method)).toEqual([
-      'terminal.close',
-      'projectGroup.delete',
-      'repo.rm'
+    expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(
+      'Project group deletion requires backend terminal teardown support.'
+    )
+    expect(store.getState().projectGroups).toEqual([
+      targetRoot,
+      siblingRoot,
+      targetChild,
+      siblingChild
     ])
-    expect(
-      runtimeEnvironmentCall.mock.calls.find(
-        ([request]) => request.method === 'projectGroup.delete'
-      )?.[0].params
-    ).toEqual({
-      groupId: targetRoot.id,
-      executionHostId: 'local',
-      preserveRendererWorkspaceIds: [targetWorkspace.id]
-    })
-    expect(store.getState().projectGroups).toEqual([siblingRoot, siblingChild])
-    expect(store.getState().folderWorkspaces).toEqual([siblingWorkspace])
-    expect(store.getState().repos).toEqual([siblingRepo])
-    expect(store.getState().tabsByWorktree[workspaceKey]).toEqual([siblingTab])
-    expect(store.getState().ptyIdsByTabId[targetTab.id]).toBeUndefined()
+    expect(store.getState().folderWorkspaces).toEqual([targetWorkspace, siblingWorkspace])
+    expect(store.getState().repos).toEqual([targetRepo, siblingRepo])
+    expect(store.getState().tabsByWorktree[workspaceKey]).toEqual([targetTab, siblingTab])
+    expect(store.getState().ptyIdsByTabId[targetTab.id]).toEqual([targetPtyId])
     expect(store.getState().ptyIdsByTabId[siblingTab.id]).toEqual([siblingPtyId])
-    expect(store.getState().activeWorkspaceExecutionHostId).toBe(siblingRoot.executionHostId)
+    expect(store.getState().activeWorkspaceExecutionHostId).toBe(targetRoot.executionHostId)
+    warn.mockRestore()
   })
 
   it.each([

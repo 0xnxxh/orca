@@ -24,8 +24,10 @@ describe('Project Group deletion owner wiring', () => {
 
     expect(targetStart).toBeGreaterThan(-1)
     expect(targetEnd).toBeGreaterThan(targetStart)
-    expect(targetBlock).toContain('getProjectGroupExecutionHostIdForRows(group, defaultHostId)')
-    expect(targetBlock).toContain('getRepoExecutionHostId(repo) === hostId')
-    expect(targetBlock).toContain('candidateRepos.map((repo) => [repo.id, repo.displayName])')
+    expect(targetBlock).toContain('getProjectGroupDeletePreview({')
+    expect(targetBlock).toContain('...projectGroupDeleteDialog,')
+    expect(targetBlock).toContain('defaultHostId,')
+    expect(targetBlock).toContain('projectGroups,')
+    expect(targetBlock).toContain('repos')
   })
 })

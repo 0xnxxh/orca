@@ -612,7 +612,7 @@ describe('folder workspace owner-routed mutations', () => {
     expect(folderWorkspacesDelete).not.toHaveBeenCalled()
   })
 
-  it('deletes a unique folder through an owner-unqualified legacy runtime', async () => {
+  it('deletes a unique folder through an owner-unqualified runtime with backend teardown', async () => {
     const folderWorkspace = makeFolderWorkspace({
       id: 'folder-old-host',
       executionHostId: 'runtime:env-owner'
@@ -699,7 +699,7 @@ describe('folder workspace owner-routed mutations', () => {
     })
   })
 
-  it('closes exact terminals before deleting through a legacy runtime', async () => {
+  it('refuses to delete an open folder through a legacy runtime', async () => {
     const folderWorkspace = makeFolderWorkspace({
       id: 'folder-legacy',
       executionHostId: 'runtime:env-owner'
@@ -753,29 +753,18 @@ describe('folder workspace owner-routed mutations', () => {
       }
     })
 
-    await expect(store.getState().deleteFolderWorkspace(folderWorkspace.id)).resolves.toBe(true)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    expect(runtimeEnvironmentCall.mock.calls.map(([request]) => request.method)).toEqual([
-      'terminal.close',
-      'folderWorkspace.delete'
-    ])
-    expect(
-      runtimeEnvironmentCall.mock.calls.find(
-        ([request]) => request.method === 'terminal.close'
-      )?.[0].params
-    ).toEqual({ terminal: 'pty-owner' })
-    expect(
-      runtimeEnvironmentCall.mock.calls.find(
-        ([request]) => request.method === 'folderWorkspace.delete'
-      )?.[0].params
-    ).toEqual({
-      folderWorkspaceId: folderWorkspace.id,
-      executionHostId: 'local',
-      preserveRendererWorkspaceKey: true
-    })
-    expect(store.getState().folderWorkspaces).toEqual([siblingWorkspace])
-    expect(store.getState().tabsByWorktree[workspaceKey]).toEqual([siblingTab])
-    expect(store.getState().ptyIdsByTabId[targetTab.id]).toBeUndefined()
+    await expect(store.getState().deleteFolderWorkspace(folderWorkspace.id)).resolves.toBe(false)
+
+    expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(
+      'Folder workspace deletion requires backend terminal teardown support.'
+    )
+    expect(store.getState().folderWorkspaces).toEqual([folderWorkspace, siblingWorkspace])
+    expect(store.getState().tabsByWorktree[workspaceKey]).toEqual([targetTab, siblingTab])
+    expect(store.getState().ptyIdsByTabId[targetTab.id]).toEqual([targetPtyId])
     expect(store.getState().ptyIdsByTabId[siblingTab.id]).toEqual([siblingPtyId])
+    warn.mockRestore()
   })
 })

@@ -4862,7 +4862,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       if (Object.keys(folderUpdates).length === 0) {
         return { ok: true }
       }
-      const owner = findFolderWorkspaceMetaOwner(get(), workspaceScope.folderWorkspaceId)
+      const owner = findFolderWorkspaceMetaOwner(
+        get(),
+        workspaceScope.folderWorkspaceId,
+        options?.executionHostId
+      )
       if (!owner) {
         return {
           ok: false,
@@ -5199,29 +5203,43 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     )
   },
 
-  setWorktreesPinnedAndReveal: (worktreeIds, isPinned) => {
+  setWorktreesPinnedAndReveal: (worktreeIds, isPinned, options) => {
+    const executionHostId = worktreeIds.length === 1 ? options?.executionHostId : undefined
     // Only follow a toggled row with the viewport when it's the focused worktree, not an unfocused card.
     const activeSidebarWorktreeId = getActiveSidebarWorkspaceId(
       get().activeWorkspaceKey,
       get().activeWorktreeId
     )
+    const activeWorkspaceExecutionHostId = get().activeWorkspaceExecutionHostId
     // Skip worktrees already in the target state so a no-op toggle doesn't scroll the viewport away.
     const updates = new Map<string, Partial<WorktreeMeta>>()
     let didChange = false
     let revealWorktreeId: string | null = null
     for (const worktreeId of worktreeIds) {
-      const current = get().getKnownWorktreeById(worktreeId)
+      const current = get().getKnownWorktreeById(worktreeId, executionHostId)
       if (!current || current.isPinned === isPinned) {
         continue
       }
       didChange = true
       const workspaceScope = parseWorkspaceKey(worktreeId)
       if (workspaceScope?.type === 'folder') {
-        void get().updateWorktreeMeta(worktreeId, { isPinned })
+        void get().updateWorktreeMeta(
+          worktreeId,
+          { isPinned },
+          executionHostId ? { executionHostId } : undefined
+        )
       } else {
         updates.set(worktreeId, { isPinned })
       }
-      if (revealWorktreeId === null && worktreeId === activeSidebarWorktreeId) {
+      const activeOwnerMatches =
+        workspaceScope?.type !== 'folder' ||
+        executionHostId === undefined ||
+        executionHostId === activeWorkspaceExecutionHostId
+      if (
+        revealWorktreeId === null &&
+        worktreeId === activeSidebarWorktreeId &&
+        activeOwnerMatches
+      ) {
         revealWorktreeId = worktreeId
       }
     }

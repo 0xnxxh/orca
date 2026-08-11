@@ -10,6 +10,22 @@ export type FolderWorkspaceRuntimeTerminalRemoval = {
   terminalHandles: string[]
 }
 
+export async function isLegacyRuntimeFolderWorkspaceDeletionBlocked(
+  removal: FolderWorkspaceRuntimeTerminalRemoval | null
+): Promise<boolean> {
+  if (!removal) {
+    return false
+  }
+  return !(await runtimeEnvironmentSupportsCapability(
+    removal.environmentId,
+    FOLDER_WORKSPACE_BACKEND_TEARDOWN_RUNTIME_CAPABILITY,
+    {
+      timeoutMs: 15_000,
+      expectedEnvironmentPairingRevision: removal.expectedEnvironmentPairingRevision
+    }
+  ))
+}
+
 export async function closeFolderWorkspaceRuntimeTerminalHandles(
   removal: FolderWorkspaceRuntimeTerminalRemoval
 ): Promise<number> {

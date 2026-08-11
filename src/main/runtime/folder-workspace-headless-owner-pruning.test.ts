@@ -146,7 +146,7 @@ function createRuntime(args: {
 }
 
 describe('headless folder workspace owner pruning', () => {
-  it('prunes only the deleted SSH owner from a shared mobile split after stop failure', async () => {
+  it('prunes only the deleted SSH owner from a shared mobile split after verified shutdown', async () => {
     const workspaceId = 'shared-headless-folder'
     const workspaceKey = folderWorkspaceKey(workspaceId)
     const connectionId = 'ssh-owner'
@@ -206,7 +206,10 @@ describe('headless folder workspace owner pruning', () => {
     fixture.runtime.syncWindowGraph(HEADLESS_RUNTIME_WINDOW_ID, { tabs: [], leaves: [] })
     fixture.runtime.registerPty(localPtyId, workspaceKey, null)
     fixture.runtime.registerPty(sshPtyId, workspaceKey, connectionId)
-    const stopAndWait = vi.fn().mockRejectedValue(new Error('stop failed'))
+    const stopAndWait = vi.fn(async (ptyId: string) => {
+      fixture.runtime.onPtyExit(ptyId, 0)
+      return true
+    })
     fixture.runtime.setPtyController({
       write: () => true,
       kill: () => true,

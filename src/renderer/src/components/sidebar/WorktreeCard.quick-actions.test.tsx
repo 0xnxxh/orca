@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { renderToStaticMarkup } from 'react-dom/server'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
@@ -11,7 +11,9 @@ import type {
   WorktreeCardProperty
 } from '../../../../shared/types'
 import type WorktreeCardComponent from './WorktreeCard'
+import type * as WorktreeCardMeta from './WorktreeCardMeta'
 import type * as WorkspaceDeleteQuickAction from './workspace-delete-quick-action'
+import type { WorktreeCardDetailsHoverProps } from './worktree-card-meta-types'
 
 const fetchHostedReviewForBranch = vi.fn()
 const fetchIssue = vi.fn()
@@ -30,6 +32,7 @@ let workspaceDeleteModifierPressed = false
 let gitConflictOperationByWorktree: Record<string, GitConflictOperation> = {}
 let activeWorktreeId: string | null = null
 let activeWorkspaceExecutionHostId: string | null = null
+let capturedUnlinkReview: (() => void) | undefined
 let WorktreeCard: typeof WorktreeCardComponent
 
 vi.mock('@/store', () => {
@@ -92,6 +95,19 @@ vi.mock('./WorktreeContextMenu', () => ({
   WORKTREE_CONTEXT_MENU_SCOPE_ATTR: 'data-orca-context-menu-scope',
   WORKTREE_NATIVE_CONTEXT_MENU_ATTR: 'data-worktree-native-context-menu'
 }))
+
+vi.mock('./WorktreeCardMeta', async (importOriginal) => {
+  const actual = await importOriginal<typeof WorktreeCardMeta>()
+  return {
+    ...actual,
+    WorktreeCardDetailsHover: ({ children, onUnlinkReview }: WorktreeCardDetailsHoverProps) => {
+      if (onUnlinkReview) {
+        capturedUnlinkReview = onUnlinkReview
+      }
+      return <>{children}</>
+    }
+  }
+})
 
 vi.mock('./workspace-delete-quick-action', async (importOriginal) => {
   const actual = await importOriginal<typeof WorkspaceDeleteQuickAction>()
@@ -160,6 +176,7 @@ describe('WorktreeCard quick actions', () => {
     gitConflictOperationByWorktree = {}
     activeWorktreeId = null
     activeWorkspaceExecutionHostId = null
+    capturedUnlinkReview = undefined
   })
 
   afterEach(cleanup)
@@ -171,6 +188,52 @@ describe('WorktreeCard quick actions', () => {
 
     expect(markup).toContain('aria-label="Mark as read"')
     expect(markup).toContain('data-workspace-board-preserve-open=""')
+  })
+
+  it('routes folder quick metadata actions to the clicked owner', async () => {
+    const worktree = makeWorktree({
+      id: 'folder:folder-1',
+      hostId: 'ssh:builder',
+      path: '/workspace/folder-1'
+    })
+    const { container } = render(
+      <WorktreeCard worktree={worktree} repo={undefined} isActive={false} />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark as read' }))
+    fireEvent.doubleClick(container.querySelector('[data-worktree-title-inline-rename]')!)
+    const renameInput = screen.getByRole('textbox', { name: 'Rename workspace' })
+    fireEvent.change(renameInput, { target: { value: 'Remote folder' } })
+    fireEvent.keyDown(renameInput, { key: 'Enter' })
+
+    await waitFor(() => expect(updateWorktreeMeta).toHaveBeenCalledTimes(2))
+    expect(updateWorktreeMeta).toHaveBeenNthCalledWith(
+      1,
+      worktree.id,
+      { isUnread: false },
+      { executionHostId: 'ssh:builder' }
+    )
+    expect(updateWorktreeMeta).toHaveBeenNthCalledWith(
+      2,
+      worktree.id,
+      { displayName: 'Remote folder' },
+      { executionHostId: 'ssh:builder' }
+    )
+  })
+
+  it('routes linked-review unlinking to the clicked owner', () => {
+    worktreeCardProperties = ['pr']
+    const worktree = makeWorktree({ linkedPR: 456, hostId: 'ssh:builder' })
+    render(<WorktreeCard worktree={worktree} repo={makeRepo()} isActive={false} />)
+
+    expect(capturedUnlinkReview).toBeTypeOf('function')
+    capturedUnlinkReview?.()
+
+    expect(updateWorktreeMeta).toHaveBeenCalledWith(
+      worktree.id,
+      { linkedPR: null },
+      { executionHostId: 'ssh:builder' }
+    )
   })
 
   it('renders repo identity in the detailed metadata row', () => {

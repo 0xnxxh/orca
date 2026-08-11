@@ -3,7 +3,7 @@ import type {
   RuntimeMobileSessionTabsResult,
   RuntimeMobileSessionTabsSnapshot
 } from '../../shared/runtime-types'
-import type { FolderWorkspace, ProjectGroup } from '../../shared/types'
+import type { FolderWorkspace, ProjectGroup, Repo } from '../../shared/types'
 import { getProjectGroupSubtreeIds } from '../../shared/project-groups'
 import { folderWorkspaceKey } from '../../shared/workspace-scope'
 import type { IPtyProvider } from '../providers/types'
@@ -159,6 +159,8 @@ function createRuntime(args: {
   workspaces: FolderWorkspace[]
   localProvider: IPtyProvider
   sshProviders?: Map<string, IPtyProvider>
+  getSshProvider?: (connectionId: string) => IPtyProvider | undefined
+  repos?: Repo[]
   events?: string[]
 }) {
   let groups = [...args.groups]
@@ -207,7 +209,7 @@ function createRuntime(args: {
     return true
   })
   const store = {
-    getRepos: () => [],
+    getRepos: () => args.repos ?? [],
     getProjectGroups: () => groups,
     getFolderWorkspaces: () => workspaces,
     createFolderWorkspace,
@@ -222,7 +224,7 @@ function createRuntime(args: {
   const onPtyStopped = vi.fn()
   const runtime = new OrcaRuntimeService(store, undefined, {
     getLocalProvider: () => args.localProvider,
-    getSshProvider: (connectionId) => args.sshProviders?.get(connectionId),
+    getSshProvider: args.getSshProvider ?? ((connectionId) => args.sshProviders?.get(connectionId)),
     onPtyStopped
   })
   const reposChanged = vi.fn()
@@ -587,10 +589,12 @@ describe('folder workspace deletion teardown', () => {
   it('infers direct-SSH ownership for graph PTYs without runtime records', async () => {
     const workspace = makeWorkspace('workspace-ssh', ROOT_GROUP_ID, 'ssh-1')
     const workspaceKey = folderWorkspaceKey(workspace.id)
+    const remoteProvider = makeProvider([])
     const fixture = createRuntime({
       groups: [{ ...makeGroup(ROOT_GROUP_ID), connectionId: 'ssh-1' }],
       workspaces: [workspace],
-      localProvider: makeProvider([]).provider
+      localProvider: makeProvider([]).provider,
+      sshProviders: new Map([['ssh-1', remoteProvider.provider]])
     })
     const stopAndWait = vi.fn().mockResolvedValue(true)
     fixture.runtime.setPtyController({

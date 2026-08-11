@@ -1,4 +1,4 @@
-import { mapWithConcurrency } from '../../shared/map-with-concurrency'
+import { mapSettledWithConcurrency } from '../../shared/map-with-concurrency'
 import type { IPtyProvider } from '../providers/types'
 import type { OrcaRuntimeService } from './orca-runtime'
 import type { FolderWorkspaceTerminalTeardownTarget } from './folder-workspace-terminal-teardown-targets'
@@ -23,10 +23,16 @@ type FolderWorkspaceTerminalTeardownDeps = {
   getLocalProvider: () => IPtyProvider | null
   getSshProvider: (connectionId: string) => IPtyProvider | undefined
   onPtyStopped?: (ptyId: string) => void
+  requirePhysicalSshStop?: boolean
 }
 
 type FolderWorkspaceTerminalTeardownJob =
-  | { kind: 'inventory'; markReady: () => void; provider: IPtyProvider }
+  | {
+      kind: 'inventory'
+      markReady: () => void
+      provider: IPtyProvider
+      requirePhysicalStop: boolean
+    }
   | {
       kind: 'provider'
       inventoryReady: Promise<void>
@@ -35,14 +41,25 @@ type FolderWorkspaceTerminalTeardownJob =
     }
   | { kind: 'runtime'; target: FolderWorkspaceTerminalTeardownTarget }
 
+type InventoryJob = Extract<FolderWorkspaceTerminalTeardownJob, { kind: 'inventory' }>
+type TargetJob = Exclude<FolderWorkspaceTerminalTeardownJob, { kind: 'inventory' }>
+
 type SharedFolderWorkspaceTeardownProvider = {
   inventoryReady: Promise<void>
   markInventoryReady: () => void
   provider: IPtyProvider
+  requirePhysicalStop: boolean
 }
 
 function emptyTeardownResult(): WorktreeTeardownResult {
   return { runtimeStopped: 0, providerStopped: 0, registryStopped: 0 }
+}
+
+function requiresPhysicalStop(
+  target: FolderWorkspaceTerminalTeardownTarget,
+  deps: FolderWorkspaceTerminalTeardownDeps
+): boolean {
+  return deps.requirePhysicalSshStop === true && target.connection.kind === 'ssh'
 }
 
 async function stopRuntimeFolderWorkspaceTerminals(
@@ -54,17 +71,39 @@ async function stopRuntimeFolderWorkspaceTerminals(
   if (target.connection.kind === 'ambiguous') {
     return emptyTeardownResult()
   }
+  const strict = requiresPhysicalStop(target, deps)
   try {
+    if (strict && Date.now() >= deadline) {
+      throw new Error(`Folder workspace terminal teardown timed out: ${target.workspaceKey}`)
+    }
     const result = await deps.runtime.stopTerminalsForWorktree(target.workspaceKey, {
       deadline,
-      stopPty: async (_ptyId, stop) => ({ stopped: await stop(), owner: true }),
+      stopPty: async (ptyId, stop) => {
+        const stopped = await stop()
+        if (strict && !stopped) {
+          throw new Error(`Unable to verify PTY stopped: ${ptyId}`)
+        }
+        return { stopped, owner: true }
+      },
       excludedPtyIds,
       excludeRemoteRuntimePtys: true,
       resolvedWorktreeId: target.workspaceKey,
       resolvedConnectionId: target.connection.kind === 'ssh' ? target.connection.connectionId : null
     })
+    if (strict && Date.now() >= deadline) {
+      throw new Error(`Folder workspace terminal teardown timed out: ${target.workspaceKey}`)
+    }
     return { ...emptyTeardownResult(), runtimeStopped: result.stopped }
   } catch (error) {
+    if (strict) {
+      if (
+        error instanceof Error &&
+        (error.message === 'runtime_unavailable' || error.message === 'selector_not_found')
+      ) {
+        return emptyTeardownResult()
+      }
+      throw error
+    }
     console.warn(`[folder-workspace-teardown] failed for ${target.workspaceKey}:`, error)
     return emptyTeardownResult()
   }
@@ -78,6 +117,7 @@ async function stopProviderFolderWorkspaceTerminals(
   deps: FolderWorkspaceTerminalTeardownDeps
 ): Promise<WorktreeTeardownResult> {
   await inventoryReady
+  const strict = requiresPhysicalStop(target, deps)
   let physical = emptyTeardownResult()
   const physicallyStoppedPtyIds = new Set<string>()
   try {
@@ -92,9 +132,13 @@ async function stopProviderFolderWorkspaceTerminals(
         deps.onPtyStopped?.(ptyId)
       },
       timeoutMs: providerBudgetMs,
+      ...(strict ? { requirePhysicalStop: true } : {}),
       ...(target.connection.kind === 'ssh' ? { includeLocalRegistry: false } : {})
     })
   } catch (error) {
+    if (strict) {
+      throw error
+    }
     console.warn(`[folder-workspace-teardown] failed for ${target.workspaceKey}:`, error)
   }
   // Why: provider-first avoids one post-stop process inventory per graph PTY.
@@ -123,12 +167,21 @@ function getFolderWorkspaceTeardownJobDeadline(
 async function inventoryFolderWorkspaceProvider(
   provider: IPtyProvider,
   deadline: number,
-  markReady: () => void
+  markReady: () => void,
+  requirePhysicalStop: boolean
 ): Promise<WorktreeTeardownResult> {
   try {
     const inventory = provider.listProcesses({ deadlineMs: teardownRpcDeadline(deadline) })
-    await settleBeforeDeadline(() => inventory, [], deadline)
-  } catch {
+    await settleBeforeDeadline(
+      () => inventory,
+      [],
+      deadline,
+      requirePhysicalStop ? new Error('Folder workspace provider inventory timed out') : undefined
+    )
+  } catch (error) {
+    if (requirePhysicalStop) {
+      throw error
+    }
     // Why: inventory failure must not suppress owner-specific runtime cleanup.
   } finally {
     markReady()
@@ -146,7 +199,8 @@ function createSharedFolderWorkspaceTeardownProvider(
   return {
     inventoryReady,
     markInventoryReady,
-    provider: withSharedPtyProviderProcessSnapshot(provider)
+    provider: withSharedPtyProviderProcessSnapshot(provider),
+    requirePhysicalStop: false
   }
 }
 
@@ -157,7 +211,7 @@ export async function stopFolderWorkspaceTerminals(
   const batchStartedAt = Date.now()
   const batchDeadline = batchStartedAt + FOLDER_WORKSPACE_TEARDOWN_TIMEOUT_MS
   const sharedProviders = new Map<IPtyProvider, SharedFolderWorkspaceTeardownProvider>()
-  const targetJobs: FolderWorkspaceTerminalTeardownJob[] = []
+  const targetJobs: TargetJob[] = []
   for (const target of targets) {
     if (target.connection.kind === 'ambiguous') {
       continue
@@ -167,6 +221,11 @@ export async function stopFolderWorkspaceTerminals(
         ? deps.getSshProvider(target.connection.connectionId)
         : deps.getLocalProvider()
     if (!provider) {
+      if (requiresPhysicalStop(target, deps)) {
+        throw new Error(
+          `PTY provider unavailable for folder workspace deletion: ${target.workspaceKey}`
+        )
+      }
       // Why: mixed host ownership cannot safely choose a provider inventory.
       targetJobs.push({ kind: 'runtime', target })
       continue
@@ -176,38 +235,54 @@ export async function stopFolderWorkspaceTerminals(
       sharedProvider = createSharedFolderWorkspaceTeardownProvider(provider)
       sharedProviders.set(provider, sharedProvider)
     }
+    if (requiresPhysicalStop(target, deps)) {
+      sharedProvider.requirePhysicalStop = true
+    }
     targetJobs.push({ kind: 'provider', target, ...sharedProvider })
   }
-  const inventoryJobs: FolderWorkspaceTerminalTeardownJob[] = [...sharedProviders.values()].map(
-    ({ markInventoryReady, provider }) => ({
+  const inventoryJobs: InventoryJob[] = [...sharedProviders.values()].map(
+    ({ markInventoryReady, provider, requirePhysicalStop }) => ({
       kind: 'inventory',
       markReady: markInventoryReady,
-      provider
+      provider,
+      requirePhysicalStop
     })
   )
   const inventoryPhaseDeadline =
     inventoryJobs.length > 0
       ? batchStartedAt + Math.floor(FOLDER_WORKSPACE_TEARDOWN_TIMEOUT_MS / 2)
       : batchStartedAt
-  const jobs = [...inventoryJobs, ...targetJobs]
-  const results = await mapWithConcurrency(
-    jobs,
+  const inventoryResults = await mapSettledWithConcurrency(
+    inventoryJobs,
     FOLDER_WORKSPACE_TEARDOWN_CONCURRENCY,
     (job, index) => {
-      if (job.kind === 'inventory') {
-        const deadline = getFolderWorkspaceTeardownJobDeadline(
-          batchStartedAt,
-          inventoryPhaseDeadline,
-          inventoryJobs.length,
-          index
-        )
-        return inventoryFolderWorkspaceProvider(job.provider, deadline, job.markReady)
-      }
+      const deadline = getFolderWorkspaceTeardownJobDeadline(
+        batchStartedAt,
+        inventoryPhaseDeadline,
+        inventoryJobs.length,
+        index
+      )
+      return inventoryFolderWorkspaceProvider(
+        job.provider,
+        deadline,
+        job.markReady,
+        job.requirePhysicalStop
+      )
+    }
+  )
+  const failedInventory = inventoryResults.find((result) => result.status === 'rejected')
+  if (failedInventory) {
+    throw failedInventory.reason
+  }
+  const targetResults = await mapSettledWithConcurrency(
+    targetJobs,
+    FOLDER_WORKSPACE_TEARDOWN_CONCURRENCY,
+    (job, index) => {
       const deadline = getFolderWorkspaceTeardownJobDeadline(
         inventoryPhaseDeadline,
         batchDeadline,
         targetJobs.length,
-        index - inventoryJobs.length
+        index
       )
       return job.kind === 'provider'
         ? stopProviderFolderWorkspaceTerminals(
@@ -220,11 +295,19 @@ export async function stopFolderWorkspaceTerminals(
         : stopRuntimeFolderWorkspaceTerminals(job.target, deadline, deps)
     }
   )
-  return results.reduce<WorktreeTeardownResult>(
+  const failed = targetResults.find((result) => result.status === 'rejected')
+  if (failed) {
+    throw failed.reason
+  }
+  const completed = [...inventoryResults, ...targetResults].filter(
+    (result): result is PromiseFulfilledResult<WorktreeTeardownResult> =>
+      result.status === 'fulfilled'
+  )
+  return completed.reduce<WorktreeTeardownResult>(
     (total, result) => ({
-      runtimeStopped: total.runtimeStopped + result.runtimeStopped,
-      providerStopped: total.providerStopped + result.providerStopped,
-      registryStopped: total.registryStopped + result.registryStopped
+      runtimeStopped: total.runtimeStopped + result.value.runtimeStopped,
+      providerStopped: total.providerStopped + result.value.providerStopped,
+      registryStopped: total.registryStopped + result.value.registryStopped
     }),
     emptyTeardownResult()
   )

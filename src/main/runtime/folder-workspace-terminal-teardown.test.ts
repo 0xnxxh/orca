@@ -29,6 +29,17 @@ function createInventoryProvider(): {
   }
 }
 
+function deferred<T>(): {
+  promise: Promise<T>
+  reject: (reason: unknown) => void
+} {
+  let reject = (_reason: unknown): void => {}
+  const promise = new Promise<T>((_resolve, rejectPromise) => {
+    reject = rejectPromise
+  })
+  return { promise, reject }
+}
+
 describe('folder workspace terminal teardown', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -85,7 +96,7 @@ describe('folder workspace terminal teardown', () => {
     ).toEqual([{ workspaceKey: 'folder:folder-workspace', connection: { kind: 'ambiguous' } }])
   })
 
-  it('caps combined provider and runtime-only fanout while sharing each inventory', async () => {
+  it('keeps strict SSH and best-effort local teardown in one bounded batch', async () => {
     let activeTeardowns = 0
     let peakTeardowns = 0
     const settleTrackedTeardown = async <T>(result: T): Promise<T> => {
@@ -122,7 +133,7 @@ describe('folder workspace terminal teardown', () => {
       })),
       ...Array.from({ length: 4 }, (_, index) => ({
         workspaceKey: `runtime-only-${index}`,
-        connection: { kind: 'ssh' as const, connectionId: 'missing' }
+        connection: { kind: 'local' as const }
       }))
     ]
 
@@ -134,13 +145,17 @@ describe('folder workspace terminal teardown', () => {
           ? providerA.provider
           : connectionId === 'ssh-b'
             ? providerB.provider
-            : undefined
+            : undefined,
+      requirePhysicalSshStop: true
     })
 
     expect(peakTeardowns).toBe(4)
     expect(providerA.listProcesses).toHaveBeenCalledTimes(1)
     expect(providerB.listProcesses).toHaveBeenCalledTimes(1)
     expect(killAllProcessesForWorktreeMock).toHaveBeenCalledTimes(8)
+    expect(
+      killAllProcessesForWorktreeMock.mock.calls.every(([, deps]) => deps.requirePhysicalStop)
+    ).toBe(true)
     expect(stopTerminalsForWorktree).toHaveBeenCalledTimes(12)
     const deadlineByWorkspace = new Map(
       stopTerminalsForWorktree.mock.calls.map(([workspaceKey, options]) => [
@@ -159,6 +174,46 @@ describe('folder workspace terminal teardown', () => {
       )
     }
     expect(result).toEqual({ runtimeStopped: 12, providerStopped: 8, registryStopped: 0 })
+  })
+
+  it('preflights every strict SSH provider before stopping any target', async () => {
+    const providerA = createInventoryProvider()
+    const providerB = createInventoryProvider()
+    const providerBInventory = deferred<never[]>()
+    providerB.listProcesses.mockReturnValue(providerBInventory.promise)
+    killAllProcessesForWorktreeMock.mockResolvedValue({
+      runtimeStopped: 0,
+      providerStopped: 1,
+      registryStopped: 0
+    })
+    const stopTerminalsForWorktree = vi.fn(async () => ({ stopped: 1 }))
+
+    const teardown = stopFolderWorkspaceTerminals(
+      [
+        { workspaceKey: 'folder:a', connection: { kind: 'ssh', connectionId: 'ssh-a' } },
+        { workspaceKey: 'folder:b', connection: { kind: 'ssh', connectionId: 'ssh-b' } }
+      ],
+      {
+        runtime: { stopTerminalsForWorktree } as unknown as OrcaRuntimeService,
+        getLocalProvider: () => null,
+        getSshProvider: (connectionId) =>
+          connectionId === 'ssh-a' ? providerA.provider : providerB.provider,
+        requirePhysicalSshStop: true
+      }
+    )
+
+    await vi.waitFor(() => {
+      expect(providerA.listProcesses).toHaveBeenCalledTimes(1)
+      expect(providerB.listProcesses).toHaveBeenCalledTimes(1)
+    })
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(killAllProcessesForWorktreeMock).not.toHaveBeenCalled()
+    expect(stopTerminalsForWorktree).not.toHaveBeenCalled()
+
+    providerBInventory.reject(new Error('host-b-offline'))
+    await expect(teardown).rejects.toThrow('host-b-offline')
+    expect(killAllProcessesForWorktreeMock).not.toHaveBeenCalled()
+    expect(stopTerminalsForWorktree).not.toHaveBeenCalled()
   })
 
   it('reserves teardown budget for a late queued workspace and its runtime sweep', async () => {

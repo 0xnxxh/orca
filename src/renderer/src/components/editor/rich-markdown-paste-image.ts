@@ -1,5 +1,6 @@
 import type { Editor } from '@tiptap/react'
 import { toast } from 'sonner'
+import { translate } from '@/i18n/i18n'
 import { useAppStore } from '@/store'
 import { extractIpcErrorMessage } from './rich-markdown-ipc-error-message'
 import { insertRichMarkdownImageFromPath } from './rich-markdown-image-insert'
@@ -46,7 +47,12 @@ export function handleRichMarkdownImagePaste({
     ? resolveRichMarkdownFileOwner(useAppStore.getState(), fileId, filePath, worktreeId)
     : null
   if (!fileOwner) {
-    toast.error("Couldn't verify which host owns this file. Reopen the file and try again.")
+    toast.error(
+      translate(
+        'auto.components.right.sidebar.useFileDeletion.8b8ee9d22f',
+        "Couldn't determine which host owns this file. Check the workspace connection and try again."
+      )
+    )
     return true
   }
 

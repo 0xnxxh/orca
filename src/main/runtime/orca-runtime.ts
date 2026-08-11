@@ -2882,6 +2882,7 @@ export class OrcaRuntimeService {
   private authoritativeWindowId: number | null = null
   private rendererDeletedFolderWorkspaceKeys = new Set<string>()
   private rendererDeletedFolderWorkspacePtyIds = new Map<string, Set<string>>()
+  private rendererPendingFolderWorkspaceDeletionKeys = new Set<string>()
   // Why: paired graph transactions need foreground timer cadence only until their publication settles.
   private readonly rendererPublicationThrottle = new RendererPublicationThrottle()
   private tabs = new Map<string, RuntimeSyncedTab>()
@@ -5660,6 +5661,9 @@ export class OrcaRuntimeService {
         new Set(ptyIds)
       ])
     )
+    const rendererPendingFolderWorkspaceDeletionKeys = new Set(
+      this.rendererPendingFolderWorkspaceDeletionKeys
+    )
     const acceptsRendererWorkspace = (worktreeId: string): boolean => {
       if (splitWorktreeId(worktreeId)) {
         return true
@@ -5667,16 +5671,27 @@ export class OrcaRuntimeService {
       const scope = parseWorkspaceKey(worktreeId)
       return (
         scope?.type !== 'folder' ||
-        !rendererDeletedFolderWorkspaceKeys.has(folderWorkspaceKey(scope.folderWorkspaceId))
+        (!rendererDeletedFolderWorkspaceKeys.has(folderWorkspaceKey(scope.folderWorkspaceId)) &&
+          !rendererPendingFolderWorkspaceDeletionKeys.has(
+            folderWorkspaceKey(scope.folderWorkspaceId)
+          ))
       )
     }
     const acceptsRendererPty = (worktreeId: string, ptyId: string | null): boolean =>
       acceptsRendererWorkspace(worktreeId) &&
       (!ptyId || !rendererDeletedFolderWorkspacePtyIds.get(worktreeId)?.has(ptyId))
-    const syncedTabs = graph.tabs.filter((tab) => acceptsRendererWorkspace(tab.worktreeId))
-    const syncedLeaves = graph.leaves.filter((leaf) =>
-      acceptsRendererPty(leaf.worktreeId, leaf.ptyId)
-    )
+    const syncedTabs = [
+      ...graph.tabs.filter((tab) => acceptsRendererWorkspace(tab.worktreeId)),
+      ...[...this.tabs.values()].filter((tab) =>
+        rendererPendingFolderWorkspaceDeletionKeys.has(tab.worktreeId)
+      )
+    ]
+    const syncedLeaves = [
+      ...graph.leaves.filter((leaf) => acceptsRendererPty(leaf.worktreeId, leaf.ptyId)),
+      ...[...this.leaves.values()].filter((leaf) =>
+        rendererPendingFolderWorkspaceDeletionKeys.has(leaf.worktreeId)
+      )
+    ]
     const mobileSessionTabs = graph.mobileSessionTabs
       ?.filter((snapshot) => acceptsRendererWorkspace(snapshot.worktree))
       .map((snapshot) =>
@@ -5685,8 +5700,12 @@ export class OrcaRuntimeService {
           rendererDeletedFolderWorkspacePtyIds.get(snapshot.worktree)
         )
       )
-    const unchangedMobileSessionWorktrees =
-      graph.unchangedMobileSessionWorktrees?.filter(acceptsRendererWorkspace)
+    const unchangedMobileSessionWorktrees = [
+      ...(graph.unchangedMobileSessionWorktrees?.filter(acceptsRendererWorkspace) ?? []),
+      ...[...rendererPendingFolderWorkspaceDeletionKeys].filter((workspaceKey) =>
+        this.mobileSessionTabsByWorktree.has(workspaceKey)
+      )
+    ]
     const previousTabs = this.tabs
     const previousLeaves = this.leaves
     this.tabs = new Map(syncedTabs.map((tab) => [tab.tabId, tab]))
@@ -18761,26 +18780,103 @@ export class OrcaRuntimeService {
     return preserved
   }
 
-  private async stopAndPurgeFolderWorkspaces(
+  private requireDirectSshFolderWorkspaceProviders(
+    targets: ReturnType<typeof resolveFolderWorkspaceTerminalTeardownTargets>
+  ): void {
+    for (const target of targets) {
+      if (
+        target.connection.kind === 'ssh' &&
+        !this.getSshProviderFn?.(target.connection.connectionId)
+      ) {
+        throw new Error(
+          `PTY provider unavailable for folder workspace deletion: ${target.workspaceKey}`
+        )
+      }
+    }
+  }
+
+  private beginPendingFolderWorkspaceDeletionFence(
+    targets: ReturnType<typeof resolveFolderWorkspaceTerminalTeardownTargets>
+  ): () => void {
+    const workspaceKeys = new Set(targets.map((target) => target.workspaceKey))
+    for (const workspaceKey of workspaceKeys) {
+      this.rendererPendingFolderWorkspaceDeletionKeys.add(workspaceKey)
+    }
+    return () => {
+      for (const workspaceKey of workspaceKeys) {
+        this.rendererPendingFolderWorkspaceDeletionKeys.delete(workspaceKey)
+      }
+    }
+  }
+
+  private async stopFolderWorkspaceTargets(
     targets: ReturnType<typeof resolveFolderWorkspaceTerminalTeardownTargets>,
-    preserveRendererWorkspaceKeys: ReadonlySet<string> = new Set()
+    requirePhysicalSshStop = false
   ): Promise<void> {
     try {
       await stopFolderWorkspaceTerminals(targets, {
         runtime: this,
         getLocalProvider: () => this.getLocalProvider(),
         getSshProvider: (connectionId) => this.getSshProviderFn?.(connectionId),
-        onPtyStopped: this.onPtyStopped ?? undefined
+        onPtyStopped: this.onPtyStopped ?? undefined,
+        ...(requirePhysicalSshStop ? { requirePhysicalSshStop: true } : {})
       })
     } catch (error) {
+      if (requirePhysicalSshStop) {
+        throw error
+      }
       console.warn('[folder-workspace-teardown] batch failed:', error)
     }
+  }
+
+  private purgeFolderWorkspaceTargets(
+    targets: ReturnType<typeof resolveFolderWorkspaceTerminalTeardownTargets>,
+    preserveRendererWorkspaceKeys: ReadonlySet<string>
+  ): void {
     for (const target of targets) {
       if (preserveRendererWorkspaceKeys.has(target.workspaceKey)) {
         this.purgeFolderWorkspaceOwnerRuntimeState(target)
       } else {
         this.purgeWorkspaceRuntimeState(target.workspaceKey)
       }
+    }
+  }
+
+  private async commitFolderWorkspaceDeletion(
+    targets: ReturnType<typeof resolveFolderWorkspaceTerminalTeardownTargets>,
+    preserveRendererWorkspaceKeys: ReadonlySet<string>,
+    deleteMetadata: () => boolean
+  ): Promise<boolean> {
+    const requirePhysicalSshStop = targets.some((target) => target.connection.kind === 'ssh')
+    if (requirePhysicalSshStop) {
+      this.requireDirectSshFolderWorkspaceProviders(targets)
+    }
+    const releasePendingFence = requirePhysicalSshStop
+      ? this.beginPendingFolderWorkspaceDeletionFence(targets)
+      : null
+    try {
+      if (requirePhysicalSshStop) {
+        await this.stopFolderWorkspaceTargets(targets, true)
+      }
+      if (!deleteMetadata()) {
+        return false
+      }
+      const snapshotPtyIdsByWorkspace = this.pruneDeletedFolderWorkspaceMobileSnapshots(
+        targets,
+        preserveRendererWorkspaceKeys
+      )
+      this.fenceDeletedFolderWorkspaceRendererGraphs(
+        targets,
+        preserveRendererWorkspaceKeys,
+        snapshotPtyIdsByWorkspace
+      )
+      if (!requirePhysicalSshStop) {
+        await this.stopFolderWorkspaceTargets(targets)
+      }
+      this.purgeFolderWorkspaceTargets(targets, preserveRendererWorkspaceKeys)
+      return true
+    } finally {
+      releasePendingFence?.()
     }
   }
 
@@ -18991,25 +19087,20 @@ export class OrcaRuntimeService {
             preserveRendererWorkspaceKeys.has(folderWorkspaceKey(workspace.id))
           )
           .map((workspace) => workspace.id)
-        const deleted = this.store.deleteProjectGroup(groupId, {
-          executionHostId: ownerHostId,
-          ...(preservedRendererWorkspaceIds.length > 0
-            ? { preserveRendererWorkspaceIds: preservedRendererWorkspaceIds }
-            : {})
-        })
+        const deleted = await this.commitFolderWorkspaceDeletion(
+          targets,
+          preserveRendererWorkspaceKeys,
+          () =>
+            this.store!.deleteProjectGroup!(groupId, {
+              executionHostId: ownerHostId,
+              ...(preservedRendererWorkspaceIds.length > 0
+                ? { preserveRendererWorkspaceIds: preservedRendererWorkspaceIds }
+                : {})
+            })
+        )
         if (!deleted) {
           return { deleted: false }
         }
-        const snapshotPtyIdsByWorkspace = this.pruneDeletedFolderWorkspaceMobileSnapshots(
-          targets,
-          preserveRendererWorkspaceKeys
-        )
-        this.fenceDeletedFolderWorkspaceRendererGraphs(
-          targets,
-          preserveRendererWorkspaceKeys,
-          snapshotPtyIdsByWorkspace
-        )
-        await this.stopAndPurgeFolderWorkspaces(targets, preserveRendererWorkspaceKeys)
         if (options.notify !== false) {
           this.notifyReposChanged()
         }
@@ -19242,23 +19333,18 @@ export class OrcaRuntimeService {
         [workspace]
       )
       const preserveRendererWorkspaceKey = preserveRendererWorkspaceKeys.has(workspaceKey)
-      const deleted = this.store.removeFolderWorkspace(folderWorkspaceId, {
-        executionHostId: ownerHostId,
-        ...(preserveRendererWorkspaceKey ? { preserveRendererWorkspaceKey: true } : {})
-      })
+      const deleted = await this.commitFolderWorkspaceDeletion(
+        targets,
+        preserveRendererWorkspaceKeys,
+        () =>
+          this.store!.removeFolderWorkspace!(folderWorkspaceId, {
+            executionHostId: ownerHostId,
+            ...(preserveRendererWorkspaceKey ? { preserveRendererWorkspaceKey: true } : {})
+          })
+      )
       if (!deleted) {
         return { deleted: false }
       }
-      const snapshotPtyIdsByWorkspace = this.pruneDeletedFolderWorkspaceMobileSnapshots(
-        targets,
-        preserveRendererWorkspaceKeys
-      )
-      this.fenceDeletedFolderWorkspaceRendererGraphs(
-        targets,
-        preserveRendererWorkspaceKeys,
-        snapshotPtyIdsByWorkspace
-      )
-      await this.stopAndPurgeFolderWorkspaces(targets, preserveRendererWorkspaceKeys)
       if (options.notify !== false) {
         this.notifyReposChanged()
       }

@@ -8,7 +8,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { MouseEventHandler, PointerEventHandler, ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Worktree } from '../../../../shared/types'
+import type { WorkspaceStatusDefinition, Worktree } from '../../../../shared/types'
 
 const storeDoubles = vi.hoisted(() => {
   const deleteFolderWorkspace = vi.fn()
@@ -25,7 +25,7 @@ const storeDoubles = vi.hoisted(() => {
       deleteStateByWorktreeId: {},
       worktreeLineageById: {},
       workspaceLineageByChildKey: {},
-      workspaceStatuses: [],
+      workspaceStatuses: [] as WorkspaceStatusDefinition[],
       projectGroups: [],
       settings: null,
       updateWorktreeMeta: vi.fn(),
@@ -55,7 +55,10 @@ vi.mock('@/store/selectors', () => ({
   useWorktreeMap: () => new Map()
 }))
 
-vi.mock('@/i18n/i18n', () => ({ translate: (_key: string, fallback: string) => fallback }))
+vi.mock('@/i18n/i18n', () => ({
+  i18n: { language: 'en' },
+  translate: (_key: string, fallback: string) => fallback
+}))
 
 vi.mock('@/components/ui/tooltip', () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -98,7 +101,7 @@ vi.mock('@/components/ui/dropdown-menu', () => {
     DropdownMenuItem: item,
     DropdownMenuLabel: passthrough,
     DropdownMenuRadioGroup: passthrough,
-    DropdownMenuRadioItem: passthrough,
+    DropdownMenuRadioItem: item,
     DropdownMenuSeparator: () => null,
     DropdownMenuSub: passthrough,
     DropdownMenuSubContent: passthrough,
@@ -144,9 +147,13 @@ function makeWorktree(overrides: Partial<Worktree> = {}): Worktree {
 
 // Why: assert on text content — the passthrough menu mock renders each label as
 // a bare text node beside its icon, which getByText's element matching skips.
-function openContextMenu(altKey: boolean, worktree: Worktree = makeWorktree()): string {
+function openContextMenu(
+  altKey: boolean,
+  worktree: Worktree = makeWorktree(),
+  selectedWorktrees?: readonly Worktree[]
+): string {
   const { container } = render(
-    <WorktreeContextMenu worktree={worktree}>
+    <WorktreeContextMenu worktree={worktree} selectedWorktrees={selectedWorktrees}>
       <div data-testid="card">card</div>
     </WorktreeContextMenu>
   )
@@ -158,6 +165,7 @@ describe('Developer submenu reveal', () => {
   beforeEach(() => {
     storeDoubles.state.activeWorktreeId = null
     storeDoubles.state.activeWorkspaceExecutionHostId = null
+    storeDoubles.state.workspaceStatuses = []
   })
 
   afterEach(() => {
@@ -197,5 +205,63 @@ describe('Developer submenu reveal', () => {
       })
     })
     expect(storeDoubles.setActiveWorktree).toHaveBeenCalledWith(null)
+  })
+
+  it('routes folder menu metadata actions to the clicked owner', async () => {
+    const worktree = makeWorktree({
+      id: 'folder:folder-1',
+      hostId: 'ssh:builder',
+      workspaceStatus: 'todo'
+    })
+    openContextMenu(false, worktree)
+
+    const pin = screen.getByRole('button', { name: 'Pin' })
+    fireEvent.pointerDown(pin, { button: 0 })
+    fireEvent.click(pin)
+    const markUnread = screen.getByRole('button', { name: 'Mark Unread' })
+    fireEvent.pointerDown(markUnread, { button: 0 })
+    fireEvent.click(markUnread)
+
+    expect(storeDoubles.state.setWorktreesPinnedAndReveal).toHaveBeenCalledWith(
+      [worktree.id],
+      true,
+      { executionHostId: 'ssh:builder' }
+    )
+    await waitFor(() => expect(storeDoubles.state.updateWorktreeMeta).toHaveBeenCalledTimes(1))
+    expect(storeDoubles.state.updateWorktreeMeta).toHaveBeenCalledWith(
+      worktree.id,
+      { isUnread: true },
+      { executionHostId: 'ssh:builder' }
+    )
+  })
+
+  it('keeps the clicked owner when raw-ID multi-selection retained its sibling', async () => {
+    storeDoubles.state.workspaceStatuses = [
+      { id: 'todo', label: 'Todo' },
+      { id: 'done', label: 'Done' }
+    ]
+    const clicked = makeWorktree({
+      id: 'folder:folder-1',
+      hostId: 'ssh:builder',
+      workspaceStatus: 'todo'
+    })
+    const retainedSibling = makeWorktree({
+      id: clicked.id,
+      hostId: 'local',
+      workspaceStatus: 'todo'
+    })
+    const other = makeWorktree({ id: 'repo-2::/other', workspaceStatus: 'done' })
+    openContextMenu(false, clicked, [retainedSibling, other])
+
+    const done = screen.getByRole('button', { name: 'Done' })
+    fireEvent.pointerDown(done, { button: 0 })
+    fireEvent.click(done)
+
+    await waitFor(() => expect(storeDoubles.state.updateWorktreeMeta).toHaveBeenCalledTimes(1))
+    expect(storeDoubles.state.updateWorktreeMeta).toHaveBeenCalledWith(
+      clicked.id,
+      { workspaceStatus: 'done' },
+      { executionHostId: 'ssh:builder' }
+    )
   })
 })
