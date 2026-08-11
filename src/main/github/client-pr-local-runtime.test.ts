@@ -234,6 +234,9 @@ describe('GitHub PR local runtime routing', () => {
           stdout: JSON.stringify({ id: 13, node_id: 'PRRC_inline_13', user: null, body: 'Inline' })
         }
       }
+      if (args.length === 2 && endpoint === 'repos/acme/orca/pulls/7') {
+        return { stdout: JSON.stringify({ stack: null }) }
+      }
       return { stdout: '', stderr: '' }
     })
 
@@ -466,6 +469,9 @@ describe('GitHub PR local runtime routing', () => {
       }
       if (endpoint.endsWith('/check-runs/88/annotations?per_page=20')) {
         return { stdout: '[]' }
+      }
+      if (args.length === 2 && endpoint === 'repos/team/orca/pulls/7') {
+        return { stdout: JSON.stringify({ stack: null }) }
       }
       if (query) {
         return { stdout: JSON.stringify({ data: { repository: {} } }) }

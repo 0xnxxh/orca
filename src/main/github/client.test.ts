@@ -1,6 +1,7 @@
 /* oxlint-disable max-lines -- Why: GitHub client fixtures cover local and SSH repo identity paths in one suite so mocked CLI behavior stays consistent. */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as GithubApiRepositoryModule from './github-api-repository'
+import type * as GitHubEnterpriseRepositoryModule from './github-enterprise-repository'
 
 type RateLimitGuardResult =
   | { blocked: false }
@@ -101,6 +102,11 @@ vi.mock('../providers/ssh-git-dispatch', () => ({
 
 vi.mock('./local-git-config-signature', () => ({
   readLocalGitConfigSignature: readLocalGitConfigSignatureMock
+}))
+
+vi.mock('./github-enterprise-repository', async (importOriginal) => ({
+  ...(await importOriginal<typeof GitHubEnterpriseRepositoryModule>()),
+  isGitHubHostAuthenticated: vi.fn().mockResolvedValue(true)
 }))
 
 vi.mock('./rate-limit', () => ({
@@ -4143,6 +4149,8 @@ describe('GitHub GraphQL rate-limit guard', () => {
     __resetPRConflictSummaryCachesForTests()
   })
 
+  afterEach(() => vi.restoreAllMocks())
+
   it('skips PR review-thread GraphQL fetch while preserving REST comments', async () => {
     rateLimitGuardMock.mockImplementation(((bucket: string) =>
       bucket === 'graphql'
@@ -4561,6 +4569,167 @@ describe('GitHub GraphQL rate-limit guard', () => {
     expect(
       ghExecFileAsyncMock.mock.calls.some(([args]) => args[0] === 'pr' && args[1] === 'merge')
     ).toBe(false)
+  })
+
+  const stackMetadataUnavailableError =
+    'Could not verify GitHub pull request stack metadata. Refresh and try again.'
+
+  it.each([
+    {
+      failure: 'local transport failure',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: new Error('stack metadata unavailable'),
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'stack metadata unavailable',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'unparsable probe response over SSH',
+      repoPath: '/remote/repo-root',
+      connectionId: 'ssh-1',
+      probeResponse: { stdout: '' },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'invalid JSON response',
+      expectedOptions: { host: 'github.com' }
+    },
+    {
+      failure: 'valid JSON with a non-object payload',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: { stdout: 'null' },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'invalid response shape',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'malformed stack response',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: {
+        stdout: JSON.stringify({
+          number: 202,
+          head: { sha: 'api-sha' },
+          stack: {
+            number: 51,
+            position: 2,
+            size: '2',
+            base: { ref: 'main', sha: 'main-sha' }
+          }
+        })
+      },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'malformed stack',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'registered stack response without a head SHA',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: {
+        stdout: JSON.stringify({
+          number: 202,
+          head: { ref: 'stack/api' },
+          stack: {
+            number: 51,
+            position: 2,
+            size: 2,
+            base: { ref: 'main', sha: 'main-sha' }
+          }
+        })
+      },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'missing head SHA',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'omitted stack metadata',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: {
+        stdout: JSON.stringify({
+          number: 202,
+          head: { sha: 'api-sha' },
+          base: { ref: 'stack/models', sha: 'models-sha' }
+        })
+      },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'stack field omitted',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'omitted stack metadata on GHES',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: {
+        stdout: JSON.stringify({
+          number: 202,
+          head: { sha: 'api-sha' },
+          base: { ref: 'stack/models', sha: 'models-sha' }
+        })
+      },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'stack field omitted',
+      expectedOptions: { cwd: '/repo-root', host: 'github.acme-corp.com:8443' }
+    }
+  ])('fails closed on $failure', async (scenario) => {
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    if (scenario.probeResponse instanceof Error) {
+      ghExecFileAsyncMock.mockRejectedValueOnce(scenario.probeResponse)
+    } else {
+      ghExecFileAsyncMock.mockResolvedValueOnce(scenario.probeResponse)
+    }
+    // Why: disabling the guard must expose the legacy merge fallthrough, not fail on an unstubbed call.
+    ghExecFileAsyncMock
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          number: 202,
+          title: 'Stack API',
+          state: 'OPEN',
+          url: 'https://github.com/stablyai/orca/pull/202',
+          statusCheckRollup: [],
+          updatedAt: '2026-08-10T00:00:00Z',
+          isDraft: false,
+          mergeable: 'MERGEABLE',
+          baseRefName: 'stack/models',
+          headRefName: 'stack/api',
+          headRefOid: 'api-sha'
+        })
+      })
+      .mockResolvedValueOnce({ stdout: '', stderr: '' })
+
+    const result = await mergePR(scenario.repoPath, 202, 'squash', scenario.connectionId, {
+      owner: 'stablyai',
+      repo: 'orca',
+      host: scenario.expectedOptions.host
+    })
+
+    expect.soft(result).toEqual({ ok: false, error: scenario.expectedError })
+    expect
+      .soft(ghExecFileAsyncMock.mock.calls.map(([args]) => args))
+      .toEqual([['api', 'repos/stablyai/orca/pulls/202']])
+    expect.soft(ghExecFileAsyncMock.mock.calls[0]?.[1]).toEqual(scenario.expectedOptions)
+    expect
+      .soft(
+        ghExecFileAsyncMock.mock.calls.some(([args]) =>
+          args.includes('repos/stablyai/orca/pulls/202/merge-async')
+        )
+      )
+      .toBe(false)
+    expect
+      .soft(
+        ghExecFileAsyncMock.mock.calls.some(([args]) => args[0] === 'pr' && args[1] === 'merge')
+      )
+      .toBe(false)
+    expect.soft(acquireMock).toHaveBeenCalledTimes(1)
+    expect.soft(releaseMock).toHaveBeenCalledTimes(1)
+    expect
+      .soft(consoleWarnSpy)
+      .toHaveBeenCalledWith(
+        'mergePR stack metadata probe failed for stablyai/orca#202:',
+        scenario.expectedDiagnostic
+      )
+    expect.soft(consoleWarnSpy).toHaveBeenCalledTimes(1)
   })
 
   it('keeps legacy merge for unregistered dependent PR chains', async () => {
