@@ -162,6 +162,26 @@ describe('worktree list folder reveal', () => {
     ])
   })
 
+  it('derives the owner when only project-group ids collide', () => {
+    const localGroup = makeProjectGroup({ id: 'group-child', executionHostId: 'local' })
+    const runtimeGroup = makeProjectGroup({
+      id: 'group-child',
+      executionHostId: 'runtime:env-1'
+    })
+    const runtimeFolder = makeFolderWorkspace({
+      id: 'runtime-folder',
+      executionHostId: 'runtime:env-1'
+    })
+
+    expect(
+      getFolderWorkspaceRevealGroupKeys(
+        folderWorkspaceKey(runtimeFolder.id),
+        [runtimeFolder],
+        [localGroup, runtimeGroup]
+      )
+    ).toEqual([getProjectGroupHeaderKey(runtimeGroup.id, 'runtime:env-1')])
+  })
+
   it('uses qualified DOM row keys only for collision-qualified folder rows', () => {
     expect(
       getFolderWorkspaceSidebarRowKey('folder-workspace-1', 'folder-workspace:folder-workspace-1')

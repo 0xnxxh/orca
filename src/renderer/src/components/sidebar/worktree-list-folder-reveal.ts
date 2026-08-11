@@ -107,16 +107,21 @@ export function getFolderWorkspaceRevealGroupKeys(
     return []
   }
 
+  const resolvedOwnerHostId =
+    ownerHostId ?? resolveFolderWorkspaceCatalogOwnerHostId(folderWorkspace, projectGroups)
+  if (!resolvedOwnerHostId) {
+    return []
+  }
   const projectGroupIndex = buildProjectGroupSidebarIndex(projectGroups)
   let group = findProjectGroupForSidebarOwner(
     projectGroupIndex,
     folderWorkspace.projectGroupId,
-    ownerHostId
+    resolvedOwnerHostId
   )
   const keys: string[] = []
   const seen = new Set<string>()
   while (group) {
-    const identity = JSON.stringify([ownerHostId, group.id])
+    const identity = JSON.stringify([resolvedOwnerHostId, group.id])
     if (seen.has(identity)) {
       break
     }
@@ -124,7 +129,7 @@ export function getFolderWorkspaceRevealGroupKeys(
     keys.unshift(
       getProjectGroupHeaderKey(
         group.id,
-        projectGroupIndex.ambiguousIds.has(group.id) ? ownerHostId : undefined
+        projectGroupIndex.ambiguousIds.has(group.id) ? resolvedOwnerHostId : undefined
       )
     )
     group = findProjectGroupParentForSidebar(projectGroupIndex, group)
