@@ -17,6 +17,7 @@ import { SearchableSetting } from './SearchableSetting'
 import { matchesSettingsSearch } from './settings-search'
 import { getTerminalWindowsPowershellImplementationSearchEntry } from './terminal-windows-search'
 import { TerminalMacKeyboardSection } from './TerminalMacKeyboardSection'
+import { TerminalMacPtyLimitSetting } from './TerminalMacPtyLimitSetting'
 import { translate } from '@/i18n/i18n'
 
 type TerminalAdvancedSectionProps = {
@@ -297,7 +298,10 @@ export function TerminalAdvancedSection({
         ) : null}
 
         {isMac ? (
-          <TerminalMacKeyboardSection settings={settings} updateSettings={updateSettings} />
+          <>
+            <TerminalMacPtyLimitSetting />
+            <TerminalMacKeyboardSection settings={settings} updateSettings={updateSettings} />
+          </>
         ) : null}
       </div>
     </section>

@@ -58,6 +58,14 @@ describe('getTerminalPaneSearchEntries', () => {
     expect(entries.some((entry) => entry.title === 'Option as Alt')).toBe(false)
   })
 
+  it('includes the system PTY limit setting only on macOS', () => {
+    const entriesMac = getTerminalPaneSearchEntries({ isWindows: false, isMac: true })
+    const entriesLinux = getTerminalPaneSearchEntries({ isWindows: false, isMac: false })
+
+    expect(entriesMac.some((entry) => entry.title === 'macOS PTY Limit')).toBe(true)
+    expect(entriesLinux.some((entry) => entry.title === 'macOS PTY Limit')).toBe(false)
+  })
+
   it('includes the JIS Yen mapping setting only on macOS', () => {
     const entriesMac = getTerminalPaneSearchEntries({ isWindows: false, isMac: true })
     const entriesLinux = getTerminalPaneSearchEntries({ isWindows: false, isMac: false })

@@ -93,6 +93,27 @@ export const getTerminalMacYenSearchEntries = createLocalizedCatalog(() => [
   }
 ])
 
+export const getTerminalMacPtyLimitSearchEntries = createLocalizedCatalog(() => [
+  {
+    title: translate(
+      'auto.components.settings.terminal.search.macosPtyLimitTitle',
+      'macOS PTY Limit'
+    ),
+    description: translate(
+      'auto.components.settings.terminal.search.macosPtyLimitDescription',
+      'System-wide capacity for local terminal sessions.'
+    ),
+    keywords: [
+      ...translateSearchKeyword('auto.components.settings.terminal.search.f66a7cf715', 'terminal'),
+      ...translateSearchKeyword('auto.components.settings.terminal.search.macosPty', 'pty'),
+      ...translateSearchKeyword('auto.components.settings.terminal.search.macosLimit', 'limit'),
+      ...translateSearchKeyword('auto.components.settings.terminal.search.macos511', '511'),
+      ...translateSearchKeyword('auto.components.settings.terminal.search.macos999', '999'),
+      ...translateSearchKeyword('auto.components.settings.terminal.search.d8d6f7a3c5', 'macos')
+    ]
+  }
+])
+
 export const getTerminalGhosttyImportSearchEntries = createLocalizedCatalog(() => [
   {
     title: translate('auto.components.settings.terminal.search.a979df0083', 'Import from Ghostty'),

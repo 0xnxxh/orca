@@ -6,6 +6,7 @@ import { isMacUserAgent, isWindowsUserAgent } from '@/components/terminal-pane/p
 import {
   getManageSessionsSearchEntries,
   getTerminalAdvancedSearchEntries,
+  getTerminalMacPtyLimitSearchEntries,
   getTerminalMacOptionSearchEntries,
   getTerminalMacYenSearchEntries,
   getTerminalPaneInteractionSearchEntries,
@@ -104,6 +105,7 @@ export function TerminalPane({
       )) ||
     (isMac &&
       (matchesSettingsSearch(searchQuery, getTerminalMacOptionSearchEntries()) ||
+        matchesSettingsSearch(searchQuery, getTerminalMacPtyLimitSearchEntries()) ||
         matchesSettingsSearch(searchQuery, getTerminalMacYenSearchEntries()))) ? (
       <TerminalAdvancedSection
         key="advanced"

@@ -9413,7 +9413,9 @@
               "title": "Theme Mode",
               "keyword_target": "target",
               "keyword_editing": "editing"
-            }
+            },
+            "macosPtyLimitTitle": "macOS PTY Limit",
+            "macosPtyLimitDescription": "System-wide capacity for local terminal sessions."
           },
           "windows": {
             "search": {
@@ -10586,6 +10588,19 @@
           "on": "On",
           "auto": "Agent",
           "off": "Off"
+        },
+        "TerminalMacPtyLimitSetting": {
+          "confirmTitle": "Increase the system PTY limit?",
+          "confirmDescription": "macOS will request administrator authentication. This raises the limit for all apps on this Mac until restart, allowing runaway processes to consume more PTYs and related resources.",
+          "confirmLabel": "Increase limit",
+          "success": "System PTY limit increased to 999 until restart.",
+          "failure": "Couldn’t increase the system PTY limit.",
+          "description": "System-wide capacity for local terminal sessions. Remote SSH hosts are unaffected.",
+          "retry": "Retry status",
+          "maximum": "{{value0}} · Maximum",
+          "waiting": "Waiting for macOS…",
+          "increase": "Increase to {{value0}}",
+          "current": "Current: {{value0}} · Resets after restart"
         }
       },
       "right": {

@@ -10,6 +10,7 @@ import type {
 } from '../shared/hosted-review'
 import type { NativeFileDropPayload } from '../shared/native-file-drop'
 import type { ComputerAwakeStatus } from '../shared/computer-awake-mode'
+import type { MacosPtyLimitIncreaseResult, MacosPtyLimitStatus } from '../shared/macos-pty-limit'
 import type { BrowserFindSource } from '../shared/browser-find-source'
 import type {
   DashboardRevealAgentArgs,
@@ -2350,6 +2351,10 @@ export type PreloadApi = {
     previewWarpThemeImport: (source: WarpThemeImportSource) => Promise<WarpThemeImportPreview>
     /** Subscribe to out-of-band settings updates (e.g. View > Appearance toggles) to stay in sync with main. */
     onChanged: (callback: (updates: Partial<GlobalSettings>) => void) => () => void
+  }
+  macosPtyLimit: {
+    getStatus: () => Promise<MacosPtyLimitStatus>
+    increase: () => Promise<MacosPtyLimitIncreaseResult>
   }
   agentAwake: {
     getStatus: () => Promise<ComputerAwakeStatus>

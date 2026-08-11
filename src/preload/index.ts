@@ -5,6 +5,7 @@ import { preloadE2EConfig } from './e2e-config'
 import { glApi } from './gitlab'
 import type { AppIdentity } from '../shared/app-identity'
 import type { ComputerAwakeStatus } from '../shared/computer-awake-mode'
+import type { MacosPtyLimitIncreaseResult, MacosPtyLimitStatus } from '../shared/macos-pty-limit'
 import type {
   DashboardRevealAgentArgs,
   DashboardSleepWorkspaceArgs,
@@ -2051,6 +2052,12 @@ const api = {
       ipcRenderer.on('settings:changed', listener)
       return () => ipcRenderer.removeListener('settings:changed', listener)
     }
+  },
+
+  macosPtyLimit: {
+    getStatus: (): Promise<MacosPtyLimitStatus> => ipcRenderer.invoke('macosPtyLimit:getStatus'),
+    increase: (): Promise<MacosPtyLimitIncreaseResult> =>
+      ipcRenderer.invoke('macosPtyLimit:increase')
   },
 
   agentAwake: {

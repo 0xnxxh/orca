@@ -15,6 +15,7 @@ const {
   registerNotificationHandlersMock,
   registerDeveloperPermissionHandlersMock,
   registerComputerUsePermissionHandlersMock,
+  registerMacosPtyLimitHandlersMock,
   registerSettingsHandlersMock,
   registerKeybindingHandlersMock,
   registerTelemetryHandlersMock,
@@ -79,6 +80,7 @@ const {
   registerNotificationHandlersMock: vi.fn(),
   registerDeveloperPermissionHandlersMock: vi.fn(),
   registerComputerUsePermissionHandlersMock: vi.fn(),
+  registerMacosPtyLimitHandlersMock: vi.fn(),
   registerSettingsHandlersMock: vi.fn(),
   registerKeybindingHandlersMock: vi.fn(),
   registerTelemetryHandlersMock: vi.fn(),
@@ -214,6 +216,10 @@ vi.mock('./developer-permissions', () => ({
 
 vi.mock('./computer-use-permissions', () => ({
   registerComputerUsePermissionHandlers: registerComputerUsePermissionHandlersMock
+}))
+
+vi.mock('./macos-pty-limit', () => ({
+  registerMacosPtyLimitHandlers: registerMacosPtyLimitHandlersMock
 }))
 
 vi.mock('./settings', () => ({
@@ -392,6 +398,7 @@ describe('registerCoreHandlers', () => {
     registerNotificationHandlersMock.mockReset()
     registerDeveloperPermissionHandlersMock.mockReset()
     registerComputerUsePermissionHandlersMock.mockReset()
+    registerMacosPtyLimitHandlersMock.mockReset()
     registerSettingsHandlersMock.mockReset()
     registerKeybindingHandlersMock.mockReset()
     registerTelemetryHandlersMock.mockReset()
@@ -513,6 +520,7 @@ describe('registerCoreHandlers', () => {
     expect(registerNotificationHandlersMock).toHaveBeenCalledWith(store, runtime)
     expect(registerDeveloperPermissionHandlersMock).toHaveBeenCalled()
     expect(registerComputerUsePermissionHandlersMock).toHaveBeenCalled()
+    expect(registerMacosPtyLimitHandlersMock).toHaveBeenCalled()
     expect(registerDashboardPopoutHandlersMock).toHaveBeenCalledWith(store, undefined)
     expect(registerTerminalPreviewHandlersMock).toHaveBeenCalledWith(runtime)
     expect(registerSettingsHandlersMock).toHaveBeenCalledWith(store, agentAwakeService)

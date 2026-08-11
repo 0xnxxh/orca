@@ -726,6 +726,10 @@ function createWebPreloadApi(): Partial<PreloadApi> {
       listFonts: () => Promise.resolve([]),
       onChanged: () => noopUnsubscribe
     } satisfies Partial<WebSettingsApi> as unknown as WebSettingsApi,
+    macosPtyLimit: {
+      getStatus: async () => ({ state: 'unsupported' }),
+      increase: async () => ({ outcome: 'unsupported' })
+    },
     agentAwake: {
       getStatus: async () => {
         const settings = getStoredSettings()

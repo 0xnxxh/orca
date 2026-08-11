@@ -32,6 +32,7 @@ import { registerDashboardPopoutHandlers } from './dashboard-popout'
 import { registerTerminalPreviewHandlers } from './terminal-preview'
 import { registerDeveloperPermissionHandlers } from './developer-permissions'
 import { registerComputerUsePermissionHandlers } from './computer-use-permissions'
+import { registerMacosPtyLimitHandlers } from './macos-pty-limit'
 import {
   setTrustedBrowserRendererWebContentsId,
   setAgentBrowserBridgeRef,
@@ -175,6 +176,7 @@ export function registerCoreHandlers(
   registerDiagnosticsHandlers()
   registerTerminalRenderDesyncEvidenceHandler()
   registerComputerUsePermissionHandlers()
+  registerMacosPtyLimitHandlers()
   registerSettingsHandlers(store, agentAwakeService)
   registerSkillsHandlers(store)
   if (automations) {

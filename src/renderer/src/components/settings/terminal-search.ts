@@ -3,6 +3,7 @@ import {
   getTerminalAdvancedSearchEntries,
   getTerminalGhosttyImportSearchEntries,
   getTerminalMacOptionSearchEntries,
+  getTerminalMacPtyLimitSearchEntries,
   getTerminalMacYenSearchEntries
 } from './terminal-advanced-platform-search'
 import {
@@ -53,6 +54,7 @@ export {
 export {
   getTerminalAdvancedSearchEntries,
   getTerminalMacOptionSearchEntries,
+  getTerminalMacPtyLimitSearchEntries,
   getTerminalMacYenSearchEntries,
   getTerminalGhosttyImportSearchEntries
 } from './terminal-advanced-platform-search'
@@ -120,7 +122,11 @@ export function getTerminalPaneSearchEntries(platform: {
     ...getManageSessionsSearchEntries(),
     ...getTerminalAdvancedSearchEntries(),
     ...(platform.isMac
-      ? [...getTerminalMacOptionSearchEntries(), ...getTerminalMacYenSearchEntries()]
+      ? [
+          ...getTerminalMacPtyLimitSearchEntries(),
+          ...getTerminalMacOptionSearchEntries(),
+          ...getTerminalMacYenSearchEntries()
+        ]
       : [])
   ]
 }
