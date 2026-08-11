@@ -3,6 +3,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
+import { parseWorkspaceCleanupFacetNumber } from './workspace-cleanup-facet-panel-model'
 
 /** One facet group inside the filter panel, with its own match count. */
 export function FacetSection({
@@ -48,11 +49,12 @@ export function FacetToggleList<T extends string>({
   getLabel: (value: T) => string
   onChange: (next: T[]) => void
 }): React.JSX.Element {
+  const selectedSet = new Set(selected)
   return (
     <FacetField label={label}>
       <div className="flex flex-wrap gap-1">
         {values.map((value) => {
-          const active = selected.includes(value)
+          const active = selectedSet.has(value)
           return (
             <button
               key={value}
@@ -144,7 +146,7 @@ export function FacetNumberField({
           aria-label={label}
           value={value === null ? '' : String(value)}
           placeholder={placeholder}
-          onChange={(event) => onChange(parseFacetNumber(event.target.value))}
+          onChange={(event) => onChange(parseWorkspaceCleanupFacetNumber(event.target.value))}
           className="h-7 w-24 text-xs"
         />
         {suffix ? <span className="text-[11px] text-muted-foreground">{suffix}</span> : null}
@@ -218,13 +220,4 @@ function FacetField({
       {children}
     </div>
   )
-}
-
-export function parseFacetNumber(raw: string): number | null {
-  const trimmed = raw.trim()
-  if (trimmed === '') {
-    return null
-  }
-  const parsed = Number(trimmed)
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }

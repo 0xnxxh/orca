@@ -15032,6 +15032,8 @@
             "protected": "Protected"
           },
           "blockerMode": "Blocker match",
+          "blockerModeAny": "Has any",
+          "blockerModeNone": "Has none",
           "blockers": "Blockers",
           "dismissed": "Ignored",
           "selectableOnly": "Only workspaces I can delete now",

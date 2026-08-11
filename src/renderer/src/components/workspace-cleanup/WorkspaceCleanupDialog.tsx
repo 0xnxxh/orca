@@ -112,7 +112,11 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
 
   const candidates = useMemo(() => scan?.candidates ?? [], [scan?.candidates])
   const gitEvidenceNeeded = open && needsWorkspaceCleanupGitEvidence(browse.filters, browse.sort)
-  const gitEvidence = useWorkspaceCleanupGitEvidence({ enabled: gitEvidenceNeeded, candidates })
+  const gitEvidence = useWorkspaceCleanupGitEvidence({
+    enabled: gitEvidenceNeeded,
+    candidates,
+    scannedAt: scan?.scannedAt ?? null
+  })
   const evidencedCandidates = useMemo(
     () => applyWorkspaceCleanupGitEvidence(candidates, gitEvidence.evidenceByWorktreeId),
     [candidates, gitEvidence.evidenceByWorktreeId]
@@ -253,17 +257,19 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
     setSelectedIds((current) => toggleSetMember(current, worktreeId))
   }, [])
 
-  const selectableWorktreeIds = facetRows.selectableWorktreeIds
+  const selectableWorktreeIds = useMemo(
+    () =>
+      removal.removalInFlight
+        ? []
+        : facetRows.selectableWorktreeIds.filter((id) => !deletingWorktreeIds.has(id)),
+    [deletingWorktreeIds, facetRows.selectableWorktreeIds, removal.removalInFlight]
+  )
   const toggleSelectAll = useCallback(
     (selectAll: boolean) => {
       selectionTouchedRef.current = true
-      setSelectedIds(
-        selectAll
-          ? new Set(selectableWorktreeIds.filter((id) => !deletingWorktreeIds.has(id)))
-          : new Set()
-      )
+      setSelectedIds(selectAll ? new Set(selectableWorktreeIds) : new Set())
     },
-    [deletingWorktreeIds, selectableWorktreeIds]
+    [selectableWorktreeIds]
   )
 
   // Why: stable per-row handlers so React.memo keeps unchanged CandidateRow
@@ -334,6 +340,7 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
             <WorkspaceCleanupBrowseToolbar
               browse={browse}
               facetRows={facetRows}
+              selectableCount={selectableWorktreeIds.length}
               selectedCount={selectedCount}
               spaceScanning={workspaceSpaceScanning}
               gitPendingCount={gitEvidence.pendingWorktreeIds.size}

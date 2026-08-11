@@ -35,3 +35,12 @@ export function toMegabytes(bytes: number | null): number | null {
 export function fromMegabytes(megabytes: number | null): number | null {
   return megabytes === null ? null : Math.round(megabytes * WORKSPACE_CLEANUP_MEGABYTE)
 }
+
+export function parseWorkspaceCleanupFacetNumber(raw: string): number | null {
+  const trimmed = raw.trim()
+  if (trimmed === '') {
+    return null
+  }
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}

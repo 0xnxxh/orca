@@ -13,6 +13,7 @@ import { WorkspaceCleanupSortHeader } from './workspace-cleanup-sort-header'
 export function WorkspaceCleanupBrowseToolbar({
   browse,
   facetRows,
+  selectableCount,
   selectedCount,
   spaceScanning,
   gitPendingCount,
@@ -22,6 +23,7 @@ export function WorkspaceCleanupBrowseToolbar({
 }: {
   browse: WorkspaceCleanupBrowseController
   facetRows: WorkspaceCleanupFacetRows
+  selectableCount: number
   selectedCount: number
   spaceScanning: boolean
   gitPendingCount: number
@@ -54,7 +56,7 @@ export function WorkspaceCleanupBrowseToolbar({
       />
       <WorkspaceCleanupSortHeader
         sort={browse.sort}
-        selectableCount={facetRows.selectableWorktreeIds.length}
+        selectableCount={selectableCount}
         selectedCount={selectedCount}
         onToggleSortField={browse.toggleSortField}
         onToggleSelectAll={onToggleSelectAll}

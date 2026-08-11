@@ -2,6 +2,7 @@ import type {
   WorkspaceCleanupBlocker,
   WorkspaceCleanupCandidate
 } from '../../../../shared/workspace-cleanup'
+import { applyWorkspaceCleanupPolicy } from '../../../../shared/workspace-cleanup'
 import type {
   WorkspaceCleanupFilterState,
   WorkspaceCleanupSortField,
@@ -77,5 +78,22 @@ export function applyWorkspaceCleanupGitEvidence(
   if (evidenceByWorktreeId.size === 0) {
     return candidates
   }
-  return candidates.map((candidate) => evidenceByWorktreeId.get(candidate.worktreeId) ?? candidate)
+  return candidates.map((candidate) => {
+    const evidence = evidenceByWorktreeId.get(candidate.worktreeId)
+    if (
+      evidence === undefined ||
+      (candidate.git.checkedAt !== null &&
+        candidate.git.checkedAt >= (evidence.git.checkedAt ?? Number.NEGATIVE_INFINITY))
+    ) {
+      return candidate
+    }
+    return applyWorkspaceCleanupPolicy({
+      ...candidate,
+      blockers: [
+        ...candidate.blockers.filter((blocker) => !GIT_DERIVED_BLOCKERS.has(blocker)),
+        ...evidence.blockers.filter((blocker) => GIT_DERIVED_BLOCKERS.has(blocker))
+      ],
+      git: evidence.git
+    })
+  })
 }

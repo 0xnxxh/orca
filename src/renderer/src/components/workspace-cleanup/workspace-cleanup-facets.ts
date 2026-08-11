@@ -174,6 +174,10 @@ export function buildWorkspaceCleanupSizeIndex(
   return index
 }
 
+export function countWorkspaceCleanupMeasuredRows(rows: readonly WorkspaceCleanupFacets[]): number {
+  return rows.reduce((count, row) => count + (row.sizeBytes === null ? 0 : 1), 0)
+}
+
 export function buildWorkspaceCleanupWorktreeIndex(
   worktreesByRepo: Readonly<Record<string, readonly WorkspaceCleanupWorktreeFacts[]>>
 ): Map<string, WorkspaceCleanupWorktreeFacts> {

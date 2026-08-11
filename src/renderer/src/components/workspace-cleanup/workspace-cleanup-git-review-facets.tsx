@@ -21,6 +21,7 @@ import {
   FacetToggleList
 } from './workspace-cleanup-facet-controls'
 import {
+  getWorkspaceCleanupBlockerModeLabel,
   getWorkspaceCleanupGitStateLabel,
   getWorkspaceCleanupPresenceLabel,
   getWorkspaceCleanupReviewProviderLabel,
@@ -176,6 +177,7 @@ export function WorkspaceCleanupGitReviewFacets({
           label={translate('components.workspace.cleanup.browse.blockerMode', 'Blocker match')}
           value={filters.safety.blockerMode}
           options={WORKSPACE_CLEANUP_BLOCKER_MODE_VALUES}
+          getLabel={getWorkspaceCleanupBlockerModeLabel}
           onChange={(blockerMode) => onPatch('safety', { blockerMode })}
         />
         <FacetToggleList

@@ -140,6 +140,15 @@ describe('workspace cleanup facet controls', () => {
     expect(onPatch).toHaveBeenCalledWith('safety', { dismissed: 'only' })
   })
 
+  it('labels blocker matching without exposing model tokens', () => {
+    renderFacets(createDefaultWorkspaceCleanupFilterState(), createPatchMock())
+
+    expect(control('Blocker match: Has any')).not.toBeNull()
+    expect(control('Blocker match: Has none')).not.toBeNull()
+    expect(container?.textContent).not.toContain('any-of')
+    expect(container?.textContent).not.toContain('none-of')
+  })
+
   it('toggles the unsized escape hatch for the opt-in space scan', () => {
     const onPatch = createPatchMock()
     renderFacets(createDefaultWorkspaceCleanupFilterState(), onPatch)

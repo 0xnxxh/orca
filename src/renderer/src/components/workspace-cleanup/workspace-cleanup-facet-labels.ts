@@ -3,6 +3,7 @@ import type { HostedReviewProvider } from '../../../../shared/hosted-review'
 import type { WorkspaceCleanupTier } from '../../../../shared/workspace-cleanup'
 import type {
   WorkspaceCleanupAgentState,
+  WorkspaceCleanupBlockerMode,
   WorkspaceCleanupGitState,
   WorkspaceCleanupIdleSignal,
   WorkspaceCleanupPresence,
@@ -165,4 +166,10 @@ export function getWorkspaceCleanupPresenceLabel(value: WorkspaceCleanupPresence
     case 'none':
       return translate('components.workspace.cleanup.browse.presence.none', 'Has none')
   }
+}
+
+export function getWorkspaceCleanupBlockerModeLabel(value: WorkspaceCleanupBlockerMode): string {
+  return value === 'any-of'
+    ? translate('components.workspace.cleanup.browse.blockerModeAny', 'Has any')
+    : translate('components.workspace.cleanup.browse.blockerModeNone', 'Has none')
 }

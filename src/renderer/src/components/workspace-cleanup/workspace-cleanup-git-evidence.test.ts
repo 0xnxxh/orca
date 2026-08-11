@@ -111,4 +111,38 @@ describe('applyWorkspaceCleanupGitEvidence', () => {
     const candidates = [deferredCandidate('a')]
     expect(applyWorkspaceCleanupGitEvidence(candidates, new Map())).toBe(candidates)
   })
+
+  it('merges only git facts into the current broad-scan row', () => {
+    const current = deferredCandidate('a')
+    current.displayName = 'current name'
+    current.blockers = ['dismissed']
+    current.fingerprint = 'current-fingerprint'
+    const refreshed = makeFacetCandidate({
+      worktreeId: 'a',
+      displayName: 'stale name',
+      blockers: ['dirty-files'],
+      fingerprint: 'focused-fingerprint',
+      git: { clean: false, upstreamAhead: 0, upstreamBehind: 0, checkedAt: 5 }
+    })
+
+    const [row] = applyWorkspaceCleanupGitEvidence([current], new Map([['a', refreshed]]))
+
+    expect(row.displayName).toBe('current name')
+    expect(row.fingerprint).toBe('current-fingerprint')
+    expect(row.blockers).toEqual(expect.arrayContaining(['dismissed', 'dirty-files']))
+    expect(row.git).toEqual(refreshed.git)
+  })
+
+  it('keeps newer broad-scan git evidence', () => {
+    const current = makeFacetCandidate({
+      worktreeId: 'a',
+      git: { clean: true, upstreamAhead: 0, upstreamBehind: 0, checkedAt: 10 }
+    })
+    const older = makeFacetCandidate({
+      worktreeId: 'a',
+      git: { clean: false, upstreamAhead: 2, upstreamBehind: 0, checkedAt: 5 }
+    })
+
+    expect(applyWorkspaceCleanupGitEvidence([current], new Map([['a', older]]))[0]).toBe(current)
+  })
 })

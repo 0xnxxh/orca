@@ -37,7 +37,7 @@ export function sortWorkspaceCleanupFacets(
   sort: WorkspaceCleanupSortState
 ): WorkspaceCleanupFacets[] {
   const multiplier = sort.direction === 'asc' ? 1 : -1
-  return [...facets].sort(
+  return facets.toSorted(
     (left, right) =>
       comparePrimary(left, right, sort.field, multiplier) || compareTieBreaks(left, right)
   )

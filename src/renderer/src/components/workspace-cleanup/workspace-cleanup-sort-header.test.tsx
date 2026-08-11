@@ -84,4 +84,12 @@ describe('WorkspaceCleanupSortHeader', () => {
 
     expect(onToggleSelectAll).toHaveBeenCalledWith(true)
   })
+
+  it('exposes a partial selection as mixed', () => {
+    render({ field: 'name', direction: 'asc' }, { selectableCount: 3, selectedCount: 1 })
+
+    expect(
+      container?.querySelector<HTMLButtonElement>('[role="checkbox"]')?.getAttribute('aria-checked')
+    ).toBe('mixed')
+  })
 })

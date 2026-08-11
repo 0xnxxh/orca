@@ -13,6 +13,7 @@ import {
   buildWorkspaceCleanupFacetList,
   buildWorkspaceCleanupSizeIndex,
   buildWorkspaceCleanupWorktreeIndex,
+  countWorkspaceCleanupMeasuredRows,
   type WorkspaceCleanupFacets
 } from './workspace-cleanup-facets'
 import {
@@ -143,6 +144,6 @@ export function useWorkspaceCleanupFacetRows({
     options,
     reviewInfoByWorktreeId,
     sizeByWorktreeId,
-    measuredSizeCount: sizeByWorktreeId.size
+    measuredSizeCount: countWorkspaceCleanupMeasuredRows(facets)
   }
 }

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   buildWorkspaceCleanupFacetList,
   buildWorkspaceCleanupSizeIndex,
-  buildWorkspaceCleanupWorktreeIndex
+  buildWorkspaceCleanupWorktreeIndex,
+  countWorkspaceCleanupMeasuredRows
 } from './workspace-cleanup-facets'
 import {
   DAY,
@@ -67,6 +68,11 @@ describe('facet building', () => {
     const index = buildWorkspaceCleanupSizeIndex(scanned)
     expect(index.get('a')).toBe(10)
     expect(index.has('b')).toBe(false)
+  })
+
+  it('counts measurements only for rows in the current fleet', () => {
+    const rows = [makeFacets({ sizeBytes: 10 }), makeNamedFacets('unsized')]
+    expect(countWorkspaceCleanupMeasuredRows(rows)).toBe(1)
   })
 
   it('indexes worktrees across repos by id', () => {

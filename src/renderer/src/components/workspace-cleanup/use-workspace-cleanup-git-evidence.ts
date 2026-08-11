@@ -29,10 +29,12 @@ const EMPTY_EVIDENCE: WorkspaceCleanupGitEvidenceState = {
  */
 export function useWorkspaceCleanupGitEvidence({
   enabled,
-  candidates
+  candidates,
+  scannedAt
 }: {
   enabled: boolean
   candidates: readonly WorkspaceCleanupCandidate[]
+  scannedAt: number | null
 }): WorkspaceCleanupGitEvidenceState {
   const scanWorkspaceCleanup = useAppStore((s) => s.scanWorkspaceCleanup)
   const mountedRef = useMountedRef()
@@ -40,8 +42,11 @@ export function useWorkspaceCleanupGitEvidence({
   const evidenceRef = useRef(new Map<string, WorkspaceCleanupCandidate>())
   const attemptedRef = useRef(new Set<string>())
   const queueRef = useRef<string[]>([])
+  const queuedRef = useRef(new Set<string>())
   const inFlightRef = useRef(new Set<string>())
   const totalRef = useRef(0)
+  const enabledRef = useRef(enabled)
+  const scannedAtRef = useRef(scannedAt)
   // Why: results that land after the user cleared the git filter belong to a
   // stale pass and must not resurrect its pending banner.
   const generationRef = useRef(0)
@@ -52,8 +57,8 @@ export function useWorkspaceCleanupGitEvidence({
     }
     setState({
       evidenceByWorktreeId: new Map(evidenceRef.current),
-      pendingWorktreeIds: new Set(inFlightRef.current),
-      checkedCount: totalRef.current - queueRef.current.length - inFlightRef.current.size,
+      pendingWorktreeIds: new Set([...queuedRef.current, ...inFlightRef.current]),
+      checkedCount: totalRef.current - queuedRef.current.size - inFlightRef.current.size,
       totalCount: totalRef.current
     })
   }, [mountedRef])
@@ -68,13 +73,18 @@ export function useWorkspaceCleanupGitEvidence({
       if (worktreeId === undefined) {
         break
       }
+      queuedRef.current.delete(worktreeId)
       inFlightRef.current.add(worktreeId)
       attemptedRef.current.add(worktreeId)
       void scanWorkspaceCleanup({ worktreeId })
         .then((result) => {
-          const refreshed = result.candidates.find(
-            (candidate) => candidate.worktreeId === worktreeId
-          )
+          let refreshed: WorkspaceCleanupCandidate | undefined
+          for (const candidate of result.candidates) {
+            if (candidate.worktreeId === worktreeId) {
+              refreshed = candidate
+              break
+            }
+          }
           if (refreshed && generation === generationRef.current) {
             evidenceRef.current.set(worktreeId, refreshed)
           }
@@ -84,10 +94,10 @@ export function useWorkspaceCleanupGitEvidence({
           // attemptedRef keeps it from retrying in a loop.
         })
         .finally(() => {
-          inFlightRef.current.delete(worktreeId)
           if (generation !== generationRef.current) {
             return
           }
+          inFlightRef.current.delete(worktreeId)
           publish()
           pump()
         })
@@ -96,24 +106,37 @@ export function useWorkspaceCleanupGitEvidence({
   }, [publish, scanWorkspaceCleanup])
 
   useEffect(() => {
-    if (!enabled) {
+    const wasEnabled = enabledRef.current
+    const snapshotChanged = scannedAtRef.current !== scannedAt
+    enabledRef.current = enabled
+    scannedAtRef.current = scannedAt
+
+    if ((wasEnabled && !enabled) || (enabled && snapshotChanged)) {
       generationRef.current += 1
       queueRef.current = []
+      queuedRef.current.clear()
       inFlightRef.current.clear()
+      attemptedRef.current.clear()
+      evidenceRef.current.clear()
       totalRef.current = 0
       publish()
+    }
+    if (!enabled) {
       return
     }
     const targets = selectWorkspaceCleanupGitEvidenceTargets(candidates, {
       resolvedWorktreeIds: attemptedRef.current
-    }).filter((id) => !queueRef.current.includes(id))
+    }).filter((id) => !queuedRef.current.has(id) && !inFlightRef.current.has(id))
     if (targets.length === 0) {
       return
     }
     queueRef.current.push(...targets)
+    for (const target of targets) {
+      queuedRef.current.add(target)
+    }
     totalRef.current += targets.length
     pump()
-  }, [candidates, enabled, pump, publish])
+  }, [candidates, enabled, pump, publish, scannedAt])
 
   return state
 }
