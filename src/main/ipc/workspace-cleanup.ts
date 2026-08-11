@@ -57,10 +57,7 @@ export function registerWorkspaceCleanupHandlers(
   )
 
   ipcMain.handle('workspaceCleanup:dismiss', (_event, args: WorkspaceCleanupDismissArgs) => {
-    // Why spread the whole record: updateUI replaces `workspaceCleanup` wholesale,
-    // so writing dismissals alone would erase the persisted browse state.
-    const currentState = store.getUI().workspaceCleanup
-    const next = { ...currentState?.dismissals }
+    const next = { ...store.getUI().workspaceCleanup?.dismissals }
     for (const dismissal of args.dismissals ?? []) {
       if (
         dismissal &&
@@ -71,13 +68,11 @@ export function registerWorkspaceCleanupHandlers(
         next[dismissal.worktreeId] = dismissal
       }
     }
-    store.updateUI({ workspaceCleanup: { ...currentState, dismissals: next } })
+    store.updateUI({ workspaceCleanup: { dismissals: next } })
   })
 
   ipcMain.handle('workspaceCleanup:clearDismissals', () => {
-    store.updateUI({
-      workspaceCleanup: { ...store.getUI().workspaceCleanup, dismissals: {} }
-    })
+    store.updateUI({ workspaceCleanup: { dismissals: {} } })
   })
 
   ipcMain.handle(

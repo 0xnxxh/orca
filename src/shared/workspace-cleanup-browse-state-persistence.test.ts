@@ -55,6 +55,22 @@ describe('workspace cleanup browse state persistence', () => {
     expect(normalized).not.toHaveProperty('unknownTopLevelField')
   })
 
+  it('drops invalid persisted host ids without losing valid SSH and runtime hosts', () => {
+    const normalized = normalizeWorkspaceCleanupBrowseState({
+      filters: {
+        location: {
+          hostIds: ['local', 'ssh:build%20box', 'not-a-host', 'runtime:linux', 'ssh:']
+        }
+      }
+    })
+
+    expect(normalized.filters.location.hostIds).toEqual([
+      'local',
+      'ssh:build%20box',
+      'runtime:linux'
+    ])
+  })
+
   it.each([null, undefined, 'corrupt', 42, [], { filters: 'nonsense' }])(
     'never throws on a corrupt blob (%p)',
     (value) => {

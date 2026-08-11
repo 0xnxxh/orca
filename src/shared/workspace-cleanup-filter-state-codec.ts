@@ -1,4 +1,4 @@
-import type { ExecutionHostId } from './execution-host'
+import { normalizeExecutionHostId, type ExecutionHostId } from './execution-host'
 import type { HostedReviewProvider } from './hosted-review'
 import {
   WORKSPACE_CLEANUP_AGENT_STATE_VALUES,
@@ -99,7 +99,7 @@ export function normalizeWorkspaceCleanupFilterState(value: unknown): WorkspaceC
       completelyEmpty: asBoolean(context.completelyEmpty, base.context.completelyEmpty)
     },
     location: {
-      hostIds: asStringList(location.hostIds) as ExecutionHostId[],
+      hostIds: asExecutionHostIdList(location.hostIds),
       repoIds: asStringList(location.repoIds),
       pathPrefix: asString(location.pathPrefix, base.location.pathPrefix)
     },
@@ -197,6 +197,23 @@ export function asStringList(value: unknown): string[] {
     }
   }
   return [...seen]
+}
+
+function asExecutionHostIdList(value: unknown): ExecutionHostId[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  const result = new Set<ExecutionHostId>()
+  for (const entry of value) {
+    if (typeof entry !== 'string') {
+      continue
+    }
+    const hostId = normalizeExecutionHostId(entry)
+    if (hostId) {
+      result.add(hostId)
+    }
+  }
+  return [...result]
 }
 
 function asTriState(

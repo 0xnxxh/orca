@@ -31,8 +31,8 @@ export const createWorkspaceCleanupBrowseSlice: StateCreator<
     }
     persistTimer = setTimeout(() => {
       persistTimer = null
-      // Why dismissals ride along: main replaces `workspaceCleanup` wholesale on
-      // ui.set, so a browse-only payload would erase every dismissal.
+      // Why dismissals ride along: the legacy wire schema requires the field,
+      // while `browse` stays optional for older clients.
       window.api.ui
         .set({
           workspaceCleanup: {
