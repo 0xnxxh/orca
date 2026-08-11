@@ -184,6 +184,12 @@ describe('MobileSocketWiring', () => {
       transport: { transport: 'direct' }
     })
 
+    wiring.closeForOutboundReplyOverflow(ws as unknown as WebSocket)
+    wiring.closeForOutboundReplyOverflow(ws as unknown as WebSocket)
+    expect(ws.close).toHaveBeenCalledOnce()
+    expect(ws.close).toHaveBeenCalledWith(1013, 'Outbound reply buffer overflow')
+    expect(wiring.channelCount).toBe(0)
+
     transport.disconnect(ws)
     expect(onClose).toHaveBeenCalledWith(expect.objectContaining({ ws }), false)
     expect(wiring.channelCount).toBe(0)

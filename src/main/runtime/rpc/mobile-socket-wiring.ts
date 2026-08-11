@@ -114,6 +114,10 @@ export class MobileSocketWiring {
     return this.connectionIds.get(ws)
   }
 
+  closeForOutboundReplyOverflow(ws: WebSocket): void {
+    this.closeChannel(ws, 1013, 'Outbound reply buffer overflow')
+  }
+
   get channelCount(): number {
     return this.channels.size
   }
@@ -176,9 +180,7 @@ export class MobileSocketWiring {
         },
         onError: (code, reason) => {
           const reportUnpairedDevice = code === 4001 && reason === 'Unauthorized'
-          this.channels.get(ws)?.destroy()
-          this.channels.delete(ws)
-          ws.close(code, reason)
+          this.closeChannel(ws, code, reason)
           if (reportUnpairedDevice) {
             try {
               this.onUnpairedDeviceAuthFailure?.(metadata)
@@ -204,6 +206,16 @@ export class MobileSocketWiring {
       this.channels.set(ws, channel)
     }
     channel.handleRawMessage(message)
+  }
+
+  private closeChannel(ws: WebSocket, code: number, reason: string): void {
+    const channel = this.channels.get(ws)
+    if (!channel) {
+      return
+    }
+    channel.destroy()
+    this.channels.delete(ws)
+    ws.close(code, reason)
   }
 
   private handleClose(ws: WebSocket): void {

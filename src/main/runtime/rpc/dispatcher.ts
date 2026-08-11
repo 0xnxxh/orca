@@ -10,6 +10,8 @@ import {
 } from './core'
 
 import type { FeatureInteractionId } from '../../../shared/feature-interactions'
+import { REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES } from '../../../shared/remote-runtime-capacity-limits'
+import { tryStringifyJsonWithinByteLimit } from '../../../shared/node-bounded-json-stringify'
 import { errorResponse, successResponse } from './errors'
 import { ALL_RPC_METHODS } from './methods'
 import { emulatorProbe, emulatorProbeError } from '../../emulator/emulator-probe'
@@ -139,25 +141,45 @@ export class RpcDispatcher {
     options?: RpcDispatchStreamingOptions
   ): Promise<void> {
     const meta = this.meta()
+    let outboundReplyOverflowed = false
+    const repliesSuppressed = (): boolean =>
+      outboundReplyOverflowed ||
+      Boolean(options?.suppressRepliesAfterAbort && options.signal?.aborted)
+    const replyResponse = (response: RpcResponse): void => {
+      if (repliesSuppressed()) {
+        return
+      }
+      const serialized = tryStringifyJsonWithinByteLimit(
+        response,
+        REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES
+      )
+      if (!serialized.ok) {
+        if (!options?.onOutboundReplyOverflow) {
+          throw serialized.error
+        }
+        outboundReplyOverflowed = true
+        options.onOutboundReplyOverflow()
+        return
+      }
+      reply(serialized.serialized)
+    }
     const method = this.registry.get(request.method)
     if (!method) {
-      reply(
-        JSON.stringify(
-          errorResponse(request.id, meta, 'method_not_found', `Unknown method: ${request.method}`)
-        )
+      replyResponse(
+        errorResponse(request.id, meta, 'method_not_found', `Unknown method: ${request.method}`)
       )
       return
     }
 
     const migrationFence = orchestrationMigrationFence(request, meta)
     if (migrationFence) {
-      reply(JSON.stringify(migrationFence))
+      replyResponse(migrationFence)
       return
     }
 
     const parsedParams = this.parseParams(request, method, meta)
     if (parsedParams.error) {
-      reply(JSON.stringify(parsedParams.error))
+      replyResponse(parsedParams.error)
       return
     }
 
@@ -169,7 +191,7 @@ export class RpcDispatcher {
           options?.signal
         )
         if (compatibility.handled) {
-          reply(JSON.stringify(successResponse(request.id, meta, compatibility.result)))
+          replyResponse(successResponse(request.id, meta, compatibility.result))
           return
         }
         const effectiveParams = compatibility.params ?? parsedParams.value
@@ -217,15 +239,18 @@ export class RpcDispatcher {
           undefined,
           request.params
         )
-        reply(JSON.stringify(successResponse(request.id, meta, result)))
+        replyResponse(successResponse(request.id, meta, result))
       } catch (error) {
-        reply(JSON.stringify(mapDispatcherError(request, meta, error)))
+        replyResponse(mapDispatcherError(request, meta, error))
       }
       return
     }
 
     const recordedStreamingFeatureInteractions = new Set<FeatureInteractionId>()
     const emit = (result: unknown): void => {
+      if (repliesSuppressed()) {
+        return
+      }
       recordRuntimeFeatureInteraction(
         this.runtime,
         request.method,
@@ -235,7 +260,7 @@ export class RpcDispatcher {
       )
       const response = successResponse(request.id, meta, result)
       response.streaming = true
-      reply(JSON.stringify(response))
+      replyResponse(response)
     }
 
     try {
@@ -265,7 +290,7 @@ export class RpcDispatcher {
         request.params
       )
     } catch (error) {
-      reply(JSON.stringify(mapDispatcherError(request, meta, error)))
+      replyResponse(mapDispatcherError(request, meta, error))
     }
   }
 

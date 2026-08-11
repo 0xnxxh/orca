@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { runInNewContext } from 'node:vm'
+import { describe, expect, it, vi } from 'vitest'
 import {
   JsonStringifyByteLimitError,
   stringifyJsonWithinByteLimit
@@ -73,10 +74,96 @@ describe('stringifyJsonWithinByteLimit', () => {
     expect(calls).toBe(1)
   })
 
+  it('matches native coercion for boxed primitives with overridden hooks', () => {
+    const booleanValue = new Boolean(true)
+    booleanValue.valueOf = () => {
+      throw new Error('native JSON ignores this hook')
+    }
+    const numberValue = new Number(1)
+    numberValue[Symbol.toPrimitive] = () => 2
+    const stringValue = new String('a')
+    stringValue[Symbol.toPrimitive] = () => 'b'
+
+    for (const value of [booleanValue, numberValue, stringValue]) {
+      const native = JSON.stringify(value)
+
+      expect(stringifyJsonWithinByteLimit(value, Buffer.byteLength(native)).serialized).toBe(native)
+    }
+  })
+
+  it('recognizes cross-realm boxed primitives but not proxies around them', () => {
+    const crossRealmValues = runInNewContext(
+      '[new Number(7), new String("cross-realm"), new Boolean(false)]'
+    ) as unknown[]
+    const proxiedNumber = new Proxy(new Number(7), {})
+
+    for (const value of [...crossRealmValues, proxiedNumber]) {
+      const native = JSON.stringify(value)
+
+      expect(stringifyJsonWithinByteLimit(value, Buffer.byteLength(native)).serialized).toBe(native)
+    }
+  })
+
+  it('preserves proxy key order and invokes array accessors once', () => {
+    const target = { 1: 'one', 2: 'two' }
+    const proxy = new Proxy(target, {
+      ownKeys: () => ['2', '1']
+    })
+    const array = [0]
+    const read = vi.fn(() => proxy)
+    Object.defineProperty(array, 0, { enumerable: true, get: read })
+    const native = JSON.stringify(array)
+    read.mockClear()
+
+    expect(stringifyJsonWithinByteLimit(array, Buffer.byteLength(native)).serialized).toBe(native)
+    expect(read).toHaveBeenCalledOnce()
+  })
+
+  it('counts custom boxed-string coercion before materializing JSON output', () => {
+    const value = new String('small')
+    value[Symbol.toPrimitive] = () => 'x'.repeat(1024 * 1024)
+    const charCodeAt = vi.spyOn(String.prototype, 'charCodeAt')
+    try {
+      expect(() => stringifyJsonWithinByteLimit(value, 64)).toThrow(JsonStringifyByteLimitError)
+      expect(charCodeAt.mock.calls.length).toBeLessThan(128)
+    } finally {
+      charCodeAt.mockRestore()
+    }
+  })
+
   it('rejects a large root string before materializing escaped JSON', () => {
     const value = '\n'.repeat(1024 * 1024)
 
     expect(() => stringifyJsonWithinByteLimit(value, 1024)).toThrow(JsonStringifyByteLimitError)
+  })
+
+  it('stops measuring a primitive string as soon as it crosses the limit', () => {
+    const charCodeAt = vi.spyOn(String.prototype, 'charCodeAt')
+    try {
+      let observed: unknown
+      try {
+        stringifyJsonWithinByteLimit('x'.repeat(1024 * 1024), 64)
+      } catch (error) {
+        observed = error
+      }
+      expect(observed).toBeInstanceOf(JsonStringifyByteLimitError)
+      expect((observed as JsonStringifyByteLimitError).observedBytes).toBe(65)
+      expect(charCodeAt.mock.calls.length).toBeLessThan(128)
+    } finally {
+      charCodeAt.mockRestore()
+    }
+  })
+
+  it('stops measuring a property key as soon as it crosses the limit', () => {
+    let observed: unknown
+    try {
+      stringifyJsonWithinByteLimit({ ['x'.repeat(1024 * 1024)]: true }, 64)
+    } catch (error) {
+      observed = error
+    }
+
+    expect(observed).toBeInstanceOf(JsonStringifyByteLimitError)
+    expect((observed as JsonStringifyByteLimitError).observedBytes).toBe(65)
   })
 
   it('stops visiting a large collection as soon as it crosses the limit', () => {
@@ -97,9 +184,16 @@ describe('stringifyJsonWithinByteLimit', () => {
     if (!createRawJson) {
       return
     }
-    const value = createRawJson(JSON.stringify('x'.repeat(1024)))
+    const value = createRawJson(JSON.stringify('x'.repeat(1024 * 1024)))
 
-    expect(() => stringifyJsonWithinByteLimit(value, 32)).toThrow(JsonStringifyByteLimitError)
+    let observed: unknown
+    try {
+      stringifyJsonWithinByteLimit(value, 64)
+    } catch (error) {
+      observed = error
+    }
+    expect(observed).toBeInstanceOf(JsonStringifyByteLimitError)
+    expect((observed as JsonStringifyByteLimitError).observedBytes).toBe(65)
   })
 
   it('rejects invalid limits and unserializable roots like native JSON', () => {

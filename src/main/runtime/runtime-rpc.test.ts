@@ -2130,7 +2130,7 @@ describe('OrcaRuntimeRpcServer', () => {
       await first
 
       expect(server['activeLongPolls']).toBe(0)
-      expect(replies).toContainEqual(expect.objectContaining({ id: 'req_wait', ok: true }))
+      expect(replies).not.toContainEqual(expect.objectContaining({ id: 'req_wait' }))
     } finally {
       db.close()
       await server.stop()
@@ -2218,8 +2218,8 @@ describe('OrcaRuntimeRpcServer', () => {
 
       expect(server['activeLongPolls']).toBe(0)
       expect(server['activeAskLongPolls']).toBe(0)
-      expect(replies).toContainEqual(expect.objectContaining({ id: 'req_ask_0', ok: true }))
-      expect(replies).toContainEqual(expect.objectContaining({ id: 'req_check_wait', ok: true }))
+      expect(replies).not.toContainEqual(expect.objectContaining({ id: 'req_ask_0' }))
+      expect(replies).not.toContainEqual(expect.objectContaining({ id: 'req_check_wait' }))
     } finally {
       db.close()
       await server.stop()

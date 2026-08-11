@@ -1,4 +1,4 @@
-import { REMOTE_RUNTIME_MAX_PREPARED_RPC_BYTES } from './remote-runtime-memory-limits'
+import { REMOTE_RUNTIME_MAX_PREPARED_RPC_BYTES } from './remote-runtime-capacity-limits'
 
 const DEFAULT_REMOTE_RUNTIME_CALL_CONCURRENCY = 8
 const DEFAULT_REMOTE_RUNTIME_BACKGROUND_CALL_CONCURRENCY = 2
