@@ -85,6 +85,18 @@ function stampCleanTabDiskBaseline(id: string, result: FileContent): void {
   }
 }
 
+// Why: the newest read for a tab is already on its way, so a re-run of the lazy
+// effect (a worktree flip-flop re-adds `isVisible`) must not fire a second RPC.
+// An invalidation bumps the tab's generation, so a superseded read never counts.
+function hasLiveRead(
+  generationsById: Record<string, number>,
+  outstandingById: Record<string, number>,
+  id: string
+): boolean {
+  const generation = generationsById[id]
+  return generation !== undefined && outstandingById[id] === generation
+}
+
 function inFlightReadKey(connectionId: string | undefined, filePath: string): string {
   return `${connectionId ?? ''}::${filePath}`
 }
@@ -123,6 +135,8 @@ export function useEditorPanelContentState({
   const diffReadGenerationRef = useRef<Record<string, number>>({})
   const fileReadGenerationCounterRef = useRef(0)
   const diffReadGenerationCounterRef = useRef(0)
+  const outstandingFileReadsRef = useRef<Record<string, number>>({})
+  const outstandingDiffReadsRef = useRef<Record<string, number>>({})
   const openFilesRef = useRef(openFiles)
   const editorViewModeRef = useRef(editorViewMode)
   const isVisibleRef = useRef(isVisible)
@@ -152,8 +166,11 @@ export function useEditorPanelContentState({
       const next = { ...prev }
       let changed = false
       for (const fileId of uniqueIds) {
-        if (fileId in next) {
-          delete next[fileId]
+        const existing = next[fileId]
+        // Why: keep the last-known bytes rendered and swap them when the lazy
+        // reload lands — dropping them flashes "Loading…" on every reveal.
+        if (existing && existing.isStale !== true) {
+          next[fileId] = { ...existing, isStale: true }
           changed = true
         }
       }
@@ -198,6 +215,7 @@ export function useEditorPanelContentState({
       const generation = fileReadGenerationCounterRef.current + 1
       fileReadGenerationCounterRef.current = generation
       fileReadGenerationRef.current[id] = generation
+      outstandingFileReadsRef.current[id] = generation
       try {
         const resolvedConnectionId = getConnectionIdForFile(worktreeId ?? null, filePath)
         const connectionId = resolvedConnectionId ?? undefined
@@ -326,6 +344,10 @@ export function useEditorPanelContentState({
           ...prev,
           [id]: { content: '', isBinary: false, loadError: message }
         }))
+      } finally {
+        if (outstandingFileReadsRef.current[id] === generation) {
+          delete outstandingFileReadsRef.current[id]
+        }
       }
     },
     []
@@ -339,6 +361,7 @@ export function useEditorPanelContentState({
       const generation = diffReadGenerationCounterRef.current + 1
       diffReadGenerationCounterRef.current = generation
       diffReadGenerationRef.current[file.id] = generation
+      outstandingDiffReadsRef.current[file.id] = generation
       try {
         const worktreePath = file.filePath.slice(
           0,
@@ -451,6 +474,10 @@ export function useEditorPanelContentState({
             modifiedIsBinary: false
           }
         }))
+      } finally {
+        if (outstandingDiffReadsRef.current[file.id] === generation) {
+          delete outstandingDiffReadsRef.current[file.id]
+        }
       }
     },
     []
@@ -491,6 +518,17 @@ export function useEditorPanelContentState({
 
   useLocalLogTail({ openFiles, fileContents, setFileContents, reloadContent })
 
+  const needsFileRead = (fileId: string): boolean => {
+    const cached = fileContents[fileId]
+    return (
+      (!cached || cached.isStale === true) &&
+      !hasLiveRead(fileReadGenerationRef.current, outstandingFileReadsRef.current, fileId)
+    )
+  }
+  const needsDiffRead = (fileId: string): boolean =>
+    !diffContents[fileId] &&
+    !hasLiveRead(diffReadGenerationRef.current, outstandingDiffReadsRef.current, fileId)
+
   useEffect(() => {
     if (!isVisible) {
       return
@@ -514,7 +552,7 @@ export function useEditorPanelContentState({
         }
 
         const absolutePath = joinPath(activeFile.filePath, entry.path)
-        if (!fileContents[absolutePath]) {
+        if (needsFileRead(absolutePath)) {
           void loadFileContent(absolutePath, absolutePath, activeFile.worktreeId, entry.path)
         }
       }
@@ -529,7 +567,7 @@ export function useEditorPanelContentState({
       if (fileToLoad.conflict?.kind === 'conflict-placeholder') {
         return
       }
-      if (!fileContents[fileToLoad.id]) {
+      if (needsFileRead(fileToLoad.id)) {
         void loadFileContent(
           fileToLoad.filePath,
           fileToLoad.id,
@@ -537,10 +575,10 @@ export function useEditorPanelContentState({
           fileToLoad.relativePath
         )
       }
-      if (isChangesMode && !diffContents[fileToLoad.id]) {
+      if (isChangesMode && needsDiffRead(fileToLoad.id)) {
         void loadDiffContent(fileToLoad)
       }
-    } else if (isReloadableSingleFileDiffTab(fileToLoad) && !diffContents[fileToLoad.id]) {
+    } else if (isReloadableSingleFileDiffTab(fileToLoad) && needsDiffRead(fileToLoad.id)) {
       void loadDiffContent(fileToLoad)
     }
     // oxlint-disable-next-line react-hooks/exhaustive-deps

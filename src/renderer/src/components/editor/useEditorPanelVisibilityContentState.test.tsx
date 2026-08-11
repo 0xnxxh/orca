@@ -217,6 +217,62 @@ describe('useEditorPanelContentState visibility', () => {
     )
   })
 
+  it('keeps invalidated bytes on screen until the reveal read lands', async () => {
+    const file = makeFile('no-flash')
+    const freshRead = createDeferred<FileContent>()
+    mocks.readRuntimeFileContent
+      .mockResolvedValueOnce({ content: 'old', isBinary: false })
+      .mockReturnValueOnce(freshRead.promise)
+
+    await act(async () => root.render(<Probe activeFile={file} />))
+    await vi.waitFor(() =>
+      expect(snapshots.get('main')?.fileContents[file.id]?.content).toBe('old')
+    )
+
+    await act(async () => root.render(<Probe activeFile={file} isVisible={false} />))
+    dispatchExternalChange(file)
+    expect(snapshots.get('main')?.fileContents[file.id]?.content).toBe('old')
+
+    await act(async () => root.render(<Probe activeFile={file} />))
+    await vi.waitFor(() => expect(mocks.readRuntimeFileContent).toHaveBeenCalledTimes(2))
+    // Why: an unresolved reveal read must not blank the pane to "Loading…".
+    expect(snapshots.get('main')?.fileContents[file.id]?.content).toBe('old')
+
+    await act(async () => {
+      freshRead.resolve({ content: 'fresh', isBinary: false })
+      await freshRead.promise
+    })
+    await vi.waitFor(() =>
+      expect(snapshots.get('main')?.fileContents[file.id]).toEqual({
+        content: 'fresh',
+        isBinary: false
+      })
+    )
+  })
+
+  it('does not re-read while the reveal read is still in flight', async () => {
+    const file = makeFile('flip-flop')
+    const pendingRead = createDeferred<FileContent>()
+    mocks.readRuntimeFileContent.mockReturnValue(pendingRead.promise)
+
+    await act(async () => root.render(<Probe activeFile={file} isVisible={false} />))
+    await act(async () => root.render(<Probe activeFile={file} />))
+    expect(mocks.readRuntimeFileContent).toHaveBeenCalledOnce()
+
+    await act(async () => root.render(<Probe activeFile={file} isVisible={false} />))
+    await act(async () => root.render(<Probe activeFile={file} />))
+    expect(mocks.readRuntimeFileContent).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      pendingRead.resolve({ content: 'remote', isBinary: false })
+      await pendingRead.promise
+    })
+    await vi.waitFor(() =>
+      expect(snapshots.get('main')?.fileContents[file.id]?.content).toBe('remote')
+    )
+    expect(mocks.readRuntimeFileContent).toHaveBeenCalledOnce()
+  })
+
   it('publishes hidden visibility before a watcher event in the same commit', async () => {
     const file = makeFile('commit-visibility')
     mocks.readRuntimeFileContent.mockResolvedValue({ content: 'old', isBinary: false })
@@ -234,7 +290,11 @@ describe('useEditorPanelContentState visibility', () => {
     )
 
     expect(mocks.readRuntimeFileContent).toHaveBeenCalledOnce()
-    expect(snapshots.get('main')?.fileContents[file.id]).toBeUndefined()
+    expect(snapshots.get('main')?.fileContents[file.id]).toEqual({
+      content: 'old',
+      isBinary: false,
+      isStale: true
+    })
   })
 
   it('shares one post-change read between visible source and preview panels', async () => {
@@ -285,7 +345,7 @@ describe('useEditorPanelContentState visibility', () => {
 
     const changed = { ...file, fileContentReloadNonce: 1 }
     await act(async () => root.render(<Probe activeFile={changed} isVisible={false} />))
-    expect(snapshots.get('main')?.fileContents[file.id]).toBeUndefined()
+    expect(snapshots.get('main')?.fileContents[file.id]?.isStale).toBe(true)
     expect(mocks.readRuntimeFileContent).toHaveBeenCalledOnce()
 
     await act(async () => root.render(<Probe activeFile={changed} />))
