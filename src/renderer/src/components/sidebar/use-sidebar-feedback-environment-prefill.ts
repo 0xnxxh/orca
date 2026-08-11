@@ -31,6 +31,7 @@ export function useSidebarFeedbackEnvironmentPrefill(params: {
   textareaRef: RefObject<HTMLTextAreaElement | null>
   mountedRef: RefObject<boolean>
 }): void {
+  const { open, feedback, setFeedback, textareaRef, mountedRef } = params
   const pendingFeedbackSelectionRef = useRef<FeedbackSelection | null>(null)
 
   useLayoutEffect(() => {
@@ -39,27 +40,27 @@ export function useSidebarFeedbackEnvironmentPrefill(params: {
       return
     }
     pendingFeedbackSelectionRef.current = null
-    if (pending.feedback !== params.feedback) {
+    if (pending.feedback !== feedback) {
       return
     }
-    const textarea = params.textareaRef.current
+    const textarea = textareaRef.current
     if (textarea && document.activeElement === textarea) {
       textarea.setSelectionRange(pending.start, pending.end, pending.direction)
     }
-  }, [params.feedback, params.textareaRef])
+  }, [feedback, textareaRef])
 
   // Why: copied feedback does not include the structured IPC metadata.
   useEffect(() => {
-    if (!params.open) {
+    if (!open) {
       return
     }
 
     let cancelled = false
     void resolveClientEnvironmentInfo().then((environmentInfo) => {
-      if (cancelled || !params.mountedRef.current) {
+      if (cancelled || !mountedRef.current) {
         return
       }
-      const textarea = params.textareaRef.current
+      const textarea = textareaRef.current
       if (textarea && document.activeElement === textarea) {
         pendingFeedbackSelectionRef.current = {
           feedback: insertClientEnvironmentFooter({
@@ -71,7 +72,7 @@ export function useSidebarFeedbackEnvironmentPrefill(params: {
           direction: textarea.selectionDirection
         }
       }
-      params.setFeedback((current) =>
+      setFeedback((current) =>
         insertClientEnvironmentFooter({ feedback: current, environmentInfo })
       )
     })
@@ -79,5 +80,5 @@ export function useSidebarFeedbackEnvironmentPrefill(params: {
     return () => {
       cancelled = true
     }
-  }, [params.open, params.mountedRef, params.setFeedback, params.textareaRef])
+  }, [open, mountedRef, setFeedback, textareaRef])
 }
