@@ -24,11 +24,12 @@ function tokenizeWindowsStartupCommand(
       // Why: cmd keeps `^` literal inside double quotes and PowerShell keeps
       // backticks literal inside single quotes; this branch consumes them
       // anyway, so the token value stops matching the real shell's argv.
-      // Why: cmd strips `^` before the child's parser re-splits on the bare
-      // whitespace, so an escaped separator hides two real arguments;
-      // PowerShell's backtick genuinely folds the character into the token.
+      // Why: cmd strips `^` and hands the bare byte to the child's own parser,
+      // which re-splits on whitespace and reopens a quote — so the escaped
+      // byte changes argv. PowerShell's backtick folds into the token instead,
+      // and only its line continuation disappears.
       divergesFromShell ||=
-        (shell === 'cmd' ? /\s/.test(value[index + 1]) : value[index + 1] === '\n') ||
+        (shell === 'cmd' ? /[\s"]/.test(value[index + 1]) : value[index + 1] === '\n') ||
         (shell === 'cmd' && quote === '"') ||
         (shell === 'powershell' && quote === "'")
       token += value[index + 1]
@@ -88,7 +89,10 @@ function tokenizeWindowsStartupCommand(
       divergesFromShell ||=
         ';&|<>'.includes(char) ||
         (shell === 'powershell' &&
-          ((char === '#' && !tokenStarted) ||
+          // Why: bare (…) is evaluated and {…} is a script block in argument
+          // position, so both are live syntax the span splice cannot model.
+          ('(){}'.includes(char) ||
+            (char === '#' && !tokenStarted) ||
             (char === '$' && (value[index + 1] === '(' || value[index + 1] === '{'))))
       token += char
       tokenStarted = true

@@ -105,14 +105,16 @@ export function buildClaudeResumeLaunchCommand(
   // be modelable, including the executable itself; only PowerShell's leading
   // call operator is a known-safe divergent token.
   for (let i = 0; i <= tokens.length; i += 1) {
-    const isCallOperator = shell === 'powershell' && i === 0 && tokens[i] === '&'
     const gapStart = i === 0 ? 0 : spans[i - 1].end
     const gapEnd = i === tokens.length ? baseCommand.length : spans[i].start
     if (!/^[ \t]*$/.test(baseCommand.slice(gapStart, gapEnd))) {
       return appended
     }
-    if (i < tokens.length && spans[i].divergesFromShell && !isCallOperator) {
-      return appended
+    if (i < tokens.length && spans[i].divergesFromShell) {
+      const isCallOperator = shell === 'powershell' && i === 0 && tokens[i] === '&'
+      if (!isCallOperator) {
+        return appended
+      }
     }
   }
   const cuts: { start: number; end: number }[] = []

@@ -179,6 +179,36 @@ describe('buildClaudeResumeLaunchCommand', () => {
     expectSingleAuthoritativeResume(command, 'posix')
   })
 
+  it.each(['claude a^" --resume ^"b', 'claude ^"--resume^" old'])(
+    'fails open when a cmd caret escapes a quote: %s',
+    (base) => {
+      // cmd strips the caret and the child's parser reads a bare quote
+      // delimiter, so the tokenizer's word boundaries stop matching argv.
+      expect(buildClaudeResumeLaunchCommand(base, RESUME, 'cmd')).toBe(
+        `${base} "--resume" "${SESSION_ID}"`
+      )
+    }
+  )
+
+  it.each(['claude --resume (Get-Content id.txt)', 'claude --hook { npm -c run } --resume old'])(
+    'fails open on bare powershell evaluation syntax: %s',
+    (base) => {
+      expect(buildClaudeResumeLaunchCommand(base, RESUME, 'powershell')).toBe(
+        `${base} '--resume' '${SESSION_ID}'`
+      )
+    }
+  )
+
+  it('still strips with parens safely inside quotes on powershell', () => {
+    expect(
+      buildClaudeResumeLaunchCommand(
+        'claude --allowedTools "Bash(git:*)" --resume old',
+        RESUME,
+        'powershell'
+      )
+    ).toBe(`claude --allowedTools "Bash(git:*)" '--resume' '${SESSION_ID}'`)
+  })
+
   it('fails open when a cmd caret escapes a real argument separator', () => {
     // cmd strips ^ before the child re-splits on the bare space, so the
     // tokenizer's merged token would drop the user's second argument.
