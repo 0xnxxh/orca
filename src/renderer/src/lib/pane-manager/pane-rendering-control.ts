@@ -4,10 +4,11 @@ import {
   attachWebgl,
   clearTerminalWebglAttachBackoff,
   disposeWebgl,
+  isPaneWebglContextLost,
   markComplexScriptOutput,
   resetWebglTextureAtlas
 } from './pane-webgl-renderer'
-import { reattachWebglIfNeeded } from './pane-webgl-reattach'
+import { rebuildAttachedWebgl, reattachWebglIfNeeded } from './pane-webgl-reattach'
 import {
   releaseHiddenWebglRetention,
   tryRetainHiddenPanesWebgl
@@ -80,8 +81,17 @@ export function resumePaneRendering(
     // boundary — Chromium may have restored the GPU process since a context
     // loss, and bounding retries to resume events cannot loop on live loss.
     clearTerminalWebglAttachBackoff(pane)
+    const rebuildDeferred = pane.webglRebuildDeferred === true
     pane.webglAttachmentDeferred = false
     pane.webglDisabledAfterContextLoss = false
+    pane.webglRebuildDeferred = false
+    if (pane.webglAddon && isPaneWebglContextLost(pane)) {
+      disposeWebgl(pane)
+    }
+    if (rebuildDeferred && pane.webglAddon) {
+      rebuildAttachedWebgl(pane)
+      continue
+    }
     reattachWebglIfNeeded(pane)
   }
 }
