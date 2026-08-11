@@ -68,6 +68,25 @@ describe('WslSkillInstallFilesystem', () => {
     expect(execFileAsyncMock).toHaveBeenCalledOnce()
   })
 
+  it('uses manifest mode provenance for Windows-backed WSL paths', async () => {
+    const filesystem = new WslSkillInstallFilesystem('Ubuntu-24.04', [
+      'C:\\Users\\jin\\repo\\.agents\\skills'
+    ])
+    const manifest = {
+      files: [
+        { path: 'SKILL.md', executable: false },
+        { path: 'scripts/run.sh', executable: true }
+      ]
+    } as SkillPackageManifestV1
+
+    await filesystem.prepareExtractedSkill(
+      'C:\\Users\\jin\\repo\\.agents\\skills\\.orca-skill-extract-1\\skill',
+      manifest
+    )
+
+    expect(execFileAsyncMock).not.toHaveBeenCalled()
+  })
+
   it('rejects a path from another distro before spawning wsl.exe', async () => {
     const filesystem = new WslSkillInstallFilesystem('Ubuntu-24.04', [WSL_ROOT])
     await expect(

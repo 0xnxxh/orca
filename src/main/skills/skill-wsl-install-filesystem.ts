@@ -14,6 +14,10 @@ const execFileAsync = promisify(execFile)
 const BATCH_FILE_COUNT = 8
 const GUEST_COMMAND_TIMEOUT_MS = 30_000
 
+function isWindowsBackedGuestPath(path: string): boolean {
+  return /^\/mnt\/[a-z](?:\/|$)/iu.test(path)
+}
+
 const APPLY_MODES_SCRIPT = [
   'set -eu',
   'while [ "$#" -gt 1 ]; do',
@@ -72,6 +76,9 @@ export class WslSkillInstallFilesystem implements SkillInstallFilesystem {
 
   async prepareExtractedSkill(path: string, manifest: SkillPackageManifestV1): Promise<void> {
     const guestRoot = this.requireAllowed(path)
+    if (isWindowsBackedGuestPath(guestRoot)) {
+      return
+    }
     const directories = new Set([guestRoot])
     for (const file of manifest.files) {
       let directory = posix.dirname(posix.join(guestRoot, file.path))
@@ -98,7 +105,9 @@ export class WslSkillInstallFilesystem implements SkillInstallFilesystem {
       return observeSkillPackage(path)
     }
     const guestRoot = this.requireAllowed(path)
-    await this.verifyModes(guestRoot, files)
+    if (!isWindowsBackedGuestPath(guestRoot)) {
+      await this.verifyModes(guestRoot, files)
+    }
     return observeSkillPackage(
       path,
       SKILL_PACKAGE_OBSERVATION_LIMITS,

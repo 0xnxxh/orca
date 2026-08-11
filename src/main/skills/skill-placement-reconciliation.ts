@@ -205,15 +205,6 @@ async function createMissingPlacement(input: {
       status: 'installed'
     }
   } catch {
-    if (input.filesystem.createAlias) {
-      return {
-        provider: input.destination.provider,
-        path: input.destinationPath,
-        topology: 'provider-alias',
-        status: 'failed',
-        errorCategory: 'skill-placement-create-failed'
-      }
-    }
     try {
       await createVerifiedCopyAtMissingDestination(
         input.canonicalPath,
