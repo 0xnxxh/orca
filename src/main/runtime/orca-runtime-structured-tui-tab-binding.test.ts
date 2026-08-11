@@ -80,6 +80,16 @@ describe('structured TUI launch tab binding', () => {
       markLocalWorkspaceTrustedForAgent(): void
       waitForTerminal(): Promise<unknown>
       waitForStructuredTuiProof(): Promise<{ transcriptPath?: string }>
+      waitForStructuredTuiPtyExit(): Promise<void>
+      handles: Map<
+        string,
+        {
+          rendererGraphEpoch: number
+          tabId: string
+          leafId: string
+        }
+      >
+      graphStatus: 'ready'
     }
     internal.resolveTerminalWorkspaceLaunchScope = vi.fn(async () => ({
       id: WORKTREE_ID,
@@ -106,6 +116,8 @@ describe('structured TUI launch tab binding', () => {
       return { transcriptPath: '/tmp/rollout.jsonl' }
     })
     internal.waitForStructuredTuiProof = waitForStructuredTuiProof
+    const waitForStructuredTuiPtyExit = vi.fn(async () => {})
+    internal.waitForStructuredTuiPtyExit = waitForStructuredTuiPtyExit
     readStructuredTuiProcessIdentity.mockResolvedValue({
       hostId: 'local',
       pid: 4243,
@@ -137,16 +149,24 @@ describe('structured TUI launch tab binding', () => {
     }
     expect(owner.terminal).toMatchObject({
       tabId: 'tab-renderer',
-      paneKey: `${reveal.tabId}:${reveal.leafId}`
+      paneKey: `${reveal.tabId}:${reveal.leafId}`,
+      ptyId: 'pty-structured'
     })
     expect(waitForTerminal).toHaveBeenCalledWith(
-      owner.terminal.handle,
+      expect.any(String),
       expect.objectContaining({ condition: 'tui-idle' })
     )
     expect(waitForStructuredTuiProof).toHaveBeenCalledOnce()
     expect(waitForStructuredTuiProof.mock.invocationCallOrder[0]).toBeLessThan(
       revealTerminalSession.mock.invocationCallOrder[0]!
     )
+
+    Object.assign(internal.handles.get(owner.terminal.handle)!, {
+      rendererGraphEpoch: -1,
+      tabId: 'tab-retired',
+      leafId: 'leaf-retired'
+    })
+    internal.graphStatus = 'ready'
 
     explicitStatus = {
       state: 'working',
@@ -175,9 +195,15 @@ describe('structured TUI launch tab binding', () => {
       lease: { ownerProcess: owner.process, provenHandleLinkId: owner.link.linkId }
     } as never
 
-    await expect(transport.reproveTuiOwner({ record: persistedRecord, owner })).resolves.toEqual(
-      owner
-    )
+    const rebound = await transport.reproveTuiOwner({ record: persistedRecord, owner })
+    expect(rebound.terminal).toMatchObject({
+      ptyId: 'pty-structured',
+      tabId: owner.terminal.tabId,
+      paneKey: owner.terminal.paneKey
+    })
+    expect(rebound.terminal.handle).not.toBe(owner.terminal.handle)
+    await transport.waitForTuiExit(rebound)
+    expect(waitForStructuredTuiPtyExit).toHaveBeenCalledWith('pty-structured')
     expect(waitForStructuredTuiProof).toHaveBeenCalledOnce()
   })
 })

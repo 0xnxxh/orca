@@ -143,7 +143,12 @@ async function establishNativeOwner(): Promise<void> {
 
 function makeTuiOwner(fence: number, spawnToken: string): StructuredTuiOwner {
   return {
-    terminal: { handle: 'term-tui', tabId: 'tab-tui', paneKey: 'tab-tui:leaf-tui' },
+    terminal: {
+      handle: 'term-tui',
+      tabId: 'tab-tui',
+      paneKey: 'tab-tui:leaf-tui',
+      ptyId: 'pty-tui'
+    },
     process: process(spawnToken, 4200),
     link: link(fence, `tui-link-${fence}`),
     transcriptPath: join(root, 'rollout.jsonl')
@@ -544,7 +549,59 @@ describe('structured session ownership handoff', () => {
     expect(store.getRecord(SESSION)?.lease).toMatchObject({
       runtimeKind: 'tui',
       claimStatus: 'live',
-      handoffStage: 'preparing'
+      handoffStage: null
+    })
+  })
+
+  it('rolls a stale reverse handle back to one durable TUI owner and retries', async () => {
+    await moveToTui()
+    waitForTuiExit.mockRejectedValueOnce(new Error('terminal_handle_stale'))
+    const retryOperation = operationId()
+
+    expect(
+      await submit(request('to-native', 'now', { operationId: retryOperation }))
+    ).toMatchObject({ ok: true })
+    await waitForPhase('failed')
+
+    expect(coordinator.status(SESSION)).toMatchObject({
+      owner: 'tui',
+      operationId: retryOperation,
+      error: { recoverableOwner: 'tui', details: 'terminal_handle_stale' }
+    })
+    expect(store.getRecord(SESSION)?.lease).toMatchObject({
+      runtimeKind: 'tui',
+      claimStatus: 'live',
+      handoffStage: null,
+      handoffOperationId: null
+    })
+
+    expect(
+      await submit(request('to-native', 'now', { action: 'retry', operationId: retryOperation }))
+    ).toMatchObject({ ok: true })
+    await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('native'))
+    expect(waitForTuiExit).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps one recoverable owner when a queued reverse auto-fire fails', async () => {
+    await moveToTui()
+    tuiIdle = false
+    tuiTurnComplete = false
+    waitForTuiExit.mockRejectedValueOnce(new Error('terminal_handle_stale'))
+
+    expect(await submit(request('to-native', 'after-turn'))).toMatchObject({ ok: true })
+    expect(coordinator.status(SESSION).phase).toBe('queued')
+    tuiTurnComplete = true
+    await waitForPhase('failed')
+
+    expect(coordinator.status(SESSION)).toMatchObject({
+      owner: 'tui',
+      error: { recoverableOwner: 'tui', details: 'terminal_handle_stale' }
+    })
+    expect(store.getRecord(SESSION)?.lease).toMatchObject({
+      runtimeKind: 'tui',
+      claimStatus: 'live',
+      handoffStage: null,
+      handoffOperationId: null
     })
   })
 

@@ -36,6 +36,30 @@ export function stopAgentSessionOwnerForHandoff(args: {
   })
 }
 
+export function rollbackAgentSessionHandoffPreparation(args: {
+  record: AgentSessionRecord
+  expectedFence: number
+  operationId: string
+  now: number
+}): AgentSessionRecord {
+  const { record } = args
+  assertFence(record.lease, args.expectedFence)
+  if (
+    record.lease.handoffStage !== 'preparing' ||
+    record.lease.handoffOperationId !== args.operationId ||
+    record.lease.claimStatus !== 'live' ||
+    record.lease.ownerProcess === null
+  ) {
+    throw new Error('agent_session_ownership_unknown')
+  }
+  return withLease(record, {
+    ...record.lease,
+    handoffStage: null,
+    handoffOperationId: null,
+    lastRenewedAt: args.now
+  })
+}
+
 export function reserveAgentSessionHandoffOwner(args: {
   record: AgentSessionRecord
   expectedFence: number

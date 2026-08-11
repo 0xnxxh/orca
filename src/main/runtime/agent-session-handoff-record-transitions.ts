@@ -2,6 +2,7 @@ import type { AgentSessionHandoffStage } from '../../shared/agent-session-record
 import {
   abandonAgentSessionHandoffAttempt,
   reserveAgentSessionHandoffOwner,
+  rollbackAgentSessionHandoffPreparation,
   stopAgentSessionOwnerForHandoff
 } from './agent-session-handoff-lease-transitions'
 import { setAgentSessionHandoffStage } from './agent-session-lease-transitions'
@@ -31,6 +32,15 @@ export function stopStoredAgentSessionOwnerForHandoff(
 ) {
   return store.transitionHandoff(args.sessionId, (record) =>
     stopAgentSessionOwnerForHandoff({ ...args, record })
+  )
+}
+
+export function rollbackStoredAgentSessionHandoffPreparation(
+  store: AgentSessionRecordStore,
+  args: { sessionId: string; expectedFence: number; operationId: string; now: number }
+) {
+  return store.transitionHandoff(args.sessionId, (record) =>
+    rollbackAgentSessionHandoffPreparation({ ...args, record })
   )
 }
 

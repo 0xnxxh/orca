@@ -3,6 +3,7 @@ import type { AgentSessionHandoffRequest } from '../../../shared/agent-session-w
 import {
   abandonStoredAgentSessionHandoffAttempt,
   reserveStoredAgentSessionHandoffOwner,
+  rollbackStoredAgentSessionHandoffPreparation,
   stopStoredAgentSessionOwnerForHandoff
 } from '../../runtime/agent-session-handoff-record-transitions'
 import type { StructuredAgentSessionHandoffFlowContext } from './structured-agent-session-handoff-types'
@@ -18,27 +19,46 @@ export async function handoffStructuredSessionToNative(
   let record = context.requireRecord(sessionId)
   let owner = context.owner(sessionId)
   let transcriptPath = owner?.transcriptPath
-  if (!retry || record.lease.handoffStage === 'preparing') {
+  if (!retry || record.lease.handoffStage === 'preparing' || record.lease.handoffStage === null) {
     if (record.lease.handoffStage === null) {
       await context.enterPreparing(record, operationId, 'to-native')
     }
-    if (!owner) {
-      throw new Error('The owning agent terminal could not be identified.')
+    record = context.requireRecord(sessionId)
+    try {
+      if (!owner) {
+        throw new Error('The owning agent terminal could not be identified.')
+      }
+      owner = await deps.transport!.reproveTuiOwner({ record, owner })
+      context.retainOwner(sessionId, owner)
+      transcriptPath = owner.transcriptPath ?? transcriptPath
+      context.setStatus(sessionId, {
+        owner: 'tui',
+        direction: 'to-native',
+        phase: 'waiting-for-exit',
+        stage: 'preparing',
+        operationId,
+        terminal: owner.terminal,
+        hostLabel: deps.transport?.hostLabel
+      })
+      const exited = await deps.transport!.waitForTuiExit(owner)
+      transcriptPath = exited.transcriptPath ?? owner.transcriptPath
+    } catch (error) {
+      const current = context.requireRecord(sessionId)
+      if (
+        current.lease.handoffStage === 'preparing' &&
+        current.lease.handoffOperationId === operationId &&
+        current.lease.claimStatus === 'live' &&
+        current.lease.ownerProcess
+      ) {
+        await rollbackStoredAgentSessionHandoffPreparation(deps.store, {
+          sessionId,
+          expectedFence: current.lease.runtimeFence,
+          operationId,
+          now: deps.now()
+        })
+      }
+      throw error
     }
-    owner = await deps.transport!.reproveTuiOwner({ record, owner })
-    context.retainOwner(sessionId, owner)
-    transcriptPath = owner.transcriptPath ?? transcriptPath
-    context.setStatus(sessionId, {
-      owner: 'tui',
-      direction: 'to-native',
-      phase: 'waiting-for-exit',
-      stage: 'preparing',
-      operationId,
-      terminal: owner.terminal,
-      hostLabel: deps.transport?.hostLabel
-    })
-    const exited = await deps.transport!.waitForTuiExit(owner)
-    transcriptPath = exited.transcriptPath ?? owner.transcriptPath
     record = await stopStoredAgentSessionOwnerForHandoff(deps.store, {
       sessionId,
       expectedFence: record.lease.runtimeFence,

@@ -74,7 +74,10 @@ import {
 import { ensureStructuredAgentSessionHost as installStructuredAgentSessionHost } from './structured-agent-session-runtime'
 import { getStructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-registry'
 import type { AgentSessionAttachParams } from '../native-chat/agent-session-wire/structured-agent-session-attach'
-import type { StructuredAgentSessionHandoffTransport } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
+import type {
+  StructuredAgentSessionHandoffTransport,
+  StructuredTuiOwner
+} from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
 import type { AgentSessionRecord } from '../../shared/agent-session-record'
 import { codexProviderHandleLink } from '../codex/codex-structured-owner-identity'
 import { proveCodexTuiRollout } from '../codex/codex-tui-rollout-proof'
@@ -9120,7 +9123,7 @@ export class OrcaRuntimeService {
         )
         const terminal = launched.terminal
         try {
-          if (!terminal.processId || !terminal.paneKey || !terminal.tabId) {
+          if (!terminal.processId || !terminal.paneKey || !terminal.tabId || !terminal.ptyId) {
             throw new Error('The resumed terminal did not publish a process identity.')
           }
           await this.waitForTerminal(terminal.handle, {
@@ -9136,11 +9139,12 @@ export class OrcaRuntimeService {
             sessionId: record.sessionId
           })
           const revealed = await this.focusTerminal(terminal.handle)
-          return {
+          return this.refreshStructuredTuiOwnerBinding({
             terminal: {
               handle: terminal.handle,
               tabId: revealed.tabId,
-              paneKey: terminal.paneKey
+              paneKey: terminal.paneKey,
+              ptyId: terminal.ptyId
             },
             process: await readStructuredTuiProcessIdentity({
               hostId: record.location.executionHostId,
@@ -9155,7 +9159,7 @@ export class OrcaRuntimeService {
               observedAt: Date.now()
             }),
             ...(proof.transcriptPath ? { transcriptPath: proof.transcriptPath } : {})
-          }
+          })
         } catch (error) {
           await this.closeTerminal(terminal.handle)
           await this.waitForTerminal(terminal.handle, {
@@ -9166,36 +9170,29 @@ export class OrcaRuntimeService {
         }
       },
       waitForTuiExit: async (owner) => {
+        const current = this.refreshStructuredTuiOwnerBinding(owner)
         await waitForStructuredTuiExitProof({
-          identity: owner.process,
-          waitForExit: () => this.waitForTerminal(owner.terminal.handle, { condition: 'exit' })
+          identity: current.process,
+          waitForExit: () => this.waitForStructuredTuiPtyExit(current.terminal.ptyId)
         })
-        return owner.transcriptPath ? { transcriptPath: owner.transcriptPath } : {}
+        return current.transcriptPath ? { transcriptPath: current.transcriptPath } : {}
       },
       waitForTuiIdle: async (owner, signal) => {
-        const explicit = this.getFreshExplicitAgentStatusForHandle(owner.terminal.handle)
-        if (explicit) {
-          return explicit.status === 'idle'
-        }
-        return (
-          await this.waitForTerminal(owner.terminal.handle, {
-            condition: 'tui-idle',
-            signal
-          })
-        ).satisfied
+        return this.waitForStructuredTuiIdle(owner, signal)
       },
       reproveTuiOwner: async ({ record, owner }) => {
+        const current = this.refreshStructuredTuiOwnerBinding(owner)
         const persisted = record.lease.ownerProcess
         if (
           !persisted ||
-          persisted.hostId !== owner.process.hostId ||
-          persisted.pid !== owner.process.pid ||
-          persisted.processStartTimeMs !== owner.process.processStartTimeMs ||
-          persisted.spawnToken !== owner.process.spawnToken
+          persisted.hostId !== current.process.hostId ||
+          persisted.pid !== current.process.pid ||
+          persisted.processStartTimeMs !== current.process.processStartTimeMs ||
+          persisted.spawnToken !== current.process.spawnToken
         ) {
           throw new Error('The owning terminal does not match the persisted launch identity.')
         }
-        const proof = await probeAgentSessionProcessIdentity({ identity: owner.process })
+        const proof = await probeAgentSessionProcessIdentity({ identity: current.process })
         if (proof.outcome !== 'identity-matched' || proof.matchedOn.length === 0) {
           throw new Error('The owning Codex child process could not be re-proved.')
         }
@@ -9203,13 +9200,13 @@ export class OrcaRuntimeService {
         if (
           head?.handle.provider !== 'codex' ||
           (record.lease.provenHandleLinkId !== null &&
-            owner.link.linkId !== record.lease.provenHandleLinkId) ||
-          owner.link.handle.provider !== 'codex' ||
-          owner.link.handle.threadId !== head.handle.threadId
+            current.link.linkId !== record.lease.provenHandleLinkId) ||
+          current.link.handle.provider !== 'codex' ||
+          current.link.handle.threadId !== head.handle.threadId
         ) {
           throw new Error('agent_session_identity_required')
         }
-        return owner
+        return current
       },
       recoverTuiOwner: async (record) => {
         const identity = record.lease.ownerProcess
@@ -9225,7 +9222,7 @@ export class OrcaRuntimeService {
             pty.tabId &&
             pty.paneKey
         )
-        const handle = candidate ? this.handleByPtyId.get(candidate.ptyId) : null
+        const handle = candidate ? this.issueStructuredTuiPtyHandle(candidate) : null
         if (!candidate?.tabId || !candidate.paneKey || !handle) {
           throw new Error('The owning agent terminal could not be recovered.')
         }
@@ -9238,7 +9235,12 @@ export class OrcaRuntimeService {
           sessionId: record.sessionId
         })
         return {
-          terminal: { handle, tabId: candidate.tabId, paneKey: candidate.paneKey },
+          terminal: {
+            handle,
+            tabId: candidate.tabId,
+            paneKey: candidate.paneKey,
+            ptyId: candidate.ptyId
+          },
           process: identity,
           link: codexProviderHandleLink({
             threadId: head.handle.threadId,
@@ -9250,15 +9252,71 @@ export class OrcaRuntimeService {
         }
       },
       stopRecoveredOwner: (record) => this.stopStructuredSessionProcess(record),
-      tuiStatus: (owner) => this.structuredTuiStatus(owner.terminal.handle),
+      tuiStatus: (owner) => this.structuredTuiStatus(owner),
       stopFailedTuiLaunch: async (owner) => {
-        await this.closeTerminal(owner.terminal.handle)
-        await this.waitForTerminal(owner.terminal.handle, {
+        const current = this.refreshStructuredTuiOwnerBinding(owner)
+        await this.closeTerminal(current.terminal.handle)
+        await this.waitForTerminal(current.terminal.handle, {
           condition: 'exit',
           timeoutMs: 15_000
         })
       }
     }
+  }
+
+  private refreshStructuredTuiOwnerBinding(owner: StructuredTuiOwner): StructuredTuiOwner {
+    const pty = this.ptysById.get(owner.terminal.ptyId)
+    if (!pty?.connected) {
+      throw new Error('The owning agent terminal lost its launch identity.')
+    }
+    const handle = this.issueStructuredTuiPtyHandle(pty)
+    if (handle === owner.terminal.handle) {
+      return owner
+    }
+    return { ...owner, terminal: { ...owner.terminal, handle } }
+  }
+
+  private issueStructuredTuiPtyHandle(pty: RuntimePtyWorktreeRecord): string {
+    const existingHandle = this.findHandleForPtyRecord(pty.ptyId)
+    if (existingHandle) {
+      this.handleByPtyId.set(pty.ptyId, existingHandle)
+      return existingHandle
+    }
+    const handle = `term_${randomUUID()}`
+    const syntheticId = `pty:${pty.ptyId}`
+    this.syntheticTerminalHandles.add(handle)
+    this.handles.set(handle, {
+      handle,
+      runtimeId: this.runtimeId,
+      rendererGraphEpoch: this.rendererGraphEpoch,
+      worktreeId: pty.worktreeId,
+      tabId: syntheticId,
+      leafId: syntheticId,
+      ptyId: pty.ptyId,
+      ptyGeneration: 0
+    })
+    this.handleByPtyId.set(pty.ptyId, handle)
+    return handle
+  }
+
+  private async waitForStructuredTuiPtyExit(ptyId: string): Promise<void> {
+    while (this.ptysById.get(ptyId)?.connected === true) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
+  private async waitForStructuredTuiIdle(
+    owner: StructuredTuiOwner,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    const deadline = Date.now() + 250
+    while (!signal.aborted && Date.now() < deadline) {
+      if (this.structuredTuiStatus(owner) === 'idle') {
+        return true
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    return false
   }
 
   private async stopStructuredSessionProcess(record: AgentSessionRecord): Promise<void> {
@@ -9292,39 +9350,24 @@ export class OrcaRuntimeService {
     throw new Error('The recovered owner process did not exit.')
   }
 
-  private structuredTuiStatus(handle: string): 'idle' | 'busy' {
-    const explicit = this.getFreshExplicitAgentStatusForHandle(handle)
+  private structuredTuiStatus(owner: StructuredTuiOwner): 'idle' | 'busy' {
+    const pty = this.ptysById.get(owner.terminal.ptyId)
+    const paneKey = pty?.paneKey ?? owner.terminal.paneKey
+    const explicit = this.getFreshExplicitAgentStatusForHandle(owner.terminal.handle, paneKey)
     if (explicit) {
       return explicit.status === 'idle' ? 'idle' : 'busy'
     }
-    const pty = this.getLivePtyForHandle(handle)
-    if (pty) {
-      const text = buildTerminalWaitText(
-        pty.pty.tailBuffer,
-        pty.pty.tailPartialLine,
-        pty.pty.preview
-      )
+    if (pty?.connected) {
+      const text = buildTerminalWaitText(pty.tailBuffer, pty.tailPartialLine, pty.preview)
       return hasStructuredTuiIdleEvidence({
         blocked: detectTerminalWaitBlockedReason(text) !== null,
-        status: pty.pty.lastAgentStatus,
-        statusObservedLive: pty.pty.lastAgentStatusObservedLive
+        status: pty.lastAgentStatus,
+        statusObservedLive: pty.lastAgentStatusObservedLive
       })
         ? 'idle'
         : 'busy'
     }
-    try {
-      const { leaf } = this.getLiveLeafForHandle(handle)
-      const text = buildTerminalWaitText(leaf.tailBuffer, leaf.tailPartialLine, leaf.preview)
-      return hasStructuredTuiIdleEvidence({
-        blocked: detectTerminalWaitBlockedReason(text) !== null,
-        status: leaf.lastAgentStatus,
-        statusObservedLive: leaf.lastAgentStatusObservedLive
-      })
-        ? 'idle'
-        : 'busy'
-    } catch {
-      return 'busy'
-    }
+    return 'busy'
   }
 
   private async waitForStructuredTuiProof(input: {
@@ -17623,11 +17666,14 @@ export class OrcaRuntimeService {
     return true
   }
 
-  private getFreshExplicitAgentStatusForHandle(handle: string): {
+  private getFreshExplicitAgentStatusForHandle(
+    handle: string,
+    paneKeyOverride?: string | null
+  ): {
     status: NonNullable<RuntimeTerminalAgentStatus['status']>
     updatedAt: number
   } | null {
-    const paneKey = this.getPaneKeyForTerminalHandle(handle)
+    const paneKey = paneKeyOverride ?? this.getPaneKeyForTerminalHandle(handle)
     const now = Date.now()
     let bestStatus: NonNullable<RuntimeTerminalAgentStatus['status']> | null = null
     let bestUpdatedAt = -1
