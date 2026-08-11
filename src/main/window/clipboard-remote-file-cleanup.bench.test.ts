@@ -139,8 +139,9 @@ async function measure(operation: () => Promise<void>): Promise<number> {
 
 function summarize(samples: number[]): { median: string; p95: string } {
   const sorted = [...samples].sort((left, right) => left - right)
-  const middle = sorted.length / 2
-  const median = (sorted[middle - 1] + sorted[middle]) / 2
+  const middle = Math.floor(sorted.length / 2)
+  const median =
+    sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
   const p95 = sorted[Math.ceil(sorted.length * 0.95) - 1]
   return { median: median.toFixed(3), p95: p95.toFixed(3) }
 }

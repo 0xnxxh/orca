@@ -5,15 +5,18 @@ const {
   createRemoteClipboardTransferDirectoryMock,
   downloadFileMock,
   requireSshFilesystemProviderMock,
+  RemoteClipboardStagingRootUnsafeErrorMock,
   spanFailMock,
   startSpanMock
 } = vi.hoisted(() => {
+  class RemoteClipboardStagingRootUnsafeErrorMock extends Error {}
   const spanFailMock = vi.fn()
   return {
     cleanupLegacyRemoteClipboardStagingMock: vi.fn(async () => undefined),
     createRemoteClipboardTransferDirectoryMock: vi.fn(),
     downloadFileMock: vi.fn(),
     requireSshFilesystemProviderMock: vi.fn(),
+    RemoteClipboardStagingRootUnsafeErrorMock,
     spanFailMock,
     startSpanMock: vi.fn(() => ({ fail: spanFailMock }))
   }
@@ -29,6 +32,7 @@ vi.mock('./clipboard-remote-file-staging', () => ({
   cleanupExpiredRemoteClipboardStaging: vi.fn(async () => undefined),
   cleanupLegacyRemoteClipboardStaging: cleanupLegacyRemoteClipboardStagingMock,
   createRemoteClipboardTransferDirectory: createRemoteClipboardTransferDirectoryMock,
+  RemoteClipboardStagingRootUnsafeError: RemoteClipboardStagingRootUnsafeErrorMock,
   removeRemoteClipboardTransferDirectory: vi.fn(),
   scheduleRemoteClipboardTransferCleanup: vi.fn()
 }))
@@ -37,6 +41,7 @@ import {
   scheduleLegacyRemoteClipboardFileCleanup,
   writeRemoteFileToClipboard
 } from './clipboard-remote-file-copy'
+import { RemoteClipboardStagingRootUnsafeError } from './clipboard-remote-file-staging'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -47,13 +52,15 @@ beforeEach(() => {
 })
 
 describe('remote clipboard staging failures', () => {
-  it('returns a toast-safe reason and records path-conflict diagnostics', async () => {
-    const error = Object.assign(new Error('mkdir failed'), { code: 'EEXIST' })
-    createRemoteClipboardTransferDirectoryMock.mockRejectedValueOnce(error)
+  it('rejects remote directories before creating staging', async () => {
+    requireSshFilesystemProviderMock.mockReturnValue({
+      stat: vi.fn(async () => ({ type: 'directory' })),
+      downloadFile: downloadFileMock
+    })
 
     await expect(
       writeRemoteFileToClipboard({
-        remotePath: '/repo/readme.md',
+        remotePath: '/repo/src',
         connectionId: 'ssh-1',
         deps: {
           platform: 'win32',
@@ -61,18 +68,61 @@ describe('remote clipboard staging failures', () => {
           runCommand: vi.fn()
         }
       })
-    ).resolves.toEqual({ ok: false, reason: 'staging-unavailable' })
+    ).resolves.toEqual({ ok: false, reason: 'is-directory' })
 
-    expect(startSpanMock).toHaveBeenCalledWith('clipboard.remote_staging_init', {
-      attributes: {
-        operation: 'create',
-        platform: process.platform,
-        failure_category: 'path-conflict'
-      }
-    })
-    expect(spanFailMock).toHaveBeenCalledWith(error)
+    expect(createRemoteClipboardTransferDirectoryMock).not.toHaveBeenCalled()
     expect(downloadFileMock).not.toHaveBeenCalled()
   })
+
+  it.each([
+    {
+      category: 'unsafe-root',
+      error: new RemoteClipboardStagingRootUnsafeError()
+    },
+    {
+      category: 'permissions',
+      error: Object.assign(new Error('access denied'), { code: 'EACCES' })
+    },
+    {
+      category: 'permissions',
+      error: Object.assign(new Error('operation not permitted'), { code: 'EPERM' })
+    },
+    {
+      category: 'path-conflict',
+      error: Object.assign(new Error('path exists'), { code: 'EEXIST' })
+    },
+    {
+      category: 'unavailable',
+      error: new Error('storage offline')
+    }
+  ])(
+    'returns a toast-safe reason and records $category diagnostics',
+    async ({ category, error }) => {
+      createRemoteClipboardTransferDirectoryMock.mockRejectedValueOnce(error)
+
+      await expect(
+        writeRemoteFileToClipboard({
+          remotePath: '/repo/readme.md',
+          connectionId: 'ssh-1',
+          deps: {
+            platform: 'win32',
+            writeBuffer: vi.fn(),
+            runCommand: vi.fn()
+          }
+        })
+      ).resolves.toEqual({ ok: false, reason: 'staging-unavailable' })
+
+      expect(startSpanMock).toHaveBeenCalledWith('clipboard.remote_staging_init', {
+        attributes: {
+          operation: 'create',
+          platform: process.platform,
+          failure_category: category
+        }
+      })
+      expect(spanFailMock).toHaveBeenCalledWith(error)
+      expect(downloadFileMock).not.toHaveBeenCalled()
+    }
+  )
 })
 
 describe('legacy remote clipboard cleanup scheduling', () => {

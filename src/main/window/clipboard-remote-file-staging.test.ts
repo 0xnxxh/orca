@@ -145,19 +145,19 @@ describe('remote clipboard staging ownership', () => {
     expect(rmMock).not.toHaveBeenCalled()
   })
 
-  it('rejects wrong-owner and insecure POSIX parents', async () => {
-    if (typeof process.getuid !== 'function') {
-      return
+  it.skipIf(typeof process.getuid !== 'function')(
+    'rejects wrong-owner and insecure POSIX parents',
+    async () => {
+      lstatMock
+        .mockResolvedValueOnce({ ...safeDirectoryStats(), uid: process.getuid!() + 1 })
+        .mockResolvedValueOnce({ ...safeDirectoryStats(), mode: 0o755 })
+
+      await cleanupExpiredRemoteClipboardStaging(TEMP_ROOT, NOW_MS)
+      await cleanupExpiredRemoteClipboardStaging(TEMP_ROOT, NOW_MS)
+
+      expect(opendirMock).not.toHaveBeenCalled()
     }
-    lstatMock
-      .mockResolvedValueOnce({ ...safeDirectoryStats(), uid: process.getuid() + 1 })
-      .mockResolvedValueOnce({ ...safeDirectoryStats(), mode: 0o755 })
-
-    await cleanupExpiredRemoteClipboardStaging(TEMP_ROOT, NOW_MS)
-    await cleanupExpiredRemoteClipboardStaging(TEMP_ROOT, NOW_MS)
-
-    expect(opendirMock).not.toHaveBeenCalled()
-  })
+  )
 
   it('rejects child symlinks and names outside the owned parent', async () => {
     opendirMock.mockResolvedValue(

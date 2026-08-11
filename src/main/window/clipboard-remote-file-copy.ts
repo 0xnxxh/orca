@@ -16,6 +16,7 @@ import {
   cleanupExpiredRemoteClipboardStaging,
   cleanupLegacyRemoteClipboardStaging,
   createRemoteClipboardTransferDirectory,
+  RemoteClipboardStagingRootUnsafeError,
   removeRemoteClipboardTransferDirectory,
   scheduleRemoteClipboardTransferCleanup
 } from './clipboard-remote-file-staging'
@@ -110,7 +111,7 @@ export function scheduleLegacyRemoteClipboardFileCleanup(): void {
   }
   legacyCleanupScheduled = true
   const timer = setTimeout(() => {
-    void cleanupLegacyRemoteClipboardFiles()
+    void cleanupLegacyRemoteClipboardFiles().catch(() => undefined)
   }, REMOTE_CLIPBOARD_LEGACY_CLEANUP_DELAY_MS)
   unrefTimer(timer)
 }
@@ -134,7 +135,7 @@ function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
 }
 
 function getStagingFailureCategory(error: unknown): string {
-  if (error instanceof Error && error.message.includes('staging root is unsafe')) {
+  if (error instanceof RemoteClipboardStagingRootUnsafeError) {
     return 'unsafe-root'
   }
   const code = error instanceof Error && 'code' in error ? String(error.code) : undefined

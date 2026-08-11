@@ -26,6 +26,13 @@ const REMOVE_OPTIONS = {
 
 type CleanupResult = 'failed' | 'fresh' | 'ignored' | 'removed'
 
+export class RemoteClipboardStagingRootUnsafeError extends Error {
+  constructor() {
+    super('Remote clipboard staging root is unsafe')
+    this.name = 'RemoteClipboardStagingRootUnsafeError'
+  }
+}
+
 export function getRemoteClipboardStagingRoot(tempRoot: string): string {
   const uidSuffix = typeof process.getuid === 'function' ? `-${process.getuid()}` : ''
   return join(tempRoot, `${REMOTE_CLIPBOARD_STAGING_ROOT_NAME}${uidSuffix}`)
@@ -161,7 +168,7 @@ async function ensureRemoteClipboardStagingRoot(tempRoot: string): Promise<strin
   await mkdir(stagingRoot, { recursive: true, mode: 0o700 })
   const rootStats = await lstat(stagingRoot)
   if (!isSafeOwnedDirectory(rootStats)) {
-    throw new Error('Remote clipboard staging root is unsafe')
+    throw new RemoteClipboardStagingRootUnsafeError()
   }
   return stagingRoot
 }

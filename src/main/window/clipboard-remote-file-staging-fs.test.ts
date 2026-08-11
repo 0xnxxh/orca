@@ -6,7 +6,8 @@ import { basename, dirname, join } from 'node:path'
 import {
   cleanupExpiredRemoteClipboardStaging,
   createRemoteClipboardTransferDirectory,
-  getRemoteClipboardStagingRoot
+  getRemoteClipboardStagingRoot,
+  RemoteClipboardStagingRootUnsafeError
 } from './clipboard-remote-file-staging'
 
 const FIXTURE_PREFIX = 'orca-clipboard-staging-test-'
@@ -66,7 +67,7 @@ describe('remote clipboard staging filesystem contract', () => {
         NOW_MS,
         '00000000-0000-4000-8000-000000000000'
       )
-    ).rejects.toThrow('staging root is unsafe')
+    ).rejects.toBeInstanceOf(RemoteClipboardStagingRootUnsafeError)
 
     expect(await readdir(outsideDirectory)).toEqual([])
   })
