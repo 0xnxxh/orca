@@ -66,7 +66,7 @@ function getRequiredShellReadyWrapperPaths(root = getShellReadyWrapperRoot()): s
 // Why a file, not an inlined `-C` body: the WSL launch path sources this same
 // wrapper root through /mnt/c, and inlining the body into the wsl.exe argv would
 // make every `$` in it collide with escapeWslShCommandForWindows.
-export function getFishShellReadyWrapperPath(root = getShellReadyWrapperRoot()): string {
+function getFishShellReadyWrapperPath(root = getShellReadyWrapperRoot()): string {
   return `${root}/fish/orca.fish`
 }
 

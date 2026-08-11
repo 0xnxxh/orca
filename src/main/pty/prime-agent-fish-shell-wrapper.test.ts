@@ -184,6 +184,31 @@ describePosix('Prime Agent fish shell wrapper', () => {
     expect(capture).toContain('ARG5=--follow')
   })
 
+  // Why separately from the case above: `set -e argv[1..2]` erases the whole
+  // list here, and fish's slice deletion is the one construct with no bash
+  // `shift 2` equivalent.
+  itWithFish('injects the extension when attach has no trailing arguments', () => {
+    const fixture = makeFixture()
+    const capture = runPrime(fixture, 'prime-agent attach agent-123')
+
+    expect(capture).toContain('ARG1=attach')
+    expect(capture).toContain('ARG2=agent-123')
+    expect(capture).toContain('ARG3=--extension')
+    expect(capture).toContain(`ARG4=${fixture.extensionPath}`)
+    expect(capture).not.toContain('ARG5=')
+  })
+
+  // Why: bash passes `"$@"`; fish passes a bare `$argv`, which would split a
+  // quoted operand if the list expansion were not element-preserving.
+  itWithFish('keeps a multi-word operand as a single argument', () => {
+    const fixture = makeFixture()
+    const capture = runPrime(fixture, 'prime-agent ask "write a haiku"')
+
+    expect(capture).toContain('ARG3=ask')
+    expect(capture).toContain('ARG4=write a haiku')
+    expect(capture).not.toContain('ARG5=')
+  })
+
   itWithFish('preserves a bare attach without inventing an agent operand', () => {
     const fixture = makeFixture()
     const capture = runPrime(fixture, 'prime-agent attach')
