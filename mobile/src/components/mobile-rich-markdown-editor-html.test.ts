@@ -65,6 +65,99 @@ function runtimeListMarkdown(): (list: unknown) => string {
   return new Function(sources)() as (list: unknown) => string
 }
 
+type FakeRange = {
+  commonAncestorContainer: unknown
+  cloneRange: () => FakeRange
+  selectNodeContents: (node: unknown) => void
+  collapse: (toStart: boolean) => void
+}
+
+function createFakeRange(container: unknown): FakeRange {
+  const range: FakeRange = {
+    commonAncestorContainer: container,
+    cloneRange: () => createFakeRange(range.commonAncestorContainer),
+    selectNodeContents: (node) => {
+      range.commonAncestorContainer = node
+    },
+    collapse: () => {}
+  }
+  return range
+}
+
+// Drives the editor's real selection functions against a stub DOM whose blur drops
+// the selection, the way WebKit does.
+function createSelectionRuntime(caretContainer: string | null) {
+  const liveNodes = new Set(caretContainer ? [caretContainer] : [])
+  let focused = caretContainer != null
+  let ranges: FakeRange[] = caretContainer ? [createFakeRange(caretContainer)] : []
+
+  const editor = {
+    contains: (node: unknown) => typeof node === 'string' && liveNodes.has(node),
+    focus: () => {
+      focused = true
+      fakeDocument.activeElement = editor
+    },
+    blur: () => {
+      focused = false
+      fakeDocument.activeElement = null
+      ranges = []
+    }
+  }
+  const fakeDocument: { activeElement: unknown; createRange: () => FakeRange } = {
+    activeElement: focused ? editor : null,
+    createRange: () => createFakeRange('detached')
+  }
+  const fakeWindow = {
+    getSelection: () => ({
+      get rangeCount() {
+        return ranges.length
+      },
+      getRangeAt: (index: number) => ranges[index],
+      removeAllRanges: () => {
+        ranges = []
+      },
+      addRange: (range: FakeRange) => {
+        ranges = [range]
+      }
+    })
+  }
+
+  const script = editorScript()
+  const sources = [
+    'var editor = arguments[0];',
+    'var document = arguments[1];',
+    'var window = arguments[2];',
+    'var savedSelectionRange = null;',
+    'var selectionDroppedOnBlur = false;',
+    extractFunctionSource(script, 'focusEditor'),
+    extractFunctionSource(script, 'rememberSelection'),
+    extractFunctionSource(script, 'applySelectionRange'),
+    extractFunctionSource(script, 'dismissKeyboard'),
+    extractFunctionSource(script, 'restoreSelectionOrEnd'),
+    'return { dismissKeyboard: dismissKeyboard, restoreSelectionOrEnd: restoreSelectionOrEnd };'
+  ].join('\n')
+  const api = new Function(sources)(editor, fakeDocument, fakeWindow) as {
+    dismissKeyboard: () => void
+    restoreSelectionOrEnd: () => void
+  }
+
+  return {
+    dismissKeyboard: api.dismissKeyboard,
+    restoreSelectionOrEnd: api.restoreSelectionOrEnd,
+    detachEditorContent: () => liveNodes.clear(),
+    selectedContainer: () => {
+      if (ranges.length === 0) {
+        return null
+      }
+      const container = ranges[0].commonAncestorContainer
+      return container === editor ? 'editor-end' : (container as string)
+    },
+    get focused() {
+      return focused
+    }
+  }
+}
+
 describe('mobile rich markdown editor HTML', () => {
   it('builds parseable WebView JavaScript', () => {
     const script = editorScript()
@@ -232,5 +325,63 @@ describe('mobile rich markdown editor HTML', () => {
     expect(emitChange).toContain('var pendingGeneration = documentGeneration')
     expect(emitChange).not.toContain('window.setTimeout')
     expect(emitChange).toContain('generation: pendingGeneration')
+  })
+
+  it('exposes a keyboard dismissal command that blurs WebView focus', () => {
+    const script = editorScript()
+    const dismissKeyboard = extractFunctionSource(script, 'dismissKeyboard')
+
+    expect(dismissKeyboard).toContain('rememberSelection()')
+    expect(dismissKeyboard).toContain('document.activeElement.blur()')
+    expect(dismissKeyboard).toContain('editor.blur()')
+    expect(script).toContain('dismissKeyboard: dismissKeyboard')
+  })
+
+  it('reclaims editor focus at the tapped caret after keyboard dismissal', () => {
+    const script = editorScript()
+
+    expect(script).toContain('var caret = caretRangeAtPoint(event.clientX, event.clientY);')
+    expect(script).toContain(
+      'if (caret && editor.contains(caret.commonAncestorContainer)) applySelectionRange(caret);'
+    )
+  })
+
+  it('leaves task-list label taps to the checkbox instead of refocusing the editor', () => {
+    const script = editorScript()
+
+    expect(script).toContain(
+      'var uneditable = event.target && event.target.closest && event.target.closest(\'[contenteditable="false"]\');'
+    )
+    expect(script).toContain('if (uneditable && uneditable !== editor) return;')
+  })
+
+  it('restores the pre-dismissal caret so commands do not insert at the document end', () => {
+    const runtime = createSelectionRuntime('paragraph-3')
+
+    runtime.dismissKeyboard()
+    expect(runtime.selectedContainer()).toBe(null)
+
+    runtime.restoreSelectionOrEnd()
+
+    expect(runtime.selectedContainer()).toBe('paragraph-3')
+    expect(runtime.focused).toBe(true)
+  })
+
+  it('falls back to the document end when no caret was ever placed', () => {
+    const runtime = createSelectionRuntime(null)
+
+    runtime.restoreSelectionOrEnd()
+
+    expect(runtime.selectedContainer()).toBe('editor-end')
+  })
+
+  it('drops a remembered caret whose nodes left the document', () => {
+    const runtime = createSelectionRuntime('paragraph-3')
+
+    runtime.dismissKeyboard()
+    runtime.detachEditorContent()
+    runtime.restoreSelectionOrEnd()
+
+    expect(runtime.selectedContainer()).toBe('editor-end')
   })
 })
