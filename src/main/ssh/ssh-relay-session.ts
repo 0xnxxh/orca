@@ -640,6 +640,7 @@ export class SshRelaySession {
       return
     }
 
+    this.releaseRelayLossWatcher()
     // Cancel any in-flight reconnect
     this.abortController?.abort()
     const abortController = new AbortController()
@@ -651,7 +652,6 @@ export class SshRelaySession {
     this.currentConnection = conn
 
     // Why: stop scanning before teardownProviders so the poll timer can't fire against a disposed multiplexer.
-    this.releaseRelayLossWatcher()
     this.stopPortScanning()
     await this.portForwardManager.removeAllForwards(this.targetId)
     this.broadcastEmptyLists()
@@ -836,8 +836,8 @@ export class SshRelaySession {
   private runDisposal(pendingDetach: Promise<void> | null): Promise<void> {
     // Why: the whole in-memory half runs before any await so a concurrent connect can never observe
     // a half-torn session; only the durability barriers below are deferred onto the returned promise.
-    this.abortController?.abort()
     this.releaseRelayLossWatcher()
+    this.abortController?.abort()
     this.stopPortScanning()
     this.broadcastEmptyLists()
     this.teardownProviders('shutdown')
@@ -910,8 +910,8 @@ export class SshRelaySession {
       return
     }
     detachSshPtyConsumerRecovery(this.targetId, this.ptyConsumerClientInstanceId)
-    this.abortController?.abort()
     this.releaseRelayLossWatcher()
+    this.abortController?.abort()
     this.stopPortScanning()
     this.broadcastEmptyLists()
     this.teardownProviders('connection_lost')
@@ -930,8 +930,8 @@ export class SshRelaySession {
       // step — a fast reconnect must reclaim this identity instead of minting one, even if a
       // teardown call below throws unexpectedly.
       detachSshPtyConsumerRecovery(this.targetId, this.ptyConsumerClientInstanceId)
-      this.abortController?.abort()
       this.releaseRelayLossWatcher()
+      this.abortController?.abort()
       this.stopPortScanning()
       this.broadcastEmptyLists()
       // Why: disconnect keeps PTY ownership so a later manual connect can reattach.
@@ -955,7 +955,9 @@ export class SshRelaySession {
   // control lane turns that admission failure into mux.dispose('connection_lost'). Every teardown
   // path must release the watcher before its first mux write, or our own shutdown re-enters
   // recovery as a spurious relay loss. teardownProviders is not early enough: stopPortScanning
-  // runs ahead of it and is what emits that frame.
+  // runs ahead of it and is what emits that frame. Call this ahead of abortController.abort()
+  // too — that signal reaches no mux request today, but plumbing it into one would otherwise
+  // reopen the same hole silently.
   private releaseRelayLossWatcher(): void {
     this.muxDisposeCleanup?.()
     this.muxDisposeCleanup = null
