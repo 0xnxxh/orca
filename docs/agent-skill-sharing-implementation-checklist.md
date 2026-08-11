@@ -6,7 +6,7 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `149d2dc2b5` on `skills-share` (pending push; no PR).
+- Orca implementation: `149d2dc2b5` on `skills-share` (pushed; no PR).
 - Orca Cloud: `499856c` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
