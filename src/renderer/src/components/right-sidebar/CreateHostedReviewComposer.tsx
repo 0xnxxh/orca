@@ -24,6 +24,7 @@ import {
 import { translate } from '@/i18n/i18n'
 import type { HostedReviewProvider } from '../../../../shared/hosted-review'
 import { stripBaseRef } from './useCreatePullRequestDialogFields'
+import type { HostedReviewStackParent } from './useHostedReviewStackParent'
 import type { DropdownActionKind, DropdownEntry } from './source-control-dropdown-items'
 import { CreateHostedReviewComposerFields } from './CreateHostedReviewComposerFields'
 import {
@@ -52,6 +53,7 @@ export type CreateHostedReviewComposerProps = {
   draft: boolean
   setDraft: (value: boolean) => void
   stackedCreationSupported: boolean
+  stackParentReview: HostedReviewStackParent | null
   baseQuery: string
   setBaseQuery: (value: string) => void
   baseResults: string[]
@@ -86,6 +88,7 @@ export function CreateHostedReviewComposer({
   draft,
   setDraft,
   stackedCreationSupported,
+  stackParentReview,
   baseQuery,
   setBaseQuery,
   baseResults,
@@ -106,12 +109,22 @@ export function CreateHostedReviewComposer({
   onPrimaryAction,
   onDropdownAction
 }: CreateHostedReviewComposerProps): React.JSX.Element {
-  const [stacked, setStacked] = useState(false)
   const copy = localizedHostedReviewCopy(resolveSupportedHostedReviewCopyProvider(provider))
   const ReviewIcon = provider === 'gitlab' ? GitMerge : GitPullRequestArrow
   const stackedModeAvailable = provider === 'github' && stackedCreationSupported
-  const effectiveStacked = stackedModeAvailable && stacked
   const normalizedBase = stripBaseRef(base)
+  const stackSelectionKey = stackParentReview
+    ? `${normalizedBase}:${stackParentReview.number}`
+    : null
+  const [stackSelection, setStackSelection] = useState({ key: '', enabled: false })
+  const effectiveStacked =
+    stackedModeAvailable &&
+    stackSelectionKey !== null &&
+    stackSelection.key === stackSelectionKey &&
+    stackSelection.enabled
+  const setStacked = (enabled: boolean): void => {
+    setStackSelection({ key: stackSelectionKey ?? '', enabled })
+  }
   const strippedBranch = stripBaseRef(branch)
   const baseSameAsBranch = normalizedBase.toLowerCase() === strippedBranch.toLowerCase()
   const createDisabled =
@@ -237,7 +250,7 @@ export function CreateHostedReviewComposer({
           setDraft={setDraft}
           stacked={effectiveStacked}
           setStacked={setStacked}
-          showStackedMode={stackedModeAvailable}
+          stackParentReview={stackedModeAvailable ? stackParentReview : null}
           baseQuery={baseQuery}
           setBaseQuery={setBaseQuery}
           baseResults={baseResults}
@@ -360,7 +373,7 @@ function getCreateButtonLabel({
   if (pushBeforeCreate && stacked) {
     return translate(
       'auto.components.right.sidebar.CreateHostedReviewComposer.pushCreateStackedPr',
-      'Push & Create stacked PR'
+      'Push & Create PR in stack'
     )
   }
   if (pushBeforeCreate) {
@@ -374,11 +387,11 @@ function getCreateButtonLabel({
     return draft
       ? translate(
           'auto.components.right.sidebar.CreateHostedReviewComposer.createDraftStackedPr',
-          'Create draft stacked PR'
+          'Create draft PR in stack'
         )
       : translate(
           'auto.components.right.sidebar.CreateHostedReviewComposer.createStackedPr',
-          'Create stacked PR'
+          'Create PR in stack'
         )
   }
   if (draft) {

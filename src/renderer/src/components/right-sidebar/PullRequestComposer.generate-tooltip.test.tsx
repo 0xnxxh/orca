@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render as renderDom, screen } from '@testing-librar
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { CreateHostedReviewComposer } from './CreateHostedReviewComposer'
+import type { HostedReviewStackParent } from './useHostedReviewStackParent'
 import { resolveDropdownItems } from './source-control-dropdown-items'
 import { resolvePrimaryAction } from './source-control-primary-action'
 
@@ -14,6 +15,7 @@ type RenderPullRequestComposerOptions = {
   generateDisabled?: boolean
   generateDisabledReason?: string
   stackedCreationSupported?: boolean
+  stackParentReview?: HostedReviewStackParent | null
   onPrimaryAction?: (stacked: boolean) => void
 }
 
@@ -23,6 +25,7 @@ function pullRequestComposerElement({
   generateDisabled = false,
   generateDisabledReason,
   stackedCreationSupported = true,
+  stackParentReview = null,
   onPrimaryAction = vi.fn()
 }: RenderPullRequestComposerOptions = {}): React.JSX.Element {
   const sourceControlInputs = {
@@ -52,6 +55,7 @@ function pullRequestComposerElement({
         draft={false}
         setDraft={vi.fn()}
         stackedCreationSupported={stackedCreationSupported}
+        stackParentReview={stackParentReview}
         baseQuery=""
         setBaseQuery={vi.fn()}
         baseResults={[]}
@@ -137,28 +141,43 @@ describe('CreateHostedReviewComposer generate tooltip', () => {
     expect(button).not.toContain('disabled=""')
   })
 
-  it('shows the parent-child preview and stacked create action', () => {
-    const onPrimaryAction = vi.fn()
-    const { container } = renderDom(pullRequestComposerElement({ onPrimaryAction }))
+  it('does not ask for a PR type without an open parent review', () => {
+    const markup = renderPullRequestComposer()
 
-    fireEvent.click(screen.getByText('Stacked PR'))
+    expect(markup).not.toContain('Regular PR')
+    expect(markup).not.toContain('Stacked PR')
+    expect(markup).not.toContain('Stack this PR above')
+  })
+
+  it('shows the parent-child preview and stack create action for an open parent review', () => {
+    const onPrimaryAction = vi.fn()
+    const { container } = renderDom(
+      pullRequestComposerElement({
+        stackParentReview: { number: 13741, url: 'https://github.com/stablyai/orca/pull/13741' },
+        onPrimaryAction
+      })
+    )
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /Stack this PR above #13741/ }))
 
     const markup = container.innerHTML
 
-    expect(markup).toContain('Stacked PR')
+    expect(markup).toContain('#13741')
     expect(markup).toContain('master')
     expect(markup).toContain('branch-login-issue')
-    expect(markup).toContain('The base branch must have an open PR and be the top of its stack.')
-    expect(markup).toContain('Create stacked PR')
+    expect(markup).toContain("Creates a GitHub Stack or extends the parent's existing stack.")
+    expect(markup).toContain('Create PR in stack')
 
-    fireEvent.click(screen.getByRole('button', { name: /Create stacked PR/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Create PR in stack/ }))
     expect(onPrimaryAction).toHaveBeenCalledWith(true)
   })
 
   it('hides stacked creation when the executing host lacks the capability', () => {
-    const markup = renderPullRequestComposer({ stackedCreationSupported: false })
+    const markup = renderPullRequestComposer({
+      stackedCreationSupported: false,
+      stackParentReview: { number: 13741, url: 'https://github.com/stablyai/orca/pull/13741' }
+    })
 
-    expect(markup).not.toContain('Stacked PR')
-    expect(markup).not.toContain('Regular PR')
+    expect(markup).not.toContain('Stack this PR above #13741')
   })
 })

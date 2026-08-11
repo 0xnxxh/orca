@@ -246,6 +246,7 @@ import {
 } from './source-control-pull-policy-error-notice'
 import { SourceControlTextGenerationDialog } from './SourceControlTextGenerationDialog'
 import { CreateHostedReviewComposer } from './CreateHostedReviewComposer'
+import { useHostedReviewStackParent } from './useHostedReviewStackParent'
 import {
   hasConfiguredCommitMessageGenerationDefaults,
   hasConfiguredSourceControlTextGenerationDefaults
@@ -3062,6 +3063,15 @@ function SourceControlInner(): React.JSX.Element {
       onCancelGenerate: handleCancelGeneratePullRequestFieldsForActive
     }
   })
+  const stackParentReview = useHostedReviewStackParent({
+    enabled: hostedReviewCreateProvider === 'github' && prStackedCreationSupported,
+    repoPath: activeRepo?.path ?? '',
+    repoId: activeRepo?.id ?? null,
+    base: prBase,
+    defaultBase: hostedReviewCreation?.defaultBaseRef,
+    head: branchName,
+    fetchHostedReviewForBranch
+  })
 
   const handleGeneratePullRequestFieldsClick = useCallback((): void => {
     if (!sourceControlAiActionsVisible) {
@@ -5838,6 +5848,7 @@ function SourceControlInner(): React.JSX.Element {
                 draft={prDraft}
                 setDraft={setPrDraft}
                 stackedCreationSupported={prStackedCreationSupported}
+                stackParentReview={stackParentReview}
                 baseQuery={prBaseQuery}
                 setBaseQuery={setPrBaseQuery}
                 baseResults={prBaseResults}

@@ -188,6 +188,7 @@ import { resolveSourceControlLaunchPlatform } from '@/lib/source-control-launch-
 import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import { CreateHostedReviewComposer } from './CreateHostedReviewComposer'
+import { useHostedReviewStackParent } from './useHostedReviewStackParent'
 import { formatCreateError } from './create-pull-request-review-copy'
 import { stripBaseRef, useCreatePullRequestDialogFields } from './useCreatePullRequestDialogFields'
 import { localizedHostedReviewCopy } from '@/i18n/hosted-review-localized-copy'
@@ -1359,6 +1360,15 @@ export default function ChecksPanel(): React.JSX.Element {
       },
       onCancelGenerate: handleCancelGeneratePullRequestFieldsForActive
     }
+  })
+  const stackParentReview = useHostedReviewStackParent({
+    enabled: hostedReviewCreateProvider === 'github' && prStackedCreationSupported,
+    repoPath: repo?.path ?? '',
+    repoId: repo?.id ?? null,
+    base: prBase,
+    defaultBase: hostedReviewCreation?.defaultBaseRef,
+    head: branch,
+    fetchHostedReviewForBranch
   })
   useEffect(() => {
     // Why: PR generation can finish while this composer is hidden by a worktree switch; hydrate once the original composer is visible again.
@@ -4311,6 +4321,7 @@ export default function ChecksPanel(): React.JSX.Element {
               draft={prDraft}
               setDraft={setPrDraft}
               stackedCreationSupported={prStackedCreationSupported}
+              stackParentReview={stackParentReview}
               baseQuery={prBaseQuery}
               setBaseQuery={setPrBaseQuery}
               baseResults={prBaseResults}

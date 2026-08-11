@@ -10648,14 +10648,13 @@
           },
           "CreateHostedReviewComposer": {
             "741ff8a0d2": "Push & Create {{value0}}",
-            "pushCreateStackedPr": "Push & Create stacked PR",
-            "createDraftStackedPr": "Create draft stacked PR",
-            "createStackedPr": "Create stacked PR",
-            "reviewType": "Pull request type",
-            "regularPr": "Regular PR",
-            "stackedPr": "Stacked PR",
+            "pushCreateStackedPr": "Push & Create PR in stack",
+            "createDraftStackedPr": "Create draft PR in stack",
+            "createStackedPr": "Create PR in stack",
             "newPr": "new PR",
-            "stackRequirement": "The base branch must have an open PR and be the top of its stack."
+            "stackAbovePr": "Stack this PR above #{{value0}}",
+            "stackParentBranch": "{{value0}} is the parent branch.",
+            "stackBehavior": "Creates a GitHub Stack or extends the parent's existing stack."
           },
           "CreatePullRequestGenerateButton": {
             "4012459f8a": "Generate with AI",
