@@ -130,4 +130,43 @@ describe('installSkillOnSshHost', () => {
     ).rejects.toThrow('skill-install-ssh-update-required')
     expect(requestHostRpc).toHaveBeenCalledOnce()
   })
+
+  it('uses a configured development origin through the client', async () => {
+    const bytes = Buffer.from('private development archive')
+    const requestHostRpc = vi.fn(async (method: string, params: unknown) => {
+      if (method === 'relay.status') {
+        return { capabilities: ['skills.install.v1', 'skills.upload.v1'] }
+      }
+      if (method === 'skills.install') {
+        const ingress = (params as { request: ReturnType<typeof request> }).request.ingress
+        if (ingress.kind === 'download-grant') {
+          throw new Error('skill-download-url-rejected')
+        }
+        return result()
+      }
+      if (method === 'skills.beginUpload') {
+        return { uploadId: 'upload_1', chunkBytes: 256 * 1024 }
+      }
+      if (method === 'skills.uploadChunk') {
+        const chunk = params as { offset: number; bytesBase64: string }
+        return {
+          acknowledgedOffset: chunk.offset + Buffer.from(chunk.bytesBase64, 'base64').length
+        }
+      }
+      return { ok: true }
+    })
+
+    await expect(
+      installSkillOnSshHost({
+        provider: { requestHostRpc } as unknown as IPtyProvider,
+        userDataPath: await userDataPath(),
+        request: request(bytes),
+        requireHttps: false,
+        fetcher: vi.fn(
+          async () =>
+            new Response(bytes, { headers: { 'content-type': SKILL_PACKAGE_CONTENT_TYPE } })
+        ) as typeof fetch
+      })
+    ).resolves.toEqual(result())
+  })
 })

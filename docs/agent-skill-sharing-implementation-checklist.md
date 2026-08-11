@@ -6,7 +6,7 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `92c8c6a4c6` on `skills-share` (pushed; no PR).
+- Orca implementation: `af5f8d1fe2` on `skills-share` (pushed; no PR).
 - Orca Cloud: `81a581d` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
@@ -29,6 +29,9 @@ Validated so far:
   every host produced the same package digest and archive SHA-256 golden.
 - Real native Windows global, linked Git-worktree, and plain folder installs with spaces and
   non-ASCII paths, plus privacy-safe install diagnostics and owner-private staging tests.
+- Docker-backed SSH relay installation from the real Electron client passed global, remote Git
+  worktree, and remote plain-folder scopes, including client-mediated upload, unchanged preview,
+  managed-install listing, safe removal, and remote-target Cloud authorization.
 - Isolated staging bucket, IAM, secret container, log metrics, dashboard, and alerts in
   `onorca-cloud-staging`.
 
@@ -774,6 +777,12 @@ non-local worktree or repository. Real SSH validation therefore requires registe
 SSH macOS, Ubuntu 20.04, or supported Windows target; implementation and contract tests continue
 without treating the missing external topology as a product failure.
 
+The Docker-backed Linux SSH harness now exercises the production Electron → SSH provider → relay
+→ remote installer path. Its loopback package origin is unreachable from the container, forcing
+client-mediated chunk upload. The test independently verifies Cloud request receipts and remote
+files for global, Git-worktree, and plain-folder installs, unchanged preview, listing, and removal.
+This does not substitute for physical SSH macOS/Windows or the supported Linux floor.
+
 - [x] Define a host-side installer command that invokes the same installer core and structured
       result contract.
 - [x] Transfer immutable packages through the existing SSH/SFTP provider into bounded private
@@ -786,7 +795,8 @@ without treating the missing external topology as a product failure.
 - [x] Propagate cancellation and clean partial SSH transfers and staging.
 - [ ] Test SSH-only macOS, Linux at the supported floor, and Windows where the existing provider
       supports it.
-- [ ] Test Git worktree and folder-workspace scope over SSH.
+- [x] Test Git worktree and folder-workspace scope over SSH through the disposable Docker Linux
+      target and verify the host-owned paths independently.
 - [ ] Test connection loss during upload, extraction, commit, provenance, and result return.
 - [ ] Prove SSH and paired runtimes return the same result and error-category contracts.
 

@@ -34,6 +34,10 @@ import { retrySkillTransferRpc } from './skill-transfer-rpc-retry'
 
 const REQUEST_TIMEOUT_MS = 5 * 60_000
 const DIRECT_DOWNLOAD_FAILURE = 'skill-download-transport-failed'
+const DEVELOPMENT_DOWNLOAD_POLICY_FAILURES = new Set([
+  'skill-download-url-rejected',
+  'skill-download-origin-rejected'
+])
 
 type SkillSshRelayClient = NonNullable<IPtyProvider['requestHostRpc']>
 
@@ -54,6 +58,14 @@ function allowedOrigins(requireHttps: boolean): string[] {
     )
   }
   return [...new Set(origins)]
+}
+
+function shouldUseClientTransfer(error: unknown, requireHttps: boolean): boolean {
+  const message = error instanceof Error ? error.message : ''
+  return (
+    message === DIRECT_DOWNLOAD_FAILURE ||
+    (!requireHttps && DEVELOPMENT_DOWNLOAD_POLICY_FAILURES.has(message))
+  )
 }
 
 async function capabilities(client: SkillSshRelayClient): Promise<string[]> {
@@ -94,7 +106,7 @@ export async function installSkillOnSshHost(input: {
   } catch (error) {
     if (
       input.request.ingress.kind !== 'download-grant' ||
-      (error as Error).message !== DIRECT_DOWNLOAD_FAILURE
+      !shouldUseClientTransfer(error, input.requireHttps)
     ) {
       throw error
     }
