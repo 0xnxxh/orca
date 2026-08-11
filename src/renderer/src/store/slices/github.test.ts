@@ -5427,6 +5427,91 @@ describe('createGitHubSlice.refreshAllGitHub', () => {
     vi.clearAllMocks()
   })
 
+  it('skips the workspace catalog when no visible surface uses PR or issue data', () => {
+    const store = createTestStore()
+    let catalogReads = 0
+    const worktreesByRepo = Object.defineProperty({}, 'repo-1', {
+      enumerable: true,
+      get: () => {
+        catalogReads += 1
+        return [makePRRefreshWorktree()]
+      }
+    })
+    store.setState({
+      repos: [{ id: 'repo-1', path: '/repo', name: 'repo', kind: 'git' }],
+      groupBy: 'repo',
+      worktreeCardProperties: ['comment'],
+      rightSidebarOpen: false,
+      worktreesByRepo
+    } as unknown as Partial<AppState>)
+    let publications = 0
+    const unsubscribe = store.subscribe(() => {
+      publications += 1
+    })
+
+    store.getState().refreshAllGitHub()
+    unsubscribe()
+
+    expect(catalogReads).toBe(0)
+    expect(publications).toBe(0)
+  })
+
+  it('still clears populated comments when no workspace refresh is needed', () => {
+    const store = createTestStore()
+    store.setState({
+      commentsCache: { cached: { data: [], fetchedAt: 1 } },
+      groupBy: 'repo',
+      worktreeCardProperties: ['comment'],
+      rightSidebarOpen: false
+    } as unknown as Partial<AppState>)
+    let publications = 0
+    const unsubscribe = store.subscribe(() => {
+      publications += 1
+    })
+
+    store.getState().refreshAllGitHub()
+    unsubscribe()
+
+    expect(store.getState().commentsCache).toEqual({})
+    expect(publications).toBe(1)
+  })
+
+  it('indexes repos once for visible workspace refreshes', () => {
+    const store = createTestStore()
+    const repos = Array.from({ length: 20 }, (_, index) => ({
+      id: `repo-${index}`,
+      path: `/repo-${index}`,
+      name: `repo-${index}`,
+      kind: 'git' as const
+    }))
+    const repoFind = vi.spyOn(repos, 'find')
+    const worktreesByRepo = Object.fromEntries(
+      repos.map((repo, index) => [
+        repo.id,
+        [
+          makePRRefreshWorktree({
+            id: `wt-${index}`,
+            repoId: repo.id,
+            path: `${repo.path}/worktree`,
+            branch: `feature/${index}`
+          })
+        ]
+      ])
+    )
+    store.setState({
+      repos,
+      groupBy: 'pr-status',
+      worktreeCardProperties: [],
+      rightSidebarOpen: false,
+      worktreesByRepo
+    } as unknown as Partial<AppState>)
+
+    store.getState().refreshAllGitHub()
+
+    expect(repoFind).not.toHaveBeenCalled()
+    expect(mockApi.gh.enqueuePRRefresh).toHaveBeenCalledTimes(20)
+  })
+
   it('refreshes stale PR data when source control is the visible PR surface', () => {
     const store = createTestStore()
     const repoPath = '/repo'

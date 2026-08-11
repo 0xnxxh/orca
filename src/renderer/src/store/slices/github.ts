@@ -119,13 +119,17 @@ function queryOverrideKeyPart(queryOverride: string | undefined): string {
 function getRuntimeRepoTarget(
   state: AppState,
   repoPath: string,
-  settings: AppState['settings'] = state.settings
+  settings: AppState['settings'] = state.settings,
+  knownRepo?: Repo
 ): { target: { kind: 'environment'; environmentId: string }; repo: Repo } | null {
   const target = getActiveRuntimeTarget(settings)
   if (target.kind !== 'environment') {
     return null
   }
-  const repo = state.repos.find((candidate) => candidate.path === repoPath)
+  const repo =
+    knownRepo?.path === repoPath
+      ? knownRepo
+      : state.repos.find((candidate) => candidate.path === repoPath)
   return repo ? { target, repo } : null
 }
 
@@ -1130,9 +1134,13 @@ function shouldApplyBranchMismatchedLinkedPRClear(args: {
 function buildPRRefreshCandidate(
   state: AppState,
   worktree: Worktree,
-  repoPath?: string
+  repoPath?: string,
+  knownRepo?: Repo
 ): GitHubPRRefreshCandidate | null {
-  const repo = state.repos.find((r) => r.id === worktree.repoId)
+  const repo =
+    knownRepo?.id === worktree.repoId
+      ? knownRepo
+      : state.repos.find((r) => r.id === worktree.repoId)
   if (!repo) {
     return null
   }
@@ -4415,22 +4423,37 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
 
   refreshAllGitHub: () => {
     // Clear comments cache; evict stale entries to bound long-session growth across repos/branches.
-    set((s) => ({
-      commentsCache: {},
-      prCache: evictStaleEntries(s.prCache),
-      issueCache: evictStaleEntries(s.issueCache),
-      checksCache: evictStaleEntries(s.checksCache),
-      workItemsCache: evictStaleEntries(s.workItemsCache),
-      projectViewCache: evictStaleEntries(s.projectViewCache),
-      prRefreshStates: pruneExpiredPRRefreshStates(s.prRefreshStates)
-    }))
+    set((s) => {
+      const next = {
+        commentsCache: Object.keys(s.commentsCache).length === 0 ? s.commentsCache : {},
+        prCache: evictStaleEntries(s.prCache),
+        issueCache: evictStaleEntries(s.issueCache),
+        checksCache: evictStaleEntries(s.checksCache),
+        workItemsCache: evictStaleEntries(s.workItemsCache),
+        projectViewCache: evictStaleEntries(s.projectViewCache),
+        prRefreshStates: pruneExpiredPRRefreshStates(s.prRefreshStates)
+      }
+      return next.commentsCache === s.commentsCache &&
+        next.prCache === s.prCache &&
+        next.issueCache === s.issueCache &&
+        next.checksCache === s.checksCache &&
+        next.workItemsCache === s.workItemsCache &&
+        next.projectViewCache === s.projectViewCache &&
+        next.prRefreshStates === s.prRefreshStates
+        ? s
+        : next
+    })
 
     // Why: don't prune prRequestGenerations here — deleting a live generation makes its response look stale.
 
     // Only re-fetch PR/issue entries that are already stale — skip fresh ones
     const state = get()
     const now = Date.now()
-    const stalePRCandidates: { candidate: GitHubPRRefreshCandidate; score: number }[] = []
+    const stalePRCandidates: {
+      candidate: GitHubPRRefreshCandidate
+      repo: Repo
+      score: number
+    }[] = []
     const cardProps = state.worktreeCardProperties ?? []
     const rawCardProps = cardProps as readonly string[]
     const shouldRefreshIssues = shouldRefreshIssueDecorations(state)
@@ -4442,10 +4465,20 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       (state.settings?.experimentalNewWorktreeCardStyle === true
         ? cardProps.includes('status')
         : cardProps.includes('pr') || rawCardProps.includes('ci'))
+    if (!shouldRefreshPRs && !shouldRefreshIssues) {
+      return
+    }
+    const reposById = new Map<string, Repo>()
+    for (const repo of state.repos) {
+      // Preserve Array.find's first-match behavior if corrupt state has duplicate IDs.
+      if (!reposById.has(repo.id)) {
+        reposById.set(repo.id, repo)
+      }
+    }
 
     for (const worktrees of Object.values(state.worktreesByRepo)) {
       for (const wt of worktrees) {
-        const repo = state.repos.find((r) => r.id === wt.repoId)
+        const repo = reposById.get(wt.repoId)
         if (!repo) {
           continue
         }
@@ -4463,10 +4496,11 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
           )
           const prEntry = state.prCache[prKey]
           if (!prEntry || now - prEntry.fetchedAt >= CACHE_TTL) {
-            const candidate = buildPRRefreshCandidate(state, wt)
+            const candidate = buildPRRefreshCandidate(state, wt, undefined, repo)
             if (candidate) {
               stalePRCandidates.push({
                 candidate,
+                repo,
                 score:
                   (state.activeWorktreeId === wt.id ? Number.MAX_SAFE_INTEGER : 0) +
                   wt.lastActivityAt
@@ -4495,12 +4529,12 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     const candidatesToRefresh = stalePRCandidates
       .sort((a, b) => b.score - a.score)
       .slice(0, isPRStatusGrouping ? stalePRCandidates.length : 5)
-    for (const { candidate } of candidatesToRefresh) {
+    for (const { candidate, repo } of candidatesToRefresh) {
       const candidateSettings = settingsForGitHubRepoOwner(
         state.settings,
         candidate as Pick<Repo, 'connectionId' | 'executionHostId'>
       )
-      if (getRuntimeRepoTarget(state, candidate.repoPath, candidateSettings)) {
+      if (getRuntimeRepoTarget(state, candidate.repoPath, candidateSettings, repo)) {
         void get().fetchPRForBranch(candidate.repoPath, candidate.branch, {
           repoId: candidate.repoId,
           worktreeId: candidate.worktreeId,
