@@ -9201,6 +9201,29 @@ describe('Store', () => {
       expect(
         store.persistPtyBinding(
           {
+            worktreeId: 'wt1',
+            tabId: 'different-target-tab',
+            leafId: TEST_LEAF_2,
+            ptyId: 'pty-split',
+            expectedSourceBinding: {
+              worktreeId: 'wt1',
+              tabId: 'tab1',
+              leafId: TEST_LEAF_1,
+              ptyId: 'pty-source'
+            }
+          },
+          hostId
+        )
+      ).toBe(false)
+      expect(
+        store
+          .getWorkspaceSession(hostId)
+          .tabsByWorktree.wt1.some((tab) => tab.id === 'different-target-tab')
+      ).toBe(false)
+
+      expect(
+        store.persistPtyBinding(
+          {
             worktreeId: 'wt-canonical',
             tabId: 'tab1',
             leafId: TEST_LEAF_2,

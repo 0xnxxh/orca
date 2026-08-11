@@ -153,7 +153,11 @@ describe('buildHeadlessTerminalSplitLayout (headless split persistence)', () => 
     )
 
     expect(countTerminalLayoutLeaves(next.root)).toBe(3)
-    expect(Object.keys(next.ptyIdsByLeafId!)).toEqual(['leaf-a', 'leaf-b', 'leaf-c'])
+    expect(next.ptyIdsByLeafId).toEqual({
+      'leaf-a': 'pty-a',
+      'leaf-b': 'pty-b',
+      'leaf-c': 'pty-c'
+    })
   })
 
   it('does not collapse — the persisted layout keeps both leaves (regression guard)', () => {

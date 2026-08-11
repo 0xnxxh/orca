@@ -6788,6 +6788,9 @@ export class Store {
     const bindingWorktreeId = args.expectedSourceBinding?.worktreeId ?? args.worktreeId
     if (args.expectedSourceBinding) {
       const expected = args.expectedSourceBinding
+      if (expected.tabId !== args.tabId) {
+        return false
+      }
       const sourceTab = session.tabsByWorktree?.[bindingWorktreeId]?.find(
         (candidate) => candidate.id === expected.tabId && candidate.worktreeId === bindingWorktreeId
       )
