@@ -27,10 +27,13 @@ import {
   SKILL_SSH_RELAY_UPLOAD_CHUNK_METHOD,
   type SkillSshWorkspaceAuthority
 } from '../../shared/skill-ssh-relay-contract'
-import { SKILL_UPLOAD_CHUNK_MAX_BYTES } from '../../shared/skill-upload-session-contract'
+import {
+  SKILL_UPLOAD_CHUNK_MAX_BYTES,
+  SkillUploadBeginResultSchema
+} from '../../shared/skill-upload-session-contract'
 import type { IPtyProvider } from '../providers/pty-provider-contract'
 import { downloadSkillPackageGrant } from './skill-package-download'
-import { retrySkillTransferRpc } from './skill-transfer-rpc-retry'
+import { retrySkillTransferRpc, throwIfSkillTransferCancelled } from './skill-transfer-rpc-retry'
 
 const REQUEST_TIMEOUT_MS = 5 * 60_000
 const DIRECT_DOWNLOAD_FAILURE = 'skill-download-transport-failed'
@@ -217,19 +220,34 @@ async function transferSkillPackageToSshHost(
   })
   let uploadId: string | null = null
   try {
-    const begun = (await client(
-      SKILL_SSH_RELAY_BEGIN_UPLOAD_METHOD,
-      { package: input.request.package },
-      { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
-    )) as { uploadId: string; chunkBytes: number }
+    const begun = SkillUploadBeginResultSchema.parse(
+      await retrySkillTransferRpc({
+        signal: input.signal,
+        checkCancellationAfterSuccess: false,
+        retryable: (error) =>
+          typeof (error as { code?: unknown })?.code !== 'number' &&
+          (error as Error)?.name !== 'AbortError',
+        call: () =>
+          client(
+            SKILL_SSH_RELAY_BEGIN_UPLOAD_METHOD,
+            { package: input.request.package, transferId: input.request.operationId },
+            { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
+          )
+      })
+    )
     uploadId = begun.uploadId
+    throwIfSkillTransferCancelled(input.signal)
     const chunkBytes = Math.min(begun.chunkBytes, SKILL_UPLOAD_CHUNK_MAX_BYTES)
-    if (!uploadId || !Number.isInteger(chunkBytes) || chunkBytes < 1) {
+    if (
+      begun.acknowledgedOffset > input.request.package.compressedBytes ||
+      !Number.isInteger(chunkBytes) ||
+      chunkBytes < 1
+    ) {
       throw new Error('skill-transfer-ssh-begin-invalid')
     }
     const handle = await open(downloaded.archivePath, 'r')
     try {
-      let offset = 0
+      let offset = begun.acknowledgedOffset
       while (offset < input.request.package.compressedBytes) {
         const bytes = Buffer.alloc(
           Math.min(chunkBytes, input.request.package.compressedBytes - offset)

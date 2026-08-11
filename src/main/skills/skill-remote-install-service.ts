@@ -86,6 +86,7 @@ export async function installSkillOnRemoteRuntime(input: {
   const transfer = await transferSkillPackageToRuntime({
     userDataPath: input.userDataPath,
     environmentId: input.environmentId,
+    transferId: input.request.operationId,
     package: input.request.package,
     grant: input.request.ingress,
     requireHttps: input.requireHttps,

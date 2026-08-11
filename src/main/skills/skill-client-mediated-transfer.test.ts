@@ -30,7 +30,7 @@ describe('transferSkillPackageToRuntime', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('cleans the local package when connection loss hides the begin result', async () => {
+  it('cleans the local package after bounded begin retries', async () => {
     const archivePath = join(root, 'package.tar.gz')
     await writeFile(archivePath, Buffer.from('package-data'))
     const cleanup = vi.fn(async () => undefined)
@@ -41,6 +41,7 @@ describe('transferSkillPackageToRuntime', () => {
       transferSkillPackageToRuntime({
         userDataPath: root,
         environmentId: 'environment-1',
+        transferId: 'operation-1',
         package: {
           packageId: 'package-1',
           versionId: 'version-1',
@@ -57,7 +58,76 @@ describe('transferSkillPackageToRuntime', () => {
     ).rejects.toThrow('connection dropped')
 
     expect(cleanup).toHaveBeenCalledOnce()
-    expect(mocks.callRuntimeEnvironment).toHaveBeenCalledOnce()
+    expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(3)
+  })
+
+  it('reuses the operation identity and resumes an acknowledged upload', async () => {
+    const archivePath = join(root, 'package.tar.gz')
+    const bytes = Buffer.from('package-data')
+    await writeFile(archivePath, bytes)
+    const cleanup = vi.fn(async () => undefined)
+    mocks.downloadSkillPackageGrant.mockResolvedValue({ archivePath, cleanup })
+    const beginRequests: unknown[] = []
+    let beginAttempts = 0
+    mocks.callRuntimeEnvironment.mockImplementation(
+      async (_userData: string, _environment: string, method: string, params: unknown) => {
+        if (method === 'skills.beginUpload') {
+          beginRequests.push(params)
+          beginAttempts += 1
+          if (beginAttempts === 1) {
+            throw new Error('connection dropped after receiver resumed upload')
+          }
+          return {
+            id: 'rpc-begin',
+            ok: true,
+            result: { uploadId: 'upload-1', chunkBytes: 256 * 1024, acknowledgedOffset: 4 },
+            _meta: { runtimeId: 'runtime-1' }
+          }
+        }
+        if (method === 'skills.uploadChunk') {
+          const chunk = params as { offset: number; bytesBase64: string }
+          expect(chunk.offset).toBe(4)
+          expect(Buffer.from(chunk.bytesBase64, 'base64')).toEqual(bytes.subarray(4))
+          return {
+            id: 'rpc-chunk',
+            ok: true,
+            result: { acknowledgedOffset: bytes.length },
+            _meta: { runtimeId: 'runtime-1' }
+          }
+        }
+        return {
+          id: 'rpc-success',
+          ok: true,
+          result: { uploadId: 'upload-1' },
+          _meta: { runtimeId: 'runtime-1' }
+        }
+      }
+    )
+
+    const transferred = await transferSkillPackageToRuntime({
+      userDataPath: root,
+      environmentId: 'environment-1',
+      transferId: 'operation-1',
+      package: {
+        packageId: 'package-1',
+        versionId: 'version-1',
+        packageDigest: 'a'.repeat(64),
+        archiveSha256: 'b'.repeat(64),
+        compressedBytes: bytes.length
+      },
+      grant: {
+        url: 'https://storage.googleapis.com/bucket/package.tar.gz',
+        expiresAt: '2099-01-01T00:00:00.000Z'
+      },
+      requireHttps: true
+    })
+    await transferred.cleanup()
+
+    expect(beginRequests).toEqual([
+      expect.objectContaining({ transferId: 'operation-1' }),
+      expect.objectContaining({ transferId: 'operation-1' })
+    ])
+    expect(cleanup).toHaveBeenCalledOnce()
   })
 
   it('rejects an invalid acknowledgement and cancels the remote session', async () => {
@@ -96,6 +166,7 @@ describe('transferSkillPackageToRuntime', () => {
       transferSkillPackageToRuntime({
         userDataPath: root,
         environmentId: 'environment-1',
+        transferId: 'operation-1',
         package: {
           packageId: 'package-1',
           versionId: 'version-1',
@@ -165,6 +236,7 @@ describe('transferSkillPackageToRuntime', () => {
       transferSkillPackageToRuntime({
         userDataPath: root,
         environmentId: 'environment-1',
+        transferId: 'operation-1',
         package: {
           packageId: 'package-1',
           versionId: 'version-1',
@@ -224,6 +296,7 @@ describe('transferSkillPackageToRuntime', () => {
       transferSkillPackageToRuntime({
         userDataPath: root,
         environmentId: 'environment-1',
+        transferId: 'operation-1',
         package: {
           packageId: 'package-1',
           versionId: 'version-1',
@@ -303,6 +376,7 @@ describe('transferSkillPackageToRuntime', () => {
     const transferred = await transferSkillPackageToRuntime({
       userDataPath: root,
       environmentId: 'environment-1',
+      transferId: 'operation-1',
       package: {
         packageId: 'package-1',
         versionId: 'version-1',
@@ -353,6 +427,7 @@ describe('transferSkillPackageToRuntime', () => {
       transferSkillPackageToRuntime({
         userDataPath: root,
         environmentId: 'environment-1',
+        transferId: 'operation-1',
         package: {
           packageId: 'package-1',
           versionId: 'version-1',

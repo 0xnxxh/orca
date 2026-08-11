@@ -70,6 +70,30 @@ describe('SkillUploadSessionService', () => {
     await expect(readFile(staged.archivePath)).rejects.toThrow()
   })
 
+  it('resumes an idempotent transfer without allocating another session', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skill-upload-session-'))
+    roots.push(root)
+    const service = new SkillUploadSessionService(join(root, 'uploads'))
+    const bytes = Buffer.from('resumable package')
+    const packageIdentity = identity(bytes)
+    const request = { package: packageIdentity, transferId: 'operation-1' }
+    const begun = await service.begin(request)
+    await service.append({ uploadId: begun.uploadId, offset: 0, bytesBase64: 'cmVzdW1l' })
+
+    await expect(service.begin(request)).resolves.toEqual({
+      uploadId: begun.uploadId,
+      chunkBytes: begun.chunkBytes,
+      acknowledgedOffset: 6
+    })
+    await expect(
+      service.begin({
+        package: { ...packageIdentity, packageId: 'different-package' },
+        transferId: request.transferId
+      })
+    ).rejects.toThrow('skill-upload-transfer-mismatch')
+    expect(await readdir(join(root, 'uploads'))).toEqual([`${begun.uploadId}.tar.gz`])
+  })
+
   it('removes an abandoned upload when its idle lifetime expires', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-skill-upload-session-'))
     roots.push(root)

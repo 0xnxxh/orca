@@ -52,6 +52,8 @@ describe('installSkillOnSshHost', () => {
   it('uses client-mediated upload only after direct host download fails', async () => {
     const bytes = Buffer.from('private skill archive')
     let received = 0
+    let beginAttempts = 0
+    const beginRequests: unknown[] = []
     let chunkAttempts = 0
     let commitAttempts = 0
     const requestHostRpc = vi.fn(async (method: string, params: unknown) => {
@@ -68,6 +70,11 @@ describe('installSkillOnSshHost', () => {
         return result()
       }
       if (method === 'skills.beginUpload') {
+        beginRequests.push(params)
+        beginAttempts += 1
+        if (beginAttempts === 1) {
+          throw new Error('connection dropped after receiver began upload')
+        }
         return { uploadId: 'upload_1', chunkBytes: 256 * 1024 }
       }
       if (method === 'skills.uploadChunk') {
@@ -105,9 +112,14 @@ describe('installSkillOnSshHost', () => {
       })
     ).resolves.toEqual(result())
     expect(received).toBe(bytes.length)
+    expect(beginRequests).toEqual([
+      expect.objectContaining({ transferId: 'operation_1' }),
+      expect.objectContaining({ transferId: 'operation_1' })
+    ])
     expect(requestHostRpc.mock.calls.map(([method]) => method)).toEqual([
       'relay.status',
       'skills.install',
+      'skills.beginUpload',
       'skills.beginUpload',
       'skills.uploadChunk',
       'skills.uploadChunk',

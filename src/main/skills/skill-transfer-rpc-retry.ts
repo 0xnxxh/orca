@@ -13,12 +13,15 @@ export async function retrySkillTransferRpc<T>(input: {
   call: () => Promise<T>
   signal?: AbortSignal
   retryable?: (error: unknown) => boolean
+  checkCancellationAfterSuccess?: boolean
 }): Promise<T> {
   for (let attempt = 1; ; attempt += 1) {
     throwIfSkillTransferCancelled(input.signal)
     try {
       const result = await input.call()
-      throwIfSkillTransferCancelled(input.signal)
+      if (input.checkCancellationAfterSuccess !== false) {
+        throwIfSkillTransferCancelled(input.signal)
+      }
       return result
     } catch (error) {
       throwIfSkillTransferCancelled(input.signal)

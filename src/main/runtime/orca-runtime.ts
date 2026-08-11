@@ -4959,6 +4959,7 @@ export class OrcaRuntimeService {
   beginSkillUpload(request: SkillUploadBeginRequest): Promise<{
     uploadId: string
     chunkBytes: number
+    acknowledgedOffset: number
   }> {
     return this.requireSkillUploadSessions().begin(request)
   }

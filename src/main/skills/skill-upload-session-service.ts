@@ -6,6 +6,7 @@ import { SKILL_PACKAGE_MAX_COMPRESSED_BYTES } from '../../shared/skill-package-m
 import {
   SKILL_UPLOAD_CHUNK_MAX_BYTES,
   type SkillUploadBeginRequest,
+  type SkillUploadBeginResult,
   type SkillUploadChunkRequest
 } from '../../shared/skill-upload-session-contract'
 
@@ -16,6 +17,7 @@ type UploadSession = {
   id: string
   path: string
   package: SkillUploadBeginRequest['package']
+  transferId: string | null
   handle: FileHandle | null
   idleTimer: ReturnType<typeof setTimeout> | null
   bytesReceived: number
@@ -35,9 +37,19 @@ export class SkillUploadSessionService {
     this.idleMs = options.idleMs ?? SESSION_IDLE_MS
   }
 
-  async begin(request: SkillUploadBeginRequest): Promise<{ uploadId: string; chunkBytes: number }> {
+  async begin(request: SkillUploadBeginRequest): Promise<SkillUploadBeginResult> {
     await this.initialize()
     await this.prune()
+    const existing = request.transferId
+      ? [...this.sessions.values()].find((session) => session.transferId === request.transferId)
+      : undefined
+    if (existing) {
+      if (JSON.stringify(existing.package) !== JSON.stringify(request.package)) {
+        throw new Error('skill-upload-transfer-mismatch')
+      }
+      this.touch(existing)
+      return this.beginResult(existing)
+    }
     if (this.sessions.size >= MAX_SESSIONS) {
       throw new Error('skill-upload-session-limit')
     }
@@ -48,6 +60,7 @@ export class SkillUploadSessionService {
       id,
       path,
       package: request.package,
+      transferId: request.transferId ?? null,
       handle,
       idleTimer: null,
       bytesReceived: 0,
@@ -56,7 +69,7 @@ export class SkillUploadSessionService {
     }
     this.sessions.set(id, session)
     this.touch(session)
-    return { uploadId: id, chunkBytes: SKILL_UPLOAD_CHUNK_MAX_BYTES }
+    return this.beginResult(session)
   }
 
   async append(request: SkillUploadChunkRequest): Promise<{ acknowledgedOffset: number }> {
@@ -180,6 +193,14 @@ export class SkillUploadSessionService {
 
   private expired(session: UploadSession): boolean {
     return Date.now() - session.touchedAt >= this.idleMs
+  }
+
+  private beginResult(session: UploadSession): SkillUploadBeginResult {
+    return {
+      uploadId: session.id,
+      chunkBytes: SKILL_UPLOAD_CHUNK_MAX_BYTES,
+      acknowledgedOffset: session.bytesReceived
+    }
   }
 
   private touch(session: UploadSession): void {

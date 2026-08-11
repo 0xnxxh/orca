@@ -2,7 +2,10 @@ import { open } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { RuntimeRpcResponse } from '../../shared/runtime-rpc-envelope'
 import type { SkillPackageIdentity } from '../../shared/skill-install-contract'
-import { SKILL_UPLOAD_CHUNK_MAX_BYTES } from '../../shared/skill-upload-session-contract'
+import {
+  SKILL_UPLOAD_CHUNK_MAX_BYTES,
+  SkillUploadBeginResultSchema
+} from '../../shared/skill-upload-session-contract'
 import { callRuntimeEnvironment } from '../ipc/runtime-environment-transport-routing'
 import { downloadSkillPackageGrant } from './skill-package-download'
 import { retrySkillTransferRpc, throwIfSkillTransferCancelled } from './skill-transfer-rpc-retry'
@@ -44,6 +47,7 @@ async function remoteCall<T>(
 export async function transferSkillPackageToRuntime(input: {
   userDataPath: string
   environmentId: string
+  transferId: string
   package: SkillPackageIdentity
   grant: { url: string; expiresAt: string }
   requireHttps: boolean
@@ -61,21 +65,30 @@ export async function transferSkillPackageToRuntime(input: {
   })
   let uploadId: string | null = null
   try {
-    const begun = await remoteCall<{ uploadId: string; chunkBytes: number }>(
-      input.userDataPath,
-      input.environmentId,
-      'skills.beginUpload',
-      { package: input.package }
+    const begun = SkillUploadBeginResultSchema.parse(
+      await retrySkillTransferRpc({
+        signal: input.signal,
+        retryable: retryableRemoteTransferError,
+        checkCancellationAfterSuccess: false,
+        call: () =>
+          remoteCall(input.userDataPath, input.environmentId, 'skills.beginUpload', {
+            package: input.package,
+            transferId: input.transferId
+          })
+      })
     )
     uploadId = begun.uploadId
     throwIfSkillTransferCancelled(input.signal)
     const chunkBytes = Math.min(begun.chunkBytes, SKILL_UPLOAD_CHUNK_MAX_BYTES)
+    if (begun.acknowledgedOffset > input.package.compressedBytes) {
+      throw new Error('skill-transfer-offset-invalid')
+    }
     if (!Number.isInteger(chunkBytes) || chunkBytes < 1) {
       throw new Error('skill-transfer-chunk-size-invalid')
     }
     const handle = await open(downloaded.archivePath, 'r')
     try {
-      let offset = 0
+      let offset = begun.acknowledgedOffset
       while (offset < input.package.compressedBytes) {
         const bytes = Buffer.alloc(Math.min(chunkBytes, input.package.compressedBytes - offset))
         const read = await handle.read(bytes, 0, bytes.length, offset)

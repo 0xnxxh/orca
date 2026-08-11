@@ -4,8 +4,17 @@ import { SkillPackageIdentitySchema } from './skill-install-contract'
 export const SKILL_UPLOAD_CHUNK_MAX_BYTES = 256 * 1024
 
 export const SkillUploadBeginRequestSchema = z
-  .object({ package: SkillPackageIdentitySchema })
+  .object({
+    package: SkillPackageIdentitySchema,
+    transferId: z.string().min(1).max(128).optional()
+  })
   .strict()
+
+export const SkillUploadBeginResultSchema = z.object({
+  uploadId: z.string().min(1).max(128),
+  chunkBytes: z.number().int().positive(),
+  acknowledgedOffset: z.number().int().nonnegative().optional().default(0)
+})
 
 export const SkillUploadChunkRequestSchema = z
   .object({
@@ -20,4 +29,5 @@ export const SkillUploadCommitRequestSchema = z
   .strict()
 
 export type SkillUploadBeginRequest = z.infer<typeof SkillUploadBeginRequestSchema>
+export type SkillUploadBeginResult = z.infer<typeof SkillUploadBeginResultSchema>
 export type SkillUploadChunkRequest = z.infer<typeof SkillUploadChunkRequestSchema>
