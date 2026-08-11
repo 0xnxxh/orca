@@ -7,8 +7,11 @@ import { createStructuredAgentSessionOwnerProbe } from './structured-agent-sessi
 
 const HOST_ID = 'local'
 
-function record(ownerProcess: AgentSessionProcessIdentity | null): AgentSessionRecord {
-  return { sessionId: 'session-1', lease: { ownerProcess } } as AgentSessionRecord
+function record(
+  ownerProcess: AgentSessionProcessIdentity | null,
+  processlessAt?: number | null
+): AgentSessionRecord {
+  return { sessionId: 'session-1', lease: { ownerProcess, processlessAt } } as AgentSessionRecord
 }
 
 const OWNER: AgentSessionProcessIdentity = {
@@ -46,5 +49,16 @@ describe('structured agent-session owner probe', () => {
     // Evicting here would need proof nothing spawned under the token; guessing
     // would put a second writer on a live Codex thread.
     expect(result.outcome).toBe('indeterminate')
+  })
+
+  it('releases only a reservation carrying durable pre-spawn proof', async () => {
+    const probe = vi.fn(async () => ({ outcome: 'pid-absent' }) as const)
+    const result = await createStructuredAgentSessionOwnerProbe(
+      HOST_ID,
+      probe
+    )(record(null, 1_800_000_000_000))
+
+    expect(probe).not.toHaveBeenCalled()
+    expect(result).toEqual({ outcome: 'reservation-unused' })
   })
 })

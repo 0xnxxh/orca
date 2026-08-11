@@ -7,8 +7,8 @@ import {
 import type { StructuredAgentSessionEventSink } from '../native-chat/agent-session-wire/structured-agent-session-event-sink'
 import type { CodexStructuredSessionEvent } from './codex-structured-session-adapter'
 import {
-  codexItemBody,
   codexItemIdentity,
+  codexJournalItem,
   codexStreamingMessageBody,
   CodexTurnOrdinals,
   readCodexThreadItem
@@ -157,7 +157,7 @@ export function createCodexJournalTranslator(
     }
     const turnId = readCodexTurnId(event.params) ?? currentTurnIds.get(event.threadId) ?? null
     const identity = identityFor(event.threadId, turnId, item)
-    const body = codexItemBody(item)
+    const translated = codexJournalItem(item)
     const command = readString(item, 'command')
     if (command) {
       details.set(itemKey(event.threadId, item.id), command)
@@ -168,10 +168,10 @@ export function createCodexJournalTranslator(
       latestStreamText.delete(itemKey(event.threadId, item.id))
       checkpointLengths.delete(itemKey(event.threadId, item.id))
     }
-    if (!body) {
+    if (!translated.body) {
       return
     }
-    deps.sink.appendItem(identity, body)
+    deps.sink.appendItem(identity, translated.body, translated.blobs)
     deps.sink.publish()
   }
 

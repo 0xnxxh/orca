@@ -1,21 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  getAgentSessionOptionCatalog,
-  type AgentSessionOptionCatalog
-} from '../../../src/shared/agent-session-option-catalog'
-import {
-  buildNativeChatSessionOptionSnapshot,
-  resolveEffectiveNativeChatModelId
-} from '../../../src/shared/native-chat-session-option-snapshot'
-import {
-  createNativeChatSessionOptionRecord,
-  applyNativeChatReportedSessionOptions,
-  setTrackedSessionOption
-} from '../../../src/shared/native-chat-session-option-state'
-import type { SessionOptionValue } from '../../../src/shared/native-chat-session-options'
+import { getAgentSessionOptionCatalog } from '../../../src/shared/agent-session-option-catalog'
 import type { AgentSessionOptionsResult } from '../../../src/shared/agent-session-wire'
+import type { SessionOptionValue } from '../../../src/shared/native-chat-session-options'
+import {
+  applyStructuredAgentSessionOptions,
+  canSetStructuredAgentSessionOption,
+  commitStructuredAgentSessionOption,
+  createStructuredAgentSessionOptionState,
+  structuredAgentSessionOptionSnapshot
+} from '../../../src/shared/structured-agent-session-options'
 import type { RpcClient } from '../transport/rpc-client'
-import { mobileStructuredOptionCatalog } from './mobile-structured-session-option-catalog'
 import type { MobileStructuredAgent } from './mobile-structured-session-create'
 import type { MobileNativeChatSessionOptionsController } from './use-mobile-native-chat-session-options'
 
@@ -27,28 +21,21 @@ export function useMobileStructuredSessionOptions(args: {
   setOption: (key: string, value: string) => Promise<boolean>
 }): MobileNativeChatSessionOptionsController {
   const { client, connected, sessionId, agent, setOption: dispatchOption } = args
-  const [version, setVersion] = useState(0)
-  const [catalog, setCatalog] = useState<AgentSessionOptionCatalog | null>(null)
-  const [pickerRequest, setPickerRequest] = useState<{ id: string; token: number } | null>(null)
-  const [pending, setPending] = useState<{
-    sessionId: string
-    id: string
-    record: ReturnType<typeof createNativeChatSessionOptionRecord>
-  } | null>(null)
-  const record = useMemo(
-    () => createNativeChatSessionOptionRecord(agent ?? 'codex'),
-    [agent, sessionId]
+  const [optionState, setOptionState] = useState(() =>
+    createStructuredAgentSessionOptionState(agent ?? 'codex')
   )
-  const activeRecordRef = useRef(record)
-  useEffect(() => {
-    activeRecordRef.current = record
-  }, [record])
-  const pendingId = pending?.record === record ? pending.id : null
+  const [pickerRequest, setPickerRequest] = useState<{ id: string; token: number } | null>(null)
+  const activeRecordRef = useRef(optionState.record)
+  const seed = agent ? getAgentSessionOptionCatalog(agent) : null
 
   useEffect(() => {
-    setCatalog(null)
+    const next = createStructuredAgentSessionOptionState(agent ?? 'codex')
+    activeRecordRef.current = next.record
+    setOptionState(next)
+  }, [agent, sessionId])
+
+  useEffect(() => {
     setPickerRequest(null)
-    const seed = agent ? getAgentSessionOptionCatalog(agent) : null
     if (!client || !connected || !sessionId || !seed) {
       return
     }
@@ -60,71 +47,49 @@ export function useMobileStructuredSessionOptions(args: {
           return
         }
         const result = response.result as AgentSessionOptionsResult
-        const live = mobileStructuredOptionCatalog(seed, result)
-        applyNativeChatReportedSessionOptions(record, {
-          model: result.current.model,
-          ...(result.current.effort ? { effort: result.current.effort } : {})
-        })
-        setCatalog(live)
-        setVersion((current) => current + 1)
+        setOptionState((current) =>
+          current.record === activeRecordRef.current
+            ? applyStructuredAgentSessionOptions(current, seed, result)
+            : current
+        )
       })
       .catch(() => {})
     return () => {
       stale = true
     }
-  }, [agent, client, connected, record, sessionId])
+  }, [client, connected, seed, sessionId])
 
-  const snapshot = useMemo(() => {
-    void version
-    if (!catalog || !sessionId) {
-      return []
-    }
-    return buildNativeChatSessionOptionSnapshot({
-      catalog,
-      models: catalog.models,
-      record,
-      mode: 'live',
-      modelLabel: 'Model'
-    })
-  }, [catalog, record, sessionId, version])
+  const snapshot = useMemo(
+    () => (sessionId ? structuredAgentSessionOptionSnapshot(optionState) : []),
+    [optionState, sessionId]
+  )
 
   const setOption = useCallback(
     async (id: string, value: SessionOptionValue): Promise<boolean> => {
-      const descriptor = snapshot.find((entry) => entry.id === id)
-      if (
-        !catalog ||
-        !sessionId ||
-        typeof value !== 'string' ||
-        pendingId !== null ||
-        !descriptor ||
-        descriptor.kind.type !== 'select' ||
-        !descriptor.kind.choices.some((choice) => choice.value === value)
-      ) {
+      if (!sessionId || !canSetStructuredAgentSessionOption(optionState, id, value)) {
         return false
       }
-      const targetSessionId = sessionId
-      const targetRecord = record
-      setPending({ sessionId: targetSessionId, id, record: targetRecord })
+      if (typeof value !== 'string') {
+        return false
+      }
+      const targetRecord = optionState.record
+      setOptionState((current) => ({ ...current, pendingId: id }))
       try {
         const applied = await dispatchOption(id, value)
         if (!applied || activeRecordRef.current !== targetRecord) {
           return false
         }
-        const effectiveModel = resolveEffectiveNativeChatModelId(
-          catalog,
-          catalog.models,
-          targetRecord
-        )
-        setTrackedSessionOption(targetRecord, id, value, 'dispatched', effectiveModel)
-        setVersion((current) => current + 1)
+        setOptionState((current) => commitStructuredAgentSessionOption(current, id, value))
         return true
       } finally {
-        setPending((current) =>
-          current?.record === targetRecord && current.id === id ? null : current
+        setOptionState((current) =>
+          current.record === targetRecord && current.pendingId === id
+            ? { ...current, pendingId: null }
+            : current
         )
       }
     },
-    [catalog, dispatchOption, pendingId, record, sessionId, snapshot]
+    [dispatchOption, optionState, sessionId]
   )
 
   const invokeAction = useCallback(
@@ -141,7 +106,7 @@ export function useMobileStructuredSessionOptions(args: {
   return useMemo(
     () => ({
       snapshot,
-      pendingId,
+      pendingId: optionState.pendingId,
       setOption,
       invokeAction,
       recordCommand: () => {},
@@ -149,6 +114,6 @@ export function useMobileStructuredSessionOptions(args: {
       dismissPickerRequest: (token: number) =>
         setPickerRequest((current) => (current?.token === token ? null : current))
     }),
-    [invokeAction, pendingId, pickerRequest, setOption, snapshot]
+    [invokeAction, optionState.pendingId, pickerRequest, setOption, snapshot]
   )
 }

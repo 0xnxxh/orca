@@ -273,6 +273,26 @@ describe('CodexStructuredSessionAdapter.acquire', () => {
     ).rejects.toThrow('no live codex app-server')
   })
 
+  it('classifies launch validation failure as pre-spawn without opening a child', async () => {
+    const codex = fakeCodex()
+    const adapter = new CodexStructuredSessionAdapter({
+      resolveLaunch: async () => {
+        throw new Error('workspace no longer exists')
+      },
+      openConnection: codex.openConnection
+    })
+
+    const error = await adapter
+      .acquire({ identity: identityFor('session-1'), fence: 7, spawnToken: 'spawn-9' })
+      .catch((cause: unknown) => cause)
+
+    expect(error).toMatchObject({
+      name: 'AgentSessionPreSpawnError',
+      message: 'workspace no longer exists'
+    })
+    expect(codex.connections).toHaveLength(0)
+  })
+
   it('reports the rollout path Codex named, and null when it named none', async () => {
     const withPath = fakeCodex()
     const adapter = await acquired(withPath)

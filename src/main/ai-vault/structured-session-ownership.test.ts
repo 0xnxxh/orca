@@ -41,7 +41,6 @@ describe('structured AI Vault ownership', () => {
       structuredSession: { sessionId: 'session-alpha', workspaceId: 'workspace-1' }
     })
   })
-
   it('derives typed refusals from the single writer predicate for live and proving leases', async () => {
     installOwnership()
     expect(() =>

@@ -1,7 +1,8 @@
 import type { ExecutionHostId } from '../../../shared/execution-host'
-import type { Tab, TabGroup, Worktree } from '../../../shared/types'
+import type { Tab, TabGroup, WorkspaceVisibleTabType, Worktree } from '../../../shared/types'
 import { isClipboardTextByteLengthOverLimit } from '../../../shared/clipboard-text'
 import { selectPaletteTypeAliasMatch } from './palette-type-alias-match'
+import { compareBaseSensitivityLocaleText } from './locale-text-collators'
 import { resolveWorktreeDisplayName } from './worktree-default-display-name'
 import type { MatchRange } from './worktree-palette-search'
 
@@ -34,7 +35,7 @@ export type SimulatorPaletteSearchResult = {
   score: number
 }
 
-type SimulatorPaletteActiveTabType = 'browser' | 'editor' | 'terminal' | 'simulator'
+type SimulatorPaletteActiveTabType = WorkspaceVisibleTabType
 
 export const SIMULATOR_PALETTE_QUERY_MAX_BYTES = 2 * 1024
 
@@ -67,7 +68,7 @@ export type BuildSearchableSimulatorTabsOptions = {
 }
 
 function compareText(a: string, b: string): number {
-  return a.localeCompare(b, undefined, { sensitivity: 'base' })
+  return compareBaseSensitivityLocaleText(a, b)
 }
 
 function findRange(text: string, query: string): MatchRange | null {

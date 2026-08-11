@@ -88,6 +88,7 @@ export function reserveAgentSessionOwner(args: {
       provenHandleLinkId: null,
       ownerProcess: null,
       reservedSpawnToken: reservation.spawnToken,
+      processlessAt: null,
       leaseDeadlineAt: reservation.now + reservation.leaseTtlMs,
       lastRenewedAt: reservation.now,
       handoffOperationId: reservation.handoffOperationId,
@@ -99,12 +100,16 @@ export function reserveAgentSessionOwner(args: {
 }
 
 /** Step 4 of acquisition: write the observed identity back into the same lease row. */
-export function commitAgentSessionProcessIdentity(args: {
-  record: AgentSessionRecord
+export type AgentSessionProcessIdentityCommit = {
+  sessionId: string
   fence: number
   process: AgentSessionProcessIdentity
   now: number
-}): AgentSessionRecord {
+}
+
+export function commitAgentSessionProcessIdentity(
+  args: AgentSessionProcessIdentityCommit & { record: AgentSessionRecord }
+): AgentSessionRecord {
   const { record } = args
   assertFence(record.lease, args.fence)
   if (record.lease.claimStatus !== 'reserved' || record.lease.ownerProcess !== null) {
@@ -114,7 +119,12 @@ export function commitAgentSessionProcessIdentity(args: {
     // Why: a child that cannot echo the reserved token is not the process Orca started.
     throw new Error('agent_session_ownership_unknown')
   }
-  return withLease(record, { ...record.lease, ownerProcess: args.process, lastRenewedAt: args.now })
+  return withLease(record, {
+    ...record.lease,
+    ownerProcess: args.process,
+    processlessAt: null,
+    lastRenewedAt: args.now
+  })
 }
 
 /**
@@ -217,6 +227,7 @@ export function evictAgentSessionOwner(args: {
     handoffStage: null,
     ownerProcess: null,
     reservedSpawnToken: null,
+    processlessAt: null,
     claimStatus: 'released',
     lastRenewedAt: args.now,
     handoffOperationId: null,
@@ -247,6 +258,7 @@ export function applyAgentSessionRestartAdjudication(args: {
       handoffStage: null,
       ownerProcess: null,
       reservedSpawnToken: null,
+      processlessAt: null,
       claimStatus: 'released',
       unreconciled: false,
       lastRenewedAt: args.now,

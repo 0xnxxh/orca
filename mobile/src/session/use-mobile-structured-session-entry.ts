@@ -1,11 +1,11 @@
 import * as ExpoCrypto from 'expo-crypto'
 import { useCallback, useEffect, useState, type MutableRefObject } from 'react'
-import type { RpcClient } from '../transport/rpc-client'
-import { createMobileStructuredOperationId } from './mobile-structured-mutation-envelope'
 import {
-  mobileStructuredCreateFingerprint,
-  type MobileStructuredAgent
-} from './mobile-structured-session-create'
+  createStructuredAgentSessionOperationId,
+  structuredAgentSessionCreateFingerprint
+} from '../../../src/shared/structured-agent-session-mutation'
+import type { RpcClient } from '../transport/rpc-client'
+import type { MobileStructuredAgent } from './mobile-structured-session-create'
 import { useMobileStructuredAgentSession } from './use-mobile-structured-agent-session'
 import { useMobileStructuredAttachments } from './use-mobile-structured-attachments'
 import { useMobileStructuredSessionOptions } from './use-mobile-structured-session-options'
@@ -46,10 +46,7 @@ export function useMobileStructuredSessionEntry(args: {
     claude: false,
     codex: false
   })
-  const session = useMobileStructuredAgentSession({
-    client,
-    sessionId
-  })
+  const session = useMobileStructuredAgentSession({ client, sessionId })
   const writes = useMobileStructuredSessionWrites({
     client,
     connected,
@@ -119,9 +116,11 @@ export function useMobileStructuredSessionEntry(args: {
         const response = await client.sendRequest('agentSession.create', {
           envelope: {
             sessionId: createdSessionId,
-            clientOperationId: createMobileStructuredOperationId(() => ExpoCrypto.randomUUID()),
+            clientOperationId: createStructuredAgentSessionOperationId(() =>
+              ExpoCrypto.randomUUID()
+            ),
             expectedRuntimeFence: null,
-            payloadFingerprint: mobileStructuredCreateFingerprint({
+            payloadFingerprint: structuredAgentSessionCreateFingerprint({
               sessionId: createdSessionId,
               worktree,
               agent

@@ -16,6 +16,10 @@ import { RpcDispatcher } from '../dispatcher'
 import { ALL_RPC_METHODS } from './index'
 import { STRUCTURED_AGENT_SESSION_METHODS } from './structured-agent-session'
 import { computeAgentSessionPayloadFingerprint } from '../../../../shared/agent-session-mutation-envelope'
+import {
+  recordMobileClipboardImagePath,
+  resetMobileClipboardImageProvenanceForTest
+} from '../mobile-clipboard-image-provenance'
 
 const SESSION = 'session-alpha'
 const FINGERPRINT = 'f'.repeat(64)
@@ -83,7 +87,10 @@ function hostStub(): StructuredAgentSessionHost {
         unconfirmedClientMessageIds: []
       }
     })),
-    send: vi.fn(async () => ({ ok: true, replayed: false })),
+    send: vi.fn(async (_caller, params) => {
+      params.beforeRun?.()
+      return { ok: true, replayed: false }
+    }),
     cancel: vi.fn(async () => ({ ok: true, replayed: false })),
     respondToPrompt: vi.fn(async () => ({ ok: true, replayed: false })),
     setOption: vi.fn(async () => ({ ok: true, replayed: false })),
@@ -134,7 +141,11 @@ function dispatcher(): RpcDispatcher {
 async function call(
   method: string,
   params: unknown,
-  client?: { clientKind?: 'mobile' | 'runtime'; clientCapabilities?: string[] }
+  client?: {
+    clientId?: string
+    clientKind?: 'mobile' | 'runtime'
+    clientCapabilities?: string[]
+  }
 ): Promise<RpcResponse> {
   const replies: RpcResponse[] = []
   await dispatcher().dispatchStreaming(
@@ -156,10 +167,12 @@ const STRUCTURED_CLIENT = {
 
 beforeEach(() => {
   setStructuredAgentSessionHost(hostStub())
+  resetMobileClipboardImageProvenanceForTest()
 })
 
 afterEach(() => {
   setStructuredAgentSessionHost(null)
+  resetMobileClipboardImageProvenanceForTest()
 })
 
 describe('capability gating', () => {
@@ -299,6 +312,65 @@ describe('method routing', () => {
       'approval',
       'question'
     ])
+  })
+})
+
+describe('mobile image provenance', () => {
+  const path = '/tmp/orca-paste-image.png'
+  const mobileClient = (clientId: string) => ({ ...STRUCTURED_CLIENT, clientId })
+  const imageParams = (block: { type: 'image-ref'; path?: string; url?: string }) =>
+    sendParams({
+      body: { kind: 'message', role: 'user', blocks: [block] }
+    })
+
+  it('accepts a same-client upload across retries without consuming provenance', async () => {
+    recordMobileClipboardImagePath('device-a', path)
+
+    await expect(
+      call('agentSession.send', imageParams({ type: 'image-ref', path }), mobileClient('device-a'))
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      call('agentSession.send', imageParams({ type: 'image-ref', path }), mobileClient('device-a'))
+    ).resolves.toMatchObject({ ok: true })
+    expect(hostCalls.send).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects forged, cross-client, and URL image references from mobile', async () => {
+    recordMobileClipboardImagePath('device-a', path)
+
+    const forged = await call(
+      'agentSession.send',
+      imageParams({ type: 'image-ref', path: '/etc/private.png' }),
+      mobileClient('device-a')
+    )
+    const crossClient = await call(
+      'agentSession.send',
+      imageParams({ type: 'image-ref', path }),
+      mobileClient('device-b')
+    )
+    const url = await call(
+      'agentSession.send',
+      imageParams({ type: 'image-ref', url: 'https://example.com/image.png' }),
+      mobileClient('device-a')
+    )
+
+    for (const response of [forged, crossClient, url]) {
+      expect(response).toMatchObject({
+        ok: false,
+        error: { message: expect.stringContaining('agent_session_image_untrusted') }
+      })
+    }
+    expect(hostCalls.send).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps trusted in-process image paths unchanged', async () => {
+    const response = await call(
+      'agentSession.send',
+      imageParams({ type: 'image-ref', path: '/trusted/local/image.png' })
+    )
+
+    expect(response).toMatchObject({ ok: true })
+    expect(hostCalls.send).toHaveBeenCalledTimes(1)
   })
 })
 

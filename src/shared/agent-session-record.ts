@@ -85,6 +85,8 @@ export type AgentSessionLease = {
   ownerProcess: AgentSessionProcessIdentity | null
   /** Reserved before any process exists, then matched against the child's environment. */
   reservedSpawnToken: string | null
+  /** Set only when acquisition failed before any spawn attempt. */
+  processlessAt?: number | null
   leaseDeadlineAt: number
   lastRenewedAt: number
   handoffOperationId: string | null
@@ -236,6 +238,9 @@ function isAgentSessionLease(value: unknown): value is AgentSessionLease {
     (lease.ownerProcess === null || isAgentSessionProcessIdentity(lease.ownerProcess)) &&
     (lease.reservedSpawnToken === null ||
       isBoundedString(lease.reservedSpawnToken, MAX_ID_LENGTH)) &&
+    (lease.processlessAt === undefined ||
+      lease.processlessAt === null ||
+      (Number.isSafeInteger(lease.processlessAt) && (lease.processlessAt as number) >= 0)) &&
     Number.isSafeInteger(lease.leaseDeadlineAt) &&
     Number.isSafeInteger(lease.lastRenewedAt) &&
     (lease.handoffOperationId === null ||

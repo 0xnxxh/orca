@@ -8,10 +8,7 @@
 // single-file too or two clients could both read one prompt as pending.
 
 import { randomUUID } from 'node:crypto'
-import type {
-  AgentJournalCursor,
-  AgentJournalMessageItem
-} from '../../../shared/agent-session-journal-types'
+import type { AgentJournalCursor } from '../../../shared/agent-session-journal-types'
 import type { AgentSessionOwnerProbe } from '../../../shared/agent-session-lease-adjudication'
 import type {
   AgentSessionExecutionLocation,
@@ -51,6 +48,7 @@ import {
   promptPlan,
   sendPlan,
   setOptionPlan,
+  type AgentSessionSendPlanParams,
   type MutationPlan
 } from './structured-agent-session-mutation-plans'
 import {
@@ -266,11 +264,7 @@ export class StructuredAgentSessionHost {
 
   send(
     caller: StructuredAgentSessionCaller,
-    params: {
-      envelope: AgentSessionMutationEnvelope
-      body: AgentJournalMessageItem
-      retryUnknown?: true
-    }
+    params: AgentSessionSendPlanParams
   ): Promise<AgentSessionMutationResult<AgentSessionSendResult>> {
     return this.mutate(caller, params.envelope, sendPlan(params))
   }

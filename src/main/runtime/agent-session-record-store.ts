@@ -27,7 +27,6 @@ import {
   type AgentSessionExecutionLocation,
   type AgentSessionHandoffStage,
   type AgentSessionJournalCheckpoint,
-  type AgentSessionProcessIdentity,
   type AgentSessionRecord
 } from '../../shared/agent-session-record'
 import {
@@ -38,9 +37,14 @@ import {
   proveAgentSessionOwner,
   renewAgentSessionLease,
   setAgentSessionHandoffStage,
-  setAgentSessionJournalCheckpoint
+  setAgentSessionJournalCheckpoint,
+  type AgentSessionProcessIdentityCommit
 } from './agent-session-lease-transitions'
 import { recordAgentSessionProviderHandle } from './agent-session-provider-handle-transition'
+import {
+  setAgentSessionReservationProcesslessProof,
+  type AgentSessionReservationProcesslessProof
+} from './agent-session-processless-reservation'
 import {
   applyAgentSessionReservation,
   evaluateAgentSessionReserveOperation,
@@ -59,11 +63,6 @@ import {
   markAgentSessionStoreLeasesUnreconciled
 } from './agent-session-store-transaction-queue'
 import * as claimKeyState from './agent-session-claim-key-state'
-
-export type {
-  AgentSessionReserveRequest,
-  AgentSessionReserveResult
-} from './agent-session-reservation-admission'
 
 export const AGENT_SESSION_LEASE_TTL_MS = 30_000
 export const AGENT_SESSION_LEASE_RENEW_INTERVAL_MS = 10_000
@@ -168,16 +167,20 @@ export class AgentSessionRecordStore {
     })
   }
 
-  async commitProcessIdentity(args: {
-    sessionId: string
-    fence: number
-    process: AgentSessionProcessIdentity
-    now: number
-  }): Promise<AgentSessionRecord> {
+  async commitProcessIdentity(
+    args: AgentSessionProcessIdentityCommit
+  ): Promise<AgentSessionRecord> {
     return this.mutate(args.sessionId, (record) =>
       commitAgentSessionProcessIdentity({ ...args, record })
     )
   }
+
+  setReservationProcesslessProof = (
+    args: AgentSessionReservationProcesslessProof & { processlessAt: number | null }
+  ): Promise<AgentSessionRecord> =>
+    this.mutate(args.sessionId, (record) =>
+      setAgentSessionReservationProcesslessProof({ ...args, record })
+    )
 
   async proveOwner(args: {
     sessionId: string
@@ -344,7 +347,5 @@ export class AgentSessionRecordStore {
   }
 
   /** Serialize every mutation against the latest committed disk state. */
-  private async transact<T>(apply: () => T): Promise<T> {
-    return this.transactions.transact(apply)
-  }
+  private transact = <T>(apply: () => T): Promise<T> => this.transactions.transact(apply)
 }

@@ -5,18 +5,16 @@ import type {
   AgentSessionMutationResult,
   AgentSessionSendResult
 } from '../../../src/shared/agent-session-wire'
+import {
+  createStructuredAgentSessionOutboxEntry,
+  reconcileStructuredAgentSessionOutbox,
+  structuredAgentSessionSendRequest,
+  updateStructuredAgentSessionOutboxEntry
+} from '../../../src/shared/structured-agent-session-outbox'
+import { createStructuredAgentSessionOperationId } from '../../../src/shared/structured-agent-session-mutation'
 import type { RpcClient } from '../transport/rpc-client'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
-import {
-  createMobileStructuredOutboxEntry,
-  isMobileStructuredDeliveryUnknown,
-  reconcileMobileStructuredOutbox,
-  updateMobileStructuredOutboxEntry
-} from './mobile-structured-outbox-entry'
-import {
-  createMobileStructuredOperationId,
-  mobileStructuredSendRequest
-} from './mobile-structured-mutation-envelope'
+import { isMobileStructuredDeliveryUnknown } from './mobile-structured-outbox-entry'
 import {
   loadMobileStructuredOutbox,
   saveMobileStructuredOutbox,
@@ -90,7 +88,7 @@ export function useMobileStructuredSessionWrites(args: {
     if (!sessionId || submissions.length === 0 || outboxRef.current.length === 0) {
       return
     }
-    const next = reconcileMobileStructuredOutbox(outboxRef.current, submissions)
+    const next = reconcileStructuredAgentSessionOutbox(outboxRef.current, submissions)
     if (
       next.length !== outboxRef.current.length ||
       next.some((entry, index) => entry !== outboxRef.current[index])
@@ -131,7 +129,7 @@ export function useMobileStructuredSessionWrites(args: {
       if (!sessionId) {
         return
       }
-      const next = updateMobileStructuredOutboxEntry(outboxRef.current, id, update)
+      const next = updateStructuredAgentSessionOutboxEntry(outboxRef.current, id, update)
       outboxRef.current = next
       setOutbox(next)
       await persist(sessionId, next)
@@ -168,7 +166,7 @@ export function useMobileStructuredSessionWrites(args: {
         }))
         const response = await client.sendRequest(
           'agentSession.send',
-          mobileStructuredSendRequest(next, fence)
+          structuredAgentSessionSendRequest(next, fence)
         )
         if (activeSessionRef.current !== targetSessionId) {
           return
@@ -242,8 +240,8 @@ export function useMobileStructuredSessionWrites(args: {
       if (!sessionId || (!text.trim() && attachments.length === 0)) {
         return false
       }
-      const entry = createMobileStructuredOutboxEntry({
-        clientMessageId: createMobileStructuredOperationId(() => ExpoCrypto.randomUUID()),
+      const entry = createStructuredAgentSessionOutboxEntry({
+        clientMessageId: createStructuredAgentSessionOperationId(() => ExpoCrypto.randomUUID()),
         sessionId,
         text,
         attachments,

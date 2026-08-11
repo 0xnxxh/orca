@@ -24,7 +24,10 @@ import {
 } from './structured-agent-session-attach'
 import type { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
 import type { StructuredAgentSessionAdapter } from './structured-agent-session-adapter'
-import { AgentSessionAcquisitionRefusal } from './structured-agent-session-adapter'
+import {
+  AgentSessionAcquisitionRefusal,
+  isAgentSessionPreSpawnError
+} from './structured-agent-session-adapter'
 import type { StructuredAgentSessionEventSink } from './structured-agent-session-event-sink'
 import { resolveAgentSessionReplayOutcome } from './structured-agent-session-replay-outcome'
 
@@ -60,6 +63,7 @@ export async function performAttach(
   }
 
   let record: AgentSessionRecord
+  let reservedRecord: AgentSessionRecord | null = null
   let replayed = false
   try {
     const reserved = await store.reserveOwner(
@@ -73,6 +77,7 @@ export async function performAttach(
       })
     )
     record = reserved.record
+    reservedRecord = record
     replayed = reserved.disposition === 'replayed'
     if (replayed && reserved.operationRow.outcome.status === 'failed') {
       const replay = resolveAgentSessionReplayOutcome({
@@ -88,6 +93,19 @@ export async function performAttach(
       record = await acquireOwner(input, record)
     }
   } catch (error) {
+    if (reservedRecord && isAgentSessionPreSpawnError(error)) {
+      const spawnToken = reservedRecord.lease.reservedSpawnToken
+      if (spawnToken) {
+        const processlessAt = input.now()
+        await store.setReservationProcesslessProof({
+          sessionId,
+          fence: reservedRecord.lease.runtimeFence,
+          spawnToken,
+          processlessAt,
+          now: processlessAt
+        })
+      }
+    }
     if (error instanceof AgentSessionAcquisitionRefusal) {
       const refusal = { code: error.code, message: error.message }
       await store.recordOperationOutcome({
@@ -143,6 +161,14 @@ async function acquireOwner(
   if (!spawnToken) {
     throw new Error('agent_session_ownership_unknown')
   }
+  // Pre-spawn proof is single-use: this retry may create a child after the durable clear.
+  record = await input.store.setReservationProcesslessProof({
+    sessionId: record.sessionId,
+    fence,
+    spawnToken,
+    processlessAt: null,
+    now: input.now()
+  })
   await input.onAcquiring?.()
   const acquired = await input.adapter.acquire({
     identity: journalIdentityFor(record, input.params),

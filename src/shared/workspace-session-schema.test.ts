@@ -40,7 +40,7 @@ describe('parseWorkspaceSession', () => {
     }
   })
 
-  it('rejects blank external SSH file ownership', () => {
+  it('drops an open file with blank external SSH ownership, keeping the session', () => {
     const result = parseWorkspaceSession({
       activeRepoId: null,
       activeWorktreeId: 'wt',
@@ -60,7 +60,10 @@ describe('parseWorkspaceSession', () => {
       }
     })
 
-    expect(result.ok).toBe(false)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.openFilesByWorktree?.wt).toEqual([])
+    }
   })
 
   it('accepts a fully populated session with optional fields', () => {
@@ -194,7 +197,7 @@ describe('parseWorkspaceSession', () => {
     }
   })
 
-  it('rejects a session where ptyId is a number (schema drift)', () => {
+  it('drops a tab where ptyId is a number (schema drift) without failing the session', () => {
     const result = parseWorkspaceSession({
       activeRepoId: null,
       activeWorktreeId: null,
@@ -215,9 +218,9 @@ describe('parseWorkspaceSession', () => {
       },
       terminalLayoutsByTabId: {}
     })
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.error).toContain('ptyId')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.tabsByWorktree.wt).toEqual([])
     }
   })
 
@@ -406,6 +409,47 @@ describe('parseWorkspaceSession', () => {
     expect(parseWorkspaceSession(42).ok).toBe(false)
   })
 
+  it('drops one truncated tab without discarding other persisted worktrees', () => {
+    const validTab = {
+      id: 'tab-good',
+      ptyId: null,
+      worktreeId: 'worktree-good',
+      title: 'Terminal',
+      customTitle: null,
+      color: null,
+      sortOrder: 0,
+      createdAt: 1_700_000_000_000
+    }
+    const result = parseWorkspaceSession({
+      activeRepoId: null,
+      activeWorktreeId: 'worktree-good',
+      activeTabId: 'tab-good',
+      tabsByWorktree: {
+        'worktree-good': [validTab],
+        'worktree-corrupt': [
+          {
+            id: 'tab-truncated',
+            ptyId: null,
+            worktreeId: 'worktree-corrupt',
+            title: 'Terminal',
+            sortOrder: 0,
+            generation: 3,
+            startupCwd: '/workspace'
+          }
+        ]
+      },
+      terminalLayoutsByTabId: {}
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.tabsByWorktree).toEqual({
+        'worktree-good': [validTab],
+        'worktree-corrupt': []
+      })
+    }
+  })
+
   it('drops bad lastVisitedAtByWorktreeId entries rather than failing the session', () => {
     const result = parseWorkspaceSession({
       activeRepoId: null,
@@ -498,6 +542,43 @@ describe('parseWorkspaceSession', () => {
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.value.unifiedTabs?.wt[0].viewMode).toBe('chat')
+    }
+  })
+
+  it('preserves a structured agent session tab and its active projection', () => {
+    const result = parseWorkspaceSession({
+      activeRepoId: null,
+      activeWorktreeId: 'wt',
+      activeTabId: 'session-1',
+      tabsByWorktree: {},
+      terminalLayoutsByTabId: {},
+      unifiedTabs: {
+        wt: [
+          {
+            id: 'session-1',
+            entityId: 'session-1',
+            groupId: 'group1',
+            worktreeId: 'wt',
+            contentType: 'agent-session',
+            agentSessionAgent: 'codex',
+            label: 'Codex Chat',
+            customLabel: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 0
+          }
+        ]
+      },
+      activeTabTypeByWorktree: { wt: 'agent-session' }
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.unifiedTabs?.wt[0]).toMatchObject({
+        contentType: 'agent-session',
+        agentSessionAgent: 'codex'
+      })
+      expect(result.value.activeTabTypeByWorktree?.wt).toBe('agent-session')
     }
   })
 

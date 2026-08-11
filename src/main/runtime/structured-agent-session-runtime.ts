@@ -157,6 +157,9 @@ export function createStructuredAgentSessionOwnerProbe(
   return async (record) => {
     const owner = record.lease.ownerProcess
     if (!owner) {
+      if (record.lease.processlessAt !== undefined && record.lease.processlessAt !== null) {
+        return { outcome: 'reservation-unused' }
+      }
       // Freeing a reservation needs positive proof that nothing spawned under
       // its token, and this host has no spawn-token process scan yet.
       return {

@@ -170,16 +170,26 @@ function commandState(item: CodexThreadItem): 'running' | 'completed' | 'failed'
   return typeof exitCode === 'number' && exitCode !== 0 ? 'failed' : 'completed'
 }
 
-function commandBody(item: CodexThreadItem): AgentJournalItemBody {
+export type CodexJournalItem = {
+  body: AgentJournalItemBody | null
+  blobs: { digest: string; payload: string }[]
+}
+
+function commandItem(item: CodexThreadItem): CodexJournalItem {
   const output = readString(item, 'aggregatedOutput')
+  const bounded = output === null ? null : boundInlineText(output, DEFAULT_JOURNAL_PAYLOAD_LIMITS)
   return {
-    kind: 'tool-call',
-    name: 'shell',
-    input: { command: item.command ?? null, cwd: item.cwd ?? null },
-    state: commandState(item),
-    ...(output === null
-      ? {}
-      : { output: boundInlineText(output, DEFAULT_JOURNAL_PAYLOAD_LIMITS).bounded })
+    body: {
+      kind: 'tool-call',
+      name: 'shell',
+      input: { command: item.command ?? null, cwd: item.cwd ?? null },
+      state: commandState(item),
+      ...(bounded === null ? {} : { output: bounded.bounded })
+    },
+    blobs:
+      output !== null && bounded?.bounded.truncated
+        ? [{ digest: bounded.bounded.digest, payload: output }]
+        : []
   }
 }
 
@@ -190,22 +200,29 @@ function commandBody(item: CodexThreadItem): AgentJournalItemBody {
  * row the client cannot render is worse than a gap, and the ordinal projection
  * already guarantees skipping it costs the following messages nothing.
  */
-export function codexItemBody(item: CodexThreadItem): AgentJournalItemBody | null {
+export function codexJournalItem(item: CodexThreadItem): CodexJournalItem {
   if (item.type === 'userMessage' || item.type === 'agentMessage') {
     const blocks = codexMessageBlocks(item)
-    return blocks.length === 0
-      ? null
-      : { kind: 'message', role: item.type === 'userMessage' ? 'user' : 'assistant', blocks }
+    return {
+      body:
+        blocks.length === 0
+          ? null
+          : { kind: 'message', role: item.type === 'userMessage' ? 'user' : 'assistant', blocks },
+      blobs: []
+    }
   }
   if (item.type === 'commandExecution') {
-    return commandBody(item)
+    return commandItem(item)
   }
   if (item.type === 'fileChange') {
     return {
-      kind: 'tool-call',
-      name: 'apply_patch',
-      input: { changes: item.changes ?? null },
-      state: commandState(item)
+      body: {
+        kind: 'tool-call',
+        name: 'apply_patch',
+        input: { changes: item.changes ?? null },
+        state: commandState(item)
+      },
+      blobs: []
     }
   }
   if (item.type === 'reasoning') {
@@ -213,11 +230,19 @@ export function codexItemBody(item: CodexThreadItem): AgentJournalItemBody | nul
       readTextContent(item, 'text') ??
       readTextContent(item, 'summary') ??
       readTextContent(item, 'content')
-    return text === null
-      ? null
-      : { kind: 'status', text: boundInlineText(text, DEFAULT_JOURNAL_PAYLOAD_LIMITS).text }
+    return {
+      body:
+        text === null
+          ? null
+          : { kind: 'status', text: boundInlineText(text, DEFAULT_JOURNAL_PAYLOAD_LIMITS).text },
+      blobs: []
+    }
   }
-  return null
+  return { body: null, blobs: [] }
+}
+
+export function codexItemBody(item: CodexThreadItem): AgentJournalItemBody | null {
+  return codexJournalItem(item).body
 }
 
 /** Snapshot body for text still streaming, before its item completes. */
