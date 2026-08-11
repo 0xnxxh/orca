@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- web session-tab sync reconciles terminal, unified-tab, group, and PTY maps atomically to avoid split-brain tab state */
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { AppState } from '../store'
 import { useAppStore } from '../store'
 import type { RuntimeRpcResponse } from '../../../shared/runtime-rpc-envelope'
@@ -3488,8 +3488,10 @@ export function useWebSessionTabsSync(): void {
     return environment ? (environment.pairingRevision ?? environment.createdAt) : undefined
   })
   const workspaceSessionReady = useAppStore((state) => state.workspaceSessionReady)
-  // Why: declared first so the refs commit before the effects whose resume callbacks read them.
-  useEffect(() => {
+  // Why: only resume callbacks read these refs, and resumes fire from visibilitychange or
+  // stale-visibility recovery — outside React — so committing during layout leaves no window
+  // where a resume could read the previous worktree's key.
+  useLayoutEffect(() => {
     activeRuntimeEnvironmentIdRef.current = activeWorktreeRuntimeEnvironmentId?.trim() || null
     activeRuntimeWorktreeKeyRef.current =
       activeWorktreeRuntimeEnvironmentId && activeWorktreeId
