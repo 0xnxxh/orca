@@ -393,11 +393,15 @@ const runtimeRpcStartFailedSchema = z
 // Why: the 1013 overflow close kills a remote user's whole session, and no emission site is
 // instrumented today — incidence is unmeasurable, so producer caps have no acceptance signal.
 // `method` is a developer-defined RPC identifier: closed set, no paths or user content.
+// `outcome` separates the recoverable per-request failure from the session-killing close, and
+// `size_bucket` is bucketed because a payload size is user data.
 const remoteReplyOverflowSchema = z
   .object({
     method: z.string().max(64),
     transport: z.enum(['relay', 'direct']),
-    client_kind: z.enum(['mobile', 'runtime'])
+    client_kind: z.enum(['mobile', 'runtime']),
+    outcome: z.enum(['request_failed', 'socket_closed']),
+    size_bucket: z.enum(['4_8mb', '8_16mb', '16_32mb', '32_64mb', '64mb_plus'])
   })
   .strict()
 

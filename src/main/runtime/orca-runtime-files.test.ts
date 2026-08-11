@@ -104,7 +104,15 @@ vi.mock('../providers/ssh-filesystem-dispatch', () => ({
     'Remote connection dropped. Click Reconnect on the SSH target before retrying.'
 }))
 
-import { awaitRuntimeFileWatcherUnsubscribes, RuntimeFileCommands } from './orca-runtime-files'
+import {
+  awaitRuntimeFileWatcherUnsubscribes,
+  RUNTIME_PREVIEWABLE_BINARY_MAX_BYTES,
+  RuntimeFileCommands
+} from './orca-runtime-files'
+import {
+  REMOTE_RUNTIME_MAX_OUTBOUND_CONTENT_BYTES,
+  REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES
+} from '../../shared/remote-runtime-capacity-limits'
 import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import {
   resetSshConnectionGenerations,
@@ -2314,6 +2322,61 @@ describe('RuntimeFileCommands', () => {
       await expect(commands.resolveTerminalPath('id:wt-1', 'src/x.ts')).rejects.toThrow(
         'Remote connection dropped'
       )
+    })
+  })
+  // Why: mobile-file-tab-doc.ts calls files.readPreview for every image tab, so this constant is
+  // the most reachable way to overflow the outbound envelope and kill the socket.
+  describe('previewable binary budget', () => {
+    const previewTempDirs: string[] = []
+
+    afterEach(async () => {
+      await Promise.all(previewTempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
+      previewTempDirs.length = 0
+    })
+
+    async function previewFixture(): Promise<string> {
+      const dir = await mkdtemp(join(tmpdir(), 'orca-preview-budget-'))
+      previewTempDirs.push(dir)
+      await writeFile(join(dir, 'logo.png'), 'fake-png')
+      return dir
+    }
+
+    it('stays inside the outbound JSON envelope once base64-inflated', () => {
+      const base64Bytes = Math.ceil(RUNTIME_PREVIEWABLE_BINARY_MAX_BYTES / 3) * 4
+
+      expect(base64Bytes).toBeLessThanOrEqual(REMOTE_RUNTIME_MAX_OUTBOUND_CONTENT_BYTES)
+      expect(base64Bytes).toBeLessThan(REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES)
+    })
+
+    it('rejects a previewable image one byte above the cap', async () => {
+      const dir = await previewFixture()
+      const { commands } = createRuntimeFileCommands({ path: dir })
+      resolveAuthorizedPathMock.mockImplementation(async (p: string) => p)
+      statMock.mockResolvedValue({
+        isDirectory: () => false,
+        size: RUNTIME_PREVIEWABLE_BINARY_MAX_BYTES + 1
+      })
+
+      await expect(commands.readFileExplorerPreview('id:wt-1', 'logo.png')).rejects.toThrow(
+        'file_too_large'
+      )
+    })
+
+    it('returns full base64 for a previewable image at the cap', async () => {
+      const dir = await previewFixture()
+      const { commands } = createRuntimeFileCommands({ path: dir })
+      resolveAuthorizedPathMock.mockImplementation(async (p: string) => p)
+      statMock.mockResolvedValue({
+        isDirectory: () => false,
+        size: RUNTIME_PREVIEWABLE_BINARY_MAX_BYTES
+      })
+
+      await expect(commands.readFileExplorerPreview('id:wt-1', 'logo.png')).resolves.toEqual({
+        content: Buffer.from('fake-png').toString('base64'),
+        isBinary: true,
+        isImage: true,
+        mimeType: 'image/png'
+      })
     })
   })
 })

@@ -10,7 +10,6 @@ import {
 } from './core'
 
 import type { FeatureInteractionId } from '../../../shared/feature-interactions'
-import { REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES } from '../../../shared/remote-runtime-capacity-limits'
 import { errorResponse, successResponse } from './errors'
 import { ALL_RPC_METHODS } from './methods'
 import { emulatorProbe, emulatorProbeError } from '../../emulator/emulator-probe'
@@ -26,6 +25,7 @@ import { recordRuntimeFeatureInteraction } from './runtime-feature-interaction'
 import { OrchestrationLegacyCompatibility } from './orchestration-legacy-compatibility'
 import type { RpcDispatchStreamingOptions } from './dispatcher-stream-options'
 import { invalidArgumentResponse, mapDispatcherError } from './dispatcher-error-response'
+import { createBoundedReplyChannel } from './outbound-reply-admission'
 
 export type DispatcherOptions = { runtime: OrcaRuntimeService; methods?: readonly RpcAnyMethod[] }
 
@@ -140,32 +140,13 @@ export class RpcDispatcher {
     options?: RpcDispatchStreamingOptions
   ): Promise<void> {
     const meta = this.meta()
-    let outboundReplyOverflowed = false
-    const repliesSuppressed = (): boolean =>
-      outboundReplyOverflowed || options?.shouldSuppressReplies?.() === true
-    const replyResponse = (response: RpcResponse): void => {
-      if (repliesSuppressed()) {
-        return
-      }
-      const serialized = JSON.stringify(response)
-      // Why: same constant and UTF-8 measure as the channel's size admission
-      // (mobile-e2ee-outbound-admission.ts), so the two size checks cannot disagree. This is a
-      // backstop — producers cap themselves — so it favours a fast admit over a bounded reject.
-      if (Buffer.byteLength(serialized, 'utf8') > REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES) {
-        if (!options?.onOutboundReplyOverflow) {
-          throw new Error(
-            `Outbound RPC reply exceeds ${REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES} bytes`
-          )
-        }
-        outboundReplyOverflowed = true
-        // Why: an unregistered method name is client-supplied; keep it out of logs and telemetry.
-        options.onOutboundReplyOverflow({
-          method: this.registry.get(request.method) ? request.method : 'unknown'
-        })
-        return
-      }
-      reply(serialized)
-    }
+    const { replyResponse, repliesSuppressed } = createBoundedReplyChannel({
+      reply,
+      meta,
+      // Why: an unregistered method name is client-supplied; keep it out of logs and telemetry.
+      method: this.registry.get(request.method) ? request.method : 'unknown',
+      options
+    })
     const method = this.registry.get(request.method)
     if (!method) {
       replyResponse(

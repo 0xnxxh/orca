@@ -49,7 +49,11 @@ describe('runtime RPC outbound overflow', () => {
       dispatchStreaming: vi.fn(async (_request, _reply, options) => {
         dispatchSignal = options?.signal
         expect(dispatchSignal?.aborted).toBe(false)
-        options?.onOutboundReplyOverflow?.({ method: 'status.get' })
+        options?.onOutboundReplyOverflow?.({
+          method: 'status.get',
+          byteLength: 9 * 1024 * 1024,
+          streaming: true
+        })
         expect(dispatchSignal?.aborted).toBe(true)
       })
     }
@@ -75,7 +79,78 @@ describe('runtime RPC outbound overflow', () => {
       expect(trackMock.mock.calls.filter(([event]) => event === 'remote_reply_overflow')).toEqual([
         [
           'remote_reply_overflow',
-          { method: 'status.get', transport: 'direct', client_kind: 'runtime' }
+          {
+            method: 'status.get',
+            transport: 'direct',
+            client_kind: 'runtime',
+            outcome: 'socket_closed',
+            size_bucket: '8_16mb'
+          }
+        ]
+      ])
+    } finally {
+      await server.stop()
+      await rm(userDataPath, { recursive: true, force: true })
+    }
+  })
+
+  it('reports a replaced one-shot reply as request_failed and leaves the socket up', async () => {
+    trackMock.mockClear()
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-too-large-'))
+    const runtime = { getRuntimeId: () => 'test-runtime' } as OrcaRuntimeService
+    const server = new OrcaRuntimeRpcServer({ runtime, userDataPath, enableWebSocket: false })
+    const registry = new DeviceRegistry(userDataPath)
+    const device = registry.addDevice('mobile-test', 'mobile')
+    const ws = new FakeWebSocket()
+    const closeForOutboundReplyOverflow = vi.fn()
+    server['deviceRegistry'] = registry
+    server['mobileSocketWiring'] = {
+      closeForOutboundReplyOverflow,
+      getConnectionId: () => 'connection-1'
+    } as unknown as NonNullable<(typeof server)['mobileSocketWiring']>
+    let dispatchSignal: AbortSignal | undefined
+    ;(
+      server as unknown as {
+        dispatcher: {
+          dispatchStreaming: (
+            request: unknown,
+            reply: (response: string) => void,
+            options?: RpcDispatchStreamingOptions
+          ) => Promise<void>
+        }
+      }
+    ).dispatcher = {
+      dispatchStreaming: vi.fn(async (_request, _reply, options) => {
+        dispatchSignal = options?.signal
+        options?.onOutboundReplyTooLarge?.({
+          method: 'git.diff',
+          byteLength: 5 * 1024 * 1024,
+          streaming: false
+        })
+      })
+    }
+
+    try {
+      await server['handleWebSocketMessage'](
+        JSON.stringify({ id: 'request-1', method: 'git.diff', deviceToken: device.token }),
+        vi.fn(),
+        vi.fn(),
+        undefined,
+        ws as unknown as WebSocket
+      )
+
+      expect(dispatchSignal?.aborted).toBe(false)
+      expect(closeForOutboundReplyOverflow).not.toHaveBeenCalled()
+      expect(trackMock.mock.calls.filter(([event]) => event === 'remote_reply_overflow')).toEqual([
+        [
+          'remote_reply_overflow',
+          {
+            method: 'git.diff',
+            transport: 'direct',
+            client_kind: 'mobile',
+            outcome: 'request_failed',
+            size_bucket: '4_8mb'
+          }
         ]
       ])
     } finally {

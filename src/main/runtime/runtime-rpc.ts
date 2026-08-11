@@ -53,6 +53,7 @@ import {
   type TerminalStreamFrame
 } from '../../shared/terminal-stream-protocol'
 import { track } from '../telemetry/client'
+import { oversizedReplySizeBucket, type OversizedReplyReport } from './rpc/oversized-reply-report'
 
 const DEFAULT_WS_PORT = 6768
 
@@ -1709,6 +1710,7 @@ export class OrcaRuntimeRpcServer {
               )
           }
         : undefined
+    const replyTransport = authenticatedSocket?.transport.transport === 'relay' ? 'relay' : 'direct'
     try {
       await this.dispatcher.dispatchStreaming(request, replyForRequest, {
         connectionId,
@@ -1719,18 +1721,16 @@ export class OrcaRuntimeRpcServer {
         clientCapabilities: authenticatedSocket?.clientCapabilities,
         ...(ws
           ? {
-              onOutboundReplyOverflow: ({ method }) => {
+              onOutboundReplyOverflow: (report) => {
                 console.warn(
-                  `[runtime-rpc] outbound reply exceeded the remote JSON limit for ${method}; closing socket`
+                  `[runtime-rpc] outbound reply exceeded the remote JSON limit for ${report.method}; closing socket`
                 )
-                track('remote_reply_overflow', {
-                  method,
-                  transport:
-                    authenticatedSocket?.transport.transport === 'relay' ? 'relay' : 'direct',
-                  client_kind: device.scope
-                })
+                this.reportOversizedReply(report, 'socket_closed', device.scope, replyTransport)
                 this.abortWebSocketDispatches(ws)
                 this.mobileSocketWiring?.closeForOutboundReplyOverflow(ws)
+              },
+              onOutboundReplyTooLarge: (report) => {
+                this.reportOversizedReply(report, 'request_failed', device.scope, replyTransport)
               },
               // Why: the only abort sources are socket close/error and overflow, so "not OPEN" is
               // the condition we actually mean; see registerWebSocketDispatchAbort.
@@ -1747,6 +1747,23 @@ export class OrcaRuntimeRpcServer {
       abortRegistration?.dispose()
       this.releaseLongPoll(longPoll)
     }
+  }
+
+  // Why: one event for both outcomes so the ratio of failed requests to killed sessions is
+  // readable without joining two series.
+  private reportOversizedReply(
+    report: OversizedReplyReport,
+    outcome: 'request_failed' | 'socket_closed',
+    clientKind: 'mobile' | 'runtime',
+    transport: 'relay' | 'direct'
+  ): void {
+    track('remote_reply_overflow', {
+      method: report.method,
+      transport,
+      client_kind: clientKind,
+      outcome,
+      size_bucket: oversizedReplySizeBucket(report.byteLength)
+    })
   }
 
   private buildError(id: string, code: string, message: string): RpcResponse {

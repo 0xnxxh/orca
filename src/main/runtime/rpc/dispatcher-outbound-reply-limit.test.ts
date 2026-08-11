@@ -50,43 +50,64 @@ describe('RpcDispatcher outbound reply limit', () => {
     expect(onOutboundReplyOverflow).not.toHaveBeenCalled()
   })
 
-  it('rejects a one-shot response one byte above the serialized envelope limit', async () => {
+  it('fails a one-shot response one byte above the limit without closing the socket', async () => {
     const replies: string[] = []
     const onOutboundReplyOverflow = vi.fn()
+    const onOutboundReplyTooLarge = vi.fn()
+    const oversized = asciiResultForEnvelopeBytes(REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES + 1)
     const dispatcher = new RpcDispatcher({
       runtime: stubRuntime(),
       methods: [
-        defineMethod({
-          name: REQUEST.method,
-          params: null,
-          handler: async () =>
-            asciiResultForEnvelopeBytes(REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES + 1)
-        })
+        defineMethod({ name: REQUEST.method, params: null, handler: async () => oversized })
       ]
     })
 
     await dispatcher.dispatchStreaming(REQUEST, (reply) => replies.push(reply), {
-      onOutboundReplyOverflow
+      onOutboundReplyOverflow,
+      onOutboundReplyTooLarge
     })
 
-    expect(replies).toEqual([])
-    expect(onOutboundReplyOverflow).toHaveBeenCalledExactlyOnceWith({ method: REQUEST.method })
+    expect(replies).toHaveLength(1)
+    expect(JSON.parse(replies[0]!)).toEqual({
+      id: REQUEST.id,
+      ok: false,
+      error: {
+        code: 'response_too_large',
+        message: expect.any(String),
+        data: {
+          byteLength: REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES + 1,
+          maxBytes: REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES
+        }
+      },
+      _meta: { runtimeId: 'test-runtime' }
+    })
+    expect(onOutboundReplyOverflow).not.toHaveBeenCalled()
+    // Exact key set: a future field must not leak params, filePath or worktree into telemetry.
+    expect(onOutboundReplyTooLarge).toHaveBeenCalledExactlyOnceWith({
+      method: REQUEST.method,
+      byteLength: REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES + 1,
+      streaming: false
+    })
   })
 
   it('reports an unregistered method as "unknown" so a client string cannot reach telemetry', async () => {
-    const onOutboundReplyOverflow = vi.fn()
+    const onOutboundReplyTooLarge = vi.fn()
     const dispatcher = new RpcDispatcher({ runtime: stubRuntime(), methods: [] })
 
     await dispatcher.dispatchStreaming(
       { ...REQUEST, method: 'x'.repeat(REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES) },
       vi.fn(),
-      { onOutboundReplyOverflow }
+      { onOutboundReplyOverflow: vi.fn(), onOutboundReplyTooLarge }
     )
 
-    expect(onOutboundReplyOverflow).toHaveBeenCalledExactlyOnceWith({ method: 'unknown' })
+    expect(onOutboundReplyTooLarge).toHaveBeenCalledExactlyOnceWith({
+      method: 'unknown',
+      byteLength: expect.any(Number),
+      streaming: false
+    })
   })
 
-  it('rejects an oversized error response without emitting a replacement reply', async () => {
+  it('replaces an oversized error response with the same failure envelope', async () => {
     const replies: string[] = []
     const onOutboundReplyOverflow = vi.fn()
     const dispatcher = new RpcDispatcher({
@@ -106,13 +127,40 @@ describe('RpcDispatcher outbound reply limit', () => {
       onOutboundReplyOverflow
     })
 
+    expect(replies).toHaveLength(1)
+    expect(JSON.parse(replies[0]!)).toMatchObject({
+      ok: false,
+      error: { code: 'response_too_large' }
+    })
+    expect(onOutboundReplyOverflow).not.toHaveBeenCalled()
+  })
+
+  it('closes the socket when the replacement envelope itself cannot fit', async () => {
+    const replies: string[] = []
+    const onOutboundReplyOverflow = vi.fn()
+    const onOutboundReplyTooLarge = vi.fn()
+    const dispatcher = new RpcDispatcher({
+      runtime: stubRuntime(),
+      methods: [defineMethod({ name: REQUEST.method, params: null, handler: async () => 'small' })]
+    })
+
+    await dispatcher.dispatchStreaming(
+      { ...REQUEST, id: 'x'.repeat(REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES) },
+      (reply) => replies.push(reply),
+      { onOutboundReplyOverflow, onOutboundReplyTooLarge }
+    )
+
     expect(replies).toEqual([])
+    expect(onOutboundReplyTooLarge).not.toHaveBeenCalled()
     expect(onOutboundReplyOverflow).toHaveBeenCalledOnce()
   })
 
+  // Why: a subscription handler resolves through registerSubscriptionCleanup, not the abort
+  // signal, so failing the request in place would leak its runtime listener.
   it('closes a synchronous stream once and suppresses later emits after overflow', async () => {
     const replies: string[] = []
     const onOutboundReplyOverflow = vi.fn()
+    const onOutboundReplyTooLarge = vi.fn()
     const dispatcher = new RpcDispatcher({
       runtime: stubRuntime(),
       methods: [
@@ -128,11 +176,17 @@ describe('RpcDispatcher outbound reply limit', () => {
     })
 
     await dispatcher.dispatchStreaming(REQUEST, (reply) => replies.push(reply), {
-      onOutboundReplyOverflow
+      onOutboundReplyOverflow,
+      onOutboundReplyTooLarge
     })
 
     expect(replies).toEqual([])
-    expect(onOutboundReplyOverflow).toHaveBeenCalledOnce()
+    expect(onOutboundReplyTooLarge).not.toHaveBeenCalled()
+    expect(onOutboundReplyOverflow).toHaveBeenCalledExactlyOnceWith({
+      method: REQUEST.method,
+      byteLength: expect.any(Number),
+      streaming: true
+    })
   })
 
   it('does not throw or repeat cleanup for late stream emits after overflow', async () => {
@@ -227,7 +281,7 @@ describe('RpcDispatcher outbound reply limit', () => {
 
   it('measures UTF-8 bytes, not string length', async () => {
     const replies: string[] = []
-    const onOutboundReplyOverflow = vi.fn()
+    const onOutboundReplyTooLarge = vi.fn()
     // 3 UTF-8 bytes each, so `.length` stays far below the limit the byte count blows past.
     const result = '€'.repeat(2 * 1024 * 1024)
     const dispatcher = new RpcDispatcher({
@@ -237,11 +291,16 @@ describe('RpcDispatcher outbound reply limit', () => {
 
     expect(result.length).toBeLessThan(REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES)
     await dispatcher.dispatchStreaming(REQUEST, (reply) => replies.push(reply), {
-      onOutboundReplyOverflow
+      onOutboundReplyOverflow: vi.fn(),
+      onOutboundReplyTooLarge
     })
 
-    expect(replies).toEqual([])
-    expect(onOutboundReplyOverflow).toHaveBeenCalledOnce()
+    expect(replies).toHaveLength(1)
+    expect(JSON.parse(replies[0]!)).toMatchObject({
+      ok: false,
+      error: { code: 'response_too_large' }
+    })
+    expect(onOutboundReplyTooLarge).toHaveBeenCalledOnce()
   })
 
   it('agrees with the E2EE channel admission at the byte boundary', async () => {
@@ -267,10 +326,15 @@ describe('RpcDispatcher outbound reply limit', () => {
     await dispatcher(REMOTE_RUNTIME_MAX_OUTBOUND_JSON_BYTES + 1).dispatchStreaming(
       REQUEST,
       (reply) => replies.push(reply),
-      { onOutboundReplyOverflow: () => rejected.push('overflow') }
+      {
+        onOutboundReplyOverflow: vi.fn(),
+        onOutboundReplyTooLarge: () => rejected.push('too_large')
+      }
     )
 
     expect(isMobileE2EETextPayloadWithinLimit(replies[0]!)).toBe(true)
+    // The replacement envelope must itself pass the same channel admission.
+    expect(isMobileE2EETextPayloadWithinLimit(replies[1]!)).toBe(true)
     expect(rejected).toHaveLength(1)
     expect(
       isMobileE2EETextPayloadWithinLimit(

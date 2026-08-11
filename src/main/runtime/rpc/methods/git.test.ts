@@ -179,7 +179,14 @@ describe('git RPC methods', () => {
       })
     )
 
-    expect(runtime.getRuntimeGitDiff).toHaveBeenCalledWith('id:wt-1', 'src/index.ts', false, true)
+    // No clientKind on the in-process dispatch path, so the diff stays uncapped.
+    expect(runtime.getRuntimeGitDiff).toHaveBeenCalledWith(
+      'id:wt-1',
+      'src/index.ts',
+      false,
+      true,
+      undefined
+    )
     expect(response).toMatchObject({
       ok: true,
       result: { kind: 'text', modifiedContent: 'hello' }

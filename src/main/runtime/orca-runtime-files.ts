@@ -37,6 +37,7 @@ import {
   relativePathInsideRoot,
   resolveRuntimePath
 } from '../../shared/cross-platform-path'
+import { REMOTE_RUNTIME_MAX_OUTBOUND_CONTENT_BYTES } from '../../shared/remote-runtime-capacity-limits'
 import { PhysicalExitTracker } from '../../shared/physical-exit-tracker'
 import { sortDirEntries } from '../../shared/file-name-sort'
 import type {
@@ -101,7 +102,11 @@ const MOBILE_FILE_PATH_SEARCH_CACHE_LIMIT = 20_000
 const MOBILE_FILE_PATH_SEARCH_CACHE_ENTRIES = 8
 const MOBILE_FILE_PATH_SEARCH_CACHE_TTL_MS = 30_000
 const MOBILE_FILE_READ_MAX_BYTES = 512 * 1024
-const RUNTIME_PREVIEWABLE_BINARY_MAX_BYTES = 10 * 1024 * 1024
+// Why: previews are reachable only over RPC, and base64 inflates them 4/3, so derive the cap from
+// the outbound envelope — a hardcoded 10 MiB serializes past it and kills the socket instead.
+export const RUNTIME_PREVIEWABLE_BINARY_MAX_BYTES = Math.floor(
+  (REMOTE_RUNTIME_MAX_OUTBOUND_CONTENT_BYTES * 3) / 4
+)
 const WINDOWS_RUNTIME_FILE_WATCH_DEBOUNCE_MS = 150
 export const WINDOWS_RUNTIME_FILE_WATCH_CLOSE_DEADLINE_MS = 10_000
 const TERMINAL_FILE_GRANT_TTL_MS = 10 * 60 * 1000

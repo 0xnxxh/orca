@@ -612,3 +612,39 @@ describe('exported enum schemas', () => {
     }
   })
 })
+
+describe('remote_reply_overflow schema', () => {
+  const payload = {
+    method: 'git.diff',
+    transport: 'direct',
+    client_kind: 'mobile',
+    outcome: 'request_failed',
+    size_bucket: '4_8mb'
+  }
+
+  it('round-trips both outcomes', () => {
+    for (const outcome of ['request_failed', 'socket_closed']) {
+      expect(eventSchemas.remote_reply_overflow.safeParse({ ...payload, outcome }).success).toBe(
+        true
+      )
+    }
+  })
+
+  it('rejects a raw byte count or any other extra key', () => {
+    expect(
+      eventSchemas.remote_reply_overflow.safeParse({ ...payload, byte_length: 4194305 }).success
+    ).toBe(false)
+    expect(
+      eventSchemas.remote_reply_overflow.safeParse({ ...payload, file_path: '/tmp/a.png' }).success
+    ).toBe(false)
+  })
+
+  it('rejects an unknown outcome or bucket', () => {
+    expect(
+      eventSchemas.remote_reply_overflow.safeParse({ ...payload, outcome: 'ignored' }).success
+    ).toBe(false)
+    expect(
+      eventSchemas.remote_reply_overflow.safeParse({ ...payload, size_bucket: '2_4mb' }).success
+    ).toBe(false)
+  })
+})

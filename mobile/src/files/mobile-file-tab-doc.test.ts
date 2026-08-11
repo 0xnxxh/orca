@@ -138,6 +138,24 @@ describe('resolveMobileFileTabDoc', () => {
     })
   })
 
+  // Why: the host caps oversized diffs and previews with an error envelope, so an old client that
+  // knows nothing about the codes must still surface the message instead of an empty or binary doc.
+  it('propagates a host diff_too_large failure instead of rendering an empty diff', async () => {
+    const client = clientOf({
+      'git.diff': fail('diff_too_large', 'This diff is too large to open over a remote connection.')
+    })
+    await expect(
+      resolveMobileFileTabDoc(client, { ...WT, relativePath: 'a.ts', diffSource: 'staged' })
+    ).rejects.toThrow('This diff is too large to open over a remote connection.')
+  })
+
+  it('propagates a capped image preview instead of rendering a broken image', async () => {
+    const client = clientOf({ 'files.readPreview': fail('runtime_error', 'file_too_large') })
+    await expect(
+      resolveMobileFileTabDoc(client, { ...WT, relativePath: 'logo.png' })
+    ).rejects.toThrow('file_too_large')
+  })
+
   it('propagates the RPC error message when a read fails', async () => {
     const client = clientOf({ 'files.read': fail('EIO', 'file_too_large') })
     await expect(
