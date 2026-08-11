@@ -183,7 +183,10 @@ import {
   type DirectSshConnectedStateOrigin
 } from './direct-ssh-state-routing'
 import { isDirectSshReconnectCoordinatorRoutingEnabled } from './direct-ssh-reconnect-rollout'
-import { createRuntimeClientEventSubscriptionInvalidationGate } from '@/runtime/runtime-client-event-subscription-invalidation'
+import {
+  bumpRuntimeClientEventSubscriptionGeneration,
+  createRuntimeClientEventSubscriptionInvalidationGate
+} from '@/runtime/runtime-client-event-subscription-invalidation'
 
 function getShortcutPlatform(): NodeJS.Platform {
   if (navigator.userAgent.includes('Mac')) {
@@ -1037,41 +1040,47 @@ export function useIpcEvents(): void {
       if (!runtimeClientEventSubscriptionInvalidation.changed(state)) {
         return
       }
-      const nextEnvironmentIds = getRuntimeClientEventEnvironmentIds()
-      const nextKey = buildRuntimeClientEventEnvironmentKey(nextEnvironmentIds)
-      const nextReachableEnvironmentIds = getReachableRuntimeEnvironmentIds()
-      const nextReachableKey = buildRuntimeClientEventEnvironmentKey(nextReachableEnvironmentIds)
-      if (
-        nextKey === runtimeClientEventEnvironmentKey &&
-        nextReachableKey === reachableRuntimeEnvironmentKey
-      ) {
-        return
+      try {
+        const nextEnvironmentIds = getRuntimeClientEventEnvironmentIds()
+        const nextKey = buildRuntimeClientEventEnvironmentKey(nextEnvironmentIds)
+        const nextReachableEnvironmentIds = getReachableRuntimeEnvironmentIds()
+        const nextReachableKey = buildRuntimeClientEventEnvironmentKey(nextReachableEnvironmentIds)
+        if (
+          nextKey === runtimeClientEventEnvironmentKey &&
+          nextReachableKey === reachableRuntimeEnvironmentKey
+        ) {
+          return
+        }
+        for (const environmentId of getRuntimeProjectRefreshEnvironmentIds({
+          previousDesired: runtimeClientEventEnvironmentIds,
+          nextDesired: nextEnvironmentIds,
+          previousReachable: reachableRuntimeEnvironmentIds,
+          nextReachable: nextReachableEnvironmentIds
+        })) {
+          runtimeProjectRefreshScheduler.request(environmentId)
+        }
+        for (const environmentId of getNewlyDisconnectedRuntimeEnvironmentIds(
+          reachableRuntimeEnvironmentIds,
+          nextReachableEnvironmentIds
+        )) {
+          // No-op when the environment has no SSH bucket (e.g. web client).
+          useAppStore.getState().markEnvironmentSshStateStale(environmentId)
+        }
+        runtimeClientEventEnvironmentIds = nextEnvironmentIds
+        reachableRuntimeEnvironmentIds = nextReachableEnvironmentIds
+        // Nested stale-state writes can advance the out-of-store SSH generation.
+        runtimeClientEventEnvironmentKey = buildRuntimeClientEventEnvironmentKey(
+          runtimeClientEventEnvironmentIds
+        )
+        reachableRuntimeEnvironmentKey = buildRuntimeClientEventEnvironmentKey(
+          reachableRuntimeEnvironmentIds
+        )
+        runtimeClientEventsSync.sync()
+      } catch (error) {
+        // Why: the gate already consumed this publication, so re-arm it or the subscription stays stale forever.
+        bumpRuntimeClientEventSubscriptionGeneration()
+        throw error
       }
-      for (const environmentId of getRuntimeProjectRefreshEnvironmentIds({
-        previousDesired: runtimeClientEventEnvironmentIds,
-        nextDesired: nextEnvironmentIds,
-        previousReachable: reachableRuntimeEnvironmentIds,
-        nextReachable: nextReachableEnvironmentIds
-      })) {
-        runtimeProjectRefreshScheduler.request(environmentId)
-      }
-      for (const environmentId of getNewlyDisconnectedRuntimeEnvironmentIds(
-        reachableRuntimeEnvironmentIds,
-        nextReachableEnvironmentIds
-      )) {
-        // No-op when the environment has no SSH bucket (e.g. web client).
-        useAppStore.getState().markEnvironmentSshStateStale(environmentId)
-      }
-      runtimeClientEventEnvironmentIds = nextEnvironmentIds
-      reachableRuntimeEnvironmentIds = nextReachableEnvironmentIds
-      // Nested stale-state writes can advance the out-of-store SSH generation.
-      runtimeClientEventEnvironmentKey = buildRuntimeClientEventEnvironmentKey(
-        runtimeClientEventEnvironmentIds
-      )
-      reachableRuntimeEnvironmentKey = buildRuntimeClientEventEnvironmentKey(
-        reachableRuntimeEnvironmentIds
-      )
-      runtimeClientEventsSync.sync()
     })
     unsubs.push(runtimeClientEventsSync.stop)
     unsubs.push(runtimeProjectRefreshScheduler.stop)

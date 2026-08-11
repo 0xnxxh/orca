@@ -58,6 +58,45 @@ describe('buildRuntimeClientEventEnvironmentKey', () => {
   })
 })
 
+describe('runtime client-event subscription gate', () => {
+  it('re-arms after a failed reconcile so the next publication retries', async () => {
+    let failNextStatusRead = false
+    const statusReads: string[] = []
+    const runtimeStatusByEnvironmentId = new Map<string, { status: string } | null>()
+    runtimeStatusByEnvironmentId.get = (environmentId: string) => {
+      statusReads.push(environmentId)
+      if (failNextStatusRead) {
+        failNextStatusRead = false
+        throw new Error('reconcile failed')
+      }
+      return undefined
+    }
+    const storeState = createHarnessStoreState({
+      tabsByWorktree: {},
+      runtimeEnvironments: [{ id: 'env-1' }],
+      runtimeStatusByEnvironmentId
+    })
+    const harness = await loadIpcEventsHarness(storeState)
+    const { useAppStore } = await import('../store')
+    const { bumpRuntimeClientEventSubscriptionGeneration } =
+      await import('@/runtime/runtime-client-event-subscription-invalidation')
+    harness.useIpcEvents()
+    const reconcile = vi.mocked(useAppStore.subscribe).mock.calls[0]?.[0] as (
+      state: unknown
+    ) => void
+
+    bumpRuntimeClientEventSubscriptionGeneration()
+    failNextStatusRead = true
+    expect(() => reconcile(storeState)).toThrow('reconcile failed')
+    const readsAfterFailure = statusReads.length
+
+    // Same store references as the failed publication: only the failure re-arm can drive this.
+    reconcile(storeState)
+
+    expect(statusReads.length).toBeGreaterThan(readsAfterFailure)
+  })
+})
+
 describe('getNewlyConnectedRuntimeEnvironmentIds', () => {
   it('returns only environments that became connected', () => {
     expect(getNewlyConnectedRuntimeEnvironmentIds(['env-a'], ['env-a', 'env-b'])).toEqual(['env-b'])
