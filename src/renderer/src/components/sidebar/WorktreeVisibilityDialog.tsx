@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useId, useState } from 'react'
+import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useAppStore } from '@/store'
 import {
   Dialog,
@@ -42,9 +43,15 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const [isToggling, setIsToggling] = useState(false)
   const [listState, setListState] = useState<'checking' | 'ready' | 'failed'>('checking')
   const alwaysShowSwitchId = useId()
+  const hiddenListHeadingId = useId()
+  const hiddenListRef = useRef<HTMLDivElement>(null)
 
   const isOpen = activeModal === 'worktree-visibility'
   const repoId = typeof modalData.repoId === 'string' ? modalData.repoId : ''
+  const currentRepoIdRef = useRef(repoId)
+  const activeMutationByRepoRef = useRef(
+    new Map<string, { kind: 'row'; path: string } | { kind: 'toggle' }>()
+  )
   const repo = repos.find((candidate) => candidate.id === repoId) ?? null
   const detected = repoId ? detectedWorktreesByRepo[repoId] : undefined
   const showOther = repo
@@ -58,11 +65,34 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const otherCount = getVisibleNonOrcaWorktrees(detected).length
   const hiddenWorktreeLabel = `${hiddenCount} ${hiddenCount === 1 ? 'worktree' : 'worktrees'}`
   const shownWorktreeLabel = `${otherCount} ${otherCount === 1 ? 'worktree' : 'worktrees'}`
+  const hiddenListVirtualizer = useVirtualizer({
+    count: hiddenImportable.length,
+    getScrollElement: () => hiddenListRef.current,
+    estimateSize: () => 56,
+    getItemKey: (index) => hiddenImportable[index]?.id ?? index,
+    overscan: 3,
+    initialRect: { width: 480, height: 224 }
+  })
+
+  useLayoutEffect(() => {
+    currentRepoIdRef.current = repoId
+  }, [repoId])
+
+  useEffect(() => {
+    const activeMutation = activeMutationByRepoRef.current.get(repoId)
+    setActionState(null)
+    setBusyPath(activeMutation?.kind === 'row' ? activeMutation.path : null)
+    setIsToggling(activeMutation?.kind === 'toggle')
+  }, [repoId])
 
   // Why: recovery must not trust a stale or fallback snapshot — an empty one
   // would read as "nothing hidden" for a worktree that is sitting on disk (#10324).
   useEffect(() => {
     if (!isOpen || !repoId) {
+      return
+    }
+    // Why: reopening mid-write must not start a scan that can absorb the mutation's confirmation refresh.
+    if (activeMutationByRepoRef.current.has(repoId)) {
       return
     }
     let cancelled = false
@@ -83,7 +113,9 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
     }
     setListState('checking')
     const refreshed = await fetchWorktrees(repoId, { requireAuthoritative: true })
-    setListState(refreshed ? 'ready' : 'failed')
+    if (currentRepoIdRef.current === repoId) {
+      setListState(refreshed ? 'ready' : 'failed')
+    }
   }, [fetchWorktrees, repoId])
 
   const handleShowWorktree = useCallback(
@@ -91,6 +123,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
       if (!repo) {
         return
       }
+      activeMutationByRepoRef.current.set(repo.id, { kind: 'row', path: worktreePath })
       setBusyPath(worktreePath)
       await importNewExternalWorktreeInboxPaths({
         projectId: repo.id,
@@ -99,6 +132,9 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
         updateRepo,
         fetchWorktrees,
         setInboxState: (_projectId, state) => {
+          if (currentRepoIdRef.current !== repo.id) {
+            return
+          }
           setActionState(state)
           // Why: a null state is only reachable after a successful authoritative
           // refetch, which supersedes an earlier failed open-time scan.
@@ -107,7 +143,10 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           }
         }
       })
-      setBusyPath(null)
+      activeMutationByRepoRef.current.delete(repo.id)
+      if (currentRepoIdRef.current === repo.id) {
+        setBusyPath(null)
+      }
     },
     [fetchWorktrees, repo, updateRepo]
   )
@@ -117,9 +156,11 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
       if (!repoId || checked === alwaysShow) {
         return
       }
+      activeMutationByRepoRef.current.set(repoId, { kind: 'toggle' })
+      setActionState(null)
       setIsToggling(true)
       try {
-        await updateRepo(repoId, {
+        const updated = await updateRepo(repoId, {
           externalWorktreeVisibility: checked ? 'show' : 'hide',
           agentWorktreeVisibility: checked ? 'show' : 'hide',
           // Why: showing hidden externals again should re-enable the inbox if the
@@ -128,9 +169,27 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           // where `undefined` is stripped before persistence.
           ...(checked ? { externalWorktreeDiscoverySuppressedAt: null } : {})
         })
-        await fetchWorktrees(repoId)
+        if (!updated) {
+          if (currentRepoIdRef.current === repoId) {
+            setActionState({
+              pending: false,
+              error: translate(
+                'auto.components.sidebar.WorktreeVisibilityDialog.d40d436fc2',
+                'Could not update worktree visibility. Try again.'
+              )
+            })
+          }
+          return
+        }
+        const refreshed = await fetchWorktrees(repoId, { requireAuthoritative: true })
+        if (currentRepoIdRef.current === repoId) {
+          setListState(refreshed ? 'ready' : 'failed')
+        }
       } finally {
-        setIsToggling(false)
+        activeMutationByRepoRef.current.delete(repoId)
+        if (currentRepoIdRef.current === repoId) {
+          setIsToggling(false)
+        }
       }
     },
     [alwaysShow, fetchWorktrees, repoId, updateRepo]
@@ -232,7 +291,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
         {hiddenImportable.length > 0 ? (
           <div className="grid min-w-0 gap-2">
             <div>
-              <h3 className="text-sm font-medium">
+              <h3 id={hiddenListHeadingId} className="text-sm font-medium">
                 {translate(
                   'auto.components.sidebar.WorktreeVisibilityDialog.7d21c5e848',
                   'Hidden worktrees ({{value0}})',
@@ -246,40 +305,66 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
                 )}
               </p>
             </div>
-            <ul className="scrollbar-sleek grid max-h-56 min-w-0 gap-1 overflow-y-auto">
-              {hiddenImportable.map((worktree) => {
-                const displayPath =
-                  relativePathInsideRoot(repo.path, worktree.path) || worktree.path
-                return (
-                  <li
-                    key={worktree.id}
-                    className="flex min-w-0 items-center gap-3 rounded-md border border-border px-3 py-2"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm">{worktree.displayName}</div>
-                      <div className="truncate text-xs text-muted-foreground">{displayPath}</div>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={busyPath !== null || isToggling || listState === 'checking'}
-                      onClick={() => void handleShowWorktree(worktree.path)}
+            <div
+              ref={hiddenListRef}
+              aria-labelledby={hiddenListHeadingId}
+              className="scrollbar-sleek max-h-56 min-w-0 overflow-y-auto"
+              tabIndex={0}
+              style={{
+                height: `${Math.min(hiddenListVirtualizer.getTotalSize(), 224)}px`
+              }}
+            >
+              <ul
+                className="relative min-w-0"
+                style={{ height: `${hiddenListVirtualizer.getTotalSize()}px` }}
+              >
+                {hiddenListVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const worktree = hiddenImportable[virtualRow.index]
+                  if (!worktree) {
+                    return null
+                  }
+                  const displayPath =
+                    relativePathInsideRoot(repo.path, worktree.path) || worktree.path
+                  return (
+                    <li
+                      key={worktree.id}
+                      ref={hiddenListVirtualizer.measureElement}
+                      data-index={virtualRow.index}
+                      className="absolute left-0 top-0 w-full pb-1"
+                      style={{ transform: `translateY(${virtualRow.start}px)` }}
+                      aria-posinset={virtualRow.index + 1}
+                      aria-setsize={hiddenImportable.length}
                     >
-                      {busyPath === worktree.path
-                        ? translate(
-                            'auto.components.sidebar.WorktreeVisibilityDialog.2f80cd4b97',
-                            'Showing…'
-                          )
-                        : translate(
-                            'auto.components.sidebar.WorktreeVisibilityDialog.e64b81d3a9',
-                            'Show'
-                          )}
-                    </Button>
-                  </li>
-                )
-              })}
-            </ul>
+                      <div className="flex min-w-0 items-center gap-3 rounded-md border border-border px-3 py-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm">{worktree.displayName}</div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {displayPath}
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={busyPath !== null || isToggling || listState === 'checking'}
+                          onClick={() => void handleShowWorktree(worktree.path)}
+                        >
+                          {busyPath === worktree.path
+                            ? translate(
+                                'auto.components.sidebar.WorktreeVisibilityDialog.2f80cd4b97',
+                                'Showing…'
+                              )
+                            : translate(
+                                'auto.components.sidebar.WorktreeVisibilityDialog.e64b81d3a9',
+                                'Show'
+                              )}
+                        </Button>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
           </div>
         ) : null}
 

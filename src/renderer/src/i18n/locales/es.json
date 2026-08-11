@@ -4708,7 +4708,8 @@
           "7d21c5e848": "Worktrees ocultos ({{value0}})",
           "9b53f7a160": "Elige qué worktrees ocultos mostrar de forma individual.",
           "2f80cd4b97": "Mostrando…",
-          "e64b81d3a9": "Mostrar"
+          "e64b81d3a9": "Mostrar",
+          "d40d436fc2": "No se pudo actualizar la visibilidad de los worktrees. Inténtalo de nuevo."
         },
         "add": {
           "repo": {

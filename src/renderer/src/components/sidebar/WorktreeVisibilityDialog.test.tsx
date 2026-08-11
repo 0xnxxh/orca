@@ -6,6 +6,8 @@ import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DetectedWorktree, DetectedWorktreeListResult, Repo } from '../../../../shared/types'
 
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
 const SCRATCH_PATH = '/repo/.claude/worktrees/scratch-1'
 
 const mocks = vi.hoisted(() => ({
@@ -41,6 +43,22 @@ vi.mock('@/i18n/i18n', () => ({
     values
       ? fallback.replace(/\{\{(\w+)\}\}/g, (_match, name: string) => String(values[name] ?? ''))
       : fallback
+}))
+
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 56,
+    getVirtualItems: () =>
+      Array.from({ length: Math.min(count, 10) }, (_, index) => ({
+        index,
+        key: index,
+        start: index * 56,
+        size: 56,
+        end: (index + 1) * 56,
+        lane: 0
+      })),
+    measureElement: vi.fn()
+  })
 }))
 
 function makeRepo(overrides: Partial<Repo> = {}): Repo {
@@ -128,6 +146,17 @@ async function renderDialog(): Promise<void> {
   })
 }
 
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+} {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 function buttonWithText(text: string): HTMLButtonElement {
   const button = [...document.querySelectorAll('button')].find(
     (candidate) => (candidate.textContent ?? '').trim() === text
@@ -166,6 +195,22 @@ describe('WorktreeVisibilityDialog', () => {
     expect(
       document.querySelector('button[aria-label="Which worktrees are hidden by default?"]')
     ).not.toBeNull()
+  })
+
+  it('bounds rendered rows for repositories with many hidden worktrees', async () => {
+    const worktrees = Array.from({ length: 500 }, (_, index) =>
+      makeWorktree({
+        id: `hidden-${index}`,
+        path: `/repo/.claude/worktrees/scratch-${index}`,
+        displayName: `scratch-${index}`
+      })
+    )
+    mocks.state.detectedWorktreesByRepo = { 'repo-1': makeDetected(worktrees) }
+
+    await renderDialog()
+
+    expect(document.body.textContent).toContain('Hidden worktrees (500)')
+    expect(document.querySelectorAll('ul > li').length).toBeLessThan(20)
   })
 
   it('recovers a hidden worktree per path through the existing import exception', async () => {
@@ -300,6 +345,71 @@ describe('WorktreeVisibilityDialog', () => {
     await click(buttonWithText('Show'))
 
     expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('does not leak an old repo action failure into a newly opened repo', async () => {
+    const update = deferred<boolean>()
+    mocks.state.updateRepo.mockReturnValueOnce(update.promise)
+    await renderDialog()
+    await click(buttonWithText('Show'))
+
+    mocks.state.modalData = { repoId: 'repo-2' }
+    mocks.state.repos = [makeRepo({ id: 'repo-2', path: '/repo-2', displayName: 'other' })]
+    mocks.state.detectedWorktreesByRepo = { 'repo-2': makeDetected([], { repoId: 'repo-2' }) }
+    await renderDialog()
+
+    update.resolve(false)
+    await act(async () => update.promise)
+
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('keeps a reopened repo locked until its earlier row action settles', async () => {
+    const update = deferred<boolean>()
+    mocks.state.updateRepo.mockReturnValueOnce(update.promise)
+    await renderDialog()
+    mocks.state.fetchWorktrees.mockClear()
+    await click(buttonWithText('Show'))
+
+    mocks.state.activeModal = null
+    await renderDialog()
+    mocks.state.activeModal = 'worktree-visibility'
+    await renderDialog()
+
+    expect(document.body.textContent).toContain('Hidden worktrees (1)')
+    expect(buttonWithText('Showing…').disabled).toBe(true)
+    expect(mocks.state.fetchWorktrees).not.toHaveBeenCalled()
+
+    update.resolve(false)
+    await act(async () => update.promise)
+    expect(buttonWithText('Show').disabled).toBe(false)
+  })
+
+  it('reports a failed persistent visibility update without starting a refresh', async () => {
+    mocks.state.updateRepo.mockResolvedValue(false)
+    await renderDialog()
+    mocks.state.fetchWorktrees.mockClear()
+
+    await click(alwaysShowSwitch())
+
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not update worktree visibility. Try again.'
+    )
+    expect(mocks.state.fetchWorktrees).not.toHaveBeenCalled()
+  })
+
+  it('reports a failed authoritative refresh after updating persistent visibility', async () => {
+    await renderDialog()
+    mocks.state.fetchWorktrees.mockResolvedValue(false)
+
+    await click(alwaysShowSwitch())
+
+    expect(mocks.state.fetchWorktrees).toHaveBeenLastCalledWith('repo-1', {
+      requireAuthoritative: true
+    })
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "Could not list this repo's worktrees."
+    )
   })
 
   it('enables the persistent policy for regular and agent worktrees', async () => {
