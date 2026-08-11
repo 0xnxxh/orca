@@ -205,7 +205,20 @@ export function findProjectGroupForFolderWorkspace(
       : workspace.connectionId === null
         ? LOCAL_EXECUTION_HOST_ID
         : undefined)
-  return findProjectGroupForSidebarOwner(index, workspace.projectGroupId, ownerHostId)
+  const exact = findProjectGroupForSidebarOwner(index, workspace.projectGroupId, ownerHostId)
+  if (
+    exact ||
+    !workspace.connectionId ||
+    ownerHostId !== toSshExecutionHostId(workspace.connectionId)
+  ) {
+    return exact
+  }
+  const legacyGroup = index.byUnambiguousId.get(workspace.projectGroupId)
+  return legacyGroup !== undefined &&
+    legacyGroup.connectionId === undefined &&
+    getProjectGroupOwnerHostId(legacyGroup) === LOCAL_EXECUTION_HOST_ID
+    ? legacyGroup
+    : undefined
 }
 
 export function getAmbiguousFolderWorkspaceSidebarIds(
