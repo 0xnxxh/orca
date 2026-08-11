@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   ChevronDown,
   GitMerge,
@@ -50,8 +51,6 @@ export type CreateHostedReviewComposerProps = {
   setBody: (value: string) => void
   draft: boolean
   setDraft: (value: boolean) => void
-  stacked: boolean
-  setStacked: (value: boolean) => void
   stackedCreationSupported: boolean
   baseQuery: string
   setBaseQuery: (value: string) => void
@@ -70,7 +69,7 @@ export type CreateHostedReviewComposerProps = {
   dropdownItems?: DropdownEntry[]
   onGenerate: () => void
   onCancelGenerate: () => void
-  onPrimaryAction: () => void
+  onPrimaryAction: (stacked: boolean) => void
   onDropdownAction?: (kind: DropdownActionKind) => void
 }
 
@@ -86,8 +85,6 @@ export function CreateHostedReviewComposer({
   setBody,
   draft,
   setDraft,
-  stacked,
-  setStacked,
   stackedCreationSupported,
   baseQuery,
   setBaseQuery,
@@ -109,8 +106,11 @@ export function CreateHostedReviewComposer({
   onPrimaryAction,
   onDropdownAction
 }: CreateHostedReviewComposerProps): React.JSX.Element {
+  const [stacked, setStacked] = useState(false)
   const copy = localizedHostedReviewCopy(resolveSupportedHostedReviewCopyProvider(provider))
   const ReviewIcon = provider === 'gitlab' ? GitMerge : GitPullRequestArrow
+  const stackedModeAvailable = provider === 'github' && stackedCreationSupported
+  const effectiveStacked = stackedModeAvailable && stacked
   const normalizedBase = stripBaseRef(base)
   const strippedBranch = stripBaseRef(branch)
   const baseSameAsBranch = normalizedBase.toLowerCase() === strippedBranch.toLowerCase()
@@ -235,9 +235,9 @@ export function CreateHostedReviewComposer({
           setBody={setBody}
           draft={draft}
           setDraft={setDraft}
-          stacked={stacked}
+          stacked={effectiveStacked}
           setStacked={setStacked}
-          showStackedMode={provider === 'github' && stackedCreationSupported}
+          showStackedMode={stackedModeAvailable}
           baseQuery={baseQuery}
           setBaseQuery={setBaseQuery}
           baseResults={baseResults}
@@ -257,7 +257,7 @@ export function CreateHostedReviewComposer({
             type="button"
             size="xs"
             disabled={createDisabled}
-            onClick={() => onPrimaryAction()}
+            onClick={() => onPrimaryAction(effectiveStacked)}
             className={cn(
               'h-7 px-3 text-xs',
               showDropdown && 'rounded-r-none',
@@ -275,7 +275,7 @@ export function CreateHostedReviewComposer({
                 isCreating,
                 pushBeforeCreate,
                 draft,
-                stacked,
+                stacked: effectiveStacked,
                 shortLabel: copy.shortLabel
               })}
             </span>

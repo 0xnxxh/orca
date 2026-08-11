@@ -1,5 +1,8 @@
+// @vitest-environment happy-dom
+
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render as renderDom, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { CreateHostedReviewComposer } from './CreateHostedReviewComposer'
 import { resolveDropdownItems } from './source-control-dropdown-items'
@@ -10,18 +13,18 @@ type RenderPullRequestComposerOptions = {
   generating?: boolean
   generateDisabled?: boolean
   generateDisabledReason?: string
-  stacked?: boolean
   stackedCreationSupported?: boolean
+  onPrimaryAction?: (stacked: boolean) => void
 }
 
-function renderPullRequestComposer({
+function pullRequestComposerElement({
   aiGenerationEnabled = true,
   generating = false,
   generateDisabled = false,
   generateDisabledReason,
-  stacked = false,
-  stackedCreationSupported = true
-}: RenderPullRequestComposerOptions = {}): string {
+  stackedCreationSupported = true,
+  onPrimaryAction = vi.fn()
+}: RenderPullRequestComposerOptions = {}): React.JSX.Element {
   const sourceControlInputs = {
     stagedCount: 1,
     hasUnstagedChanges: false,
@@ -35,21 +38,19 @@ function renderPullRequestComposer({
   }
   const primaryAction = resolvePrimaryAction(sourceControlInputs)
 
-  return renderToStaticMarkup(
+  return (
     <TooltipProvider>
       <CreateHostedReviewComposer
         provider="github"
         branch="branch-login-issue"
         base="master"
         setBase={vi.fn()}
-        title=""
+        title="Ready to create"
         setTitle={vi.fn()}
         body=""
         setBody={vi.fn()}
         draft={false}
         setDraft={vi.fn()}
-        stacked={stacked}
-        setStacked={vi.fn()}
         stackedCreationSupported={stackedCreationSupported}
         baseQuery=""
         setBaseQuery={vi.fn()}
@@ -67,11 +68,15 @@ function renderPullRequestComposer({
         dropdownItems={resolveDropdownItems(sourceControlInputs)}
         onGenerate={vi.fn()}
         onCancelGenerate={vi.fn()}
-        onPrimaryAction={vi.fn()}
+        onPrimaryAction={onPrimaryAction}
         onDropdownAction={vi.fn()}
       />
     </TooltipProvider>
   )
+}
+
+function renderPullRequestComposer(options: RenderPullRequestComposerOptions = {}): string {
+  return renderToStaticMarkup(pullRequestComposerElement(options))
 }
 
 function elementByLabel(markup: string, tagName: string, label: string): string {
@@ -87,6 +92,8 @@ function elementByLabel(markup: string, tagName: string, label: string): string 
 }
 
 describe('CreateHostedReviewComposer generate tooltip', () => {
+  afterEach(cleanup)
+
   it('renders hosted review labels without leaking interpolation placeholders', () => {
     const markup = renderPullRequestComposer()
 
@@ -131,13 +138,21 @@ describe('CreateHostedReviewComposer generate tooltip', () => {
   })
 
   it('shows the parent-child preview and stacked create action', () => {
-    const markup = renderPullRequestComposer({ stacked: true })
+    const onPrimaryAction = vi.fn()
+    const { container } = renderDom(pullRequestComposerElement({ onPrimaryAction }))
+
+    fireEvent.click(screen.getByText('Stacked PR'))
+
+    const markup = container.innerHTML
 
     expect(markup).toContain('Stacked PR')
     expect(markup).toContain('master')
     expect(markup).toContain('branch-login-issue')
     expect(markup).toContain('The base branch must have an open PR and be the top of its stack.')
     expect(markup).toContain('Create stacked PR')
+
+    fireEvent.click(screen.getByRole('button', { name: /Create stacked PR/ }))
+    expect(onPrimaryAction).toHaveBeenCalledWith(true)
   })
 
   it('hides stacked creation when the executing host lacks the capability', () => {

@@ -166,7 +166,6 @@ export function useCreatePullRequestDialogFields({
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [draft, setDraft] = useState(false)
-  const [stacked, setStacked] = useState(false)
   const [baseQuery, setBaseQuery] = useState('')
   const [baseResults, setBaseResults] = useState<string[]>([])
   const [baseSearchError, setBaseSearchError] = useState<string | null>(null)
@@ -315,7 +314,6 @@ export function useCreatePullRequestDialogFields({
     setTitle(resolveCreateReviewDraftTitle({ branch, eligibilityTitle: eligibility.title }))
     setBody(eligibility.body ?? '')
     setDraft(resolvedPrDefaults.draft)
-    setStacked(false)
     setBaseQuery('')
     setBaseResults([])
     setBaseSearchError(null)
@@ -611,8 +609,6 @@ export function useCreatePullRequestDialogFields({
     draft,
     setDraft: setUserDraft,
     stackedCreationSupported: eligibility?.stackedCreationSupported === true,
-    stacked: eligibility?.stackedCreationSupported === true && stacked,
-    setStacked,
     fieldRevisions: fieldRevisionsRef.current,
     applyGeneratedFields,
     baseQuery,

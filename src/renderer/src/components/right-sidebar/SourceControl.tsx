@@ -3021,8 +3021,6 @@ function SourceControlInner(): React.JSX.Element {
     setBody: setPrBody,
     draft: prDraft,
     setDraft: setPrDraft,
-    stacked: prStacked,
-    setStacked: setPrStacked,
     stackedCreationSupported: prStackedCreationSupported,
     baseQuery: prBaseQuery,
     setBaseQuery: setPrBaseQuery,
@@ -3284,168 +3282,170 @@ function SourceControlInner(): React.JSX.Element {
     worktreePath
   ])
 
-  const handleCreatePullRequest = useCallback(async (): Promise<void> => {
-    if (
-      !activeRepo ||
-      !activeWorktreeId ||
-      !worktreePath ||
-      !hostedReviewCreation ||
-      prGenerating ||
-      createPrInFlightRef.current[activeWorktreeId]
-    ) {
-      return
-    }
-
-    if (!hostedReviewCreation.canCreate) {
-      // Why: blocked Create Review clicks are intentional; the inline notice tells the user which prerequisite to clear.
-      const message = resolveBlockedCreateReviewNoticeMessage(hostedReviewCreation)
-      if (message) {
-        setCreatePrIntentNoticeForWorktree(activeWorktreeId, {
-          tone: 'destructive',
-          message
-        })
+  const handleCreatePullRequest = useCallback(
+    async (stacked = false): Promise<void> => {
+      if (
+        !activeRepo ||
+        !activeWorktreeId ||
+        !worktreePath ||
+        !hostedReviewCreation ||
+        prGenerating ||
+        createPrInFlightRef.current[activeWorktreeId]
+      ) {
+        return
       }
-      return
-    }
 
-    const base = stripBaseRef(prBase).trim()
-    const title = prTitle.trim()
-
-    if (!title) {
-      setCreatePrIntentNoticeForWorktree(activeWorktreeId, {
-        tone: 'destructive',
-        message: translate(
-          'auto.components.right.sidebar.SourceControl.f3a8b2c1d0e5',
-          'Enter a {{value0}} title.',
-          { value0: hostedReviewCreateCopy.reviewLabel }
-        )
-      })
-      return
-    }
-
-    if (!base || stripBaseRef(base).toLowerCase() === stripBaseRef(branchName).toLowerCase()) {
-      setCreatePrIntentNoticeForWorktree(activeWorktreeId, {
-        tone: 'destructive',
-        message: translate(
-          'auto.components.right.sidebar.SourceControl.ae743199cd',
-          'Choose a different base branch before creating a {{value0}}.',
-          { value0: hostedReviewCreateCopy.reviewLabel }
-        )
-      })
-      return
-    }
-
-    createPrInFlightRef.current[activeWorktreeId] = true
-    setCreatePrInFlightByWorktree((prev) => ({ ...prev, [activeWorktreeId]: true }))
-    setCreatePrIntentNoticeForWorktree(activeWorktreeId, null)
-    try {
-      const createInput = {
-        repoId: activeRepo.id,
-        provider: hostedReviewCreateProvider,
-        base,
-        head: normalizeHostedReviewHeadRef(branchName),
-        title,
-        body: prBody,
-        draft: prDraft,
-        worktreePath,
-        useTemplate: resolvedPrCreationDefaults.useTemplate
-      }
-      const result = prStacked
-        ? await createStackedHostedReview(activeRepo.path, createInput)
-        : await createHostedReview(activeRepo.path, createInput)
-
-      if (result.ok) {
-        setCreatePrIntentNoticeForWorktree(activeWorktreeId, null)
-        await handlePullRequestCreated({
-          provider: hostedReviewCreateProvider,
-          number: result.number,
-          url: result.url
-        })
-        if (resolvedPrCreationDefaults.openAfterCreate) {
-          window.api.shell.openUrl(result.url)
+      if (!hostedReviewCreation.canCreate) {
+        // Why: blocked Create Review clicks are intentional; the inline notice tells the user which prerequisite to clear.
+        const message = resolveBlockedCreateReviewNoticeMessage(hostedReviewCreation)
+        if (message) {
+          setCreatePrIntentNoticeForWorktree(activeWorktreeId, {
+            tone: 'destructive',
+            message
+          })
         }
         return
       }
 
-      if ('existingReview' in result && result.existingReview?.url) {
-        const number = result.existingReview.number
-        toast.success(
-          number
-            ? translate(
-                'auto.components.right.sidebar.SourceControl.eef5446523',
-                '{{value0}} #{{value1}} is already open',
-                { value0: hostedReviewCreateCopy.titleLabel, value1: number }
-              )
-            : translate(
-                'auto.components.right.sidebar.SourceControl.d6fb1df5fe',
-                '{{value0}} is already open',
-                { value0: hostedReviewCreateCopy.titleLabel }
-              ),
-          {
-            action: {
-              label: translate(
-                'auto.components.right.sidebar.SourceControl.812cb992ee',
-                'Open on {{value0}}',
-                { value0: hostedReviewCreateCopy.providerName }
-              ),
-              onClick: () => window.api.shell.openUrl(result.existingReview!.url)
-            }
-          }
-        )
-        if (number) {
+      const base = stripBaseRef(prBase).trim()
+      const title = prTitle.trim()
+
+      if (!title) {
+        setCreatePrIntentNoticeForWorktree(activeWorktreeId, {
+          tone: 'destructive',
+          message: translate(
+            'auto.components.right.sidebar.SourceControl.f3a8b2c1d0e5',
+            'Enter a {{value0}} title.',
+            { value0: hostedReviewCreateCopy.reviewLabel }
+          )
+        })
+        return
+      }
+
+      if (!base || stripBaseRef(base).toLowerCase() === stripBaseRef(branchName).toLowerCase()) {
+        setCreatePrIntentNoticeForWorktree(activeWorktreeId, {
+          tone: 'destructive',
+          message: translate(
+            'auto.components.right.sidebar.SourceControl.ae743199cd',
+            'Choose a different base branch before creating a {{value0}}.',
+            { value0: hostedReviewCreateCopy.reviewLabel }
+          )
+        })
+        return
+      }
+
+      createPrInFlightRef.current[activeWorktreeId] = true
+      setCreatePrInFlightByWorktree((prev) => ({ ...prev, [activeWorktreeId]: true }))
+      setCreatePrIntentNoticeForWorktree(activeWorktreeId, null)
+      try {
+        const createInput = {
+          repoId: activeRepo.id,
+          provider: hostedReviewCreateProvider,
+          base,
+          head: normalizeHostedReviewHeadRef(branchName),
+          title,
+          body: prBody,
+          draft: prDraft,
+          worktreePath,
+          useTemplate: resolvedPrCreationDefaults.useTemplate
+        }
+        const result = stacked
+          ? await createStackedHostedReview(activeRepo.path, createInput)
+          : await createHostedReview(activeRepo.path, createInput)
+
+        if (result.ok) {
           setCreatePrIntentNoticeForWorktree(activeWorktreeId, null)
           await handlePullRequestCreated({
             provider: hostedReviewCreateProvider,
-            number,
-            url: result.existingReview.url
+            number: result.number,
+            url: result.url
           })
+          if (resolvedPrCreationDefaults.openAfterCreate) {
+            window.api.shell.openUrl(result.url)
+          }
           return
         }
-      }
 
-      setCreatePrIntentNoticeForWorktree(activeWorktreeId, {
-        tone: 'destructive',
-        message: result.error
-      })
-    } catch (error) {
-      setCreatePrIntentNoticeForWorktree(activeWorktreeId, {
-        tone: 'destructive',
-        message:
-          error instanceof Error
-            ? error.message
-            : translate(
-                'auto.components.right.sidebar.SourceControl.e2b7a1c0d9f4',
-                'Failed to create {{value0}}',
-                { value0: hostedReviewCreateCopy.reviewLabel }
-              )
-      })
-    } finally {
-      createPrInFlightRef.current[activeWorktreeId] = false
-      setCreatePrInFlightByWorktree((prev) => ({ ...prev, [activeWorktreeId]: false }))
-    }
-  }, [
-    activeRepo,
-    activeWorktreeId,
-    branchName,
-    createHostedReview,
-    createStackedHostedReview,
-    handlePullRequestCreated,
-    hostedReviewCreation,
-    hostedReviewCreateCopy.providerName,
-    hostedReviewCreateCopy.reviewLabel,
-    hostedReviewCreateCopy.titleLabel,
-    hostedReviewCreateProvider,
-    prBase,
-    prBody,
-    prDraft,
-    prGenerating,
-    prStacked,
-    prTitle,
-    resolvedPrCreationDefaults.openAfterCreate,
-    resolvedPrCreationDefaults.useTemplate,
-    setCreatePrIntentNoticeForWorktree,
-    worktreePath
-  ])
+        if ('existingReview' in result && result.existingReview?.url) {
+          const number = result.existingReview.number
+          toast.success(
+            number
+              ? translate(
+                  'auto.components.right.sidebar.SourceControl.eef5446523',
+                  '{{value0}} #{{value1}} is already open',
+                  { value0: hostedReviewCreateCopy.titleLabel, value1: number }
+                )
+              : translate(
+                  'auto.components.right.sidebar.SourceControl.d6fb1df5fe',
+                  '{{value0}} is already open',
+                  { value0: hostedReviewCreateCopy.titleLabel }
+                ),
+            {
+              action: {
+                label: translate(
+                  'auto.components.right.sidebar.SourceControl.812cb992ee',
+                  'Open on {{value0}}',
+                  { value0: hostedReviewCreateCopy.providerName }
+                ),
+                onClick: () => window.api.shell.openUrl(result.existingReview!.url)
+              }
+            }
+          )
+          if (number) {
+            setCreatePrIntentNoticeForWorktree(activeWorktreeId, null)
+            await handlePullRequestCreated({
+              provider: hostedReviewCreateProvider,
+              number,
+              url: result.existingReview.url
+            })
+            return
+          }
+        }
+
+        setCreatePrIntentNoticeForWorktree(activeWorktreeId, {
+          tone: 'destructive',
+          message: result.error
+        })
+      } catch (error) {
+        setCreatePrIntentNoticeForWorktree(activeWorktreeId, {
+          tone: 'destructive',
+          message:
+            error instanceof Error
+              ? error.message
+              : translate(
+                  'auto.components.right.sidebar.SourceControl.e2b7a1c0d9f4',
+                  'Failed to create {{value0}}',
+                  { value0: hostedReviewCreateCopy.reviewLabel }
+                )
+        })
+      } finally {
+        createPrInFlightRef.current[activeWorktreeId] = false
+        setCreatePrInFlightByWorktree((prev) => ({ ...prev, [activeWorktreeId]: false }))
+      }
+    },
+    [
+      activeRepo,
+      activeWorktreeId,
+      branchName,
+      createHostedReview,
+      createStackedHostedReview,
+      handlePullRequestCreated,
+      hostedReviewCreation,
+      hostedReviewCreateCopy.providerName,
+      hostedReviewCreateCopy.reviewLabel,
+      hostedReviewCreateCopy.titleLabel,
+      hostedReviewCreateProvider,
+      prBase,
+      prBody,
+      prDraft,
+      prGenerating,
+      prTitle,
+      resolvedPrCreationDefaults.openAfterCreate,
+      resolvedPrCreationDefaults.useTemplate,
+      setCreatePrIntentNoticeForWorktree,
+      worktreePath
+    ]
+  )
 
   const createHostedReviewForCreatePrIntent = useCallback(
     async (
@@ -5826,6 +5826,7 @@ function SourceControlInner(): React.JSX.Element {
           {shouldRenderCommitArea(unresolvedConflicts.length, conflictOperation) &&
             (directCreatePrAction ? (
               <CreateHostedReviewComposer
+                key={`${activeRepo?.id ?? ''}:${activeWorktreeId ?? worktreePath ?? ''}:${branchName}`}
                 provider={hostedReviewCreateProvider}
                 branch={branchName}
                 base={prBase}
@@ -5836,8 +5837,6 @@ function SourceControlInner(): React.JSX.Element {
                 setBody={setPrBody}
                 draft={prDraft}
                 setDraft={setPrDraft}
-                stacked={prStacked}
-                setStacked={setPrStacked}
                 stackedCreationSupported={prStackedCreationSupported}
                 baseQuery={prBaseQuery}
                 setBaseQuery={setPrBaseQuery}
@@ -5857,8 +5856,8 @@ function SourceControlInner(): React.JSX.Element {
                 dropdownItems={dropdownItems}
                 onGenerate={handleGeneratePullRequestFieldsClick}
                 onCancelGenerate={handleCancelGeneratePullRequestFields}
-                onPrimaryAction={() => {
-                  void handleCreatePullRequest()
+                onPrimaryAction={(stacked) => {
+                  void handleCreatePullRequest(stacked)
                 }}
                 onDropdownAction={handleActionInvoke}
               />
