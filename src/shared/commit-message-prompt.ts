@@ -173,7 +173,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
       // Why: a `"` inside $(…) or `…` re-opens a nested quoting context in the
       // real shell, so this tokenizer's word boundaries stop matching it.
       divergesFromShell ||=
-        quote === '"' && (ch === '`' || (ch === '$' && '({\'"'.includes(template[i + 1] ?? '')))
+        quote === '"' && (ch === '`' || (ch === '$' && '({'.includes(template[i + 1] ?? '\0')))
       if (ch === quote) {
         quote = null
         i++
@@ -231,7 +231,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
     divergesFromShell ||=
       ';&|<>`'.includes(ch) ||
       (ch === '#' && !inToken) ||
-      (ch === '$' && '({\'"'.includes(template[i + 1] ?? ''))
+      (ch === '$' && '({\'"'.includes(template[i + 1] ?? '\0'))
     current += ch
     inToken = true
     i++

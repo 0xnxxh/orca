@@ -170,6 +170,25 @@ describe('buildClaudeResumeLaunchCommand', () => {
   })
 
   it.each([
+    'claude --resume old --append-system-prompt "spend under 5$"',
+    'claude --resume old --note x$',
+    'claude --resume old --note "a$"'
+  ])('still strips when a $ is not an expansion opener: %s', (base) => {
+    const command = buildClaudeResumeLaunchCommand(base, RESUME, 'posix')
+    expect(command).not.toContain('--resume old')
+    expectSingleAuthoritativeResume(command, 'posix')
+  })
+
+  it('fails open when a cmd caret escapes a real argument separator', () => {
+    // cmd strips ^ before the child re-splits on the bare space, so the
+    // tokenizer's merged token would drop the user's second argument.
+    const base = 'claude --resume a^ b --model x'
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'cmd')).toBe(
+      `${base} "--resume" "${SESSION_ID}"`
+    )
+  })
+
+  it.each([
     ['claude --resume old \\', 'posix' as const],
     ['claude --resume old `', 'powershell' as const],
     ['claude --resume old ^', 'cmd' as const]

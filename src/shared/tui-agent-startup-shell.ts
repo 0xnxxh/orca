@@ -24,8 +24,11 @@ function tokenizeWindowsStartupCommand(
       // Why: cmd keeps `^` literal inside double quotes and PowerShell keeps
       // backticks literal inside single quotes; this branch consumes them
       // anyway, so the token value stops matching the real shell's argv.
+      // Why: cmd strips `^` before the child's parser re-splits on the bare
+      // whitespace, so an escaped separator hides two real arguments;
+      // PowerShell's backtick genuinely folds the character into the token.
       divergesFromShell ||=
-        value[index + 1] === '\n' ||
+        (shell === 'cmd' ? /\s/.test(value[index + 1]) : value[index + 1] === '\n') ||
         (shell === 'cmd' && quote === '"') ||
         (shell === 'powershell' && quote === "'")
       token += value[index + 1]
