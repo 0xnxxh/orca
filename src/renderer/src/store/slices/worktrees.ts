@@ -14,6 +14,7 @@ import type {
   WorktreeLineage,
   WorkspaceLineage,
   ProjectHostSetup,
+  Repo,
   WorktreeMeta
 } from '../../../../shared/types'
 import type { RuntimeWorktreeListResult } from '../../../../shared/runtime-types'
@@ -6071,7 +6072,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       const repoIdsWithRemovedOwners = new Set<string>()
       const survivingRepoIds = new Set<string>()
       const repoIdsWithSurvivingOwners = new Set<string>()
-      const survivingRepos: AppState['repos'] = []
+      const survivingRepos: Repo[] = []
       for (const repo of s.repos) {
         if (isRemovedRuntimeHostId(getRepoExecutionHostId(repo), removed)) {
           repoIdsWithRemovedOwners.add(repo.id)

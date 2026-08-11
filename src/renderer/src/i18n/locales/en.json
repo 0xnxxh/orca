@@ -2856,7 +2856,11 @@
             "openTaskTerminal": "Open task terminal",
             "systemBrowser": "System Browser",
             "orcaBrowser": "Orca Browser",
-            "terminalLinkSettings": "Terminal link settings"
+            "terminalLinkSettings": "Terminal link settings",
+            "copyLink": "Copy link",
+            "copied": "Copied",
+            "copiedLink": "Copied link",
+            "copyLinkFailed": "Failed to copy link"
           },
           "TerminalSessionStateSaveFailureDialog": {
             "6bee0c8f17": "Open Disk Space Analyzer",
@@ -3145,7 +3149,12 @@
             "c781f992e4": "destructive",
             "be8f0ff166": "Delete",
             "f3a8c2d1e7": "Search quick commands...",
-            "b4e7f9a2c1": "No commands match"
+            "b4e7f9a2c1": "No commands match",
+            "8d525e5f15": "Copied",
+            "53b17a4b1b": "Couldn't copy",
+            "a9a564b7e7": "Copy {{value0}}",
+            "69a1441a21": "Nothing to copy",
+            "192a4616a5": "Quick command actions"
           },
           "shell": {
             "icons": {
@@ -3642,7 +3651,7 @@
           },
           "CaffeinateStatusSegment": {
             "on": "On",
-            "auto": "Auto",
+            "auto": "Agent",
             "off": "Off",
             "active": "Active",
             "inactive": "Inactive",
@@ -4539,7 +4548,9 @@
           "cliCreated": "Hide CLI-created",
           "detachedHead": "Hide detached HEAD",
           "keepDefaultBranch": "Except default branch",
-          "keepDefaultBranchAria": "Keep the default branch visible while hiding sleeping workspaces"
+          "keepDefaultBranchAria": "Keep the default branch visible while hiding sleeping workspaces",
+          "otherClients": "Hide other-client workspaces",
+          "otherClientsAria": "Hide workspaces created from other Orca clients on shared remote servers"
         },
         "sidebarHostOptions": {
           "3e102f111c": "All hosts",
@@ -6784,7 +6795,11 @@
           "f2bf411640": "Could not load commands from this host.",
           "7ecfee5b8e": "Retry",
           "601d6af51f": "Loading commands…",
-          "923ba89646": "Could not refresh commands from this host. Showing the last loaded commands."
+          "923ba89646": "Could not refresh commands from this host. Showing the last loaded commands.",
+          "8d525e5f15": "Copied",
+          "53b17a4b1b": "Couldn't copy",
+          "a9a564b7e7": "Copy {{value0}}",
+          "69a1441a21": "Nothing to copy"
         },
         "RecentTabOrderControl": {
           "3b17c81ede": "Tab strip order",
@@ -9513,8 +9528,8 @@
           "95d3031db2": "Keeps this computer and display awake while agents are working. Lid-close behavior follows this device's power settings.",
           "a42f6fbdd8": "Keeps this computer and display awake while agents are working. Orca also asks this device to stay awake when the lid is closed, subject to its power policy.",
           "modeTitle": "Keep computer awake",
-          "modeDescriptionWindows": "Choose On, Auto while agents are working, or Off. Lid-close behavior follows this device's power settings.",
-          "modeDescriptionDefault": "Choose On, Auto while agents are working, or Off. Orca also asks this device to stay awake when the lid is closed, subject to its power policy."
+          "modeDescriptionWindows": "Choose On, Agent, or Off. Agent mode stays awake while agents are working; lid-close behavior follows this device's power settings.",
+          "modeDescriptionDefault": "Choose On, Agent, or Off. Agent mode stays awake while agents are working. Orca also asks this device to stay awake when the lid is closed, subject to its power policy."
         },
         "agent-status-hooks-copy": {
           "7707c15abb": "Agent status hooks",
@@ -10576,7 +10591,7 @@
         },
         "AgentAwakeSetting": {
           "on": "On",
-          "auto": "Auto",
+          "auto": "Agent",
           "off": "Off"
         }
       },

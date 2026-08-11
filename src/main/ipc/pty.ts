@@ -203,7 +203,9 @@ import {
 } from '../codex-accounts/managed-codex-auth-readiness'
 import {
   forgetCodexPaneAccount,
-  recordCodexPaneAccount
+  getCodexPaneAccount,
+  recordCodexPaneAccount,
+  type CodexPaneHomeRoute
 } from '../codex/codex-pane-account-registry'
 import { resolveCodexPaneLaunchAccount } from '../codex/codex-pane-launch-account'
 import { getSystemCodexHomePath } from '../codex/codex-home-paths'
@@ -1243,6 +1245,7 @@ export type CodexHomePtySpawnedLifecycleArgs = {
   id: string
   codexHomePath: string | null
   reattached?: boolean
+  reattachedHomeRoute?: CodexPaneHomeRoute | null
   launchEnv?: NodeJS.ProcessEnv
   startedAt?: Date
   startedSequence?: number
@@ -1452,6 +1455,30 @@ function recordCodexPaneAccountForSpawn(args: {
     return
   }
   recordCodexPaneAccount(args.ptyId, record)
+}
+
+function snapshotCodexPaneHomeRoutes(
+  ptyIds: readonly (string | null | undefined)[]
+): ReadonlyMap<string, CodexPaneHomeRoute | null> {
+  const routes = new Map<string, CodexPaneHomeRoute | null>()
+  for (const ptyId of ptyIds) {
+    if (!ptyId || routes.has(ptyId)) {
+      continue
+    }
+    routes.set(ptyId, getCodexPaneAccount(ptyId)?.homeRoute ?? null)
+  }
+  return routes
+}
+
+function codexReattachedHomeRouteField(
+  routes: ReadonlyMap<string, CodexPaneHomeRoute | null>,
+  ptyId: string,
+  reattached: boolean
+): { reattachedHomeRoute?: CodexPaneHomeRoute | null } {
+  if (!reattached || !routes.has(ptyId)) {
+    return {}
+  }
+  return { reattachedHomeRoute: routes.get(ptyId) ?? null }
 }
 
 function readEnvWithProcessFallback(
@@ -4412,6 +4439,12 @@ export function registerPtyHandlers(
       const codexHomeLaunchStartedAt = !args.connectionId ? new Date() : undefined
       const codexHomeLaunchStartedSequence = !args.connectionId ? ++ptyLifecycleSequence : undefined
       const preAdoptedStablePane = args.adoptedStablePane ?? null
+      const reattachedCodexHomeRoutes = !args.connectionId
+        ? snapshotCodexPaneHomeRoutes([
+            preAdoptedStablePane?.result.id,
+            args.sessionId ? getAppPtyId(args.connectionId, args.sessionId) : undefined
+          ])
+        : new Map<string, CodexPaneHomeRoute | null>()
       const startupPromise = getLocalPtyStartupPromise(args.connectionId)
       if (startupPromise) {
         await startupPromise
@@ -4445,7 +4478,8 @@ export function registerPtyHandlers(
             codexHomePath: null,
             reattached: true,
             startedAt: codexHomeLaunchStartedAt,
-            startedSequence: codexHomeLaunchStartedSequence
+            startedSequence: codexHomeLaunchStartedSequence,
+            ...codexReattachedHomeRouteField(reattachedCodexHomeRoutes, result.id, true)
           })
         }
         return result
@@ -5120,6 +5154,7 @@ export function registerPtyHandlers(
               reattached: true,
               startedAt: codexHomeLaunchStartedAt,
               startedSequence: codexHomeLaunchStartedSequence,
+              ...codexReattachedHomeRouteField(reattachedCodexHomeRoutes, result.id, true),
               ...(env ? { launchEnv: env } : {})
             })
           }
@@ -5293,6 +5328,11 @@ export function registerPtyHandlers(
             codexHomePath: selectedCodexHomePath,
             startedAt: codexHomeLaunchStartedAt,
             startedSequence: codexHomeLaunchStartedSequence,
+            ...codexReattachedHomeRouteField(
+              reattachedCodexHomeRoutes,
+              result.id,
+              result.isReattach === true
+            ),
             ...(result.isReattach === true ? { reattached: true } : env ? { launchEnv: env } : {})
           })
         }
@@ -5796,6 +5836,37 @@ export function registerPtyHandlers(
     ) => {
       const codexHomeLaunchStartedAt = !args.connectionId ? new Date() : undefined
       const codexHomeLaunchStartedSequence = !args.connectionId ? ++ptyLifecycleSequence : undefined
+      const initialLeafId =
+        typeof args.leafId === 'string' && isTerminalLeafId(args.leafId) ? args.leafId : null
+      const initialPaneKey =
+        typeof args.worktreeId === 'string' &&
+        typeof args.tabId === 'string' &&
+        isValidTerminalTabId(args.tabId) &&
+        args.tabId.length <= 512 &&
+        initialLeafId
+          ? makePaneKey(args.tabId, initialLeafId)
+          : null
+      const initialStablePanePtyId = (() => {
+        try {
+          return !args.connectionId && initialPaneKey
+            ? resolveStablePaneOwner(
+                runtime,
+                store,
+                initialPaneKey,
+                args.worktreeId,
+                args.connectionId
+              )?.ptyId
+            : undefined
+        } catch {
+          return undefined
+        }
+      })()
+      const reattachedCodexHomeRoutes = !args.connectionId
+        ? snapshotCodexPaneHomeRoutes([
+            initialStablePanePtyId,
+            args.sessionId ? getAppPtyId(args.connectionId, args.sessionId) : undefined
+          ])
+        : new Map<string, CodexPaneHomeRoute | null>()
       const spawnTiming = createPtySpawnTiming()
       const startupPromise = getLocalPtyStartupPromise(args.connectionId)
       if (startupPromise) {
@@ -6850,6 +6921,11 @@ export function registerPtyHandlers(
             codexHomePath: selectedCodexHomePath,
             startedAt: codexHomeLaunchStartedAt,
             startedSequence: codexHomeLaunchStartedSequence,
+            ...codexReattachedHomeRouteField(
+              reattachedCodexHomeRoutes,
+              result.id,
+              result.isReattach === true
+            ),
             ...(result.isReattach === true
               ? { reattached: true }
               : baseEnv

@@ -1,11 +1,28 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
-import { RefreshCw } from 'lucide-react-native'
-import { MobileRichMarkdownEditor } from '../components/MobileRichMarkdownEditor'
+import { ChevronDown, Keyboard as KeyboardIcon, RefreshCw } from 'lucide-react-native'
+import {
+  MobileRichMarkdownEditor,
+  type MobileRichMarkdownEditorHandle
+} from '../components/MobileRichMarkdownEditor'
 import { colors, spacing } from '../theme/mobile-theme'
-import { resolveMarkdownFloatingActionsBottom } from './markdown-floating-actions-layout'
+import {
+  resolveMarkdownFloatingActionsBottom,
+  shouldShowMarkdownFloatingActions
+} from './markdown-floating-actions-layout'
 import type { MarkdownDocState } from './mobile-session-route-types'
 import { styles } from './mobile-session-styles'
+
+type Props = {
+  documentId: string
+  doc: MarkdownDocState | undefined
+  onRefresh: () => void
+  onChange: (content: string) => void
+  onSave: () => void
+  onCopy: () => void
+  onDiscard: () => void
+  keyboardLift: number
+}
 
 export function MobileMarkdownReader({
   documentId,
@@ -16,18 +33,13 @@ export function MobileMarkdownReader({
   onCopy,
   onDiscard,
   keyboardLift
-}: {
-  documentId: string
-  doc: MarkdownDocState | undefined
-  onRefresh: () => void
-  onChange: (content: string) => void
-  onSave: () => void
-  onCopy: () => void
-  onDiscard: () => void
-  keyboardLift: number
-}): React.JSX.Element {
+}: Props) {
+  const editorRef = useRef<MobileRichMarkdownEditorHandle>(null)
+  // Native Keyboard events under-report the WebView editor's covered area, so prefer the larger WebView-measured inset.
   const [webviewKeyboardInset, setWebviewKeyboardInset] = useState(0)
   const effectiveKeyboardLift = Math.max(keyboardLift, webviewKeyboardInset)
+  const keyboardOpen = effectiveKeyboardLift > 0
+
   if (!doc || doc.status === 'loading') {
     return (
       <View style={styles.markdownState}>
@@ -54,14 +66,21 @@ export function MobileMarkdownReader({
       : doc.stale
         ? 'Changed on desktop'
         : null
-  const showRefresh = (doc.stale && !doc.isDirty) || !doc.editable
-  const showCopy = doc.saveError || !doc.editable
-  const showSave = doc.isDirty || doc.saving
-  const showFloatingActions = statusText || showRefresh || showCopy || showSave
+  const showRefresh = Boolean((doc.stale && !doc.isDirty) || !doc.editable)
+  const showCopy = Boolean(doc.saveError || !doc.editable)
+  const showSave = Boolean(doc.isDirty || doc.saving)
+  const showFloatingActions = shouldShowMarkdownFloatingActions({
+    keyboardLift: effectiveKeyboardLift,
+    hasStatus: statusText != null,
+    showRefresh,
+    showCopy,
+    showSave
+  })
 
   return (
     <View style={styles.markdownEditor}>
       <MobileRichMarkdownEditor
+        ref={editorRef}
         key={documentId}
         content={doc.localContent}
         editable={doc.editable && !doc.saving}
@@ -73,6 +92,7 @@ export function MobileMarkdownReader({
           pointerEvents="box-none"
           style={[
             styles.markdownFloatingBar,
+            // Why: editor focus lives in a WebView, so lift native Save/Discard controls instead of resizing it.
             {
               bottom: resolveMarkdownFloatingActionsBottom({
                 keyboardLift: effectiveKeyboardLift,
@@ -91,6 +111,26 @@ export function MobileMarkdownReader({
             </Text>
           ) : null}
           <View style={styles.markdownFloatingActions}>
+            {keyboardOpen ? (
+              <Pressable
+                style={[styles.markdownFloatingButton, styles.markdownKeyboardDismissButton]}
+                onPress={() => editorRef.current?.dismissKeyboard()}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss keyboard"
+                accessibilityHint="Hides the software keyboard and keeps the markdown editor open."
+              >
+                <View style={styles.keyboardDismissGlyph}>
+                  <KeyboardIcon size={15} color={colors.textSecondary} strokeWidth={2} />
+                  <ChevronDown
+                    size={10}
+                    color={colors.textSecondary}
+                    strokeWidth={2.5}
+                    style={styles.keyboardDismissChevron}
+                  />
+                </View>
+              </Pressable>
+            ) : null}
             {showCopy ? (
               <Pressable style={styles.markdownFloatingButton} onPress={onCopy}>
                 <Text style={styles.markdownFloatingButtonText}>Copy</Text>
