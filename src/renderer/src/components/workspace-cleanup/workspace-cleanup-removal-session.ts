@@ -209,8 +209,11 @@ export function useWorkspaceCleanupRemovalSession({
         deselectRemovedIds(result.removedIds)
       },
       onError: () => {
+        // Why: the batch driver is gone, so nothing will settle these rows later; clear
+        // unconditionally (not just queued ones) or a hung 'deleting' row stays stuck in
+        // the sidebar and filterWorkspaceCleanupRemovalCandidates blocks every retry.
         for (const worktreeId of removableWorktreeIds) {
-          clearQueuedDeleteState(worktreeId)
+          clearWorktreeDeleteState(worktreeId)
         }
         if (mountedRef.current) {
           setRemovalProgress(null)
@@ -223,6 +226,7 @@ export function useWorkspaceCleanupRemovalSession({
     })
   }, [
     clearQueuedDeleteState,
+    clearWorktreeDeleteState,
     confirmCandidates,
     deselectRemovedIds,
     markWorktreesQueuedForDeletion,
