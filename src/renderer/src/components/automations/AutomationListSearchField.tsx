@@ -51,7 +51,8 @@ export function AutomationListSearchField({
         // so the first Escape clears the query without also losing focus.
         data-escape-clears-value={hasText ? 'true' : undefined}
         className={cn(
-          'h-8 border-border bg-background pl-8 text-xs shadow-none',
+          // Flat list search: no elevation/halo; soft focus border only.
+          'h-8 border-border bg-background pl-8 text-xs shadow-none focus-visible:border-ring/70 focus-visible:ring-0 dark:bg-background',
           hasText && (isTooLarge ? 'pr-20' : 'pr-7')
         )}
         onChange={(event) => onQueryChange(event.target.value)}
