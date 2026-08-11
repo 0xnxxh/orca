@@ -552,7 +552,7 @@ describe('workspace cleanup scan progress', () => {
     expect(store.getState().workspaceCleanupScan).toMatchObject(secondResult)
   })
 
-  it('does not join legacy and full-workspace broad scans', async () => {
+  it('does not join suggestion-only and full-workspace broad scans', async () => {
     const legacyPending = deferred<WorkspaceCleanupScanResult>()
     const fullPending = deferred<WorkspaceCleanupScanResult>()
     const scan = vi.fn((args?: { includeAllWorkspaces?: boolean }) =>
@@ -561,7 +561,7 @@ describe('workspace cleanup scan progress', () => {
     installWorkspaceCleanupApi(scan)
     const store = createCleanupTestStore()
 
-    const legacy = store.getState().scanWorkspaceCleanup()
+    const legacy = store.getState().scanWorkspaceCleanup({ includeAllWorkspaces: false })
     const full = store.getState().scanWorkspaceCleanup({ includeAllWorkspaces: true })
 
     expect(scan).toHaveBeenCalledTimes(2)
