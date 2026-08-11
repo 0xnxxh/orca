@@ -51,13 +51,13 @@ export default function WorktreeVisibilityHelpPopover(): React.JSX.Element {
             <li>
               {translate(
                 'auto.components.sidebar.WorktreeVisibilityHelpPopover.54a7c2f183',
-                'For newly added repositories, worktrees created manually or by another tool are hidden by default to avoid unexpected sidebar clutter. Always show includes these worktrees now and in the future.'
+                'For newly added repositories, worktrees created manually or by another tool are hidden by default to avoid unexpected sidebar clutter.'
               )}
             </li>
             <li>
               {translate(
                 'auto.components.sidebar.WorktreeVisibilityHelpPopover.b9e0d43675',
-                "Agent scratch worktrees under .claude/worktrees/* and .gsd-workspaces/* remain hidden when Always show is enabled because they're temporary tool workspaces. Use Show below to add one."
+                'Always show includes current and future non-Orca worktrees, including agent worktrees under .claude/worktrees/* and .gsd-workspaces/*. When it is off, use Show below to add one individually.'
               )}
             </li>
           </ul>

@@ -12,13 +12,13 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
-  getHiddenExternalWorktrees,
   getHiddenImportableExternalWorktrees,
-  getVisibleExternalWorktrees
+  getVisibleNonOrcaWorktrees
 } from '../../../../shared/external-worktree-inbox'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
 import { relativePathInsideRoot } from '../../../../shared/cross-platform-path'
 import {
+  effectiveAgentWorktreeVisibility,
   effectiveExternalWorktreeVisibility,
   isLegacyRepoForExternalWorktreeVisibility
 } from '../../../../shared/worktree-ownership'
@@ -51,9 +51,11 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
     ? effectiveExternalWorktreeVisibility(repo, isLegacyRepoForExternalWorktreeVisibility(repo)) ===
       'show'
     : false
-  const hiddenCount = getHiddenExternalWorktrees(detected).length
-  const otherCount = getVisibleExternalWorktrees(detected).length
+  const showAgentScratch = repo ? effectiveAgentWorktreeVisibility(repo) === 'show' : false
+  const alwaysShow = showOther && showAgentScratch
   const hiddenImportable = getHiddenImportableExternalWorktrees(detected)
+  const hiddenCount = hiddenImportable.length
+  const otherCount = getVisibleNonOrcaWorktrees(detected).length
   const hiddenWorktreeLabel = `${hiddenCount} ${hiddenCount === 1 ? 'worktree' : 'worktrees'}`
   const shownWorktreeLabel = `${otherCount} ${otherCount === 1 ? 'worktree' : 'worktrees'}`
 
@@ -112,13 +114,14 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
 
   const handleAlwaysShowChange = useCallback(
     async (checked: boolean) => {
-      if (!repoId || checked === showOther) {
+      if (!repoId || checked === alwaysShow) {
         return
       }
       setIsToggling(true)
       try {
         await updateRepo(repoId, {
           externalWorktreeVisibility: checked ? 'show' : 'hide',
+          agentWorktreeVisibility: checked ? 'show' : 'hide',
           // Why: showing hidden externals again should re-enable the inbox if the
           // user previously opted out of discovery prompts for this repo.
           // Why: null is the transport sentinel for clearing on remote runtime paths
@@ -130,7 +133,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
         setIsToggling(false)
       }
     },
-    [fetchWorktrees, repoId, showOther, updateRepo]
+    [alwaysShow, fetchWorktrees, repoId, updateRepo]
   )
 
   if (!isOpen || !repo || !isGitRepoKind(repo)) {
@@ -155,11 +158,11 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
 
         <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
-            {showOther ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
+            {alwaysShow ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium">
-              {showOther
+              {alwaysShow
                 ? translate(
                     'auto.components.sidebar.WorktreeVisibilityDialog.3e045d4cb8',
                     'Shown in sidebar'
@@ -170,7 +173,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
                   )}
             </div>
             <div className="text-xs text-muted-foreground">
-              {showOther
+              {alwaysShow
                 ? translate(
                     'auto.components.sidebar.WorktreeVisibilityDialog.8372e4bbd9',
                     '{{value0}} currently shown',
@@ -190,7 +193,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
             )}
             <Switch
               id={alwaysShowSwitchId}
-              checked={showOther}
+              checked={alwaysShow}
               disabled={busyPath !== null || isToggling || listState === 'checking'}
               onCheckedChange={(checked) => void handleAlwaysShowChange(checked)}
             />
@@ -239,7 +242,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
               <p className="text-xs text-muted-foreground">
                 {translate(
                   'auto.components.sidebar.WorktreeVisibilityDialog.9b53f7a160',
-                  "Choose which hidden worktrees to show in the sidebar. Agent-created worktrees aren't affected by Always show."
+                  'Choose which hidden worktrees to show individually.'
                 )}
               </p>
             </div>

@@ -12,6 +12,7 @@ import {
   getHiddenImportableExternalWorktrees,
   getNewExternalWorktreeInboxWorktrees,
   getVisibleExternalWorktrees,
+  getVisibleNonOrcaWorktrees,
   mergeExternalWorktreeInboxPaths,
   shouldOfferNewExternalWorktreeInbox
 } from './external-worktree-inbox'
@@ -173,6 +174,10 @@ describe('external worktree inbox', () => {
     })
 
     expect(getVisibleExternalWorktrees(detectedResult([visible, scratch]))).toEqual([visible])
+    expect(getVisibleNonOrcaWorktrees(detectedResult([visible, scratch]))).toEqual([
+      visible,
+      scratch
+    ])
   })
 
   it('lists hidden agent scratch among importable worktrees so recovery stays reachable', () => {
@@ -193,7 +198,7 @@ describe('external worktree inbox', () => {
     ])
 
     expect(getHiddenImportableExternalWorktrees(detected)).toEqual([hiddenScratch, hiddenExternal])
-    // Why: scratch stays out of the repo-wide discovery/visibility counts (#9388).
+    // Why: scratch stays out of discovery counts even though the dialog controls it.
     expect(getHiddenExternalWorktrees(detected)).toEqual([hiddenExternal])
   })
 

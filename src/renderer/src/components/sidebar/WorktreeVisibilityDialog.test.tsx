@@ -153,12 +153,12 @@ async function click(element: HTMLElement): Promise<void> {
 }
 
 describe('WorktreeVisibilityDialog', () => {
-  it('lists a hidden agent worktree the toggle cannot reveal, with a repo-relative path', async () => {
+  it('lists a hidden agent worktree with a repo-relative path', async () => {
     await renderDialog()
 
     expect(document.body.textContent).toContain('Hidden worktrees (1)')
     expect(document.body.textContent).toContain(
-      "Choose which hidden worktrees to show in the sidebar. Agent-created worktrees aren't affected by Always show."
+      'Choose which hidden worktrees to show individually.'
     )
     expect(document.body.textContent).toContain('scratch-1')
     expect(document.body.textContent).toContain('.claude/worktrees/scratch-1')
@@ -169,8 +169,7 @@ describe('WorktreeVisibilityDialog', () => {
   })
 
   it('recovers a hidden worktree per path through the existing import exception', async () => {
-    // Why: reproduces #10324 — the path is baselined (inbox silent) and the toggle
-    // never reveals scratch, so this row's Show is the only way back.
+    // Why: individual recovery remains available while the repo-wide policy is off.
     await renderDialog()
 
     await click(buttonWithText('Show'))
@@ -303,24 +302,43 @@ describe('WorktreeVisibilityDialog', () => {
     expect(document.querySelector('[role="alert"]')).toBeNull()
   })
 
-  it('presents the repo-wide policy as a persistent switch without counting scratch', async () => {
+  it('enables the persistent policy for regular and agent worktrees', async () => {
     await renderDialog()
 
     expect(document.body.textContent).toContain('Always show')
-    expect(document.body.textContent).toContain('0 worktrees currently hidden')
+    expect(document.body.textContent).toContain('1 worktree currently hidden')
     expect(alwaysShowSwitch().getAttribute('aria-checked')).toBe('false')
 
     await click(alwaysShowSwitch())
 
     expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
       externalWorktreeVisibility: 'show',
+      agentWorktreeVisibility: 'show',
       externalWorktreeDiscoverySuppressedAt: null
     })
     expect(mocks.state.closeModal).not.toHaveBeenCalled()
   })
 
-  it('turns the persistent policy off without closing the dialog', async () => {
+  it('keeps the combined switch off until the agent policy is explicitly enabled', async () => {
     mocks.state.repos = [makeRepo({ externalWorktreeVisibility: 'show' })]
+    await renderDialog()
+
+    expect(alwaysShowSwitch().getAttribute('aria-checked')).toBe('false')
+    expect(document.body.textContent).toContain('scratch-1')
+
+    await click(alwaysShowSwitch())
+
+    expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
+      externalWorktreeVisibility: 'show',
+      agentWorktreeVisibility: 'show',
+      externalWorktreeDiscoverySuppressedAt: null
+    })
+  })
+
+  it('turns the persistent policy off without closing the dialog', async () => {
+    mocks.state.repos = [
+      makeRepo({ externalWorktreeVisibility: 'show', agentWorktreeVisibility: 'show' })
+    ]
     await renderDialog()
 
     expect(document.body.textContent).toContain('0 worktrees currently shown')
@@ -329,7 +347,8 @@ describe('WorktreeVisibilityDialog', () => {
     await click(alwaysShowSwitch())
 
     expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
-      externalWorktreeVisibility: 'hide'
+      externalWorktreeVisibility: 'hide',
+      agentWorktreeVisibility: 'hide'
     })
     expect(mocks.state.closeModal).not.toHaveBeenCalled()
   })

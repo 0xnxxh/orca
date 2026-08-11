@@ -55,8 +55,7 @@ export function getVisibleExternalWorktrees(
 }
 
 function isUserFacingExternalWorktree(worktree: DetectedWorktree): boolean {
-  // Why: an explicit scratch import may be visible, but agent plumbing must
-  // stay outside repo-wide discovery and visibility controls (#9388).
+  // Why: agent plumbing stays outside the discovery inbox even when its separate visibility policy shows it.
   return (
     !worktree.selectedCheckout &&
     worktree.ownership !== 'orca-managed' &&
@@ -64,9 +63,7 @@ function isUserFacingExternalWorktree(worktree: DetectedWorktree): boolean {
   )
 }
 
-// Why: scratch is not user-facing, but the visibility toggle can never reveal
-// it (#9388), so an explicit per-path import is its only reachable path back
-// once hidden (#10324).
+// Why: per-path recovery remains available while either repo visibility policy is off.
 function isImportableExternalWorktree(worktree: DetectedWorktree): boolean {
   return !worktree.selectedCheckout && worktree.ownership !== 'orca-managed'
 }
@@ -79,6 +76,18 @@ export function getHiddenImportableExternalWorktrees(
   }
   return detected.worktrees.filter(
     (worktree) => !worktree.visible && isImportableExternalWorktree(worktree)
+  )
+}
+
+export function getVisibleNonOrcaWorktrees(
+  detected: DetectedWorktreeListResult | undefined
+): DetectedWorktree[] {
+  if (detected?.authoritative !== true) {
+    return []
+  }
+  return detected.worktrees.filter(
+    (worktree) =>
+      worktree.visible && !worktree.selectedCheckout && worktree.ownership !== 'orca-managed'
   )
 }
 
