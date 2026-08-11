@@ -163,7 +163,30 @@ function createRuntime(args: {
 }) {
   let groups = [...args.groups]
   let workspaces = [...args.workspaces]
+  let createdWorkspaceCount = 0
   const events = args.events ?? []
+  const createFolderWorkspace = vi.fn(
+    (input: {
+      projectGroupId: string
+      name?: string
+      folderPath?: string | null
+      connectionId?: string | null
+    }) => {
+      const group = groups.find((candidate) => candidate.id === input.projectGroupId)
+      const folderPath = input.folderPath ?? group?.parentPath
+      if (!group || !folderPath) {
+        throw new Error('Folder-backed project group not found.')
+      }
+      createdWorkspaceCount += 1
+      const workspace = {
+        ...makeWorkspace(`created-${createdWorkspaceCount}`, group.id, input.connectionId ?? null),
+        name: input.name ?? `${group.name} workspace`,
+        folderPath
+      }
+      workspaces = [workspace, ...workspaces]
+      return workspace
+    }
+  )
   const removeFolderWorkspace = vi.fn((workspaceId: string) => {
     const before = workspaces.length
     workspaces = workspaces.filter((workspace) => workspace.id !== workspaceId)
@@ -187,6 +210,7 @@ function createRuntime(args: {
     getRepos: () => [],
     getProjectGroups: () => groups,
     getFolderWorkspaces: () => workspaces,
+    createFolderWorkspace,
     removeFolderWorkspace,
     deleteProjectGroup,
     getAllWorktreeMeta: () => ({}),
@@ -207,6 +231,7 @@ function createRuntime(args: {
     runtime,
     groups: () => groups,
     workspaces: () => workspaces,
+    createFolderWorkspace,
     removeFolderWorkspace,
     deleteProjectGroup,
     onPtyStopped,
@@ -673,6 +698,41 @@ describe('folder workspace deletion teardown', () => {
     await expect(
       fixture.runtime.acquireWorktreeTerminalSpawn(folderWorkspaceKey(workspace.id))
     ).rejects.toThrow('folder_workspace_not_found')
+  })
+
+  it('serializes the final folder create mutation behind project-group deletion', async () => {
+    const workspace = makeWorkspace('workspace-a', ROOT_GROUP_ID)
+    const fixture = createRuntime({
+      groups: [makeGroup(ROOT_GROUP_ID)],
+      workspaces: [workspace],
+      localProvider: makeProvider([]).provider
+    })
+    const workspaceKey = folderWorkspaceKey(workspace.id)
+    const internals = fixture.runtime as unknown as {
+      terminalMutationTailByWorktreeId: Map<string, Promise<void>>
+    }
+    const releaseBlocker = await fixture.runtime.acquireWorktreeTerminalSpawn(workspaceKey)
+    const blockerTail = internals.terminalMutationTailByWorktreeId.get(workspaceKey)
+    const deletion = fixture.runtime.deleteProjectGroup(ROOT_GROUP_ID)
+    await vi.waitFor(() =>
+      expect(internals.terminalMutationTailByWorktreeId.get(workspaceKey)).not.toBe(blockerTail)
+    )
+
+    const creation = fixture.runtime.createFolderWorkspace({
+      projectGroupId: ROOT_GROUP_ID,
+      folderPath: process.cwd(),
+      connectionId: null
+    })
+    void creation.catch(() => {})
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(fixture.createFolderWorkspace).not.toHaveBeenCalled()
+
+    releaseBlocker()
+
+    await expect(deletion).resolves.toEqual({ deleted: true })
+    await expect(creation).rejects.toThrow('Folder-backed project group not found.')
+    expect(fixture.createFolderWorkspace).toHaveBeenCalledTimes(1)
+    expect(fixture.workspaces()).toEqual([])
   })
 
   it('does not spawn a queued background terminal after deletion returns', async () => {

@@ -1,7 +1,8 @@
-import type { TerminalLayoutSnapshot, TerminalTab } from '../../../../shared/types'
+import type { TerminalLayoutSnapshot } from '../../../../shared/types'
 import { isTerminalLeafId, makePaneKey } from '../../../../shared/stable-pane-id'
 import type { AppState } from '../types'
 import {
+  collectFolderWorkspaceTerminalTabPtyIds,
   folderWorkspaceTerminalOwnerOwnsPty,
   type FolderWorkspaceTerminalOwner
 } from './folder-workspace-terminal-owner'
@@ -27,22 +28,6 @@ export type FolderWorkspaceTerminalBindingPruneResult = {
   removedPaneKeys: string[]
   removedPtyBindings: { ptyId: string; tabId: string }[]
   removedPtyIds: string[]
-}
-
-function collectBoundPtyIds(state: TerminalBindingState, tab: TerminalTab): string[] {
-  return [
-    ...new Set(
-      [
-        ...(state.ptyIdsByTabId[tab.id] ?? []),
-        tab.ptyId,
-        ...Object.values(state.terminalLayoutsByTabId[tab.id]?.ptyIdsByLeafId ?? {}),
-        state.lastKnownRelayPtyIdByTabId[tab.id],
-        state.deferredSshSessionIdsByTabId[tab.id],
-        state.directSshLivePtyBindingByTabId[tab.id]?.ptyId,
-        state.pendingReconnectPtyIdByTabId[tab.id]
-      ].filter((ptyId): ptyId is string => Boolean(ptyId))
-    )
-  ]
 }
 
 function countLayoutLeaves(node: TerminalLayoutSnapshot['root']): number {
@@ -120,7 +105,7 @@ export function pruneFolderWorkspaceTerminalBindings(
     nextRetries = deleteOwnedSshRecovery(nextRetries, tab.id, owner) ?? nextRetries
     nextLiveBindings = deleteOwnedSshRecovery(nextLiveBindings, tab.id, owner) ?? nextLiveBindings
     nextRetryHistory = deleteOwnedSshRecovery(nextRetryHistory, tab.id, owner) ?? nextRetryHistory
-    const boundPtyIds = collectBoundPtyIds(state, tab)
+    const boundPtyIds = collectFolderWorkspaceTerminalTabPtyIds(state, tab)
     const removed = boundPtyIds.filter((ptyId) => folderWorkspaceTerminalOwnerOwnsPty(owner, ptyId))
     if (removed.length === 0) {
       continue

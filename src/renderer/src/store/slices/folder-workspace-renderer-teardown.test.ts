@@ -25,6 +25,7 @@ vi.mock('@/components/terminal-pane/terminal-parked-watcher-registry', () => ({
 const folderWorkspacesDelete = vi.fn()
 const folderWorkspacesList = vi.fn()
 const projectGroupsDelete = vi.fn()
+const projectGroupsList = vi.fn()
 const runtimeEnvironmentCall = vi.fn()
 
 const rootGroup: ProjectGroup = {
@@ -145,19 +146,70 @@ beforeEach(() => {
   folderWorkspacesDelete.mockResolvedValue(true)
   folderWorkspacesList.mockResolvedValue([])
   projectGroupsDelete.mockResolvedValue(true)
+  projectGroupsList.mockResolvedValue([])
   vi.stubGlobal('window', {
     api: {
       folderWorkspaces: {
         delete: folderWorkspacesDelete,
         list: folderWorkspacesList
       },
-      projectGroups: { delete: projectGroupsDelete },
+      projectGroups: { delete: projectGroupsDelete, list: projectGroupsList },
       runtimeEnvironments: { call: runtimeEnvironmentCall }
     }
   })
 })
 
 describe('folder workspace renderer teardown', () => {
+  it('finishes direct deletion cleanup after a newer empty catalog refresh', async () => {
+    const workspace = makeFolderWorkspace('refresh-during-delete', rootGroup.id)
+    const workspaceKey = folderWorkspaceKey(workspace.id)
+    const store = createTestStore()
+    store.setState({ projectGroups: [rootGroup], folderWorkspaces: [workspace] })
+    seedTerminalRows(store, [workspace])
+    const teardown = instrumentRendererTeardown(store)
+    let resolveShutdown: (() => void) | undefined
+    teardown.shutdownWorktreeTerminals.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveShutdown = resolve
+        })
+    )
+
+    const deletion = store.getState().deleteFolderWorkspace(workspace.id)
+    await vi.waitFor(() => expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledOnce())
+    await store.getState().fetchFolderWorkspaces({ runtimeEnvironmentId: null })
+    resolveShutdown?.()
+    await deletion
+
+    expect(teardown.purgeWorktreeTerminalState).toHaveBeenCalledWith([workspaceKey])
+    expect(store.getState().tabsByWorktree[workspaceKey]).toBeUndefined()
+  })
+
+  it('finishes group deletion cleanup after a newer empty group refresh', async () => {
+    const workspace = makeFolderWorkspace('group-refresh-during-delete', rootGroup.id)
+    const workspaceKey = folderWorkspaceKey(workspace.id)
+    const store = createTestStore()
+    store.setState({ projectGroups: [rootGroup], folderWorkspaces: [workspace] })
+    seedTerminalRows(store, [workspace])
+    const teardown = instrumentRendererTeardown(store)
+    let resolveShutdown: (() => void) | undefined
+    teardown.shutdownWorktreeTerminals.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveShutdown = resolve
+        })
+    )
+
+    const deletion = store.getState().deleteProjectGroup(rootGroup.id)
+    await vi.waitFor(() => expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledOnce())
+    await store.getState().fetchProjectGroups({ runtimeEnvironmentId: null })
+    resolveShutdown?.()
+    await deletion
+
+    expect(teardown.purgeWorktreeTerminalState).toHaveBeenCalledWith([workspaceKey])
+    expect(store.getState().tabsByWorktree[workspaceKey]).toBeUndefined()
+  })
+
   it('retires the exact folder scope after direct deletion and preserves its sibling', async () => {
     const removedWorkspace = makeFolderWorkspace('removed', rootGroup.id)
     const siblingWorkspace = makeFolderWorkspace('sibling', rootGroup.id)
@@ -176,10 +228,14 @@ describe('folder workspace renderer teardown', () => {
     await expect(store.getState().deleteFolderWorkspace(removedWorkspace.id)).resolves.toBe(true)
 
     expect(teardown.shutdownWorktreeBrowsers).toHaveBeenCalledWith(removedKey)
-    expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledWith(removedKey, {
-      shutdownReason: 'remove-worktree',
-      backendOwnsPtyTeardown: true
-    })
+    expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledWith(
+      removedKey,
+      expect.objectContaining({
+        shutdownReason: 'remove-worktree',
+        backendOwnsPtyTeardown: true,
+        isCurrent: expect.any(Function)
+      })
+    )
     expect(disposeRemovedWorktreeParkedTerminalWatchers).toHaveBeenCalledWith(removedKey, [
       'pty-removed'
     ])
@@ -213,8 +269,22 @@ describe('folder workspace renderer teardown', () => {
 
     expect(teardown.shutdownWorktreeBrowsers.mock.calls).toEqual([[directKey], [childKey]])
     expect(teardown.shutdownWorktreeTerminals.mock.calls).toEqual([
-      [directKey, { shutdownReason: 'remove-worktree', backendOwnsPtyTeardown: true }],
-      [childKey, { shutdownReason: 'remove-worktree', backendOwnsPtyTeardown: true }]
+      [
+        directKey,
+        expect.objectContaining({
+          shutdownReason: 'remove-worktree',
+          backendOwnsPtyTeardown: true,
+          isCurrent: expect.any(Function)
+        })
+      ],
+      [
+        childKey,
+        expect.objectContaining({
+          shutdownReason: 'remove-worktree',
+          backendOwnsPtyTeardown: true,
+          isCurrent: expect.any(Function)
+        })
+      ]
     ])
     expect(disposeRemovedWorktreeParkedTerminalWatchers.mock.calls).toEqual([
       [directKey, ['pty-direct']],
@@ -245,10 +315,14 @@ describe('folder workspace renderer teardown', () => {
     await store.getState().fetchFolderWorkspaces({ runtimeEnvironmentId: null })
 
     expect(teardown.shutdownWorktreeBrowsers).toHaveBeenCalledWith(staleKey)
-    expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledWith(staleKey, {
-      shutdownReason: 'remove-worktree',
-      backendOwnsPtyTeardown: true
-    })
+    expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledWith(
+      staleKey,
+      expect.objectContaining({
+        shutdownReason: 'remove-worktree',
+        backendOwnsPtyTeardown: true,
+        isCurrent: expect.any(Function)
+      })
+    )
     expect(teardown.purgeWorktreeTerminalState).toHaveBeenCalledWith([staleKey])
     expect(store.getState().folderWorkspaces.map((workspace) => workspace.id)).toEqual([
       siblingWorkspace.id
@@ -291,10 +365,14 @@ describe('folder workspace renderer teardown', () => {
       })
     ])
     expect(events).toEqual(['close', 'purge'])
-    expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledWith(workspaceKey, {
-      shutdownReason: 'remove-worktree',
-      backendOwnsPtyTeardown: true
-    })
+    expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledWith(
+      workspaceKey,
+      expect.objectContaining({
+        shutdownReason: 'remove-worktree',
+        backendOwnsPtyTeardown: true,
+        isCurrent: expect.any(Function)
+      })
+    )
     expect(store.getState().tabsByWorktree[workspaceKey]).toBeUndefined()
   })
 
@@ -458,6 +536,11 @@ describe('folder workspace renderer teardown', () => {
       store.getState().deleteFolderWorkspace(owner.id, { hostId: ownerHostId })
     ).resolves.toBe(true)
 
+    expect(folderWorkspacesDelete).toHaveBeenCalledWith({
+      folderWorkspaceId: owner.id,
+      executionHostId: ownerHostId,
+      preserveRendererWorkspaceKey: true
+    })
     expect(teardown.purgeWorktreeTerminalState).not.toHaveBeenCalled()
     expect(store.getState().folderWorkspaces).toEqual([sibling])
     expect(store.getState().tabsByWorktree[workspaceKey]).toEqual([siblingTab, localTab])
@@ -466,120 +549,249 @@ describe('folder workspace renderer teardown', () => {
     expect(store.getState().ptyIdsByTabId[localTab.id]).toEqual([localPtyId])
   })
 
-  it('retires only the active owner unbound tab and retargets a same-key sibling', async () => {
-    const environmentId = 'env-unbound-owner'
-    const siblingEnvironmentId = 'env-unbound-sibling'
-    const ownerHostId = toRuntimeExecutionHostId(environmentId)
-    const siblingHostId = toRuntimeExecutionHostId(siblingEnvironmentId)
-    const owner = makeFolderWorkspace('unbound-shared', rootGroup.id, {
+  it('removes same-key browser and editor state only for the deleted owner', async () => {
+    const ownerTargetId = 'ssh-content-owner'
+    const siblingTargetId = 'ssh-content-sibling'
+    const ownerHostId = toSshExecutionHostId(ownerTargetId)
+    const siblingHostId = toSshExecutionHostId(siblingTargetId)
+    const owner = makeFolderWorkspace('content-shared', rootGroup.id, {
+      connectionId: ownerTargetId,
       executionHostId: ownerHostId
     })
-    const sibling = makeFolderWorkspace('unbound-shared', rootGroup.id, {
-      name: 'Unbound sibling',
+    const sibling = makeFolderWorkspace('content-shared', rootGroup.id, {
+      connectionId: siblingTargetId,
       executionHostId: siblingHostId
     })
     const workspaceKey = folderWorkspaceKey(owner.id)
-    const ownerTab = makeTab({ id: 'tab-unbound-owner', worktreeId: workspaceKey })
-    const siblingTab = makeTab({ id: 'tab-unbound-sibling', worktreeId: workspaceKey })
-    mockRuntimeFolderCatalog(true)
+    const ownerBrowser = {
+      id: 'browser-owner',
+      worktreeId: workspaceKey,
+      workspaceExecutionHostId: ownerHostId
+    }
+    const siblingBrowser = {
+      id: 'browser-sibling',
+      worktreeId: workspaceKey,
+      workspaceExecutionHostId: siblingHostId
+    }
+    const ownerPage = {
+      id: 'page-owner',
+      workspaceId: ownerBrowser.id,
+      worktreeId: workspaceKey,
+      workspaceExecutionHostId: ownerHostId
+    }
+    const siblingPage = {
+      id: 'page-sibling',
+      workspaceId: siblingBrowser.id,
+      worktreeId: workspaceKey,
+      workspaceExecutionHostId: siblingHostId
+    }
+    const ownerFile = {
+      id: 'file-owner',
+      filePath: '/owner/file.ts',
+      worktreeId: workspaceKey,
+      externalSshTargetId: ownerTargetId
+    }
+    const siblingFile = {
+      id: 'file-sibling',
+      filePath: '/sibling/file.ts',
+      worktreeId: workspaceKey,
+      externalSshTargetId: siblingTargetId
+    }
+    const ambiguousLegacyFile = {
+      id: 'file-legacy-null',
+      filePath: '/legacy/file.ts',
+      worktreeId: workspaceKey,
+      runtimeEnvironmentId: null
+    }
+    const ownerGroupId = 'group-owner-content'
+    const siblingGroupId = 'group-sibling-content'
+    const unifiedTabs = [
+      {
+        id: 'unified-browser-owner',
+        entityId: ownerBrowser.id,
+        groupId: ownerGroupId,
+        worktreeId: workspaceKey,
+        contentType: 'browser'
+      },
+      {
+        id: 'unified-file-owner',
+        entityId: ownerFile.id,
+        groupId: ownerGroupId,
+        worktreeId: workspaceKey,
+        contentType: 'editor'
+      },
+      {
+        id: 'unified-browser-sibling',
+        entityId: siblingBrowser.id,
+        groupId: siblingGroupId,
+        worktreeId: workspaceKey,
+        contentType: 'browser'
+      },
+      {
+        id: 'unified-file-sibling',
+        entityId: siblingFile.id,
+        groupId: siblingGroupId,
+        worktreeId: workspaceKey,
+        contentType: 'editor'
+      }
+    ]
+    const groups = [
+      {
+        id: ownerGroupId,
+        worktreeId: workspaceKey,
+        activeTabId: 'unified-file-owner',
+        tabOrder: ['unified-browser-owner', 'unified-file-owner'],
+        recentTabIds: ['unified-browser-owner', 'unified-file-owner']
+      },
+      {
+        id: siblingGroupId,
+        worktreeId: workspaceKey,
+        activeTabId: 'unified-file-sibling',
+        tabOrder: ['unified-browser-sibling', 'unified-file-sibling'],
+        recentTabIds: ['unified-browser-sibling', 'unified-file-sibling']
+      }
+    ]
     const store = createTestStore()
     store.setState({
-      projectGroups: [
-        { ...rootGroup, executionHostId: ownerHostId },
-        { ...rootGroup, executionHostId: siblingHostId }
-      ],
+      projectGroups: [rootGroup],
+      folderWorkspaces: [owner, sibling],
+      browserTabsByWorktree: {
+        [workspaceKey]: [ownerBrowser, siblingBrowser] as never
+      },
+      browserPagesByWorkspace: {
+        [ownerBrowser.id]: [ownerPage] as never,
+        [siblingBrowser.id]: [siblingPage] as never
+      },
+      openFiles: [ownerFile, siblingFile, ambiguousLegacyFile] as never,
+      unifiedTabsByWorktree: { [workspaceKey]: unifiedTabs as never },
+      groupsByWorktree: { [workspaceKey]: groups },
+      layoutByWorktree: {
+        [workspaceKey]: {
+          type: 'split',
+          direction: 'horizontal',
+          first: { type: 'leaf', groupId: ownerGroupId },
+          second: { type: 'leaf', groupId: siblingGroupId }
+        }
+      },
+      activeGroupIdByWorktree: { [workspaceKey]: ownerGroupId },
+      activeBrowserTabId: ownerBrowser.id,
+      activeBrowserTabIdByWorktree: { [workspaceKey]: ownerBrowser.id },
+      activeFileId: ownerFile.id,
+      activeFileIdByWorktree: { [workspaceKey]: ownerFile.id },
+      tabBarOrderByWorktree: {
+        [workspaceKey]: [
+          ownerBrowser.id,
+          ownerFile.id,
+          siblingBrowser.id,
+          siblingFile.id,
+          ...unifiedTabs.map((tab) => tab.id)
+        ]
+      }
+    })
+    const teardown = instrumentRendererTeardown(store)
+
+    await expect(
+      store.getState().deleteFolderWorkspace(owner.id, { hostId: ownerHostId })
+    ).resolves.toBe(true)
+
+    const state = store.getState()
+    expect(teardown.purgeWorktreeTerminalState).not.toHaveBeenCalled()
+    expect(state.folderWorkspaces).toEqual([sibling])
+    expect(state.browserTabsByWorktree[workspaceKey]).toEqual([siblingBrowser])
+    expect(state.browserPagesByWorkspace[ownerBrowser.id]).toBeUndefined()
+    expect(state.browserPagesByWorkspace[siblingBrowser.id]).toEqual([siblingPage])
+    expect(state.openFiles).toEqual([siblingFile, ambiguousLegacyFile])
+    expect(state.unifiedTabsByWorktree[workspaceKey]).toEqual(unifiedTabs.slice(2))
+    expect(state.groupsByWorktree[workspaceKey]).toEqual([groups[1]])
+    expect(state.layoutByWorktree[workspaceKey]).toEqual({
+      type: 'leaf',
+      groupId: siblingGroupId
+    })
+    expect(state.activeGroupIdByWorktree[workspaceKey]).toBe(siblingGroupId)
+    expect(state.activeBrowserTabId).toBe(siblingBrowser.id)
+    expect(state.activeFileId).toBe(siblingFile.id)
+    expect(state.tabBarOrderByWorktree[workspaceKey]).toEqual([
+      siblingBrowser.id,
+      siblingFile.id,
+      'unified-browser-sibling',
+      'unified-file-sibling'
+    ])
+  })
+
+  it('keeps an empty same-key sibling selected after closing the last owner surface', async () => {
+    const ownerTargetId = 'ssh-last-surface-owner'
+    const siblingTargetId = 'ssh-empty-sibling'
+    const ownerHostId = toSshExecutionHostId(ownerTargetId)
+    const siblingHostId = toSshExecutionHostId(siblingTargetId)
+    const owner = makeFolderWorkspace('last-surface-shared', rootGroup.id, {
+      connectionId: ownerTargetId,
+      executionHostId: ownerHostId
+    })
+    const sibling = makeFolderWorkspace(owner.id, rootGroup.id, {
+      connectionId: siblingTargetId,
+      executionHostId: siblingHostId
+    })
+    const workspaceKey = folderWorkspaceKey(owner.id)
+    const browserWorkspace = {
+      id: 'last-owner-browser',
+      worktreeId: workspaceKey,
+      workspaceExecutionHostId: ownerHostId
+    }
+    const browserPage = {
+      id: 'last-owner-page',
+      workspaceId: browserWorkspace.id,
+      worktreeId: workspaceKey,
+      workspaceExecutionHostId: ownerHostId
+    }
+    const unifiedTab = {
+      id: 'last-owner-unified',
+      entityId: browserWorkspace.id,
+      groupId: 'last-owner-group',
+      worktreeId: workspaceKey,
+      contentType: 'browser'
+    }
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [rootGroup],
       folderWorkspaces: [owner, sibling],
       activeWorktreeId: workspaceKey,
       activeWorkspaceKey: workspaceKey,
       activeWorkspaceExecutionHostId: ownerHostId,
-      activeTabId: ownerTab.id,
-      tabsByWorktree: { [workspaceKey]: [ownerTab, siblingTab] }
+      activeBrowserTabId: browserWorkspace.id,
+      activeBrowserTabIdByWorktree: { [workspaceKey]: browserWorkspace.id },
+      activeTabType: 'browser',
+      activeTabTypeByWorktree: { [workspaceKey]: 'browser' },
+      browserTabsByWorktree: { [workspaceKey]: [browserWorkspace] as never },
+      browserPagesByWorkspace: { [browserWorkspace.id]: [browserPage] as never },
+      unifiedTabsByWorktree: { [workspaceKey]: [unifiedTab] as never },
+      groupsByWorktree: {
+        [workspaceKey]: [
+          {
+            id: unifiedTab.groupId,
+            worktreeId: workspaceKey,
+            activeTabId: unifiedTab.id,
+            tabOrder: [unifiedTab.id],
+            recentTabIds: [unifiedTab.id]
+          }
+        ]
+      },
+      layoutByWorktree: {
+        [workspaceKey]: { type: 'leaf', groupId: unifiedTab.groupId }
+      },
+      activeGroupIdByWorktree: { [workspaceKey]: unifiedTab.groupId }
     })
-    const teardown = instrumentRendererTeardown(store)
+    instrumentRendererTeardown(store)
 
-    await store.getState().fetchFolderWorkspaces({ runtimeEnvironmentId: environmentId })
+    await expect(
+      store.getState().deleteFolderWorkspace(owner.id, { hostId: ownerHostId })
+    ).resolves.toBe(true)
 
-    expect(teardown.purgeWorktreeTerminalState).not.toHaveBeenCalled()
-    expect(store.getState().folderWorkspaces).toEqual([sibling])
-    expect(store.getState().tabsByWorktree[workspaceKey]).toEqual([siblingTab])
-    expect(store.getState().activeWorkspaceExecutionHostId).toBe(siblingHostId)
-  })
-
-  it('preserves an active same-key sibling unbound tab over stale restored ownership', async () => {
-    const environmentId = 'env-stale-restored-owner'
-    const siblingEnvironmentId = 'env-active-sibling'
-    const ownerHostId = toRuntimeExecutionHostId(environmentId)
-    const siblingHostId = toRuntimeExecutionHostId(siblingEnvironmentId)
-    const owner = makeFolderWorkspace('stale-owner-shared', rootGroup.id, {
-      executionHostId: ownerHostId
-    })
-    const sibling = makeFolderWorkspace('stale-owner-shared', rootGroup.id, {
-      name: 'Active sibling',
-      executionHostId: siblingHostId
-    })
-    const workspaceKey = folderWorkspaceKey(owner.id)
-    const siblingTab = makeTab({ id: 'tab-active-sibling', worktreeId: workspaceKey })
-    mockRuntimeFolderCatalog(true)
-    const store = createTestStore()
-    store.setState({
-      projectGroups: [
-        { ...rootGroup, executionHostId: ownerHostId },
-        { ...rootGroup, executionHostId: siblingHostId }
-      ],
-      folderWorkspaces: [owner, sibling],
+    expect(store.getState()).toMatchObject({
       activeWorktreeId: workspaceKey,
       activeWorkspaceKey: workspaceKey,
       activeWorkspaceExecutionHostId: siblingHostId,
-      activeTabId: siblingTab.id,
-      restoredRuntimeHostIdByWorkspaceSessionKey: { [workspaceKey]: ownerHostId },
-      tabsByWorktree: { [workspaceKey]: [siblingTab] }
+      activeBrowserTabId: null
     })
-    const teardown = instrumentRendererTeardown(store)
-
-    await store.getState().fetchFolderWorkspaces({ runtimeEnvironmentId: environmentId })
-
-    expect(teardown.purgeWorktreeTerminalState).not.toHaveBeenCalled()
-    expect(store.getState().folderWorkspaces).toEqual([sibling])
-    expect(store.getState().tabsByWorktree[workspaceKey]).toEqual([siblingTab])
-    expect(store.getState().activeWorkspaceExecutionHostId).toBe(siblingHostId)
-  })
-
-  it('uses restored ownership for an active unbound tab with no explicit host', async () => {
-    const environmentId = 'env-restored-owner'
-    const siblingEnvironmentId = 'env-restored-sibling'
-    const ownerHostId = toRuntimeExecutionHostId(environmentId)
-    const siblingHostId = toRuntimeExecutionHostId(siblingEnvironmentId)
-    const owner = makeFolderWorkspace('restored-owner-shared', rootGroup.id, {
-      executionHostId: ownerHostId
-    })
-    const sibling = makeFolderWorkspace('restored-owner-shared', rootGroup.id, {
-      name: 'Restored sibling',
-      executionHostId: siblingHostId
-    })
-    const workspaceKey = folderWorkspaceKey(owner.id)
-    const ownerTab = makeTab({ id: 'tab-restored-owner', worktreeId: workspaceKey })
-    const siblingTab = makeTab({ id: 'tab-restored-sibling', worktreeId: workspaceKey })
-    mockRuntimeFolderCatalog(true)
-    const store = createTestStore()
-    store.setState({
-      projectGroups: [
-        { ...rootGroup, executionHostId: ownerHostId },
-        { ...rootGroup, executionHostId: siblingHostId }
-      ],
-      folderWorkspaces: [owner, sibling],
-      activeWorktreeId: workspaceKey,
-      activeWorkspaceKey: workspaceKey,
-      activeWorkspaceExecutionHostId: null,
-      activeTabId: ownerTab.id,
-      restoredRuntimeHostIdByWorkspaceSessionKey: { [workspaceKey]: ownerHostId },
-      tabsByWorktree: { [workspaceKey]: [ownerTab, siblingTab] }
-    })
-
-    await store.getState().fetchFolderWorkspaces({ runtimeEnvironmentId: environmentId })
-
-    expect(store.getState().folderWorkspaces).toEqual([sibling])
-    expect(store.getState().tabsByWorktree[workspaceKey]).toEqual([siblingTab])
-    expect(store.getState().activeWorkspaceExecutionHostId).toBe(siblingHostId)
   })
 
   it('leaves terminal teardown to a capable runtime after catalog removal', async () => {
@@ -605,10 +817,14 @@ describe('folder workspace renderer teardown', () => {
     expect(
       runtimeEnvironmentCall.mock.calls.some(([request]) => request.method === 'terminal.close')
     ).toBe(false)
-    expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledWith(workspaceKey, {
-      shutdownReason: 'remove-worktree',
-      backendOwnsPtyTeardown: true
-    })
+    expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledWith(
+      workspaceKey,
+      expect.objectContaining({
+        shutdownReason: 'remove-worktree',
+        backendOwnsPtyTeardown: true,
+        isCurrent: expect.any(Function)
+      })
+    )
     expect(teardown.purgeWorktreeTerminalState).toHaveBeenCalledWith([workspaceKey])
   })
 })

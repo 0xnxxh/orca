@@ -7,7 +7,10 @@ import {
   type RuntimeEnvironmentCallRequest
 } from '../../runtime/runtime-compatibility-test-fixture'
 import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rpc-client'
-import { FOLDER_WORKSPACE_BACKEND_TEARDOWN_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
+import {
+  FOLDER_WORKSPACE_BACKEND_TEARDOWN_RUNTIME_CAPABILITY,
+  FOLDER_WORKSPACE_OWNER_QUALIFIED_DELETE_RUNTIME_CAPABILITY
+} from '../../../../shared/protocol-version'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
 
 const remoteRepo: Repo = {
@@ -100,6 +103,10 @@ describe('project group deletion store routing', () => {
 
     await expect(store.getState().deleteProjectGroup(projectGroup.id)).resolves.toBe(true)
 
+    expect(projectGroupsDelete).toHaveBeenCalledWith({
+      groupId: projectGroup.id,
+      executionHostId: 'local'
+    })
     expect(store.getState().projectGroups.map((group) => group.id)).toEqual([siblingGroup.id])
     expect(store.getState().folderWorkspaces).toEqual([])
     expect(store.getState().repos).toMatchObject([
@@ -163,10 +170,14 @@ describe('project group deletion store routing', () => {
     expect(store.getState().repos).toMatchObject([{ projectGroupId: null }])
     expect(store.getState().tabsByWorktree[workspaceKey]).toBeUndefined()
     expect(shutdownWorktreeBrowsers).toHaveBeenCalledWith(workspaceKey)
-    expect(shutdownWorktreeTerminals).toHaveBeenCalledWith(workspaceKey, {
-      shutdownReason: 'remove-worktree',
-      backendOwnsPtyTeardown: true
-    })
+    expect(shutdownWorktreeTerminals).toHaveBeenCalledWith(
+      workspaceKey,
+      expect.objectContaining({
+        shutdownReason: 'remove-worktree',
+        backendOwnsPtyTeardown: true,
+        isCurrent: expect.any(Function)
+      })
+    )
   })
 
   it('uses the remote delete response shape before mutating local state', async () => {
@@ -180,21 +191,59 @@ describe('project group deletion store routing', () => {
     const store = createTestStore()
     store.setState({
       settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
-      projectGroups: [projectGroup],
+      projectGroups: [{ ...projectGroup, executionHostId: 'runtime:env-1' }],
       repos: [groupedRepo]
     })
 
     await expect(store.getState().deleteProjectGroup(projectGroup.id)).resolves.toBe(false)
 
-    expect(store.getState().projectGroups).toEqual([projectGroup])
+    expect(store.getState().projectGroups).toEqual([
+      { ...projectGroup, executionHostId: 'runtime:env-1' }
+    ])
     expect(store.getState().repos).toEqual([groupedRepo])
     expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
       selector: 'env-1',
       method: 'projectGroup.delete',
-      params: { groupId: projectGroup.id },
-      timeoutMs: 15_000
+      params: { groupId: projectGroup.id, executionHostId: 'local' },
+      timeoutMs: 15_000,
+      expectedEnvironmentPairingRevision: undefined
     })
     expect(projectGroupsDelete).not.toHaveBeenCalled()
+  })
+
+  it('deletes a unique group through an owner-unqualified legacy runtime', async () => {
+    const oldRuntimeStatus = createCompatibleRuntimeStatusResponse('runtime-remote')
+    if (oldRuntimeStatus.ok) {
+      oldRuntimeStatus.result.capabilities = oldRuntimeStatus.result.capabilities?.filter(
+        (capability) => capability !== FOLDER_WORKSPACE_OWNER_QUALIFIED_DELETE_RUNTIME_CAPABILITY
+      )
+    }
+    runtimeEnvironmentTransportCall.mockImplementation((args: RuntimeEnvironmentCallRequest) =>
+      args.method === 'status.get' ? oldRuntimeStatus : runtimeEnvironmentCall(args)
+    )
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-delete-group',
+      ok: true,
+      result: { deleted: true },
+      _meta: { runtimeId: 'runtime-remote' }
+    })
+    const store = createTestStore()
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
+      projectGroups: [{ ...projectGroup, executionHostId: 'runtime:env-1' }]
+    })
+
+    await expect(store.getState().deleteProjectGroup(projectGroup.id)).resolves.toBe(true)
+
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
+      selector: 'env-1',
+      method: 'projectGroup.delete',
+      params: { groupId: projectGroup.id },
+      timeoutMs: 15_000,
+      expectedEnvironmentPairingRevision: undefined
+    })
+    expect(projectGroupsDelete).not.toHaveBeenCalled()
+    expect(store.getState().projectGroups).toEqual([])
   })
 
   it('closes exact descendant folder terminals before deleting through a legacy runtime', async () => {
@@ -235,7 +284,7 @@ describe('project group deletion store routing', () => {
     const store = createTestStore()
     store.setState({
       settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
-      projectGroups: [projectGroup],
+      projectGroups: [{ ...projectGroup, executionHostId: 'runtime:env-1' }],
       folderWorkspaces: [folderWorkspace],
       tabsByWorktree: { [workspaceKey]: [tab] },
       ptyIdsByTabId: { [tab.id]: [ptyId] }
@@ -361,7 +410,9 @@ describe('project group deletion store routing', () => {
         ([request]) => request.method === 'projectGroup.delete'
       )?.[0].params
     ).toEqual({
-      groupId: targetRoot.id
+      groupId: targetRoot.id,
+      executionHostId: 'local',
+      preserveRendererWorkspaceIds: [targetWorkspace.id]
     })
     expect(store.getState().projectGroups).toEqual([siblingRoot, siblingChild])
     expect(store.getState().folderWorkspaces).toEqual([siblingWorkspace])
@@ -370,6 +421,124 @@ describe('project group deletion store routing', () => {
     expect(store.getState().ptyIdsByTabId[targetTab.id]).toBeUndefined()
     expect(store.getState().ptyIdsByTabId[siblingTab.id]).toEqual([siblingPtyId])
     expect(store.getState().activeWorkspaceExecutionHostId).toBe(siblingRoot.executionHostId)
+  })
+
+  it.each([
+    ['forward', false],
+    ['reverse', true]
+  ])('deletes only one same-runtime physical subtree in %s order', async (_label, reverse) => {
+    const localRoot = {
+      ...projectGroup,
+      id: 'shared-root',
+      name: 'Local root',
+      connectionId: null,
+      executionHostId: 'runtime:env-1' as const,
+      runtimeSourceExecutionHostId: 'local' as const
+    }
+    const sshRoot = {
+      ...projectGroup,
+      id: localRoot.id,
+      name: 'SSH root',
+      connectionId: 'builder',
+      executionHostId: 'runtime:env-1' as const,
+      runtimeSourceExecutionHostId: 'ssh:builder' as const
+    }
+    const localChild = {
+      ...localRoot,
+      id: 'shared-child',
+      name: 'Local child',
+      parentGroupId: localRoot.id
+    }
+    const sshChild = {
+      ...sshRoot,
+      id: localChild.id,
+      name: 'SSH child',
+      parentGroupId: sshRoot.id
+    }
+    const localFolder: FolderWorkspace = {
+      id: 'shared-folder',
+      projectGroupId: localChild.id,
+      name: 'Local folder',
+      folderPath: '/local/folder',
+      connectionId: null,
+      executionHostId: 'runtime:env-1',
+      runtimeSourceExecutionHostId: 'local',
+      linkedTask: null,
+      comment: '',
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 0,
+      lastActivityAt: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const sshFolder: FolderWorkspace = {
+      ...localFolder,
+      name: 'SSH folder',
+      folderPath: '/ssh/folder',
+      connectionId: 'builder',
+      runtimeSourceExecutionHostId: 'ssh:builder'
+    }
+    const localRepo = {
+      ...remoteRepo,
+      id: 'local-repo',
+      connectionId: null,
+      executionHostId: 'runtime:env-1' as const,
+      projectGroupId: localChild.id
+    }
+    const sshRepo = {
+      ...remoteRepo,
+      id: 'ssh-repo',
+      connectionId: 'builder',
+      executionHostId: 'runtime:env-1' as const,
+      projectGroupId: sshChild.id
+    }
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-delete-group',
+      ok: true,
+      result: { deleted: true },
+      _meta: { runtimeId: 'runtime-remote' }
+    })
+    const store = createTestStore()
+    store.setState({
+      projectGroups: reverse
+        ? [sshChild, localChild, sshRoot, localRoot]
+        : [localRoot, sshRoot, localChild, sshChild],
+      folderWorkspaces: reverse ? [sshFolder, localFolder] : [localFolder, sshFolder],
+      repos: reverse ? [sshRepo, localRepo] : [localRepo, sshRepo]
+    })
+
+    await expect(
+      store.getState().deleteProjectGroupWithContainedProjects(sshRoot.id, {
+        hostId: 'runtime:env-1',
+        sourceExecutionHostId: 'ssh:builder',
+        removeContainedProjects: false
+      })
+    ).resolves.toMatchObject({ status: 'deleted-group', requestedProjectIds: [] })
+
+    expect(
+      runtimeEnvironmentCall.mock.calls.find(
+        ([request]) => request.method === 'projectGroup.delete'
+      )?.[0].params
+    ).toEqual({
+      groupId: sshRoot.id,
+      executionHostId: 'ssh:builder',
+      preserveRendererWorkspaceIds: [sshFolder.id]
+    })
+    expect(
+      store
+        .getState()
+        .projectGroups.map((group) => group.name)
+        .sort()
+    ).toEqual([localChild.name, localRoot.name])
+    expect(store.getState().folderWorkspaces).toEqual([localFolder])
+    expect(
+      Object.fromEntries(store.getState().repos.map((repo) => [repo.id, repo.projectGroupId]))
+    ).toEqual({
+      [localRepo.id]: localChild.id,
+      [sshRepo.id]: null
+    })
   })
 
   it('deletes only the group when contained project removal is not requested', async () => {

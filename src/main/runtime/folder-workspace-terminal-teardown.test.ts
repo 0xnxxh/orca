@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { FolderWorkspace, ProjectGroup, Repo } from '../../shared/types'
 import type { IPtyProvider } from '../providers/types'
 import type { OrcaRuntimeService } from './orca-runtime'
 
@@ -12,6 +13,7 @@ vi.mock('./worktree-teardown', () => ({
 }))
 
 import {
+  resolveFolderWorkspaceTerminalTeardownTargets,
   stopFolderWorkspaceTerminals,
   type FolderWorkspaceTerminalTeardownTarget
 } from './folder-workspace-terminal-teardown'
@@ -30,6 +32,57 @@ function createInventoryProvider(): {
 describe('folder workspace terminal teardown', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('keeps explicit-null workspace ownership local under an SSH group', () => {
+    const group = {
+      id: 'folder-group',
+      parentPath: '/workspace/folder',
+      connectionId: 'ssh-owner',
+      parentGroupId: null
+    } as ProjectGroup
+    const workspace = {
+      id: 'folder-workspace',
+      projectGroupId: group.id,
+      folderPath: '/workspace/folder',
+      connectionId: null
+    } as FolderWorkspace
+    const repo = {
+      id: 'ssh-repo',
+      path: '/workspace/folder/repo',
+      projectGroupId: group.id,
+      connectionId: 'ssh-owner'
+    } as Repo
+
+    expect(
+      resolveFolderWorkspaceTerminalTeardownTargets({
+        workspaces: [workspace],
+        projectGroups: [group],
+        repos: [repo]
+      })
+    ).toEqual([{ workspaceKey: 'folder:folder-workspace', connection: { kind: 'local' } }])
+  })
+
+  it('fails closed when folder teardown ownership fields conflict', () => {
+    const group = {
+      id: 'folder-group',
+      connectionId: 'conflicting-owner'
+    } as ProjectGroup
+    const workspace = {
+      id: 'folder-workspace',
+      projectGroupId: group.id,
+      folderPath: '/workspace/folder',
+      connectionId: null,
+      executionHostId: 'ssh:conflicting-owner'
+    } as unknown as FolderWorkspace
+
+    expect(
+      resolveFolderWorkspaceTerminalTeardownTargets({
+        workspaces: [workspace],
+        projectGroups: [group],
+        repos: []
+      })
+    ).toEqual([{ workspaceKey: 'folder:folder-workspace', connection: { kind: 'ambiguous' } }])
   })
 
   it('caps combined provider and runtime-only fanout while sharing each inventory', async () => {
@@ -68,8 +121,8 @@ describe('folder workspace terminal teardown', () => {
         connection: { kind: 'ssh' as const, connectionId: 'ssh-b' }
       })),
       ...Array.from({ length: 4 }, (_, index) => ({
-        workspaceKey: `ambiguous-${index}`,
-        connection: { kind: 'ambiguous' as const }
+        workspaceKey: `runtime-only-${index}`,
+        connection: { kind: 'ssh' as const, connectionId: 'missing' }
       }))
     ]
 
@@ -77,7 +130,11 @@ describe('folder workspace terminal teardown', () => {
       runtime: { stopTerminalsForWorktree } as unknown as OrcaRuntimeService,
       getLocalProvider: () => null,
       getSshProvider: (connectionId) =>
-        connectionId === 'ssh-a' ? providerA.provider : providerB.provider
+        connectionId === 'ssh-a'
+          ? providerA.provider
+          : connectionId === 'ssh-b'
+            ? providerB.provider
+            : undefined
     })
 
     expect(peakTeardowns).toBe(4)
@@ -147,7 +204,7 @@ describe('folder workspace terminal teardown', () => {
       const targets: FolderWorkspaceTerminalTeardownTarget[] = [
         ...Array.from({ length: 4 }, (_, index) => ({
           workspaceKey: `blocked-${index}`,
-          connection: { kind: 'ambiguous' as const }
+          connection: { kind: 'ssh' as const, connectionId: 'missing' }
         })),
         { workspaceKey: 'late-live', connection: { kind: 'local' as const } }
       ]
@@ -173,6 +230,26 @@ describe('folder workspace terminal teardown', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('does not stop terminals when workspace ownership is ambiguous', async () => {
+    const localProvider = createInventoryProvider()
+    const stopTerminalsForWorktree = vi.fn(async () => ({ stopped: 1 }))
+
+    await expect(
+      stopFolderWorkspaceTerminals(
+        [{ workspaceKey: 'folder:ambiguous', connection: { kind: 'ambiguous' } }],
+        {
+          runtime: { stopTerminalsForWorktree } as unknown as OrcaRuntimeService,
+          getLocalProvider: () => localProvider.provider,
+          getSshProvider: () => undefined
+        }
+      )
+    ).resolves.toEqual({ runtimeStopped: 0, providerStopped: 0, registryStopped: 0 })
+
+    expect(localProvider.listProcesses).not.toHaveBeenCalled()
+    expect(killAllProcessesForWorktreeMock).not.toHaveBeenCalled()
+    expect(stopTerminalsForWorktree).not.toHaveBeenCalled()
   })
 
   it('gives one slow shared inventory a stable budget across a large target batch', async () => {

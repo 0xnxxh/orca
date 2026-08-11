@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type {
   PersistedState,
+  FolderWorkspace,
   Project,
   ProjectGroup,
   ProjectHostSetup,
@@ -154,6 +155,71 @@ function dataFile(): string {
 function writeDataFile(data: unknown): void {
   mkdirSync(testState.dir, { recursive: true })
   writeFileSync(dataFile(), JSON.stringify(data, null, 2), 'utf-8')
+}
+
+function writeLocalSshFolderCollisionData(options: { includeSshRepo?: boolean } = {}): {
+  groupId: string
+  workspaceId: string
+  sshTargetId: string
+  sshHostId: `ssh:${string}`
+} {
+  const groupId = 'shared-group'
+  const workspaceId = 'shared-folder'
+  const sshTargetId = 'ssh-owner'
+  const group = {
+    id: groupId,
+    name: 'Shared group',
+    parentPath: '/workspace/shared',
+    connectionId: null,
+    parentGroupId: null,
+    createdFrom: 'manual',
+    tabOrder: 0,
+    isCollapsed: false,
+    color: null,
+    createdAt: 1,
+    updatedAt: 1
+  }
+  const workspace = {
+    id: workspaceId,
+    projectGroupId: groupId,
+    name: 'Shared folder',
+    folderPath: '/workspace/shared',
+    connectionId: null,
+    linkedTask: null,
+    comment: '',
+    isArchived: false,
+    isUnread: false,
+    isPinned: false,
+    sortOrder: 1,
+    lastActivityAt: 0,
+    createdAt: 1,
+    updatedAt: 1
+  }
+  writeDataFile({
+    projectGroups: [group, { ...group, connectionId: sshTargetId }],
+    folderWorkspaces: [workspace, { ...workspace, connectionId: sshTargetId }],
+    ...(options.includeSshRepo
+      ? {
+          repos: [
+            {
+              id: 'ssh-collision-repo',
+              path: '/workspace/shared/repo',
+              displayName: 'SSH collision repo',
+              badgeColor: '#737373',
+              addedAt: 1,
+              projectGroupId: groupId,
+              connectionId: sshTargetId
+            }
+          ]
+        }
+      : {})
+  })
+  return {
+    groupId,
+    workspaceId,
+    sshTargetId,
+    sshHostId: toSshExecutionHostId(sshTargetId)
+  }
 }
 
 function readDataFile(): unknown {
@@ -5114,6 +5180,55 @@ describe('Store', () => {
     expect(store.getFolderWorkspaces()).toHaveLength(1)
   })
 
+  it('rejects explicit local authority under a sole SSH group', async () => {
+    const store = await createStore()
+    const group = store.createProjectGroup({
+      name: 'Remote platform',
+      parentPath: '/workspace/platform',
+      connectionId: 'ssh-1',
+      createdFrom: 'folder-scan'
+    })
+
+    expect(() =>
+      store.createFolderWorkspace({ projectGroupId: group.id, connectionId: null })
+    ).toThrow('Folder-backed project group not found.')
+  })
+
+  it('creates under legacy-local and SSH same-id groups regardless of catalog order', async () => {
+    for (const sshFirst of [false, true]) {
+      const { groupId, sshTargetId } = writeLocalSshFolderCollisionData()
+      const persisted = readDataFile() as {
+        projectGroups: ProjectGroup[]
+        folderWorkspaces: FolderWorkspace[]
+      }
+      const localGroup = { ...persisted.projectGroups[0]!, parentPath: '/workspace/local' }
+      delete localGroup.connectionId
+      const sshGroup = { ...persisted.projectGroups[1]!, parentPath: '/srv/ssh' }
+      persisted.projectGroups = sshFirst ? [sshGroup, localGroup] : [localGroup, sshGroup]
+      persisted.folderWorkspaces = []
+      writeDataFile(persisted)
+      const store = await createStore()
+
+      expect(() => store.createFolderWorkspace({ projectGroupId: groupId })).toThrow(
+        'Folder-backed project group not found.'
+      )
+      expect(
+        store.createFolderWorkspace({ projectGroupId: groupId, connectionId: null })
+      ).toMatchObject({
+        projectGroupId: groupId,
+        folderPath: '/workspace/local',
+        connectionId: null
+      })
+      expect(
+        store.createFolderWorkspace({ projectGroupId: groupId, connectionId: sshTargetId })
+      ).toMatchObject({
+        projectGroupId: groupId,
+        folderPath: '/srv/ssh',
+        connectionId: sshTargetId
+      })
+    }
+  })
+
   it('round-trips Jira item and source context for repo-less folder workspaces', async () => {
     const store = await createStore()
     const group = store.createProjectGroup({
@@ -5282,6 +5397,93 @@ describe('Store', () => {
 
     expect(store.getProjectGroups()[0]).toMatchObject({ id: 'root', connectionId: 'ssh-1' })
     expect(store.getFolderWorkspaces()[0]).toMatchObject({ id: 'fw-1', connectionId: 'ssh-1' })
+  })
+
+  it('keeps explicit-null workspace ownership local under an SSH group on load', async () => {
+    writeDataFile({
+      repos: [
+        makeRepo({
+          id: 'api',
+          path: '/workspace/platform/api',
+          projectGroupId: 'root',
+          connectionId: 'ssh-1'
+        })
+      ],
+      projectGroups: [
+        {
+          id: 'root',
+          name: 'Platform',
+          parentPath: '/workspace/platform',
+          connectionId: 'ssh-1',
+          parentGroupId: null,
+          createdFrom: 'folder-scan',
+          tabOrder: 0,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      folderWorkspaces: [
+        {
+          id: 'fw-local',
+          projectGroupId: 'root',
+          name: 'Local override',
+          folderPath: '/workspace/platform',
+          connectionId: null,
+          comment: '',
+          isArchived: false,
+          isUnread: false,
+          isPinned: false,
+          sortOrder: 1,
+          lastActivityAt: 1,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    const store = await createStore()
+
+    expect(store.getFolderWorkspaces()[0]).toHaveProperty('connectionId', null)
+    expect(
+      store.removeFolderWorkspace('fw-local', {
+        executionHostId: toSshExecutionHostId('ssh-1')
+      })
+    ).toBe(false)
+    expect(store.removeFolderWorkspace('fw-local', { executionHostId: 'local' })).toBe(true)
+  })
+
+  it('does not backfill an explicitly local folder group from SSH repos', async () => {
+    writeDataFile({
+      repos: [
+        makeRepo({
+          id: 'api',
+          path: '/workspace/platform/api',
+          projectGroupId: 'root',
+          connectionId: 'ssh-1'
+        })
+      ],
+      projectGroups: [
+        {
+          id: 'root',
+          name: 'Platform',
+          parentPath: '/workspace/platform',
+          connectionId: null,
+          parentGroupId: null,
+          createdFrom: 'folder-scan',
+          tabOrder: 0,
+          isCollapsed: false,
+          color: null,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+
+    const store = await createStore()
+
+    expect(store.getProjectGroups()[0]).toHaveProperty('connectionId', null)
   })
 
   it('backfills folder-scope SSH provenance from grouped repos despite unrelated same-path SSH repos', async () => {
@@ -5516,6 +5718,315 @@ describe('Store', () => {
     expect(reloaded.getMobileClientTabSelections()['device-a']?.[key]?.activeTabId).toBe(
       'remote-tab'
     )
+  })
+
+  it('removes one host-qualified folder when local and direct-SSH IDs collide', async () => {
+    const { workspaceId, sshHostId } = writeLocalSshFolderCollisionData()
+    const store = await createStore()
+    const workspaceKey = folderWorkspaceKey(workspaceId)
+    const localTab = makeTerminalTab({ id: 'local-owner-tab', worktreeId: workspaceKey })
+    const sshTab = makeTerminalTab({ id: 'ssh-owner-tab', worktreeId: workspaceKey })
+    store.setWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: { [workspaceKey]: [localTab] }
+    })
+    store.setWorkspaceSession(
+      {
+        ...getDefaultWorkspaceSession(),
+        tabsByWorktree: { [workspaceKey]: [sshTab] }
+      },
+      sshHostId
+    )
+
+    expect(store.getFolderWorkspaces()).toHaveLength(2)
+    expect(store.removeFolderWorkspace(workspaceId)).toBe(false)
+    expect(store.removeFolderWorkspace(workspaceId, { executionHostId: sshHostId })).toBe(true)
+
+    expect(store.getFolderWorkspaces()).toEqual([
+      expect.objectContaining({ id: workspaceId, connectionId: null })
+    ])
+    expect(store.getWorkspaceSession().tabsByWorktree[workspaceKey]).toEqual([localTab])
+    expect(store.getWorkspaceSession(sshHostId).tabsByWorktree[workspaceKey]).toBeUndefined()
+  })
+
+  it('updates only the selected host when folder and group IDs collide', async () => {
+    const { groupId, workspaceId, sshHostId } = writeLocalSshFolderCollisionData()
+    const store = await createStore()
+
+    expect(store.getFolderWorkspace(workspaceId)).toBeUndefined()
+    expect(store.updateFolderWorkspace(workspaceId, { name: 'Ambiguous' })).toBeNull()
+    expect(store.updateProjectGroup(groupId, { name: 'Ambiguous' })).toBeNull()
+
+    expect(
+      store.updateFolderWorkspace(
+        workspaceId,
+        { name: 'SSH folder' },
+        { executionHostId: sshHostId }
+      )
+    ).toMatchObject({ name: 'SSH folder', connectionId: 'ssh-owner' })
+    expect(
+      store.updateProjectGroup(groupId, { name: 'SSH group' }, { executionHostId: sshHostId })
+    ).toMatchObject({ name: 'SSH group', connectionId: 'ssh-owner' })
+
+    expect(store.getFolderWorkspaces()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Shared folder', connectionId: null }),
+        expect.objectContaining({ name: 'SSH folder', connectionId: 'ssh-owner' })
+      ])
+    )
+    expect(store.getProjectGroups()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Shared group', connectionId: null }),
+        expect.objectContaining({ name: 'SSH group', connectionId: 'ssh-owner' })
+      ])
+    )
+  })
+
+  it('preserves a surviving SSH sibling spill during folder and group deletion', async () => {
+    for (const deletionKind of ['folder', 'group'] as const) {
+      const { groupId, workspaceId } = writeLocalSshFolderCollisionData()
+      const persisted = readDataFile() as {
+        projectGroups: ProjectGroup[]
+        folderWorkspaces: FolderWorkspace[]
+      }
+      const firstTargetId = 'ssh-owner-a'
+      const secondTargetId = 'ssh-owner-b'
+      persisted.projectGroups[0]!.connectionId = firstTargetId
+      persisted.projectGroups[1]!.connectionId = secondTargetId
+      persisted.folderWorkspaces[0]!.connectionId = firstTargetId
+      persisted.folderWorkspaces[1]!.connectionId = secondTargetId
+      writeDataFile(persisted)
+      const store = await createStore()
+      const workspaceKey = folderWorkspaceKey(workspaceId)
+      const spillTab = makeTerminalTab({ id: `spill-${deletionKind}`, worktreeId: workspaceKey })
+      const firstTab = makeTerminalTab({ id: `first-${deletionKind}`, worktreeId: workspaceKey })
+      const secondTab = makeTerminalTab({ id: `second-${deletionKind}`, worktreeId: workspaceKey })
+      const sessionFor = (tab: TerminalTab): WorkspaceSessionState => ({
+        ...getDefaultWorkspaceSession(),
+        tabsByWorktree: { [workspaceKey]: [tab] }
+      })
+      const firstHostId = toSshExecutionHostId(firstTargetId)
+      const secondHostId = toSshExecutionHostId(secondTargetId)
+      store.setWorkspaceSession(sessionFor(spillTab))
+      store.setWorkspaceSession(sessionFor(firstTab), firstHostId)
+      store.setWorkspaceSession(sessionFor(secondTab), secondHostId)
+
+      const deleted =
+        deletionKind === 'folder'
+          ? store.removeFolderWorkspace(workspaceId, { executionHostId: firstHostId })
+          : store.deleteProjectGroup(groupId, { executionHostId: firstHostId })
+
+      expect(deleted).toBe(true)
+      expect(store.getWorkspaceSession().tabsByWorktree[workspaceKey]).toEqual([spillTab])
+      expect(store.getWorkspaceSession(firstHostId).tabsByWorktree[workspaceKey]).toBeUndefined()
+      expect(store.getWorkspaceSession(secondHostId).tabsByWorktree[workspaceKey]).toEqual([
+        secondTab
+      ])
+    }
+  })
+
+  it('preserves a surviving SSH sibling spill when deleting its local folder or group', async () => {
+    for (const deletionKind of ['folder', 'group'] as const) {
+      const { groupId, workspaceId, sshHostId } = writeLocalSshFolderCollisionData()
+      const store = await createStore()
+      const workspaceKey = folderWorkspaceKey(workspaceId)
+      const spillTab = makeTerminalTab({
+        id: `ssh-spill-${deletionKind}`,
+        worktreeId: workspaceKey
+      })
+      const sshTab = makeTerminalTab({
+        id: `ssh-owner-${deletionKind}`,
+        worktreeId: workspaceKey
+      })
+      const sessionFor = (tab: TerminalTab): WorkspaceSessionState => ({
+        ...getDefaultWorkspaceSession(),
+        tabsByWorktree: { [workspaceKey]: [tab] }
+      })
+      store.setWorkspaceSession(sessionFor(spillTab))
+      store.setWorkspaceSession(sessionFor(sshTab), sshHostId)
+
+      const deleted =
+        deletionKind === 'folder'
+          ? store.removeFolderWorkspace(workspaceId, { executionHostId: 'local' })
+          : store.deleteProjectGroup(groupId, { executionHostId: 'local' })
+
+      expect(deleted).toBe(true)
+      expect(store.getWorkspaceSession().tabsByWorktree[workspaceKey]).toEqual([spillTab])
+      expect(store.getWorkspaceSession(sshHostId).tabsByWorktree[workspaceKey]).toEqual([sshTab])
+      expect(store.getFolderWorkspaces()).toEqual([
+        expect.objectContaining({ id: workspaceId, connectionId: 'ssh-owner' })
+      ])
+    }
+  })
+
+  it('preserves local and direct-SSH folder collisions across backfill reloads', async () => {
+    const { groupId, workspaceId, sshTargetId } = writeLocalSshFolderCollisionData({
+      includeSshRepo: true
+    })
+    const store = await createStore()
+
+    expect(store.getProjectGroups()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: groupId, connectionId: null }),
+        expect.objectContaining({ id: groupId, connectionId: sshTargetId })
+      ])
+    )
+    expect(store.getProjectGroups()).toHaveLength(2)
+    expect(store.getFolderWorkspaces()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: workspaceId, connectionId: null }),
+        expect.objectContaining({ id: workspaceId, connectionId: sshTargetId })
+      ])
+    )
+    expect(store.getFolderWorkspaces()).toHaveLength(2)
+
+    store.flush()
+    const reloaded = await createStore()
+
+    expect(reloaded.getProjectGroups()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: groupId, connectionId: null }),
+        expect.objectContaining({ id: groupId, connectionId: sshTargetId })
+      ])
+    )
+    expect(reloaded.getProjectGroups()).toHaveLength(2)
+    expect(reloaded.getFolderWorkspaces()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: workspaceId, connectionId: null }),
+        expect.objectContaining({ id: workspaceId, connectionId: sshTargetId })
+      ])
+    )
+    expect(reloaded.getFolderWorkspaces()).toHaveLength(2)
+  })
+
+  it('keeps repo group membership scoped to each execution host', async () => {
+    const { groupId, sshTargetId } = writeLocalSshFolderCollisionData()
+    const persisted = readDataFile() as {
+      projectGroups: ProjectGroup[]
+      folderWorkspaces: FolderWorkspace[]
+      repos?: Repo[]
+    }
+    persisted.projectGroups.push({
+      ...persisted.projectGroups[1]!,
+      id: 'ssh-only-group',
+      name: 'SSH only'
+    })
+    persisted.projectGroups.push({
+      ...persisted.projectGroups[0]!,
+      id: 'local-only-group',
+      name: 'Local only'
+    })
+    persisted.repos = [
+      makeRepo({ id: 'local-repo', projectGroupId: groupId, connectionId: null }),
+      makeRepo({ id: 'ssh-repo', projectGroupId: groupId, connectionId: sshTargetId }),
+      makeRepo({ id: 'local-to-ssh', projectGroupId: null, connectionId: null }),
+      makeRepo({ id: 'ssh-to-local', projectGroupId: null, connectionId: sshTargetId }),
+      makeRepo({
+        id: 'runtime-repo',
+        projectGroupId: groupId,
+        executionHostId: 'runtime:env-1'
+      })
+    ]
+    writeDataFile(persisted)
+
+    const store = await createStore()
+
+    expect(store.getRepo('local-repo')?.projectGroupId).toBe(groupId)
+    expect(store.getRepo('ssh-repo')?.projectGroupId).toBe(groupId)
+    expect(store.getRepo('runtime-repo')?.projectGroupId).toBeNull()
+
+    expect(store.moveProjectToGroup('local-repo', 'ssh-only-group')?.projectGroupId).toBeNull()
+    expect(
+      store.updateRepo('local-repo', { projectGroupId: 'ssh-only-group' }, 'local')?.projectGroupId
+    ).toBeNull()
+    store.addRepo(
+      makeRepo({ id: 'added-local', projectGroupId: 'ssh-only-group', connectionId: null })
+    )
+    expect(store.getRepo('added-local')?.projectGroupId).toBeNull()
+
+    expect(
+      store.updateRepo(
+        'local-to-ssh',
+        { executionHostId: toSshExecutionHostId(sshTargetId), projectGroupId: 'ssh-only-group' },
+        'local'
+      )
+    ).toMatchObject({
+      executionHostId: toSshExecutionHostId(sshTargetId),
+      projectGroupId: 'ssh-only-group'
+    })
+    expect(
+      store.updateRepo(
+        'ssh-to-local',
+        { executionHostId: 'local', projectGroupId: 'local-only-group' },
+        toSshExecutionHostId(sshTargetId)
+      )
+    ).toMatchObject({ executionHostId: 'local', projectGroupId: 'local-only-group' })
+
+    store.addRepo(makeRepo({ id: 'wrong-migration', projectGroupId: null, connectionId: null }))
+    expect(
+      store.updateRepo(
+        'wrong-migration',
+        { executionHostId: toSshExecutionHostId(sshTargetId), projectGroupId: 'local-only-group' },
+        'local'
+      )?.projectGroupId
+    ).toBeNull()
+  })
+
+  it('moves only the host-qualified repo when repo IDs collide', async () => {
+    const { groupId, sshTargetId, sshHostId } = writeLocalSshFolderCollisionData()
+    const persisted = readDataFile() as {
+      repos?: Repo[]
+    }
+    persisted.repos = [
+      makeRepo({ id: 'shared-repo', projectGroupId: null, connectionId: null }),
+      makeRepo({ id: 'shared-repo', projectGroupId: null, connectionId: sshTargetId })
+    ]
+    writeDataFile(persisted)
+    const store = await createStore()
+
+    expect(store.moveProjectToGroup('shared-repo', groupId)).toBeNull()
+    expect(
+      store.moveProjectToGroup('shared-repo', groupId, 7, { executionHostId: sshHostId })
+    ).toMatchObject({ connectionId: sshTargetId, projectGroupId: groupId, projectGroupOrder: 7 })
+
+    expect(store.getRepos().filter((repo) => repo.id === 'shared-repo')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ connectionId: null, projectGroupId: null }),
+        expect.objectContaining({ connectionId: sshTargetId, projectGroupId: groupId })
+      ])
+    )
+  })
+
+  it('removes one host-qualified group subtree when local and direct-SSH IDs collide', async () => {
+    const { groupId, workspaceId, sshHostId } = writeLocalSshFolderCollisionData()
+    const store = await createStore()
+    const workspaceKey = folderWorkspaceKey(workspaceId)
+    const localTab = makeTerminalTab({ id: 'local-group-tab', worktreeId: workspaceKey })
+    const sshTab = makeTerminalTab({ id: 'ssh-group-tab', worktreeId: workspaceKey })
+    store.setWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: { [workspaceKey]: [localTab] }
+    })
+    store.setWorkspaceSession(
+      {
+        ...getDefaultWorkspaceSession(),
+        tabsByWorktree: { [workspaceKey]: [sshTab] }
+      },
+      sshHostId
+    )
+
+    expect(store.getProjectGroups()).toHaveLength(2)
+    expect(store.deleteProjectGroup(groupId)).toBe(false)
+    expect(store.deleteProjectGroup(groupId, { executionHostId: sshHostId })).toBe(true)
+
+    expect(store.getProjectGroups()).toEqual([
+      expect.objectContaining({ id: groupId, connectionId: null })
+    ])
+    expect(store.getFolderWorkspaces()).toEqual([
+      expect.objectContaining({ id: workspaceId, connectionId: null })
+    ])
+    expect(store.getWorkspaceSession().tabsByWorktree[workspaceKey]).toEqual([localTab])
+    expect(store.getWorkspaceSession(sshHostId).tabsByWorktree[workspaceKey]).toBeUndefined()
   })
 
   // ── 9. Settings: get/update ────────────────────────────────────────

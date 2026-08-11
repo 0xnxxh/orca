@@ -1345,13 +1345,19 @@ export type PreloadApi = {
     }) => Promise<ProjectGroup>
     update: (args: {
       groupId: string
+      executionHostId?: ExecutionHostId
       updates: Partial<Pick<ProjectGroup, 'name' | 'isCollapsed' | 'tabOrder' | 'color'>>
     }) => Promise<ProjectGroup | null>
-    delete: (args: { groupId: string; preserveRendererWorkspaceIds?: string[] }) => Promise<boolean>
+    delete: (args: {
+      groupId: string
+      executionHostId?: ExecutionHostId
+      preserveRendererWorkspaceIds?: string[]
+    }) => Promise<boolean>
     moveProject: (args: {
       projectId: string
       groupId: string | null
       order?: number
+      executionHostId?: ExecutionHostId
     }) => Promise<Repo | null>
     scanNested: (args: {
       path: string
@@ -1386,6 +1392,7 @@ export type PreloadApi = {
     }) => Promise<FolderWorkspace>
     update: (args: {
       folderWorkspaceId: string
+      executionHostId?: ExecutionHostId
       updates: Partial<
         Pick<
           FolderWorkspace,
@@ -1408,6 +1415,7 @@ export type PreloadApi = {
     }) => Promise<FolderWorkspace | null>
     delete: (args: {
       folderWorkspaceId: string
+      executionHostId?: ExecutionHostId
       preserveRendererWorkspaceKey?: boolean
     }) => Promise<boolean>
   }

@@ -4,8 +4,15 @@ import {
 } from '@/components/terminal-pane/terminal-parked-watcher-registry'
 import { resolveMountedRuntimeTerminalPaneIdByPtyId } from '@/runtime/sync-runtime-graph'
 import type { AppState } from '../types'
+import { closeRemoteBrowserPagesForWorkspaces } from './browser-remote-page-close'
+import { destroyWorkspaceWebviews } from './browser-webview-cleanup'
+import { snapshotFolderWorkspaceContentRemoval } from './folder-workspace-content-removal-snapshot'
+import { pruneFolderWorkspaceContentState } from './folder-workspace-content-state-pruning'
 import { pruneFolderWorkspaceTerminalBindings } from './folder-workspace-terminal-binding-pruning'
-import { reconcileDeletedFolderWorkspaceActiveOwner } from './folder-workspace-terminal-owner'
+import {
+  folderWorkspaceTerminalTabBelongsToOwner,
+  reconcileDeletedFolderWorkspaceActiveOwner
+} from './folder-workspace-terminal-owner'
 import type { FolderWorkspaceRendererOwnerRemoval } from './folder-workspace-renderer-teardown'
 
 type TeardownSet = (updater: (state: AppState) => AppState | Partial<AppState>) => void
@@ -28,13 +35,28 @@ export function teardownSelectiveFolderWorkspaceOwner(args: {
   get: () => AppState
   isCurrent: () => boolean
   ownerRemoval: FolderWorkspaceRendererOwnerRemoval | null
+  retireBrowserWorkspaceIds: readonly string[]
+  retireEditorFileIds: readonly string[]
   retireTabIds: readonly string[]
+  retireUnifiedTabIds: readonly string[]
   set: TeardownSet
   workspaceKey: string
 }): void {
   for (const tabId of args.retireTabIds) {
     if (!args.isCurrent()) {
       return
+    }
+    if (
+      !args.ownerRemoval ||
+      !folderWorkspaceTerminalTabBelongsToOwner(
+        args.get(),
+        args.workspaceKey,
+        tabId,
+        args.ownerRemoval,
+        args.ownerRemoval.hostId
+      )
+    ) {
+      continue
     }
     args.get().closeTab(tabId, {
       reason: 'cleanup',
@@ -44,6 +66,47 @@ export function teardownSelectiveFolderWorkspaceOwner(args: {
   }
   if (!args.ownerRemoval || !args.isCurrent()) {
     return
+  }
+  const contentRemoval = snapshotFolderWorkspaceContentRemoval(
+    args.get(),
+    args.workspaceKey,
+    args.ownerRemoval
+  )
+  closeRemoteBrowserPagesForWorkspaces(args.get(), contentRemoval.retireBrowserWorkspaceIds)
+  for (const workspaceId of contentRemoval.retireBrowserWorkspaceIds) {
+    if (!args.isCurrent()) {
+      return
+    }
+    destroyWorkspaceWebviews(args.get().browserPagesByWorkspace, workspaceId)
+  }
+  const hasRetiredContent =
+    contentRemoval.retireBrowserWorkspaceIds.length > 0 ||
+    contentRemoval.retireEditorFileIds.length > 0 ||
+    contentRemoval.retireUnifiedTabIds.length > 0
+  args.set((state) =>
+    args.isCurrent()
+      ? pruneFolderWorkspaceContentState(state, {
+          browserWorkspaceIds: contentRemoval.retireBrowserWorkspaceIds,
+          editorFileIds: contentRemoval.retireEditorFileIds,
+          ownerRemoval: args.ownerRemoval!,
+          unifiedTabIds: contentRemoval.retireUnifiedTabIds,
+          workspaceKey: args.workspaceKey
+        })
+      : state
+  )
+  if (hasRetiredContent) {
+    for (const tabId of contentRemoval.retireUnifiedTabIds) {
+      if (!args.isCurrent()) {
+        return
+      }
+      args.get().closeUnifiedTab(tabId, {
+        preserveWorkspaceSelection: true,
+        recordInteraction: false
+      })
+    }
+    if (args.isCurrent()) {
+      args.get().reconcileWorktreeTabModel(args.workspaceKey)
+    }
   }
   let removedPaneKeys: string[] = []
   let removedPtyBindings: { ptyId: string; tabId: string }[] = []

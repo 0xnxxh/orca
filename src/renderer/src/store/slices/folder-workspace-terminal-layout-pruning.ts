@@ -78,7 +78,7 @@ export function pruneOwnedTerminalLayout(
       root,
       activeLeafId,
       expandedLeafId:
-        layout.expandedLeafId && !removedLeafIds.has(layout.expandedLeafId)
+        root.type !== 'leaf' && layout.expandedLeafId && !removedLeafIds.has(layout.expandedLeafId)
           ? layout.expandedLeafId
           : null,
       ...(ptyIdsByLeafId ? { ptyIdsByLeafId } : {}),

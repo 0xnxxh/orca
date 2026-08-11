@@ -122,4 +122,54 @@ describe('repo IPC folder workspace teardown delegation', () => {
     expect(store.removeFolderWorkspace).toHaveBeenCalledWith('folder-1')
     expect(store.deleteProjectGroup).toHaveBeenCalledWith('group-1')
   })
+
+  it('forwards renderer-preservation options through the direct store fallback', async () => {
+    store.removeFolderWorkspace.mockReturnValue(true)
+    store.deleteProjectGroup.mockReturnValue(true)
+    register()
+
+    await handlers.get('folderWorkspaces:delete')!(null, {
+      folderWorkspaceId: 'shared-folder',
+      preserveRendererWorkspaceKey: true
+    })
+    await handlers.get('projectGroups:delete')!(null, {
+      groupId: 'shared-group',
+      preserveRendererWorkspaceIds: ['shared-folder']
+    })
+
+    expect(store.removeFolderWorkspace).toHaveBeenCalledWith('shared-folder', {
+      preserveRendererWorkspaceKey: true
+    })
+    expect(store.deleteProjectGroup).toHaveBeenCalledWith('shared-group', {
+      preserveRendererWorkspaceIds: ['shared-folder']
+    })
+  })
+
+  it('forwards host-qualified folder and group deletion selectors', async () => {
+    runtime.deleteFolderWorkspace.mockResolvedValue({ deleted: true })
+    runtime.deleteProjectGroup.mockResolvedValue({ deleted: true })
+    register(runtime)
+
+    await handlers.get('folderWorkspaces:delete')!(null, {
+      folderWorkspaceId: 'shared-folder',
+      executionHostId: 'ssh:ssh-owner',
+      preserveRendererWorkspaceKey: true
+    })
+    await handlers.get('projectGroups:delete')!(null, {
+      groupId: 'shared-group',
+      executionHostId: 'ssh:ssh-owner',
+      preserveRendererWorkspaceIds: ['shared-folder']
+    })
+
+    expect(runtime.deleteFolderWorkspace).toHaveBeenCalledWith('shared-folder', {
+      notify: false,
+      executionHostId: 'ssh:ssh-owner',
+      preserveRendererWorkspaceKey: true
+    })
+    expect(runtime.deleteProjectGroup).toHaveBeenCalledWith('shared-group', {
+      notify: false,
+      executionHostId: 'ssh:ssh-owner',
+      preserveRendererWorkspaceIds: ['shared-folder']
+    })
+  })
 })

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { toRuntimeExecutionHostId } from '../../../../shared/execution-host'
 import {
   FOLDER_WORKSPACE_BACKEND_TEARDOWN_RUNTIME_CAPABILITY,
+  FOLDER_WORKSPACE_OWNER_QUALIFIED_DELETE_RUNTIME_CAPABILITY,
   MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION,
   RUNTIME_PROTOCOL_VERSION
 } from '../../../../shared/protocol-version'
@@ -69,13 +70,16 @@ function revisionFailure(method: string) {
   }
 }
 
-function statusResponse(backendOwnsTeardown = false) {
+function statusResponse(backendOwnsTeardown = false, ownerQualifiedDelete = true) {
   return runtimeResponse('status.get', {
     runtimeId: 'runtime-folder-delete',
     graphStatus: 'ready',
     runtimeProtocolVersion: RUNTIME_PROTOCOL_VERSION,
     minCompatibleRuntimeClientVersion: MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION,
-    capabilities: backendOwnsTeardown ? [FOLDER_WORKSPACE_BACKEND_TEARDOWN_RUNTIME_CAPABILITY] : []
+    capabilities: [
+      ...(backendOwnsTeardown ? [FOLDER_WORKSPACE_BACKEND_TEARDOWN_RUNTIME_CAPABILITY] : []),
+      ...(ownerQualifiedDelete ? [FOLDER_WORKSPACE_OWNER_QUALIFIED_DELETE_RUNTIME_CAPABILITY] : [])
+    ]
   })
 }
 
@@ -553,7 +557,7 @@ describe('folder workspace pairing revision fences', () => {
     expect(purgeWorktreeTerminalState).not.toHaveBeenCalled()
   })
 
-  it('cancels delayed catalog teardown after a newer catalog claims the host fence', async () => {
+  it('adopts delayed catalog teardown after a newer empty catalog keeps the owner absent', async () => {
     const group = makeGroup()
     const workspace = makeWorkspace('folder-catalog', group.id)
     const delayedCapability = deferred<ReturnType<typeof runtimeResponse>>()
@@ -568,11 +572,8 @@ describe('folder workspace pairing revision fences', () => {
         listCalls += 1
         if (listCalls === 1) {
           clearRuntimeCompatibilityCacheForTests()
-          return runtimeResponse(request.method, { folderWorkspaces: [] })
         }
-        return runtimeResponse(request.method, {
-          folderWorkspaces: [{ ...workspace, executionHostId: undefined }]
-        })
+        return runtimeResponse(request.method, { folderWorkspaces: [] })
       }
       return runtimeResponse(request.method, { close: { closed: true } })
     })
@@ -592,14 +593,23 @@ describe('folder workspace pairing revision fences', () => {
 
     expect(listCalls).toBe(2)
     expect(
-      runtimeEnvironmentCall.mock.calls.some(([request]) => request.method === 'terminal.close')
-    ).toBe(false)
+      runtimeEnvironmentCall.mock.calls.filter(([request]) => request.method === 'terminal.close')
+    ).toHaveLength(1)
     expect(teardown.closeTab).not.toHaveBeenCalled()
-    expect(teardown.shutdownWorktreeBrowsers).not.toHaveBeenCalled()
-    expect(teardown.shutdownWorktreeTerminals).not.toHaveBeenCalled()
-    expect(teardown.purgeWorktreeTerminalState).not.toHaveBeenCalled()
-    expect(store.getState().folderWorkspaces).toEqual([workspace])
-    expect(store.getState().tabsByWorktree[folderWorkspaceKey(workspace.id)]).toHaveLength(1)
+    const workspaceKey = folderWorkspaceKey(workspace.id)
+    expect(teardown.shutdownWorktreeBrowsers).toHaveBeenCalledOnce()
+    expect(teardown.shutdownWorktreeBrowsers).toHaveBeenCalledWith(workspaceKey)
+    expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledOnce()
+    expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledWith(
+      workspaceKey,
+      expect.objectContaining({
+        shutdownReason: 'remove-worktree',
+        backendOwnsPtyTeardown: true
+      })
+    )
+    expect(teardown.purgeWorktreeTerminalState).toHaveBeenCalledOnce()
+    expect(teardown.purgeWorktreeTerminalState).toHaveBeenCalledWith([workspaceKey])
+    expect(store.getState().folderWorkspaces).toEqual([])
     expectCallsBoundToCapturedRevision()
   })
 
@@ -637,6 +647,50 @@ describe('folder workspace pairing revision fences', () => {
     expect(teardown.closeTab).not.toHaveBeenCalled()
     expect(teardown.shutdownWorktreeBrowsers).not.toHaveBeenCalled()
     expect(teardown.shutdownWorktreeTerminals).not.toHaveBeenCalled()
+    expect(teardown.purgeWorktreeTerminalState).not.toHaveBeenCalled()
+    expectCallsBoundToCapturedRevision()
+  })
+
+  it('invalidates terminal cleanup when the environment re-pairs during its awaited stop', async () => {
+    const group = makeGroup()
+    const original = makeWorkspace('folder-mid-teardown', group.id, 'Original')
+    const replacement = { ...original, name: 'Replacement', updatedAt: 2 }
+    const terminalShutdown = deferred<void>()
+    runtimeEnvironmentCall.mockImplementation((request: RuntimeCall) => {
+      if (request.method === 'status.get') {
+        return statusResponse(true)
+      }
+      if (request.method === 'folderWorkspace.delete') {
+        return runtimeResponse(request.method, { deleted: true })
+      }
+      throw new Error(`Unexpected runtime method: ${request.method}`)
+    })
+    const store = createTestStore()
+    seedRuntimeWorkspace(store, [group], [original])
+    const teardown = instrumentRendererTeardown(store)
+    let terminalFence: (() => boolean) | undefined
+    teardown.shutdownWorktreeTerminals.mockImplementation(
+      (_workspaceKey: string, options?: { isCurrent?: () => boolean }) => {
+        terminalFence = options?.isCurrent
+        return terminalShutdown.promise
+      }
+    )
+
+    const deletion = store.getState().deleteFolderWorkspace(original.id, {
+      hostId: OWNER_HOST_ID
+    })
+    await vi.waitFor(() => expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledOnce())
+    expect(terminalFence?.()).toBe(true)
+
+    setRevision(REPLACEMENT_REVISION)
+    seedRuntimeWorkspace(store, [group], [replacement])
+    expect(terminalFence?.()).toBe(false)
+    terminalShutdown.resolve()
+
+    await expect(deletion).resolves.toBe(true)
+    expect(store.getState().folderWorkspaces).toEqual([replacement])
+    expect(store.getState().tabsByWorktree[folderWorkspaceKey(replacement.id)]).toHaveLength(1)
+    expect(teardown.shutdownWorktreeTerminals).toHaveBeenCalledOnce()
     expect(teardown.purgeWorktreeTerminalState).not.toHaveBeenCalled()
     expectCallsBoundToCapturedRevision()
   })

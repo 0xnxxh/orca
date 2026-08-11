@@ -1,9 +1,18 @@
 import { z } from 'zod'
 import { defineMethod, type RpcMethod } from '../core'
-import { OptionalFiniteNumber, OptionalString, requiredString } from '../schemas'
+import {
+  OptionalExecutionHostId,
+  OptionalFiniteNumber,
+  OptionalString,
+  requiredString
+} from '../schemas'
 import { PROJECT_RUNTIME_METHODS } from './project-runtime-rpc-methods'
 import { FOLDER_WORKSPACE_METHODS } from './folder-workspace'
 import { createRepoUpdateSchema } from './repo-update-schema'
+import {
+  FolderCatalogListParams,
+  projectProjectGroupCatalogForClient
+} from './folder-catalog-publication'
 
 const RepoSelector = z.object({
   repo: requiredString('Missing repo selector')
@@ -55,6 +64,7 @@ const ProjectGroupCreate = z.object({
 
 const ProjectGroupUpdate = z.object({
   groupId: requiredString('Missing group id'),
+  executionHostId: OptionalExecutionHostId,
   updates: z.object({
     name: OptionalString,
     isCollapsed: z.boolean().optional(),
@@ -65,6 +75,7 @@ const ProjectGroupUpdate = z.object({
 
 const ProjectGroupSelector = z.object({
   groupId: requiredString('Missing group id'),
+  executionHostId: OptionalExecutionHostId,
   preserveRendererWorkspaceIds: z.array(requiredString('Missing folder workspace id')).optional()
 })
 
@@ -117,8 +128,13 @@ export const REPO_METHODS: RpcMethod[] = [
   ...PROJECT_RUNTIME_METHODS,
   defineMethod({
     name: 'projectGroup.list',
-    params: null,
-    handler: (_params, { runtime }) => ({ groups: runtime.listProjectGroups() })
+    params: FolderCatalogListParams,
+    handler: (params, { runtime }) => ({
+      groups: projectProjectGroupCatalogForClient(
+        runtime.listProjectGroups(),
+        params?.ownerQualified === true
+      )
+    })
   }),
   defineMethod({
     name: 'projectGroup.create',
@@ -131,16 +147,23 @@ export const REPO_METHODS: RpcMethod[] = [
     name: 'projectGroup.update',
     params: ProjectGroupUpdate,
     handler: async (params, { runtime }) => ({
-      group: await runtime.updateProjectGroup(params.groupId, params.updates)
+      group: params.executionHostId
+        ? await runtime.updateProjectGroup(params.groupId, params.updates, {
+            executionHostId: params.executionHostId
+          })
+        : await runtime.updateProjectGroup(params.groupId, params.updates)
     })
   }),
   defineMethod({
     name: 'projectGroup.delete',
     params: ProjectGroupSelector,
     handler: async (params, { runtime }) =>
-      params.preserveRendererWorkspaceIds
+      params.executionHostId || params.preserveRendererWorkspaceIds
         ? runtime.deleteProjectGroup(params.groupId, {
-            preserveRendererWorkspaceIds: params.preserveRendererWorkspaceIds
+            ...(params.executionHostId ? { executionHostId: params.executionHostId } : {}),
+            ...(params.preserveRendererWorkspaceIds
+              ? { preserveRendererWorkspaceIds: params.preserveRendererWorkspaceIds }
+              : {})
           })
         : runtime.deleteProjectGroup(params.groupId)
   }),

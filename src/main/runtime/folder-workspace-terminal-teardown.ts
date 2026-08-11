@@ -1,12 +1,7 @@
 import { mapWithConcurrency } from '../../shared/map-with-concurrency'
-import type { FolderWorkspace, ProjectGroup, Repo } from '../../shared/types'
-import { folderWorkspaceKey } from '../../shared/workspace-scope'
-import {
-  inferFolderWorkspacePathConnection,
-  type FolderWorkspacePathConnectionResolution
-} from '../project-groups/folder-workspace-path-status'
 import type { IPtyProvider } from '../providers/types'
 import type { OrcaRuntimeService } from './orca-runtime'
+import type { FolderWorkspaceTerminalTeardownTarget } from './folder-workspace-terminal-teardown-targets'
 import { withSharedPtyProviderProcessSnapshot } from './pty-provider-process-snapshot'
 import { settleBeforeDeadline } from './settle-before-deadline'
 import {
@@ -18,10 +13,10 @@ import {
 const FOLDER_WORKSPACE_TEARDOWN_CONCURRENCY = 4
 const FOLDER_WORKSPACE_TEARDOWN_TIMEOUT_MS = 12_000
 
-export type FolderWorkspaceTerminalTeardownTarget = {
-  workspaceKey: string
-  connection: FolderWorkspacePathConnectionResolution
-}
+export {
+  resolveFolderWorkspaceTerminalTeardownTargets,
+  type FolderWorkspaceTerminalTeardownTarget
+} from './folder-workspace-terminal-teardown-targets'
 
 type FolderWorkspaceTerminalTeardownDeps = {
   runtime: OrcaRuntimeService
@@ -46,30 +41,6 @@ type SharedFolderWorkspaceTeardownProvider = {
   provider: IPtyProvider
 }
 
-export function resolveFolderWorkspaceTerminalTeardownTargets(args: {
-  workspaces: readonly FolderWorkspace[]
-  projectGroups: readonly ProjectGroup[]
-  repos: readonly Repo[]
-}): FolderWorkspaceTerminalTeardownTarget[] {
-  const groupById = new Map(args.projectGroups.map((group) => [group.id, group]))
-  const targets = new Map<string, FolderWorkspaceTerminalTeardownTarget>()
-  for (const workspace of args.workspaces) {
-    const group = groupById.get(workspace.projectGroupId)
-    const workspaceKey = folderWorkspaceKey(workspace.id)
-    targets.set(workspaceKey, {
-      workspaceKey,
-      connection: inferFolderWorkspacePathConnection({
-        folderPath: workspace.folderPath,
-        projectGroupId: workspace.projectGroupId,
-        connectionId: workspace.connectionId ?? group?.connectionId ?? null,
-        projectGroups: args.projectGroups,
-        repos: args.repos
-      })
-    })
-  }
-  return [...targets.values()]
-}
-
 function emptyTeardownResult(): WorktreeTeardownResult {
   return { runtimeStopped: 0, providerStopped: 0, registryStopped: 0 }
 }
@@ -80,6 +51,9 @@ async function stopRuntimeFolderWorkspaceTerminals(
   deps: FolderWorkspaceTerminalTeardownDeps,
   excludedPtyIds?: ReadonlySet<string>
 ): Promise<WorktreeTeardownResult> {
+  if (target.connection.kind === 'ambiguous') {
+    return emptyTeardownResult()
+  }
   try {
     const result = await deps.runtime.stopTerminalsForWorktree(target.workspaceKey, {
       deadline,
@@ -87,12 +61,7 @@ async function stopRuntimeFolderWorkspaceTerminals(
       excludedPtyIds,
       excludeRemoteRuntimePtys: true,
       resolvedWorktreeId: target.workspaceKey,
-      ...(target.connection.kind === 'ambiguous'
-        ? {}
-        : {
-            resolvedConnectionId:
-              target.connection.kind === 'ssh' ? target.connection.connectionId : null
-          })
+      resolvedConnectionId: target.connection.kind === 'ssh' ? target.connection.connectionId : null
     })
     return { ...emptyTeardownResult(), runtimeStopped: result.stopped }
   } catch (error) {
@@ -190,12 +159,13 @@ export async function stopFolderWorkspaceTerminals(
   const sharedProviders = new Map<IPtyProvider, SharedFolderWorkspaceTeardownProvider>()
   const targetJobs: FolderWorkspaceTerminalTeardownJob[] = []
   for (const target of targets) {
+    if (target.connection.kind === 'ambiguous') {
+      continue
+    }
     const provider =
-      target.connection.kind === 'ambiguous'
-        ? null
-        : target.connection.kind === 'ssh'
-          ? deps.getSshProvider(target.connection.connectionId)
-          : deps.getLocalProvider()
+      target.connection.kind === 'ssh'
+        ? deps.getSshProvider(target.connection.connectionId)
+        : deps.getLocalProvider()
     if (!provider) {
       // Why: mixed host ownership cannot safely choose a provider inventory.
       targetJobs.push({ kind: 'runtime', target })

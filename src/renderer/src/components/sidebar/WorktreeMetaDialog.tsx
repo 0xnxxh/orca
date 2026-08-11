@@ -20,6 +20,7 @@ import {
 } from './worktree-meta-updates'
 import { useWorktreeIssueLink } from './use-worktree-issue-link'
 import { useWorktreeMetaWorkspace } from './use-worktree-meta-workspace'
+import { parseExecutionHostId } from '../../../../shared/execution-host'
 import { WorktreeIssueLinkField } from './WorktreeIssueLinkField'
 import { getScreenSubmitShortcutLabel, isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
 import { useMountedRef } from '@/hooks/useMountedRef'
@@ -69,6 +70,9 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
   // Why: the opening row names its repo bucket for workspace IDs the owner index
   // reads as ambiguous across hosts.
   const ownerRepoId = typeof modalData.repoId === 'string' ? modalData.repoId : null
+  const ownerExecutionHostId = parseExecutionHostId(
+    typeof modalData.executionHostId === 'string' ? modalData.executionHostId : null
+  )?.id
   const {
     worktree,
     linkedIssue,
@@ -77,7 +81,11 @@ const WorktreeMetaDialog = React.memo(function WorktreeMetaDialog() {
     currentProvider,
     isFolderWorkspace,
     liveLinks
-  } = useWorktreeMetaWorkspace({ worktreeId, ownerRepoId })
+  } = useWorktreeMetaWorkspace({
+    worktreeId,
+    ownerRepoId,
+    ownerExecutionHostId: ownerExecutionHostId ?? null
+  })
   // Why: ChecksPanel seeds the PR it is looking at, which may not be linked yet.
   const currentPR =
     typeof modalData.currentPR === 'number'

@@ -254,9 +254,12 @@ export function resolveMountedRuntimeTerminalPaneIdByPtyId(
   if (!registered) {
     return { status: 'unmounted' }
   }
-  const pane = registered
-    .getManager()
-    ?.getPanes()
+  const manager = registered.getManager()
+  if (!manager) {
+    return { status: 'unmounted' }
+  }
+  const pane = manager
+    .getPanes()
     .find((candidate) => registered.getPtyIdForPane(candidate.id) === ptyId)
   return pane ? { status: 'resolved', paneId: pane.id } : { status: 'missing' }
 }

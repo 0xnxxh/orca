@@ -119,6 +119,7 @@ export function useWorktreeCardActivationActions({
       openModal('edit-meta', {
         worktreeId: worktree.id,
         repoId: worktree.repoId,
+        executionHostId: worktree.hostId,
         currentDisplayName: worktree.displayName,
         currentIssue: worktree.linkedIssue,
         currentPR: worktree.linkedPR,
@@ -130,6 +131,7 @@ export function useWorktreeCardActivationActions({
       affiliateListMode,
       worktree.comment,
       worktree.displayName,
+      worktree.hostId,
       worktree.id,
       worktree.linkedIssue,
       worktree.linkedPR,

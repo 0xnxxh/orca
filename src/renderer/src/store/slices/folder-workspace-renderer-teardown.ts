@@ -6,14 +6,21 @@ import {
   closeLegacyRuntimeCatalogTerminals,
   type FolderWorkspaceRuntimeTerminalRemoval
 } from './folder-workspace-legacy-terminal-close'
+import { snapshotFolderWorkspaceContentRemoval } from './folder-workspace-content-removal-snapshot'
 import { teardownSelectiveFolderWorkspaceOwner } from './folder-workspace-selective-renderer-teardown'
-import { folderWorkspaceTerminalOwnerOwnsPty } from './folder-workspace-terminal-owner'
+import {
+  collectFolderWorkspaceTerminalTabPtyIds,
+  folderWorkspaceTerminalTabBelongsToOwner
+} from './folder-workspace-terminal-owner'
 
 export type FolderWorkspaceRendererTeardownSnapshot = {
   workspaceKey: string
   ptyIds: string[]
   purgeRendererState: boolean
+  retireBrowserWorkspaceIds: string[]
+  retireEditorFileIds: string[]
   retireTabIds: string[]
+  retireUnifiedTabIds: string[]
   ownerRemoval: FolderWorkspaceRendererOwnerRemoval | null
   runtimeCatalogRemoval: FolderWorkspaceRuntimeTerminalRemoval | null
 }
@@ -53,47 +60,21 @@ type FolderWorkspaceRendererTeardownSnapshotState = Pick<
   | 'activeWorkspaceExecutionHostId'
   | 'activeTabId'
   | 'restoredRuntimeHostIdByWorkspaceSessionKey'
->
+> &
+  Partial<
+    Pick<
+      AppState,
+      | 'browserTabsByWorktree'
+      | 'browserPagesByWorkspace'
+      | 'remoteBrowserPageHandlesByPageId'
+      | 'openFiles'
+      | 'unifiedTabsByWorktree'
+    >
+  >
 
 type FolderWorkspaceRendererTeardownSet = (
   updater: (state: AppState) => AppState | Partial<AppState>
 ) => void
-
-function collectTerminalTabBoundPtyIds(
-  state: FolderWorkspaceRendererTeardownSnapshotState,
-  tab: { id: string; ptyId: string | null }
-): string[] {
-  return [
-    ...new Set(
-      [
-        ...(state.ptyIdsByTabId[tab.id] ?? []),
-        tab.ptyId,
-        ...Object.values(state.terminalLayoutsByTabId[tab.id]?.ptyIdsByLeafId ?? {}),
-        state.lastKnownRelayPtyIdByTabId[tab.id],
-        state.deferredSshSessionIdsByTabId[tab.id],
-        state.directSshLivePtyBindingByTabId[tab.id]?.ptyId,
-        state.pendingReconnectPtyIdByTabId[tab.id]
-      ].filter((ptyId): ptyId is string => Boolean(ptyId))
-    )
-  ]
-}
-
-function unboundTabsBelongToRemovedOwner(
-  state: FolderWorkspaceRendererTeardownSnapshotState,
-  workspaceKey: string,
-  tabId: string,
-  ownerRemoval: FolderWorkspaceRendererOwnerRemoval
-): boolean {
-  if (state.activeTabId !== tabId) {
-    return false
-  }
-  if (state.activeWorktreeId !== workspaceKey && state.activeWorkspaceKey !== workspaceKey) {
-    return false
-  }
-  return state.activeWorkspaceExecutionHostId === null
-    ? state.restoredRuntimeHostIdByWorkspaceSessionKey[workspaceKey] === ownerRemoval.hostId
-    : state.activeWorkspaceExecutionHostId === ownerRemoval.hostId
-}
 
 function getRuntimeTerminalHandlesFromPtyIds(
   ptyIds: readonly string[],
@@ -119,7 +100,7 @@ export function snapshotFolderWorkspaceRuntimeTerminalHandles(
       ...new Set(
         workspaceKeys.flatMap((workspaceKey) =>
           (state.tabsByWorktree[workspaceKey] ?? []).flatMap((tab) =>
-            collectTerminalTabBoundPtyIds(state, tab)
+            collectFolderWorkspaceTerminalTabPtyIds(state, tab)
           )
         )
       )
@@ -143,31 +124,31 @@ export function snapshotFolderWorkspaceRendererTeardown(
   return [...workspaceKeys].map((workspaceKey) => {
     const tabs = state.tabsByWorktree[workspaceKey] ?? []
     const ptyIdsByTabId = new Map(
-      tabs.map((tab) => [tab.id, collectTerminalTabBoundPtyIds(state, tab)])
+      tabs.map((tab) => [tab.id, collectFolderWorkspaceTerminalTabPtyIds(state, tab)])
     )
     const ptyIds = [...new Set([...ptyIdsByTabId.values()].flat())]
     const terminalHandles = runtimeCatalogRemoval
       ? getRuntimeTerminalHandlesFromPtyIds(ptyIds, runtimeCatalogRemoval.environmentId)
       : []
+    const contentRemoval = snapshotFolderWorkspaceContentRemoval(state, workspaceKey, ownerRemoval)
     return {
       workspaceKey,
       ptyIds,
       purgeRendererState: purgeKeys.has(workspaceKey),
+      ...contentRemoval,
       ownerRemoval: ownerRemoval && ownerRemovalKeys.has(workspaceKey) ? ownerRemoval : null,
       retireTabIds:
         ownerRemoval && ownerRemovalKeys.has(workspaceKey)
           ? tabs
-              .filter((tab) => {
-                const tabPtyIds = ptyIdsByTabId.get(tab.id) ?? []
-                return (
-                  (tabPtyIds.length > 0 &&
-                    tabPtyIds.every((ptyId) =>
-                      folderWorkspaceTerminalOwnerOwnsPty(ownerRemoval, ptyId)
-                    )) ||
-                  (tabPtyIds.length === 0 &&
-                    unboundTabsBelongToRemovedOwner(state, workspaceKey, tab.id, ownerRemoval))
+              .filter((tab) =>
+                folderWorkspaceTerminalTabBelongsToOwner(
+                  state,
+                  workspaceKey,
+                  tab.id,
+                  ownerRemoval,
+                  ownerRemoval.hostId
                 )
-              })
+              )
               .map((tab) => tab.id)
           : [],
       runtimeCatalogRemoval:
@@ -187,7 +168,9 @@ export async function teardownDeletedFolderWorkspaceRendererState(
   set: FolderWorkspaceRendererTeardownSet,
   get: () => AppState,
   snapshots: readonly FolderWorkspaceRendererTeardownSnapshot[],
-  options: { isCurrent?: () => boolean } = {}
+  options: {
+    isCurrent?: (snapshot: FolderWorkspaceRendererTeardownSnapshot) => boolean
+  } = {}
 ): Promise<void> {
   if (snapshots.length === 0) {
     return
@@ -198,50 +181,58 @@ export async function teardownDeletedFolderWorkspaceRendererState(
     await closeLegacyRuntimeCatalogTerminals(
       snapshot.runtimeCatalogRemoval,
       backendTeardownByEnvironment,
-      isCurrent
+      () => isCurrent(snapshot)
     )
   }
   for (const snapshot of snapshots) {
-    if (snapshot.purgeRendererState || !isCurrent()) {
+    if (snapshot.purgeRendererState || !isCurrent(snapshot)) {
       continue
     }
     teardownSelectiveFolderWorkspaceOwner({
       get,
-      isCurrent,
+      isCurrent: () => isCurrent(snapshot),
       ownerRemoval: snapshot.ownerRemoval,
+      retireBrowserWorkspaceIds: snapshot.retireBrowserWorkspaceIds,
+      retireEditorFileIds: snapshot.retireEditorFileIds,
       retireTabIds: snapshot.retireTabIds,
+      retireUnifiedTabIds: snapshot.retireUnifiedTabIds,
       set,
       workspaceKey: snapshot.workspaceKey
     })
   }
   const purgeSnapshots = snapshots.filter((snapshot) => snapshot.purgeRendererState)
-  for (const { workspaceKey, ptyIds } of purgeSnapshots) {
-    if (!isCurrent()) {
-      break
+  for (const snapshot of purgeSnapshots) {
+    const { workspaceKey, ptyIds } = snapshot
+    if (!isCurrent(snapshot)) {
+      continue
     }
     try {
       await get().shutdownWorktreeBrowsers(workspaceKey)
     } catch (error) {
       console.warn('Failed to shut down deleted folder workspace browsers:', error)
     }
-    if (!isCurrent()) {
-      break
+    if (!isCurrent(snapshot)) {
+      continue
     }
     try {
       await get().shutdownWorktreeTerminals(workspaceKey, {
         shutdownReason: 'remove-worktree',
-        backendOwnsPtyTeardown: true
+        backendOwnsPtyTeardown: true,
+        isCurrent: () => isCurrent(snapshot)
       })
     } catch (error) {
       // Why: backend deletion is authoritative, so renderer binding failure cannot retain the workspace.
       console.warn('Failed to retire deleted folder workspace terminals:', error)
     }
-    if (!isCurrent()) {
-      break
+    if (!isCurrent(snapshot)) {
+      continue
     }
     disposeRemovedWorktreeParkedTerminalWatchers(workspaceKey, ptyIds)
   }
-  if (purgeSnapshots.length > 0 && isCurrent()) {
-    get().purgeWorktreeTerminalState(purgeSnapshots.map(({ workspaceKey }) => workspaceKey))
+  const currentPurgeKeys = purgeSnapshots
+    .filter((snapshot) => isCurrent(snapshot))
+    .map(({ workspaceKey }) => workspaceKey)
+  if (currentPurgeKeys.length > 0) {
+    get().purgeWorktreeTerminalState(currentPurgeKeys)
   }
 }

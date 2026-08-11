@@ -1,5 +1,5 @@
 import { useAppStore } from '@/store'
-import type { ExecutionHostId } from '../../../../shared/types'
+import type { ExecutionHostId } from '../../../../shared/execution-host'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
 import { runWorktreeBatchDelete, runWorktreeDelete } from './delete-worktree-flow'
 import type { WorktreeDeleteIdentity } from './worktree-delete-request'

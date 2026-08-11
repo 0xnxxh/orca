@@ -6,7 +6,10 @@ import {
   type RuntimeEnvironmentCallRequest
 } from '../../runtime/runtime-compatibility-test-fixture'
 import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rpc-client'
-import { FOLDER_WORKSPACE_BACKEND_TEARDOWN_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
+import {
+  FOLDER_WORKSPACE_BACKEND_TEARDOWN_RUNTIME_CAPABILITY,
+  FOLDER_WORKSPACE_OWNER_QUALIFIED_DELETE_RUNTIME_CAPABILITY
+} from '../../../../shared/protocol-version'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
 import { createTestStore, makeTab } from './store-test-helpers'
 
@@ -87,7 +90,8 @@ describe('folder workspace owner-routed mutations', () => {
 
     expect(folderWorkspacesUpdate).toHaveBeenCalledWith({
       folderWorkspaceId: folderWorkspace.id,
-      updates: { comment: 'Ready' }
+      updates: { comment: 'Ready' },
+      executionHostId: 'local'
     })
     expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
     expect(store.getState().folderWorkspaces[0]?.comment).toBe('Ready')
@@ -117,12 +121,127 @@ describe('folder workspace owner-routed mutations', () => {
       method: 'folderWorkspace.update',
       params: {
         folderWorkspaceId: folderWorkspace.id,
-        updates: { comment: 'Ready' }
+        updates: { comment: 'Ready' },
+        executionHostId: 'local'
       },
       timeoutMs: 15_000
     })
     expect(folderWorkspacesUpdate).not.toHaveBeenCalled()
     expect(store.getState().folderWorkspaces[0]?.comment).toBe('Ready')
+  })
+
+  it('updates only the selected host when local and direct-SSH folders share an ID', async () => {
+    const localFolder = makeFolderWorkspace({ connectionId: null, executionHostId: 'local' })
+    const sshFolder = makeFolderWorkspace({
+      connectionId: 'ssh-1',
+      executionHostId: 'ssh:ssh-1'
+    })
+    folderWorkspacesUpdate.mockResolvedValue({ ...sshFolder, comment: 'Remote update' })
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [
+        { ...projectGroup, connectionId: null, executionHostId: 'local' },
+        { ...projectGroup, connectionId: 'ssh-1', executionHostId: 'ssh:ssh-1' }
+      ],
+      folderWorkspaces: [localFolder, sshFolder]
+    })
+
+    await expect(
+      store.getState().updateFolderWorkspace(localFolder.id, { comment: 'Ambiguous' })
+    ).resolves.toBe(false)
+    await expect(
+      store.getState().updateFolderWorkspace(
+        sshFolder.id,
+        { comment: 'Remote update' },
+        {
+          executionHostId: 'ssh:ssh-1'
+        }
+      )
+    ).resolves.toBe(true)
+
+    expect(folderWorkspacesUpdate).toHaveBeenCalledTimes(1)
+    expect(folderWorkspacesUpdate).toHaveBeenCalledWith({
+      folderWorkspaceId: sshFolder.id,
+      updates: { comment: 'Remote update' },
+      executionHostId: 'ssh:ssh-1'
+    })
+    expect(store.getState().folderWorkspaces).toEqual([
+      localFolder,
+      { ...sshFolder, comment: 'Remote update' }
+    ])
+  })
+
+  it('fails a runtime update when physical owner provenance is ambiguous', async () => {
+    const folderWorkspace = makeFolderWorkspace({
+      executionHostId: 'runtime:env-owner'
+    })
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [
+        {
+          ...projectGroup,
+          executionHostId: 'runtime:env-owner',
+          runtimeSourceExecutionHostId: 'local'
+        },
+        {
+          ...projectGroup,
+          executionHostId: 'runtime:env-owner',
+          runtimeSourceExecutionHostId: 'ssh:ssh-1'
+        }
+      ],
+      folderWorkspaces: [folderWorkspace]
+    })
+
+    await expect(
+      store.getState().updateFolderWorkspace(folderWorkspace.id, { comment: 'Unsafe' })
+    ).resolves.toBe(false)
+
+    expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
+    expect(folderWorkspacesUpdate).not.toHaveBeenCalled()
+  })
+
+  it('rejects contradictory direct authority before update or delete routing', async () => {
+    const folderWorkspace = makeFolderWorkspace({
+      connectionId: 'ssh-1',
+      executionHostId: 'local'
+    })
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [{ ...projectGroup, connectionId: null, executionHostId: 'local' }],
+      folderWorkspaces: [folderWorkspace]
+    })
+
+    await expect(
+      store.getState().updateFolderWorkspace(folderWorkspace.id, { comment: 'Unsafe' })
+    ).resolves.toBe(false)
+    await expect(store.getState().deleteFolderWorkspace(folderWorkspace.id)).resolves.toBe(false)
+
+    expect(folderWorkspacesUpdate).not.toHaveBeenCalled()
+    expect(folderWorkspacesDelete).not.toHaveBeenCalled()
+    expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
+  })
+
+  it('rejects conflicting paired source stamps before runtime mutation', async () => {
+    const folderWorkspace = makeFolderWorkspace({ executionHostId: 'runtime:env-owner' })
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [
+        {
+          ...projectGroup,
+          connectionId: 'ssh-1',
+          executionHostId: 'runtime:env-owner',
+          runtimeSourceExecutionHostId: 'local'
+        }
+      ],
+      folderWorkspaces: [folderWorkspace]
+    })
+
+    await expect(
+      store.getState().updateFolderWorkspace(folderWorkspace.id, { comment: 'Unsafe' })
+    ).resolves.toBe(false)
+    await expect(store.getState().deleteFolderWorkspace(folderWorkspace.id)).resolves.toBe(false)
+
+    expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
   })
 
   it('ignores an older response after the same field changes again', async () => {
@@ -399,9 +518,27 @@ describe('folder workspace owner-routed mutations', () => {
     await expect(store.getState().deleteFolderWorkspace(folderWorkspace.id)).resolves.toBe(true)
 
     expect(folderWorkspacesDelete).toHaveBeenCalledWith({
-      folderWorkspaceId: folderWorkspace.id
+      folderWorkspaceId: folderWorkspace.id,
+      executionHostId: 'local'
     })
     expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
+  })
+
+  it('deletes an explicit-local folder as local under an SSH group', async () => {
+    const folderWorkspace = makeFolderWorkspace({ connectionId: null })
+    folderWorkspacesDelete.mockResolvedValue(true)
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [{ ...projectGroup, connectionId: 'ssh-1', executionHostId: 'ssh:ssh-1' }],
+      folderWorkspaces: [folderWorkspace]
+    })
+
+    await expect(store.getState().deleteFolderWorkspace(folderWorkspace.id)).resolves.toBe(true)
+
+    expect(folderWorkspacesDelete).toHaveBeenCalledWith({
+      folderWorkspaceId: folderWorkspace.id,
+      executionHostId: 'local'
+    })
   })
 
   it('tells local deletion to preserve a same-ID runtime sibling graph', async () => {
@@ -436,6 +573,7 @@ describe('folder workspace owner-routed mutations', () => {
 
     expect(folderWorkspacesDelete).toHaveBeenCalledWith({
       folderWorkspaceId: localWorkspace.id,
+      executionHostId: 'local',
       preserveRendererWorkspaceKey: true
     })
     expect(store.getState().folderWorkspaces).toEqual([runtimeWorkspace])
@@ -464,10 +602,101 @@ describe('folder workspace owner-routed mutations', () => {
     expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
       selector: 'env-owner',
       method: 'folderWorkspace.delete',
-      params: { folderWorkspaceId: folderWorkspace.id },
-      timeoutMs: 15_000
+      params: {
+        folderWorkspaceId: folderWorkspace.id,
+        executionHostId: 'local'
+      },
+      timeoutMs: 15_000,
+      expectedEnvironmentPairingRevision: undefined
     })
     expect(folderWorkspacesDelete).not.toHaveBeenCalled()
+  })
+
+  it('deletes a unique folder through an owner-unqualified legacy runtime', async () => {
+    const folderWorkspace = makeFolderWorkspace({
+      id: 'folder-old-host',
+      executionHostId: 'runtime:env-owner'
+    })
+    const oldRuntimeStatus = createCompatibleRuntimeStatusResponse('runtime-owner')
+    if (oldRuntimeStatus.ok) {
+      oldRuntimeStatus.result.capabilities = oldRuntimeStatus.result.capabilities?.filter(
+        (capability) => capability !== FOLDER_WORKSPACE_OWNER_QUALIFIED_DELETE_RUNTIME_CAPABILITY
+      )
+    }
+    runtimeEnvironmentTransportCall.mockImplementation((args: RuntimeEnvironmentCallRequest) =>
+      args.method === 'status.get' ? oldRuntimeStatus : runtimeEnvironmentCall(args)
+    )
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-delete-folder',
+      ok: true,
+      result: { deleted: true },
+      _meta: { runtimeId: 'runtime-owner' }
+    })
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [{ ...projectGroup, executionHostId: folderWorkspace.executionHostId }],
+      folderWorkspaces: [folderWorkspace]
+    })
+
+    await expect(store.getState().deleteFolderWorkspace(folderWorkspace.id)).resolves.toBe(true)
+
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
+      selector: 'env-owner',
+      method: 'folderWorkspace.delete',
+      params: { folderWorkspaceId: folderWorkspace.id },
+      timeoutMs: 15_000,
+      expectedEnvironmentPairingRevision: undefined
+    })
+    expect(folderWorkspacesDelete).not.toHaveBeenCalled()
+    expect(store.getState().folderWorkspaces).toEqual([])
+  })
+
+  it('lets a legacy runtime handle ambiguous physical provenance by ID', async () => {
+    const folderWorkspace = makeFolderWorkspace({
+      id: 'folder-old-ambiguous',
+      executionHostId: 'runtime:env-owner'
+    })
+    const oldRuntimeStatus = createCompatibleRuntimeStatusResponse('runtime-owner')
+    if (oldRuntimeStatus.ok) {
+      oldRuntimeStatus.result.capabilities = oldRuntimeStatus.result.capabilities?.filter(
+        (capability) => capability !== FOLDER_WORKSPACE_OWNER_QUALIFIED_DELETE_RUNTIME_CAPABILITY
+      )
+    }
+    runtimeEnvironmentTransportCall.mockImplementation((args: RuntimeEnvironmentCallRequest) =>
+      args.method === 'status.get' ? oldRuntimeStatus : runtimeEnvironmentCall(args)
+    )
+    runtimeEnvironmentCall.mockResolvedValue({
+      id: 'rpc-delete-folder',
+      ok: true,
+      result: { deleted: true },
+      _meta: { runtimeId: 'runtime-owner' }
+    })
+    const store = createTestStore()
+    store.setState({
+      projectGroups: [
+        {
+          ...projectGroup,
+          executionHostId: 'runtime:env-owner',
+          runtimeSourceExecutionHostId: 'local'
+        },
+        {
+          ...projectGroup,
+          executionHostId: 'runtime:env-owner',
+          runtimeSourceExecutionHostId: 'ssh:ssh-1'
+        }
+      ],
+      folderWorkspaces: [folderWorkspace]
+    })
+
+    await expect(store.getState().deleteFolderWorkspace(folderWorkspace.id)).resolves.toBe(true)
+
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
+      selector: 'env-owner',
+      method: 'folderWorkspace.delete',
+      params: { folderWorkspaceId: folderWorkspace.id },
+      timeoutMs: 15_000,
+      expectedEnvironmentPairingRevision: undefined
+    })
   })
 
   it('closes exact terminals before deleting through a legacy runtime', async () => {
@@ -540,7 +769,9 @@ describe('folder workspace owner-routed mutations', () => {
         ([request]) => request.method === 'folderWorkspace.delete'
       )?.[0].params
     ).toEqual({
-      folderWorkspaceId: folderWorkspace.id
+      folderWorkspaceId: folderWorkspace.id,
+      executionHostId: 'local',
+      preserveRendererWorkspaceKey: true
     })
     expect(store.getState().folderWorkspaces).toEqual([siblingWorkspace])
     expect(store.getState().tabsByWorktree[workspaceKey]).toEqual([siblingTab])
