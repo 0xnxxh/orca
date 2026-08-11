@@ -4,6 +4,7 @@ import { useAppStore, type AppState } from '@/store'
 import { basename, joinPath } from '@/lib/path'
 import { getExternalFileChangeRelativePath } from '@/components/right-sidebar/useFileExplorerWatch'
 import {
+  areLocalWindowsWslPathAliases,
   isWindowsAbsolutePathLike,
   normalizeRuntimePathForComparison
 } from '../../../shared/cross-platform-path'
@@ -39,6 +40,7 @@ import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 import { getFolderWorkspaceConnectionId } from '@/lib/folder-workspace-connection'
 import { isLocalWindowsDesktopClient } from '@/lib/desktop-window-chrome'
 import { parseExecutionHostId } from '../../../shared/execution-host'
+import { findRepoForHost } from '@/store/slices/repo-host-identity'
 
 // Why: atomic writes burst same-path events; one reload dispatch each fans out into N EditorPanel rebuilds that can wedge the renderer (issue #826), so debounce per (worktreeId+path).
 const EXTERNAL_RELOAD_DEBOUNCE_MS = 75
@@ -93,6 +95,26 @@ function localWslAliasOption(
   return isLocalWindowsDesktopClient() && target.allowLocalWindowsWslAliases === true
     ? { allowLocalWindowsWslAliases: true }
     : {}
+}
+
+function findMatchingWatchedPath(
+  watchedPaths: ReadonlyMap<string, string>,
+  filePath: string,
+  allowLocalWslAliases?: true
+): string | undefined {
+  const directMatch = watchedPaths.get(normalizeRuntimePathForComparison(filePath))
+  if (directMatch !== undefined) {
+    return directMatch
+  }
+  if (allowLocalWslAliases !== true || !isLocalWindowsDesktopClient()) {
+    return undefined
+  }
+  for (const watchedPath of watchedPaths.values()) {
+    if (areLocalWindowsWslPathAliases(filePath, watchedPath)) {
+      return watchedPath
+    }
+  }
+  return undefined
 }
 
 function isLocalHostStamp(value: string | null | undefined): boolean {
@@ -210,8 +232,13 @@ export function getEditorExternalWatchTargets(
   const activeWorktree = activeWorktreeId
     ? findWorktreeById(state.worktreesByRepo, activeWorktreeId)
     : undefined
+  const activeWorktreeHost = parseExecutionHostId(activeWorktree?.hostId)
   const activeRepo = activeWorktree
-    ? state.repos.find((repo) => repo.id === activeWorktree.repoId)
+    ? activeWorktreeHost?.kind === 'local'
+      ? (findRepoForHost(state.repos, activeWorktree.repoId, {
+          hostId: activeWorktreeHost.id
+        }) ?? undefined)
+      : state.repos.find((repo) => repo.id === activeWorktree.repoId)
     : undefined
   const sourceControlCanConsumeWatch =
     !!activeWorktreeId &&
@@ -251,9 +278,19 @@ export function getEditorExternalWatchTargets(
     if (!wt && !folderWorkspace) {
       continue
     }
-    const repo = wt ? state.repos.find((r) => r.id === wt.repoId) : undefined
+    const worktreeHost = parseExecutionHostId(wt?.hostId)
+    const repo = wt
+      ? worktreeHost?.kind === 'local'
+        ? (findRepoForHost(state.repos, wt.repoId, { hostId: worktreeHost.id }) ?? undefined)
+        : state.repos.find((r) => r.id === wt.repoId)
+      : undefined
+    const folderHostId = parseExecutionHostId(folderWorkspace?.executionHostId)?.id
     const projectGroup = folderWorkspace
-      ? state.projectGroups.find((group) => group.id === folderWorkspace.projectGroupId)
+      ? state.projectGroups.find(
+          (group) =>
+            group.id === folderWorkspace.projectGroupId &&
+            parseExecutionHostId(group.executionHostId)?.id === folderHostId
+        )
       : undefined
     const connectionId = folderWorkspace
       ? getFolderWorkspaceConnectionId(state, folderWorkspace.id)
@@ -489,16 +526,19 @@ export function createExternalWatchEventHandler(
     }
 
     // Why: collect create/update paths first to cancel any pending same-path delete — this absorbs the macOS atomic-write delete→create split across two payloads.
-    const createOrUpdatePaths = new Set<string>()
+    const createOrUpdatePaths = new Map<string, string>()
     for (const evt of payload.events) {
       if (evt.isDirectory === true) {
         continue
       }
       if (evt.kind === 'create' || evt.kind === 'update') {
-        createOrUpdatePaths.add(normalizeRuntimePathForComparison(evt.absolutePath))
+        createOrUpdatePaths.set(
+          normalizeRuntimePathForComparison(evt.absolutePath),
+          evt.absolutePath
+        )
       }
     }
-    for (const createdPath of createOrUpdatePaths) {
+    for (const createdPath of createOrUpdatePaths.keys()) {
       const key = pendingKey(target.worktreeId, target.runtimeEnvironmentId, createdPath)
       const existing = pendingDeletes.get(key)
       if (existing) {
@@ -514,7 +554,8 @@ export function createExternalWatchEventHandler(
       payload,
       target.worktreeId,
       target.runtimeEnvironmentId,
-      openFilesAtStart
+      openFilesAtStart,
+      target.allowLocalWindowsWslAliases
     )
     // Only pay the per-id lookup to suppress a move's own source-delete while a move is live; else the batch stays O(deletes).
     const deletedOpenEditorIds = hasActiveEditorPathMoves()
@@ -544,7 +585,8 @@ export function createExternalWatchEventHandler(
           target.worktreeId,
           target.runtimeEnvironmentId,
           deletedOpenEditorIds,
-          openFilesAtStart
+          openFilesAtStart,
+          target.allowLocalWindowsWslAliases
         )
         for (const fileId of deletedOpenEditorIds) {
           const absolutePath = deletePathByFileId.get(fileId)
@@ -580,7 +622,11 @@ export function createExternalWatchEventHandler(
           openFileRuntimeOwner(file) === target.runtimeEnvironmentId &&
           (file.mode === 'edit' || file.mode === 'markdown-preview') &&
           (file.externalMutation === 'deleted' || file.externalMutation === 'renamed') &&
-          createOrUpdatePaths.has(normalizeRuntimePathForComparison(file.filePath))
+          findMatchingWatchedPath(
+            createOrUpdatePaths,
+            file.filePath,
+            target.allowLocalWindowsWslAliases
+          ) !== undefined
         ) {
           state.setExternalMutation(file.id, null)
         }
@@ -992,12 +1038,13 @@ function buildDeletePathByFileId(
   worktreeId: string,
   runtimeEnvironmentId: string | null,
   deletedOpenEditorIds: string[],
-  openFiles: OpenFile[]
+  openFiles: OpenFile[],
+  allowLocalWindowsWslAliases?: true
 ): Map<string, string> {
-  const deletePaths = new Set<string>()
+  const deletePaths = new Map<string, string>()
   for (const evt of payload.events) {
     if (evt.kind === 'delete') {
-      deletePaths.add(normalizeRuntimePathForComparison(evt.absolutePath))
+      deletePaths.set(normalizeRuntimePathForComparison(evt.absolutePath), evt.absolutePath)
     }
   }
   const result = new Map<string, string>()
@@ -1013,9 +1060,13 @@ function buildDeletePathByFileId(
     ) {
       continue
     }
-    const normalized = normalizeRuntimePathForComparison(file.filePath)
-    if (deletePaths.has(normalized)) {
-      result.set(file.id, normalized)
+    const deletePath = findMatchingWatchedPath(
+      deletePaths,
+      file.filePath,
+      allowLocalWindowsWslAliases
+    )
+    if (deletePath) {
+      result.set(file.id, normalizeRuntimePathForComparison(deletePath))
     }
   }
   return result
@@ -1025,12 +1076,13 @@ function collectDeletedOpenEditorIds(
   payload: FsChangedPayload,
   worktreeId: string,
   runtimeEnvironmentId: string | null,
-  openFiles: OpenFile[]
+  openFiles: OpenFile[],
+  allowLocalWindowsWslAliases?: true
 ): string[] {
-  const deletePaths = new Set<string>()
+  const deletePaths = new Map<string, string>()
   for (const evt of payload.events) {
     if (evt.kind === 'delete') {
-      deletePaths.add(normalizeRuntimePathForComparison(evt.absolutePath))
+      deletePaths.set(normalizeRuntimePathForComparison(evt.absolutePath), evt.absolutePath)
     }
   }
   if (deletePaths.size === 0) {
@@ -1045,7 +1097,9 @@ function collectDeletedOpenEditorIds(
     ) {
       continue
     }
-    if (deletePaths.has(normalizeRuntimePathForComparison(file.filePath))) {
+    if (
+      findMatchingWatchedPath(deletePaths, file.filePath, allowLocalWindowsWslAliases) !== undefined
+    ) {
       result.push(file.id)
     }
   }
