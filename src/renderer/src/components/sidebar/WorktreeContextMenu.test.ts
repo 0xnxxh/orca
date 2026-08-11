@@ -15,6 +15,7 @@ import {
   hasWorktreeParentLink,
   isWorktreeParentPickerDisabled,
   planWorkspaceStatusAssignment,
+  resolveWorktreeContextMenuTargets,
   selectMenuScopedMap,
   shouldRevealWorktreeDeveloperMenu
 } from './WorktreeContextMenu'
@@ -27,6 +28,24 @@ import type {
   WorktreeLineage,
   WorkspaceStatusDefinition
 } from '../../../../shared/types'
+
+describe('resolveWorktreeContextMenuTargets', () => {
+  const worktree = (id: string, hostId: string): Worktree => ({ id, hostId }) as Worktree
+
+  it('keeps an unambiguous multi-workspace selection', () => {
+    const local = worktree('local-workspace', 'local')
+    const runtime = worktree('runtime-workspace', 'runtime:env-1')
+
+    expect(resolveWorktreeContextMenuTargets(runtime, [local, runtime])).toEqual([local, runtime])
+  })
+
+  it('uses only the clicked owner when selected rows share a bare id', () => {
+    const local = worktree('same-id', 'local')
+    const runtime = worktree('same-id', 'runtime:env-1')
+
+    expect(resolveWorktreeContextMenuTargets(runtime, [local, runtime])).toEqual([runtime])
+  })
+})
 
 describe('findContextMenuRepo', () => {
   const repo = (executionHostId: 'local' | 'runtime:env-1'): Repo =>

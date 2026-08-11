@@ -113,6 +113,15 @@ export function findContextMenuRepo(
   )
 }
 
+export function resolveWorktreeContextMenuTargets(
+  worktree: Worktree,
+  selectedWorktrees: readonly Worktree[]
+): readonly Worktree[] {
+  const ids = selectedWorktrees.map((item) => item.id)
+  // Why: batch APIs accept bare IDs and cannot distinguish same-ID rows owned by different hosts.
+  return new Set(ids).size === ids.length ? selectedWorktrees : [worktree]
+}
+
 // Why: stable empty sentinels let closed menu wrappers subscribe to a referentially
 // stable value instead of the high-churn maps that delete teardown replaces. The
 // selector returns these when the menu is closed, so the wrapper stays inert to
@@ -928,7 +937,8 @@ const WorktreeContextMenu = React.memo(function WorktreeContextMenu({
         contextMenuOpenedAtRef.current = Date.now()
         window.dispatchEvent(new Event(CLOSE_ALL_CONTEXT_MENUS_EVENT))
         setDeveloperMenuRevealed(event.altKey)
-        setContextWorktrees(onContextMenuSelect?.(event) ?? effectiveSelectedWorktrees)
+        const selectedContextWorktrees = onContextMenuSelect?.(event) ?? effectiveSelectedWorktrees
+        setContextWorktrees(resolveWorktreeContextMenuTargets(worktree, selectedContextWorktrees))
         const bounds = event.currentTarget.getBoundingClientRect()
         setMenuPoint({ x: event.clientX - bounds.left, y: event.clientY - bounds.top })
         setMenuOpenState(true)
