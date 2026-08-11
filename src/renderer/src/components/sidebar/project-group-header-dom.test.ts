@@ -783,6 +783,20 @@ describe('WorktreeList project-group host filtering', () => {
     expect(container.textContent).not.toContain('No workspaces found')
   })
 
+  it('keeps a selected-host folder-only owner group visible under workspace filters', async () => {
+    setHostFilteredWorktreeListState([hostFilteredFolderWorkspace()])
+    worktreeListStore.state = {
+      ...worktreeListStore.state,
+      hideDefaultBranchWorkspace: true
+    }
+
+    const container = await renderHostFilteredWorktreeList()
+
+    expect(container.textContent).toContain('Runtime project group')
+    expect(container.textContent).toContain('Runtime folder workspace')
+    expect(container.textContent).not.toContain('No workspaces found')
+  })
+
   it('still lets a workspace filter replace empty project-group headers', async () => {
     setHostFilteredWorktreeListState([])
     worktreeListStore.state = {

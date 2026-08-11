@@ -6943,6 +6943,7 @@ const WorktreeList = React.memo(function WorktreeList({
       workspaceHostScope: 'all'
     }) &&
     worktrees.length === 0 &&
+    visibleFolderWorkspacesForRows.length === 0 &&
     placeholderRepoIds.size === 0 &&
     importedWorktreesByRepo.size === 0
   // Why: host filters own Project Group rows; only workspace filters may replace those rows with Clear Filters.
