@@ -339,8 +339,9 @@ function removeWorktreeMetadataAndTransientState(
   // Why: release the removed worktree's PR-refresh aliases so coalesced queue entries don't retain it all session (memory creep).
   pruneWorktreePRRefreshAliases(worktreeId)
   // Why: removed workspaces must never resurrect from the persisted cleanup/space scan snapshots.
-  void pruneWorkspaceCleanupScanSnapshot(worktreeId)
-  void pruneWorkspaceSpaceAnalysisSnapshot(worktreeId)
+  const snapshotDirectory = store.getProfileStorageDirectory()
+  void pruneWorkspaceCleanupScanSnapshot(snapshotDirectory, worktreeId, hostId)
+  void pruneWorkspaceSpaceAnalysisSnapshot(snapshotDirectory, worktreeId, hostId)
 }
 
 function getProjectHostSetupMetaUpdates(

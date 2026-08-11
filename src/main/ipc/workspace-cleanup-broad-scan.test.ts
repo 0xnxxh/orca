@@ -193,19 +193,48 @@ describe('workspace cleanup broad scan opt-in', () => {
   })
 
   it('reports folder workspaces with a folder-repo blocker', async () => {
-    const result = await scanWorkspaceCleanup(makeStore([FOLDER_REPO]), {
+    const instanceId = `${FOLDER_REPO.id}::${FOLDER_REPO.path}::workspace:11111111-2222-4333-8444-555555555555`
+    const instanceMeta = makeWorktreeMeta({
+      displayName: 'Folder session',
+      lastActivityAt: NOW - 2 * DAY_MS
+    })
+    const result = await scanWorkspaceCleanup(
+      makeStore([FOLDER_REPO], { [instanceId]: instanceMeta }),
+      { includeAllWorkspaces: true }
+    )
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        worktreeId: 'repo-folder::/folder-workspace',
+        tier: 'protected',
+        selectedByDefault: false,
+        blockers: expect.arrayContaining(['folder-repo', 'main-worktree'])
+      }),
+      expect.objectContaining({
+        worktreeId: instanceId,
+        displayName: 'Folder session',
+        path: FOLDER_REPO.path,
+        tier: 'protected',
+        selectedByDefault: false,
+        blockers: ['folder-repo']
+      })
+    ])
+  })
+
+  it('does not mark connected SSH folder workspaces as disconnected', async () => {
+    const sshFolderRepo: Repo = { ...FOLDER_REPO, connectionId: 'ssh-1' }
+    getSshGitProviderMock.mockReturnValue({})
+
+    const result = await scanWorkspaceCleanup(makeStore([sshFolderRepo]), {
       includeAllWorkspaces: true
     })
 
     expect(result.candidates).toHaveLength(1)
     expect(result.candidates[0]).toMatchObject({
       worktreeId: 'repo-folder::/folder-workspace',
-      tier: 'protected',
-      selectedByDefault: false
+      connectionId: 'ssh-1',
+      blockers: ['main-worktree', 'folder-repo']
     })
-    expect(result.candidates[0]?.blockers).toEqual(
-      expect.arrayContaining(['folder-repo', 'main-worktree'])
-    )
   })
 
   it('defers git evidence for rows that no cleanup decision can use', async () => {
@@ -256,6 +285,27 @@ describe('workspace cleanup broad scan opt-in', () => {
       blockers: ['ssh-disconnected'],
       reasons: []
     })
+  })
+
+  it('uses the backing path for disconnected SSH folder instances', async () => {
+    const sshFolderRepo: Repo = { ...FOLDER_REPO, connectionId: 'ssh-1' }
+    const instanceId = `${sshFolderRepo.id}::${sshFolderRepo.path}::workspace:11111111-2222-4333-8444-555555555555`
+    const allMeta = {
+      [instanceId]: makeWorktreeMeta({ displayName: 'Remote folder session' })
+    }
+
+    const result = await scanWorkspaceCleanup(makeStore([sshFolderRepo], allMeta), {
+      includeAllWorkspaces: true
+    })
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        worktreeId: instanceId,
+        path: sshFolderRepo.path,
+        branch: 'folder-workspace',
+        blockers: ['ssh-disconnected']
+      })
+    ])
   })
 
   it('streams every row through scan progress on an opt-in scan', async () => {

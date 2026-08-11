@@ -1,6 +1,7 @@
 import type { IGitProvider } from '../providers/types'
 import { isFolderRepo } from '../../shared/repo-kind'
 import type { Repo, Worktree } from '../../shared/types'
+import { getRepoExecutionHostId } from '../../shared/execution-host'
 import {
   applyWorkspaceCleanupPolicy,
   createWorkspaceCleanupFingerprint,
@@ -58,6 +59,7 @@ export async function buildWorkspaceCleanupCandidate(args: {
     repoId: repo.id,
     repoName: repo.displayName,
     connectionId: repo.connectionId ?? null,
+    executionHostId: getRepoExecutionHostId(repo),
     displayName: worktree.displayName,
     branch: shortWorkspaceCleanupBranchName(worktree.branch),
     path: worktree.path,
@@ -102,6 +104,7 @@ export function buildWorkspaceCleanupCandidateFromError(
     repoId: repo.id,
     repoName: repo.displayName,
     connectionId: repo.connectionId ?? null,
+    executionHostId: getRepoExecutionHostId(repo),
     displayName: worktree.displayName,
     branch: shortWorkspaceCleanupBranchName(worktree.branch),
     path: worktree.path,

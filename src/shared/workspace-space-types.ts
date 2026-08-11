@@ -1,3 +1,5 @@
+import type { ExecutionHostId } from './execution-host'
+
 export type WorkspaceSpaceScanStatus =
   | 'ok'
   | 'missing'
@@ -17,6 +19,7 @@ export type WorkspaceSpaceItem = {
 export type WorkspaceSpaceWorktree = {
   worktreeId: string
   repoId: string
+  executionHostId?: ExecutionHostId
   repoDisplayName: string
   repoPath: string
   displayName: string
@@ -40,6 +43,7 @@ export type WorkspaceSpaceWorktree = {
 
 export type WorkspaceSpaceRepoSummary = {
   repoId: string
+  executionHostId?: ExecutionHostId
   displayName: string
   path: string
   isRemote: boolean

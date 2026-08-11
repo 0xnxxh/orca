@@ -29,6 +29,7 @@ export function registerWorkspaceCleanupHandlers(
   store: Store,
   deps: WorkspaceCleanupHandlerDeps = {}
 ): void {
+  const snapshotDirectory = store.getProfileStorageDirectory()
   ipcMain.removeHandler('workspaceCleanup:scan')
   ipcMain.removeHandler('workspaceCleanup:getCachedScan')
   ipcMain.removeHandler('workspaceCleanup:dismiss')
@@ -44,21 +45,19 @@ export function registerWorkspaceCleanupHandlers(
           : undefined
       })
       // Fire-and-forget: snapshot persistence must never delay or fail the scan reply.
-      void persistWorkspaceCleanupScanResult(args ?? {}, result)
+      void persistWorkspaceCleanupScanResult(snapshotDirectory, args ?? {}, result)
       return result
     }
   )
 
   ipcMain.handle(
     'workspaceCleanup:getCachedScan',
-    (): Promise<WorkspaceCleanupScanResult | null> => readWorkspaceCleanupScanSnapshot()
+    (): Promise<WorkspaceCleanupScanResult | null> =>
+      readWorkspaceCleanupScanSnapshot(snapshotDirectory)
   )
 
   ipcMain.handle('workspaceCleanup:dismiss', (_event, args: WorkspaceCleanupDismissArgs) => {
-    // Why spread the whole record: updateUI replaces `workspaceCleanup` wholesale,
-    // so writing dismissals alone would erase the persisted browse state.
-    const currentState = store.getUI().workspaceCleanup
-    const next = { ...currentState?.dismissals }
+    const next = { ...store.getUI().workspaceCleanup?.dismissals }
     for (const dismissal of args.dismissals ?? []) {
       if (
         dismissal &&
@@ -69,13 +68,11 @@ export function registerWorkspaceCleanupHandlers(
         next[dismissal.worktreeId] = dismissal
       }
     }
-    store.updateUI({ workspaceCleanup: { ...currentState, dismissals: next } })
+    store.updateUI({ workspaceCleanup: { dismissals: next } })
   })
 
   ipcMain.handle('workspaceCleanup:clearDismissals', () => {
-    store.updateUI({
-      workspaceCleanup: { ...store.getUI().workspaceCleanup, dismissals: {} }
-    })
+    store.updateUI({ workspaceCleanup: { dismissals: {} } })
   })
 
   ipcMain.handle(

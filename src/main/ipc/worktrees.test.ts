@@ -314,6 +314,7 @@ describe('registerWorktreeHandlers', () => {
   }
   const ipcEvent = { sender: { id: 1 } }
   const store = {
+    getProfileStorageDirectory: vi.fn(() => '/profile-a'),
     getRepos: vi.fn(),
     getRepo: vi.fn(),
     getProjects: vi.fn(),
@@ -8302,8 +8303,16 @@ describe('registerWorktreeHandlers', () => {
     await handlers['worktrees:remove'](null, { worktreeId: 'repo-1::/workspace/feature-wt' })
 
     // A removed workspace must never resurrect from the cached scan snapshots.
-    expect(pruneCleanupScanSnapshotMock).toHaveBeenCalledWith('repo-1::/workspace/feature-wt')
-    expect(pruneSpaceAnalysisSnapshotMock).toHaveBeenCalledWith('repo-1::/workspace/feature-wt')
+    expect(pruneCleanupScanSnapshotMock).toHaveBeenCalledWith(
+      '/profile-a',
+      'repo-1::/workspace/feature-wt',
+      'local'
+    )
+    expect(pruneSpaceAnalysisSnapshotMock).toHaveBeenCalledWith(
+      '/profile-a',
+      'repo-1::/workspace/feature-wt',
+      'local'
+    )
   })
 
   it('traces the removal as worktree.remove with a stage sub-span tree', async () => {

@@ -34,6 +34,7 @@ import { getSshGitProvider } from './providers/ssh-git-dispatch'
 import { createFolderWorktree, listRepoWorktrees } from './repo-worktrees'
 import { mergeWorktree } from './ipc/worktree-logic'
 import { getLocalProjectWorktreeGitOptions } from './project-runtime-git-options'
+import { getRepoExecutionHostId } from '../shared/execution-host'
 
 const REPO_SCAN_CONCURRENCY = 2
 const WORKTREE_SCAN_CONCURRENCY = 3
@@ -309,6 +310,7 @@ function createBaseWorktreeRow(
   return {
     worktreeId: worktree.id,
     repoId: repo.id,
+    executionHostId: getRepoExecutionHostId(repo),
     repoDisplayName: repo.displayName,
     repoPath: repo.path,
     displayName: worktree.displayName,
@@ -733,6 +735,7 @@ async function scanRepo(
       worktrees: [],
       summary: {
         repoId: repo.id,
+        executionHostId: getRepoExecutionHostId(repo),
         displayName: repo.displayName,
         path: repo.path,
         isRemote: Boolean(repo.connectionId),
@@ -809,6 +812,7 @@ async function scanRepo(
     worktrees: rows,
     summary: {
       repoId: repo.id,
+      executionHostId: getRepoExecutionHostId(repo),
       displayName: repo.displayName,
       path: repo.path,
       isRemote: Boolean(repo.connectionId),

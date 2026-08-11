@@ -74,6 +74,10 @@ function createEvent() {
   }
 }
 
+function createStore(): Store {
+  return { getProfileStorageDirectory: () => '/profile-a' } as Store
+}
+
 describe('registerWorkspaceSpaceHandlers', () => {
   beforeEach(() => {
     analyzeWorkspaceSpaceMock.mockReset()
@@ -82,7 +86,7 @@ describe('registerWorkspaceSpaceHandlers', () => {
   })
 
   it('shares an in-flight analysis request', async () => {
-    const store = {} as Store
+    const store = createStore()
     let resolveFirstScan: (analysis: WorkspaceSpaceAnalysis) => void = () => {}
     const firstScan = new Promise<WorkspaceSpaceAnalysis>((resolve) => {
       resolveFirstScan = resolve
@@ -120,7 +124,7 @@ describe('registerWorkspaceSpaceHandlers', () => {
   })
 
   it('forwards scan progress to the requesting renderer', async () => {
-    const store = {} as Store
+    const store = createStore()
     let onProgress: ((progress: WorkspaceSpaceScanProgress) => void) | undefined
     analyzeWorkspaceSpaceMock.mockImplementationOnce((_store, options) => {
       onProgress = options.onProgress
@@ -150,7 +154,7 @@ describe('registerWorkspaceSpaceHandlers', () => {
   })
 
   it('cancels the in-flight scan', async () => {
-    const store = {} as Store
+    const store = createStore()
     let signal: AbortSignal | undefined
     analyzeWorkspaceSpaceMock.mockImplementationOnce((_store, options) => {
       signal = options.signal
@@ -168,7 +172,7 @@ describe('registerWorkspaceSpaceHandlers', () => {
   })
 
   it('returns a normal cancelled result instead of rejecting expected cancellation', async () => {
-    const store = {} as Store
+    const store = createStore()
     analyzeWorkspaceSpaceMock.mockRejectedValueOnce(new WorkspaceSpaceScanCancelledErrorMock())
 
     registerWorkspaceSpaceHandlers(store)
@@ -182,21 +186,22 @@ describe('registerWorkspaceSpaceHandlers', () => {
     const analysis = createAnalysis(7)
     analyzeWorkspaceSpaceMock.mockResolvedValueOnce(analysis)
 
-    registerWorkspaceSpaceHandlers({} as Store)
+    registerWorkspaceSpaceHandlers(createStore())
     const analyzeHandler = handlers.get('workspaceSpace:analyze')
 
     await expect(analyzeHandler!(createEvent())).resolves.toEqual({ ok: true, analysis })
-    expect(persistAnalysisSnapshotMock).toHaveBeenCalledWith(analysis)
+    expect(persistAnalysisSnapshotMock).toHaveBeenCalledWith('/profile-a', analysis)
   })
 
   it('serves the cached analysis through getCachedAnalysis', async () => {
     const cached = createAnalysis(3)
     readAnalysisSnapshotMock.mockResolvedValue(cached)
 
-    registerWorkspaceSpaceHandlers({} as Store)
+    registerWorkspaceSpaceHandlers(createStore())
     expect(removeHandlerMock).toHaveBeenCalledWith('workspaceSpace:getCachedAnalysis')
     const cachedHandler = handlers.get('workspaceSpace:getCachedAnalysis')
 
     await expect(cachedHandler!()).resolves.toBe(cached)
+    expect(readAnalysisSnapshotMock).toHaveBeenCalledWith('/profile-a')
   })
 })
