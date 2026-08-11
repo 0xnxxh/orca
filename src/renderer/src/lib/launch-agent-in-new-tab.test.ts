@@ -353,14 +353,17 @@ describe('launchAgentInNewTab', () => {
     })
   })
 
-  it('preserves the Codex CLI default after its native picker retires a stale override', async () => {
+  it('does not inject native-chat model preferences into terminal Quick Commands', async () => {
     store.settings = {
       agentCmdOverrides: {},
       agentDefaultArgs: { codex: '--profile team' },
       agentDefaultEnv: {},
       activeRuntimeEnvironmentId: null,
+      experimentalNativeChat: true,
+      openAgentTabsInChatByDefault: false,
       nativeChatSessionOptions: {
         codex: {
+          model: 'gpt-5.2-codex',
           valuesByModel: { 'gpt-5.2-codex': { effort: 'medium' } }
         }
       }
@@ -375,10 +378,6 @@ describe('launchAgentInNewTab', () => {
       quickCommandLabel: 'Review'
     })
 
-    expect(mockQueueTabStartupCommand).toHaveBeenCalledWith(
-      'tab-1',
-      expect.objectContaining({ command: expect.stringContaining("'Review this diff'") })
-    )
     const launch = mockQueueTabStartupCommand.mock.calls[0]?.[1]
     expect(launch.command).toContain("'--profile' 'team'")
     expect(launch.command).not.toContain("'-m'")
@@ -386,16 +385,18 @@ describe('launchAgentInNewTab', () => {
     expect(launch.sessionOptions).toBeUndefined()
   })
 
-  it('keeps explicit Codex model and effort choices on Quick Command launches', async () => {
+  it('applies native-chat model preferences to Quick Commands opened in chat', async () => {
     store.settings = {
       agentCmdOverrides: {},
       agentDefaultArgs: {},
       agentDefaultEnv: {},
       activeRuntimeEnvironmentId: null,
+      experimentalNativeChat: true,
+      openAgentTabsInChatByDefault: true,
       nativeChatSessionOptions: {
         codex: {
-          model: 'gpt-5.5',
-          valuesByModel: { 'gpt-5.5': { effort: 'high' } }
+          model: 'gpt-5.2-codex',
+          valuesByModel: { 'gpt-5.2-codex': { effort: 'medium' } }
         }
       }
     }
@@ -410,12 +411,15 @@ describe('launchAgentInNewTab', () => {
     })
 
     const launch = mockQueueTabStartupCommand.mock.calls[0]?.[1]
-    expect(launch.command).toContain("'-m' 'gpt-5.5'")
-    expect(launch.command).toContain("'-c' 'model_reasoning_effort=high'")
-    expect(launch.sessionOptions).toEqual({
-      model: 'gpt-5.5',
-      effort: 'high'
-    })
+    expect(launch.command).toContain("'-m' 'gpt-5.2-codex'")
+    expect(launch.command).toContain("'-c' 'model_reasoning_effort=medium'")
+    expect(launch.sessionOptions).toEqual({ model: 'gpt-5.2-codex', effort: 'medium' })
+    expect(mockCreateTab).toHaveBeenCalledWith(
+      'wt-1',
+      undefined,
+      undefined,
+      expect.objectContaining({ viewMode: 'chat' })
+    )
   })
 
   it('preserves paired-host draft delivery and supported launch preferences', async () => {
@@ -425,6 +429,8 @@ describe('launchAgentInNewTab', () => {
       agentDefaultArgs: {},
       agentDefaultEnv: {},
       activeRuntimeEnvironmentId: 'web-runtime',
+      experimentalNativeChat: true,
+      openAgentTabsInChatByDefault: true,
       nativeChatSessionOptions: {
         claude: {
           model: 'opus',

@@ -72,6 +72,7 @@ import {
 import { syncRuntimeGitForkDefaultBranch } from '../../runtime/runtime-git-client'
 import { toRuntimeWorktreeSelector } from '../../runtime/runtime-worktree-selector'
 import { buildDismissedOnboardingFolderAgentStartup } from '@/lib/onboarding-folder-agent-startup'
+import { isNativeChatTranscriptLocalReadable } from '@/lib/native-chat-transcript-readability'
 import { markOnboardingProjectAdded } from '@/lib/onboarding-project-checklist'
 import { filterSetupScriptPromptDismissalsToValidRepos } from '@/lib/setup-script-prompt'
 import { notifyInstalledAgentSkillsChanged } from '@/hooks/installed-agent-skill-discovery'
@@ -3268,7 +3269,8 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         const startup = buildDismissedOnboardingFolderAgentStartup(
           get().settings,
           onboarding,
-          hadProjectBeforeAdd
+          hadProjectBeforeAdd,
+          isNativeChatTranscriptLocalReadable(repo.connectionId)
         )
         activateAndRevealWorktree(folderWorktree.id, {
           sidebarRevealBehavior: 'auto',

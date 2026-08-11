@@ -57,27 +57,14 @@ export function useNativeChatPickerCommandDispatch(args: {
       if (!target || disabled || isDispatchingSessionOption) {
         return
       }
-      const tracksSessionOption = sessionOptionsSurface?.tracksOutgoingCommand(text) === true
-      const verifySubmission = agent === 'codex' && tracksSessionOption
-      const send = sendNativeChatMessage(
-        target.settings,
-        target.ptyId,
-        text,
-        verifySubmission ? { verifySubmission: true } : undefined
-      )
-      trackPendingSend(send)
+      trackPendingSend(sendNativeChatMessage(target.settings, target.ptyId, text))
       emitNativeChatPickerItemAccepted({ agent, itemKind: 'command' })
       // Why: picker dispatch is a catalog-verified command send; it must leave
       // the same telemetry and composer state as the typed path — including
       // disarming attachments, or a stale image rides the next prompt.
       emitNativeChatSendClassified({ agent, outcome: 'command' })
       onSlashCommand?.(text)
-      if (tracksSessionOption) {
-        sessionOptionsSurface?.recordOutgoingCommand(
-          text,
-          verifySubmission ? send.submission : undefined
-        )
-      }
+      sessionOptionsSurface?.recordOutgoingCommand(text)
       emitNativeChatMessageSent({
         agent,
         runtime: nativeChatComposerTargetIsRemote(target.ptyId) ? 'remote' : 'local'

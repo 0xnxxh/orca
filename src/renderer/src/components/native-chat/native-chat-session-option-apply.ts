@@ -33,7 +33,7 @@ type SessionOptionApplyContext = {
   getModels: () => CatalogModel[]
   getRecord: () => NativeChatSessionOptionRecord
   dispatchCommand: NativeChatSessionOptionDispatchCommand
-  onAgentPicker?: () => Promise<void> | void
+  onAgentPicker?: () => void
   /** The one persist entry point, shared with typed commands: it owns both the
    *  null-model guard and whether the id may be adopted as the launch default. */
   persist: (modelId: string | null, optionId: string, value: SessionOptionValue) => void
@@ -112,7 +112,7 @@ async function handleAgentPicker(
   await ctx.dispatchCommand(midSession.command)
   ctx.clearModelTruth()
   const snapshot = ctx.publish()
-  await ctx.onAgentPicker?.()
+  ctx.onAgentPicker?.()
   return { snapshot }
 }
 
@@ -157,10 +157,10 @@ async function dispatchLiveCommand(
     : await ctx.dispatchCommand(command)
 }
 
-async function applyDispatchOutcome(
+function applyDispatchOutcome(
   ctx: SessionOptionApplyContext,
   dispatchResult: NativeChatSessionOptionDispatchResult | void
-): Promise<SessionOptionSetResult | null> {
+): SessionOptionSetResult | null {
   if (dispatchResult?.outcome === 'rejected') {
     throw new Error('Claude kept the current model.')
   }
@@ -172,7 +172,7 @@ async function applyDispatchOutcome(
   if (dispatchResult?.outcome === 'interaction-required') {
     ctx.clearModelTruth()
     const snapshot = ctx.publish()
-    await ctx.onAgentPicker?.()
+    ctx.onAgentPicker?.()
     return { snapshot }
   }
   return null
@@ -227,7 +227,7 @@ async function applySetOption(
     throw new Error('This option is only available after the session starts.')
   }
 
-  const early = await applyDispatchOutcome(ctx, dispatchResult)
+  const early = applyDispatchOutcome(ctx, dispatchResult)
   if (early) {
     return early
   }

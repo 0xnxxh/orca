@@ -3,23 +3,9 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CatalogModel } from '../../../../shared/agent-session-option-catalog'
-import type { PersistedNativeChatSessionOptions } from '../../../../shared/native-chat-session-options'
-import { toAppSshPtyId } from '../../../../shared/ssh-pty-id'
 import { clearNativeChatModelEnrichmentForTests } from './native-chat-session-option-enrichment'
-import {
-  clearNativeChatSessionOptionCacheForTests,
-  seedNativeChatAppliedSessionOptions
-} from './native-chat-session-option-cache'
 
 const discoverModels = vi.fn<() => Promise<readonly CatalogModel[] | null>>()
-const updateSettings = vi.fn()
-const storeState: {
-  settings: { nativeChatSessionOptions?: PersistedNativeChatSessionOptions }
-  updateSettings: typeof updateSettings
-} = {
-  settings: {},
-  updateSettings
-}
 
 vi.mock('./native-chat-session-option-discovery', () => ({
   resolveNativeChatModelDiscoveryContext: () => ({ hostKey: 'host', runtime: null }),
@@ -28,7 +14,7 @@ vi.mock('./native-chat-session-option-discovery', () => ({
 
 vi.mock('../../store', () => ({
   useAppStore: Object.assign(() => undefined, {
-    getState: () => storeState
+    getState: () => ({ settings: {}, updateSettings: async () => undefined })
   })
 }))
 
@@ -55,218 +41,8 @@ function modelDescriptor(snapshot: { id: string; kind: unknown }[]): {
 describe('useNativeChatSessionOptions model reporting', () => {
   beforeEach(() => {
     clearNativeChatModelEnrichmentForTests()
-    clearNativeChatSessionOptionCacheForTests()
     discoverModels.mockReset()
-    updateSettings.mockReset()
-    updateSettings.mockImplementation(async ({ nativeChatSessionOptions }) => {
-      storeState.settings = { nativeChatSessionOptions }
-    })
-    storeState.settings = {}
     Object.defineProperty(window, 'api', { configurable: true, value: undefined })
-  })
-
-  it('clears stale Codex flags on SSH/folders when older Codex or cancellation exposes no result', async () => {
-    discoverModels.mockResolvedValue(null)
-    storeState.settings = {
-      nativeChatSessionOptions: {
-        codex: {
-          model: 'gpt-5.2-codex',
-          valuesByModel: { 'gpt-5.2-codex': { effort: 'medium' } }
-        }
-      }
-    }
-    const dispatchCommand = vi.fn().mockResolvedValue(undefined)
-    const onAgentPicker = vi.fn()
-    seedNativeChatAppliedSessionOptions('folder-tab', 'codex', {
-      model: 'gpt-5.2-codex',
-      effort: 'medium'
-    })
-    const { result } = renderHook(() =>
-      useNativeChatSessionOptions({
-        agent: 'codex',
-        terminalTabId: 'folder-tab',
-        targetPtyId: toAppSshPtyId('host', 'pty-1'),
-        dispatchCommand,
-        onAgentPicker
-      })
-    )
-
-    await result.current.surface?.invokeAction('effort')
-
-    expect(dispatchCommand).toHaveBeenCalledWith('/model')
-    expect(onAgentPicker).toHaveBeenCalledOnce()
-    await waitFor(() => expect(updateSettings).toHaveBeenCalledOnce())
-    expect(storeState.settings.nativeChatSessionOptions?.codex).toEqual({
-      valuesByModel: { 'gpt-5.2-codex': { effort: 'medium' } }
-    })
-  })
-
-  it('keeps explicit Orca model selections persistable after picker retirement', async () => {
-    discoverModels.mockResolvedValue(null)
-    storeState.settings = {
-      nativeChatSessionOptions: {
-        codex: {
-          model: 'gpt-5.2-codex',
-          valuesByModel: {
-            'gpt-5.2-codex': { effort: 'medium' },
-            'gpt-5.5': { effort: 'high' }
-          }
-        }
-      }
-    }
-    const dispatchCommand = vi.fn()
-    const { result } = renderHook(() =>
-      useNativeChatSessionOptions({
-        agent: 'codex',
-        terminalTabId: 'tab-explicit',
-        targetPtyId: 'pty-explicit',
-        dispatchCommand
-      })
-    )
-
-    result.current.surface?.recordOutgoingCommand('/model', Promise.resolve(true))
-    await result.current.surface?.setOption('model', 'gpt-5.5')
-    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(2))
-
-    expect(dispatchCommand).toHaveBeenCalledWith('/model gpt-5.5')
-    expect(storeState.settings.nativeChatSessionOptions?.codex?.model).toBe('gpt-5.5')
-    expect(
-      storeState.settings.nativeChatSessionOptions?.codex?.valuesByModel?.['gpt-5.5']?.effort
-    ).toBe('high')
-  })
-
-  it('keeps the override when a typed picker command is canceled before submit', async () => {
-    discoverModels.mockResolvedValue(null)
-    storeState.settings = {
-      nativeChatSessionOptions: { codex: { model: 'gpt-5.2-codex' } }
-    }
-    const onAgentPicker = vi.fn()
-    seedNativeChatAppliedSessionOptions('tab-canceled', 'codex', {
-      model: 'gpt-5.2-codex',
-      effort: 'medium'
-    })
-    const { result } = renderHook(() =>
-      useNativeChatSessionOptions({
-        agent: 'codex',
-        terminalTabId: 'tab-canceled',
-        targetPtyId: 'pty-canceled',
-        dispatchCommand: vi.fn(),
-        onAgentPicker
-      })
-    )
-
-    result.current.surface?.recordOutgoingCommand('/model', Promise.resolve(false))
-    await Promise.resolve()
-
-    expect(updateSettings).not.toHaveBeenCalled()
-    expect(onAgentPicker).not.toHaveBeenCalled()
-    expect(storeState.settings.nativeChatSessionOptions?.codex?.model).toBe('gpt-5.2-codex')
-  })
-
-  it('applies rapidly typed picker commands in terminal submission order', async () => {
-    discoverModels.mockResolvedValue(null)
-    storeState.settings = {
-      nativeChatSessionOptions: { codex: { model: 'gpt-5.2-codex' } }
-    }
-    seedNativeChatAppliedSessionOptions('tab-typed-order', 'codex', {
-      model: 'gpt-5.2-codex',
-      effort: 'medium'
-    })
-    const { result } = renderHook(() =>
-      useNativeChatSessionOptions({
-        agent: 'codex',
-        terminalTabId: 'tab-typed-order',
-        targetPtyId: 'pty-typed-order',
-        dispatchCommand: vi.fn()
-      })
-    )
-    let submitPicker: ((submitted: boolean) => void) | undefined
-    let submitExplicit: ((submitted: boolean) => void) | undefined
-    result.current.surface?.recordOutgoingCommand(
-      '/model',
-      new Promise<boolean>((resolve) => {
-        submitPicker = resolve
-      })
-    )
-    result.current.surface?.recordOutgoingCommand(
-      '/model gpt-5.5',
-      new Promise<boolean>((resolve) => {
-        submitExplicit = resolve
-      })
-    )
-
-    submitPicker?.(true)
-    await waitFor(() => expect(updateSettings).toHaveBeenCalledOnce())
-    submitExplicit?.(true)
-    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(2))
-
-    expect(storeState.settings.nativeChatSessionOptions?.codex?.model).toBe('gpt-5.5')
-  })
-
-  it('settles picker ownership before handing the pane to Codex', async () => {
-    discoverModels.mockResolvedValue(null)
-    storeState.settings = {
-      nativeChatSessionOptions: { codex: { model: 'gpt-5.2-codex' } }
-    }
-    let settleWrite: (() => void) | undefined
-    updateSettings.mockImplementation(
-      ({ nativeChatSessionOptions }) =>
-        new Promise<void>((resolve) => {
-          settleWrite = () => {
-            storeState.settings = { nativeChatSessionOptions }
-            resolve()
-          }
-        })
-    )
-    const onAgentPicker = vi.fn()
-    seedNativeChatAppliedSessionOptions('tab-ordered', 'codex', {
-      model: 'gpt-5.2-codex',
-      effort: 'medium'
-    })
-    const { result } = renderHook(() =>
-      useNativeChatSessionOptions({
-        agent: 'codex',
-        terminalTabId: 'tab-ordered',
-        targetPtyId: 'pty-ordered',
-        dispatchCommand: vi.fn(),
-        onAgentPicker
-      })
-    )
-
-    const picker = result.current.surface?.invokeAction('effort')
-    await waitFor(() => expect(updateSettings).toHaveBeenCalledOnce())
-
-    expect(onAgentPicker).not.toHaveBeenCalled()
-    settleWrite?.()
-    await picker
-    expect(onAgentPicker).toHaveBeenCalledOnce()
-    expect(storeState.settings.nativeChatSessionOptions?.codex?.model).toBeUndefined()
-  })
-
-  it('keeps the override when Codex never accepts the picker command', async () => {
-    discoverModels.mockResolvedValue(null)
-    storeState.settings = {
-      nativeChatSessionOptions: { codex: { model: 'gpt-5.2-codex' } }
-    }
-    const onAgentPicker = vi.fn()
-    seedNativeChatAppliedSessionOptions('tab-rejected', 'codex', {
-      model: 'gpt-5.2-codex',
-      effort: 'medium'
-    })
-    const { result } = renderHook(() =>
-      useNativeChatSessionOptions({
-        agent: 'codex',
-        terminalTabId: 'tab-rejected',
-        targetPtyId: 'pty-rejected',
-        dispatchCommand: vi.fn().mockRejectedValue(new Error('rejected')),
-        onAgentPicker
-      })
-    )
-
-    await expect(result.current.surface?.invokeAction('effort')).rejects.toThrow('rejected')
-    expect(updateSettings).not.toHaveBeenCalled()
-    expect(onAgentPicker).not.toHaveBeenCalled()
-    expect(storeState.settings.nativeChatSessionOptions?.codex?.model).toBe('gpt-5.2-codex')
   })
 
   it('re-resolves the reported model against models discovered after the read', async () => {

@@ -12,12 +12,9 @@ export type NativeChatPtySendQueueHandle = {
   settled: Promise<void>
   bodyStarted: () => boolean
   finished: () => boolean
-  submitted: () => boolean
 }
 
 export type EnqueueNativeChatPtySendOptions = {
-  /** False while a non-abortable submission write must settle before releasing the queue. */
-  finishOnCancel?: () => boolean
   /**
    * Called when cancel aborts after `start` began but before Enter was marked
    * submitted. Used to clear leftover body text from the agent TUI.
@@ -84,8 +81,6 @@ export function enqueueNativeChatPtySend(
     delay: (ms: number, fn: () => void) => void
     /** Call when Enter (or the terminal write that completes the send) fires. */
     markSubmitted: () => void
-    /** Finish a rejected send without claiming submission. */
-    markFinished: () => void
   }) => void,
   options?: EnqueueNativeChatPtySendOptions
 ): NativeChatPtySendQueueHandle {
@@ -137,7 +132,7 @@ export function enqueueNativeChatPtySend(
         return
       }
       bodyStarted = true
-      start({ isCancelled: () => cancelled, delay, markSubmitted, markFinished: finishEntry })
+      start({ isCancelled: () => cancelled, delay, markSubmitted })
       if (durationMs <= 0) {
         markSubmitted()
       }
@@ -174,16 +169,13 @@ export function enqueueNativeChatPtySend(
         clearTimeout(timer)
       }
       const shouldClear = bodyStarted && !submitted
-      const finishOnCancel = options?.finishOnCancel?.() ?? true
       // Why: refund only THIS sequence's charged window rather than collapsing
       // freeAt to now — later queued sends still hold the line, so a blanket
       // reset would understate the next enqueue's settle time and let a send
       // card drop while a queued Enter is still pending.
-      if (finishOnCancel) {
-        state.freeAt = Math.max(Date.now(), state.freeAt - Math.max(0, durationMs))
-        finishEntry()
-        dropHandle()
-      }
+      state.freeAt = Math.max(Date.now(), state.freeAt - Math.max(0, durationMs))
+      finishEntry()
+      dropHandle()
       if (shouldClear) {
         options?.onCancelUnsubmitted?.()
       }
@@ -191,8 +183,7 @@ export function enqueueNativeChatPtySend(
     settleAfterMs,
     settled,
     bodyStarted: () => bodyStarted,
-    finished: () => finished,
-    submitted: () => submitted
+    finished: () => finished
   }
   state.handles.add(handle)
   return handle

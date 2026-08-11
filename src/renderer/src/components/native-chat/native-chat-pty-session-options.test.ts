@@ -582,9 +582,6 @@ describe('native chat PTY session options', () => {
       mode: 'live',
       dispatchCommand: vi.fn()
     })!
-    expect(surface.tracksOutgoingCommand('/effort high')).toBe(true)
-    expect(surface.tracksOutgoingCommand('/fast')).toBe(true)
-    expect(surface.tracksOutgoingCommand('/clear')).toBe(false)
     surface.recordOutgoingCommand('/effort high')
     expect(surface.getSnapshot().find(({ id }) => id === 'effort')).toMatchObject({
       valueSource: 'dispatched',
@@ -610,7 +607,6 @@ describe('native chat PTY session options', () => {
       onAgentPicker
     })!
 
-    expect(surface.tracksOutgoingCommand('/model')).toBe(true)
     surface.recordOutgoingCommand('/model')
 
     expect(onAgentPicker).toHaveBeenCalledOnce()

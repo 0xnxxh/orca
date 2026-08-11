@@ -33,13 +33,9 @@ const mocks = vi.hoisted(() => ({
   getMainBufferSnapshot: vi.fn(),
   sendHandle: { cancel: vi.fn(), settleAfterMs: 500 },
   sendNativeChatMessage: vi.fn(),
-  sendNativeChatMessageWithImageAttachments: vi.fn(),
   sendNativeChatMessageVerified: vi.fn(),
   trackPendingSend: vi.fn(),
   setDraft: vi.fn(),
-  draft: 'hello',
-  imageAttachments: [] as { id: string; path: string }[],
-  verifiedCommands: [] as { name: string; description?: string }[],
   draftScopeKeys: [] as string[],
   clearNativeChatLaunchDraft: vi.fn(),
   markNativeChatLaunchDraftAdopted: vi.fn()
@@ -69,8 +65,7 @@ vi.mock('./native-chat-runtime-send', () => ({
   sendNativeChatMessage: (...args: unknown[]) => mocks.sendNativeChatMessage(...args),
   sendNativeChatMessageVerified: (...args: unknown[]) =>
     mocks.sendNativeChatMessageVerified(...args),
-  sendNativeChatMessageWithImageAttachments: (...args: unknown[]) =>
-    mocks.sendNativeChatMessageWithImageAttachments(...args),
+  sendNativeChatMessageWithImageAttachments: vi.fn(),
   submitNativeChatPrompt: vi.fn()
 }))
 vi.mock('./claude-model-switch-confirmation', () => ({
@@ -79,7 +74,7 @@ vi.mock('./claude-model-switch-confirmation', () => ({
 }))
 vi.mock('../../../../shared/native-chat-agent-profiles', async (importOriginal) => ({
   ...(await importOriginal<typeof nativeChatAgentProfiles>()),
-  getVerifiedNativeChatCommands: () => mocks.verifiedCommands
+  getVerifiedNativeChatCommands: () => []
 }))
 vi.mock('@/lib/native-chat-telemetry', () => ({
   emitNativeChatMessageSent: vi.fn(),
@@ -90,7 +85,7 @@ vi.mock('@/lib/native-chat-telemetry', () => ({
 vi.mock('./use-native-chat-draft', () => ({
   useNativeChatDraft: (scopeKey: string) => {
     mocks.draftScopeKeys.push(scopeKey)
-    return { draft: mocks.draft, setDraft: mocks.setDraft }
+    return { draft: 'hello', setDraft: mocks.setDraft }
   }
 }))
 vi.mock('./native-chat-draft-cache', () => ({
@@ -107,7 +102,7 @@ vi.mock('./use-native-chat-skills', () => ({
 }))
 vi.mock('./use-native-chat-composer-attachments', () => ({
   useNativeChatComposerAttachments: () => ({
-    imageAttachments: mocks.imageAttachments,
+    imageAttachments: [],
     attachResolvedPaths: vi.fn(),
     clearImageAttachments: vi.fn(),
     removeImageAttachment: vi.fn()
@@ -147,9 +142,6 @@ describe('NativeChatComposer', () => {
     clearNativeChatModelEnrichmentForTests()
     mocks.fieldProps = null
     mocks.modelSwitchOutcome = 'applied'
-    mocks.draft = 'hello'
-    mocks.imageAttachments = []
-    mocks.verifiedCommands = []
     mocks.draftScopeKeys.length = 0
     mocks.confirmationObserver = null
     mocks.createClaudeModelSwitchConfirmationObserver.mockImplementation(() => {
@@ -188,7 +180,6 @@ describe('NativeChatComposer', () => {
       ]
     })
     mocks.sendNativeChatMessage.mockReturnValue(mocks.sendHandle)
-    mocks.sendNativeChatMessageWithImageAttachments.mockReturnValue(mocks.sendHandle)
     mocks.sendNativeChatMessageVerified.mockResolvedValue(true)
     mocks.sendHandle.settleAfterMs = 500
     Object.defineProperty(window, 'api', {
@@ -241,36 +232,6 @@ describe('NativeChatComposer', () => {
 
     expect(onOptimisticSend).toHaveBeenCalledWith('hello', [])
     expect(mocks.trackPendingSend).toHaveBeenCalledWith(mocks.sendHandle, 'pending-1')
-  })
-
-  it('does not transfer picker ownership when an attachment precedes /model', async () => {
-    mocks.draft = '/model'
-    mocks.imageAttachments = [{ id: 'image-1', path: '/tmp/image.png' }]
-    mocks.verifiedCommands = [{ name: 'model' }]
-    const onSwitchToTerminal = vi.fn()
-    render(
-      <NativeChatComposer
-        terminalTabId="tab-1"
-        paneKey="tab-1:leaf-1"
-        targetPtyId="pty-1"
-        agent="codex"
-        onSwitchToTerminal={onSwitchToTerminal}
-      />
-    )
-
-    await act(async () => {
-      mocks.fieldProps?.onSend?.()
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    })
-
-    expect(mocks.sendNativeChatMessageWithImageAttachments).toHaveBeenCalledWith(
-      {},
-      'pty-1',
-      '/model',
-      ['/tmp/image.png'],
-      undefined
-    )
-    expect(onSwitchToTerminal).not.toHaveBeenCalled()
   })
 
   it('retires the launch-draft seed once a send clears the TUI input line', () => {

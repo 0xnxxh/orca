@@ -8,7 +8,6 @@ import {
   submitNativeChatPrompt
 } from './native-chat-runtime-send'
 import type { NativeChatSendHandle } from './native-chat-runtime-send'
-import { verifiedSendOptions, verifyCodexSend } from './native-chat-verified-submit'
 import { resolveNativeChatLaunchDraftSend } from './native-chat-launch-draft-send'
 import { getVerifiedNativeChatCommands } from '../../../../shared/native-chat-agent-profiles'
 import { emitNativeChatMessageSent } from '@/lib/native-chat-telemetry'
@@ -252,16 +251,13 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
         return
       }
       const classification = classifySend(text)
-      const optionSurface = imagePaths.length === 0 ? sessionOptionsSurface : null
-      const verified = verifyCodexSend(agent, classification, optionSurface, text.trim())
       // A parked launch draft must be cleared line-by-line before the body.
-      const launchDraftSend = resolveNativeChatLaunchDraftSend({
+      const { sendOptions } = resolveNativeChatLaunchDraftSend({
         launchDraft,
         launchDraftResolved,
         agent,
         readScreen: () => readTerminalScreen?.()
       })
-      const sendOptions = verifiedSendOptions(launchDraftSend.sendOptions, verified)
       let pendingHandle: NativeChatSendHandle | null = null
       // Why: image attachments take the attachment send path even for a
       // command/unknown send, otherwise `clearImageAttachments()` below drops
@@ -289,7 +285,7 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
         // mutate session-option state; unknown slash-like text has no such proof.
         if (classification === 'command') {
           onSlashCommand?.(text.trim())
-          optionSurface?.recordOutgoingCommand(text.trim(), pendingHandle?.submission)
+          sessionOptionsSurface?.recordOutgoingCommand(text.trim())
         }
       } else {
         const pendingId = onOptimisticSend?.(text, imagePaths)
