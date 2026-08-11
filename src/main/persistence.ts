@@ -5030,7 +5030,11 @@ export class Store {
       if (
         typeof nextGroupId !== 'string' ||
         nextGroupId.trim().length === 0 ||
-        !this.state.projectGroups.some((group) => group.id === nextGroupId)
+        !resolveProjectGroupMembership(
+          buildProjectGroupOwnerIndex(this.state.projectGroups),
+          nextGroupId,
+          getRepoExecutionHostId(repo)
+        )
       ) {
         sanitizedUpdates.projectGroupId = null
       }

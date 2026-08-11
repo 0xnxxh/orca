@@ -1780,7 +1780,12 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
           const group = groupResolver.getGroupForRepo(repoPath)
           if (existing) {
             if (group) {
-              store.moveProjectToGroup(existing.id, group.id, projectGroupOrder)
+              store.moveProjectToGroup(
+                existing.id,
+                group.id,
+                projectGroupOrder,
+                getRepoExecutionHostId(existing)
+              )
             }
             importedProjectIdsByRepoPath.set(normalizedImportRepoPath, existing.id)
             results.push({ path: repoPath, projectId: existing.id, status: 'already-known' })

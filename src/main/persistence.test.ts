@@ -3953,6 +3953,17 @@ describe('Store', () => {
     expect(updated?.projectGroupOrder).toBe(1)
   })
 
+  it('rejects repo membership in a group owned by another host', async () => {
+    const store = await createStore()
+    store.addRepo(makeRepo({ id: 'local-repo', path: '/local' }))
+    const remoteGroup = store.createProjectGroup({ name: 'Remote', createdFrom: 'manual' })
+    remoteGroup.executionHostId = 'runtime:env-1'
+
+    const updated = store.updateRepo('local-repo', { projectGroupId: remoteGroup.id }, 'local')
+
+    expect(updated?.projectGroupId).toBeNull()
+  })
+
   it('updates repo execution host identity', async () => {
     const store = await createStore()
     store.addRepo(makeRepo({ id: 'r1' }))
