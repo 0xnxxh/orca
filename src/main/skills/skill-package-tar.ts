@@ -80,6 +80,23 @@ async function writeWithBackpressure(stream: Writable, bytes: Buffer): Promise<v
   }
 }
 
+function portableGzipHeader(): Transform {
+  let emittedBytes = 0
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      if (emittedBytes <= 9 && emittedBytes + chunk.length > 9) {
+        const portable = Buffer.from(chunk)
+        portable[9 - emittedBytes] = 0xff
+        emittedBytes += chunk.length
+        callback(null, portable)
+        return
+      }
+      emittedBytes += chunk.length
+      callback(null, chunk)
+    }
+  })
+}
+
 export async function writeSkillTarGzip(
   archivePath: string,
   entries: readonly SkillTarWriteEntry[]
@@ -100,6 +117,7 @@ export async function writeSkillTarGzip(
   })
   const sink = pipeline(
     gzip,
+    portableGzipHeader(),
     hashTransform,
     createWriteStream(archivePath, { flags: 'wx', mode: 0o600 })
   )
