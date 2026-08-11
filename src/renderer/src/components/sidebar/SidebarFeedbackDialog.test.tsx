@@ -138,13 +138,25 @@ describe('SidebarFeedbackDialog environment prefill', () => {
     expect(textarea.selectionStart).toBe('Typed before loading'.length)
   })
 
-  it('requires user text above the footer after values are edited or moved', async () => {
+  it('enables Send when the user types below the prefilled footer', async () => {
     render(<SidebarFeedbackDialog open onOpenChange={vi.fn()} />)
     const textarea = screen.getByPlaceholderText('What could we improve?') as HTMLTextAreaElement
     await waitFor(() => expect(textarea.value).toContain('Orca: 1.4.178-rc.2'))
 
     fireEvent.change(textarea, {
-      target: { value: '---\nOrca: custom build\nOS: edited\nText below footer' }
+      target: { value: `${textarea.value.trim()}\nText below footer` }
+    })
+
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('keeps Send disabled for an edited footer with no user text', async () => {
+    render(<SidebarFeedbackDialog open onOpenChange={vi.fn()} />)
+    const textarea = screen.getByPlaceholderText('What could we improve?') as HTMLTextAreaElement
+    await waitFor(() => expect(textarea.value).toContain('Orca: 1.4.178-rc.2'))
+
+    fireEvent.change(textarea, {
+      target: { value: '---\nOrca: custom build\nOS: edited' }
     })
 
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)

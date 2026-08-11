@@ -11,6 +11,12 @@ export type ClientEnvironmentInfo = {
 const FOOTER_MARKER = '---'
 const ORCA_LINE_PREFIX = 'Orca:'
 
+// Why: match the whole prefilled block (optional Shell line included) so strip
+// keeps authored text both above and below — users who click past the footer
+// and type must still be able to send.
+const CLIENT_ENVIRONMENT_FOOTER_BLOCK =
+  /(^|\r?\n)---\r?\nOrca:[^\r\n]*\r?\nOS:[^\r\n]*(?:\r?\nShell:[^\r\n]*)?/
+
 function normalizeEnvironmentValue(value: string): string {
   return value.trim().replace(/[\r\n]+/g, ' ')
 }
@@ -34,19 +40,13 @@ export function formatClientEnvironmentFooter(info: ClientEnvironmentInfo): stri
   return `${FOOTER_MARKER}\n${formatClientEnvironmentInfo(info)}`
 }
 
-function findClientEnvironmentFooterIndex(text: string): number | null {
-  const match = /(^|\r?\n)---\r?\nOrca:[^\r\n]*\r?\nOS:[^\r\n]*/.exec(text)
-  return match ? match.index + match[1].length : null
-}
-
 export function hasClientEnvironmentFooter(text: string): boolean {
-  return findClientEnvironmentFooterIndex(text) !== null
+  return CLIENT_ENVIRONMENT_FOOTER_BLOCK.test(text)
 }
 
-/** Keep only text above the footer so validation requires a user-authored report. */
+/** Drop only the env footer block; keep user text above and below it. */
 export function stripClientEnvironmentFooter(text: string): string {
-  const footerIndex = findClientEnvironmentFooterIndex(text)
-  return footerIndex === null ? text : text.slice(0, footerIndex)
+  return text.replace(CLIENT_ENVIRONMENT_FOOTER_BLOCK, '$1')
 }
 
 export function appendClientEnvironmentFooter(params: {

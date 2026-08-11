@@ -83,16 +83,21 @@ describe('environment footer helpers', () => {
     expect(stripClientEnvironmentFooter(footer).trim()).toBe('')
   })
 
-  it('recognizes edited footer values and ignores text moved below the footer', () => {
-    const editedFooter = ['---', 'Orca: locally-built', 'OS: edited by user', 'notes below'].join(
-      '\n'
-    )
+  it('counts authored text above or below the footer as user feedback', () => {
+    const footer = formatClientEnvironmentFooter(SAMPLE)
+    expect(hasClientEnvironmentFooter(`\n\n${footer}\ntyped below`)).toBe(true)
+    expect(stripClientEnvironmentFooter(`\n\n${footer}\ntyped below`).trim()).toBe('typed below')
+    expect(stripClientEnvironmentFooter(`actual report\n\n${footer}`).trim()).toBe('actual report')
+    expect(
+      stripClientEnvironmentFooter(`above\n\n${footer}\nbelow`).replace(/\n+/g, ' ').trim()
+    ).toBe('above below')
+  })
+
+  it('still detects an edited footer block', () => {
+    const editedFooter = ['---', 'Orca: locally-built', 'OS: edited by user'].join('\n')
 
     expect(hasClientEnvironmentFooter(editedFooter)).toBe(true)
-    expect(stripClientEnvironmentFooter(editedFooter)).toBe('')
-    expect(stripClientEnvironmentFooter(`actual report\n\n${editedFooter}`).trim()).toBe(
-      'actual report'
-    )
+    expect(stripClientEnvironmentFooter(editedFooter).trim()).toBe('')
   })
 
   it('treats a report as user text after the footer is deleted', () => {
