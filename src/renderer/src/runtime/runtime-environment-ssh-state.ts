@@ -130,16 +130,19 @@ async function runEnvironmentSshTargetMetadataRefresh(environmentId: string): Pr
   const metadataChanged =
     !bucket?.targetsHydrated || !sshTargetLabelsEqual(bucket.targetLabels, targets)
   useAppStore.getState().setEnvironmentSshTargetsMetadata(environmentId, targets, generation)
+  const priorTargetIds = new Set(bucket?.targetLabels.keys() ?? [])
+  // Why: read states after the write — a resync racing this fetch can label a target that never had one read.
+  const knownStates = useAppStore.getState().sshStateByEnvironment.get(environmentId)
+    ?.connectionStates
+  const needStateRead = targets.filter(
+    (target) => !priorTargetIds.has(target.id) || !knownStates?.has(target.id)
+  )
   if (!metadataChanged) {
+    await fetchEnvironmentSshConnectionStates(environmentId, needStateRead, generation)
     return
   }
   await syncEnvironmentRemovedSshTargetLabels(environmentId, generation)
-  const priorTargetIds = new Set(bucket?.targetLabels.keys() ?? [])
-  await fetchEnvironmentSshConnectionStates(
-    environmentId,
-    targets.filter((target) => !priorTargetIds.has(target.id)),
-    generation
-  )
+  await fetchEnvironmentSshConnectionStates(environmentId, needStateRead, generation)
 }
 
 function requestSshRefreshRerun(entry: SshRefreshEntry, kind: SshRefreshKind): void {
@@ -287,10 +290,9 @@ export async function connectRuntimeEnvironmentSshTarget(
 }
 
 /** Resyncs the environment's target metadata after a failed connect so a
- * stale overlay converges to the ghost/re-adopted state (STA-1468). */
+ * stale overlay converges to the ghost/re-adopted state (STA-1468). Full
+ * hydration, not metadata alone: a host re-added under a new target id must
+ * land with a connection state or its chip and mutation gate stay dead. */
 export async function resyncRuntimeEnvironmentSshTargets(environmentId: string): Promise<void> {
-  await syncEnvironmentSshTargetMetadata(
-    environmentId,
-    getEnvironmentSshStateGeneration(environmentId)
-  )
+  await hydrateRuntimeEnvironmentSshState(environmentId, { force: true })
 }

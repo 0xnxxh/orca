@@ -190,6 +190,23 @@ describe('hydrateRuntimeEnvironmentSshState', () => {
     ])
   })
 
+  it('reads state for a labelled target the bucket never recorded a state for', async () => {
+    const envId = nextEnvId()
+    // A failed-connect resync can label a target without ever reading its state.
+    useAppStore
+      .getState()
+      .setEnvironmentSshTargetsMetadata(envId, [{ id: 'ssh-new', label: 'new box' }])
+    installRpcResponses({
+      targets: [{ id: 'ssh-new', label: 'new box' }],
+      states: { 'ssh-new': connState('ssh-new') }
+    })
+
+    await refreshRuntimeEnvironmentSshTargetMetadata(envId)
+
+    const bucket = useAppStore.getState().sshStateByEnvironment.get(envId)
+    expect(bucket?.connectionStates.get('ssh-new')?.status).toBe('connected')
+  })
+
   it('prunes removed targets and fetches state only for newly discovered targets', async () => {
     const envId = nextEnvId()
     useAppStore.getState().setEnvironmentSshTargetsMetadata(envId, [
@@ -557,5 +574,23 @@ describe('resyncRuntimeEnvironmentSshTargets', () => {
     const bucket = useAppStore.getState().sshStateByEnvironment.get(envId)
     expect(bucket?.targetLabels.get('ssh-live')).toBe('devbox')
     expect(bucket?.targetsHydrated).toBe(true)
+  })
+
+  it('reads the connection state of a host re-added under a new target id', async () => {
+    const envId = nextEnvId()
+    useAppStore
+      .getState()
+      .setEnvironmentSshTargetsMetadata(envId, [{ id: 'ssh-old', label: 'devbox' }])
+    installRpcResponses({
+      targets: [{ id: 'ssh-new', label: 'devbox' }],
+      labels: { 'ssh-old': 'devbox' },
+      states: { 'ssh-new': connState('ssh-new') }
+    })
+
+    await resyncRuntimeEnvironmentSshTargets(envId)
+
+    const bucket = useAppStore.getState().sshStateByEnvironment.get(envId)
+    expect(bucket?.targetLabels.get('ssh-new')).toBe('devbox')
+    expect(bucket?.connectionStates.get('ssh-new')?.status).toBe('connected')
   })
 })
