@@ -40,7 +40,10 @@ function tokenizeWindowsStartupCommand(
       divergesFromShell ||=
         (shell === 'cmd' ? /[\s"]/.test(value[index + 1]) : value[index + 1] === '\n') ||
         (shell === 'cmd' && quote === '"') ||
-        (shell === 'powershell' && quote === "'")
+        (shell === 'powershell' && quote === "'") ||
+        // PowerShell expands escape sequences only inside double quotes, so
+        // there the token value this branch builds is not what argv receives.
+        (shell === 'powershell' && quote === '"' && '0abefnrtuv'.includes(value[index + 1]))
       token += value[index + 1]
       if (!tokenStarted) {
         tokenStart = index

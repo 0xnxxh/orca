@@ -113,8 +113,10 @@ export function buildClaudeResumeLaunchCommand(
     if (i === tokens.length) {
       break
     }
-    // Why: bare `--%` makes PowerShell pass the rest of the line to the child
-    // literally, so appended quoting would arrive as literal bytes.
+    // Why: a bare `--%` makes PowerShell pass the rest of the line to the
+    // child literally, so appended quoting would arrive as literal bytes. A
+    // quoted `--%` can also stop parsing, but only before a parameter token,
+    // where the base is already mangled with or without the guard.
     if (shell === 'powershell' && baseCommand.slice(spans[i].start, spans[i].end) === '--%') {
       return appended
     }
