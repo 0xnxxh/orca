@@ -3245,6 +3245,13 @@ export class Store {
           parsed.settings
         )
         const migratedTerminalCursorStyle = normalizeTerminalCursorStyleDefault(parsed.settings)
+        if (
+          parsed.settings?.terminalCursorStyle !==
+            migratedTerminalCursorStyle.terminalCursorStyle ||
+          parsed.settings?.terminalCursorStyleDefaultedToBlock !== true
+        ) {
+          this.loadNeedsSave = true
+        }
         const migratedTerminalLineHeight = normalizeTerminalLineHeight(
           parsed.settings?.terminalLineHeight
         )
@@ -4478,6 +4485,7 @@ export class Store {
     linkedTask?: FolderWorkspace['linkedTask']
     linkedTaskSourceContext?: FolderWorkspace['linkedTaskSourceContext']
     connectionId?: string | null
+    creatorProvenance?: FolderWorkspace['creatorProvenance']
     createdWithAgent?: FolderWorkspace['createdWithAgent']
     pendingFirstAgentMessageRename?: boolean
   }): FolderWorkspace {
@@ -4500,6 +4508,7 @@ export class Store {
       name: normalizeFolderWorkspaceName(input.name, `${group.name} workspace`),
       folderPath,
       connectionId: input.connectionId ?? group.connectionId ?? null,
+      ...(input.creatorProvenance ? { creatorProvenance: input.creatorProvenance } : {}),
       linkedTask,
       linkedTaskSourceContext: isWorkspaceLinkedItemSourceContextMatch(linkedTask, sourceContext)
         ? sourceContext
@@ -5842,6 +5851,15 @@ export class Store {
     if ('terminalCustomThemes' in updates) {
       sanitizedUpdates.terminalCustomThemes = normalizeTerminalCustomThemes(
         updates.terminalCustomThemes
+      )
+    }
+    if ('terminalCursorStyle' in updates) {
+      Object.assign(
+        sanitizedUpdates,
+        normalizeTerminalCursorStyleDefault(
+          { terminalCursorStyle: updates.terminalCursorStyle },
+          { preserveExplicitValue: true }
+        )
       )
     }
     if ('terminalScrollbackRows' in updates) {
