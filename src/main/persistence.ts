@@ -148,6 +148,7 @@ import { resolveUsagePercentageDisplayChangeNoticeDismissed } from '../shared/us
 import { normalizePRBotAuthorOverrides } from '../shared/pr-bot-author-overrides'
 import { toRelaySshPtyId } from './providers/ssh-pty-id'
 import {
+  migrateFolderWorkspaceHostSshTargetId,
   migrateUiHostScopeSshTargetId,
   migrateWorkspaceSessionSshTargetId
 } from './ssh/ssh-target-id-migration'
@@ -170,6 +171,61 @@ import {
   pruneAutomationRuns
 } from '../shared/automation-run-retention'
 import { pruneWorkspaceSessionBrowserHistory } from '../shared/workspace-session-browser-history'
+import {
+  applyAutomationExecutionTarget,
+  deriveAutomationExecutionTargetForCreate,
+  deriveAutomationExecutionTargetForUpdate
+} from '../shared/automation-execution-target'
+import {
+  automationCapturedHostIssue,
+  projectAutomationList,
+  projectAutomationSelector,
+  toAutomationChangeSelector,
+  type AutomationCapturedHostIssue,
+  type AutomationChangeSelector,
+  type AutomationListParams,
+  type AutomationListResult,
+  type AutomationProjectionContext,
+  type AutomationWorkspaceHost
+} from '../shared/automation-list-scope'
+import type { FolderWorkspaceHostState } from '../shared/folder-workspace-execution-host'
+import {
+  resolveAutomationWorkspaceHost,
+  resolveAutomationWorkspaceSshTargetId,
+  type AutomationWorkspaceSshPin
+} from '../shared/automation-workspace-pin'
+import {
+  assertAutomationDestination,
+  assertAutomationOwnerFence,
+  assertExecutionTargetMatchesDestination,
+  toAutomationOwnerPrecondition,
+  type AutomationDestination,
+  type AutomationOwnerFenceOperation,
+  type AutomationOwnerPrecondition
+} from '../shared/automation-owner-precondition'
+import {
+  AUTOMATION_OWNER_CONFLICT_CODES,
+  AutomationOwnerConflictError
+} from '../shared/automation-owner-conflict'
+import {
+  summarizeAutomationRunUsage,
+  type AutomationUsageSummary
+} from '../shared/automation-usage-summary'
+import {
+  nextSshTargetGeneration,
+  resolveSshTargetGenerationHighWaterMark,
+  sanitizeSshTargetGeneration
+} from '../shared/ssh-target-generation'
+import { migrateAutomationOwners } from './automations/automation-owner-migration'
+import {
+  MAX_REMOVED_SSH_TARGET_TOMBSTONES,
+  capRemovedSshTargetTombstones,
+  collectSshTargetRemovalEvidenceDependencies
+} from './ssh/removed-ssh-target-tombstone-retention'
+import {
+  migrateAutomationHostFilterSshTargetId,
+  migrateAutomationsForSshReadoption
+} from './automations/automation-ssh-readoption-migration'
 import {
   FOLDER_WORKSPACE_INSTANCE_SEPARATOR,
   getRepoIdFromWorktreeId,
@@ -1236,6 +1292,10 @@ function normalizeSshTarget(t: SshTarget): SshTarget {
   const normalized: SshTarget = {
     ...target,
     configHost: target.configHost ?? target.label ?? target.host
+  }
+  // Why: a corrupt generation would fence automations against a value no allocation can reach; drop it so the migration re-stamps one.
+  if (sanitizeSshTargetGeneration(target.generation) === undefined) {
+    delete normalized.generation
   }
   // Why: old SSH form persisted 10800 even without a user choice; treat that legacy default as the new implicit default.
   if (
@@ -2330,9 +2390,6 @@ function remapAcknowledgedAgentPaneKeys(
 
 // Why: bounds a corrupt/bloated persisted list — the gate only needs the few Claude sessions a daemon can keep alive.
 const MAX_CLAUDE_LIVE_PTY_SESSION_IDS = 200
-
-// Why: bound removed-SSH-target history so remove/re-add churn can't grow the file unbounded.
-const MAX_REMOVED_SSH_TARGET_TOMBSTONES = 50
 
 function normalizeClaudeLivePtySessionIds(value: unknown): string[] {
   if (!Array.isArray(value)) {
@@ -3901,6 +3958,28 @@ export class Store {
       automationRuns: automationContextMigration.state.automationRuns
     }
 
+    // Why: must follow the context backfill — classification reads runContext.hostId.
+    const automationOwnerMigration = migrateAutomationOwners({
+      automations: result.automations,
+      sshTargets: result.sshTargets,
+      repos,
+      folderWorkspaces: result.folderWorkspaces,
+      projectGroups: result.projectGroups,
+      removedSshTargetTombstones: result.removedSshTargetTombstones ?? [],
+      sshTargetGenerationCounter: result.sshTargetGenerationCounter,
+      now: Date.now()
+    })
+    if (automationOwnerMigration.changed) {
+      this.loadNeedsSave = true
+    }
+    result = {
+      ...result,
+      automations: automationOwnerMigration.automations,
+      sshTargets: automationOwnerMigration.sshTargets,
+      removedSshTargetTombstones: automationOwnerMigration.removedSshTargetTombstones,
+      sshTargetGenerationCounter: automationOwnerMigration.sshTargetGenerationCounter
+    }
+
     const folderScopeConnectionMigration = backfillFolderScopeConnectionIds({
       ...result,
       repos,
@@ -5326,10 +5405,208 @@ export class Store {
       .sort((left, right) => right.createdAt - left.createdAt)
   }
 
-  createAutomation(input: AutomationCreateInput): Automation {
+  /** Current registration generation of the SSH target a repo is pinned to, if any. */
+  private sshTargetGenerationForConnection(
+    connectionId: string | null | undefined
+  ): number | undefined {
+    const targetId = connectionId?.trim()
+    if (!targetId) {
+      return undefined
+    }
+    const target = this.state.sshTargets?.find((entry) => entry.id === targetId)
+    return sanitizeSshTargetGeneration(target?.generation)
+  }
+
+  private automationUsageSummaries(): Map<string, AutomationUsageSummary> {
+    const runsByAutomation = new Map<string, AutomationRun[]>()
+    for (const run of this.state.automationRuns ?? []) {
+      const runs = runsByAutomation.get(run.automationId)
+      if (runs) {
+        runs.push(run)
+      } else {
+        runsByAutomation.set(run.automationId, [run])
+      }
+    }
+    return new Map(
+      [...runsByAutomation].map(([id, runs]) => [id, summarizeAutomationRunUsage(runs)])
+    )
+  }
+
+  private folderWorkspaceHostState(): FolderWorkspaceHostState {
+    return {
+      folderWorkspaces: this.state.folderWorkspaces ?? [],
+      projectGroups: this.state.projectGroups ?? [],
+      repos: this.state.repos ?? []
+    }
+  }
+
+  /**
+   * Host the automation's workspace pins it to.
+   *
+   * A folder workspace can be pinned to an SSH host while its repo is local; the
+   * repo alone would file that record under Self and dispatch would then run it
+   * somewhere else entirely.
+   */
+  private automationWorkspaceHost(automation: Automation): AutomationWorkspaceHost {
+    return resolveAutomationWorkspaceHost(this.folderWorkspaceHostState(), automation.workspaceId)
+  }
+
+  /** Records whose folder workspace — not their project — attaches them to one SSH target. */
+  private automationIdsPinnedToSshTarget(targetId: string): Set<string> {
+    const state = this.folderWorkspaceHostState()
+    return new Set(
+      (this.state.automations ?? [])
+        .filter(
+          (automation) =>
+            resolveAutomationWorkspaceSshTargetId(state, automation.workspaceId) === targetId
+        )
+        .map((automation) => automation.id)
+    )
+  }
+
+  /** The pinned SSH target and the generation its registration carries right now. */
+  private automationWorkspaceSshPin(
+    workspaceId: Automation['workspaceId']
+  ): AutomationWorkspaceSshPin | undefined {
+    const targetId = resolveAutomationWorkspaceSshTargetId(
+      this.folderWorkspaceHostState(),
+      workspaceId
+    )
+    return targetId === undefined
+      ? undefined
+      : { targetId, generation: this.sshTargetGenerationForConnection(targetId) }
+  }
+
+  /** Generations come from one counter and are never reissued, so at most one target carries each. */
+  private sshTargetIdForGeneration(generation: number): string | undefined {
+    return (this.state.sshTargets ?? []).find((target) => target.generation === generation)?.id
+  }
+
+  private automationProjectionContext(withUsage: boolean): AutomationProjectionContext {
+    const usage = withUsage ? this.automationUsageSummaries() : null
+    return {
+      sshTargetGeneration: (targetId) => this.sshTargetGenerationForConnection(targetId),
+      sshTargetIdForGeneration: (generation) => this.sshTargetIdForGeneration(generation),
+      // Why: a missing repo is not evidence of Self, so absent and local must stay distinguishable.
+      repoConnectionId: (repoId) => {
+        const repo = this.state.repos.find((entry) => entry.id === repoId)
+        return repo ? repo.connectionId?.trim() || null : undefined
+      },
+      workspaceHost: (automation) => this.automationWorkspaceHost(automation),
+      ...(usage ? { usageSummary: (id: string) => usage.get(id) ?? null } : {})
+    }
+  }
+
+  /** Host-scoped list for this authority. An omitted selector returns everything it stores. */
+  listAutomationsForScope(params?: AutomationListParams | null): AutomationListResult {
+    const scope = params?.selector
+    if (scope?.kind === 'ssh') {
+      const current = this.sshTargetGenerationForConnection(scope.targetId)
+      if (current === undefined) {
+        throw new AutomationOwnerConflictError(AUTOMATION_OWNER_CONFLICT_CODES.targetRemoved)
+      }
+      if (current !== scope.expectedTargetGeneration) {
+        throw new AutomationOwnerConflictError(AUTOMATION_OWNER_CONFLICT_CODES.ownerChanged)
+      }
+    }
+    return projectAutomationList(
+      this.listAutomations(),
+      this.automationProjectionContext(true),
+      scope
+    )
+  }
+
+  /**
+   * The owner a client must name to mutate this record; null when it is gone.
+   *
+   * Read-then-act is the only way a non-desktop client can satisfy the fence, so
+   * this is the read half of it. It stays a projection: two calls either side of
+   * a target change return different owners, and the fence is what catches that.
+   */
+  automationOwnerPrecondition(id: string): AutomationOwnerPrecondition | null {
+    const automation = (this.state.automations ?? []).find((entry) => entry.id === id)
+    return automation
+      ? toAutomationOwnerPrecondition(
+          projectAutomationSelector(automation, this.automationProjectionContext(false))
+        )
+      : null
+  }
+
+  /** Host a scoped `automationsChanged` must name; null when the record is gone. */
+  automationChangeSelector(id: string): AutomationChangeSelector | null {
+    const automation = (this.state.automations ?? []).find((entry) => entry.id === id)
+    return automation
+      ? toAutomationChangeSelector(
+          projectAutomationSelector(automation, this.automationProjectionContext(false))
+        )
+      : null
+  }
+
+  /**
+   * The host-identity diagnosis standing against the record, if any.
+   *
+   * Dispatch's half of the same projection the list renders: a host that was
+   * removed, or removed and re-registered under the same id, leaves hostId,
+   * repoId and path untouched, so nothing else on the run-target path can tell
+   * either case from a healthy target.
+   */
+  automationCapturedHostIssue(automation: Automation): AutomationCapturedHostIssue | null {
+    return automationCapturedHostIssue(automation, this.automationProjectionContext(false))
+  }
+
+  /** Fails closed when the caller's captured owner no longer matches the stored record. */
+  assertAutomationOwnerFence(input: {
+    id: string
+    expectedOwner?: AutomationOwnerPrecondition
+    operation: AutomationOwnerFenceOperation
+  }): Automation {
+    const automation = (this.state.automations ?? []).find((entry) => entry.id === input.id)
+    if (!automation) {
+      throw new Error('Automation not found.')
+    }
+    assertAutomationOwnerFence({
+      automation,
+      expectedOwner: input.expectedOwner,
+      operation: input.operation,
+      context: this.automationProjectionContext(false)
+    })
+    return automation
+  }
+
+  /** Next SSH registration generation. Only create / re-create / explicit re-adopt may call this. */
+  allocateSshTargetGeneration(): number {
+    // Why: recompute the high-water mark per allocation so a rolled-back counter can't reissue a captured generation.
+    const next = nextSshTargetGeneration(
+      resolveSshTargetGenerationHighWaterMark({
+        persistedCounter: this.state.sshTargetGenerationCounter,
+        targetGenerations: (this.state.sshTargets ?? []).map((target) => target.generation),
+        capturedGenerations: (this.state.automations ?? []).map(
+          (automation) => automation.executionTargetGeneration
+        )
+      })
+    )
+    this.state.sshTargetGenerationCounter = next
+    this.scheduleSave()
+    return next
+  }
+
+  createAutomation(
+    input: AutomationCreateInput,
+    options?: { destination?: AutomationDestination }
+  ): Automation {
     const repo = this.state.repos.find((entry) => entry.id === input.projectId)
     const now = Date.now()
-    const executionTargetType = repo?.connectionId ? 'ssh' : 'local'
+    const workspaceId = input.workspaceMode === 'existing' ? (input.workspaceId ?? null) : null
+    const workspaceSshPin = this.automationWorkspaceSshPin(workspaceId)
+    const executionTarget = deriveAutomationExecutionTargetForCreate({
+      repo,
+      sshTargetGeneration: this.sshTargetGenerationForConnection(repo?.connectionId),
+      workspaceSshPin
+    })
+    if (options?.destination) {
+      assertAutomationDestination(options.destination, this.automationProjectionContext(false))
+      assertExecutionTargetMatchesDestination(executionTarget, options.destination, workspaceSshPin)
+    }
     const schedulerOwner = getAutomationSchedulerOwner(repo)
     const contexts = getAutomationContextsForRepo(repo, this.state.projectHostSetups ?? [])
     const automation: Automation = {
@@ -5341,11 +5618,10 @@ export class Store {
       runContext: input.runContext ?? contexts.runContext,
       sourceContext: input.sourceContext ?? contexts.sourceContext,
       projectId: input.projectId,
-      executionTargetType,
-      executionTargetId: executionTargetType === 'ssh' ? (repo?.connectionId ?? '') : 'local',
+      ...executionTarget,
       schedulerOwner,
       workspaceMode: input.workspaceMode,
-      workspaceId: input.workspaceMode === 'existing' ? (input.workspaceId ?? null) : null,
+      workspaceId,
       baseBranch: input.workspaceMode === 'new_per_run' ? (input.baseBranch ?? null) : null,
       setupDecision: normalizeAutomationSetupDecisionForWorkspaceMode(
         input.workspaceMode,
@@ -5368,22 +5644,41 @@ export class Store {
     return automation
   }
 
-  updateAutomation(id: string, updates: AutomationUpdateInput): Automation {
+  updateAutomation(
+    id: string,
+    updates: AutomationUpdateInput,
+    options?: { expectedOwner?: AutomationOwnerPrecondition; destination?: AutomationDestination }
+  ): Automation {
     const index = (this.state.automations ?? []).findIndex((entry) => entry.id === id)
     if (index === -1) {
       throw new Error('Automation not found.')
     }
     const current = this.state.automations[index]
+    // Both sides are validated before the replacement is built, so a rejected move writes nothing.
+    assertAutomationOwnerFence({
+      automation: current,
+      expectedOwner: options?.expectedOwner,
+      operation: 'mutate',
+      context: this.automationProjectionContext(false)
+    })
+    if (options?.destination) {
+      assertAutomationDestination(options.destination, this.automationProjectionContext(false))
+    }
     const repoId = updates.projectId ?? current.projectId
     const repo = this.state.repos.find((entry) => entry.id === repoId)
-    const executionTargetType = repo?.connectionId ? 'ssh' : 'local'
-    const schedulerOwner = getAutomationSchedulerOwner(repo)
+    // Why: only these two say "move me"; every other update keeps the host the record already names.
+    const selectorMoveRequested =
+      updates.projectId !== undefined || options?.destination !== undefined
+    // Why: the scheduler owner is the other half of the same host identity — re-deriving it alone
+    // would hand an unmoved record to a different scheduler than its stored target.
+    const schedulerOwner =
+      selectorMoveRequested && repo ? getAutomationSchedulerOwner(repo) : current.schedulerOwner
     const contexts = getAutomationContextsForRepo(repo, this.state.projectHostSetups ?? [])
     const rrule = updates.rrule ?? current.rrule
     const dtstart = updates.dtstart ?? current.dtstart
     const scheduleChanged = updates.rrule !== undefined || updates.dtstart !== undefined
     const workspaceMode = updates.workspaceMode ?? current.workspaceMode
-    const updated: Automation = {
+    const merged: Automation = {
       ...current,
       ...updates,
       name:
@@ -5402,8 +5697,6 @@ export class Store {
         : updates.projectId !== undefined
           ? contexts.sourceContext
           : (current.sourceContext ?? contexts.sourceContext),
-      executionTargetType,
-      executionTargetId: executionTargetType === 'ssh' ? (repo?.connectionId ?? '') : 'local',
       schedulerOwner,
       workspaceMode,
       workspaceId:
@@ -5433,14 +5726,44 @@ export class Store {
       nextRunAt: scheduleChanged
         ? nextAutomationOccurrenceAfter(rrule, dtstart, Date.now())
         : current.nextRunAt,
+      // Why: an explicit enablement change outranks the owner migration's default,
+      // so the next load leaves the record alone instead of flipping it back.
+      enabledDecidedBy: updates.enabled !== undefined ? 'user' : current.enabledDecidedBy,
       updatedAt: Date.now()
     }
+    // Derived from the merged record: the workspace it ends up on decides which pin owns its capture.
+    const previousPin = this.automationWorkspaceSshPin(current.workspaceId)
+    const workspaceSshPin = this.automationWorkspaceSshPin(merged.workspaceId)
+    const workspaceSshPinMoved = previousPin?.targetId !== workspaceSshPin?.targetId
+    const executionTarget = deriveAutomationExecutionTargetForUpdate({
+      current,
+      repo,
+      selectorMoveRequested,
+      sshTargetGeneration: this.sshTargetGenerationForConnection(repo?.connectionId),
+      workspaceSshPin,
+      workspaceSshPinMoved
+    })
+    if (options?.destination) {
+      assertExecutionTargetMatchesDestination(executionTarget, options.destination, workspaceSshPin)
+    }
+    const updated = applyAutomationExecutionTarget(
+      merged,
+      executionTarget,
+      workspaceSshPinMoved ? undefined : workspaceSshPin
+    )
     this.state.automations[index] = updated
     this.flush()
     return updated
   }
 
-  deleteAutomation(id: string): void {
+  deleteAutomation(id: string, options?: { expectedOwner?: AutomationOwnerPrecondition }): void {
+    if ((this.state.automations ?? []).some((entry) => entry.id === id)) {
+      this.assertAutomationOwnerFence({
+        id,
+        expectedOwner: options?.expectedOwner,
+        operation: 'mutate'
+      })
+    }
     this.state.automations = (this.state.automations ?? []).filter((entry) => entry.id !== id)
     this.state.automationRuns = (this.state.automationRuns ?? []).filter(
       (entry) => entry.automationId !== id
@@ -5495,6 +5818,55 @@ export class Store {
     }
     this.flush()
     return run
+  }
+
+  /**
+   * Folds one more identical refusal into the run that already records it.
+   *
+   * Returns null when there is nothing to fold into, which is what starts a fresh
+   * record whenever the reason changes, a real run intervenes, or the user asked
+   * for this one by hand — a manual attempt owes the user its own answer.
+   */
+  recordRepeatedAutomationSkip(
+    automationId: string,
+    error: string,
+    scheduledFor: number
+  ): AutomationRun | null {
+    const runs = this.state.automationRuns ?? []
+    const latest = runs
+      .filter((run) => run.automationId === automationId)
+      .reduce<AutomationRun | null>(
+        (newest, run) => (!newest || run.createdAt > newest.createdAt ? run : newest),
+        null
+      )
+    if (
+      !latest ||
+      latest.status !== 'skipped_unavailable' ||
+      latest.trigger !== 'scheduled' ||
+      latest.error !== error
+    ) {
+      return null
+    }
+    // Same dedupe key createAutomationRun uses: re-evaluating one occurrence must
+    // not count twice, and it still means the caller writes no new run.
+    if ((latest.lastOccurrenceAt ?? latest.scheduledFor) === scheduledFor) {
+      return latest
+    }
+    const now = Date.now()
+    const updated: AutomationRun = {
+      ...latest,
+      occurrenceCount: (latest.occurrenceCount ?? 1) + 1,
+      lastOccurrenceAt: scheduledFor
+    }
+    runs[runs.findIndex((run) => run.id === latest.id)] = updated
+    const automation = this.state.automations.find((entry) => entry.id === automationId)
+    if (automation) {
+      // Parity with the row this replaces: a folded occurrence was still an attempt.
+      automation.lastRunAt = now
+      automation.updatedAt = now
+    }
+    this.flush()
+    return updated
   }
 
   updateAutomationRun(result: AutomationDispatchResult): AutomationRun {
@@ -7219,11 +7591,29 @@ export class Store {
     const existing = this.state.removedSshTargetTombstones ?? []
     // Why: dedupe by oldTargetId so re-removing the same id can't stack duplicate tombstones; newest wins.
     const filtered = existing.filter((t) => t.oldTargetId !== tombstone.oldTargetId)
-    // Cap the history so pathological churn can't grow the state file unbounded.
-    this.state.removedSshTargetTombstones = [...filtered, tombstone].slice(
-      -MAX_REMOVED_SSH_TARGET_TOMBSTONES
+    // Cap the history so pathological churn can't grow the state file unbounded, but
+    // never evict removal evidence stored state still depends on.
+    this.state.removedSshTargetTombstones = capRemovedSshTargetTombstones(
+      [...filtered, tombstone],
+      this.sshTargetRemovalEvidenceDependencies(),
+      MAX_REMOVED_SSH_TARGET_TOMBSTONES
     )
     this.scheduleSave()
+  }
+
+  private sshTargetRemovalEvidenceDependencies(): Set<string> {
+    return collectSshTargetRemovalEvidenceDependencies({
+      automations: this.state.automations ?? [],
+      automationHostFilter: this.state.ui?.automationHostFilter
+    })
+  }
+
+  /** Consume a re-adoption tombstone unless stored state still depends on its removal evidence. */
+  releaseRemovedSshTargetTombstone(oldTargetId: string): void {
+    if (this.sshTargetRemovalEvidenceDependencies().has(oldTargetId)) {
+      return
+    }
+    this.removeRemovedSshTargetTombstone(oldTargetId)
   }
 
   removeRemovedSshTargetTombstone(oldTargetId: string): void {
@@ -7289,6 +7679,30 @@ export class Store {
       carrierChanged = true
     }
     if (migrateUiHostScopeSshTargetId(this.state.ui, oldTargetId, newTargetId)) {
+      carrierChanged = true
+    }
+    // Why: read the pins before the workspace sweep re-points them, or nothing still names the old id.
+    const workspacePinnedAutomationIds = this.automationIdsPinnedToSshTarget(oldTargetId)
+    if (migrateFolderWorkspaceHostSshTargetId(this.state, oldTargetId, newTargetId)) {
+      carrierChanged = true
+    }
+    // Why: the automation owner, its run history and the persisted host filter are carriers too —
+    // migrating the workspace alone leaves the automation orphaned on the dead id (doc:183).
+    if (
+      migrateAutomationsForSshReadoption({
+        automations: this.state.automations ?? [],
+        automationRuns: this.state.automationRuns ?? [],
+        oldTargetId,
+        newTargetId,
+        workspacePinnedAutomationIds,
+        newTargetGeneration: (this.state.sshTargets ?? []).find(
+          (target) => target.id === newTargetId
+        )?.generation
+      })
+    ) {
+      carrierChanged = true
+    }
+    if (migrateAutomationHostFilterSshTargetId(this.state.ui, oldTargetId, newTargetId)) {
       carrierChanged = true
     }
     for (const lease of this.state.sshRemotePtyLeases ?? []) {

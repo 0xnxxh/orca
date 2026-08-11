@@ -88,6 +88,15 @@ export const AGENT_SESSION_OMP_RESUME_PATH_RUNTIME_CAPABILITY =
 export const FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY = 'files.mutation-ownership.v1' as const
 export const FILE_MUTATION_OWNERSHIP_UPDATE_REQUIRED_MESSAGE =
   'Remote file changes require a newer Orca server. Update the HUB and try again.'
+// Why: older hosts drop automation.list's selector and answer with the whole authority, so a scoped client must not read that as one host's rows.
+export const AUTOMATION_LIST_HOST_SCOPE_RUNTIME_CAPABILITY =
+  'automation.list-host-scope.v1' as const
+export const AUTOMATION_LIST_HOST_SCOPE_UPDATE_REQUIRED_MESSAGE =
+  'Filtering automations by host requires a newer Orca server. Update the HUB and try again.'
+// Why: without server-side owner preconditions a mutation could run against a host the user never saw, so unfenced rows stay view-only.
+export const AUTOMATION_OWNER_FENCING_RUNTIME_CAPABILITY = 'automation.owner-fencing.v1' as const
+export const AUTOMATION_OWNER_FENCING_UPDATE_REQUIRED_MESSAGE =
+  'Editing automations on this host requires a newer Orca server. Update the HUB and try again.'
 
 export const RUNTIME_CAPABILITIES = [
   'runtime.status.compat.v1',
@@ -123,7 +132,9 @@ export const RUNTIME_CAPABILITIES = [
   AGENT_SESSION_OMP_RESUME_PATH_RUNTIME_CAPABILITY,
   FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY,
   ACCOUNT_IMPORT_RUNTIME_CAPABILITY,
-  CODEX_RESET_CREDIT_RUNTIME_CAPABILITY
+  CODEX_RESET_CREDIT_RUNTIME_CAPABILITY,
+  AUTOMATION_LIST_HOST_SCOPE_RUNTIME_CAPABILITY,
+  AUTOMATION_OWNER_FENCING_RUNTIME_CAPABILITY
 ] as const
 
 export type RuntimeCapability = (typeof RUNTIME_CAPABILITIES)[number] | (string & {})

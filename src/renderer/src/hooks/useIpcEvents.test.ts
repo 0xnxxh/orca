@@ -345,6 +345,7 @@ describe('useIpcEvents zoom routing', () => {
       clearTimeout: vi.fn(),
       api: {
         repos: makeEvents(),
+        automations: makeEvents(),
         worktrees: makeEvents(),
         keybindings: makeEvents(),
         settings: makeEvents(),
@@ -488,6 +489,7 @@ describe('useIpcEvents zoom routing', () => {
       clearTimeout: vi.fn(),
       api: {
         repos: makeEvents(),
+        automations: makeEvents(),
         worktrees: makeEvents(),
         keybindings: makeEvents(),
         settings: makeEvents(),
@@ -697,6 +699,7 @@ describe('useIpcEvents rate-limit hydration', () => {
       clearTimeout: vi.fn(),
       api: {
         repos: makeEvents(),
+        automations: makeEvents(),
         worktrees: makeEvents(),
         keybindings: makeEvents(),
         settings: makeEvents(),
@@ -1013,6 +1016,7 @@ describe('useIpcEvents browser tab create routing', () => {
       clearTimeout: vi.fn(),
       api: {
         repos: { onChanged: () => () => {} },
+        automations: { onChanged: () => () => {} },
         worktrees: {
           onChanged: () => () => {},
           onGitStatusMetadataChanged: () => () => {},
@@ -1246,6 +1250,7 @@ describe('useIpcEvents updater integration', () => {
     vi.stubGlobal('window', {
       api: {
         repos: { onChanged: () => () => {} },
+        automations: { onChanged: () => () => {} },
         worktrees: {
           onChanged: () => () => {},
           onBaseStatus: () => () => {},
@@ -1442,6 +1447,7 @@ describe('useIpcEvents updater integration', () => {
     vi.stubGlobal('window', {
       api: {
         repos: makeEvents(),
+        automations: makeEvents(),
         worktrees: makeEvents(),
         keybindings: makeEvents(),
         settings: makeEvents(),
@@ -1617,6 +1623,7 @@ describe('useIpcEvents updater integration', () => {
     vi.stubGlobal('window', {
       api: {
         repos: { onChanged: () => () => {} },
+        automations: { onChanged: () => () => {} },
         worktrees: {
           onChanged: () => () => {},
           onBaseStatus: () => () => {},
@@ -2088,6 +2095,7 @@ describe('useIpcEvents updater integration', () => {
       dispatchEvent,
       api: {
         repos: { onChanged: () => () => {} },
+        automations: { onChanged: () => () => {} },
         worktrees: {
           onChanged: () => () => {},
           onBaseStatus: () => () => {},
@@ -3230,6 +3238,7 @@ describe('useIpcEvents browser tab close routing', () => {
       dispatchEvent: vi.fn(),
       api: {
         repos: { onChanged: () => () => {} },
+        automations: { onChanged: () => () => {} },
         worktrees: {
           onChanged: () => () => {},
           onBaseStatus: () => () => {},
@@ -3802,6 +3811,7 @@ describe('useIpcEvents browser tab close routing', () => {
       dispatchEvent: vi.fn(),
       api: {
         repos: { onChanged: () => () => {} },
+        automations: { onChanged: () => () => {} },
         worktrees: {
           onChanged: () => () => {},
           onBaseStatus: () => () => {},
@@ -4023,6 +4033,7 @@ describe('useIpcEvents browser tab close routing', () => {
       dispatchEvent: vi.fn(),
       api: {
         repos: { onChanged: () => () => {} },
+        automations: { onChanged: () => () => {} },
         worktrees: {
           onChanged: () => () => {},
           onBaseStatus: () => () => {},
@@ -4239,6 +4250,7 @@ describe('useIpcEvents browser tab close routing', () => {
       dispatchEvent: vi.fn(),
       api: {
         repos: { onChanged: () => () => {} },
+        automations: { onChanged: () => () => {} },
         worktrees: {
           onChanged: () => () => {},
           onBaseStatus: () => () => {},
@@ -4562,6 +4574,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     vi.stubGlobal('window', {
       api: {
         repos: { onChanged: () => () => {} },
+        automations: { onChanged: () => () => {} },
         worktrees: {
           onChanged: () => () => {},
           onBaseStatus: () => () => {},
@@ -4828,6 +4841,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
     vi.stubGlobal('window', {
       api: {
         repos: { onChanged: () => () => {} },
+        automations: { onChanged: () => () => {} },
         worktrees: {
           onChanged: (callback: (data: { repoId: string }) => void) => {
             localWorktreesOnChanged = callback
@@ -5211,6 +5225,7 @@ describe('useIpcEvents agent status snapshot integration', () => {
     return {
       api: {
         repos: { onChanged: () => () => {} },
+        automations: { onChanged: () => () => {} },
         worktrees: {
           onChanged: () => () => {},
           onBaseStatus: () => () => {},

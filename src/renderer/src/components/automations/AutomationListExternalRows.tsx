@@ -23,6 +23,7 @@ import type {
 } from '../../../../shared/automations-types'
 import type { SshConnectionState } from '../../../../shared/ssh-types'
 import type { ExternalAutomationListEntry } from './external-automation-list-entries'
+import type { ExternalAutomationScope } from './external-automation-scope-client'
 import {
   formatExternalDate,
   getExternalProviderLabel,
@@ -60,9 +61,14 @@ export function AutomationListExternalRows({
   onRequestAction: (
     manager: ExternalAutomationManager,
     job: ExternalAutomationJob,
-    action: ExternalAutomationAction
+    action: ExternalAutomationAction,
+    scope: ExternalAutomationScope
   ) => void
-  onEdit: (manager: ExternalAutomationManager, job: ExternalAutomationJob) => void
+  onEdit: (
+    manager: ExternalAutomationManager,
+    job: ExternalAutomationJob,
+    scope: ExternalAutomationScope
+  ) => void
 }): React.JSX.Element {
   return (
     <>
@@ -151,7 +157,7 @@ export function AutomationListExternalRows({
                   <DropdownMenuContent align="end" className="w-48">
                     <DropdownMenuItem
                       disabled={actionDisabled}
-                      onSelect={() => onRequestAction(entry.manager, entry.job, 'run')}
+                      onSelect={() => onRequestAction(entry.manager, entry.job, 'run', entry.scope)}
                     >
                       <Play className="size-3.5" />
                       <span className="min-w-0 truncate">
@@ -165,7 +171,7 @@ export function AutomationListExternalRows({
                     {entry.manager.provider === 'hermes' ? (
                       <DropdownMenuItem
                         disabled={!entry.manager.canManage || externalActionKey !== null}
-                        onSelect={() => onEdit(entry.manager, entry.job)}
+                        onSelect={() => onEdit(entry.manager, entry.job, entry.scope)}
                       >
                         <Pencil className="size-3.5" />
                         {translate(
@@ -180,7 +186,8 @@ export function AutomationListExternalRows({
                         onRequestAction(
                           entry.manager,
                           entry.job,
-                          entry.job.enabled ? 'pause' : 'resume'
+                          entry.job.enabled ? 'pause' : 'resume',
+                          entry.scope
                         )
                       }
                     >
@@ -203,7 +210,9 @@ export function AutomationListExternalRows({
                     <DropdownMenuItem
                       variant="destructive"
                       disabled={actionDisabled}
-                      onSelect={() => onRequestAction(entry.manager, entry.job, 'delete')}
+                      onSelect={() =>
+                        onRequestAction(entry.manager, entry.job, 'delete', entry.scope)
+                      }
                     >
                       <Trash2 className="size-3.5" />
                       {translate(
@@ -218,7 +227,7 @@ export function AutomationListExternalRows({
             <ContextMenuContent className="w-48">
               <ContextMenuItem
                 disabled={actionDisabled}
-                onSelect={() => onRequestAction(entry.manager, entry.job, 'run')}
+                onSelect={() => onRequestAction(entry.manager, entry.job, 'run', entry.scope)}
               >
                 <Play className="size-3.5" />
                 <span className="min-w-0 truncate">
@@ -229,7 +238,7 @@ export function AutomationListExternalRows({
               {entry.manager.provider === 'hermes' ? (
                 <ContextMenuItem
                   disabled={!entry.manager.canManage || externalActionKey !== null}
-                  onSelect={() => onEdit(entry.manager, entry.job)}
+                  onSelect={() => onEdit(entry.manager, entry.job, entry.scope)}
                 >
                   <Pencil className="size-3.5" />
                   {translate('auto.components.automations.AutomationsPage.f4612e3f78', 'Edit')}
@@ -238,7 +247,12 @@ export function AutomationListExternalRows({
               <ContextMenuItem
                 disabled={actionDisabled}
                 onSelect={() =>
-                  onRequestAction(entry.manager, entry.job, entry.job.enabled ? 'pause' : 'resume')
+                  onRequestAction(
+                    entry.manager,
+                    entry.job,
+                    entry.job.enabled ? 'pause' : 'resume',
+                    entry.scope
+                  )
                 }
               >
                 {entry.job.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
@@ -250,7 +264,7 @@ export function AutomationListExternalRows({
               <ContextMenuItem
                 variant="destructive"
                 disabled={actionDisabled}
-                onSelect={() => onRequestAction(entry.manager, entry.job, 'delete')}
+                onSelect={() => onRequestAction(entry.manager, entry.job, 'delete', entry.scope)}
               >
                 <Trash2 className="size-3.5" />
                 {translate('auto.components.automations.AutomationsPage.15e0bfb13b', 'Delete')}

@@ -7,6 +7,7 @@ import type {
   SshTarget
 } from './ssh-types'
 import type { Automation, AutomationExecutionTargetType, AutomationRun } from './automations-types'
+import type { PersistedAutomationHostFilter } from './automation-host-filter'
 import type { WorkspaceSource } from './workspace-source'
 import type { DedicatedRepoChannel, ReleaseBuild, ReleaseChannel } from './release-channel'
 import type { GitHubProjectSettings } from './github-project-types'
@@ -3475,6 +3476,8 @@ export type PersistedUIState = {
   visibleWorkspaceHostIds?: VisibleWorkspaceHostIds
   /** User-defined sidebar order for host sections; missing/new hosts append in discovered order. */
   workspaceHostOrder?: WorkspaceHostOrder
+  /** Automations page host filter. Stores only the stable form (a canonical `hostStableKey`); an unparseable value degrades to All hosts. */
+  automationHostFilter?: PersistedAutomationHostFilter
   /** Desktop-owned all-host repo order; host-qualified identities keep a manual cross-host interleaving while each host owns its local permutation. */
   manualRepoOrder?: ManualRepoOrderEntry[]
   /** Deprecated legacy positive-form setting. Ignored on hydration. */
@@ -3739,6 +3742,8 @@ export type PersistedState = {
   /** Per-execution-host session partitions for non-'local' hosts (ssh:/runtime:); 'local' stays in workspaceSession so pre-partition builds keep working. */
   workspaceSessionsByHostId?: Partial<Record<ExecutionHostId, WorkspaceSessionState>>
   sshTargets: SshTarget[]
+  /** Highest SSH target registration generation ever issued. Reloaded as a high-water mark over stored targets and automations, so a rollback can't reissue a captured generation. */
+  sshTargetGenerationCounter?: number
   /** SSH config aliases the user deleted; suppresses re-import from ~/.ssh/config so a deleted host doesn't reappear. */
   deletedSshConfigAliases: string[]
   /** Identity records for removed SSH targets so a re-added host can re-adopt workspaces orphaned on the old target id. */

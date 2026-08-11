@@ -20,6 +20,10 @@ import {
   isValidAutomationSchedule
 } from '../../../../shared/automation-schedules'
 import { Field } from './automation-page-parts'
+import { AutomationCreateDestinationField } from './AutomationCreateDestinationField'
+import { AutomationOwnerConflictNotice } from './AutomationOwnerConflictNotice'
+import type { AutomationActionNotice } from './automation-row-action-dispatch'
+import type { AutomationCreateDestinationControl } from './use-automation-create-destination'
 import { AutomationEditorDialogFooter } from './AutomationEditorDialogFooter'
 import { AutomationEditorDialogHeader } from './AutomationEditorDialogHeader'
 import { AutomationEditorPromptSection } from './AutomationEditorPromptSection'
@@ -69,6 +73,12 @@ type AutomationEditorDialogProps = {
   worktrees: Worktree[]
   settings: GlobalSettings | null
   draft: AutomationDraft
+  /** Present only while creating an Orca automation; editing keeps the record's captured owner. */
+  createDestination?: AutomationCreateDestinationControl
+  /** Why a save was refused. Belongs here rather than on the page: this dialog covers it. */
+  notice?: AutomationActionNotice | null
+  onNoticeRecover?: () => void
+  onNoticeDismiss?: () => void
   onProjectChange: (projectId: string) => void
   getRepoHostLabel?: (repo: Repo) => string | null | undefined
   onCreateTargetChange: (target: AutomationCreateTarget) => void
@@ -94,6 +104,10 @@ export function AutomationEditorDialog({
   worktrees,
   settings,
   draft,
+  createDestination,
+  notice,
+  onNoticeRecover,
+  onNoticeDismiss,
   onProjectChange,
   getRepoHostLabel,
   onCreateTargetChange,
@@ -118,6 +132,10 @@ export function AutomationEditorDialog({
       (agent) => enabledIds.has(agent.id) || agent.id === draft.agentId
     )
   }, [draft.agentId, settings?.disabledTuiAgents])
+  const destinationField =
+    createDestination && isCreateMode && !isHermesTarget ? (
+      <AutomationCreateDestinationField control={createDestination} />
+    ) : null
   const scheduleField = (
     <Field
       label={translate('auto.components.automations.AutomationEditorDialog.c4b19094c2', 'Schedule')}
@@ -168,6 +186,13 @@ export function AutomationEditorDialog({
           onDraftChange={onDraftChange}
         />
 
+        <AutomationOwnerConflictNotice
+          notice={notice ?? null}
+          className="mx-5 mb-1"
+          onRecover={onNoticeRecover}
+          onDismiss={onNoticeDismiss}
+        />
+
         <AutomationEditorDialogFooter
           isEditing={isEditing}
           isEditingExternal={isEditingExternal}
@@ -184,6 +209,7 @@ export function AutomationEditorDialog({
           settings={settings}
           draft={draft}
           visibleAgents={visibleAgents}
+          destinationField={destinationField}
           scheduleField={scheduleField}
           pickerTriggerClassName={PICKER_TRIGGER_CLASS}
           modeToggleItemClassName={MODE_TOGGLE_ITEM_CLASS}

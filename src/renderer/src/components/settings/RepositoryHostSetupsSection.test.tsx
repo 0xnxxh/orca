@@ -292,6 +292,7 @@ describe('RepositoryHostSetupsSection', () => {
                 }
               ]
             ]),
+            targetGenerations: new Map(),
             targetLabels: new Map([
               ['direct', 'Direct box'],
               ['jump', 'Jump box']

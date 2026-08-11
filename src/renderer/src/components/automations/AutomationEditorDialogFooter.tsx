@@ -40,6 +40,7 @@ type AutomationEditorDialogFooterProps = {
   settings: GlobalSettings | null
   draft: AutomationDraft
   visibleAgents: AgentCatalogEntry[]
+  destinationField: React.ReactNode
   scheduleField: React.ReactNode
   pickerTriggerClassName: string
   modeToggleItemClassName: string
@@ -67,6 +68,7 @@ export function AutomationEditorDialogFooter({
   settings,
   draft,
   visibleAgents,
+  destinationField,
   scheduleField,
   pickerTriggerClassName,
   modeToggleItemClassName,
@@ -79,6 +81,9 @@ export function AutomationEditorDialogFooter({
 }: AutomationEditorDialogFooterProps): React.JSX.Element {
   return (
     <div className="border-t border-border/50 px-5 py-4">
+      {/* Why its own row: the storage host is a statement about the record, not
+          a peer of the compact column pickers below it. */}
+      {destinationField ? <div className="pb-3">{destinationField}</div> : null}
       <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
         <Field
           label={translate(
