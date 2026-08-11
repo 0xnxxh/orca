@@ -6,14 +6,14 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `81bc526d81` on `skills-share` (pushed; no PR).
-- Orca Cloud: `ddbd4e2` on `skills-share-cloud` (pushed; no PR).
+- Orca implementation: `6ba6107dba` on `skills-share` (pushed; no PR).
+- Orca Cloud: `cdf22de` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
 
 - Local Node and web typechecks, changed-code quality gates, 94 skill-domain files with 770 tests
-  passed and 3 skipped, 132 Orca Cloud API tests, the full Cloud monorepo test/typecheck/lint/build
-  gates, and Terraform validation.
+  passed and 3 skipped, 133 Orca Cloud API tests with one opt-in integration skip, the full Cloud
+  monorepo test/typecheck/lint/build gates, and isolated Terraform formatting and validation.
 - Final Orca validation passed repository-wide lint, all Node/CLI/web typechecks, the production
   desktop/native build, the Node 18 Relay bundle contract, 78 focused skill files with 557 tests
   passed and 10 platform skips, and the mixed-version wire suite. The full repository run passed
@@ -52,10 +52,18 @@ Validated so far:
   response, and validated structured SSH failure data without arbitrary error-data disclosure.
 - Isolated staging bucket, IAM, secret container, log metrics, dashboard, and alerts in
   `onorca-cloud-staging`.
+- PostgreSQL migration startup is serialized by a transaction-scoped advisory lock. Transactional
+  DDL rollback and eight concurrent startup callers passed against ephemeral PostgreSQL 16 and 17,
+  with exactly one recorded schema version.
+- The immutable API deploy path now stamps every artifact and skill literal variable plus exactly
+  one approved skill-database secret, and rejects secret, Cloud SQL, service-account, scaling,
+  CPU, memory, volume, mount, probe, or unexpected-environment drift before traffic promotion.
+  Both staging and production workflows explicitly carry all four skill controls as `false`.
 
 Rollout gate: staging Cloud SQL is shared with Auth/Relay and intentionally stopped. Do not create
 the skills database/user/secret version or deploy Cloud Run routes until the supported staging SQL
 power workflow deliberately wakes it and the reviewed plan still shows no unrelated changes.
+`gcloud` currently requires `gcloud auth login jinwoo@stably.ai` before that fresh plan can run.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
 
@@ -479,6 +487,12 @@ does not mean the surrounding phase is complete.
       database, and error data.
 - [x] Define criteria for splitting finalization into a worker service if it harms existing API
       traffic.
+- [x] Make immutable API candidates atomically replace the complete Terraform-owned literal
+      environment and the exact `ORCA_SKILLS_DATABASE_URL` Secret Manager reference.
+- [x] Reject serving or candidate drift in the runtime service account, Cloud SQL attachment,
+      scaling, CPU, memory, volumes, mounts, ports, and probes before moving traffic.
+- [x] Keep all four skill controls explicitly disabled in staging and production deploy workflows
+      until their rollout gates are intentionally changed.
 
 ### Terraform review and apply
 
@@ -496,6 +510,10 @@ does not mean the surrounding phase is complete.
 
 ### PostgreSQL migrations
 
+- [x] Serialize concurrent Cloud Run startup migrations with a transaction-scoped PostgreSQL
+      advisory lock before migration-table inspection.
+- [x] Prove failed DDL records no schema version and eight concurrent callers converge on one
+      version against real PostgreSQL 16 and 17.
 - [x] Add `skill_packages` with owner organization, slug/name, creator, timestamps, and deletion
       state.
 - [x] Add immutable `skill_package_versions` with package and archive identities, GCS key and

@@ -39,7 +39,7 @@ that larger package-manager surface.
 
 ## Current execution status
 
-Orca implementation through `81bc526d81` and Orca Cloud implementation through `ddbd4e2` are
+Orca implementation through `6ba6107dba` and Orca Cloud implementation through `cdf22de` are
 pushed on feature branches without an Orca pull request. Local, Windows, WSL, paired-runtime, and
 Docker-backed SSH validation are substantially complete; the implementation checklist records the
 exact evidence and remaining physical-host and failure-recovery gates.
@@ -56,6 +56,13 @@ The dedicated staging bucket, IAM, secret container, metrics, dashboard, and ale
 stopped. Review a fresh Terraform plan after refreshing `gcloud` authentication, then wake staging
 only through the supported Relay power workflow if the reviewed skill changes require the
 database. Keep skill routes disabled until migrations and staging smoke tests pass.
+
+The API release workflow now deploys an immutable no-traffic candidate with the complete artifact
+and skill environment plus exactly one approved skill-database secret. It verifies the inherited
+Terraform runtime identity, Cloud SQL attachment, scaling, resources, volumes, mounts, ports, and
+probes before promotion, and rolls back to a re-smoked prior revision on failure. All four skill
+controls remain explicitly disabled. Database migration startup uses a transaction-scoped advisory
+lock; transactional rollback and eight concurrent callers pass against PostgreSQL 16 and 17.
 
 ## Research baseline
 
@@ -458,6 +465,13 @@ ORCA_SKILLS_DATABASE_URL=<Secret Manager reference>
 
 Use the existing auth base URL and CORS-origin configuration. Do not add a second authentication
 implementation for skills.
+
+Every API image rollout must stamp the complete Terraform-owned literal environment and exact
+`ORCA_SKILLS_DATABASE_URL` secret reference in one no-traffic candidate. Before smoke or promotion,
+compare the candidate with both the reviewed release values and the serving Terraform runtime
+shape. Reject any unexpected secret or environment entry, changed service account, Cloud SQL
+attachment, scaling bound, resource limit, volume, mount, port, or probe. This keeps ordinary image
+deploys from clearing the skill database secret or silently detaching Cloud SQL.
 
 The API streams upload validation with fixed buffers under its existing 512 MiB memory limit. Load
 test the finalize lane before choosing its fixed concurrency. Keep the current Cloud Run instance
