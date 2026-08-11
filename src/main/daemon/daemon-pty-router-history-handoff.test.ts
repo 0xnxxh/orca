@@ -7,6 +7,7 @@ import { DaemonPtyRouter } from './daemon-pty-router'
 import { DaemonServer } from './daemon-server'
 import { getDaemonSocketPath } from './daemon-spawner'
 import { TERMINAL_HISTORY_INLINE_SEED_CODE_UNITS } from './terminal-history-seed-chunks'
+import { DAEMON_SESSION_SCROLLBACK_ROWS } from './daemon-session-scrollback-window'
 import type { DaemonFileLog } from './daemon-file-log'
 import type { SubprocessHandle } from './session'
 
@@ -106,6 +107,8 @@ describe('DaemonPtyRouter history handoff', () => {
     vi.stubEnv('ORCA_DAEMON_SESSION_SCROLLBACK_ROWS', '5000')
     await legacyAdapter.spawn({ sessionId, cols: 400, rows: 24 })
     legacySubprocess.emitData(`${'x'.repeat(TERMINAL_HISTORY_INLINE_SEED_CODE_UNITS + 1)}${marker}`)
+    // Keep only the played legacy session deep; the receiving daemon must use today's flat window.
+    vi.stubEnv('ORCA_DAEMON_SESSION_SCROLLBACK_ROWS', String(DAEMON_SESSION_SCROLLBACK_ROWS))
     router = new DaemonPtyRouter({ current: currentAdapter, legacy: [legacyAdapter] })
     await router.discoverLegacySessions()
     const client = (

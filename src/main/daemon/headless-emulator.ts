@@ -331,7 +331,6 @@ export class HeadlessEmulator {
     this.terminal.clear()
   }
 
-  // Why: xterm trims the normal buffer on assignment, so lowering this frees retained rows immediately.
   dispose(): void {
     this.disposed = true
     this.terminal.dispose()

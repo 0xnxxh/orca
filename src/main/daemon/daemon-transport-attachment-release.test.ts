@@ -1,9 +1,8 @@
 /**
- * Retention-leak regression: the attached-client exemption keeps a viewed session at full scrollback
- * depth, so an attachment that outlives its transport pins that session deep forever — and enough dead
- * attachments silently rebuild the unbounded retention the LRU cap exists to prevent. A dropped client
- * transport must release exactly that client's attachments, and protocol detach must really detach
- * (it was previously logging-only).
+ * Attachment-leak regression: an attachment that outlives its transport leaves the session looking
+ * viewed forever — producer pause/resume and any attachment-gated behavior then act on a client that
+ * no longer exists. A dropped client transport must release exactly that client's attachments, and
+ * protocol detach must really detach (it was previously logging-only).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -60,7 +59,7 @@ describe('transport-drop attachment release', () => {
     return host.sessions.get(sessionId)
   }
 
-  it('releases a dropped client transport instead of pinning its sessions at full depth', async () => {
+  it('releases a dropped client transport instead of leaving a phantom attachment', async () => {
     const started = new DaemonServer({
       socketPath,
       tokenPath,

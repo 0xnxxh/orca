@@ -115,7 +115,7 @@ export class TerminalHost {
     return Promise.resolve(killed)
   }
 
-  // Why: dispose a dead session's emulator so exited terminals don't pin ~5000 rows of scrollback for the daemon's life.
+  // Why: dispose a dead session's emulator so exited terminals don't pin their scrollback window for the daemon's life.
   private reapSession(sessionId: string): void {
     const session = this.sessions.get(sessionId)
     if (!session || session.isAlive) {
