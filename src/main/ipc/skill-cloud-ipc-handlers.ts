@@ -2,27 +2,18 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { z } from 'zod'
-import {
-  SKILL_INSTALL_CAPABILITY,
-  SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE
-} from '../../shared/skill-install-capability'
-import {
-  SkillInstallDestinationSchema,
-  type SkillInstallRequest
-} from '../../shared/skill-install-contract'
+import { SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE } from '../../shared/skill-install-capability'
+import { SkillInstallDestinationSchema } from '../../shared/skill-install-contract'
 import type { SkillInstallProgress } from '../../shared/skill-sharing-contract'
 import { SkillDiscoveryTargetSchema, type SkillDiscoveryResult } from '../../shared/skills'
 import type { SkillCloudDownloadGrant } from '../../shared/skill-cloud-contract'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
-import { installSkillOnRemoteRuntime } from '../skills/skill-remote-install-service'
+import { installSkillCloudGrant } from '../skills/skill-cloud-grant-installation'
+import { SkillRemoteInstallCancellation } from '../skills/skill-remote-install-cancellation'
 import { classifySkillCloudInstallTarget } from '../skills/skill-cloud-install-target'
 import { SkillSharePreparationService } from '../skills/skill-share-preparation-service'
-import { skillInstallFailureFromError } from '../skills/skill-install-operation-error'
 import { supportsSkillRuntimeInstall } from '../skills/skill-runtime-capability'
-import {
-  callRuntimeEnvironment,
-  getRuntimeEnvironmentStatus
-} from './runtime-environment-transport-routing'
+import { callRuntimeEnvironment } from './runtime-environment-transport-routing'
 import { registerSkillInstallManagementIpcHandlers } from './skill-install-management-ipc-handlers'
 
 const environmentIdSchema = z.string().min(1).max(128)
@@ -84,70 +75,6 @@ const packageVersionSchema = z
   })
   .strict()
 
-async function installGrant(
-  runtime: OrcaRuntimeService,
-  grant: SkillCloudDownloadGrant,
-  input: z.infer<typeof shareInstallSchema> | z.infer<typeof packageVersionInstallSchema>
-) {
-  const request: SkillInstallRequest = {
-    operationId: input.operationId ?? randomUUID(),
-    package: {
-      packageId: grant.version.packageId,
-      versionId: grant.version.versionId,
-      packageDigest: grant.version.packageDigest,
-      archiveSha256: grant.version.archiveSha256,
-      compressedBytes: grant.version.compressedBytes
-    },
-    ingress: {
-      kind: 'download-grant',
-      url: grant.grant.url,
-      expiresAt: grant.grant.expiresAt
-    },
-    destination: input.destination,
-    conflictResolution: input.conflictResolution
-  }
-  try {
-    if (!input.environmentId) {
-      return { status: 'ok' as const, value: await runtime.installSharedSkillRequest(request) }
-    }
-    const userDataPath = app.getPath('userData')
-    const status = await getRuntimeEnvironmentStatus(userDataPath, input.environmentId, 15_000)
-    if (
-      status.ok !== true ||
-      status.result.capabilities?.includes(SKILL_INSTALL_CAPABILITY) !== true
-    ) {
-      return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
-    }
-    return {
-      status: 'ok' as const,
-      value: await installSkillOnRemoteRuntime({
-        userDataPath,
-        environmentId: input.environmentId,
-        request,
-        capabilities: status.result.capabilities ?? [],
-        requireHttps: app.isPackaged
-      })
-    }
-  } catch (error) {
-    const failure = skillInstallFailureFromError(error)
-    if (!failure) {
-      throw error
-    }
-    return {
-      status: 'ok' as const,
-      value: {
-        operationId: request.operationId,
-        status: failure.category === 'cancelled' ? ('cancelled' as const) : ('failed' as const),
-        name: grant.version.name,
-        packageDigest: request.package.packageDigest,
-        placements: [],
-        errorCategory: failure.code,
-        failure
-      }
-    }
-  }
-}
-
 function registerSharingHandlers(
   runtime: OrcaRuntimeService,
   discover: (target?: z.infer<typeof SkillDiscoveryTargetSchema>) => Promise<SkillDiscoveryResult>
@@ -187,6 +114,25 @@ function registerSharingHandlers(
 }
 
 function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
+  const remoteInstallCancellation = new SkillRemoteInstallCancellation()
+  const installAuthorizedGrant = async (
+    grant: SkillCloudDownloadGrant,
+    input: z.infer<typeof shareInstallSchema> | z.infer<typeof packageVersionInstallSchema>
+  ) => {
+    if (!input.environmentId || input.environmentId.startsWith('ssh:')) {
+      return installSkillCloudGrant(runtime, grant, {
+        ...input,
+        operationId: input.operationId ?? randomUUID()
+      })
+    }
+    const operationId = input.operationId ?? randomUUID()
+    const signal = remoteInstallCancellation.begin(operationId)
+    try {
+      return await installSkillCloudGrant(runtime, grant, { ...input, operationId }, signal)
+    } finally {
+      remoteInstallCancellation.finish(operationId, signal)
+    }
+  }
   ipcMain.handle('skills:resolveShare', (_event, shareId: unknown) =>
     runtime.resolveSkillShare(z.string().min(1).max(128).parse(shareId), {})
   )
@@ -219,7 +165,7 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
     if (grant.status === 'ok') {
       sendProgress(event, { operationId: input.operationId, phase: 'installing' })
     }
-    return grant.status === 'ok' ? installGrant(runtime, grant.value, input) : grant
+    return grant.status === 'ok' ? installAuthorizedGrant(grant.value, input) : grant
   })
   ipcMain.handle('skills:installPackageVersion', async (event, value: unknown) => {
     const parsed = packageVersionInstallSchema.parse(value)
@@ -240,7 +186,7 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
     if (grant.status === 'ok') {
       sendProgress(event, { operationId: input.operationId, phase: 'installing' })
     }
-    return grant.status === 'ok' ? installGrant(runtime, grant.value, input) : grant
+    return grant.status === 'ok' ? installAuthorizedGrant(grant.value, input) : grant
   })
   ipcMain.handle('skills:cancelInstall', async (_event, value: unknown) => {
     const input = z
@@ -253,16 +199,19 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
     if (!input.environmentId || input.environmentId.startsWith('ssh:')) {
       return { cancelled: runtime.cancelSharedSkillInstall(input.operationId) }
     }
+    const transferCancelled = remoteInstallCancellation.cancel(input.operationId)
     const response = await callRuntimeEnvironment(
       app.getPath('userData'),
       input.environmentId,
       'skills.cancelInstall',
       { operationId: input.operationId },
       15_000
-    )
-    return response.ok === true && response.result && typeof response.result === 'object'
-      ? { cancelled: (response.result as { cancelled?: unknown }).cancelled === true }
-      : { cancelled: false }
+    ).catch(() => null)
+    const installCancelled =
+      response?.ok === true && response.result && typeof response.result === 'object'
+        ? (response.result as { cancelled?: unknown }).cancelled === true
+        : false
+    return { cancelled: transferCancelled || installCancelled }
   })
   ipcMain.handle('skills:getPackage', (_event, packageId: unknown) =>
     runtime.getSkillPackage(z.string().min(1).max(128).parse(packageId), {})

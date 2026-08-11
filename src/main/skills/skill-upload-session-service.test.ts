@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -22,6 +22,19 @@ function identity(bytes: Buffer) {
 }
 
 describe('SkillUploadSessionService', () => {
+  it('removes abandoned staging bytes when a runtime starts a fresh service', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skill-upload-session-'))
+    roots.push(root)
+    const uploads = join(root, 'uploads')
+    await mkdir(uploads)
+    await writeFile(join(uploads, 'abandoned.tar.gz'), 'partial package')
+    const service = new SkillUploadSessionService(uploads)
+
+    await service.begin({ package: identity(Buffer.from('new package')) })
+
+    expect(await readdir(uploads)).not.toContain('abandoned.tar.gz')
+  })
+
   it('accepts monotonic chunks, acknowledges identical retries, and transfers ownership', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-skill-upload-session-'))
     roots.push(root)
@@ -43,7 +56,8 @@ describe('SkillUploadSessionService', () => {
       offset: first.length,
       bytesBase64: second.toString('base64')
     })
-    await service.commit(begun.uploadId)
+    await expect(service.commit(begun.uploadId)).resolves.toEqual({ uploadId: begun.uploadId })
+    await expect(service.commit(begun.uploadId)).resolves.toEqual({ uploadId: begun.uploadId })
     const staged = await service.take(begun.uploadId, packageIdentity)
     await expect(readFile(staged.archivePath)).resolves.toEqual(bytes)
     await staged.cleanup()

@@ -30,6 +30,7 @@ import {
 import { SKILL_UPLOAD_CHUNK_MAX_BYTES } from '../../shared/skill-upload-session-contract'
 import type { IPtyProvider } from '../providers/pty-provider-contract'
 import { downloadSkillPackageGrant } from './skill-package-download'
+import { retrySkillTransferRpc } from './skill-transfer-rpc-retry'
 
 const REQUEST_TIMEOUT_MS = 5 * 60_000
 const DIRECT_DOWNLOAD_FAILURE = 'skill-download-transport-failed'
@@ -225,11 +226,18 @@ async function transferSkillPackageToSshHost(
         if (read.bytesRead !== bytes.length) {
           throw new Error('skill-transfer-source-changed')
         }
-        const acknowledged = (await client(
-          SKILL_SSH_RELAY_UPLOAD_CHUNK_METHOD,
-          { uploadId, offset, bytesBase64: bytes.toString('base64') },
-          { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
-        )) as { acknowledgedOffset: number }
+        const acknowledged = (await retrySkillTransferRpc({
+          signal: input.signal,
+          retryable: (error) =>
+            typeof (error as { code?: unknown })?.code !== 'number' &&
+            (error as Error)?.name !== 'AbortError',
+          call: () =>
+            client(
+              SKILL_SSH_RELAY_UPLOAD_CHUNK_METHOD,
+              { uploadId, offset, bytesBase64: bytes.toString('base64') },
+              { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
+            )
+        })) as { acknowledgedOffset: number }
         if (acknowledged.acknowledgedOffset !== offset + bytes.length) {
           throw new Error('skill-transfer-ack-invalid')
         }
@@ -238,11 +246,18 @@ async function transferSkillPackageToSshHost(
     } finally {
       await handle.close()
     }
-    await client(
-      SKILL_SSH_RELAY_COMMIT_UPLOAD_METHOD,
-      { uploadId },
-      { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
-    )
+    await retrySkillTransferRpc({
+      signal: input.signal,
+      retryable: (error) =>
+        typeof (error as { code?: unknown })?.code !== 'number' &&
+        (error as Error)?.name !== 'AbortError',
+      call: () =>
+        client(
+          SKILL_SSH_RELAY_COMMIT_UPLOAD_METHOD,
+          { uploadId },
+          { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
+        )
+    })
     const committedId = uploadId
     uploadId = null
     return committedId

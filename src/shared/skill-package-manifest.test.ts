@@ -102,15 +102,16 @@ describe('skill package manifest', () => {
     expect(() => parseSkillPackageManifest(manifest([{ ...file, size: fourMiB + 1 }]))).toThrow(
       'skill-package-manifest-invalid'
     )
-    const total = (extra: number): SkillPackageFile[] => [
+    const total = (lastSize: number): SkillPackageFile[] => [
       { ...file, size: 0 },
-      ...Array.from({ length: 8 }, (_, index) => packageFile(`payload-${index}.bin`, fourMiB)),
-      ...(extra ? [packageFile('z-extra.bin', extra)] : [])
+      ...Array.from({ length: 7 }, (_, index) => packageFile(`payload-${index}.bin`, fourMiB)),
+      packageFile('payload-7.bin', lastSize)
     ]
-    expect(() => parseSkillPackageManifest(manifest(total(0)))).not.toThrow()
-    expect(() => parseSkillPackageManifest(manifest(total(1)))).toThrow(
-      'skill-package-total-size-limit'
-    )
+    expect(() => parseSkillPackageManifest(manifest(total(fourMiB - 1)))).not.toThrow()
+    expect(() => parseSkillPackageManifest(manifest(total(fourMiB)))).not.toThrow()
+    expect(() =>
+      parseSkillPackageManifest(manifest([...total(fourMiB), packageFile('z-extra.bin', 1)]))
+    ).toThrow('skill-package-total-size-limit')
   })
 
   it('rejects Unicode normalization and case-fold collisions', () => {

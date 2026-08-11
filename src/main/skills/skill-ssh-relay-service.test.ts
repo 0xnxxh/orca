@@ -52,6 +52,8 @@ describe('installSkillOnSshHost', () => {
   it('uses client-mediated upload only after direct host download fails', async () => {
     const bytes = Buffer.from('private skill archive')
     let received = 0
+    let chunkAttempts = 0
+    let commitAttempts = 0
     const requestHostRpc = vi.fn(async (method: string, params: unknown) => {
       if (method === 'relay.status') {
         return {
@@ -69,11 +71,22 @@ describe('installSkillOnSshHost', () => {
         return { uploadId: 'upload_1', chunkBytes: 256 * 1024 }
       }
       if (method === 'skills.uploadChunk') {
+        chunkAttempts += 1
         const chunk = params as { offset: number; bytesBase64: string }
         received = chunk.offset + Buffer.from(chunk.bytesBase64, 'base64').length
+        if (chunkAttempts === 1) {
+          throw new Error('connection dropped after receiver write')
+        }
         return { acknowledgedOffset: received }
       }
-      if (method === 'skills.commitUpload' || method === 'skills.cancelUpload') {
+      if (method === 'skills.commitUpload') {
+        commitAttempts += 1
+        if (commitAttempts === 1) {
+          throw new Error('connection dropped after receiver commit')
+        }
+        return { ok: true }
+      }
+      if (method === 'skills.cancelUpload') {
         return { ok: true }
       }
       throw new Error(`unexpected method ${method}`)
@@ -97,6 +110,8 @@ describe('installSkillOnSshHost', () => {
       'skills.install',
       'skills.beginUpload',
       'skills.uploadChunk',
+      'skills.uploadChunk',
+      'skills.commitUpload',
       'skills.commitUpload',
       'skills.install',
       'skills.cancelUpload'

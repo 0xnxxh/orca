@@ -87,7 +87,14 @@ export class SkillUploadSessionService {
   }
 
   async commit(uploadId: string): Promise<{ uploadId: string }> {
-    const session = this.requireActive(uploadId)
+    const session = this.sessions.get(uploadId)
+    if (!session || Date.now() - session.touchedAt > SESSION_IDLE_MS) {
+      throw new Error('skill-upload-session-unavailable')
+    }
+    if (session.committed) {
+      session.touchedAt = Date.now()
+      return { uploadId }
+    }
     if (session.bytesReceived !== session.package.compressedBytes || !session.handle) {
       throw new Error('skill-upload-size-mismatch')
     }

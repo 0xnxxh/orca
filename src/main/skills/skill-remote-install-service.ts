@@ -54,6 +54,7 @@ export async function installSkillOnRemoteRuntime(input: {
   request: SkillInstallRequest
   capabilities: readonly RuntimeCapability[]
   requireHttps: boolean
+  signal?: AbortSignal
 }): Promise<SkillInstallResult> {
   if (input.request.ingress.kind !== 'download-grant') {
     throw new Error('skill-install-remote-ingress-invalid')
@@ -74,7 +75,8 @@ export async function installSkillOnRemoteRuntime(input: {
     environmentId: input.environmentId,
     package: input.request.package,
     grant: input.request.ingress,
-    requireHttps: input.requireHttps
+    requireHttps: input.requireHttps,
+    signal: input.signal
   })
   try {
     const staged = await install(input.userDataPath, input.environmentId, {
