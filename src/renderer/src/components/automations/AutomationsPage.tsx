@@ -187,9 +187,14 @@ export default function AutomationsPage(): React.JSX.Element {
   // Why: list is the primary surface; detail is a full-page drill-in, not a side pane.
   const [isDetailOpen, setIsDetailOpen] = useState(false)
   const selectedExternalKeyRef = useRef<string | null>(null)
-  selectedExternalKeyRef.current = selectedExternalKey
   const isDetailOpenRef = useRef(false)
-  isDetailOpenRef.current = isDetailOpen
+  // Keep async refresh/delete handlers reading the latest selection without render-time mutation.
+  useEffect(() => {
+    selectedExternalKeyRef.current = selectedExternalKey
+  }, [selectedExternalKey])
+  useEffect(() => {
+    isDetailOpenRef.current = isDetailOpen
+  }, [isDetailOpen])
   const runtimePreflightMountedRef = useRef(true)
   const runtimePreflightRequestedHostIdsRef = useRef<Set<TaskSourceContext['hostId']>>(new Set())
   const [runtimePreflightStatusByHostId, setRuntimePreflightStatusByHostId] = useState<
