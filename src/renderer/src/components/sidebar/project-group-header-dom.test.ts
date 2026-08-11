@@ -1,6 +1,10 @@
+// @vitest-environment happy-dom
+
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { join } from 'node:path'
+import { act, createElement, type ReactNode } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import { getFolderWorkspaceRowKey } from '../../../../shared/folder-workspaces'
 import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
@@ -21,12 +25,15 @@ import { addHostSectionRows } from './host-section-rows'
 import { getRenderRowKey } from './worktree-list-virtual-rows'
 
 function readWorktreeListSource(): string {
-  return readFileSync(fileURLToPath(new URL('./WorktreeList.tsx', import.meta.url)), 'utf8')
+  return readFileSync(
+    join(process.cwd(), 'src', 'renderer', 'src', 'components', 'sidebar', 'WorktreeList.tsx'),
+    'utf8'
+  )
 }
 
 function readComposerStateSource(): string {
   return readFileSync(
-    fileURLToPath(new URL('../../hooks/useComposerState.ts', import.meta.url)),
+    join(process.cwd(), 'src', 'renderer', 'src', 'hooks', 'useComposerState.ts'),
     'utf8'
   )
 }
@@ -487,5 +494,288 @@ describe('duplicate project-group header identity (#12532)', () => {
     expect(folderRow && getRenderRowKey(folderRow)).toBe(
       'folder-workspace:runtime%3Aenv-1:same-folder'
     )
+  })
+})
+
+const worktreeListStore = vi.hoisted(() => ({ state: {} as Record<string, unknown> }))
+
+type WorktreeListComponent = React.ComponentType<{
+  scrollOffsetRef: React.RefObject<number>
+  scrollAnchorRef: React.RefObject<unknown>
+}>
+
+let WorktreeList: WorktreeListComponent
+
+vi.mock('@/store', () => {
+  const useAppStore = ((selector: (state: Record<string, unknown>) => unknown) =>
+    selector(worktreeListStore.state)) as ((
+    selector: (state: Record<string, unknown>) => unknown
+  ) => unknown) & { getState: () => Record<string, unknown> }
+  useAppStore.getState = () => worktreeListStore.state
+  return { useAppStore }
+})
+
+vi.mock('@tanstack/react-virtual', () => ({
+  defaultRangeExtractor: ({ startIndex, endIndex }: { startIndex: number; endIndex: number }) =>
+    Array.from({ length: endIndex - startIndex + 1 }, (_, index) => startIndex + index),
+  measureElement: () => 32,
+  useVirtualizer: ({ count }: { count: number }) => ({
+    elementsCache: new Map(),
+    getTotalSize: () => count * 96,
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, index) => ({
+        index,
+        key: `row-${index}`,
+        start: index * 96
+      })),
+    measureElement: vi.fn(),
+    scrollToIndex: vi.fn()
+  })
+}))
+
+vi.mock('@/hooks/useVirtualizedScrollAnchor', () => ({
+  VIRTUALIZED_SCROLL_ANCHOR_RECORD_EVENT: 'orca:test-record-scroll-anchor',
+  useVirtualizedScrollAnchor: vi.fn()
+}))
+
+vi.mock('./project-header-drag', () => ({
+  useRepoHeaderDrag: () => ({
+    state: { draggingRepoId: null, dropIndicatorY: null },
+    onHandlePointerDown: vi.fn()
+  }),
+  isRepoHeaderActionTarget: () => false
+}))
+
+function childrenOnly({ children }: { children: ReactNode }): ReactNode {
+  return children
+}
+
+vi.mock('@/components/ui/hover-card', () => ({
+  HoverCard: childrenOnly,
+  HoverCardContent: childrenOnly,
+  HoverCardTrigger: childrenOnly
+}))
+
+vi.mock('@/components/ui/tooltip', () => ({
+  Tooltip: childrenOnly,
+  TooltipContent: childrenOnly,
+  TooltipTrigger: childrenOnly
+}))
+
+vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenu: childrenOnly,
+  DropdownMenuContent: childrenOnly,
+  DropdownMenuItem: childrenOnly,
+  DropdownMenuSeparator: () => null,
+  DropdownMenuSub: childrenOnly,
+  DropdownMenuSubContent: childrenOnly,
+  DropdownMenuSubTrigger: childrenOnly,
+  DropdownMenuTrigger: childrenOnly
+}))
+
+vi.mock('@/lib/sidebar-worktree-activation', () => ({ activateWorktreeFromSidebar: vi.fn() }))
+vi.mock('@/lib/worktree-activation', () => ({ activateAndRevealWorktree: vi.fn() }))
+vi.mock('@/runtime/runtime-rpc-client', () => ({
+  getActiveRuntimeTarget: () => ({ kind: 'local' }),
+  callRuntimeRpc: vi.fn()
+}))
+vi.mock('./WorktreeCardAgents', () => ({
+  default: () => null,
+  SUPPRESS_WORKTREE_LIST_SCROLL_ADJUSTMENT_EVENT: 'orca:test-suppress-scroll-adjustment'
+}))
+vi.mock('./WorktreeCard', () => ({
+  default: ({ worktree }: { worktree: Worktree }) =>
+    createElement('div', { 'data-mock-worktree-card': worktree.id }, worktree.displayName)
+}))
+
+function hostFilteredProjectGroup(): ProjectGroup {
+  return {
+    id: 'runtime-group',
+    name: 'Runtime project group',
+    parentPath: '/srv/runtime-project',
+    executionHostId: 'runtime:env-1',
+    parentGroupId: null,
+    createdFrom: 'folder-scan',
+    tabOrder: 0,
+    isCollapsed: false,
+    color: null,
+    createdAt: 1,
+    updatedAt: 1
+  }
+}
+
+function hostFilteredFolderWorkspace(): FolderWorkspace {
+  return {
+    id: 'runtime-folder',
+    projectGroupId: 'runtime-group',
+    name: 'Runtime folder workspace',
+    folderPath: '/srv/runtime-project/task',
+    executionHostId: 'runtime:env-1',
+    linkedTask: null,
+    comment: '',
+    isArchived: false,
+    isUnread: false,
+    isPinned: false,
+    sortOrder: 0,
+    lastActivityAt: 1,
+    createdAt: 1,
+    updatedAt: 1
+  }
+}
+
+function setHostFilteredWorktreeListState(folderWorkspaces: FolderWorkspace[]): void {
+  worktreeListStore.state = {
+    activeModal: '',
+    activeView: 'terminal',
+    activeWorkspaceExecutionHostId: null,
+    activeWorkspaceKey: null,
+    activeWorktreeId: null,
+    agentSendPopoverTargetMode: null,
+    agentStatusByPaneKey: {},
+    agentStatusEpoch: 0,
+    alwaysShowDefaultBranchWorkspace: true,
+    browserTabsByWorktree: {},
+    clearPendingRevealSidebarRow: vi.fn(),
+    clearPendingRevealWorktreeId: vi.fn(),
+    collapsedGroups: new Set<string>(),
+    deleteStateByWorktreeId: {},
+    detectedWorktreesByRepo: {},
+    fetchFolderWorkspacePathStatus: vi.fn(),
+    fetchHostedReviewForBranch: vi.fn(),
+    fetchIssue: vi.fn(),
+    fetchLinearIssue: vi.fn(),
+    filterRepoIds: [],
+    folderWorkspacePathStatuses: {},
+    folderWorkspaces,
+    getFolderWorkspacePathStatusCacheKey: (request: unknown) => JSON.stringify(request),
+    getFreshFolderWorkspacePathStatus: vi.fn(() => null),
+    gitConflictOperationByWorktreeId: {},
+    groupBy: 'repo',
+    hideAutomationGeneratedWorkspaces: false,
+    hideCliCreatedWorkspaces: false,
+    hideDefaultBranchWorkspace: false,
+    hideDetachedHeadWorkspaces: false,
+    hostedReviewCache: {},
+    issueCache: {},
+    linearIssueCache: {},
+    linearStatus: null,
+    migrationUnsupportedByPtyId: {},
+    openModal: vi.fn(),
+    openSettingsPage: vi.fn(),
+    openSettingsTarget: null,
+    openTaskPage: vi.fn(),
+    pendingRevealSidebarRow: null,
+    pendingRevealWorktree: null,
+    prCache: {},
+    projectGroups: [hostFilteredProjectGroup()],
+    projectOrderBy: 'manual',
+    ptyIdsByTabId: {},
+    recordFeatureInteraction: vi.fn(),
+    remoteBranchConflictByWorktreeId: {},
+    reorderRepos: vi.fn(),
+    reportVisibleGitHubPRRefreshCandidates: vi.fn(),
+    repos: [],
+    retainedAgentsByPaneKey: {},
+    revealSidebarRow: vi.fn(),
+    revealWorktreeInSidebar: vi.fn(),
+    runtimeEnvironments: [{ id: 'env-1', name: 'Runtime host' }],
+    runtimePaneTitlesByTabId: {},
+    runtimeStatusByEnvironmentId: new Map(),
+    setAlwaysShowDefaultBranchWorkspace: vi.fn(),
+    setFilterRepoIds: vi.fn(),
+    setGroupBy: vi.fn(),
+    setHideAutomationGeneratedWorkspaces: vi.fn(),
+    setHideCliCreatedWorkspaces: vi.fn(),
+    setHideDefaultBranchWorkspace: vi.fn(),
+    setHideDetachedHeadWorkspaces: vi.fn(),
+    setRenamingWorktreeId: vi.fn(),
+    setShowSleepingWorkspaces: vi.fn(),
+    setSortBy: vi.fn(),
+    setVisibleWorkspaceHostIds: vi.fn(),
+    setWorkspaceHostOrder: vi.fn(),
+    setWorktreesPinnedAndReveal: vi.fn(),
+    settings: null,
+    showSleepingWorkspaces: true,
+    sortBy: 'manual',
+    sortEpoch: 0,
+    sshConnectedGeneration: 0,
+    sshConnectionStates: new Map(),
+    sshTargetLabels: new Map(),
+    tabsByWorktree: {},
+    terminalLayoutsByTabId: {},
+    toggleCollapsedGroup: vi.fn(),
+    updateProjectGroup: vi.fn(),
+    updateRepo: vi.fn(),
+    updateWorktreeMeta: vi.fn(),
+    updateWorktreesMeta: vi.fn(),
+    visibleWorkspaceHostIds: ['runtime:env-1'],
+    workspaceHostOrder: [],
+    workspaceHostScope: 'all',
+    workspaceLineageByChildKey: {},
+    workspacePortScan: null,
+    workspaceStatuses: [],
+    worktreeCardProperties: ['status', 'pr', 'comment'],
+    worktreeLineageById: {},
+    worktreesByRepo: {}
+  }
+}
+
+const mountedWorktreeListRoots: Root[] = []
+
+async function renderHostFilteredWorktreeList(): Promise<HTMLElement> {
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  mountedWorktreeListRoots.push(root)
+  await act(async () => {
+    root.render(
+      createElement(WorktreeList, {
+        scrollOffsetRef: { current: 0 },
+        scrollAnchorRef: { current: null }
+      })
+    )
+  })
+  return container
+}
+
+describe('WorktreeList project-group host filtering', () => {
+  beforeAll(async () => {
+    WorktreeList = (await import('./WorktreeList')).default as WorktreeListComponent
+  }, 60_000)
+
+  beforeEach(() => vi.clearAllMocks())
+
+  afterEach(async () => {
+    await act(async () => {
+      for (const root of mountedWorktreeListRoots.splice(0)) {
+        root.unmount()
+      }
+    })
+    document.body.innerHTML = ''
+  })
+
+  it.each([
+    ['zero-count', []],
+    ['folder-only', [hostFilteredFolderWorkspace()]]
+  ] as const)('keeps the selected-host %s owner group visible', async (_case, workspaces) => {
+    setHostFilteredWorktreeListState([...workspaces])
+
+    const container = await renderHostFilteredWorktreeList()
+
+    expect(container.textContent).toContain('Runtime project group')
+    expect(container.textContent).not.toContain('No workspaces found')
+  })
+
+  it('still lets a workspace filter replace empty project-group headers', async () => {
+    setHostFilteredWorktreeListState([])
+    worktreeListStore.state = {
+      ...worktreeListStore.state,
+      hideDefaultBranchWorkspace: true
+    }
+
+    const container = await renderHostFilteredWorktreeList()
+
+    expect(container.textContent).toContain('No workspaces found')
+    expect(container.textContent).not.toContain('Runtime project group')
   })
 })

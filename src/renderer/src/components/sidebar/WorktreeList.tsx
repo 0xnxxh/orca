@@ -6944,13 +6944,17 @@ const WorktreeList = React.memo(function WorktreeList({
     }
   }, [handleRevealCurrentWorkspaceRequest])
 
-  const filtersHideAllRows =
-    hasFilters &&
+  const workspaceFiltersHideAllRows =
+    sidebarHasActiveFilters({
+      ...filterState,
+      visibleWorkspaceHostIds: null,
+      workspaceHostScope: 'all'
+    }) &&
     worktrees.length === 0 &&
     placeholderRepoIds.size === 0 &&
     importedWorktreesByRepo.size === 0
-  // Why: when active filters hide every row, the Clear Filters empty state must win over Project Group headers.
-  if (rows.length === 0 || filtersHideAllRows) {
+  // Why: host filters own Project Group rows; only workspace filters may replace those rows with Clear Filters.
+  if (rows.length === 0 || workspaceFiltersHideAllRows) {
     return (
       <div
         data-worktree-sidebar-container
