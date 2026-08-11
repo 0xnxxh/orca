@@ -113,6 +113,7 @@ export class StructuredAgentSessionHost {
       subscribers: this.subscribers,
       now: this.now
     })
+    this.runtimeState.startLeaseRenewal()
   }
 
   private now = (): number => this.deps.now?.() ?? Date.now()
@@ -151,7 +152,8 @@ export class StructuredAgentSessionHost {
         ),
       serialize: (sessionId, task) => this.serialize(sessionId, task),
       hasSession: (sessionId) => this.sessions.has(sessionId),
-      onReadable: (sessionId, restored) => this.sessions.set(sessionId, restored)
+      onReadable: (sessionId, restored) => this.sessions.set(sessionId, restored),
+      restoreHandoff: (sessionId) => this.handoffs.restore(sessionId)
     })
   }
 
@@ -233,6 +235,7 @@ export class StructuredAgentSessionHost {
 
   /** Settles final provider rows after every child has stopped producing them. */
   async flushAllStreamedEvents(): Promise<void> {
+    this.runtimeState.stopLeaseRenewal()
     // An acquired provider can still be opening its journal; bind before draining.
     await this.tasks.drainAttaches()
     await this.runtimeState.flushAllEventSinks()
@@ -307,10 +310,11 @@ export class StructuredAgentSessionHost {
   }
 
   requestHandoff(
+    caller: StructuredAgentSessionCaller,
     params: AgentSessionHandoffRequest
-  ): AgentSessionMutationResult<AgentSessionHandoffResult> {
+  ): Promise<AgentSessionMutationResult<AgentSessionHandoffResult>> {
     this.requireSession(params.envelope.sessionId)
-    return this.handoffs.request(params)
+    return this.handoffs.request(caller.callerKey, params)
   }
 
   handoffStatus(sessionId: string): AgentSessionHandoffStatus {

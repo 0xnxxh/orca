@@ -6,7 +6,6 @@
  * observed process identity, and a proved provider handle — in that order, at one fence.
  */
 
-import { isDeepStrictEqual } from 'node:util'
 import {
   adjudicateAgentSessionRestart,
   evaluateAgentSessionAcquisition,
@@ -24,6 +23,7 @@ import type {
   AgentSessionProcessIdentity,
   AgentSessionRecord
 } from '../../shared/agent-session-record'
+import { adjudicateRestartedAgentSessionHandoff } from './agent-session-restart-handoff-adjudication'
 
 export type AgentSessionReservation = {
   runtimeKind: AgentSessionOwnerRuntimeKind
@@ -48,13 +48,6 @@ export function assertFence(lease: AgentSessionLease, fence: number): void {
   if (lease.unreconciled) {
     throw new Error('execution_owner_reconciling')
   }
-}
-
-export function agentSessionReconciliationTargetMatches(
-  current: AgentSessionRecord,
-  probed: AgentSessionRecord
-): boolean {
-  return isDeepStrictEqual(current, probed)
 }
 
 /**
@@ -255,6 +248,12 @@ export function applyAgentSessionRestartAdjudication(args: {
       unreconciled: false,
       lastRenewedAt: args.now
     })
+  }
+  if (
+    record.lease.handoffStage === 'preparing' ||
+    record.lease.handoffStage === 'new-owner-proving'
+  ) {
+    return adjudicateRestartedAgentSessionHandoff(record, args.probe, args.now)
   }
   const adjudication = adjudicateAgentSessionRestart({
     lease: record.lease,

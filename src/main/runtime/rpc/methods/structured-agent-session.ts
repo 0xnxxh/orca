@@ -214,7 +214,7 @@ export const STRUCTURED_AGENT_SESSION_METHODS: RpcAnyMethod[] = [
   defineMethod({
     name: 'agentSession.requestHandoff',
     params: HandoffParams,
-    handler: async (params, ctx) => requireHost(ctx).requestHandoff(params)
+    handler: async (params, ctx) => requireHost(ctx).requestHandoff(callerFor(ctx), params)
   }),
   defineMethod({
     name: 'agentSession.handoffStatus',

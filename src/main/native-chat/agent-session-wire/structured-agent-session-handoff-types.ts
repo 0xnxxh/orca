@@ -21,6 +21,12 @@ export type StructuredAgentSessionHandoffTransport = {
     fence: number
     spawnToken: string
   }): Promise<StructuredTuiOwner>
+  reproveTuiOwner(input: {
+    record: AgentSessionRecord
+    owner: StructuredTuiOwner
+  }): Promise<StructuredTuiOwner>
+  recoverTuiOwner(record: AgentSessionRecord): Promise<StructuredTuiOwner>
+  stopRecoveredOwner(record: AgentSessionRecord): Promise<void>
   waitForTuiExit(owner: StructuredTuiOwner): Promise<{ transcriptPath?: string }>
   tuiStatus(owner: StructuredTuiOwner): 'idle' | 'busy'
   stopFailedTuiLaunch?(owner: StructuredTuiOwner): Promise<void>

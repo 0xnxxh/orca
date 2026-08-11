@@ -10,8 +10,9 @@
  */
 
 import {
-  pruneAgentSessionOperationRows,
   agentSessionOperationKey,
+  pruneAgentSessionOperationRows,
+  settleAgentSessionOperation,
   type AgentSessionOperationDecision,
   type AgentSessionOperationOutcome,
   type AgentSessionOperationRow
@@ -31,7 +32,6 @@ import {
 } from '../../shared/agent-session-record'
 import {
   applyAgentSessionRestartAdjudication,
-  agentSessionReconciliationTargetMatches,
   commitAgentSessionProcessIdentity,
   evictAgentSessionOwner,
   proveAgentSessionOwner,
@@ -39,6 +39,7 @@ import {
   setAgentSessionJournalCheckpoint,
   type AgentSessionProcessIdentityCommit
 } from './agent-session-lease-transitions'
+import { agentSessionReconciliationTargetMatches } from './agent-session-reconciliation-target'
 import {
   setAgentSessionReservationProcesslessProof,
   type AgentSessionReservationProcesslessProof
@@ -291,16 +292,12 @@ export class AgentSessionRecordStore {
   }
 
   async recordOperationOutcome(args: {
-    callerKey: string
+    callerKey?: string
     operationId: string
     outcome: AgentSessionOperationOutcome
   }): Promise<void> {
     await this.transact(() => {
-      const key = agentSessionOperationKey(args.callerKey, args.operationId)
-      const row = this.state.operations.get(key)
-      if (row) {
-        this.state.operations.set(key, { ...row, outcome: args.outcome })
-      }
+      this.state.operations = settleAgentSessionOperation(this.state.operations, args)
     })
   }
 

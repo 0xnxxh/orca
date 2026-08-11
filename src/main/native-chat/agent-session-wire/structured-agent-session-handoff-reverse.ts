@@ -16,7 +16,7 @@ export async function handoffStructuredSessionToNative(
   const sessionId = params.envelope.sessionId
   const operationId = params.envelope.clientOperationId
   let record = context.requireRecord(sessionId)
-  const owner = context.owner(sessionId)
+  let owner = context.owner(sessionId)
   let transcriptPath = owner?.transcriptPath
   if (!retry || record.lease.handoffStage === 'preparing') {
     if (record.lease.handoffStage === null) {
@@ -25,6 +25,9 @@ export async function handoffStructuredSessionToNative(
     if (!owner) {
       throw new Error('The owning agent terminal could not be identified.')
     }
+    owner = await deps.transport!.reproveTuiOwner({ record, owner })
+    context.retainOwner(sessionId, owner)
+    transcriptPath = owner.transcriptPath ?? transcriptPath
     context.setStatus(sessionId, {
       owner: 'tui',
       direction: 'to-native',

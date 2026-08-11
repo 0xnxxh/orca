@@ -75,10 +75,13 @@ import { ensureStructuredAgentSessionHost as installStructuredAgentSessionHost }
 import { getStructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-registry'
 import type { AgentSessionAttachParams } from '../native-chat/agent-session-wire/structured-agent-session-attach'
 import type { StructuredAgentSessionHandoffTransport } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
+import type { AgentSessionRecord } from '../../shared/agent-session-record'
 import { codexProviderHandleLink } from '../codex/codex-structured-owner-identity'
 import { proveCodexTuiRollout } from '../codex/codex-tui-rollout-proof'
-import { readProcessStartTimeMs } from './agent-session-process-identity-probe'
+import { probeAgentSessionProcessIdentity } from './agent-session-process-identity-probe'
 import { waitForStructuredTuiExitProof } from './structured-tui-exit-proof'
+import { readStructuredTuiProcessIdentity } from './structured-tui-process-identity'
+import { hasStructuredTuiIdleEvidence } from './structured-tui-idle-evidence'
 import { getProfileUserDataPath } from '../orca-profiles/profile-storage-paths'
 import { getSystemCodexHomePath } from '../codex/codex-home-paths'
 import {
@@ -9120,10 +9123,6 @@ export class OrcaRuntimeService {
           if (!terminal.processId || !terminal.paneKey || !terminal.tabId) {
             throw new Error('The resumed terminal did not publish a process identity.')
           }
-          await this.waitForTerminal(terminal.handle, {
-            condition: 'tui-idle',
-            timeoutMs: 30_000
-          })
           const proof = await this.waitForStructuredTuiProof({
             handle: terminal.handle,
             paneKey: terminal.paneKey,
@@ -9139,12 +9138,12 @@ export class OrcaRuntimeService {
               tabId: terminal.tabId,
               paneKey: terminal.paneKey
             },
-            process: {
+            process: await readStructuredTuiProcessIdentity({
               hostId: record.location.executionHostId,
-              pid: terminal.processId,
-              processStartTimeMs: await readProcessStartTimeMs(terminal.processId),
-              spawnToken
-            },
+              rootPid: terminal.processId,
+              spawnToken,
+              agent: 'codex'
+            }),
             link: codexProviderHandleLink({
               threadId: head.handle.threadId,
               resumed: true,
@@ -9169,6 +9168,64 @@ export class OrcaRuntimeService {
         })
         return owner.transcriptPath ? { transcriptPath: owner.transcriptPath } : {}
       },
+      reproveTuiOwner: async ({ record, owner }) => {
+        const proof = await probeAgentSessionProcessIdentity({ identity: owner.process })
+        if (proof.outcome !== 'identity-matched' || proof.matchedOn.length === 0) {
+          throw new Error('The owning Codex child process could not be re-proved.')
+        }
+        const head = record.providerHandleChain.at(-1)
+        if (head?.handle.provider !== 'codex') {
+          throw new Error('agent_session_identity_required')
+        }
+        const tuiProof = await this.waitForStructuredTuiProof({
+          handle: owner.terminal.handle,
+          paneKey: owner.terminal.paneKey,
+          threadId: head.handle.threadId,
+          spawnToken: owner.process.spawnToken,
+          codexHome: record.accountHome.path,
+          sessionId: record.sessionId
+        })
+        return { ...owner, transcriptPath: tuiProof.transcriptPath }
+      },
+      recoverTuiOwner: async (record) => {
+        const identity = record.lease.ownerProcess
+        const head = record.providerHandleChain.at(-1)
+        if (!identity || head?.handle.provider !== 'codex') {
+          throw new Error('agent_session_identity_required')
+        }
+        const candidate = [...this.ptysById.values()].find(
+          (pty) =>
+            pty.connected &&
+            pty.launchToken === identity.spawnToken &&
+            pty.launchAgent === 'codex' &&
+            pty.tabId &&
+            pty.paneKey
+        )
+        const handle = candidate ? this.handleByPtyId.get(candidate.ptyId) : null
+        if (!candidate?.tabId || !candidate.paneKey || !handle) {
+          throw new Error('The owning agent terminal could not be recovered.')
+        }
+        const proof = await this.waitForStructuredTuiProof({
+          handle,
+          paneKey: candidate.paneKey,
+          threadId: head.handle.threadId,
+          spawnToken: identity.spawnToken,
+          codexHome: record.accountHome.path,
+          sessionId: record.sessionId
+        })
+        return {
+          terminal: { handle, tabId: candidate.tabId, paneKey: candidate.paneKey },
+          process: identity,
+          link: codexProviderHandleLink({
+            threadId: head.handle.threadId,
+            resumed: true,
+            fence: record.lease.runtimeFence,
+            observedAt: Date.now()
+          }),
+          transcriptPath: proof.transcriptPath
+        }
+      },
+      stopRecoveredOwner: (record) => this.stopStructuredSessionProcess(record),
       tuiStatus: (owner) => this.structuredTuiStatus(owner.terminal.handle),
       stopFailedTuiLaunch: async (owner) => {
         await this.closeTerminal(owner.terminal.handle)
@@ -9180,6 +9237,37 @@ export class OrcaRuntimeService {
     }
   }
 
+  private async stopStructuredSessionProcess(record: AgentSessionRecord): Promise<void> {
+    const identity = record.lease.ownerProcess
+    if (!identity) {
+      return
+    }
+    const proof = await probeAgentSessionProcessIdentity({ identity })
+    if (proof.outcome === 'pid-absent' || proof.outcome === 'identity-mismatch') {
+      return
+    }
+    if (proof.outcome !== 'identity-matched' || proof.matchedOn.length === 0) {
+      throw new Error('The recovered owner process could not be stopped safely.')
+    }
+    try {
+      process.kill(identity.pid, 'SIGTERM')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+        throw error
+      }
+      return
+    }
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      const current = await probeAgentSessionProcessIdentity({ identity })
+      if (current.outcome === 'pid-absent' || current.outcome === 'identity-mismatch') {
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    throw new Error('The recovered owner process did not exit.')
+  }
+
   private structuredTuiStatus(handle: string): 'idle' | 'busy' {
     const pty = this.getLivePtyForHandle(handle)
     if (pty) {
@@ -9188,21 +9276,22 @@ export class OrcaRuntimeService {
         pty.pty.tailPartialLine,
         pty.pty.preview
       )
-      return !detectTerminalWaitBlockedReason(text) &&
-        (pty.pty.lastAgentStatus === 'idle' ||
-          this.getAdoptedPtyExplicitIdleStatus(pty.pty) === 'idle' ||
-          isKnownReadyPromptPreview(text))
+      return hasStructuredTuiIdleEvidence({
+        blocked: detectTerminalWaitBlockedReason(text) !== null,
+        status: pty.pty.lastAgentStatus,
+        statusObservedLive: pty.pty.lastAgentStatusObservedLive
+      })
         ? 'idle'
         : 'busy'
     }
     try {
       const { leaf } = this.getLiveLeafForHandle(handle)
       const text = buildTerminalWaitText(leaf.tailBuffer, leaf.tailPartialLine, leaf.preview)
-      const title = leaf.paneTitle ?? this.tabs.get(leaf.tabId)?.title
-      return !detectTerminalWaitBlockedReason(text) &&
-        (leaf.lastAgentStatus === 'idle' ||
-          (title && detectExplicitIdleStatusFromTitle(title) === 'idle') ||
-          isKnownReadyPromptPreview(text))
+      return hasStructuredTuiIdleEvidence({
+        blocked: detectTerminalWaitBlockedReason(text) !== null,
+        status: leaf.lastAgentStatus,
+        statusObservedLive: leaf.lastAgentStatusObservedLive
+      })
         ? 'idle'
         : 'busy'
     } catch {

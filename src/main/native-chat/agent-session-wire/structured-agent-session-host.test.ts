@@ -221,6 +221,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  await host.flushAllStreamedEvents()
   await rm(root, { recursive: true, force: true })
 })
 
@@ -228,7 +229,6 @@ describe('attach', () => {
   it('reserves the lease, spawns through the adapter, and opens the journal', async () => {
     const result = await host.attach(CALLER, attachParams())
     expect(result).toMatchObject({ ok: true, replayed: false })
-    expect(host.hasSession(SESSION)).toBe(true)
     const record = store.getRecord(SESSION)
     expect(record?.lease.ownerProcess?.pid).toBe(4242)
     expect(record?.lease.handoffStage).toBeNull()

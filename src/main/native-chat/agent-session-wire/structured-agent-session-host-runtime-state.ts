@@ -5,11 +5,28 @@ import {
   type DeferredStructuredAgentSessionEventSink
 } from './structured-agent-session-event-sink'
 import type { StructuredAgentSessionHostDeps } from './structured-agent-session-host'
+import { StructuredAgentSessionLeaseRenewer } from './structured-agent-session-lease-renewer'
 
 export class StructuredAgentSessionHostRuntimeState {
   private readonly eventSinks = new Map<string, DeferredStructuredAgentSessionEventSink>()
+  private readonly leaseRenewer: StructuredAgentSessionLeaseRenewer
 
-  constructor(private readonly deps: StructuredAgentSessionHostDeps) {}
+  constructor(private readonly deps: StructuredAgentSessionHostDeps) {
+    this.leaseRenewer = new StructuredAgentSessionLeaseRenewer({
+      store: deps.store,
+      probe: (record) => this.probeRecord(record),
+      now: () => deps.now?.() ?? Date.now(),
+      onError: ({ sessionId, error }) => deps.onEventSinkError?.({ sessionId, error })
+    })
+  }
+
+  startLeaseRenewal(): void {
+    this.leaseRenewer.start()
+  }
+
+  stopLeaseRenewal(): void {
+    this.leaseRenewer.stop()
+  }
 
   eventSinkFor(sessionId: string): DeferredStructuredAgentSessionEventSink {
     const existing = this.eventSinks.get(sessionId)
