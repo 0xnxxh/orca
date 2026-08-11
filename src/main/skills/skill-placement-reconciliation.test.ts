@@ -1,0 +1,48 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import type * as NodeFsPromises from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('node:fs/promises', async (importOriginal) => ({
+  ...(await importOriginal<typeof NodeFsPromises>()),
+  symlink: vi.fn(async () => {
+    throw new Error('injected-alias-denial')
+  })
+}))
+
+import { nativeSkillInstallFilesystem } from './skill-install-filesystem'
+import { reconcileSkillProviderPlacement } from './skill-placement-reconciliation'
+
+const temporaryDirectories: string[] = []
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true }))
+  )
+})
+
+describe('skill provider placement reconciliation', () => {
+  it('creates a verified independent copy when native alias creation is denied', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skill-placement-test-'))
+    temporaryDirectories.push(root)
+    const canonicalPath = join(root, 'canonical', 'private-skill')
+    const providerRoot = join(root, 'provider')
+    await mkdir(canonicalPath, { recursive: true })
+    await writeFile(join(canonicalPath, 'SKILL.md'), 'private skill')
+    const observed = await nativeSkillInstallFilesystem.observeSkill(canonicalPath)
+
+    const result = await reconcileSkillProviderPlacement({
+      canonicalPath,
+      skillName: 'private-skill',
+      destination: { provider: 'claude', rootPath: providerRoot, readsCanonicalRoot: false },
+      previousReceipt: null,
+      packageDigest: observed.observedDigest
+    })
+
+    expect(result).toMatchObject({ topology: 'independent-copy', status: 'installed' })
+    expect(await readFile(join(providerRoot, 'private-skill', 'SKILL.md'), 'utf8')).toBe(
+      'private skill'
+    )
+  })
+})

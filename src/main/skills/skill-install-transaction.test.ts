@@ -8,6 +8,7 @@ import {
   previewLocalSkillPackage,
   type LocalSkillInstallInput
 } from './skill-install-transaction'
+import { nativeSkillInstallFilesystem } from './skill-install-filesystem'
 
 const temporaryDirectories: string[] = []
 
@@ -114,5 +115,36 @@ describe('skill install transaction', () => {
     )
     expect(replaced.status).toBe('installed')
     expect(await readFile(join(destination, 'SKILL.md'), 'utf8')).toContain('# Cloud')
+  })
+
+  it('restores the previous version when commit is interrupted after backup', async () => {
+    const root = await temporaryDirectory()
+    const first = await packageVersion(root, 'version_1', '# First')
+    const second = await packageVersion(root, 'version_2', '# Second')
+    await installLocalSkillPackage(installInput(root, first))
+    let renameCount = 0
+    const interruptedFilesystem = {
+      ...nativeSkillInstallFilesystem,
+      rename: async (source: string, target: string): Promise<void> => {
+        renameCount += 1
+        if (renameCount === 3) {
+          throw new Error('injected-commit-interruption')
+        }
+        await nativeSkillInstallFilesystem.rename(source, target)
+      }
+    }
+
+    await expect(
+      installLocalSkillPackage(installInput(root, second, { filesystem: interruptedFilesystem }))
+    ).rejects.toThrow('injected-commit-interruption')
+    expect(await readFile(join(root, 'skills', 'test-skill', 'SKILL.md'), 'utf8')).toContain(
+      '# First'
+    )
+
+    const retried = await installLocalSkillPackage(installInput(root, second))
+    expect(retried.status).toBe('updated')
+    expect(await readFile(join(root, 'skills', 'test-skill', 'SKILL.md'), 'utf8')).toContain(
+      '# Second'
+    )
   })
 })

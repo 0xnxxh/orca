@@ -8,6 +8,7 @@ import {
   removeSharedSkill,
   type SkillInstallServiceInput
 } from './skill-install-service'
+import { nativeSkillInstallFilesystem } from './skill-install-filesystem'
 
 const temporaryDirectories: string[] = []
 
@@ -141,5 +142,46 @@ describe('skill install service', () => {
     })
     expect(removed.status).toBe('partial')
     expect(await readFile(join(claude, 'local.md'), 'utf8')).toBe('keep provider')
+  })
+
+  it('restores moved placements when removal is interrupted', async () => {
+    const { root, input } = await fixture()
+    await installSharedSkill(input)
+    const canonical = join(root, 'home', '.agents', 'skills', 'test-skill')
+    const claude = join(root, 'home', '.claude', 'skills', 'test-skill')
+    let renameCount = 0
+    const interruptedFilesystem = {
+      ...nativeSkillInstallFilesystem,
+      rename: async (source: string, target: string): Promise<void> => {
+        renameCount += 1
+        if (renameCount === 2) {
+          throw new Error('injected-removal-interruption')
+        }
+        await nativeSkillInstallFilesystem.rename(source, target)
+      }
+    }
+
+    await expect(
+      removeSharedSkill({
+        operationId: 'remove_interrupted',
+        skillName: 'test-skill',
+        scope: 'global',
+        homeDirectory: input.homeDirectory,
+        orcaStateDirectory: input.orcaStateDirectory,
+        detectedProviders: input.detectedProviders,
+        filesystem: interruptedFilesystem
+      })
+    ).rejects.toThrow('injected-removal-interruption')
+    expect(await realpath(claude)).toBe(await realpath(canonical))
+
+    const retried = await removeSharedSkill({
+      operationId: 'remove_retried',
+      skillName: 'test-skill',
+      scope: 'global',
+      homeDirectory: input.homeDirectory,
+      orcaStateDirectory: input.orcaStateDirectory,
+      detectedProviders: input.detectedProviders
+    })
+    expect(retried.status).toBe('removed')
   })
 })

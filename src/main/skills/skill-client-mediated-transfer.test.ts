@@ -90,4 +90,73 @@ describe('transferSkillPackageToRuntime', () => {
       5 * 60_000
     )
   })
+
+  it('cancels the remote upload when commit fails', async () => {
+    const archivePath = join(root, 'package.tar.gz')
+    await writeFile(archivePath, Buffer.from('package-data'))
+    const downloadCleanup = vi.fn(async () => undefined)
+    mocks.downloadSkillPackageGrant.mockResolvedValue({ archivePath, cleanup: downloadCleanup })
+    mocks.callRuntimeEnvironment.mockImplementation(
+      async (_userData: string, _environment: string, method: string) => {
+        if (method === 'skills.beginUpload') {
+          return {
+            id: 'rpc-1',
+            ok: true,
+            result: { uploadId: 'upload-1', chunkBytes: 256 * 1024 },
+            _meta: { runtimeId: 'runtime-1' }
+          }
+        }
+        if (method === 'skills.uploadChunk') {
+          return {
+            id: 'rpc-2',
+            ok: true,
+            result: { acknowledgedOffset: 12 },
+            _meta: { runtimeId: 'runtime-1' }
+          }
+        }
+        if (method === 'skills.commitUpload') {
+          return {
+            id: 'rpc-3',
+            ok: false,
+            error: { code: 'skill-upload-commit-failed', message: 'commit failed' },
+            _meta: { runtimeId: 'runtime-1' }
+          }
+        }
+        return {
+          id: 'rpc-4',
+          ok: true,
+          result: undefined,
+          _meta: { runtimeId: 'runtime-1' }
+        }
+      }
+    )
+
+    await expect(
+      transferSkillPackageToRuntime({
+        userDataPath: root,
+        environmentId: 'environment-1',
+        package: {
+          packageId: 'package-1',
+          versionId: 'version-1',
+          packageDigest: 'a'.repeat(64),
+          archiveSha256: 'b'.repeat(64),
+          compressedBytes: 12
+        },
+        grant: {
+          url: 'https://storage.googleapis.com/bucket/package.tar.gz',
+          expiresAt: '2099-01-01T00:00:00.000Z'
+        },
+        requireHttps: true
+      })
+    ).rejects.toThrow('skill-transfer-remote-skill-upload-commit-failed')
+
+    expect(downloadCleanup).toHaveBeenCalledOnce()
+    expect(mocks.callRuntimeEnvironment).toHaveBeenCalledWith(
+      root,
+      'environment-1',
+      'skills.cancelUpload',
+      { uploadId: 'upload-1' },
+      5 * 60_000
+    )
+  })
 })

@@ -121,4 +121,29 @@ describe('downloadSkillPackageGrant', () => {
     await expect(downloadSkillPackageGrant(expired)).rejects.toThrow('skill-download-grant-expired')
     expect(expired.fetcher).not.toHaveBeenCalled()
   })
+
+  it('deletes partial bytes when a streaming download is cancelled', async () => {
+    const controller = new AbortController()
+    let sent = false
+    const cancelled = await input({
+      signal: controller.signal,
+      fetcher: fetcher(async () =>
+        response(
+          new ReadableStream({
+            pull(stream) {
+              if (sent) {
+                return
+              }
+              sent = true
+              stream.enqueue(bytes.subarray(0, 4))
+              queueMicrotask(() => controller.abort())
+            }
+          })
+        )
+      )
+    })
+
+    await expect(downloadSkillPackageGrant(cancelled)).rejects.toThrow('skill-download-cancelled')
+    expect(await readdir(cancelled.temporaryRoot)).toEqual([])
+  })
 })
