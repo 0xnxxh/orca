@@ -29,7 +29,9 @@ export const HARD_SCROLL_UP = {
   /** Significant down-scroll cancels upward intent. */
   significantDownDeltaPx: 48,
   /** Cap stored samples so long sessions stay cheap. */
-  maxSamples: 32
+  maxSamples: 32,
+  /** Ignore scroll input this long after a programmatic jump to top. */
+  suppressAfterJumpMs: 120
 } as const
 
 export type HardScrollUpWheelSample = {

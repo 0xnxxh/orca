@@ -11,6 +11,8 @@ function createScroller(): HTMLElement {
   Object.defineProperties(element, {
     scrollHeight: { configurable: true, value: 5000 },
     clientHeight: { configurable: true, value: 500 },
+    // 16px narrower than offsetWidth so the scrollbar hit-test has a realistic gutter.
+    clientWidth: { configurable: true, value: 284 },
     offsetWidth: { configurable: true, value: 300 }
   })
   element.getBoundingClientRect = () => ({

@@ -217,7 +217,8 @@ export function useWorktreeListScrollToTop({
     onUserScrollIntent?.()
     publishVisible(reduceHardScrollUpOnDismiss(detectorRef.current))
     clearIdleTimer()
-    suppressDetectionUntilRef.current = window.performance.now() + 120
+    suppressDetectionUntilRef.current =
+      window.performance.now() + HARD_SCROLL_UP.suppressAfterJumpMs
     scrollElement.scrollTo({ top: 0, behavior: 'auto' })
     scrollElement.focus({ preventScroll: true })
   }, [clearIdleTimer, onUserScrollIntent, publishVisible, scrollElement])
