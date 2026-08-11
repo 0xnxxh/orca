@@ -125,7 +125,7 @@ describe('skill package creation and extraction', () => {
       archiveSha256: created.archiveSha256,
       packageDigest: created.manifest.packageDigest
     }).toEqual({
-      archiveSha256: '4a62b276b1e8100f0b437f2f0aa182d844768160ba30c5f76afd027acfe50ac8',
+      archiveSha256: '2abf449e92650f03b749631547c22e0f28facf6da9c36f0e77d6f8cc7df8e47a',
       packageDigest: '3bb1fc63cfea2f2b7f2cf80e539735eebd5bfb6aa65f47cf0db7e9fd35297f57'
     })
   })

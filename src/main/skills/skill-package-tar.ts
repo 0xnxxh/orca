@@ -4,7 +4,7 @@ import { once } from 'node:events'
 import type { Readable, Writable } from 'node:stream'
 import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { createGunzip, createGzip } from 'node:zlib'
+import { constants as zlibConstants, createGunzip, createGzip } from 'node:zlib'
 import { SKILL_PACKAGE_MAX_COMPRESSED_BYTES } from '../../shared/skill-package-manifest'
 
 const TAR_BLOCK_BYTES = 512
@@ -103,7 +103,7 @@ export async function writeSkillTarGzip(
 ): Promise<{ archiveSha256: string; compressedBytes: number }> {
   const archiveHash = createHash('sha256')
   let compressedBytes = 0
-  const gzip = createGzip({ level: 9 })
+  const gzip = createGzip({ level: 9, strategy: zlibConstants.Z_FIXED })
   const hashTransform = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       compressedBytes += chunk.length
