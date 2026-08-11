@@ -1,14 +1,39 @@
 import { dirname, posix, resolve } from 'node:path'
 import type { SkillInstallResult, SkillPlacementResult } from '../../shared/skill-install-contract'
 import type { SkillDiscoveryResult } from '../../shared/skills'
+import { parseWslUncPath } from '../../shared/wsl-paths'
 import { discoverSkills } from './discovery'
 import { discoverSkillsInWsl } from './skill-discovery-wsl'
 
+function toWslDiscoveryPath(path: string, distro: string): string {
+  if (path.includes('\0')) {
+    throw new Error('skill-install-wsl-path-invalid')
+  }
+  const parsed = parseWslUncPath(path)
+  if (parsed) {
+    if (parsed.distro.toLocaleLowerCase('en-US') !== distro.toLocaleLowerCase('en-US')) {
+      throw new Error('skill-install-wsl-distro-mismatch')
+    }
+    return posix.normalize(parsed.linuxPath)
+  }
+  const slashed = path.replace(/\\/g, '/')
+  const drive = slashed.match(/^([A-Za-z]):\/(.*)$/)
+  if (drive) {
+    return posix.join('/mnt', drive[1].toLocaleLowerCase('en-US'), drive[2])
+  }
+  if (!posix.isAbsolute(slashed)) {
+    throw new Error('skill-install-wsl-path-invalid')
+  }
+  return posix.normalize(slashed)
+}
+
 function normalizedPath(path: string, wslDistro?: string): string {
-  const normalized = wslDistro ? path.replace(/\/+$/, '') : resolve(path)
+  const normalized = wslDistro ? toWslDiscoveryPath(path, wslDistro) : resolve(path)
+  const withoutTrailingSlash =
+    wslDistro && normalized !== '/' ? normalized.replace(/\/+$/, '') : normalized
   return !wslDistro && process.platform === 'win32'
-    ? normalized.toLocaleLowerCase('en-US')
-    : normalized
+    ? withoutTrailingSlash.toLocaleLowerCase('en-US')
+    : withoutTrailingSlash
 }
 
 function placementIsDiscovered(
@@ -19,7 +44,7 @@ function placementIsDiscovered(
 ): boolean {
   const placementPath = normalizedPath(placement.path, wslDistro)
   const placementRoot = normalizedPath(
-    wslDistro ? posix.dirname(placement.path) : dirname(placement.path),
+    wslDistro ? posix.dirname(placementPath) : dirname(placement.path),
     wslDistro
   )
   return discovery.skills.some((skill) => {
@@ -44,8 +69,8 @@ async function discoverInstalledSkill(input: {
   if (input.wslDistro) {
     return discoverSkillsInWsl({
       distro: input.wslDistro,
-      homeDir: input.homeDirectory,
-      cwd: input.workspaceDirectory ?? input.homeDirectory
+      homeDir: toWslDiscoveryPath(input.homeDirectory, input.wslDistro),
+      cwd: toWslDiscoveryPath(input.workspaceDirectory ?? input.homeDirectory, input.wslDistro)
     })
   }
   return discoverSkills({
