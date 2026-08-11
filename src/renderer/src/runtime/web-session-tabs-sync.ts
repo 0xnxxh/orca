@@ -1215,6 +1215,8 @@ function buildMirroredBrowserTabs(
       browserRuntimeEnvironmentId: environmentId,
       viewportPresetId: existing?.page.viewportPresetId ?? null
     }
+    // Why: reuse hinges on browserPageEqual comparing workspaceId — the removed-workspace
+    // page-list cleanup gates on page.workspaceId matching this entry's workspace.id.
     const page = existing && browserPageEqual(existing.page, nextPage) ? existing.page : nextPage
     const workspace: BrowserWorkspace = {
       id: workspaceId,
