@@ -165,7 +165,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
       if (ch === '\\' && quote === '"' && i + 1 < template.length) {
         // Why: inside double quotes the shell only consumes the backslash
         // before these; elsewhere it stays a literal byte this tokenizer drops.
-        divergesFromShell ||= !'$`"\\\n'.includes(template[i + 1])
+        divergesFromShell ||= !'$`"\\'.includes(template[i + 1])
         current += template[i + 1]
         i += 2
         continue
@@ -173,8 +173,7 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
       // Why: a `"` inside $(…) or `…` re-opens a nested quoting context in the
       // real shell, so this tokenizer's word boundaries stop matching it.
       divergesFromShell ||=
-        quote === '"' &&
-        (ch === '`' || (ch === '$' && (template[i + 1] === '(' || template[i + 1] === '{')))
+        quote === '"' && (ch === '`' || (ch === '$' && '({\'"'.includes(template[i + 1] ?? '')))
       if (ch === quote) {
         quote = null
         i++
@@ -226,10 +225,13 @@ export function tokenizeCustomCommandTemplate(template: string): TokenizeCustomC
     if (!inToken) {
       tokenStart = i
     }
+    // Why: a trailing unpaired escape swallows whatever a consumer appends
+    // after the base, so the base is not safe to build on.
+    divergesFromShell ||= ch === '\\' && i + 1 >= template.length
     divergesFromShell ||=
       ';&|<>`'.includes(ch) ||
       (ch === '#' && !inToken) ||
-      (ch === '$' && (template[i + 1] === '(' || template[i + 1] === '{'))
+      (ch === '$' && '({\'"'.includes(template[i + 1] ?? ''))
     current += ch
     inToken = true
     i++

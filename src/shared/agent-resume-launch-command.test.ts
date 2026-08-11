@@ -159,6 +159,38 @@ describe('buildClaudeResumeLaunchCommand', () => {
     ).toBe(`claude --model "a\\"b" '--resume' '${SESSION_ID}'`)
   })
 
+  it.each([
+    'claude "--resu\\\nme" --resume stale',
+    "claude $'-c' --resume stale",
+    "claude $'--resu\\x6de' --resume stale"
+  ])('fails open when an escape hides a selector from the tokenizer: %s', (base) => {
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'posix')).toBe(
+      `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
+
+  it.each([
+    ['claude --resume old \\', 'posix' as const],
+    ['claude --resume old `', 'powershell' as const],
+    ['claude --resume old ^', 'cmd' as const]
+  ])('fails open on a trailing unpaired escape: %s', (base, shell) => {
+    // A dangling escape would swallow the separator before the appended
+    // selector, so claude would receive no exact --resume at all.
+    const quoted = shell === 'cmd' ? `"--resume" "${SESSION_ID}"` : `'--resume' '${SESSION_ID}'`
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, shell)).toBe(`${base} ${quoted}`)
+  })
+
+  it('fails open on a windows escaped line continuation', () => {
+    const powershellBase = 'claude --resume stale `\n--resume hidden'
+    expect(buildClaudeResumeLaunchCommand(powershellBase, RESUME, 'powershell')).toBe(
+      `${powershellBase} '--resume' '${SESSION_ID}'`
+    )
+    const cmdBase = 'claude --resume stale ^\n--resume hidden'
+    expect(buildClaudeResumeLaunchCommand(cmdBase, RESUME, 'cmd')).toBe(
+      `${cmdBase} "--resume" "${SESSION_ID}"`
+    )
+  })
+
   it('fails open on a posix line continuation hiding a selector', () => {
     const base = 'claude --model x \\\n--resume old'
     expect(buildClaudeResumeLaunchCommand(base, RESUME, 'posix')).toBe(

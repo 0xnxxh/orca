@@ -25,7 +25,9 @@ function tokenizeWindowsStartupCommand(
       // backticks literal inside single quotes; this branch consumes them
       // anyway, so the token value stops matching the real shell's argv.
       divergesFromShell ||=
-        (shell === 'cmd' && quote === '"') || (shell === 'powershell' && quote === "'")
+        value[index + 1] === '\n' ||
+        (shell === 'cmd' && quote === '"') ||
+        (shell === 'powershell' && quote === "'")
       token += value[index + 1]
       if (!tokenStarted) {
         tokenStart = index
@@ -77,6 +79,9 @@ function tokenizeWindowsStartupCommand(
       if (!tokenStarted) {
         tokenStart = index
       }
+      // Why: see the posix tokenizer — a trailing unpaired escape would
+      // swallow the separator before anything appended to the base.
+      divergesFromShell ||= char === escape && index + 1 >= value.length
       divergesFromShell ||=
         ';&|<>'.includes(char) ||
         (shell === 'powershell' &&
