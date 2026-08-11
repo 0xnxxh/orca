@@ -2899,13 +2899,10 @@ export class OrcaRuntimeService {
   private handles = new Map<string, TerminalHandleRecord>()
   private handleByLeafKey = new Map<string, string>()
   private handleByPtyId = new Map<string, string>()
-  // Why: provisional pointer state serializes PTY injection before the durable delivered_at commit.
-  private readonly lastPointedMessageSequenceByHandle = new Map<string, number>()
-  // Why: a waiter can reserve an older row while a newer row advances the sequence watermark.
-  private readonly pointedMessageIdsByHandle = new Map<string, Set<string>>()
   private readonly mailPointerRepointScheduler = new MailPointerRepointScheduler((handle) =>
     this.repointPendingMessagesForHandle(handle)
   )
+  // Why: in-process reservations serialize delayed Enter after durable pointer staging.
   private readonly pointedMessageWatermarkOwnerByHandle = new Map<
     string,
     { ptyId: string; sequence: number; leafKey: string; active: boolean }
@@ -2915,7 +2912,7 @@ export class OrcaRuntimeService {
     string,
     ReadonlySet<string> | null
   >()
-  private readonly pendingForeignDirectReconciliationsByLeafKey = new Set<string>()
+  private readonly pendingDirectMailboxReconciliationsByLeafKey = new Set<string>()
   private syntheticTerminalHandles = new Set<string>()
   private detachedPreAllocatedLeaves = new Map<string, RuntimeLeafRecord>()
   private graphSyncCallbacks: (() => void)[] = []
@@ -3953,8 +3950,6 @@ export class OrcaRuntimeService {
   setOrchestrationDb(db: OrchestrationDb): void {
     this.stopOrchestrationFederationRelay()
     this.mailPointerRepointScheduler.clear()
-    this.lastPointedMessageSequenceByHandle.clear()
-    this.pointedMessageIdsByHandle.clear()
     this._orchestrationDb = db
     this.ensureOrchestrationFederationRelay()
     this.scheduleRestoredMessageRepoints()
@@ -32428,14 +32423,14 @@ export class OrcaRuntimeService {
     }
   }
 
-  private scheduleForeignDirectReconciliation(leaf: RuntimeLeafRecord): void {
+  private scheduleDirectMailboxReconciliation(leaf: RuntimeLeafRecord): void {
     const leafKey = this.getLeafKey(leaf.tabId, leaf.leafId)
-    if (this.pendingForeignDirectReconciliationsByLeafKey.has(leafKey)) {
+    if (this.pendingDirectMailboxReconciliationsByLeafKey.has(leafKey)) {
       return
     }
-    this.pendingForeignDirectReconciliationsByLeafKey.add(leafKey)
+    this.pendingDirectMailboxReconciliationsByLeafKey.add(leafKey)
     setImmediate(() => {
-      this.pendingForeignDirectReconciliationsByLeafKey.delete(leafKey)
+      this.pendingDirectMailboxReconciliationsByLeafKey.delete(leafKey)
       const currentLeaf = this.leaves.get(leafKey)
       if (!currentLeaf || currentLeaf.ptyId !== leaf.ptyId) {
         return
@@ -32443,6 +32438,7 @@ export class OrcaRuntimeService {
       this.notifyForwardedOrchestrationMailboxes(
         this.routeForeignDirectMessagesForLeaf(currentLeaf)
       )
+      this.resolveActionableMailboxForLeaf(currentLeaf)
     })
   }
 
@@ -32476,7 +32472,7 @@ export class OrcaRuntimeService {
       paneKey
     )
     if (routed?.hasMore) {
-      this.scheduleForeignDirectReconciliation(leaf)
+      this.scheduleDirectMailboxReconciliation(leaf)
     }
     return routed?.mailboxes ?? []
   }
@@ -32489,6 +32485,25 @@ export class OrcaRuntimeService {
         this.notifyMessageArrived(routed.mailboxHandle, routedType)
       }
     }
+  }
+
+  private wakeRoutedMessageWaiters(mailboxHandle: string, types: readonly string[]): void {
+    const waiters = [...(this.messageWaitersByHandle.get(mailboxHandle) ?? [])]
+    if (waiters.length === 0 || types.length === 0) {
+      return
+    }
+    // Why: the arrival hook must snapshot waiter ownership before routed rows wake those waiters.
+    queueMicrotask(() => {
+      const liveWaiters = this.messageWaitersByHandle.get(mailboxHandle)
+      for (const waiter of waiters) {
+        if (
+          liveWaiters?.has(waiter) &&
+          (!waiter.typeFilter || types.some((type) => waiter.typeFilter?.includes(type)))
+        ) {
+          this.resolveMessageWaiter(waiter, 'notified')
+        }
+      }
+    })
   }
 
   private resolveActionableMailboxForLeaf(
@@ -32515,7 +32530,10 @@ export class OrcaRuntimeService {
         return null
       }
       const hasDirectRunMail =
-        this._orchestrationDb.hasUndeliveredDirectMessageForRun?.(run.id, terminalHandle) ?? false
+        options.routeDirectMail === false
+          ? false
+          : (this._orchestrationDb.hasUndeliveredDirectMessageForRun?.(run.id, terminalHandle) ??
+            false)
       if (
         options.requireRequestedMail &&
         requestedMailbox === terminalHandle &&
@@ -32524,7 +32542,14 @@ export class OrcaRuntimeService {
         return null
       }
       if (hasDirectRunMail && options.routeDirectMail !== false) {
-        this._orchestrationDb.routeUnreadDirectMessagesToRunMailbox?.(run.id, terminalHandle)
+        const routed = this._orchestrationDb.routeUnreadDirectMessagesToRunMailbox?.(
+          run.id,
+          terminalHandle
+        )
+        this.wakeRoutedMessageWaiters(runMailbox, routed?.types ?? [])
+        if (routed?.hasMore) {
+          this.scheduleDirectMailboxReconciliation(leaf)
+        }
       }
       return runMailbox
     }
@@ -32540,10 +32565,12 @@ export class OrcaRuntimeService {
         return null
       }
       const hasDirectDispatchMail =
-        this._orchestrationDb.hasUndeliveredDirectMessageForRun?.(
-          dispatch.run_id,
-          terminalHandle
-        ) ?? false
+        options.routeDirectMail === false
+          ? false
+          : (this._orchestrationDb.hasUndeliveredDirectMessageForRun?.(
+              dispatch.run_id,
+              terminalHandle
+            ) ?? false)
       if (
         options.requireRequestedMail &&
         requestedMailbox === terminalHandle &&
@@ -32552,11 +32579,15 @@ export class OrcaRuntimeService {
         return null
       }
       if (hasDirectDispatchMail && options.routeDirectMail !== false) {
-        this._orchestrationDb.routeUnreadDirectMessagesToDispatchMailbox?.(
+        const routed = this._orchestrationDb.routeUnreadDirectMessagesToDispatchMailbox?.(
           dispatch.id,
           dispatch.run_id,
           terminalHandle
         )
+        this.wakeRoutedMessageWaiters(dispatchMailbox, routed?.types ?? [])
+        if (routed?.hasMore) {
+          this.scheduleDirectMailboxReconciliation(leaf)
+        }
       }
       return dispatchMailbox
     }
@@ -33237,7 +33268,7 @@ export class OrcaRuntimeService {
   // retire must not clear a newer same-id flight or flush its parked trigger.
   private readonly messageDeliveryFlightsByPtyId = new Map<
     string,
-    { enterTimer: ReturnType<typeof setTimeout> | null }
+    { enterTimer: ReturnType<typeof setTimeout> | null; stagedMessageIds: string[] }
   >()
 
   private readonly parkedMessageRedeliveriesByPtyId = new Map<
@@ -33247,7 +33278,7 @@ export class OrcaRuntimeService {
 
   private settlePendingMessageDelivery(
     ptyId: string,
-    flight: { enterTimer: ReturnType<typeof setTimeout> | null }
+    flight: { enterTimer: ReturnType<typeof setTimeout> | null; stagedMessageIds: string[] }
   ): void {
     if (this.messageDeliveryFlightsByPtyId.get(ptyId) !== flight) {
       return
@@ -33338,7 +33369,7 @@ export class OrcaRuntimeService {
     reservedTypes: ReadonlySet<string> | undefined
   ): void {
     const prior = this.parkedMessageRedeliveryTypesByMailboxHandle.get(mailboxHandle)
-    if (prior === null || (prior === undefined && reservedTypes === undefined)) {
+    if (!this.parkedMessageRedeliveryTypesByMailboxHandle.has(mailboxHandle) && !reservedTypes) {
       this.parkedMessageRedeliveryTypesByMailboxHandle.set(mailboxHandle, null)
       return
     }
@@ -33369,19 +33400,18 @@ export class OrcaRuntimeService {
     if (flight?.enterTimer != null) {
       clearTimeout(flight.enterTimer)
     }
+    if (flight?.stagedMessageIds.length) {
+      this._orchestrationDb?.markAsUndelivered(flight.stagedMessageIds)
+    }
     this.messageDeliveryFlightsByPtyId.delete(ptyId)
     this.parkedMessageRedeliveriesByPtyId.delete(ptyId)
     for (const leaf of this.getLeavesForPty(ptyId)) {
       const handle = this.handleByLeafKey.get(this.getLeafKey(leaf.tabId, leaf.leafId))
       if (handle) {
-        this.lastPointedMessageSequenceByHandle.delete(handle)
-        this.pointedMessageIdsByHandle.delete(handle)
         this.mailPointerRepointScheduler.schedule(handle)
       }
       const run = this._orchestrationDb?.getCurrentRunForPane?.(`${leaf.tabId}:${leaf.leafId}`)
       if (run) {
-        this.lastPointedMessageSequenceByHandle.delete(`run:${run.id}`)
-        this.pointedMessageIdsByHandle.delete(`run:${run.id}`)
         this.mailPointerRepointScheduler.schedule(`run:${run.id}`)
       }
     }
@@ -33416,7 +33446,7 @@ export class OrcaRuntimeService {
     if (messages.some((message) => messageTypeHasLiveWaiter(waiters, message.type))) {
       return 'release'
     }
-    return (this._orchestrationDb?.areUndeliveredUnreadMessages?.(
+    return (this._orchestrationDb?.areUnreadMessages?.(
       mailboxHandle,
       messages.map((message) => message.id)
     ) ?? true)
@@ -33442,11 +33472,11 @@ export class OrcaRuntimeService {
       return
     }
     const mailboxHandle = options.mailboxHandle ?? handle
+    if (!mailboxHandle.startsWith('run:')) {
+      return
+    }
 
-    if (
-      mailboxHandle.startsWith('run:') &&
-      this._orchestrationDb.hasOutstandingRunDelivery?.(mailboxHandle.slice('run:'.length))
-    ) {
+    if (this._orchestrationDb.hasOutstandingRunDelivery?.(mailboxHandle.slice('run:'.length))) {
       return
     }
 
@@ -33489,18 +33519,6 @@ export class OrcaRuntimeService {
       excludeTypes: [...excludedTypes],
       limit: ORCHESTRATION_DELIVERY_BATCH_LIMIT
     })
-    const pendingIds = new Set(pending.map((message) => message.id))
-    const pointedIds = this.pointedMessageIdsByHandle.get(mailboxHandle)
-    if (pointedIds) {
-      for (const id of pointedIds) {
-        if (!pendingIds.has(id)) {
-          pointedIds.delete(id)
-        }
-      }
-      if (pointedIds.size === 0) {
-        this.pointedMessageIdsByHandle.delete(mailboxHandle)
-      }
-    }
     const unread = pending
       .filter(
         (message) =>
@@ -33509,16 +33527,6 @@ export class OrcaRuntimeService {
       )
       .slice(0, ORCHESTRATION_DELIVERY_BATCH_LIMIT)
     if (unread.length === 0) {
-      return
-    }
-
-    const watermark = this.lastPointedMessageSequenceByHandle.get(mailboxHandle) ?? -1
-    const priorPointedIds = this.pointedMessageIdsByHandle.get(mailboxHandle)
-    if (
-      !unread.some(
-        (message) => message.sequence > watermark || priorPointedIds?.has(message.id) !== true
-      )
-    ) {
       return
     }
 
@@ -33599,7 +33607,10 @@ export class OrcaRuntimeService {
     }
 
     const deliveryPtyId = leaf.ptyId
-    const flight: { enterTimer: ReturnType<typeof setTimeout> | null } = { enterTimer: null }
+    const flight: {
+      enterTimer: ReturnType<typeof setTimeout> | null
+      stagedMessageIds: string[]
+    } = { enterTimer: null, stagedMessageIds: [] }
     this.messageDeliveryFlightsByPtyId.set(deliveryPtyId, flight)
     let settlesInEnterCallback = false
     try {
@@ -33608,16 +33619,8 @@ export class OrcaRuntimeService {
       if (!wrote) {
         return
       }
-      this.lastPointedMessageSequenceByHandle.set(
-        mailboxHandle,
-        Math.max(watermark, newestSequence)
-      )
-      const pointedIdsAfterWrite =
-        this.pointedMessageIdsByHandle.get(mailboxHandle) ?? new Set<string>()
-      for (const message of unread) {
-        pointedIdsAfterWrite.add(message.id)
-      }
-      this.pointedMessageIdsByHandle.set(mailboxHandle, pointedIdsAfterWrite)
+      flight.stagedMessageIds = unread.map((message) => message.id)
+      this._orchestrationDb.markAsDelivered(flight.stagedMessageIds)
       this.setPointedMessageWatermark(
         mailboxHandle,
         newestSequence,
@@ -33627,17 +33630,7 @@ export class OrcaRuntimeService {
 
       const tabTitle = this.tabs.get(leaf.tabId)?.title
       if (isCursorAgentOrchestrationTarget(leaf, tabTitle)) {
-        let delivered = false
-        try {
-          this._orchestrationDb.markAsDelivered(unread.map((message) => message.id))
-          delivered = true
-        } finally {
-          if (delivered) {
-            this.clearPointedMessageWatermark(mailboxHandle, newestSequence, deliveryPtyId)
-          } else {
-            this.deactivatePointedMessageWatermark(mailboxHandle, newestSequence, deliveryPtyId)
-          }
-        }
+        this.clearPointedMessageWatermark(mailboxHandle, newestSequence, deliveryPtyId)
         this.redrivePendingMessageMailbox(mailboxHandle)
         return
       }
@@ -33645,7 +33638,7 @@ export class OrcaRuntimeService {
       // Why: agent TUIs can swallow a \r in the same PTY write; submit separately after a delay.
       flight.enterTimer = setTimeout(() => {
         let clearAndRedrive = false
-        let delivered = false
+        let submitted = false
         let releaseWithoutRedrive = false
         let finalizeReservation = true
         void this.isLeafPtyProvenAbsent(deliveryPtyId)
@@ -33679,11 +33672,7 @@ export class OrcaRuntimeService {
               releaseWithoutRedrive = true
               return
             }
-            const submitted = this.ptyController?.write(deliveryPtyId, '\r') ?? false
-            if (submitted) {
-              this._orchestrationDb?.markAsDelivered(unread.map((message) => message.id))
-              delivered = true
-            }
+            submitted = this.ptyController?.write(deliveryPtyId, '\r') ?? false
           })
           .catch(() => {
             // Terminal liveness is uncertain; mail remains queued for explicit check.
@@ -33691,8 +33680,11 @@ export class OrcaRuntimeService {
           .finally(() => {
             let released = false
             if (finalizeReservation) {
+              if (clearAndRedrive) {
+                this._orchestrationDb?.markAsUndelivered(unread.map((message) => message.id))
+              }
               released =
-                delivered || clearAndRedrive || releaseWithoutRedrive
+                submitted || clearAndRedrive || releaseWithoutRedrive
                   ? this.clearPointedMessageWatermark(mailboxHandle, newestSequence, deliveryPtyId)
                   : this.deactivatePointedMessageWatermark(
                       mailboxHandle,
