@@ -239,6 +239,7 @@ import { keybindingMatchesAction } from '../../../../shared/keybindings'
 import { ProjectGroupNameDialog } from './ProjectGroupNameDialog'
 import { ProjectGroupDeleteDialog } from './ProjectGroupDeleteDialog'
 import { selectProjectGroupRemovalTargets } from '@/store/slices/project-group-removal-targets'
+import { findRepoForHost } from '@/store/slices/repo-host-identity'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
 import {
   effectiveExternalWorktreeVisibility,
@@ -644,7 +645,7 @@ type VirtualizedWorktreeViewportProps = {
   collapsedGroups: Set<string>
   handleCreateForRepo: (projectId: string) => void
   handleOpenRepoSettings: (projectId: string, sectionId?: string) => void
-  handleOpenWorktreeVisibility: (projectId: string) => void
+  handleOpenWorktreeVisibility: (repo: Repo) => void
   handleShowImportedWorktrees: (projectId: string) => void
   handleKeepImportedWorktreesHidden: (projectId: string) => void
   importedWorktreeCardActionState: ReadonlyMap<string, ImportedWorktreeCardActionState>
@@ -4584,7 +4585,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                               <DropdownMenuItem
                                 onSelect={() => {
                                   if (row.repo) {
-                                    handleOpenWorktreeVisibility(row.repo.id)
+                                    handleOpenWorktreeVisibility(row.repo)
                                   }
                                 }}
                               >
@@ -5978,8 +5979,11 @@ const WorktreeList = React.memo(function WorktreeList({
   )
 
   const handleOpenWorktreeVisibility = useCallback(
-    (projectId: string) => {
-      openModal('worktree-visibility', { repoId: projectId })
+    (repo: Repo) => {
+      openModal('worktree-visibility', {
+        repoId: repo.id,
+        hostId: getRepoExecutionHostId(repo)
+      })
     },
     [openModal]
   )
@@ -6739,9 +6743,11 @@ const WorktreeList = React.memo(function WorktreeList({
           if (!suppressExternalWorktreeInboxRepoId) {
             return
           }
-          const projectId = suppressExternalWorktreeInboxRepoId
+          const repo = findRepoForHost(repos, suppressExternalWorktreeInboxRepoId, { settings })
           setSuppressExternalWorktreeInboxRepoId(null)
-          handleOpenWorktreeVisibility(projectId)
+          if (repo) {
+            handleOpenWorktreeVisibility(repo)
+          }
         }}
       />
       <ProjectGroupDeleteDialog

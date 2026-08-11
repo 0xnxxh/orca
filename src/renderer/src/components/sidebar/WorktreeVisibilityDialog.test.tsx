@@ -409,6 +409,57 @@ describe('WorktreeVisibilityDialog', () => {
     expect(alwaysShowSwitch().disabled).toBe(false)
   })
 
+  it('does not carry a mutation fence across same-id repos on different hosts', async () => {
+    const update = deferred<boolean>()
+    const localWorktree = makeWorktree({ hostId: 'local' })
+    const remotePath = '/srv/repo/.claude/worktrees/remote-scratch'
+    const remoteWorktree = makeWorktree({
+      id: `repo-1::${remotePath}`,
+      path: remotePath,
+      displayName: 'remote-scratch',
+      hostId: 'runtime:env-1'
+    })
+    mocks.state.modalData = { repoId: 'repo-1', hostId: 'local' }
+    mocks.state.repos = [
+      makeRepo(),
+      makeRepo({ path: '/srv/repo', displayName: 'remote', executionHostId: 'runtime:env-1' })
+    ]
+    mocks.state.detectedWorktreesByRepo = {
+      'repo-1': makeDetected([localWorktree, remoteWorktree])
+    }
+    mocks.state.updateRepo.mockReturnValueOnce(update.promise)
+    await renderDialog()
+    await click(buttonWithText('Show'))
+
+    await act(async () => root.render(null))
+    mocks.state.modalData = { repoId: 'repo-1', hostId: 'runtime:env-1' }
+    mocks.state.fetchWorktrees.mockClear()
+    await renderDialog()
+
+    expect(document.body.textContent).toContain('remote-scratch')
+    expect(document.body.textContent).not.toContain('scratch-1')
+    expect(buttonWithText('Show').disabled).toBe(false)
+    expect(mocks.state.fetchWorktrees).toHaveBeenCalledWith('repo-1', {
+      requireAuthoritative: true,
+      executionHostId: 'runtime:env-1'
+    })
+
+    await click(buttonWithText('Show'))
+    expect(mocks.state.updateRepo).toHaveBeenLastCalledWith(
+      'repo-1',
+      {
+        importedExternalWorktreePaths: [remotePath],
+        externalWorktreeInboxBaselinePaths: [SCRATCH_PATH, remotePath]
+      },
+      { hostId: 'runtime:env-1' }
+    )
+
+    await act(async () => {
+      update.resolve(false)
+      await update.promise
+    })
+  })
+
   it('reports a failed persistent visibility update without starting a refresh', async () => {
     mocks.state.updateRepo.mockResolvedValue(false)
     await renderDialog()
