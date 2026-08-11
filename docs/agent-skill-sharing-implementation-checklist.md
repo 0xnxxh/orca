@@ -59,6 +59,8 @@ Validated so far:
   one approved skill-database secret, and rejects secret, Cloud SQL, service-account, scaling,
   CPU, memory, volume, mount, probe, or unexpected-environment drift before traffic promotion.
   Both staging and production workflows explicitly carry all four skill controls as `false`.
+- Orca Cloud `main` verification run `31518125253` passed its Terraform and full code jobs after
+  merge commit `9356b6e`.
 
 Rollout gate: staging Cloud SQL is shared with Auth/Relay and intentionally stopped. Do not create
 the skills database/user/secret version or deploy Cloud Run routes until the supported staging SQL
