@@ -17,10 +17,18 @@ import {
   hasSingleProjectGroupMutationOwner,
   parseProjectGroupSidebarHeaderKey
 } from './worktree-list-groups'
+import { addHostSectionRows } from './host-section-rows'
 import { getRenderRowKey } from './worktree-list-virtual-rows'
 
 function readWorktreeListSource(): string {
   return readFileSync(fileURLToPath(new URL('./WorktreeList.tsx', import.meta.url)), 'utf8')
+}
+
+function readComposerStateSource(): string {
+  return readFileSync(
+    fileURLToPath(new URL('../../hooks/useComposerState.ts', import.meta.url)),
+    'utf8'
+  )
 }
 
 describe('Project Group header drag DOM source', () => {
@@ -48,6 +56,28 @@ describe('Project Group header drag DOM source', () => {
     expect(source).toContain('activationRowKey={folderSidebarRowKey}')
     expect(source).toContain('aria-current={isFolderWorkspaceActive')
     expect(source).toContain('activeWorkspaceExecutionHostId === folderOwnerHostId')
+  })
+
+  it('checks Reveal Current visibility with owner-qualified selection identity', () => {
+    const source = readWorktreeListSource()
+    const revealStart = source.indexOf('const handleRevealCurrentWorkspaceRequest')
+    const revealEnd = source.indexOf('useEffect(() => {', revealStart)
+    const revealSource = source.slice(revealStart, revealEnd)
+
+    expect(revealSource).toContain('getSidebarWorktreeSelectionId(')
+    expect(revealSource).toContain('renderedWorktreeSelectionIds.includes(')
+    expect(revealSource).not.toContain('renderedWorktreeIds.includes(')
+  })
+
+  it('persists and restores a draft project group through its existing host field', () => {
+    const source = readComposerStateSource()
+    const restoreStart = source.indexOf('const initialFolderProjectGroupId')
+    const restoreEnd = source.indexOf('const isProjectGroupTarget', restoreStart)
+    const persistStart = source.indexOf('// Persist draft whenever relevant fields change')
+    const persistEnd = source.indexOf('// Auto-pick the first eligible repo', persistStart)
+
+    expect(source.slice(restoreStart, restoreEnd)).toContain('draftHostId')
+    expect(source.slice(persistStart, persistEnd)).toContain('selectedProjectGroupOwnerHostId')
   })
 
   it('keeps grab cursor on the title surface and dual handle attrs on row + surface', () => {
@@ -302,6 +332,99 @@ function projectGroupHeaderKeys(rows: ReturnType<typeof buildOwnerRows>): string
 }
 
 describe('duplicate project-group header identity (#12532)', () => {
+  it('keeps an empty owner-scoped group in its zero-count host section', () => {
+    const localRepo = ownerHeaderRepo('local-repo', 'local')
+    const sshRepo = ownerHeaderRepo('ssh-repo', 'ssh:builder')
+    const emptyGroup = ownerHeaderGroup('runtime:env-1')
+    const rows: ReturnType<typeof buildOwnerRows> = [
+      {
+        type: 'header',
+        key: 'repo:local-repo',
+        label: 'Local',
+        count: 1,
+        tone: 'text-foreground',
+        repo: localRepo
+      },
+      {
+        type: 'item',
+        rowKey: 'repo:local-repo:local-wt',
+        sectionKey: 'repo:local-repo',
+        worktree: ownerHeaderWorktree('local-wt', localRepo.id),
+        repo: localRepo,
+        depth: 0,
+        groupDepth: 0,
+        lineageTrail: [],
+        isLastLineageChild: true,
+        lineageChildCount: 0
+      },
+      {
+        type: 'header',
+        key: 'repo:ssh-repo',
+        label: 'SSH',
+        count: 1,
+        tone: 'text-foreground',
+        repo: sshRepo
+      },
+      {
+        type: 'item',
+        rowKey: 'repo:ssh-repo:ssh-wt',
+        sectionKey: 'repo:ssh-repo',
+        worktree: ownerHeaderWorktree('ssh-wt', sshRepo.id),
+        repo: sshRepo,
+        depth: 0,
+        groupDepth: 0,
+        lineageTrail: [],
+        isLastLineageChild: true,
+        lineageChildCount: 0
+      },
+      {
+        type: 'header',
+        key: 'project-group:runtime%3Aenv-1:same-id',
+        label: emptyGroup.name,
+        count: 0,
+        tone: 'text-foreground',
+        projectGroup: emptyGroup,
+        projectGroupOwnerHostId: 'runtime:env-1',
+        hostWorktreeCounts: new Map([['runtime:env-1', 0]])
+      }
+    ]
+
+    const sectioned = addHostSectionRows({
+      rows,
+      hostOptions: [
+        { id: 'local', kind: 'local', label: 'Local', detail: '', health: 'local' },
+        {
+          id: 'ssh:builder',
+          kind: 'ssh',
+          label: 'Builder',
+          detail: '',
+          health: 'available'
+        },
+        {
+          id: 'runtime:env-1',
+          kind: 'runtime',
+          label: 'Runtime',
+          detail: '',
+          health: 'available'
+        }
+      ],
+      workspaceHostScope: 'all',
+      defaultHostId: 'local'
+    })
+
+    expect(sectioned).toContainEqual(
+      expect.objectContaining({
+        type: 'header',
+        key: 'project-group:runtime%3Aenv-1:same-id',
+        count: 0,
+        hostId: 'runtime:env-1'
+      })
+    )
+    expect(sectioned).toContainEqual(
+      expect.objectContaining({ type: 'host-header', hostId: 'runtime:env-1', count: 0 })
+    )
+  })
+
   it('keeps cold-render and virtualizer identities distinct across owners', () => {
     const rows = buildOwnerRows(['local', 'runtime:env-1'])
 

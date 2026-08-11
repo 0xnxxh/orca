@@ -161,7 +161,7 @@ function localizePendingRowsForHost(
       continue
     }
     const count = row.hostWorktreeCounts.get(hostId)
-    if (count !== undefined && count > 0) {
+    if (count !== undefined) {
       localized.push({
         ...row,
         count,
@@ -229,9 +229,6 @@ export function addHostSectionRows(args: {
     }
     for (const row of pendingRows) {
       for (const [hostId, count] of row.hostWorktreeCounts ?? []) {
-        if (count <= 0) {
-          continue
-        }
         const hostRows = rowsByHostId.get(hostId) ?? []
         const hostIds = row.hostWorktreeIds?.get(hostId)
         hostRows.push({

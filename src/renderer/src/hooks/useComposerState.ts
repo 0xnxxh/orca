@@ -748,10 +748,13 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       : null
   )
   const initialFolderProjectGroupId = initialProjectGroupId ?? draftProjectGroupId
+  const initialFolderProjectGroupOwnerHostId = initialProjectGroupId
+    ? initialProjectGroupOwnerHostId
+    : (draftHostId ?? undefined)
   const initialFolderProjectGroup = findActionableFolderProjectGroup({
     projectGroups,
     groupId: initialFolderProjectGroupId,
-    ownerHostId: initialProjectGroupId ? initialProjectGroupOwnerHostId : undefined,
+    ownerHostId: initialFolderProjectGroupOwnerHostId,
     actionableHostIds
   })
   const [selectedProjectGroupId, setSelectedProjectGroupId] = useState<string | null>(
@@ -793,7 +796,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     const nextGroup = findActionableFolderProjectGroup({
       projectGroups,
       groupId: initialFolderProjectGroupId,
-      ownerHostId: initialProjectGroupId ? initialProjectGroupOwnerHostId : undefined,
+      ownerHostId: initialFolderProjectGroupOwnerHostId,
       actionableHostIds
     })
     if (nextGroup) {
@@ -804,8 +807,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   }, [
     actionableHostIds,
     initialFolderProjectGroupId,
-    initialProjectGroupId,
-    initialProjectGroupOwnerHostId,
+    initialFolderProjectGroupOwnerHostId,
     projectGroups,
     selectedProjectGroupId
   ])
@@ -1708,7 +1710,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       projectGroupId: selectedProjectGroup?.id ?? null,
       hostId:
         selectedProjectGroup !== null
-          ? null
+          ? selectedProjectGroupOwnerHostId
           : selectedWorkspaceTarget.status === 'ready'
             ? selectedWorkspaceTarget.target.hostId
             : null,
@@ -1747,6 +1749,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     name,
     repoId,
     selectedProjectGroup,
+    selectedProjectGroupOwnerHostId,
     selectedWorkspaceTarget,
     setNewWorkspaceDraft,
     taskSourceContext,

@@ -6899,7 +6899,14 @@ const WorktreeList = React.memo(function WorktreeList({
       if (!activeWorktree || activeWorktree.isArchived) {
         return
       }
-      if (!renderedWorktreeIds.includes(currentSidebarWorktreeId)) {
+      const activeSelectionId = getSidebarWorktreeSelectionId(
+        activeWorkspaceExecutionHostId
+          ? { ...activeWorktree, hostId: activeWorkspaceExecutionHostId }
+          : activeWorktree,
+        repoMap.get(activeWorktree.repoId),
+        defaultHostId
+      )
+      if (!renderedWorktreeSelectionIds.includes(activeSelectionId)) {
         // Why: the reveal action must show the current workspace, so relax filters that hide it first.
         clearFilters()
       }
@@ -6915,9 +6922,11 @@ const WorktreeList = React.memo(function WorktreeList({
       currentSidebarWorktreeId,
       folderWorkspaces,
       projectGroups,
+      defaultHostId,
       revealSidebarRow,
-      renderedWorktreeIds,
+      renderedWorktreeSelectionIds,
       revealWorktreeInSidebar,
+      repoMap,
       worktreeMap
     ]
   )
