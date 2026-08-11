@@ -300,10 +300,32 @@ describe('CreateHostedReviewComposer generate tooltip', () => {
 
     fireEvent.focus(input)
     fireEvent.change(input, { target: { value: '' } })
-    expect(screen.getByText('Press Enter to use main.')).toBeTruthy()
+    expect(screen.getByText('Leave empty to use main.')).toBeTruthy()
 
     fireEvent.keyDown(input, { key: 'Enter' })
     expect((input as HTMLInputElement).value).toBe('main')
+  })
+
+  it('commits the repo default when an emptied field loses focus', () => {
+    renderDom(<InteractiveBaseComposer initialBase="feature/parent" repoDefaultBase="main" />)
+    const input = screen.getByRole('combobox', { name: 'Pull Request base branch' })
+
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.blur(input)
+
+    expect((input as HTMLInputElement).value).toBe('main')
+  })
+
+  it('cancels a partial query on blur instead of committing it', () => {
+    renderDom(<InteractiveBaseComposer initialBase="feature/parent" repoDefaultBase="main" />)
+    const input = screen.getByRole('combobox', { name: 'Pull Request base branch' })
+
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'rele' } })
+    fireEvent.blur(input)
+
+    expect((input as HTMLInputElement).value).toBe('feature/parent')
   })
 
   it('restores the committed base when an emptied field is cancelled', () => {
@@ -323,9 +345,14 @@ describe('CreateHostedReviewComposer generate tooltip', () => {
 
     fireEvent.focus(input)
     fireEvent.change(input, { target: { value: '' } })
-    expect(screen.queryByText(/Press Enter to use/)).toBeNull()
+    expect(screen.queryByText(/Leave empty to use/)).toBeNull()
 
     fireEvent.keyDown(input, { key: 'Enter' })
+    expect((input as HTMLInputElement).value).toBe('feature/parent')
+
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.blur(input)
     expect((input as HTMLInputElement).value).toBe('feature/parent')
   })
 

@@ -51,14 +51,16 @@ export function CreateHostedReviewBasePicker({
 }: CreateHostedReviewBasePickerProps): React.JSX.Element {
   const [activeResult, setActiveResult] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Why: marks a blur that an explicit Enter/Escape already resolved.
+  const settledRef = useRef(false)
   const fieldId = useId()
   const resultsId = useId()
 
   const trimmedQuery = baseQuery.trim()
   const trimmedRepoDefault = repoDefaultBase?.trim() ?? ''
   const showResults = editing && baseResults.length > 0
-  // Why: emptying the field is how you say "not this branch"; surface where Enter
-  // lands so the reset isn't an invisible behaviour.
+  // Why: emptying the field is how you say "not this branch"; name where it lands so
+  // the reset isn't an invisible behaviour.
   const showRepoDefaultHint = editing && trimmedQuery.length === 0 && trimmedRepoDefault.length > 0
   // Why: only claim "no branches match" once a search has actually settled, so the
   // debounce window can't report an absence the app hasn't observed yet.
@@ -84,8 +86,32 @@ export function CreateHostedReviewBasePicker({
     if (nextBase) {
       setBase(nextBase)
     }
+    settledRef.current = true
     closeSearch()
     inputRef.current?.blur()
+  }
+
+  const cancelSearch = (): void => {
+    settledRef.current = true
+    closeSearch()
+    inputRef.current?.blur()
+  }
+
+  const handleBlur = (): void => {
+    // Why: Enter and Escape blur the input themselves; without this they would
+    // re-enter the commit path below with the pre-close query still in scope.
+    if (settledRef.current) {
+      settledRef.current = false
+      closeSearch()
+      return
+    }
+    // Why: clicking away from an emptied field means what pressing Enter on it
+    // means — land on the repo default instead of restoring what was cleared.
+    // A partial query still cancels; only an empty one is an instruction.
+    if (trimmedQuery.length === 0 && trimmedRepoDefault) {
+      setBase(trimmedRepoDefault)
+    }
+    closeSearch()
   }
 
   const moveActiveResult = (delta: number): void => {
@@ -114,8 +140,7 @@ export function CreateHostedReviewBasePicker({
     }
     if (event.key === 'Escape') {
       event.preventDefault()
-      closeSearch()
-      inputRef.current?.blur()
+      cancelSearch()
     }
   }
 
@@ -166,10 +191,13 @@ export function CreateHostedReviewBasePicker({
           value={editing ? baseQuery : base}
           disabled={fieldsLocked}
           onFocus={(event) => {
+            // Why: a programmatic blur that never fired would otherwise leave the
+            // flag set and swallow the next real one.
+            settledRef.current = false
             setEditing(true)
             setBaseQuery(event.currentTarget.value)
           }}
-          onBlur={closeSearch}
+          onBlur={handleBlur}
           onChange={(event) => {
             setBaseQuery(event.target.value)
             setActiveResult(-1)
@@ -181,7 +209,7 @@ export function CreateHostedReviewBasePicker({
             trimmedRepoDefault ||
             translate('auto.components.right.sidebar.SourceControl.e64a632456', 'main')
           }
-          className={cn(COMPOSER_FIELD_CLASS, 'pl-2 pr-7 font-mono')}
+          className={cn(COMPOSER_FIELD_CLASS, 'pl-2 pr-7')}
         />
         <ChevronDown
           className="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
@@ -207,7 +235,7 @@ export function CreateHostedReviewBasePicker({
                 data-selected={index === activeResult ? 'true' : undefined}
                 disabled={fieldsLocked}
                 className={cn(
-                  'flex h-7 w-full items-center justify-between gap-2 rounded-sm px-2 text-left font-mono text-xs hover:bg-accent hover:text-accent-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
+                  'flex h-7 w-full items-center justify-between gap-2 rounded-sm px-2 text-left text-xs hover:bg-accent hover:text-accent-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
                   selected && 'text-foreground'
                 )}
                 onMouseDown={(event) => {
@@ -227,7 +255,7 @@ export function CreateHostedReviewBasePicker({
         <p className="px-2 text-[11px] text-muted-foreground">
           {translate(
             'auto.components.right.sidebar.CreateHostedReviewComposer.baseEmptyResetsToDefault',
-            'Press Enter to use {{value0}}.',
+            'Leave empty to use {{value0}}.',
             { value0: trimmedRepoDefault }
           )}
         </p>

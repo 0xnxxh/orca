@@ -196,14 +196,14 @@ export function CreateHostedReviewComposerFields({
                   <span className="shrink-0 text-muted-foreground">
                     #{stackParentReview.number}
                   </span>
-                  <span className="truncate font-mono text-foreground">{normalizedBase}</span>
+                  <span className="truncate text-foreground">{normalizedBase}</span>
                 </div>
                 <div className="flex min-w-0 items-center gap-1.5">
                   <CornerDownRight
                     className="size-3 shrink-0 text-muted-foreground"
                     aria-hidden="true"
                   />
-                  <span className="truncate font-mono text-foreground">{strippedBranch}</span>
+                  <span className="truncate text-foreground">{strippedBranch}</span>
                   <span className="shrink-0 text-muted-foreground">
                     {translate(
                       'auto.components.right.sidebar.CreateHostedReviewComposer.newPr',
