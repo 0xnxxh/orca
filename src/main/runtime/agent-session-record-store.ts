@@ -26,7 +26,6 @@ import type { AgentSessionProviderHandleLink } from '../../shared/agent-session-
 import {
   agentSessionScopeKey,
   type AgentSessionExecutionLocation,
-  type AgentSessionHandoffStage,
   type AgentSessionJournalCheckpoint,
   type AgentSessionRecord
 } from '../../shared/agent-session-record'
@@ -37,7 +36,6 @@ import {
   evictAgentSessionOwner,
   proveAgentSessionOwner,
   renewAgentSessionLease,
-  setAgentSessionHandoffStage,
   setAgentSessionJournalCheckpoint,
   type AgentSessionProcessIdentityCommit
 } from './agent-session-lease-transitions'
@@ -230,14 +228,11 @@ export class AgentSessionRecordStore {
     return this.mutate(args.sessionId, (record) => evictAgentSessionOwner({ ...args, record }))
   }
 
-  async setHandoffStage(args: {
-    sessionId: string
-    fence: number
-    stage: AgentSessionHandoffStage | null
-    handoffOperationId: string | null
-    now: number
-  }): Promise<AgentSessionRecord> {
-    return this.mutate(args.sessionId, (record) => setAgentSessionHandoffStage({ ...args, record }))
+  async transitionHandoff(
+    sessionId: string,
+    transition: (record: AgentSessionRecord) => AgentSessionRecord
+  ): Promise<AgentSessionRecord> {
+    return this.mutate(sessionId, transition)
   }
 
   async setJournalCheckpoint(args: {

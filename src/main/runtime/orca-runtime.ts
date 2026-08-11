@@ -74,6 +74,11 @@ import {
 import { ensureStructuredAgentSessionHost as installStructuredAgentSessionHost } from './structured-agent-session-runtime'
 import { getStructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-registry'
 import type { AgentSessionAttachParams } from '../native-chat/agent-session-wire/structured-agent-session-attach'
+import type { StructuredAgentSessionHandoffTransport } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
+import { codexProviderHandleLink } from '../codex/codex-structured-owner-identity'
+import { proveCodexTuiRollout } from '../codex/codex-tui-rollout-proof'
+import { readProcessStartTimeMs } from './agent-session-process-identity-probe'
+import { waitForStructuredTuiExitProof } from './structured-tui-exit-proof'
 import { getProfileUserDataPath } from '../orca-profiles/profile-storage-paths'
 import { getSystemCodexHomePath } from '../codex/codex-home-paths'
 import {
@@ -114,7 +119,7 @@ import {
 import { getGitCloneFailureMessage } from '../../shared/git-clone-failure-message'
 import { GIT_FETCH_SKIP_AUTO_MAINTENANCE_CONFIG_ARGS } from '../../shared/git-fetch-auto-maintenance'
 import { createHash, randomUUID } from 'node:crypto'
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { resolveWorktreeCreateBase } from '../worktree-create-base'
@@ -1385,6 +1390,7 @@ type TerminalCreateOptions = {
   // Why: only the host-derived structured resume path may attach provider
   // identity; opaque terminal.create commands remain ordinary shells.
   agentSessionClaim?: AgentSessionExecutionClaim
+  structuredAgentSessionId?: string
   agentSessionCreateOperationId?: string
   signal?: AbortSignal
   // Why: idempotent create operations must retain their fence after the PTY
@@ -1700,12 +1706,18 @@ type RuntimePtyController = {
     }
   }): Promise<{
     id: string
+    pid?: number
     incarnationId?: PtyIncarnationId
     wslDistro?: string
     stablePaneOwner?: { handle: string; tabId: string; leafId: string }
     agentSessionEnsure?: AgentSessionClaimedSpawnResult
   }>
   write(ptyId: string, data: string): boolean
+  writeAgentSessionProof?(
+    ptyId: string,
+    data: string,
+    authority: { sessionId: string; spawnToken: string }
+  ): boolean
   /** Attach-only adoption of a live local daemon session so its output streams
    *  to main without a renderer pane; never creates, resizes, or focuses.
    *  False on doubt (absent session, SSH-scoped id, non-daemon provider). */
@@ -9079,7 +9091,167 @@ export class OrcaRuntimeService {
       // Resolves folder workspaces as well as git worktrees, so a chat session
       // in a plain folder lands in the folder rather than failing to resolve.
       resolveWorkspacePath: async (workspaceId) =>
-        (await this.resolveRuntimeFileTarget(`id:${workspaceId}`)).worktree.path
+        (await this.resolveRuntimeFileTarget(`id:${workspaceId}`)).worktree.path,
+      handoffTransport: this.createStructuredAgentSessionHandoffTransport()
+    })
+  }
+
+  private createStructuredAgentSessionHandoffTransport(): StructuredAgentSessionHandoffTransport {
+    return {
+      hostLabel: hostname(),
+      launchTui: async ({ record, fence, spawnToken }) => {
+        const head = record.providerHandleChain.at(-1)
+        if (head?.handle.provider !== 'codex') {
+          throw new Error('agent_session_identity_required')
+        }
+        const launched = await this.ensureAgentSession(
+          {
+            kind: 'explicit',
+            worktree: `id:${record.location.workspaceId}`,
+            agent: 'codex',
+            providerSession: { key: 'session_id', id: head.handle.threadId },
+            presentation: 'background'
+          },
+          {},
+          { spawnToken, codexHome: record.accountHome.path, sessionId: record.sessionId }
+        )
+        const terminal = launched.terminal
+        try {
+          if (!terminal.processId || !terminal.paneKey || !terminal.tabId) {
+            throw new Error('The resumed terminal did not publish a process identity.')
+          }
+          await this.waitForTerminal(terminal.handle, {
+            condition: 'tui-idle',
+            timeoutMs: 30_000
+          })
+          const proof = await this.waitForStructuredTuiProof({
+            handle: terminal.handle,
+            paneKey: terminal.paneKey,
+            threadId: head.handle.threadId,
+            spawnToken,
+            codexHome: record.accountHome.path,
+            sessionId: record.sessionId
+          })
+          await this.focusTerminal(terminal.handle)
+          return {
+            terminal: {
+              handle: terminal.handle,
+              tabId: terminal.tabId,
+              paneKey: terminal.paneKey
+            },
+            process: {
+              hostId: record.location.executionHostId,
+              pid: terminal.processId,
+              processStartTimeMs: await readProcessStartTimeMs(terminal.processId),
+              spawnToken
+            },
+            link: codexProviderHandleLink({
+              threadId: head.handle.threadId,
+              resumed: true,
+              fence,
+              observedAt: Date.now()
+            }),
+            ...(proof.transcriptPath ? { transcriptPath: proof.transcriptPath } : {})
+          }
+        } catch (error) {
+          await this.closeTerminal(terminal.handle)
+          await this.waitForTerminal(terminal.handle, {
+            condition: 'exit',
+            timeoutMs: 15_000
+          })
+          throw error
+        }
+      },
+      waitForTuiExit: async (owner) => {
+        await waitForStructuredTuiExitProof({
+          identity: owner.process,
+          waitForExit: () => this.waitForTerminal(owner.terminal.handle, { condition: 'exit' })
+        })
+        return owner.transcriptPath ? { transcriptPath: owner.transcriptPath } : {}
+      },
+      tuiStatus: (owner) => this.structuredTuiStatus(owner.terminal.handle),
+      stopFailedTuiLaunch: async (owner) => {
+        await this.closeTerminal(owner.terminal.handle)
+        await this.waitForTerminal(owner.terminal.handle, {
+          condition: 'exit',
+          timeoutMs: 15_000
+        })
+      }
+    }
+  }
+
+  private structuredTuiStatus(handle: string): 'idle' | 'busy' {
+    const pty = this.getLivePtyForHandle(handle)
+    if (pty) {
+      const text = buildTerminalWaitText(
+        pty.pty.tailBuffer,
+        pty.pty.tailPartialLine,
+        pty.pty.preview
+      )
+      return !detectTerminalWaitBlockedReason(text) &&
+        (pty.pty.lastAgentStatus === 'idle' ||
+          this.getAdoptedPtyExplicitIdleStatus(pty.pty) === 'idle' ||
+          isKnownReadyPromptPreview(text))
+        ? 'idle'
+        : 'busy'
+    }
+    try {
+      const { leaf } = this.getLiveLeafForHandle(handle)
+      const text = buildTerminalWaitText(leaf.tailBuffer, leaf.tailPartialLine, leaf.preview)
+      const title = leaf.paneTitle ?? this.tabs.get(leaf.tabId)?.title
+      return !detectTerminalWaitBlockedReason(text) &&
+        (leaf.lastAgentStatus === 'idle' ||
+          (title && detectExplicitIdleStatusFromTitle(title) === 'idle') ||
+          isKnownReadyPromptPreview(text))
+        ? 'idle'
+        : 'busy'
+    } catch {
+      return 'busy'
+    }
+  }
+
+  private async waitForStructuredTuiProof(input: {
+    handle: string
+    paneKey: string
+    threadId: string
+    spawnToken: string
+    codexHome: string
+    sessionId: string
+  }): Promise<{ transcriptPath?: string }> {
+    const readBoundPty = (): RuntimePtyWorktreeRecord => {
+      const pty = this.getLivePtyForHandle(input.handle)?.pty
+      if (
+        !pty?.connected ||
+        pty.paneKey !== input.paneKey ||
+        pty.launchAgent !== 'codex' ||
+        pty.launchToken !== input.spawnToken
+      ) {
+        throw new Error('The resumed terminal lost its launch identity.')
+      }
+      return pty
+    }
+    const initialPty = readBoundPty()
+    const kittyKeyboardFlags = this.providerModeTrackersByPtyId.get(initialPty.ptyId)?.flags ?? 0
+    return proveCodexTuiRollout({
+      codexHome: input.codexHome,
+      threadId: input.threadId,
+      kittyKeyboardFlags,
+      readOutput: () => {
+        const pty = readBoundPty()
+        return {
+          text: buildTerminalWaitText(pty.tailBuffer, pty.tailPartialLine, pty.preview),
+          lastOutputAt: pty.lastOutputAt
+        }
+      },
+      write: (data) => {
+        const pty = readBoundPty()
+        return (
+          this.ptyController?.writeAgentSessionProof?.(pty.ptyId, data, {
+            sessionId: input.sessionId,
+            spawnToken: input.spawnToken
+          }) ?? false
+        )
+      }
     })
   }
 
@@ -13806,6 +13978,7 @@ export class OrcaRuntimeService {
       this.intentionalHandlelessPtyStops.has(ptyId) &&
       (intentionalStopIncarnation === null || intentionalStopIncarnation === incarnationId)
     advertisedUrlWatcher.unbindPty(ptyId)
+    agentSessionPtyWriteGate.unbindPty(ptyId)
     // Clean up new mobile state for this PTY
     this.mobileSubscribers.delete(ptyId)
     this.remoteTerminalViewSubscriberCounts.delete(ptyId)
@@ -25316,7 +25489,8 @@ export class OrcaRuntimeService {
 
   async ensureAgentSession(
     request: RuntimeEnsureAgentSessionRequest,
-    _caller: RuntimeAgentSessionRpcCaller = {}
+    _caller: RuntimeAgentSessionRpcCaller = {},
+    handoffAuthority?: { spawnToken: string; codexHome: string; sessionId: string }
   ): Promise<RuntimeEnsureAgentSessionResult> {
     if (request.kind === 'automatic') {
       // Legacy renderer sleep records are migration evidence, not host authority.
@@ -25326,7 +25500,11 @@ export class OrcaRuntimeService {
       throw new Error('runtime_unavailable')
     }
     const workspace = await this.resolveTerminalWorkspaceLaunchScope(request.worktree)
-    const namespace = this.getAgentSessionExecutionNamespace(workspace, request.agent)
+    const resolvedNamespace = this.getAgentSessionExecutionNamespace(workspace, request.agent)
+    const namespace =
+      resolvedNamespace && handoffAuthority
+        ? { ...resolvedNamespace, providerRoot: handoffAuthority.codexHome }
+        : resolvedNamespace
     if (
       !namespace ||
       !(await this.executionOwnerSupportsAgentSessionOperation(workspace, 'resume', _caller.signal))
@@ -25360,7 +25538,10 @@ export class OrcaRuntimeService {
         request.agentArgs !== undefined
           ? request.agentArgs
           : resolveTuiAgentLaunchArgs(request.agent, settings.agentDefaultArgs),
-      agentEnv: resolveTuiAgentLaunchEnv(request.agent, settings.agentDefaultEnv),
+      agentEnv: {
+        ...resolveTuiAgentLaunchEnv(request.agent, settings.agentDefaultEnv),
+        ...(handoffAuthority ? { CODEX_HOME: handoffAuthority.codexHome } : {})
+      },
       ompResumeFilePath: request.ompResumeFilePath,
       sessionOptions: this.toAgentSessionOptions(request.launchPreferences),
       platform,
@@ -25392,6 +25573,12 @@ export class OrcaRuntimeService {
       leafId: request.placement?.leafId,
       persistHostSessionBinding: true,
       agentSessionClaim: claim,
+      ...(handoffAuthority
+        ? {
+            launchToken: handoffAuthority.spawnToken,
+            structuredAgentSessionId: handoffAuthority.sessionId
+          }
+        : {}),
       signal: _caller.signal
     })
     return {
@@ -25895,6 +26082,9 @@ export class OrcaRuntimeService {
           leafId,
           ...(result.incarnationId ? { incarnationId: result.incarnationId } : {})
         })
+        if (launchOpts.structuredAgentSessionId) {
+          agentSessionPtyWriteGate.bindPty(result.id, launchOpts.structuredAgentSessionId)
+        }
         const pty = this.getOrCreatePtyWorktreeRecord(result.id)
         if (pty) {
           if (persistHostSessionBinding) {
@@ -25972,6 +26162,7 @@ export class OrcaRuntimeService {
           title: pty?.title ?? launchOpts.title ?? null,
           ...this.getPtyExecutionHostMetadata(result.id),
           surface,
+          ...(result.pid ? { processId: result.pid } : {}),
           ...(result.agentSessionEnsure
             ? { agentSessionDisposition: result.agentSessionEnsure.disposition }
             : {}),

@@ -6,6 +6,8 @@ import type {
   AgentJournalRenderItem
 } from '../../../src/shared/agent-session-journal-types'
 import type {
+  AgentSessionHandoffDirection,
+  AgentSessionHandoffMode,
   AgentSessionMutationResult,
   AgentSessionPromptResult
 } from '../../../src/shared/agent-session-wire'
@@ -25,12 +27,18 @@ export type MobileStructuredSessionMutations = {
   respondToPrompt: (item: MobileStructuredPromptItem, optionId: string) => Promise<boolean>
   setOption: (key: string, value: string) => Promise<boolean>
   cancel: (turnId: string) => Promise<boolean>
+  requestHandoff: (
+    direction: AgentSessionHandoffDirection,
+    mode: AgentSessionHandoffMode,
+    action?: 'start' | 'cancel-queued' | 'retry'
+  ) => Promise<boolean>
 }
 
 export function useMobileStructuredSessionMutations(args: {
   client: RpcClient | null
   sessionId: string | null
   fence: number | null
+  handoffOperationId?: string | null
   onRefusal: (message: string | null) => void
 }): MobileStructuredSessionMutations {
   const operationIdsRef = useRef(new Map<string, string>())
@@ -44,12 +52,18 @@ export function useMobileStructuredSessionMutations(args: {
     activeContextRef.current = { client, fence, sessionId }
   }, [client, fence, sessionId])
   const mutate = useCallback(
-    async <TValue>(method: string, fingerprintMethod: string, fields: Record<string, unknown>) => {
+    async <TValue>(
+      method: string,
+      fingerprintMethod: string,
+      fields: Record<string, unknown>,
+      operationIdOverride?: string | null
+    ) => {
       if (!client || !sessionId || fence === null || client.getState() !== 'connected') {
         return null
       }
       const mutationKey = `${sessionId}:${fingerprintMethod}:${JSON.stringify(fields)}`
       const clientOperationId =
+        operationIdOverride ??
         operationIdsRef.current.get(mutationKey) ??
         createStructuredAgentSessionOperationId(() => ExpoCrypto.randomUUID())
       operationIdsRef.current.set(mutationKey, clientOperationId)
@@ -117,9 +131,22 @@ export function useMobileStructuredSessionMutations(args: {
       setOption: async (key: string, value: string) =>
         Boolean(await mutate('agentSession.setOption', 'agentSession.setOption', { key, value })),
       cancel: async (turnId: string) =>
-        Boolean(await mutate('agentSession.cancel', 'agentSession.cancel', { turnId }))
+        Boolean(await mutate('agentSession.cancel', 'agentSession.cancel', { turnId })),
+      requestHandoff: async (
+        direction: AgentSessionHandoffDirection,
+        mode: AgentSessionHandoffMode,
+        action: 'start' | 'cancel-queued' | 'retry' = 'start'
+      ) =>
+        Boolean(
+          await mutate(
+            'agentSession.requestHandoff',
+            'agentSession.requestHandoff',
+            { direction, mode, action },
+            action === 'retry' ? args.handoffOperationId : null
+          )
+        )
     }),
-    [mutate]
+    [args.handoffOperationId, mutate]
   )
 }
 

@@ -191,3 +191,14 @@ export const UnsubscribeParams = z
     subscriptionId: Identifier('Invalid subscription id').optional()
   })
   .strict()
+
+export const HandoffParams = z
+  .object({
+    envelope: MutationEnvelope,
+    direction: z.enum(['to-tui', 'to-native']),
+    mode: z.enum(['now', 'after-turn', 'stop-turn']),
+    action: z.enum(['start', 'cancel-queued', 'retry']).optional()
+  })
+  .strict()
+
+export const HandoffStatusParams = z.object({ sessionId: SessionId }).strict()

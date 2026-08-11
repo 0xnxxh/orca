@@ -3,6 +3,9 @@ import type { AgentJournalRenderItem } from '../../../../shared/agent-session-jo
 import type { AgentType } from '../../../../shared/agent-status-types'
 import type {
   AgentSessionMutationResult,
+  AgentSessionHandoffDirection,
+  AgentSessionHandoffMode,
+  AgentSessionHandoffResult,
   AgentSessionOptionsResult,
   AgentSessionPromptResult
 } from '../../../../shared/agent-session-wire'
@@ -61,13 +64,15 @@ export function useStructuredAgentSession(args: {
     async <T>(
       method: string,
       fingerprintMethod: string,
-      fields: Record<string, unknown>
+      fields: Record<string, unknown>,
+      operationIdOverride?: string | null
     ): Promise<T | null> => {
       if (stateRef.current.fence === null) {
         return null
       }
       const key = `${fingerprintMethod}:${JSON.stringify(fields)}`
-      const clientOperationId = operationIds.current.get(key) ?? structuredSessionOperationId()
+      const clientOperationId =
+        operationIdOverride ?? operationIds.current.get(key) ?? structuredSessionOperationId()
       operationIds.current.set(key, clientOperationId)
       const result = await callStructuredAgentSession<AgentSessionMutationResult<T>>(
         target,
@@ -204,6 +209,18 @@ export function useStructuredAgentSession(args: {
       ),
     optionSnapshot,
     optionSurface,
-    setStructuredOption
+    setStructuredOption,
+    requestHandoff: (
+      direction: AgentSessionHandoffDirection,
+      mode: AgentSessionHandoffMode,
+      action: 'start' | 'cancel-queued' | 'retry' = 'start'
+    ) =>
+      mutate<AgentSessionHandoffResult>(
+        'agentSession.requestHandoff',
+        'agentSession.requestHandoff',
+        { direction, mode, action },
+        action === 'retry' ? stateRef.current.handoff?.operationId : null
+      ),
+    handoff: state.handoff
   }
 }

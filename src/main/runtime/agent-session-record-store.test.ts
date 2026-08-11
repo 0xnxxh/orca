@@ -9,6 +9,7 @@ import type {
   AgentSessionRecord
 } from '../../shared/agent-session-record'
 import type { AgentSessionProviderHandleLink } from '../../shared/agent-session-provider-handle'
+import { setStoredAgentSessionHandoffStage } from './agent-session-handoff-record-transitions'
 import {
   AGENT_SESSION_CLAIM_KEY_RETENTION_MS,
   AgentSessionRecordStore
@@ -754,7 +755,7 @@ describe('orphans, claim keys, checkpoints, and unreadable rows', () => {
   it('rejects a handoff stage change under a different operation id', async () => {
     const store = await open()
     await establishOwner(store)
-    await store.setHandoffStage({
+    await setStoredAgentSessionHandoffStage(store, {
       sessionId: 'session-alpha',
       fence: 1,
       stage: 'preparing',
@@ -762,7 +763,7 @@ describe('orphans, claim keys, checkpoints, and unreadable rows', () => {
       now: NOW
     })
     await expect(
-      store.setHandoffStage({
+      setStoredAgentSessionHandoffStage(store, {
         sessionId: 'session-alpha',
         fence: 1,
         stage: 'old-owner-stopped',

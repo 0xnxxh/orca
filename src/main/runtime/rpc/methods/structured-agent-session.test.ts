@@ -187,7 +187,7 @@ describe('capability gating', () => {
     for (const method of STRUCTURED_AGENT_SESSION_METHODS) {
       expect(names).toContain(method.name)
     }
-    expect(STRUCTURED_AGENT_SESSION_METHODS).toHaveLength(12)
+    expect(STRUCTURED_AGENT_SESSION_METHODS).toHaveLength(14)
   })
 
   it('hides the surface from a declared client that did not advertise it', async () => {

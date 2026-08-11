@@ -26,6 +26,7 @@ export async function restoreStructuredAgentSessionsOnRestart(input: {
       if (
         !unreconciled &&
         current?.lease.claimStatus === 'released' &&
+        current.lease.handoffStage === null &&
         (await input.resume(
           attachParamsForRecord(current, {
             clientOperationId: input.operationId(),

@@ -34,11 +34,14 @@ export type AgentSessionReservation = {
   now: number
 }
 
-function withLease(record: AgentSessionRecord, lease: AgentSessionLease): AgentSessionRecord {
+export function withLease(
+  record: AgentSessionRecord,
+  lease: AgentSessionLease
+): AgentSessionRecord {
   return { ...record, lease, updatedAt: lease.lastRenewedAt }
 }
 
-function assertFence(lease: AgentSessionLease, fence: number): void {
+export function assertFence(lease: AgentSessionLease, fence: number): void {
   if (lease.runtimeFence !== fence) {
     throw new Error('agent_session_checkpoint_stale')
   }
@@ -242,6 +245,17 @@ export function applyAgentSessionRestartAdjudication(args: {
   now: number
 }): AgentSessionRecord {
   const { record } = args
+  if (
+    record.lease.handoffStage === 'old-owner-stopped' &&
+    record.lease.claimStatus === 'released' &&
+    record.lease.ownerProcess === null
+  ) {
+    return withLease(record, {
+      ...record.lease,
+      unreconciled: false,
+      lastRenewedAt: args.now
+    })
+  }
   const adjudication = adjudicateAgentSessionRestart({
     lease: record.lease,
     probe: args.probe,
