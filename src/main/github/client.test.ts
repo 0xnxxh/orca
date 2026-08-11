@@ -4487,20 +4487,38 @@ describe('GitHub GraphQL rate-limit guard', () => {
     expect(mergeQueueMetadataCall?.[0]).toEqual(expect.arrayContaining(['-f', 'branch=main']))
   })
 
-  it('uses async merge only for GitHub-registered stacks', async () => {
+  const validStackHeadSha = 'a'.repeat(40)
+  const validStackBaseSha = 'b'.repeat(40)
+  const validSha256HeadSha = 'c'.repeat(64)
+
+  it.each([
+    {
+      objectFormat: 'SHA-1 with a base SHA',
+      headSha: validStackHeadSha,
+      baseSha: validStackBaseSha
+    },
+    {
+      objectFormat: 'SHA-256 without a base SHA',
+      headSha: validSha256HeadSha,
+      baseSha: undefined
+    }
+  ])('uses async merge only for GitHub-registered stacks using $objectFormat', async (scenario) => {
     ghExecFileAsyncMock
       .mockResolvedValueOnce({
         stdout: JSON.stringify({
           number: 202,
           title: 'Stack API',
           state: 'open',
-          head: { ref: 'stack/api', sha: 'api-sha' },
+          head: { ref: 'stack/api', sha: scenario.headSha },
           base: { ref: 'stack/models', sha: 'models-sha' },
           stack: {
             number: 51,
             position: 2,
             size: 2,
-            base: { ref: 'main', sha: 'main-sha' }
+            base: {
+              ref: 'main',
+              ...(scenario.baseSha ? { sha: scenario.baseSha } : {})
+            }
           }
         })
       })
@@ -4527,7 +4545,7 @@ describe('GitHub GraphQL rate-limit guard', () => {
         'PUT',
         'repos/stablyai/orca/pulls/202/merge-async',
         'merge_action=merge_queue',
-        'sha=api-sha'
+        `sha=${scenario.headSha}`
       ])
     )
     expect(mergeCall?.[0]).not.toContain('merge_method=squash')
@@ -4544,13 +4562,13 @@ describe('GitHub GraphQL rate-limit guard', () => {
         stdout: JSON.stringify({
           number: 202,
           state: 'open',
-          head: { ref: 'stack/api', sha: 'api-sha' },
+          head: { ref: 'stack/api', sha: validStackHeadSha },
           base: { ref: 'stack/models', sha: 'models-sha' },
           stack: {
             number: 51,
             position: 2,
             size: 2,
-            base: { ref: 'main', sha: 'main-sha' }
+            base: { ref: 'main', sha: validStackBaseSha }
           }
         })
       })
@@ -4603,18 +4621,182 @@ describe('GitHub GraphQL rate-limit guard', () => {
       expectedOptions: { cwd: '/repo-root', host: 'github.com' }
     },
     {
+      failure: 'valid JSON with an array payload',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: { stdout: '[]' },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'invalid response shape',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'present primitive stack metadata',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: {
+        stdout: JSON.stringify({
+          number: 202,
+          head: { sha: validStackHeadSha },
+          stack: true
+        })
+      },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'malformed stack',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
       failure: 'malformed stack response',
       repoPath: '/repo-root',
       connectionId: undefined,
       probeResponse: {
         stdout: JSON.stringify({
           number: 202,
-          head: { sha: 'api-sha' },
+          head: { sha: validStackHeadSha },
           stack: {
             number: 51,
             position: 2,
             size: '2',
-            base: { ref: 'main', sha: 'main-sha' }
+            base: { ref: 'main', sha: validStackBaseSha }
+          }
+        })
+      },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'malformed stack',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'incoherent stack position',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: {
+        stdout: JSON.stringify({
+          number: 202,
+          head: { sha: validStackHeadSha },
+          stack: {
+            number: 51,
+            position: 3,
+            size: 2,
+            base: { ref: 'main', sha: validStackBaseSha }
+          }
+        })
+      },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'malformed stack',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'non-positive stack number',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: {
+        stdout: JSON.stringify({
+          number: 202,
+          head: { sha: validStackHeadSha },
+          stack: {
+            number: 0,
+            position: 1,
+            size: 2,
+            base: { ref: 'main', sha: validStackBaseSha }
+          }
+        })
+      },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'malformed stack',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'fractional stack size',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: {
+        stdout: JSON.stringify({
+          number: 202,
+          head: { sha: validStackHeadSha },
+          stack: {
+            number: 51,
+            position: 1,
+            size: 1.5,
+            base: { ref: 'main', sha: validStackBaseSha }
+          }
+        })
+      },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'malformed stack',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'unsafe stack number',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: {
+        stdout: JSON.stringify({
+          number: 202,
+          head: { sha: validStackHeadSha },
+          stack: {
+            number: Number.MAX_SAFE_INTEGER + 1,
+            position: 1,
+            size: 2,
+            base: { ref: 'main', sha: validStackBaseSha }
+          }
+        })
+      },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'malformed stack',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'blank stack base ref',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: {
+        stdout: JSON.stringify({
+          number: 202,
+          head: { sha: validStackHeadSha },
+          stack: {
+            number: 51,
+            position: 2,
+            size: 2,
+            base: { ref: '  ', sha: validStackBaseSha }
+          }
+        })
+      },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'malformed stack',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'invalid stack base SHA',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: {
+        stdout: JSON.stringify({
+          number: 202,
+          head: { sha: validStackHeadSha },
+          stack: {
+            number: 51,
+            position: 2,
+            size: 2,
+            base: { ref: 'main', sha: 123 }
+          }
+        })
+      },
+      expectedError: stackMetadataUnavailableError,
+      expectedDiagnostic: 'malformed stack',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
+    },
+    {
+      failure: 'invalid string stack base SHA',
+      repoPath: '/repo-root',
+      connectionId: undefined,
+      probeResponse: {
+        stdout: JSON.stringify({
+          number: 202,
+          head: { sha: validStackHeadSha },
+          stack: {
+            number: 51,
+            position: 2,
+            size: 2,
+            base: { ref: 'main', sha: 'not-a-git-object-id' }
           }
         })
       },
@@ -4634,7 +4816,7 @@ describe('GitHub GraphQL rate-limit guard', () => {
             number: 51,
             position: 2,
             size: 2,
-            base: { ref: 'main', sha: 'main-sha' }
+            base: { ref: 'main', sha: validStackBaseSha }
           }
         })
       },
@@ -4643,34 +4825,44 @@ describe('GitHub GraphQL rate-limit guard', () => {
       expectedOptions: { cwd: '/repo-root', host: 'github.com' }
     },
     {
-      failure: 'omitted stack metadata',
+      failure: 'registered stack response with an invalid head SHA',
       repoPath: '/repo-root',
       connectionId: undefined,
       probeResponse: {
         stdout: JSON.stringify({
           number: 202,
-          head: { sha: 'api-sha' },
-          base: { ref: 'stack/models', sha: 'models-sha' }
+          head: { ref: 'stack/api', sha: {} },
+          stack: {
+            number: 51,
+            position: 2,
+            size: 2,
+            base: { ref: 'main', sha: validStackBaseSha }
+          }
         })
       },
       expectedError: stackMetadataUnavailableError,
-      expectedDiagnostic: 'stack field omitted',
+      expectedDiagnostic: 'missing head SHA',
       expectedOptions: { cwd: '/repo-root', host: 'github.com' }
     },
     {
-      failure: 'omitted stack metadata on GHES',
+      failure: 'registered stack response with an invalid string head SHA',
       repoPath: '/repo-root',
       connectionId: undefined,
       probeResponse: {
         stdout: JSON.stringify({
           number: 202,
-          head: { sha: 'api-sha' },
-          base: { ref: 'stack/models', sha: 'models-sha' }
+          head: { ref: 'stack/api', sha: 'not-a-git-object-id' },
+          stack: {
+            number: 51,
+            position: 2,
+            size: 2,
+            base: { ref: 'main', sha: validStackBaseSha }
+          }
         })
       },
       expectedError: stackMetadataUnavailableError,
-      expectedDiagnostic: 'stack field omitted',
-      expectedOptions: { cwd: '/repo-root', host: 'github.acme-corp.com:8443' }
+      expectedDiagnostic: 'missing head SHA',
+      expectedOptions: { cwd: '/repo-root', host: 'github.com' }
     }
   ])('fails closed on $failure', async (scenario) => {
     const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -4730,6 +4922,55 @@ describe('GitHub GraphQL rate-limit guard', () => {
         scenario.expectedDiagnostic
       )
     expect.soft(consoleWarnSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps legacy merge when an ordinary GitHub response omits stack', async () => {
+    ghExecFileAsyncMock
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          number: 13866,
+          title: 'Fail closed on unavailable stack metadata',
+          state: 'open',
+          head: {
+            ref: 'sta-3924-stack-merge-fail-closed',
+            sha: validStackHeadSha
+          },
+          base: { ref: 'main', sha: validStackBaseSha }
+        })
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          number: 13866,
+          title: 'Fail closed on unavailable stack metadata',
+          state: 'OPEN',
+          url: 'https://github.com/stablyai/orca/pull/13866',
+          statusCheckRollup: [],
+          updatedAt: '2026-08-11T00:00:00Z',
+          isDraft: false,
+          mergeable: 'MERGEABLE',
+          baseRefName: 'main',
+          baseRefOid: validStackBaseSha,
+          headRefName: 'sta-3924-stack-merge-fail-closed',
+          headRefOid: validStackHeadSha
+        })
+      })
+      .mockResolvedValueOnce({ stdout: '', stderr: '' })
+
+    await expect(
+      mergePR('/repo-root', 13866, 'squash', undefined, {
+        owner: 'stablyai',
+        repo: 'orca',
+        host: 'github.com'
+      })
+    ).resolves.toEqual({ ok: true })
+
+    expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
+      3,
+      ['pr', 'merge', '13866', '--squash', '--repo', 'stablyai/orca'],
+      expect.objectContaining({ env: expect.objectContaining({ GH_PROMPT_DISABLED: '1' }) })
+    )
+    expect(acquireMock).toHaveBeenCalledTimes(1)
+    expect(releaseMock).toHaveBeenCalledTimes(1)
   })
 
   it('keeps legacy merge for unregistered dependent PR chains', async () => {

@@ -2949,6 +2949,39 @@ async function lookupPRByBranchName(args: {
   }
 }
 
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+function isGitObjectId(value: unknown): value is string {
+  return typeof value === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value)
+}
+
+function isUsableRestStackMetadata(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const stack = value as {
+    number?: unknown
+    position?: unknown
+    size?: unknown
+    base?: unknown
+  }
+  if (!stack.base || typeof stack.base !== 'object' || Array.isArray(stack.base)) {
+    return false
+  }
+  const base = stack.base as { ref?: unknown; sha?: unknown }
+  return (
+    isPositiveSafeInteger(stack.number) &&
+    isPositiveSafeInteger(stack.position) &&
+    isPositiveSafeInteger(stack.size) &&
+    stack.position <= stack.size &&
+    typeof base.ref === 'string' &&
+    base.ref.trim().length > 0 &&
+    (base.sha === undefined || isGitObjectId(base.sha))
+  )
+}
+
 async function getRestPRByNumber(
   ownerRepo: GitHubApiRepository,
   number: number,
@@ -2965,16 +2998,17 @@ async function getRestPRByNumber(
   }
   const restData = parsed as RestPullRequest
   const mapped = mapRestPullRequest(restData)
-  if (options.requireUsableStackMetadata) {
-    // Why: only explicit null authorizes legacy merge; an absent field cannot prove the PR is unregistered.
-    const hasStackMetadata = Object.hasOwn(restData, 'stack')
-    if (!hasStackMetadata || (restData.stack !== null && (!mapped.stack || !mapped.headRefOid))) {
-      const reason = !hasStackMetadata
-        ? 'stack field omitted'
-        : !mapped.stack
-          ? 'malformed stack'
-          : 'missing head SHA'
-      throw new Error(reason)
+  if (
+    options.requireUsableStackMetadata &&
+    restData.stack !== undefined &&
+    restData.stack !== null
+  ) {
+    // Why: GitHub omits stack for ordinary PRs; only unusable non-null metadata is unsafe.
+    if (!isUsableRestStackMetadata(restData.stack) || !mapped.stack) {
+      throw new Error('malformed stack')
+    }
+    if (!isGitObjectId(restData.head?.sha)) {
+      throw new Error('missing head SHA')
     }
   }
   return mapped
