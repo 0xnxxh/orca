@@ -199,16 +199,18 @@ describe('buildClaudeResumeLaunchCommand', () => {
     }
   )
 
-  it.each(['claude "-`r" foo --model x', 'claude "-`u{72}" oldid'])(
-    'fails open on powershell escape sequences inside double quotes: %s',
-    (base) => {
-      // PowerShell expands these only inside double quotes, so the tokenizer's
-      // token value is not what argv receives.
-      expect(buildClaudeResumeLaunchCommand(base, RESUME, 'powershell')).toBe(
-        `${base} '--resume' '${SESSION_ID}'`
-      )
-    }
-  )
+  it.each([
+    'claude "-`r" foo --model x',
+    'claude "-`u{72}" oldid --resume x',
+    'claude -`r foo --model x',
+    'claude --resum`e stale --model x'
+  ])('fails open on powershell escape sequences, quoted or bare: %s', (base) => {
+    // PowerShell expands these in bare arguments too, so the tokenizer's
+    // token value is not what argv receives.
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'powershell')).toBe(
+      `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
 
   it('fails open on the powershell stop-parsing token', () => {
     // After a bare --%, PowerShell hands the rest of the line to the child
