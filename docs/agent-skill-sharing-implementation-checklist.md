@@ -6,7 +6,7 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `e6737e5068` on `skills-share` (pushed; no PR).
+- Orca implementation: `81bc526d81` on `skills-share` (pushed; no PR).
 - Orca Cloud: `ddbd4e2` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
@@ -14,6 +14,13 @@ Validated so far:
 - Local Node and web typechecks, changed-code quality gates, 94 skill-domain files with 770 tests
   passed and 3 skipped, 132 Orca Cloud API tests, the full Cloud monorepo test/typecheck/lint/build
   gates, and Terraform validation.
+- Final Orca validation passed repository-wide lint, all Node/CLI/web typechecks, the production
+  desktop/native build, the Node 18 Relay bundle contract, 78 focused skill files with 557 tests
+  passed and 10 platform skips, and the mixed-version wire suite. The full repository run passed
+  49,977 tests with 112 skips; its three environment/timeout failures passed as a 124-test rerun
+  after removing Orca-injected Git config variables and rerunning the slow macOS PTY case.
+- Skill sharing and installation renderer copy now passes the localization catalog, extraction,
+  and coverage gates without a max-lines exception.
 - Remote upload sessions actively expire abandoned bytes after their bounded idle lifetime, and
   begin/chunk/commit retries resume from the host-acknowledged offset under one stable transfer ID.
 - Identical archives are deduplicated only within an owner tenant. PostgreSQL object identity and
@@ -39,6 +46,10 @@ Validated so far:
 - Real paired-runtime installation passed from an isolated Electron client to both a headed
   desktop host and headless `orca serve` host. The host owned global and Git-worktree installs;
   the headed host also owned a plain-folder install. The client's home remained untouched.
+- A fresh post-resilience E2E run passed all three headed paired-runtime, headless `orca serve`,
+  and Docker SSH journeys. Focused failure injection also proves invalid gzip classification,
+  old-version preservation after `EACCES` and `ENOSPC`, bounded recovery from a lost final install
+  response, and validated structured SSH failure data without arbitrary error-data disclosure.
 - Isolated staging bucket, IAM, secret container, log metrics, dashboard, and alerts in
   `onorca-cloud-staging`.
 
@@ -233,6 +244,8 @@ does not mean the surrounding phase is complete.
 - [x] Test traversal, absolute paths, drive paths, Unicode/case collisions, duplicate paths, all
       rejected link and special-file types, and encrypted entries.
 - [x] Test truncated archives and invalid tar and content checksums.
+- [x] Test invalid gzip bytes and map zlib-specific errors to the stable non-retryable archive
+      category.
 - [x] Fuzz archive path normalization and envelope parsing with bounded resources.
 
 ### Phase 2 package gate
@@ -646,13 +659,17 @@ does not mean the surrounding phase is complete.
 - [x] Never pass the desktop's local path as a remote package source.
 - [x] Preserve the same inspection, transaction, provenance, and result behavior for both
       transports.
+- [x] Retry an idempotent install after a recoverable lost final response; rebuild a staged
+      transfer before retrying so a consumed upload is never reused.
 - [x] Run the real Electron client against a paired desktop host for global, Git-worktree, and
       plain-folder install, unchanged preview, inventory, and removal.
 - [x] Run the same contract against a paired headless `orca serve` host for global and
       Git-worktree install, unchanged preview, inventory, and removal.
 - [x] Verify paired installation creates files only in host-owned roots and never falls back to the
       client's isolated home.
-- [ ] Test connection loss and resumption or restart behavior at every transfer boundary.
+- [ ] Test connection loss and resumption or restart behavior at every transfer boundary. Lost
+      final install-response convergence is covered for direct and staged paired-runtime paths;
+      restart and the remaining physical disconnect boundaries are still open.
 
 ### Mixed versions
 
@@ -743,7 +760,9 @@ source snapshot, dependencies, and package-manager store were removed after the 
       `skill-install-filesystem-failed`; the real Windows source remains intact for retry.
 - [ ] Terminate the runtime before and after each journal boundary and verify startup recovery.
 - [ ] Test permission-denied, read-only, disk-full, cancellation, runtime disconnect, and partial
-      provider-coverage paths.
+      provider-coverage paths. Deterministic `EACCES` and `ENOSPC` transaction injection now proves
+      the prior installed version remains intact; physical read-only/disk-full and disconnect
+      journeys remain open.
 
 ### WSL tests
 
@@ -815,8 +834,13 @@ This does not substitute for physical SSH macOS/Windows or the supported Linux f
       supports it.
 - [x] Test Git worktree and folder-workspace scope over SSH through the disposable Docker Linux
       target and verify the host-owned paths independently.
-- [ ] Test connection loss during upload, extraction, commit, provenance, and result return.
-- [ ] Prove SSH and paired runtimes return the same result and error-category contracts.
+- [ ] Test connection loss during upload, extraction, commit, provenance, and result return. Lost
+      result-return recovery is covered for direct and staged SSH installs; the other physical
+      boundaries remain open.
+- [ ] Prove SSH and paired runtimes return the same result and error-category contracts. Focused
+      coverage now proves invalid staged archives preserve the stable archive category through SSH
+      and that only schema-valid failure data crosses Relay JSON-RPC; the complete category matrix
+      remains open.
 
 ## 12. Add observability, operations, and security controls
 
@@ -897,7 +921,8 @@ still require the listed split metrics, latency panels, and alerts.
       links, and broken links.
 - [ ] Test concurrent desktop, headless runtime, CLI, SSH, and recovery attempts.
 - [ ] Test permission and read-only failures, disk exhaustion, cancellation, process termination,
-      and host disconnect.
+      and host disconnect. Simulated `EACCES` and `ENOSPC` preservation plus lost-response retry are
+      covered; physical failure and termination journeys remain open.
 - [ ] Test independent-copy drift and incomplete provider coverage.
 
 ### Platform and target matrix

@@ -39,10 +39,17 @@ that larger package-manager surface.
 
 ## Current execution status
 
-Orca implementation through `e6737e5068` and Orca Cloud implementation through `ddbd4e2` are
+Orca implementation through `81bc526d81` and Orca Cloud implementation through `ddbd4e2` are
 pushed on feature branches without an Orca pull request. Local, Windows, WSL, paired-runtime, and
 Docker-backed SSH validation are substantially complete; the implementation checklist records the
 exact evidence and remaining physical-host and failure-recovery gates.
+
+The latest resilience pass adds bounded convergence after a lost final install response for both
+paired runtimes and SSH. A staged retry creates a new upload instead of reusing a consumed upload.
+SSH now carries only schema-validated structured skill failures through optional JSON-RPC
+`error.data`, while older peers continue to ignore the field and newer clients fall back safely
+when it is absent. Invalid gzip input has a stable archive category, and deterministic `EACCES`
+and `ENOSPC` injection proves failed updates preserve the previous installed version.
 
 The dedicated staging bucket, IAM, secret container, metrics, dashboard, and alerts exist in
 `onorca-cloud-staging`. Staging Cloud SQL is shared with Auth and Relay and is intentionally
@@ -920,7 +927,15 @@ Recommended RPC surface:
 
 Upload sessions are bounded by count, bytes, idle lifetime, and chunk size. Offsets are monotonic;
 retries either repeat an acknowledged chunk idempotently or restart the upload. Disconnect and
-cancellation release staging bytes.
+cancellation release staging bytes. Installation RPC retries are also bounded. Because operation
+IDs make commit idempotent, a direct install can converge after its response is lost; a staged
+install rebuilds the upload before retrying because the first host attempt may already have
+consumed it.
+
+SSH Relay errors retain JSON-RPC numeric codes on the wire. Known skill failures add optional,
+schema-validated `error.data`; arbitrary handler data is never published. This is additive for
+mixed versions and gives SSH the same stable error categories as native and paired installation
+without exposing package contents or credentials.
 
 The runtime that executes installation owns:
 
@@ -985,6 +1000,7 @@ destination containment, and expected identities must all agree.
 - Traversal, absolute paths, Windows drive paths, Unicode/case collisions, duplicate paths,
   symlinks, hardlinks, devices, FIFOs, sockets, and encrypted entries.
 - Truncated and checksum-invalid archives.
+- Invalid gzip bytes with a stable non-retryable archive failure.
 
 ### Transaction tests
 
@@ -997,8 +1013,10 @@ destination containment, and expected identities must all agree.
 - Cancellation during download, extraction, copy, commit, and alias reconciliation.
 - Antivirus-style Windows rename contention.
 - Permission failures and read-only destinations.
+- Permission and disk-capacity failure injection that preserves the prior installed version.
 - Alias failure with verified copy fallback.
 - Independent copy drift during update and removal.
+- Lost final-response retry for direct installs and staged-transfer rebuild before retry.
 
 ### Target matrix
 
