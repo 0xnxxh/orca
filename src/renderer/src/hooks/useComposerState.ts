@@ -3444,6 +3444,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         const smartGitHubResolution = smartGitHubSettlement.value
         const smartGitHubMetadata =
           smartGitHubResolution.kind === 'none' ? null : smartGitHubResolution
+        const submitLinkedWorkItem = smartGitHubMetadata?.linkedWorkItem ?? linkedWorkItem
         const agent =
           requestedAgent && isTuiAgentEnabled(requestedAgent, disabledTuiAgents)
             ? requestedAgent
@@ -3452,12 +3453,14 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
           return
         }
         const folderLaunchDraftText =
-          agent && linkedWorkItem ? resolveFolderWorkspaceLaunchDraft(linkedWorkItem, note) : null
+          agent && submitLinkedWorkItem
+            ? resolveFolderWorkspaceLaunchDraft(submitLinkedWorkItem, note)
+            : null
         const folderWorkspaceCreated = await submitFolderWorkspaceCreate({
           projectGroup: selectedProjectGroup,
           name: smartGitHubMetadata?.workspaceName ?? name,
           lastAutoName: lastAutoNameRef.current,
-          linkedWorkItem: smartGitHubMetadata?.linkedWorkItem ?? linkedWorkItem,
+          linkedWorkItem: submitLinkedWorkItem,
           linkedTaskSourceContext: taskSourceContext,
           note,
           quickAgent: agent,
