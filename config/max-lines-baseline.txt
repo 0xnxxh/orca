@@ -232,7 +232,6 @@ inline src/renderer/src/components/settings/AgentsPane.tsx
 inline src/renderer/src/components/settings/RepositoryHooksSection.tsx
 inline src/renderer/src/components/settings/RuntimeEnvironmentsPane.tsx
 inline src/renderer/src/components/settings/Settings.tsx
-inline src/renderer/src/components/settings/SettingsFormControls.tsx
 inline src/renderer/src/components/sidebar/RemoteFileBrowser.tsx
 inline src/renderer/src/components/sidebar/WorkspaceKanbanDrawer.tsx
 inline src/renderer/src/components/sidebar/WorktreeContextMenu.tsx
