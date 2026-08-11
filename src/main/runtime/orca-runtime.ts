@@ -9123,6 +9123,10 @@ export class OrcaRuntimeService {
           if (!terminal.processId || !terminal.paneKey || !terminal.tabId) {
             throw new Error('The resumed terminal did not publish a process identity.')
           }
+          await this.waitForTerminal(terminal.handle, {
+            condition: 'tui-idle',
+            timeoutMs: 30_000
+          })
           const proof = await this.waitForStructuredTuiProof({
             handle: terminal.handle,
             paneKey: terminal.paneKey,
@@ -9131,11 +9135,11 @@ export class OrcaRuntimeService {
             codexHome: record.accountHome.path,
             sessionId: record.sessionId
           })
-          await this.focusTerminal(terminal.handle)
+          const revealed = await this.focusTerminal(terminal.handle)
           return {
             terminal: {
               handle: terminal.handle,
-              tabId: terminal.tabId,
+              tabId: revealed.tabId,
               paneKey: terminal.paneKey
             },
             process: await readStructuredTuiProcessIdentity({
