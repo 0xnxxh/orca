@@ -6,7 +6,7 @@ Last updated: 2026-08-11.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `534abb8908` on `skills-share` (pushed; no PR).
+- Orca implementation: `18fe31f107` on `skills-share` (pushed; no PR).
 - Orca Cloud: `81a581d` on `skills-share-cloud` (pushed; no PR).
 
 Validated so far:
@@ -687,9 +687,12 @@ matching Orca's supported Windows placement topology.
 - [ ] Test an unowned junction, external link, broken junction, and provider parent that is already
       linked.
 - [ ] Test copy-fallback drift during update and removal.
-- [ ] Hold destination files open to simulate antivirus/indexer contention and verify bounded
-      `EPERM`, `EACCES`, and `EBUSY` rename retries.
-- [ ] Verify retry exhaustion restores the old version and yields an actionable result.
+- [x] Hold destination files open to simulate antivirus/indexer contention and verify bounded
+      `EPERM`, `EACCES`, and `EBUSY` rename retries. A real `FileShare.None` lock on `windows 2`
+      proved transient recovery and bounded exhaustion at `18fe31f107`.
+- [x] Verify retry exhaustion restores the old version and yields an actionable result. The
+      transaction preserves the old bytes and returns retryable
+      `skill-install-filesystem-failed`; the real Windows source remains intact for retry.
 - [ ] Terminate the runtime before and after each journal boundary and verify startup recovery.
 - [ ] Test permission-denied, read-only, disk-full, cancellation, runtime disconnect, and partial
       provider-coverage paths.
