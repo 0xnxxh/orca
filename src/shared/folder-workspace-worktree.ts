@@ -1,12 +1,15 @@
 import type { FolderWorkspace, Worktree } from './types'
 import { folderWorkspaceKey } from './workspace-scope'
 import { toSshExecutionHostId } from './execution-host'
+import { normalizeWorkspaceCreatorProvenance } from './workspace-creator-provenance'
 
 export function folderWorkspaceToWorktree(folderWorkspace: FolderWorkspace): Worktree {
   const linkedTask = folderWorkspace.linkedTask
+  const creatorProvenance = normalizeWorkspaceCreatorProvenance(folderWorkspace.creatorProvenance)
   return {
     id: folderWorkspaceKey(folderWorkspace.id),
     repoId: `folder-workspace:${folderWorkspace.projectGroupId}`,
+    ...(creatorProvenance ? { creatorProvenance } : {}),
     displayName: folderWorkspace.name,
     comment: folderWorkspace.comment,
     linkedIssue:

@@ -1,5 +1,12 @@
 import React from 'react'
-import { CalendarClock, GitBranch, GitCommitHorizontal, Moon, SquareTerminal } from 'lucide-react'
+import {
+  CalendarClock,
+  GitBranch,
+  GitCommitHorizontal,
+  MonitorSmartphone,
+  Moon,
+  SquareTerminal
+} from 'lucide-react'
 import { useAppStore } from '@/store'
 import { translate } from '@/i18n/i18n'
 import { FilterToggleRow } from './FilterToggleRow'
@@ -17,6 +24,8 @@ const SidebarWorkspaceFilterSection = React.memo(function SidebarWorkspaceFilter
   const setHideCliCreatedWorkspaces = useAppStore((s) => s.setHideCliCreatedWorkspaces)
   const hideDetachedHeadWorkspaces = useAppStore((s) => s.hideDetachedHeadWorkspaces)
   const setHideDetachedHeadWorkspaces = useAppStore((s) => s.setHideDetachedHeadWorkspaces)
+  const hideWorkspacesFromOtherDevices = useAppStore((s) => s.hideWorkspacesFromOtherDevices)
+  const setHideWorkspacesFromOtherDevices = useAppStore((s) => s.setHideWorkspacesFromOtherDevices)
   const alwaysShowDefaultBranchWorkspace = useAppStore((s) => s.alwaysShowDefaultBranchWorkspace)
   const setAlwaysShowDefaultBranchWorkspace = useAppStore(
     (s) => s.setAlwaysShowDefaultBranchWorkspace
@@ -82,6 +91,15 @@ const SidebarWorkspaceFilterSection = React.memo(function SidebarWorkspaceFilter
         )}
         checked={hideCliCreatedWorkspaces}
         onChange={setHideCliCreatedWorkspaces}
+      />
+      <FilterToggleRow
+        icon={<MonitorSmartphone className="size-3.5" />}
+        label={translate(
+          'auto.components.sidebar.SidebarWorkspaceFilterSection.otherDevices',
+          'Hide workspaces from other devices'
+        )}
+        checked={hideWorkspacesFromOtherDevices}
+        onChange={setHideWorkspacesFromOtherDevices}
       />
       <FilterToggleRow
         icon={<GitCommitHorizontal className="size-3.5" />}

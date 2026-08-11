@@ -1026,6 +1026,7 @@ function createFolderWorkspace(
     createdAt: now,
     orcaCreatedAt: now,
     orcaCreationSource: 'desktop',
+    creatorProvenance: { kind: 'host' },
     ...(args.automationProvenance ? { automationProvenance: args.automationProvenance } : {}),
     ...(args.cliProvenance ? { cliProvenance: args.cliProvenance } : {}),
     ...(args.createdWithAgent ? { createdWithAgent: args.createdWithAgent } : {}),

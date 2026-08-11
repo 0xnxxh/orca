@@ -124,6 +124,7 @@ import {
   setVisibleWorktreeIds,
   sidebarHasActiveFilters
 } from './visible-worktrees'
+import { getPairedDeviceIdsByEnvironment } from './workspace-creator-visibility'
 import {
   getCyclicProjectedWorktreeLineageIds,
   getWorktreeLineageAncestors
@@ -5222,6 +5223,7 @@ const WorktreeList = React.memo(function WorktreeList({
   const hideAutomationGeneratedWorkspaces = useAppStore((s) => s.hideAutomationGeneratedWorkspaces)
   const hideCliCreatedWorkspaces = useAppStore((s) => s.hideCliCreatedWorkspaces)
   const hideDetachedHeadWorkspaces = useAppStore((s) => s.hideDetachedHeadWorkspaces)
+  const hideWorkspacesFromOtherDevices = useAppStore((s) => s.hideWorkspacesFromOtherDevices)
   const alwaysShowDefaultBranchWorkspace = useAppStore((s) => s.alwaysShowDefaultBranchWorkspace)
   const filterRepoIds = useAppStore((s) => s.filterRepoIds)
   const openModal = useAppStore((s) => s.openModal)
@@ -5510,6 +5512,11 @@ const WorktreeList = React.memo(function WorktreeList({
       hideAutomationGeneratedWorkspaces,
       hideCliCreatedWorkspaces,
       hideDetachedHeadWorkspaces,
+      hideWorkspacesFromOtherDevices,
+      pairedDeviceIdsByEnvironment: getPairedDeviceIdsByEnvironment(
+        runtimeEnvironments,
+        runtimeStatusByEnvironmentId
+      ),
       alwaysShowDefaultBranchWorkspace,
       repoMap,
       workspaceHostScope,
@@ -5528,6 +5535,7 @@ const WorktreeList = React.memo(function WorktreeList({
     hideAutomationGeneratedWorkspaces,
     hideCliCreatedWorkspaces,
     hideDetachedHeadWorkspaces,
+    hideWorkspacesFromOtherDevices,
     alwaysShowDefaultBranchWorkspace,
     workspaceHostScope,
     visibleWorkspaceHostIds,
@@ -5539,7 +5547,9 @@ const WorktreeList = React.memo(function WorktreeList({
     sortedIds,
     worktreeMap,
     worktreeLineageById,
-    worktreesByRepo
+    worktreesByRepo,
+    runtimeEnvironments,
+    runtimeStatusByEnvironmentId
   ])
   // Why: agentStatusEpoch bumps recompute this memo even when membership and
   // order are unchanged; keeping the previous identity stops the whole
@@ -6490,6 +6500,7 @@ const WorktreeList = React.memo(function WorktreeList({
       hideAutomationGeneratedWorkspaces,
       hideCliCreatedWorkspaces,
       hideDetachedHeadWorkspaces,
+      hideWorkspacesFromOtherDevices,
       alwaysShowDefaultBranchWorkspace,
       visibleWorkspaceHostIds,
       workspaceHostScope
@@ -6501,6 +6512,7 @@ const WorktreeList = React.memo(function WorktreeList({
       hideAutomationGeneratedWorkspaces,
       hideCliCreatedWorkspaces,
       hideDetachedHeadWorkspaces,
+      hideWorkspacesFromOtherDevices,
       alwaysShowDefaultBranchWorkspace,
       visibleWorkspaceHostIds,
       workspaceHostScope
@@ -6514,6 +6526,7 @@ const WorktreeList = React.memo(function WorktreeList({
   )
   const setHideCliCreatedWorkspaces = useAppStore((s) => s.setHideCliCreatedWorkspaces)
   const setHideDetachedHeadWorkspaces = useAppStore((s) => s.setHideDetachedHeadWorkspaces)
+  const setHideWorkspacesFromOtherDevices = useAppStore((s) => s.setHideWorkspacesFromOtherDevices)
   const setAlwaysShowDefaultBranchWorkspace = useAppStore(
     (s) => s.setAlwaysShowDefaultBranchWorkspace
   )
@@ -6540,6 +6553,9 @@ const WorktreeList = React.memo(function WorktreeList({
     if (actions.resetHideDetachedHeadWorkspaces) {
       setHideDetachedHeadWorkspaces(false)
     }
+    if (actions.resetHideWorkspacesFromOtherDevices) {
+      setHideWorkspacesFromOtherDevices(false)
+    }
     if (actions.resetAlwaysShowDefaultBranchWorkspace) {
       setAlwaysShowDefaultBranchWorkspace(true)
     }
@@ -6553,6 +6569,7 @@ const WorktreeList = React.memo(function WorktreeList({
     setHideAutomationGeneratedWorkspaces,
     setHideCliCreatedWorkspaces,
     setHideDetachedHeadWorkspaces,
+    setHideWorkspacesFromOtherDevices,
     setAlwaysShowDefaultBranchWorkspace,
     setVisibleWorkspaceHostIds,
     filterState

@@ -54,6 +54,10 @@ import {
   isDefaultBranchWorkspace,
   isSleepingSweepExemptWorkspace
 } from '@/components/sidebar/visible-worktrees'
+import {
+  getPairedDeviceIdsByEnvironment,
+  isWorkspaceFromOtherDevice
+} from '@/components/sidebar/workspace-creator-visibility'
 import { getLiveAgentStatusByWorktreeId, isInactiveWorkspace } from '@/lib/worktree-activity-state'
 import { orderEmptyQueryWorktrees } from '@/lib/order-empty-query-worktrees'
 import {
@@ -615,6 +619,7 @@ function WorktreeJumpPaletteContent({
   const hideAutomationGeneratedWorkspaces = useAppStore((s) => s.hideAutomationGeneratedWorkspaces)
   const hideCliCreatedWorkspaces = useAppStore((s) => s.hideCliCreatedWorkspaces)
   const hideDetachedHeadWorkspaces = useAppStore((s) => s.hideDetachedHeadWorkspaces)
+  const hideWorkspacesFromOtherDevices = useAppStore((s) => s.hideWorkspacesFromOtherDevices)
   const showSleepingWorkspaces = useAppStore((s) => s.showSleepingWorkspaces)
   const alwaysShowDefaultBranchWorkspace = useAppStore((s) => s.alwaysShowDefaultBranchWorkspace)
   const lastVisitedAtByWorktreeId = useAppStore((s) => s.lastVisitedAtByWorktreeId)
@@ -748,6 +753,10 @@ function WorktreeJumpPaletteContent({
       ),
     [agentStatusByPaneKey, tabsByWorktree]
   )
+  const pairedDeviceIdsByEnvironment = useMemo(
+    () => getPairedDeviceIdsByEnvironment(runtimeEnvironments, runtimeStatusByEnvironmentId),
+    [runtimeEnvironments, runtimeStatusByEnvironmentId]
+  )
 
   // Why: empty-query mirrors sidebar filters so Search opens on the same quiet list; typed search widens to global non-archived scope.
   const emptyQueryVisibleWorktrees = useMemo(
@@ -771,6 +780,12 @@ function WorktreeJumpPaletteContent({
           return false
         }
         if (hideDetachedHeadWorkspaces && isDetachedHeadWorkspace(worktree)) {
+          return false
+        }
+        if (
+          hideWorkspacesFromOtherDevices &&
+          isWorkspaceFromOtherDevice(worktree, pairedDeviceIdsByEnvironment)
+        ) {
           return false
         }
         if (
@@ -799,6 +814,8 @@ function WorktreeJumpPaletteContent({
       hideCliCreatedWorkspaces,
       hideDefaultBranchWorkspace,
       hideDetachedHeadWorkspaces,
+      hideWorkspacesFromOtherDevices,
+      pairedDeviceIdsByEnvironment,
       ptyIdsByTabId,
       showSleepingWorkspaces,
       tabsByWorktree,

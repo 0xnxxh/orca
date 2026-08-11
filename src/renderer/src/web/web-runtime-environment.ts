@@ -71,6 +71,7 @@ export function createStoredWebRuntimeEnvironment(args: {
     updatedAt: now,
     lastUsedAt: null,
     runtimeId: null,
+    ...(args.offer.pairedDeviceId ? { pairedDeviceId: args.offer.pairedDeviceId } : {}),
     ...(args.connectionDependency ? { connectionDependency: args.connectionDependency } : {}),
     ...(compatibleEnvironmentIds.length > 0 ? { compatibleEnvironmentIds } : {}),
     preferredEndpointId: `ws-${id}`,
@@ -124,17 +125,20 @@ export function getPreferredWebPairingOffer(
     v: 2,
     endpoint: endpoint.endpoint,
     deviceToken: endpoint.deviceToken,
-    publicKeyB64: endpoint.publicKeyB64
+    publicKeyB64: endpoint.publicKeyB64,
+    ...(environment.pairedDeviceId ? { pairedDeviceId: environment.pairedDeviceId } : {})
   }
 }
 
 export function updateStoredEnvironmentRuntimeId(
   environment: StoredWebRuntimeEnvironment,
-  runtimeId: string | null
+  runtimeId: string | null,
+  pairedDeviceId?: string
 ): StoredWebRuntimeEnvironment {
   const next = {
     ...environment,
     runtimeId,
+    ...(pairedDeviceId ? { pairedDeviceId } : {}),
     updatedAt: Date.now(),
     lastUsedAt: Date.now()
   }

@@ -281,6 +281,22 @@ describe('web runtime environment identity', () => {
     await expect(globals.window.api.runtimeEnvironments.list()).resolves.toEqual([])
   })
 
+  it('stores paired device identity from a web access link', async () => {
+    const globals = installBrowserGlobals('Linux')
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+
+    const paired = await globals.window.api.runtimeEnvironments.addFromPairingCode({
+      name: 'Shared server',
+      pairingCode: encodePairingCode({ pairedDeviceId: 'paired-device-a' })
+    })
+
+    expect(paired.environment.pairedDeviceId).toBe('paired-device-a')
+    expect(
+      JSON.parse(globals.storage.getItem('orca.web.runtimeEnvironment.v1') ?? '{}')
+    ).toMatchObject({ pairedDeviceId: 'paired-device-a' })
+  })
+
   it('persists an explicit Active Server choice across unrelated web settings writes', async () => {
     const globals = installBrowserGlobals('Linux')
     const { installWebPreloadApi } = await import('./web-preload-api')
@@ -378,7 +394,7 @@ describe('web runtime environment identity', () => {
           return Promise.resolve({
             id: method,
             ok: true,
-            result: { runtimeId: 'runtime-1' },
+            result: { runtimeId: 'runtime-1', pairedDeviceId: 'paired-device-a' },
             _meta: { runtimeId: 'runtime-1' }
           })
         }
@@ -431,6 +447,9 @@ describe('web runtime environment identity', () => {
     ).resolves.toMatchObject({ ok: true })
     expect(clientCount).toBe(2)
     expect(calls).toEqual(['status.get', 'status.get'])
+    expect(
+      JSON.parse(globals.storage.getItem('orca.web.runtimeEnvironment.v1') ?? '{}')
+    ).toMatchObject({ pairedDeviceId: 'paired-device-a' })
   })
 
   it('fences a web runtime response that completes after manual disconnect', async () => {
@@ -2357,6 +2376,49 @@ describe('web UI preload API', () => {
     expect(stored.featureInteractions?.ports).toEqual({
       firstInteractedAt: 300,
       interactionCount: 1
+    })
+  })
+
+  it('keeps the workspace origin filter browser-local across host UI responses', async () => {
+    const runtimeCalls: { method: string; params: unknown }[] = []
+    vi.doMock('./web-runtime-client', () => ({
+      WebRuntimeClient: class {
+        call(method: string, params?: unknown): Promise<RuntimeRpcResponse<unknown>> {
+          runtimeCalls.push({ method, params })
+          return Promise.resolve({
+            id: method,
+            ok: true,
+            result: {
+              ui: {
+                hideWorkspacesFromOtherDevices: false,
+                featureInteractions: {
+                  tasks: { firstInteractedAt: 100, interactionCount: 1 }
+                }
+              }
+            },
+            _meta: { runtimeId: 'runtime-1' }
+          })
+        }
+
+        close(): void {}
+      }
+    }))
+
+    const globals = installBrowserGlobals('Linux')
+    writeStoredRuntimeEnvironment(globals.storage)
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+
+    await globals.window.api.ui.set({ hideWorkspacesFromOtherDevices: true })
+    expect(runtimeCalls[0]).toEqual({ method: 'ui.set', params: {} })
+    await expect(globals.window.api.ui.get()).resolves.toMatchObject({
+      hideWorkspacesFromOtherDevices: true
+    })
+    await expect(globals.window.api.ui.recordFeatureInteraction('tasks')).resolves.toMatchObject({
+      hideWorkspacesFromOtherDevices: true
+    })
+    expect(JSON.parse(globals.storage.getItem('orca.web.ui.v1') ?? '{}')).toMatchObject({
+      hideWorkspacesFromOtherDevices: true
     })
   })
 

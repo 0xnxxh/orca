@@ -4,6 +4,7 @@ import type { Repo, Worktree } from '../../../../shared/types'
 import { computeVisibleWorktreeIds } from './visible-worktrees'
 import { getWorktreeIdsWithLiveAgent } from '@/lib/worktree-activity-state'
 import { getSettingsFocusedExecutionHostId } from '../../../../shared/execution-host'
+import { getPairedDeviceIdsByEnvironment } from './workspace-creator-visibility'
 
 type UseVisibleWorkspaceKanbanWorktreeIdsParams = {
   allWorktrees: readonly Worktree[]
@@ -22,6 +23,9 @@ export function useVisibleWorkspaceKanbanWorktreeIds({
   const hideAutomationGeneratedWorkspaces = useAppStore((s) => s.hideAutomationGeneratedWorkspaces)
   const hideCliCreatedWorkspaces = useAppStore((s) => s.hideCliCreatedWorkspaces)
   const hideDetachedHeadWorkspaces = useAppStore((s) => s.hideDetachedHeadWorkspaces)
+  const hideWorkspacesFromOtherDevices = useAppStore((s) => s.hideWorkspacesFromOtherDevices)
+  const runtimeEnvironments = useAppStore((s) => s.runtimeEnvironments)
+  const runtimeStatusByEnvironmentId = useAppStore((s) => s.runtimeStatusByEnvironmentId)
   const alwaysShowDefaultBranchWorkspace = useAppStore((s) => s.alwaysShowDefaultBranchWorkspace)
   const workspaceHostScope = useAppStore((s) => s.workspaceHostScope)
   const visibleWorkspaceHostIds = useAppStore((s) => s.visibleWorkspaceHostIds)
@@ -62,6 +66,11 @@ export function useVisibleWorkspaceKanbanWorktreeIds({
         hideAutomationGeneratedWorkspaces,
         hideCliCreatedWorkspaces,
         hideDetachedHeadWorkspaces,
+        hideWorkspacesFromOtherDevices,
+        pairedDeviceIdsByEnvironment: getPairedDeviceIdsByEnvironment(
+          runtimeEnvironments,
+          runtimeStatusByEnvironmentId
+        ),
         alwaysShowDefaultBranchWorkspace,
         repoMap,
         workspaceHostScope,
@@ -81,12 +90,15 @@ export function useVisibleWorkspaceKanbanWorktreeIds({
     hideAutomationGeneratedWorkspaces,
     hideCliCreatedWorkspaces,
     hideDetachedHeadWorkspaces,
+    hideWorkspacesFromOtherDevices,
     alwaysShowDefaultBranchWorkspace,
     workspaceHostScope,
     visibleWorkspaceHostIds,
     settings,
     ptyIdsByTabId,
     repoMap,
+    runtimeEnvironments,
+    runtimeStatusByEnvironmentId,
     showSleepingWorkspaces,
     tabsByWorktree,
     worktreeIdsWithLiveAgent,

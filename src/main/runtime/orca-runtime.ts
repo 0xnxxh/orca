@@ -17582,6 +17582,7 @@ export class OrcaRuntimeService {
         ...(meta?.manualOrder !== undefined ? { manualOrder: meta.manualOrder } : {}),
         lastActivityAt: worktree.lastActivityAt,
         ...(worktree.createdAt !== undefined ? { createdAt: worktree.createdAt } : {}),
+        ...(worktree.creatorProvenance ? { creatorProvenance: worktree.creatorProvenance } : {}),
         linkedIssue: worktree.linkedIssue,
         linkedPR,
         linkedLinearIssue: meta?.linkedLinearIssue ?? null,
@@ -17630,6 +17631,7 @@ export class OrcaRuntimeService {
         ...(worktree.manualOrder !== undefined ? { manualOrder: worktree.manualOrder } : {}),
         lastActivityAt: worktree.lastActivityAt,
         ...(worktree.createdAt !== undefined ? { createdAt: worktree.createdAt } : {}),
+        ...(worktree.creatorProvenance ? { creatorProvenance: worktree.creatorProvenance } : {}),
         linkedIssue: worktree.linkedIssue ?? null,
         linkedPR: null,
         linkedLinearIssue: worktree.linkedLinearIssue ?? null,
@@ -18304,6 +18306,7 @@ export class OrcaRuntimeService {
     name?: string
     folderPath?: string | null
     connectionId?: string | null
+    creatorProvenance?: FolderWorkspace['creatorProvenance']
     linkedTask?: FolderWorkspace['linkedTask']
     linkedTaskSourceContext?: FolderWorkspace['linkedTaskSourceContext']
     createdWithAgent?: FolderWorkspace['createdWithAgent']
@@ -18332,7 +18335,10 @@ export class OrcaRuntimeService {
       { getSshFilesystemProvider }
     )
     assertFolderWorkspacePathUsable(status)
-    const workspace = this.store.createFolderWorkspace(input)
+    const workspace = this.store.createFolderWorkspace({
+      ...input,
+      creatorProvenance: input.creatorProvenance ?? { kind: 'host' }
+    })
     this.notifyReposChanged()
     return workspace
   }
@@ -21652,6 +21658,7 @@ export class OrcaRuntimeService {
     pendingFirstAgentMessageRename?: boolean
     automationProvenance?: AutomationWorkspaceProvenance
     cliProvenance?: CliWorkspaceProvenance
+    creatorProvenance?: Worktree['creatorProvenance']
     startup?: WorktreeStartupLaunch
     startupDraft?: string
     startupDraftPaste?: WorktreeStartupDraftPaste
@@ -21718,6 +21725,7 @@ export class OrcaRuntimeService {
         },
         ...(args.automationProvenance ? { automationProvenance: args.automationProvenance } : {}),
         ...(args.cliProvenance ? { cliProvenance: args.cliProvenance } : {}),
+        creatorProvenance: args.creatorProvenance ?? { kind: 'host' },
         ...(args.linkedIssue !== undefined ? { linkedIssue: args.linkedIssue } : {}),
         ...(args.linkedPR !== undefined ? { linkedPR: args.linkedPR } : {}),
         ...(args.linkedLinearIssue !== undefined
@@ -22346,6 +22354,7 @@ export class OrcaRuntimeService {
         : {}),
       ...(args.automationProvenance ? { automationProvenance: args.automationProvenance } : {}),
       ...(args.cliProvenance ? { cliProvenance: args.cliProvenance } : {}),
+      creatorProvenance: args.creatorProvenance ?? { kind: 'host' },
       ...(args.comment !== undefined ? { comment: args.comment } : {}),
       ...(args.manualOrder !== undefined ? { manualOrder: args.manualOrder } : {}),
       ...(args.workspaceStatus !== undefined ? { workspaceStatus: args.workspaceStatus } : {})
