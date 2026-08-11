@@ -70,6 +70,11 @@ export type WorkspaceSpaceAnalyzeResult =
   | { ok: true; analysis: WorkspaceSpaceAnalysis }
   | { ok: false; cancelled: true }
 
+export type WorkspaceSpaceWorktreeMeasurement = Pick<
+  WorkspaceSpaceWorktree,
+  'worktreeId' | 'status' | 'sizeBytes'
+>
+
 export type WorkspaceSpaceDirectoryScanResult = {
   sizeBytes: number
   skippedEntryCount: number
@@ -89,4 +94,6 @@ export type WorkspaceSpaceScanProgress = {
   scannedWorktreeCount: number
   currentRepoDisplayName: string | null
   currentWorktreeDisplayName: string | null
+  /** Append-only batch; absent for older senders and progress-only updates. */
+  completedMeasurements?: WorkspaceSpaceWorktreeMeasurement[]
 }

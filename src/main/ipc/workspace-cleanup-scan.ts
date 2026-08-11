@@ -10,7 +10,6 @@ import type {
   WorkspaceCleanupCandidate,
   WorkspaceCleanupScanError,
   WorkspaceCleanupScanArgs,
-  WorkspaceCleanupScanProgress,
   WorkspaceCleanupScanResult
 } from '../../shared/workspace-cleanup'
 import { shouldScanBroadWorkspaceCleanupWorktree } from './workspace-cleanup-scan-eligibility'
@@ -34,23 +33,17 @@ import {
 } from './workspace-cleanup-scan-primitives'
 import { getLocalProjectWorktreeGitOptions } from '../project-runtime-git-options'
 import { listWorkspaceCleanupFolderWorkspaces } from './workspace-cleanup-folder-workspaces'
+import {
+  createWorkspaceCleanupProgressEmitter,
+  type WorkspaceCleanupScanOptions
+} from './workspace-cleanup-progress-emitter'
 
 const WORKTREE_SCAN_CONCURRENCY = 3
-
-type WorkspaceCleanupScanOptions = {
-  onProgress?: (progress: WorkspaceCleanupScanProgress) => void
-}
 
 type WorkspaceCleanupScanRepoProgress = {
   onWorktreesDiscovered?: (count: number) => void
   onCandidateScanned?: (candidate: WorkspaceCleanupCandidate) => void
   onErrors?: (errors: WorkspaceCleanupScanError[]) => void
-}
-
-type WorkspaceCleanupProgressEmitter = {
-  addDiscovered: (count: number) => void
-  addCandidate: (candidate: WorkspaceCleanupCandidate) => void
-  addErrors: (errors: WorkspaceCleanupScanError[]) => void
 }
 
 export async function scanWorkspaceCleanup(
@@ -66,27 +59,30 @@ export async function scanWorkspaceCleanup(
   const repos = parsedTarget
     ? store.getRepos().filter((repo) => repo.id === parsedTarget.repoId)
     : store.getRepos()
-  const progress = createProgressEmitter(args.scanId, scannedAt, options)
+  const progress = createWorkspaceCleanupProgressEmitter(args.scanId, scannedAt, options)
   const errors: WorkspaceCleanupScanResult['errors'] = []
   const candidates: WorkspaceCleanupCandidate[] = []
 
-  for (const repo of repos) {
-    const result = await scanRepoWorkspaces({
-      store,
-      repo,
-      scannedAt,
-      targetWorktreeId: args.worktreeId,
-      includeAllWorkspaces: args.includeAllWorkspaces === true,
-      skipGitWorktreeIds: new Set(args.skipGitWorktreeIds ?? []),
-      onWorktreesDiscovered: progress.addDiscovered,
-      onCandidateScanned: progress.addCandidate,
-      onErrors: progress.addErrors
-    })
-    appendWorkspaceCleanupItems(candidates, result.candidates)
-    appendWorkspaceCleanupItems(errors, result.errors)
+  try {
+    for (const repo of repos) {
+      const result = await scanRepoWorkspaces({
+        store,
+        repo,
+        scannedAt,
+        targetWorktreeId: args.worktreeId,
+        includeAllWorkspaces: args.includeAllWorkspaces === true,
+        skipGitWorktreeIds: new Set(args.skipGitWorktreeIds ?? []),
+        onWorktreesDiscovered: progress.addDiscovered,
+        onCandidateScanned: progress.addCandidate,
+        onErrors: progress.addErrors
+      })
+      appendWorkspaceCleanupItems(candidates, result.candidates)
+      appendWorkspaceCleanupItems(errors, result.errors)
+    }
+    return { scannedAt, candidates, errors }
+  } finally {
+    progress.flush()
   }
-
-  return { scannedAt, candidates, errors }
 }
 
 async function scanRepoWorkspaces(
@@ -279,45 +275,4 @@ function handleRepoWorktreeListError(args: {
   const errors = [createWorkspaceCleanupScanError(repo, toSafeWorkspaceCleanupRepoScanError(error))]
   onErrors?.(errors)
   return { scannedAt, candidates: [], errors }
-}
-
-function createProgressEmitter(
-  scanId: string | undefined,
-  scannedAt: number,
-  options: WorkspaceCleanupScanOptions
-): WorkspaceCleanupProgressEmitter {
-  const errors: WorkspaceCleanupScanError[] = []
-  let totalWorktreeCount = 0
-  let scannedWorktreeCount = 0
-  const emit = (
-    candidates: WorkspaceCleanupCandidate[],
-    candidateMode: WorkspaceCleanupScanProgress['candidateMode'] = 'snapshot'
-  ): void => {
-    if (!scanId) {
-      return
-    }
-    options.onProgress?.({
-      scanId,
-      scannedAt,
-      totalWorktreeCount,
-      scannedWorktreeCount,
-      candidates,
-      errors: [...errors],
-      candidateMode
-    })
-  }
-  return {
-    addDiscovered: (count) => {
-      totalWorktreeCount += count
-      emit([], 'append')
-    },
-    addCandidate: (candidate) => {
-      scannedWorktreeCount += 1
-      emit([candidate], 'append')
-    },
-    addErrors: (newErrors) => {
-      appendWorkspaceCleanupItems(errors, newErrors)
-      emit([], 'append')
-    }
-  }
 }

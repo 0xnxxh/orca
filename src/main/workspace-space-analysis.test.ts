@@ -221,6 +221,17 @@ describe('analyzeWorkspaceSpace', () => {
       scannedRepoCount: 1,
       scannedWorktreeCount: 1
     })
+    expect(progress).toContainEqual(
+      expect.objectContaining({
+        completedMeasurements: [
+          expect.objectContaining({
+            worktreeId: `repo-1::${repoPath}`,
+            status: 'ok',
+            sizeBytes: expect.any(Number)
+          })
+        ]
+      })
+    )
   })
 
   it('rejects when a scan is cancelled before it starts', async () => {

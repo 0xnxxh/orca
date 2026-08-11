@@ -3,7 +3,8 @@ import type { Store } from '../persistence'
 import type {
   WorkspaceSpaceAnalysis,
   WorkspaceSpaceAnalyzeResult,
-  WorkspaceSpaceScanProgress
+  WorkspaceSpaceScanProgress,
+  WorkspaceSpaceWorktreeMeasurement
 } from '../../shared/workspace-space-types'
 import {
   analyzeWorkspaceSpace,
@@ -46,7 +47,11 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
         currentWorktreeDisplayName: null
       }
       let lastProgressSentAt = 0
+      let pendingMeasurements: WorkspaceSpaceWorktreeMeasurement[] = []
       const sendProgress = (progress: WorkspaceSpaceScanProgress): void => {
+        if (progress.completedMeasurements?.length) {
+          pendingMeasurements.push(...progress.completedMeasurements)
+        }
         // Why: large fleets can report one progress event per worktree; keep
         // the UI responsive without repainting the full Space page for each row.
         const now = Date.now()
@@ -64,7 +69,12 @@ export function registerWorkspaceSpaceHandlers(store: Store): void {
         }
         lastProgressSentAt = now
         if (!event.sender.isDestroyed()) {
-          event.sender.send('workspaceSpace:progress', progress)
+          const completedMeasurements = pendingMeasurements
+          pendingMeasurements = []
+          event.sender.send('workspaceSpace:progress', {
+            ...progress,
+            ...(completedMeasurements.length > 0 ? { completedMeasurements } : {})
+          })
         }
       }
       // Why: large worktree fleets require real disk traversal; duplicate

@@ -18,6 +18,9 @@ import {
 import type { WorkspaceCleanupReviewInfo } from './workspace-cleanup-presentation'
 import { formatWorkspaceCleanupRelativeTime } from './workspace-cleanup-relative-time'
 import { StatusPill } from './workspace-cleanup-status-pill'
+import { WorkspaceCleanupCandidateList } from './workspace-cleanup-candidate-list'
+
+const CONFIRM_REMOVE_ROW_ESTIMATE_PX = 76
 
 const EMPTY_REVIEW_INFO: WorkspaceCleanupReviewInfo = {
   hasReview: false,
@@ -42,6 +45,7 @@ export function WorkspaceCleanupConfirmRemove({
   onCancel: () => void
   onConfirm: () => void
 }): React.JSX.Element {
+  const [scrollElement, setScrollElement] = React.useState<HTMLDivElement | null>(null)
   const count = candidates.length
   const deleting = progress !== null
   const progressValue = progress
@@ -120,15 +124,20 @@ export function WorkspaceCleanupConfirmRemove({
             )}
           </div>
         </div>
-        <ScrollArea className="min-h-0 flex-1">
-          {candidates.map((candidate, index) => (
-            <ConfirmRemoveRow
-              key={candidate.worktreeId}
-              candidate={candidate}
-              reviewInfo={reviewInfoByWorktreeId.get(candidate.worktreeId) ?? EMPTY_REVIEW_INFO}
-              last={index === candidates.length - 1}
-            />
-          ))}
+        <ScrollArea className="min-h-0 flex-1" viewportRef={setScrollElement}>
+          <WorkspaceCleanupCandidateList
+            rows={candidates}
+            scrollElement={scrollElement}
+            estimatedRowHeight={CONFIRM_REMOVE_ROW_ESTIMATE_PX}
+            renderRow={(candidate, index) => (
+              <ConfirmRemoveRow
+                key={candidate.worktreeId}
+                candidate={candidate}
+                reviewInfo={reviewInfoByWorktreeId.get(candidate.worktreeId) ?? EMPTY_REVIEW_INFO}
+                last={index === candidates.length - 1}
+              />
+            )}
+          />
         </ScrollArea>
       </div>
       <DialogFooter className="border-t border-border px-5 py-3">

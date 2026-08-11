@@ -12,6 +12,8 @@ import type { WorkspaceCleanupFacetGroupProps } from './workspace-cleanup-facet-
 export type WorkspaceCleanupSizeScanState = {
   measuredCount: number
   scanning: boolean
+  scannedCount: number
+  totalCount: number
   onRun: () => void
 }
 
@@ -111,20 +113,22 @@ export function WorkspaceCleanupFilterBar({
         </span>
       ) : null}
 
-      {sizeScan.measuredCount === 0 ? (
-        <Button
-          variant="outline"
-          size="sm"
-          className="shrink-0"
-          disabled={sizeScan.scanning}
-          onClick={sizeScan.onRun}
-        >
+      {sizeScan.scanning || sizeScan.measuredCount === 0 ? (
+        <Button variant="outline" size="sm" disabled={sizeScan.scanning} onClick={sizeScan.onRun}>
           {sizeScan.scanning ? (
             <Loader2 className="size-3.5 animate-spin" />
           ) : (
             <HardDrive className="size-3.5" />
           )}
-          {translate('components.workspace.cleanup.browse.measureSizes', 'Measure sizes')}
+          {sizeScan.scanning
+            ? sizeScan.totalCount > 0
+              ? translate(
+                  'components.workspace.cleanup.browse.measuringSizesProgress',
+                  'Measuring {{value0}}/{{value1}}',
+                  { value0: sizeScan.scannedCount, value1: sizeScan.totalCount }
+                )
+              : translate('components.workspace.cleanup.browse.measuringSizes', 'Measuring sizes')
+            : translate('components.workspace.cleanup.browse.measureSizes', 'Measure sizes')}
         </Button>
       ) : null}
     </div>

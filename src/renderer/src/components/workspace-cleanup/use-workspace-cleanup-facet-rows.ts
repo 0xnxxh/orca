@@ -70,22 +70,34 @@ export function useWorkspaceCleanupFacetRows({
       agentStatusByPaneKey: s.agentStatusByPaneKey,
       tabsByWorktree: s.tabsByWorktree,
       dismissals: s.workspaceCleanupDismissals,
-      spaceWorktrees: s.workspaceSpaceAnalysis?.worktrees ?? null
+      spaceWorktrees: s.workspaceSpaceAnalysis?.worktrees ?? null,
+      spaceMeasurements: s.workspaceSpaceMeasurements
     }))
   )
+  const { hostedReviewCache, repos, settings, worktreesByRepo } = sources
 
   const reviewInfoByWorktreeId = useMemo(() => {
     const infos = new Map<string, WorkspaceCleanupReviewInfo>()
+    const reviewSources = { hostedReviewCache, repos, settings, worktreesByRepo }
     for (const candidate of candidates) {
-      infos.set(candidate.worktreeId, getWorkspaceCleanupReviewInfo(candidate, sources))
+      infos.set(candidate.worktreeId, getWorkspaceCleanupReviewInfo(candidate, reviewSources))
     }
     return infos
-  }, [candidates, sources])
+  }, [candidates, hostedReviewCache, repos, settings, worktreesByRepo])
 
-  const sizeByWorktreeId = useMemo(
+  const completedSizeByWorktreeId = useMemo(
     () => buildWorkspaceCleanupSizeIndex(sources.spaceWorktrees),
     [sources.spaceWorktrees]
   )
+  const sizeByWorktreeId = useMemo(() => {
+    if (sources.spaceMeasurements.length === 0) {
+      return completedSizeByWorktreeId
+    }
+    return new Map([
+      ...completedSizeByWorktreeId,
+      ...buildWorkspaceCleanupSizeIndex(sources.spaceMeasurements)
+    ])
+  }, [completedSizeByWorktreeId, sources.spaceMeasurements])
 
   const facets = useMemo(
     () =>
@@ -102,17 +114,56 @@ export function useWorkspaceCleanupFacetRows({
         reviewInfoByWorktreeId,
         dismissedWorktreeIds: new Set(Object.keys(sources.dismissals))
       }),
-    [candidates, now, reviewInfoByWorktreeId, sizeByWorktreeId, sources]
+    [
+      candidates,
+      now,
+      reviewInfoByWorktreeId,
+      sizeByWorktreeId,
+      sources.agentStatusByPaneKey,
+      sources.dismissals,
+      sources.lastVisitedAtByWorktreeId,
+      sources.tabsByWorktree,
+      sources.workspaceStatuses,
+      sources.worktreesByRepo
+    ]
   )
 
   const result = useMemo(
     () => runWorkspaceCleanupQuery(facets, { filters, sort }, now),
     [facets, filters, now, sort]
   )
-  const facetCounts = useMemo(
-    () => countWorkspaceCleanupFacetMatches(facets, filters, now),
-    [facets, filters, now]
+  const facetFilters = useMemo<WorkspaceCleanupFilterState>(
+    () => ({
+      query: '',
+      activity: filters.activity,
+      size: filters.size,
+      status: filters.status,
+      agent: filters.agent,
+      git: filters.git,
+      review: filters.review,
+      ticket: filters.ticket,
+      context: filters.context,
+      location: filters.location,
+      safety: filters.safety
+    }),
+    [
+      filters.activity,
+      filters.agent,
+      filters.context,
+      filters.git,
+      filters.location,
+      filters.review,
+      filters.safety,
+      filters.size,
+      filters.status,
+      filters.ticket
+    ]
   )
+  const facetCounts = useMemo(
+    () => countWorkspaceCleanupFacetMatches(facets, facetFilters, now),
+    [facets, facetFilters, now]
+  )
+  const measuredSizeCount = useMemo(() => countWorkspaceCleanupMeasuredRows(facets), [facets])
 
   const options = useMemo<WorkspaceCleanupFacetOptions>(
     () => ({
@@ -144,6 +195,6 @@ export function useWorkspaceCleanupFacetRows({
     options,
     reviewInfoByWorktreeId,
     sizeByWorktreeId,
-    measuredSizeCount: countWorkspaceCleanupMeasuredRows(facets)
+    measuredSizeCount
   }
 }

@@ -87,6 +87,37 @@ function makeAnalysis(): WorkspaceSpaceAnalysis {
 }
 
 describe('workspace space slice', () => {
+  it('keeps streamed measurements across later progress updates', () => {
+    const store = createWorkspaceSpaceTestStore()
+    store.setState({ workspaceSpaceScanning: true })
+    const progress = {
+      scanId: 'scan-1',
+      state: 'running' as const,
+      startedAt: 1,
+      updatedAt: 1,
+      totalRepoCount: 1,
+      scannedRepoCount: 0,
+      totalWorktreeCount: 2,
+      scannedWorktreeCount: 1,
+      currentRepoDisplayName: 'orca',
+      currentWorktreeDisplayName: 'feature'
+    }
+
+    store.getState().applyWorkspaceSpaceProgress({
+      ...progress,
+      completedMeasurements: [{ worktreeId: 'a', status: 'ok', sizeBytes: 10 }]
+    })
+    store.getState().applyWorkspaceSpaceProgress({
+      ...progress,
+      scannedWorktreeCount: 2,
+      currentWorktreeDisplayName: null
+    })
+
+    expect(store.getState().workspaceSpaceMeasurements).toEqual([
+      { worktreeId: 'a', status: 'ok', sizeBytes: 10 }
+    ])
+  })
+
   it('removes deleted worktrees from cached analysis totals', () => {
     const store = createWorkspaceSpaceTestStore()
     store.setState({ workspaceSpaceAnalysis: makeAnalysis() })

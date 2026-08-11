@@ -3,31 +3,37 @@ import { AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 import type { WorkspaceCleanupScanProgress } from '../../../../shared/workspace-cleanup'
-import { formatWorkspaceCleanupScanProgress } from './workspace-cleanup-scan-notice'
 
 export function WorkspaceCleanupInitialScanBanner({
   progress
 }: {
   progress: WorkspaceCleanupScanProgress | null
 }): React.JSX.Element {
+  const title =
+    progress && progress.totalWorktreeCount > 0
+      ? translate(
+          'components.workspace.cleanup.scan.progress',
+          'Scanning workspaces ({{value0}}/{{value1}})',
+          {
+            value0: progress.scannedWorktreeCount,
+            value1: progress.totalWorktreeCount
+          }
+        )
+      : translate(
+          'auto.components.workspace.cleanup.WorkspaceCleanupDialog.7eee951968',
+          'Scanning workspaces'
+        )
+
   return (
     <div className="flex items-start gap-2 border-b border-border bg-muted/25 px-5 py-3">
       <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin text-muted-foreground" />
       <div className="min-w-0">
-        <div className="text-xs font-medium text-foreground">
-          {translate(
-            'auto.components.workspace.cleanup.WorkspaceCleanupDialog.7eee951968',
-            'Checking inactive workspaces'
-          )}
-        </div>
+        <div className="text-xs font-medium text-foreground">{title}</div>
         <div className="mt-0.5 text-xs text-muted-foreground">
           {translate(
             'auto.components.workspace.cleanup.WorkspaceCleanupDialog.47123d0108',
-            'Scanning inactive workspaces. You can close this and come back.'
+            'Collecting workspace information. You can close this and come back.'
           )}
-        </div>
-        <div className="mt-1 text-xs font-medium text-muted-foreground">
-          {formatWorkspaceCleanupScanProgress(progress)}
         </div>
       </div>
     </div>

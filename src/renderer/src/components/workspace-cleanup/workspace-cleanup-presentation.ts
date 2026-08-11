@@ -1,4 +1,4 @@
-import { getWorktreeMapFromState } from '@/store/selectors'
+import { getRepoMapFromState, getWorktreeMapFromState } from '@/store/selectors'
 import { getHostedReviewCacheKey } from '@/store/slices/hosted-review'
 import type { AppState } from '@/store/types'
 import { translate } from '@/i18n/i18n'
@@ -52,7 +52,7 @@ export function getWorkspaceCleanupReviewInfo(
   state: WorkspaceCleanupRendererStateInputs
 ): WorkspaceCleanupReviewInfo {
   const worktree = getWorktreeMapFromState(state).get(candidate.worktreeId) ?? null
-  const repo = state.repos.find((entry) => entry.id === candidate.repoId) ?? null
+  const repo = getRepoMapFromState(state).get(candidate.repoId) ?? null
   const hostedReview = getCachedHostedReview(candidate, worktree, repo, state)
   if (hostedReview) {
     return {

@@ -24,6 +24,7 @@ const WORKSPACE_CLEANUP_ROW_OVERSCAN = 8
 export function WorkspaceCleanupCandidateList<Row extends WorkspaceCleanupListRow>({
   rows,
   renderRow,
+  estimatedRowHeight = WORKSPACE_CLEANUP_ROW_ESTIMATE_PX,
   // Why: a state-held element, not a ref — the ScrollArea viewport is not
   // attached when this component first mounts, so a ref would leave the
   // virtualizer unobserved until some unrelated re-render.
@@ -31,6 +32,7 @@ export function WorkspaceCleanupCandidateList<Row extends WorkspaceCleanupListRo
 }: {
   rows: readonly Row[]
   renderRow: (row: Row, index: number) => React.ReactNode
+  estimatedRowHeight?: number
   scrollElement: HTMLDivElement | null
 }): React.JSX.Element {
   const virtualize = rows.length >= WORKSPACE_CLEANUP_VIRTUALIZE_MIN_ROWS
@@ -39,7 +41,7 @@ export function WorkspaceCleanupCandidateList<Row extends WorkspaceCleanupListRo
     count: rows.length,
     enabled: virtualize && scrollElement !== null,
     getScrollElement: () => scrollElement,
-    estimateSize: () => WORKSPACE_CLEANUP_ROW_ESTIMATE_PX,
+    estimateSize: () => estimatedRowHeight,
     overscan: WORKSPACE_CLEANUP_ROW_OVERSCAN,
     // Why: stable worktree keys let the virtualizer carry row identity across
     // scan refreshes instead of remounting the window on every streamed row.

@@ -2,7 +2,10 @@ import type { LiveAgentWorktreeStatus } from '@/lib/worktree-activity-state'
 import { LOCAL_EXECUTION_HOST_ID, type ExecutionHostId } from '../../../../shared/execution-host'
 import type { Worktree, WorkspaceStatusDefinition } from '../../../../shared/types'
 import { getWorkspaceStatus } from '../../../../shared/workspace-statuses'
-import type { WorkspaceSpaceWorktree } from '../../../../shared/workspace-space-types'
+import type {
+  WorkspaceSpaceWorktree,
+  WorkspaceSpaceWorktreeMeasurement
+} from '../../../../shared/workspace-space-types'
 import {
   canSelectWorkspaceCleanupCandidate,
   type WorkspaceCleanupBlocker,
@@ -163,7 +166,10 @@ export function buildWorkspaceCleanupFacetList(
 
 /** Only `ok` scans carry a trustworthy byte count; everything else stays unsized. */
 export function buildWorkspaceCleanupSizeIndex(
-  worktrees: readonly WorkspaceSpaceWorktree[] | null | undefined
+  worktrees:
+    | readonly (WorkspaceSpaceWorktree | WorkspaceSpaceWorktreeMeasurement)[]
+    | null
+    | undefined
 ): Map<string, number> {
   const index = new Map<string, number>()
   for (const entry of worktrees ?? []) {

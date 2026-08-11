@@ -1,7 +1,8 @@
 import type { StateCreator } from 'zustand'
 import type {
   WorkspaceSpaceAnalysis,
-  WorkspaceSpaceScanProgress
+  WorkspaceSpaceScanProgress,
+  WorkspaceSpaceWorktreeMeasurement
 } from '../../../../shared/workspace-space-types'
 import type { AppState } from '../types'
 
@@ -12,6 +13,7 @@ export type WorkspaceSpaceSlice = {
   workspaceSpaceScanProgress: WorkspaceSpaceScanProgress | null
   workspaceSpaceScanError: string | null
   workspaceSpaceScanning: boolean
+  workspaceSpaceMeasurements: WorkspaceSpaceWorktreeMeasurement[]
   applyWorkspaceSpaceProgress: (progress: WorkspaceSpaceScanProgress) => void
   cancelWorkspaceSpaceScan: () => Promise<boolean>
   /** Stale-while-revalidate seed; true when the persisted analysis filled an empty slice. */
@@ -74,6 +76,7 @@ export const createWorkspaceSpaceSlice: StateCreator<AppState, [], [], Workspace
   workspaceSpaceScanProgress: null,
   workspaceSpaceScanError: null,
   workspaceSpaceScanning: false,
+  workspaceSpaceMeasurements: [],
   applyWorkspaceSpaceProgress: (progress) =>
     set((state) => {
       if (
@@ -82,9 +85,14 @@ export const createWorkspaceSpaceSlice: StateCreator<AppState, [], [], Workspace
       ) {
         return state
       }
+      const sameScan = state.workspaceSpaceScanProgress?.scanId === progress.scanId
+      const previousMeasurements = sameScan ? state.workspaceSpaceMeasurements : []
       return {
         workspaceSpaceScanProgress: progress,
-        workspaceSpaceScanning: true
+        workspaceSpaceScanning: true,
+        workspaceSpaceMeasurements: progress.completedMeasurements?.length
+          ? [...previousMeasurements, ...progress.completedMeasurements]
+          : previousMeasurements
       }
     }),
   cancelWorkspaceSpaceScan: async () => {
@@ -134,7 +142,8 @@ export const createWorkspaceSpaceSlice: StateCreator<AppState, [], [], Workspace
     set({
       workspaceSpaceScanning: true,
       workspaceSpaceScanProgress: null,
-      workspaceSpaceScanError: null
+      workspaceSpaceScanError: null,
+      workspaceSpaceMeasurements: []
     })
     // Why: the compact Resource Manager card and the full Space page share
     // one manual scan result; duplicate button presses should join the same IO.
@@ -148,7 +157,8 @@ export const createWorkspaceSpaceSlice: StateCreator<AppState, [], [], Workspace
         set({
           workspaceSpaceAnalysis: analysis,
           workspaceSpaceScanning: false,
-          workspaceSpaceScanProgress: null
+          workspaceSpaceScanProgress: null,
+          workspaceSpaceMeasurements: []
         })
         return analysis
       })
@@ -158,7 +168,8 @@ export const createWorkspaceSpaceSlice: StateCreator<AppState, [], [], Workspace
             ? null
             : errorMessage(error),
           workspaceSpaceScanning: false,
-          workspaceSpaceScanProgress: null
+          workspaceSpaceScanProgress: null,
+          workspaceSpaceMeasurements: []
         })
         throw error
       })
@@ -171,15 +182,16 @@ export const createWorkspaceSpaceSlice: StateCreator<AppState, [], [], Workspace
     if (worktreeIds.length > 0) {
       get().recordFeatureInteraction?.('workspace-cleanup')
     }
-    set((state) =>
-      state.workspaceSpaceAnalysis
-        ? {
-            workspaceSpaceAnalysis: removeDeletedWorktreesFromAnalysis(
-              state.workspaceSpaceAnalysis,
-              worktreeIds
-            )
-          }
-        : state
-    )
+    set((state) => {
+      const deletedSet = new Set(worktreeIds)
+      return {
+        workspaceSpaceAnalysis: state.workspaceSpaceAnalysis
+          ? removeDeletedWorktreesFromAnalysis(state.workspaceSpaceAnalysis, worktreeIds)
+          : null,
+        workspaceSpaceMeasurements: state.workspaceSpaceMeasurements.filter(
+          (measurement) => !deletedSet.has(measurement.worktreeId)
+        )
+      }
+    })
   }
 })

@@ -41,7 +41,7 @@ export function formatWorkspaceCleanupScanProgress(
   if (!progress || progress.scannedWorktreeCount === 0) {
     return translate(
       'auto.components.workspace.cleanup.WorkspaceCleanupDialog.4cc5b73efe',
-      'Finding inactive workspaces...'
+      'Finding workspaces...'
     )
   }
   return translate(
@@ -52,15 +52,15 @@ export function formatWorkspaceCleanupScanProgress(
 }
 
 export function formatWorkspaceCleanupReadyToast(
-  inactiveCount: number,
+  workspaceCount: number,
   suggestedCount: number
 ): string {
-  if (inactiveCount === 0) {
+  if (workspaceCount === 0) {
     return 'No workspaces found.'
   }
-  const workspaceNoun = inactiveCount === 1 ? 'workspace' : 'workspaces'
+  const workspaceNoun = workspaceCount === 1 ? 'workspace' : 'workspaces'
   const suggestedNoun = suggestedCount === 1 ? 'suggestion' : 'suggestions'
-  return `${inactiveCount} ${workspaceNoun} found, with ${suggestedCount} cleanup ${suggestedNoun}.`
+  return `${workspaceCount} ${workspaceNoun} found, with ${suggestedCount} cleanup ${suggestedNoun}.`
 }
 
 function formatScanErrorRepoName(

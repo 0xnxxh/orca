@@ -703,8 +703,13 @@ function reportProgress(
   updates: Partial<WorkspaceSpaceProgressState>,
   onProgress: WorkspaceSpaceAnalyzeOptions['onProgress']
 ): void {
+  const completedMeasurements = updates.completedMeasurements
   Object.assign(progress, updates, { updatedAt: Date.now() })
-  onProgress?.({ ...progress })
+  delete progress.completedMeasurements
+  onProgress?.({
+    ...progress,
+    ...(completedMeasurements?.length ? { completedMeasurements } : {})
+  })
 }
 
 async function scanRepo(
@@ -793,7 +798,12 @@ async function scanRepo(
         )
     reportProgress(
       progress,
-      { scannedWorktreeCount: progress.scannedWorktreeCount + 1 },
+      {
+        scannedWorktreeCount: progress.scannedWorktreeCount + 1,
+        completedMeasurements: [
+          { worktreeId: row.worktreeId, status: row.status, sizeBytes: row.sizeBytes }
+        ]
+      },
       options.onProgress
     )
     return row

@@ -59,7 +59,7 @@ export function useWorkspaceCleanupScanLifecycle({
           toast.success(
             translate(
               'auto.components.workspace.cleanup.WorkspaceCleanupDialog.0e2d235c63',
-              'Inactive workspace scan ready'
+              'Workspace scan ready'
             ),
             {
               description: formatWorkspaceCleanupReadyToast(

@@ -27,25 +27,41 @@ import {
   needsWorkspaceCleanupGitEvidence
 } from './workspace-cleanup-git-evidence'
 import { useWorkspaceCleanupBrowseState } from './use-workspace-cleanup-browse-state'
+import {
+  useWorkspaceCleanupDialogLifecycle,
+  type WorkspaceCleanupDialogLifecycle
+} from './use-workspace-cleanup-dialog-lifecycle'
 import { useWorkspaceCleanupFacetRows } from './use-workspace-cleanup-facet-rows'
 import { useWorkspaceCleanupGitEvidence } from './use-workspace-cleanup-git-evidence'
-import { useWorkspaceCleanupRemoval } from './use-workspace-cleanup-removal'
 import { useWorkspaceCleanupRowOrder } from './use-workspace-cleanup-row-order'
-import { useWorkspaceCleanupScanLifecycle } from './use-workspace-cleanup-scan-lifecycle'
 
 /** One filterable list of every workspace Orca knows about. */
-export default function WorkspaceCleanupDialog(): React.JSX.Element {
-  const activeModal = useAppStore((s) => s.activeModal)
-  const closeModal = useAppStore((s) => s.closeModal)
+export default function WorkspaceCleanupDialog(): React.JSX.Element | null {
+  const lifecycle = useWorkspaceCleanupDialogLifecycle()
+  if (!lifecycle.mountedContent) {
+    return null
+  }
+  return <WorkspaceCleanupDialogContent {...lifecycle} />
+}
+
+function WorkspaceCleanupDialogContent({
+  open,
+  loading,
+  closeModal,
+  selectedIds,
+  setSelectedIds,
+  removal,
+  startWorkspaceCleanupScan
+}: WorkspaceCleanupDialogLifecycle): React.JSX.Element {
   const scan = useAppStore((s) => s.workspaceCleanupScan)
   const scanProgress = useAppStore((s) => s.workspaceCleanupProgress)
-  const loading = useAppStore((s) => s.workspaceCleanupLoading)
   const error = useAppStore((s) => s.workspaceCleanupError)
   const repos = useAppStore((s) => s.repos)
   const markCandidateViewed = useAppStore((s) => s.markWorkspaceCleanupCandidateViewed)
   const dismissCandidates = useAppStore((s) => s.dismissWorkspaceCleanupCandidates)
   const refreshWorkspaceSpace = useAppStore((s) => s.refreshWorkspaceSpace)
   const workspaceSpaceScanning = useAppStore((s) => s.workspaceSpaceScanning)
+  const workspaceSpaceProgress = useAppStore((s) => s.workspaceSpaceScanProgress)
   const deletionPhaseByWorktreeId = useAppStore(
     useShallow((s) => {
       const phases: Record<string, WorkspaceCleanupDeletionPhase> = {}
@@ -62,53 +78,26 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
     [deletionPhaseByWorktreeId]
   )
 
-  const open = activeModal === 'workspace-cleanup'
   const browse = useWorkspaceCleanupBrowseState()
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(() => new Set())
   const [rowsScrollElement, setRowsScrollElement] = useState<HTMLDivElement | null>(null)
   const selectedDefaultsScanAtRef = useRef<number | null>(null)
+  const wasOpenRef = useRef(open)
   // Why: a refresh completing mid-open must not clobber a selection the user
   // already made (or was given) for this open — defaults apply at most once.
   const defaultsAppliedForOpenRef = useRef(false)
   const selectionTouchedRef = useRef(false)
   const mountedRef = useMountedRef()
 
-  const deselectRemovedIds = useCallback((removedIds: readonly string[]) => {
-    if (removedIds.length === 0) {
-      return
+  useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      defaultsAppliedForOpenRef.current = false
+      selectionTouchedRef.current = false
     }
-    setSelectedIds((current) => {
-      const next = new Set(current)
-      for (const id of removedIds) {
-        next.delete(id)
-      }
-      return next
-    })
-  }, [])
-  const removal = useWorkspaceCleanupRemoval({ onDeselect: deselectRemovedIds, closeModal })
-  // Why: the controller object is rebuilt every render; effects must depend on
-  // its stable members or they re-run on every keystroke.
-  const { removalInFlightRef, resetForReopen, resetRowFailures } = removal
+    wasOpenRef.current = open
+  }, [open])
 
-  const onFreshOpen = useCallback(() => {
-    defaultsAppliedForOpenRef.current = false
-    selectionTouchedRef.current = false
-    // Why: filters and sort persist across reopens; only volatile row state
-    // resets, and not while a batch is still settling.
-    if (!removalInFlightRef.current) {
-      resetForReopen()
-      setSelectedIds(new Set())
-    }
-  }, [removalInFlightRef, resetForReopen])
-
-  const { startWorkspaceCleanupScan } = useWorkspaceCleanupScanLifecycle({
-    open,
-    loading,
-    removalInFlightRef,
-    resetRowFailures,
-    onFreshOpen
-  })
+  const { removalInFlightRef } = removal
 
   const candidates = useMemo(() => scan?.candidates ?? [], [scan?.candidates])
   const gitEvidenceNeeded = open && needsWorkspaceCleanupGitEvidence(browse.filters, browse.sort)
@@ -179,7 +168,7 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
     }
     defaultsAppliedForOpenRef.current = true
     setSelectedIds(getDefaultSelectedWorkspaceCleanupIds(scan.candidates, deletingWorktreeIds))
-  }, [deletingWorktreeIds, loading, removalInFlightRef, scan])
+  }, [deletingWorktreeIds, loading, removalInFlightRef, scan, setSelectedIds])
 
   const pruneSelectionToVisibleRows = useEffectEvent(() => {
     setSelectedIds((current) => {
@@ -230,7 +219,11 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
       void dismissCandidates([candidate])
         .then(() => {
           if (mountedRef.current) {
-            deselectRemovedIds([candidate.worktreeId])
+            setSelectedIds((current) => {
+              const next = new Set(current)
+              next.delete(candidate.worktreeId)
+              return next
+            })
           }
         })
         .catch((err: unknown) => {
@@ -245,17 +238,20 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
           }
         })
     },
-    [deselectRemovedIds, dismissCandidates, mountedRef]
+    [dismissCandidates, mountedRef, setSelectedIds]
   )
 
   const toggleExpandedRow = useCallback((worktreeId: string) => {
     setExpandedRowIds((current) => toggleSetMember(current, worktreeId))
   }, [])
 
-  const toggleSelectedRow = useCallback((worktreeId: string) => {
-    selectionTouchedRef.current = true
-    setSelectedIds((current) => toggleSetMember(current, worktreeId))
-  }, [])
+  const toggleSelectedRow = useCallback(
+    (worktreeId: string) => {
+      selectionTouchedRef.current = true
+      setSelectedIds((current) => toggleSetMember(current, worktreeId))
+    },
+    [setSelectedIds]
+  )
 
   const selectableWorktreeIds = useMemo(
     () =>
@@ -269,7 +265,7 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
       selectionTouchedRef.current = true
       setSelectedIds(selectAll ? new Set(selectableWorktreeIds) : new Set())
     },
-    [selectableWorktreeIds]
+    [selectableWorktreeIds, setSelectedIds]
   )
 
   // Why: stable per-row handlers so React.memo keeps unchanged CandidateRow
@@ -286,7 +282,7 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
       setSelectedIds(new Set([candidate.worktreeId]))
       openConfirmRemove([candidate])
     },
-    [openConfirmRemove, removalInFlightRef]
+    [openConfirmRemove, removalInFlightRef, setSelectedIds]
   )
 
   const handleViewCandidate = useCallback(
@@ -343,6 +339,7 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
               selectableCount={selectableWorktreeIds.length}
               selectedCount={selectedCount}
               spaceScanning={workspaceSpaceScanning}
+              spaceProgress={workspaceSpaceProgress}
               gitPendingCount={gitEvidence.pendingWorktreeIds.size}
               gitCheckedTotal={gitEvidence.totalCount}
               onRunSpaceScan={runSpaceScan}

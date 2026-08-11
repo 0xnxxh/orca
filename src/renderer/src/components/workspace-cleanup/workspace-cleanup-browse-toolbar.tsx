@@ -9,6 +9,7 @@ import {
 import { WorkspaceCleanupEmptyState } from './workspace-cleanup-dialog-notices'
 import { WorkspaceCleanupFilterBar } from './workspace-cleanup-filter-bar'
 import { WorkspaceCleanupSortHeader } from './workspace-cleanup-sort-header'
+import type { WorkspaceSpaceScanProgress } from '../../../../shared/workspace-space-types'
 
 export function WorkspaceCleanupBrowseToolbar({
   browse,
@@ -16,6 +17,7 @@ export function WorkspaceCleanupBrowseToolbar({
   selectableCount,
   selectedCount,
   spaceScanning,
+  spaceProgress,
   gitPendingCount,
   gitCheckedTotal,
   onRunSpaceScan,
@@ -26,6 +28,7 @@ export function WorkspaceCleanupBrowseToolbar({
   selectableCount: number
   selectedCount: number
   spaceScanning: boolean
+  spaceProgress: WorkspaceSpaceScanProgress | null
   gitPendingCount: number
   gitCheckedTotal: number
   onRunSpaceScan: () => void
@@ -48,6 +51,8 @@ export function WorkspaceCleanupBrowseToolbar({
         sizeScan={{
           measuredCount: facetRows.measuredSizeCount,
           scanning: spaceScanning,
+          scannedCount: spaceProgress?.scannedWorktreeCount ?? 0,
+          totalCount: spaceProgress?.totalWorktreeCount ?? 0,
           onRun: onRunSpaceScan
         }}
         gitEvidence={{ pendingCount: gitPendingCount, totalCount: gitCheckedTotal }}
@@ -61,7 +66,7 @@ export function WorkspaceCleanupBrowseToolbar({
         onToggleSortField={browse.toggleSortField}
         onToggleSelectAll={onToggleSelectAll}
       />
-      {browse.sort.field === 'size' && facetRows.measuredSizeCount === 0 ? (
+      {browse.sort.field === 'size' && facetRows.measuredSizeCount === 0 && !spaceScanning ? (
         <WorkspaceCleanupEmptyState
           title={translate(
             'components.workspace.cleanup.browse.noSizes',

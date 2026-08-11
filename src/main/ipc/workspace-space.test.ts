@@ -153,6 +153,63 @@ describe('registerWorkspaceSpaceHandlers', () => {
     expect(event.sender.send).toHaveBeenCalledWith('workspaceSpace:progress', progress)
   })
 
+  it('batches completed measurements without dropping throttled rows', async () => {
+    const store = createStore()
+    let onProgress: ((progress: WorkspaceSpaceScanProgress) => void) | undefined
+    let resolveScan!: (analysis: WorkspaceSpaceAnalysis) => void
+    analyzeWorkspaceSpaceMock.mockImplementationOnce((_store, options) => {
+      onProgress = options.onProgress
+      return new Promise<WorkspaceSpaceAnalysis>((resolve) => {
+        resolveScan = resolve
+      })
+    })
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+
+    try {
+      registerWorkspaceSpaceHandlers(store)
+      const event = createEvent()
+      const promise = handlers.get('workspaceSpace:analyze')!(event)
+      const base = {
+        scanId: 'scan-1',
+        state: 'running' as const,
+        startedAt: 1,
+        updatedAt: 1,
+        totalRepoCount: 1,
+        scannedRepoCount: 0,
+        totalWorktreeCount: 2,
+        currentRepoDisplayName: 'orca',
+        currentWorktreeDisplayName: 'feature'
+      }
+      onProgress?.({ ...base, scannedWorktreeCount: 0 })
+      onProgress?.({
+        ...base,
+        scannedWorktreeCount: 1,
+        completedMeasurements: [{ worktreeId: 'a', status: 'ok', sizeBytes: 10 }]
+      })
+      onProgress?.({
+        ...base,
+        scannedWorktreeCount: 2,
+        completedMeasurements: [{ worktreeId: 'b', status: 'ok', sizeBytes: 20 }]
+      })
+      resolveScan(createAnalysis(1))
+      await promise
+
+      expect(event.sender.send).toHaveBeenCalledTimes(2)
+      expect(event.sender.send).toHaveBeenLastCalledWith(
+        'workspaceSpace:progress',
+        expect.objectContaining({
+          scannedWorktreeCount: 2,
+          completedMeasurements: [
+            { worktreeId: 'a', status: 'ok', sizeBytes: 10 },
+            { worktreeId: 'b', status: 'ok', sizeBytes: 20 }
+          ]
+        })
+      )
+    } finally {
+      now.mockRestore()
+    }
+  })
+
   it('cancels the in-flight scan', async () => {
     const store = createStore()
     let signal: AbortSignal | undefined

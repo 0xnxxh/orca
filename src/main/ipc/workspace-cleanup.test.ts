@@ -251,11 +251,11 @@ describe('workspace cleanup scan', () => {
         (event as WorkspaceCleanupScanProgress).candidateMode === 'append' &&
         (event as WorkspaceCleanupScanProgress).candidates.length > 0
     )
-    expect(candidateProgress).toHaveLength(2)
-    expect(candidateProgress.every((event) => event.candidates.length === 1)).toBe(true)
+    expect(candidateProgress.length).toBeLessThanOrEqual(2)
     const progressWorktreeIds = candidateProgress.flatMap((event) =>
       event.candidates.map((candidate) => candidate.worktreeId)
     )
+    expect(progressWorktreeIds).toHaveLength(2)
     expect(progressWorktreeIds).toEqual(
       expect.arrayContaining(['repo-1::/repo-feature-a', 'repo-1::/repo-feature-b'])
     )

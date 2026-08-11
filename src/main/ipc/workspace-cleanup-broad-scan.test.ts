@@ -252,6 +252,46 @@ describe('workspace cleanup broad scan opt-in', () => {
     ).toMatchObject({ clean: true, checkedAt: expect.any(Number) })
   })
 
+  it('batches fleet progress instead of emitting one IPC payload per row', async () => {
+    const worktrees = [
+      GIT_WORKTREES[0],
+      ...Array.from(
+        { length: 200 },
+        (_, index): GitWorktreeInfo => ({
+          path: `/repo-batch-${index}`,
+          head: `head-${index}`,
+          branch: `refs/heads/batch-${index}`,
+          isBare: false,
+          isMainWorktree: false
+        })
+      )
+    ]
+    listRepoWorktreesMock.mockResolvedValue(worktrees)
+    const onProgress = vi.fn()
+
+    const result = await scanWorkspaceCleanup(
+      makeStore(),
+      {
+        scanId: 'fleet-scan',
+        includeAllWorkspaces: true,
+        skipGitWorktreeIds: worktrees.map((worktree) => `${REPO.id}::${worktree.path}`)
+      },
+      { onProgress }
+    )
+
+    expect(onProgress.mock.calls.length).toBeLessThanOrEqual(2)
+    const progress = onProgress.mock.lastCall?.[0]
+    expect(progress).toMatchObject({
+      scannedWorktreeCount: result.candidates.length,
+      totalWorktreeCount: result.candidates.length,
+      candidateMode: 'append'
+    })
+    const streamedCandidates = onProgress.mock.calls.flatMap(([update]) => update.candidates)
+    expect(streamedCandidates.map((candidate) => candidate.worktreeId)).toEqual(
+      result.candidates.map((candidate) => candidate.worktreeId)
+    )
+  })
+
   it('still forces a git read for a focused scan of a recent workspace', async () => {
     const result = await scanWorkspaceCleanup(makeStore(), {
       worktreeId: 'repo-1::/repo-recent',

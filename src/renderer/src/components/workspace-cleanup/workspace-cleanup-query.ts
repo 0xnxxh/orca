@@ -42,6 +42,15 @@ export function matchesWorkspaceCleanupFilters(
   now: number = Date.now()
 ): boolean {
   const query = filters.query.trim().toLowerCase()
+  return matchesWorkspaceCleanupFiltersWithQuery(facets, filters, now, query)
+}
+
+function matchesWorkspaceCleanupFiltersWithQuery(
+  facets: WorkspaceCleanupFacets,
+  filters: WorkspaceCleanupFilterState,
+  now: number,
+  query: string
+): boolean {
   if (query && !facets.searchText.includes(query)) {
     return false
   }
@@ -64,7 +73,10 @@ export function filterWorkspaceCleanupFacets(
   filters: WorkspaceCleanupFilterState,
   now: number = Date.now()
 ): WorkspaceCleanupFacets[] {
-  return facets.filter((entry) => matchesWorkspaceCleanupFilters(entry, filters, now))
+  const query = filters.query.trim().toLowerCase()
+  return facets.filter((entry) =>
+    matchesWorkspaceCleanupFiltersWithQuery(entry, filters, now, query)
+  )
 }
 
 export function runWorkspaceCleanupQuery(
