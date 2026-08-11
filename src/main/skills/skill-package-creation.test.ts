@@ -103,6 +103,33 @@ describe('skill package creation and extraction', () => {
     expect(await readFile(first.archivePath)).toEqual(await readFile(second.archivePath))
   })
 
+  it('matches the cross-platform golden package identity', async () => {
+    const root = await temporaryDirectory()
+    const sourceDirectory = join(root, 'portable-skill')
+    await mkdir(sourceDirectory)
+    await writeFile(
+      join(sourceDirectory, 'SKILL.md'),
+      '---\nname: portable-skill\ndescription: Portable identity\n---\n\n# Portable\n'
+    )
+    await writeFile(join(sourceDirectory, 'notes.txt'), 'same bytes on every host\n')
+
+    const created = await createSkillPackageArchive({
+      sourceDirectory,
+      archivePath: join(root, 'portable.tar.gz'),
+      packageId: 'package_portable',
+      versionId: 'version_portable',
+      createdAt: '2026-08-11T12:00:00.000Z'
+    })
+
+    expect({
+      archiveSha256: created.archiveSha256,
+      packageDigest: created.manifest.packageDigest
+    }).toEqual({
+      archiveSha256: '6537c6c1820e08f175206df49bc918893770efc464916724869f78374709f90f',
+      packageDigest: '3bb1fc63cfea2f2b7f2cf80e539735eebd5bfb6aa65f47cf0db7e9fd35297f57'
+    })
+  })
+
   it('rejects archive and package identity mismatches before publishing extraction', async () => {
     const root = await temporaryDirectory()
     const sourceDirectory = await createSkill(root)
