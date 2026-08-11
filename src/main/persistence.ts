@@ -134,7 +134,7 @@ import {
   ONBOARDING_FLOW_VERSION,
   ONBOARDING_FINAL_STEP
 } from '../shared/constants'
-import { parseWorkspaceSession } from '../shared/workspace-session-schema'
+import { parseWorkspaceSessionSalvaging } from '../shared/workspace-session-salvage'
 import { normalizeUsagePercentageDisplay } from '../shared/usage-percentage-display'
 import { normalizeStatusBarUsageMode } from '../shared/status-bar-usage-mode'
 import { isExistingPersistedProfile } from '../shared/project-order-manual-default-notice'
@@ -556,15 +556,27 @@ function workspaceSessionPatchNeedsFullNormalization(patch: WorkspaceSessionPatc
   )
 }
 
+function workspaceSessionSalvageLogDetails(result: {
+  droppedCount: number
+  droppedPaths: string[]
+}): { count: number; fields: string[]; detailsTruncated: boolean } {
+  return {
+    count: result.droppedCount,
+    fields: [...new Set(result.droppedPaths.map((path) => path.split('.', 1)[0]))],
+    detailsTruncated: result.droppedCount > result.droppedPaths.length
+  }
+}
+
 /** Normalize non-'local' host partitions; 'local' (the legacy workspaceSession blob) is dropped so the two surfaces never diverge.
  *  Each partition is zod-validated independently, so one corrupt host drops to defaults without taking out the others. Idempotent. */
 function parseWorkspaceSessionsByHostId(
   raw: unknown,
   defaults: WorkspaceSessionState
-): Partial<Record<ExecutionHostId, WorkspaceSessionState>> {
+): { partitions: Partial<Record<ExecutionHostId, WorkspaceSessionState>>; repaired: boolean } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return {}
+    return { partitions: {}, repaired: raw !== undefined }
   }
+  let repaired = false
   const partitions: Partial<Record<ExecutionHostId, WorkspaceSessionState>> = {}
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     const hostId = normalizeExecutionHostId(key)
@@ -572,17 +584,25 @@ function parseWorkspaceSessionsByHostId(
     if (!hostId || hostId === LOCAL_EXECUTION_HOST_ID) {
       continue
     }
-    const result = parseWorkspaceSession(value)
+    const result = parseWorkspaceSessionSalvaging(value)
     if (!result.ok) {
+      repaired = true
       console.error(
         `[persistence] Corrupt workspace session for host ${hostId}, using defaults:`,
         result.error
       )
       continue
     }
+    if (result.droppedCount > 0) {
+      console.warn(
+        `[persistence] Salvaged workspace session for host ${hostId}; dropped corrupt entries:`,
+        workspaceSessionSalvageLogDetails(result)
+      )
+      repaired = true
+    }
     partitions[hostId] = { ...defaults, ...result.value }
   }
-  return partitions
+  return { partitions, repaired }
 }
 
 function backupPath(dataFile: string, index: number): string {
@@ -3652,7 +3672,7 @@ export class Store {
             if (parsed.workspaceSession === undefined) {
               return defaults.workspaceSession
             }
-            const result = parseWorkspaceSession(parsed.workspaceSession)
+            const result = parseWorkspaceSessionSalvaging(parsed.workspaceSession)
             if (!result.ok) {
               console.error(
                 '[persistence] Corrupt workspace session, using defaults:',
@@ -3660,13 +3680,28 @@ export class Store {
               )
               return defaults.workspaceSession
             }
+            if (result.droppedCount > 0) {
+              console.warn(
+                '[persistence] Salvaged workspace session; dropped corrupt entries:',
+                workspaceSessionSalvageLogDetails(result)
+              )
+              // Why: salvage repairs only the in-memory session; without a save the corrupt entries stay on disk and get re-dropped every launch.
+              this.loadNeedsSave = true
+            }
             return { ...defaults.workspaceSession, ...result.value }
           })(),
           // Why: per-host session partitions, validated independently; 'local' stays in workspaceSession for downgrade compat.
-          workspaceSessionsByHostId: parseWorkspaceSessionsByHostId(
-            parsed.workspaceSessionsByHostId,
-            defaults.workspaceSession
-          ),
+          workspaceSessionsByHostId: (() => {
+            const { partitions, repaired } = parseWorkspaceSessionsByHostId(
+              parsed.workspaceSessionsByHostId,
+              defaults.workspaceSession
+            )
+            if (repaired) {
+              // Why: salvage repairs only the in-memory partitions; without a save the corrupt entries stay on disk and get re-dropped every launch.
+              this.loadNeedsSave = true
+            }
+            return partitions
+          })(),
           sshTargets: (parsed.sshTargets ?? []).map(normalizeSshTarget),
           deletedSshConfigAliases: Array.isArray(parsed.deletedSshConfigAliases)
             ? parsed.deletedSshConfigAliases.filter(
@@ -5748,7 +5783,7 @@ export class Store {
     }
   }
 
-  // Why: UI view-state is written from both desktop and mobile (ui.set RPC), so notify to keep bi-directional sync (desktop hydrates UI only once).
+  // Why: renderer-visible UI state is written from desktop and mobile, so notify to keep bi-directional sync.
   onUIChanged(listener: (ui: PersistedState['ui']) => void): () => void {
     this.uiChangeListeners.add(listener)
     return () => {
@@ -5783,6 +5818,10 @@ export class Store {
     }
     if ('showMenuBarIcon' in updates) {
       sanitizedUpdates.showMenuBarIcon = updates.showMenuBarIcon === true
+    }
+    // Why: the artifact publish capability must be an exact boolean on disk; no truthy value grants it.
+    if ('artifactSharingEnabled' in updates) {
+      sanitizedUpdates.artifactSharingEnabled = updates.artifactSharingEnabled === true
     }
     if ('disabledTuiAgents' in updates) {
       sanitizedUpdates.disabledTuiAgents = normalizeDisabledTuiAgents(updates.disabledTuiAgents)
@@ -6159,7 +6198,8 @@ export class Store {
       (lastEmittedBucket === null ||
         compareFeatureInteractionUsageBuckets(nextBucket, lastEmittedBucket) > 0)
 
-    this.updateUI({
+    this.state.ui = {
+      ...this.state.ui,
       featureInteractions: {
         ...featureInteractions,
         [id]: {
@@ -6167,11 +6207,15 @@ export class Store {
           interactionCount: nextCount
         }
       }
-    })
+    }
     this.state.featureInteractionTelemetryBuckets = shouldEmit
       ? { ...telemetryBuckets, [id]: nextBucket }
       : telemetryBuckets
     this.scheduleSave()
+    // Why: live UI only consumes the seen transition; count-only telemetry must not re-hydrate the renderer.
+    if (!existing) {
+      this.notifyUIChanged()
+    }
 
     if (shouldEmit) {
       track('feature_interaction_usage_bucket_reached', {

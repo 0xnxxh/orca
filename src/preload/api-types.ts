@@ -9,6 +9,7 @@ import type {
   HostedReviewProvider
 } from '../shared/hosted-review'
 import type { NativeFileDropPayload } from '../shared/native-file-drop'
+import type { ComputerAwakeStatus } from '../shared/computer-awake-mode'
 import type { BrowserFindSource } from '../shared/browser-find-source'
 import type {
   DashboardRevealAgentArgs,
@@ -226,6 +227,7 @@ import type {
   MarkdownDocument,
   FloatingTerminalCwdRequest,
   GitHubIssueUpdate,
+  GitHubReactionContent,
   GitHubPRRefreshCandidate,
   GitHubPRRefreshEnqueueResult,
   GitHubPRRefreshEvent,
@@ -512,6 +514,10 @@ import type {
   AiVaultSubagentListArgs,
   AiVaultSubagentListResult
 } from '../shared/ai-vault-types'
+import type {
+  AiVaultSessionTitlesArgs,
+  AiVaultSessionTitlesResult
+} from '../shared/ai-vault-session-title'
 import type {
   AiVaultPrepareSessionResumeArgs,
   AiVaultPrepareSessionResumeResult
@@ -920,6 +926,7 @@ export type OpenCodeUsageApi = {
 
 export type AiVaultApi = {
   listSessions: (args?: AiVaultListArgs) => Promise<AiVaultListResult>
+  resolveSessionTitles: (args: AiVaultSessionTitlesArgs) => Promise<AiVaultSessionTitlesResult>
   cancelListSessions: (args: { requestToken: string }) => Promise<void>
   prepareSessionResume: (
     args: AiVaultPrepareSessionResumeArgs
@@ -1476,6 +1483,7 @@ export type PreloadApi = {
       worktreeId: string
       branchName: string
       expectedHead: string
+      hostId?: ExecutionHostId
     }) => Promise<ForceDeleteWorktreeBranchResult>
     updateMeta: (args: { worktreeId: string; updates: Partial<WorktreeMeta> }) => Promise<Worktree>
     listLineage: () => Promise<{
@@ -1564,6 +1572,9 @@ export type PreloadApi = {
       snapshot?: string
       snapshotCols?: number
       snapshotRows?: number
+      snapshotPrefixAnsi?: string
+      snapshotFrameAnsi?: string
+      snapshotFrameRestoreAnsi?: string
       isReattach?: boolean
       isAlternateScreen?: boolean
       replay?: string
@@ -1630,6 +1641,7 @@ export type PreloadApi = {
       opts?: { scrollbackRows?: number }
     ) => Promise<{
       data: string
+      frameRestoreAnsi?: string
       cols: number
       rows: number
       cwd?: string | null
@@ -1882,6 +1894,15 @@ export type PreloadApi = {
       prRepo?: GitHubOwnerRepo | null
       noCache?: boolean
     }) => Promise<PRComment[]>
+    setPRCommentReaction: (args: {
+      repoPath: string
+      repoId?: string
+      sourceContext?: TaskSourceContext | null
+      reactionSubjectId: string
+      content: GitHubReactionContent
+      reacted: boolean
+      prRepo?: GitHubOwnerRepo | null
+    }) => Promise<boolean>
     resolveReviewThread: (args: {
       repoPath: string
       repoId?: string
@@ -2414,6 +2435,10 @@ export type PreloadApi = {
     previewWarpThemeImport: (source: WarpThemeImportSource) => Promise<WarpThemeImportPreview>
     /** Subscribe to out-of-band settings updates (e.g. View > Appearance toggles) to stay in sync with main. */
     onChanged: (callback: (updates: Partial<GlobalSettings>) => void) => () => void
+  }
+  agentAwake: {
+    getStatus: () => Promise<ComputerAwakeStatus>
+    onChanged: (callback: (status: ComputerAwakeStatus) => void) => () => void
   }
   localhostWorktreeLabels: {
     register: (args: LocalhostWorktreeLabelRoute) => Promise<LocalhostWorktreeLabelResult>
@@ -3229,6 +3254,7 @@ export type PreloadApi = {
     onDictationKeyDown: (callback: () => void) => () => void
     onExportPdfRequested: (callback: () => void) => () => void
     onAppMenuPaste: (callback: () => void) => () => void
+    onAppMenuSelectionAction: (callback: (action: 'copy' | 'select-all') => void) => () => void
     onEditableContextPaste: (callback: (data: { plainTextOnly: boolean }) => void) => () => void
     onActivateWorktree: (
       callback: (data: {
@@ -3343,6 +3369,7 @@ export type PreloadApi = {
     writeSelectionClipboardText: (text: string) => Promise<void>
     writeClipboardImage: (dataUrl: string) => Promise<void>
     performNativePaste: (options?: { mode?: 'paste' | 'paste-and-match-style' }) => void
+    performNativeSelectionAction: (action: 'copy' | 'select-all') => void
     writeClipboardFile: (
       args:
         | {
@@ -3671,7 +3698,7 @@ export type PreloadApi = {
   }
   mobile: {
     listNetworkInterfaces: () => Promise<{
-      interfaces: { name: string; address: string }[]
+      interfaces: { name: string; address: string; hasDefaultRoute?: boolean }[]
     }>
     getPairingQR: (args?: {
       address?: string
