@@ -4,8 +4,9 @@ import { once } from 'node:events'
 import type { Readable, Writable } from 'node:stream'
 import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { constants as zlibConstants, createGunzip, createGzip } from 'node:zlib'
+import { createGunzip } from 'node:zlib'
 import { SKILL_PACKAGE_MAX_COMPRESSED_BYTES } from '../../shared/skill-package-manifest'
+import { createDeterministicGzipStore } from './skill-package-deterministic-gzip'
 
 const TAR_BLOCK_BYTES = 512
 const TAR_EXPANDED_LIMIT = 40 * 1024 * 1024
@@ -80,30 +81,13 @@ async function writeWithBackpressure(stream: Writable, bytes: Buffer): Promise<v
   }
 }
 
-function portableGzipHeader(): Transform {
-  let emittedBytes = 0
-  return new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      if (emittedBytes <= 9 && emittedBytes + chunk.length > 9) {
-        const portable = Buffer.from(chunk)
-        portable[9 - emittedBytes] = 0xff
-        emittedBytes += chunk.length
-        callback(null, portable)
-        return
-      }
-      emittedBytes += chunk.length
-      callback(null, chunk)
-    }
-  })
-}
-
 export async function writeSkillTarGzip(
   archivePath: string,
   entries: readonly SkillTarWriteEntry[]
 ): Promise<{ archiveSha256: string; compressedBytes: number }> {
   const archiveHash = createHash('sha256')
   let compressedBytes = 0
-  const gzip = createGzip({ level: 9, strategy: zlibConstants.Z_FIXED })
+  const gzip = createDeterministicGzipStore()
   const hashTransform = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
       compressedBytes += chunk.length
@@ -117,7 +101,6 @@ export async function writeSkillTarGzip(
   })
   const sink = pipeline(
     gzip,
-    portableGzipHeader(),
     hashTransform,
     createWriteStream(archivePath, { flags: 'wx', mode: 0o600 })
   )
