@@ -2280,7 +2280,6 @@ function applyWebSessionTabsSnapshotWithContext(
     return sameOpenFiles(state.openFiles, next) ? state.openFiles : next
   })()
   advanceWebSessionOpenFilesIndex(batchContext, nextOpenFiles, worktreeId)
-  const currentUnifiedTabs = state.unifiedTabsByWorktree[worktreeId] ?? []
   const retainedUnifiedTabs = currentUnifiedTabs.filter((tab) => {
     if (tab.contentType === 'agent-session') {
       return false
