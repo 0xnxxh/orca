@@ -102,22 +102,21 @@ describe.runIf(RUN_REAL_WSL)('real WSL POSIX skill semantics', () => {
     const homeDirectory = uncPath(`${guestRoot}/home`)
     const filesystem = createWslSkillInstallFilesystem({ distro: DISTRO, homeDirectory })
 
-    await expect(
-      installSharedSkill({
-        operationId: 'wsl-posix-semantics',
-        archivePath,
-        scope: 'global',
-        homeDirectory,
-        orcaStateDirectory: join(localRoot, 'state'),
-        detectedProviders: [],
-        destinationIdentity: 'global:wsl-posix',
-        hostIdentity: 'windows-2',
-        expectedArchiveSha256: archive.archiveSha256,
-        expectedPackageDigest: manifest.packageDigest,
-        filesystem,
-        wslDistro: DISTRO
-      })
-    ).resolves.toMatchObject({ status: 'installed' })
+    const result = await installSharedSkill({
+      operationId: 'wsl-posix-semantics',
+      archivePath,
+      scope: 'global',
+      homeDirectory,
+      orcaStateDirectory: join(localRoot, 'state'),
+      detectedProviders: [],
+      destinationIdentity: 'global:wsl-posix',
+      hostIdentity: 'windows-2',
+      expectedArchiveSha256: archive.archiveSha256,
+      expectedPackageDigest: manifest.packageDigest,
+      filesystem,
+      wslDistro: DISTRO
+    })
+    expect(result.status, JSON.stringify(result)).toBe('installed')
 
     const skill = `${guestRoot}/home/.agents/skills/wsl-mode-skill`
     await expect(runWsl('stat', '-c', '%a', `${skill}/SKILL.md`)).resolves.toBe('600')
