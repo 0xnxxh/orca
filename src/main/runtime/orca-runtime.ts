@@ -20109,14 +20109,17 @@ export class OrcaRuntimeService {
       checkName?: string
       url?: string | null
       prRepo?: GitHubOwnerRepo | null
-    }
+    },
+    signal?: AbortSignal
   ): Promise<Awaited<ReturnType<typeof getPRCheckDetails>>> {
     const repo = await this.resolveRepoSelector(repoSelector)
+    const localGitOptions = this.getLocalGitExecutionOptionArgs(repo)[0] ?? {}
     return getPRCheckDetails(
       repo.path,
       { ...args, prRepo: args.prRepo ?? null },
       repo.connectionId ?? null,
-      ...this.getLocalGitExecutionOptionArgs(repo)
+      localGitOptions,
+      signal
     )
   }
 
