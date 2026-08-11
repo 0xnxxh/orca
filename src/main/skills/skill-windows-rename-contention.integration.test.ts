@@ -16,7 +16,7 @@ const LOCK_SCRIPT = [
   "[Console]::Out.WriteLine('LOCKED')",
   'Start-Sleep -Milliseconds ([int]$args[1])',
   '$stream.Dispose()'
-].join(' ')
+].join('\n')
 
 function holdFile(path: string, durationMs: number) {
   const child = spawn(
@@ -45,8 +45,10 @@ function holdFile(path: string, durationMs: number) {
     child.once('exit', (code) => {
       if (code === 0) {
         resolve()
-      } else {
+      } else if (ready) {
         reject(new Error(`windows-locker-exited-${code ?? 'unknown'}`))
+      } else {
+        resolve()
       }
     })
   })
