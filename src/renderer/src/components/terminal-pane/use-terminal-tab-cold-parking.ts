@@ -63,6 +63,7 @@ export function useTerminalTabColdParking(args: {
   terminalTabs: readonly TerminalTab[]
   assignments: ReadonlyMap<string, TerminalOverlayTabAssignment>
   isWorktreeActive: boolean
+  activeTerminalTabId: string | null
   /** Worktree-level park verdict from Terminal.tsx. */
   coldParkTerminalPanes: boolean
   /** Retention-budget force-park (C1 slice B): unlike ordinary parks, the
@@ -82,6 +83,7 @@ export function useTerminalTabColdParking(args: {
     terminalTabs,
     assignments,
     isWorktreeActive,
+    activeTerminalTabId,
     coldParkTerminalPanes,
     isForceParked = false,
     shouldMeasureHiddenWorktree,
@@ -116,8 +118,7 @@ export function useTerminalTabColdParking(args: {
     [sleepingAgentSessionsByPaneKey, worktreeId]
   )
   const terminalTabHiddenSinceRef = useRef(new Map<string, number>())
-  // Why: ranks the #8262 keep-warm exemption when hiddenSince ties; see
-  // terminal-tab-activation-order.ts.
+  // Why: view switches hide every tab at once, so the park clock cannot rank them.
   const terminalTabActivationOrderRef = useRef(createTerminalTabActivationOrder())
   // Why (shared measure-clock contract with Terminal.tsx): tab hiddenSince
   // survives a background-measure window so per-tab park deadlines stay in
@@ -189,6 +190,7 @@ export function useTerminalTabColdParking(args: {
       terminalTabs,
       assignments,
       isWorktreeActive,
+      activeTerminalTabId,
       portalTabIds,
       shouldMeasureHiddenWorktree,
       hiddenSinceByTabId: terminalTabHiddenSinceRef.current,
@@ -249,6 +251,7 @@ export function useTerminalTabColdParking(args: {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- semantic keys own the tab and assignment dependencies.
   }, [
     activityTerminalPortals,
+    activeTerminalTabId,
     isWorktreeActive,
     pendingStartupByTabId,
     runtimeStatusByEnvironmentId,

@@ -49,8 +49,7 @@ export type TerminalTabColdParkCandidate = ColdParkableTerminalTab & {
   isVisible: boolean
   hasActivityTerminalPortal: boolean
   hiddenSinceMs: number | null
-  /** Monotonic activation counter (higher = activated more recently); see
-   *  compareColdParkRecencyDesc for why hiddenSinceMs alone cannot rank tabs. */
+  /** Higher means activated more recently; breaks same-pass hidden-time ties. */
   lastActivatedSeq?: number
 }
 
@@ -207,10 +206,8 @@ export type ColdParkRetainCandidate = {
   lastActivatedSeq?: number
 }
 
-// Why: equal hiddenSinceMs is the common case, not a corner — hiding a view
-// stamps every tab it owns in one pass — and ids are random UUIDs, so ranking
-// recency on them is a coin flip. Recorded activation order decides instead;
-// the id only settles candidates that were never activated (#8262).
+// Why: a view switch stamps every owned tab at once, so activation order must
+// break the routine hidden-time tie before the deterministic UUID fallback.
 function compareColdParkRecencyDesc(
   a: ColdParkRetainCandidate,
   b: ColdParkRetainCandidate
