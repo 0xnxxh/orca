@@ -212,6 +212,15 @@ describe('buildClaudeResumeLaunchCommand', () => {
     )
   })
 
+  it('fails open on a token-leading powershell backtick before whitespace', () => {
+    // PowerShell drops the backtick AND the whitespace, emitting no token,
+    // so the tokenizer's extra token would shift the locator.
+    const base = 'claude --resume ` \t"q"'
+    expect(buildClaudeResumeLaunchCommand(base, RESUME, 'powershell')).toBe(
+      `${base} '--resume' '${SESSION_ID}'`
+    )
+  })
+
   it('fails open on the powershell stop-parsing token', () => {
     // After a bare --%, PowerShell hands the rest of the line to the child
     // literally, so an appended quoted selector would arrive as literal bytes.

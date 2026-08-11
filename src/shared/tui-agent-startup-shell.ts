@@ -35,12 +35,16 @@ function tokenizeWindowsStartupCommand(
       // Why: cmd strips `^` and hands the bare byte to the child's parser,
       // which re-splits on whitespace and reopens a quote, and keeps the caret
       // literal inside double quotes — either way the token stops matching
-      // argv. PowerShell folds the backtick into the token, so only its line
-      // continuation and its verbatim single quotes diverge.
+      // argv. PowerShell folds the backtick into the token except for line
+      // continuations, verbatim single quotes, escape sequences, and a
+      // token-leading backtick before whitespace, which it drops entirely.
       divergesFromShell ||=
-        (shell === 'cmd' ? /[\s"]/.test(value[index + 1]) : value[index + 1] === '\n') ||
+        (shell === 'cmd' ? /[\s"]/.test(value[index + 1]) : /[\n\r]/.test(value[index + 1])) ||
         (shell === 'cmd' && quote === '"') ||
         (shell === 'powershell' && quote === "'") ||
+        // A token-leading backtick before whitespace is dropped with the
+        // whitespace, emitting no token at all rather than the one built here.
+        (shell === 'powershell' && !tokenStarted && /\s/.test(value[index + 1])) ||
         // PowerShell expands these escape sequences in quoted AND bare
         // arguments, so the token value this branch builds is not argv's.
         (shell === 'powershell' && '0abefnrtuv'.includes(value[index + 1]))
