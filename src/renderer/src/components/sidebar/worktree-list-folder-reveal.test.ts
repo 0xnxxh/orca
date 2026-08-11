@@ -182,6 +182,23 @@ describe('worktree list folder reveal', () => {
     ).toEqual([getProjectGroupHeaderKey(runtimeGroup.id, 'runtime:env-1')])
   })
 
+  it('reveals a legacy SSH folder through its unambiguous local-stamped group', () => {
+    const localGroup = makeProjectGroup({ id: 'legacy-group', executionHostId: 'local' })
+    const legacyFolder = makeFolderWorkspace({
+      projectGroupId: localGroup.id,
+      connectionId: 'builder'
+    })
+
+    expect(
+      getFolderWorkspaceRevealGroupKeys(
+        folderWorkspaceKey(legacyFolder.id),
+        [legacyFolder],
+        [localGroup],
+        'ssh:builder'
+      )
+    ).toEqual([getProjectGroupHeaderKey(localGroup.id)])
+  })
+
   it('uses qualified DOM row keys only for collision-qualified folder rows', () => {
     expect(
       getFolderWorkspaceSidebarRowKey('folder-workspace-1', 'folder-workspace:folder-workspace-1')

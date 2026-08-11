@@ -5,9 +5,11 @@ import { resolveFolderWorkspaceCatalogOwnerHostId } from '../../../../shared/fol
 import { folderWorkspaceKey, parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import {
   buildProjectGroupSidebarIndex,
-  findProjectGroupForSidebarOwner,
+  findProjectGroupForFolderWorkspace,
   findProjectGroupParentForSidebar,
-  getProjectGroupHeaderKey
+  getProjectGroupHeaderKey,
+  getProjectGroupOwnerHostId,
+  getProjectGroupSidebarIdentity
 } from './worktree-list-groups'
 
 function findFolderWorkspaceByKey(
@@ -107,29 +109,21 @@ export function getFolderWorkspaceRevealGroupKeys(
     return []
   }
 
-  const resolvedOwnerHostId =
-    ownerHostId ?? resolveFolderWorkspaceCatalogOwnerHostId(folderWorkspace, projectGroups)
-  if (!resolvedOwnerHostId) {
-    return []
-  }
   const projectGroupIndex = buildProjectGroupSidebarIndex(projectGroups)
-  let group = findProjectGroupForSidebarOwner(
-    projectGroupIndex,
-    folderWorkspace.projectGroupId,
-    resolvedOwnerHostId
-  )
+  let group = findProjectGroupForFolderWorkspace(projectGroupIndex, folderWorkspace)
   const keys: string[] = []
   const seen = new Set<string>()
   while (group) {
-    const identity = JSON.stringify([resolvedOwnerHostId, group.id])
+    const identity = getProjectGroupSidebarIdentity(group)
     if (seen.has(identity)) {
       break
     }
     seen.add(identity)
+    const groupOwnerHostId = getProjectGroupOwnerHostId(group)
     keys.unshift(
       getProjectGroupHeaderKey(
         group.id,
-        projectGroupIndex.ambiguousIds.has(group.id) ? resolvedOwnerHostId : undefined
+        projectGroupIndex.ambiguousIds.has(group.id) ? groupOwnerHostId : undefined
       )
     )
     group = findProjectGroupParentForSidebar(projectGroupIndex, group)

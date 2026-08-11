@@ -112,6 +112,41 @@ describe('project group deletion store routing', () => {
     expect(setActiveWorktree).toHaveBeenCalledWith(null)
   })
 
+  it('clears an active legacy SSH folder removed with its local-stamped group', async () => {
+    const localStampedGroup = { ...projectGroup, executionHostId: 'local' as const }
+    const legacyFolder: FolderWorkspace = {
+      id: 'legacy-folder',
+      projectGroupId: localStampedGroup.id,
+      connectionId: 'builder',
+      name: 'Legacy SSH folder',
+      folderPath: '/remote/folder',
+      linkedTask: null,
+      comment: '',
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 1,
+      lastActivityAt: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    projectGroupsDelete.mockResolvedValue(true)
+    const store = createTestStore()
+    const setActiveWorktree = vi.fn()
+    store.setState({
+      projectGroups: [localStampedGroup],
+      folderWorkspaces: [legacyFolder],
+      activeWorktreeId: 'folder:legacy-folder',
+      activeWorkspaceExecutionHostId: 'ssh:builder',
+      setActiveWorktree
+    })
+
+    await expect(store.getState().deleteProjectGroup(projectGroup.id)).resolves.toBe(true)
+
+    expect(store.getState().folderWorkspaces).toEqual([])
+    expect(setActiveWorktree).toHaveBeenCalledWith(null)
+  })
+
   it('uses the remote delete response shape before mutating local state', async () => {
     runtimeEnvironmentCall.mockResolvedValue({
       id: 'rpc-delete-group',

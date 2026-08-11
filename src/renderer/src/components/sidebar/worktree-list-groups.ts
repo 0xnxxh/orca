@@ -31,7 +31,10 @@ import {
   getProjectGroupOwnerIdentity,
   UNGROUPED_PROJECT_GROUP_KEY
 } from '../../../../shared/project-groups'
-import { getFolderWorkspaceRowKey } from '../../../../shared/folder-workspaces'
+import {
+  getFolderWorkspaceCatalogOwnerHostId,
+  getFolderWorkspaceRowKey
+} from '../../../../shared/folder-workspaces'
 import { cloneDefaultWorkspaceStatuses } from '../../../../shared/workspace-statuses'
 import type { AppState } from '../../store/types'
 import { getGitHubPRCacheKey, getLegacyGitHubPRCacheKey } from '../../store/slices/github-cache-key'
@@ -235,7 +238,7 @@ export function getAmbiguousFolderWorkspaceSidebarIds(
     if (!group || ambiguousIds.has(workspace.id)) {
       continue
     }
-    const ownerHostId = getProjectGroupOwnerHostId(group)
+    const ownerHostId = getFolderWorkspaceCatalogOwnerHostId(workspace, [group])
     const existingOwnerHostId = ownerById.get(workspace.id)
     if (existingOwnerHostId && existingOwnerHostId !== ownerHostId) {
       ownerById.delete(workspace.id)
@@ -284,6 +287,9 @@ export function getFolderWorkspaceExecutionHostIdForRows({
   }
   if (projectGroup) {
     const explicitProjectGroupHostId = normalizeExecutionHostId(projectGroup.executionHostId)
+    if (explicitProjectGroupHostId === LOCAL_EXECUTION_HOST_ID && folderWorkspace.connectionId) {
+      return toSshExecutionHostId(folderWorkspace.connectionId)
+    }
     if (explicitProjectGroupHostId) {
       return explicitProjectGroupHostId
     }

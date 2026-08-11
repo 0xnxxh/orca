@@ -188,6 +188,28 @@ describe('project-groups', () => {
     ).toHaveLength(1)
   })
 
+  it('retains a legacy SSH folder under one local-stamped group', () => {
+    const localGroup = projectGroup({
+      id: 'local-stamped',
+      parentPath: '/local-stamped',
+      executionHostId: 'local'
+    })
+
+    const legacyFolder = {
+      id: 'legacy-folder',
+      projectGroupId: localGroup.id,
+      connectionId: 'builder'
+    }
+
+    expect(normalizeFolderWorkspaces([legacyFolder], [localGroup])).toHaveLength(1)
+    expect(
+      normalizeFolderWorkspaces(
+        [legacyFolder],
+        [localGroup, projectGroup({ id: localGroup.id, executionHostId: 'runtime:env-1' })]
+      )
+    ).toEqual([])
+  })
+
   it('does not reinterpret explicit local provenance as a unique SSH owner', () => {
     const ssh = projectGroup({ id: 'same-id', connectionId: 'builder' })
     const index = buildProjectGroupOwnerIndex([ssh])

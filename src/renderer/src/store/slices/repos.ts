@@ -3176,14 +3176,18 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       }
       const activeWorkspaceScope = parseWorkspaceKey(stateBeforeDelete.activeWorktreeId ?? '')
       if (activeWorkspaceScope?.type === 'folder') {
-        const activeOwnerIdentity = stateBeforeDelete.activeWorkspaceExecutionHostId
-          ? getFolderWorkspaceIdentity(
-              activeWorkspaceScope.folderWorkspaceId,
-              stateBeforeDelete.activeWorkspaceExecutionHostId
+        const activeFolderWorkspace = findFolderWorkspaceOwner(
+          stateBeforeDelete,
+          activeWorkspaceScope.folderWorkspaceId,
+          stateBeforeDelete.activeWorkspaceExecutionHostId ?? undefined
+        )
+        const removedActiveOwner = activeFolderWorkspace
+          ? targets.folderWorkspaceIdentities.has(
+              getProjectGroupRemovalFolderWorkspaceIdentity(
+                removalGroupIndex,
+                activeFolderWorkspace
+              ) ?? ''
             )
-          : null
-        const removedActiveOwner = activeOwnerIdentity
-          ? targets.folderWorkspaceIdentities.has(activeOwnerIdentity)
           : removedFolderWorkspaceIds.has(activeWorkspaceScope.folderWorkspaceId) &&
             !get().folderWorkspaces.some(
               (workspace) => workspace.id === activeWorkspaceScope.folderWorkspaceId

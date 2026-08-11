@@ -4,6 +4,7 @@ import { addHostSectionRows } from './host-section-rows'
 import type { Row } from './worktree-list-groups'
 import {
   filterFolderWorkspacesForVisibleHosts,
+  filterProjectGroupsForVisibleHosts,
   getFolderPathStatusRouteOptionsForRows,
   getFolderWorkspaceExecutionHostIdForRows,
   getProjectGroupExecutionHostIdForRows,
@@ -76,6 +77,16 @@ describe('WorktreeList host filtering ownership', () => {
         defaultHostId: 'runtime:env-1'
       })
     ).toBe('runtime:env-1')
+  })
+
+  it('uses legacy SSH folder ownership over a local-stamped group', () => {
+    expect(
+      getFolderWorkspaceExecutionHostIdForRows({
+        folderWorkspace: folderWorkspace({ connectionId: 'builder' }),
+        projectGroup: group({ connectionId: undefined, executionHostId: 'local' }),
+        defaultHostId: 'runtime:env-1'
+      })
+    ).toBe('ssh:builder')
   })
 
   it('extracts runtime route ids for folder path status requests', () => {
@@ -297,5 +308,31 @@ describe('runtime folder host section rows', () => {
       ['local', 1],
       ['runtime:env-2', 1]
     ])
+  })
+
+  it('retains a local-stamped group needed by a visible legacy SSH folder', () => {
+    const localGroup = group({
+      id: 'legacy-group',
+      connectionId: undefined,
+      executionHostId: 'local'
+    })
+    const legacyFolder = folderWorkspace({
+      projectGroupId: localGroup.id,
+      connectionId: 'builder'
+    })
+
+    expect(
+      filterProjectGroupsForVisibleHosts([localGroup], new Set(['ssh:builder']), 'local', [
+        legacyFolder
+      ])
+    ).toEqual([localGroup])
+  })
+
+  it('keeps groups when the caller cannot provide folder membership', () => {
+    const localGroup = group({ executionHostId: 'local' })
+
+    expect(
+      filterProjectGroupsForVisibleHosts([localGroup], new Set(['ssh:builder']), 'local')
+    ).toEqual([localGroup])
   })
 })

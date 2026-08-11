@@ -11,9 +11,16 @@ import {
   getProjectGroupOwnerHostId,
   resolveFolderWorkspaceProjectGroup
 } from '../../shared/project-groups'
-import { getRepoExecutionHostId, LOCAL_EXECUTION_HOST_ID } from '../../shared/execution-host'
-import type { ProjectGroup, Repo } from '../../shared/types'
-import { resolveFolderWorkspaceCatalogOwnerHostId } from '../../shared/folder-workspaces'
+import {
+  getRepoExecutionHostId,
+  LOCAL_EXECUTION_HOST_ID,
+  normalizeExecutionHostId
+} from '../../shared/execution-host'
+import type { FolderWorkspace, ProjectGroup, Repo } from '../../shared/types'
+import {
+  resolveFolderWorkspaceCatalogOwnerHostIdFromIndex,
+  resolveFolderWorkspaceProjectGroupWithLegacySsh
+} from '../../shared/folder-workspaces'
 
 export const PATH_ACCESS_DENIED_MESSAGE =
   'Access denied: path resolves outside allowed directories. If this blocks a legitimate workflow, please file a GitHub issue.'
@@ -75,7 +82,9 @@ type FolderAuthIndex = {
 
 type GroupMembershipSummary = {
   repoCount: number
+  folderWorkspaceCount: number
   hasLocalOwner: boolean
+  hasLocalFolderWorkspace: boolean
   hasUnconnectedRepo: boolean
   unsafeCycle: boolean
 }
@@ -86,7 +95,8 @@ function ownerGroupKey(ownerHostId: string, groupId: string): string {
 
 function buildFolderAuthIndex(
   projectGroups: readonly ProjectGroup[],
-  repos: readonly Repo[]
+  repos: readonly Repo[],
+  folderWorkspaces: readonly FolderWorkspace[]
 ): FolderAuthIndex {
   const projectGroupIndex = buildProjectGroupOwnerIndex(projectGroups)
   const parentByGroup = new Map<string, string>()
@@ -154,6 +164,32 @@ function buildFolderAuthIndex(
         legacySummary.hasLocalOwner ||= ownerHostId === LOCAL_EXECUTION_HOST_ID
         legacySummary.hasUnconnectedRepo ||= !repo.connectionId
       }
+    }
+  }
+  for (const workspace of folderWorkspaces) {
+    if (
+      workspace.connectionId === undefined &&
+      !normalizeExecutionHostId(workspace.executionHostId)
+    ) {
+      continue
+    }
+    const group = resolveFolderWorkspaceProjectGroupWithLegacySsh(projectGroupIndex, workspace)
+    if (!group) {
+      continue
+    }
+    const ownerHostId = resolveFolderWorkspaceCatalogOwnerHostIdFromIndex(
+      workspace,
+      projectGroupIndex
+    )
+    const summary = groupMembership.get(ownerGroupKey(getProjectGroupOwnerHostId(group), group.id))
+    if (summary) {
+      summary.folderWorkspaceCount++
+      summary.hasLocalFolderWorkspace ||= ownerHostId === LOCAL_EXECUTION_HOST_ID
+    }
+    const legacySummary = legacyGroupMembership.get(group.id)
+    if (legacySummary) {
+      legacySummary.folderWorkspaceCount++
+      legacySummary.hasLocalFolderWorkspace ||= ownerHostId === LOCAL_EXECUTION_HOST_ID
     }
   }
 
@@ -235,7 +271,9 @@ function buildFolderAuthIndex(
 function emptyGroupMembershipSummary(): GroupMembershipSummary {
   return {
     repoCount: 0,
+    folderWorkspaceCount: 0,
     hasLocalOwner: false,
+    hasLocalFolderWorkspace: false,
     hasUnconnectedRepo: false,
     unsafeCycle: false
   }
@@ -243,7 +281,9 @@ function emptyGroupMembershipSummary(): GroupMembershipSummary {
 
 function mergeGroupMembership(target: GroupMembershipSummary, child: GroupMembershipSummary): void {
   target.repoCount += child.repoCount
+  target.folderWorkspaceCount += child.folderWorkspaceCount
   target.hasLocalOwner ||= child.hasLocalOwner
+  target.hasLocalFolderWorkspace ||= child.hasLocalFolderWorkspace
   target.hasUnconnectedRepo ||= child.hasUnconnectedRepo
   target.unsafeCycle ||= child.unsafeCycle
 }
@@ -293,18 +333,22 @@ function isRemoteOnlyFolderScopeWithIndex(
       return true
     }
     const hasAnyCandidate =
-      legacySummary.repoCount > 0 || hasIndexedPathInside(folderPath, index.allRepoPaths)
+      legacySummary.repoCount > 0 ||
+      legacySummary.folderWorkspaceCount > 0 ||
+      hasIndexedPathInside(folderPath, index.allRepoPaths)
     const hasLocalCandidate =
-      legacySummary.hasLocalOwner || hasIndexedPathInside(folderPath, index.localOwnerRepoPaths)
+      legacySummary.hasLocalOwner ||
+      legacySummary.hasLocalFolderWorkspace ||
+      hasIndexedPathInside(folderPath, index.localOwnerRepoPaths)
     if (hasAnyCandidate && !hasLocalCandidate) {
       return true
     }
   }
-  if (summary.repoCount === 0) {
+  if (summary.repoCount === 0 && summary.folderWorkspaceCount === 0) {
     // Why: empty membership means no remote-linked evidence; authorize local folder scopes without path scans.
     return false
   }
-  if (summary.hasUnconnectedRepo) {
+  if (summary.hasUnconnectedRepo || summary.hasLocalFolderWorkspace) {
     return false
   }
   if (hasIndexedPathInside(folderPath, index.unconnectedRepoPathsByOwner.get(ownerHostId) ?? [])) {
@@ -318,8 +362,9 @@ function getLocalFolderScopeRoots(store: Store): string[] {
   const repos = scopeStore.getRepos()
   // Why: many filesystem tests use narrow Store doubles; folder scopes are additive.
   const projectGroups = scopeStore.getProjectGroups?.() ?? []
+  const folderWorkspaces = scopeStore.getFolderWorkspaces?.() ?? []
   // Why: one owner-indexed pass avoids O((groups+folders)*(groups+repos)) remote-only checks.
-  const index = buildFolderAuthIndex(projectGroups, repos)
+  const index = buildFolderAuthIndex(projectGroups, repos, folderWorkspaces)
   const roots: string[] = []
   for (const group of projectGroups) {
     if (
@@ -337,7 +382,7 @@ function getLocalFolderScopeRoots(store: Store): string[] {
       roots.push(resolve(group.parentPath))
     }
   }
-  for (const workspace of scopeStore.getFolderWorkspaces?.() ?? []) {
+  for (const workspace of folderWorkspaces) {
     const group = resolveFolderWorkspaceProjectGroup(index.projectGroupIndex, workspace)
     if (!group && index.projectGroupIndex.byId.has(workspace.projectGroupId)) {
       continue
@@ -345,7 +390,7 @@ function getLocalFolderScopeRoots(store: Store): string[] {
     // Why: narrow Store doubles may omit groups; folder roots stay additive from the workspace catalog.
     const ownerHostId = group
       ? getProjectGroupOwnerHostId(group)
-      : resolveFolderWorkspaceCatalogOwnerHostId(workspace, projectGroups)
+      : resolveFolderWorkspaceCatalogOwnerHostIdFromIndex(workspace, index.projectGroupIndex)
     if (!ownerHostId) {
       continue
     }

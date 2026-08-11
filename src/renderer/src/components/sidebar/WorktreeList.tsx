@@ -1102,7 +1102,8 @@ export function renderRowContainsWorktree(
     return (
       folderWorkspaceKey(row.folderWorkspace.id) === worktreeId &&
       (!ownerHostId ||
-        getProjectGroupMutationSelector(row.projectGroup).ownerHostId === ownerHostId)
+        resolveFolderWorkspaceCatalogOwnerHostId(row.folderWorkspace, [row.projectGroup]) ===
+          ownerHostId)
     )
   }
   if (row.type === 'lineage-group') {
@@ -1261,7 +1262,9 @@ function getRenderedSidebarSelectionEntries(
     } else if (row.type === 'folder-workspace') {
       worktree = {
         ...folderWorkspaceToWorktree(row.folderWorkspace),
-        hostId: getProjectGroupMutationSelector(row.projectGroup).ownerHostId
+        hostId:
+          resolveFolderWorkspaceCatalogOwnerHostId(row.folderWorkspace, [row.projectGroup]) ??
+          getProjectGroupMutationSelector(row.projectGroup).ownerHostId
       }
     } else {
       continue
@@ -5230,9 +5233,11 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
 
             if (row.type === 'folder-workspace') {
               const folderWorkspaceRow = row as FolderWorkspaceItemRow
-              const folderOwnerHostId = getProjectGroupMutationSelector(
-                folderWorkspaceRow.projectGroup
-              ).ownerHostId
+              const folderOwnerHostId =
+                resolveFolderWorkspaceCatalogOwnerHostId(
+                  folderWorkspaceRow.folderWorkspace,
+                  projectGroups
+                ) ?? getProjectGroupMutationSelector(folderWorkspaceRow.projectGroup).ownerHostId
               const folderWorktree = {
                 ...folderWorkspaceToWorktree(folderWorkspaceRow.folderWorkspace),
                 hostId: folderOwnerHostId
@@ -5844,8 +5849,14 @@ const WorktreeList = React.memo(function WorktreeList({
     })
   }, [defaultHostId, repos, visibleHostIdSet])
   const visibleProjectGroupsForRows = useMemo(
-    () => filterProjectGroupsForVisibleHosts(projectGroups, visibleHostIdSet, defaultHostId),
-    [defaultHostId, projectGroups, visibleHostIdSet]
+    () =>
+      filterProjectGroupsForVisibleHosts(
+        projectGroups,
+        visibleHostIdSet,
+        defaultHostId,
+        folderWorkspaces
+      ),
+    [defaultHostId, folderWorkspaces, projectGroups, visibleHostIdSet]
   )
   const ownerQualifiedProjectGroupIds = useMemo(
     () => buildProjectGroupSidebarIndex(projectGroups).ambiguousIds,

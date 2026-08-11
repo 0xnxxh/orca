@@ -7,6 +7,7 @@ import {
 import {
   buildProjectGroupOwnerIndex,
   getFolderWorkspaceProjectGroupOwnerHostId,
+  getProjectGroupOwnerHostId,
   resolveFolderWorkspaceProjectGroup,
   resolveProjectGroupOwner,
   type ProjectGroupOwnerIndex
@@ -30,7 +31,7 @@ export function resolveFolderWorkspaceProjectGroupWithLegacySsh(
   const group = resolveProjectGroupOwner(index, workspace.projectGroupId)
   return group &&
     group.connectionId === undefined &&
-    !normalizeExecutionHostId(group.executionHostId)
+    getProjectGroupOwnerHostId(group) === LOCAL_EXECUTION_HOST_ID
     ? group
     : null
 }

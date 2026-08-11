@@ -11,8 +11,10 @@ import type { FolderWorkspace, ProjectGroup } from '../../../../shared/types'
 import {
   buildProjectGroupSidebarIndex,
   findProjectGroupForFolderWorkspace,
+  findProjectGroupParentForSidebar,
   getFolderWorkspaceExecutionHostIdForRows,
-  getProjectGroupExecutionHostIdForRows
+  getProjectGroupExecutionHostIdForRows,
+  getProjectGroupSidebarIdentity
 } from './worktree-list-groups'
 
 export { getFolderWorkspaceExecutionHostIdForRows, getProjectGroupExecutionHostIdForRows }
@@ -33,13 +35,41 @@ export function getVisibleSidebarHostIdSet(
 export function filterProjectGroupsForVisibleHosts(
   projectGroups: readonly ProjectGroup[],
   visibleHostIdSet: ReadonlySet<ExecutionHostId> | null,
-  defaultHostId: ExecutionHostId
+  defaultHostId: ExecutionHostId,
+  folderWorkspaces?: readonly FolderWorkspace[]
 ): readonly ProjectGroup[] {
-  if (!visibleHostIdSet) {
+  if (!visibleHostIdSet || !folderWorkspaces) {
     return projectGroups
   }
-  return projectGroups.filter((group) =>
-    visibleHostIdSet.has(getProjectGroupExecutionHostIdForRows(group, defaultHostId))
+  const retainedFolderGroupIdentities = new Set<string>()
+  const projectGroupIndex = buildProjectGroupSidebarIndex(projectGroups)
+  for (const folderWorkspace of folderWorkspaces) {
+    let group = findProjectGroupForFolderWorkspace(projectGroupIndex, folderWorkspace)
+    if (
+      !group ||
+      !visibleHostIdSet.has(
+        getFolderWorkspaceExecutionHostIdForRows({
+          folderWorkspace,
+          projectGroup: group,
+          defaultHostId
+        })
+      )
+    ) {
+      continue
+    }
+    while (group) {
+      const identity = getProjectGroupSidebarIdentity(group)
+      if (retainedFolderGroupIdentities.has(identity)) {
+        break
+      }
+      retainedFolderGroupIdentities.add(identity)
+      group = findProjectGroupParentForSidebar(projectGroupIndex, group)
+    }
+  }
+  return projectGroups.filter(
+    (group) =>
+      visibleHostIdSet.has(getProjectGroupExecutionHostIdForRows(group, defaultHostId)) ||
+      retainedFolderGroupIdentities.has(getProjectGroupSidebarIdentity(group))
   )
 }
 
