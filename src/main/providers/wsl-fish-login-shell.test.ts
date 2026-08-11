@@ -11,9 +11,11 @@
 import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   rmSync,
   writeFileSync
@@ -73,6 +75,12 @@ function makeGuestFixture(loginShell: string): GuestFixture {
     { mode: 0o755 }
   )
   chmodSync(join(binDir, 'getent'), 0o755)
+  // Why a .profile: a POSIX login shell sources /etc/profile, which on most
+  // distros *overwrites* PATH and would hide the fake prime-agent from the
+  // non-fish control below. fish never reads /etc/profile, so only the control
+  // needs it — but a guest user's profile owning PATH is the realistic shape.
+  writeFileSync(join(home, '.profile'), `PATH="${binDir}:$PATH"\nexport PATH\n`)
+  writeFileSync(join(home, 'stdin-script'), 'prime-agent ask\n')
   return { home, binDir, extensionPath, capturePath }
 }
 
@@ -80,19 +88,31 @@ function runGuestLogin(
   fixture: GuestFixture,
   env: NodeJS.ProcessEnv
 ): { stderr: string; stdout: string } {
-  return spawnSync('sh', ['-c', buildWslInteractiveLoginShellCommand()], {
-    cwd: fixture.home,
-    // Why piped stdin: the script execs an interactive fish, which reads and
-    // runs piped commands when stdin is not a tty.
-    input: 'prime-agent ask\n',
-    env: {
-      PATH: `${fixture.binDir}:${process.env.PATH ?? ''}`,
-      HOME: fixture.home,
-      ORCA_CAPTURE_FILE: fixture.capturePath,
-      ...env
-    },
-    encoding: 'utf8'
-  })
+  // Why stdin from a real file rather than spawnSync's `input`: the script
+  // execs a login shell with no `-c`, so the command has to arrive on stdin —
+  // and fish fstats fd 0, where Node's `input` pipe reports EISDIR and fish
+  // dies with "Unable to read input file: Is a directory" before running
+  // anything. Reproduced on fish 3.6/3.7 (Linux); macOS fish 4.8 tolerates the
+  // pipe, which is exactly how this passed locally and failed in CI. A regular
+  // file fstats cleanly on both.
+  const stdin = openSync(join(fixture.home, 'stdin-script'), 'r')
+  try {
+    const result = spawnSync('sh', ['-c', buildWslInteractiveLoginShellCommand()], {
+      cwd: fixture.home,
+      stdio: [stdin, 'pipe', 'pipe'],
+      env: {
+        PATH: `${fixture.binDir}:${process.env.PATH ?? ''}`,
+        HOME: fixture.home,
+        ORCA_CAPTURE_FILE: fixture.capturePath,
+        ...env
+      },
+      encoding: 'utf8',
+      timeout: 15_000
+    })
+    return { stderr: result.stderr ?? '', stdout: result.stdout ?? '' }
+  } finally {
+    closeSync(stdin)
+  }
 }
 
 describePosix('WSL guest login script, fish branch', () => {
@@ -144,7 +164,7 @@ describePosix('WSL guest login script, fish branch', () => {
   )
 
   itWithFish(
-    'reaches a usable fish prompt when the wrapper file is missing',
+    'reaches a usable fish login when the wrapper file is missing',
     () => {
       const fixture = makeGuestFixture(fishPath ?? 'fish')
       guestHomes.push(fixture.home)
