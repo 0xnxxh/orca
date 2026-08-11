@@ -902,7 +902,7 @@ export type UISlice = {
   showDotfilesByWorktree: Record<string, boolean>
   setShowDotfilesForWorktree: (worktreeId: string, showDotfiles: boolean) => void
   toggleShowDotfilesForWorktree: (worktreeId: string) => void
-  filterRepoIds: string[]
+  filterRepoIds: readonly string[]
   setFilterRepoIds: (ids: string[]) => void
   collapsedGroups: Set<string>
   toggleCollapsedGroup: (key: string) => void

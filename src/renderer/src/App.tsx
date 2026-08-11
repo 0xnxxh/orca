@@ -1413,7 +1413,8 @@ function App(): React.JSX.Element {
         hideDetachedHeadWorkspaces,
         alwaysShowDefaultBranchWorkspace,
         showDotfilesByWorktree,
-        filterRepoIds,
+        // Why: the store keeps this array readonly for identity stability; persistence serializes it.
+        filterRepoIds: [...filterRepoIds],
         // Why (#9002): activeView is deliberately NOT included here. It used to
         // ride this same 150ms writer (#8265), which meant every top-level view
         // switch scheduled a full durable-state save. The narrow preference

@@ -47,11 +47,13 @@ function areValuesEqual(a: unknown, b: unknown): boolean {
   )
 }
 
-function areReposEqual(a: Repo, b: Repo): boolean {
+// Why: own-key-count equality distinguishes an absent optional key from one present-and-undefined,
+// which callers rely on to detect a cleared field (e.g. a dropped runtime preference).
+function areEntriesEqual<T extends object>(a: T, b: T): boolean {
   if (a === b) {
     return true
   }
-  const keys = Object.keys(a) as (keyof Repo)[]
+  const keys = Object.keys(a) as (keyof T)[]
   if (keys.length !== Object.keys(b).length) {
     return false
   }
@@ -66,22 +68,34 @@ function areReposEqual(a: Repo, b: Repo): boolean {
   return true
 }
 
-export function reconcileFetchedRepos(
-  previous: readonly Repo[],
-  next: readonly Repo[]
-): readonly Repo[] {
-  const previousById = new Map(previous.map((repo) => [getRepoHostIdentity(repo), repo]))
+/**
+ * Reuses equal entries from `previous` — and the whole array when nothing moved — so a refetch
+ * that changed nothing leaves identity-keyed memos and store subscribers untouched.
+ */
+export function reconcileFetchedEntries<T extends object>(
+  previous: readonly T[],
+  next: readonly T[],
+  getIdentity: (entry: T) => string
+): readonly T[] {
+  const previousByIdentity = new Map(previous.map((entry) => [getIdentity(entry), entry]))
   let identical = next.length === previous.length
-  const reconciled = next.map((repo, index) => {
-    const existing = previousById.get(getRepoHostIdentity(repo))
-    if (existing && areReposEqual(existing, repo)) {
+  const reconciled = next.map((entry, index) => {
+    const existing = previousByIdentity.get(getIdentity(entry))
+    if (existing && areEntriesEqual(existing, entry)) {
       if (existing !== previous[index]) {
         identical = false
       }
       return existing
     }
     identical = false
-    return repo
+    return entry
   })
   return identical ? previous : reconciled
+}
+
+export function reconcileFetchedRepos(
+  previous: readonly Repo[],
+  next: readonly Repo[]
+): readonly Repo[] {
+  return reconcileFetchedEntries(previous, next, getRepoHostIdentity)
 }
