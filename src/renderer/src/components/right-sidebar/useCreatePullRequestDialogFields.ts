@@ -409,7 +409,9 @@ export function useCreatePullRequestDialogFields({
   // worktree's own base. Consumers that need "is this the repo's default branch?"
   // must ask this one, not that one.
   useEffect(() => {
-    if (!open) {
+    // Why: the repo default doesn't move while a repo stays open, so skip the probe
+    // once it is known — on a remote runtime it is an RPC round-trip per composer open.
+    if (!open || repoDefaultBaseRef) {
       return
     }
     let stale = false
@@ -423,7 +425,7 @@ export function useCreatePullRequestDialogFields({
     return () => {
       stale = true
     }
-  }, [open, repoId, settings])
+  }, [open, repoDefaultBaseRef, repoId, settings])
 
   useEffect(() => {
     if (!open || base || !repoDefaultBaseRef) {

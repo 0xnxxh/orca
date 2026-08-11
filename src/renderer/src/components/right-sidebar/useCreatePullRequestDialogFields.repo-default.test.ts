@@ -107,6 +107,23 @@ describe('useCreatePullRequestDialogFields repo default base ref', () => {
     }
   })
 
+  it('probes the repo default once per repo', async () => {
+    getRuntimeRepoBaseRefDefault.mockResolvedValue({
+      defaultBaseRef: 'refs/remotes/origin/main',
+      remoteCount: 1
+    })
+    const harness = renderFields('repo-1')
+    try {
+      await harness.switchRepo('repo-1', 'refs/remotes/origin/feature/parent')
+      await harness.switchRepo('repo-1', 'refs/remotes/origin/feature/other')
+
+      expect(getRuntimeRepoBaseRefDefault).toHaveBeenCalledTimes(1)
+      expect(harness.current().repoDefaultBaseRef).toBe('main')
+    } finally {
+      harness.unmount()
+    }
+  })
+
   it('drops a previous repo default instead of applying it to the next repo', async () => {
     getRuntimeRepoBaseRefDefault.mockResolvedValue({
       defaultBaseRef: 'refs/remotes/origin/main',

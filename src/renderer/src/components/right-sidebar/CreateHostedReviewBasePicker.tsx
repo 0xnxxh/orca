@@ -181,7 +181,9 @@ export function CreateHostedReviewBasePicker({
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={showResults}
-          aria-controls={resultsId}
+          // Why: the listbox only exists while results show, and an aria-controls
+          // IDREF that resolves to nothing is worse than no reference at all.
+          aria-controls={showResults ? resultsId : undefined}
           aria-activedescendant={
             showResults && activeResult >= 0 ? `${resultsId}-${activeResult}` : undefined
           }
