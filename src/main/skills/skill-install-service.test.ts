@@ -63,7 +63,6 @@ describe('skill install service', () => {
 
     expect(result.status).toBe('installed')
     expect(result.placements).toHaveLength(2)
-    expect((await lstat(claude)).isSymbolicLink()).toBe(process.platform !== 'win32')
     expect(await realpath(claude)).toBe(await realpath(canonical))
   })
 

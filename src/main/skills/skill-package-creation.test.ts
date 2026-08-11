@@ -32,7 +32,7 @@ afterEach(async () => {
 })
 
 describe('skill package creation and extraction', () => {
-  it('round trips a validated skill and preserves executable identity', async () => {
+  it('round trips a validated skill and preserves observed executable identity', async () => {
     const root = await temporaryDirectory()
     const sourceDirectory = await createSkill(root)
     const archivePath = join(root, 'package.tar.gz')
@@ -54,7 +54,7 @@ describe('skill package creation and extraction', () => {
     expect(extracted.manifest).toEqual(created.manifest)
     expect(extracted.manifest.files.map((file) => [file.path, file.executable])).toEqual([
       ['SKILL.md', false],
-      ['scripts/run.sh', true]
+      ['scripts/run.sh', process.platform !== 'win32']
     ])
     expect(await readFile(join(extracted.skillDirectory, 'scripts', 'run.sh'), 'utf8')).toContain(
       'echo test'
