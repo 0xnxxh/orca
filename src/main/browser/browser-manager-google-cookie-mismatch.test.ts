@@ -325,4 +325,23 @@ describe('browserManager Google CookieMismatch prompt', () => {
     await expect(recovery).resolves.toBe(false)
     expect(guest.loadURL).not.toHaveBeenCalled()
   })
+
+  it('does not overwrite a newer navigation after an in-flight cookie clear', async () => {
+    let resolveCookies: ((cookies: Cookie[]) => void) | undefined
+    const partition = createPartition()
+    partition.cookies.get.mockImplementation(
+      () => new Promise<Cookie[]>((resolve) => (resolveCookies = resolve))
+    )
+    const guest = createGuest(719, partition)
+    mount([guest])
+    register(guest, 'browser-1')
+    guest.emit('did-navigate', {}, MISMATCH_URL)
+
+    const recovery = browserManager.recoverFromGoogleCookieMismatch('browser-1')
+    guest.emit('did-navigate', {}, 'https://example.com/')
+    resolveCookies?.([])
+
+    await expect(recovery).resolves.toBe(false)
+    expect(guest.loadURL).not.toHaveBeenCalled()
+  })
 })

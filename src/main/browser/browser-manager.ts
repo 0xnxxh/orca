@@ -1042,7 +1042,12 @@ export class BrowserManager {
       // Why: navigate anyway — a persisting mismatch just shows Google's page again.
       console.error('[browser-manager] Google CookieMismatch cookie clear failed', error)
     }
-    if (guest.isDestroyed() || this.webContentsIdByTabId.get(browserPageId) !== webContentsId) {
+    if (
+      guest.isDestroyed() ||
+      this.webContentsIdByTabId.get(browserPageId) !== webContentsId ||
+      this.pendingNavigationByGuestId.has(webContentsId) ||
+      !isGoogleCookieMismatchUrl(guest.getURL())
+    ) {
       return false
     }
     await guest.loadURL(googleCookieMismatchRecoveryUrl(mismatchUrl)).catch(() => {
