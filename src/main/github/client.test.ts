@@ -4933,7 +4933,10 @@ describe('GitHub GraphQL rate-limit guard', () => {
     expect.soft(consoleWarnSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps legacy merge when an ordinary GitHub response omits stack', async () => {
+  it.each([
+    { stackShape: 'omits stack', stackField: {} },
+    { stackShape: 'sets stack to null', stackField: { stack: null } }
+  ])('keeps legacy merge when an ordinary GitHub response $stackShape', async (scenario) => {
     ghExecFileAsyncMock
       .mockResolvedValueOnce({
         stdout: JSON.stringify({
@@ -4944,7 +4947,8 @@ describe('GitHub GraphQL rate-limit guard', () => {
             ref: 'sta-3924-stack-merge-fail-closed',
             sha: validStackHeadSha
           },
-          base: { ref: 'main', sha: validStackBaseSha }
+          base: { ref: 'main', sha: validStackBaseSha },
+          ...scenario.stackField
         })
       })
       .mockResolvedValueOnce({
