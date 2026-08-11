@@ -70,6 +70,21 @@ describe('useClipboardTextCopyFeedback', () => {
     expect(result.current.status).toBe('idle')
   })
 
+  it('drops feedback when the text changes', async () => {
+    const { result, rerender } = renderHook(
+      ({ text }: { text: string }) => useClipboardTextCopyFeedback(text),
+      { initialProps: { text: 'git status' } }
+    )
+
+    await act(async () => {
+      await result.current.copyText()
+    })
+    expect(result.current.status).toBe('copied')
+
+    rerender({ text: 'git diff' })
+    expect(result.current.status).toBe('idle')
+  })
+
   it('does not set state after unmount', async () => {
     let resolveWrite: (() => void) | null = null
     writeClipboardText.mockImplementation(

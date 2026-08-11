@@ -4,6 +4,11 @@ export type ClipboardTextCopyStatus = 'idle' | 'copied' | 'failed'
 
 const FEEDBACK_MS = 1500
 
+type Feedback = {
+  text: string
+  status: Exclude<ClipboardTextCopyStatus, 'idle'>
+}
+
 /**
  * Clipboard write with brief success/failure feedback. Guards setState after
  * unmount (clipboard IPC can resolve after the menu/row is gone).
@@ -13,10 +18,14 @@ export function useClipboardTextCopyFeedback(text: string): {
   copyText: () => Promise<boolean>
   status: ClipboardTextCopyStatus
 } {
-  const [status, setStatus] = useState<ClipboardTextCopyStatus>('idle')
+  // Why: key feedback to the copied body so a prop change drops stale labels
+  // without setState-in-effect (react-doctor no-adjust-state-on-prop-change).
+  const [feedback, setFeedback] = useState<Feedback | null>(null)
   const isMountedRef = useRef(true)
   const resetTimerRef = useRef<number | null>(null)
   const canCopy = text.trim().length > 0
+  const status: ClipboardTextCopyStatus =
+    feedback != null && feedback.text === text ? feedback.status : 'idle'
 
   const clearResetTimer = useCallback((): void => {
     if (resetTimerRef.current !== null) {
@@ -33,11 +42,9 @@ export function useClipboardTextCopyFeedback(text: string): {
     }
   }, [clearResetTimer])
 
-  // Why: body text can change while feedback is showing (edit in another host /
-  // incomplete draft); drop stale "Copied"/"Couldn't copy" labels.
+  // Drop any pending reset timer when the body changes; display status is already idle.
   useEffect(() => {
     clearResetTimer()
-    setStatus('idle')
   }, [clearResetTimer, text])
 
   const scheduleReset = useCallback((): void => {
@@ -45,7 +52,7 @@ export function useClipboardTextCopyFeedback(text: string): {
     resetTimerRef.current = window.setTimeout(() => {
       resetTimerRef.current = null
       if (isMountedRef.current) {
-        setStatus('idle')
+        setFeedback(null)
       }
     }, FEEDBACK_MS)
   }, [clearResetTimer])
@@ -59,14 +66,14 @@ export function useClipboardTextCopyFeedback(text: string): {
       if (!isMountedRef.current) {
         return true
       }
-      setStatus('copied')
+      setFeedback({ text, status: 'copied' })
       scheduleReset()
       return true
     } catch {
       if (!isMountedRef.current) {
         return false
       }
-      setStatus('failed')
+      setFeedback({ text, status: 'failed' })
       scheduleReset()
       return false
     }

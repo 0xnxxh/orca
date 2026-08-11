@@ -20,6 +20,11 @@ type QuickCommandRowProps = {
   disabled: boolean
 }
 
+type CopyFeedback = {
+  body: string
+  status: 'copied' | 'failed'
+}
+
 export function QuickCommandRow({
   command,
   first,
@@ -31,9 +36,13 @@ export function QuickCommandRow({
   const isAgent = isAgentQuickCommand(command)
   const body = getTerminalQuickCommandBody(command)
   const canCopy = body.trim().length > 0
-  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
+  // Why: key feedback to the copied body so a prop change drops stale labels
+  // without setState-in-effect (react-doctor no-adjust-state-on-prop-change).
+  const [feedback, setFeedback] = useState<CopyFeedback | null>(null)
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
+  const copyStatus: 'idle' | 'copied' | 'failed' =
+    feedback != null && feedback.body === body ? feedback.status : 'idle'
 
   useEffect(() => {
     mountedRef.current = true
@@ -45,12 +54,12 @@ export function QuickCommandRow({
     }
   }, [])
 
+  // Drop any pending reset timer when the body changes; display status is already idle.
   useEffect(() => {
     if (copyResetTimerRef.current) {
       clearTimeout(copyResetTimerRef.current)
       copyResetTimerRef.current = null
     }
-    setCopyStatus('idle')
   }, [body])
 
   const handleCopy = async (): Promise<void> => {
@@ -62,12 +71,12 @@ export function QuickCommandRow({
       if (!mountedRef.current) {
         return
       }
-      setCopyStatus('copied')
+      setFeedback({ body, status: 'copied' })
     } catch {
       if (!mountedRef.current) {
         return
       }
-      setCopyStatus('failed')
+      setFeedback({ body, status: 'failed' })
     }
     if (copyResetTimerRef.current) {
       clearTimeout(copyResetTimerRef.current)
@@ -75,7 +84,7 @@ export function QuickCommandRow({
     copyResetTimerRef.current = setTimeout(() => {
       copyResetTimerRef.current = null
       if (mountedRef.current) {
-        setCopyStatus('idle')
+        setFeedback(null)
       }
     }, 1500)
   }
