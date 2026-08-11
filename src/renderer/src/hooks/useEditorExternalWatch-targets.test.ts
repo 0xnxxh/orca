@@ -105,9 +105,10 @@ describe('getEditorExternalWatchTargets', () => {
   })
 
   it('enables WSL aliases for a proven-local Windows drive watcher', () => {
-    const repo = makeRepo('repo-local-drive')
+    const repo = makeRepo('repo-local-drive', null, 'local')
     const worktree = makeWorktree(repo.id, 'wt-local-drive')
     worktree.path = 'C:\\repo'
+    worktree.hostId = 'local'
 
     expect(
       getEditorExternalWatchTargets(
@@ -125,9 +126,10 @@ describe('getEditorExternalWatchTargets', () => {
   })
 
   it('does not infer a local alias owner while repo metadata is missing', () => {
-    const repo = makeRepo('repo-unresolved')
+    const repo = makeRepo('repo-unresolved', null, 'local')
     const worktree = makeWorktree(repo.id, 'wt-unresolved')
     worktree.path = 'C:\\repo'
+    worktree.hostId = 'local'
     const state = makeState({ repo, worktree, openFiles: [makeOpenFile(worktree.id)] })
     state.repos = []
 
@@ -142,11 +144,34 @@ describe('getEditorExternalWatchTargets', () => {
   })
 
   it.each(['worktree', 'repo'] as const)(
+    'does not grant local aliases while the %s host stamp is missing',
+    (stampOwner) => {
+      const repo = makeRepo('repo-missing-host', null, 'local')
+      const worktree = makeWorktree(repo.id, 'wt-missing-host')
+      worktree.path = 'C:\\repo'
+      worktree.hostId = 'local'
+      if (stampOwner === 'worktree') {
+        worktree.hostId = undefined
+      } else {
+        repo.executionHostId = undefined
+      }
+
+      const target = getEditorExternalWatchTargets(
+        makeState({ repo, worktree, openFiles: [makeOpenFile(worktree.id)] })
+      ).targets[0]
+
+      expect(target).not.toHaveProperty('allowLocalWindowsWslAliases')
+    }
+  )
+
+  it.each(['worktree', 'repo'] as const)(
     'does not grant local aliases for an unknown %s host stamp',
     (stampOwner) => {
       const repo = makeRepo('repo-unknown-host')
       const worktree = makeWorktree(repo.id, 'wt-unknown-host')
       worktree.path = 'C:\\repo'
+      worktree.hostId = 'local'
+      repo.executionHostId = 'local'
       if (stampOwner === 'worktree') {
         worktree.hostId = 'future:host' as never
       } else {

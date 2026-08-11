@@ -96,9 +96,6 @@ function localWslAliasOption(
 }
 
 function isLocalHostStamp(value: string | null | undefined): boolean {
-  if (!value?.trim()) {
-    return true
-  }
   return parseExecutionHostId(value)?.kind === 'local'
 }
 
