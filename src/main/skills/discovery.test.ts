@@ -129,7 +129,11 @@ describe('skill discovery', () => {
     await writeFile(join(codexSkills, 'review', 'SKILL.md'), '# review')
     await mkdir(join(home, '.agents'), { recursive: true })
     // Shared root is a symlink onto the Codex root: one canonical file, two roots.
-    await symlink(codexSkills, join(home, '.agents', 'skills'), 'dir')
+    await symlink(
+      codexSkills,
+      join(home, '.agents', 'skills'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
 
     const result = await discoverSkills({ homeDir: home, repos: [], includeCwd: false })
 
@@ -148,7 +152,11 @@ describe('skill discovery', () => {
     await writeFile(join(claudeSkills, 'orchestration', 'SKILL.md'), '# orchestration')
     // `npx skills add --global` links a provider home onto an existing install.
     await mkdir(join(home, '.grok'), { recursive: true })
-    await symlink(claudeSkills, join(home, '.grok', 'skills'), 'dir')
+    await symlink(
+      claudeSkills,
+      join(home, '.grok', 'skills'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
 
     const result = await discoverSkills({ homeDir: home, repos: [], includeCwd: false })
 
