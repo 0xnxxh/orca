@@ -24,6 +24,7 @@ import {
   type PtyStartupIngressIntent
 } from '../../shared/pty-startup-ingress'
 import { extractOnlyCookedEchoSafeQueryReplies } from '../../shared/terminal-query-reply'
+import { startPtyPromptReadinessProbe } from '../../shared/pty-prompt-readiness-probe'
 import type {
   PendingOutputRecord,
   SessionState,
@@ -126,6 +127,7 @@ export class Session {
   private startupDeviceAttributesQueryFilter: StartupDeviceAttributesQueryFilter | null = null
   private shellReadyScanState: ShellReadyScanState | null = null
   private shellReadyTimer: ReturnType<typeof setTimeout> | null = null
+  private stopPromptReadinessProbe: (() => void) | null = null
   private killTimer: ReturnType<typeof setTimeout> | null = null
   private postReadyFlushGate: PostReadyFlushGate
   private pendingOutputRecords: PendingOutputRecord[] = []
@@ -188,6 +190,14 @@ export class Session {
 
     this.postReadyFlushGate = new PostReadyFlushGate(() => this.flushPreReadyQueue())
     const echoProbe = createPtySlaveEchoProbe(this.subprocess.slavePath)
+    // Why: an `exec` in the user's rc files strips the wrapper that prints the marker,
+    // so without this the barrier burns its full timeout on every spawn (#13767).
+    if (this._shellState === 'pending' && echoProbe) {
+      this.stopPromptReadinessProbe = startPtyPromptReadinessProbe({
+        probe: echoProbe,
+        onPromptReady: () => this.onPromptReadinessDetected()
+      })
+    }
     this.startupIngress = new PtyStartupIngress({
       ...(opts.startupIngress ? { intent: opts.startupIngress } : {}),
       ...(opts.ownerBackend ? { ownerBackend: opts.ownerBackend } : {}),
@@ -595,6 +605,7 @@ export class Session {
     this._disposed = true
     // Why: never leave a paused fd behind on teardown; the handle's dead-guard makes this a no-op once the child is reaped.
     this.releaseProducerPause({ resume: true })
+    this.clearPromptReadinessProbe()
     if (this.killTimer) {
       clearTimeout(this.killTimer)
       this.killTimer = null
@@ -712,6 +723,7 @@ export class Session {
       clearTimeout(this.shellReadyTimer)
       this.shellReadyTimer = null
     }
+    this.clearPromptReadinessProbe()
     this.postReadyFlushGate.clear()
 
     // Why: release the ptmx fd here or node-pty's _socket leaks the master fd until GC (docs/fix-pty-fd-leak.md).
@@ -756,9 +768,36 @@ export class Session {
     }
   }
 
+  /** Readiness proven by the slave's line discipline rather than the marker — the only
+   *  signal an `exec` in the user's rc files cannot strip (#13767). */
+  private onPromptReadinessDetected(): void {
+    this.stopPromptReadinessProbe = null
+    if (this._shellState !== 'pending') {
+      return
+    }
+    // Why warn: a marker that never arrives also means the wrapper's OSC 133 hooks are
+    // gone, and that half of the failure stays silent even once the wait is short.
+    console.warn(
+      `[Session] ${this.sessionId}: shell-ready marker never arrived; fell back to line-discipline prompt detection. Shell integration (OSC 133) is likely inactive — an \`exec\` in a shell startup file strips Orca's wrapper.`
+    )
+    // Why before the transition: transitionToReady drops the scan state, and any held
+    // partial-marker prefix must still reach the client.
+    this.releaseHeldShellReadyBytes()
+    // Why `true`: the line editor already owns the tty — that is what was just measured —
+    // so the gate's wait-for-raw-mode fallback would only add latency.
+    this.transitionToReady(true)
+    this.releaseStartupDeviceAttributes()
+  }
+
+  private clearPromptReadinessProbe(): void {
+    this.stopPromptReadinessProbe?.()
+    this.stopPromptReadinessProbe = null
+  }
+
   private transitionToReady(postMarkerBytesObserved = false): void {
     this._shellState = 'ready'
     this.shellReadyScanState = null
+    this.clearPromptReadinessProbe()
     if (this.shellReadyTimer) {
       clearTimeout(this.shellReadyTimer)
       this.shellReadyTimer = null
@@ -771,6 +810,7 @@ export class Session {
 
   private onShellReadyTimeout(): void {
     this.shellReadyTimer = null
+    this.clearPromptReadinessProbe()
     if (this._shellState !== 'pending') {
       return
     }
