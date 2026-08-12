@@ -205,6 +205,7 @@ export async function installSkillBundle(
         ? input.filesystem.rename(source, target)
         : renameSkillPathWithWindowsRetry(source, target))
       try {
+        await input.filesystem?.prepareExtractedSkill(target, manifest)
         const result = await installSharedExtractedSkill(serviceInput, extractedSkill)
         results.push(completedSkillResult({ skill, preview, result }))
       } catch (error) {
