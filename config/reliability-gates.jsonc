@@ -1478,6 +1478,33 @@
           "result": "passed",
           "durationSeconds": 7.6,
           "summary": "Final candidate d5767481b982b736e7cc5b4653b2a32a61280638 on merge-base 36d45af062ec4022265aabac8fc6a9d36eecedf1 passed the byte-identical 5806b23f oracle after final review and rebase: one host page, one client workspace, requested split, rendered DOM, stable focus, and browser-only close."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "failed",
+          "durationSeconds": 11.8,
+          "summary": "Latest-main 346e59c879 failed the byte-identical 2ec1dcf1 oracle with two client HTML browser workspaces instead of one."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 8.4,
+          "summary": "Candidate d05217c40d passed the byte-identical 2ec1dcf1 oracle: one host page, one client workspace, stable split, rendered DOM, editor focus after creation, explicit-click browser focus, and browser-only close."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "failed",
+          "durationSeconds": 12.3,
+          "summary": "Candidate d05217c40d with only the side-preview focusOnCreate:false call disabled failed the byte-identical 2ec1dcf1 oracle because preview creation activated the browser instead of preserving editor focus."
         }
       ],
       "runtimeBudget": {
@@ -1490,7 +1517,7 @@
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "The byte-identical 5806b23f Electron oracle is red on affected main a90a18d43da333e1cc327779a3f9912a78308848, green on final candidate d5767481b982b736e7cc5b4653b2a32a61280638 rebased onto 36d45af062ec4022265aabac8fc6a9d36eecedf1, and red when the candidate's side-preview owning-runtime routing seam is disabled. Affected main collapsed the preview into the editor group; the disabled candidate created two client browser workspaces."
+        "evidence": "The byte-identical 2ec1dcf1 Electron oracle is red on latest main 346e59c879, green on candidate d05217c40d, and red when only the candidate's side-preview focusOnCreate:false call is disabled. Latest main created two client browser workspaces; the disabled candidate focused the browser before an explicit click. Historical 5806b23f evidence separately proves the owning-runtime routing seam."
       },
       "performanceBudget": {
         "required": true,

@@ -308,6 +308,10 @@ describe('createWebRuntimeSessionBrowserTab', () => {
 
   it('applies an empty host snapshot without retaining delayed browser focus', async () => {
     const snapshot = makeSnapshot()
+    let resolveList!: (response: unknown) => void
+    const listResponse = new Promise((resolve) => {
+      resolveList = resolve
+    })
     const runtimeCall = vi
       .fn()
       .mockResolvedValueOnce({
@@ -315,11 +319,7 @@ describe('createWebRuntimeSessionBrowserTab', () => {
         ok: true,
         result: { browserPageId: 'remote-browser-page-1' }
       })
-      .mockResolvedValueOnce({
-        id: 'list',
-        ok: true,
-        result: snapshot
-      })
+      .mockReturnValueOnce(listResponse)
 
     vi.stubGlobal('window', {
       api: {
@@ -329,14 +329,19 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       }
     })
 
-    await expect(
-      createWebRuntimeSessionBrowserTab({
-        worktreeId: WORKTREE_ID,
-        url: 'https://example.com/'
-      })
-    ).resolves.toBe(true)
+    const pendingCreate = createWebRuntimeSessionBrowserTab({
+      worktreeId: WORKTREE_ID,
+      url: 'https://example.com/'
+    })
 
     await vi.waitFor(() => expect(runtimeCall).toHaveBeenCalledTimes(2))
+    expect(mocks.subscribe).toHaveBeenCalledOnce()
+    expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toEqual({
+      hostTabId: 'remote-browser-page-1',
+      expectedCurrentLocalTabId: 'local-editor-tab'
+    })
+    resolveList({ id: 'list', ok: true, result: snapshot })
+    await expect(pendingCreate).resolves.toBe(true)
     await vi.waitFor(() => expect(mocks.applyFreshWebSessionTabsSnapshot).toHaveBeenCalledTimes(1))
 
     expect(runtimeCall).toHaveBeenNthCalledWith(1, {
