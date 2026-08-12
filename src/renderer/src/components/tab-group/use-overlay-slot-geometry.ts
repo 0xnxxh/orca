@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from 'react'
+import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import {
   findTabGroupBodyElement,
   measureOverlaySlotRect,
@@ -29,8 +29,9 @@ function stabilizeMeasuredRect(
  * When CSS anchors desync after a column snap, forceMeasured becomes true and
  * the caller should pin the overlay with measured top/left/width/height.
  *
- * Why no render-time ref writes: React Doctor flags ref.current mutation during
- * render. Latch state lives in React state + an effect-local flag only.
+ * Why: render stays pure (no ref writes during render). isVisible only gates
+ * new latches — a proven forceMeasured survives hide/reveal. Observers always
+ * tear down via the effect cleanup return (React Doctor effect-needs-cleanup).
  */
 export function useOverlaySlotGeometry(args: {
   overlayRef: RefObject<HTMLElement | null>
@@ -46,20 +47,25 @@ export function useOverlaySlotGeometry(args: {
 } {
   const [measuredRect, setMeasuredRect] = useState<OverlaySlotRect | null>(null)
   const [forceMeasured, setForceMeasured] = useState(false)
+  // Why: read in observer callbacks without putting isVisible in the effect deps
+  // (deps would re-run the effect and clear forceMeasured on every hide/reveal).
+  const isVisibleRef = useRef(args.isVisible)
+  isVisibleRef.current = args.isVisible
 
-  // Why: single layout effect owns group transitions, RO attach, and late body
-  // discovery so reset/re-observe cannot race across multiple effects.
   useLayoutEffect(() => {
-    // Why: group/worktree identity change always re-arms CSS anchors.
+    // Why: only group/worktree/css support changes re-arm CSS anchors — not visibility.
     setForceMeasured(false)
+
     if (!args.groupId) {
-      return
+      // Why: always return a cleanup so effect-needs-cleanup stays satisfied on this path.
+      return () => {}
     }
 
-    // Effect-local only — never written during render (React purity).
     let latchedMeasured = false
     let observedBody: Element | null = null
     let observedParent: Element | null = null
+    let rafId = 0
+
     const resizeObserver = new ResizeObserver(() => {
       update()
     })
@@ -108,7 +114,7 @@ export function useOverlaySlotGeometry(args: {
         groupId: args.groupId,
         worktreeId: args.worktreeId,
         forceMeasured: latchedMeasured,
-        mayLatchDesync: args.isVisible
+        mayLatchDesync: isVisibleRef.current
       })
       if (decision.preferMeasured && !latchedMeasured) {
         latchedMeasured = true
@@ -122,7 +128,7 @@ export function useOverlaySlotGeometry(args: {
     update()
     // Why: rAF catches the frame after a pane-column snap reflow when RO may
     // not fire (body size unchanged but anchor resolution changed).
-    const rafId = requestAnimationFrame(update)
+    rafId = requestAnimationFrame(update)
 
     // Why: tab-group bodies are siblings outside the overlay tree and often
     // mount/replace after this effect; subtree mutations re-run attach for the
@@ -138,19 +144,13 @@ export function useOverlaySlotGeometry(args: {
 
     return () => {
       cancelAnimationFrame(rafId)
+      window.removeEventListener('resize', update)
       mutationObserver.disconnect()
       resizeObserver.disconnect()
       observedBody = null
       observedParent = null
-      window.removeEventListener('resize', update)
     }
-  }, [
-    args.cssAnchorsSupported,
-    args.groupId,
-    args.isVisible,
-    args.overlayRef,
-    args.worktreeId
-  ])
+  }, [args.cssAnchorsSupported, args.groupId, args.overlayRef, args.worktreeId])
 
   return {
     measuredRect,

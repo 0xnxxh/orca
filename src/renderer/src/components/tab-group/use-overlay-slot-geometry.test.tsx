@@ -41,9 +41,7 @@ let disconnectedResize = 0
 let disconnectedMutation = 0
 
 class CapturingResizeObserver {
-  private readonly callback: ResizeObserverCallback
   constructor(callback: ResizeObserverCallback) {
-    this.callback = callback
     resizeCallbacks.push(callback)
   }
   observe(target: Element): void {
@@ -61,9 +59,7 @@ class CapturingResizeObserver {
 }
 
 class CapturingMutationObserver {
-  private readonly callback: MutationCallback
   constructor(callback: MutationCallback) {
-    this.callback = callback
     mutationCallbacks.push(callback)
   }
   observe(): void {}
@@ -267,6 +263,44 @@ describe('useOverlaySlotGeometry late body attach', () => {
     bodyA.remove()
     renderHarness({ groupId: 'g-b', worktreeId: 'wt-1', cssAnchorsSupported: true })
     expect(lastProbe?.forceMeasured).toBe(false)
+  })
+
+  it('keeps forceMeasured across hide/reveal (isVisible must not clear the latch)', () => {
+    const bodyRect = createRect({ top: 40, left: 500, width: 500, height: 760 })
+    mountBody('g-vis', 'wt-1', bodyRect)
+    renderHarness({
+      groupId: 'g-vis',
+      worktreeId: 'wt-1',
+      isVisible: true,
+      cssAnchorsSupported: true
+    })
+    const overlay = host.querySelector('[data-testid="overlay"]') as HTMLElement
+    overlay.getBoundingClientRect = () => createRect({ width: 1000, height: 800 })
+
+    act(() => {
+      resizeCallbacks[0]?.([], {} as ResizeObserver)
+    })
+    expect(lastProbe?.forceMeasured).toBe(true)
+    expect(lastProbe?.useCssAnchors).toBe(false)
+
+    // Hide then reveal without group/worktree change — latch must survive.
+    renderHarness({
+      groupId: 'g-vis',
+      worktreeId: 'wt-1',
+      isVisible: false,
+      cssAnchorsSupported: true
+    })
+    expect(lastProbe?.forceMeasured).toBe(true)
+    expect(lastProbe?.useCssAnchors).toBe(false)
+
+    renderHarness({
+      groupId: 'g-vis',
+      worktreeId: 'wt-1',
+      isVisible: true,
+      cssAnchorsSupported: true
+    })
+    expect(lastProbe?.forceMeasured).toBe(true)
+    expect(lastProbe?.useCssAnchors).toBe(false)
   })
 })
 
