@@ -167,10 +167,12 @@ import {
   WORKTREE_REFRESH_CONCURRENCY,
   acquireDirectSshDetectedWorktreeRefresh,
   createWorktreeSlice,
+  getProvisionedRootRuntimeWorkspaceKeys,
   getHostedReviewLinkMutationGenerationForTests,
   getHostedReviewLinkWorktreeAliasCountForTests,
   resetAuthoritativelyRemovedWorktreeMemoryForTests,
-  resetHostedReviewLinkMutationGenerationForTests
+  resetHostedReviewLinkMutationGenerationForTests,
+  restoreProvisionedRootCheckoutModes
 } from './worktrees'
 import type { PendingWorktreeCreation } from '@/lib/pending-worktree-creation'
 import { getHostedReviewCacheKey } from './hosted-review'
@@ -487,65 +489,55 @@ describe('fetchWorktrees', () => {
     expect(result).toBe(true)
   })
 
-  it('restores provisioned-root ownership when an older host strips the metadata field', async () => {
-    const store = createTestStore()
+  it('restores stripped provisioned-root metadata without marking a same-id sibling host', () => {
     const provisioned = makeWorktree({
-      id: 'repo1::/workspace/provisioned',
+      id: 'repo1::/workspace/main',
       repoId: 'repo1',
       path: '/workspace/provisioned',
+      hostId: 'ssh:ssh-1',
       isMainWorktree: true,
       branch: 'refs/heads/feature'
     })
-    const reusable = makeWorktree({
-      id: 'repo1::/workspace/reusable',
-      repoId: 'repo1',
-      path: '/workspace/reusable',
-      isMainWorktree: true,
-      branch: 'refs/heads/main'
+    const sameIdOnSiblingHost = makeWorktree({
+      ...provisioned,
+      path: '/workspace/sibling',
+      hostId: 'ssh:ssh-2'
     })
-    mockApi.worktrees.listDetected.mockResolvedValueOnce(
-      makeDetectedResult('repo1', [provisioned, reusable])
-    )
-    mockApi.ephemeralVm.listRuntimes.mockResolvedValueOnce([
+    const runtimeKeys = getProvisionedRootRuntimeWorkspaceKeys([
       {
         id: 'runtime-provisioned',
+        recipeId: 'recipe-provisioned',
+        repoId: 'repo1',
         workspaceId: provisioned.id,
+        sshTargetId: 'ssh-1',
         status: 'running',
+        cleanupStatus: 'not_started',
+        createdAt: 1,
+        updatedAt: 1,
         recipeResult: {
           schemaVersion: 2,
           checkoutMode: 'provisioned-root',
           pairingCode: 'pairing-provisioned',
           projectRoot: provisioned.path
         }
-      },
-      {
-        id: 'runtime-reusable',
-        workspaceId: reusable.id,
-        status: 'running',
-        recipeResult: {
-          schemaVersion: 1,
-          pairingCode: 'pairing-reusable',
-          projectRoot: reusable.path
-        }
       }
     ])
 
-    await store.getState().fetchWorktrees('repo1')
+    const restored = restoreProvisionedRootCheckoutModes(
+      [provisioned],
+      [],
+      runtimeKeys,
+      'ssh:ssh-1'
+    )
+    const sibling = restoreProvisionedRootCheckoutModes(
+      [sameIdOnSiblingHost],
+      [],
+      runtimeKeys,
+      'ssh:ssh-2'
+    )
 
-    expect(store.getState().worktreesByRepo.repo1).toEqual([
-      expect.objectContaining({
-        id: provisioned.id,
-        ephemeralVmCheckoutMode: 'provisioned-root'
-      }),
-      expect.objectContaining({
-        id: reusable.id
-      })
-    ])
-    expect(store.getState().worktreesByRepo.repo1[1]).not.toHaveProperty('ephemeralVmCheckoutMode')
-    expect(store.getState().detectedWorktreesByRepo.repo1.worktrees[0]).toMatchObject({
-      id: provisioned.id,
-      ephemeralVmCheckoutMode: 'provisioned-root'
-    })
+    expect(restored[0]).toMatchObject({ ephemeralVmCheckoutMode: 'provisioned-root' })
+    expect(sibling[0]).not.toHaveProperty('ephemeralVmCheckoutMode')
   })
 
   it('preserves provisioned-root ownership across a stripped refresh when runtime lookup fails', async () => {
