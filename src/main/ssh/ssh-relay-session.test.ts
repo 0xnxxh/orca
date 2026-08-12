@@ -554,6 +554,37 @@ describe('SshRelaySession', () => {
     expect(mockAttach).toHaveBeenCalledWith('pty-1')
   })
 
+  // This is the path that reattaches every known pty when a relay comes back — precisely when ids
+  // have been reissued from pty-1 — so it is the one that most needs to say which shell it means.
+  // Pane identity still is not sent; the shell's own identity is, and only when the host attested
+  // it. Without this the main reconnect attaches by id alone and can land on somebody else's shell.
+  it('forwards the shell identity its lease recorded when reattaching', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const { getSshPtyProvider } = await import('../ipc/pty')
+    const mockAttach = vi.fn().mockResolvedValue(undefined)
+    vi.mocked(getSshPtyProvider).mockReturnValue({
+      attachForReconnect: mockAttach,
+      dispose: vi.fn()
+    } as unknown as ReturnType<typeof getSshPtyProvider>)
+    vi.mocked(getPtyIdsForConnection).mockReturnValue([])
+    const leafId = '11111111-1111-4111-8111-111111111111'
+    vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([
+      {
+        targetId: 'target-1',
+        ptyId: 'pty-1',
+        state: 'detached',
+        tabId: 'tab-a',
+        leafId,
+        incarnationId: 'inc-host-1'
+      }
+    ] as ReturnType<typeof mockStore.getSshRemotePtyLeases>)
+
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+    await session.establish(mockConn)
+
+    expect(mockAttach).toHaveBeenCalledWith('pty-1', undefined, 'inc-host-1')
+  })
+
   it('does not expire a live reused relay id when attach rejects identity mismatch', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow, mockWindow } = createMockDeps()
     const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)

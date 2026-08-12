@@ -2356,11 +2356,14 @@ export class SshRelaySession {
         targetedDeliveryRecovery === 'fresh-activation'
           ? undefined
           : await this.sourceRecoveryRequest(appPtyId)
+      // The shell this lease names, as the host attested it. Without it the main reconnect path
+      // attaches by id alone, and a replaced relay reissues ids from pty-1.
       const attachResult = await this.attachPtyWithRetry(
         ptyProvider,
         ptyId,
         recoveryRequest,
-        shouldContinue
+        shouldContinue,
+        activeLeaseByPtyId.get(ptyId)?.incarnationId
       )
       sourceActivationLease = attachResult.sourceActivationLease
       if (!shouldContinue()) {
@@ -2590,7 +2593,8 @@ export class SshRelaySession {
     ptyProvider: SshPtyProvider,
     ptyId: string,
     recoveryRequest: PtySourceRecoveryRequest | undefined,
-    shouldContinue: () => boolean
+    shouldContinue: () => boolean,
+    expectedIncarnationId: string | undefined
   ): Promise<SshPtyAttachResult> {
     let lastError: unknown
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -2598,7 +2602,12 @@ export class SshRelaySession {
         throw lastError ?? new Error('PTY reattach attempt is no longer current')
       }
       try {
-        return await this.attachPtyWithDeadline(ptyProvider, ptyId, recoveryRequest)
+        return await this.attachPtyWithDeadline(
+          ptyProvider,
+          ptyId,
+          recoveryRequest,
+          expectedIncarnationId
+        )
       } catch (error) {
         lastError = error
         // A proven exit is as final as an unknown id: retrying either only burns the wait before
@@ -2621,7 +2630,8 @@ export class SshRelaySession {
   private async attachPtyWithDeadline(
     ptyProvider: SshPtyProvider,
     ptyId: string,
-    recoveryRequest: PtySourceRecoveryRequest | undefined
+    recoveryRequest: PtySourceRecoveryRequest | undefined,
+    expectedIncarnationId: string | undefined
   ): Promise<SshPtyAttachResult> {
     let timer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
@@ -2635,9 +2645,13 @@ export class SshRelaySession {
       timer.unref?.()
     })
     try {
-      const attach = recoveryRequest
-        ? ptyProvider.attachForReconnect(ptyId, recoveryRequest)
-        : ptyProvider.attachForReconnect(ptyId)
+      // Only pass what we actually have: a caller with nothing to add keeps the older call shape.
+      const attach =
+        expectedIncarnationId !== undefined
+          ? ptyProvider.attachForReconnect(ptyId, recoveryRequest, expectedIncarnationId)
+          : recoveryRequest !== undefined
+            ? ptyProvider.attachForReconnect(ptyId, recoveryRequest)
+            : ptyProvider.attachForReconnect(ptyId)
       const guardedAttach = attach.then((result) => {
         if (timedOut) {
           result.sourceActivationLease?.rollback()

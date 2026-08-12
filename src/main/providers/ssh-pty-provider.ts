@@ -2,6 +2,7 @@ import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
 import type { IPtyProvider, PtyProcessInfo, PtySpawnOptions, PtySpawnResult } from './types'
 import { toAppSshPtyId, toRelaySshPtyId } from './ssh-pty-id'
 import { createSshPtyAppliedSizeReader } from './ssh-pty-applied-size'
+import { isRelayAttestedPtyIncarnationId } from '../../shared/pty-incarnation'
 import type {
   RemoteCliBridgeEnv,
   SshPtyDataCallback,
@@ -182,15 +183,21 @@ export class SshPtyProvider implements IPtyProvider {
 
   async attachForReconnect(
     id: string,
-    sourceRecovery?: PtySourceRecoveryRequest
+    sourceRecovery?: PtySourceRecoveryRequest,
+    expectedIncarnationId?: string
   ): Promise<SshPtyAttachResult> {
     // Why: reconnect owns replay delivery so stale/duplicate attach results can
     // be filtered before they reach the renderer. Pane identity is deliberately
     // not sent — see reattachSshPtySession; the relay's copy is frozen at spawn,
     // so it rejected panes that had merely moved tabs.
+    // The shell's own identity IS sent when the caller knows it. This is the path that reconnects
+    // every known pty after a relay comes back, which is exactly when ids have been recycled, so
+    // leaving it unfenced would leave the main reconnect open to attaching somebody else's shell.
     const params = {
       id: this.toRelayPtyId(id),
       suppressReplayNotification: true,
+      exitProofSupported: true,
+      ...(isRelayAttestedPtyIncarnationId(expectedIncarnationId) ? { expectedIncarnationId } : {}),
       ...(sourceRecovery ? { sourceRecovery } : {})
     }
     const relayPtyId = this.toRelayPtyId(id)

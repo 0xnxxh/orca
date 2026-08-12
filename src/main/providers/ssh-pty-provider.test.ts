@@ -743,7 +743,8 @@ describe('SshPtyProvider', () => {
       'pty.attach',
       {
         id: 'pty-1',
-        suppressReplayNotification: true
+        suppressReplayNotification: true,
+        exitProofSupported: true
       },
       expect.objectContaining({
         timeoutMs: 10_000,
