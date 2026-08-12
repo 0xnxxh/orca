@@ -82,6 +82,13 @@ import {
   isWebAgentSessionHandoffPostCreateSnapshotConfirmed,
   resolveWebAgentSessionHandoff
 } from './web-agent-session-handoff'
+import {
+  clearWebSessionBrowserPlacementsForEnvironment,
+  clearWebSessionBrowserPlacementsForWorktree,
+  isWebSessionBrowserPlacementGroupReserved,
+  resetWebSessionBrowserPlacementsForTests,
+  takeWebSessionBrowserPlacementGroup
+} from './web-session-browser-placement'
 import { getRuntimeEnvironmentRevision } from './runtime-environment-revision'
 import { useRuntimeSessionMirrorEnvironmentKey } from './use-runtime-session-mirror-environment-key'
 
@@ -126,6 +133,7 @@ type MirroredBrowserTab = {
   remotePageId: string
   unifiedTab: Tab
   hostTabId: string
+  clientGroupId?: string
 }
 
 type MirroredEditorTab = {
@@ -331,6 +339,7 @@ export function resetWebSessionTabsSnapshotFreshnessForTests(): void {
   replayableSessionTabsSnapshotByWorktree.clear()
   lastHostTerminalTabCountByWorktree.clear()
   hostSessionTabIdByLocalKey.clear()
+  resetWebSessionBrowserPlacementsForTests()
 }
 
 export function _getWebSessionTabsTrackingCountsForTest(): {
@@ -352,6 +361,7 @@ function clearWebSessionTabsTrackingForWorktree(environmentId: string, worktreeI
   clearWebSessionReorderIntentsForWorktree({ environmentId }, worktreeId)
   clearWebSessionCloseIntentsForWorktree({ environmentId }, worktreeId)
   clearWebAgentSessionHandoffsForWorktree(environmentId, worktreeId)
+  clearWebSessionBrowserPlacementsForWorktree(environmentId, worktreeId)
   const keyPrefix = `${environmentId}:${worktreeId}:`
   for (const key of hostSessionTabIdByLocalKey.keys()) {
     if (key.startsWith(keyPrefix)) {
@@ -387,6 +397,7 @@ export function clearWebSessionTabsTrackingForEnvironment(environmentId: string)
     }
   }
   clearWebAgentSessionHandoffsForEnvironment(trimmedEnvironmentId)
+  clearWebSessionBrowserPlacementsForEnvironment(trimmedEnvironmentId)
   clearAllWebRuntimeWakeTerminalRespawn()
 }
 
@@ -1063,6 +1074,10 @@ function buildMirroredBrowserTabs(
   sortOffset: number,
   now: number
 ): MirroredBrowserTab[] {
+  const renderedGroupIds = collectLayoutGroupIds(state.layoutByWorktree[snapshot.worktree])
+  const clientGroupIds = new Set(
+    (state.groupsByWorktree[snapshot.worktree] ?? []).map((group) => group.id)
+  )
   return snapshot.tabs.filter(isReadyBrowserTab).map((tab, index) => {
     const existing = findBrowserWorkspaceForRemotePage(
       state,
@@ -1073,7 +1088,22 @@ function buildMirroredBrowserTabs(
     const workspaceId = existing?.workspace.id ?? tab.browserWorkspaceId
     const pageId = existing?.page.id ?? tab.browserPageId
     const createdAt = existing?.page.createdAt ?? now + sortOffset + index
-    const groupId = hostGroupIdByTabId.get(tab.id) ?? fallbackGroupId
+    const recordedClientGroupId = takeWebSessionBrowserPlacementGroup({
+      environmentId,
+      worktreeId: snapshot.worktree,
+      remotePageId: tab.browserPageId
+    })
+    const hostGroupId = hostGroupIdByTabId.get(tab.id) ?? fallbackGroupId
+    const existingClientGroupId =
+      existing?.unifiedTab?.groupId !== hostGroupId ? existing?.unifiedTab?.groupId : undefined
+    const preferredClientGroupId = recordedClientGroupId ?? existingClientGroupId
+    const clientGroupId =
+      preferredClientGroupId &&
+      clientGroupIds.has(preferredClientGroupId) &&
+      (renderedGroupIds.size === 0 || renderedGroupIds.has(preferredClientGroupId))
+        ? preferredClientGroupId
+        : undefined
+    const groupId = clientGroupId ?? hostGroupId
     const title = tab.title.trim() || 'Browser'
     const page: BrowserPage = {
       id: pageId,
@@ -1112,7 +1142,8 @@ function buildMirroredBrowserTabs(
       certificateFailure: tab.certificateFailure ?? null,
       remotePageId: tab.browserPageId,
       unifiedTab: buildBrowserUnifiedTab(workspace, tab, existing?.unifiedTab ?? null, groupId),
-      hostTabId: tab.id
+      hostTabId: tab.id,
+      ...(clientGroupId ? { clientGroupId } : {})
     }
   })
 }
@@ -1316,6 +1347,46 @@ function updateHostSessionTabIdMappings(args: {
   }
 }
 
+function retainClientPlacedMirroredTabs(args: {
+  groups: readonly TabGroup[]
+  mirroredUnifiedIds: ReadonlySet<string>
+  validUnifiedTabIds: ReadonlySet<string>
+  clientGroupIdByLocalTabId: ReadonlyMap<string, string>
+  nextActiveUnifiedTabId: string | null
+}): TabGroup[] {
+  return args.groups.map((group) => {
+    const retainedTabOrder = group.tabOrder.filter(
+      (tabId) =>
+        args.validUnifiedTabIds.has(tabId) &&
+        (!args.mirroredUnifiedIds.has(tabId) ||
+          args.clientGroupIdByLocalTabId.get(tabId) === group.id)
+    )
+    const placedTabIds = [...args.clientGroupIdByLocalTabId]
+      .filter(
+        ([tabId, groupId]) =>
+          groupId === group.id &&
+          args.validUnifiedTabIds.has(tabId) &&
+          !retainedTabOrder.includes(tabId)
+      )
+      .map(([tabId]) => tabId)
+    const tabOrder = [...retainedTabOrder, ...placedTabIds]
+    const activeTabId =
+      args.nextActiveUnifiedTabId && tabOrder.includes(args.nextActiveUnifiedTabId)
+        ? args.nextActiveUnifiedTabId
+        : group.activeTabId && tabOrder.includes(group.activeTabId)
+          ? group.activeTabId
+          : (tabOrder[0] ?? null)
+    return {
+      ...group,
+      tabOrder,
+      activeTabId,
+      recentTabIds: activeTabId
+        ? pushRecentTabId(sanitizeRecentTabIds(group.recentTabIds, tabOrder), activeTabId)
+        : []
+    }
+  })
+}
+
 function buildMirroredHostGroups({
   currentGroups,
   hostGroups,
@@ -1325,7 +1396,8 @@ function buildMirroredHostGroups({
   now,
   validUnifiedTabIds,
   environmentId,
-  worktreeId
+  worktreeId,
+  clientGroupIdByLocalTabId
 }: {
   currentGroups: readonly TabGroup[]
   hostGroups: readonly RuntimeMobileSessionTabGroup[]
@@ -1336,16 +1408,14 @@ function buildMirroredHostGroups({
   validUnifiedTabIds: ReadonlySet<string>
   environmentId: string
   worktreeId: string
+  clientGroupIdByLocalTabId: ReadonlyMap<string, string>
 }): TabGroup[] | null {
-  const strippedGroups = currentGroups.map((group) => {
-    const tabOrder = group.tabOrder.filter(
-      (tabId) => validUnifiedTabIds.has(tabId) && !mirroredUnifiedIds.has(tabId)
-    )
-    return {
-      ...group,
-      tabOrder,
-      recentTabIds: sanitizeRecentTabIds(group.recentTabIds, tabOrder)
-    }
+  const strippedGroups = retainClientPlacedMirroredTabs({
+    groups: currentGroups,
+    mirroredUnifiedIds,
+    validUnifiedTabIds,
+    clientGroupIdByLocalTabId,
+    nextActiveUnifiedTabId
   })
   const groupsById = new Map(strippedGroups.map((group) => [group.id, group]))
   const orderedGroups: TabGroup[] = []
@@ -1355,7 +1425,12 @@ function buildMirroredHostGroups({
     const existing = groupsById.get(hostGroup.id)
     const localHostOrder = hostGroup.tabOrder
       .map((tabId) => hostToLocalTabId.get(tabId))
-      .filter((tabId): tabId is string => tabId !== undefined && validUnifiedTabIds.has(tabId))
+      .filter(
+        (tabId): tabId is string =>
+          tabId !== undefined &&
+          validUnifiedTabIds.has(tabId) &&
+          !clientGroupIdByLocalTabId.has(tabId)
+      )
     const hostTabOrder = [
       ...(existing?.tabOrder.filter((tabId) => !localHostOrder.includes(tabId)) ?? []),
       ...localHostOrder
@@ -1397,7 +1472,11 @@ function buildMirroredHostGroups({
   }
 
   for (const group of strippedGroups) {
-    if (!seen.has(group.id) && group.tabOrder.length > 0) {
+    if (
+      !seen.has(group.id) &&
+      (group.tabOrder.length > 0 ||
+        isWebSessionBrowserPlacementGroupReserved({ environmentId, worktreeId, groupId: group.id }))
+    ) {
       orderedGroups.push(group)
     }
   }
@@ -2167,6 +2246,11 @@ export function applyWebSessionTabsSnapshot(
   })
 
   const currentGroups = state.groupsByWorktree[worktreeId] ?? []
+  const clientGroupIdByLocalTabId = new Map(
+    mirroredBrowserTabs.flatMap((entry) =>
+      entry.clientGroupId ? [[entry.unifiedTab.id, entry.clientGroupId] as const] : []
+    )
+  )
   const nextGroups = (() => {
     if (!nextUnifiedTabs || nextUnifiedTabs.length === 0) {
       return null
@@ -2181,21 +2265,17 @@ export function applyWebSessionTabsSnapshot(
         now,
         validUnifiedTabIds,
         environmentId,
-        worktreeId
+        worktreeId,
+        clientGroupIdByLocalTabId
       })
     }
-    const strippedGroups = currentGroups.map((group) => ({
-      ...group,
-      tabOrder: group.tabOrder.filter(
-        (tabId) => validUnifiedTabIds.has(tabId) && !mirroredUnifiedIds.has(tabId)
-      ),
-      recentTabIds: sanitizeRecentTabIds(
-        group.recentTabIds,
-        group.tabOrder.filter(
-          (tabId) => validUnifiedTabIds.has(tabId) && !mirroredUnifiedIds.has(tabId)
-        )
-      )
-    }))
+    const strippedGroups = retainClientPlacedMirroredTabs({
+      groups: currentGroups,
+      mirroredUnifiedIds,
+      validUnifiedTabIds,
+      clientGroupIdByLocalTabId,
+      nextActiveUnifiedTabId
+    })
     const target = strippedGroups.find((group) => group.id === targetGroupId) ?? {
       id: targetGroupId,
       worktreeId,
@@ -2205,7 +2285,9 @@ export function applyWebSessionTabsSnapshot(
     }
     const targetOrder = [
       ...target.tabOrder.filter((tabId) => validUnifiedTabIds.has(tabId)),
-      ...mirroredUnifiedTabs.map((tab) => tab.id)
+      ...mirroredUnifiedTabs
+        .filter((tab) => !clientGroupIdByLocalTabId.has(tab.id))
+        .map((tab) => tab.id)
     ]
     const targetActiveTabId =
       nextActiveUnifiedTabId && targetOrder.includes(nextActiveUnifiedTabId)
@@ -2225,7 +2307,16 @@ export function applyWebSessionTabsSnapshot(
     const merged = strippedGroups.some((group) => group.id === targetGroupId)
       ? strippedGroups.map((group) => (group.id === targetGroupId ? updatedTarget : group))
       : [...strippedGroups, updatedTarget]
-    return merged.filter((group) => group.id === targetGroupId || group.tabOrder.length > 0)
+    return merged.filter(
+      (group) =>
+        group.id === targetGroupId ||
+        group.tabOrder.length > 0 ||
+        isWebSessionBrowserPlacementGroupReserved({
+          environmentId,
+          worktreeId,
+          groupId: group.id
+        })
+    )
   })()
 
   const nextTabBarOrder = (() => {
