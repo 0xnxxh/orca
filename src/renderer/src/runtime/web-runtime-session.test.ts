@@ -471,6 +471,57 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toBeNull()
   })
 
+  it('does not focus a browser after an editor A-B-A selection during reconciliation', async () => {
+    let resolveList!: (response: unknown) => void
+    const listResponse = new Promise((resolve) => {
+      resolveList = resolve
+    })
+    let state = mocks.getState()
+    let listener: ((next: typeof state, previous: typeof state) => void) | null = null
+    mocks.getState.mockImplementation(() => state)
+    mocks.subscribe.mockImplementation((nextListener) => {
+      listener = nextListener
+      return vi.fn()
+    })
+    const runtimeCall = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'create',
+        ok: true,
+        result: { browserPageId: 'created-host-browser' }
+      })
+      .mockReturnValueOnce(listResponse)
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    const pendingCreate = createWebRuntimeSessionBrowserTab({ worktreeId: WORKTREE_ID })
+    await vi.waitFor(() => expect(runtimeCall).toHaveBeenCalledTimes(2))
+    const editorBState = {
+      ...state,
+      activeFileIdByWorktree: { [WORKTREE_ID]: '/worktree/other.html' },
+      unifiedTabsByWorktree: {
+        [WORKTREE_ID]: [
+          ...state.unifiedTabsByWorktree[WORKTREE_ID],
+          {
+            id: 'other-editor-tab',
+            entityId: '/worktree/other.html',
+            contentType: 'editor'
+          }
+        ]
+      }
+    }
+    listener!(editorBState, state)
+    const editorAState = {
+      ...editorBState,
+      activeFileIdByWorktree: { [WORKTREE_ID]: '/worktree/index.html' }
+    }
+    listener!(editorAState, editorBState)
+    state = editorAState
+    resolveList({ id: 'list', ok: true, result: makeSnapshot() })
+    await expect(pendingCreate).resolves.toBe(true)
+
+    expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toBeNull()
+  })
+
   it('does not retry a failed browser create', async () => {
     const runtimeCall = vi.fn().mockResolvedValue({
       id: 'create-lost',

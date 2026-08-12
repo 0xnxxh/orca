@@ -468,6 +468,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
     selectWebRuntimeSessionBrowserWorktree(args.worktreeId, environmentId)
   }
   let unsubscribeFocusGuard = (): void => {}
+  let guardedPageId = provisionalPageId
   try {
     if (matchesWebSessionIntentOwner(intentOwner)) {
       recordWebSessionFocusIntent(
@@ -492,7 +493,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
         if (resolveWebSessionVisibleTabId(state, args.worktreeId) === expectedCurrentLocalTabId) {
           return
         }
-        clearWebSessionFocusIntentIfMatches(intentOwner, args.worktreeId, provisionalPageId)
+        clearWebSessionFocusIntentIfMatches(intentOwner, args.worktreeId, guardedPageId)
         unsubscribeFocusGuard()
       })
     }
@@ -513,7 +514,6 @@ export async function createWebRuntimeSessionBrowserTab(args: {
         timeoutMs: 15_000
       })) as RuntimeRpcResponse<BrowserTabCreateResult>
     )
-    unsubscribeFocusGuard()
     if (created.browserPageId !== provisionalPageId) {
       moveWebSessionBrowserPlacement({
         environmentId,
@@ -531,6 +531,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
           focusIntent.expectedCurrentLocalTabId
         )
       }
+      guardedPageId = created.browserPageId
     }
     try {
       await refreshWebRuntimeSessionTabsSnapshot(environmentId, args.worktreeId, {
@@ -543,6 +544,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
         error instanceof Error ? error.message : String(error)
       )
     }
+    unsubscribeFocusGuard()
     return true
   } catch (error) {
     unsubscribeFocusGuard()
