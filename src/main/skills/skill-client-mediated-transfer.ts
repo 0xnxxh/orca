@@ -10,6 +10,10 @@ import {
 import { callRuntimeEnvironment } from '../ipc/runtime-environment-transport-routing'
 import { downloadSkillPackageGrant } from './skill-package-download'
 import { retrySkillTransferRpc, throwIfSkillTransferCancelled } from './skill-transfer-rpc-retry'
+
+const REMOTE_TRANSFER_TIMEOUT_MS = 5 * 60_000
+const REMOTE_TRANSFER_CLEANUP_TIMEOUT_MS = 15_000
+
 function allowedOrigins(allowConfiguredOrigins: boolean): string[] {
   const origins = ['https://storage.googleapis.com']
   if (allowConfiguredOrigins && process.env.ORCA_SKILL_PACKAGE_DOWNLOAD_ORIGINS) {
@@ -30,15 +34,14 @@ async function remoteCall<T>(
   userDataPath: string,
   environmentId: string,
   method: string,
-  params: unknown
+  params: unknown,
+  signal?: AbortSignal,
+  timeoutMs = REMOTE_TRANSFER_TIMEOUT_MS
 ): Promise<T> {
-  const response = (await callRuntimeEnvironment(
-    userDataPath,
-    environmentId,
-    method,
-    params,
-    5 * 60_000
-  )) as RuntimeRpcResponse<T>
+  const args = [userDataPath, environmentId, method, params, timeoutMs] as const
+  const response = (await (signal
+    ? callRuntimeEnvironment(...args, undefined, undefined, { signal })
+    : callRuntimeEnvironment(...args))) as RuntimeRpcResponse<T>
   if (response.ok !== true) {
     throw new Error(`skill-transfer-remote-${response.error.code}`)
   }
@@ -72,10 +75,16 @@ export async function transferSkillPackageToRuntime(input: {
         retryable: retryableRemoteTransferError,
         checkCancellationAfterSuccess: false,
         call: () =>
-          remoteCall(input.userDataPath, input.environmentId, 'skills.beginUpload', {
-            package: input.package,
-            transferId: input.transferId
-          })
+          remoteCall(
+            input.userDataPath,
+            input.environmentId,
+            'skills.beginUpload',
+            {
+              package: input.package,
+              transferId: input.transferId
+            },
+            input.signal
+          )
       })
     )
     uploadId = begun.uploadId
@@ -104,7 +113,8 @@ export async function transferSkillPackageToRuntime(input: {
               input.userDataPath,
               input.environmentId,
               'skills.uploadChunk',
-              { uploadId, offset, bytesBase64: bytes.toString('base64') }
+              { uploadId, offset, bytesBase64: bytes.toString('base64') },
+              input.signal
             )
         })
         if (acknowledged.acknowledgedOffset !== offset + bytes.length) {
@@ -119,23 +129,39 @@ export async function transferSkillPackageToRuntime(input: {
       signal: input.signal,
       retryable: retryableRemoteTransferError,
       call: () =>
-        remoteCall(input.userDataPath, input.environmentId, 'skills.commitUpload', { uploadId })
+        remoteCall(
+          input.userDataPath,
+          input.environmentId,
+          'skills.commitUpload',
+          { uploadId },
+          input.signal
+        )
     })
     const committedId = uploadId
     uploadId = null
     return {
       uploadId: committedId,
       cleanup: () =>
-        remoteCall(input.userDataPath, input.environmentId, 'skills.cancelUpload', {
-          uploadId: committedId
-        })
+        remoteCall(
+          input.userDataPath,
+          input.environmentId,
+          'skills.cancelUpload',
+          { uploadId: committedId },
+          undefined,
+          REMOTE_TRANSFER_CLEANUP_TIMEOUT_MS
+        )
     }
   } finally {
     await downloaded.cleanup()
     if (uploadId) {
-      await remoteCall(input.userDataPath, input.environmentId, 'skills.cancelUpload', {
-        uploadId
-      }).catch(() => undefined)
+      await remoteCall(
+        input.userDataPath,
+        input.environmentId,
+        'skills.cancelUpload',
+        { uploadId },
+        undefined,
+        REMOTE_TRANSFER_CLEANUP_TIMEOUT_MS
+      ).catch(() => undefined)
     }
   }
 }

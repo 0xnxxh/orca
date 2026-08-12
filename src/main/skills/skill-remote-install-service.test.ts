@@ -118,6 +118,37 @@ describe('installSkillOnRemoteRuntime', () => {
     expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(2)
   })
 
+  it('settles a hung paired install when cancellation reaches the transport', async () => {
+    const controller = new AbortController()
+    let started: () => void = () => {}
+    const requestStarted = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    mocks.callRuntimeEnvironment.mockImplementation(
+      (...args: unknown[]) =>
+        new Promise((_resolve, reject) => {
+          const options = args[7] as { signal?: AbortSignal }
+          options.signal?.addEventListener('abort', () => reject(options.signal?.reason), {
+            once: true
+          })
+          started()
+        })
+    )
+    const pending = installSkillOnRemoteRuntime({
+      userDataPath: '/state',
+      environmentId: 'environment-1',
+      request,
+      capabilities: ['skills.install.v1'],
+      requireHttps: true,
+      signal: controller.signal
+    })
+    await requestStarted
+
+    controller.abort()
+    await expect(pending).rejects.toThrow('skill-install-cancelled')
+    expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(1)
+  })
+
   it('falls back to a staged client transfer and always cleans it up', async () => {
     const cleanup = vi.fn(async () => undefined)
     mocks.callRuntimeEnvironment

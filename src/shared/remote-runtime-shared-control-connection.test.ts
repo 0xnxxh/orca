@@ -620,6 +620,32 @@ describe('RemoteRuntimeSharedControlConnection', () => {
     connection.close()
   })
 
+  it('aborts one pending request without disturbing shared-control peers', async () => {
+    const server = await createServer({ delayedMethods: ['worktree.hang'] })
+    const connection = new RemoteRuntimeSharedControlConnection(server.pairing)
+    const controller = new AbortController()
+    const cancelled = connection.request('worktree.hang', undefined, 60_000, controller.signal)
+    await vi.waitFor(() =>
+      expect(server.requests.map(({ method }) => method)).toContain('worktree.hang')
+    )
+
+    controller.abort()
+    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
+    expect(connection.getDiagnostics().pendingRequestCount).toBe(0)
+    expect(getRemoteRuntimeRequestAdmissionEvidence()).toEqual({
+      pendingRequestCount: 0,
+      retainedBytes: 0
+    })
+    server.flushDelayedResponses()
+    await expect(connection.request('worktree.ps', undefined, 1000)).resolves.toMatchObject({
+      ok: true,
+      result: { method: 'worktree.ps' }
+    })
+    expect(server.connectionCount()).toBe(1)
+
+    connection.close()
+  })
+
   it('keeps sent request bytes admitted while a ready socket stops responding', async () => {
     const server = await createServer({ silentMethods: ['worktree.large'] })
     const connection = new RemoteRuntimeSharedControlConnection(server.pairing)

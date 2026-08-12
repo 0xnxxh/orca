@@ -188,7 +188,7 @@ describe('transferSkillPackageToRuntime', () => {
       'environment-1',
       'skills.cancelUpload',
       { uploadId: 'upload-1' },
-      5 * 60_000
+      15_000
     )
   })
 
@@ -261,7 +261,7 @@ describe('transferSkillPackageToRuntime', () => {
       'environment-1',
       'skills.cancelUpload',
       { uploadId: 'upload-1' },
-      5 * 60_000
+      15_000
     )
   })
 
@@ -449,7 +449,7 @@ describe('transferSkillPackageToRuntime', () => {
       'environment-1',
       'skills.cancelUpload',
       { uploadId: 'upload-1' },
-      5 * 60_000
+      15_000
     )
   })
 })

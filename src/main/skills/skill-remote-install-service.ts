@@ -37,29 +37,25 @@ const DEVELOPMENT_DOWNLOAD_POLICY_FAILURES = new Set([
 async function install(
   userDataPath: string,
   environmentId: string,
-  request: SkillInstallRequest
+  request: SkillInstallRequest,
+  signal?: AbortSignal
 ): Promise<RuntimeRpcResponse<unknown>> {
-  return (await callRuntimeEnvironment(
-    userDataPath,
-    environmentId,
-    'skills.install',
-    request,
-    5 * 60_000
-  )) as RuntimeRpcResponse<unknown>
+  const args = [userDataPath, environmentId, 'skills.install', request, 5 * 60_000] as const
+  return (await (signal
+    ? callRuntimeEnvironment(...args, undefined, undefined, { signal })
+    : callRuntimeEnvironment(...args))) as RuntimeRpcResponse<unknown>
 }
 
 async function installBundle(
   userDataPath: string,
   environmentId: string,
-  request: SkillBundleInstallRequest
+  request: SkillBundleInstallRequest,
+  signal?: AbortSignal
 ): Promise<RuntimeRpcResponse<unknown>> {
-  return (await callRuntimeEnvironment(
-    userDataPath,
-    environmentId,
-    'skills.installBundle',
-    request,
-    5 * 60_000
-  )) as RuntimeRpcResponse<unknown>
+  const args = [userDataPath, environmentId, 'skills.installBundle', request, 5 * 60_000] as const
+  return (await (signal
+    ? callRuntimeEnvironment(...args, undefined, undefined, { signal })
+    : callRuntimeEnvironment(...args))) as RuntimeRpcResponse<unknown>
 }
 
 async function readBundleInstallProgress(
@@ -130,7 +126,7 @@ export async function installSkillOnRemoteRuntime(input: {
   const direct = await retrySkillTransferRpc({
     signal: input.signal,
     retryable: retryableRemoteInstallTransportError,
-    call: () => install(input.userDataPath, input.environmentId, input.request)
+    call: () => install(input.userDataPath, input.environmentId, input.request, input.signal)
   })
   if (!isDirectDownloadUnavailable(direct, input.requireHttps)) {
     if (direct.ok !== true) {
@@ -156,10 +152,15 @@ export async function installSkillOnRemoteRuntime(input: {
         signal: input.signal
       })
       try {
-        const staged = await install(input.userDataPath, input.environmentId, {
-          ...input.request,
-          ingress: { kind: 'staged-upload', uploadId: transfer.uploadId }
-        })
+        const staged = await install(
+          input.userDataPath,
+          input.environmentId,
+          {
+            ...input.request,
+            ingress: { kind: 'staged-upload', uploadId: transfer.uploadId }
+          },
+          input.signal
+        )
         if (staged.ok !== true) {
           throw remoteFailure(staged)
         }
@@ -203,7 +204,8 @@ export async function installSkillBundleOnRemoteRuntime(input: {
     const direct = await retrySkillTransferRpc({
       signal: input.signal,
       retryable: retryableRemoteInstallTransportError,
-      call: () => installBundle(input.userDataPath, input.environmentId, input.request)
+      call: () =>
+        installBundle(input.userDataPath, input.environmentId, input.request, input.signal)
     })
     if (!isDirectDownloadUnavailable(direct, input.requireHttps)) {
       if (direct.ok !== true) {
@@ -228,10 +230,15 @@ export async function installSkillBundleOnRemoteRuntime(input: {
           signal: input.signal
         })
         try {
-          const staged = await installBundle(input.userDataPath, input.environmentId, {
-            ...input.request,
-            ingress: { kind: 'staged-upload', uploadId: transfer.uploadId }
-          })
+          const staged = await installBundle(
+            input.userDataPath,
+            input.environmentId,
+            {
+              ...input.request,
+              ingress: { kind: 'staged-upload', uploadId: transfer.uploadId }
+            },
+            input.signal
+          )
           if (staged.ok !== true) {
             throw remoteFailure(staged)
           }

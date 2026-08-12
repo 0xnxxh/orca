@@ -25,7 +25,8 @@ export function sendRemoteRuntimeConnectionRequest<TResult>(
   pairing: PairingOffer,
   method: string,
   params: unknown,
-  timeoutMs: number
+  timeoutMs: number,
+  signal?: AbortSignal
 ): Promise<RuntimeRpcResponse<TResult>> {
   const pairingKey = getPairingKey(pairing)
   let cached = requestConnections.get(environmentId)
@@ -37,7 +38,7 @@ export function sendRemoteRuntimeConnectionRequest<TResult>(
     }
     requestConnections.set(environmentId, cached)
   }
-  return cached.connection.request(method, params, timeoutMs)
+  return cached.connection.request(method, params, timeoutMs, signal)
 }
 
 export function closeRemoteRuntimeRequestConnection(environmentId: string): void {
@@ -52,9 +53,15 @@ export function sendRemoteRuntimeSharedControlRequest<TResult>(
   pairing: PairingOffer,
   method: string,
   params: unknown,
-  timeoutMs: number
+  timeoutMs: number,
+  signal?: AbortSignal
 ): Promise<RuntimeRpcResponse<TResult>> {
-  return getSharedControlConnection(environmentId, pairing).request(method, params, timeoutMs)
+  return getSharedControlConnection(environmentId, pairing).request(
+    method,
+    params,
+    timeoutMs,
+    signal
+  )
 }
 
 export function subscribeRemoteRuntimeSharedControlRequest<TResult>(

@@ -241,6 +241,33 @@ describe('sendRemoteRuntimeRequest', () => {
     })
   })
 
+  it('aborts and closes an in-flight one-shot socket', async () => {
+    let requestObserved: () => void = () => {}
+    const observed = new Promise<void>((resolve) => {
+      requestObserved = resolve
+    })
+    const server = await createOneShotServer({ onRequest: requestObserved })
+    const closeSpy = vi.spyOn(WebSocketClient.prototype, 'close')
+    const controller = new AbortController()
+    try {
+      const request = sendRemoteRuntimeRequest(
+        server.pairing,
+        'skills.install',
+        {},
+        60_000,
+        undefined,
+        controller.signal
+      )
+      await observed
+
+      controller.abort()
+      await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+      expect(closeSpy).toHaveBeenCalled()
+    } finally {
+      closeSpy.mockRestore()
+    }
+  })
+
   it('preserves structured failure data for remote computer-use recovery hints', async () => {
     const server = await createOneShotServer({
       response: (requestId) => ({
