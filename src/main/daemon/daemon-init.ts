@@ -88,7 +88,7 @@ export const WEDGED_DAEMON_GRACE_RETRIES = 11
  * provider outright, so the whole path has to fit under that with room to spare —
  * overrunning it would trade a wedged daemon for no daemon at all.
  */
-export const WEDGED_DAEMON_GRACE_BUDGET_MS = 20_000
+export const WEDGED_DAEMON_GRACE_BUDGET_MS = 12_000
 const DAEMON_SELF_SHUTDOWN_WAIT_MS = 5_000
 const DAEMON_CHILD_TERMINATION_GRACE_MS = 5_000
 const DAEMON_CHILD_FORCE_EXIT_WAIT_MS = 1_000

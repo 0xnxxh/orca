@@ -1,5 +1,6 @@
 import {
   getFreshProcessTableSnapshot,
+  getProcessTableSnapshot,
   type ProcessTableRow
 } from '../../shared/process-table-snapshot'
 import { queryWindowsProcessDescendants } from '../providers/windows-foreground-process-rows'
@@ -23,6 +24,7 @@ export type DaemonPtyOwnership = 'owns-live-ptys' | 'no-live-ptys' | 'unknown'
 export type DaemonPtyOwnershipDeps = {
   platform?: NodeJS.Platform
   readPosixProcessTable?: () => Promise<ProcessTableRow[]>
+  readCachedPosixProcessTable?: () => Promise<ProcessTableRow[]>
   queryWindowsDescendants?: typeof queryWindowsProcessDescendants
   windowsDeadlineMs?: number
   posixDeadlineMs?: number
@@ -41,7 +43,7 @@ export const PTY_OWNERSHIP_PROBE_ATTEMPTS = 2
  * may fall back to wmic, and the shared reader can queue behind an in-flight scan — worst
  * case tens of seconds on the launch path. Blind is a safe answer here; hanging is not.
  */
-export const WINDOWS_OWNERSHIP_PROBE_DEADLINE_MS = 6_000
+export const WINDOWS_OWNERSHIP_PROBE_DEADLINE_MS = 4_000
 
 /**
  * POSIX needs its own ceiling for the same reason: the shared reader's `ps` timeout does not
@@ -179,11 +181,23 @@ async function probeOnce(
     )
     return hosted.length > 0 ? 'owns-live-ptys' : 'no-live-ptys'
   }
-  const rows = await withDeadline(
-    (deps.readPosixProcessTable ?? getFreshProcessTableSnapshot)(),
-    deps.posixDeadlineMs ?? POSIX_OWNERSHIP_PROBE_DEADLINE_MS,
-    null
-  )
+  const deadlineMs = deps.posixDeadlineMs ?? POSIX_OWNERSHIP_PROBE_DEADLINE_MS
+  const rows =
+    (await withDeadline(
+      (deps.readPosixProcessTable ?? getFreshProcessTableSnapshot)(),
+      deadlineMs,
+      null
+    )) ??
+    // Why fall back instead of answering 'unknown': the uncached reader queues behind the
+    // scans every agent pane already drives, so the busiest host — the one this evidence
+    // exists to protect — is the likeliest to blow the deadline on queueing alone. A table a
+    // few hundred milliseconds old still shows whether this daemon has children, and going
+    // blind here gets them killed.
+    (await withDeadline(
+      (deps.readCachedPosixProcessTable ?? getProcessTableSnapshot)(),
+      deadlineMs,
+      null
+    ))
   // Why: a walk that never saw the root reports zero descendants for a process it
   // never examined. Only a root we actually observed can prove emptiness — and a read
   // that blew its deadline saw nothing at all.

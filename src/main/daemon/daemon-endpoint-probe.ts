@@ -4,7 +4,7 @@
 import { connect } from 'node:net'
 import { lstatSync } from 'node:fs'
 
-const ENDPOINT_PROBE_TIMEOUT_MS = 500
+export const ENDPOINT_PROBE_TIMEOUT_MS = 500
 
 /**
  * 'connected' — something is listening. 'missing'/'refused' — nothing is, and the endpoint

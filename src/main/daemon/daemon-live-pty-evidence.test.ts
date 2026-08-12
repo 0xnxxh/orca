@@ -203,6 +203,31 @@ describe('inspectDaemonPtyOwnership on POSIX', () => {
     ).resolves.toBe('unknown')
   })
 
+  it('falls back to the cached table when the uncached read blows its deadline', async () => {
+    // Why this matters most on the busiest host: every agent pane drives the shared reader on
+    // its own cadence, so the uncached read queues behind them and can expire on queueing
+    // alone — going blind exactly where the daemon has the most agents to lose.
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        posixDeadlineMs: 5,
+        readPosixProcessTable: () => new Promise<ProcessTableRow[]>(() => {}),
+        readCachedPosixProcessTable: posixTable([daemonRow, row(101, DAEMON_PID)])
+      })
+    ).resolves.toBe('owns-live-ptys')
+  })
+
+  it('reports unknown only when the cached table is blind too', async () => {
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        posixDeadlineMs: 5,
+        readPosixProcessTable: () => new Promise<ProcessTableRow[]>(() => {}),
+        readCachedPosixProcessTable: () => new Promise<ProcessTableRow[]>(() => {})
+      })
+    ).resolves.toBe('unknown')
+  })
+
   it('reports unknown when the process table cannot be read', async () => {
     await expect(
       inspectDaemonPtyOwnership(DAEMON_PID, {
