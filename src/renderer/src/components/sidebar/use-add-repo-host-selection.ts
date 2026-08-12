@@ -23,7 +23,7 @@ export function useAddRepoHostSelection({
   setStep: (step: AddRepoDialogStep) => void
 }): {
   hostOptions: ReturnType<typeof useSidebarHostScopeOptions>['hostOptions']
-  selectedHostId: ExecutionHostId
+  selectedHostId: ExecutionHostId | null
   selectedParsedHost: ReturnType<typeof parseExecutionHostId>
   selectedSshTargetId: string | null
   hostSelectorOpen: boolean
@@ -75,7 +75,7 @@ export function useAddRepoHostSelection({
     ) ??
     selectableHostOptions.find((host) => canSelectAddRepoHost(host)) ??
     selectableHostOptions[0]
-  const selectedHostId = selectedHost?.id ?? LOCAL_EXECUTION_HOST_ID
+  const selectedHostId = selectedHost?.id ?? (isWebClient ? null : LOCAL_EXECUTION_HOST_ID)
   const selectedParsedHost = parseExecutionHostId(selectedHostId)
   const selectedSshTargetId =
     selectedParsedHost?.kind === 'ssh' ? selectedParsedHost.targetId : null
@@ -87,14 +87,16 @@ export function useAddRepoHostSelection({
         (host) => host.id === focusedHostId && canSelectAddRepoHost(host)
       )
         ? focusedHostId
-        : (pairedWebRuntimeHost?.id ?? LOCAL_EXECUTION_HOST_ID)
-      setSelectedAddProjectHostId(nextHostId)
+        : (pairedWebRuntimeHost?.id ?? (isWebClient ? null : LOCAL_EXECUTION_HOST_ID))
+      if (nextHostId) {
+        setSelectedAddProjectHostId(nextHostId)
+      }
     }
     if (!isOpen) {
       setHostSelectorOpen(false)
     }
     previousOpenRef.current = isOpen
-  }, [isOpen, pairedWebRuntimeHost?.id, selectableHostOptions, settings])
+  }, [isOpen, isWebClient, pairedWebRuntimeHost?.id, selectableHostOptions, settings])
 
   const handleSelectAddProjectHost = useCallback(
     async (hostId: ExecutionHostId): Promise<void> => {

@@ -309,7 +309,7 @@ export default React.memo(function AddRepoDialog({
         selectedSshTargetId={hostSelection.selectedSshTargetId}
         selectedHostLabel={
           hostSelection.hostOptions.find((host) => host.id === hostSelection.selectedHostId)
-            ?.label ?? hostSelection.selectedHostId
+            ?.label ?? null
         }
         lockSshTargetSelection={hostSelection.selectedParsedHost?.kind === 'ssh'}
         remotePath={remotePath}
@@ -341,10 +341,16 @@ export default React.memo(function AddRepoDialog({
           })
         }
         onOpenCloneStep={() => {
+          if (!hostSelection.selectedHostId) {
+            return
+          }
           setCloneError(null)
           setStep('clone')
         }}
         onOpenCreateStep={() => {
+          if (!hostSelection.selectedHostId) {
+            return
+          }
           setCreateError(null)
           setStep('create')
         }}

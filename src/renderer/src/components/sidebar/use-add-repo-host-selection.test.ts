@@ -158,6 +158,20 @@ describe('useAddRepoHostSelection', () => {
     })
   })
 
+  it('has no local fallback while a paired web runtime is loading', async () => {
+    mocks.isWebClient = true
+    mocks.stateValues = ['local', false]
+    mocks.hostOptions = [mocks.hostOptions[0]]
+    const { useAddRepoHostSelection } = await import('./use-add-repo-host-selection')
+
+    const result = useAddRepoHostSelection({ isOpen: true, setStep: vi.fn() })
+
+    expect(result.hostOptions).toEqual([])
+    expect(result.selectedHostId).toBeNull()
+    expect(result.selectedParsedHost).toBeNull()
+    expect(mocks.stateSetters[0]).not.toHaveBeenCalledWith('local')
+  })
+
   it('selects a local or SSH host without changing the durable active server', async () => {
     mocks.stateValues = ['runtime:env-1', false]
     mocks.storeState.settings = { activeRuntimeEnvironmentId: 'env-1' }
