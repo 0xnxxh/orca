@@ -18491,6 +18491,7 @@ export class OrcaRuntimeService {
         | 'pendingFirstAgentMessageRename'
         | 'firstAgentMessageRenameError'
         | 'lastActivityAt'
+        | 'diffComments'
       >
     >
   ): Promise<FolderWorkspace | null> {

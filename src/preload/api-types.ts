@@ -1332,6 +1332,7 @@ export type PreloadApi = {
           | 'pendingFirstAgentMessageRename'
           | 'firstAgentMessageRenameError'
           | 'lastActivityAt'
+          | 'diffComments'
         >
       >
     }) => Promise<FolderWorkspace | null>
