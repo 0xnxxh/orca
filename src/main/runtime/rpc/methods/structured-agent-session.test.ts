@@ -331,6 +331,21 @@ describe('method routing', () => {
     expect(response).toMatchObject({ ok: true })
     expect(hostCalls.requestHandoff).toHaveBeenCalledWith({ callerKey: 'mobile-device-a' }, params)
   })
+
+  it('accepts manual proof recovery at the RPC boundary', async () => {
+    const params = {
+      envelope: envelope(),
+      direction: 'to-tui',
+      mode: 'now',
+      action: 'recover'
+    }
+
+    await expect(call('agentSession.requestHandoff', params)).resolves.toMatchObject({ ok: true })
+    expect(hostCalls.requestHandoff).toHaveBeenCalledWith(
+      { callerKey: 'trusted-local:runtime' },
+      params
+    )
+  })
 })
 
 describe('mobile image provenance', () => {

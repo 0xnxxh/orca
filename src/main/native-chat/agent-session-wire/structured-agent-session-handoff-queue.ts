@@ -2,6 +2,7 @@ import type {
   AgentSessionHandoffRequest,
   AgentSessionHandoffStatus
 } from '../../../shared/agent-session-wire'
+import type { AgentSessionRecord } from '../../../shared/agent-session-record'
 import { activeStructuredAgentSessionTurnId } from '../../../shared/structured-agent-session-projection'
 import type {
   StructuredAgentSessionHandoffDeps,
@@ -53,13 +54,35 @@ export class StructuredAgentSessionHandoffQueue {
   }
 }
 
+export function queuedStructuredHandoffCanBegin(
+  record: AgentSessionRecord,
+  status: AgentSessionHandoffStatus,
+  params: AgentSessionHandoffRequest
+): boolean {
+  const expectedOwner = params.direction === 'to-tui' ? 'native' : 'tui'
+  return (
+    record.sessionId === params.envelope.sessionId &&
+    status.phase === 'queued' &&
+    status.direction === params.direction &&
+    status.operationId === params.envelope.clientOperationId &&
+    record.lease.runtimeFence === params.envelope.expectedRuntimeFence &&
+    record.lease.runtimeKind === expectedOwner &&
+    record.lease.claimStatus === 'live' &&
+    record.lease.handoffStage === null &&
+    !record.lease.unreconciled
+  )
+}
+
 export function enqueueStructuredHandoffAfterTurn(input: {
   deps: StructuredAgentSessionHandoffDeps
   queue: StructuredAgentSessionHandoffQueue
   params: AgentSessionHandoffRequest
   tuiOwner: StructuredTuiOwner | undefined
+  status: () => AgentSessionHandoffStatus
+  requireRecord: () => AgentSessionRecord
   setStatus: (status: AgentSessionHandoffStatus) => void
   begin: (params: AgentSessionHandoffRequest, tuiAlreadyExited: boolean) => void
+  refuse: (record: AgentSessionRecord) => void
 }): void {
   const { deps, params, queue, tuiOwner } = input
   const sessionId = params.envelope.sessionId
@@ -83,6 +106,14 @@ export function enqueueStructuredHandoffAfterTurn(input: {
         : null
       return tuiReadiness !== null
     },
-    () => input.begin({ ...params, mode: 'now' }, tuiReadiness === 'exited')
+    () => {
+      const record = input.requireRecord()
+      const status = input.status()
+      if (!queuedStructuredHandoffCanBegin(record, status, params)) {
+        input.refuse(record)
+        return
+      }
+      input.begin({ ...params, mode: 'now' }, tuiReadiness === 'exited')
+    }
   )
 }

@@ -34,7 +34,7 @@ function notifier(revealTerminalSession: ReturnType<typeof vi.fn>) {
 }
 
 describe('structured TUI launch tab binding', () => {
-  it('rebuilds a Claude proving link only from launch-token-bound hook evidence', async () => {
+  it('rebuilds a Claude proving link from current launch-token-bound hook evidence', async () => {
     const paneKey = 'tab-claude:leaf-claude'
     const spawnToken = 'claude-restart-token'
     const sessionId = '019fd532-7c11-7a90-b6de-4e1a2c3d5f61'
@@ -113,12 +113,85 @@ describe('structured TUI launch tab binding', () => {
       }
     })
     expect(reproved.link.linkId).not.toBe('claude-old')
+    expect(attestAgentHookCompatibilityAuthority).not.toHaveBeenCalled()
+  })
+
+  it('requires restored hook attestation after the runtime restarts', async () => {
+    const paneKey = 'tab-restored:leaf-restored'
+    const spawnToken = 'restored-token'
+    const sessionId = '019fd532-7c11-7a90-b6de-4e1a2c3d5f62'
+    const transcriptPath = '/tmp/claude-home/projects/worktree/restored.jsonl'
+    const attestAgentHookCompatibilityAuthority = vi.fn(() => ({
+      paneKey,
+      source: 'hydrated_commitment' as const
+    }))
+    const runtime = new OrcaRuntimeService(null, undefined, {
+      attestAgentHookCompatibilityAuthority,
+      getAgentProviderSessionRowsForPane: () => [
+        {
+          paneKey,
+          connectionId: null,
+          state: 'done',
+          prompt: '',
+          agentType: 'claude',
+          receivedAt: 10,
+          stateStartedAt: 10,
+          providerSession: { key: 'session_id', id: sessionId, transcriptPath }
+        }
+      ]
+    })
+    const internal = runtime as unknown as {
+      createStructuredAgentSessionHandoffTransport(): StructuredAgentSessionHandoffTransport
+      ptysById: Map<string, unknown>
+      restoredOrchestrationAuthorityByPtyId: Map<string, unknown>
+    }
+    internal.ptysById.set('pty-restored', {
+      ptyId: 'pty-restored',
+      worktreeId: WORKTREE_ID,
+      connectionId: null,
+      tabId: 'tab-restored',
+      paneKey,
+      launchToken: spawnToken,
+      launchAgent: 'claude',
+      connected: true
+    })
+    internal.restoredOrchestrationAuthorityByPtyId.set('pty-restored', {})
+    const record = {
+      sessionId: 'session-restored',
+      accountHome: { variable: 'CLAUDE_CONFIG_DIR', path: '/tmp/claude-home' },
+      providerHandleChain: [
+        {
+          linkId: 'claude-restored',
+          handle: { provider: 'claude', sessionId, leafUuid: 'leaf-restored' },
+          origin: 'created',
+          mintedAtFence: 1,
+          observedAt: 1
+        }
+      ],
+      lease: {
+        runtimeFence: 4,
+        ownerProcess: {
+          hostId: 'local',
+          pid: 4545,
+          processStartTimeMs: 30,
+          spawnToken
+        },
+        provenHandleLinkId: null
+      }
+    } as never
+
+    await internal.createStructuredAgentSessionHandoffTransport().recoverTuiOwner(record)
+
     expect(attestAgentHookCompatibilityAuthority).toHaveBeenCalledWith({
       paneKey,
       launchTokenHash: createHash('sha256').update(spawnToken).digest('hex'),
       connectionId: null,
       terminalProvenance: 'restored'
     })
+    attestAgentHookCompatibilityAuthority.mockReturnValueOnce(null as never)
+    await expect(
+      internal.createStructuredAgentSessionHandoffTransport().recoverTuiOwner(record)
+    ).rejects.toThrow('launch-token authority')
   })
 
   it('proves the published launch tab before returning its revealed renderer binding', async () => {

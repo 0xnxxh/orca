@@ -197,7 +197,7 @@ export const HandoffParams = z
     envelope: MutationEnvelope,
     direction: z.enum(['to-tui', 'to-native']),
     mode: z.enum(['now', 'after-turn', 'stop-turn']),
-    action: z.enum(['start', 'cancel-queued', 'retry']).optional()
+    action: z.enum(['start', 'cancel-queued', 'retry', 'recover']).optional()
   })
   .strict()
 

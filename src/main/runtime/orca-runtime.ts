@@ -9417,14 +9417,16 @@ export class OrcaRuntimeService {
     if (!paneKey) {
       throw new Error('The owning Claude terminal did not retain its pane identity.')
     }
-    const attestation = this.attestAgentHookCompatibilityAuthorityFn?.({
-      paneKey,
-      launchTokenHash: createHash('sha256').update(input.spawnToken).digest('hex'),
-      connectionId: input.candidate.connectionId,
-      terminalProvenance: 'restored'
-    })
-    if (attestation?.paneKey !== paneKey) {
-      throw new Error('The owning Claude terminal did not retain launch-token authority.')
+    if (this.restoredOrchestrationAuthorityByPtyId.has(input.candidate.ptyId)) {
+      const attestation = this.attestAgentHookCompatibilityAuthorityFn?.({
+        paneKey,
+        launchTokenHash: createHash('sha256').update(input.spawnToken).digest('hex'),
+        connectionId: input.candidate.connectionId,
+        terminalProvenance: 'restored'
+      })
+      if (attestation?.paneKey !== paneKey) {
+        throw new Error('The owning Claude terminal did not retain launch-token authority.')
+      }
     }
     const matches = (this.getAgentProviderSessionRowsForPaneFn?.(paneKey) ?? []).filter(
       (row) =>

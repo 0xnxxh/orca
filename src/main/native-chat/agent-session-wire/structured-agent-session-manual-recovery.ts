@@ -71,19 +71,21 @@ export function beginStructuredManualRecovery(input: {
         throw new Error('The TUI owner proof is still unavailable.')
       }
     })
-    .then(() =>
-      deps.store.recordOperationOutcome({
+    .then(() => {
+      operationGuard.finish(sessionId, params.envelope.clientOperationId)
+      return deps.store.recordOperationOutcome({
         callerKey,
         operationId: params.envelope.clientOperationId,
         outcome: { status: 'succeeded', sessionId }
       })
-    )
+    })
     .catch(async (error) => {
       await deps.store.recordOperationOutcome({
         callerKey,
         operationId: params.envelope.clientOperationId,
         outcome: { status: 'failed', code: 'agent_session_handoff_failed' }
       })
+      operationGuard.finish(sessionId, params.envelope.clientOperationId)
       const status = idleStructuredHandoffStatus(requireRecord(sessionId))
       setStatus(sessionId, {
         ...status,

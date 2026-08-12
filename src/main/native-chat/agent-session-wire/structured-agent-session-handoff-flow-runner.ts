@@ -44,19 +44,21 @@ export class StructuredAgentSessionHandoffFlowRunner {
       fingerprint
     })
     const flow = this.run(params, turnId, tuiAlreadyExited)
-      .then(() =>
-        this.input.deps.store.recordOperationOutcome({
+      .then(() => {
+        this.input.operationGuard.finish(sessionId, params.envelope.clientOperationId)
+        return this.input.deps.store.recordOperationOutcome({
           callerKey,
           operationId: params.envelope.clientOperationId,
           outcome: { status: 'succeeded', sessionId }
         })
-      )
+      })
       .catch(async (error) => {
         await this.input.deps.store.recordOperationOutcome({
           callerKey,
           operationId: params.envelope.clientOperationId,
           outcome: { status: 'failed', code: 'agent_session_handoff_failed' }
         })
+        this.input.operationGuard.finish(sessionId, params.envelope.clientOperationId)
         this.input.fail(params, error)
       })
       .finally(() => this.input.operationGuard.finish(sessionId, params.envelope.clientOperationId))

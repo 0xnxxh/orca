@@ -7,7 +7,6 @@ import type {
   AgentSessionWireRefusal
 } from '../../../shared/agent-session-wire'
 import { activeStructuredAgentSessionTurnId } from '../../../shared/structured-agent-session-projection'
-import { setStoredAgentSessionHandoffStage } from '../../runtime/agent-session-handoff-record-transitions'
 import {
   admitStructuredHandoffRequest,
   refuseAdmittedStructuredHandoff,
@@ -34,8 +33,7 @@ import {
   failedStructuredHandoffStatus,
   idleStructuredHandoffStatus,
   structuredSessionHasPendingPrompt,
-  structuredTuiStatus,
-  switchingStructuredHandoffStatus
+  structuredTuiStatus
 } from './structured-agent-session-handoff-status'
 import type {
   StructuredAgentSessionHandoffDeps,
@@ -61,9 +59,8 @@ export class StructuredAgentSessionHandoffCoordinator {
   }
 
   status(sessionId: string): AgentSessionHandoffStatus {
-    return (
-      this.statuses.get(sessionId) ?? idleStructuredHandoffStatus(this.requireRecord(sessionId))
-    )
+    const current = this.statuses.get(sessionId)
+    return current ?? idleStructuredHandoffStatus(this.requireRecord(sessionId))
   }
 
   drain = (): Promise<void> => this.flowRunner.drain()
@@ -108,7 +105,11 @@ export class StructuredAgentSessionHandoffCoordinator {
     const { fingerprint } = admission
     const action = params.action ?? 'start'
     if (action === 'cancel-queued') {
-      if (currentStatus?.phase !== 'queued' || currentStatus.direction !== params.direction) {
+      if (
+        currentStatus?.phase !== 'queued' ||
+        currentStatus.operationId === null ||
+        currentStatus.direction !== params.direction
+      ) {
         return this.refuseAdmitted(
           callerKey,
           params,
@@ -117,6 +118,10 @@ export class StructuredAgentSessionHandoffCoordinator {
         )
       }
       this.queue.cancel(record.sessionId)
+      await this.operationGuard.settle(record.sessionId, currentStatus.operationId, {
+        status: 'failed',
+        code: 'agent_session_operation_conflict'
+      })
       this.setStatus(record.sessionId, idleStructuredHandoffStatus(record))
       await this.deps.store.recordOperationOutcome({
         callerKey,
@@ -206,8 +211,11 @@ export class StructuredAgentSessionHandoffCoordinator {
         queue: this.queue,
         params,
         tuiOwner,
+        status: () => this.status(record.sessionId),
+        requireRecord: () => this.requireRecord(record.sessionId),
         setStatus: (status) => this.setStatus(record.sessionId, status),
-        begin: (next, exited) => this.begin(callerKey, next, null, fingerprint, exited)
+        begin: (next, exited) => this.begin(callerKey, next, null, fingerprint, exited),
+        refuse: (latest) => this.refuseQueued(params, latest)
       })
       return this.success(record.sessionId, false)
     }
@@ -229,16 +237,29 @@ export class StructuredAgentSessionHandoffCoordinator {
     code: AgentSessionWireRefusal['code'],
     message: string
   ): Promise<AgentSessionMutationResult<AgentSessionHandoffResult>> {
-    return refuseAdmittedStructuredHandoff({
+    const result = await refuseAdmittedStructuredHandoff({
       deps: this.deps,
       callerKey,
       params,
       refusal: refusal(code, message)
     })
+    this.operationGuard.finish(params.envelope.sessionId, params.envelope.clientOperationId)
+    return result
   }
 
   private success = (sessionId: string, replayed: boolean) =>
     structuredHandoffSuccess(this.deps, sessionId, replayed, this.status(sessionId))
+
+  private refuseQueued(params: AgentSessionHandoffRequest, record: AgentSessionRecord): void {
+    const settlement = this.operationGuard
+      .settle(record.sessionId, params.envelope.clientOperationId, {
+        status: 'failed',
+        code: 'agent_session_checkpoint_stale'
+      })
+      .then(() => this.setStatus(record.sessionId, idleStructuredHandoffStatus(record)))
+      .catch((error) => this.fail(params, error))
+    this.flowRunner.track(settlement)
+  }
 
   private begin(
     callerKey: string,
@@ -263,33 +284,8 @@ export class StructuredAgentSessionHandoffCoordinator {
       retainOwner: (sessionId, owner) => this.tuiOwners.set(sessionId, owner),
       releaseOwner: (sessionId) => void this.tuiOwners.delete(sessionId),
       setStatus: (sessionId, status) => this.setStatus(sessionId, status),
-      enterPreparing: (record, operationId, direction) =>
-        this.enterPreparing(record, operationId, direction),
-      publishStage: (record, direction) => this.publishStage(record, direction),
       requireRecord: (sessionId) => this.requireRecord(sessionId)
     })
-  }
-
-  private async enterPreparing(
-    record: AgentSessionRecord,
-    operationId: string,
-    direction: 'to-tui' | 'to-native'
-  ): Promise<void> {
-    const prepared = await setStoredAgentSessionHandoffStage(this.deps.store, {
-      sessionId: record.sessionId,
-      fence: record.lease.runtimeFence,
-      stage: 'preparing',
-      handoffOperationId: operationId,
-      now: this.deps.now()
-    })
-    this.publishStage(prepared, direction)
-  }
-
-  private publishStage(record: AgentSessionRecord, direction: 'to-tui' | 'to-native'): void {
-    this.setStatus(
-      record.sessionId,
-      switchingStructuredHandoffStatus(record, direction, this.deps.transport?.hostLabel)
-    )
   }
 
   private fail(params: AgentSessionHandoffRequest, error: unknown): void {
