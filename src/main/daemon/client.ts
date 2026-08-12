@@ -258,6 +258,12 @@ export class DaemonClient {
   disconnect(): void {
     this.connectionAttemptGeneration++
     this.connected = false
+    // Why: the daemon unlinks its token once its last authenticated client drops, so a caller-driven
+    // disconnect leaves the same retired-endpoint evidence a socket close does. Recording it here is
+    // what makes the next connect's missing-token ENOENT eligible for a respawn instead of surfacing raw.
+    if (this.daemonIdentity) {
+      this.observedAuthenticatedDisconnect = true
+    }
     this.daemonIdentity = null
     this.disconnectArmed = false
     this.cleanupActiveSocketListeners()

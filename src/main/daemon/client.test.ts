@@ -567,6 +567,44 @@ describe('DaemonClient', () => {
       client = new DaemonClient({ socketPath, tokenPath })
       expect(() => client.disconnect()).not.toThrow()
     })
+
+    it('records an authenticated disconnect when the caller disconnects', async () => {
+      await startMockDaemon()
+
+      client = new DaemonClient({ socketPath, tokenPath })
+      await client.ensureConnected()
+      expect(client.hasObservedAuthenticatedDisconnect()).toBe(false)
+
+      client.disconnect()
+
+      expect(client.hasObservedAuthenticatedDisconnect()).toBe(true)
+    })
+
+    it('does not record an authenticated disconnect when the caller never authenticated', async () => {
+      // Why: a missing token before any authenticated session can still hide a live daemon, so it
+      // must stay ineligible for the retired-endpoint recovery this flag gates.
+      await startMockDaemon({ rejectVersion: true })
+
+      client = new DaemonClient({ socketPath, tokenPath })
+      await expect(client.ensureConnected()).rejects.toThrow('Version mismatch')
+
+      client.disconnect()
+
+      expect(client.hasObservedAuthenticatedDisconnect()).toBe(false)
+    })
+
+    it('clears the recorded disconnect once reconnected', async () => {
+      await startMockDaemon()
+
+      client = new DaemonClient({ socketPath, tokenPath })
+      await client.ensureConnected()
+      client.disconnect()
+      expect(client.hasObservedAuthenticatedDisconnect()).toBe(true)
+
+      await client.ensureConnected()
+
+      expect(client.hasObservedAuthenticatedDisconnect()).toBe(false)
+    })
   })
 
   describe('notify (fire-and-forget)', () => {

@@ -595,6 +595,42 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       }
     })
 
+    it('respawns when the daemon retires its token after a caller-driven disconnect', async () => {
+      // Why: the daemon unlinks its token when its last authenticated client drops, so the drop that
+      // triggers retirement is often our own disconnect() — which observes no socket close. Losing
+      // that evidence left the reconnect's ENOENT ineligible for respawn and surfaced it raw.
+      let respawnServer: DaemonServer | undefined
+      const respawn = vi.fn(async () => {
+        respawnServer = new DaemonServer({
+          socketPath,
+          tokenPath,
+          spawnSubprocess: () => createMockSubprocess()
+        })
+        await respawnServer.start()
+      })
+      const healingAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const { id } = await healingAdapter.spawn({ cols: 80, rows: 24 })
+        const client = (healingAdapter as unknown as { client: DaemonClient }).client
+
+        client.disconnect()
+        // Retire the daemon only after the client detached, so no close event reaches it.
+        await server.shutdown()
+        expect(existsSync(tokenPath)).toBe(false)
+        expect(client.isConnected()).toBe(false)
+
+        await expect(
+          healingAdapter.spawn({ sessionId: id, cols: 80, rows: 24 })
+        ).resolves.toMatchObject({ id })
+        expect(respawn).toHaveBeenCalledTimes(1)
+      } finally {
+        warn.mockRestore()
+        healingAdapter.dispose()
+        await respawnServer?.shutdown()
+      }
+    })
+
     it('does not spawn a daemon per keystroke after respawn fails', async () => {
       const respawn = vi.fn(async () => {
         throw new Error('daemon unavailable')
