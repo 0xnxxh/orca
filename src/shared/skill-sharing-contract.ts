@@ -58,7 +58,7 @@ export type SkillShareResolvedOperation = SkillCloudOperation<{
 
 export type SkillShareProgress = {
   preparationId: string
-  phase: 'uploading' | 'finalizing'
+  phase: 'uploading' | 'finalizing' | 'publishing'
   bytesSent: number
   totalBytes: number
 }

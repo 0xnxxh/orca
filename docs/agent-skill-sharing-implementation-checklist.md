@@ -856,8 +856,10 @@ does not mean the surrounding phase is complete.
 - [x] Review bundle name, skill/file/byte counts, script/executable warnings, expandable per-skill
       details, unlisted-link behavior, and release notes.
 - [x] Add Settings → **Share Skills** with artifact-like explanation and a route to the Skills page.
-- [ ] Show named preparation, upload, verification, and link-publication progress and return one
-      durable link for the bundle.
+- [x] Show named preparation, upload, verification, and link-publication progress and return one
+      durable link for the bundle. Preparation uses **Preparing preview…**; publication advances
+      through **Uploading…**, **Verifying package…**, and **Publishing link…** before rendering the
+      single durable share URL. Cancellation reaches both upload and link publication.
 
 ### Install experience
 

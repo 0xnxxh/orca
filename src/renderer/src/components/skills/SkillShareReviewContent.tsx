@@ -77,6 +77,22 @@ function byteLabel(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function publishingPhaseLabel(progress: SkillShareProgress | null): string {
+  if (progress?.phase === 'publishing') {
+    return translate(
+      'auto.components.skills.SkillShareReviewContent.publishingLink',
+      'Publishing link…'
+    )
+  }
+  if (progress?.phase === 'finalizing') {
+    return translate(
+      'auto.components.skills.SkillShareReviewContent.verifyingPackage',
+      'Verifying package…'
+    )
+  }
+  return translate('auto.components.skills.SkillShareReviewContent.0142581727', 'Uploading…')
+}
+
 export function SkillSharePreparationReview({
   preview,
   author,
@@ -211,20 +227,10 @@ export function SkillSharePreparationReview({
       {publishing ? (
         <section className="space-y-2" aria-live="polite">
           <div className="flex justify-between text-xs text-muted-foreground">
-            <span>
-              {progress?.phase === 'finalizing'
-                ? translate(
-                    'auto.components.skills.SkillShareReviewContent.ad940367a5',
-                    'Validating and publishing…'
-                  )
-                : translate(
-                    'auto.components.skills.SkillShareReviewContent.0142581727',
-                    'Uploading…'
-                  )}
-            </span>
-            <span>{progress?.phase === 'finalizing' ? '100%' : `${progressPercent}%`}</span>
+            <span>{publishingPhaseLabel(progress)}</span>
+            <span>{progress?.phase === 'uploading' ? `${progressPercent}%` : '100%'}</span>
           </div>
-          <Progress value={progress?.phase === 'finalizing' ? 100 : progressPercent} />
+          <Progress value={progress?.phase === 'uploading' ? progressPercent : 100} />
         </section>
       ) : null}
     </div>

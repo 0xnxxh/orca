@@ -100,6 +100,7 @@ export class SkillCloudService {
     request: SkillCloudOptions & {
       pinnedVersionId?: string
       idempotencyKey?: string
+      signal?: AbortSignal
     }
   ): Promise<SkillCloudOperation<SkillCloudShare>> {
     return this.withAuth(request, async (token, apiUrl) => {
@@ -111,7 +112,8 @@ export class SkillCloudService {
         body: {
           pinnedVersionId: request.pinnedVersionId
         },
-        idempotencyKey: request.idempotencyKey ?? randomUUID()
+        idempotencyKey: request.idempotencyKey ?? randomUUID(),
+        signal: request.signal
       })
       return shared.share
     })

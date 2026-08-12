@@ -72,9 +72,10 @@ describe('SkillSharePreparationService', () => {
       preparationId: preview.preparationId,
       releaseNotes: 'retry'
     }
+    const progress = vi.fn()
 
-    await expect(service.publish(input)).rejects.toThrow('response lost')
-    await expect(service.publish(input)).resolves.toMatchObject({
+    await expect(service.publish(input, progress)).rejects.toThrow('response lost')
+    await expect(service.publish(input, progress)).resolves.toMatchObject({
       status: 'ok',
       value: { version: { versionId: 'version_retry' }, share: { id: 'share_retry' } }
     })
@@ -84,6 +85,10 @@ describe('SkillSharePreparationService', () => {
     const idempotencyKey = createShare.mock.calls[0]?.[1].idempotencyKey
     expect(idempotencyKey).toMatch(/^[A-Za-z0-9_-]{1,128}$/)
     expect(idempotencyKey).toBe(createShare.mock.calls[1]?.[1].idempotencyKey)
+    expect(createShare.mock.calls[1]?.[1].signal).toBeInstanceOf(AbortSignal)
+    expect(progress).toHaveBeenLastCalledWith(
+      expect.objectContaining({ preparationId: preview.preparationId, phase: 'publishing' })
+    )
   })
 
   it('keeps the finalized version while sign-in is reconnected', async () => {

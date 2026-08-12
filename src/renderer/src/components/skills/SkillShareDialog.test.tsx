@@ -179,6 +179,20 @@ describe('SkillShareDialog', () => {
       totalBytes: 96
     })
     await screen.findByText('50%')
+    emitProgress({
+      preparationId: preview.preparationId,
+      phase: 'finalizing',
+      bytesSent: 96,
+      totalBytes: 96
+    })
+    await screen.findByText('Verifying package…')
+    emitProgress({
+      preparationId: preview.preparationId,
+      phase: 'publishing',
+      bytesSent: 96,
+      totalBytes: 96
+    })
+    await screen.findByText('Publishing link…')
     fireEvent.click(screen.getByRole('button', { name: 'Cancel upload' }))
     await waitFor(() => expect(skills.cancelShare).toHaveBeenCalledWith(preview.preparationId))
     rejectPublish(new Error('aborted'))

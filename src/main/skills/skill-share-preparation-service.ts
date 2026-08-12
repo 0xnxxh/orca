@@ -138,8 +138,15 @@ export class SkillSharePreparationService {
         version = published.value
         preparation.publishedVersion = version
       }
+      onProgress?.({
+        preparationId: input.preparationId,
+        phase: 'publishing',
+        bytesSent: preparation.created.compressedBytes,
+        totalBytes: preparation.created.compressedBytes
+      })
       const shared = await this.cloud.createShare(version.packageId, {
-        idempotencyKey: shareIdempotencyKey(input.preparationId)
+        idempotencyKey: shareIdempotencyKey(input.preparationId),
+        signal: controller.signal
       })
       if (shared.status !== 'ok') {
         return shared
