@@ -14,10 +14,13 @@ import {
 import {
   toHostReadableTranscriptPath,
   wslClaudeProjectsDirs,
-  wslCodexSessionsDirs
+  wslClaudeProjectsDirsForDistro,
+  wslCodexSessionsDirs,
+  wslCodexSessionsDirsForDistro
 } from './host-readable-transcript-path'
 import { findWslCodexSessionPath } from './wsl-codex-session-path-scan'
 import { findWslSessionPath } from './wsl-session-path-scan'
+import type { NativeChatTranscriptHost } from './transcript-host'
 
 // Why: these mirror the path constants in ai-vault/session-scanner.ts. Reads
 // run in the main process against the runtime's own home directory; over SSH
@@ -73,6 +76,8 @@ export type ResolveSessionFileOptions = {
    *  directly — recent Claude Code names the transcript with a UUID that differs
    *  from the hook session_id, so the id-based glob below would miss it. */
   transcriptPath?: string
+  /** PTY-owned execution host. Undefined preserves legacy discovery. */
+  transcriptHost?: NativeChatTranscriptHost
 }
 
 /**
@@ -102,7 +107,10 @@ export async function resolveSessionFilePath(
   // stale/missing paths fall through to the id-based search.
   const hookPath = options.transcriptPath?.trim()
   if (hookPath && extname(hookPath) === '.jsonl') {
-    const hostReadable = await toHostReadableTranscriptPath(hookPath, { signal })
+    const hostReadable = await toHostReadableTranscriptPath(hookPath, {
+      signal,
+      transcriptHost: options.transcriptHost
+    })
     if (hostReadable) {
       return hostReadable
     }
@@ -115,29 +123,59 @@ export async function resolveSessionFilePath(
 
   if (transcriptAgent === 'claude') {
     const overrideDir = options.claudeProjectsDir
+    if (!overrideDir && options.transcriptHost?.kind === 'wsl') {
+      const projectsDirs = await wslClaudeProjectsDirsForDistro(options.transcriptHost.distro)
+      signal?.throwIfAborted()
+      return resolveClaudeSessionFileInDirs(trimmedId, projectsDirs, signal)
+    }
     return resolveClaudeSessionFile(
       trimmedId,
       overrideDir ?? claudeProjectsDir(),
-      overrideDir ? undefined : wslClaudeProjectsDirs,
+      overrideDir || options.transcriptHost?.kind === 'host' ? undefined : wslClaudeProjectsDirs,
       signal
     )
   }
   if (transcriptAgent === 'codex') {
     const overrideDirs = options.codexSessionsDirs
+    if (!overrideDirs && options.transcriptHost?.kind === 'wsl') {
+      const sessionsDirs = await wslCodexSessionsDirsForDistro(options.transcriptHost.distro)
+      signal?.throwIfAborted()
+      return findCodexRolloutInDirs(trimmedId, sessionsDirs, signal)
+    }
     return resolveCodexSessionFile(
       trimmedId,
       overrideDirs ?? codexSessionsDirs(),
       // Why: enumerating WSL homes spawns wsl.exe per distro, which boots ones the
       // user left stopped. Only pay that after this host's own Codex roots miss.
-      overrideDirs ? undefined : wslCodexSessionsDirs,
+      overrideDirs || options.transcriptHost?.kind === 'host' ? undefined : wslCodexSessionsDirs,
       signal
     )
   }
   if (transcriptAgent === 'grok') {
+    if (options.transcriptHost?.kind === 'wsl') {
+      return null
+    }
     return resolveGrokSessionFile(trimmedId, options.grokSessionsDir ?? grokSessionsDir(), signal)
   }
   if (transcriptAgent === 'omp') {
+    if (options.transcriptHost?.kind === 'wsl') {
+      return null
+    }
     return resolveOmpSessionFile(trimmedId, options.ompSessionsDir ?? ompSessionsDir(), signal)
+  }
+  return null
+}
+
+async function resolveClaudeSessionFileInDirs(
+  sessionId: string,
+  projectsDirs: string[],
+  signal?: AbortSignal
+): Promise<string | null> {
+  for (const projectsDir of projectsDirs) {
+    const hit = await findClaudeTranscript(projectsDir, sessionId, signal)
+    if (hit) {
+      return hit
+    }
   }
   return null
 }

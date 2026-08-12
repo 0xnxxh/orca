@@ -122,7 +122,8 @@ function subscribeViaResolvePoll(
           // the current drive (`C:\home\…`) and bind chat to a look-alike file.
           lastWslTranslateAt = Date.now()
           hostReadableExactPath = await toHostReadableTranscriptPath(exactPath, {
-            signal: resolveController.signal
+            signal: resolveController.signal,
+            transcriptHost: args.transcriptHost
           })
         }
       }

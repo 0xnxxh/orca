@@ -92,6 +92,79 @@ afterEach(() => {
 })
 
 describe('resolveSessionFilePath on a Windows host with WSL', () => {
+  it('routes an exact hook path through only the authoritative PTY distro', async () => {
+    await expect(
+      resolveSessionFilePath('codex', 'ignored', {
+        transcriptPath: ROLLOUT_LINUX,
+        transcriptHost: { kind: 'wsl', distro: 'Ubuntu' }
+      })
+    ).resolves.toBe(ROLLOUT_UNC)
+
+    expect(vi.mocked(listWslDistrosAsync)).not.toHaveBeenCalled()
+    expect(vi.mocked(getWslHomeAsync)).not.toHaveBeenCalled()
+  })
+
+  it('does not search WSL when authoritative PTY provenance says host', async () => {
+    const options = { transcriptHost: { kind: 'host' as const } }
+
+    await expect(resolveSessionFilePath('claude', 'missing', options)).resolves.toBeNull()
+
+    expect(scanned.dirs).toHaveLength(1)
+    expect(scanned.dirs[0]).not.toMatch(/^\\\\wsl/)
+    expect(vi.mocked(listWslDistrosAsync)).not.toHaveBeenCalled()
+    expect(vi.mocked(getWslHomeAsync)).not.toHaveBeenCalled()
+  })
+
+  it('searches only the authoritative PTY distro for a WSL Claude session', async () => {
+    vi.mocked(listWslDistrosAsync).mockResolvedValueOnce(['Missing', 'Ubuntu'])
+    scanned.wslClaudeTranscriptDir = WSL_CLAUDE_PROJECTS_DIR
+    const options = { transcriptHost: { kind: 'wsl' as const, distro: 'Ubuntu' } }
+
+    await expect(resolveSessionFilePath('claude', 'claude-wsl-sess', options)).resolves.toBe(
+      WSL_CLAUDE_TRANSCRIPT
+    )
+
+    expect(scanned.dirs).toEqual([WSL_CLAUDE_PROJECTS_DIR])
+    expect(vi.mocked(listWslDistrosAsync)).not.toHaveBeenCalled()
+    expect(vi.mocked(getWslHomeAsync)).toHaveBeenCalledWith('Ubuntu')
+  })
+
+  it('applies authoritative PTY routing to Codex without broad discovery', async () => {
+    await expect(
+      resolveSessionFilePath('codex', 'missing', {
+        transcriptHost: { kind: 'wsl', distro: 'Ubuntu' }
+      })
+    ).resolves.toBeNull()
+
+    expect(scanned.dirs).toEqual([
+      `${UBUNTU_HOME}\\.local\\share\\orca\\codex-runtime-home\\home\\sessions`,
+      `${UBUNTU_HOME}\\.codex\\sessions`
+    ])
+    expect(vi.mocked(listWslDistrosAsync)).not.toHaveBeenCalled()
+  })
+
+  it('does not search WSL for a host-owned Codex miss', async () => {
+    await expect(
+      resolveSessionFilePath('codex', 'missing', { transcriptHost: { kind: 'host' } })
+    ).resolves.toBeNull()
+
+    expect(scanned.dirs.some((dir) => dir.startsWith('\\\\wsl.localhost\\'))).toBe(false)
+    expect(vi.mocked(listWslDistrosAsync)).not.toHaveBeenCalled()
+  })
+
+  it.each(['grok', 'omp'] as const)(
+    'does not bind a host %s transcript to a WSL-owned PTY',
+    async (agent) => {
+      await expect(
+        resolveSessionFilePath(agent, 'same-id', {
+          transcriptHost: { kind: 'wsl', distro: 'Ubuntu' }
+        })
+      ).resolves.toBeNull()
+
+      expect(vi.mocked(listWslDistrosAsync)).not.toHaveBeenCalled()
+    }
+  )
+
   it('resolves a Claude transcript from WSL when no hook path is known', async () => {
     scanned.wslClaudeTranscriptDir = WSL_CLAUDE_PROJECTS_DIR
 

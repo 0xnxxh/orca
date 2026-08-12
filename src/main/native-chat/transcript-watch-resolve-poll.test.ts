@@ -75,12 +75,17 @@ describe('native chat transcript resolve polling', () => {
       agent: 'codex',
       sessionId: 'session-id',
       transcriptPath: '/home/ada/.codex/sessions/rollout-session-id.jsonl',
+      transcriptHost: { kind: 'wsl', distro: 'Ubuntu' },
       resolvePollIntervalMs: 10,
       onAppend: () => {}
     })
 
     await vi.advanceTimersByTimeAsync(100)
     expect(mocks.toHostReadable).toHaveBeenCalledTimes(1)
+    expect(mocks.toHostReadable).toHaveBeenCalledWith(
+      '/home/ada/.codex/sessions/rollout-session-id.jsonl',
+      expect.objectContaining({ transcriptHost: { kind: 'wsl', distro: 'Ubuntu' } })
+    )
     expect(mocks.install.mock.calls.some(([filePath]) => String(filePath).startsWith('/'))).toBe(
       false
     )

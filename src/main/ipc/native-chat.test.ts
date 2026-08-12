@@ -54,13 +54,17 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
   }
 }
 
-async function invokeReadSession(args: {
-  agent: string
-  sessionId: string
-  limit?: number
-  transcriptPath?: string
-}): Promise<unknown> {
-  registerNativeChatHandlers()
+async function invokeReadSession(
+  args: {
+    agent: string
+    sessionId: string
+    limit?: number
+    transcriptPath?: string
+    ptyId?: string
+  },
+  deps?: Parameters<typeof registerNativeChatHandlers>[0]
+): Promise<unknown> {
+  registerNativeChatHandlers(deps)
   const handler = handlers.get('nativeChat:readSession')
   if (!handler) {
     throw new Error('handler not registered')
@@ -69,6 +73,26 @@ async function invokeReadSession(args: {
 }
 
 describe('nativeChat:readSession handler', () => {
+  it('asks the PTY owner for transcript provenance', async () => {
+    const resolveTranscriptHost = vi.fn(() => ({ kind: 'host' as const }))
+
+    await invokeReadSession(
+      { agent: 'claude', sessionId: 'missing-session', ptyId: 'pty-1' },
+      { resolveTranscriptHost }
+    )
+
+    expect(resolveTranscriptHost).toHaveBeenCalledWith('pty-1')
+  })
+
+  it('fails closed when a supplied PTY identity is missing', async () => {
+    const result = (await invokeReadSession(
+      { agent: 'claude', sessionId: 'same-id', ptyId: 'missing-pty' },
+      { resolveTranscriptHost: () => null }
+    )) as { error?: string; notFound?: true }
+
+    expect(result).toEqual({ error: 'Transcript unavailable' })
+  })
+
   it('preserves notFound so a just-created session stays in retry/loading', async () => {
     const result = (await invokeReadSession({
       agent: 'claude',

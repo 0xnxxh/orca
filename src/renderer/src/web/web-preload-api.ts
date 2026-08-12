@@ -77,6 +77,7 @@ import {
 } from '../../../shared/execution-host'
 import { toRuntimeWorktreeSelector } from '../runtime/runtime-worktree-selector'
 import { callAbortableRuntimeEnvironment } from '../runtime/abortable-runtime-environment-call'
+import { parseRemoteRuntimePtyId } from '../runtime/runtime-terminal-stream'
 import { normalizeDisabledTuiAgents } from '../../../shared/tui-agent-selection'
 import {
   normalizeTuiAgentArgsRecord,
@@ -1242,15 +1243,27 @@ function createWebKeybindingsApi(): WebKeybindingsApi {
 // Why: web has no IPC for native-chat transcripts, so route readSession/subscribe through runtime RPC (as mobile does).
 function createNativeChatApi(): NativeChatApi {
   return {
-    readSession: async (agent, sessionId, limit, transcriptPath) =>
-      parseRuntimeNativeChatReadSessionResult(
-        await callRuntimeResult<unknown>('nativeChat.readSession', {
+    readSession: async (agent, sessionId, limit, transcriptPath, ptyId) => {
+      const parsedPty = ptyId ? parseRemoteRuntimePtyId(ptyId) : null
+      const environment = parsedPty?.environmentId
+        ? resolveEnvironment(parsedPty.environmentId)
+        : requireActiveEnvironment()
+      const response = await callEnvironmentEnvelope<unknown>(
+        environment.id,
+        'nativeChat.readSession',
+        {
           agent,
           sessionId,
           limit,
-          transcriptPath
-        })
-      ),
+          transcriptPath,
+          ...(ptyId ? { ptyId: parsedPty?.handle || ptyId } : {})
+        }
+      )
+      if (!response.ok) {
+        throw new Error(response.error.message)
+      }
+      return parseRuntimeNativeChatReadSessionResult(response.result)
+    },
     subscribe: (args, onFrame) => {
       // No paired runtime yet: return a no-op teardown so the chat view mounts cleanly; only the not-paired case is swallowed.
       const environment = requireActiveEnvironmentOrNull()
@@ -1266,10 +1279,14 @@ function createNativeChatApi(): NativeChatApi {
         })
         return () => {}
       }
+      const parsedPty = args.ptyId ? parseRemoteRuntimePtyId(args.ptyId) : null
+      const targetEnvironment = parsedPty?.environmentId
+        ? resolveEnvironment(parsedPty.environmentId)
+        : environment
       let handle: { unsubscribe: () => void } | null = null
       let cancelled = false
       let receivedInitial = false
-      void getClientForEnvironment(environment)
+      void getClientForEnvironment(targetEnvironment)
         .subscribe(
           'nativeChat.subscribe',
           {
@@ -1277,6 +1294,7 @@ function createNativeChatApi(): NativeChatApi {
             sessionId: args.sessionId,
             subscriptionId: args.subscriptionId,
             transcriptPath: args.transcriptPath,
+            ...(args.ptyId ? { ptyId: parsedPty?.handle || args.ptyId } : {}),
             limit: args.limit
           },
           {
