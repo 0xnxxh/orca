@@ -809,6 +809,26 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         // Why: cwd fallback is only for fresh local spawns — reattach keeps the session's cwd and SSH transports resolve cwd on the remote host.
         const shouldSendLocalCwdFallback =
           cwdFallback === 'worktree' && !connectionId && !admittedSessionId
+        // Every startup value this transport was CONSTRUCTED with. `suppressSavedStartup` drops the
+        // whole set at once: a "fresh" shell that inherits any of them can resume the agent session
+        // it was meant to leave alone, and suppressing them field by field is how two were missed.
+        const saved = options.suppressSavedStartup
+          ? ({} as Partial<{
+              command: typeof command
+              launchConfig: typeof launchConfig
+              resumeProviderSession: typeof resumeProviderSession
+              launchToken: typeof launchToken
+              launchAgent: typeof launchAgent
+              startupCommandDelivery: typeof startupCommandDelivery
+            }>)
+          : {
+              command,
+              launchConfig,
+              resumeProviderSession,
+              launchToken,
+              launchAgent,
+              startupCommandDelivery
+            }
         const result = await window.api.pty.spawn({
           cols: options.cols ?? 80,
           rows: options.rows ?? 24,
@@ -818,26 +838,27 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
           ...((options.envToDelete ?? envToDelete)
             ? { envToDelete: options.envToDelete ?? envToDelete }
             : {}),
-          command: options.suppressSavedStartup ? options.command : (options.command ?? command),
-          ...((options.suppressSavedStartup ? options.launchConfig : (options.launchConfig ?? launchConfig))
-            ? { launchConfig: options.launchConfig ?? launchConfig }
+          command: options.command ?? saved.command,
+          ...((options.launchConfig ?? saved.launchConfig)
+            ? { launchConfig: options.launchConfig ?? saved.launchConfig }
             : {}),
-          ...((options.suppressSavedStartup
-            ? options.resumeProviderSession
-            : (options.resumeProviderSession ?? resumeProviderSession))
+          ...((options.resumeProviderSession ?? saved.resumeProviderSession)
             ? {
                 resumeProviderSession:
-                  options.resumeProviderSession ?? resumeProviderSession
+                  options.resumeProviderSession ?? saved.resumeProviderSession
               }
             : {}),
-          ...((options.suppressSavedStartup ? options.launchToken : (options.launchToken ?? launchToken))
-            ? { launchToken: options.launchToken ?? launchToken }
+          ...((options.launchToken ?? saved.launchToken)
+            ? { launchToken: options.launchToken ?? saved.launchToken }
             : {}),
-          ...((options.launchAgent ?? launchAgent)
-            ? { launchAgent: options.launchAgent ?? launchAgent }
+          ...((options.launchAgent ?? saved.launchAgent)
+            ? { launchAgent: options.launchAgent ?? saved.launchAgent }
             : {}),
-          ...((options.startupCommandDelivery ?? startupCommandDelivery)
-            ? { startupCommandDelivery: options.startupCommandDelivery ?? startupCommandDelivery }
+          ...((options.startupCommandDelivery ?? saved.startupCommandDelivery)
+            ? {
+                startupCommandDelivery:
+                  options.startupCommandDelivery ?? saved.startupCommandDelivery
+              }
             : {}),
           ...(connectionId ? { connectionId } : {}),
           ...(admittedSessionId ? { sessionId: admittedSessionId } : {}),
