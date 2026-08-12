@@ -11,12 +11,18 @@ import type {
   SkillSharePreview
 } from '../../src/shared/skill-sharing-contract'
 import { expect, test } from './helpers/orca-app'
+import {
+  connectStagingSkillSshTarget,
+  removeStagingSkillSshTarget,
+  stagingSkillSshTargetFromEnvironment
+} from './helpers/staging-skill-ssh-target'
 
 const RUN_STAGING = process.env.ORCA_E2E_SKILL_STAGING === '1'
 const AUTH_TOKEN = process.env.ORCA_CLOUD_AUTH_TOKEN?.trim()
 const PHYSICAL_HOST_PAIRING_URL = process.env.ORCA_E2E_SKILL_PHYSICAL_PAIRING_URL?.trim()
 const PHYSICAL_WSL_DISTRO = 'Ubuntu-24.04'
 const SKILL_NAME = `orca-staging-${randomUUID().slice(0, 8)}`
+const SSH_TARGET = RUN_STAGING ? stagingSkillSshTargetFromEnvironment() : null
 
 if (RUN_STAGING && !AUTH_TOKEN) {
   throw new Error('ORCA_CLOUD_AUTH_TOKEN is required for the noninteractive staging journey.')
@@ -46,9 +52,13 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
   const globalSkill = join(home, '.agents', 'skills', SKILL_NAME)
   let packageId: string | null = null
   let physicalEnvironmentId: string | null = null
+  let sshTargetId: string | null = null
   try {
     if (PHYSICAL_HOST_PAIRING_URL) {
       physicalEnvironmentId = await addPhysicalHost(orcaPage, PHYSICAL_HOST_PAIRING_URL)
+    }
+    if (SSH_TARGET) {
+      sshTargetId = await connectStagingSkillSshTarget(orcaPage, SSH_TARGET)
     }
     mkdirSync(source, { recursive: true })
     writeSkill(source, 'v1')
@@ -61,13 +71,13 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
         packageId = preview.packageId
       }
     )
-    for (const target of physicalTargets(physicalEnvironmentId)) {
+    for (const target of externalTargets(physicalEnvironmentId, sshTargetId)) {
       const remoteFirst = await installVersion(
         orcaPage,
         first.published,
         target.destination,
         undefined,
-        target.environmentId
+        target.installEnvironmentId
       )
       expectPhysicalInstall(remoteFirst, first.published, target.kind)
       expect(existsSync(globalSkill)).toBe(false)
@@ -84,13 +94,13 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
       'Second immutable version',
       first.preview.packageId
     )
-    for (const target of physicalTargets(physicalEnvironmentId)) {
+    for (const target of externalTargets(physicalEnvironmentId, sshTargetId)) {
       const remoteUpdate = await installVersion(
         orcaPage,
         second.published,
         target.destination,
         'replace-unmodified',
-        target.environmentId
+        target.installEnvironmentId
       )
       expectBundleOutcome(remoteUpdate, 'complete', 'updated')
       await expectManagedRemoteVersion(orcaPage, target, second.published.version.versionId)
@@ -117,13 +127,13 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
     expectBundleOutcome(rollback, 'complete', 'updated')
     expect(readFileSync(join(globalSkill, 'SKILL.md'), 'utf8')).toContain('version: v1')
 
-    for (const target of physicalTargets(physicalEnvironmentId)) {
+    for (const target of externalTargets(physicalEnvironmentId, sshTargetId)) {
       const remoteRollback = await installVersion(
         orcaPage,
         first.published,
         target.destination,
         'replace-unmodified',
-        target.environmentId
+        target.installEnvironmentId
       )
       expectBundleOutcome(remoteRollback, 'complete', 'updated')
       await expectManagedRemoteVersion(orcaPage, target, first.published.version.versionId)
@@ -152,17 +162,21 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
     expect(revokedInstall.status).toBe('rejected')
     expect(readFileSync(join(globalSkill, 'SKILL.md'), 'utf8')).toContain('version: v1')
 
-    for (const target of physicalTargets(physicalEnvironmentId)) {
+    for (const target of externalTargets(physicalEnvironmentId, sshTargetId)) {
       await expectManagedRemoteVersion(orcaPage, target, first.published.version.versionId)
       expect(
         await orcaPage.evaluate(
           ({ environmentId, name, destination }) =>
             window.api.skills.removeInstall({
-              environmentId,
+              ...(environmentId ? { environmentId } : {}),
               name,
               destination
             }),
-          { environmentId: target.environmentId, name: SKILL_NAME, destination: target.destination }
+          {
+            environmentId: target.installEnvironmentId,
+            name: SKILL_NAME,
+            destination: target.destination
+          }
         )
       ).toMatchObject({ status: 'ok', value: { status: 'removed' } })
     }
@@ -181,19 +195,26 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
     ).toMatchObject({ status: 'ok' })
     packageId = null
   } finally {
-    for (const target of physicalTargets(physicalEnvironmentId)) {
+    for (const target of externalTargets(physicalEnvironmentId, sshTargetId)) {
       await orcaPage
         .evaluate(
           ({ environmentId, name, destination }) =>
             window.api.skills.removeInstall({
-              environmentId,
+              ...(environmentId ? { environmentId } : {}),
               name,
               destination,
               conflictResolution: 'replace-and-discard-local'
             }),
-          { environmentId: target.environmentId, name: SKILL_NAME, destination: target.destination }
+          {
+            environmentId: target.installEnvironmentId,
+            name: SKILL_NAME,
+            destination: target.destination
+          }
         )
         .catch(() => undefined)
+    }
+    if (sshTargetId) {
+      await removeStagingSkillSshTarget(orcaPage, sshTargetId).catch(() => undefined)
     }
     if (physicalEnvironmentId) {
       await orcaPage
@@ -310,32 +331,56 @@ async function addPhysicalHost(page: Page, pairingUrl: string): Promise<string> 
   }, pairingUrl)
 }
 
-type PhysicalTarget = {
-  environmentId: string
-  kind: 'windows' | 'wsl'
+type ExternalTarget = {
+  installEnvironmentId?: string
+  managedEnvironmentId: string
+  kind: 'windows' | 'wsl' | 'ssh'
   destination: SkillInstallDestination
 }
 
-function physicalTargets(environmentId: string | null): PhysicalTarget[] {
-  return environmentId
-    ? [
-        { environmentId, kind: 'windows', destination: { scope: 'global' } },
-        {
-          environmentId,
-          kind: 'wsl',
-          destination: {
-            scope: 'global',
-            executionTarget: { kind: 'wsl', distro: PHYSICAL_WSL_DISTRO }
+function externalTargets(
+  environmentId: string | null,
+  sshTargetId: string | null
+): ExternalTarget[] {
+  return [
+    ...(environmentId
+      ? [
+          {
+            installEnvironmentId: environmentId,
+            managedEnvironmentId: environmentId,
+            kind: 'windows' as const,
+            destination: { scope: 'global' as const }
+          },
+          {
+            installEnvironmentId: environmentId,
+            managedEnvironmentId: environmentId,
+            kind: 'wsl' as const,
+            destination: {
+              scope: 'global' as const,
+              executionTarget: { kind: 'wsl' as const, distro: PHYSICAL_WSL_DISTRO }
+            }
           }
-        }
-      ]
-    : []
+        ]
+      : []),
+    ...(sshTargetId
+      ? [
+          {
+            managedEnvironmentId: `ssh:${sshTargetId}`,
+            kind: 'ssh' as const,
+            destination: {
+              scope: 'global' as const,
+              executionTarget: { kind: 'ssh' as const, connectionId: sshTargetId }
+            }
+          }
+        ]
+      : [])
+  ]
 }
 
 function expectPhysicalInstall(
   operation: SkillBundleShareInstallOperation,
   published: SkillCloudPublishResult,
-  target: PhysicalTarget['kind']
+  target: ExternalTarget['kind']
 ): void {
   expectBundleOutcome(operation, 'complete', 'installed')
   if (operation.status !== 'ok') {
@@ -348,29 +393,40 @@ function expectPhysicalInstall(
     expect(skill?.canonicalPath).toContain(`.agents\\skills\\${SKILL_NAME}`)
   } else {
     expect(skill?.canonicalPath).toMatch(/^\/home\/[^/]+\/\.agents\/skills\//)
-    expect(skill?.canonicalPath).toEndWith(`/${SKILL_NAME}`)
+    expect(skill?.canonicalPath.endsWith(`/${SKILL_NAME}`)).toBe(true)
   }
 }
 
 async function expectManagedRemoteVersion(
   page: Page,
-  target: PhysicalTarget,
+  target: ExternalTarget,
   versionId: string
 ): Promise<void> {
   const installs = await page.evaluate(
     (id) => window.api.skills.listManagedInstalls(id),
-    target.environmentId
+    target.managedEnvironmentId
   )
   if (installs.status !== 'ok') {
     throw new Error(`physical host managed-install listing failed: ${installs.status}`)
   }
-  const install = installs.value.find((candidate) =>
-    target.kind === 'wsl'
-      ? candidate.destination.scope === 'global' &&
+  const install = installs.value.find((candidate) => {
+    if (target.kind === 'windows') {
+      return candidate.destination.scope === 'global' && !candidate.destination.executionTarget
+    }
+    if (target.kind === 'wsl') {
+      return (
+        candidate.destination.scope === 'global' &&
         candidate.destination.executionTarget?.kind === 'wsl' &&
         candidate.destination.executionTarget.distro === PHYSICAL_WSL_DISTRO
-      : candidate.destination.scope === 'global' && !candidate.destination.executionTarget
-  )
+      )
+    }
+    return (
+      candidate.destination.scope === 'global' &&
+      candidate.destination.executionTarget?.kind === 'ssh' &&
+      candidate.destination.executionTarget.connectionId ===
+        target.destination.executionTarget?.connectionId
+    )
+  })
   expect(install).toMatchObject({
     name: SKILL_NAME,
     versionId,
