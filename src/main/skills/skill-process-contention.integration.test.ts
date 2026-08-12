@@ -29,8 +29,10 @@ async function waitForFile(path: string, child: ChildProcess, output: () => stri
     if (await stat(path).catch(() => null)) {
       return
     }
-    if (child.exitCode !== null) {
-      throw new Error(`skill-contention-child-exited-${child.exitCode}: ${output()}`)
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `skill-contention-child-exited-${child.exitCode ?? child.signalCode}: ${output()}`
+      )
     }
     await new Promise<void>((resolveWait) => setTimeout(resolveWait, 20))
   }
@@ -82,8 +84,21 @@ async function waitForExit(child: ChildProcess, output: () => string): Promise<v
   const exit =
     child.exitCode !== null || child.signalCode !== null
       ? { code: child.exitCode, signal: child.signalCode }
-      : await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) =>
-          child.once('exit', (code, signal) => resolveExit({ code, signal }))
+      : await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+          (resolveExit, rejectExit) => {
+            const timeout = setTimeout(() => {
+              child.kill('SIGKILL')
+              rejectExit(new Error(`skill-contention-child-timeout: ${output()}`))
+            }, 15_000)
+            child.once('error', (error) => {
+              clearTimeout(timeout)
+              rejectExit(error)
+            })
+            child.once('exit', (code, signal) => {
+              clearTimeout(timeout)
+              resolveExit({ code, signal })
+            })
+          }
         )
   if (exit.code !== 0) {
     throw new Error(`skill-contention-child-failed-${exit.code ?? exit.signal}: ${output()}`)
