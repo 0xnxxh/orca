@@ -3,11 +3,10 @@ import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SkillInstallResult } from '../../shared/skill-install-contract'
 import type { SkillPackageManifestV1 } from '../../shared/skill-package-manifest'
-import { acquireSkillInstallLock } from './skill-install-lock'
+import { acquireSkillInstallLock, skillInstallLockPath } from './skill-install-lock'
 import { inspectSkillCanonicalState, type SkillCanonicalState } from './skill-install-planner'
 import {
   readSkillInstallReceipt,
-  skillInstallStateKey,
   writeSkillInstallReceipt,
   writeSkillStateFile
 } from './skill-install-provenance'
@@ -75,10 +74,6 @@ export type SkillInstallTransactionDependencies = {
     phase: SkillInstallJournalV1['phase'],
     boundary: SkillInstallJournalBoundary
   ) => Promise<void>
-}
-
-function lockPath(stateDirectory: string, canonicalPath: string): string {
-  return join(stateDirectory, 'locks', `${skillInstallStateKey(canonicalPath)}.lock`)
 }
 
 async function inspectExtractedPackage(
@@ -164,7 +159,7 @@ export async function installLocalExtractedSkillPackage(
   try {
     throwIfCancelled(input.signal)
     releaseLock = await acquireSkillInstallLock({
-      path: lockPath(input.stateDirectory, canonicalPath),
+      path: skillInstallLockPath(input.stateDirectory, canonicalPath),
       timeoutMs: input.lockTimeoutMs
     })
     await recoverSkillRemovalTransaction(input.stateDirectory, canonicalPath, filesystem)

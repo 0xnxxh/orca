@@ -71,6 +71,7 @@ import { triggerStartupNotificationRegistration } from './ipc/notifications'
 import { OrcaRuntimeService, type RuntimeWorktreeLifecycleEvent } from './runtime/orca-runtime'
 import { ArtifactCloudService } from './artifacts/artifact-cloud-service'
 import { SkillCloudService } from './skills/skill-cloud-service'
+import { recoverPendingSkillTransactions } from './skills/skill-transaction-startup-recovery'
 import { isArtifactSharingEnabled } from '../shared/artifact-sharing-gate'
 import { loadAgentSessionClaimSigner } from './runtime/agent-session-claim-identity'
 import {
@@ -2359,6 +2360,18 @@ void app.whenReady().then(async () => {
     packaged: app.isPackaged,
     platform: process.platform
   })
+  void recoverPendingSkillTransactions(join(app.getPath('userData'), 'skill-installs'))
+    .then((report) => {
+      if (report.scanned || report.failures.length || report.truncated) {
+        console.info('[skills] startup transaction recovery:', {
+          scanned: report.scanned,
+          recovered: report.recovered,
+          failures: report.failures.map((failure) => failure.code),
+          truncated: report.truncated
+        })
+      }
+    })
+    .catch((error) => console.warn('[skills] startup transaction recovery failed:', error))
   // Why: cohort-classifier reads repo count synchronously at every emit, so hydrate it here — before any IPC handler or window can trigger track().
   initCohortClassifier(store)
   initOnboardingCohortClassifier(store)

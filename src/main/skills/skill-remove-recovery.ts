@@ -1,5 +1,6 @@
-import { lstat, readFile, readlink, rm } from 'node:fs/promises'
+import { lstat, readlink, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { readNodeFileWithinLimit } from '../../shared/node-bounded-file-reader'
 import type { SkillPlacementResult } from '../../shared/skill-install-contract'
 import type { SkillInstallFilesystem } from './skill-install-filesystem'
 import { nativeSkillInstallFilesystem } from './skill-install-filesystem'
@@ -27,6 +28,8 @@ export type SkillRemovalJournalV1 = {
   receipt: SkillInstallReceiptV1
   allowedProviderRoots: string[]
 }
+
+const SKILL_TRANSACTION_JOURNAL_MAX_BYTES = 4 * 1024 * 1024
 
 export function skillRemovalJournalPath(stateDirectory: string, canonicalPath: string): string {
   return join(stateDirectory, 'removal-journals', `${skillInstallStateKey(canonicalPath)}.json`)
@@ -140,13 +143,18 @@ async function movedBackupMatches(
   return observed?.observedDigest === move.expectedDigest
 }
 
-async function readJournal(
+export async function readSkillRemovalRecoveryJournal(
   stateDirectory: string,
   canonicalPath: string
 ): Promise<SkillRemovalJournalV1 | null> {
   try {
     const value: unknown = JSON.parse(
-      await readFile(skillRemovalJournalPath(stateDirectory, canonicalPath), 'utf8')
+      (
+        await readNodeFileWithinLimit(
+          skillRemovalJournalPath(stateDirectory, canonicalPath),
+          SKILL_TRANSACTION_JOURNAL_MAX_BYTES
+        )
+      ).buffer.toString('utf8')
     )
     if (!isRemovalJournal(value, canonicalPath)) {
       throw new Error('skill-removal-journal-invalid')
@@ -169,7 +177,7 @@ export async function recoverSkillRemovalTransaction(
   canonicalPath: string,
   filesystem: SkillInstallFilesystem = nativeSkillInstallFilesystem
 ): Promise<void> {
-  const journal = await readJournal(stateDirectory, canonicalPath)
+  const journal = await readSkillRemovalRecoveryJournal(stateDirectory, canonicalPath)
   if (!journal) {
     return
   }

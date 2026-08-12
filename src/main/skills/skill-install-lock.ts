@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rm, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { SKILL_INSTALL_BUSY_FAILURE } from '../../shared/skill-install-failure'
 import { SkillInstallOperationError } from './skill-install-operation-error'
+import { skillInstallStateKey } from './skill-install-provenance'
 
 const LOCK_RETRY_MS = 50
 const LOCK_STALE_MS = 30 * 60 * 1000
@@ -24,7 +25,7 @@ function processIsAlive(pid: number): boolean {
 
 async function removeStaleLock(path: string): Promise<void> {
   const lockStat = await stat(path).catch(() => null)
-  if (!lockStat || Date.now() - lockStat.mtimeMs < LOCK_STALE_MS) {
+  if (!lockStat) {
     return
   }
   let owner: SkillInstallLockOwner | null = null
@@ -33,10 +34,20 @@ async function removeStaleLock(path: string): Promise<void> {
   } catch {
     owner = null
   }
-  if (owner && Number.isInteger(owner.pid) && processIsAlive(owner.pid)) {
+  if (owner && Number.isInteger(owner.pid)) {
+    if (processIsAlive(owner.pid)) {
+      return
+    }
+    await rm(path, { force: true })
     return
   }
-  await rm(path, { force: true })
+  if (Date.now() - lockStat.mtimeMs >= LOCK_STALE_MS) {
+    await rm(path, { force: true })
+  }
+}
+
+export function skillInstallLockPath(stateDirectory: string, canonicalPath: string): string {
+  return join(stateDirectory, 'locks', `${skillInstallStateKey(canonicalPath)}.lock`)
 }
 
 export async function acquireSkillInstallLock(input: {

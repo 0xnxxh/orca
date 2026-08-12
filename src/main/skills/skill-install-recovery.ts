@@ -1,5 +1,6 @@
-import { lstat, readFile, rm } from 'node:fs/promises'
+import { lstat, rm } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
+import { readNodeFileWithinLimit } from '../../shared/node-bounded-file-reader'
 import {
   skillInstallStateKey,
   writeSkillInstallReceipt,
@@ -17,6 +18,8 @@ type InstallJournalPhase =
   | 'canonical-placed'
   | 'receipt-published'
   | 'complete'
+
+const SKILL_TRANSACTION_JOURNAL_MAX_BYTES = 4 * 1024 * 1024
 
 export type SkillInstallJournalV1 = {
   schemaVersion: 1
@@ -75,13 +78,18 @@ function isInstallJournal(value: unknown, canonicalPath: string): value is Skill
   )
 }
 
-async function readJournal(
+export async function readSkillInstallRecoveryJournal(
   stateDirectory: string,
   canonicalPath: string
 ): Promise<SkillInstallJournalV1 | null> {
   try {
     const value: unknown = JSON.parse(
-      await readFile(skillInstallJournalPath(stateDirectory, canonicalPath), 'utf8')
+      (
+        await readNodeFileWithinLimit(
+          skillInstallJournalPath(stateDirectory, canonicalPath),
+          SKILL_TRANSACTION_JOURNAL_MAX_BYTES
+        )
+      ).buffer.toString('utf8')
     )
     if (!isInstallJournal(value, canonicalPath)) {
       throw new Error('skill-install-journal-invalid')
@@ -150,7 +158,7 @@ export async function recoverSkillInstallTransaction(
   canonicalPath: string,
   filesystem: SkillInstallFilesystem = nativeSkillInstallFilesystem
 ): Promise<void> {
-  const journal = await readJournal(stateDirectory, canonicalPath)
+  const journal = await readSkillInstallRecoveryJournal(stateDirectory, canonicalPath)
   if (!journal) {
     return
   }

@@ -523,6 +523,11 @@ does not mean the surrounding phase is complete.
 - [x] Never remove a path based only on a filename pattern; require journal ownership,
       containment, and expected identities.
 - [x] Run bounded recovery at startup and before later operations for the destination.
+      Startup scans at most 64 install and 64 removal journals, bounds each read to 4 MiB,
+      validates the journal filename against the canonical-path state key, and recovers removal
+      before install under the destination lock. Dead-PID locks are reclaimed immediately after a
+      killed runtime; malformed locks retain the bounded stale-age safeguard. Corrupt or conflicting
+      journals are preserved and reported by path-free failure code for manual recovery.
 
 ### Provenance
 
@@ -618,6 +623,9 @@ does not mean the surrounding phase is complete.
 - [x] Verify a placed destination without a receipt is completed or restored according to journal
       state.
 - [x] Verify a published receipt with an incomplete journal is finalized safely.
+- [x] Verify a restarted process discovers orphaned install and removal journals without a later
+      user operation. Deterministic startup tests prove a committed update publishes provenance and
+      cleans its dead lock, while an interrupted removal restores both bytes and receipt.
 - [x] Verify interrupted placement reconciliation preserves the canonical install and retries.
 - [x] Test cancellation during download, extraction, staging copy, commit, provenance, and
       placement reconciliation.

@@ -2,11 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { lstat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { SkillInstallResult, SkillPlacementResult } from '../../shared/skill-install-contract'
-import { acquireSkillInstallLock } from './skill-install-lock'
+import { acquireSkillInstallLock, skillInstallLockPath } from './skill-install-lock'
 import {
   readSkillInstallReceipt,
   removeSkillInstallReceipt,
-  skillInstallStateKey,
   writeSkillStateFile,
   type SkillInstallReceiptV1
 } from './skill-install-provenance'
@@ -43,10 +42,6 @@ export type SkillRemovalTransactionDependencies = {
     phase: SkillRemovalJournalV1['phase'],
     boundary: 'before' | 'after'
   ) => Promise<void>
-}
-
-function lockPath(stateDirectory: string, canonicalPath: string): string {
-  return join(stateDirectory, 'locks', `${skillInstallStateKey(canonicalPath)}.lock`)
 }
 
 function conflictResult(
@@ -107,7 +102,7 @@ export async function removeLocalSharedSkill(
 ): Promise<SkillInstallResult> {
   const filesystem = input.filesystem ?? nativeSkillInstallFilesystem
   const releaseLock = await acquireSkillInstallLock({
-    path: lockPath(input.stateDirectory, input.canonicalPath)
+    path: skillInstallLockPath(input.stateDirectory, input.canonicalPath)
   })
   try {
     await recoverSkillRemovalTransaction(input.stateDirectory, input.canonicalPath, filesystem)
