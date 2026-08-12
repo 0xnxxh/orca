@@ -1201,7 +1201,7 @@ physical SSH macOS and supported Windows remain open.
       reconciliation counts.
 - [x] Add dashboards for grant/finalize/share rates, authorization and rate limits, finalization
       saturation, archive rejection, and digest mismatch.
-- [ ] Add Cloud Run 5xx, CPU, memory, instance, and skill-route latency panels and alerts.
+- [x] Add Cloud Run 5xx, CPU, memory, instance, and skill-route latency panels and alerts.
 - [ ] Add GCS quarantine/published bytes, object count, and lifecycle failure panels and alerts.
 - [x] Add PostgreSQL connection, storage, query latency, migration, and transaction panels and
       alerts.
@@ -1221,7 +1221,10 @@ Cloud PR `#345` passed both required checks and merged as `06a5c729`; it normali
 compression failures to the bounded `skill_package_archive_invalid` category, adds explicit
 finalization-saturation and archive-rejection metrics, and displays successful and failed API
 operations as rates. The broader unchecked items still require the listed split metrics, lifecycle
-visibility, budget coverage, and reviewed alert thresholds.
+visibility, budget coverage, and reviewed alert thresholds. Cloud PR `#346` passed both required
+checks and merged as `8199c048`; it adds privacy-bounded per-route latency distributions, sustained
+80% CPU/memory and near-instance-ceiling alerts, separate five-second interactive and 30-second
+finalization p99 latency alerts, and a route-template p99 dashboard without bearer identifiers.
 
 ### Logging and privacy
 

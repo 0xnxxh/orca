@@ -118,6 +118,12 @@ dashboard coverage with explicit finalization-saturation and archive-rejection s
 successful and failed operations as rates. Malformed compression errors now become the bounded
 `skill_package_archive_invalid` category before they reach persistence, responses, or telemetry.
 
+Cloud PR `#346` passed both required checks and merged as `8199c048`. The Cloud Run dashboard and
+alerts now cover route-template-scoped p99 skill latency, server errors, CPU, memory, and active
+instance pressure. Alerts require five minutes above 80% p99 CPU/memory, more than 80% of the
+configured instance ceiling, five-second interactive p99, or 30-second finalization p99; no bearer
+URL or identifier becomes a metric label.
+
 Auth deploy run `31535179937` promoted `orca-cloud-auth-staging-00017-dug` with exact staging-only
 GitHub OIDC constraints, healthy JWKS, and zero deployment-window errors. API run `31535438327`
 promoted `orca-cloud-api-staging-00042-hef` with `authenticatedSmoke: true` and `skillSmoke: true`.
