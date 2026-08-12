@@ -648,6 +648,65 @@ describe('RuntimeBrowserCommands headless offscreen routing', () => {
     expect(setActiveTab).toHaveBeenCalledWith(202, 'wt-1')
   })
 
+  it('replays one browser page for repeated create operation ids', async () => {
+    const { RuntimeBrowserCommands } = await import('./orca-runtime-browser')
+    const committed = deferred<{ browserPageId: string }>()
+    const createTab = vi.fn(() => committed.promise)
+    const bridge = {
+      getRegisteredTabs: vi.fn(() => new Map([['page-offscreen', 202]])),
+      setActiveTab: vi.fn()
+    } as unknown as AgentBrowserBridge
+    const commands = new RuntimeBrowserCommands(
+      createHost({
+        getAgentBrowserBridge: () => bridge,
+        getAvailableAuthoritativeWindow: vi.fn(() => null),
+        getOffscreenBrowserBackend: vi.fn(() => ({ createTab, closeTab: vi.fn() }))
+      })
+    )
+    const request = {
+      worktree: 'id:wt-1',
+      url: 'https://example.com',
+      clientOperationId: 'browser-create-1'
+    }
+
+    const first = commands.browserTabCreate(request)
+    const replay = commands.browserTabCreate(request)
+    committed.resolve({ browserPageId: 'page-offscreen' })
+
+    await expect(Promise.all([first, replay])).resolves.toEqual([
+      { browserPageId: 'page-offscreen' },
+      { browserPageId: 'page-offscreen' }
+    ])
+    expect(createTab).toHaveBeenCalledOnce()
+    await expect(commands.browserTabCreate(request)).resolves.toEqual({
+      browserPageId: 'page-offscreen'
+    })
+    expect(createTab).toHaveBeenCalledOnce()
+  })
+
+  it('rejects operation id reuse with a different browser create payload', async () => {
+    const { RuntimeBrowserCommands } = await import('./orca-runtime-browser')
+    const createTab = vi.fn(async () => ({ browserPageId: 'page-offscreen' }))
+    const commands = new RuntimeBrowserCommands(
+      createHost({
+        getAvailableAuthoritativeWindow: vi.fn(() => null),
+        getOffscreenBrowserBackend: vi.fn(() => ({ createTab, closeTab: vi.fn() }))
+      })
+    )
+
+    await commands.browserTabCreate({
+      url: 'https://example.com',
+      clientOperationId: 'browser-create-1'
+    })
+    await expect(
+      commands.browserTabCreate({
+        url: 'https://stably.ai',
+        clientOperationId: 'browser-create-1'
+      })
+    ).rejects.toThrow(/payload changed/)
+    expect(createTab).toHaveBeenCalledOnce()
+  })
+
   it('rejects tab creation when neither a renderer nor an offscreen backend is available', async () => {
     const { RuntimeBrowserCommands } = await import('./orca-runtime-browser')
     const commands = new RuntimeBrowserCommands(

@@ -53,6 +53,49 @@ describe('web session browser placement', () => {
     ).toBe('group-128')
   })
 
+  it('refreshes existing entries at capacity without evicting another placement', () => {
+    for (let index = 0; index < 128; index += 1) {
+      recordWebSessionBrowserPlacement({
+        environmentId: ENVIRONMENT_ID,
+        worktreeId: WORKTREE_ID,
+        remotePageId: `page-${index}`,
+        groupId: `group-${index}`
+      })
+      reserveWebSessionBrowserPlacementGroup({
+        environmentId: ENVIRONMENT_ID,
+        worktreeId: WORKTREE_ID,
+        groupId: `group-${index}`
+      })
+    }
+
+    recordWebSessionBrowserPlacement({
+      environmentId: ENVIRONMENT_ID,
+      worktreeId: WORKTREE_ID,
+      remotePageId: 'page-127',
+      groupId: 'group-127'
+    })
+    reserveWebSessionBrowserPlacementGroup({
+      environmentId: ENVIRONMENT_ID,
+      worktreeId: WORKTREE_ID,
+      groupId: 'group-127'
+    })
+
+    expect(
+      isWebSessionBrowserPlacementGroupReserved({
+        environmentId: ENVIRONMENT_ID,
+        worktreeId: WORKTREE_ID,
+        groupId: 'group-0'
+      })
+    ).toBe(true)
+    expect(
+      getWebSessionBrowserPlacementGroup({
+        environmentId: ENVIRONMENT_ID,
+        worktreeId: WORKTREE_ID,
+        remotePageId: 'page-0'
+      })
+    ).toBe('group-0')
+  })
+
   it('clears only the requested worktree or environment', () => {
     for (const [environmentId, worktreeId, suffix] of [
       [ENVIRONMENT_ID, WORKTREE_ID, 'target'],

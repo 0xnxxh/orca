@@ -34,6 +34,7 @@ import {
   resetWebAgentSessionHandoffsForTests
 } from './web-agent-session-handoff'
 import { toRuntimeExecutionHostId } from '../../../shared/execution-host'
+import { BROWSER_TAB_CREATE_IDEMPOTENCY_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
 import {
   isWebSessionBrowserPlacementGroupReserved,
   resetWebSessionBrowserPlacementsForTests
@@ -333,7 +334,8 @@ describe('createWebRuntimeSessionBrowserTab', () => {
         // Why: a user-initiated "New Browser Tab" focuses the new tab, which on a
         // headless host marks it active in the session snapshot.
         activate: true,
-        waitForRegistration: false
+        waitForRegistration: false,
+        clientOperationId: expect.any(String)
       },
       timeoutMs: 15_000
     })
@@ -359,6 +361,60 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       environmentId: ENVIRONMENT_ID,
       remotePageId: 'remote-browser-page-1'
     })
+  })
+
+  it('retries an ambiguous create with the same operation id on a capable host', async () => {
+    let createAttempts = 0
+    const runtimeCall = vi.fn(
+      async (request: { method: string; params?: Record<string, string> }) => {
+        if (request.method === 'status.get') {
+          return {
+            id: 'status',
+            ok: true,
+            result: {
+              runtimeId: 'runtime-1',
+              rendererGraphEpoch: 1,
+              graphStatus: 'ready',
+              authoritativeWindowId: null,
+              liveTabCount: 0,
+              liveLeafCount: 0,
+              runtimeProtocolVersion: 3,
+              minCompatibleRuntimeClientVersion: 2,
+              capabilities: [BROWSER_TAB_CREATE_IDEMPOTENCY_RUNTIME_CAPABILITY]
+            }
+          }
+        }
+        if (request.method === 'browser.tabCreate' && createAttempts++ === 0) {
+          return {
+            id: 'create-lost',
+            ok: false,
+            error: { code: 'remote_runtime_unavailable', message: 'response lost' }
+          }
+        }
+        if (request.method === 'browser.tabCreate') {
+          return {
+            id: 'create-replayed',
+            ok: true,
+            result: { browserPageId: 'remote-browser-page-1' }
+          }
+        }
+        return { id: 'list', ok: true, result: makeSnapshot() }
+      }
+    )
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    await expect(
+      createWebRuntimeSessionBrowserTab({ worktreeId: WORKTREE_ID, url: 'https://example.com/' })
+    ).resolves.toBe(true)
+
+    const createCalls = runtimeCall.mock.calls.filter(
+      ([request]) => request.method === 'browser.tabCreate'
+    )
+    expect(createCalls).toHaveLength(2)
+    expect(createCalls[1]?.[0].params?.clientOperationId).toBe(
+      createCalls[0]?.[0].params?.clientOperationId
+    )
+    expect(mocks.createBrowserTab).toHaveBeenCalledOnce()
   })
 
   it('keeps the requested split reserved until a pre-published browser gains a unified tab', async () => {
@@ -1537,6 +1593,7 @@ describe('moveWebRuntimeSessionTab', () => {
   })
 
   afterEach(() => {
+    resetWebSessionFocusIntentForTests()
     vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
@@ -1740,6 +1797,7 @@ describe('web runtime session tab actions', () => {
   })
 
   afterEach(() => {
+    resetWebSessionFocusIntentForTests()
     vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
@@ -1816,6 +1874,25 @@ describe('web runtime session tab actions', () => {
       timeoutMs: 15_000
     })
     expect(mocks.applyFreshWebSessionTabsSnapshot).toHaveBeenCalled()
+  })
+
+  it('supersedes browser focus intent when a terminal is activated next', async () => {
+    mocks.resolveHostSessionTabIdForWebSessionTab.mockImplementation(
+      (_state, args: { tabId: string }) =>
+        args.tabId === 'local-browser-unified' ? 'host-browser-unified' : 'host-terminal'
+    )
+    const runtimeCall = vi.fn().mockResolvedValue({ id: 'activate', ok: true, result: {} })
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    await activateWebRuntimeSessionTab({
+      worktreeId: WORKTREE_ID,
+      tabId: 'local-browser-unified'
+    })
+    await activateWebRuntimeSessionTab({ worktreeId: WORKTREE_ID, tabId: 'local-terminal' })
+
+    expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toEqual({
+      hostTabId: 'host-terminal'
+    })
   })
 
   it('sends lifecycle and explicit user close reasons on the wire', async () => {

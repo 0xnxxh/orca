@@ -18,7 +18,11 @@ import type {
   SleepingAgentLaunchConfig,
   AgentProviderSessionMetadata
 } from '../../../shared/agent-session-resume'
-import { AGENT_SESSION_OMP_RESUME_PATH_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
+import {
+  AGENT_SESSION_OMP_RESUME_PATH_RUNTIME_CAPABILITY,
+  BROWSER_TAB_CREATE_IDEMPOTENCY_RUNTIME_CAPABILITY
+} from '../../../shared/protocol-version'
+import { isRecoverableRemoteRuntimeConnectionError } from '../../../shared/remote-runtime-client-error-classification'
 import type {
   AgentLaunchPreferences,
   AgentPromptDelivery,
@@ -29,7 +33,11 @@ import type { TerminalPaneLayoutNode, TuiAgent } from '../../../shared/types'
 import type { AppState } from '../store/types'
 import { getRuntimeEnvironmentIdForWorktree } from '../lib/worktree-runtime-owner'
 import { useAppStore } from '../store'
-import { unwrapRuntimeRpcResult } from './runtime-rpc-client'
+import {
+  RuntimeRpcCallError,
+  runtimeEnvironmentSupportsCapability,
+  unwrapRuntimeRpcResult
+} from './runtime-rpc-client'
 import {
   createAgentSessionCreateOperation,
   withAgentSessionCreateOperationId
@@ -461,22 +469,43 @@ export async function createWebRuntimeSessionBrowserTab(args: {
     selectWebRuntimeSessionBrowserWorktree(args.worktreeId, environmentId)
   }
   try {
-    const response = await callEnvironment({
-      method: 'browser.tabCreate',
-      params: {
-        worktree: toRuntimeWorktreeSelector(args.worktreeId),
-        url: args.url,
-        profileId: args.profileId ?? undefined,
-        // Why: user clicked "New Browser Tab", so mark it active in the snapshot, else the reconcile snaps back to a terminal.
-        activate: true,
-        // Why: place the new browser in the clicked split group so the host snapshot is authoritative for it (no left-snap).
-        ...(args.targetGroupId ? { targetGroupId: args.targetGroupId } : {}),
-        // Why: web clients need the local tab now; waiting for host webview registration makes the workspace appear to close.
-        waitForRegistration: false
-      },
-      timeoutMs: 15_000
-    })
-    const created = unwrapRuntimeRpcResult(response as RuntimeRpcResponse<BrowserTabCreateResult>)
+    const clientOperationId = crypto.randomUUID()
+    const create = async (): Promise<BrowserTabCreateResult> =>
+      unwrapRuntimeRpcResult(
+        (await callEnvironment({
+          method: 'browser.tabCreate',
+          params: {
+            worktree: toRuntimeWorktreeSelector(args.worktreeId),
+            url: args.url,
+            profileId: args.profileId ?? undefined,
+            // Why: user clicked "New Browser Tab", so mark it active in the snapshot, else the reconcile snaps back to a terminal.
+            activate: true,
+            // Why: place the new browser in the clicked split group so the host snapshot is authoritative for it (no left-snap).
+            ...(args.targetGroupId ? { targetGroupId: args.targetGroupId } : {}),
+            // Why: web clients need the local tab now; waiting for host webview registration makes the workspace appear to close.
+            waitForRegistration: false,
+            clientOperationId
+          },
+          timeoutMs: 15_000
+        })) as RuntimeRpcResponse<BrowserTabCreateResult>
+      )
+    let created: BrowserTabCreateResult
+    try {
+      created = await create()
+    } catch (error) {
+      const retryable =
+        error instanceof RuntimeRpcCallError && isRecoverableRemoteRuntimeConnectionError(error)
+      const hostSupportsRetry =
+        retryable &&
+        (await runtimeEnvironmentSupportsCapability(
+          environmentId,
+          BROWSER_TAB_CREATE_IDEMPOTENCY_RUNTIME_CAPABILITY
+        ).catch(() => false))
+      if (!hostSupportsRetry) {
+        throw error
+      }
+      created = await create()
+    }
     // Why: record focus intent (tab id === browserPageId on a headless host) so the reconcile follows to the new browser tab.
     if (matchesWebSessionIntentOwner(intentOwner)) {
       recordWebSessionFocusIntent(intentOwner, args.worktreeId, created.browserPageId)
@@ -992,11 +1021,6 @@ async function callWebRuntimeSessionTabMethod(
   try {
     const { resolveHostSessionTabIdForWebSessionTab } = await import('./web-session-tabs-sync')
     const state = useAppStore.getState()
-    const isBrowserActivation =
-      !isClose &&
-      (state.unifiedTabsByWorktree?.[args.worktreeId] ?? []).some(
-        (tab) => tab.id === args.tabId && tab.contentType === 'browser'
-      )
     const hostTabId =
       resolveHostSessionTabIdForWebSessionTab(state, {
         environmentId,
@@ -1007,7 +1031,7 @@ async function callWebRuntimeSessionTabMethod(
       // Why: suppress until the host confirms removal, else an in-flight pre-close snapshot flashes the tab back.
       closeIntentTabIds.add(hostTabId)
       recordWebSessionCloseIntent(intentOwner, args.worktreeId, hostTabId, Date.now())
-    } else if (isBrowserActivation) {
+    } else {
       activationHostTabId = hostTabId
       recordWebSessionFocusIntent(intentOwner, args.worktreeId, hostTabId)
     }

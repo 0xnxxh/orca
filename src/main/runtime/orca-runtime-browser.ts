@@ -109,6 +109,14 @@ type ActiveBrowserScreencastPage = {
   done: Promise<void>
 }
 
+type BrowserTabCreateOperation = {
+  requestKey: string
+  promise: Promise<{ browserPageId: string }>
+  settled: boolean
+}
+
+const MAX_BROWSER_TAB_CREATE_OPERATIONS = 128
+
 function clampInteger(
   value: number | undefined,
   min: number,
@@ -162,6 +170,7 @@ export class RuntimeBrowserCommands {
   private readonly activeScreencastPageIds = new Set<string>()
   private readonly activeScreencastsByPageId = new Map<string, ActiveBrowserScreencastPage>()
   private readonly stoppingScreencastPageIds = new Map<string, Promise<void>>()
+  private readonly browserTabCreateOperations = new Map<string, BrowserTabCreateOperation>()
 
   constructor(private readonly host: RuntimeBrowserCommandHost) {}
 
@@ -1298,7 +1307,15 @@ export class RuntimeBrowserCommands {
     waitForRegistration?: boolean
     activate?: boolean
     targetGroupId?: string
+    clientOperationId?: string
   }): Promise<{ browserPageId: string }> {
+    const clientOperationId = params.clientOperationId?.trim()
+    if (clientOperationId) {
+      const { clientOperationId: _ignored, ...request } = params
+      return this.runBrowserTabCreateOperation(clientOperationId, JSON.stringify(request), () =>
+        this.browserTabCreate(request)
+      )
+    }
     const url = params.url ?? 'about:blank'
     const worktreeId = params.worktree
       ? (await this.host.resolveWorktreeSelector(params.worktree)).id
@@ -1360,6 +1377,46 @@ export class RuntimeBrowserCommands {
     }
 
     return { browserPageId }
+  }
+
+  private runBrowserTabCreateOperation(
+    operationId: string,
+    requestKey: string,
+    create: () => Promise<{ browserPageId: string }>
+  ): Promise<{ browserPageId: string }> {
+    const existing = this.browserTabCreateOperations.get(operationId)
+    if (existing) {
+      if (existing.requestKey !== requestKey) {
+        throw new BrowserError('invalid_argument', 'Browser create operation payload changed')
+      }
+      return existing.promise
+    }
+    if (this.browserTabCreateOperations.size >= MAX_BROWSER_TAB_CREATE_OPERATIONS) {
+      for (const [id, operation] of this.browserTabCreateOperations) {
+        if (operation.settled) {
+          this.browserTabCreateOperations.delete(id)
+          break
+        }
+      }
+    }
+    if (this.browserTabCreateOperations.size >= MAX_BROWSER_TAB_CREATE_OPERATIONS) {
+      throw new BrowserError('browser_error', 'Too many browser tabs are being created')
+    }
+    const operation: BrowserTabCreateOperation = {
+      requestKey,
+      promise: create(),
+      settled: false
+    }
+    this.browserTabCreateOperations.set(operationId, operation)
+    void operation.promise.then(
+      () => {
+        operation.settled = true
+      },
+      () => {
+        operation.settled = true
+      }
+    )
+    return operation.promise
   }
 
   async browserTabSetProfile(

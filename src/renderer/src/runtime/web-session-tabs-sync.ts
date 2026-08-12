@@ -2288,6 +2288,16 @@ function toVisibleTabType(tab: Tab): WebSessionTabsSyncState['activeTabType'] {
   return 'editor'
 }
 
+function runtimeTabMatchesVisibleType(
+  tab: RuntimeMobileSessionTabsResult['tabs'][number],
+  visibleType: WebSessionTabsSyncState['activeTabType'] | null
+): boolean {
+  if (tab.type === 'browser' || tab.type === 'terminal') {
+    return tab.type === visibleType
+  }
+  return visibleType === 'editor'
+}
+
 function findCurrentVisibleUnifiedTabId(args: {
   state: WebSessionTabsSyncState
   worktreeId: string
@@ -2363,7 +2373,7 @@ function applyWebSessionTabsSnapshotWithContext(
   // Why: only a caller-recorded create intent may focus its arriving tab; unsolicited server-active must not steal focus (#5435).
   const focusIntent = peekWebSessionFocusIntent({ environmentId }, worktreeId)
   const focusIntentHostTabId = focusIntent?.hostTabId ?? null
-  const callerFocusIntentTab =
+  const matchingFocusIntentTab =
     focusIntentHostTabId === null
       ? null
       : focusIntent?.leafId
@@ -2379,13 +2389,21 @@ function applyWebSessionTabsSnapshotWithContext(
               (tab.type === 'terminal' && tab.parentTabId === focusIntentHostTabId) ||
               (tab.type === 'browser' && tab.browserPageId === focusIntentHostTabId)
           ) ?? null)
+  const currentVisibleType =
+    state.activeTabTypeByWorktree[worktreeId] ??
+    (state.activeWorktreeId === worktreeId ? state.activeTabType : null)
+  const callerFocusIntentTab =
+    matchingFocusIntentTab &&
+    runtimeTabMatchesVisibleType(matchingFocusIntentTab, currentVisibleType)
+      ? matchingFocusIntentTab
+      : null
   const followIntentTab =
     snapshot.navigationIntent === 'follow'
       ? (snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null)
       : null
   const navigationIntentTab = callerFocusIntentTab ?? followIntentTab
   const honorSnapshotActiveFocus = navigationIntentTab !== null
-  if (callerFocusIntentTab) {
+  if (matchingFocusIntentTab) {
     clearWebSessionFocusIntent({ environmentId }, worktreeId)
   }
   const currentTerminalTabs = state.tabsByWorktree[worktreeId] ?? []

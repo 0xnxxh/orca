@@ -53,7 +53,8 @@ describe('browser RPC methods', () => {
       makeRequest('browser.tabCreate', {
         worktree: 'id:wt-1',
         url: 'https://example.com',
-        profileId: 'profile-1'
+        profileId: 'profile-1',
+        clientOperationId: 'browser-create-1'
       })
     )
     await dispatcher.dispatch(
@@ -81,7 +82,8 @@ describe('browser RPC methods', () => {
     expect(runtime.browserTabCreate).toHaveBeenCalledWith({
       worktree: 'id:wt-1',
       url: 'https://example.com',
-      profileId: 'profile-1'
+      profileId: 'profile-1',
+      clientOperationId: 'browser-create-1'
     })
     expect(runtime.browserTabSwitch).toHaveBeenCalledWith({
       worktree: 'id:wt-1',

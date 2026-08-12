@@ -28,10 +28,12 @@ export function reserveWebSessionBrowserPlacementGroup(args: {
   worktreeId: string
   groupId: string
 }): void {
+  const key = groupKey(args.environmentId, args.worktreeId, args.groupId)
+  reservedGroups.delete(key)
   while (reservedGroups.size >= MAX_PENDING_PLACEMENTS) {
     evictOldest(reservedGroups)
   }
-  reservedGroups.add(groupKey(args.environmentId, args.worktreeId, args.groupId))
+  reservedGroups.add(key)
 }
 
 export function releaseWebSessionBrowserPlacementGroup(args: {
@@ -56,10 +58,12 @@ export function recordWebSessionBrowserPlacement(args: {
   remotePageId: string
   groupId: string
 }): void {
+  const key = pageKey(args.environmentId, args.worktreeId, args.remotePageId)
+  placementsByPage.delete(key)
   while (placementsByPage.size >= MAX_PENDING_PLACEMENTS) {
     evictOldest(placementsByPage)
   }
-  placementsByPage.set(pageKey(args.environmentId, args.worktreeId, args.remotePageId), {
+  placementsByPage.set(key, {
     groupId: args.groupId,
     seen: false
   })

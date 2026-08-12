@@ -118,17 +118,15 @@ export const TabCreate = z.object({
   waitForRegistration: z.boolean().optional(),
   // User-initiated opens focus the tab; agent/automation opens stay background.
   activate: z.boolean().optional(),
-  // Why: the split group whose "+" was clicked, so a headless host places the
-  // new browser tab there instead of coalescing into the first/active group.
-  targetGroupId: OptionalString
+  // Why: headless hosts need the clicked split instead of their first/active group.
+  targetGroupId: OptionalString,
+  clientOperationId: z.string().trim().min(1).max(256).optional()
 })
 
 export const TabShow = z.object({
   page: requiredString('Missing required --page'),
   worktree: OptionalString
 })
-
-export const TabCurrent = z.object({ worktree: OptionalString })
 
 export const TabClose = z.object({
   index: z
