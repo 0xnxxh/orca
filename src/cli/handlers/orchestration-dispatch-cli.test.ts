@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const callMock = vi.fn()
 const getTerminalHandleMock = vi.hoisted(() => vi.fn())
+const printResultMock = vi.hoisted(() => vi.fn())
 const originalTerminalHandle = process.env.ORCA_TERMINAL_HANDLE
 const originalPaneKey = process.env.ORCA_PANE_KEY
 const originalLaunchToken = process.env.ORCA_AGENT_LAUNCH_TOKEN
 
-vi.mock('../format', () => ({ printResult: vi.fn() }))
+vi.mock('../format', () => ({ printResult: printResultMock }))
 vi.mock('../selectors', () => ({ getTerminalHandle: getTerminalHandleMock }))
 
 import { ORCHESTRATION_HANDLERS } from './orchestration'
@@ -37,6 +38,7 @@ describe('orchestration dispatch coordinator handle', () => {
   beforeEach(() => {
     callMock.mockReset()
     getTerminalHandleMock.mockReset()
+    printResultMock.mockReset()
     delete process.env.ORCA_TERMINAL_HANDLE
     delete process.env.ORCA_PANE_KEY
   })
@@ -279,6 +281,7 @@ describe('orchestration dispatch coordinator handle', () => {
         ])
       )
     ).rejects.toMatchObject({ code: 'dispatch_capability_unavailable' })
+    expect(printResultMock).not.toHaveBeenCalled()
   })
 
   it.each([undefined, 'inspection'] as const)(
