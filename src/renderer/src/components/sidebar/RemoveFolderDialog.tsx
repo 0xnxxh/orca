@@ -24,6 +24,11 @@ const RemoveFolderDialog = React.memo(function RemoveFolderDialog() {
   const isOpen = activeModal === 'confirm-remove-folder'
   const repoId = typeof modalData.repoId === 'string' ? modalData.repoId : ''
   const displayName = typeof modalData.displayName === 'string' ? modalData.displayName : ''
+  const isProvisionedRoot = useAppStore((s) =>
+    (s.worktreesByRepo[repoId] ?? []).some(
+      (worktree) => worktree.ephemeralVmCheckoutMode === 'provisioned-root'
+    )
+  )
 
   // Why: for an SSH project the files live on the remote host's disk, not the
   // user's — "still on your disk" would be misleading. Name the host (using the
@@ -44,17 +49,23 @@ const RemoveFolderDialog = React.memo(function RemoveFolderDialog() {
   // Why: fragment concatenation around the styled name cannot be reordered by
   // SOV locales (#9294). Translate one full sentence with the name as a
   // sentinel token, then split on it to re-apply the inline emphasis.
-  const description = sshHostLabel
+  const description = isProvisionedRoot
     ? translate(
-        'auto.components.sidebar.RemoveFolderDialog.removeDescriptionSsh',
-        'This only removes {{name}} from Orca. Its files stay on {{host}} — re-add that SSH host to recover it.',
-        { name: NAME_TOKEN, host: sshHostLabel }
-      )
-    : translate(
-        'auto.components.sidebar.RemoveFolderDialog.removeDescriptionLocal',
-        'This only removes {{name}} from Orca. It is still on your disk.',
+        'auto.components.sidebar.RemoveFolderDialog.removeDescriptionProvisionedRoot',
+        'This removes {{name}} from Orca and cleans up its provisioned environment according to the recipe.',
         { name: NAME_TOKEN }
       )
+    : sshHostLabel
+      ? translate(
+          'auto.components.sidebar.RemoveFolderDialog.removeDescriptionSsh',
+          'This only removes {{name}} from Orca. Its files stay on {{host}} — re-add that SSH host to recover it.',
+          { name: NAME_TOKEN, host: sshHostLabel }
+        )
+      : translate(
+          'auto.components.sidebar.RemoveFolderDialog.removeDescriptionLocal',
+          'This only removes {{name}} from Orca. It is still on your disk.',
+          { name: NAME_TOKEN }
+        )
   const [descriptionBeforeName, descriptionAfterName] = description.split(NAME_TOKEN)
 
   const handleConfirm = useCallback(() => {

@@ -345,6 +345,14 @@ resource_id="$(node -e 'const d=JSON.parse(process.argv[1]); process.stdout.writ
 # destroy: provider remove "$resource_id"   (or set destroy: none in orca.yaml)
 ```
 
+For a provisioned-root `resume` script, require the negotiated schema **before** waking the resource;
+omit this gate from `suspend`/`destroy` and from orca-worktree recipes:
+
+```bash
+[ "${ORCA_RECIPE_RESULT_SCHEMA_VERSION:-1}" = 2 ] \
+  || { echo "Upgrade Orca before resuming this provisioned-root recipe" >&2; exit 1; }
+```
+
 ### 7e. State file — scaffold with scope/project/repo filled in and snapshot ids empty (§6).
 
 ### 7f. Worked example — Vercel Sandbox (all three phases)
@@ -636,7 +644,7 @@ Windows runs recipes through its command shell; invoke it explicitly in `orca.ya
 ```powershell
 #requires -Version 5
 $ErrorActionPreference = 'Stop'
-# Provisioned-root scripts only; omit this block for orca-worktree recipes.
+# Provisioned-root create/resume only; omit this block from suspend/destroy and orca-worktree recipes.
 if ($env:ORCA_RECIPE_RESULT_SCHEMA_VERSION -ne '2') {
   throw 'Upgrade Orca before using this provisioned-root recipe'
 }

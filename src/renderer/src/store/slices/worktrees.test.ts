@@ -487,6 +487,90 @@ describe('fetchWorktrees', () => {
     expect(result).toBe(true)
   })
 
+  it('restores provisioned-root ownership when an older host strips the metadata field', async () => {
+    const store = createTestStore()
+    const provisioned = makeWorktree({
+      id: 'repo1::/workspace/provisioned',
+      repoId: 'repo1',
+      path: '/workspace/provisioned',
+      isMainWorktree: true,
+      branch: 'refs/heads/feature'
+    })
+    const reusable = makeWorktree({
+      id: 'repo1::/workspace/reusable',
+      repoId: 'repo1',
+      path: '/workspace/reusable',
+      isMainWorktree: true,
+      branch: 'refs/heads/main'
+    })
+    mockApi.worktrees.listDetected.mockResolvedValueOnce(
+      makeDetectedResult('repo1', [provisioned, reusable])
+    )
+    mockApi.ephemeralVm.listRuntimes.mockResolvedValueOnce([
+      {
+        id: 'runtime-provisioned',
+        workspaceId: provisioned.id,
+        status: 'running',
+        recipeResult: {
+          schemaVersion: 2,
+          checkoutMode: 'provisioned-root',
+          pairingCode: 'pairing-provisioned',
+          projectRoot: provisioned.path
+        }
+      },
+      {
+        id: 'runtime-reusable',
+        workspaceId: reusable.id,
+        status: 'running',
+        recipeResult: {
+          schemaVersion: 1,
+          pairingCode: 'pairing-reusable',
+          projectRoot: reusable.path
+        }
+      }
+    ])
+
+    await store.getState().fetchWorktrees('repo1')
+
+    expect(store.getState().worktreesByRepo.repo1).toEqual([
+      expect.objectContaining({
+        id: provisioned.id,
+        ephemeralVmCheckoutMode: 'provisioned-root'
+      }),
+      expect.objectContaining({
+        id: reusable.id
+      })
+    ])
+    expect(store.getState().worktreesByRepo.repo1[1]).not.toHaveProperty('ephemeralVmCheckoutMode')
+    expect(store.getState().detectedWorktreesByRepo.repo1.worktrees[0]).toMatchObject({
+      id: provisioned.id,
+      ephemeralVmCheckoutMode: 'provisioned-root'
+    })
+  })
+
+  it('preserves provisioned-root ownership across a stripped refresh when runtime lookup fails', async () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/workspace/provisioned',
+      repoId: 'repo1',
+      path: '/workspace/provisioned',
+      isMainWorktree: true,
+      branch: 'refs/heads/feature',
+      ephemeralVmCheckoutMode: 'provisioned-root'
+    })
+    const stripped = { ...existing, ephemeralVmCheckoutMode: undefined }
+    mockApi.worktrees.listDetected.mockResolvedValueOnce(makeDetectedResult('repo1', [stripped]))
+    mockApi.ephemeralVm.listRuntimes.mockRejectedValueOnce(new Error('older desktop API'))
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    await store.getState().fetchWorktrees('repo1')
+
+    expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
+      id: existing.id,
+      ephemeralVmCheckoutMode: 'provisioned-root'
+    })
+  })
+
   it('retains catalog and row references for a cloned unchanged runtime payload', async () => {
     const store = createTestStore()
     const first = makeWorktree({

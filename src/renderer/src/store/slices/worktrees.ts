@@ -40,6 +40,7 @@ import {
 } from './stale-runtime-host-rows'
 import { ensureHooksConfirmed } from '@/lib/ensure-hooks-confirmed'
 import { cleanupEphemeralVmRuntimesForDeleted } from '@/lib/ephemeral-vm-runtime-cleanup'
+import { getEphemeralVmRecipeResultCheckoutMode } from '../../../../shared/ephemeral-vm-recipes'
 import { tabHasLivePty } from '@/lib/tab-has-live-pty'
 import { disposeRemovedWorktreeParkedTerminalWatchers } from '../../components/terminal-pane/terminal-parked-watcher-registry'
 import {
@@ -2835,6 +2836,44 @@ function preserveConcurrentManualOrder<T extends Worktree>(
   })
 }
 
+async function listProvisionedRootRuntimeWorkspaceIds(): Promise<ReadonlySet<string>> {
+  try {
+    const runtimes = await window.api.ephemeralVm.listRuntimes()
+    return new Set(
+      runtimes
+        .filter(
+          (runtime) =>
+            runtime.status !== 'cleaned' &&
+            getEphemeralVmRecipeResultCheckoutMode(runtime.recipeResult) === 'provisioned-root' &&
+            runtime.workspaceId
+        )
+        .map((runtime) => runtime.workspaceId as string)
+    )
+  } catch {
+    return new Set()
+  }
+}
+
+function restoreProvisionedRootCheckoutModes<T extends Worktree>(
+  incoming: readonly T[],
+  current: readonly Worktree[] | undefined,
+  runtimeWorkspaceIds: ReadonlySet<string> | undefined
+): T[] {
+  const currentModes = new Map(
+    current?.map((worktree) => [worktree.id, worktree.ephemeralVmCheckoutMode])
+  )
+  return incoming.map((worktree) => {
+    if (
+      worktree.ephemeralVmCheckoutMode ||
+      (currentModes.get(worktree.id) !== 'provisioned-root' &&
+        !runtimeWorkspaceIds?.has(worktree.id))
+    ) {
+      return worktree
+    }
+    return { ...worktree, ephemeralVmCheckoutMode: 'provisioned-root' }
+  })
+}
+
 type FencedWorktreeMergeArgs = {
   repoId: string
   hostId: ExecutionHostId
@@ -2843,6 +2882,7 @@ type FencedWorktreeMergeArgs = {
   requestStartedWorktrees: readonly Worktree[] | undefined
   setup?: ProjectHostSetup
   refresh: AdmittedDetectedWorktreeRefresh
+  provisionedRootRuntimeWorkspaceIds?: ReadonlySet<string>
   purgeRemovedWorktrees?: boolean
 }
 
@@ -2871,11 +2911,15 @@ function mergeFetchedWorktrees(
     const currentWorktrees = s.worktreesByRepo[args.repoId]
     const refreshResult = {
       ...args.refresh.result,
-      worktrees: preserveConcurrentManualOrder(
-        args.refresh.result.worktrees,
-        args.requestStartedWorktrees,
+      worktrees: restoreProvisionedRootCheckoutModes(
+        preserveConcurrentManualOrder(
+          args.refresh.result.worktrees,
+          args.requestStartedWorktrees,
+          currentWorktrees,
+          (worktree) => worktreeMatchesHost(worktree, args.hostId, matchOptions)
+        ),
         currentWorktrees,
-        (worktree) => worktreeMatchesHost(worktree, args.hostId, matchOptions)
+        args.provisionedRootRuntimeWorkspaceIds
       )
     }
     let incoming = toVisibleWorktrees(refreshResult, args.hostId, args.setup)
@@ -3131,6 +3175,7 @@ async function runKnownSshWorktreeFetch(
           worktrees: result.result.worktrees.filter((worktree) => !suppressedIds.has(worktree.id))
         }
       : result.result
+  const provisionedRootRuntimeWorkspaceIds = await listProvisionedRootRuntimeWorkspaceIds()
   let admitted = false
   set((state) => {
     // Why: the provider can connect during the await; authoritative rows already replaced this host, so appending stale metadata would resurrect purged worktrees.
@@ -3143,8 +3188,11 @@ async function runKnownSshWorktreeFetch(
     admitted = true
     const setup = getProjectHostSetupForRepoHost(state, repoId, executionHostId)
     const matchOptions = worktreeHostMatchOptions(state, repoId, executionHostId)
-    const incomingDetected = known.worktrees.map((worktree) =>
-      withRepoHostOwnership(worktree, executionHostId, setup)
+    const currentWorktrees = state.worktreesByRepo[repoId]
+    const incomingDetected = restoreProvisionedRootCheckoutModes(
+      known.worktrees.map((worktree) => withRepoHostOwnership(worktree, executionHostId, setup)),
+      currentWorktrees,
+      provisionedRootRuntimeWorkspaceIds
     )
     const priorDetected = state.detectedWorktreesByRepo[repoId]
     // Why: only the rows are ours to merge. This entry is keyed by repo alone, so adopting the fallback's
@@ -3159,8 +3207,12 @@ async function runKnownSshWorktreeFetch(
       )
     }
     const worktrees = appendMissingWorktreesForHost(
-      state.worktreesByRepo[repoId],
-      toVisibleWorktrees(known, executionHostId, setup),
+      currentWorktrees,
+      restoreProvisionedRootCheckoutModes(
+        toVisibleWorktrees(known, executionHostId, setup),
+        currentWorktrees,
+        provisionedRootRuntimeWorkspaceIds
+      ),
       executionHostId,
       matchOptions
     )
@@ -3383,6 +3435,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     const directCallerAuthority =
       options && 'directSshAuthority' in options ? options.directSshAuthority : undefined
     try {
+      const provisionedRootRuntimeWorkspaceIdsPromise = listProvisionedRootRuntimeWorkspaceIds()
       const ownerState = get()
       const requestStartedWorktrees = ownerState.worktreesByRepo[repoId]
       const repoOwners = ownerState.repos.filter((repo) => repo.id === repoId)
@@ -3448,7 +3501,8 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             : undefined,
         requestStartedWorktrees,
         setup,
-        refresh
+        refresh,
+        provisionedRootRuntimeWorkspaceIds: await provisionedRootRuntimeWorkspaceIdsPromise
       })
       if (!admitted) {
         return directCallerAuthority
@@ -3472,6 +3526,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
   fetchAllWorktrees: async (options) => {
     const { repos } = get()
+    const provisionedRootRuntimeWorkspaceIds = await listProvisionedRootRuntimeWorkspaceIds()
 
     // Why: after the one-shot hydration purge, later calls only refresh cached lists — no IPC double-probe for the per-repo success signal.
     if (get().hasHydratedWorktreePurge) {
@@ -3507,7 +3562,8 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             ownerWasMissingAtStart: false,
             requestStartedWorktrees,
             setup,
-            refresh
+            refresh,
+            provisionedRootRuntimeWorkspaceIds
           })
         } catch (err) {
           if (notifyRuntimeScopeForbiddenIfNeeded(err)) {
@@ -3564,6 +3620,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             requestStartedWorktrees,
             setup,
             refresh,
+            provisionedRootRuntimeWorkspaceIds,
             purgeRemovedWorktrees: false
           })
           if (!admitted) {

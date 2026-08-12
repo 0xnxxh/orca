@@ -243,6 +243,36 @@ describe('repo slice project host setup lifecycle', () => {
     expect(store.getState().tabsByWorktree[worktreeId]).toEqual([])
   })
 
+  it('rejects failed setup deletion without mutating imported project state', async () => {
+    const attachedSetup = { ...runtimeSetup, repoId: runtimeRepo.id }
+    const worktree = makeWorktree({
+      id: `${runtimeRepo.id}::${runtimeRepo.path}`,
+      repoId: runtimeRepo.id,
+      path: runtimeRepo.path,
+      hostId: 'runtime:env-1'
+    })
+    runtimeEnvironmentCall.mockRejectedValue(new Error('runtime unavailable'))
+    const store = createTestStore()
+    store.setState({
+      projects: [project],
+      projectHostSetups: [attachedSetup],
+      repos: [runtimeRepo],
+      worktreesByRepo: { [runtimeRepo.id]: [worktree] },
+      tabsByWorktree: { [worktree.id]: [] },
+      settings: { activeRuntimeEnvironmentId: null } as never
+    })
+
+    await expect(
+      store.getState().deleteProjectHostSetup({ setupId: attachedSetup.id })
+    ).rejects.toThrow('runtime unavailable')
+
+    expect(store.getState().projects).toEqual([project])
+    expect(store.getState().projectHostSetups).toEqual([attachedSetup])
+    expect(store.getState().repos).toEqual([runtimeRepo])
+    expect(store.getState().worktreesByRepo[runtimeRepo.id]).toEqual([worktree])
+    expect(store.getState().tabsByWorktree[worktree.id]).toEqual([])
+  })
+
   it('preserves runtime-fetched setup-only states during repo hydration', async () => {
     const pendingSetup: ProjectHostSetup = {
       ...runtimeSetup,

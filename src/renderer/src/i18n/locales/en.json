@@ -4399,6 +4399,7 @@
           "4dc5b5065b": "Remove",
           "d36883e046": "Cancel",
           "b79b39d865": "Remove Project",
+          "removeDescriptionProvisionedRoot": "This removes {{name}} from Orca and cleans up its provisioned environment according to the recipe.",
           "removeDescriptionSsh": "This only removes {{name}} from Orca. Its files stay on {{host}} — re-add that SSH host to recover it.",
           "removeDescriptionLocal": "This only removes {{name}} from Orca. It is still on your disk."
         },
