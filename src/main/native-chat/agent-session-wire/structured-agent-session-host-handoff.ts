@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
 import { importLegacyTranscriptIntoJournal } from '../agent-session-journal/journal-legacy-import'
 import { journalIdentityFor } from './structured-agent-session-attach'
@@ -7,6 +8,7 @@ import type { StructuredAgentSessionHostDeps } from './structured-agent-session-
 import type { StructuredAgentSessionHostSession } from './structured-agent-session-host-types'
 import { StructuredAgentSessionHandoffCoordinator } from './structured-agent-session-handoff'
 import type { AgentSessionSubscribers } from './structured-agent-session-subscribers'
+import { StructuredTuiTranscriptCatchup } from './structured-tui-transcript-catchup'
 
 type HostHandoffAccess = {
   session: (sessionId: string) => StructuredAgentSessionHostSession
@@ -17,7 +19,9 @@ type HostHandoffAccess = {
   now: () => number
 }
 
-export type StructuredAgentSessionHostHandoff = StructuredAgentSessionHandoffCoordinator
+export type StructuredAgentSessionHostHandoff = StructuredAgentSessionHandoffCoordinator & {
+  stopTuiHistoryCatchup: () => void
+}
 
 export async function refreshRecoverableStructuredHandoffStatus(
   handoff: StructuredAgentSessionHostHandoff,
@@ -35,7 +39,17 @@ export function createStructuredAgentSessionHostHandoff(
   deps: StructuredAgentSessionHostDeps,
   host: HostHandoffAccess
 ): StructuredAgentSessionHostHandoff {
-  return new StructuredAgentSessionHandoffCoordinator({
+  const tuiHistoryCatchup = new StructuredTuiTranscriptCatchup({
+    store: deps.store,
+    session: host.session,
+    schedule: host.serialize,
+    publish: (sessionId) => {
+      const session = host.session(sessionId)
+      host.subscribers.publish(sessionId, session.journal)
+    },
+    ...(deps.onEventSinkError ? { onError: deps.onEventSinkError } : {})
+  })
+  const coordinator = new StructuredAgentSessionHandoffCoordinator({
     store: deps.store,
     claimKeyId: deps.claimKeyId,
     ...(deps.handoffTransport ? { transport: deps.handoffTransport } : {}),
@@ -49,6 +63,9 @@ export function createStructuredAgentSessionHostHandoff(
     acquireNativeStop: async (sessionId, turnId, fence) =>
       (await deps.adapter.cancelTurn({ sessionId, turnId, fence })).cancelled,
     importTuiHistory: (input) => importTuiHistory(deps, host, input),
+    prepareTuiHistoryCatchup: (sessionId, fence) => tuiHistoryCatchup.prepare(sessionId, fence),
+    activateTuiHistoryCatchup: (sessionId) => tuiHistoryCatchup.activate(sessionId),
+    stopTuiHistoryCatchup: (sessionId) => tuiHistoryCatchup.stop(sessionId),
     publish: (sessionId, status) => {
       const session = host.session(sessionId)
       const fence = deps.store.getRecord(sessionId)?.lease.runtimeFence ?? session.fence
@@ -57,6 +74,7 @@ export function createStructuredAgentSessionHostHandoff(
     schedule: host.serialize,
     now: host.now
   })
+  return Object.assign(coordinator, { stopTuiHistoryCatchup: () => tuiHistoryCatchup.stopAll() })
 }
 
 async function importTuiHistory(
@@ -75,7 +93,9 @@ async function importTuiHistory(
     agent: 'codex',
     sessionId: head.handle.threadId,
     fence: input.fence,
-    ...(input.transcriptPath ? { options: { filePath: input.transcriptPath } } : {})
+    options: input.transcriptPath
+      ? { filePath: input.transcriptPath }
+      : { codexSessionsDirs: [join(record.accountHome.path, 'sessions')] }
   })
   if (!imported.ok) {
     throw new Error(imported.error)

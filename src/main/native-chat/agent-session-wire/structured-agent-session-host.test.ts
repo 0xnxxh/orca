@@ -682,7 +682,10 @@ describe('restart', () => {
     await host.send(CALLER, { envelope: envelope('agentSession.send', { body }), body })
     await reboot(async () => ({ outcome: 'indeterminate', reason: 'read does not need ownership' }))
     acquire.mockClear()
+    const listRecords = vi.spyOn(store, 'listRecords')
 
+    await host.restoreReadableSessions()
+    const restoreReads = listRecords.mock.calls.length
     await host.restoreReadableSessions()
 
     expect(host.listSessionTabs()).toEqual([
@@ -691,6 +694,7 @@ describe('restart', () => {
     const history = host.history({ sessionId: SESSION, direction: 'tail' })
     expect(history.ok && history.page.items).not.toHaveLength(0)
     expect(acquire).not.toHaveBeenCalled()
+    expect(listRecords).toHaveBeenCalledTimes(restoreReads)
   })
 
   it('clears stale TUI recovery when restart successfully reacquires the native owner', async () => {

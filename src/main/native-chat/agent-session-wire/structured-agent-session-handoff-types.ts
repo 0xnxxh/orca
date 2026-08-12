@@ -53,6 +53,9 @@ export type StructuredAgentSessionHandoffDeps = {
     fence: number
     transcriptPath?: string
   }) => Promise<void>
+  prepareTuiHistoryCatchup?: (sessionId: string, fence: number) => Promise<void>
+  activateTuiHistoryCatchup?: (sessionId: string) => Promise<void>
+  stopTuiHistoryCatchup?: (sessionId: string) => void
   publish: (sessionId: string, status: AgentSessionHandoffStatus) => void
   schedule: (sessionId: string, task: () => Promise<void>) => Promise<void>
   now: () => number

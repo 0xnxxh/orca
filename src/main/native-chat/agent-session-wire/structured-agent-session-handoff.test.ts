@@ -55,6 +55,11 @@ let stopRecoveredOwner: ReturnType<
   typeof vi.fn<StructuredAgentSessionHandoffTransport['stopRecoveredOwner']>
 >
 let operations: number
+let prepareTuiHistoryCatchup: ReturnType<
+  typeof vi.fn<(sessionId: string, fence: number) => Promise<void>>
+>
+let activateTuiHistoryCatchup: ReturnType<typeof vi.fn<(sessionId: string) => Promise<void>>>
+let stopTuiHistoryCatchup: ReturnType<typeof vi.fn<(sessionId: string) => void>>
 
 function operationId(): string {
   operations += 1
@@ -220,6 +225,9 @@ function createCoordinator(): StructuredAgentSessionHandoffCoordinator {
         { fence, recovered: true }
       )
     },
+    prepareTuiHistoryCatchup,
+    activateTuiHistoryCatchup,
+    stopTuiHistoryCatchup,
     publish: (_sessionId, status) => statuses.push(status),
     schedule: async (_sessionId, task) => task(),
     now: () => NOW
@@ -252,6 +260,9 @@ beforeEach(async () => {
   importFailure = null
   nativeAcquireFailure = null
   acquireNativeCalls = 0
+  prepareTuiHistoryCatchup = vi.fn(async () => undefined)
+  activateTuiHistoryCatchup = vi.fn(async () => undefined)
+  stopTuiHistoryCatchup = vi.fn()
   stopRecoveredOwner = vi.fn(async () => undefined)
   store = await AgentSessionRecordStore.open({ directory: join(root, 'store'), hostId: 'local' })
   await establishNativeOwner()
@@ -324,6 +335,12 @@ describe('structured session ownership handoff', () => {
       claimStatus: 'live',
       handoffStage: null
     })
+    expect(prepareTuiHistoryCatchup).toHaveBeenCalledWith(SESSION, forwardRecord.lease.runtimeFence)
+    expect(activateTuiHistoryCatchup).toHaveBeenCalledWith(SESSION)
+    expect(stopTuiHistoryCatchup).toHaveBeenCalledWith(SESSION)
+    expect(prepareTuiHistoryCatchup.mock.invocationCallOrder[0]).toBeLessThan(
+      launchTui.mock.invocationCallOrder[0] ?? Infinity
+    )
   })
 
   it('queues a busy native turn, supports cancel, and starts only after idle', async () => {

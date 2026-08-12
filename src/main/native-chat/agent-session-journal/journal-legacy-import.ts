@@ -47,6 +47,34 @@ export type LegacyImportResult =
   | { ok: true; epoch: string; cursor: AgentJournalCursor; imported: number }
   | { ok: false; error: string }
 
+export async function appendLegacyTranscriptMessages(input: {
+  journal: AgentSessionJournal
+  agent: AgentType
+  sessionId: string
+  fence: number
+  messages: NativeChatMessage[]
+}): Promise<number> {
+  let appended = 0
+  for (const message of input.messages) {
+    const mapped = legacyItemBody(message, DEFAULT_JOURNAL_PAYLOAD_LIMITS)
+    for (const blob of mapped.blobs) {
+      await putJournalBlob(input.journal.directory, blob.digest, blob.payload)
+    }
+    await input.journal.appendItem(
+      {
+        provider: 'legacy',
+        agent: input.agent,
+        sessionId: input.sessionId,
+        recordId: message.id
+      },
+      mapped.body,
+      { fence: input.fence, observedAt: message.timestamp ?? undefined }
+    )
+    appended += 1
+  }
+  return appended
+}
+
 export async function importLegacyTranscriptIntoJournal(input: {
   journal: AgentSessionJournal
   agent: AgentType

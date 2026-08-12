@@ -178,6 +178,7 @@ async function restoreRecoverableLiveTui(
     now: input.deps.now()
   })
   input.retainOwner(record.sessionId, owner)
+  await startRecoveredTuiCatchup(input, record)
   input.setStatus(record.sessionId, {
     owner: 'tui',
     direction: null,
@@ -192,6 +193,7 @@ async function restoreRecoverableLiveTui(
 async function restoreLiveTui(input: RestartAccess, record: AgentSessionRecord): Promise<void> {
   const owner = await input.deps.transport!.recoverTuiOwner(record)
   input.retainOwner(record.sessionId, owner)
+  await startRecoveredTuiCatchup(input, record)
   input.setStatus(record.sessionId, {
     owner: 'tui',
     direction: null,
@@ -239,6 +241,7 @@ async function restoreProving(input: RestartAccess, record: AgentSessionRecord):
       now: input.deps.now()
     })
     input.retainOwner(record.sessionId, reproved)
+    await startRecoveredTuiCatchup(input, record)
     input.setStatus(record.sessionId, {
       owner: 'tui',
       direction: null,
@@ -259,6 +262,14 @@ async function restoreProving(input: RestartAccess, record: AgentSessionRecord):
     now: input.deps.now()
   })
   await continueHandoff(input, stopped)
+}
+
+async function startRecoveredTuiCatchup(
+  input: RestartAccess,
+  record: AgentSessionRecord
+): Promise<void> {
+  await input.deps.prepareTuiHistoryCatchup?.(record.sessionId, record.lease.runtimeFence)
+  await input.deps.activateTuiHistoryCatchup?.(record.sessionId)
 }
 
 async function continueHandoff(input: RestartAccess, record: AgentSessionRecord): Promise<void> {

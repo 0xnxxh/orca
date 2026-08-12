@@ -47,7 +47,6 @@ import {
   type AgentSessionSubscribeInput
 } from './structured-agent-session-subscribers'
 import { StructuredAgentSessionTaskQueue } from './structured-agent-session-task-queue'
-import { restoreStructuredAgentSessionsOnRestart } from './structured-agent-session-restart-restore'
 import type { StructuredAgentSessionHandoffTransport } from './structured-agent-session-handoff-types'
 import {
   createStructuredAgentSessionHostHandoff,
@@ -56,6 +55,7 @@ import {
 } from './structured-agent-session-host-handoff'
 import { StructuredAgentSessionHostRuntimeState } from './structured-agent-session-host-runtime-state'
 import { listStructuredAgentSessionTabs } from './structured-agent-session-host-tabs'
+import { StructuredAgentSessionReadableRestorer } from './structured-agent-session-readable-restorer'
 import type {
   StructuredAgentSessionCaller,
   StructuredAgentSessionHostSession
@@ -80,6 +80,7 @@ export class StructuredAgentSessionHost {
   private readonly runtimeState: StructuredAgentSessionHostRuntimeState
   private readonly reconcileLeases: (sessionId: string) => Promise<AgentSessionWireRefusal | null>
   private readonly handoffs: StructuredAgentSessionHostHandoff
+  private readonly readableRestorer: StructuredAgentSessionReadableRestorer
 
   constructor(readonly deps: StructuredAgentSessionHostDeps) {
     this.runtimeState = new StructuredAgentSessionHostRuntimeState(deps, (record) =>
@@ -98,6 +99,20 @@ export class StructuredAgentSessionHost {
       subscribers: this.subscribers,
       now: this.now
     })
+    this.readableRestorer = new StructuredAgentSessionReadableRestorer({
+      store: deps.store,
+      journalRoot: deps.journalRoot,
+      reconcile: this.reconcileLeases,
+      resume: (params) =>
+        this.attach({ callerKey: 'trusted-local:host-restart' }, params).then(
+          (result) => result.ok
+        ),
+      serialize: (sessionId, task) => this.serialize(sessionId, task),
+      hasSession: (sessionId) => this.sessions.has(sessionId),
+      onReadable: (sessionId, restored) => this.sessions.set(sessionId, restored),
+      restoreHandoff: (sessionId) => this.handoffs.restore(sessionId),
+      now: this.now
+    })
     this.runtimeState.startLeaseRenewal()
   }
 
@@ -113,23 +128,8 @@ export class StructuredAgentSessionHost {
     return listStructuredAgentSessionTabs(this.sessions)
   }
 
-  async restoreReadableSessions(): Promise<void> {
-    await restoreStructuredAgentSessionsOnRestart({
-      store: this.deps.store,
-      journalRoot: this.deps.journalRoot,
-      records: this.deps.store.listRecords().filter((record) => record.provider === 'codex'),
-      reconcile: this.reconcileLeases,
-      operationId: () =>
-        `${Math.trunc(this.now()).toString().padStart(13, '0')}-${randomUUID().replaceAll('-', '')}`,
-      resume: (params) =>
-        this.attach({ callerKey: 'trusted-local:host-restart' }, params).then(
-          (result) => result.ok
-        ),
-      serialize: (sessionId, task) => this.serialize(sessionId, task),
-      hasSession: (sessionId) => this.sessions.has(sessionId),
-      onReadable: (sessionId, restored) => this.sessions.set(sessionId, restored),
-      restoreHandoff: (sessionId) => this.handoffs.restore(sessionId)
-    })
+  restoreReadableSessions(): Promise<void> {
+    return this.readableRestorer.restore()
   }
 
   private serialize<T>(sessionId: string, task: () => Promise<T>): Promise<T> {
@@ -207,6 +207,7 @@ export class StructuredAgentSessionHost {
 
   async flushAllStreamedEvents(): Promise<void> {
     this.runtimeState.stopLeaseRenewal()
+    this.handoffs.stopTuiHistoryCatchup()
     await this.tasks.drainAttaches()
     await this.runtimeState.flushAllEventSinks()
   }
