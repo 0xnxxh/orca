@@ -1202,7 +1202,7 @@ physical SSH macOS and supported Windows remain open.
 - [x] Add dashboards for grant/finalize/share rates, authorization and rate limits, finalization
       saturation, archive rejection, and digest mismatch.
 - [x] Add Cloud Run 5xx, CPU, memory, instance, and skill-route latency panels and alerts.
-- [ ] Add GCS quarantine/published bytes, object count, and lifecycle failure panels and alerts.
+- [x] Add GCS quarantine/published bytes, object count, and lifecycle failure panels and alerts.
 - [x] Add PostgreSQL connection, storage, query latency, migration, and transaction panels and
       alerts.
 - [x] Add signed-policy/URL generation and IAM Credentials failure alerts. Grant-signing failures
@@ -1225,6 +1225,14 @@ visibility, budget coverage, and reviewed alert thresholds. Cloud PR `#346` pass
 checks and merged as `8199c048`; it adds privacy-bounded per-route latency distributions, sustained
 80% CPU/memory and near-instance-ceiling alerts, separate five-second interactive and 30-second
 finalization p99 latency alerts, and a route-template p99 dashboard without bearer identifiers.
+Cloud PR `#347` passed both required checks and merged as `65320475`; it adds a six-hour
+aggregate-only storage inventory job, fixed quarantine/published bytes and object-count metrics,
+an overdue-quarantine metric, two storage panels, and an overdue-or-job-failure alert. The monitor
+identity has only `storage.objects.list`, while the scheduler can invoke only that job. The reviewed
+targeted staging apply added 18 observability resources, updated the existing dashboard, and
+replaced only the inert descriptor-propagation timer. A manual run emitted only aggregate fixed-
+namespace measurements with zero overdue objects; the post-apply targeted plan is zero-diff, SQL
+remained `NEVER`/`STOPPED`, all Relay MIG targets remained zero, and production remained disabled.
 
 ### Logging and privacy
 

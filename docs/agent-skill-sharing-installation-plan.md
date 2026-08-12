@@ -124,6 +124,16 @@ instance pressure. Alerts require five minutes above 80% p99 CPU/memory, more th
 configured instance ceiling, five-second interactive p99, or 30-second finalization p99; no bearer
 URL or identifier becomes a metric label.
 
+Cloud PR `#347` passed both required checks and merged as `65320475`. It adds a six-hour aggregate
+storage inventory job, fixed-namespace bytes and object-count metrics, overdue-quarantine and job
+failure alerts, and storage dashboard panels. The monitor identity has only
+`storage.objects.list`; its scheduler identity can invoke only that job. A reviewed targeted
+staging apply added 18 observability resources, updated the existing dashboard, and replaced only
+the inert metric-propagation timer. The post-apply targeted plan is zero-diff. A manual execution
+completed successfully and emitted only aggregate published and quarantine measurements, with
+zero overdue objects and no identifiers or paths. SQL remained `NEVER`/`STOPPED`, all three Relay
+MIG targets remained zero, and production remained disabled and untouched.
+
 Auth deploy run `31535179937` promoted `orca-cloud-auth-staging-00017-dug` with exact staging-only
 GitHub OIDC constraints, healthy JWKS, and zero deployment-window errors. API run `31535438327`
 promoted `orca-cloud-api-staging-00042-hef` with `authenticatedSmoke: true` and `skillSmoke: true`.
