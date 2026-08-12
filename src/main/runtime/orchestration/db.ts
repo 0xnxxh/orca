@@ -44,6 +44,7 @@ import { OrchestrationError } from './orchestration-error'
 import { resolveOrchestrationMigrationStartVersion } from './orchestration-schema-version-skew'
 import {
   deriveWorkerTerminalListState,
+  WORKER_SETTLED_STATES,
   type WorkerTerminalResourceRow,
   type WorkerTerminalArchiveRow,
   type WorkerTerminalArchiveStatus,
@@ -70,6 +71,17 @@ function isEquivalentPaneKey(a: string, b: string): boolean {
   const aLeaf = parsePaneKey(a)?.leafId
   const bLeaf = parsePaneKey(b)?.leafId
   return Boolean(aLeaf && bLeaf && aLeaf === bLeaf)
+}
+
+function parseWorkerTerminalPriorOwnerIds(value: string): string[] | null {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) && parsed.every((entry) => typeof entry === 'string')
+      ? parsed
+      : null
+  } catch {
+    return null
+  }
 }
 
 // Why: indexable pre-filter for isEquivalentPaneKey — equal strings and equal leaves both share the
@@ -5878,12 +5890,12 @@ export class OrchestrationDb {
       if (!worker) {
         throw new OrchestrationError('dispatch_not_found', `Dispatch ${dispatchId} was not found.`)
       }
-      if (!['succeeded', 'failed'].includes(worker.state)) {
+      if (!WORKER_SETTLED_STATES.includes(worker.state)) {
         // Why: release is post-completion cleanup only; recording intent for an unsettled or
         // uncertain worker would let recovery close a terminal the coordinator never reviewed.
         throw new OrchestrationError(
           'dispatch_inactive',
-          `Dispatch ${dispatchId} is ${worker.state}; only a succeeded or failed worker can release. Use worker-stop to cancel an active worker.`
+          `Dispatch ${dispatchId} is ${worker.state}; only a settled worker can release. Use worker-stop to cancel an active worker.`
         )
       }
       const resource = this.getWorkerTerminalResourceByOwner(dispatchId)
@@ -5897,6 +5909,10 @@ export class OrchestrationDb {
       if (resource.release_state === 'released' || resource.ownership_state === 'released') {
         this.db.exec('COMMIT')
         return { disposition: 'already_released', resource }
+      }
+      if (worker.state === 'stopped' || worker.state === 'abandoned') {
+        this.db.exec('COMMIT')
+        return { disposition: 'retained', resource, reason: 'identity_unproven' }
       }
       if (resource.ownership_state === 'external') {
         this.db.exec('COMMIT')
@@ -5940,6 +5956,66 @@ export class OrchestrationDb {
         disposition: 'requested',
         resource: this.getWorkerTerminalResource(resource.id) as WorkerTerminalResourceRow
       }
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  settleDeadWorkerTerminalRelease(params: {
+    requestingDispatchId: string
+    resourceId: string
+    processIncarnation: string
+  }):
+    | { disposition: 'released'; resource: WorkerTerminalResourceRow }
+    | { disposition: 'retained'; resource: WorkerTerminalResourceRow } {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const resource = this.getWorkerTerminalResource(params.resourceId)
+      if (!resource) {
+        throw new OrchestrationError(
+          'dispatch_not_found',
+          `Worker terminal resource ${params.resourceId} was not found.`
+        )
+      }
+      const priorOwners = parseWorkerTerminalPriorOwnerIds(resource.prior_owner_dispatch_ids)
+      const requesterRelated =
+        resource.owner_dispatch_id === params.requestingDispatchId ||
+        priorOwners?.includes(params.requestingDispatchId) === true
+      const requester = this.getWorkerDispatch(params.requestingDispatchId)
+      const owner = this.getWorkerDispatch(resource.owner_dispatch_id)
+      const requesterSettled = Boolean(requester && WORKER_SETTLED_STATES.includes(requester.state))
+      const ownerSettled = Boolean(owner && WORKER_SETTLED_STATES.includes(owner.state))
+      if (
+        !priorOwners ||
+        !requesterRelated ||
+        !requesterSettled ||
+        !ownerSettled ||
+        resource.process_incarnation !== params.processIncarnation ||
+        resource.ownership_state === 'released' ||
+        !['not_requested', 'retained', 'unknown'].includes(resource.release_state)
+      ) {
+        this.db.exec('COMMIT')
+        return { disposition: 'retained', resource }
+      }
+      this.db
+        .prepare(
+          `UPDATE worker_terminal_resources
+           SET release_state = 'released', ownership_state = 'released', retained_reason = NULL,
+               release_requested_at = COALESCE(release_requested_at, datetime('now')),
+               release_completed_at = datetime('now'), release_error = NULL,
+               updated_at = datetime('now')
+           WHERE id = ? AND process_incarnation = ? AND ownership_state != 'released'
+             AND release_state IN ('not_requested', 'retained', 'unknown')`
+        )
+        .run(params.resourceId, params.processIncarnation)
+      const released = this.getWorkerTerminalResource(
+        params.resourceId
+      ) as WorkerTerminalResourceRow
+      this.db.exec('COMMIT')
+      return released.release_state === 'released'
+        ? { disposition: 'released', resource: released }
+        : { disposition: 'retained', resource: released }
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
