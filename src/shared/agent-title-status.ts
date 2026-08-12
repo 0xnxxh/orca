@@ -24,6 +24,7 @@ import {
   isPiTerminalTitle
 } from './agent-title-core'
 import type { AgentStatus } from './agent-title-core'
+import { clearOmpNativeWorkingStatus, getOmpNativeTitleStatus } from './omp-native-title-status'
 import { isOpenCodeNativeTitle } from './opencode-terminal-title'
 import { getPiCompatibleSyntheticAgentStatus } from './pi-compatible-synthetic-title'
 import { isGrokRotatingWorkingTitle } from './terminal-title-agent-type'
@@ -32,7 +33,7 @@ import { isGrokRotatingWorkingTitle } from './terminal-title-agent-type'
  * Strip working-status indicators so stale exit titles stop reporting working.
  */
 export function clearWorkingIndicators(title: string): string {
-  let cleaned = title
+  let cleaned = clearOmpNativeWorkingStatus(title) ?? title
 
   cleaned = cleaned.replace(GEMINI_WORKING, '')
   cleaned = cleaned.replace(GEMINI_SILENT_WORKING, '')
@@ -174,6 +175,11 @@ export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
   }
   if (title.includes(GEMINI_IDLE)) {
     return 'idle'
+  }
+
+  const ompNativeStatus = getOmpNativeTitleStatus(title)
+  if (ompNativeStatus) {
+    return ompNativeStatus
   }
 
   // Why: resolve synthetic Pi/OMP permission/idle labels before the broader
