@@ -55,14 +55,16 @@ that larger package-manager surface.
 
 The Orca implementation is on `skills-share` at `38012f06c1`; no Orca pull request exists. Cloud
 bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`;
-the bundle desktop smoke update merged through `#329` as `eddb144afe`, and generation-aware GCS
-recovery merged through `#330` as `8045c85dad`.
+the bundle desktop smoke update merged through `#329` as `eddb144afe`, generation-aware GCS
+recovery merged through `#330` as `8045c85dad`, and the bounded finalization load gate plus cleanup
+hardening merged through `#332`-`#335` as `bb8bf8b9ac`.
 The authenticated OIDC smoke landed in `#313`; the narrow Auth release-metadata convergence
 follow-up landed in `#314`; the finalization and lifecycle fixes landed in `#317`. The final
 anonymous bearer-link candidate and canonical smoke now pass in staging. Production remains
 untouched. Local, Windows, WSL, paired-runtime, Docker-backed SSH, browser-free staging desktop,
-and published-object recovery validation are substantially complete; the implementation checklist
-records the exact evidence and remaining physical-host, load, and lifecycle gates.
+published-object recovery, and bounded finalization-load validation are substantially complete;
+the implementation checklist records the exact evidence and remaining physical-host and lifecycle
+gates.
 
 The local redesign now has an independently implemented Agent Plugins 1.0.0 skills-only bundle
 manifest, deterministic one-or-many archive creation, bounded bundle extraction, additive bundle
@@ -127,8 +129,14 @@ Cloud PR `#330` merged as `8045c85dad`; deploy `31579844413` promoted revision
 `orca-cloud-api-staging-00057-kat`, and recovery smoke `31580071168` proved generation-aware GCS
 soft-delete restoration, transactional reference repointing, bearer download, and cleanup.
 Guarded sleep `31580339694` restored SQL to `NEVER`/`STOPPED` and all Relay MIG targets to zero.
-Remaining staging gates are remote physical-host journeys, bounded finalization load, and the
-time-gated quarantine lifecycle deletion.
+Load run `31585710645` then exercised 12 concurrent 30-skill bundles at roughly 3.95 MiB extracted
+per bundle. Explicit saturation bounded ten requests while two completed; API, Cloud SQL, instance,
+and latency metrics stayed far below their reviewed thresholds. PR `#335` made retry settlement
+cleanup-safe, and run `31586684354` removed the exact failed-wave package set before two
+manifest-proven quarantine generations were deleted with GCS preconditions. Guarded sleep
+`31587083752` then returned SQL to `NEVER`/`STOPPED`, all three stable Relay MIGs to zero, and every
+active Cloud Run revision minimum to zero. Remaining staging gates are remote physical-host
+journeys and the time-gated quarantine lifecycle deletion.
 
 ## Research baseline
 

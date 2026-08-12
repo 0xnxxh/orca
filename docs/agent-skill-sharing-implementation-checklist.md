@@ -134,12 +134,33 @@ Validated so far:
 - Guarded sleep `31580339694` returned staging to low cost. Independent reads verified Cloud SQL
   `NEVER`/`STOPPED`, C1/C2/C3 target size zero and stable, and API/Auth min scale zero. Production
   was not touched.
+- Cloud PRs `#332` through `#335` added the staging-only 12-by-30 finalization load gate, narrowly
+  authorized its OIDC identity, fixed deterministic fixture ordering, and made retry settlement
+  cleanup-safe. Their merge commits were `ac85d0690e`, `53559bd644`, `7e1d50a84b`, and
+  `bb8bf8b9ac`; merged-main verification passed through run `31586525326`.
+- Auth deploy `31584318896` promoted `orca-cloud-auth-staging-00021-tuq` with digest
+  `sha256:e17075d69dca36df427f02fa515481f359c8f67397c5ab16de9759f7f949c6be`; candidate and
+  canonical smoke passed with one 100%-traffic revision and no remaining candidate tag.
+- Load run `31585710645` exercised 12 concurrent bundles with 30 skills and 3,949,317 extracted
+  bytes each. Two finalized immediately and ten returned explicit saturation; client p95 was
+  1,514 ms. Aggregate utilization stayed bounded: request p95 1,401.06 ms, API CPU 8.95%, API
+  memory 26.95%, one API instance, database CPU 10.89%, database memory 25.59%, and seven
+  connections. A saved, exact one-add Terraform plan restored the declared
+  `roles/monitoring.viewer` binding for the staging deploy identity before those aggregate metrics
+  were read; it changed no service, traffic, SQL, storage, Relay, or production resource.
+- Cleanup run `31586684354` removed the exact failed-wave package set through normal package DELETE
+  routes. The two remaining quarantine archives were manifest-proven as 30-skill fixtures for
+  suffix `013756ec4740` and deleted with exact GCS generation preconditions; no live object from
+  that run window remained. GCS soft delete keeps the operation recoverable.
+- Guarded sleep `31587083752` returned staging to low cost. Independent reads verified Cloud SQL
+  `NEVER`/`STOPPED`, C1/C2/C3 target size zero and stable with no current actions, and API, Auth,
+  and Relay active-revision minimums at zero. Production was not touched.
 
 Rollout gate: staging infrastructure, OIDC owner identity exchange, anonymous bearer lifecycle,
 owner management, browser-free desktop bundle lifecycle, privacy-safe logging, published-object
-recovery, and guarded rollback-capable deployment passed. The shared staging data plane is back in
-its low-cost asleep state. Production remains untouched; final remote physical-host staging
-journeys, bounded finalization load, and quarantine lifecycle deletion remain.
+recovery, bounded finalization load, and guarded rollback-capable deployment passed. Production
+remains untouched, and the shared staging data plane is asleep; final remote physical-host staging
+journeys and quarantine lifecycle deletion remain.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
 
@@ -1204,8 +1225,11 @@ still require the listed split metrics, latency panels, and alerts.
       Cloud Run platform request logs through Terraform and verify zero are retained.
 - [ ] Verify logs, metrics, traces, diagnostics, and support bundles contain no grants or private
       package data.
-- [ ] Load-test finalization and choose the fixed semaphore from observed memory, CPU, request
-      latency, and database usage.
+- [x] Load-test finalization and choose the fixed semaphore from observed memory, CPU, request
+      latency, and database usage. Run `31585710645` kept the existing semaphore: its 12 concurrent
+      30-skill bundles produced two immediate successes and ten explicit saturation responses,
+      1,514 ms client p95, 8.95% API CPU, 26.95% API memory, one API instance, 10.89% database CPU,
+      25.59% database memory, and seven database connections.
 - [ ] Exercise at least one quarantine lifecycle deletion and published-object soft-delete
       recovery. Published-object recovery passed run `31580071168`; the one-day quarantine
       lifecycle deletion remains time-gated.
