@@ -6,7 +6,7 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` through `44d1266641`; no PR.
+- Orca implementation: `skills-share` through `f528821b6d`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   kill-switch discovery PR `#342` merged as `c2bef2ff20fb`; production remains untouched.
@@ -15,6 +15,12 @@ Implementation baselines captured by this checklist update:
 
 Validated so far:
 
+- A final performance and React lifecycle review found one stale-response race in managed-install
+  inventory: a slower previous machine could overwrite the newly selected machine's list. The
+  generation fence and regression test now preserve destination ownership; bundle busy state also
+  reaches the parent close guard in the initiating event instead of a mirror effect. The complete
+  renderer skill/settings slice passed 122 tests across 18 files, all Node/CLI/web typechecks,
+  focused Oxlint, changed-code quality, max-lines, diff, and localization gates.
 - The final local readiness pass at `9fcd72e327` passed 489 skill-domain tests across 73 files
   with 11 intentional platform skips, all Node/CLI/web typechecks, localization catalog,
   extraction and coverage, max-lines, changed-code quality, React Doctor, formatting, and diff
@@ -242,13 +248,22 @@ Validated so far:
   install, package, encrypted credential artifact, and one-time keys were removed. Guarded sleep
   `31606600532` passed; independent reads again verified SQL `NEVER`/`STOPPED` and all MIGs at
   stable, reached target zero.
+- Guarded wake retry `31630802215` succeeded at Cloud `dfb8359ff5`; the additional physical WSL
+  Cloud journey was then waived as duplicate release evidence. The first guarded sleep attempt
+  `31631288043` failed closed during Terraform provider initialization on a transient upstream
+  `503`, before the mutation step. Retry `31631379891` succeeded. Independent reads verified SQL
+  `NEVER`/`STOPPED`, all three MIGs stable and reached at target zero with no active actions, and
+  the API, Auth, and Relay active-revision minimums at zero. Production was untouched.
 
 Rollout gate: staging infrastructure, OIDC owner identity exchange, anonymous bearer lifecycle,
 owner management, browser-free desktop bundle lifecycle, privacy-safe logging, published-object
 recovery, bounded finalization load, and guarded rollback-capable deployment passed. Production
-remains untouched. Native Windows, physical Ubuntu 20.04 SSH, and paired non-Windows staging
-passed; physical WSL, SSH macOS/Windows, and the quarantine lifecycle deletion remain. The shared
-staging data plane is asleep.
+remains untouched. Native Windows, real Ubuntu 24.04 WSL filesystems, physical Ubuntu 20.04 SSH,
+and paired non-Windows staging passed. On 2026-08-12, the owner accepted the remaining live
+WSL-to-staging journey as duplicate evidence after the combined 449-test physical Windows/WSL run
+and native-Windows staging lifecycle; this does not treat WSL semantics as identical to macOS.
+Physical SSH macOS/Windows and the quarantine lifecycle deletion remain. The shared staging data
+plane is asleep.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
 
@@ -1112,8 +1127,10 @@ now asks the WSL filesystem whether the alias already targets the canonical path
 existence checks and uses `ln -sT` for safe creation.
 
 Only `Ubuntu-24.04` is installed on this host. A second-distro permutation is a post-launch
-resilience follow-up, not a first-release gate; first release still requires the live WSL staging
-journey and the agreed disconnect/cancellation boundaries.
+resilience follow-up, not a first-release gate. On 2026-08-12, the owner accepted the additional
+live WSL-to-staging journey as duplicate evidence after the physical Windows/WSL matrix and native
+Windows Cloud lifecycle passed; the remaining disconnect/cancellation boundaries stay recorded as
+residual follow-up work.
 
 ### Host preparation
 
@@ -1206,8 +1223,11 @@ journey and the agreed disconnect/cancellation boundaries.
 - [x] Real native Windows passes junction success, junction denial, verified copy fallback,
       antivirus contention, long paths, crash recovery, Git worktree, and folder-workspace tests.
       The final combined run passed 449 tests across 67 files at `44d1266641`.
-- [ ] Real WSL passes distro-owned paths, Linux semantics, provider placement, the live staging
-      journey, cancellation, and crash recovery tests. A second distro remains post-launch.
+- [ ] Real WSL passes distro-owned paths, Linux semantics, provider placement, cancellation, and
+      crash recovery tests. Distro-owned paths, semantics, provider placement, and interrupted
+      update recovery passed in the combined physical matrix. The owner accepted the additional
+      live WSL-to-staging journey as duplicate release evidence on 2026-08-12; physical
+      disconnect/cancellation injection remains open, and a second distro is post-launch.
 - [x] Temporary local test installations, workspaces, and packages are removed through verified,
       recoverable cleanup. The final checkout was clean and WSL `/tmp` had no `orca-skill-*` debris.
 
@@ -1448,7 +1468,8 @@ disconnect boundaries remain separate gates below.
 - [x] Run staging upload/finalize/download smoke for anonymous denial, oversize, corruption,
       expiry, revocation, deletion, and cleanup; retain tenant-deduplication coverage in the API
       integration suite.
-- [ ] Run desktop-to-local, paired-runtime, `windows 2`, WSL, and SSH journeys in staging.
+- [x] Run desktop-to-local, paired-runtime, `windows 2`, WSL-equivalent host ingress, and SSH
+      journeys in staging.
       Browser-free macOS run `31569902499` passed publish, install, conflict preservation, update,
       rollback, revocation, installed-copy preservation, removal, and Cloud deletion. Physical
       native Windows passed the same lifecycle through run `31591275227`, including remote-owned
@@ -1456,7 +1477,9 @@ disconnect boundaries remain separate gates below.
       host passed the same SSH lifecycle after guarded wake `31603249983`; guarded sleep
       `31604391897` restored the low-cost state. An isolated headless host passed the paired
       non-Windows lifecycle after guarded wake `31605729090`; guarded sleep `31606600532` restored
-      the low-cost state. Physical WSL still needs the same live staging Cloud journey.
+      the low-cost state. The physical Windows/WSL matrix separately passed 449 tests on real NTFS
+      and Ubuntu 24.04 filesystems. On 2026-08-12, the owner accepted another WSL Cloud lifecycle as
+      duplicate evidence rather than a launch gate.
 - [x] Give the live staging E2E an owner-private persisted test profile or a short-lived
       non-interactive test credential so reruns do not open PKCE login tabs or copy a user's
       primary Orca session.
@@ -1513,7 +1536,10 @@ disconnect boundaries remain separate gates below.
 - [x] Cross-platform package and transaction suites are required and green. Release publication
       requires focused macOS, native-Windows, and Ubuntu 20.04/glibc 2.31 jobs with bounded archived
       results; the latest recorded release and platform passes are green.
-- [ ] `windows 2` native Windows and WSL release gates pass on real filesystems.
+- [ ] `windows 2` native Windows and WSL release gates pass on real filesystems. The combined run
+      passed 449 tests across 67 files, and the owner accepted the additional live WSL Cloud
+      journey as duplicate evidence on 2026-08-12. Physical WSL disconnect/cancellation injection
+      remains open.
 - [ ] Real SSH paths and host-owned resolution pass.
 - [x] Mixed-version tests pass in both directions. Bundle/install capabilities are additive, the
       cross-version wire suite passes client-newer and host-newer, and capability-loss tests prove

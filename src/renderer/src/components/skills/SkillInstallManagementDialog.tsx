@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -29,6 +29,8 @@ import { skillInstallManagementCopy } from './skill-install-management-copy'
 import { useSkillInstallProgress } from './skill-install-progress-state'
 import { SkillManagedInstallList } from './SkillManagedInstallList'
 import { SkillManagedInstallDetails } from './SkillManagedInstallDetails'
+import { summarizeManagedSkillRemoval } from './skill-managed-removal-summary'
+import { retainManagedSkillVersion } from './skill-managed-version-selection'
 import {
   groupManagedSkillInstalls,
   type SkillManagedInstallGroup
@@ -57,6 +59,7 @@ export function SkillInstallManagementDialog({
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const installProgress = useSkillInstallProgress()
+  const loadGeneration = useRef(0)
 
   const groups = useMemo(() => groupManagedSkillInstalls(installs), [installs])
   const selected = useMemo(
@@ -66,6 +69,7 @@ export function SkillInstallManagementDialog({
   const selectedInstall = selected?.installs[0] ?? null
 
   const load = useCallback(async (): Promise<void> => {
+    const generation = ++loadGeneration.current
     if (!open) {
       return
     }
@@ -75,6 +79,9 @@ export function SkillInstallManagementDialog({
       const operation = await window.api.skills.listManagedInstalls(
         environmentId === 'local' ? undefined : environmentId
       )
+      if (generation !== loadGeneration.current) {
+        return
+      }
       if (operation.status !== 'ok') {
         setError(operation.message)
         return
@@ -84,10 +91,15 @@ export function SkillInstallManagementDialog({
       setDetails(null)
       setNotice(null)
     } catch (cause) {
+      if (generation !== loadGeneration.current) {
+        return
+      }
       console.warn('[skills] managed install listing failed:', cause)
       setError('Orca could not inspect managed installs on this machine.')
     } finally {
-      setBusy(false)
+      if (generation === loadGeneration.current) {
+        setBusy(false)
+      }
     }
   }, [environmentId, open])
 
@@ -132,11 +144,7 @@ export function SkillInstallManagementDialog({
       throw new Error(operation.status)
     }
     setDetails(operation.value)
-    setVersionId((current) =>
-      operation.value.versions.some((version) => version.versionId === current)
-        ? current
-        : (operation.value.versions[0]?.versionId ?? '')
-    )
+    setVersionId((current) => retainManagedSkillVersion(operation.value.versions, current))
   }
 
   const packageDeleted = (): void => {
@@ -279,21 +287,13 @@ export function SkillInstallManagementDialog({
         setError(unsupported.message)
         return
       }
-      const values = operations.flatMap((operation) =>
-        operation.status === 'ok' ? [operation.value] : []
-      )
-      const removed = values.filter((value) => value.status === 'removed').length
-      const preserved = values.filter((value) => value.status === 'conflict').length
-      setResult(values.at(-1) ?? null)
-      setNotice(
-        selected.installs.length > 1
-          ? `${removed} removed${preserved ? ` · ${preserved} modified skill${preserved === 1 ? '' : 's'} preserved` : ''}.`
-          : null
-      )
-      if (removed > 0) {
+      const summary = summarizeManagedSkillRemoval(operations, selected.installs.length)
+      setResult(summary.lastResult)
+      setNotice(summary.notice)
+      if (summary.removed > 0) {
         notifyInstalledAgentSkillsChanged()
       }
-      if (preserved === 0 && values.every((value) => value.status !== 'failed')) {
+      if (summary.complete) {
         await load()
       }
     } catch (cause) {

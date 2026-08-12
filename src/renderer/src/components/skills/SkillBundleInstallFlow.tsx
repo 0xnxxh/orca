@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Download, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DialogFooter } from '@/components/ui/dialog'
@@ -37,7 +37,6 @@ export function SkillBundleInstallFlow(props: {
   onClose(): void
   onBusyChange(busy: boolean): void
 }): React.JSX.Element {
-  const { onBusyChange } = props
   const runtimeEnvironments = useAppStore((state) => state.runtimeEnvironments)
   const runtimeStatus = useAppStore((state) => state.runtimeStatusByEnvironmentId)
   const worktreesByRepo = useAppStore((state) => state.worktreesByRepo)
@@ -64,8 +63,6 @@ export function SkillBundleInstallFlow(props: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const installProgress = useSkillInstallProgress()
-
-  useEffect(() => onBusyChange(busy), [busy, onBusyChange])
 
   const workspaceChoices = useMemo(
     () => skillInstallWorkspaceChoices({ environmentId, folderWorkspaces, repos, worktreesByRepo }),
@@ -114,6 +111,7 @@ export function SkillBundleInstallFlow(props: {
       return
     }
     setBusy(true)
+    props.onBusyChange(true)
     setError(null)
     try {
       const selectedSkills = props.version.manifest.skills
@@ -190,6 +188,7 @@ export function SkillBundleInstallFlow(props: {
     } finally {
       installProgress.finish()
       setBusy(false)
+      props.onBusyChange(false)
     }
   }
 

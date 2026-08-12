@@ -177,6 +177,47 @@ afterEach(() => {
 })
 
 describe('SkillInstallManagementDialog', () => {
+  it('ignores a stale install list after switching machines', async () => {
+    useAppStore.setState({
+      runtimeEnvironments: [
+        {
+          id: 'remote_1',
+          name: 'Remote',
+          createdAt: 1,
+          updatedAt: 1,
+          lastUsedAt: null,
+          runtimeId: null,
+          endpoints: [
+            {
+              id: 'remote_ws',
+              kind: 'websocket',
+              label: 'WebSocket',
+              endpoint: 'ws://remote.invalid'
+            }
+          ],
+          preferredEndpointId: 'remote_ws'
+        }
+      ]
+    })
+    const skills = skillsApi(install('local_version'), [
+      version('local_version', '2026-08-12T00:00:00.000Z')
+    ])
+    let resolveLocal: ((value: unknown) => void) | undefined
+    skills.listManagedInstalls
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveLocal = resolve)) as never)
+      .mockResolvedValueOnce({ status: 'ok', value: [install('remote_version')] })
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
+
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(screen.getByRole('option', { name: 'Remote' }))
+    await screen.findByText('global · remote_version')
+    resolveLocal?.({ status: 'ok', value: [install('local_version')] })
+
+    await waitFor(() => expect(screen.queryByText('global · local_version')).toBeNull())
+    expect(screen.getByText('global · remote_version')).toBeTruthy()
+  })
+
   it('updates an installed skill to the newest immutable version', async () => {
     const skills = skillsApi(install('ver_1'), [
       version('ver_2', '2026-08-12T00:00:00.000Z'),

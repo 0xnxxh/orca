@@ -223,9 +223,23 @@ enabled the same topology for an isolated headless paired host with a separate h
 full paired-runtime staging lifecycle passed in 12.5 seconds without local fallback, and its
 environment, install, Cloud package, encrypted credential artifact, and one-time keys were
 removed. Guarded sleep `31606600532` passed with the same independently verified low-cost state.
-Remaining staging gates are the live physical WSL Cloud journey, physical SSH macOS/Windows, and
-the time-gated quarantine lifecycle deletion. The local Windows/WSL release matrix itself is green.
+The owner accepted the additional live physical WSL Cloud journey as duplicate release evidence on
+2026-08-12 after the combined 449-test Windows/WSL matrix and native-Windows Cloud lifecycle passed;
+this does not collapse WSL semantics into macOS. Remaining staging gates are physical SSH
+macOS/Windows and the time-gated quarantine lifecycle deletion. The Windows/WSL release matrix is
+green.
+Guarded wake retry `31630802215` succeeded before that decision. The first cleanup attempt
+`31631288043` failed closed during Terraform provider download on an upstream `503`, before its
+mutation step; guarded sleep retry `31631379891` succeeded. Independent reads verified SQL
+`NEVER`/`STOPPED`, all three Relay MIGs stable and reached at target zero with no active actions,
+and zero minimum instances on each active API, Auth, and Relay revision.
 Production remains untouched.
+
+A final renderer lifecycle review fenced managed-install inventory by request generation so a
+slower previous machine cannot overwrite the newly selected machine's list. It also moved bundle
+busy propagation into the initiating event instead of mirroring state through an effect. The
+renderer skill/settings slice passed 122 tests across 18 files plus all Node/CLI/web typechecks,
+focused lint, changed-code quality, max-lines, diff, and localization gates.
 
 ## Research baseline
 
