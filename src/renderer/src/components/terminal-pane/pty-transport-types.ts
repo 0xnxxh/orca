@@ -147,6 +147,10 @@ export type PtyTransport = {
     envToDelete?: string[]
     launchConfig?: SleepingAgentLaunchConfig
     resumeProviderSession?: AgentProviderSessionMetadata
+    /** Start a genuinely new shell: ignore the startup this transport was constructed with.
+     *  Omitting the fields is not enough — connect falls back to its constructor values, so a
+     *  "fresh" spawn would silently resume the saved agent session. */
+    suppressSavedStartup?: boolean
     launchToken?: string
     launchAgent?: TuiAgent
     startupCommandDelivery?: StartupCommandDelivery

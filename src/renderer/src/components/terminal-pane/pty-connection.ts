@@ -552,6 +552,10 @@ type PendingStartupCommand = {
 
 type FreshSpawnOptions = {
   forceBlankRestoredViewport?: boolean
+  /** Ignore the startup this transport was constructed with. Omitting the fields is not enough:
+   *  connect falls back to its constructor values, so a "fresh" shell would resume the saved agent
+   *  session — the duplicate transcript the disconnected pane exists to prevent. */
+  suppressSavedStartup?: boolean
 }
 
 type ColdRestoreAgentResumeStartup = PendingStartupCommand & {
@@ -5129,6 +5133,13 @@ export function connectPanePty(
      * because nothing here knows whether the shell died.
      */
     const publishUnreachablePane = (sessionId: string): void => {
+      // Guards live HERE, not at the seven call sites. They are identical at every one, and the
+      // review found three separate sites that had each forgotten a different one — a local pane
+      // shown an SSH-specific card it can never clear, and a disposed pane republishing state onto
+      // a reused numeric pane id. Centralising them makes the next call site correct by default.
+      if (disposed || !connectionId) {
+        return
+      }
       // Both actions clear the banner before acting: nothing else retracts it. The app-SSH
       // transport does not publish recovery states, so a card left up would sit over a live shell
       // with armed buttons.
@@ -5140,6 +5151,14 @@ export function connectPanePty(
         unreachablePane: {
           onRetry: () => {
             clearBanner()
+            // Put the card back if the remount never happens. A stale generation, a refused remount
+            // or a throw all return false without scheduling anything, and swallowing that leaves
+            // the pane with no shell AND no action surface — worse than the toast this replaced.
+            const republishIfDeclined = (scheduled: boolean): void => {
+              if (!scheduled) {
+                publishUnreachablePane(sessionId)
+              }
+            }
             // Why the generation and instance: a recovery declined by the cooldown only schedules
             // a deferred retry when it can identify the generation to remount. Without them a
             // second click inside the window is refused silently, which on a surface whose whole
@@ -5150,18 +5169,29 @@ export function connectPanePty(
               reason: 'restore-blocked',
               terminalRecoveryGeneration,
               terminalRecoveryInstanceId: terminalRecoveryInstance.id
-            })
+            }).then(republishIfDeclined, () => republishIfDeclined(false))
           },
           onStartNewTerminal: () => {
             clearBanner()
-            deps.clearExitedPanePtyLayoutBinding(pane.id, sessionId)
-            deps.clearTabPtyId(deps.tabId, sessionId)
-            // A NEW shell, not a resumed one. The old automatic respawn passed the cold-restore
-            // startup, which carries the agent's providerSession — correct then, because it only
-            // ran on proof the shell was gone. Here the shell is probably still alive, so resuming
-            // would put a second agent process on one transcript: the exact defect this pane
-            // exists to prevent. `null` starts fresh, which is also what the button says.
-            startFreshSpawn(null, { forceBlankRestoredViewport: true })
+            // A NEW shell, not a resumed one. The automatic respawn this replaced passed the
+            // cold-restore startup, which carries the agent's providerSession — correct there,
+            // because it only ran on proof the shell was gone. Here the shell is probably still
+            // alive, so resuming would put a second agent process on one transcript. `null` alone
+            // does not achieve that: connect falls back to the startup this transport was built
+            // with, so the suppression has to be explicit.
+            void startFreshSpawn(null, {
+              forceBlankRestoredViewport: true,
+              suppressSavedStartup: true
+            }).then((freshPtyId) => {
+              if (!freshPtyId) {
+                // The replacement never started. Keep the old binding and put the card back, or the
+                // pane is left blank and unbound with no way back to a shell that may still be up.
+                publishUnreachablePane(sessionId)
+                return
+              }
+              deps.clearExitedPanePtyLayoutBinding(pane.id, sessionId)
+              deps.clearTabPtyId(deps.tabId, sessionId)
+            })
           }
         }
       })
@@ -5336,6 +5366,7 @@ export function connectPanePty(
       transportConnectInFlightSince = Date.now()
       const outputCallbacks = captureTransportOutputCallbacks(reportError)
       const spawnedRaw = transport.connect({
+        ...(options.suppressSavedStartup ? { suppressSavedStartup: true } : {}),
         url: '',
         cols,
         rows,

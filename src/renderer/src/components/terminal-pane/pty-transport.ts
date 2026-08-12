@@ -818,16 +818,19 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
           ...((options.envToDelete ?? envToDelete)
             ? { envToDelete: options.envToDelete ?? envToDelete }
             : {}),
-          command: options.command ?? command,
-          ...((options.launchConfig ?? launchConfig)
+          command: options.suppressSavedStartup ? options.command : (options.command ?? command),
+          ...((options.suppressSavedStartup ? options.launchConfig : (options.launchConfig ?? launchConfig))
             ? { launchConfig: options.launchConfig ?? launchConfig }
             : {}),
-          ...((options.resumeProviderSession ?? resumeProviderSession)
+          ...((options.suppressSavedStartup
+            ? options.resumeProviderSession
+            : (options.resumeProviderSession ?? resumeProviderSession))
             ? {
-                resumeProviderSession: options.resumeProviderSession ?? resumeProviderSession
+                resumeProviderSession:
+                  options.resumeProviderSession ?? resumeProviderSession
               }
             : {}),
-          ...((options.launchToken ?? launchToken)
+          ...((options.suppressSavedStartup ? options.launchToken : (options.launchToken ?? launchToken))
             ? { launchToken: options.launchToken ?? launchToken }
             : {}),
           ...((options.launchAgent ?? launchAgent)

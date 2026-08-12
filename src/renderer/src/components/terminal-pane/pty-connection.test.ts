@@ -9319,6 +9319,10 @@ describe('connectPanePty', () => {
   // replacement PTY exists, whatever route created it.
   it('drops stale callbacks but delivers fresh replacement output after an old replay clear', async () => {
     const { connectPanePty } = await import('./pty-connection')
+    mockStoreState = {
+      ...mockStoreState,
+      repos: [{ id: 'repo1', connectionId: 'target-a', displayName: 'orca' }]
+    } as StoreState
     const { getTerminalScrollIntentKind, markTerminalPinnedViewport } =
       await import('@/lib/pane-manager/terminal-scroll-intent')
     const transport = createMockTransport('tab-pty')
@@ -9568,6 +9572,11 @@ describe('connectPanePty', () => {
     })
     transportFactoryQueue.push(transport)
     setReattachPaneTitle('Cursor Agent')
+    // After setReattachPaneTitle: it rewrites mockStoreState and would drop this.
+    mockStoreState = {
+      ...mockStoreState,
+      repos: [{ id: 'repo1', connectionId: 'target-a', displayName: 'orca' }]
+    } as StoreState
 
     const pane = createPane(1)
     const textarea = {} as HTMLTextAreaElement
@@ -9669,6 +9678,12 @@ describe('connectPanePty', () => {
     })
     transportFactoryQueue.push(transport)
     setReattachPaneTitle('Cursor Agent')
+    // SSH repo: the disconnected card is SSH-only, and setReattachPaneTitle rewrites
+    // mockStoreState, so this must come after it.
+    mockStoreState = {
+      ...mockStoreState,
+      repos: [{ id: 'repo1', connectionId: 'target-a', displayName: 'orca' }]
+    } as StoreState
 
     const pane = createPane(1)
     const textarea = {} as HTMLTextAreaElement
@@ -9767,6 +9782,12 @@ describe('connectPanePty', () => {
 
   it('does not respawn a pane whose restore was answered with a not-found', async () => {
     const { connectPanePty } = await import('./pty-connection')
+    // SSH repo: these are SSH reattach scenarios, and the disconnected card is SSH-only by design.
+    // Without this the fixture has no connectionId and the pane is not SSH at all.
+    mockStoreState = {
+      ...mockStoreState,
+      repos: [{ id: 'repo1', connectionId: 'target-a', displayName: 'orca' }]
+    } as StoreState
     const transport = createMockTransport('tab-pty')
     transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) => {
       if (sessionId) {
@@ -9809,6 +9830,12 @@ describe('connectPanePty', () => {
   // agent process on one transcript. That is the very defect this pane exists to prevent.
   it('starts a fresh shell rather than resuming the agent when the user starts a new terminal', async () => {
     const { connectPanePty } = await import('./pty-connection')
+    // SSH repo: these are SSH reattach scenarios, and the disconnected card is SSH-only by design.
+    // Without this the fixture has no connectionId and the pane is not SSH at all.
+    mockStoreState = {
+      ...mockStoreState,
+      repos: [{ id: 'repo1', connectionId: 'target-a', displayName: 'orca' }]
+    } as StoreState
     const transport = createMockTransport('tab-pty')
     const spawnOptions: Record<string, unknown>[] = []
     transport.connect.mockImplementation(async (options: { sessionId?: string }) => {
@@ -9867,6 +9894,11 @@ describe('connectPanePty', () => {
     // Nothing else retracts the card, so the action must clear it or it sits over a live shell.
     expect(onPtyRecoveryState).toHaveBeenCalledWith(pane.id, null)
     expect(deps.clearTabPtyId).toHaveBeenCalledWith('tab-1', 'tab-pty')
+    // The transport falls back to the startup it was CONSTRUCTED with whenever a per-call field is
+    // absent, so omitting them is not enough — a "fresh" shell would resume the saved session. This
+    // asserts the explicit suppression, which is the only thing that actually closes it. Asserting
+    // the absence of per-call fields cannot: on a mock it passes either way.
+    expect(spawnOptions[0]).toMatchObject({ suppressSavedStartup: true })
     // The resume path claims the launch config before spawning; a fresh shell has none to claim.
     expect(mockStoreState.registerAgentLaunchConfig).not.toHaveBeenCalled()
     expect(spawnOptions).toHaveLength(1)
