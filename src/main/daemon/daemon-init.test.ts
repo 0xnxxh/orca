@@ -3478,6 +3478,81 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     }
   })
 
+  const wedgedClient = function MockWedgedDaemonClient() {
+    return {
+      ensureConnected: vi.fn(async () => {
+        throw new Error('Hello response timed out')
+      }),
+      request: vi.fn(),
+      disconnect: vi.fn()
+    }
+  }
+  const answeringClient = function MockDaemonClient() {
+    return {
+      ensureConnected: vi.fn(async () => {}),
+      request: vi.fn(async () => ({ sessions: [] })),
+      disconnect: vi.fn()
+    }
+  }
+
+  it('still replaces when the endpoint is proven dead, so a cold start is not held', async () => {
+    // The regression holding most risks: 'unknown' is also what a cold start looks like, since
+    // nothing answers when nothing is there. Holding then would hand every first launch a
+    // provider pointed at no daemon. A missing socket is the discriminator.
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+    daemonClientMock.mockImplementation(wedgedClient)
+
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void> }>
+    checkDaemonHealthMock.mockResolvedValueOnce('unreachable')
+    probeSocketExistsMock.mockReturnValue(false)
+    // Reaching the fork IS the assertion; throwing there stops before the spawn plumbing.
+    forkMock.mockImplementationOnce(() => {
+      throw new Error('reached the replacement fork')
+    })
+
+    try {
+      await expect(launcher('/fake/socket', '/fake/token')).rejects.toThrow(
+        'reached the replacement fork'
+      )
+    } finally {
+      daemonClientMock.mockImplementation(answeringClient)
+    }
+  })
+
+  it('still replaces an unreachable daemon that refused the handshake', async () => {
+    // 'rejected' answered and refused — bad token or foreign protocol — so it can never be
+    // adopted and its sessions can never be reattached. Holding one would be permanent
+    // degradation buying nothing, which is the opposite of the trade holding exists to make.
+    // Note this needs occupancy to stay 'unknown': a daemon that answers listSessions is
+    // 'empty' and reaches the replace path without ever consulting the exclusion.
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+    daemonClientMock.mockImplementation(wedgedClient)
+
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void> }>
+    checkDaemonHealthMock.mockResolvedValueOnce('rejected')
+    probeSocketExistsMock.mockReturnValue(true)
+    netConnectMock.mockImplementation(stubAliveSocketConnect)
+    forkMock.mockImplementationOnce(() => {
+      throw new Error('reached the replacement fork')
+    })
+
+    try {
+      await expect(launcher('/fake/socket', '/fake/token')).rejects.toThrow(
+        'reached the replacement fork'
+      )
+    } finally {
+      daemonClientMock.mockImplementation(answeringClient)
+    }
+  })
+
   it('spends a patient connect budget on the wedged ask, not the cheap one', async () => {
     // Pins the round-11 defect, which shipped green because every other test recomputes the
     // budget expression instead of watching the launcher spend it: with the evidence clock

@@ -55,6 +55,24 @@ describe('wedged-daemon classification budget', () => {
     }
   })
 
+  it('only attempts the evidence read while the clock can still finish it', () => {
+    // The gate is what keeps an opportunistic read from becoming an overrun: the read costs an
+    // identity ps plus two ownership probes, and it runs after the probes have already spent
+    // whatever they spent. If the threshold ever drops below that cost, a read started near the
+    // ceiling finishes past it — and the ceiling is what the kill ladder and fork are sized
+    // against.
+    const evidenceCostMs =
+      PS_IDENTITY_TIMEOUT_MS + POSIX_OWNERSHIP_PROBE_DEADLINE_MS * PTY_OWNERSHIP_PROBE_ATTEMPTS
+
+    if (process.platform !== 'win32') {
+      expect(CLASSIFICATION_EVIDENCE_MIN_MS).toBeGreaterThanOrEqual(evidenceCostMs)
+    }
+    // And the ceiling must still hold if a read starts at the very last moment the gate allows.
+    expect(WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS).toBeGreaterThanOrEqual(
+      CLASSIFICATION_EVIDENCE_MIN_MS
+    )
+  })
+
   it('gives the patient ask more clock than the cheap ask it replaced', () => {
     // Kept as arithmetic, but it is NOT the guard: this restates the expression rather than
     // executing it, so it cannot catch the expression being replaced. daemon-init.test.ts
