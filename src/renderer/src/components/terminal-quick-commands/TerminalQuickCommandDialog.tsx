@@ -23,10 +23,12 @@ import { Label } from '@/components/ui/label'
 import { getAgentCatalog } from '@/lib/agent-catalog'
 import { getScreenSubmitShortcutLabel, isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
 import { TerminalQuickCommandActionToggle } from './TerminalQuickCommandActionToggle'
-import { TerminalQuickCommandAdvancedSection } from './TerminalQuickCommandAdvancedSection'
+import { TerminalQuickCommandAppendEnterSwitch } from './TerminalQuickCommandAppendEnterSwitch'
+import { TerminalQuickCommandCollapsibleRow } from './TerminalQuickCommandCollapsibleRow'
 import { TerminalQuickCommandContentSection } from './TerminalQuickCommandContentSection'
 import { TerminalQuickCommandDialogFooter } from './TerminalQuickCommandDialogFooter'
 import { TerminalQuickCommandLabelField } from './TerminalQuickCommandLabelField'
+import { TerminalQuickCommandScopeField } from './TerminalQuickCommandScopeField'
 import {
   createTerminalQuickCommandDialogDraftMemory,
   switchTerminalQuickCommandDialogAction
@@ -76,7 +78,6 @@ export function TerminalQuickCommandDialog({
   const lastRepoScopeIdRef = useRef<string | null>(
     initialScope.type === 'repo' ? initialScope.repoId : null
   )
-  const [advancedOpen, setAdvancedOpen] = useState(false)
   const selectedAction = getTerminalQuickCommandAction(draft)
   const selectedScope = getTerminalQuickCommandScope(draft)
   const isAgentAction = isTerminalAgentQuickCommand(draft)
@@ -95,7 +96,6 @@ export function TerminalQuickCommandDialog({
     draftMemoryRef.current = createTerminalQuickCommandDialogDraftMemory(command, fallbackAgent)
     const commandScope = getTerminalQuickCommandScope(command)
     lastRepoScopeIdRef.current = commandScope.type === 'repo' ? commandScope.repoId : null
-    setAdvancedOpen(false)
     setDraft({ ...command })
   }
 
@@ -164,9 +164,12 @@ export function TerminalQuickCommandDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md sm:max-w-md" showCloseButton={false}>
+      <DialogContent
+        className="max-h-[min(88vh,54rem)] grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-xl"
+        showCloseButton={false}
+      >
         <DialogHeader>
-          <DialogTitle className="text-sm">
+          <DialogTitle>
             {mode === 'edit'
               ? translate(
                   'auto.components.terminal.quick.commands.TerminalQuickCommandDialog.f9b184fc16',
@@ -177,7 +180,7 @@ export function TerminalQuickCommandDialog({
                   'Add Quick Command'
                 )}
           </DialogTitle>
-          <DialogDescription className="text-xs">
+          <DialogDescription>
             {translate(
               'auto.components.terminal.quick.commands.TerminalQuickCommandDialog.ed04233b3e',
               'Save terminal commands or agent prompts for quick access.'
@@ -185,8 +188,9 @@ export function TerminalQuickCommandDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {/* Why -mx-1/px-1: the scroll container would otherwise clip focus rings. */}
         <div
-          className="space-y-4"
+          className="-mx-1 min-h-0 space-y-4 overflow-y-auto px-1 py-1 scrollbar-sleek"
           onKeyDown={(event) => {
             if (isScreenSubmitShortcut(event) && canSave) {
               event.preventDefault()
@@ -217,17 +221,24 @@ export function TerminalQuickCommandDialog({
             setDraft={setDraft}
           />
 
-          <TerminalQuickCommandAdvancedSection
-            draft={draft}
+          <TerminalQuickCommandCollapsibleRow open={!isAgentAction} className="px-1 pt-1 pb-4">
+            <TerminalQuickCommandAppendEnterSwitch
+              appendEnter={isTerminalAgentQuickCommand(draft) ? false : draft.appendEnter}
+              disabled={isAgentAction}
+              onToggle={toggleAppendEnter}
+            />
+          </TerminalQuickCommandCollapsibleRow>
+
+          <TerminalQuickCommandScopeField
             repos={repos}
-            advancedOpen={advancedOpen}
             selectedScope={selectedScope}
             selectedRepoId={selectedRepoId}
             selectedRepoMissing={selectedRepoMissing}
-            lastRepoScopeIdRef={lastRepoScopeIdRef}
-            setAdvancedOpen={setAdvancedOpen}
+            lastRepoScopeId={lastRepoScopeIdRef.current}
+            rememberRepoScopeId={(repoId) => {
+              lastRepoScopeIdRef.current = repoId
+            }}
             setDraft={setDraft}
-            toggleAppendEnter={toggleAppendEnter}
           />
         </div>
 

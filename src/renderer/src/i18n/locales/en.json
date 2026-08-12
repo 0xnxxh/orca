@@ -6781,6 +6781,12 @@
           "8bfdd23a88": "Help us figure out what to build next. Orca sends anonymous counts of which features you use and where things break.",
           "afec8b03be": "ci"
         },
+        "QuickCommandsList": {
+          "noSearchMatches": "No commands match this search."
+        },
+        "QuickCommandsToolbar": {
+          "searchLabel": "Search commands"
+        },
         "QuickCommandsPane": {
           "8764c6e9e4": "Remove {{value0}}",
           "7d90fd5299": "Edit {{value0}}",
