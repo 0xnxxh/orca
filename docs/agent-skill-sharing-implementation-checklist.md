@@ -6,7 +6,7 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `96a70b2269`; no PR.
+- Orca implementation: `skills-share` at `522e006127`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   kill-switch discovery PR `#342` merged as `c2bef2ff20fb`; production remains untouched.
@@ -1269,13 +1269,17 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
 - [ ] Run Linux against Ubuntu 20.04/glibc 2.31 and verify bundled native binaries respect the
       floor.
 - [x] Run native Windows and WSL scenarios on `windows 2`.
-- [ ] Run local and remote Git worktrees and plain folder workspaces.
+- [x] Run local and remote Git worktrees and plain folder workspaces. Native Windows covered a
+      linked worktree and folder; paired desktop and Docker SSH covered host-owned worktrees and
+      folders; physical Ubuntu SSH covered the global lifecycle.
 - [x] Run same-build paired desktop and headless runtimes through client-mediated transfer; headed
       coverage includes global, Git-worktree, and plain-folder scopes, while headless coverage
       includes global and Git-worktree scopes.
 - [ ] Run paired runtimes with both client-newer and server-newer combinations.
 - [ ] Run supported SSH-only macOS, Linux, and Windows targets.
-- [ ] Run a remote target without outbound Cloud connectivity through chunk transfer.
+- [x] Run a remote target without outbound Cloud connectivity through chunk transfer. The Docker
+      SSH target could not reach the loopback package origin and completed global, worktree, and
+      folder installation through client-mediated upload.
 
 ### Required journeys
 
@@ -1283,14 +1287,20 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
       skill.
 - [ ] Share on machine A, install into a folder workspace on a connected runtime, and discover it
       only in that workspace.
-- [ ] Modify installed bytes, publish an update, and prove Orca refuses silent replacement.
+- [x] Modify installed bytes, publish an update, and prove Orca refuses silent replacement. The
+      browser-free macOS staging lifecycle preserved the modified v1 copy before applying v2 only
+      after the explicit test decision.
 - [ ] Disconnect during commit, reconnect, recover, and prove either the old or new version is
       complete.
-- [ ] Revoke a share, prove a new install fails, and prove the existing local install remains.
-- [ ] Publish a new immutable version, update one machine, leave another pinned, then rollback the
-      updated machine.
-- [ ] Remove local installation without deleting its Cloud package, then delete/revoke Cloud
-      access without mutating another local installation.
+- [x] Revoke a share, prove a new install fails, and prove the existing local install remains.
+      Bearer-route tests and staging smoke reject revoked resolution/grants; macOS, native Windows,
+      paired, and SSH lifecycles independently preserve already installed bytes.
+- [x] Publish a new immutable version, update one machine, leave another pinned, then rollback the
+      updated machine. The physical Windows staging journey updated only the remote host to v2,
+      retained the local machine's independent version, and rolled Windows back to v1.
+- [x] Remove local installation without deleting its Cloud package, then delete/revoke Cloud
+      access without mutating another local installation. Staging lifecycles separate host/local
+      removal from package deletion, and revocation never mutates either installed copy.
 
 ### CI and test evidence
 
@@ -1298,7 +1308,9 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
 - [x] Add failure-injection hooks available only to tests/development harnesses.
 - [x] Add a CLI-only developer harness for local and remote integration tests.
 - [x] Keep CI commands compatible with macOS, Linux, Windows PowerShell/cmd, and WSL.
-- [ ] Archive bounded test results and security evidence without secrets or private contents.
+- [x] Archive bounded test results and security evidence without secrets or private contents. The
+      required release jobs archive bounded machine-readable results; privacy-safe Cloud field
+      inventories, load aggregates, and recovery evidence contain no grants or package contents.
 - [x] Make package safety, transaction recovery, platform, and mixed-version suites required release
       checks. Release publication now depends on focused macOS, real native-Windows, and Ubuntu
       20.04/glibc 2.31 jobs that archive bounded machine-readable results.
