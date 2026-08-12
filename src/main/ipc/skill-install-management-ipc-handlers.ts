@@ -44,36 +44,49 @@ type BundlePreviewInput = z.infer<typeof SkillBundleInstallPreviewRequestSchema>
   environmentId?: string
 }
 
+const REMOTE_BUNDLE_PREVIEW_CONCURRENCY = 8
+
 async function previewBundleInstall(runtime: OrcaRuntimeService, input: BundlePreviewInput) {
-  const previews = await Promise.all(
-    input.selectedSkills.map(async (skill) => {
-      const request = {
-        package: {
-          packageId: input.package.packageId,
-          versionId: input.package.versionId,
-          packageDigest: skill.digest,
-          archiveSha256: input.package.archiveSha256,
-          compressedBytes: input.package.compressedBytes
-        },
-        name: skill.name,
-        destination: input.destination
-      }
-      if (!input.environmentId) {
-        return runtime.previewSharedSkillInstallRequest(request)
-      }
-      const response = await callRuntimeEnvironment(
-        app.getPath('userData'),
-        input.environmentId,
-        'skills.previewInstall',
-        request,
-        30_000
-      )
-      if (response.ok !== true) {
-        throw new Error(`skill-bundle-preview-remote-${response.error.code}`)
-      }
-      return SkillInstallPreviewSchema.parse(response.result)
-    })
-  )
+  if (!input.environmentId) {
+    return runtime.previewSharedSkillBundleInstallRequest(input)
+  }
+  const environmentId = input.environmentId
+  const previews: z.infer<typeof SkillInstallPreviewSchema>[] = []
+  for (
+    let offset = 0;
+    offset < input.selectedSkills.length;
+    offset += REMOTE_BUNDLE_PREVIEW_CONCURRENCY
+  ) {
+    const batch = input.selectedSkills.slice(offset, offset + REMOTE_BUNDLE_PREVIEW_CONCURRENCY)
+    previews.push(
+      ...(await Promise.all(
+        batch.map(async (skill) => {
+          const request = {
+            package: {
+              packageId: input.package.packageId,
+              versionId: input.package.versionId,
+              packageDigest: skill.digest,
+              archiveSha256: input.package.archiveSha256,
+              compressedBytes: input.package.compressedBytes
+            },
+            name: skill.name,
+            destination: input.destination
+          }
+          const response = await callRuntimeEnvironment(
+            app.getPath('userData'),
+            environmentId,
+            'skills.previewInstall',
+            request,
+            30_000
+          )
+          if (response.ok !== true) {
+            throw new Error(`skill-bundle-preview-remote-${response.error.code}`)
+          }
+          return SkillInstallPreviewSchema.parse(response.result)
+        })
+      ))
+    )
+  }
   return SkillBundleInstallPreviewSchema.parse({
     packageId: input.package.packageId,
     versionId: input.package.versionId,

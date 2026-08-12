@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
   SkillBundleInstallProgress,
@@ -21,6 +20,11 @@ import {
 } from './skill-install-transaction'
 import { skillInstallFailureFromError } from './skill-install-operation-error'
 import { renameSkillPathWithWindowsRetry } from './skill-filesystem-retry'
+import {
+  beginSkillExtractionRecovery,
+  finishSkillExtractionRecovery
+} from './skill-extraction-recovery'
+import { nativeSkillInstallFilesystem } from './skill-install-filesystem'
 
 export type SkillBundleInstallServiceInput = Omit<
   SkillInstallServiceInput,
@@ -143,16 +147,23 @@ export async function installSkillBundle(
     expectedVersionId: input.versionId
   }).destinationRoot
   await mkdir(destinationRoot, { recursive: true })
-  const extractionPath = join(destinationRoot, `.orca-skill-bundle-extract-${randomUUID()}`)
-  const extracted = await extractSkillBundleArchive({
-    archivePath: input.archivePath,
-    destinationDirectory: extractionPath,
-    expectedArchiveSha256: input.expectedArchiveSha256,
-    expectedBundleDigest: input.bundleDigest,
-    expectedPackageId: input.packageId,
-    expectedVersionId: input.versionId
-  })
+  const stateDirectory = join(input.orcaStateDirectory, 'skill-installs')
+  const recovery = await beginSkillExtractionRecovery(
+    stateDirectory,
+    destinationRoot,
+    input.wslDistro
+  )
+  const extractionPath = recovery.extractionPath
   try {
+    const extracted = await extractSkillBundleArchive({
+      archivePath: input.archivePath,
+      destinationDirectory: extractionPath,
+      expectedArchiveSha256: input.expectedArchiveSha256,
+      expectedBundleDigest: input.bundleDigest,
+      expectedPackageId: input.packageId,
+      expectedVersionId: input.versionId,
+      signal: input.signal
+    })
     const selected = new Set(input.selectedSkillIds)
     const skills = extracted.manifest.skills.filter((skill) => selected.has(skill.id))
     if (skills.length !== selected.size) {
@@ -242,6 +253,10 @@ export async function installSkillBundle(
       skills: results
     })
   } finally {
-    await rm(extractionPath, { recursive: true, force: true })
+    await finishSkillExtractionRecovery(
+      stateDirectory,
+      recovery,
+      input.filesystem ?? nativeSkillInstallFilesystem
+    )
   }
 }

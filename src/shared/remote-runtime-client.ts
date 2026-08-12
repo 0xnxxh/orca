@@ -27,6 +27,7 @@ import {
   AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
   SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY
 } from './protocol-version'
+import { SKILL_INSTALL_RESULT_V2_CAPABILITY } from './skill-install-capability'
 // Re-export so existing value importers of `RemoteRuntimeClientError` are
 // unaffected; the class lives in a ws-free module so type-only consumers
 // (and mobile's typecheck) don't compile this file's Node-only deps.
@@ -151,7 +152,8 @@ async function sendRemoteRuntimeRequestOnSocket<TResult>(
     deviceToken: pairing.deviceToken,
     clientCapabilities: [
       SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
-      AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY
+      AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
+      SKILL_INSTALL_RESULT_V2_CAPABILITY
     ]
   })
   const pendingRequest = {
@@ -538,7 +540,8 @@ export async function subscribeRemoteRuntimeRequest<TResult>(
     deviceToken: pairing.deviceToken,
     clientCapabilities: [
       SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
-      AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY
+      AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
+      SKILL_INSTALL_RESULT_V2_CAPABILITY
     ]
   })
   return await new Promise((resolve, reject) => {

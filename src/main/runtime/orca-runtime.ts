@@ -153,14 +153,18 @@ import type {
   SkillRemoveRequest
 } from '../../shared/skill-install-contract'
 import type {
+  SkillBundleInstallPreview,
+  SkillBundleInstallPreviewRequest,
   SkillBundleInstallProgress,
   SkillBundleInstallRequest,
   SkillBundleInstallResult
 } from '../../shared/skill-bundle-install-contract'
+import { SkillBundleInstallPreviewSchema } from '../../shared/skill-bundle-install-contract'
 import { executeSkillInstallRequest } from '../skills/skill-install-request-service'
 import { executeSkillBundleInstallRequest } from '../skills/skill-bundle-install-request-service'
 import type { SkillInstallDestinationAuthority } from '../skills/skill-install-destinations'
 import {
+  previewSharedSkillBundleInstall,
   previewSharedSkillInstall,
   removeSharedSkillInstall
 } from '../skills/skill-install-management-service'
@@ -4835,6 +4839,50 @@ export class OrcaRuntimeService {
       })
     }
     return previewSharedSkillInstall(request, {
+      authority: this.skillInstallDestinationAuthority(runtimeId),
+      stateDirectory: app.getPath('userData'),
+      detectProviders: detectInstalledAgentsWithShellPathHydration
+    })
+  }
+
+  async previewSharedSkillBundleInstallRequest(
+    request: SkillBundleInstallPreviewRequest
+  ): Promise<SkillBundleInstallPreview> {
+    if (await this.resolveSkillSshTarget(request.destination)) {
+      const previews: SkillInstallPreview[] = []
+      for (let offset = 0; offset < request.selectedSkills.length; offset += 8) {
+        const batch = request.selectedSkills.slice(offset, offset + 8)
+        previews.push(
+          ...(await Promise.all(
+            batch.map((skill) =>
+              this.previewSharedSkillInstallRequest({
+                package: {
+                  packageId: request.package.packageId,
+                  versionId: request.package.versionId,
+                  packageDigest: skill.digest,
+                  archiveSha256: request.package.archiveSha256,
+                  compressedBytes: request.package.compressedBytes
+                },
+                name: skill.name,
+                destination: request.destination
+              })
+            )
+          ))
+        )
+      }
+      return SkillBundleInstallPreviewSchema.parse({
+        packageId: request.package.packageId,
+        versionId: request.package.versionId,
+        bundleDigest: request.package.bundleDigest,
+        destinationIdentity: previews[0]?.destinationIdentity ?? '',
+        skills: request.selectedSkills.map((skill, index) => ({
+          ...skill,
+          currentState: previews[index].currentState
+        }))
+      })
+    }
+    const runtimeId = this.getStatus().runtimeId
+    return previewSharedSkillBundleInstall(request, {
       authority: this.skillInstallDestinationAuthority(runtimeId),
       stateDirectory: app.getPath('userData'),
       detectProviders: detectInstalledAgentsWithShellPathHydration

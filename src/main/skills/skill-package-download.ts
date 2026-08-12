@@ -1,5 +1,5 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, open, rm } from 'node:fs/promises'
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
+import { chmod, mkdir, mkdtemp, open, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   SKILL_PACKAGE_CONTENT_TYPE,
@@ -11,6 +11,9 @@ import { startSkillPhaseOperation } from './skill-operation-observability'
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 const MAX_REDIRECTS = 3
+const PROCESS_DOWNLOAD_ROOT_PREFIX = '.orca-skill-download-process-'
+const processDownloadRootName = `${PROCESS_DOWNLOAD_ROOT_PREFIX}${process.pid}-${randomUUID()}`
+const initializedTemporaryRoots = new Map<string, Promise<string>>()
 
 export type SkillPackageDownloadResult = {
   archivePath: string
@@ -118,6 +121,51 @@ function hashesEqual(actual: string, expected: string): boolean {
   return timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'))
 }
 
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
+
+async function prepareTemporaryRoot(path: string): Promise<string> {
+  let initialization = initializedTemporaryRoots.get(path)
+  if (!initialization) {
+    initialization = (async () => {
+      await mkdir(path, { recursive: true, mode: 0o700 })
+      if (process.platform !== 'win32') {
+        await chmod(path, 0o700)
+      }
+      const entries = await readdir(path, { withFileTypes: true })
+      await Promise.all(
+        entries.map(async (entry) => {
+          const match = entry.isDirectory()
+            ? entry.name.match(/^\.orca-skill-download-process-(\d+)-/)
+            : null
+          const pid = Number(match?.[1])
+          if (match && Number.isSafeInteger(pid) && !processIsAlive(pid)) {
+            await rm(join(path, entry.name), { recursive: true, force: true })
+          }
+        })
+      )
+      const processRoot = join(path, processDownloadRootName)
+      await mkdir(processRoot, { recursive: true, mode: 0o700 })
+      return processRoot
+    })()
+    initializedTemporaryRoots.set(path, initialization)
+  }
+  try {
+    return await initialization
+  } catch (error) {
+    if (initializedTemporaryRoots.get(path) === initialization) {
+      initializedTemporaryRoots.delete(path)
+    }
+    throw error
+  }
+}
+
 async function downloadSkillPackageGrantUnobserved(
   input: SkillPackageDownloadInput
 ): Promise<SkillPackageDownloadResult> {
@@ -146,11 +194,8 @@ async function downloadSkillPackageGrantUnobserved(
     throw new Error('skill-download-size-mismatch')
   }
 
-  await mkdir(input.temporaryRoot, { recursive: true, mode: 0o700 })
-  if (process.platform !== 'win32') {
-    await chmod(input.temporaryRoot, 0o700)
-  }
-  const temporaryDirectory = await mkdtemp(join(input.temporaryRoot, '.orca-skill-download-'))
+  const processRoot = await prepareTemporaryRoot(input.temporaryRoot)
+  const temporaryDirectory = await mkdtemp(join(processRoot, '.orca-skill-download-'))
   const archivePath = join(temporaryDirectory, 'package.tar.gz')
   try {
     const handle = await open(archivePath, 'wx', 0o600)

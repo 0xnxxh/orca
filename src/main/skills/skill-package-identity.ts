@@ -63,7 +63,8 @@ type SkillPackageObservationLimits = {
 async function readBoundedSkillFile(
   path: string,
   remainingTotalBytes: number,
-  maximumSingleFileBytes: number
+  maximumSingleFileBytes: number,
+  signal?: AbortSignal
 ): Promise<Buffer> {
   const handle = await open(path, 'r')
   try {
@@ -77,6 +78,9 @@ async function readBoundedSkillFile(
     const bytes = Buffer.alloc(before.size)
     let offset = 0
     while (offset < bytes.length) {
+      if (signal?.aborted) {
+        throw new Error('skill-install-cancelled')
+      }
       const result = await handle.read(bytes, offset, bytes.length - offset, offset)
       if (result.bytesRead === 0) {
         throw new Error('skill-package-changed-during-read')
@@ -167,7 +171,8 @@ function matchesFileIdentity(
 export async function observeSkillPackage(
   packageRoot: string,
   limits: SkillPackageObservationLimits = SKILL_PACKAGE_OBSERVATION_LIMITS,
-  executablePaths?: ReadonlySet<string>
+  executablePaths?: ReadonlySet<string>,
+  signal?: AbortSignal
 ): Promise<ObservedSkillPackage> {
   const files: ObservedSkillFile[] = []
   const treeEntries: SkillGitTreeFileEntry[] = []
@@ -176,6 +181,9 @@ export async function observeSkillPackage(
   let totalBytes = 0
 
   async function visit(directory: string, depth: number): Promise<void> {
+    if (signal?.aborted) {
+      throw new Error('skill-install-cancelled')
+    }
     const directoryHandle = await opendir(directory)
     const entries: Dirent[] = []
     try {
@@ -197,6 +205,9 @@ export async function observeSkillPackage(
     // identity order must match the generator without locale-sensitive collation.
     entries.sort((left, right) => compareCodeUnits(left.name, right.name))
     for (const entry of entries) {
+      if (signal?.aborted) {
+        throw new Error('skill-install-cancelled')
+      }
       const absolutePath = join(directory, entry.name)
       // Only a plain file is OS-authored, so the type decides and not the name alone: a
       // directory or link wearing the name would otherwise hide a subtree from identity and
@@ -243,7 +254,8 @@ export async function observeSkillPackage(
         const bytes = await readBoundedSkillFile(
           absolutePath,
           limits.maximumTotalBytes - totalBytes,
-          limits.maximumSingleFileBytes
+          limits.maximumSingleFileBytes,
+          signal
         )
         totalBytes += bytes.length
         const executable = executablePaths

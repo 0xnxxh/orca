@@ -4,6 +4,27 @@ import { skillCloudRequest, type SkillCloudRequestError } from './skill-cloud-re
 vi.mock('electron', () => ({ app: { isPackaged: false } }))
 
 describe('skillCloudRequest', () => {
+  it('bounds requests that do not have a caller-owned cancellation signal', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn(
+      async (_input: URL | RequestInfo, init?: RequestInit) =>
+        await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+        })
+    ) as typeof fetch
+    const request = skillCloudRequest({
+      apiUrl: 'http://127.0.0.1:8787',
+      path: '/v1/skill-shares/share_1',
+      fetcher,
+      timeoutMs: 100
+    })
+    const expectation = expect(request).rejects.toThrow('skill-cloud-request-timeout')
+
+    await vi.advanceTimersByTimeAsync(100)
+    await expectation
+    vi.useRealTimers()
+  })
+
   it('sends credentials only to the validated Orca origin', async () => {
     const fetcher = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
       expect(String(input)).toBe('http://127.0.0.1:8787/v1/skill-shares/share_1')

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -18,6 +18,18 @@ async function temporaryRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'orca-skill-download-test-'))
   roots.push(root)
   return root
+}
+
+async function remainingDownloadFiles(root: string): Promise<string[]> {
+  const entries = await readdir(root, { withFileTypes: true })
+  const nested = await Promise.all(
+    entries.map(async (entry) =>
+      entry.isDirectory()
+        ? (await readdir(join(root, entry.name))).map((name) => join(entry.name, name))
+        : [entry.name]
+    )
+  )
+  return nested.flat()
 }
 
 function response(body: BodyInit | null, init: ResponseInit = {}): Response {
@@ -47,6 +59,23 @@ async function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe('downloadSkillPackageGrant', () => {
+  it('removes download bytes abandoned by a previous process', async () => {
+    const downloadInput = await input()
+    const abandoned = join(
+      downloadInput.temporaryRoot,
+      '.orca-skill-download-process-2147483647-abandoned'
+    )
+    await mkdir(abandoned)
+    await writeFile(join(abandoned, 'package.tar.gz'), 'private bytes')
+
+    const result = await downloadSkillPackageGrant(downloadInput)
+
+    await expect(readFile(join(abandoned, 'package.tar.gz'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await result.cleanup()
+  })
+
   it('streams a verified package into an owner-private temporary file', async () => {
     const downloadInput = await input()
     if (process.platform !== 'win32') {
@@ -139,13 +168,13 @@ describe('downloadSkillPackageGrant', () => {
       fetcher: fetcher(async () => response(bytes))
     })
     await expect(downloadSkillPackageGrant(sizeInput)).rejects.toThrow('skill-download-size-limit')
-    expect(await readdir(sizeInput.temporaryRoot)).toEqual([])
+    expect(await remainingDownloadFiles(sizeInput.temporaryRoot)).toEqual([])
 
     const digestInput = await input({ expectedArchiveSha256: '0'.repeat(64) })
     await expect(downloadSkillPackageGrant(digestInput)).rejects.toThrow(
       'skill-download-archive-digest-mismatch'
     )
-    expect(await readdir(digestInput.temporaryRoot)).toEqual([])
+    expect(await remainingDownloadFiles(digestInput.temporaryRoot)).toEqual([])
   })
 
   it('rejects expired grants without network access', async () => {
@@ -176,6 +205,6 @@ describe('downloadSkillPackageGrant', () => {
     })
 
     await expect(downloadSkillPackageGrant(cancelled)).rejects.toThrow('skill-download-cancelled')
-    expect(await readdir(cancelled.temporaryRoot)).toEqual([])
+    expect(await remainingDownloadFiles(cancelled.temporaryRoot)).toEqual([])
   })
 })

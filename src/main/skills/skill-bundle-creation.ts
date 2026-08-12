@@ -36,6 +36,8 @@ export type CreatedSkillBundle = {
 
 export type SkillBundleCreationDependencies = { afterSourcesObserved?: () => Promise<void> }
 
+const SOURCE_OBSERVATION_CONCURRENCY = 4
+
 function observationsMatch(left: ObservedSkillPackage, right: ObservedSkillPackage): boolean {
   return (
     left.files.length === right.files.length &&
@@ -126,21 +128,30 @@ async function createSkillBundleArchiveUnobserved(
   if (input.sources.length === 0) {
     throw new Error('skill-bundle-empty')
   }
-  const sourceObservations = await Promise.all(
-    input.sources.map((source) => observeSkillPackage(source.sourceDirectory))
-  )
-  const summaries = await Promise.all(
-    input.sources.map(async (source) => {
-      const summary = summarizeSkillMarkdown(
-        await readFile(join(source.sourceDirectory, 'SKILL.md'), 'utf8')
-      )
-      if (!summary.name) {
-        throw new Error('skill-package-skill-name-required')
-      }
-      validateSkillPackageName(summary.name)
-      return { name: summary.name, description: summary.description ?? '' }
-    })
-  )
+  const sourceObservations: ObservedSkillPackage[] = []
+  const summaries: { name: string; description: string }[] = []
+  for (let offset = 0; offset < input.sources.length; offset += SOURCE_OBSERVATION_CONCURRENCY) {
+    const batch = input.sources.slice(offset, offset + SOURCE_OBSERVATION_CONCURRENCY)
+    const observed = await Promise.all(
+      batch.map(async (source) => {
+        const [observation, markdown] = await Promise.all([
+          observeSkillPackage(source.sourceDirectory),
+          readFile(join(source.sourceDirectory, 'SKILL.md'), 'utf8')
+        ])
+        const summary = summarizeSkillMarkdown(markdown)
+        if (!summary.name) {
+          throw new Error('skill-package-skill-name-required')
+        }
+        validateSkillPackageName(summary.name)
+        return {
+          observation,
+          summary: { name: summary.name, description: summary.description ?? '' }
+        }
+      })
+    )
+    sourceObservations.push(...observed.map((value) => value.observation))
+    summaries.push(...observed.map((value) => value.summary))
+  }
   const foldedNames = new Set<string>()
   for (const summary of summaries) {
     const foldedName = summary.name.toLocaleLowerCase('en-US')

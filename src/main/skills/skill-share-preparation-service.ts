@@ -60,6 +60,8 @@ function preview(id: string, value: Preparation): SkillSharePreview {
 
 export class SkillSharePreparationService {
   private readonly preparations = new Map<string, Preparation>()
+  private initialized: Promise<void> | null = null
+  private preparingCount = 0
 
   constructor(
     private readonly root: string,
@@ -73,14 +75,16 @@ export class SkillSharePreparationService {
     description?: string
     packageId?: string
   }): Promise<SkillSharePreview> {
+    await this.initialize()
     await this.prune()
-    if (this.preparations.size >= MAX_PREPARATIONS) {
+    if (this.preparations.size + this.preparingCount >= MAX_PREPARATIONS) {
       throw new Error('skill-share-preparation-limit')
     }
+    this.preparingCount += 1
     const preparationId = randomUUID()
     const directory = join(this.root, preparationId)
-    await mkdir(directory, { recursive: true, mode: 0o700 })
     try {
+      await mkdir(directory, { recursive: true, mode: 0o700 })
       const sources =
         input.sources ?? (input.sourceDirectory ? [{ sourceDirectory: input.sourceDirectory }] : [])
       const created = await createSkillBundleArchive({
@@ -102,6 +106,8 @@ export class SkillSharePreparationService {
     } catch (error) {
       await rm(directory, { recursive: true, force: true })
       throw error
+    } finally {
+      this.preparingCount -= 1
     }
   }
 
@@ -188,5 +194,13 @@ export class SkillSharePreparationService {
       .filter(([, value]) => value.expiresAt <= Date.now() && !value.controller)
       .map(([id]) => id)
     await Promise.all(expired.map((id) => this.release(id)))
+  }
+
+  private async initialize(): Promise<void> {
+    this.initialized ??= (async () => {
+      await rm(this.root, { recursive: true, force: true })
+      await mkdir(this.root, { recursive: true, mode: 0o700 })
+    })()
+    await this.initialized
   }
 }

@@ -11,8 +11,18 @@ import {
   SKILL_SSH_RELAY_COMMIT_UPLOAD_METHOD,
   SKILL_SSH_RELAY_INSTALL_BUNDLE_METHOD,
   SKILL_SSH_RELAY_INSTALL_METHOD,
+  SKILL_SSH_RELAY_LIST_METHOD,
   SKILL_SSH_RELAY_UPLOAD_CHUNK_METHOD
 } from '../shared/skill-ssh-relay-contract'
+import {
+  readSkillInstallReceipt,
+  writeSkillStateFile,
+  type SkillInstallReceiptV1
+} from '../main/skills/skill-install-provenance'
+import {
+  skillInstallJournalPath,
+  type SkillInstallJournalV1
+} from '../main/skills/skill-install-recovery'
 import { SKILL_RELAY_CAPABILITIES, SkillInstallHandler } from './skill-install-handler'
 
 const roots: string[] = []
@@ -21,7 +31,14 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-async function fixture() {
+async function fixture(
+  beforeStart?: (input: {
+    archive: Awaited<ReturnType<typeof createSkillPackageArchive>>
+    home: string
+    source: string
+    state: string
+  }) => Promise<void>
+) {
   const root = await mkdtemp(join(tmpdir(), 'orca-relay-skill-test-'))
   roots.push(root)
   const home = join(root, 'home')
@@ -38,6 +55,7 @@ async function fixture() {
     packageId: 'package_1',
     versionId: 'version_1'
   })
+  await beforeStart?.({ archive, home, source, state })
   const bytes = await readFile(archive.archivePath)
   const handlers = new Map<string, MethodHandler>()
   const dispatcher = {
@@ -54,7 +72,7 @@ async function fixture() {
       isStale: () => false,
       signal: new AbortController().signal
     })
-  return { archive, bytes, call, home, root }
+  return { archive, bytes, call, home, root, state }
 }
 
 describe('SkillInstallHandler', () => {
@@ -100,6 +118,87 @@ describe('SkillInstallHandler', () => {
       'skills.upload.v1',
       'skills.manage.v1'
     ])
+  })
+
+  it('recovers a committed install before the first managed-install listing', async () => {
+    let canonicalPath = ''
+    const { archive, call, state } = await fixture(async (input) => {
+      canonicalPath = join(input.home, '.agents', 'skills', input.archive.manifest.name)
+      await mkdir(canonicalPath, { recursive: true })
+      await writeFile(
+        join(canonicalPath, 'SKILL.md'),
+        await readFile(join(input.source, 'SKILL.md'))
+      )
+      const receipt: SkillInstallReceiptV1 = {
+        schemaVersion: 1,
+        packageId: input.archive.manifest.packageId,
+        versionId: input.archive.manifest.versionId,
+        packageDigest: input.archive.manifest.packageDigest,
+        archiveSha256: input.archive.archiveSha256,
+        scope: 'global',
+        destinationIdentity: 'global:ssh-host',
+        canonicalPath,
+        placements: [
+          {
+            provider: 'agent-skills',
+            path: canonicalPath,
+            topology: 'canonical-copy',
+            status: 'installed'
+          }
+        ],
+        installedAt: '2026-08-12T12:00:00.000Z',
+        hostIdentity: 'ssh-host',
+        fileModes: input.archive.manifest.files
+      }
+      const extractionPath = join(input.home, '.agents', 'skills', '.orca-skill-extract-crashed')
+      const journal: SkillInstallJournalV1 = {
+        schemaVersion: 1,
+        operation: 'install',
+        phase: 'canonical-placed',
+        canonicalPath,
+        extractionPath,
+        stagingPath: join(
+          input.home,
+          '.agents',
+          'skills',
+          `.${input.archive.manifest.name}.orca-staging-crashed`
+        ),
+        backupPath: join(
+          input.home,
+          '.agents',
+          'skills',
+          `.${input.archive.manifest.name}.orca-backup-crashed`
+        ),
+        backupDigest: null,
+        stagingFileModes: input.archive.manifest.files,
+        backupFileModes: input.archive.manifest.files,
+        receipt
+      }
+      await writeSkillStateFile(
+        skillInstallJournalPath(join(input.state, 'skill-installs'), canonicalPath),
+        journal
+      )
+    })
+
+    const installs = (await call(SKILL_SSH_RELAY_LIST_METHOD, { workspaces: [] })) as {
+      packageId: string
+      versionId: string
+      state: string
+    }[]
+
+    expect(installs).toEqual([
+      expect.objectContaining({
+        packageId: archive.manifest.packageId,
+        versionId: archive.manifest.versionId,
+        state: 'unchanged'
+      })
+    ])
+    await expect(
+      readSkillInstallReceipt(join(state, 'skill-installs'), canonicalPath)
+    ).resolves.toMatchObject({ versionId: archive.manifest.versionId })
+    await expect(
+      readFile(skillInstallJournalPath(join(state, 'skill-installs'), canonicalPath))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('installs a selected bundle through the additive SSH method', async () => {

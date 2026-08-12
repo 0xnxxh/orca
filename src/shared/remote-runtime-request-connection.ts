@@ -235,7 +235,8 @@ export class RemoteRuntimeRequestConnection {
           deviceToken: this.pairing.deviceToken,
           clientCapabilities: [
             protocolVersion.SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
-            protocolVersion.AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY
+            protocolVersion.AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
+            protocolVersion.SKILL_INSTALL_RESULT_V2_CAPABILITY
           ]
         }),
         sharedKey

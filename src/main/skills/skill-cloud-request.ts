@@ -1,5 +1,7 @@
 import { resolveArtifactCloudApiUrl } from '../artifacts/artifact-cloud-config'
 
+const DEFAULT_SKILL_CLOUD_REQUEST_TIMEOUT_MS = 60_000
+
 export class SkillCloudRequestError extends Error {
   constructor(
     readonly statusCode: number,
@@ -7,6 +9,37 @@ export class SkillCloudRequestError extends Error {
     message: string
   ) {
     super(message)
+  }
+}
+
+function requestSignal(
+  input: AbortSignal | undefined,
+  timeoutMs: number
+): {
+  signal: AbortSignal
+  cleanup(): void
+} {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error('skill-cloud-request-timeout-invalid')
+  }
+  const controller = new AbortController()
+  const forwardAbort = (): void => controller.abort(input?.reason)
+  if (input?.aborted) {
+    forwardAbort()
+  } else {
+    input?.addEventListener('abort', forwardAbort, { once: true })
+  }
+  const timeout = setTimeout(
+    () => controller.abort(new Error('skill-cloud-request-timeout')),
+    timeoutMs
+  )
+  timeout.unref()
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeout)
+      input?.removeEventListener('abort', forwardAbort)
+    }
   }
 }
 
@@ -19,35 +52,44 @@ export async function skillCloudRequest<T>(input: {
   signal?: AbortSignal
   idempotencyKey?: string
   fetcher?: typeof fetch
+  timeoutMs?: number
 }): Promise<T> {
   const apiUrl = resolveArtifactCloudApiUrl(input.apiUrl)
   const url = new URL(input.path, `${apiUrl}/`)
   if (url.origin !== apiUrl || !url.pathname.startsWith('/v1/')) {
     throw new Error('skill-cloud-request-path-invalid')
   }
-  const response = await (input.fetcher ?? fetch)(url, {
-    method: input.method ?? 'GET',
-    headers: {
-      ...(input.authToken ? { authorization: `Bearer ${input.authToken}` } : {}),
-      accept: 'application/json',
-      ...(input.body === undefined ? {} : { 'content-type': 'application/json' }),
-      ...(input.idempotencyKey ? { 'idempotency-key': input.idempotencyKey } : {})
-    },
-    ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
-    signal: input.signal,
-    redirect: 'error'
-  })
-  if (response.status === 204) {
-    return undefined as T
+  const deadline = requestSignal(
+    input.signal,
+    input.timeoutMs ?? DEFAULT_SKILL_CLOUD_REQUEST_TIMEOUT_MS
+  )
+  try {
+    const response = await (input.fetcher ?? fetch)(url, {
+      method: input.method ?? 'GET',
+      headers: {
+        ...(input.authToken ? { authorization: `Bearer ${input.authToken}` } : {}),
+        accept: 'application/json',
+        ...(input.body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(input.idempotencyKey ? { 'idempotency-key': input.idempotencyKey } : {})
+      },
+      ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
+      signal: deadline.signal,
+      redirect: 'error'
+    })
+    if (response.status === 204) {
+      return undefined as T
+    }
+    const value: unknown = await response.json().catch(() => null)
+    if (!response.ok) {
+      const error = value as { code?: unknown; message?: unknown } | null
+      throw new SkillCloudRequestError(
+        response.status,
+        typeof error?.code === 'string' ? error.code : 'skill_cloud_request_failed',
+        typeof error?.message === 'string' ? error.message : 'The skill Cloud request failed.'
+      )
+    }
+    return value as T
+  } finally {
+    deadline.cleanup()
   }
-  const value: unknown = await response.json().catch(() => null)
-  if (!response.ok) {
-    const error = value as { code?: unknown; message?: unknown } | null
-    throw new SkillCloudRequestError(
-      response.status,
-      typeof error?.code === 'string' ? error.code : 'skill_cloud_request_failed',
-      typeof error?.message === 'string' ? error.message : 'The skill Cloud request failed.'
-    )
-  }
-  return value as T
 }

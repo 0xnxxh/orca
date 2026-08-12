@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -50,6 +50,39 @@ afterEach(async () => {
 })
 
 describe('SkillSharePreparationService', () => {
+  it('removes abandoned preparations from a previous process before preparing', async () => {
+    const { root, source } = await createSource()
+    const preparationRoot = join(root, 'preparations')
+    await mkdir(join(preparationRoot, 'abandoned'), { recursive: true })
+    await writeFile(join(preparationRoot, 'abandoned', 'package.tar.gz'), 'private bytes')
+    const service = new SkillSharePreparationService(preparationRoot, {
+      publishVersion: vi.fn(),
+      createShare: vi.fn()
+    })
+
+    const result = await service.prepare({ sourceDirectory: source })
+
+    expect(await readdir(preparationRoot)).toEqual([result.preparationId])
+  })
+
+  it('enforces the preparation cap while archives are still being created', async () => {
+    const { root, source } = await createSource()
+    const service = new SkillSharePreparationService(join(root, 'preparations'), {
+      publishVersion: vi.fn(),
+      createShare: vi.fn()
+    })
+
+    const results = await Promise.allSettled(
+      Array.from({ length: 9 }, () => service.prepare({ sourceDirectory: source }))
+    )
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(8)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    expect(results.find((result) => result.status === 'rejected')).toMatchObject({
+      reason: new Error('skill-share-preparation-limit')
+    })
+  })
+
   it('reuses a finalized version when share response delivery is lost', async () => {
     const { root, source } = await createSource()
     const publishVersion = vi.fn(async (request: { packageId: string }) => ({

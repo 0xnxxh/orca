@@ -53,6 +53,7 @@ import {
   SkillInstallOperationError,
   skillInstallFailureFromError
 } from '../main/skills/skill-install-operation-error'
+import { recoverPendingSkillTransactions } from '../main/skills/skill-transaction-startup-recovery'
 
 const SSH_SKILL_ENVIRONMENT_ID = 'ssh-host'
 
@@ -69,6 +70,7 @@ export class SkillInstallHandler {
   private readonly stateDirectory: string
   private readonly uploads: SkillUploadSessionService
   private readonly detectProviders: () => Promise<readonly string[]>
+  private readonly recovery: Promise<unknown>
   private readonly installProgress = new Map<string, SkillBundleInstallProgress>()
 
   constructor(
@@ -85,6 +87,7 @@ export class SkillInstallHandler {
       join(this.stateDirectory, 'skill-installs', 'remote-uploads')
     )
     this.detectProviders = options.detectProviders ?? detectRelaySkillProviders
+    this.recovery = recoverPendingSkillTransactions(join(this.stateDirectory, 'skill-installs'))
     this.registerHandlers()
   }
 
@@ -178,6 +181,7 @@ export class SkillInstallHandler {
 
   private async executeSkillOperation<T>(operation: () => Promise<T>): Promise<T> {
     try {
+      await this.recovery
       return await operation()
     } catch (error) {
       const failure = skillInstallFailureFromError(error)
@@ -191,6 +195,7 @@ export class SkillInstallHandler {
   private async listManagedInstalls(
     workspaces: SkillSshWorkspaceAuthority[]
   ): Promise<ManagedSkillInstall[]> {
+    await this.recovery
     const installs = await listManagedSkillInstalls(join(this.stateDirectory, 'skill-installs'))
     return installs.flatMap((install): ManagedSkillInstall[] => {
       if (install.scope === 'global') {

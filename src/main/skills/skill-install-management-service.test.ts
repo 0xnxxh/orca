@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  previewSharedSkillBundleInstall,
   previewSharedSkillInstall,
   removeSharedSkillInstall
 } from './skill-install-management-service'
@@ -58,6 +59,31 @@ describe('skill install management', () => {
       destinationIdentity: 'global:runtime-1'
     })
     expect(preview.providers.map((provider) => provider.provider)).toEqual(['codex', 'claude'])
+  })
+
+  it('resolves providers once for every skill in a bundle preview', async () => {
+    const detectProviders = vi.fn(async () => ['codex', 'claude'])
+    const preview = await previewSharedSkillBundleInstall(
+      {
+        package: {
+          packageId: 'package-1',
+          versionId: 'version-1',
+          bundleDigest: 'c'.repeat(64),
+          archiveSha256: 'b'.repeat(64),
+          compressedBytes: 100
+        },
+        selectedSkills: ['alpha', 'beta'].map((name) => ({
+          id: name,
+          name,
+          digest: 'a'.repeat(64)
+        })),
+        destination: { scope: 'global' }
+      },
+      { ...dependencies(), detectProviders }
+    )
+
+    expect(preview.skills.map((skill) => skill.currentState)).toEqual(['missing', 'missing'])
+    expect(detectProviders).toHaveBeenCalledOnce()
   })
 
   it('refuses to remove an unowned destination', async () => {

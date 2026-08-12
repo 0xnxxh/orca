@@ -24,6 +24,7 @@ import {
   AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
   SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY
 } from './protocol-version'
+import { SKILL_INSTALL_RESULT_V2_CAPABILITY } from './skill-install-capability'
 
 const TEST_PROJECT_PATH = path.join('tmp', 'project')
 
@@ -67,7 +68,8 @@ describe('RemoteRuntimeSharedControlConnection', () => {
       deviceToken: 'device-token',
       clientCapabilities: [
         SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
-        AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY
+        AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
+        SKILL_INSTALL_RESULT_V2_CAPABILITY
       ]
     })
     expect(server.requests.map((request) => request.method)).toEqual([
