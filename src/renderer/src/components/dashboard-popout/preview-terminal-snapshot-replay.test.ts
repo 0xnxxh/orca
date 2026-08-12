@@ -56,6 +56,28 @@ describe('replayPreviewConnectionSnapshot', () => {
     expect(modes.snapshotFlags).toBe(0)
   })
 
+  it('carries live-proven flags across a resync snapshot that proves nothing', () => {
+    // A grid change or capture overflow against an old host fetches a
+    // replacement snapshot with no kitty metadata; wiping the mirror there
+    // reintroduces the raw-text-into-a-bit-3-TUI bug on every resync.
+    const modes = new TerminalKittyKeyboardModeTracker()
+    apply({ data: 'first frame' }, [], modes)
+    modes.scan('\x1b[>8u')
+    apply({ data: 'second frame' }, [], modes)
+    expect(modes.flags).toBe(8)
+    expect(modes.snapshotFlags).toBe(8)
+  })
+
+  it('carries nothing across a flagless snapshot when the mirror never proved state', () => {
+    // The constructor's known-zero was never proven for the previewed PTY;
+    // carrying it would launder a fresh default into a host-proven inactive.
+    const modes = new TerminalKittyKeyboardModeTracker()
+    apply({ data: 'first frame' }, [], modes)
+    apply({ data: 'second frame' }, [], modes)
+    expect(modes.flags).toBe(0)
+    expect(modes.snapshotFlags).toBeUndefined()
+  })
+
   it('keeps proven flags across a replacement snapshot whose ANSI carries no kitty bytes', () => {
     // The resync path used to reset the mirror and then scan kitty-free ANSI,
     // which is what silently dropped a live TUI's negotiation.

@@ -134,12 +134,35 @@ export function encodeImeCommitForKitty(
 
 /**
  * Resolve a press's release obligation against the physical `keyup` that
- * actually settled it. Returns null when the negotiated flags ask for no
- * release report for this key.
+ * actually settled it. Returns null when no release report is owed anymore.
  */
 export function encodeImeReleaseForKitty(
   obligation: ImeCommitReleaseObligation,
-  release: ImeReleaseKeyEvent
+  release: ImeReleaseKeyEvent,
+  context: {
+    /** The claimed press's identity, for keyups whose `key` an input source rewrote. */
+    press?: { key: string; code?: string }
+    /** The pane's flags at RELEASE time, deciding whether a release is still wanted. */
+    currentKittyKeyboardFlags: number
+  }
 ): string | null {
-  return evaluateKittyReport(release, release, obligation.flags, KITTY_EVENT_TYPE_RELEASE)
+  // Why the current-flags gate: the app can pop kitty mode between commit and
+  // keyup (a TUI quitting on the pressed key). xterm suppresses releases the
+  // moment `report_event_types` is gone — match it so the successor process
+  // never receives CSI-u bytes it did not negotiate. The report itself still
+  // encodes under the commit-time flags so the press/release pair stays
+  // consistent.
+  if ((context.currentKittyKeyboardFlags & KITTY_REPORT_EVENT_TYPES) === 0) {
+    return null
+  }
+  // Why the key fallback: an input source can rewrite the keyup's `key`
+  // ('Process' after a source switch mid-hold) while `code` still matches the
+  // press; xterm's evaluate finds no encodable key there and would silently
+  // drop the release, leaving the app with the key held forever. The keyup's
+  // own single-char `key` wins (Shift-up-first correctly reports unshifted).
+  const releaseKey =
+    release.key.length === 1 || context.press === undefined
+      ? release
+      : { ...release, key: context.press.key, code: context.press.code ?? release.code }
+  return evaluateKittyReport(releaseKey, release, obligation.flags, KITTY_EVENT_TYPE_RELEASE)
 }

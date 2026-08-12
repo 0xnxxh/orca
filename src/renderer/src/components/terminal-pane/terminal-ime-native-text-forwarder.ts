@@ -31,15 +31,29 @@ type PendingCommit = {
 }
 
 /**
- * What a claimed physical key still owes once its commit settled. `armed` holds
- * an encoder-owned release obligation; `suppress` is a tombstone that only
- * keeps the matching keyup away from xterm for a press the app never received.
+ * What a claimed physical key still owes once its commit settled. A non-null
+ * `obligation` is an encoder-owned release report; a null one is a tombstone
+ * that only keeps the matching keyup away from xterm for a press the app
+ * never received.
  */
 type ClaimedKeyRecord = {
   key: string
   code?: string
   obligation: ImeCommitReleaseObligation | null
 }
+
+// Bare modifier keydowns produce no terminal bytes and legitimately interleave
+// between a claimed press and its commit (Shift pressed for the NEXT character
+// before the text system delivers this one's `insertText`).
+const MODIFIER_KEYDOWN_KEYS = new Set([
+  'Shift',
+  'Control',
+  'Alt',
+  'Meta',
+  'CapsLock',
+  'AltGraph',
+  'Fn'
+])
 
 export type ImeNativeTextKeyEvent = {
   type: string
@@ -160,7 +174,10 @@ export function installTerminalImeNativeTextForwarder(args: {
     if (!record?.obligation) {
       return
     }
-    const report = encodeImeReleaseForKitty(record.obligation, release)
+    const report = encodeImeReleaseForKitty(record.obligation, release, {
+      press: { key: record.key, code: record.code },
+      currentKittyKeyboardFlags: args.getKittyKeyboardFlags?.() ?? 0
+    })
     if (report) {
       args.sendInput(report)
     }
@@ -199,29 +216,44 @@ export function installTerminalImeNativeTextForwarder(args: {
 
   const claimKeyEvent = (event: ImeNativeTextKeyEvent): boolean => {
     if (event.type === 'keydown') {
-      // Why: retiring here is also what drops a stale claim whose input event
-      // never arrived (the input source swallowed the key) — no timer needed.
-      // It leaves a tombstone so the stale press's keyup still cannot reach
-      // xterm, which never saw its keydown.
-      if (pendingCommit && !matchesClaimedPress(event, pendingCommit.press)) {
+      if (pendingCommit && matchesClaimedPress(event, pendingCommit.press)) {
+        // The same key pressed again while its claim still awaits `input`:
+        // settle first so an absorbed early keyup's owed release is emitted
+        // rather than silently overwritten.
         settleCommit(pendingCommit, null)
         pendingCommit = null
+      } else if (pendingCommit && !MODIFIER_KEYDOWN_KEYS.has(event.key)) {
+        // Why: retiring here is also what drops a stale claim whose input event
+        // never arrived (the input source swallowed the key) — no timer needed.
+        // It leaves a tombstone so the stale press's keyup still cannot reach
+        // xterm, which never saw its keydown. Bare modifier keydowns are
+        // exempt: they precede a still-inbound commit during fast typing and
+        // must not retire the claim it belongs to.
+        settleCommit(pendingCommit, null)
+        pendingCommit = null
+      }
+      if (event.repeat !== true) {
+        // A fresh press of a key we never saw released means its keyup was
+        // lost; drop the stale record rather than releasing it against this
+        // new press. Runs for chorded and composing keydowns too, so a stale
+        // tombstone cannot swallow the keyup of a press xterm itself encoded.
+        const staleRecordId = findClaimedRecordId(event)
+        if (staleRecordId !== null) {
+          claimedKeyRecords.delete(staleRecordId)
+        }
       }
       if (!isNativeTextKeydown(event, args.isComposing())) {
         return false
       }
-      const press: ClaimedKeyPress = {
-        key: event.key,
-        code: event.code,
-        shiftKey: event.shiftKey === true,
-        repeat: event.repeat === true
+      pendingCommit = {
+        press: {
+          key: event.key,
+          code: event.code,
+          shiftKey: event.shiftKey === true,
+          repeat: event.repeat === true
+        },
+        keyup: null
       }
-      if (press.repeat !== true) {
-        // A fresh press of a key we never saw released means its keyup was lost;
-        // drop that record rather than releasing it against this new press.
-        claimedKeyRecords.delete(claimedKeyId(press))
-      }
-      pendingCommit = { press, keyup: null }
       return true
     }
     if (event.type === 'keyup') {

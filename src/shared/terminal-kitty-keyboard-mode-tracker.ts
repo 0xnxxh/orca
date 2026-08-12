@@ -42,6 +42,11 @@ export class TerminalKittyKeyboardModeTracker {
   private altStackComplete = true
   private alternateScreenActive = false
   private alternateScreenSwitchObserved = false
+  // Why: a constructor-fresh tracker reports known-inactive, which is correct
+  // for a PTY it watches from spawn but was never proven for a pre-existing
+  // one. Grounding flips on evidence only: an explicit fresh-PTY reset, a
+  // proven snapshot restore, or scanned bytes that state flags absolutely.
+  private baselineProven = false
 
   /**
    * Current effective kitty keyboard flags. `0` doubles as the conservative
@@ -63,6 +68,16 @@ export class TerminalKittyKeyboardModeTracker {
     return this.currentKnown ? this.currentFlags : undefined
   }
 
+  /**
+   * True once this tracker's knownness is grounded in evidence for the PTY it
+   * mirrors. Consumers use it to refuse to preserve (or carry) a constructor
+   * default across a snapshot that proves nothing — the fresh known-zero must
+   * not be laundered into a host-proven inactive protocol (STA-3887).
+   */
+  get hasProvenBaseline(): boolean {
+    return this.baselineProven
+  }
+
   get isAlternateScreen(): boolean {
     return this.alternateScreenActive
   }
@@ -73,6 +88,7 @@ export class TerminalKittyKeyboardModeTracker {
 
   /** Full reset to a fresh PTY: known-inactive on both screens. */
   reset(): void {
+    this.baselineProven = true
     this.scanTail = ''
     this.currentFlags = 0
     this.mainFlags = 0
@@ -97,6 +113,7 @@ export class TerminalKittyKeyboardModeTracker {
    */
   resetForSnapshot(): void {
     this.reset()
+    this.baselineProven = false
     this.currentKnown = false
     this.mainKnown = false
     this.altKnown = false
@@ -117,6 +134,7 @@ export class TerminalKittyKeyboardModeTracker {
     }
     this.currentFlags = parsed
     this.currentKnown = true
+    this.baselineProven = true
   }
 
   scan(data: string): void {
@@ -169,6 +187,7 @@ export class TerminalKittyKeyboardModeTracker {
     // Why: xterm's DECSTR (CSI ! p) wipes kitty flags and stacks for both
     // screens via coreService.reset but does not switch buffers — mirror that
     // so a soft-resetting TUI stops receiving kitty-encoded Option chords.
+    this.baselineProven = true
     this.currentFlags = 0
     this.mainFlags = 0
     this.altFlags = 0
@@ -223,30 +242,36 @@ export class TerminalKittyKeyboardModeTracker {
       // even when the value it displaced was not.
       this.currentFlags = parsed[0] || 0
       this.currentKnown = true
+      this.baselineProven = true
       return
     }
     if (prefix === '<') {
       const count = Math.max(1, parsed[0] || 1)
-      let underflowed = false
+      let lastPopped: KittyStackFrame | null = null
       for (let i = 0; i < count; i++) {
         const frame = stack.pop()
         if (!frame) {
-          underflowed = true
+          lastPopped = null
           break
         }
+        lastPopped = frame
         this.currentFlags = frame.flags
         this.currentKnown = frame.known
       }
       if (stack.length === 0) {
+        // Why: xterm zeroes an exhausted stack even over a just-popped value.
+        // With complete history that matches the app's emulator exactly, but a
+        // mirror whose stack omits pre-snapshot pushes empties EARLIER than
+        // the app's — its forced zero is only proven when the popped frame
+        // itself proves 0 (the app restores that same value whatever sits
+        // below it); landing at empty on any other frame, or past it, proves
+        // nothing about the older history.
         this.currentFlags = 0
-        if (underflowed) {
-          // Why: xterm zeroes an exhausted stack, but a pop that reached past
-          // history the snapshot never carried proves nothing about that older
-          // frame — stay unknown instead of manufacturing a known zero.
-          this.currentKnown = this.alternateScreenActive
-            ? this.altStackComplete
-            : this.mainStackComplete
-        }
+        const stackComplete = this.alternateScreenActive
+          ? this.altStackComplete
+          : this.mainStackComplete
+        this.currentKnown =
+          stackComplete || (lastPopped !== null && lastPopped.known && lastPopped.flags === 0)
       }
       return
     }
@@ -256,6 +281,7 @@ export class TerminalKittyKeyboardModeTracker {
       // An absolute set re-proves the active screen regardless of its baseline.
       this.currentFlags = flags
       this.currentKnown = true
+      this.baselineProven = true
     } else if (mode === 2) {
       // Relative updates only preserve knowledge; they cannot create it.
       this.currentFlags |= flags

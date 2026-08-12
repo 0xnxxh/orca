@@ -6825,6 +6825,14 @@ export function connectPanePty(
           ? undefined
           : parseTerminalKittyKeyboardFlags(snapshot.kittyKeyboardFlags)
       if (proven === undefined) {
+        // Why the demotion: a mirror grounded in this PTY's stream keeps its
+        // state, but a constructor-fresh tracker (window reload) holds a
+        // known-zero that was never proven for the reattached PTY — demote it
+        // so the serializer cannot republish it downstream as host-proven
+        // inactive (STA-3887).
+        if (!kittyKeyboardModes.hasProvenBaseline) {
+          kittyKeyboardModes.resetForSnapshot()
+        }
         kittyKeyboardModes.scanReplay(snapshotData)
         return
       }
@@ -8370,6 +8378,11 @@ export function connectPanePty(
             // Relay replay may overlap xterm's pre-disconnect content; clear first to avoid duplication.
             writeReplayData('\x1b[2J\x1b[3J\x1b[H')
             // Why: raw relay replay may contain the app's own kitty pushes; re-arm with set semantics so redelivery can't grow the stack.
+            // A constructor-fresh mirror (window reload) first demotes to unproven:
+            // the replay window proves nothing about negotiations that predate it.
+            if (!kittyKeyboardModes.hasProvenBaseline) {
+              kittyKeyboardModes.resetForSnapshot()
+            }
             kittyKeyboardModes.scanReplay(connectResult.replay)
             writeReplayData(connectResult.replay)
             writeReplayData(

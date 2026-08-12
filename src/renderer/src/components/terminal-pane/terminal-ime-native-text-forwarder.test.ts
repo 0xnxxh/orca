@@ -294,6 +294,35 @@ describe('installTerminalImeNativeTextForwarder', () => {
       expect(sendInput).not.toHaveBeenCalled()
     })
 
+    it('keeps the claim armed across a bare modifier keydown before the commit lands', () => {
+      // Fast typing: ',' is pressed and released, then Shift goes down for the
+      // NEXT character while the text system is still delivering '，'.
+      const { forwarder, sendInput } = install()
+      expect(forwarder.claimKeyEvent(keyEvent({ key: ',' }))).toBe(true)
+      expect(forwarder.claimKeyEvent(keyEvent({ type: 'keyup', key: ',' }))).toBe(true)
+      expect(
+        forwarder.claimKeyEvent(keyEvent({ key: 'Shift', code: 'ShiftLeft', shiftKey: true }))
+      ).toBe(false)
+      dispatchInsertText(textarea, '，')
+      expect(sendInput).toHaveBeenCalledExactlyOnceWith('，')
+    })
+
+    it('lets a chorded keyup reach xterm after a fresh chorded press of the same key', () => {
+      const { forwarder, sendInput } = install()
+      // A claimed press whose input never arrived and whose keyup was swallowed
+      // elsewhere leaves a tombstone behind.
+      expect(forwarder.claimKeyEvent(keyEvent({ key: 'n', code: 'KeyN' }))).toBe(true)
+      expect(forwarder.claimKeyEvent(keyEvent({ key: 'x', code: 'KeyX' }))).toBe(true)
+      // Ctrl+N is xterm's press; its keyup must not be eaten by the stale tombstone.
+      expect(forwarder.claimKeyEvent(keyEvent({ key: 'n', code: 'KeyN', ctrlKey: true }))).toBe(
+        false
+      )
+      expect(
+        forwarder.claimKeyEvent(keyEvent({ type: 'keyup', key: 'n', code: 'KeyN', ctrlKey: true }))
+      ).toBe(false)
+      expect(sendInput).not.toHaveBeenCalled()
+    })
+
     it('releases the claim on blur', () => {
       const { forwarder, sendInput } = install()
       forwarder.claimKeyEvent(keyEvent({ key: ',' }))
@@ -396,6 +425,46 @@ describe('installTerminalImeNativeTextForwarder', () => {
       expect(forwarder.claimKeyEvent(keyEvent({ key: 'r' }))).toBe(false)
       dispatchInsertText(textarea, '한')
       expect(sendInput).not.toHaveBeenCalled()
+    })
+
+    it('emits the owed release before a same-key re-claim when the input event never came', () => {
+      const { forwarder, sendInput } = installWithFlags(() => 0b1010)
+      // The first press delivers and owes a release.
+      expect(forwarder.claimKeyEvent(keyEvent({ key: ',' }))).toBe(true)
+      dispatchInsertText(textarea, '，')
+      // An auto-repeat claim whose text the input source swallows absorbs the
+      // eventual keyup; the next fresh press must settle that owed release
+      // instead of deleting the record that holds it.
+      expect(forwarder.claimKeyEvent(keyEvent({ key: ',', repeat: true }))).toBe(true)
+      expect(forwarder.claimKeyEvent(keyEvent({ type: 'keyup', key: ',' }))).toBe(true)
+      expect(forwarder.claimKeyEvent(keyEvent({ key: ',' }))).toBe(true)
+      expect(sendInput.mock.calls.map((call) => call[0])).toEqual(['\x1b[44u', '\x1b[44;1:3u'])
+    })
+
+    it('suppresses the owed release when the app popped kitty mode before the keyup', () => {
+      // A TUI that quits on the pressed key pops its negotiation before the
+      // keyup; a CSI-u release would land in the successor shell as junk.
+      let flags = 0b1010
+      const { forwarder, sendInput } = installWithFlags(() => flags)
+      expect(forwarder.claimKeyEvent(keyEvent({ key: 'q', code: 'KeyQ' }))).toBe(true)
+      dispatchInsertText(textarea, 'q')
+      flags = 0
+      expect(forwarder.claimKeyEvent(keyEvent({ type: 'keyup', key: 'q', code: 'KeyQ' }))).toBe(
+        true
+      )
+      expect(sendInput).toHaveBeenCalledExactlyOnceWith('\x1b[113u')
+    })
+
+    it('encodes the release from the press when an input source rewrote the keyup key', () => {
+      const { forwarder, sendInput } = installWithFlags(() => 0b1010)
+      expect(forwarder.claimKeyEvent(keyEvent({ key: ',' }))).toBe(true)
+      dispatchInsertText(textarea, '，')
+      // Chromium reports 'Process' for IME-owned keys after a source switch
+      // mid-hold; `code` still identifies the physical press.
+      expect(
+        forwarder.claimKeyEvent(keyEvent({ type: 'keyup', key: 'Process', code: 'Comma' }))
+      ).toBe(true)
+      expect(sendInput.mock.calls.map((call) => call[0])).toEqual(['\x1b[44u', '\x1b[44;1:3u'])
     })
 
     it('writes the commit raw when the caller tracks no flags at all', () => {

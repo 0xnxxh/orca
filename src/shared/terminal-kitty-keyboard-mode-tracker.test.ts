@@ -219,6 +219,18 @@ describe('TerminalKittyKeyboardModeTracker', () => {
       expect(tracker.snapshotFlags).toBe(0)
     })
 
+    it('degrades to unknown on a pop that empties the stack over a nonzero frame', () => {
+      // The app's own emulator still holds pre-snapshot frames, so ITS pop
+      // restores the pushed 8 while the mirror's exhausted stack forces 0 —
+      // the forced zero must not be published as proven (STA-3887).
+      const tracker = new TerminalKittyKeyboardModeTracker()
+      tracker.resetForSnapshot()
+      tracker.restoreSnapshotFlags(8)
+      tracker.scan('\x1b[>2u\x1b[<u')
+      expect(tracker.flags).toBe(0)
+      expect(tracker.snapshotFlags).toBeUndefined()
+    })
+
     it('moves the known bit with the numeric slot across screen switches', () => {
       const tracker = new TerminalKittyKeyboardModeTracker()
       tracker.resetForSnapshot()
@@ -241,6 +253,45 @@ describe('TerminalKittyKeyboardModeTracker', () => {
       softReset.restoreSnapshotFlags(8)
       softReset.scan('\x1b[!p')
       expect(softReset.snapshotFlags).toBe(0)
+    })
+  })
+
+  // A constructor-fresh tracker reports known-zero, which is only true for a
+  // PTY it watches from spawn. Grounding lets snapshot appliers refuse to
+  // preserve or carry that default for a pre-existing PTY (STA-3887).
+  describe('baseline grounding', () => {
+    it('starts ungrounded and grounds on an explicit fresh-PTY reset', () => {
+      const tracker = new TerminalKittyKeyboardModeTracker()
+      expect(tracker.hasProvenBaseline).toBe(false)
+      tracker.reset()
+      expect(tracker.hasProvenBaseline).toBe(true)
+    })
+
+    it('is not grounded by plain output, only by absolute kitty evidence', () => {
+      const tracker = new TerminalKittyKeyboardModeTracker()
+      tracker.scan('plain output\x1b[31mcolored\x1b[0m')
+      expect(tracker.hasProvenBaseline).toBe(false)
+      tracker.scan('\x1b[>8u')
+      expect(tracker.hasProvenBaseline).toBe(true)
+    })
+
+    it('grounds on a proven snapshot restore but not on the snapshot reset', () => {
+      const tracker = new TerminalKittyKeyboardModeTracker()
+      tracker.reset()
+      tracker.resetForSnapshot()
+      expect(tracker.hasProvenBaseline).toBe(false)
+      tracker.restoreSnapshotFlags(8)
+      expect(tracker.hasProvenBaseline).toBe(true)
+    })
+
+    it('grounds on RIS and DECSTR arriving in the stream', () => {
+      const ris = new TerminalKittyKeyboardModeTracker()
+      ris.scan('\x1bc')
+      expect(ris.hasProvenBaseline).toBe(true)
+
+      const softReset = new TerminalKittyKeyboardModeTracker()
+      softReset.scan('\x1b[!p')
+      expect(softReset.hasProvenBaseline).toBe(true)
     })
   })
 })

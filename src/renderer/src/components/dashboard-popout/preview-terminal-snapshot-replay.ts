@@ -14,8 +14,9 @@ import type {
  *    that predates this capture;
  * 2. scan the snapshot's sections with replay semantics, so screen selection
  *    and any explicit mode bytes land first;
- * 3. adopt the flags the snapshot owner proved at this same boundary, onto
- *    whichever screen step 2 selected;
+ * 3. adopt the flags the snapshot owner proved at this same boundary — or,
+ *    when the owner proved nothing, the flags this mirror had already proven
+ *    itself — onto whichever screen step 2 selected;
  * 4. scan each replay chunk with the mode main derived from its own sequence
  *    metadata — live only for a proven post-snapshot suffix.
  *
@@ -30,6 +31,14 @@ export function replayPreviewConnectionSnapshot(args: {
   write: (chunk: string, live: boolean) => void
 }): void {
   const { snapshot, kittyKeyboardModes } = args
+  // Why the carry: a resync snapshot from an owner that proves nothing (grid
+  // change, capture overflow against an old host) must not erase what this
+  // mirror already proved from live output — the pane's own snapshot policy
+  // (STA-3887). A constructor-fresh mirror carries nothing: its known-zero was
+  // never proven for the pre-existing PTY the preview attaches to.
+  const provenFlags =
+    parseTerminalKittyKeyboardFlags(snapshot.kittyKeyboardFlags) ??
+    (kittyKeyboardModes.hasProvenBaseline ? kittyKeyboardModes.snapshotFlags : undefined)
   kittyKeyboardModes.resetForSnapshot()
   if (snapshot.scrollbackAnsi) {
     args.write(snapshot.scrollbackAnsi, false)
@@ -40,7 +49,6 @@ export function replayPreviewConnectionSnapshot(args: {
   if (snapshot.pendingEscapeTailAnsi) {
     args.write(snapshot.pendingEscapeTailAnsi, false)
   }
-  const provenFlags = parseTerminalKittyKeyboardFlags(snapshot.kittyKeyboardFlags)
   if (provenFlags !== undefined) {
     kittyKeyboardModes.restoreSnapshotFlags(provenFlags)
   }

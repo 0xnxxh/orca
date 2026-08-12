@@ -4914,6 +4914,11 @@ export function registerPtyHandlers(
       // deep inside the spawn path, but the pane needs that renderer-domain
       // boundary beside the daemon snapshot's kitty flags (STA-3887).
       let reconciledSnapshotSeq: number | null = null
+      // False when bytes crossed the data socket during the spawn RPC: the
+      // reconciled boundary covers them, but the daemon proved its kitty flags
+      // before they existed, so the claim must not erase what the pane may
+      // have scanned from those bytes live.
+      let snapshotKittyFlagsCoverReconciledSeq = true
       let preparedProvisionalExecutionContext = false
       let releaseWorktreeSpawn: (() => void) | undefined
       try {
@@ -5064,6 +5069,7 @@ export function registerPtyHandlers(
           // Why: admission precedes sequence/context state and every durable publication below.
           runtime?.assertPtyRegistrationAllowed?.(result.id, result.incarnationId)
           if (result.providerSequence) {
+            const runtimeSequenceBeforeReconcile = runtime?.getPtyOutputSequence?.(result.id) ?? 0
             // Why kept: this is the reattach boundary in the RENDERER's sequence
             // domain, and the daemon snapshot's kitty flags mean nothing without
             // the boundary they were proven at (STA-3887).
@@ -5073,6 +5079,9 @@ export function registerPtyHandlers(
                 result.providerSequence,
                 sequenceBeforeProviderSpawn
               ) ?? null
+            if (runtimeSequenceBeforeReconcile > sequenceBeforeProviderSpawn) {
+              snapshotKittyFlagsCoverReconciledSeq = false
+            }
           }
           ensureWslHookRelayForReattach(result, args.connectionId)
           runtime?.preparePtyExecutionContext?.(
@@ -5375,7 +5384,8 @@ export function registerPtyHandlers(
         resolvePaneSpawnReservation(paneSpawnReservationKey, paneSpawnReservation, {
           ...result,
           ...(typeof result.snapshotKittyKeyboardFlags === 'number' &&
-          reconciledSnapshotSeq !== null
+          reconciledSnapshotSeq !== null &&
+          snapshotKittyFlagsCoverReconciledSeq
             ? { snapshotSeq: reconciledSnapshotSeq }
             : { snapshotKittyKeyboardFlags: undefined }),
           isReattach: true
@@ -5944,6 +5954,11 @@ export function registerPtyHandlers(
       // deep inside the spawn path, but the pane needs that renderer-domain
       // boundary beside the daemon snapshot's kitty flags (STA-3887).
       let reconciledSnapshotSeq: number | null = null
+      // False when bytes crossed the data socket during the spawn RPC: the
+      // reconciled boundary covers them, but the daemon proved its kitty flags
+      // before they existed, so the claim must not erase what the pane may
+      // have scanned from those bytes live.
+      let snapshotKittyFlagsCoverReconciledSeq = true
       let preparedProvisionalExecutionContext = false
       let releaseWorktreeSpawn: (() => void) | undefined
       try {
@@ -6564,6 +6579,7 @@ export function registerPtyHandlers(
           assertSpawnReplyWasLive(result)
           runtime?.assertPtyRegistrationAllowed?.(result.id, result.incarnationId)
           if (result.providerSequence) {
+            const runtimeSequenceBeforeReconcile = runtime?.getPtyOutputSequence?.(result.id) ?? 0
             // Why kept: this is the reattach boundary in the RENDERER's sequence
             // domain, and the daemon snapshot's kitty flags mean nothing without
             // the boundary they were proven at (STA-3887).
@@ -6573,6 +6589,9 @@ export function registerPtyHandlers(
                 result.providerSequence,
                 sequenceBeforeProviderSpawn
               ) ?? null
+            if (runtimeSequenceBeforeReconcile > sequenceBeforeProviderSpawn) {
+              snapshotKittyFlagsCoverReconciledSeq = false
+            }
           }
           ensureWslHookRelayForReattach(result, args.connectionId)
           runtime?.preparePtyExecutionContext?.(
@@ -6951,7 +6970,8 @@ export function registerPtyHandlers(
           // Why both or neither: a pane can only adopt proven kitty flags together
           // with the sequence boundary they describe.
           ...(typeof result.snapshotKittyKeyboardFlags === 'number' &&
-          reconciledSnapshotSeq !== null
+          reconciledSnapshotSeq !== null &&
+          snapshotKittyFlagsCoverReconciledSeq
             ? { snapshotSeq: reconciledSnapshotSeq }
             : { snapshotKittyKeyboardFlags: undefined }),
           ...(!result.isReattach && effectiveLaunchConfig

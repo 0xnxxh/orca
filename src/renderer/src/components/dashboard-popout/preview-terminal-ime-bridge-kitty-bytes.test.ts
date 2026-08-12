@@ -221,10 +221,26 @@ describe('preview IME bridge outbound bytes', () => {
     session.setFlags(8)
     session.keydown({ repeat: true })
     session.commit('，')
+    session.setFlags(10)
     session.keyup()
-    // The repeat requested no event types, but the delivered press still owes
-    // its release under the flags it was sent with.
+    // The repeat requested no event types, but its commit must not erase the
+    // release the delivered first press still owes under the flags it was
+    // sent with.
     expect(session.emitted.join('')).toBe('\x1b[44u\x1b[44u\x1b[44;1:3u')
+    session.dispose()
+  })
+
+  it('suppresses the owed release when event types are no longer negotiated at keyup', () => {
+    // xterm parity: KittyKeyboard.evaluate drops RELEASE reports the moment
+    // report_event_types is gone, so an app that popped the mode — or the
+    // successor shell of a TUI that quit on this very key — never receives
+    // CSI-u bytes it did not negotiate.
+    const session = open(10)
+    session.keydown()
+    session.commit('，')
+    session.setFlags(0)
+    session.keyup()
+    expect(session.emitted.join('')).toBe('\x1b[44u')
     session.dispose()
   })
 
