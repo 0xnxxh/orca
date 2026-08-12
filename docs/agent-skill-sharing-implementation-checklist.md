@@ -90,6 +90,9 @@ Validated so far:
 - PostgreSQL migration startup is serialized by a transaction-scoped advisory lock. Transactional
   DDL rollback and eight concurrent startup callers passed against ephemeral PostgreSQL 16 and 17,
   with exactly one recorded schema version.
+- Cloud PR `#349` merged as `6a812c5e11` after proving an older API migration runner preserves a
+  newer additive column/table and continues using its existing SQL. Build, lint, typecheck, tests,
+  Terraform initialization, and validation passed; no service or infrastructure was deployed.
 - The immutable API deploy path stamps every artifact and skill literal variable plus exactly one
   approved skill-database secret, and rejects secret, Cloud SQL, service-account, scaling, CPU,
   memory, volume, mount, probe, or unexpected-environment drift before traffic promotion.
@@ -800,8 +803,10 @@ does not mean the surrounding phase is complete.
       during mixed API versions. Unit coverage proves atomic forward/idempotent migration, ignores
       an additive schema version written by a newer API, and leaves no recorded or partial schema
       after failure. PostgreSQL 16/17 integration coverage proves transactional DDL rollback and
-      eight concurrent startup callers converge on one version. A mixed-binary coexistence run and
-      database backup restore drill remain open.
+      eight concurrent startup callers converge on one version. Cloud PR `#349` additionally proves
+      the older runner and its existing SQL preserve and operate beside a simulated newer additive
+      column/table. A live mixed-binary coexistence run and database backup restore drill remain
+      open.
 
 ### Authorization and lifecycle model
 
