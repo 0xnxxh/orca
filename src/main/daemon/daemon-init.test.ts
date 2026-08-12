@@ -3195,8 +3195,11 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
         '/fake/token'
       )
       expect(forkMock).toHaveBeenCalled()
-      // The launcher probes the full grace budget: 1 initial probe + WEDGED_DAEMON_GRACE_RETRIES retries.
-      expect(daemonClientMock).toHaveBeenCalledTimes(3 + WEDGED_DAEMON_GRACE_RETRIES)
+      // 1 adoption + 1 initial probe + the retries + 1 patient probe + 1 post-fork adoption.
+      // The patient probe is the point: retrying a four-second handshake never reaches a
+      // daemon that consistently needs longer, so the launcher spends what is left of the
+      // clock on a single tolerant ask before it is willing to replace anything.
+      expect(daemonClientMock).toHaveBeenCalledTimes(4 + WEDGED_DAEMON_GRACE_RETRIES)
       // Why: this replace path used to kill the daemon with no log, so a post-hoc
       // reader could not tell it apart from an adoption; the verdict must be recorded.
       expect(warnSpy).toHaveBeenCalledWith(

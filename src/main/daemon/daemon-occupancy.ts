@@ -16,7 +16,12 @@ export type DaemonOccupancy =
   | { state: 'unknown'; liveSessions: null }
 
 export type DaemonOccupancyDeps = {
-  listSessions?: (socketPath: string, tokenPath: string, budgetMs: number) => Promise<number | null>
+  listSessions?: (
+    socketPath: string,
+    tokenPath: string,
+    budgetMs: number,
+    connectBudgetMs: number
+  ) => Promise<number | null>
   inspectPtyOwnership?: typeof inspectDaemonPtyOwnership
 }
 
@@ -40,13 +45,14 @@ export const OCCUPANCY_REQUEST_BUDGET_MS = 15_000
 async function countLiveSessionsOverIpc(
   socketPath: string,
   tokenPath: string,
-  budgetMs: number
+  budgetMs: number,
+  connectBudgetMs: number
 ): Promise<number | null> {
   const client = new DaemonClient({ socketPath, tokenPath, protocolVersion: PROTOCOL_VERSION })
   const deadline = Date.now() + budgetMs
   const remaining = (): number => Math.max(1, deadline - Date.now())
   try {
-    await client.ensureConnectedWithin(Math.min(OCCUPANCY_CONNECT_BUDGET_MS, remaining()))
+    await client.ensureConnectedWithin(Math.min(connectBudgetMs, remaining()))
     const result = await client.request<ListSessionsResult>(
       'listSessions',
       undefined,
@@ -75,10 +81,19 @@ export async function resolveDaemonOccupancy(args: {
   recordedPid: number | null
   /** Ceiling for the whole resolution; defaults to the connect plus request budgets. */
   budgetMs?: number
+  /**
+   * How long to spend on the handshake alone. Defaults to the cheap ask. A caller that has
+   * budget left and no answer yet should raise it: retrying a four-second handshake twelve
+   * times cannot reach a daemon that consistently needs five, and this path is only reached
+   * because a three-second health check already timed out — so re-asking on a stricter budget
+   * than the one that triaged it here can only ever agree with it.
+   */
+  connectBudgetMs?: number
   deps?: DaemonOccupancyDeps
 }): Promise<DaemonOccupancy> {
   const { socketPath, tokenPath, recordedPid, deps = {} } = args
   const budgetMs = args.budgetMs ?? OCCUPANCY_CONNECT_BUDGET_MS + OCCUPANCY_REQUEST_BUDGET_MS
+  const connectBudgetMs = args.connectBudgetMs ?? OCCUPANCY_CONNECT_BUDGET_MS
   const unknown: DaemonOccupancy = { state: 'unknown', liveSessions: null }
   // Why catch rather than let it propagate: 'unknown' is this module's residual, and a
   // question that could not be asked is the residual's whole purpose. An escaping throw
@@ -87,7 +102,8 @@ export async function resolveDaemonOccupancy(args: {
     const counted = await (deps.listSessions ?? countLiveSessionsOverIpc)(
       socketPath,
       tokenPath,
-      budgetMs
+      budgetMs,
+      connectBudgetMs
     )
     if (counted !== null) {
       return counted > 0

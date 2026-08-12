@@ -22,6 +22,7 @@ import { DAEMON_EXIT_ENDPOINT_OCCUPIED } from './daemon-endpoint-ownership'
 import { endpointIsProvenDead, probeSocketConnect } from './daemon-endpoint-probe'
 import {
   OCCUPANCY_CONNECT_BUDGET_MS,
+  OCCUPANCY_REQUEST_BUDGET_MS,
   raiseOccupancyWithProcessEvidence,
   resolveDaemonOccupancy,
   type DaemonOccupancy
@@ -96,15 +97,19 @@ export const WEDGED_DAEMON_GRACE_RETRIES = 11
  * The remainder of the fail-open window belongs to what follows a replace verdict: the kill
  * ladder and the daemon fork.
  */
-export const WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS = 38_000
+export const WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS = 34_000
 
 /**
  * Held back from the probes for the two steps that follow them inside the same ceiling: the
  * identity re-check and the process-table read. Without it the loop would spend the clock to
  * the last millisecond and those two would run past it — which is precisely how the previous
  * budget kept overrunning, one unremembered term at a time.
+ *
+ * Zero on Windows, which runs neither step: it has no process-table evidence to read and so
+ * no identity to verify for it. Reserving there would hold back time from the probes that are
+ * the only thing standing between a wedged Windows daemon and a kill.
  */
-export const CLASSIFICATION_EVIDENCE_RESERVE_MS = 12_000
+export const CLASSIFICATION_EVIDENCE_RESERVE_MS = process.platform === 'win32' ? 0 : 12_000
 const DAEMON_SELF_SHUTDOWN_WAIT_MS = 5_000
 const DAEMON_CHILD_TERMINATION_GRACE_MS = 5_000
 const DAEMON_CHILD_FORCE_EXIT_WAIT_MS = 1_000
@@ -497,9 +502,15 @@ function createOutOfProcessLauncher(
       socketPath,
       tokenPath
     })
+    // Why the clock starts before the adoption connect: that connect is on the classification
+    // path and uses the non-shared five-seconds-per-step default, so it was the fourth term to
+    // go missing from the sum this replaces. A ceiling that starts after part of the work is
+    // the same fiction in a new place.
+    const classificationDeadline = Date.now() + WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS
+    const classificationRemainingMs = (): number => Math.max(0, classificationDeadline - Date.now())
     try {
       // Why: acquire the full pair before control-only probes so an expired inherited deadline can't fire in the probe-to-adoption gap.
-      await adoptionClient.ensureConnected()
+      await adoptionClient.ensureConnectedWithin(classificationRemainingMs())
       await reconcileDaemonPidOwnership(adoptionClient, pidPath)
     } catch {
       adoptionClient.disconnect()
@@ -526,10 +537,6 @@ function createOutOfProcessLauncher(
         pidPath
       )
     }
-    // Why the clock starts here: the adoption connect above and the health check below are
-    // both on the classification path, and both were missing from the sum this replaces.
-    const classificationDeadline = Date.now() + WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS
-    const classificationRemainingMs = (): number => Math.max(0, classificationDeadline - Date.now())
     try {
       const health = await checkDaemonHealth(socketPath, tokenPath)
       if (health === 'healthy') {
@@ -626,29 +633,45 @@ function createOutOfProcessLauncher(
         // probe can eat the reserve however long the daemon takes to answer.
         const probeBudgetMs = (): number =>
           classificationRemainingMs() - CLASSIFICATION_EVIDENCE_RESERVE_MS
-        const askDaemonWhatItHosts = (): Promise<DaemonOccupancy> =>
+        const askDaemonWhatItHosts = (connectBudgetMs: number): Promise<DaemonOccupancy> =>
           resolveDaemonOccupancy({
             socketPath,
             tokenPath,
             recordedPid: null,
-            budgetMs: probeBudgetMs()
+            budgetMs: probeBudgetMs(),
+            connectBudgetMs
           })
         // Why grace at all: a wedged-but-connectable daemon (a Windows update relaunch) may
         // still own live sessions and simply need a moment. A permanent wedge (#8689) spends
         // the window, and 'rejected' skips it — a refused handshake is never going to be
-        // adopted. Retries stop when the clock can no longer fund a handshake, so the count
-        // is a ceiling rather than the budget.
-        let occupancy = await askDaemonWhatItHosts()
+        // adopted. Retries stop when the clock can no longer fund a handshake and an answer,
+        // so the count is a ceiling rather than the budget.
+        let occupancy = await askDaemonWhatItHosts(OCCUPANCY_CONNECT_BUDGET_MS)
         let graceRetry = 0
         while (
           occupancy.state === 'unknown' &&
           health !== 'rejected' &&
           graceRetry < WEDGED_DAEMON_GRACE_RETRIES &&
-          probeBudgetMs() >= OCCUPANCY_CONNECT_BUDGET_MS &&
+          probeBudgetMs() >= OCCUPANCY_CONNECT_BUDGET_MS + OCCUPANCY_REQUEST_BUDGET_MS &&
           !endpointIsProvenDead(await probeSocketConnect(socketPath))
         ) {
-          occupancy = await askDaemonWhatItHosts()
+          occupancy = await askDaemonWhatItHosts(OCCUPANCY_CONNECT_BUDGET_MS)
           graceRetry++
+        }
+        // Why one patient ask after the impatient ones: retrying a four-second handshake never
+        // reaches a daemon that consistently needs longer, and this path is only reached
+        // because a three-second health check already timed out — so every probe so far has
+        // judged it on a stricter budget than the one that triaged it here. Spending what is
+        // left on a single tolerant attempt is the only question that can disagree.
+        if (
+          occupancy.state === 'unknown' &&
+          health !== 'rejected' &&
+          probeBudgetMs() > 0 &&
+          // Nothing to be patient with when the endpoint is provably gone — a cold start
+          // reaches here too, and has no daemon to wait for.
+          !endpointIsProvenDead(await probeSocketConnect(socketPath))
+        ) {
+          occupancy = await askDaemonWhatItHosts(probeBudgetMs())
         }
         // The evidence that separates a wedged daemon still hosting terminals from one with
         // nothing left to lose (#8689). Read once IPC has had its full chance, and only when

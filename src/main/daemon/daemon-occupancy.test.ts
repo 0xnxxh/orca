@@ -44,7 +44,12 @@ describe('resolveDaemonOccupancy with a daemon that answered', () => {
       state: 'occupied',
       liveSessions: 3
     })
-    expect(listSessions).toHaveBeenCalledWith(SOCKET_PATH, TOKEN_PATH, expect.any(Number))
+    expect(listSessions).toHaveBeenCalledWith(
+      SOCKET_PATH,
+      TOKEN_PATH,
+      expect.any(Number),
+      expect.any(Number)
+    )
     // The daemon's own reply is authoritative; process-table evidence could only muddy it.
     expect(inspectPtyOwnership).not.toHaveBeenCalled()
   })
@@ -139,7 +144,7 @@ describe('resolveDaemonOccupancy budgets', () => {
         deps: { listSessions }
       })
     ).resolves.toEqual({ state: 'unknown', liveSessions: null })
-    expect(listSessions).toHaveBeenCalledWith(SOCKET_PATH, TOKEN_PATH, 5_000)
+    expect(listSessions).toHaveBeenCalledWith(SOCKET_PATH, TOKEN_PATH, 5_000, expect.any(Number))
   })
 })
 

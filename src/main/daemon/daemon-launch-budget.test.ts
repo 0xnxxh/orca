@@ -25,15 +25,17 @@ describe('wedged-daemon classification budget', () => {
   it('leaves the kill ladder and the daemon fork room under the startup fail-open', () => {
     // Startup abandons the daemon provider entirely at the cap, and ensureRunning() is not
     // abortable — so overrunning costs the app its daemon *and* still kills the incumbent.
-    // What follows a replace verdict is the kill ladder (~10s: identity, SIGTERM, wait,
-    // recheck, SIGKILL confirm) and the fork's own 10s readiness timeout.
+    // What follows a replace verdict is the kill ladder (~11.5s: identity, endpoint probe,
+    // KILL_WAIT, recheck, another probe, SIGKILL confirm) and the fork's own 10s readiness
+    // timeout — plus, on packaged Windows, a daemon-host directory copy of unbounded size.
+    // The margin above 21.5s is what covers that copy.
     const afterClassificationMs =
       LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS - WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS
 
     expect(WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS).toBeLessThan(
       LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS
     )
-    expect(afterClassificationMs).toBeGreaterThanOrEqual(20_000)
+    expect(afterClassificationMs).toBeGreaterThanOrEqual(22_000)
   })
 
   it('reserves enough of the clock for the steps that run after the probes', () => {
