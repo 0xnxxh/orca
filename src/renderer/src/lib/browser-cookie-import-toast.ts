@@ -1,6 +1,8 @@
 import { toast } from 'sonner'
 import type { BrowserCookieImportSummary } from '../../../shared/types'
+import { getExecutionHostLabel, type ExecutionHostId } from '../../../shared/execution-host'
 import { translate } from '@/i18n/i18n'
+import { getBrowserRuntimeHostIdForWorktree } from '@/lib/browser-runtime-owner'
 import { useAppStore } from '@/store'
 
 type CookieImportWarning = NonNullable<BrowserCookieImportSummary['warning']>
@@ -27,25 +29,34 @@ function formatCookieImportWarning(warning: CookieImportWarning): string {
 
 const GOOGLE_SIGN_IN_URL = 'https://accounts.google.com/'
 
-function googleSignInErrorMessage(): string {
+function googleSignInErrorMessage(hostLabel: string): string {
   return translate(
     'auto.lib.browser.cookie.import.toast.googleDirectSignInUnavailable',
-    'Could not open the browser profile. Open it and sign in at accounts.google.com.'
+    'Could not open the browser profile on {{value0}}. Open it there and sign in at accounts.google.com.',
+    { value0: hostLabel }
   )
 }
 
 function emitGoogleCookieImportWarning(
   summary: BrowserCookieImportSummary,
-  profileId: string
+  profileId: string,
+  executionHostId: ExecutionHostId
 ): void {
   if (!summary.googleCookiesSkipped) {
     return
   }
+  const hostLabel = getExecutionHostLabel(executionHostId)
   const message = translate(
     'auto.lib.browser.cookie.import.toast.googleCookiesSkipped',
-    'Google cookies were not imported. Open a browser in Orca with this profile, then sign into Google.'
+    'Google cookies were not imported. Open a browser in Orca on {{value0}} with this profile, then sign into Google.',
+    { value0: hostLabel }
   )
-  if (!useAppStore.getState().activeWorktreeId) {
+  const state = useAppStore.getState()
+  const activeWorktreeId = state.activeWorktreeId
+  if (
+    !activeWorktreeId ||
+    getBrowserRuntimeHostIdForWorktree(state, activeWorktreeId) !== executionHostId
+  ) {
     toast.warning(message)
     return
   }
@@ -59,17 +70,17 @@ function emitGoogleCookieImportWarning(
       onClick: () => {
         void useAppStore
           .getState()
-          .openBrowserProfileTabInActiveWorkspace(GOOGLE_SIGN_IN_URL, profileId)
+          .openBrowserProfileTabInActiveWorkspace(GOOGLE_SIGN_IN_URL, profileId, executionHostId)
           .then((opened) => {
             if (!opened) {
-              toast.error(googleSignInErrorMessage())
+              toast.error(googleSignInErrorMessage(hostLabel))
               return
             }
             // Why: Settings would cover the newly opened browser tab.
             useAppStore.getState().closeSettingsPage()
           })
           .catch(() => {
-            toast.error(googleSignInErrorMessage())
+            toast.error(googleSignInErrorMessage(hostLabel))
           })
       }
     }
@@ -81,7 +92,8 @@ function emitGoogleCookieImportWarning(
 export function emitBrowserCookieImportToast(
   summary: BrowserCookieImportSummary,
   successMessage: string,
-  profileId: string
+  profileId: string,
+  executionHostId: ExecutionHostId
 ): void {
   const warning = summary.warning
   if (warning) {
@@ -89,5 +101,5 @@ export function emitBrowserCookieImportToast(
   } else {
     toast.success(successMessage)
   }
-  emitGoogleCookieImportWarning(summary, profileId)
+  emitGoogleCookieImportWarning(summary, profileId, executionHostId)
 }

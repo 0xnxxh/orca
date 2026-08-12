@@ -24,6 +24,7 @@ const summary: BrowserCookieImportSummary = {
   skippedCookies: 0,
   domains: ['example.com']
 }
+const IMPORT_HOST = 'runtime:import-host' as const
 
 describe('emitBrowserCookieImportToast', () => {
   beforeEach(() => {
@@ -33,6 +34,7 @@ describe('emitBrowserCookieImportToast', () => {
     getStateMock.mockReset()
     getStateMock.mockReturnValue({
       activeWorktreeId: 'worktree-1',
+      activeWorkspaceExecutionHostId: IMPORT_HOST,
       closeSettingsPage: vi.fn(),
       openBrowserProfileTabInActiveWorkspace: vi.fn().mockResolvedValue(true)
     })
@@ -49,7 +51,8 @@ describe('emitBrowserCookieImportToast', () => {
         }
       },
       'Imported 3 cookies.',
-      'profile-1'
+      'profile-1',
+      IMPORT_HOST
     )
 
     expect(warningToastMock).toHaveBeenCalledWith(
@@ -69,7 +72,8 @@ describe('emitBrowserCookieImportToast', () => {
         }
       },
       'Imported 3 cookies.',
-      'profile-1'
+      'profile-1',
+      IMPORT_HOST
     )
 
     expect(warningToastMock).toHaveBeenCalledWith(
@@ -79,7 +83,7 @@ describe('emitBrowserCookieImportToast', () => {
   })
 
   it('shows success when the import has no warning', () => {
-    emitBrowserCookieImportToast(summary, 'Imported 3 cookies.', 'profile-1')
+    emitBrowserCookieImportToast(summary, 'Imported 3 cookies.', 'profile-1', IMPORT_HOST)
 
     expect(successToastMock).toHaveBeenCalledWith('Imported 3 cookies.')
     expect(warningToastMock).not.toHaveBeenCalled()
@@ -89,12 +93,13 @@ describe('emitBrowserCookieImportToast', () => {
     emitBrowserCookieImportToast(
       { ...summary, importedCookies: 2, skippedCookies: 1, googleCookiesSkipped: 1 },
       'Imported 2 cookies.',
-      'profile-1'
+      'profile-1',
+      IMPORT_HOST
     )
 
     expect(successToastMock).toHaveBeenCalledWith('Imported 2 cookies.')
     expect(warningToastMock.mock.calls[0][0]).toBe(
-      'Google cookies were not imported. Open a browser in Orca with this profile, then sign into Google.'
+      'Google cookies were not imported. Open a browser in Orca on import-host with this profile, then sign into Google.'
     )
     expect(warningToastMock.mock.calls[0][1].action.label).toBe('Sign in to Google')
     expect(successToastMock.mock.invocationCallOrder[0]).toBeLessThan(
@@ -106,7 +111,8 @@ describe('emitBrowserCookieImportToast', () => {
     emitBrowserCookieImportToast(
       { ...summary, importedCookies: 2, skippedCookies: 1 },
       'Imported 2 cookies.',
-      'profile-1'
+      'profile-1',
+      IMPORT_HOST
     )
 
     expect(successToastMock).toHaveBeenCalledWith('Imported 2 cookies.')
@@ -127,13 +133,14 @@ describe('emitBrowserCookieImportToast', () => {
         }
       },
       'Imported 1 cookie.',
-      'profile-1'
+      'profile-1',
+      IMPORT_HOST
     )
 
     expect(successToastMock).not.toHaveBeenCalled()
     expect(warningToastMock.mock.calls.map(([message]) => message)).toEqual([
       'Imported 1 of 2 cookies. The rest could not be loaded, and the restart fallback was unavailable. Try the import again.',
-      'Google cookies were not imported. Open a browser in Orca with this profile, then sign into Google.'
+      'Google cookies were not imported. Open a browser in Orca on import-host with this profile, then sign into Google.'
     ])
   })
 
@@ -142,6 +149,7 @@ describe('emitBrowserCookieImportToast', () => {
     const openBrowserProfileTabInActiveWorkspace = vi.fn().mockResolvedValue(true)
     getStateMock.mockReturnValue({
       activeWorktreeId: 'worktree-1',
+      activeWorkspaceExecutionHostId: IMPORT_HOST,
       closeSettingsPage,
       openBrowserProfileTabInActiveWorkspace
     })
@@ -149,14 +157,50 @@ describe('emitBrowserCookieImportToast', () => {
     emitBrowserCookieImportToast(
       { ...summary, googleCookiesSkipped: 1 },
       'Imported 2 cookies.',
-      'profile-1'
+      'profile-1',
+      IMPORT_HOST
     )
     warningToastMock.mock.calls[0][1].action.onClick()
 
     await vi.waitFor(() => expect(closeSettingsPage).toHaveBeenCalledTimes(1))
     expect(openBrowserProfileTabInActiveWorkspace).toHaveBeenCalledWith(
       'https://accounts.google.com/',
-      'profile-1'
+      'profile-1',
+      IMPORT_HOST
+    )
+  })
+
+  it('offers the direct action when the import and active workspace are both local', () => {
+    getStateMock.mockReturnValue({
+      activeWorktreeId: 'worktree-1',
+      activeWorkspaceExecutionHostId: 'local'
+    })
+
+    emitBrowserCookieImportToast(
+      { ...summary, googleCookiesSkipped: 1 },
+      'Imported 2 cookies.',
+      'profile-1',
+      'local'
+    )
+
+    expect(warningToastMock.mock.calls[0][1].action.label).toBe('Sign in to Google')
+  })
+
+  it('keeps host-aware guidance but omits the action for a different active host', () => {
+    getStateMock.mockReturnValue({
+      activeWorktreeId: 'worktree-1',
+      activeWorkspaceExecutionHostId: 'runtime:other-host'
+    })
+
+    emitBrowserCookieImportToast(
+      { ...summary, googleCookiesSkipped: 1 },
+      'Imported 2 cookies.',
+      'profile-1',
+      IMPORT_HOST
+    )
+
+    expect(warningToastMock).toHaveBeenLastCalledWith(
+      'Google cookies were not imported. Open a browser in Orca on import-host with this profile, then sign into Google.'
     )
   })
 
@@ -166,38 +210,44 @@ describe('emitBrowserCookieImportToast', () => {
     emitBrowserCookieImportToast(
       { ...summary, googleCookiesSkipped: 1 },
       'Imported 2 cookies.',
-      'profile-1'
+      'profile-1',
+      IMPORT_HOST
     )
 
     expect(warningToastMock).toHaveBeenLastCalledWith(
-      'Google cookies were not imported. Open a browser in Orca with this profile, then sign into Google.'
+      'Google cookies were not imported. Open a browser in Orca on import-host with this profile, then sign into Google.'
     )
   })
 
   it('reports when the profile tab cannot be opened', async () => {
+    const closeSettingsPage = vi.fn()
     const openBrowserProfileTabInActiveWorkspace = vi.fn().mockResolvedValue(false)
     getStateMock.mockReturnValue({
       activeWorktreeId: 'worktree-1',
-      closeSettingsPage: vi.fn(),
+      activeWorkspaceExecutionHostId: IMPORT_HOST,
+      closeSettingsPage,
       openBrowserProfileTabInActiveWorkspace
     })
 
     emitBrowserCookieImportToast(
       { ...summary, googleCookiesSkipped: 1 },
       'Imported 2 cookies.',
-      'profile-1'
+      'profile-1',
+      IMPORT_HOST
     )
     warningToastMock.mock.calls[0][1].action.onClick()
 
     await vi.waitFor(() => expect(errorToastMock).toHaveBeenCalledTimes(1))
     expect(errorToastMock).toHaveBeenCalledWith(
-      'Could not open the browser profile. Open it and sign in at accounts.google.com.'
+      'Could not open the browser profile on import-host. Open it there and sign in at accounts.google.com.'
     )
+    expect(closeSettingsPage).not.toHaveBeenCalled()
   })
 
   it('reports when opening the profile tab rejects', async () => {
     getStateMock.mockReturnValue({
       activeWorktreeId: 'worktree-1',
+      activeWorkspaceExecutionHostId: IMPORT_HOST,
       closeSettingsPage: vi.fn(),
       openBrowserProfileTabInActiveWorkspace: vi
         .fn()
@@ -207,7 +257,8 @@ describe('emitBrowserCookieImportToast', () => {
     emitBrowserCookieImportToast(
       { ...summary, googleCookiesSkipped: 1 },
       'Imported 2 cookies.',
-      'profile-1'
+      'profile-1',
+      IMPORT_HOST
     )
     warningToastMock.mock.calls[0][1].action.onClick()
 
