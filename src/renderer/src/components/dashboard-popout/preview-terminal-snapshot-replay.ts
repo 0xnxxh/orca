@@ -6,22 +6,9 @@ import type {
 } from '../../../../shared/terminal-preview'
 
 /**
- * Applies one preview connection — snapshot image plus its buffered replay — in
- * the order that keeps the kitty mirror authoritative (STA-3887):
- *
- * 1. reset to snapshot/unknown semantics, because production snapshot ANSI
- *    deliberately omits kitty pushes and so can never recover a negotiation
- *    that predates this capture;
- * 2. scan the snapshot's sections with replay semantics, so screen selection
- *    and any explicit mode bytes land first;
- * 3. adopt the flags the snapshot owner proved at this same boundary — or,
- *    when the owner proved nothing, the flags this mirror had already proven
- *    itself — onto whichever screen step 2 selected;
- * 4. scan each replay chunk with the mode main derived from its own sequence
- *    metadata — live only for a proven post-snapshot suffix.
- *
- * Synchronous by contract: no browser event may observe the temporary reset,
- * so callers must not await between these steps.
+ * Apply snapshot + buffered replay, restoring proven kitty flags after the
+ * snapshot scan (snapshot ANSI omits kitty pushes). Synchronous so no browser
+ * event observes the temporary reset.
  */
 export function replayPreviewConnectionSnapshot(args: {
   snapshot: TerminalPreviewSnapshot
@@ -34,7 +21,7 @@ export function replayPreviewConnectionSnapshot(args: {
   // Why the carry: a resync snapshot from an owner that proves nothing (grid
   // change, capture overflow against an old host) must not erase what this
   // mirror already proved from live output — the pane's own snapshot policy
-  // (STA-3887). A constructor-fresh mirror carries nothing: its known-zero was
+  // A constructor-fresh mirror carries nothing: its known-zero was
   // never proven for the pre-existing PTY the preview attaches to.
   const provenFlags =
     parseTerminalKittyKeyboardFlags(snapshot.kittyKeyboardFlags) ??

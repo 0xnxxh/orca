@@ -7,7 +7,7 @@ export type TerminalPreviewSnapshot = {
   pendingEscapeTailAnsi?: string
   /** Effective kitty keyboard flags the snapshot owner proved at this same
    *  `seq` boundary. Absent means unknown — Preview then keeps its tracker
-   *  unproven and commits raw text rather than guessing zero (STA-3887). */
+   *  unproven and commits raw text rather than guessing zero. */
   kittyKeyboardFlags?: number
 }
 

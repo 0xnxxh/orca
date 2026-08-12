@@ -1322,7 +1322,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       })
     })
 
-    // STA-3887: a proven `0` and an absent field are different facts. Dropping
+    // A proven `0` and an absent field are different facts. Dropping
     // the zero left consumers unable to tell "the app negotiated nothing" from
     // "this source could not say", which is what makes Preview guess wrong.
     it('publishes proven kitty flags including a known zero', async () => {

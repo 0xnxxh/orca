@@ -99,7 +99,7 @@ type SnapshotFrameOptions = {
   source?: 'headless' | 'renderer'
   oscLinks?: TerminalOscLinkRange[]
   pendingEscapeTailAnsi?: string
-  /** Effective kitty flags proven at this frame's own `seq`; see STA-3887. */
+  /** Effective kitty flags proven at this frame's own `seq`. */
   kittyKeyboardFlags?: number
 }
 

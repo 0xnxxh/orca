@@ -16,7 +16,7 @@ function makeStream(): TerminalPreviewOutputStream {
   )
 }
 
-// STA-3887: the renderer needs each buffered chunk's mode, not just its bytes.
+// The renderer needs each buffered chunk's mode, not just its bytes.
 // Returning a bare string[] made a proven post-snapshot `CSI > u` look like
 // historical redelivery, so the TUI's single pop later landed on a stale frame.
 describe('TerminalPreviewOutputStream.completeSnapshot', () => {

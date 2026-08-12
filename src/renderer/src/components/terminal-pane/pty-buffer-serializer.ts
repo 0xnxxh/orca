@@ -18,7 +18,7 @@ export type SerializedBuffer = {
   lastTitle?: string
   /** Kitty flags this pane's mirror could PROVE at `seq`. Published only from
    *  the tracker's snapshotFlags, so an old host's unknown state is never
-   *  republished as a known `0` (STA-3887). */
+   *  republished as a known `0`. */
   kittyKeyboardFlags?: number
 }
 

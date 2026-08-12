@@ -94,7 +94,7 @@ export type RemoteRuntimeSnapshotImage = {
   pendingEscapeTailAnsi?: string
   /** Effective kitty flags the HOST proved at this image's own `seq`. Absent
    *  from any host that predates the field — the pane tracker then stays
-   *  unproven and commits raw text instead of guessing zero (STA-3887). */
+   *  unproven and commits raw text instead of guessing zero. */
   kittyKeyboardFlags?: number
 }
 

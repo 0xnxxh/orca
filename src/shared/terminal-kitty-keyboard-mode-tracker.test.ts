@@ -148,7 +148,7 @@ describe('TerminalKittyKeyboardModeTracker', () => {
     expect(ranAndExited.flags).toBe(0)
   })
 
-  // STA-3887: `flags` is the conservative input fallback and `snapshotFlags` is
+  // `flags` is the conservative input fallback and `snapshotFlags` is
   // the provable fact. Collapsing them lets a snapshot that carried no kitty
   // metadata be republished downstream as "the host proved kitty is inactive",
   // which is exactly how a Preview on a bit-3 TUI ends up sending legacy text.
@@ -222,7 +222,7 @@ describe('TerminalKittyKeyboardModeTracker', () => {
     it('degrades to unknown on a pop that empties the stack over a nonzero frame', () => {
       // The app's own emulator still holds pre-snapshot frames, so ITS pop
       // restores the pushed 8 while the mirror's exhausted stack forces 0 —
-      // the forced zero must not be published as proven (STA-3887).
+      // the forced zero must not be published as proven.
       const tracker = new TerminalKittyKeyboardModeTracker()
       tracker.resetForSnapshot()
       tracker.restoreSnapshotFlags(8)
@@ -258,7 +258,7 @@ describe('TerminalKittyKeyboardModeTracker', () => {
 
   // A constructor-fresh tracker reports known-zero, which is only true for a
   // PTY it watches from spawn. Grounding lets snapshot appliers refuse to
-  // preserve or carry that default for a pre-existing PTY (STA-3887).
+  // preserve or carry that default for a pre-existing PTY.
   describe('baseline grounding', () => {
     it('starts ungrounded and grounds on an explicit fresh-PTY reset', () => {
       const tracker = new TerminalKittyKeyboardModeTracker()

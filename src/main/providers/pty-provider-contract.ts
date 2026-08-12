@@ -34,7 +34,7 @@ export type PtyProviderBufferSnapshot = {
   pendingEscapeTailAnsi?: string
   /** Effective kitty keyboard flags PROVEN at this snapshot's own `seq`
    *  boundary. Absent means the source could not prove them; readers must not
-   *  rewrite that silence into a known `0` (STA-3887). */
+   *  rewrite that silence into a known `0`. */
   kittyKeyboardFlags?: number
 }
 

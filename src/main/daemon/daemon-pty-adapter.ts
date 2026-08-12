@@ -837,7 +837,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     const snapshotPayload = snapshotPrefix + snapshotFrame
     // Why kitty flags ride beside the payload, not inside it: the snapshot reaches renderer xterms where POST_REPLAY_REATTACH_RESET's kitty reset must win (terminal-query-authority.md §kitty).
     // Why known `0` is no longer dropped: the pane tracker must be able to tell
-    // "the app negotiated nothing" from "this reattach proved nothing" (STA-3887).
+    // "the app negotiated nothing" from "this reattach proved nothing".
     const kittyKeyboardFlags = parseTerminalKittyKeyboardFlags(
       result.snapshot.modes.kittyKeyboardFlags
     )

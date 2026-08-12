@@ -1584,7 +1584,7 @@ export type PreloadApi = {
        *  write it after its post-replay resets, last before live chunks. */
       pendingEscapeTailAnsi?: string
       /** Effective kitty flags the snapshot owner proved at `seq`. Absent means
-       *  unknown; consumers must not turn that into a known `0` (STA-3887). */
+       *  unknown; consumers must not turn that into a known `0`. */
       kittyKeyboardFlags?: number
     } | null>
     getRendererDeliveryDebugSnapshot: () => Promise<{

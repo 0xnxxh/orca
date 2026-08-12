@@ -241,7 +241,7 @@ describe('registerTerminalPreviewHandlers', () => {
     expect(sender.send).not.toHaveBeenCalled()
   })
 
-  // STA-3887: flags and image must come from ONE capture. Publishing flags from
+  // Flags and image must come from ONE capture. Publishing flags from
   // a separate "current state" read would describe a different stream position,
   // so replaying the intervening bytes could duplicate or reorder transitions.
   it('returns the kitty flags of the capture that produced the returned image', async () => {

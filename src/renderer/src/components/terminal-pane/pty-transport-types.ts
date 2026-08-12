@@ -42,7 +42,7 @@ export type PtyBufferSnapshot = {
    *  exactly as live instead of rendering literal (Bug E / #7329). */
   pendingEscapeTailAnsi?: string
   /** Effective kitty flags the owner of this image proved at `seq`. Absent
-   *  means unknown; never rewrite that silence into a known `0` (STA-3887). */
+   *  means unknown; never rewrite that silence into a known `0`. */
   kittyKeyboardFlags?: number
 }
 
@@ -84,7 +84,7 @@ export type PtyConnectResult = {
   snapshotFrameRestoreAnsi?: string
   /** Kitty keyboard flags the daemon snapshot proved, paired with the renderer-
    *  domain `snapshotSeq` main reconciled for the same attach boundary. Absent
-   *  means unknown, never a proven inactive protocol (STA-3887). */
+   *  means unknown, never a proven inactive protocol. */
   snapshotKittyKeyboardFlags?: number
   snapshotSeq?: number
   isAlternateScreen?: boolean

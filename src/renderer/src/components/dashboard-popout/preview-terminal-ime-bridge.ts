@@ -13,7 +13,7 @@ export type PreviewImeBridgeOptions = {
   /**
    * The preview's live kitty mirror, read once per commit. Required, not
    * optional: omitting it evaluated every commit at flags `0`, so a Preview on
-   * a bit-3 TUI silently sent legacy text the app had declined (STA-3887).
+   * a bit-3 TUI silently sent legacy text the app had declined.
    */
   getKittyKeyboardFlags: () => number
 }

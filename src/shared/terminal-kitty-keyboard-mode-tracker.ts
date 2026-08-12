@@ -58,11 +58,9 @@ export class TerminalKittyKeyboardModeTracker {
   }
 
   /**
-   * The active screen's flags only while this tracker can PROVE them. Absent
-   * after a snapshot whose owner published no Kitty metadata, and after any
-   * transition that depends on push history the snapshot could not carry.
-   * Serializers publish this, never `flags`, so an old host's silence is never
-   * republished downstream as a proven zero.
+   * Active screen's proven flags, absent when unknown: after snapshots without
+   * Kitty metadata, or transitions needing uncarried push history. Serializers
+   * publish this, never `flags` — silence must not become a proven zero.
    */
   get snapshotFlags(): number | undefined {
     return this.currentKnown ? this.currentFlags : undefined
@@ -72,7 +70,7 @@ export class TerminalKittyKeyboardModeTracker {
    * True once this tracker's knownness is grounded in evidence for the PTY it
    * mirrors. Consumers use it to refuse to preserve (or carry) a constructor
    * default across a snapshot that proves nothing — the fresh known-zero must
-   * not be laundered into a host-proven inactive protocol (STA-3887).
+   * not be laundered into a host-proven inactive protocol.
    */
   get hasProvenBaseline(): boolean {
     return this.baselineProven

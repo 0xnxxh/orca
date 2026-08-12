@@ -125,7 +125,7 @@ vi.mock('@/components/terminal-pane/terminal-ime-native-text-forwarder', () => (
       dispose: vi.fn(),
       sendInput: args.sendInput,
       // Why captured: the bridge's whole job is handing the live mirror to the
-      // forwarder, so the test reads what a real commit would read (STA-3887).
+      // forwarder, so the test reads what a real commit would read.
       getKittyKeyboardFlags: args.getKittyKeyboardFlags ?? ((): number => 0)
     }
     imeHarness.forwarders.push(forwarder)
@@ -277,7 +277,7 @@ describe('AgentTerminalPreview', () => {
     expect(imeHarness.trackers).toHaveLength(0)
   })
 
-  // STA-3887: the bridge omitted this dependency entirely, so every Preview
+  // The bridge omitted this dependency entirely, so every Preview
   // commit was evaluated at flags 0. Ordering and provenance live in
   // preview-terminal-snapshot-replay.test.ts; this pins the wiring.
   it('hands the forwarder the live mirror seeded from the snapshot flags', async () => {

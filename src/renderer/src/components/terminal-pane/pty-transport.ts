@@ -105,7 +105,7 @@ type ProcessPtyOutputOptions = {
   clearBeforeReplay?: boolean
   // Why: a mid-escape tail; the replay consumer writes it LAST (after the post-replay reset) so the next live chunk completes it, not renders it literally (#7329).
   pendingEscapeTailAnsi?: string
-  /** Kitty flags the snapshot owner proved at `snapshotSeq` (STA-3887). */
+  /** Kitty flags the snapshot owner proved at `snapshotSeq`. */
   kittyKeyboardFlags?: number
   snapshotSeq?: number
 }

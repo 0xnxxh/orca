@@ -1619,7 +1619,7 @@ type RuntimeTerminalBufferSnapshot = {
   scrollbackAnsi?: string
   pendingEscapeTailAnsi?: string
   /** Effective kitty flags proven at this snapshot's own `seq`. Absent means
-   *  the winning source could not prove them (STA-3887). */
+   *  the winning source could not prove them. */
   kittyKeyboardFlags?: number
 }
 
@@ -12087,7 +12087,7 @@ export class OrcaRuntimeService {
           scrollbackAnsi: snapshot.scrollbackAnsi,
           // Why beside outputSequence and never re-read later: the flags must
           // describe the same stream position as the image, or replay would
-          // apply push/pop transitions twice or out of order (STA-3887).
+          // apply push/pop transitions twice or out of order.
           ...(parseTerminalKittyKeyboardFlags(snapshot.modes?.kittyKeyboardFlags) !== undefined
             ? { kittyKeyboardFlags: snapshot.modes.kittyKeyboardFlags }
             : {}),

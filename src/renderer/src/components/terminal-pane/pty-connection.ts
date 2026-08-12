@@ -4754,7 +4754,7 @@ export function connectPanePty(
             // Why snapshotFlags and not `flags`: this pane may itself have
             // consumed an old-host snapshot that proved nothing, and its
             // conservative `0` fallback must not be republished downstream as
-            // a host-proven inactive protocol (STA-3887).
+            // a host-proven inactive protocol.
             const provenKittyFlags = kittyKeyboardModes.snapshotFlags
             return {
               data,
@@ -6808,8 +6808,8 @@ export function connectPanePty(
     }
 
     /**
-     * Apply an authoritative snapshot to the pane's kitty mirror in the order
-     * STA-3887 requires: unproven reset, replay-semantics scan of the snapshot
+     * Apply an authoritative snapshot to the pane's kitty mirror in the order:
+     * unproven reset, replay-semantics scan of the snapshot
      * bytes (so screen selection lands first), then the owner's proven flags.
      *
      * Why the reset only happens when the owner proved something: an old host
@@ -6829,7 +6829,7 @@ export function connectPanePty(
         // state, but a constructor-fresh tracker (window reload) holds a
         // known-zero that was never proven for the reattached PTY — demote it
         // so the serializer cannot republish it downstream as host-proven
-        // inactive (STA-3887).
+        // inactive.
         if (!kittyKeyboardModes.hasProvenBaseline) {
           kittyKeyboardModes.resetForSnapshot()
         }
@@ -7313,7 +7313,7 @@ export function connectPanePty(
             }
             // Why here and not from the writes below: the mirror tracks what the
             // APPLICATION negotiated, so it must see the snapshot's own bytes
-            // before adopting the flags main proved for this boundary (STA-3887).
+            // before adopting the flags main proved for this boundary.
             applySnapshotKittyKeyboardModes(`${snapshot.scrollbackAnsi ?? ''}${snapshot.data}`, {
               kittyKeyboardFlags: snapshot.kittyKeyboardFlags,
               snapshotSeq: snapshot.seq

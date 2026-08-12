@@ -28,7 +28,7 @@ function apply(
   return { modes: kittyKeyboardModes, written }
 }
 
-// STA-3887: the Preview's mirror is the only thing that can tell the IME
+// The Preview's mirror is the only thing that can tell the IME
 // forwarder what the TUI negotiated, and snapshot ANSI never carries kitty
 // pushes — so the flags have to arrive as metadata and be applied in order.
 describe('replayPreviewConnectionSnapshot', () => {

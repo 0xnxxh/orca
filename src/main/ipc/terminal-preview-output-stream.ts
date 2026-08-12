@@ -24,7 +24,7 @@ type PendingOutput = { data: string; bytes: number; meta?: TerminalPreviewOutput
  * survived. Only a chunk whose sequence metadata proves it is the suffix after
  * that boundary may advance kitty state with live stack semantics; an overlap
  * that cannot be sliced is redelivery, and a redelivered `CSI > u` applied as a
- * push would leave the TUI's single pop landing on a stale frame (STA-3887).
+ * push would leave the TUI's single pop landing on a stale frame.
  */
 function outputAfterSnapshotSeq(
   output: PendingOutput,

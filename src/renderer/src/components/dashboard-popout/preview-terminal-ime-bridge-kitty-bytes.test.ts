@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// The release oracle for STA-3887: exact outbound bytes from the REAL shared
+// The release oracle: exact outbound bytes from the REAL shared
 // forwarder behind installPreviewImeBridge. A wiring-only mock cannot show that
 // a Preview opened on a bit-3 TUI commits CSI-u, nor that exactly one release
 // leaves the forwarder in either macOS event order.

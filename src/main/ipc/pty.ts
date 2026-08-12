@@ -4126,7 +4126,7 @@ export function registerPtyHandlers(
           result.lastTitle = snapshot.lastTitle
         }
         // Why gated on seq: without a boundary the flags cannot be reconciled
-        // against live bytes, so they prove nothing (STA-3887).
+        // against live bytes, so they prove nothing.
         const kittyKeyboardFlags = parseTerminalKittyKeyboardFlags(snapshot.kittyKeyboardFlags)
         if (result.seq !== undefined && kittyKeyboardFlags !== undefined) {
           result.kittyKeyboardFlags = kittyKeyboardFlags
@@ -4912,7 +4912,7 @@ export function registerPtyHandlers(
       let pendingRegistrationPtyId: string | null = null
       // Why hoisted to the reply scope: main reconciles the provider sequence
       // deep inside the spawn path, but the pane needs that renderer-domain
-      // boundary beside the daemon snapshot's kitty flags (STA-3887).
+      // boundary beside the daemon snapshot's kitty flags.
       let reconciledSnapshotSeq: number | null = null
       // False when bytes crossed the data socket during the spawn RPC: the
       // reconciled boundary covers them, but the daemon proved its kitty flags
@@ -5072,7 +5072,7 @@ export function registerPtyHandlers(
             const runtimeSequenceBeforeReconcile = runtime?.getPtyOutputSequence?.(result.id) ?? 0
             // Why kept: this is the reattach boundary in the RENDERER's sequence
             // domain, and the daemon snapshot's kitty flags mean nothing without
-            // the boundary they were proven at (STA-3887).
+            // the boundary they were proven at.
             reconciledSnapshotSeq =
               runtime?.synchronizePtyOutputSequenceFromProvider?.(
                 result.id,
@@ -5952,7 +5952,7 @@ export function registerPtyHandlers(
       let pendingRegistrationPtyId: string | null = null
       // Why hoisted to the reply scope: main reconciles the provider sequence
       // deep inside the spawn path, but the pane needs that renderer-domain
-      // boundary beside the daemon snapshot's kitty flags (STA-3887).
+      // boundary beside the daemon snapshot's kitty flags.
       let reconciledSnapshotSeq: number | null = null
       // False when bytes crossed the data socket during the spawn RPC: the
       // reconciled boundary covers them, but the daemon proved its kitty flags
@@ -6582,7 +6582,7 @@ export function registerPtyHandlers(
             const runtimeSequenceBeforeReconcile = runtime?.getPtyOutputSequence?.(result.id) ?? 0
             // Why kept: this is the reattach boundary in the RENDERER's sequence
             // domain, and the daemon snapshot's kitty flags mean nothing without
-            // the boundary they were proven at (STA-3887).
+            // the boundary they were proven at.
             reconciledSnapshotSeq =
               runtime?.synchronizePtyOutputSequenceFromProvider?.(
                 result.id,
