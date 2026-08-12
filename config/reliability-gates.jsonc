@@ -7586,7 +7586,7 @@
       "providers": ["local", "daemon", "ssh", "wsl", "remote-runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["local", "daemon", "ssh"],
-      "coverageNotes": "A deterministic service-state-machine oracle now models a current-contract worker and coordinator whose renderer graph identities disappear across an app/runtime update. It exercises the production verifier with restored PTY and hydrated hook commitments, proves authenticated completion replay across a fresh runtime, explicit takeover, ordinary mail routing, remote-attachment process fencing, retained Task/Dispatch/terminal identity, and unchanged fixture marker bytes, and rejects foreign pane evidence. Other deterministic units cover authority-aware legacy formatting, exact legacy worker identity planning, local worker presentation, retained-output reads after adoption, reveal-failure warnings, stable-pane Run/Dispatch routing, creator pane/process/Run-generation fencing, indexed retained-Run lookup scaling, the SSH in-process CLI fallback, exact legacy Task/Dispatch/report-receipt verification, JSON rejection envelopes, and capability-negotiated Run-home settlement with lost-ack replay. Two isolated macOS Electron journeys launch fake Codex workers through the real RPC path and record append-only spawn/interruption ledgers. They assert immediate inactive presentation, one live agent PID, stable PTY/incarnation/tab/leaf/worktree/Task/Dispatch identity, and no interruption after workspace re-entry; the restart journey additionally removes renderer ownership, marks the Dispatch legacy, retains the daemon process across an app restart, and proves exact background adoption with readable ACK output and no resume replay. Distinct A/B artifacts plus live SSH, WSL, folder, remote-runtime, Linux, and Windows cutover journeys remain explicit gaps.",
+      "coverageNotes": "A deterministic service-state-machine oracle now models a current-contract worker and coordinator whose renderer graph identities disappear across an app/runtime update. It exercises the production verifier with restored PTY and hydrated hook commitments, proves authenticated completion replay across a fresh runtime, explicit takeover, ordinary mail routing, remote-attachment process fencing, retained Task/Dispatch/terminal identity, and unchanged fixture marker bytes, and rejects foreign pane evidence. Other deterministic units cover authority-aware legacy formatting, exact legacy worker identity planning, local worker presentation, retained-output reads after adoption, reveal-failure warnings, stable-pane Run/Dispatch routing, creator pane/process/Run-generation fencing, indexed retained-Run lookup scaling, the SSH in-process CLI fallback, exact legacy Task/Dispatch/report-receipt verification, JSON rejection envelopes, and capability-negotiated Run-home settlement with lost-ack replay. Three isolated macOS Electron journeys launch fake Codex workers through the real RPC path. The compiled-CLI journey spawns fresh out/cli processes for rejected and accepted worker_done plus worker-release, then independently verifies runtime and SQLite state. The presentation and restart journeys assert immediate inactive presentation, one live agent PID, stable PTY/incarnation/tab/leaf/worktree/Task/Dispatch identity, and no interruption after workspace re-entry; the restart journey additionally proves exact background adoption with readable ACK output and no resume replay. Distinct A/B artifacts plus live SSH, WSL, folder, remote-runtime, Linux, and Windows cutover journeys remain explicit gaps.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/11107#discussion_r3663321387",
         "https://github.com/stablyai/orca/issues/13858"
@@ -7603,7 +7603,8 @@
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration/orchestration-creator-authority-performance.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts",
         "pnpm run test:e2e -- tests/e2e/orchestration-worker-terminal-visibility.spec.ts --workers=1",
-        "pnpm run test:e2e -- tests/e2e/orchestration-legacy-worker-restart-recovery.spec.ts --workers=1"
+        "pnpm run test:e2e -- tests/e2e/orchestration-legacy-worker-restart-recovery.spec.ts --workers=1",
+        "pnpm run build:cli && SKIP_BUILD=1 pnpm exec playwright test tests/e2e/orchestration-worker-settlement-release-cli.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1"
       ],
       "testFiles": [
         "src/main/runtime/rpc/orchestration-runtime-update-settlement.test.ts",
@@ -7622,7 +7623,8 @@
         "src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts",
         "src/main/ssh/ssh-remote-orca-cli.test.ts",
         "tests/e2e/orchestration-worker-terminal-visibility.spec.ts",
-        "tests/e2e/orchestration-legacy-worker-restart-recovery.spec.ts"
+        "tests/e2e/orchestration-legacy-worker-restart-recovery.spec.ts",
+        "tests/e2e/orchestration-worker-settlement-release-cli.spec.ts"
       ],
       "assertionRefs": [
         {
@@ -7753,9 +7755,27 @@
             "sleeping-session, resume-claim, and pending-startup state are cleared after adoption",
             "no second spawn, resume argv, input, signal, interruption, or duplicate tab occurs after workspace re-entry"
           ]
+        },
+        {
+          "file": "tests/e2e/orchestration-worker-settlement-release-cli.spec.ts",
+          "assertions": [
+            "a compiled CLI worker_done with the wrong identity exits nonzero with ok=false",
+            "the exact Task and Dispatch remain dispatched after rejection",
+            "the correct worker identity receives an explicit completed lifecycle verdict",
+            "an independent runtime read observes the Dispatch completed"
+          ]
         }
       ],
       "evidenceRuns": [
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm run build:cli && SKIP_BUILD=1 pnpm exec playwright test tests/e2e/orchestration-worker-settlement-release-cli.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 20,
+          "summary": "The combined candidate passed one real Electron and compiled-CLI journey: wrong worker identity exited nonzero with ok=false while Dispatch stayed dispatched, the exact worker received an explicit completed verdict, and runtime state independently reached completed."
+        },
         {
           "date": "2026-08-03",
           "runner": "local",
@@ -7853,11 +7873,11 @@
       },
       "flakeHistory": {
         "status": "unknown",
-        "evidence": "The deterministic units and two isolated Electron journeys pass locally; CI and soak history are not yet available."
+        "evidence": "The deterministic units and three isolated Electron journeys pass locally; CI and soak history are not yet available."
       },
       "redGreenEvidence": {
-        "status": "partial",
-        "evidence": "The byte-identical 5f45c270f1 service oracle is red as the sole overlay 063340a8ba on origin/main@34291f07e9, green on candidate@2748b0b29b, red with current-authority propagation actually disabled in child 08a7db37bf, and green again after revert d2a4e2e024. The focused presentation and stale-handle tests failed against the earlier pre-fix implementation. The restart journey additionally failed first on empty retained output while the original PTY/PID remained live, then passed after the scoped recovered-worker snapshot fallback. The live incident and pre-fix Electron topology showed workspace re-entry replaying provider resume against a worker whose tab binding was missing. Distinct installed A/B and CI artifacts are still needed."
+        "status": "complete",
+        "evidence": "The byte-identical compiled-CLI Electron oracle failed on latest main 5ea7df1a5b because a wrong worker identity exited zero with ok=true while Dispatch stayed dispatched, passed on combined candidate d697666ce8 with a nonzero ok=false rejection and explicit completed verdict for the exact worker, and reproduced the main failure when the claimed production files were disabled at merge-base 64aec94cb2. The earlier byte-identical service oracle was also red on main, green on candidate, red with authority propagation disabled, and green after restore. Distinct installed A/B and CI artifacts are still needed."
       },
       "performanceBudget": {
         "required": true,
@@ -8019,7 +8039,7 @@
       "providers": ["local", "daemon", "ssh", "wsl", "remote-runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["local", "ssh"],
-      "coverageNotes": "Deterministic service tests cover release-versus-reuse ordering, transactional retain and takeover cancellation, exact host/pane/process identity, dead external/user-owned/transferred/stopped/abandoned reconciliation, conservative unknown provider and legacy metadata handling, immutable transcript and bounded terminal archives, mutation restart, reset cleanup, replay idempotency, and 50-resource accounting. Injected inventories cover local and SSH provider routing; live SSH, WSL, Windows, paired-runtime, and provider-close lost-ack journeys remain explicit gaps.",
+      "coverageNotes": "Deterministic service tests cover release-versus-reuse ordering, transactional retain and takeover cancellation, exact host/pane/process identity, dead external/user-owned/transferred/stopped/abandoned reconciliation, conservative unknown provider and legacy metadata handling, immutable transcript and bounded terminal archives, mutation restart, reset cleanup, replay idempotency, and 50-resource accounting. A macOS Electron journey invokes the freshly compiled worker-release CLI after the worker process disappears, then independently checks released SQLite state and coordinator liveness. Injected inventories cover local and SSH provider routing; live SSH, WSL, Windows, paired-runtime, and provider-close lost-ack journeys remain explicit gaps.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/12355",
         "https://github.com/stablyai/orca/issues/13860",
@@ -8031,7 +8051,8 @@
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime-process-incarnation-liveness.test.ts src/main/runtime/rpc/methods/orchestration-worker-release.test.ts src/main/runtime/rpc/methods/orchestration-worker-release-recovery.test.ts src/main/runtime/rpc/orchestration-mutation-ledger.test.ts src/main/runtime/orchestration/worker-transcript-read.test.ts src/renderer/src/lib/worker-terminal-takeover-report.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/methods/orchestration-worker-release.test.ts src/main/runtime/rpc/methods/orchestration-worker-release-recovery.test.ts src/main/runtime/rpc/orchestration-mutation-ledger.test.ts src/main/runtime/orchestration/worker-transcript-read.test.ts src/renderer/src/lib/worker-terminal-takeover-report.test.ts --reporter=dot",
-        "pnpm exec vitest run --config config/vitest.config.ts tests/e2e/completed-worker-retirement-resume.unit.test.ts --reporter=verbose"
+        "pnpm exec vitest run --config config/vitest.config.ts tests/e2e/completed-worker-retirement-resume.unit.test.ts --reporter=verbose",
+        "pnpm run build:cli && SKIP_BUILD=1 pnpm exec playwright test tests/e2e/orchestration-worker-settlement-release-cli.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1"
       ],
       "testFiles": [
         "src/main/runtime/orca-runtime-process-incarnation-liveness.test.ts",
@@ -8040,7 +8061,8 @@
         "src/main/runtime/rpc/orchestration-mutation-ledger.test.ts",
         "src/main/runtime/orchestration/worker-transcript-read.test.ts",
         "src/renderer/src/lib/worker-terminal-takeover-report.test.ts",
-        "tests/e2e/completed-worker-retirement-resume.unit.test.ts"
+        "tests/e2e/completed-worker-retirement-resume.unit.test.ts",
+        "tests/e2e/orchestration-worker-settlement-release-cli.spec.ts"
       ],
       "assertionRefs": [
         {
@@ -8084,9 +8106,27 @@
             "coalesces overlapping reconciliation passes and closes each resource once",
             "keeps live terminals bounded across 50 settled workers while controls survive"
           ]
+        },
+        {
+          "file": "tests/e2e/orchestration-worker-settlement-release-cli.spec.ts",
+          "assertions": [
+            "compiled worker-release reconciles a dead external retained resource to released",
+            "the CLI reports processAction none instead of closing a process",
+            "SQLite independently records released ownership and release state",
+            "the unrelated coordinator terminal remains live"
+          ]
         }
       ],
       "evidenceRuns": [
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm run build:cli && SKIP_BUILD=1 pnpm exec playwright test tests/e2e/orchestration-worker-settlement-release-cli.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 20,
+          "summary": "The combined candidate's compiled worker-release returned released with processAction none after positive process absence; an independent SQLite read showed both states released and the coordinator terminal remained live."
+        },
         {
           "date": "2026-08-11",
           "runner": "local",
@@ -8107,8 +8147,8 @@
         }
       ],
       "runtimeBudget": {
-        "p95Seconds": 15,
-        "scope": "deterministic runtime, SQLite, transcript, renderer-input, and mutation contracts"
+        "p95Seconds": 45,
+        "scope": "deterministic runtime, SQLite, transcript, renderer-input, mutation contracts, and one compiled-CLI Electron journey"
       },
       "flakeHistory": {
         "status": "unknown",
@@ -8116,7 +8156,7 @@
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "The original byte-identical 56-test oracle produced 12 deterministic failures and 44 passes with production restored to exact PR head 4aa66b62e3; candidate 457bc4edd1 passed all 56 and restoring the same production files reproduced red. For issue #13860, the unchanged three-case dead external/user-owned/transferred oracle failed 3/3 on actual latest main 444638d96b because every resource remained retained, passed 3/3 on the rebased candidate, failed 3/3 after restoring production exactly to 444638d96b, and passed 3/3 after restoring the candidate. Every run asserted both durable ownership/release state and zero terminal close calls."
+        "evidence": "The byte-identical compiled-CLI Electron oracle left the dead resource external/retained on latest main 5ea7df1a5b, passed on combined candidate d697666ce8 with released/released SQLite state and processAction none, and reproduced external/retained after disabling the claimed production files at merge-base 64aec94cb2. The earlier unchanged three-case dead external/user-owned/transferred service oracle likewise failed 3/3 on main, passed 3/3 on candidate, and failed 3/3 with production restored; every run asserted durable state and zero terminal close calls."
       },
       "performanceBudget": {
         "required": true,
