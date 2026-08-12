@@ -7258,6 +7258,28 @@ export class Store {
     lease: Omit<SshRemotePtyLease, 'createdAt' | 'updatedAt'> &
       Partial<Pick<SshRemotePtyLease, 'createdAt' | 'updatedAt'>>
   ): void {
+    this.applySshRemotePtyLease(lease)
+    this.flush()
+  }
+
+  async upsertSshPtyCleanupLeaseAsync(
+    lease: Omit<SshRemotePtyLease, 'createdAt' | 'updatedAt' | 'cleanupPending'> &
+      Partial<Pick<SshRemotePtyLease, 'createdAt' | 'updatedAt'>> & { cleanupPending: true }
+  ): Promise<void> {
+    this.applySshRemotePtyLease(lease)
+    try {
+      this.flushOrThrow()
+    } catch (error) {
+      // Why: keep live retry authority and schedule another disk attempt, but never kill remotely before one durable copy exists.
+      this.scheduleSave()
+      throw error
+    }
+  }
+
+  private applySshRemotePtyLease(
+    lease: Omit<SshRemotePtyLease, 'createdAt' | 'updatedAt'> &
+      Partial<Pick<SshRemotePtyLease, 'createdAt' | 'updatedAt'>>
+  ): void {
     this.state.sshRemotePtyLeases ??= []
     const normalizedLease = { ...lease }
     if (normalizedLease.leafId !== undefined && !isTerminalLeafId(normalizedLease.leafId)) {
@@ -7316,7 +7338,6 @@ export class Store {
     } else {
       this.state.sshRemotePtyLeases.push(next)
     }
-    this.flush()
   }
 
   markSshRemotePtyLeases(targetId: string, state: SshRemotePtyLease['state']): void {
@@ -7422,13 +7443,13 @@ export class Store {
     this.flush()
   }
 
-  removeMatchingSshPtyCleanupLeases(
+  async removeMatchingSshPtyCleanupLeasesAsync(
     targetId: string,
     candidates: readonly {
       ptyId: string
       cleanupExpectedIncarnationId?: string
     }[]
-  ): { ptyId: string; cleanupExpectedIncarnationId?: string }[] {
+  ): Promise<{ ptyId: string; cleanupExpectedIncarnationId?: string }[]> {
     const candidateByKey = new Map(
       candidates.map((candidate) => {
         const ptyId = this.getRelayPtyIdForSshLeaseStorage(targetId, candidate.ptyId)
@@ -7443,6 +7464,7 @@ export class Store {
     }
     const leases = this.state.sshRemotePtyLeases ?? []
     const retired: { ptyId: string; cleanupExpectedIncarnationId?: string }[] = []
+    const removedLeases: SshRemotePtyLease[] = []
     const next = leases.filter((lease) => {
       if (lease.targetId !== targetId || lease.cleanupPending !== true) {
         return true
@@ -7454,14 +7476,29 @@ export class Store {
         return true
       }
       retired.push(candidate)
+      removedLeases.push(lease)
       return false
     })
     if (retired.length === 0) {
       return []
     }
     this.state.sshRemotePtyLeases = next
-    this.flush()
-    return retired
+    try {
+      this.flushOrThrow()
+      return retired
+    } catch (error) {
+      this.state.sshRemotePtyLeases ??= []
+      for (const lease of removedLeases) {
+        const replaced = this.state.sshRemotePtyLeases.some(
+          (candidate) => candidate.targetId === lease.targetId && candidate.ptyId === lease.ptyId
+        )
+        if (!replaced) {
+          this.state.sshRemotePtyLeases.push(lease)
+        }
+      }
+      this.scheduleSave()
+      throw error
+    }
   }
 
   removeSshRemotePtyLease(targetId: string, ptyId: string): void {

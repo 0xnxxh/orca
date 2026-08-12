@@ -8734,10 +8734,14 @@ describe('registerPtyHandlers', () => {
     }
     registerSshPtyProvider(connectionId, provider as never)
     let cleanupLease: Record<string, unknown> | undefined
+    let cleanupPersistenceFails = true
     const store = {
       persistPtyBinding: vi.fn(() => false),
-      upsertSshRemotePtyLease: vi.fn((lease) => {
+      upsertSshPtyCleanupLeaseAsync: vi.fn(async (lease) => {
         cleanupLease = { ...lease }
+        if (cleanupPersistenceFails) {
+          throw new Error('injected cleanup lease persistence failure')
+        }
       }),
       getSshRemotePtyLeases: vi.fn(() => (cleanupLease ? [cleanupLease] : [])),
       markSshRemotePtyLease: vi.fn((_targetId, _ptyId, state) => {
@@ -8763,6 +8767,22 @@ describe('registerPtyHandlers', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const leafId = '33333333-3333-4333-8333-333333333333'
+    const spawnRejectedSplit = (): Promise<{ id: string }> =>
+      (controller as unknown as RuntimeSpawnController).spawn({
+        cols: 80,
+        rows: 24,
+        connectionId,
+        worktreeId: 'repo-1::/remote/repo',
+        tabId: 'tab-rejected-split',
+        leafId,
+        persistHostSessionBinding: true,
+        expectedSourceBinding: {
+          worktreeId: 'repo-1::/remote/repo',
+          tabId: 'tab-rejected-split',
+          leafId: '22222222-2222-4222-8222-222222222222',
+          ptyId: `ssh:${connectionId}@@source-pty`
+        }
+      })
 
     try {
       registerPtyHandlers(
@@ -8773,28 +8793,28 @@ describe('registerPtyHandlers', () => {
         undefined,
         store as never
       )
-      await expect(
-        (controller as unknown as RuntimeSpawnController).spawn({
-          cols: 80,
-          rows: 24,
-          connectionId,
-          worktreeId: 'repo-1::/remote/repo',
-          tabId: 'tab-rejected-split',
-          leafId,
-          persistHostSessionBinding: true,
-          expectedSourceBinding: {
-            worktreeId: 'repo-1::/remote/repo',
-            tabId: 'tab-rejected-split',
-            leafId: '22222222-2222-4222-8222-222222222222',
-            ptyId: `ssh:${connectionId}@@source-pty`
-          }
-        })
-      ).rejects.toThrow('terminal_split_source_not_found')
+      await expect(spawnRejectedSplit()).rejects.toThrow(
+        'injected cleanup lease persistence failure'
+      )
+      expect(shutdown).not.toHaveBeenCalled()
+      expect(liveRemotePtys.has(appPtyId)).toBe(true)
+      expect(getPtyIdsForConnection(connectionId)).toEqual([appPtyId])
+
+      cleanupPersistenceFails = false
+      shutdownFails = false
+      await handlers.get('pty:kill')!(null, { id: appPtyId })
+      cleanupLease = undefined
+      shutdown.mockClear()
+      store.markSshRemotePtyLease.mockClear()
+      store.upsertSshPtyCleanupLeaseAsync.mockClear()
+      shutdownFails = true
+
+      await expect(spawnRejectedSplit()).rejects.toThrow('terminal_split_source_not_found')
 
       expect(runtime.registerPty).not.toHaveBeenCalled()
       expect(liveRemotePtys.has(appPtyId)).toBe(true)
       expect(getPtyIdsForConnection(connectionId)).toEqual([appPtyId])
-      expect(store.upsertSshRemotePtyLease).toHaveBeenCalledWith(
+      expect(store.upsertSshPtyCleanupLeaseAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           targetId: connectionId,
           ptyId: 'rejected-split-pty',
@@ -8806,8 +8826,8 @@ describe('registerPtyHandlers', () => {
           state: 'attached'
         })
       )
-      expect(store.upsertSshRemotePtyLease.mock.calls[0]?.[0]).not.toHaveProperty('tabId')
-      expect(store.upsertSshRemotePtyLease.mock.calls[0]?.[0]).not.toHaveProperty('leafId')
+      expect(store.upsertSshPtyCleanupLeaseAsync.mock.calls[0]?.[0]).not.toHaveProperty('tabId')
+      expect(store.upsertSshPtyCleanupLeaseAsync.mock.calls[0]?.[0]).not.toHaveProperty('leafId')
       expect(warn).toHaveBeenCalledWith(
         '[pty] failed to clean up PTY after persistence failure:',
         expect.objectContaining({ message: 'injected remote shutdown failure' })
@@ -11573,6 +11593,7 @@ describe('registerPtyHandlers', () => {
     } as never)
     const store = {
       upsertSshRemotePtyLease: vi.fn(),
+      upsertSshPtyCleanupLeaseAsync: vi.fn(),
       persistPtyBinding: vi.fn(() => {
         throw new Error('disk full')
       }),
@@ -11607,7 +11628,7 @@ describe('registerPtyHandlers', () => {
       ).rejects.toThrow(/ORCA_TERMINAL_SESSION_STATE_SAVE_FAILED/)
 
       expect(remoteShutdown).toHaveBeenCalledWith(appPtyId, { immediate: true })
-      expect(store.upsertSshRemotePtyLease).toHaveBeenCalledWith(
+      expect(store.upsertSshPtyCleanupLeaseAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           targetId: 'ssh-fresh-fail',
           ptyId: 'relay-pty',
@@ -11615,8 +11636,8 @@ describe('registerPtyHandlers', () => {
           state: 'attached'
         })
       )
-      expect(store.upsertSshRemotePtyLease.mock.calls[0]?.[0]).not.toHaveProperty('tabId')
-      expect(store.upsertSshRemotePtyLease.mock.calls[0]?.[0]).not.toHaveProperty('leafId')
+      expect(store.upsertSshPtyCleanupLeaseAsync.mock.calls[0]?.[0]).not.toHaveProperty('tabId')
+      expect(store.upsertSshPtyCleanupLeaseAsync.mock.calls[0]?.[0]).not.toHaveProperty('leafId')
       expect(store.markSshRemotePtyLease).toHaveBeenCalledWith(
         'ssh-fresh-fail',
         'relay-pty',
