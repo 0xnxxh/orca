@@ -1314,7 +1314,9 @@ platform gates below.
       junction coverage remains open.
 - [ ] Test concurrent desktop, headless runtime, CLI, SSH, and recovery attempts.
       The shared transaction core now serializes two simultaneous installs into one installed and
-      one unchanged result, one receipt, and no staging residue; cross-entry-point contention
+      one unchanged result, one receipt, and no staging residue. The host request service also
+      serializes simultaneous download-grant and trusted-local ingress requests with the same
+      guarantees; contention across separate desktop, headless, CLI, SSH, and recovery processes
       remains open.
 - [ ] Test permission and read-only failures, disk exhaustion, cancellation, process termination,
       and host disconnect. Simulated `EACCES` and `ENOSPC` preservation plus lost-response retry are

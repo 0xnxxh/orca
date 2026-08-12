@@ -81,6 +81,31 @@ describe('executeSkillInstallRequest', () => {
     ).toContain('# Request')
   })
 
+  it('serializes download and trusted-local requests through one destination transaction', async () => {
+    const { root, request, dependencies, archive } = await fixture()
+    const [downloaded, local] = await Promise.all([
+      executeSkillInstallRequest(request, dependencies),
+      executeSkillInstallRequest(
+        {
+          ...request,
+          operationId: 'operation_2',
+          ingress: { kind: 'local-file', path: archive.archivePath }
+        },
+        { ...dependencies, allowTrustedLocalFile: true }
+      )
+    ])
+
+    expect([downloaded.status, local.status].sort()).toEqual(['installed', 'unchanged'])
+    expect(
+      await readdir(join(dependencies.stateDirectory, 'skill-installs', 'receipts'))
+    ).toHaveLength(1)
+    expect(
+      (await readdir(join(root, 'home', '.agents', 'skills'))).filter((name) =>
+        name.includes('.orca-')
+      )
+    ).toEqual([])
+  })
+
   it('rejects local paths at the remote request boundary', async () => {
     const { request, dependencies, archive } = await fixture()
     await expect(
