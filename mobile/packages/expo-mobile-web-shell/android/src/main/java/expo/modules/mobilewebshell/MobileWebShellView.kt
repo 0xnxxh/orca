@@ -29,7 +29,7 @@ private const val MOBILE_WEB_MESSAGE_BYTE_LIMIT = 640 * 1024
 private const val MOBILE_WEB_PENDING_MESSAGE_LIMIT = 32
 private val MOBILE_WEB_CSP = listOf(
   "default-src 'none'",
-  "script-src 'self' 'sha256-1U6xDmOrcY3IC5LxY6dRlxDPeS9l4iILlzMspyz5qlY='",
+  "script-src 'self' 'sha256-0v6dNxOHhaCHjn+NSTwrDLZhYZUfwaG9gFVsUEG6MWI='",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self'",

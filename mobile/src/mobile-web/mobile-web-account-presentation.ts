@@ -101,7 +101,7 @@ function boundedAccounts<T extends { id: string }>(
       continue
     }
     const replaceIndex = bounded.findLastIndex((candidate) => !priorities.has(candidate.id))
-    if (replaceIndex >= 0) {
+    if (replaceIndex !== -1) {
       bounded[replaceIndex] = account
     }
   }

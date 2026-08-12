@@ -152,13 +152,15 @@ import { defaultHostTaskProjectFileOperations } from '../../../src/tasks/default
 import type { HostWorkspaceCreationOperations } from '../../../src/worktree/host-workspace-creation-operations'
 import { defaultHostWorkspaceCreationOperations } from '../../../src/worktree/default-host-workspace-creation-operations'
 import {
-  type GitHubProjectSortDirection,
-  type GitHubProjectTable as SharedGitHubProjectTable,
   groupRows,
   isIterationCurrent,
   sortRows,
   type ProjectGroup
-} from '../../../src/tasks/mobile-github-project-group-sort'
+} from '../../../../src/shared/github-project-group-sort'
+import type {
+  GitHubProjectSortDirection,
+  GitHubProjectTable as SharedGitHubProjectTable
+} from '../../../../src/shared/github-project-types'
 import {
   CROSS_REPO_DISPLAY_LIMIT,
   isGitHubWorkItemsSshRemoteRequiredError,

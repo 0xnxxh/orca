@@ -7,6 +7,8 @@ import {
   openMobileNativeChatSendBudget,
   type MobileNativeChatSendOutcome
 } from './mobile-native-chat-send'
+import type { CatalogCommandDelivery } from '../../../src/shared/agent-session-option-catalog'
+import { isSlashCommandDraft } from '../../../src/shared/native-chat-slash-commands'
 import { classifyMobileNativeChatSend } from './mobile-native-chat-send-classification'
 import {
   acquireMobileNativeChatTerminalWrite,
@@ -31,7 +33,10 @@ export type MobileNativeChatMessageSend = {
   answerQuestion: (text: string) => Promise<boolean>
   /** Session-option command dispatch (e.g. `/model sonnet`) — never touches the
    *  composer draft; callers need the outcome to track dispatched state. */
-  dispatchCommand: (text: string) => Promise<MobileNativeChatSendOutcome>
+  dispatchCommand: (
+    text: string,
+    options?: { delivery?: CatalogCommandDelivery }
+  ) => Promise<MobileNativeChatSendOutcome>
 }
 
 export function useMobileNativeChatMessageSend(args: {
@@ -110,16 +115,24 @@ export function useMobileNativeChatMessageSend(args: {
           return 'rejected'
         }
       }
+      const classification = classifyMobileNativeChatSend(agent, text)
+      const resolvedLaunchDraft =
+        syncComposer && typeof seededLaunchDraft?.createdAt === 'number'
+          ? { text: seededLaunchDraft.text, createdAt: seededLaunchDraft.createdAt }
+          : undefined
+      const typeCommand =
+        agent === 'codex' &&
+        classification !== 'chat' &&
+        isSlashCommandDraft(text) &&
+        !images?.length
       const outcome = await operations.sendMessage(
         target,
         text,
         deadline,
         !images?.length && !seededLaunchDraft,
-        syncComposer && typeof seededLaunchDraft?.createdAt === 'number'
-          ? { text: seededLaunchDraft.text, createdAt: seededLaunchDraft.createdAt }
-          : undefined
+        resolvedLaunchDraft,
+        typeCommand
       )
-      const classification = classifyMobileNativeChatSend(agent, text)
       if (outcome === 'unknown') {
         if (classification === 'chat') {
           holdUnconfirmedSend(origin, text, () =>
@@ -189,12 +202,26 @@ export function useMobileNativeChatMessageSend(args: {
   // spaces a send's body and its Enter ~500ms apart — so without this lock an
   // apply lands between them and is submitted as part of the user's prompt.
   const dispatchCommand = useCallback(
-    async (text: string): Promise<MobileNativeChatSendOutcome> => {
-      const terminal = targetRef.current?.terminalId
+    async (
+      text: string,
+      _options?: { delivery?: CatalogCommandDelivery }
+    ): Promise<MobileNativeChatSendOutcome> => {
+      const target = targetRef.current
+      const terminal = target?.terminalId
       if (terminal && !acquireMobileNativeChatTerminalWrite(terminal)) {
         return 'rejected'
       }
       try {
+        if (agentRef.current === 'codex') {
+          if (!operations || !target || !terminal || !enabled) {
+            return 'rejected'
+          }
+          const deadline = openMobileNativeChatSendBudget()
+          if (!(await operations.prepareCommit(target, deadline))) {
+            return 'rejected'
+          }
+          return operations.sendMessage(target, text, deadline, false, undefined, true)
+        }
         return await sendMessage(text, undefined, false, false)
       } finally {
         if (terminal) {
@@ -202,7 +229,7 @@ export function useMobileNativeChatMessageSend(args: {
         }
       }
     },
-    [sendMessage, targetRef]
+    [agentRef, enabled, operations, sendMessage, targetRef]
   )
 
   return { send, sendWithOutcome, answerQuestion, dispatchCommand }

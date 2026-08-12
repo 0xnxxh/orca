@@ -74,7 +74,7 @@ export function createTerminalLiveOscLinkTracker() {
   return {
     handle(data: string, cursor: TerminalCursor): TerminalOscLinkRange[] {
       const separator = data.indexOf(';')
-      if (separator < 0 || data.length > MAX_OSC_LINK_URI_LENGTH + 256 || !validCursor(cursor)) {
+      if (separator === -1 || data.length > MAX_OSC_LINK_URI_LENGTH + 256 || !validCursor(cursor)) {
         active = null
         return []
       }

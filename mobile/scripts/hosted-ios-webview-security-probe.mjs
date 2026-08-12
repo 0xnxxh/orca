@@ -33,7 +33,7 @@ export function startHostedWebViewSecurityProbe() {
       resolve({
         observations,
         port: address.port,
-        reset: () => observations.splice(0, observations.length),
+        reset: () => observations.splice(0),
         token: randomUUID().toUpperCase(),
         stop: () => new Promise((stopResolve) => server.close(() => stopResolve()))
       })

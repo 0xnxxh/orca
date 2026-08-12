@@ -6,6 +6,7 @@ import { openMobileNativeChatFile } from './mobile-native-chat-open-file'
 import { healMobileNativeChatStaleInput } from './mobile-native-chat-stale-input'
 import {
   sendMobileNativeChatMessageWithOutcome,
+  typeMobileNativeChatCommandWithOutcome,
   type MobileNativeChatSendOutcome
 } from './mobile-native-chat-send'
 import { retainMobileNativeChatFilePaths } from './use-mobile-native-chat-file-search'
@@ -65,7 +66,19 @@ export function nativeHostSessionNativeChatOperations(
         return { error: 'Transcript read failed' }
       }
     },
-    sendMessage(target, text, deadline, clearInputFirst, resolvedLaunchDraft) {
+    sendMessage(target, text, deadline, clearInputFirst, resolvedLaunchDraft, typeCommand) {
+      if (typeCommand && target.terminalId) {
+        return typeMobileNativeChatCommandWithOutcome({
+          client,
+          terminal: target.terminalId,
+          command: text,
+          resolvedLaunchDraft,
+          deadline,
+          ...(target.clientId
+            ? { mobileClient: { id: target.clientId, type: 'mobile' as const } }
+            : {})
+        })
+      }
       return sendNative(target, text, true, client, deadline, clearInputFirst, resolvedLaunchDraft)
     },
     prepareCommit(target, deadline) {

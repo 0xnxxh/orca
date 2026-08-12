@@ -191,9 +191,9 @@ describe('mobile web native bridge transport', () => {
 function nativeCspDirectives(source: string, declaration: string): string[] {
   const kotlinStart = source.indexOf(`${declaration} = listOf(`)
   const swiftStart = source.indexOf(`${declaration} = [`)
-  const opening = kotlinStart >= 0 ? kotlinStart : swiftStart
-  const closing = source.indexOf(kotlinStart >= 0 ? ').joinToString' : '].joined', opening)
-  if (opening < 0 || closing < 0) {
+  const opening = kotlinStart !== -1 ? kotlinStart : swiftStart
+  const closing = source.indexOf(kotlinStart !== -1 ? ').joinToString' : '].joined', opening)
+  if (opening === -1 || closing === -1) {
     return []
   }
   return [...source.slice(opening, closing).matchAll(/^\s*"([^"]+)",?$/gm)].map(

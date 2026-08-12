@@ -5,7 +5,6 @@ const sharedPrSources = [
   '../MobilePRSidebar.tsx',
   './CommentMarkdown.tsx',
   './MobileLinkPrForm.tsx',
-  './MobilePrComposeForm.tsx',
   './PRChecksSection.tsx',
   './PRCommentCard.tsx',
   './PRConflictingFilesSection.tsx',

@@ -97,7 +97,7 @@ function sanitizeRecord(
   const result: Record<string, unknown> = Object.create(null)
   let count = 0
   for (const key in value) {
-    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+    if (!Object.hasOwn(value, key)) {
       continue
     }
     if (count >= TOOL_INPUT_COLLECTION_LIMIT || budget.characters <= 0) {
@@ -114,7 +114,7 @@ function sanitizeRecord(
 }
 
 function uniqueKey(result: Record<string, unknown>, key: string, index: number): string {
-  return Object.prototype.hasOwnProperty.call(result, key) ? `${key}~${index}` : key
+  return Object.hasOwn(result, key) ? `${key}~${index}` : key
 }
 
 function addTruncationProperty(result: Record<string, unknown>): void {

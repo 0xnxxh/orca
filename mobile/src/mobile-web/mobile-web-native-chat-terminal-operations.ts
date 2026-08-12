@@ -16,6 +16,7 @@ import { isTerminalSendRpcAccepted } from '../terminal/terminal-send-rpc-respons
 import type { RpcClient } from '../transport/rpc-client'
 import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
+import { typeAgentTuiCommand } from '../../../src/shared/agent-tui-command-typing'
 import {
   assertCurrentMobileWebNativeChatPageBinding,
   resolveFreshMobileWebNativeChatPageBinding
@@ -42,19 +43,35 @@ export async function executeMobileWebNativeChatTerminalOperation(args: {
     const payload = MobileWebNativeChatSendMessagePayloadSchema.parse(args.payload)
     validateMobileWebNativeChatDeadline(payload.deadline)
     const binding = await resolveTerminalBinding(args, payload)
-    return sendResult(
-      await sendTerminal(
+    const send = (
+      text: string,
+      enter: boolean,
+      resolvedLaunchDraft?: typeof payload.resolvedLaunchDraft
+    ) =>
+      sendTerminal(
         args.client,
         binding.hostTerminalId!,
-        payload.text,
-        true,
+        text,
+        enter,
         args.terminalClientId,
         payload.deadline,
-        payload.clearInputFirst === true,
-        payload.resolvedLaunchDraft,
+        payload.typeCommand ? false : payload.clearInputFirst === true,
+        resolvedLaunchDraft,
         () => assertCurrentBinding(args, payload, binding)
       )
-    )
+    if (payload.typeCommand) {
+      let writeIndex = 0
+      const outcome = await typeAgentTuiCommand({
+        command: payload.text,
+        write: (key) => {
+          const isSubmit = writeIndex === payload.text.length + 1
+          writeIndex += 1
+          return send(key, false, isSubmit ? payload.resolvedLaunchDraft : undefined)
+        }
+      })
+      return sendResult(outcome)
+    }
+    return sendResult(await send(payload.text, true, payload.resolvedLaunchDraft))
   }
   if (args.operation === 'prepareCommit') {
     const payload = MobileWebNativeChatPrepareCommitPayloadSchema.parse(args.payload)

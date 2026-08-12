@@ -86,7 +86,7 @@ function nativeAssetMetadata(
 ): { extension: string; contentType: string; role: string }[] {
   const start = source.indexOf(declaration)
   const end = source.indexOf(language === 'swift' ? '\n]\n' : '\n)\n', start)
-  if (start < 0 || end < 0) {
+  if (start === -1 || end === -1) {
     return []
   }
   const pattern =

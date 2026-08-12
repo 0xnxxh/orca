@@ -27,6 +27,7 @@ type Props = {
   workspaceId: string
   repoName: string | null
   onLaunch: (command: TerminalQuickCommand) => boolean
+  onCopy?: (text: string) => Promise<unknown>
 }
 
 type SheetView = 'list' | 'editor' | 'agent'
@@ -37,7 +38,8 @@ export function QuickCommandsSheet({
   operations,
   workspaceId,
   repoName,
-  onLaunch
+  onLaunch,
+  onCopy
 }: Props) {
   const { commands, loading, ready, error, totalCount, repoId, persist } = useQuickCommands({
     operations,
@@ -192,6 +194,7 @@ export function QuickCommandsSheet({
           onLaunch={handleLaunch}
           onEdit={openEditor}
           onDelete={handleDelete}
+          onCopy={onCopy}
           onAdd={() => openEditor()}
         />
       ) : null}

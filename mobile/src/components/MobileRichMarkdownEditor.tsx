@@ -1,4 +1,13 @@
-import { memo, useCallback, useMemo, useRef } from 'react'
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  type ForwardedRef
+} from 'react'
+import { Keyboard } from 'react-native'
 import WebView, { type WebViewMessageEvent } from 'react-native-webview'
 import type {
   MobileRichMarkdownEditorProps,
@@ -17,13 +26,14 @@ import { useMobileRichMarkdownEditorController } from './use-mobile-rich-markdow
 const EDITOR_DOCUMENT_ORIGIN = 'https://orca-mobile-editor.invalid'
 const EDITOR_DOCUMENT_URL = `${EDITOR_DOCUMENT_ORIGIN}/rich-markdown-editor`
 
-function MobileRichMarkdownEditorInner({
-  content,
-  editable,
-  onChange,
-  onKeyboardInsetChange,
-  onOpenLink
-}: MobileRichMarkdownEditorProps) {
+export type MobileRichMarkdownEditorHandle = {
+  dismissKeyboard: () => void
+}
+
+function MobileRichMarkdownEditorInner(
+  { content, editable, onChange, onKeyboardInsetChange, onOpenLink }: MobileRichMarkdownEditorProps,
+  ref: ForwardedRef<MobileRichMarkdownEditorHandle>
+) {
   const webViewRef = useRef<WebView>(null)
   const html = useMemo(() => buildMobileRichMarkdownEditorHtml(), [])
 
@@ -85,6 +95,14 @@ function MobileRichMarkdownEditorInner({
     return isEditorDocument
   }, [])
 
+  const dismissKeyboard = useCallback(() => {
+    // Why: the caret lives in the WebView; native dismissal alone does not blur it.
+    inject('window.__orcaRichMarkdown && window.__orcaRichMarkdown.dismissKeyboard();')
+    Keyboard.dismiss()
+  }, [inject])
+
+  useImperativeHandle(ref, () => ({ dismissKeyboard }), [dismissKeyboard])
+
   return (
     <MobileRichMarkdownEditorPresentation
       editable={editable}
@@ -112,4 +130,4 @@ function MobileRichMarkdownEditorInner({
   )
 }
 
-export const MobileRichMarkdownEditor = memo(MobileRichMarkdownEditorInner)
+export const MobileRichMarkdownEditor = memo(forwardRef(MobileRichMarkdownEditorInner))

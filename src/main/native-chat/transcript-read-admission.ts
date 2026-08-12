@@ -71,7 +71,7 @@ export class NativeChatTranscriptReadAdmission {
       if (signal) {
         waiter.abort = (): void => {
           const index = this.waiters.indexOf(waiter)
-          if (index < 0) {
+          if (index === -1) {
             return
           }
           this.waiters.splice(index, 1)

@@ -148,6 +148,7 @@ export const MobileWebNativeChatSendMessagePayloadSchema = z
       .min(1)
       .max(64 * 1024),
     clearInputFirst: z.boolean().optional(),
+    typeCommand: z.boolean().optional(),
     resolvedLaunchDraft: z
       .object({
         text: z.string().max(64 * 1024),

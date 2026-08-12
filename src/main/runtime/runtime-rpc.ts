@@ -322,6 +322,7 @@ const MOBILE_RPC_METHOD_ALLOWLIST = new Set([
   'host.wsl.isAvailable',
   'host.wsl.listDistros',
   'hostedReview.create',
+  'hostedReview.createStacked',
   'hostedReview.forBranch',
   'hostedReview.getCreationEligibility',
   'hostedReview.submit',
@@ -724,6 +725,7 @@ export class OrcaRuntimeRpcServer {
       endpoint,
       deviceToken: device.token,
       publicKeyB64,
+      pairedDeviceId: device.deviceId,
       scope
     })
     return {
@@ -936,6 +938,7 @@ export class OrcaRuntimeRpcServer {
         endpoint: direct.endpoint,
         deviceToken: device.token,
         publicKeyB64,
+        pairedDeviceId: device.deviceId,
         scope: 'mobile',
         relay: relayPairing.relay
       })
@@ -1415,7 +1418,7 @@ export class OrcaRuntimeRpcServer {
     // never orphan a running 0.0.0.0 listener outside activeTransports (and thus outside stop()).
     this.activeTransports[index] = widened.transport
     const metaIndex = this.transports.findIndex((meta) => meta.kind === 'websocket')
-    if (metaIndex >= 0) {
+    if (metaIndex !== -1) {
       this.transports[metaIndex] = { kind: 'websocket', endpoint: widened.endpoint }
     }
     try {
@@ -1457,7 +1460,7 @@ export class OrcaRuntimeRpcServer {
       )
       this.activeTransports.splice(index, 1)
       const metaIndex = this.transports.findIndex((meta) => meta.kind === 'websocket')
-      if (metaIndex >= 0) {
+      if (metaIndex !== -1) {
         this.transports.splice(metaIndex, 1)
       }
       this.wsBoundHost = null
@@ -1472,7 +1475,7 @@ export class OrcaRuntimeRpcServer {
     // orphan a live transport outside activeTransports (and thus outside stop()).
     this.activeTransports[index] = restored.transport
     const metaIndex = this.transports.findIndex((meta) => meta.kind === 'websocket')
-    if (metaIndex >= 0) {
+    if (metaIndex !== -1) {
       this.transports[metaIndex] = { kind: 'websocket', endpoint: restored.endpoint }
     }
     try {

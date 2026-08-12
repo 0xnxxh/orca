@@ -17,6 +17,7 @@ import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import { isEphemeralSetupTerminalWorktreeId } from '../../../../shared/ephemeral-setup-terminal-worktree-id'
 import { TERMINAL_PAIRED_PARKING_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
 import { TerminalKittyKeyboardModeTracker } from '../../../../shared/terminal-kitty-keyboard-mode-tracker'
+import { parseTerminalKittyKeyboardFlags } from '../../../../shared/terminal-kitty-keyboard-flags'
 import { isRuntimeOwnedSshTargetId, parseExecutionHostId } from '../../../../shared/execution-host'
 import { createTerminalZeroDimensionsMessage } from '../../../../shared/terminal-zero-dimensions-diagnostic'
 import { isWorktreeRemovalFenceError } from '../../../../shared/worktree-removal-fence-error'
@@ -36,7 +37,7 @@ import {
 } from '@/lib/pane-manager/terminal-delivery-credit'
 import { serializeWithAbsoluteCursor } from '../../../../shared/terminal-serialize-absolute-cursor'
 import { isTerminalQueryReply } from '../../../../shared/terminal-query-reply'
-import type { PtyBufferSnapshot, PtyConnectResult } from './pty-transport'
+import type { PtyBufferSnapshot, PtyConnectResult, PtyReplayDataMeta } from './pty-transport'
 import type { IpcPtyTransportOptions, PtyTransportRecoveryState } from './pty-transport-types'
 import { createIpcPtyTransport } from './pty-transport'
 import { createRemoteRuntimePtyTransport } from './remote-runtime-pty-transport'
@@ -131,7 +132,6 @@ import { createShellReadyMarkerScanState, scanForShellReadyMarker } from './shel
 import { getSystemPrefersDark } from '@/lib/terminal-theme'
 import {
   INITIAL_MODE_2031_REPLY_SCAN_STATE,
-  mode2031SequenceFor,
   resolveTerminalColorSchemeMode,
   scanMode2031ReplyDecision
 } from '../../../../shared/terminal-color-scheme-protocol'
@@ -236,6 +236,10 @@ import { createCommandCodeOutputStatusDetector } from '../../../../shared/comman
 import { createCodexBackfillErrorDetector } from './codex-backfill-error-detector'
 import type { PtyDataMeta } from './pty-dispatcher'
 import { getEagerPtyBufferHandle } from './pty-dispatcher'
+import {
+  DeferredReattachLiveDataQueue,
+  MAX_DEFERRED_REATTACH_LIVE_CHARS
+} from './deferred-reattach-live-data-queue'
 import { createTerminalGitHubPRLinkDetector } from '../../../../shared/terminal-github-pr-link-detector'
 import {
   CONPTY_DA1_RESPONSE,
@@ -259,7 +263,9 @@ import { resolveHiddenRestoreScrollbackRows } from './terminal-hidden-restore-sc
 import {
   buildMainModelSnapshotReplayWrites,
   hasPositiveTerminalDimensions,
-  resolvePositiveTerminalDimensions
+  readProposedTerminalCols,
+  resolvePositiveTerminalDimensions,
+  shouldSkipAltFrameForWidthMismatch
 } from './terminal-snapshot-replay-paint'
 import {
   decideSshReattachPaintSource,
@@ -523,11 +529,10 @@ const e2eTerminalHiddenSnapshotOverrides = new Map<string, E2eTerminalHiddenSnap
 
 // Why: the per-chunk hidden-skip grammar is deleted (Phase 6) — hidden bytes
 // either never reach the renderer (delivery gate) or ride the background
-// scheduler queue. Only the mode-2031 fact-reply counter still has a producer.
+// scheduler queue.
 type E2eTerminalPtyOutputDebugSnapshot = {
   hiddenRendererSkipCount: number
   hiddenRendererSkippedChars: number
-  hiddenRendererMode2031ReplyCount: number
 }
 
 type E2eTerminalPtyOutputDebugApi = {
@@ -560,14 +565,12 @@ type ColdRestoreAgentResumeStartup = PendingStartupCommand & {
 
 const e2eTerminalPtyOutputDebugState: E2eTerminalPtyOutputDebugSnapshot = {
   hiddenRendererSkipCount: 0,
-  hiddenRendererSkippedChars: 0,
-  hiddenRendererMode2031ReplyCount: 0
+  hiddenRendererSkippedChars: 0
 }
 
 function resetE2eTerminalPtyOutputDebug(): void {
   e2eTerminalPtyOutputDebugState.hiddenRendererSkipCount = 0
   e2eTerminalPtyOutputDebugState.hiddenRendererSkippedChars = 0
-  e2eTerminalPtyOutputDebugState.hiddenRendererMode2031ReplyCount = 0
 }
 
 function exposeE2eTerminalPtyOutputDebug(): void {
@@ -588,14 +591,6 @@ function recordHiddenRendererSkip(chars: number): void {
   exposeE2eTerminalPtyOutputDebug()
   e2eTerminalPtyOutputDebugState.hiddenRendererSkipCount += 1
   e2eTerminalPtyOutputDebugState.hiddenRendererSkippedChars += chars
-}
-
-function recordHiddenMode2031Reply(): void {
-  if (!e2eConfig.exposeStore) {
-    return
-  }
-  exposeE2eTerminalPtyOutputDebug()
-  e2eTerminalPtyOutputDebugState.hiddenRendererMode2031ReplyCount += 1
 }
 
 function exposeE2eTerminalPtyDataInjection(): void {
@@ -3640,7 +3635,7 @@ export function connectPanePty(
     ? getCachedWindowsTerminalCapabilities()
     : null
   const projectRuntime =
-    !connectionId && runtimeEnvironmentId === null
+    !tab?.forceHostRuntime && !connectionId && runtimeEnvironmentId === null
       ? getLocalProjectExecutionRuntimeContext(state, deps.worktreeId, undefined, {
           wslAvailable: localWindowsTerminalCapabilities?.wslAvailable,
           availableWslDistros: localWindowsTerminalCapabilities?.wslDistros ?? null
@@ -3715,13 +3710,13 @@ export function connectPanePty(
   })
   // Why: Phase-4 hidden-delivery gate — only meaningful under main authority
   // (renderer byte parsers need bytes otherwise). Decided once at pane
-  // creation: it picks the mode-2031 answer path (fact reply vs byte scan),
-  // which must have exactly one owner.
+  // creation: it picks which path records a mode-2031 subscription (main's
+  // fact vs the byte scan), which must have exactly one owner.
   const hiddenDeliveryGateActive =
     mainSideEffectAuthority && isRendererHiddenPtyDeliveryGateEnabled(state.settings)
   // Why: structural per-PTY gate predicate (authority on + gate on + bytes
   // transit local main, which implies snapshot-backed). Shared by the hidden
-  // mark sync and mode-2031 reply ownership so reply ownership can never
+  // mark sync and mode-2031 subscription recording so the recorder can never
   // disagree with what main may drop — and never depends on the racy hidden
   // mark (a fact can outrun the pty:data task that sets it).
   const isHiddenDeliveryGateManagedPty = (ptyId: string | null): ptyId is string =>
@@ -3744,21 +3739,10 @@ export function connectPanePty(
   const hadExistingPaneTransportAtConnect = deps.paneTransportsRef.current.size > 0
   let lastTerminalInputAt = Number.NEGATIVE_INFINITY
   let hasReceivedPtyOutput = false
-  let deferredReattachLiveData:
-    | {
-        data: string
-        ptyId: string | null
-        streamGeneration: number
-        meta?: PtyDataMeta
-        ackCredit?: () => void
-      }[]
-    | null = null
-  let deferredReattachLiveDataChars = 0
+  let deferredReattachLiveData: DeferredReattachLiveDataQueue | null = null
   let reattachLiveDataDeferralDepth = 0
   let deferredReattachLiveDataOwners = new Map<number, { failed: boolean }>()
   let transportStreamGeneration = 0
-  const MAX_DEFERRED_REATTACH_LIVE_CHARS = 512 * 1024
-  const MAX_DEFERRED_REATTACH_LIVE_CHUNKS = 1_024
   const markTerminalInputSent = (): void => {
     lastTerminalInputAt = performance.now()
     // Why: input must probe a wedged xterm even when the PTY produces no renderer output.
@@ -3883,13 +3867,10 @@ export function connectPanePty(
   // desktop silent while the elected mobile xterm owns query replies.
   const sendDesktopQueryReplyImmediate = (data: string): boolean =>
     canSendDesktopQueryReply() && transport.sendInputImmediate(data)
-  // Why (gate mode only): for gate-managed PTYs this fact is the SOLE 2031
-  // responder — visible, hidden, marked or not. Conditioning the reply on the
-  // hidden mark double-fired (mark set + bytes delivered live via interest →
-  // fact AND xterm both replied) or dropped the reply entirely (fact outran
-  // the pty:data task that set the mark). The xterm-side CSI reply and the
-  // skipped-byte scan are disabled for these panes (same structural
-  // predicate), so exactly one reply goes out.
+  // Why (gate mode only): gate-managed PTYs never see the subscribe bytes, so this fact is
+  // their only cue to record the subscription — without the registry entry a later theme
+  // flip never pushes the CSI 997 update and the TUI keeps a stale theme after reveal.
+  // Record-only: a subscribe is not a query (see observeLiveMode2031Chunk, #9993).
   const handleHiddenMode2031SubscribeFact = (): void => {
     const ptyId = transport.getPtyId()
     if (disposed || (!isHiddenDeliveryGateManagedPty(ptyId) && remoteOutputGatedPtyId !== ptyId)) {
@@ -3899,22 +3880,14 @@ export function connectPanePty(
       useAppStore.getState().settings,
       getSystemPrefersDark()
     )
-    // Why immediate: a mode-2031 query reply must beat the remote input debounce
-    // or it can miss the querying program's read window (#7329).
-    sendDesktopQueryReplyImmediate(mode2031SequenceFor(mode))
-    // Why: register the subscription exactly like the xterm CSI handler
-    // would — without the registry entry, later theme flips never push the
-    // CSI 997 update and the TUI keeps a stale theme after reveal.
     deps.recordPaneMode2031Subscription?.(pane.id, mode)
-    recordHiddenMode2031Reply()
   }
   // Why (gate mode only): the counterpart to the subscribe fact. These panes never
-  // receive the withdrawal bytes — main drops them before delivery — and both the
-  // chunk scanner and the xterm CSI handler are disabled for them, so this fact is
-  // the ONLY observer that can retire the subscription. Without it a TUI that exits
-  // while hidden leaves paneMode2031 set, and the next theme flip pushes CSI 997
-  // into the shell that replaced it (#9993 via maybePushMode2031Flip). No reply is
-  // sent: a withdrawal is not a query.
+  // receive the withdrawal bytes — main drops them before delivery — and the chunk
+  // scanner is disabled for them, so this fact is the ONLY observer that can retire
+  // the subscription. Without it a TUI that exits while hidden leaves paneMode2031
+  // set, and the next theme flip pushes CSI 997 into the shell that replaced it
+  // (#9993 via maybePushMode2031Flip).
   const handleHiddenMode2031UnsubscribeFact = (): void => {
     const ptyId = transport.getPtyId()
     if (disposed || (!isHiddenDeliveryGateManagedPty(ptyId) && remoteOutputGatedPtyId !== ptyId)) {
@@ -4083,7 +4056,7 @@ export function connectPanePty(
     }
   )
 
-  const onDataDisposable = pane.terminal.onData((data) => {
+  const forwardPtyInput = (data: string): void => {
     // Why: xterm auto-replies to embedded query sequences (DA1, DECRQM,
     // OSC 10/11, focus, CPR) via onData. When we replay recorded PTY bytes
     // into xterm for scrollback/cold-restore/snapshot, those queries would
@@ -4218,6 +4191,13 @@ export function connectPanePty(
       clearPendingTerminalInputIntent()
       requestRecoveryForUndeliverableInput()
     }
+  }
+  const onDataDisposable = pane.terminal.onData((data) => {
+    if (deps.deferPtyInput) {
+      deps.deferPtyInput(pane.id, data, forwardPtyInput)
+      return
+    }
+    forwardPtyInput(data)
   })
   const imeCompositionRouteDisposable = installTerminalImeCompositionRoute({
     terminalElement: pane.terminal.element,
@@ -4747,12 +4727,21 @@ export function connectPanePty(
                 : serializeWithAbsoluteCursor(pane.serializeAddon, pane.terminal, {
                     scrollback: opts?.scrollbackRows
                   })
+            const orderedSeq = rendererOrderedPtyId === ptyId ? rendererOrderedSeq : null
+            // Why snapshotFlags and not `flags`: this pane may itself have
+            // consumed an old-host snapshot that proved nothing, and its
+            // conservative `0` fallback must not be republished downstream as
+            // a host-proven inactive protocol.
+            const provenKittyFlags = kittyKeyboardModes.hasProvenBaseline
+              ? kittyKeyboardModes.snapshotFlags
+              : undefined
             return {
               data,
               cols: pane.terminal.cols,
               rows: pane.terminal.rows,
-              ...(rendererOrderedPtyId === ptyId && rendererOrderedSeq !== null
-                ? { seq: rendererOrderedSeq }
+              ...(orderedSeq !== null ? { seq: orderedSeq } : {}),
+              ...(orderedSeq !== null && provenKittyFlags !== undefined
+                ? { kittyKeyboardFlags: provenKittyFlags }
                 : {})
             }
           } catch {
@@ -5644,6 +5633,8 @@ export function connectPanePty(
       generation: number
       streamGeneration: number
       pendingEscapeTailAnsi?: string
+      kittyKeyboardFlags?: number
+      snapshotSeq?: number
     }
 
     let pendingReplayData: PendingReplayData | null = null
@@ -5697,7 +5688,7 @@ export function connectPanePty(
         // negotiation; the mirror must re-arm from them after a reload. Replay
         // semantics: relay reconnects redeliver the same window, so pushes
         // apply as sets to keep the mirrored stack from accumulating frames.
-        kittyKeyboardModes.scanReplay(data)
+        applySnapshotKittyKeyboardModes(data, payload)
         await writeReplayDataAsync(data)
         if (!isCurrentPayload()) {
           continue
@@ -5773,7 +5764,7 @@ export function connectPanePty(
     }
     const replayDataCallback = (
       data: string,
-      meta: { clearBeforeReplay?: boolean; pendingEscapeTailAnsi?: string } = {},
+      meta: PtyReplayDataMeta = {},
       streamGeneration = transportStreamGeneration
     ): void => {
       pendingReplayData = {
@@ -5782,7 +5773,15 @@ export function connectPanePty(
         ptyId: transport.getPtyId(),
         generation: (replayPayloadGeneration += 1),
         streamGeneration,
-        ...(meta.pendingEscapeTailAnsi ? { pendingEscapeTailAnsi: meta.pendingEscapeTailAnsi } : {})
+        ...(meta.pendingEscapeTailAnsi
+          ? { pendingEscapeTailAnsi: meta.pendingEscapeTailAnsi }
+          : {}),
+        ...(meta.kittyKeyboardFlags !== undefined && meta.snapshotSeq !== undefined
+          ? {
+              kittyKeyboardFlags: meta.kittyKeyboardFlags,
+              snapshotSeq: meta.snapshotSeq
+            }
+          : {})
       }
       scheduleReplayDataDrain()
     }
@@ -5814,10 +5813,7 @@ export function connectPanePty(
               dataCallback(data, meta, generation)
             }
           },
-          onReplayData: (
-            data: string,
-            meta?: { clearBeforeReplay?: boolean; pendingEscapeTailAnsi?: string }
-          ): void => {
+          onReplayData: (data: string, meta?: PtyReplayDataMeta): void => {
             if (isCurrent()) {
               replayDataCallback(data, meta, generation)
             }
@@ -6349,14 +6345,14 @@ export function connectPanePty(
       }
     }
 
+    // Why record-only: DECSET 2031 subscribes to future color changes, it is not a query —
+    // the protocol's query is `CSI ?996n`. fish arms 2031 for the ~1ms it paints a prompt, so
+    // any reply lands after the withdrawal and paints `?997;1n` as literal text (#9993).
     // Why here and not in xterm's CSI handler: xterm batches several PTY chunks into one
-    // synchronous parse, so a handler cannot tell where a chunk ended. fish enables and
-    // disables 2031 around every prompt, so answering a subscribe the same chunk withdraws
-    // pushes `?997;1n` into the prompt or a child's stdin as literal text (#9993). One raw
-    // chunk in, one order-aware decision out.
+    // synchronous parse, so a handler cannot tell where a chunk ended. One raw chunk in,
+    // one order-aware final state out.
     function observeLiveMode2031Chunk(data: string): void {
-      // Main's '2031-subscribe' fact is the sole responder for gate-managed PTYs; a second
-      // reply from here would answer one subscribe twice.
+      // Gate-managed PTYs never see these bytes; main's '2031-subscribe' fact records them.
       if (isHiddenDeliveryGateManagedPty(transport.getPtyId())) {
         return
       }
@@ -6370,13 +6366,13 @@ export function connectPanePty(
         return
       }
       const settings = useAppStore.getState().settings
-      const mode = resolveTerminalColorSchemeMode(settings, getSystemPrefersDark())
-      // Why immediate: the reply must land inside the program's read window, and hidden
-      // snapshot-backed panes skip xterm.write for PTY bytes entirely.
+      // Why seed the mode: maybePushMode2031Flip only pushes on a change, so an unseeded
+      // subscription would read as a flip on the next unrelated appearance re-apply.
       deps.paneMode2031Ref.current.set(pane.id, true)
-      sendDesktopQueryReplyImmediate(mode2031SequenceFor(mode))
-      deps.paneLastThemeModeRef.current.set(pane.id, mode)
-      recordHiddenMode2031Reply()
+      deps.paneLastThemeModeRef.current.set(
+        pane.id,
+        resolveTerminalColorSchemeMode(settings, getSystemPrefersDark())
+      )
     }
 
     // Why installed here: the handler observes CSI 3 J inside xterm's parse, so a
@@ -6790,6 +6786,43 @@ export function connectPanePty(
       }
     }
 
+    /**
+     * Apply an authoritative snapshot to the pane's kitty mirror in the order:
+     * unproven reset, replay-semantics scan of the snapshot
+     * bytes (so screen selection lands first), then the owner's proven flags.
+     *
+     * Why the reset only happens when the owner proved something: an old host
+     * omits the field, and downgrading a mirror that is already tracking live
+     * output would lose correct state instead of preserving it.
+     */
+    function applySnapshotKittyKeyboardModes(
+      snapshotData: string,
+      snapshot: { kittyKeyboardFlags?: number; snapshotSeq?: number }
+    ): void {
+      const proven =
+        snapshot.snapshotSeq === undefined
+          ? undefined
+          : parseTerminalKittyKeyboardFlags(snapshot.kittyKeyboardFlags)
+      if (proven === undefined) {
+        // Why the demotion: a mirror grounded in this PTY's stream keeps its
+        // state, but a constructor-fresh tracker (window reload) holds a
+        // known-zero that was never proven for the reattached PTY — demote it
+        // so the serializer cannot republish it downstream as host-proven
+        // inactive.
+        if (!kittyKeyboardModes.hasProvenBaseline) {
+          kittyKeyboardModes.resetForSnapshot()
+        }
+        kittyKeyboardModes.scanReplay(snapshotData)
+        return
+      }
+      kittyKeyboardModes.resetForSnapshot()
+      kittyKeyboardModes.scanReplay(snapshotData)
+      kittyKeyboardModes.restoreSnapshotFlags(proven)
+      // Why in the same critical section: without the baseline a quiet pane
+      // could not publish a coherent snapshot until unrelated output arrived.
+      recordRendererOrderedSeq({ seq: snapshot.snapshotSeq })
+    }
+
     function recordRendererOrderedSeq(meta?: Pick<PtyDataMeta, 'seq'>): void {
       if (typeof meta?.seq !== 'number') {
         return
@@ -7198,6 +7231,7 @@ export function connectPanePty(
 
     async function applyMainBufferSnapshot(snapshot: {
       data: string
+      frameRestoreAnsi?: string
       cols: number
       rows: number
       seq?: number
@@ -7205,6 +7239,7 @@ export function connectPanePty(
       alternateScreen?: boolean
       scrollbackAnsi?: string
       pendingEscapeTailAnsi?: string
+      kittyKeyboardFlags?: number
     }): Promise<void> {
       const restorePtyId = transport.getPtyId()
       const restoreGeneration = hiddenOutputRestoreGeneration
@@ -7221,6 +7256,7 @@ export function connectPanePty(
       const colsBeforeReplay = pane.terminal.cols
       const rowsBeforeReplay = pane.terminal.rows
       const hasSnapshotDimensions = hasPositiveTerminalDimensions(snapshot.cols, snapshot.rows)
+      let skippedAltFrame = false
       try {
         await structuralReplayCoordinator.run(
           async () => {
@@ -7254,10 +7290,25 @@ export function connectPanePty(
                 suppressStructuralReplayPtyResize = false
               }
             }
+            // Why here and not from the writes below: the mirror tracks what the
+            // APPLICATION negotiated, so it must see the snapshot's own bytes
+            // before adopting the flags main proved for this boundary.
+            applySnapshotKittyKeyboardModes(`${snapshot.scrollbackAnsi ?? ''}${snapshot.data}`, {
+              kittyKeyboardFlags: snapshot.kittyKeyboardFlags,
+              snapshotSeq: snapshot.seq
+            })
             // Why shared: the SSH reattach model paint inlines the same
             // choreography (coordinator nesting would deadlock there); one
             // builder keeps the alt-screen branches from drifting.
-            for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot)) {
+            skippedAltFrame =
+              snapshot.alternateScreen === true &&
+              snapshot.frameRestoreAnsi !== undefined &&
+              shouldSkipAltFrameForWidthMismatch(snapshot.cols, readProposedTerminalCols(pane), {
+                skipIfTargetUnknown: true
+              })
+            for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot, {
+              skipAltFrame: skippedAltFrame
+            })) {
               writeReplayData(replayChunk)
             }
             // Why: live agents own ?25l/?1004h; a forced ?1004l here would silence focus events until restart (agents enable focus reporting only at startup).
@@ -7291,7 +7342,14 @@ export function connectPanePty(
                 return
               }
               const currentPtyId = transport.getPtyId()
-              if (!currentPtyId || getFitOverrideForPty(currentPtyId)) {
+              if (!currentPtyId) {
+                return
+              }
+              if (getFitOverrideForPty(currentPtyId)) {
+                safeFit(pane)
+                if (skippedAltFrame && !isRemoteRuntimePtyId(currentPtyId)) {
+                  window.api.pty.signal(currentPtyId, 'SIGWINCH')
+                }
                 return
               }
               const fit = safeFitAndThen(
@@ -7305,6 +7363,10 @@ export function connectPanePty(
                     ? pane.terminal.cols !== snapshot.cols || pane.terminal.rows !== snapshot.rows
                     : pane.terminal.cols !== colsBeforeReplay ||
                       pane.terminal.rows !== rowsBeforeReplay
+                  if (skippedAltFrame) {
+                    pulseVisibleLocalPtySizeForTuiRepaint(currentPtyId)
+                    return
+                  }
                   if (replayChangedDimensions && isRendererPtyResizeAuthoritative()) {
                     transport.resize(pane.terminal.cols, pane.terminal.rows)
                     if (!isRemoteRuntimePtyId(currentPtyId)) {
@@ -7313,7 +7375,13 @@ export function connectPanePty(
                     }
                   }
                 },
-                { shouldContinue: isCurrentRestore, retryIfUnmeasurable: true }
+                {
+                  shouldContinue: isCurrentRestore,
+                  retryIfUnmeasurable: true,
+                  // A skipped frame is blank until this fit pushes the final
+                  // grid/SIGWINCH, so carry the continuation through reveal.
+                  deferIfHidden: true
+                }
               )
               pendingHiddenSnapshotFit = fit
               try {
@@ -7615,47 +7683,14 @@ export function connectPanePty(
         return
       }
       if (deferredReattachLiveData !== null) {
-        // Why: a replacement stream must not inherit bytes or a gap marker from the replay owner it superseded.
-        deferredReattachLiveData = deferredReattachLiveData.filter((chunk) => {
-          const keep = chunk.streamGeneration === streamGeneration
-          if (!keep) {
-            chunk.ackCredit?.()
-          }
-          return keep
-        })
-        deferredReattachLiveDataChars = deferredReattachLiveData.reduce(
-          (total, chunk) => total + chunk.data.length,
-          0
-        )
-        const oversized = data.length > MAX_DEFERRED_REATTACH_LIVE_CHARS
-        const deferredData = oversized ? data.slice(-MAX_DEFERRED_REATTACH_LIVE_CHARS) : data
         const ackCredit = takeCurrentTerminalDeliveryCredit()
-        deferredReattachLiveData.push({
-          data: deferredData,
+        deferredReattachLiveData.enqueue({
+          data,
           ptyId: transport.getPtyId(),
           streamGeneration,
           ...(meta ? { meta } : {}),
           ...(ackCredit ? { ackCredit } : {})
         })
-        deferredReattachLiveDataChars += deferredData.length
-        // Why: one huge IPC frame would bypass the queue's memory bound; mark a stream gap so snapshot recovery replaces it, not a partial ANSI frame.
-        let dropped = oversized
-        while (
-          deferredReattachLiveData.length > 1 &&
-          (deferredReattachLiveData.length > MAX_DEFERRED_REATTACH_LIVE_CHUNKS ||
-            deferredReattachLiveDataChars > MAX_DEFERRED_REATTACH_LIVE_CHARS)
-        ) {
-          const removed = deferredReattachLiveData.shift()
-          deferredReattachLiveDataChars -= removed?.data.length ?? 0
-          removed?.ackCredit?.()
-          dropped = true
-        }
-        if (dropped && deferredReattachLiveData[0]) {
-          deferredReattachLiveData[0].meta = {
-            ...deferredReattachLiveData[0].meta,
-            droppedOutput: true
-          }
-        }
         return
       }
       if (data.length > 0) {
@@ -7820,8 +7855,7 @@ export function connectPanePty(
     const beginReattachLiveDataDeferral = (ownerGeneration = transportStreamGeneration): void => {
       reattachLiveDataDeferralDepth += 1
       if (reattachLiveDataDeferralDepth === 1) {
-        deferredReattachLiveData = []
-        deferredReattachLiveDataChars = 0
+        deferredReattachLiveData = new DeferredReattachLiveDataQueue()
         deferredReattachLiveDataOwners = new Map()
       }
       if (!deferredReattachLiveDataOwners.has(ownerGeneration)) {
@@ -7854,19 +7888,17 @@ export function connectPanePty(
       if (reattachLiveDataDeferralDepth > 0) {
         return
       }
-      const chunks = deferredReattachLiveData
+      const queue = deferredReattachLiveData
       deferredReattachLiveData = null
-      deferredReattachLiveDataChars = 0
       const currentPtyId = transport.getPtyId()
       const currentGeneration = transportStreamGeneration
       const currentOwner = deferredReattachLiveDataOwners.get(currentGeneration)
       deferredReattachLiveDataOwners = new Map()
-      if (disposed || !chunks) {
-        for (const chunk of chunks ?? []) {
-          chunk.ackCredit?.()
-        }
+      if (disposed || !queue) {
+        queue?.discard()
         return
       }
+      const chunks = queue.takeAll()
       // Why: paint the authoritative replay first, then admit deferred live chunks so the replay clear can't erase newer output.
       let deliveredDeferredChunks = 0
       for (const chunk of chunks) {
@@ -7988,7 +8020,11 @@ export function connectPanePty(
                   suppressStructuralReplayPtyResize = false
                 }
               }
-              kittyKeyboardModes.scanReplay(modelData)
+              applySnapshotKittyKeyboardModes(modelData, {
+                kittyKeyboardFlags: snapshot.kittyKeyboardFlags,
+                snapshotSeq: snapshot.seq
+              })
+              // Why keep a too-wide frame: preconnect SSH has no live repaint owner or post-restore fit.
               for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot)) {
                 writeReplayData(replayChunk)
               }
@@ -8177,7 +8213,18 @@ export function connectPanePty(
           return
         }
         if (connectResult?.snapshot) {
-          rememberReattachPayloadAgentSignal(connectResult.snapshot, { fullScreenReplay: true })
+          const snapshotPrefixAnsi = connectResult.snapshotPrefixAnsi
+          const snapshotFrameAnsi = connectResult.snapshotFrameAnsi
+          const snapshotFrameRestoreAnsi = connectResult.snapshotFrameRestoreAnsi
+          const hasSplitDaemonAltFrame =
+            typeof snapshotPrefixAnsi === 'string' &&
+            snapshotPrefixAnsi.length > 0 &&
+            typeof snapshotFrameAnsi === 'string' &&
+            snapshotFrameAnsi.length > 0
+          const daemonSnapshotReplay = hasSplitDaemonAltFrame
+            ? snapshotPrefixAnsi + snapshotFrameAnsi
+            : connectResult.snapshot
+          rememberReattachPayloadAgentSignal(daemonSnapshotReplay, { fullScreenReplay: true })
           // Why: replay at the snapshot's own dimensions to avoid rewrapping soft-wrapped rows at a different column count (#7279); suppress the PTY forward so this layout-only resize doesn't SIGWINCH the remote TUI.
           const snapshotDimensions = resolvePositiveTerminalDimensions(
             connectResult.snapshotCols,
@@ -8197,12 +8244,29 @@ export function connectPanePty(
           }
           writeReplayData('\x1b[2J\x1b[3J\x1b[H')
           // Why: re-arm the kitty keyboard mirror from the snapshot preamble so Option chords keep their encoding after a window reload.
-          kittyKeyboardModes.scanReplay(connectResult.snapshot)
-          writeReplayData(connectResult.snapshot)
-          // Snapshot reattach keeps a live session, so drop only renderer-owned state instead of the broader mode reset — unless this is a cold restore, whose owner is gone.
+          applySnapshotKittyKeyboardModes(daemonSnapshotReplay, {
+            kittyKeyboardFlags: connectResult.snapshotKittyKeyboardFlags,
+            snapshotSeq: connectResult.snapshotSeq
+          })
+          // A narrower fit clips the fixed-grid alt frame; drop it and let SIGWINCH repaint.
+          // A dead-owner restore keeps history plus its restored-session treatment;
+          // a frozen foreign-width frame would look live when no owner remains.
+          const daemonAltFrameSkippable =
+            hasSplitDaemonAltFrame &&
+            typeof snapshotFrameRestoreAnsi === 'string' &&
+            shouldSkipAltFrameForWidthMismatch(
+              connectResult.snapshotCols,
+              readProposedTerminalCols(pane),
+              { skipIfTargetUnknown: true }
+            )
+          writeReplayData(
+            daemonAltFrameSkippable
+              ? snapshotPrefixAnsi + snapshotFrameRestoreAnsi
+              : daemonSnapshotReplay
+          )
           writeReplayData(
             reattachReplayResetSequence(
-              connectResult.snapshot,
+              daemonSnapshotReplay,
               Boolean(connectResult.coldRestore),
               connectResult.isAlternateScreen
             )
@@ -8251,12 +8315,23 @@ export function connectPanePty(
                 suppressStructuralReplayPtyResize = false
               }
             }
-            kittyKeyboardModes.scanReplay(modelData)
+            applySnapshotKittyKeyboardModes(modelData, {
+              kittyKeyboardFlags: modelSnapshot.kittyKeyboardFlags,
+              snapshotSeq: modelSnapshot.seq
+            })
             // Why shared: park+reveal of an alt-screen TUI needs the same
             // ?1049l/?1049h rebuild as applyMainBufferSnapshot (main strips
             // the ?1049h marker when splitting scrollbackAnsi) — inlined here
             // because nesting structuralReplayCoordinator would deadlock.
-            for (const replayChunk of buildMainModelSnapshotReplayWrites(modelSnapshot)) {
+            for (const replayChunk of buildMainModelSnapshotReplayWrites(modelSnapshot, {
+              skipAltFrame: shouldSkipAltFrameForWidthMismatch(
+                modelCols,
+                readProposedTerminalCols(pane),
+                {
+                  skipIfTargetUnknown: true
+                }
+              )
+            })) {
               writeReplayData(replayChunk)
             }
             writeReplayData(
@@ -8282,6 +8357,11 @@ export function connectPanePty(
             // Relay replay may overlap xterm's pre-disconnect content; clear first to avoid duplication.
             writeReplayData('\x1b[2J\x1b[3J\x1b[H')
             // Why: raw relay replay may contain the app's own kitty pushes; re-arm with set semantics so redelivery can't grow the stack.
+            // A constructor-fresh mirror (window reload) first demotes to unproven:
+            // the replay window proves nothing about negotiations that predate it.
+            if (!kittyKeyboardModes.hasProvenBaseline) {
+              kittyKeyboardModes.resetForSnapshot()
+            }
             kittyKeyboardModes.scanReplay(connectResult.replay)
             writeReplayData(connectResult.replay)
             writeReplayData(
@@ -9258,11 +9338,9 @@ export function connectPanePty(
       }
       directSshPaneRetrySettlementTimers.clear()
       // Why: a stalled xterm replay may never reach its finally; release live-frame credit when this renderer no longer owns the stream.
-      for (const chunk of deferredReattachLiveData ?? []) {
-        chunk.ackCredit?.()
-      }
+      const queue = deferredReattachLiveData
       deferredReattachLiveData = null
-      deferredReattachLiveDataChars = 0
+      queue?.discard()
       reattachLiveDataDeferralDepth = 0
       deferredReattachLiveDataOwners = new Map()
       cancelPendingSafeFitContinuations(pane)
