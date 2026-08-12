@@ -6,13 +6,26 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `371767014a`; no PR.
+- Orca implementation: `skills-share` at `9fcd72e327`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   production remains untouched.
 
 Validated so far:
 
+- The final local readiness pass at `9fcd72e327` passed 489 skill-domain tests across 73 files
+  with 11 intentional platform skips, all Node/CLI/web typechecks, localization catalog,
+  extraction and coverage, max-lines, changed-code quality, React Doctor, formatting, and diff
+  checks. No new P0, P1, or P2 finding was proven by the crash/retry, security, performance,
+  functional, mobile-backcompat, or Windows/Linux review.
+- Multi-select sharing now preserves hidden selections, reconciles changed discovery scans,
+  visibly explains ineligible skills, and blocks duplicate names before review. Exact complete
+  managed bundles publish a new immutable version to their existing package; ambiguous or partial
+  selections safely create a new package.
+- The mobile/backcompat review found no persisted mobile keys, routes, deep links, or required
+  legacy fields changed. Skill RPC methods and capabilities are additive and capability-gated;
+  the cross-platform review found production paths use host path APIs and platform checks, with
+  POSIX-only literals confined to tests or WSL guest execution.
 - Final bearer-link changes pass 143 Orca Cloud API tests with one opt-in skip; 58 focused Orca
   tests; four mixed-version wire tests; desktop/node/web typecheck; localization catalog,
   extraction, and coverage; changed-code quality; max-lines; and diff checks.
