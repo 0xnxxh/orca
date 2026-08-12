@@ -16,6 +16,10 @@ export type DurableMutationInvocation = {
 
 export class OrchestrationMutationExecutor {
   private readonly inFlight = new Map<string, Promise<unknown>>()
+  private readonly secretRecoveries = new Map<
+    string,
+    { method: string; payloadHash: string; promise: Promise<unknown> }
+  >()
 
   constructor(private readonly runtime: OrcaRuntimeService) {}
 
@@ -34,6 +38,30 @@ export class OrchestrationMutationExecutor {
       .update(JSON.stringify(canonicalize({ method: request.method, params })))
       .digest('hex')
     const key = `${callerFingerprint}:${requestId}`
+    if (isSecretRecoveryMutation(request.method, params)) {
+      const secretKey = `${key}:${secretRecoveryCallerFingerprint(request)}`
+      const active = this.secretRecoveries.get(secretKey)
+      if (active) {
+        if (active.method !== request.method || active.payloadHash !== payloadHash) {
+          throw new OrchestrationError(
+            'request_mismatch',
+            `Mutation request ${requestId} is already in flight with different input.`
+          )
+        }
+        return await active.promise
+      }
+      const recovery = Promise.resolve().then(() => invoke())
+      this.secretRecoveries.set(secretKey, {
+        method: request.method,
+        payloadHash,
+        promise: recovery
+      })
+      try {
+        return await recovery
+      } finally {
+        this.secretRecoveries.delete(secretKey)
+      }
+    }
     const db = this.runtime.getOrchestrationDb()
     const identity = { callerFingerprint, requestId, method: request.method, payloadHash }
     const atomicWorkerAcceptance =
@@ -109,6 +137,31 @@ export class OrchestrationMutationExecutor {
       this.inFlight.delete(key)
     }
   }
+}
+
+function isSecretRecoveryMutation(method: string, params: unknown): boolean {
+  return (
+    method === 'orchestration.dispatchShow' &&
+    typeof params === 'object' &&
+    params !== null &&
+    (params as { recoverCapability?: unknown }).recoverCapability === true
+  )
+}
+
+function secretRecoveryCallerFingerprint(request: RpcRequest): string {
+  const evidence = request.orchestrationCompatibilityEvidence
+  return createHash('sha256')
+    .update(
+      JSON.stringify(
+        canonicalize({
+          terminalHandle: evidence?.terminalHandle?.trim() || null,
+          paneKey: evidence?.paneKey?.trim() || null,
+          launchToken: evidence?.launchToken?.trim() || null,
+          host: evidence?.host ?? null
+        })
+      )
+    )
+    .digest('hex')
 }
 
 const executorsByRuntime = new WeakMap<OrcaRuntimeService, OrchestrationMutationExecutor>()

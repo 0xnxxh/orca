@@ -73,7 +73,7 @@ export class RuntimeClient {
   ): Promise<RuntimeRpcSuccess<TResult>> {
     const effectiveTimeoutMs = options?.timeoutMs ?? this.resolveMethodTimeoutMs(method, params)
     const orchestrationMutation = isOrchestrationMutation(method, params)
-    if (orchestrationMutation) {
+    if (orchestrationMutation && !isAdditiveDispatchRecovery(method, params)) {
       await this.ensureOrchestrationContractCompatible(effectiveTimeoutMs)
     }
     const orchestrationRequestId = orchestrationMutation
@@ -82,6 +82,11 @@ export class RuntimeClient {
     const compatibilityEnvelope = method.startsWith('orchestration.')
       ? {
           ...this.orchestrationCompatibility,
+          ...(options?.orchestrationCompatibilityEvidence
+            ? {
+                orchestrationCompatibilityEvidence: options.orchestrationCompatibilityEvidence
+              }
+            : {}),
           compatibilityInvocationId:
             orchestrationRequestId ?? this.orchestrationCompatibility.compatibilityInvocationId
         }
@@ -245,6 +250,15 @@ export class RuntimeClient {
       'Timed out waiting for an Orca desktop window. The runtime may still be running headlessly.'
     )
   }
+}
+
+function isAdditiveDispatchRecovery(method: string, params: unknown): boolean {
+  return (
+    method === 'orchestration.dispatchShow' &&
+    typeof params === 'object' &&
+    params !== null &&
+    (params as { recoverCapability?: unknown }).recoverCapability === true
+  )
 }
 
 function attachMutationRecovery(error: unknown, requestId: string | undefined): unknown {

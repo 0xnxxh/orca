@@ -57,6 +57,9 @@ export function isOrchestrationMutation(method: string, params: unknown): boolea
   if (method === 'orchestration.dispatch') {
     return !hasTrueProperty(params, 'dryRun')
   }
+  if (method === 'orchestration.dispatchShow') {
+    return hasTrueProperty(params, 'recoverCapability')
+  }
   return ORCHESTRATION_MUTATION_METHODS.has(method)
 }
 

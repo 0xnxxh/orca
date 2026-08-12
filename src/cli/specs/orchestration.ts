@@ -179,7 +179,10 @@ export const ORCHESTRATION_COMMAND_SPECS: CommandSpec[] = [
     summary: 'Show dispatch context for a task',
     usage:
       'orca orchestration dispatch-show --task <task_id> [--preamble] [--from <handle>] [--json]',
-    allowedFlags: [...GLOBAL_FLAGS, 'task', 'preamble', 'from']
+    allowedFlags: [...GLOBAL_FLAGS, 'task', 'preamble', 'from', 'retry-request'],
+    notes: [
+      'Inside the exact active worker, --preamble rotates lifecycle authority and invalidates the prior capability. Coordinator inspection and inspection of completed or legacy Dispatches remain tokenless.'
+    ]
   },
   {
     path: ['orchestration', 'ask'],
