@@ -23664,8 +23664,7 @@ export class OrcaRuntimeService {
       this.invalidateWorktreeScanCacheForRepo(worktree.repoId)
     }
     const shouldClearPushTarget =
-      Object.prototype.hasOwnProperty.call(metaUpdates, 'pushTarget') &&
-      metaUpdates.pushTarget === null
+      Object.hasOwn(metaUpdates, 'pushTarget') && metaUpdates.pushTarget === null
     const normalizedMetaUpdates: Partial<WorktreeMeta> = shouldClearPushTarget
       ? { ...metaUpdates, pushTarget: undefined }
       : (metaUpdates as Partial<WorktreeMeta>)
@@ -27788,7 +27787,7 @@ export class OrcaRuntimeService {
           committedPtyIds,
           terminalHandlesByPtyId
         })
-        if (failedStopIndex >= 0) {
+        if (failedStopIndex !== -1) {
           const failedStop = stopResults[failedStopIndex]
           throw Object.assign(new Error('terminal_worktree_sleep_failed'), {
             ptyId: orderedLivePtyIds[failedStopIndex],
@@ -27815,7 +27814,7 @@ export class OrcaRuntimeService {
         committedPtyIds,
         terminalHandlesByPtyId
       })
-      if (failedStopIndex >= 0 && remainingLivePtyIds.size > 0) {
+      if (failedStopIndex !== -1 && remainingLivePtyIds.size > 0) {
         const failedStop = stopResults[failedStopIndex]
         console.error('[runtime] worktree terminal sleep physical stop failed', {
           worktreeId: worktree.id,
@@ -29834,7 +29833,7 @@ export class OrcaRuntimeService {
   private syncMobileSessionTabs(
     snapshots: RuntimeMobileSessionTabsSnapshot[] | undefined,
     unchangedWorktreeIds?: string[],
-    resyncWorktreeIds: Set<string> = new Set()
+    resyncWorktreeIds = new Set<string>()
   ): Set<string> {
     const changedWorktreeIds = new Set<string>()
     if (snapshots === undefined) {
@@ -32494,7 +32493,7 @@ export class OrcaRuntimeService {
   linearSearchForAgents(args: {
     query: string
     limit?: number
-    workspaceId?: string | 'all'
+    workspaceId?: (string & {}) | 'all'
   }): ReturnType<typeof searchLinearIssuesForAgents> {
     return searchLinearIssuesForAgents(args)
   }
@@ -32504,7 +32503,7 @@ export class OrcaRuntimeService {
   }
 
   async linearTeamListForAgents(params: {
-    workspaceId?: string | 'all'
+    workspaceId?: (string & {}) | 'all'
   }): Promise<LinearTeamListResult> {
     try {
       const result = await listLinearTeamsForAgent(params.workspaceId)
@@ -32583,7 +32582,7 @@ export class OrcaRuntimeService {
   async linearProjectListForAgents(params: {
     query?: string
     limit?: number
-    workspaceId?: string | 'all'
+    workspaceId?: (string & {}) | 'all'
   }): Promise<LinearProjectListResult> {
     const limit = clampLinearSearchLimit(params.limit)
     try {
@@ -32622,7 +32621,7 @@ export class OrcaRuntimeService {
     filter?: LinearIssueListFilter
     teamInput?: string
     limit?: number
-    workspaceId?: string | 'all'
+    workspaceId?: (string & {}) | 'all'
   }): Promise<LinearIssueListResult> {
     const filter = params.filter ?? 'assigned'
     const limit = clampLinearIssueListLimit(params.limit)
@@ -34305,7 +34304,7 @@ export class OrcaRuntimeService {
 
   private async resolveLinearTeamInput(
     teamInput: string,
-    workspaceId?: string | 'all'
+    workspaceId?: (string & {}) | 'all'
   ): Promise<{
     id: string
     key: string
@@ -36213,12 +36212,12 @@ function applyTerminalLineControls(line: string): {
   hadControl: boolean
 } {
   const carriageIndex = line.lastIndexOf('\r')
-  const latestRedraw = carriageIndex >= 0 ? line.slice(carriageIndex + 1) : line
+  const latestRedraw = carriageIndex !== -1 ? line.slice(carriageIndex + 1) : line
   if (!latestRedraw.includes('\u0008') && !latestRedraw.includes('\u001b')) {
     return {
       text: latestRedraw,
       cursorColumn: latestRedraw.length,
-      hadControl: carriageIndex >= 0
+      hadControl: carriageIndex !== -1
     }
   }
 

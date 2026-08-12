@@ -1461,7 +1461,7 @@ const api = {
       checkName?: string
       url?: string | null
       prRepo?: GitHubOwnerRepo | null
-    }): Promise<unknown | null> => ipcRenderer.invoke('gh:prCheckDetails', args),
+    }): Promise<unknown> => ipcRenderer.invoke('gh:prCheckDetails', args),
 
     rerunPRChecks: (args: {
       repoPath: string
@@ -4933,8 +4933,7 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-ignore (define in dts)
   window.electron = electronAPI
-  // @ts-ignore (define in dts)
+  // @ts-expect-error (define in dts)
   window.api = api
 }

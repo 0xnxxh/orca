@@ -673,11 +673,8 @@ function migrateTerminalScrollbackRows(settings: unknown): {
   needsSave: boolean
 } {
   const legacySettings = readLegacyTerminalScrollbackSettings(settings)
-  const hasRows = Object.prototype.hasOwnProperty.call(legacySettings, 'terminalScrollbackRows')
-  const hasLegacyBytes = Object.prototype.hasOwnProperty.call(
-    legacySettings,
-    'terminalScrollbackBytes'
-  )
+  const hasRows = Object.hasOwn(legacySettings, 'terminalScrollbackRows')
+  const hasLegacyBytes = Object.hasOwn(legacySettings, 'terminalScrollbackBytes')
   const rows = hasRows
     ? normalizeDesktopTerminalScrollbackRows(legacySettings.terminalScrollbackRows)
     : legacyTerminalScrollbackBytesToRows(legacySettings.terminalScrollbackBytes)
@@ -1685,7 +1682,7 @@ type LayoutLeafNormalization = {
 
 function collectLayoutLeafCounts(
   node: TerminalPaneLayoutNode,
-  counts: Map<string, number> = new Map()
+  counts = new Map<string, number>()
 ): Map<string, number> {
   if (node.type === 'leaf') {
     counts.set(node.leafId, (counts.get(node.leafId) ?? 0) + 1)
@@ -7226,14 +7223,14 @@ export class Store {
       (entry) =>
         entry.targetId === normalizedLease.targetId && entry.ptyId === normalizedLease.ptyId
     )
-    const existing = existingIndex >= 0 ? this.state.sshRemotePtyLeases[existingIndex] : undefined
+    const existing = existingIndex !== -1 ? this.state.sshRemotePtyLeases[existingIndex] : undefined
     const next: SshRemotePtyLease = {
       ...existing,
       ...normalizedLease,
       createdAt: existing?.createdAt ?? normalizedLease.createdAt ?? now,
       updatedAt: normalizedLease.updatedAt ?? now
     }
-    if (existingIndex >= 0) {
+    if (existingIndex !== -1) {
       this.state.sshRemotePtyLeases[existingIndex] = next
     } else {
       this.state.sshRemotePtyLeases.push(next)
