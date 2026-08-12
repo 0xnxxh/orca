@@ -71,7 +71,19 @@ hands → probe once more → `rename` in one syscall → verify we kept it.
     to them. Killing is chosen deliberately, because a daemon that can never be adopted and is
     never replaced leaves the app permanently degraded with no route back. Reconsider only with
     a way for the user to choose.
-  - **TOCTOU between the verdict and the kill.** An `empty` answer can go stale — another Orca
+  - **TOCTOU between the verdict and the kill.** The right fix is known and was implemented and
+    reverted once, deliberately: ask the daemon to retire itself via the existing `shutdownIfIdle`
+    RPC immediately before the kill, and treat only its own `{retiring: true}` as permission.
+    The daemon answers that atomically — sole authenticated client, nothing being created or
+    attached, zero sessions — and closes its listener before acknowledging, so nothing can slip
+    in behind the proof. A second `listSessions` would only move the race.
+
+    It was reverted because it makes every empty-verdict replacement depend on a new round trip,
+    and any failure of that round trip must mean hold — which turns a rare race into a new,
+    common failure mode, and worsens #8689 whenever the call is merely slow. It also changed the
+    behaviour of two endpoint-identity tests in ways that were not quickly explainable. Land it
+    on a green base with its own review, not as an addendum.
+ An `empty` answer can go stale — another Orca
     instance may create a session before the ladder runs — and a dead endpoint can be
     republished. Nothing revalidates immediately before the kill, and `liveOwnerSurvived` is
     read only afterwards. Pre-existing, and narrowed by this change rather than widened: the
