@@ -3,8 +3,12 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Page } from '@stablyai/playwright-test'
+import type { SkillBundleInstallResult } from '../../src/shared/skill-bundle-install-contract'
 import type { SkillCloudPublishResult } from '../../src/shared/skill-cloud-contract'
-import type { SkillSharePreview } from '../../src/shared/skill-sharing-contract'
+import type {
+  SkillBundleShareInstallOperation,
+  SkillSharePreview
+} from '../../src/shared/skill-sharing-contract'
 import { expect, test } from './helpers/orca-app'
 
 const RUN_STAGING = process.env.ORCA_E2E_SKILL_STAGING === '1'
@@ -51,7 +55,7 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
       }
     )
     const firstInstall = await installVersion(orcaPage, first.published, { scope: 'global' })
-    expect(firstInstall).toMatchObject({ status: 'ok', value: { status: 'installed' } })
+    expectBundleOutcome(firstInstall, 'complete', 'installed')
     expect(readFileSync(join(globalSkill, 'SKILL.md'), 'utf8')).toContain('version: v1')
 
     writeSkill(globalSkill, 'local')
@@ -63,10 +67,7 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
       first.preview.packageId
     )
     const conflict = await installVersion(orcaPage, second.published, { scope: 'global' })
-    expect(conflict).toMatchObject({
-      status: 'ok',
-      value: { status: 'conflict', conflict: { kind: 'modified' } }
-    })
+    expectBundleOutcome(conflict, 'partial', 'kept-local', 'modified')
     expect(readFileSync(join(globalSkill, 'SKILL.md'), 'utf8')).toContain('version: local')
 
     const update = await installVersion(
@@ -75,7 +76,7 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
       { scope: 'global' },
       'replace-and-discard-local'
     )
-    expect(update).toMatchObject({ status: 'ok', value: { status: 'updated' } })
+    expectBundleOutcome(update, 'complete', 'updated')
     expect(readFileSync(join(globalSkill, 'SKILL.md'), 'utf8')).toContain('version: v2')
 
     const rollback = await installVersion(
@@ -84,7 +85,7 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
       { scope: 'global' },
       'replace-unmodified'
     )
-    expect(rollback).toMatchObject({ status: 'ok', value: { status: 'updated' } })
+    expectBundleOutcome(rollback, 'complete', 'updated')
     expect(readFileSync(join(globalSkill, 'SKILL.md'), 'utf8')).toContain('version: v1')
 
     expect(
@@ -94,14 +95,18 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
       )
     ).toMatchObject({ status: 'ok' })
     const revokedInstall = await orcaPage.evaluate(
-      async ({ shareId }) => {
+      async ({ shareId, skillId }) => {
         try {
-          return await window.api.skills.installShare({ shareId, destination: { scope: 'global' } })
+          return await window.api.skills.installBundleShare({
+            shareId,
+            selectedSkillIds: [skillId],
+            destination: { scope: 'global' }
+          })
         } catch {
           return { status: 'rejected' as const }
         }
       },
-      { shareId: first.published.share.id }
+      { shareId: first.published.share.id, skillId: bundleSkillId(first.published) }
     )
     expect(revokedInstall.status).toBe('rejected')
     expect(readFileSync(join(globalSkill, 'SKILL.md'), 'utf8')).toContain('version: v1')
@@ -184,19 +189,56 @@ function installVersion(
   destination: { scope: 'global' },
   conflictResolution?: 'replace-unmodified' | 'replace-and-discard-local'
 ) {
+  const skillId = bundleSkillId(published)
   return page.evaluate(
-    ({ packageId, versionId, destination, conflictResolution }) =>
-      window.api.skills.installPackageVersion({
+    ({ packageId, versionId, skillId, destination, conflictResolution }) =>
+      window.api.skills.installBundlePackageVersion({
         packageId,
         versionId,
+        selectedSkillIds: [skillId],
         destination,
-        ...(conflictResolution ? { conflictResolution } : {})
+        ...(conflictResolution
+          ? { conflictDecisions: [{ skillId, resolution: conflictResolution }] }
+          : {})
       }),
     {
       packageId: published.version.packageId,
       versionId: published.version.versionId,
+      skillId,
       destination,
       conflictResolution
     }
   )
+}
+
+function bundleSkillId(published: SkillCloudPublishResult): string {
+  const manifest = published.version.manifest
+  if (!('skills' in manifest) || manifest.skills.length !== 1) {
+    throw new Error('staging publish did not return the expected one-skill bundle')
+  }
+  return manifest.skills[0].id
+}
+
+function expectBundleOutcome(
+  operation: SkillBundleShareInstallOperation,
+  expectedStatus: SkillBundleInstallResult['status'],
+  expectedSkillStatus: SkillBundleInstallResult['skills'][number]['status'],
+  expectedConflict?: NonNullable<SkillBundleInstallResult['skills'][number]['conflict']>['kind']
+): void {
+  if (operation.status !== 'ok') {
+    throw new Error(`staging bundle install operation failed: ${operation.status}`)
+  }
+  const diagnostic = JSON.stringify({
+    status: operation.value.status,
+    skills: operation.value.skills.map((skill) => ({
+      status: skill.status,
+      errorCategory: skill.errorCategory,
+      failure: skill.failure,
+      conflict: skill.conflict?.kind
+    }))
+  })
+  expect(operation.value.status, diagnostic).toBe(expectedStatus)
+  expect(operation.value.skills, diagnostic).toHaveLength(1)
+  expect(operation.value.skills[0]?.status, diagnostic).toBe(expectedSkillStatus)
+  expect(operation.value.skills[0]?.conflict?.kind, diagnostic).toBe(expectedConflict)
 }
