@@ -28,6 +28,8 @@ const transientDownloadErrorCodes = new Set([
   'EAI_AGAIN',
   'ECONNREFUSED',
   'ECONNRESET',
+  // GitHub release CDN can refuse HTTP/2 streams under load; retry like socket resets.
+  'ERR_HTTP2_STREAM_ERROR',
   'ENETDOWN',
   'ENETRESET',
   'ENETUNREACH',
@@ -200,7 +202,7 @@ function isTransientDownloadError(error) {
     if (transientDownloadErrorCodes.has(candidate?.code)) {
       return true
     }
-    const statusCode = candidate?.statusCode ?? candidate?.response?.statusCode
+    const statusCode = getDownloadErrorStatusCode(candidate)
     if (
       statusCode === 408 ||
       statusCode === 425 ||
@@ -211,6 +213,13 @@ function isTransientDownloadError(error) {
     }
   }
   return false
+}
+
+function getDownloadErrorStatusCode(error) {
+  // @electron/get FetchDownloader uses Fetch Response.status; older got uses statusCode.
+  return (
+    error?.statusCode ?? error?.status ?? error?.response?.statusCode ?? error?.response?.status
+  )
 }
 
 function getErrorChain(error) {
@@ -225,7 +234,7 @@ function getErrorChain(error) {
 
 function formatDownloadError(error) {
   for (const candidate of getErrorChain(error)) {
-    const statusCode = candidate?.statusCode ?? candidate?.response?.statusCode
+    const statusCode = getDownloadErrorStatusCode(candidate)
     if (statusCode) {
       return `HTTP ${statusCode}`
     }
