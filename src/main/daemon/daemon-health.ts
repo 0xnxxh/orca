@@ -28,7 +28,7 @@ import {
   type SystemResolverHealthResult
 } from './types'
 
-const HEALTH_CHECK_TIMEOUT_MS = 3_000
+export const HEALTH_CHECK_TIMEOUT_MS = 3_000
 const RESOLVER_HEALTH_CHECK_TIMEOUT_MS = 3_000
 const KILL_WAIT_MS = 3_000
 const KILL_POLL_MS = 100

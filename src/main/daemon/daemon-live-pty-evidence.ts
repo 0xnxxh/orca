@@ -34,20 +34,20 @@ export type DaemonPtyOwnershipDeps = {
  * it matters most. Only blindness is retried — a conclusive answer is taken as given.
  * This runs only on the replace path, after ~60s of grace is already spent.
  */
-const PTY_OWNERSHIP_PROBE_ATTEMPTS = 2
+export const PTY_OWNERSHIP_PROBE_ATTEMPTS = 2
 
 /**
  * Windows enumeration has no budget of its own: each scan is a powershell CIM query that
  * may fall back to wmic, and the shared reader can queue behind an in-flight scan — worst
  * case tens of seconds on the launch path. Blind is a safe answer here; hanging is not.
  */
-const WINDOWS_OWNERSHIP_PROBE_DEADLINE_MS = 6_000
+export const WINDOWS_OWNERSHIP_PROBE_DEADLINE_MS = 6_000
 
 /**
  * POSIX needs its own ceiling for the same reason: the shared reader's `ps` timeout does not
  * cover queueing behind an in-flight scan, and this runs on a launch that fails open.
  */
-const POSIX_OWNERSHIP_PROBE_DEADLINE_MS = 4_000
+export const POSIX_OWNERSHIP_PROBE_DEADLINE_MS = 4_000
 
 function withDeadline<T>(work: Promise<T>, deadlineMs: number, onDeadline: T): Promise<T> {
   return new Promise<T>((resolve) => {

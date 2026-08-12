@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
 import { PROTOCOL_VERSION } from './types'
 import { WEDGED_DAEMON_GRACE_BUDGET_MS, WEDGED_DAEMON_GRACE_RETRIES } from './daemon-init'
-import { LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS } from '../startup/first-window-startup-services'
 
 const FAKE_USER_DATA_PATH = '/fake/userData'
 const FAKE_RUNTIME_DIR = join(FAKE_USER_DATA_PATH, 'daemon')
@@ -3448,13 +3447,6 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     // retries rather than the real budget — but lowering it silently shortens the drain
     // window for a daemon whose process table cannot be read, which has no other protection.
     expect(WEDGED_DAEMON_GRACE_RETRIES).toBeGreaterThanOrEqual(11)
-  })
-
-  it('leaves headroom under the startup fail-open cap', () => {
-    // Why a wall-clock budget at all: the retry count does not bound the grace window, because
-    // each probe waits the client's hello timeout. Startup abandons the daemon provider entirely
-    // at the fail-open cap, so overrunning it trades a wedged daemon for no daemon at all.
-    expect(WEDGED_DAEMON_GRACE_BUDGET_MS).toBeLessThan(LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS)
   })
 
   it('stops grace-retrying when the wall-clock budget runs out, with retries still left', async () => {
