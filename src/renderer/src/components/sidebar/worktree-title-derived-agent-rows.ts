@@ -20,7 +20,6 @@ import {
   resolveCompatibleAgentTypeForOwner
 } from '../../../../shared/agent-title-owner'
 import { resolvePaneAgentOwner } from '../../../../shared/pane-agent-owner'
-import { isClaudeIdentityFrameTitle } from '../../../../shared/terminal-title-agent-type'
 
 const EMPTY_RUNTIME_TITLES: Record<string, Record<number, string>> = {}
 const EMPTY_LIVE_PTY_IDS: Record<string, string[]> = {}
@@ -202,22 +201,28 @@ export function resolveTitleDerivedAgentType(
   ownerAgentType?: AgentType | null
 ): AgentType | null {
   const agentType = TITLE_AGENT_LABEL_TO_TYPE[label] ?? 'unknown'
-  if (agentType !== 'claude') {
+  const owner = ownerAgentType && ownerAgentType !== 'unknown' ? ownerAgentType : null
+  if (agentType === 'claude') {
+    // Why: Claude's task-title spinner heuristic has no provider identity. In
+    // split panes it can match arbitrary terminal spinners, so sidebar rows only
+    // accept Claude when the title itself names Claude.
+    if (!CLAUDE_AGENT_TOKEN_RE.test(title)) {
+      return null
+    }
+    // Why (#8940 + #13341): Claude mentions never steal ownership, and a nested
+    // Claude identity frame under a durable non-Claude owner keeps the parent.
+    // Pane reuse is modeled by clearing launchAgent first (tab-agent path).
+    if (owner && owner !== 'claude') {
+      return null
+    }
     return agentType
   }
-  // Why: Claude's task-title spinner heuristic has no provider identity. In
-  // split panes it can match arbitrary terminal spinners, so sidebar rows only
-  // accept Claude when the title itself names Claude.
-  if (!CLAUDE_AGENT_TOKEN_RE.test(title)) {
+  // Why (#13341): nested Codex/Gemini/... titles must not rebrand a pane whose
+  // launch owner is still a different agent — fall through to ownerAgentType.
+  if (owner && agentType !== 'unknown' && agentType !== owner) {
     return null
   }
-  // Why: a "claude" word inside another agent's task text is a mention, not identity.
-  // Only a title that PRESENTS Claude may take a pane away from its known owner (#8940).
-  const owner = ownerAgentType && ownerAgentType !== 'unknown' ? ownerAgentType : null
-  if (owner && owner !== 'claude' && !isClaudeIdentityFrameTitle(title)) {
-    return null
-  }
-  return agentType
+  return agentType === 'unknown' ? null : agentType
 }
 
 function resolveTitleDerivedPaneOwner(
