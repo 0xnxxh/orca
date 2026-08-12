@@ -1,10 +1,14 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { AGENT_PLUGIN_SCHEMA_V1 } from '../../shared/skill-bundle-manifest'
+import {
+  AGENT_PLUGIN_MANIFEST_PATH,
+  AGENT_PLUGIN_SCHEMA_V1
+} from '../../shared/skill-bundle-manifest'
 import { createSkillBundleArchive } from './skill-bundle-creation'
 import { extractSkillBundleArchive } from './skill-bundle-extraction'
+import { writeSkillTarGzip } from './skill-package-tar'
 
 const temporaryDirectories: string[] = []
 
@@ -90,6 +94,91 @@ describe('skill bundle creation and extraction', () => {
 
     expect(first.archiveSha256).toBe(second.archiveSha256)
     expect(await readFile(first.archivePath)).toEqual(await readFile(second.archivePath))
+  })
+
+  it('packages and extracts thirty selected skills within the shared limits', async () => {
+    const root = await temporaryDirectory()
+    const names = Array.from(
+      { length: 30 },
+      (_, index) => `skill-${String(index).padStart(2, '0')}`
+    )
+    const sources = await Promise.all(
+      names.map(async (name) => ({
+        sourceDirectory: await createSkill(root, name, `Description for ${name}`)
+      }))
+    )
+    const created = await createSkillBundleArchive({
+      sources: sources.toReversed(),
+      archivePath: join(root, 'thirty-skills.tar.gz'),
+      packageId: 'package_30',
+      versionId: 'version_30',
+      bundleName: 'thirty-skills'
+    })
+
+    const extracted = await extractSkillBundleArchive({
+      archivePath: created.archivePath,
+      destinationDirectory: join(root, 'thirty-skills'),
+      expectedBundleDigest: created.manifest.bundleDigest
+    })
+
+    expect(extracted.manifest.skills.map((skill) => skill.name)).toEqual(names)
+    expect(extracted.manifest.skills).toHaveLength(30)
+    await expect(
+      readFile(join(extracted.skillsDirectory, 'skill-29', 'notes.txt'), 'utf8')
+    ).resolves.toBe('skill-29 notes\n')
+  })
+
+  it('rejects conflicting staging roots without changing their imported namespace', async () => {
+    const root = await temporaryDirectory()
+    const source = await createSkill(root, 'alpha-skill', 'Alpha')
+    const created = await createSkillBundleArchive({
+      sources: [{ sourceDirectory: source }],
+      archivePath: join(root, 'bundle.tar.gz'),
+      packageId: 'package_1',
+      versionId: 'version_1',
+      bundleName: 'team-skills'
+    })
+    const destination = join(root, 'conflicting-staging')
+    const importedManifest = join(destination, 'dev.orca.skill-sharing', 'manifest.json')
+    await mkdir(join(destination, 'dev.orca.skill-sharing'), { recursive: true })
+    await writeFile(importedManifest, 'unowned\n')
+
+    await expect(
+      extractSkillBundleArchive({
+        archivePath: created.archivePath,
+        destinationDirectory: destination
+      })
+    ).rejects.toMatchObject({ code: 'EEXIST' })
+    await expect(readFile(importedManifest, 'utf8')).resolves.toBe('unowned\n')
+  })
+
+  it('rejects unknown top-level extension namespaces and removes fresh staging', async () => {
+    const root = await temporaryDirectory()
+    const plugin = Buffer.from(
+      JSON.stringify({ $schema: AGENT_PLUGIN_SCHEMA_V1, name: 'team-skills' })
+    )
+    const unknown = Buffer.from('{}')
+    const archivePath = join(root, 'unknown-extension.tar.gz')
+    await writeSkillTarGzip(archivePath, [
+      {
+        path: AGENT_PLUGIN_MANIFEST_PATH,
+        size: plugin.length,
+        executable: false,
+        bytes: plugin
+      },
+      {
+        path: 'dev.orca.unexpected/manifest.json',
+        size: unknown.length,
+        executable: false,
+        bytes: unknown
+      }
+    ])
+    const destination = join(root, 'unknown-extension-staging')
+
+    await expect(
+      extractSkillBundleArchive({ archivePath, destinationDirectory: destination })
+    ).rejects.toThrow('skill-bundle-manifest-envelope-invalid')
+    await expect(stat(destination)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('rejects duplicate names and source drift without publishing an archive', async () => {

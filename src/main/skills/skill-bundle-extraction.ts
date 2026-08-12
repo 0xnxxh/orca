@@ -142,6 +142,8 @@ export async function extractSkillBundleArchive(input: {
   const archive = await openSkillTarGzip(input.archivePath)
   let destinationCreated = false
   try {
+    await mkdir(input.destinationDirectory, { mode: 0o700 })
+    destinationCreated = true
     const pluginManifest = parseAgentPluginManifest(
       await readJsonEntry(archive.reader, AGENT_PLUGIN_MANIFEST_PATH)
     )
@@ -158,8 +160,7 @@ export async function extractSkillBundleArchive(input: {
       throw new Error('skill-bundle-identity-mismatch')
     }
     const skillsDirectory = join(input.destinationDirectory, 'skills')
-    await mkdir(skillsDirectory, { recursive: true, mode: 0o700 })
-    destinationCreated = true
+    await mkdir(skillsDirectory, { mode: 0o700 })
     for (const skill of manifest.skills) {
       for (const file of skill.files) {
         const archivePath = `skills/${skill.name}/${file.path}`

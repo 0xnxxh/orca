@@ -206,7 +206,7 @@ does not mean the surrounding phase is complete.
       user explicitly approves replacement.
 - [x] Package ingestion rejects unsafe archives before any destination mutation.
 - [x] Interrupted operations recover to a complete previous or requested version.
-- [ ] Private package bytes remain access-controlled, published versions persist until deletion,
+- [x] Private package bytes remain access-controlled, published versions persist until deletion,
       and incomplete uploads expire automatically.
 - [x] Mixed-version clients and remote hosts fail safely through capability negotiation.
 - [ ] Cloud resources are Terraform-owned, monitored, recoverable, and protected by independent
@@ -305,8 +305,10 @@ does not mean the surrounding phase is complete.
       digest.
 - [x] Validate Agent Plugins 1.0.0 `plugin.json` fields from independently authored local rules;
       never fetch a schema during loading.
-- [ ] Create fresh staging roots and reject unknown, malformed, or conflicting imported
-      `dev.orca.skill-sharing` namespaces without overwriting them.
+- [x] Create fresh staging roots and reject unknown, malformed, or conflicting imported
+      `dev.orca.skill-sharing` namespaces without overwriting them. The extractor now exclusively
+      creates its staging root, preserves a pre-existing namespace on conflict, rejects unknown
+      top-level extension entries, and removes only staging it created.
 - [x] Keep the detailed manifest inside the archive for export, remote/SSH transport, and offline
       validation; keep GCS metadata compact and PostgreSQL limited to exact link/ownership lookup.
 - [x] Add selected skill IDs and per-skill conflict choices to preview/install requests.
@@ -394,12 +396,13 @@ does not mean the surrounding phase is complete.
 - [x] Include only `skill/` contents in the eventual installed directory.
 - [x] Bind the user-visible share preview to the final staged digest.
 - [x] Clean staging files on success, cancellation, source drift, and error.
-- [ ] Accept a non-empty ordered selection of skill directories and support at least 30 within the
-      global entry/file/byte limits.
+- [x] Accept a non-empty ordered selection of skill directories and support at least 30 within the
+      global entry/file/byte limits. Focused local creation/extraction now covers one 30-skill
+      archive; staging load run `31585710645` finalized the same maximum selection through Cloud.
 - [ ] Reject duplicate normalized skill names and preserve selection across search/filter changes
       in the caller.
 - [x] Generate deterministic `plugin.json`, `skills/`, and Orca extension metadata.
-- [ ] Bind the share review to every staged skill digest and the final bundle digest.
+- [x] Bind the share review to every staged skill digest and the final bundle digest.
 
 ### Bounded extraction
 
