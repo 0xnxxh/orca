@@ -1262,6 +1262,23 @@ describe('createBrowserSlice runtime guard', () => {
     })
   })
 
+  it('retains the host display label used by browser settings', async () => {
+    const store = createTestStore()
+    store.setState({
+      settings: {
+        ...settingsWithRuntime('env-1')!,
+        hostSettingOverrides: {
+          'runtime:env-1': { displayLabel: 'Production Browser Host' }
+        }
+      },
+      runtimeEnvironments: [{ id: 'env-1', name: 'Remote Mac' }] as never
+    })
+
+    const result = await store.getState().importCookiesToProfile('default')
+
+    expect(result.executionHostLabel).toBe('Production Browser Host')
+  })
+
   it('retains the local execution host for a successful browser import', async () => {
     mockApi.browser.sessionImportFromBrowser.mockResolvedValueOnce({
       ok: true,

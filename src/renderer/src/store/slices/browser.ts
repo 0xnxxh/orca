@@ -51,6 +51,7 @@ import {
   toRuntimeExecutionHostId,
   type ExecutionHostId
 } from '../../../../shared/execution-host'
+import { getHostSettingOverride } from '../../../../shared/host-setting-overrides'
 import {
   getExecutionHostIdForWorktree,
   getRuntimeEnvironmentIdForWorktree
@@ -273,6 +274,10 @@ function getBrowserSettingsHostId(
 }
 
 function getBrowserSettingsHostLabel(state: AppState, hostId: ExecutionHostId): string {
+  const override = getHostSettingOverride(state.settings, hostId, 'displayLabel')
+  if (override) {
+    return override
+  }
   const parsed = parseExecutionHostId(hostId)
   if (parsed?.kind === 'runtime') {
     const name = state.runtimeEnvironments
