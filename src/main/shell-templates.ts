@@ -171,13 +171,48 @@ fi
 // zle-line-init this lands just *before* fish arms `?2004h`, which PostReadyFlushGate
 // absorbs. `builtin printf` so a user-defined printf can't silently swallow the marker
 // and send every launch to the ready timeout.
-export function getFishShellReadyInitCommand(escapedMarker: string): string {
+function getFishShellReadyMarkerBlock(escapedMarker: string): string {
   return `if test "$ORCA_SHELL_READY_MARKER" = 1
   function __orca_shell_ready_marker --on-event fish_prompt
     builtin printf "${escapedMarker}"
     functions -e __orca_shell_ready_marker
   end
 end`
+}
+
+/**
+ * Everything Orca must apply to a fish session *after* the user's own startup
+ * files, delivered as one `--init-command` (fish evaluates -C after config.fish
+ * and conf.d, and multi-`-C` support varies by version).
+ *
+ * The POSIX wrappers do this from their rc files; fish has no such hook, so
+ * without this a fish pane silently loses both halves of the contract.
+ */
+export function getFishInitCommand(escapedMarker: string): string {
+  return `begin
+  # Why: macOS fish's bundled config.fish runs path_helper, which rebuilds PATH and
+  # appends inherited entries last — the attribution shim lands near-last and commits
+  # from fish panes lose the Orca trailer. The begin block keeps the loop variable out
+  # of the user's session. Order matches the POSIX wrappers: attribution, then teams.
+  for __orca_shim_dir in $ORCA_ATTRIBUTION_SHIM_DIR $ORCA_AGENT_TEAMS_SHIM_DIR
+    if test -n "$__orca_shim_dir"; and test "$PATH[1]" != "$__orca_shim_dir"
+      set -gx PATH "$__orca_shim_dir" $PATH
+    end
+  end
+end
+# Why: a config.fish that sets its own agent home (\`set -gx CODEX_HOME ...\`) would
+# otherwise beat Orca's routed home and launch the agent against the wrong account,
+# which reads in the UI as the account switcher doing nothing.
+if test -n "$ORCA_OPENCODE_CONFIG_DIR"
+  set -gx OPENCODE_CONFIG_DIR "$ORCA_OPENCODE_CONFIG_DIR"
+end
+if test -n "$ORCA_MIMOCODE_HOME"
+  set -gx MIMOCODE_HOME "$ORCA_MIMOCODE_HOME"
+end
+if test -n "$ORCA_CODEX_HOME"
+  set -gx CODEX_HOME "$ORCA_CODEX_HOME"
+end
+${getFishShellReadyMarkerBlock(escapedMarker)}`
 }
 
 export function getZshFinalZdotdirRestoreBlock(homeExpression = '"${ORCA_ORIG_ZDOTDIR:-$HOME}"') {
