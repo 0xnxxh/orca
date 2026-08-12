@@ -1235,7 +1235,10 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
       conflicts, grants, redirects/SSRF, authorization, tenant isolation, and instruction/script
       trust in `docs/reference/agent-skill-sharing-threat-model.md`; keep approval and residual-risk
       acceptance as separate human gates.
-- [ ] Verify owner-private staging permissions on supported hosts.
+- [x] Verify owner-private staging permissions on supported hosts. POSIX download, package,
+      extraction, upload-session, provenance, and lock tests require `0700` directories and `0600`
+      files; real WSL verifies owner-private executable modes; and the native-Windows privacy suite
+      verifies staging remains under the owning profile without broad ACL disclosure.
 - [x] Rate-limit uploads, finalization, downloads, share resolution, and remote transfer sessions.
 - [x] Test malicious redirects, DNS/host confusion, expired grants, mismatched generations, and
       oversized streaming bodies. Exact HTTPS origins, manual same-origin redirects, URL
