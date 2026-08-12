@@ -28,6 +28,8 @@ const {
   getDaemonLaunchIdentityMock,
   isDaemonStaleForCurrentBundleMock,
   killStaleDaemonMock,
+  readVerifiedDaemonPidMock,
+  inspectDaemonPtyOwnershipMock,
   getProcessStartedAtMsMock,
   parseDaemonPidFileMock,
   replaceDaemonPidFileMock,
@@ -91,6 +93,10 @@ const {
   const getMacDaemonTccAttributionHealthMock = vi.fn(async () => 'unknown')
   const getDaemonLaunchIdentityMock = vi.fn(() => 'match')
   const isDaemonStaleForCurrentBundleMock = vi.fn(() => false)
+  const inspectDaemonPtyOwnershipMock = vi.fn(
+    async (): Promise<'owns-live-ptys' | 'no-live-ptys' | 'unknown'> => 'unknown'
+  )
+  const readVerifiedDaemonPidMock = vi.fn(async (): Promise<{ pid: number } | null> => null)
   const killStaleDaemonMock = vi.fn(async () => ({
     killed: true,
     liveOwnerSurvived: false
@@ -196,6 +202,8 @@ const {
     getDaemonLaunchIdentityMock,
     isDaemonStaleForCurrentBundleMock,
     killStaleDaemonMock,
+    readVerifiedDaemonPidMock,
+    inspectDaemonPtyOwnershipMock,
     getProcessStartedAtMsMock,
     parseDaemonPidFileMock,
     replaceDaemonPidFileMock,
@@ -265,6 +273,17 @@ vi.mock('electron', () => ({
   }
 }))
 
+// Map the existing boolean socket double onto the canonical three-valued probe:
+// present ⇒ something is serving, absent ⇒ positively dead.
+vi.mock('./daemon-live-pty-evidence', () => ({
+  inspectDaemonPtyOwnership: inspectDaemonPtyOwnershipMock
+}))
+
+vi.mock('./daemon-endpoint-probe', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  probeSocketConnect: async (p: string) => (probeSocketExistsMock(p) ? 'connected' : 'missing')
+}))
+
 vi.mock('fs', () => ({
   mkdirSync: vi.fn(),
   existsSync: (p: string) => probeSocketExistsMock(p) || p.includes('.pid'),
@@ -289,6 +308,7 @@ vi.mock('./daemon-health', () => ({
   healthCheckDaemon: healthCheckDaemonMock,
   isDaemonStaleForCurrentBundle: isDaemonStaleForCurrentBundleMock,
   killStaleDaemon: killStaleDaemonMock,
+  readVerifiedDaemonPid: readVerifiedDaemonPidMock,
   getProcessStartedAtMs: getProcessStartedAtMsMock,
   parseDaemonPidFile: parseDaemonPidFileMock
 }))
@@ -3156,9 +3176,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       expect(killStaleDaemonMock).toHaveBeenCalledWith(
         FAKE_RUNTIME_DIR,
         '/fake/socket',
-        '/fake/token',
-        PROTOCOL_VERSION,
-        { preserveWhenOwningLivePtys: true }
+        '/fake/token'
       )
       expect(forkMock).toHaveBeenCalled()
       // The launcher probes the full grace budget: 1 initial probe + WEDGED_DAEMON_GRACE_RETRIES retries.
@@ -3178,11 +3196,9 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     }
   })
 
-  it('adopts a wedged daemon that still owns live PTYs instead of killing its agents', async () => {
-    // Why: the regression that motivated the veto. A daemon too wedged to answer listSessions
-    // still hosts every running agent; killing it destroys work that no restore can recover.
-    // killStaleDaemon owns the veto, so the launcher's contract is to opt in here and to route
-    // the refusal into degraded adoption rather than forking a second daemon beside it.
+  it('holds a wedged daemon that still owns live terminals instead of killing its agents', async () => {
+    // Why hold and not adopt: a daemon that cannot answer listSessions cannot answer a hello,
+    // so there is nothing to adopt. The kill must never be attempted — its agents are alive.
     const mod = await importFresh()
     await mod.initDaemonPtyProvider()
 
@@ -3193,22 +3209,19 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
         disconnect: vi.fn()
       }
     }
-    let daemonClientConstructionCount = 0
     daemonClientMock.mockImplementation(function MockWedgedDaemonClient() {
-      daemonClientConstructionCount++
       return {
         ensureConnected: vi.fn(async () => {
-          if (daemonClientConstructionCount <= 2 + WEDGED_DAEMON_GRACE_RETRIES) {
-            throw new Error('Hello response timed out')
-          }
+          throw new Error('Hello response timed out')
         }),
         getDaemonIdentity: vi.fn(readLaunchedDaemonIdentity),
         request: vi.fn(),
         disconnect: vi.fn()
       }
     })
-    // The real killStaleDaemon refuses and reports the owner alive; this is that verdict.
-    killStaleDaemonMock.mockResolvedValueOnce({ killed: false, liveOwnerSurvived: true })
+    // The daemon is identity-verified and its process still owns live terminals.
+    readVerifiedDaemonPidMock.mockResolvedValue({ pid: 4242 })
+    inspectDaemonPtyOwnershipMock.mockResolvedValue('owns-live-ptys')
 
     const launcher = spawnerInstances[0].launcher as (
       socketPath: string,
@@ -3218,27 +3231,16 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     probeSocketExistsMock.mockReturnValue(true)
     netConnectMock.mockImplementation(stubAliveSocketConnect)
 
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const handle = await launcher('/fake/socket', '/fake/token')
 
-      expect(killStaleDaemonMock).toHaveBeenCalledWith(
-        FAKE_RUNTIME_DIR,
-        '/fake/socket',
-        '/fake/token',
-        PROTOCOL_VERSION,
-        { preserveWhenOwningLivePtys: true }
-      )
-      // No replacement daemon beside the one still hosting the agents.
+      expect(handle.mode).toBe('held')
+      expect(killStaleDaemonMock).not.toHaveBeenCalled()
       expect(forkMock).not.toHaveBeenCalled()
-      expect(handle.mode).toBe('degraded-new-pty-fallback')
-      // A refusal is not a replacement, so the replace verdict must not be announced.
-      expect(warnSpy).not.toHaveBeenCalledWith(
-        expect.stringContaining('Replacing daemon that failed the health check')
-      )
     } finally {
-      warnSpy.mockRestore()
       daemonClientMock.mockImplementation(answeringDefault)
+      readVerifiedDaemonPidMock.mockResolvedValue(null)
+      inspectDaemonPtyOwnershipMock.mockResolvedValue('unknown')
     }
   })
 

@@ -28,8 +28,15 @@ export type DaemonPidFile = {
   spawnerExecPath?: string
 }
 
+/**
+ * 'degraded-new-pty-fallback' — adopted, but it cannot spawn fresh PTYs.
+ * 'held' — deliberately kept without adopting it: it owns live terminals but cannot
+ * answer a handshake, so there is no lease to take and none must be attempted.
+ */
+export type DaemonLaunchMode = 'degraded-new-pty-fallback' | 'held'
+
 export type DaemonProcessHandle = {
-  mode?: 'degraded-new-pty-fallback'
+  mode?: DaemonLaunchMode
   releaseAdoptionLease?(): void
   shutdown(): Promise<void>
 }

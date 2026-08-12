@@ -15,9 +15,12 @@ import {
   unlinkOwnedDaemonPidFile,
   type DaemonLauncher,
   type DaemonPidFile,
+  type DaemonLaunchMode,
   type DaemonProcessHandle
 } from './daemon-spawner'
 import { DAEMON_EXIT_ENDPOINT_OCCUPIED } from './daemon-endpoint-ownership'
+import { endpointIsProvenDead, probeSocketConnect } from './daemon-endpoint-probe'
+import { resolveDaemonOccupancy } from './daemon-occupancy'
 import { DaemonPtyAdapter, type DaemonRespawnReason } from './daemon-pty-adapter'
 import { DaemonPtyRouter } from './daemon-pty-router'
 import { DaemonClient } from './client'
@@ -34,6 +37,7 @@ import {
   checkDaemonHealth,
   isDaemonStaleForCurrentBundle,
   killStaleDaemon,
+  readVerifiedDaemonPid,
   parseDaemonPidFile,
   type MacDaemonTccAttributionHealth
 } from './daemon-health'
@@ -193,7 +197,7 @@ async function getAliveDaemonSessionCount(
 function createPreservedDaemonHandle(
   runtimeDir: string,
   protocolVersion = PROTOCOL_VERSION,
-  mode?: 'degraded-new-pty-fallback'
+  mode?: DaemonLaunchMode
 ): DaemonProcessHandle {
   const handle: DaemonProcessHandle = {
     shutdown: async () => {
@@ -460,11 +464,12 @@ function createOutOfProcessLauncher(
       | {
           reason: Parameters<typeof trackDaemonReplaced>[0]
           liveSessionCount: number | null
+          /** Rendered once the outcome is known; only the health-check branch announces. */
+          verdict?: string
+          announce?: boolean
         }
       | undefined
     let confirmedReplacement = false
-    let healthCheckReplacementVerdict: string | null = null
-    let healthCheckReplacementAnnounced = false
     let adoptionClient: DaemonClient | null = new DaemonClient({
       socketPath,
       tokenPath
@@ -477,9 +482,16 @@ function createOutOfProcessLauncher(
       adoptionClient.disconnect()
       adoptionClient = null
     }
-    const preserveDaemon = async (
-      mode?: 'degraded-new-pty-fallback'
-    ): Promise<DaemonProcessHandle> => {
+    /**
+     * Keep the incumbent without talking to it. No adoption, so no lease: the lease only
+     * cancels an adoption watchdog, which cannot fire on a daemon that owns sessions.
+     */
+    const holdIncumbentDaemon = (): DaemonProcessHandle => {
+      adoptionClient?.disconnect()
+      adoptionClient = null
+      return createPreservedDaemonHandle(runtimeDir, PROTOCOL_VERSION, 'held')
+    }
+    const preserveDaemon = async (mode?: DaemonLaunchMode): Promise<DaemonProcessHandle> => {
       const connectedClient = adoptionClient ?? undefined
       adoptionClient = null
       return holdDaemonAdoptionLease(
@@ -579,65 +591,69 @@ function createOutOfProcessLauncher(
           }
         }
       } else {
-        // Why: a busy machine can time out the health check on a live daemon; re-verify with a session list before killing its sessions.
-        let liveSessionCount = await getAliveDaemonSessionCount(socketPath, tokenPath)
+        // Why: a busy machine can time out the health check on a live daemon; re-verify what
+        // it is hosting before killing its sessions.
+        const verifiedPid = await readVerifiedDaemonPid(runtimeDir, socketPath, tokenPath)
+        let occupancy = await resolveDaemonOccupancy({
+          socketPath,
+          tokenPath,
+          recordedPid: verifiedPid?.pid ?? null
+        })
         // Why: a wedged-but-connectable daemon (Windows update relaunch) may still own live sessions, so grace-retry before replacing; a permanent wedge (#8689) exhausts the grace, and 'rejected' skips it (handshake refused = never adoptable).
         let graceRetry = 0
         while (
-          liveSessionCount === null &&
+          occupancy.state === 'unknown' &&
           health !== 'rejected' &&
           graceRetry < WEDGED_DAEMON_GRACE_RETRIES &&
-          (await probeSocket(socketPath))
+          !endpointIsProvenDead(await probeSocketConnect(socketPath))
         ) {
-          liveSessionCount = await getAliveDaemonSessionCount(socketPath, tokenPath)
+          occupancy = await resolveDaemonOccupancy({
+            socketPath,
+            tokenPath,
+            recordedPid: verifiedPid?.pid ?? null
+          })
           graceRetry++
         }
-        if (liveSessionCount !== null && liveSessionCount > 0) {
+        if (occupancy.state === 'occupied') {
+          // Why hold rather than adopt: a count we could only get from the process table means
+          // the daemon never answered us, so it cannot answer a hello either and adoption would
+          // fail. Holding keeps its terminals alive and routes fresh ones locally until the
+          // wedge clears or the user restarts.
+          if (occupancy.liveSessions === null) {
+            console.warn(
+              '[daemon] DEGRADED MODE: holding a daemon that cannot report its sessions but still owns live terminal processes. Killing it would end them; fresh terminals run on the local provider WITHOUT daemon persistence until it recovers or you restart it (Manage Sessions → Restart).'
+            )
+            return holdIncumbentDaemon()
+          }
+          const owned = `${occupancy.liveSessions} live session${occupancy.liveSessions === 1 ? '' : 's'}`
           if (health === 'pty-spawn-unhealthy') {
             console.warn(
-              `[daemon] DEGRADED MODE: preserving daemon that failed the PTY spawn health check because it owns ${liveSessionCount} live session${liveSessionCount === 1 ? '' : 's'}. Existing sessions keep working; fresh terminals run on the local provider WITHOUT daemon persistence until you restart the daemon (Manage Sessions → Restart).`
+              `[daemon] DEGRADED MODE: preserving daemon that failed the PTY spawn health check because it owns ${owned}. Existing sessions keep working; fresh terminals run on the local provider WITHOUT daemon persistence until you restart the daemon (Manage Sessions → Restart).`
             )
             return preserveDaemon('degraded-new-pty-fallback')
           }
           console.warn(
-            `[daemon] Preserving daemon that failed the health check because it owns ${liveSessionCount} live session${liveSessionCount === 1 ? '' : 's'}`
+            `[daemon] Preserving daemon that failed the health check because it owns ${owned}`
           )
           return preserveDaemon()
         }
         // Why: a cold start reaches this same fall-through with nothing to replace, so stay
-        // quiet unless something actually answered — a count, a socket that survived a grace
-        // retry, or a refused hello. The confirmed-kill case is added below because the one
-        // replacement that destroys user work, an unverifiable count from a daemon that never
-        // answered, satisfies none of those and used to be killed in total silence.
-        healthCheckReplacementAnnounced =
-          liveSessionCount !== null || graceRetry > 0 || health === 'rejected'
-        healthCheckReplacementVerdict = `health=${health}, liveSessions=${liveSessionCount ?? 'unverifiable'}, graceRetries=${graceRetry}`
+        // quiet unless something actually answered — a verified count, a socket that survived
+        // a grace retry, or a refused hello.
         // Why: telemetry gates on confirmedReplacement below — the post-kill truth — so a
         // cold start that killed nothing never reports a replacement.
         pendingReplacement = {
           reason: 'failed_health_check',
-          liveSessionCount
+          liveSessionCount: occupancy.liveSessions,
+          verdict: `health=${health}, occupancy=${occupancy.state}, graceRetries=${graceRetry}`,
+          announce: occupancy.state === 'empty' || graceRetry > 0 || health === 'rejected'
         }
       }
 
       // Why: a raw socket can outlive a broken daemon; kill by PID before respawn so the new daemon doesn't race the stale one.
       adoptionClient?.disconnect()
       adoptionClient = null
-      // Why these three conditions: the veto answers "we could not verify" (a daemon that
-      // answered listSessions with 0 must stay replaceable, as must an explicit user
-      // restart); a 'rejected' daemon answered and refused the handshake, so it can never be
-      // adopted and preserving it would loop forever; and an endpoint nothing can reach
-      // serves no one, so its PTYs are already unreachable and holding it costs the app a
-      // daemon it could otherwise replace.
-      const canPreserveLivePtys =
-        pendingReplacement?.liveSessionCount === null &&
-        health !== 'rejected' &&
-        (await probeSocket(socketPath))
-      const killOutcome = canPreserveLivePtys
-        ? await killStaleDaemon(runtimeDir, socketPath, tokenPath, PROTOCOL_VERSION, {
-            preserveWhenOwningLivePtys: true
-          })
-        : await killStaleDaemon(runtimeDir, socketPath, tokenPath)
+      const killOutcome = await killStaleDaemon(runtimeDir, socketPath, tokenPath)
       if (killOutcome.liveOwnerSurvived) {
         // Why: forking beside a daemon we could not prove dead is precisely how the endpoint
         // owner and the session host diverge. But refusing outright would leave the user with
@@ -654,7 +670,7 @@ function createOutOfProcessLauncher(
           // so keep a lease-free handle: the lease only cancels the adoption watchdog, which
           // cannot fire on a daemon that still owns sessions, and throwing here would cost the
           // app its daemon handle — taking Manage Sessions → Restart down with it.
-          if (await probeSocket(socketPath)) {
+          if (!endpointIsProvenDead(await probeSocketConnect(socketPath))) {
             return createPreservedDaemonHandle(
               runtimeDir,
               PROTOCOL_VERSION,
@@ -667,12 +683,9 @@ function createOutOfProcessLauncher(
           )
         }
       }
-      if (
-        healthCheckReplacementVerdict &&
-        (healthCheckReplacementAnnounced || killOutcome.killed)
-      ) {
+      if (pendingReplacement?.verdict && (pendingReplacement.announce || killOutcome.killed)) {
         console.warn(
-          `[daemon] Replacing daemon that failed the health check (${healthCheckReplacementVerdict})`
+          `[daemon] Replacing daemon that failed the health check (${pendingReplacement.verdict})`
         )
       }
       confirmedReplacement = killOutcome.killed || confirmedReplacement
@@ -1021,27 +1034,17 @@ export async function initDaemonPtyProvider(
   let routedAdapter: DaemonProvider = newAdapter
   try {
     // Why: the launcher's temporary pair closes only after this permanent pair is established, leaving no adoption gap.
-    // Why tolerated in degraded mode: it exists for a daemon we deliberately kept without
-    // being able to talk to it, so a lease it cannot grant must not abort init — that would
-    // leave the app with no spawner at all, and restartDaemon() throws without one.
-    let permanentLeaseHeld = true
-    if (launchMode === 'degraded-new-pty-fallback') {
-      permanentLeaseHeld = await newAdapter.establishLifecycleLease().then(
-        () => true,
-        () => false
-      )
-    } else {
+    // Why skipped when held: we deliberately never talked to that daemon, so there is no
+    // handshake to complete and no temporary lease to hand over. Attempting one would throw
+    // and abort init, leaving the app with no spawner — and restartDaemon() throws without one.
+    if (launchMode !== 'held') {
       await newAdapter.establishLifecycleLease()
-    }
-    // Why conditional: releasing the launcher's temporary pair with no permanent pair
-    // established is exactly the adoption gap the ordering above exists to prevent.
-    if (permanentLeaseHeld) {
       releaseDaemonAdoptionLease(newSpawner.getHandle())
     }
 
     legacyAdapters = await createLegacyDaemonAdapters(runtimeDir)
     routedAdapter =
-      launchMode === 'degraded-new-pty-fallback'
+      launchMode === 'degraded-new-pty-fallback' || launchMode === 'held'
         ? new DegradedDaemonPtyProvider({
             current: newAdapter,
             legacy: legacyAdapters,
