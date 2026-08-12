@@ -595,11 +595,11 @@ function checkLauncherHoldsOccupiedDaemon() {
   // A daemon that did complete a hello is adoptable, so it must not be routed to a mode that
   // never adopts.
   const unverifiableGuard = occupiedBlock.text.match(
-    /if\s*\(\s*health\s*===\s*'unreachable'\s*&&\s*occupancy\.liveSessions\s*===\s*null\s*\)\s*\{/
+    /if\s*\(\s*health\s*===\s*'rejected'\s*\|\|\s*occupancy\.liveSessions\s*===\s*null\s*\)\s*\{/
   )
   assert(
     unverifiableGuard !== null,
-    `${relativePath}:${occupiedLine} does not gate the hold on an unreachable daemon with an unverifiable (null) session count`
+    `${relativePath}:${occupiedLine} does not gate the hold on a daemon that cannot be adopted (rejected, or an unverifiable session count)`
   )
   const unverifiableBlock = extractBlock(
     occupiedBlock.text,

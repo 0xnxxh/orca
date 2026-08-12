@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { resolveDaemonOccupancy, type DaemonOccupancyDeps } from './daemon-occupancy'
+import {
+  raiseOccupancyWithProcessEvidence,
+  resolveDaemonOccupancy,
+  type DaemonOccupancy,
+  type DaemonOccupancyDeps
+} from './daemon-occupancy'
 import type { inspectDaemonPtyOwnership } from './daemon-live-pty-evidence'
 
 const SOCKET_PATH = '/tmp/orca-daemon.sock'
@@ -105,6 +110,83 @@ describe('resolveDaemonOccupancy when the daemon could not answer', () => {
       resolve({ listSessions: ipcAnswers(null), inspectPtyOwnership }, null)
     ).resolves.toEqual({ state: 'unknown', liveSessions: null })
     expect(inspectPtyOwnership).not.toHaveBeenCalled()
+  })
+})
+
+describe('raiseOccupancyWithProcessEvidence', () => {
+  const UNKNOWN: DaemonOccupancy = { state: 'unknown', liveSessions: null }
+
+  it('raises an unanswered verdict to occupied, with no count to report', async () => {
+    const inspectPtyOwnership = ownershipIs('owns-live-ptys')
+
+    await expect(
+      raiseOccupancyWithProcessEvidence(UNKNOWN, DAEMON_PID, { inspectPtyOwnership })
+    ).resolves.toEqual({ state: 'occupied', liveSessions: null })
+    expect(inspectPtyOwnership).toHaveBeenCalledWith(DAEMON_PID)
+  })
+
+  it('leaves an unanswered verdict unknown — never empty — when the table shows no live PTYs', async () => {
+    // The whole point of the raise-only contract: ps can miss PTYs it never observed, so an
+    // empty-looking table is not permission to kill a daemon that could not answer for itself.
+    await expect(
+      raiseOccupancyWithProcessEvidence(UNKNOWN, DAEMON_PID, {
+        inspectPtyOwnership: ownershipIs('no-live-ptys')
+      })
+    ).resolves.toEqual(UNKNOWN)
+  })
+
+  it('leaves an unanswered verdict unchanged when the table could not be read', async () => {
+    await expect(
+      raiseOccupancyWithProcessEvidence(UNKNOWN, DAEMON_PID, {
+        inspectPtyOwnership: ownershipIs('unknown')
+      })
+    ).resolves.toEqual(UNKNOWN)
+  })
+
+  it('does not inspect an unverified pid', async () => {
+    // A pid we could not tie back to this daemon may have been recycled; its children are
+    // evidence about the wrong process tree.
+    const inspectPtyOwnership = ownershipIs('owns-live-ptys')
+
+    await expect(
+      raiseOccupancyWithProcessEvidence(UNKNOWN, null, { inspectPtyOwnership })
+    ).resolves.toEqual(UNKNOWN)
+    expect(inspectPtyOwnership).not.toHaveBeenCalled()
+  })
+
+  it('returns an empty verdict untouched, without consulting the process table', async () => {
+    // 'empty' came from the daemon itself and is the one state that licenses a kill. Re-asking
+    // the table could only lower it back to 'unknown', discarding an IPC-proven answer.
+    const inspectPtyOwnership = ownershipIs('owns-live-ptys')
+
+    await expect(
+      raiseOccupancyWithProcessEvidence({ state: 'empty', liveSessions: 0 }, DAEMON_PID, {
+        inspectPtyOwnership
+      })
+    ).resolves.toEqual({ state: 'empty', liveSessions: 0 })
+    expect(inspectPtyOwnership).not.toHaveBeenCalled()
+  })
+
+  it('keeps the counted sessions of an already-occupied verdict', async () => {
+    // Raising an answered count to the countless 'occupied' would lose what the daemon reported.
+    const inspectPtyOwnership = ownershipIs('no-live-ptys')
+
+    await expect(
+      raiseOccupancyWithProcessEvidence({ state: 'occupied', liveSessions: 3 }, DAEMON_PID, {
+        inspectPtyOwnership
+      })
+    ).resolves.toEqual({ state: 'occupied', liveSessions: 3 })
+    expect(inspectPtyOwnership).not.toHaveBeenCalled()
+  })
+
+  it('leaves the verdict unchanged when the inspector throws', async () => {
+    await expect(
+      raiseOccupancyWithProcessEvidence(UNKNOWN, DAEMON_PID, {
+        inspectPtyOwnership: vi.fn<typeof inspectDaemonPtyOwnership>(async () => {
+          throw new Error('process table read exploded')
+        })
+      })
+    ).resolves.toEqual(UNKNOWN)
   })
 })
 

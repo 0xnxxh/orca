@@ -109,6 +109,47 @@ describe('inspectDaemonPtyOwnership on POSIX', () => {
     ).resolves.toBe('no-live-ptys')
   })
 
+  it("excludes the daemon's own PTY-spawn probe, which forkpty also makes a session leader", async () => {
+    // Why the stat flag is not enough: the daemon opens this PTY itself, so a daemon hosting
+    // zero user terminals would be held forever on the strength of its own stuck health check.
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        readPosixProcessTable: posixTable([
+          daemonRow,
+          row(101, DAEMON_PID, { stat: 'Ss', command: '/bin/sh -c exit 0' })
+        ])
+      })
+    ).resolves.toBe('no-live-ptys')
+  })
+
+  it("still counts a real terminal sitting beside the daemon's own probe", async () => {
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        readPosixProcessTable: posixTable([
+          daemonRow,
+          row(101, DAEMON_PID, { stat: 'Ss', command: '/bin/sh -c exit 0' }),
+          row(202, DAEMON_PID, { stat: 'Ss+', command: 'claude' })
+        ])
+      })
+    ).resolves.toBe('owns-live-ptys')
+  })
+
+  it('does not exclude an agent whose command merely contains a probe command', async () => {
+    // Exact match, not prefix or substring: `sh -c` payloads are user-supplied, and treating one
+    // as the daemon's own probe discards proof that killing the daemon would end real work.
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        readPosixProcessTable: posixTable([
+          daemonRow,
+          row(101, DAEMON_PID, { stat: 'Ss', command: '/bin/sh -c exit 0 && claude' })
+        ])
+      })
+    ).resolves.toBe('owns-live-ptys')
+  })
+
   it('counts a session leader reached through a non-session-leader hop', async () => {
     await expect(
       inspectDaemonPtyOwnership(DAEMON_PID, {
@@ -192,6 +233,43 @@ describe('inspectDaemonPtyOwnership on win32', () => {
         queryWindowsDescendants: async () => []
       })
     ).resolves.toBe('no-live-ptys')
+  })
+
+  it('ignores the conpty warmup processes the daemon spawns for itself', async () => {
+    // Casing and padding vary with how the OS recorded the command line, and this branch counts
+    // *any* descendant — so without the match a daemon hosting nothing would look occupied.
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'win32',
+        queryWindowsDescendants: async () => [
+          { ...windowsCandidate(101), command: '  CMD.EXE /C EXIT  ' },
+          { ...windowsCandidate(102), command: 'Cmd /C Exit' }
+        ]
+      })
+    ).resolves.toBe('no-live-ptys')
+  })
+
+  it('still counts a hosted terminal sitting beside the conpty warmup', async () => {
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'win32',
+        queryWindowsDescendants: async () => [
+          { ...windowsCandidate(101), command: 'cmd.exe /c exit' },
+          { ...windowsCandidate(202), command: 'claude' }
+        ]
+      })
+    ).resolves.toBe('owns-live-ptys')
+  })
+
+  it('does not exclude a command that merely starts with the warmup command', async () => {
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'win32',
+        queryWindowsDescendants: async () => [
+          { ...windowsCandidate(101), command: 'cmd.exe /c exit && npm run dev' }
+        ]
+      })
+    ).resolves.toBe('owns-live-ptys')
   })
 
   it('reports unknown when enumeration failed or the root was absent', async () => {

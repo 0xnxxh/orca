@@ -2,7 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
 import { PROTOCOL_VERSION } from './types'
-import { WEDGED_DAEMON_GRACE_RETRIES } from './daemon-init'
+import { WEDGED_DAEMON_GRACE_BUDGET_MS, WEDGED_DAEMON_GRACE_RETRIES } from './daemon-init'
+import { LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS } from '../startup/first-window-startup-services'
 
 const FAKE_USER_DATA_PATH = '/fake/userData'
 const FAKE_RUNTIME_DIR = join(FAKE_USER_DATA_PATH, 'daemon')
@@ -3244,6 +3245,54 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     }
   })
 
+  it('adopts a PTY-spawn-unhealthy daemon in degraded mode instead of merely holding it', async () => {
+    // Why not 'held': 'pty-spawn-unhealthy' is only reachable after a successful hello, so this
+    // daemon CAN be adopted — it just cannot open new PTYs. Holding it (which never adopts)
+    // because the occupancy count happened to come from the process table strands its sessions.
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+
+    const answeringDefault = function MockDaemonClient() {
+      return {
+        ensureConnected: vi.fn(async () => {}),
+        request: vi.fn(async () => ({ sessions: [] })),
+        disconnect: vi.fn()
+      }
+    }
+    // Hello succeeds; only listSessions is unanswerable, so occupancy falls back to the table.
+    daemonClientMock.mockImplementation(function MockPtySpawnUnhealthyClient() {
+      return {
+        ensureConnected: vi.fn(async () => {}),
+        request: vi.fn(async () => {
+          throw new Error('listSessions timed out')
+        }),
+        disconnect: vi.fn()
+      }
+    })
+    readVerifiedDaemonPidMock.mockResolvedValue({ pid: 4242 })
+    inspectDaemonPtyOwnershipMock.mockResolvedValue('owns-live-ptys')
+
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void>; mode?: string }>
+    checkDaemonHealthMock.mockResolvedValueOnce('pty-spawn-unhealthy')
+    probeSocketExistsMock.mockReturnValue(true)
+    netConnectMock.mockImplementation(stubAliveSocketConnect)
+
+    try {
+      const handle = await launcher('/fake/socket', '/fake/token')
+
+      expect(handle.mode).toBe('degraded-new-pty-fallback')
+      expect(killStaleDaemonMock).not.toHaveBeenCalled()
+      expect(forkMock).not.toHaveBeenCalled()
+    } finally {
+      daemonClientMock.mockImplementation(answeringDefault)
+      readVerifiedDaemonPidMock.mockResolvedValue(null)
+      inspectDaemonPtyOwnershipMock.mockResolvedValue('unknown')
+    }
+  })
+
   it('keeps a daemon handle when the preserved daemon is too wedged to be adopted', async () => {
     // Why: adoption needs a hello, which is exactly what a daemon wedged enough to be
     // preserved cannot answer. Throwing here would abort initDaemonPtyProvider, leaving no
@@ -3291,9 +3340,126 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     }
   })
 
+  it('holds a hello-rejected daemon that owns live terminals rather than adopting it', async () => {
+    // Why: 'rejected' means it answered and refused the handshake, so adoption can never
+    // succeed. Falling through to preserveDaemon() would throw and cost the app its daemon
+    // entirely — and killing it would end agents that are still running.
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+
+    const answeringDefault = function MockDaemonClient() {
+      return {
+        ensureConnected: vi.fn(async () => {}),
+        request: vi.fn(async () => ({ sessions: [] })),
+        disconnect: vi.fn()
+      }
+    }
+    daemonClientMock.mockImplementation(function MockRejectingDaemonClient() {
+      return {
+        ensureConnected: vi.fn(async () => {
+          throw new Error('hello refused')
+        }),
+        getDaemonIdentity: vi.fn(readLaunchedDaemonIdentity),
+        request: vi.fn(),
+        disconnect: vi.fn()
+      }
+    })
+    readVerifiedDaemonPidMock.mockResolvedValue({ pid: 4242 })
+    inspectDaemonPtyOwnershipMock.mockResolvedValue('owns-live-ptys')
+
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void>; mode?: string }>
+    checkDaemonHealthMock.mockResolvedValueOnce('rejected')
+    probeSocketExistsMock.mockReturnValue(true)
+    netConnectMock.mockImplementation(stubAliveSocketConnect)
+
+    try {
+      const handle = await launcher('/fake/socket', '/fake/token')
+
+      expect(handle.mode).toBe('held')
+      expect(killStaleDaemonMock).not.toHaveBeenCalled()
+      expect(forkMock).not.toHaveBeenCalled()
+    } finally {
+      daemonClientMock.mockImplementation(answeringDefault)
+      readVerifiedDaemonPidMock.mockResolvedValue(null)
+      inspectDaemonPtyOwnershipMock.mockResolvedValue('unknown')
+    }
+  })
+
   it('grace budget is generous enough to ride out a ~60s transient wedge', () => {
     // Why: each probe waits the client's 5s hello timeout, so 1 + 11 probes ≈ 60s of drain grace; don't cut without telemetry.
     expect(WEDGED_DAEMON_GRACE_RETRIES).toBeGreaterThanOrEqual(11)
+  })
+
+  it('leaves headroom under the startup fail-open cap', () => {
+    // Why a wall-clock budget at all: the retry count does not bound the grace window, because
+    // each probe waits the client's hello timeout. Startup abandons the daemon provider entirely
+    // at the fail-open cap, so overrunning it trades a wedged daemon for no daemon at all.
+    expect(WEDGED_DAEMON_GRACE_BUDGET_MS).toBeLessThan(LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS)
+  })
+
+  it('stops grace-retrying when the wall-clock budget runs out, with retries still left', async () => {
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+
+    const answeringDefault = function MockDaemonClient() {
+      return {
+        ensureConnected: vi.fn(async () => {}),
+        request: vi.fn(async () => ({ sessions: [] })),
+        disconnect: vi.fn()
+      }
+    }
+    // Permanently wedged: without the budget this drains all WEDGED_DAEMON_GRACE_RETRIES probes.
+    daemonClientMock.mockImplementation(function MockWedgedDaemonClient() {
+      return {
+        ensureConnected: vi.fn(async () => {
+          throw new Error('Hello response timed out')
+        }),
+        request: vi.fn(),
+        disconnect: vi.fn()
+      }
+    })
+
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void> }>
+    checkDaemonHealthMock.mockResolvedValueOnce('unreachable')
+    probeSocketExistsMock.mockReturnValue(true)
+    netConnectMock.mockImplementation(stubAliveSocketConnect)
+    forkMock.mockImplementationOnce(() => {
+      throw new Error('stop after replacement decision')
+    })
+
+    // Stand in for the hello timeout each probe really waits out: mocked probes return instantly,
+    // so only a moving clock can exercise the budget without a slow (or flaky) real wait.
+    const startMs = Date.now()
+    let elapsedMs = 0
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      const value = startMs + elapsedMs
+      elapsedMs += WEDGED_DAEMON_GRACE_BUDGET_MS / 3
+      return value
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      await expect(launcher('/fake/socket', '/fake/token')).rejects.toThrow(
+        'stop after replacement decision'
+      )
+
+      const verdict = warnSpy.mock.calls
+        .map((call) => String(call[0]))
+        .find((message) => message.includes('graceRetries='))
+      expect(verdict).toBeDefined()
+      const graceRetries = Number(/graceRetries=(\d+)/.exec(verdict as string)?.[1])
+      expect(graceRetries).toBeLessThan(WEDGED_DAEMON_GRACE_RETRIES)
+    } finally {
+      nowSpy.mockRestore()
+      warnSpy.mockRestore()
+      daemonClientMock.mockImplementation(answeringDefault)
+    }
   })
 
   it('preserves a daemon that stays wedged until the LAST allowed grace retry', async () => {

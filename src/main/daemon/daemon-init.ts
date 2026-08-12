@@ -633,12 +633,14 @@ function createOutOfProcessLauncher(
             )
             return preserveDaemon('degraded-new-pty-fallback')
           }
-          // Why hold rather than adopt: no hello ever completed and only the process table
-          // could answer, so adoption would fail on the same silence. Holding keeps its
-          // terminals alive and routes fresh ones locally until it recovers or is restarted.
-          if (health === 'unreachable' && occupancy.liveSessions === null) {
+          // Why hold rather than adopt: adoption opens a hello, and neither of these daemons
+          // can complete one — 'rejected' answered and refused, and a count only the process
+          // table could supply means nothing answered at all. Attempting it would throw and
+          // cost the app its daemon entirely. Holding keeps their terminals alive and routes
+          // fresh ones locally until they recover or the user restarts them.
+          if (health === 'rejected' || occupancy.liveSessions === null) {
             console.warn(
-              '[daemon] DEGRADED MODE: holding a daemon that cannot report its sessions but still owns live terminal processes. Killing it would end them; fresh terminals run on the local provider WITHOUT daemon persistence until it recovers or you restart it (Manage Sessions → Restart).'
+              `[daemon] DEGRADED MODE: holding a daemon that cannot be adopted (health=${health}) but still owns ${owned}. Killing it would end them; fresh terminals run on the local provider WITHOUT daemon persistence until it recovers or you restart it (Manage Sessions → Restart).`
             )
             return holdIncumbentDaemon()
           }
