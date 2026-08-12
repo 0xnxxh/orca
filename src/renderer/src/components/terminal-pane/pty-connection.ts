@@ -281,7 +281,6 @@ import {
   setCommandCodeDoneSettleExecutor
 } from './command-code-done-settle'
 import { canCommandCodeOutputOwnPane } from './command-code-output-ownership'
-import { isTerminalTabParked } from './terminal-parked-watcher-registry'
 import {
   getExecutionHostIdForWorktree,
   getSettingsForWorktreeRuntimeOwner
@@ -1108,10 +1107,7 @@ export function connectPanePty(
   // settles after remount must not remount its already-replaced successor.
   const terminalRecoveryGeneration = captureTerminalPaneRecoveryGeneration(deps.tabId)
   const terminalRecoveryInstance = registerTerminalPaneRecoveryInstance(deps.tabId)
-  // Why sampled here: the host disposes this tab's park watcher in the effect
-  // that follows this mount, so connect time is the only moment a pane can tell
-  // a reveal remount from an in-place reattach.
-  let mountFollowsTerminalPark = isTerminalTabParked(deps.tabId)
+  let mountFollowsTerminalPark = deps.mountFollowsTerminalPark
   let authoritativeReattachGeneration = 0
   exposeE2eTerminalPtyOutputDebug()
   let disposed = false
@@ -7326,9 +7322,7 @@ export function connectPanePty(
             skippedAltFrame =
               snapshot.alternateScreen === true &&
               snapshot.frameRestoreAnsi !== undefined &&
-              shouldSkipAltFrameForWidthMismatch(snapshot.cols, readProposedTerminalCols(pane), {
-                skipIfTargetUnknown: true
-              })
+              shouldSkipAltFrameForWidthMismatch(snapshot.cols, readProposedTerminalCols(pane))
             for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot, {
               skipAltFrame: skippedAltFrame
             })) {
@@ -8279,8 +8273,7 @@ export function connectPanePty(
             typeof snapshotFrameRestoreAnsi === 'string' &&
             shouldSkipAltFrameForWidthMismatch(
               connectResult.snapshotCols,
-              readProposedTerminalCols(pane),
-              { skipIfTargetUnknown: true }
+              readProposedTerminalCols(pane)
             )
           writeReplayData(
             daemonAltFrameSkippable
@@ -8349,10 +8342,7 @@ export function connectPanePty(
             for (const replayChunk of buildMainModelSnapshotReplayWrites(modelSnapshot, {
               skipAltFrame: shouldSkipAltFrameForWidthMismatch(
                 modelCols,
-                readProposedTerminalCols(pane),
-                {
-                  skipIfTargetUnknown: true
-                }
+                readProposedTerminalCols(pane)
               )
             })) {
               writeReplayData(replayChunk)
