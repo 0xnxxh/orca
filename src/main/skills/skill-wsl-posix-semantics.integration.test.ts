@@ -168,7 +168,10 @@ describe.runIf(RUN_REAL_WSL)('real WSL POSIX skill semantics', () => {
       wslDistro: DISTRO
     })
 
-    expect(result).toMatchObject({ status: 'complete', skills: [{ name: 'wsl-alpha' }] })
+    expect(result, JSON.stringify(result)).toMatchObject({
+      status: 'complete',
+      skills: [{ name: 'wsl-alpha' }]
+    })
     await expect(
       runWsl('test', '-f', `${guestRoot}/home/.agents/skills/wsl-alpha/SKILL.md`)
     ).resolves.toBe('')
