@@ -6,7 +6,9 @@ import { translate } from '@/i18n/i18n'
  * Degraded mode used to be rare and transient, so a console warning was enough. It is now the
  * settled outcome for a daemon the launcher could not classify — it holds one rather than
  * killing terminals it might still be hosting — which makes it permanent until the user acts.
- * A permanent state nothing renders is one the user cannot act on.
+ *
+ * This surfaces it beside the Restart action that resolves it. It does not surface it anywhere
+ * a user who has not opened Settings would see; a status-bar indicator is the obvious next step.
  */
 export function DaemonDegradedNotice(props: {
   degraded: boolean
@@ -27,14 +29,14 @@ export function DaemonDegradedNotice(props: {
         <div className="min-w-0 space-y-1">
           <p className="text-sm font-medium">
             {translate(
-              'components.settings.DaemonDegradedNotice.title',
+              'auto.components.settings.DaemonDegradedNotice.title',
               'New terminals aren’t being saved'
             )}
           </p>
-          <p className="text-sm opacity-90">
+          <p className="text-xs leading-snug">
             {translate(
-              'components.settings.DaemonDegradedNotice.body',
-              'The terminal host stopped responding, so Orca kept it rather than ending anything it may still be running. Terminals already open keep working. New ones run outside it and will close when you quit Orca. Restarting the host fixes this — it also ends any session the host is still holding.'
+              'auto.components.settings.DaemonDegradedNotice.body',
+              'The terminal host stopped responding. Orca kept it rather than ending anything it might still be hosting, but it can’t reach those terminals until the host responds again — the panes reconnect on their own if it recovers. New terminals open outside the host and close when you quit Orca. Restarting the host clears this, and ends every terminal — both the ones it is still holding and the ones running outside it.'
             )}
           </p>
         </div>
@@ -46,7 +48,7 @@ export function DaemonDegradedNotice(props: {
         disabled={props.isBusy}
         onClick={props.onRestartDaemon}
       >
-        {translate('components.settings.DaemonDegradedNotice.action', 'Restart host')}
+        {translate('auto.components.settings.DaemonDegradedNotice.action', 'Restart host')}
       </Button>
     </div>
   )

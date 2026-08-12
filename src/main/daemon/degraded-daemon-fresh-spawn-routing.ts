@@ -68,7 +68,24 @@ export class DegradedDaemonFreshSpawnRouter {
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
     const mapped = opts.sessionId ? this.sessionProviders.get(opts.sessionId) : undefined
     const target = mapped ?? this.target
-    const result = await target.spawn(opts)
+    let result: PtySpawnResult
+    try {
+      result = await target.spawn(opts)
+    } catch (error) {
+      // Why route back: recovery was a one-way flip on a two-way condition. A daemon that
+      // answers one health check and wedges again kept every later spawn pointed at it, and a
+      // spawn there costs a hello timeout plus a full launcher re-classification — per terminal,
+      // for the rest of the session. Sending the next one to the fallback costs a terminal
+      // without daemon persistence instead, and the next probe can promote it back.
+      if (target === this.current && !mapped) {
+        this.target = this.fallback
+        this.retryAfterMs = Date.now() + DEGRADED_DAEMON_RECOVERY_RETRY_MS
+        console.warn(
+          '[daemon] Fresh terminals routed back to the local provider: the daemon failed a spawn after recovering'
+        )
+      }
+      throw error
+    }
     if (!result.exitedBeforeSpawnReply) {
       this.sessionProviders.set(result.id, target)
     }

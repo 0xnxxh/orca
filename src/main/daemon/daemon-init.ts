@@ -102,16 +102,24 @@ export const WEDGED_DAEMON_GRACE_RETRIES = 11
 export const WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS = 34_000
 
 /**
- * Held back from the probes for the two steps that follow them inside the same ceiling: the
- * identity re-check and the process-table read. Without it the loop would spend the clock to
- * the last millisecond and those two would run past it — which is precisely how the previous
- * budget kept overrunning, one unremembered term at a time.
+ * The clock the identity re-check and process-table read need, checked *after* the probes
+ * rather than withheld from them.
  *
- * Zero on Windows, which runs neither step: it has no process-table evidence to read and so
- * no identity to verify for it. Reserving there would hold back time from the probes that are
- * the only thing standing between a wedged Windows daemon and a kill.
+ * It used to be a reservation, and that was backwards once 'unknown' stopped being lethal.
+ * Evidence can only raise 'unknown' to an uncounted 'occupied', and both of those now hold the
+ * daemon — so the read changes the wording of a warning and nothing else. Withholding twelve
+ * seconds for it starved the one probe whose answer can still restore full daemon mode: a
+ * counted reply is what reaches preserveDaemon(). With a reservation the "patient" ask
+ * resolved to exactly the cheap ask's four seconds and the grace loop could never afford to
+ * run at all.
+ *
+ * So the evidence read is opportunistic now. If the probes used the clock, it is skipped and
+ * the verdict stays 'unknown' — which holds the daemon exactly as an evidence-raised
+ * 'occupied' would have. Nothing is lost but a more precise log line.
+ *
+ * Zero on Windows, which runs neither step.
  */
-export const CLASSIFICATION_EVIDENCE_RESERVE_MS = process.platform === 'win32' ? 0 : 12_000
+export const CLASSIFICATION_EVIDENCE_MIN_MS = process.platform === 'win32' ? 0 : 12_000
 const DAEMON_SELF_SHUTDOWN_WAIT_MS = 5_000
 const DAEMON_CHILD_TERMINATION_GRACE_MS = 5_000
 const DAEMON_CHILD_FORCE_EXIT_WAIT_MS = 1_000
@@ -638,8 +646,7 @@ function createOutOfProcessLauncher(
         // the launch budget for an answer we already have. It is read once, after the wait.
         // Every probe spends the shared clock, minus what the evidence read still needs, so no
         // probe can eat the reserve however long the daemon takes to answer.
-        const probeBudgetMs = (): number =>
-          classificationRemainingMs() - CLASSIFICATION_EVIDENCE_RESERVE_MS
+        const probeBudgetMs = (): number => classificationRemainingMs()
         const askDaemonWhatItHosts = (connectBudgetMs: number): Promise<DaemonOccupancy> =>
           resolveDaemonOccupancy({
             socketPath,
@@ -678,7 +685,9 @@ function createOutOfProcessLauncher(
         // to be re-verified first: the grace window is long enough for the daemon to die and
         // its pid to be recycled, and the evidence would then describe a stranger's children.
         const evidencePid =
-          occupancy.state === 'unknown' && process.platform !== 'win32'
+          occupancy.state === 'unknown' &&
+          process.platform !== 'win32' &&
+          classificationRemainingMs() >= CLASSIFICATION_EVIDENCE_MIN_MS
             ? ((await readVerifiedDaemonPid(runtimeDir, socketPath, tokenPath))?.pid ?? null)
             : null
         occupancy = await raiseOccupancyWithProcessEvidence(occupancy, evidencePid)

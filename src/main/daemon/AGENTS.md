@@ -31,9 +31,13 @@ hands → probe once more → `rename` in one syscall → verify we kept it.
   replacing it. Only the daemon itself can prove it is empty, over IPC; the process table may
   only ever *raise* a verdict toward "occupied", never lower one toward a kill.
 
-  Two exclusions, both about never holding something unrecoverable: an endpoint that is proven
-  dead (a cold start has nothing to hold), and `rejected` (it answered and refused, so it can
-  never be adopted and its sessions can never be reattached).
+  Two exclusions apply **to that residual only** — not to a daemon already proven occupied:
+  an endpoint that is proven dead (a cold start has nothing to hold), and `rejected` (it
+  answered and refused, so it can never be adopted and its sessions can never be reattached).
+
+  A `rejected` daemon that process evidence shows *is* hosting live PTYs is still held, because
+  the choice there is between unreachable-but-running agents and dead ones. Restart recovers it
+  at the documented cost.
 
   The cost is deliberate and known: a wedged-but-empty daemon is no longer replaced at launch,
   so #8689 degrades to "restart it from Manage Sessions" instead of being handled automatically.

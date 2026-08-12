@@ -29,10 +29,24 @@ describe('DaemonDegradedNotice', () => {
     expect(html).toMatch(/close when you quit/)
   })
 
-  it('says the remedy also ends whatever the host is still holding', () => {
-    // Restarting is not free: it kills the sessions this whole change exists to protect. A
-    // remedy offered without its cost is how a user loses agents by clicking the helpful button.
-    expect(render()).toMatch(/ends any session the host is still holding/)
+  it('does not claim the held daemon’s terminals still work', () => {
+    // They do not. Discovery runs over the same IPC the daemon is failing to answer, so its
+    // sessions are never routed and attach refuses the fallback rather than answering on the
+    // daemon's behalf (degraded-daemon-session-routing.ts:23). The processes are alive — which
+    // is the whole point of holding — but unreachable until it responds.
+    const html = render()
+    expect(html).toMatch(/can’t reach those terminals until the host responds/)
+    expect(html).not.toMatch(/already open keep working/)
+  })
+
+  it('says the restart ends the local terminals too, not just the held ones', () => {
+    // Restarting is not free twice over: runRestartDaemon kills the daemon's sessions AND calls
+    // shutdownFallbackSessions() first (daemon-init.ts), so the terminals the notice just told
+    // the user are running "outside the host" die as well. Naming only half the cost is how a
+    // user loses work by clicking the button the banner recommended.
+    expect(render()).toMatch(
+      /ends every terminal — both the ones it is still holding and the ones running outside it/
+    )
   })
 
   it('offers the restart action, disabled while another daemon action runs', () => {

@@ -10652,6 +10652,11 @@
               "disconnectFailed": "Could not remove the saved Bitbucket credential."
             }
           }
+        },
+        "DaemonDegradedNotice": {
+          "title": "New terminals aren’t being saved",
+          "body": "The terminal host stopped responding. Orca kept it rather than ending anything it might still be hosting, but it can’t reach those terminals until the host responds again — the panes reconnect on their own if it recovers. New terminals open outside the host and close when you quit Orca. Restarting the host clears this, and ends every terminal — both the ones it is still holding and the ones running outside it.",
+          "action": "Restart host"
         }
       },
       "right": {
@@ -15293,6 +15298,13 @@
       "sent": "Session context sent to {{agent}} in a new session.",
       "deliveryFailed": "The new {{agent}} session started, but its context could not be sent.",
       "launchFailed": "Could not start a new {{agent}} session."
+    },
+    "settings": {
+      "DaemonDegradedNotice": {
+        "title": "New terminals aren’t being saved",
+        "body": "The terminal host stopped responding, so Orca kept it rather than ending anything it may still be running. Terminals it was hosting are still running, but Orca can’t reach them until it responds again. New terminals open outside it and will close when you quit Orca. Restarting the host clears this — and ends whatever it was still hosting, so try reopening those terminals first.",
+        "action": "Restart host"
+      }
     }
   },
   "dashboardPopout": {

@@ -112,6 +112,19 @@ export function ManageSessionsSection(): React.JSX.Element {
     void refresh()
   }, [refresh])
 
+  // Why refetch on focus: the degraded flag is computed in the main process and never pushed.
+  // DegradedDaemonFreshSpawnRouter.recover() clears it the moment the daemon answers a health
+  // check, so a banner rendered at mount can outlive the condition — and it arms a Restart that
+  // ends every live session. Matches TerminalTccAttributionNotice, which refetches for the same
+  // reason: a daemon restart or drain changes the verdict without a pane remount.
+  useEffect(() => {
+    const onFocus = (): void => {
+      void refresh()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refresh])
+
   const sessionCount = sessions.length
 
   const daemonActions = useDaemonActions({

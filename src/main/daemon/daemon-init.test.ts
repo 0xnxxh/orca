@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- Why: covers daemon-init's full restart flow (7-step sequence per docs/daemon-staleness-ux.md §Phase 1 + coalescer); one describe block keeps shared mocks in one place. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DaemonLaunchMode } from './daemon-spawner'
 import { join } from 'node:path'
 import { PROTOCOL_VERSION } from './types'
 import { WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS, WEDGED_DAEMON_GRACE_RETRIES } from './daemon-init'
@@ -135,10 +136,12 @@ const {
 
   // Why: every DaemonSpawner pushes here so assertions can check the *same* spawner was reused across restart.
   const spawnerInstances: MockSpawner[] = []
+  // Mirrors DaemonLaunchMode rather than restating one of its members: the type used to omit
+  // 'held', so no test could describe the launch the hold produces.
   const ensureRunningOverrides: (() => Promise<{
     socketPath: string
     tokenPath: string
-    mode?: 'degraded-new-pty-fallback'
+    mode?: DaemonLaunchMode
   }>)[] = []
   const adoptionLeaseReleases: ReturnType<typeof vi.fn>[] = []
   const lifecycleLeaseErrors: Error[] = []
@@ -343,7 +346,7 @@ vi.mock('./daemon-spawner', () => ({
     readonly getHandle: ReturnType<typeof vi.fn>
     private socketCounter: number
     private handle: {
-      mode?: 'degraded-new-pty-fallback'
+      mode?: DaemonLaunchMode
       releaseAdoptionLease?: () => void
       shutdown: () => Promise<void>
     } | null
@@ -753,6 +756,28 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     ])
     expect(adapterInstances[0].disconnectOnly).toHaveBeenCalledOnce()
     expect(adapterInstances[1].disconnectOnly).toHaveBeenCalledOnce()
+  })
+
+  it('routes a held daemon through the degraded provider, not a bare adapter', async () => {
+    // The wiring the hold depends on. Without it a held daemon gets a plain DaemonPtyAdapter:
+    // every fresh spawn hangs on the wedged socket instead of falling back locally, and
+    // isDaemonDegraded() — an instanceof check — reports false, so the notice telling the user
+    // how to recover never renders.
+    const mod = await importFresh()
+    ensureRunningOverrides.push(async () => ({
+      socketPath: '/fake/held-socket',
+      tokenPath: '/fake/held-token',
+      mode: 'held'
+    }))
+
+    await mod.initDaemonPtyProvider()
+
+    const { DegradedDaemonPtyProvider } = await import('./degraded-daemon-pty-provider')
+    const provider = mod.getDaemonProvider()
+    expect(provider).toBeInstanceOf(DegradedDaemonPtyProvider)
+    expect(
+      (provider as InstanceType<typeof DegradedDaemonPtyProvider>).routesFreshSpawnsToLocalProvider
+    ).toBe(true)
   })
 
   it('routes fresh PTYs to the local fallback when a preserved daemon cannot spawn new PTYs', async () => {
@@ -2953,7 +2978,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       socketPath: string,
       tokenPath: string
     ) => Promise<{
-      mode?: 'degraded-new-pty-fallback'
+      mode?: DaemonLaunchMode
       shutdown(): Promise<void>
     }>
     checkDaemonHealthMock.mockResolvedValueOnce('pty-spawn-unhealthy')
