@@ -187,7 +187,9 @@ async function downloadElectronArtifactWithRetry(downloadOptions) {
 function getDownloadRetryDelays() {
   const configured = process.env.ORCA_ELECTRON_PACKAGE_RETRY_DELAYS_MS
   if (!configured) {
-    return [1_000, 3_000]
+    // Why: GitHub release CDN returns intermittent 503 / HTTP2 stream refusals
+    // under CI fan-out; a few short attempts still exhaust during outages.
+    return [1_000, 3_000, 5_000, 10_000]
   }
 
   const delays = configured.split(',').map(Number)
