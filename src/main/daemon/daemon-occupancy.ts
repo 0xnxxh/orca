@@ -73,3 +73,27 @@ export async function resolveDaemonOccupancy(args: {
     return unknown
   }
 }
+
+/**
+ * Raise an unanswered verdict with out-of-band evidence. It can only ever raise: an
+ * absent or unreadable process table leaves the verdict exactly as it was, because the
+ * table can prove work exists and never that it does not.
+ *
+ * Separate from the IPC path so a caller waiting for the daemon to recover can re-ask it
+ * cheaply, and pay for the process table once, after the waiting is done.
+ */
+export async function raiseOccupancyWithProcessEvidence(
+  occupancy: DaemonOccupancy,
+  recordedPid: number | null,
+  deps: DaemonOccupancyDeps = {}
+): Promise<DaemonOccupancy> {
+  if (occupancy.state !== 'unknown' || recordedPid === null) {
+    return occupancy
+  }
+  try {
+    const ownership = await (deps.inspectPtyOwnership ?? inspectDaemonPtyOwnership)(recordedPid)
+    return ownership === 'owns-live-ptys' ? { state: 'occupied', liveSessions: null } : occupancy
+  } catch {
+    return occupancy
+  }
+}

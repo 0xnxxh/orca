@@ -20,7 +20,7 @@ import {
 } from './daemon-spawner'
 import { DAEMON_EXIT_ENDPOINT_OCCUPIED } from './daemon-endpoint-ownership'
 import { endpointIsProvenDead, probeSocketConnect } from './daemon-endpoint-probe'
-import { resolveDaemonOccupancy } from './daemon-occupancy'
+import { raiseOccupancyWithProcessEvidence, resolveDaemonOccupancy } from './daemon-occupancy'
 import { DaemonPtyAdapter, type DaemonRespawnReason } from './daemon-pty-adapter'
 import { DaemonPtyRouter } from './daemon-pty-router'
 import { DaemonClient } from './client'
@@ -76,6 +76,12 @@ function logDaemonMilestone(event: string, details: Record<string, unknown> = {}
 
 // Why: extra hello+listSessions probes (~5s each) giving a wedged-but-connectable daemon ~60s grace to answer and keep its live sessions before a permanent wedge (#8689) is replaced; raise only alongside the fail-open cap.
 export const WEDGED_DAEMON_GRACE_RETRIES = 11
+/**
+ * Wall-clock ceiling on the grace window. The retry count alone does not bound it — each
+ * probe waits the client's hello timeout — and startup fails open at 60s, abandoning the
+ * daemon provider entirely. Overrunning that would trade a wedged daemon for no daemon.
+ */
+export const WEDGED_DAEMON_GRACE_BUDGET_MS = 30_000
 const DAEMON_SELF_SHUTDOWN_WAIT_MS = 5_000
 const DAEMON_CHILD_TERMINATION_GRACE_MS = 5_000
 const DAEMON_CHILD_FORCE_EXIT_WAIT_MS = 1_000
@@ -594,43 +600,47 @@ function createOutOfProcessLauncher(
         // Why: a busy machine can time out the health check on a live daemon; re-verify what
         // it is hosting before killing its sessions.
         const verifiedPid = await readVerifiedDaemonPid(runtimeDir, socketPath, tokenPath)
-        let occupancy = await resolveDaemonOccupancy({
-          socketPath,
-          tokenPath,
-          recordedPid: verifiedPid?.pid ?? null
-        })
+        // Why recordedPid is withheld here: the loop below is waiting for *IPC* to recover,
+        // and the process table cannot change its answer within a grace window. Scanning it
+        // every pass would multiply the launch budget for an answer we already have.
+        let occupancy = await resolveDaemonOccupancy({ socketPath, tokenPath, recordedPid: null })
         // Why: a wedged-but-connectable daemon (Windows update relaunch) may still own live sessions, so grace-retry before replacing; a permanent wedge (#8689) exhausts the grace, and 'rejected' skips it (handshake refused = never adoptable).
         let graceRetry = 0
+        const graceDeadline = Date.now() + WEDGED_DAEMON_GRACE_BUDGET_MS
         while (
           occupancy.state === 'unknown' &&
           health !== 'rejected' &&
           graceRetry < WEDGED_DAEMON_GRACE_RETRIES &&
+          Date.now() < graceDeadline &&
           !endpointIsProvenDead(await probeSocketConnect(socketPath))
         ) {
-          occupancy = await resolveDaemonOccupancy({
-            socketPath,
-            tokenPath,
-            recordedPid: verifiedPid?.pid ?? null
-          })
+          occupancy = await resolveDaemonOccupancy({ socketPath, tokenPath, recordedPid: null })
           graceRetry++
         }
+        // One scan, once IPC has had its full chance: this is the evidence that separates a
+        // wedged daemon still hosting terminals from one with nothing left to lose (#8689).
+        occupancy = await raiseOccupancyWithProcessEvidence(occupancy, verifiedPid?.pid ?? null)
         if (occupancy.state === 'occupied') {
-          // Why hold rather than adopt: a count we could only get from the process table means
-          // the daemon never answered us, so it cannot answer a hello either and adoption would
-          // fail. Holding keeps its terminals alive and routes fresh ones locally until the
-          // wedge clears or the user restarts.
-          if (occupancy.liveSessions === null) {
-            console.warn(
-              '[daemon] DEGRADED MODE: holding a daemon that cannot report its sessions but still owns live terminal processes. Killing it would end them; fresh terminals run on the local provider WITHOUT daemon persistence until it recovers or you restart it (Manage Sessions → Restart).'
-            )
-            return holdIncumbentDaemon()
-          }
-          const owned = `${occupancy.liveSessions} live session${occupancy.liveSessions === 1 ? '' : 's'}`
+          const owned =
+            occupancy.liveSessions === null
+              ? 'live terminal processes'
+              : `${occupancy.liveSessions} live session${occupancy.liveSessions === 1 ? '' : 's'}`
           if (health === 'pty-spawn-unhealthy') {
+            // Reached only after a successful hello, so this daemon can still be adopted —
+            // it just cannot open new PTYs.
             console.warn(
               `[daemon] DEGRADED MODE: preserving daemon that failed the PTY spawn health check because it owns ${owned}. Existing sessions keep working; fresh terminals run on the local provider WITHOUT daemon persistence until you restart the daemon (Manage Sessions → Restart).`
             )
             return preserveDaemon('degraded-new-pty-fallback')
+          }
+          // Why hold rather than adopt: no hello ever completed and only the process table
+          // could answer, so adoption would fail on the same silence. Holding keeps its
+          // terminals alive and routes fresh ones locally until it recovers or is restarted.
+          if (health === 'unreachable' && occupancy.liveSessions === null) {
+            console.warn(
+              '[daemon] DEGRADED MODE: holding a daemon that cannot report its sessions but still owns live terminal processes. Killing it would end them; fresh terminals run on the local provider WITHOUT daemon persistence until it recovers or you restart it (Manage Sessions → Restart).'
+            )
+            return holdIncumbentDaemon()
           }
           console.warn(
             `[daemon] Preserving daemon that failed the health check because it owns ${owned}`

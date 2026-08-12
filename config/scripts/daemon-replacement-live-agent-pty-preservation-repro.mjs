@@ -2,49 +2,47 @@
 /**
  * Regression proof: daemon replacement must not kill live coding-agent terminals.
  *
- * A daemon that is ALIVE and owns running agents, but too wedged to answer
- * `listSessions`, used to be indistinguishable from a dead one to the launcher:
- * `getAliveDaemonSessionCount()` returns null ("could not verify"), the preserve
- * gate at daemon-init.ts:594 requires `!== null && > 0`, so the run fell through
- * to `killStaleDaemon()` — SIGTERM, then SIGKILL after 3s. There is no fd
- * handoff, so every agent PTY died with it.
+ * The protection is no longer a veto inside `killStaleDaemon()` — that was policy
+ * buried in a mechanism. `killStaleDaemon()` is now purely "make this pid go away"
+ * and will happily kill a daemon that is hosting live agents. The decision moved
+ * up to the launcher, ahead of any kill:
  *
- * The fix gives `killStaleDaemon()` an out-of-band second opinion:
- * `inspectDaemonPtyOwnership()` reads the process table (never the daemon
- * socket, which is exactly what failed) and reports whether the daemon's own
- * process still has live PTY descendants. Under
- * `{ preserveWhenOwningLivePtys: true }` — which daemon-init.ts:625 passes on
- * the `failed_health_check` path only — that evidence vetoes the signal.
+ *   readVerifiedDaemonPid()  -> which process, identity-verified, is the daemon
+ *   resolveDaemonOccupancy() -> is it hosting work, and how sure are we
+ *   daemon-init.ts           -> 'occupied' with an unverifiable count => HOLD
  *
- * Both directions run here, back to back, with real processes each time:
- *   PHASE 1 (unguarded, the old behavior callers with a mandate still get):
- *     killStaleDaemon(...) with no options -> daemon killed, agents GONE.
- *   PHASE 2 (guarded, the fix):
- *     killStaleDaemon(..., { preserveWhenOwningLivePtys: true }) ->
- *     { killed: false, liveOwnerSurvived: true }, daemon never signalled,
- *     agents STILL ALIVE (confirmed with ps, and again after SIGCONT — a
- *     pending SIGTERM would have felled it on resume).
- *   PHASE 3 (the launcher actually turns it on): daemon-init.ts must pass the
- *     options bag in the argument slot killStaleDaemon reads it from. A guard
- *     enabled one slot over is silently ignored and phase 2 proves nothing about
- *     production.
+ * `resolveDaemonOccupancy()` asks the daemon over IPC first (a reply is
+ * authoritative both ways); only when it cannot answer does it consult the OS
+ * process table via `inspectDaemonPtyOwnership()`, and that evidence may only
+ * RAISE the answer to 'occupied' — it can never prove 'empty'.
+ *
+ * Three phases, real processes throughout:
+ *   PHASE 1 (the danger is real): a SIGSTOPped daemon owning 2 live agent
+ *     processes presents exactly the launcher's inputs — health 'unreachable',
+ *     an endpoint that is NOT proven dead, no IPC session count. Calling
+ *     killStaleDaemon() directly at that moment kills the daemon and both agents.
+ *     This is what the decision is protecting against, not a bug in the kill.
+ *   PHASE 2 (the decision protects it): same staging, fresh daemon and agents.
+ *     readVerifiedDaemonPid() names the daemon, resolveDaemonOccupancy() returns
+ *     { state: 'occupied', liveSessions: null } — IPC could not answer, the
+ *     process table raised it to occupied — which is the exact input that makes
+ *     the launcher hold. Nothing is signalled: daemon and agents are alive, and
+ *     after SIGCONT the daemon is healthy and reports its 2 sessions again, so
+ *     the wedge was transient and the preserved work was genuinely recoverable.
+ *   PHASE 3 (the launcher actually holds): daemon-init.ts imports electron and
+ *     cannot be executed here, so its failed-health-check branch is verified
+ *     statically — the 'occupied' branch returns holdIncumbentDaemon() and
+ *     contains no kill, and every killStaleDaemon() call sits after it.
  *
  * SIGSTOP is the faithful stand-in for the wedge: the socket still accepts
- * connections (probeSocket passes) while no RPC is ever answered — exactly the
- * "busy machine can time out the health check on a live daemon" case the code
- * calls out at daemon-init.ts:581.
- *
- * Real processes throughout: the built daemon-entry.js is forked with
- * production argv, real PTY sessions run uniquely tagged marker processes
- * standing in for coding agents, and the kill decision is driven by the real
- * exported primitives.
+ * connections while no RPC is ever answered — exactly the "busy machine can time
+ * out the health check on a live daemon" case daemon-init.ts calls out.
  *
  * Usage: node config/scripts/daemon-replacement-live-agent-pty-preservation-repro.mjs
  */
 import { execFileSync, fork } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -54,10 +52,6 @@ const entryPath = join(repoRoot, 'out', 'main', 'daemon-entry.js')
 const READY_TIMEOUT_MS = 30_000
 const MARKER_SPAWN_TIMEOUT_MS = 30_000
 const SESSION_COUNT = 2
-// Why shortened in phase 2: the grace loop only establishes that the count stays
-// unverifiable, which phase 1 already proved exhaustively at ~5s per retry. The
-// guarded assertion turns on the PTY-ownership evidence, not the retry count.
-const PHASE2_GRACE_RETRIES = 1
 const REAL_USER_DAEMON_MARKER = 'Library/Application Support/orca/daemon'
 
 const startedAt = Date.now()
@@ -78,18 +72,15 @@ function assert(condition, message) {
 // Why read from source: daemon-init.ts imports 'electron' and cannot load outside Electron,
 // so the constant that sizes the grace loop is lifted rather than hardcoded (it would drift).
 function readSourceConstant(relativePath, pattern) {
-  const source = readFileSync(join(repoRoot, relativePath), 'utf8')
-  const match = source.match(pattern)
-  if (!match) {
-    throw new Error(`could not read ${pattern} from ${relativePath}`)
-  }
+  const match = readFileSync(join(repoRoot, relativePath), 'utf8').match(pattern)
+  assert(match !== null, `could not read ${pattern} from ${relativePath}`)
   return Number(match[1])
 }
 
 /**
  * Bundles the real daemon primitives into a loadable ESM module.
  *
- * Why: `killStaleDaemon` and friends live in TypeScript modules that the built
+ * Why: the decision primitives live in TypeScript modules that the built
  * daemon-entry.js does not re-export. Their import graph is electron-free, so
  * esbuild can produce the genuine code — no reimplementation, no drift.
  */
@@ -101,8 +92,9 @@ async function loadDaemonPrimitives(scratch) {
   writeFileSync(
     entrySource,
     [
-      `export { checkDaemonHealth, killStaleDaemon } from ${JSON.stringify(join(daemonDir, 'daemon-health'))}`,
-      `export { inspectDaemonPtyOwnership } from ${JSON.stringify(join(daemonDir, 'daemon-live-pty-evidence'))}`,
+      `export { checkDaemonHealth, killStaleDaemon, readVerifiedDaemonPid } from ${JSON.stringify(join(daemonDir, 'daemon-health'))}`,
+      `export { resolveDaemonOccupancy } from ${JSON.stringify(join(daemonDir, 'daemon-occupancy'))}`,
+      `export { endpointIsProvenDead, probeSocketConnect } from ${JSON.stringify(join(daemonDir, 'daemon-endpoint-probe'))}`,
       `export { getDaemonPidPath, getDaemonSocketPath, getDaemonTokenPath } from ${JSON.stringify(join(daemonDir, 'daemon-spawner'))}`,
       `export { DaemonClient } from ${JSON.stringify(join(daemonDir, 'client'))}`,
       ''
@@ -120,32 +112,8 @@ async function loadDaemonPrimitives(scratch) {
   return import(pathToFileURL(bundlePath).href)
 }
 
-// Verbatim from daemon-init.ts probeSocket() — the exact gate the grace loop consults.
-function probeSocket(socketPath) {
-  return new Promise((resolveProbe) => {
-    if (!existsSync(socketPath)) {
-      resolveProbe(false)
-      return
-    }
-    const sock = connect({ path: socketPath })
-    let settled = false
-    const finish = (alive) => {
-      if (settled) {
-        return
-      }
-      settled = true
-      clearTimeout(timer)
-      sock.destroy()
-      resolveProbe(alive)
-    }
-    const timer = setTimeout(() => finish(false), 1000)
-    sock.on('connect', () => finish(true))
-    sock.on('error', () => finish(false))
-  })
-}
-
-// Verbatim from daemon-init.ts getAliveDaemonSessionCount() — null means "could not verify".
-async function getAliveDaemonSessionCount(DaemonClient, socketPath, tokenPath) {
+// Same shape as daemon-occupancy.ts countLiveSessionsOverIpc(): null means "could not answer".
+async function countLiveSessionsOverIpc(DaemonClient, socketPath, tokenPath) {
   const client = new DaemonClient({ socketPath, tokenPath })
   try {
     await client.ensureConnected()
@@ -331,19 +299,11 @@ async function startMarkerSession(client, phase, index, runtimeDir) {
 }
 
 /**
- * Stands up a real daemon with real agent processes, wedges it with SIGSTOP, and
- * replays the launcher's decision inputs against it. Returns everything the phase
- * needs to then call killStaleDaemon() the way its caller would.
+ * Stands up a real daemon with real agent processes, wedges it with SIGSTOP, and replays
+ * the launcher's decision inputs against it — the state both phases start from.
  */
-async function stageWedgedDaemon({
-  primitives,
-  scratch,
-  phase,
-  graceRetries,
-  graceNote,
-  registry
-}) {
-  const { DaemonClient, checkDaemonHealth, inspectDaemonPtyOwnership } = primitives
+async function stageWedgedDaemon({ primitives, scratch, phase, registry }) {
+  const { DaemonClient, checkDaemonHealth, endpointIsProvenDead, probeSocketConnect } = primitives
   const runtimeDir = join(scratch, `daemon-phase-${phase}`)
   mkdirSync(runtimeDir, { recursive: true })
   const socketPath = primitives.getDaemonSocketPath(runtimeDir)
@@ -370,7 +330,7 @@ async function stageWedgedDaemon({
   for (let index = 0; index < SESSION_COUNT; index++) {
     staged.markers.push(await startMarkerSession(client, phase, index, runtimeDir))
   }
-  const liveBefore = await getAliveDaemonSessionCount(DaemonClient, socketPath, tokenPath)
+  const liveBefore = await countLiveSessionsOverIpc(DaemonClient, socketPath, tokenPath)
   client.disconnect()
   for (const marker of staged.markers) {
     log(
@@ -388,58 +348,39 @@ async function stageWedgedDaemon({
   assert(staged.markers.every(isMarkerAlive), 'the wedge itself killed the agent markers')
   log(`phase ${phase}: agent processes unaffected by the wedge — only the daemon is unresponsive`)
 
-  // Reproduce the launcher's decision inputs with the real primitives.
+  // The launcher's own inputs on the failed-health-check path, via the real primitives.
   const health = await checkDaemonHealth(socketPath, tokenPath)
-  log(
-    `phase ${phase}: checkDaemonHealth() = '${health}' (daemon-init.ts:494 takes the else branch)`
-  )
+  log(`phase ${phase}: checkDaemonHealth() = '${health}' — daemon-init.ts takes the else branch`)
   assert(health === 'unreachable', `expected health 'unreachable', got '${health}'`)
-  const socketAlive = await probeSocket(socketPath)
-  log(`phase ${phase}: probeSocket() = ${socketAlive} — the endpoint still accepts connections`)
-  assert(socketAlive, 'the wedged daemon stopped accepting connections; not the modeled failure')
 
-  let liveSessionCount = await getAliveDaemonSessionCount(DaemonClient, socketPath, tokenPath)
+  const probe = await probeSocketConnect(socketPath)
   log(
-    `phase ${phase}: getAliveDaemonSessionCount() = ${liveSessionCount} (null = could not verify)`
-  )
-  assert(liveSessionCount === null, 'the wedged daemon answered listSessions; wedge not severe')
-  let graceRetry = 0
-  while (
-    liveSessionCount === null &&
-    health !== 'rejected' &&
-    graceRetry < graceRetries &&
-    (await probeSocket(socketPath))
-  ) {
-    liveSessionCount = await getAliveDaemonSessionCount(DaemonClient, socketPath, tokenPath)
-    graceRetry++
-  }
-  log(
-    `phase ${phase}: grace loop exhausted after ${graceRetry} retries, liveSessions still ${liveSessionCount}${graceNote ? ` (${graceNote})` : ''}`
+    `phase ${phase}: probeSocketConnect() = '${probe}', endpointIsProvenDead() = ${endpointIsProvenDead(probe)} — nothing proves the daemon is gone`
   )
   assert(
-    !(liveSessionCount !== null && liveSessionCount > 0),
-    'the preserve gate held; the wedge was not severe enough'
-  )
-  log(
-    `phase ${phase}: preserve gate (daemon-init.ts:594) requires liveSessionCount !== null && > 0 — ` +
-      `NOT taken, even though ${staged.markers.length} agents are running right now`
+    !endpointIsProvenDead(probe),
+    `the wedged daemon's endpoint was proven dead ('${probe}'); not the modeled failure`
   )
 
-  // The positive, out-of-band evidence the fix turns on — read from the process
-  // table, never from the socket the daemon has already failed to answer.
-  const ownership = await inspectDaemonPtyOwnership(daemon.child.pid)
-  log(`phase ${phase}: inspectDaemonPtyOwnership(${daemon.child.pid}) = '${ownership}'`)
-  assert(
-    ownership === 'owns-live-ptys',
-    `expected 'owns-live-ptys' for the wedged daemon, got '${ownership}'`
+  const ipcCount = await countLiveSessionsOverIpc(DaemonClient, socketPath, tokenPath)
+  log(
+    `phase ${phase}: live session count over IPC = ${ipcCount} (null = the daemon could not answer)`
   )
+  assert(ipcCount === null, 'the wedged daemon answered listSessions; wedge not severe enough')
 
   return staged
 }
 
-async function runUnguardedPhase(primitives, scratch, graceRetries, registry) {
-  const staged = await stageWedgedDaemon({ primitives, scratch, phase: 1, graceRetries, registry })
-  log('phase 1: invoking the real killStaleDaemon() with NO options — the unguarded contract')
+/**
+ * PHASE 1 — what the decision is protecting against. killStaleDaemon() is now a pure
+ * mechanism with no opinion about live work, so called at this exact moment it takes the
+ * daemon and every agent PTY with it.
+ */
+async function runUnprotectedKillPhase(primitives, scratch, registry) {
+  const staged = await stageWedgedDaemon({ primitives, scratch, phase: 1, registry })
+  log(
+    'phase 1: invoking the real killStaleDaemon(runtimeDir, socket, token) directly — no occupancy consulted'
+  )
   const killOutcome = await primitives.killStaleDaemon(
     staged.runtimeDir,
     staged.socketPath,
@@ -447,15 +388,12 @@ async function runUnguardedPhase(primitives, scratch, graceRetries, registry) {
   )
   log(`phase 1: killStaleDaemon() = ${JSON.stringify(killOutcome)}`)
   staged.stopped = false
-  assert(killOutcome.killed === true, 'unguarded killStaleDaemon() did not kill the daemon')
-  assert(
-    !isProcessAlive(staged.daemon.child.pid),
-    'unguarded killStaleDaemon() left the daemon process alive'
-  )
+  assert(killOutcome.killed === true, 'killStaleDaemon() did not kill the wedged daemon')
+  assert(!isProcessAlive(staged.daemon.child.pid), 'killStaleDaemon() left the daemon alive')
 
   await waitFor(
     () => staged.markers.every((marker) => !isMarkerAlive(marker)),
-    'agent processes to die with the replaced daemon',
+    'agent processes to die with the killed daemon',
     10_000
   )
   for (const marker of staged.markers) {
@@ -463,49 +401,77 @@ async function runUnguardedPhase(primitives, scratch, graceRetries, registry) {
       `phase 1: agent PTY pid ${marker.pid} is GONE (ps: ${processArgs(marker.pid) ?? 'no such process'})`
     )
   }
-  log('phase 1 RESULT: unguarded replacement killed the daemon and every live agent with it')
+  log(
+    'phase 1 RESULT: the danger is real — killStaleDaemon() on a wedged-but-live daemon ends the daemon and every agent with it. There is no fd handoff; only a decision taken BEFORE the kill can save them.'
+  )
   return staged
 }
 
-async function runGuardedPhase(primitives, scratch, registry) {
-  const staged = await stageWedgedDaemon({
-    primitives,
-    scratch,
-    phase: 2,
-    registry,
-    graceRetries: PHASE2_GRACE_RETRIES,
-    graceNote: `grace loop deliberately shortened to ${PHASE2_GRACE_RETRIES} retry — phase 1 already proved the full loop stays unverifiable; the guarded assertion turns on PTY-ownership evidence`
-  })
+/**
+ * PHASE 2 — the decision the launcher takes instead. Identical staging, but the inputs are
+ * resolved rather than acted on: readVerifiedDaemonPid() names the process and
+ * resolveDaemonOccupancy() raises it to 'occupied' from the process table.
+ */
+async function runOccupancyDecisionPhase(primitives, scratch, graceRetries, registry) {
+  const staged = await stageWedgedDaemon({ primitives, scratch, phase: 2, registry })
   const daemonPid = staged.daemon.child.pid
-  // The signature takes a single trailing options bag (test seams and production options
-  // together) precisely so there is no adjacent slot to mis-target; phase 3 still pins the
-  // launcher's call shape so a future re-split cannot silently disable the guard.
-  log(
-    'phase 2: invoking the real killStaleDaemon(runtimeDir, socket, token, PROTOCOL_VERSION, ' +
-      '{ preserveWhenOwningLivePtys: true })'
-  )
-  const killOutcome = await primitives.killStaleDaemon(
+
+  const verifiedPid = await primitives.readVerifiedDaemonPid(
     staged.runtimeDir,
     staged.socketPath,
-    staged.tokenPath,
-    undefined,
-    { preserveWhenOwningLivePtys: true }
+    staged.tokenPath
   )
-  log(`phase 2: killStaleDaemon() = ${JSON.stringify(killOutcome)}`)
+  log(
+    `phase 2: readVerifiedDaemonPid() = ${verifiedPid ? `pid ${verifiedPid.pid} (identity verified: cmdline + start time)` : 'null'}`
+  )
   assert(
-    killOutcome.killed === false && killOutcome.liveOwnerSurvived === true,
-    `expected {killed:false,liveOwnerSurvived:true}, got ${JSON.stringify(killOutcome)}`
+    verifiedPid?.pid === daemonPid,
+    `readVerifiedDaemonPid() returned ${JSON.stringify(verifiedPid)}, expected pid ${daemonPid}`
   )
 
-  assert(isProcessAlive(daemonPid), 'the guarded call killed the daemon anyway')
+  // Which input answered is readable from the result alone: resolveDaemonOccupancy only ever
+  // returns a null count when IPC failed and inspectDaemonPtyOwnership() — the OS process
+  // table, never the socket the daemon already failed to answer — reported 'owns-live-ptys'.
+  let occupancy = await primitives.resolveDaemonOccupancy({
+    socketPath: staged.socketPath,
+    tokenPath: staged.tokenPath,
+    recordedPid: verifiedPid.pid
+  })
+  log(`phase 2: resolveDaemonOccupancy() = ${JSON.stringify(occupancy)}`)
+  // The launcher's grace loop, replayed verbatim: it only re-samples while 'unknown'.
+  let graceRetry = 0
+  while (
+    occupancy.state === 'unknown' &&
+    graceRetry < graceRetries &&
+    !primitives.endpointIsProvenDead(await primitives.probeSocketConnect(staged.socketPath))
+  ) {
+    occupancy = await primitives.resolveDaemonOccupancy({
+      socketPath: staged.socketPath,
+      tokenPath: staged.tokenPath,
+      recordedPid: verifiedPid.pid
+    })
+    graceRetry++
+  }
   log(
-    `phase 2: daemon ${daemonPid} is STILL ALIVE (ps stat '${processState(daemonPid)}' — T = stopped, not killed)`
+    `phase 2: grace loop (WEDGED_DAEMON_GRACE_RETRIES = ${graceRetries}) ran ${graceRetry} retries — it only re-samples while the state is 'unknown', and this never was`
   )
-  assert(existsSync(staged.pidPath), 'the guarded call removed the surviving daemon PID record')
+  assert(
+    occupancy.state === 'occupied' && occupancy.liveSessions === null,
+    `expected {state:'occupied',liveSessions:null}, got ${JSON.stringify(occupancy)}`
+  )
+  log(
+    "phase 2: occupancy is 'occupied' with liveSessions null — IPC could not answer, so the count came from the process table. That exact pair is what makes the launcher hold instead of kill (phase 3)."
+  )
+
+  assert(isProcessAlive(daemonPid), 'the daemon died while occupancy was being resolved')
+  log(
+    `phase 2: daemon ${daemonPid} is STILL ALIVE (ps stat '${processState(daemonPid)}' — T = stopped, not killed); resolving occupancy signals nothing`
+  )
+  assert(existsSync(staged.pidPath), 'the surviving daemon lost its PID record')
   log('phase 2: PID record left intact — no replacement can publish ownership beside it')
 
   for (const marker of staged.markers) {
-    assert(isMarkerAlive(marker), `agent PTY pid ${marker.pid} died despite the preserve guard`)
+    assert(isMarkerAlive(marker), `agent PTY pid ${marker.pid} died during the decision`)
     log(`phase 2: agent PTY pid ${marker.pid} is ALIVE (ps: ${processArgs(marker.pid)})`)
   }
 
@@ -515,108 +481,161 @@ async function runGuardedPhase(primitives, scratch, registry) {
   staged.stopped = false
   await new Promise((r) => setTimeout(r, 1_000))
   assert(isProcessAlive(daemonPid), 'the daemon died on SIGCONT — a SIGTERM had been queued for it')
-  log(`phase 2: after SIGCONT the daemon is still running — no signal was ever delivered to it`)
+  log('phase 2: after SIGCONT the daemon is still running — no signal was ever delivered to it')
+
   const resumedHealth = await primitives.checkDaemonHealth(staged.socketPath, staged.tokenPath)
-  const resumedSessions = await getAliveDaemonSessionCount(
+  const resumedSessions = await countLiveSessionsOverIpc(
     primitives.DaemonClient,
     staged.socketPath,
     staged.tokenPath
   )
   log(
-    `phase 2: resumed daemon reports checkDaemonHealth() = '${resumedHealth}', getAliveDaemonSessionCount() = ${resumedSessions}`
+    `phase 2: resumed daemon reports checkDaemonHealth() = '${resumedHealth}', live sessions over IPC = ${resumedSessions}`
   )
   assert(resumedHealth === 'healthy', `resumed daemon is not healthy: '${resumedHealth}'`)
   assert(resumedSessions === SESSION_COUNT, `resumed daemon lost sessions: ${resumedSessions}`)
   for (const marker of staged.markers) {
     assert(isMarkerAlive(marker), `agent PTY pid ${marker.pid} died during resume`)
   }
-  log('phase 2 RESULT: guarded replacement refused to signal; daemon and all live agents survived')
+  const resumedOccupancy = await primitives.resolveDaemonOccupancy({
+    socketPath: staged.socketPath,
+    tokenPath: staged.tokenPath,
+    recordedPid: verifiedPid.pid
+  })
+  log(
+    `phase 2: resolveDaemonOccupancy() on the recovered daemon = ${JSON.stringify(resumedOccupancy)} — the count is authoritative again now that IPC answers`
+  )
+  assert(
+    resumedOccupancy.state === 'occupied' && resumedOccupancy.liveSessions === SESSION_COUNT,
+    `expected {state:'occupied',liveSessions:${SESSION_COUNT}} after recovery, got ${JSON.stringify(resumedOccupancy)}`
+  )
+  log(
+    'phase 2 RESULT: the wedge was transient and the work was genuinely recoverable — the daemon and both agents survived, then came back healthy with all sessions intact'
+  )
   return staged
 }
 
-/**
- * Splits a call's (or declaration's) argument list at top level, so `{ a: 1 }` counts as
- * one argument. Returns null if the list is not balanced within `source`.
- */
-function splitCallArguments(source, openParenIndex) {
-  const args = []
+function stripComments(source) {
+  // Blanked rather than deleted so offsets and line numbers stay true to the real file.
+  const blank = (text) => text.replace(/[^\n]/g, ' ')
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, blank)
+    .replace(/(^|[^:])(\/\/[^\n]*)/g, (_match, prefix, comment) => prefix + blank(comment))
+}
+
+/** The balanced `{...}` block starting at `braceIndex`, or null if it never closes. */
+function extractBlock(source, braceIndex) {
   let depth = 0
-  let current = ''
-  for (let i = openParenIndex; i < source.length; i++) {
-    const ch = source[i]
-    if ('([{'.includes(ch)) {
+  for (let i = braceIndex; i < source.length; i++) {
+    if (source[i] === '{') {
       depth++
-      if (depth === 1) {
-        continue
-      }
-    } else if (')]}'.includes(ch)) {
+    } else if (source[i] === '}') {
       depth--
       if (depth === 0) {
-        args.push(current.trim())
-        return args
+        return { text: source.slice(braceIndex, i + 1), start: braceIndex, end: i + 1 }
       }
-    } else if (ch === ',' && depth === 1) {
-      args.push(current.trim())
-      current = ''
-      continue
     }
-    current += ch
   }
   return null
 }
 
-/**
- * Which positional argument of killStaleDaemon carries the options bag, read from the
- * declaration rather than hardcoded: an options object one slot off is silently taken for
- * a different parameter — no type error, no runtime error, guard simply off.
- */
-function readOptionsArgumentSlot() {
-  const relativePath = 'src/main/daemon/daemon-health.ts'
-  // Comments carry commas, which would corrupt the top-level parameter split.
-  const source = readFileSync(join(repoRoot, relativePath), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '')
-  const declIndex = source.indexOf('export async function killStaleDaemon(')
-  assert(declIndex !== -1, `${relativePath} does not declare killStaleDaemon`)
-  const params = splitCallArguments(source, source.indexOf('(', declIndex))
-  assert(params !== null, `could not parse the killStaleDaemon signature in ${relativePath}`)
-  const index = params.findIndex((param) => param.includes('StaleDaemonKillOptions'))
-  assert(index !== -1, 'no killStaleDaemon parameter accepts StaleDaemonKillOptions')
-  log(
-    `killStaleDaemon(${params.map((param) => param.replace(/\s+/g, ' ')).join(', ')}) — ` +
-      `StaleDaemonKillOptions is argument ${index + 1}`
-  )
-  return index + 1
+function lineOf(source, index) {
+  return source.slice(0, index).split('\n').length
+}
+
+function normalize(text) {
+  return text.replace(/\s+/g, ' ')
 }
 
 /**
- * The guard only exists if the launcher actually turns it on: an object landing in any slot
- * other than the options one is silently ignored, and every live agent dies exactly as it
- * did before the fix (phase 1).
+ * PHASE 3 — the launcher must hold rather than kill. daemon-init.ts imports electron, so it
+ * cannot be executed here; this reads the source instead, whitespace-tolerantly, and asserts
+ * the structural properties phase 2's inputs depend on.
  */
-function checkLauncherEnablesTheGuard(optionsSlot) {
+function checkLauncherHoldsOccupiedDaemon() {
   const relativePath = 'src/main/daemon/daemon-init.ts'
-  const source = readFileSync(join(repoRoot, relativePath), 'utf8')
-  const marker = source.indexOf('preserveWhenOwningLivePtys')
-  assert(marker !== -1, `${relativePath} never passes preserveWhenOwningLivePtys`)
-  const callIndex = source.lastIndexOf('killStaleDaemon(', marker)
-  assert(callIndex !== -1, `${relativePath} sets preserveWhenOwningLivePtys outside a call`)
-  const line = source.slice(0, callIndex).split('\n').length
-  const args = splitCallArguments(source, callIndex + 'killStaleDaemon'.length)
-  assert(args !== null, `could not parse the killStaleDaemon call at ${relativePath}:${line}`)
-  const renderedArgs = args.map((arg) => arg.replace(/\s+/g, ' ')).join(' | ')
-  log(
-    `phase 3: ${relativePath}:${line} calls killStaleDaemon with ${args.length} arguments: ${renderedArgs}`
-  )
-  const passedSlot = args.findIndex((arg) => arg.includes('preserveWhenOwningLivePtys')) + 1
+  const source = stripComments(readFileSync(join(repoRoot, relativePath), 'utf8'))
+
+  // 1. holdIncumbentDaemon() returns a preserved handle in 'held' mode — it does not adopt,
+  //    which a daemon too wedged to answer listSessions could never complete anyway.
+  const holdDecl = source.match(/const\s+holdIncumbentDaemon\s*=\s*\([^)]*\)[^{]*\{/)
+  assert(holdDecl !== null, `${relativePath} does not declare holdIncumbentDaemon()`)
+  const holdBody = extractBlock(source, holdDecl.index + holdDecl[0].length - 1)
+  assert(holdBody !== null, `could not parse the holdIncumbentDaemon() body in ${relativePath}`)
   assert(
-    passedSlot === optionsSlot,
-    `${relativePath}:${line} passes { preserveWhenOwningLivePtys } as argument ${passedSlot}, but ` +
-      `killStaleDaemon reads its options from argument ${optionsSlot}. Anywhere else the guard ` +
-      `never runs and the launcher still kills live agents exactly as in phase 1.`
+    /createPreservedDaemonHandle\([^)]*'held'\s*\)/.test(normalize(holdBody.text)),
+    `holdIncumbentDaemon() does not return createPreservedDaemonHandle(..., 'held'): ${normalize(holdBody.text)}`
   )
   log(
-    `phase 3 RESULT: the launcher enables the guard on the failed_health_check path, in argument ${optionsSlot}`
+    `phase 3: ${relativePath}:${lineOf(source, holdDecl.index)} holdIncumbentDaemon() = ${normalize(holdBody.text)}`
+  )
+
+  // 2. The failed-health-check path resolves occupancy from an identity-verified pid.
+  const verifiedPidCall = source.search(/readVerifiedDaemonPid\s*\(/)
+  const occupancyCall = source.search(/resolveDaemonOccupancy\s*\(\s*\{/)
+  assert(verifiedPidCall !== -1, `${relativePath} never calls readVerifiedDaemonPid()`)
+  assert(occupancyCall !== -1, `${relativePath} never calls resolveDaemonOccupancy()`)
+  assert(
+    verifiedPidCall < occupancyCall,
+    `${relativePath} resolves occupancy before verifying the recorded pid — the evidence could then describe a recycled pid's children`
+  )
+
+  // 3. The 'occupied' branch holds and never kills.
+  const occupiedGuard = source.match(/if\s*\(\s*occupancy\.state\s*===\s*'occupied'\s*\)\s*\{/)
+  assert(occupiedGuard !== null, `${relativePath} has no 'occupancy.state === occupied' guard`)
+  const occupiedBlock = extractBlock(source, occupiedGuard.index + occupiedGuard[0].length - 1)
+  assert(occupiedBlock !== null, `could not parse the occupied branch in ${relativePath}`)
+  const occupiedLine = lineOf(source, occupiedGuard.index)
+  assert(
+    !occupiedBlock.text.includes('killStaleDaemon'),
+    `${relativePath}:${occupiedLine} calls killStaleDaemon inside the occupied branch`
+  )
+
+  // Holding requires BOTH: no hello ever completed, and only the process table could answer.
+  // A daemon that did complete a hello is adoptable, so it must not be routed to a mode that
+  // never adopts.
+  const unverifiableGuard = occupiedBlock.text.match(
+    /if\s*\(\s*health\s*===\s*'unreachable'\s*&&\s*occupancy\.liveSessions\s*===\s*null\s*\)\s*\{/
+  )
+  assert(
+    unverifiableGuard !== null,
+    `${relativePath}:${occupiedLine} does not gate the hold on an unreachable daemon with an unverifiable (null) session count`
+  )
+  const unverifiableBlock = extractBlock(
+    occupiedBlock.text,
+    unverifiableGuard.index + unverifiableGuard[0].length - 1
+  )
+  assert(unverifiableBlock !== null, 'could not parse the liveSessions === null branch')
+  assert(
+    normalize(unverifiableBlock.text).includes('return holdIncumbentDaemon()'),
+    `${relativePath}:${occupiedLine} does not return holdIncumbentDaemon() when the session count came from the process table`
+  )
+  log(
+    `phase 3: ${relativePath}:${occupiedLine} occupancy.state === 'occupied' && occupancy.liveSessions === null -> return holdIncumbentDaemon(); the branch contains no kill`
+  )
+
+  // 4. Ordering: every kill on this path is downstream of the occupied branch, so a hold
+  //    returns before any of them can run.
+  const killCalls = [...source.matchAll(/killStaleDaemon\s*\(/g)].map((match) => match.index)
+  assert(killCalls.length > 0, `${relativePath} never calls killStaleDaemon()`)
+  const killsBeforeTheDecision = killCalls.filter(
+    (index) => index > occupancyCall && index < occupiedBlock.end
+  )
+  assert(
+    killsBeforeTheDecision.length === 0,
+    `${relativePath} kills at line(s) ${killsBeforeTheDecision.map((i) => lineOf(source, i)).join(', ')}, between resolving occupancy and the hold`
+  )
+  const fallThroughKill = killCalls.find((index) => index > occupiedBlock.end)
+  assert(
+    fallThroughKill !== undefined,
+    `${relativePath} has no killStaleDaemon() after the occupied branch — the replacement path is gone`
+  )
+  const killLines = killCalls.map((index) => lineOf(source, index)).join(', ')
+  log(
+    `phase 3: every killStaleDaemon() call site in the file is at line(s) ${killLines} — all downstream of the occupied branch, which returns at line ${lineOf(source, occupiedBlock.start)}`
+  )
+  log(
+    'phase 3 RESULT: statically, the failed-health-check path resolves occupancy from a verified pid and returns a held handle before any kill. This proves the source ordering and branch contents; it does NOT execute daemon-init.ts (it imports electron), so the runtime proof stops at the inputs phase 2 produced with real processes.'
   )
 }
 
@@ -671,20 +690,19 @@ async function main() {
         .join(', ')}`
     )
     const primitives = await loadDaemonPrimitives(scratch)
-    const optionsSlot = readOptionsArgumentSlot()
     const graceRetries = readSourceConstant(
       'src/main/daemon/daemon-init.ts',
       /WEDGED_DAEMON_GRACE_RETRIES = (\d+)/
     )
 
-    log('=== PHASE 1 (BEFORE / unguarded): killStaleDaemon() with no options ===')
-    await runUnguardedPhase(primitives, scratch, graceRetries, staged)
+    log('=== PHASE 1: the danger is real — killStaleDaemon() has no opinion about live work ===')
+    await runUnprotectedKillPhase(primitives, scratch, staged)
 
-    log('=== PHASE 2 (AFTER / guarded): killStaleDaemon(..., preserveWhenOwningLivePtys) ===')
-    await runGuardedPhase(primitives, scratch, staged)
+    log('=== PHASE 2: the decision protects it — resolveDaemonOccupancy() on the same wedge ===')
+    await runOccupancyDecisionPhase(primitives, scratch, graceRetries, staged)
 
-    log('=== PHASE 3: does the launcher actually enable the guard? ===')
-    checkLauncherEnablesTheGuard(optionsSlot)
+    log('=== PHASE 3: does the launcher actually hold on that verdict? ===')
+    checkLauncherHoldsOccupiedDaemon()
 
     verdict = 'PASS'
   } finally {
@@ -720,7 +738,7 @@ async function main() {
     )
     process.stdout.write(
       verdict === 'PASS'
-        ? '\n[daemon-pty-preservation] PASS (both directions proved): unguarded killStaleDaemon() still kills a wedged daemon and every agent PTY with it; the guarded call refuses to signal a daemon whose process owns live PTYs — daemon and agents survive; and the launcher passes the guard in the argument slot that turns it on.\n'
+        ? '\n[daemon-pty-preservation] PASS: killStaleDaemon() on a wedged daemon still kills it and every agent PTY with it (phase 1); against the identical wedge resolveDaemonOccupancy() returns { occupied, liveSessions: null } from the process table with the daemon unsignalled, both agents alive, and the daemon recovering healthy with all sessions on SIGCONT (phase 2); and daemon-init.ts returns holdIncumbentDaemon() on that verdict, before any kill (phase 3, static).\n'
         : '\n[daemon-pty-preservation] FAIL: live agent PTYs are NOT protected — see the ERROR line and the timeline above.\n'
     )
     process.exitCode = verdict === 'PASS' ? 0 : 1

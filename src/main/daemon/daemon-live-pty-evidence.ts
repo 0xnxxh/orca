@@ -60,18 +60,35 @@ function withDeadline<T>(work: Promise<T>, deadlineMs: number, onDeadline: T): P
 }
 
 /**
- * A PTY child is a session leader — forkpty() calls setsid() — which no ordinary
- * helper the daemon forks ever is. That single `ps` flag separates a hosted terminal
- * from the daemon's own subprocesses (a `scutil` resolver probe, a PTY-spawn health
- * check, a stuck credential helper), any of which can outlive a re-sample and would
- * otherwise be mistaken for an agent.
+ * The daemon opens PTYs for its own probes, and forkpty makes those session leaders too, so
+ * process state alone cannot tell them from a hosted terminal. Each is a fixed, argument-less
+ * command the daemon issues itself, so matching them exactly costs no real terminal.
+ */
+const DAEMON_SELF_SPAWNED_PTY_COMMANDS = [
+  // pty-subprocess.ts checkPtySpawnHealth
+  '/bin/sh -c exit 0',
+  // windows-conpty-warmup.ts
+  'cmd.exe /c exit',
+  'cmd /c exit'
+]
+
+function isDaemonSelfSpawnedPty(row: ProcessTableRow): boolean {
+  const command = row.command.trim()
+  return DAEMON_SELF_SPAWNED_PTY_COMMANDS.some(
+    (probe) => command.toLowerCase() === probe.toLowerCase()
+  )
+}
+
+/**
+ * A PTY child is a session leader — forkpty() calls setsid() — which the daemon's plain
+ * subprocesses (a `scutil` resolver probe, a stuck credential helper) never are.
  *
- * Zombies are excluded for the correlated reason: a wedged daemon cannot reap, so its
+ * Zombies are excluded for a correlated reason: a wedged daemon cannot reap, so its
  * already-exited PTYs linger as <defunct> and would read as still running.
  */
 function isLivePtySessionLeader(row: ProcessTableRow): boolean {
   // Lowercase 's' is only ever the session-leader flag; no process state code uses it.
-  return !row.stat.startsWith('Z') && row.stat.includes('s')
+  return !row.stat.startsWith('Z') && row.stat.includes('s') && !isDaemonSelfSpawnedPty(row)
 }
 
 function collectLivePtyDescendants(rows: ProcessTableRow[], rootPid: number): ProcessTableRow[] {
@@ -121,7 +138,10 @@ async function probeOnce(
     if (descendants === null) {
       return 'unknown'
     }
-    return descendants.length > 0 ? 'owns-live-ptys' : 'no-live-ptys'
+    const hosted = descendants.filter(
+      (row) => !isDaemonSelfSpawnedPty({ command: row.command } as ProcessTableRow)
+    )
+    return hosted.length > 0 ? 'owns-live-ptys' : 'no-live-ptys'
   }
   const rows = await (deps.readPosixProcessTable ?? getFreshProcessTableSnapshot)()
   // Why: a walk that never saw the root reports zero descendants for a process it
@@ -137,8 +157,8 @@ async function probeOnce(
  * running work. Descendants rather than direct children: macOS wraps every shell in
  * login(1) for TCC attribution, so the agent is a grandchild at best.
  *
- * Windows has no session-leader equivalent here, so its branch counts any descendant —
- * it can over-preserve where POSIX would not.
+ * Windows has no session-leader equivalent here, so its branch counts any descendant that
+ * is not a known self-spawned probe — it can over-preserve where POSIX would not.
  */
 export async function inspectDaemonPtyOwnership(
   daemonPid: number,
