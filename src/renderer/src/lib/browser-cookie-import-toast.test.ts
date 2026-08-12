@@ -36,7 +36,7 @@ describe('emitBrowserCookieImportToast', () => {
         }
       },
       'Imported 3 cookies.',
-      'local'
+      'Local Mac'
     )
 
     expect(warningToastMock).toHaveBeenCalledWith(
@@ -46,7 +46,7 @@ describe('emitBrowserCookieImportToast', () => {
   })
 
   it('shows success when the import has no warning', () => {
-    emitBrowserCookieImportToast(summary, 'Imported 3 cookies.', 'local')
+    emitBrowserCookieImportToast(summary, 'Imported 3 cookies.', 'Local Mac')
 
     expect(successToastMock).toHaveBeenCalledWith('Imported 3 cookies.')
     expect(warningToastMock).not.toHaveBeenCalled()
@@ -56,12 +56,12 @@ describe('emitBrowserCookieImportToast', () => {
     emitBrowserCookieImportToast(
       { ...summary, importedCookies: 2, skippedCookies: 1, googleCookiesSkipped: 1 },
       'Imported 2 cookies.',
-      'runtime:import-host'
+      'Remote Mac'
     )
 
     expect(successToastMock).toHaveBeenCalledWith('Imported 2 cookies.')
     expect(warningToastMock).toHaveBeenCalledWith(
-      'Google cookies were not imported. Open a browser in Orca on import-host with this profile, then sign into Google.',
+      'Google cookies were not imported. Open a browser in Orca on Remote Mac with this profile, then sign into Google.',
       { duration: 12000 }
     )
     expect(successToastMock.mock.invocationCallOrder[0]).toBeLessThan(
@@ -73,7 +73,7 @@ describe('emitBrowserCookieImportToast', () => {
     emitBrowserCookieImportToast(
       { ...summary, importedCookies: 2, skippedCookies: 1 },
       'Imported 2 cookies.',
-      'local'
+      'Local Mac'
     )
 
     expect(successToastMock).toHaveBeenCalledWith('Imported 2 cookies.')
@@ -94,7 +94,7 @@ describe('emitBrowserCookieImportToast', () => {
         }
       },
       'Imported 1 cookie.',
-      'runtime:import-host'
+      'Remote Mac'
     )
 
     expect(successToastMock).not.toHaveBeenCalled()
@@ -103,7 +103,7 @@ describe('emitBrowserCookieImportToast', () => {
         'Imported 1 of 2 cookies. The rest could not be loaded, and the restart fallback was unavailable. Try the import again.'
       ],
       [
-        'Google cookies were not imported. Open a browser in Orca on import-host with this profile, then sign into Google.',
+        'Google cookies were not imported. Open a browser in Orca on Remote Mac with this profile, then sign into Google.',
         { duration: 12000 }
       ]
     ])

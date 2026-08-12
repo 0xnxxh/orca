@@ -1,6 +1,5 @@
 import { toast } from 'sonner'
 import type { BrowserCookieImportSummary } from '../../../shared/types'
-import { getExecutionHostLabel, type ExecutionHostId } from '../../../shared/execution-host'
 import { translate } from '@/i18n/i18n'
 
 type CookieImportWarning = NonNullable<BrowserCookieImportSummary['warning']>
@@ -27,7 +26,7 @@ function formatCookieImportWarning(warning: CookieImportWarning): string {
 
 function emitGoogleCookieImportWarning(
   summary: BrowserCookieImportSummary,
-  executionHostId: ExecutionHostId
+  executionHostLabel: string
 ): void {
   if (!summary.googleCookiesSkipped) {
     return
@@ -36,7 +35,7 @@ function emitGoogleCookieImportWarning(
     translate(
       'auto.lib.browser.cookie.import.toast.googleCookiesSkipped',
       'Google cookies were not imported. Open a browser in Orca on {{value0}} with this profile, then sign into Google.',
-      { value0: getExecutionHostLabel(executionHostId) }
+      { value0: executionHostLabel }
     ),
     { duration: 12000 }
   )
@@ -47,7 +46,7 @@ function emitGoogleCookieImportWarning(
 export function emitBrowserCookieImportToast(
   summary: BrowserCookieImportSummary,
   successMessage: string,
-  executionHostId: ExecutionHostId
+  executionHostLabel: string
 ): void {
   const warning = summary.warning
   if (warning) {
@@ -55,5 +54,5 @@ export function emitBrowserCookieImportToast(
   } else {
     toast.success(successMessage)
   }
-  emitGoogleCookieImportWarning(summary, executionHostId)
+  emitGoogleCookieImportWarning(summary, executionHostLabel)
 }

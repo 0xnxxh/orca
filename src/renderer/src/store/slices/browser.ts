@@ -44,6 +44,7 @@ import type {
 import { createBrowserUuid } from '@/lib/browser-uuid'
 import { translate } from '@/i18n/i18n'
 import {
+  getExecutionHostLabel,
   getSettingsFocusedExecutionHostId,
   LOCAL_EXECUTION_HOST_ID,
   parseExecutionHostId,
@@ -123,13 +124,15 @@ export type RemoteBrowserPageHandle = {
 
 export type BrowserCookieImportExecutionResult = BrowserCookieImportResult & {
   executionHostId: ExecutionHostId
+  executionHostLabel: string
 }
 
 function retainCookieImportExecutionHost(
   result: BrowserCookieImportResult,
-  executionHostId: ExecutionHostId
+  executionHostId: ExecutionHostId,
+  executionHostLabel: string
 ): BrowserCookieImportExecutionResult {
-  return { ...result, executionHostId }
+  return { ...result, executionHostId, executionHostLabel }
 }
 
 export type BrowserSlice = {
@@ -267,6 +270,19 @@ function getBrowserSettingsHostId(
   state: Pick<AppState, 'browserSessionHostIdOverride' | 'settings'>
 ): ExecutionHostId {
   return state.browserSessionHostIdOverride ?? getSettingsFocusedExecutionHostId(state.settings)
+}
+
+function getBrowserSettingsHostLabel(state: AppState, hostId: ExecutionHostId): string {
+  const parsed = parseExecutionHostId(hostId)
+  if (parsed?.kind === 'runtime') {
+    const name = state.runtimeEnvironments
+      ?.find((environment) => environment.id === parsed.environmentId)
+      ?.name.trim()
+    if (name) {
+      return name
+    }
+  }
+  return getExecutionHostLabel(hostId)
 }
 
 function getBrowserSettingsRuntimeEnvironmentId(
@@ -2020,8 +2036,10 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
   },
 
   importCookiesToProfile: async (profileId) => {
-    const hostId = getBrowserSettingsHostId(get())
-    if (getBrowserSettingsRuntimeEnvironmentId(get())) {
+    const initialState = get()
+    const hostId = getBrowserSettingsHostId(initialState)
+    const executionHostLabel = getBrowserSettingsHostLabel(initialState, hostId)
+    if (getBrowserSettingsRuntimeEnvironmentId(initialState)) {
       const reason = translate(
         'auto.store.slices.browser.remoteCookieImportUnavailable',
         'Manual cookie file import is unavailable while a remote runtime is active.'
@@ -2034,7 +2052,11 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
           error: reason
         })
       )
-      return retainCookieImportExecutionHost({ ok: false as const, reason }, hostId)
+      return retainCookieImportExecutionHost(
+        { ok: false as const, reason },
+        hostId,
+        executionHostLabel
+      )
     }
     set((state) =>
       browserImportStateForHostUpdate(state, hostId, {
@@ -2073,7 +2095,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
           })
         )
       }
-      return retainCookieImportExecutionHost(result, hostId)
+      return retainCookieImportExecutionHost(result, hostId, executionHostLabel)
     } catch (err) {
       const reason = String((err as Error)?.message ?? err)
       set((state) =>
@@ -2084,7 +2106,11 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
           error: reason
         })
       )
-      return retainCookieImportExecutionHost({ ok: false as const, reason }, hostId)
+      return retainCookieImportExecutionHost(
+        { ok: false as const, reason },
+        hostId,
+        executionHostLabel
+      )
     }
   },
 
@@ -2142,8 +2168,10 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
   },
 
   importCookiesFromBrowser: async (profileId, browserFamily, browserProfile?) => {
-    const hostId = getBrowserSettingsHostId(get())
-    const runtimeEnvironmentId = getBrowserSettingsRuntimeEnvironmentId(get())
+    const initialState = get()
+    const hostId = getBrowserSettingsHostId(initialState)
+    const executionHostLabel = getBrowserSettingsHostLabel(initialState, hostId)
+    const runtimeEnvironmentId = getBrowserSettingsRuntimeEnvironmentId(initialState)
     if (runtimeEnvironmentId) {
       set((state) =>
         browserImportStateForHostUpdate(state, hostId, {
@@ -2184,7 +2212,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
             })
           )
         }
-        return retainCookieImportExecutionHost(result, hostId)
+        return retainCookieImportExecutionHost(result, hostId, executionHostLabel)
       } catch (err) {
         const reason = String((err as Error)?.message ?? err)
         set((state) =>
@@ -2195,7 +2223,11 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
             error: reason
           })
         )
-        return retainCookieImportExecutionHost({ ok: false as const, reason }, hostId)
+        return retainCookieImportExecutionHost(
+          { ok: false as const, reason },
+          hostId,
+          executionHostLabel
+        )
       }
     }
     set((state) =>
@@ -2237,7 +2269,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
           })
         )
       }
-      return retainCookieImportExecutionHost(result, hostId)
+      return retainCookieImportExecutionHost(result, hostId, executionHostLabel)
     } catch (err) {
       const reason = String((err as Error)?.message ?? err)
       set((state) =>
@@ -2248,7 +2280,11 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
           error: reason
         })
       )
-      return retainCookieImportExecutionHost({ ok: false as const, reason }, hostId)
+      return retainCookieImportExecutionHost(
+        { ok: false as const, reason },
+        hostId,
+        executionHostLabel
+      )
     }
   },
 

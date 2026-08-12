@@ -10,6 +10,7 @@ import {
 import { GRAB_BUDGET, type BrowserPageAnnotation } from '../../../../shared/browser-grab-types'
 import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rpc-client'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
+import { getExecutionHostLabel } from '../../../../shared/execution-host'
 
 const createWebRuntimeSessionBrowserTabMock = vi.hoisted(() => vi.fn())
 const runtimeEnvironmentCall = vi.fn()
@@ -842,7 +843,10 @@ describe('createBrowserSlice runtime guard', () => {
       })
     })
     const store = createTestStore()
-    store.setState({ browserSessionHostIdOverride: 'runtime:windows-2' })
+    store.setState({
+      browserSessionHostIdOverride: 'runtime:windows-2',
+      runtimeEnvironments: [{ id: 'windows-2', name: 'Windows Server' }] as never
+    })
 
     const importing = store
       .getState()
@@ -864,7 +868,8 @@ describe('createBrowserSlice runtime guard', () => {
     await expect(importing).resolves.toMatchObject({
       ok: true,
       profileId: 'windows-profile',
-      executionHostId: 'runtime:windows-2'
+      executionHostId: 'runtime:windows-2',
+      executionHostLabel: 'Windows Server'
     })
     expect(store.getState().browserSessionHostIdOverride).toBe('runtime:linux-3')
     expect(store.getState().browserSessionImportState).toBeNull()
@@ -1246,7 +1251,11 @@ describe('createBrowserSlice runtime guard', () => {
     const result = await store.getState().importCookiesToProfile('default')
 
     expect(mockApi.browser.sessionImportCookies).not.toHaveBeenCalled()
-    expect(result).toMatchObject({ ok: false, executionHostId: 'runtime:env-1' })
+    expect(result).toMatchObject({
+      ok: false,
+      executionHostId: 'runtime:env-1',
+      executionHostLabel: 'env-1'
+    })
     expect(store.getState().browserSessionImportState).toMatchObject({
       profileId: 'default',
       status: 'error'
@@ -1263,7 +1272,11 @@ describe('createBrowserSlice runtime guard', () => {
 
     const result = await store.getState().importCookiesFromBrowser('default', 'chrome', 'Default')
 
-    expect(result).toMatchObject({ ok: true, executionHostId: 'local' })
+    expect(result).toMatchObject({
+      ok: true,
+      executionHostId: 'local',
+      executionHostLabel: getExecutionHostLabel('local')
+    })
   })
 
   it('uses local browser IPC when no runtime environment is active', async () => {
