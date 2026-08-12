@@ -1565,6 +1565,8 @@ export function useTerminalPaneLifecycle({
       window.__paneManagers.set(tabId, manager)
     }
     const restoredPaneByLeafId = replayTerminalLayout(manager, initialLayoutRef.current, isActive)
+    // Why: only panes reconstructed by this replay belong to the park reveal; later splits must use ordinary reconnect semantics.
+    ptyDeps.mountFollowsTerminalPark = false
 
     const restoredBuffers = initialLayoutRef.current.buffersByLeafId
     restoreScrollbackBuffers(
