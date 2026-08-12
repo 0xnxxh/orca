@@ -6,7 +6,7 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `f548827c1e`; no PR.
+- Orca implementation: `skills-share` at `3ce85a8958`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   production remains untouched.
@@ -190,12 +190,25 @@ Validated so far:
 - Guarded sleep `31592709817` completed at Cloud `8fce3298ef`. Independent reads verified SQL
   `NEVER`/`STOPPED`, all three Relay MIGs stable at target zero with no active actions, and API,
   Auth, and Relay active-service minimums at zero.
+- Real process-death recovery now kills the transaction process after partial extraction and
+  immediately before and after every durable install/removal journal transition. All 17 macOS
+  cases passed, including extraction cleanup, dead-lock reclamation, receipt/filesystem agreement,
+  and absence of transaction debris; the release workflow requires the same suite on macOS,
+  native Windows, and Ubuntu 20.04/glibc 2.31.
+- Guarded wake `31603249983` restored only the two configured staging cells. A disposable
+  no-service-account Ubuntu 20.04/glibc 2.31 VM then passed the browser-free SSH staging lifecycle
+  in 31.3 seconds: publish v1, host-owned install with exact digest, v2 update, managed-install
+  verification, rollback, revocation with installed-copy preservation, local removal, and Cloud
+  package deletion. The remote install, Orca SSH target, encrypted credential artifact, one-time
+  keys, and VM were removed. Guarded sleep `31604391897` passed; independent reads verified SQL
+  `NEVER`/`STOPPED` and C1/C2/C3 target zero, stable, and reached. Production was untouched.
 
 Rollout gate: staging infrastructure, OIDC owner identity exchange, anonymous bearer lifecycle,
 owner management, browser-free desktop bundle lifecycle, privacy-safe logging, published-object
 recovery, bounded finalization load, and guarded rollback-capable deployment passed. Production
-remains untouched. Native Windows staging passed; physical WSL and SSH staging journeys plus the
-quarantine lifecycle deletion remain. The shared staging data plane is asleep.
+remains untouched. Native Windows and physical Ubuntu 20.04 SSH staging passed; physical WSL,
+paired non-Windows, SSH macOS/Windows, and the quarantine lifecycle deletion remain. The shared
+staging data plane is asleep.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
 
@@ -1118,16 +1131,17 @@ source snapshot, dependencies, and package-manager store were removed after the 
 
 ## 11. Implement and validate SSH targets
 
-The 2026-08-11 live Orca inventory contains only the connected `windows 2` environment and no
-non-local worktree or repository. Real SSH validation therefore requires registering an isolated
-SSH macOS, Ubuntu 20.04, or supported Windows target; implementation and contract tests continue
-without treating the missing external topology as a product failure.
+The 2026-08-11 live Orca inventory contained only the connected `windows 2` environment and no
+non-local worktree or repository. The later staging journey registered a disposable Ubuntu 20.04
+host directly through Orca's SSH provider and removed it afterward. Isolated physical SSH macOS
+and supported Windows targets are still required for their platform-specific gates.
 
-The Docker-backed Linux SSH harness now exercises the production Electron → SSH provider → relay
-→ remote installer path. Its loopback package origin is unreachable from the container, forcing
+The Docker-backed Linux SSH harness exercises the production Electron → SSH provider → relay →
+remote installer path. Its loopback package origin is unreachable from the container, forcing
 client-mediated chunk upload. The test independently verifies Cloud request receipts and remote
 files for global, Git-worktree, and plain-folder installs, unchanged preview, listing, and removal.
-This does not substitute for physical SSH macOS/Windows or the supported Linux floor.
+The physical staging journey additionally passed the supported Ubuntu 20.04/glibc 2.31 floor;
+physical SSH macOS and supported Windows remain open.
 
 - [x] Define a host-side installer command that invokes the same installer core and structured
       result contract.
@@ -1142,7 +1156,8 @@ This does not substitute for physical SSH macOS/Windows or the supported Linux f
 - [x] Route selective bundle installs through an additive SSH method with direct download,
       client-mediated fallback, per-skill results, and old-host capability fencing.
 - [ ] Test SSH-only macOS, Linux at the supported floor, and Windows where the existing provider
-      supports it.
+      supports it. Ubuntu 20.04/glibc 2.31 passed the full live staging lifecycle; macOS and
+      supported Windows remain open.
 - [x] Test Git worktree and folder-workspace scope over SSH through the disposable Docker Linux
       target and verify the host-owned paths independently.
 - [ ] Test connection loss during upload, extraction, commit, provenance, and result return. Lost
@@ -1293,8 +1308,10 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
       Browser-free macOS run `31569902499` passed publish, install, conflict preservation, update,
       rollback, revocation, installed-copy preservation, removal, and Cloud deletion. Physical
       native Windows passed the same lifecycle through run `31591275227`, including remote-owned
-      path and digest verification with no macOS fallback. Paired non-Windows, WSL, and SSH still
-      need the same live staging Cloud journey.
+      path and digest verification with no macOS fallback. A disposable Ubuntu 20.04/glibc 2.31
+      host passed the same SSH lifecycle after guarded wake `31603249983`; guarded sleep
+      `31604391897` restored the low-cost state. Paired non-Windows and physical WSL still need the
+      same live staging Cloud journey.
 - [x] Give the live staging E2E an owner-private persisted test profile or a short-lived
       non-interactive test credential so reruns do not open PKCE login tabs or copy a user's
       primary Orca session.
@@ -1302,7 +1319,10 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
       standard process metadata, with zero credential or private-content matches. Exclude per-link
       Cloud Run platform request logs through Terraform and verify zero are retained.
 - [ ] Verify logs, metrics, traces, diagnostics, and support bundles contain no grants or private
-      package data.
+      package data. The physical SSH window emitted 27 structured route-template events whose
+      complete application field inventory was only duration, event, hostname, level, method,
+      process ID, route template, status, and time; it emitted zero API error logs. Broader trace,
+      diagnostic, and support-bundle inspection remains open.
 - [x] Load-test finalization and choose the fixed semaphore from observed memory, CPU, request
       latency, and database usage. Run `31585710645` kept the existing semaphore: its 12 concurrent
       30-skill bundles produced two immediate successes and ten explicit saturation responses,

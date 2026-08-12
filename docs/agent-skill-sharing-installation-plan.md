@@ -53,7 +53,7 @@ that larger package-manager surface.
 
 ## Current execution status
 
-The Orca implementation is on `skills-share` at `371767014a`; no Orca pull request exists. Cloud
+The Orca implementation is on `skills-share` at `3ce85a8958`; no Orca pull request exists. Cloud
 bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`;
 the bundle desktop smoke update merged through `#329` as `eddb144afe`, generation-aware GCS
 recovery merged through `#330` as `8045c85dad`, and the bounded finalization load gate plus cleanup
@@ -63,9 +63,9 @@ The authenticated OIDC smoke landed in `#313`; the narrow Auth release-metadata 
 follow-up landed in `#314`; the finalization and lifecycle fixes landed in `#317`. The final
 anonymous bearer-link candidate and canonical smoke now pass in staging. Production remains
 untouched. Local, Windows, WSL, paired-runtime, Docker-backed SSH, browser-free staging desktop,
-published-object recovery, and bounded finalization-load validation are substantially complete;
-the implementation checklist records the exact evidence and remaining physical-host and lifecycle
-gates.
+physical Ubuntu 20.04 SSH, published-object recovery, and bounded finalization-load validation are
+substantially complete; the implementation checklist records the exact evidence and remaining
+physical-host and lifecycle gates.
 
 The local redesign now has an independently implemented Agent Plugins 1.0.0 skills-only bundle
 manifest, deterministic one-or-many archive creation, bounded bundle extraction, additive bundle
@@ -142,9 +142,14 @@ configured Relay cells, and Auth deploy `31589963244` promoted
 passed publish, native Windows install, update, independent local version selection, rollback,
 revocation preservation, removal, and Cloud deletion using encrypted credential run
 `31591275227`; its ciphertext artifact and one-time local key material were deleted immediately.
-Remaining staging gates are physical WSL and SSH journeys and the time-gated quarantine lifecycle
-deletion. Guarded sleep `31592709817` returned SQL to `NEVER`/`STOPPED`, all three stable Relay
-MIGs to zero, and every active Cloud Run service minimum to zero. Production remains untouched.
+Guarded wake `31603249983` later restored only the two configured cells. A disposable
+no-service-account Ubuntu 20.04/glibc 2.31 VM passed the full live SSH staging lifecycle in 31.3
+seconds, including host-owned install, update, rollback, revocation preservation, removal, and
+Cloud deletion. The encrypted credential artifact, one-time keys, Orca SSH target, remote install,
+and VM were removed. Guarded sleep `31604391897` passed and independent reads confirmed SQL
+`NEVER`/`STOPPED` plus all three Relay MIGs at stable target zero. Remaining staging gates are
+physical WSL, paired non-Windows, physical SSH macOS/Windows, and the time-gated quarantine
+lifecycle deletion. Production remains untouched.
 
 ## Research baseline
 
