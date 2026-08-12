@@ -60,4 +60,23 @@ describe('skill-sharing release workflow', () => {
       expect(archive.with['if-no-files-found']).toBe('error')
     }
   })
+
+  it('loads each exact Linux package on the glibc 2.31 floor', () => {
+    const build = workflow.jobs.build
+    const smoke = stepNamed(build, 'Load packaged node-pty on the Linux floor')
+    const linuxEntries = build.strategy.matrix.include.filter(({ platform }) =>
+      platform.startsWith('linux-')
+    )
+
+    expect(linuxEntries).toEqual([
+      expect.objectContaining({ platform: 'linux-x64', unpacked_dir: 'dist/linux-unpacked' }),
+      expect.objectContaining({
+        platform: 'linux-arm64',
+        unpacked_dir: 'dist/linux-arm64-unpacked'
+      })
+    ])
+    expect(smoke.if).toContain("matrix.platform == 'linux-x64'")
+    expect(smoke.with.command).toContain('run-linux-packaged-node-pty-floor-smoke.mjs')
+    expect(smoke.with.command).toContain('${{ matrix.unpacked_dir }}')
+  })
 })
