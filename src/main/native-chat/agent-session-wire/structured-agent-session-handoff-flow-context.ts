@@ -41,6 +41,17 @@ export function createStructuredHandoffFlowContext(input: {
   }
 }
 
+export function requireStructuredHandoffRecord(
+  deps: StructuredAgentSessionHandoffDeps,
+  sessionId: string
+): AgentSessionRecord {
+  const record = deps.store.getRecord(sessionId)
+  if (!record) {
+    throw new Error('agent_session_identity_required')
+  }
+  return record
+}
+
 export async function stopStructuredNativeTurn(
   deps: StructuredAgentSessionHandoffDeps,
   sessionId: string,

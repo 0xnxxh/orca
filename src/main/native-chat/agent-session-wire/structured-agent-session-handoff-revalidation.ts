@@ -2,6 +2,7 @@ import type { AgentSessionRecord } from '../../../shared/agent-session-record'
 import type { AgentSessionHandoffRequest } from '../../../shared/agent-session-wire'
 import { activeStructuredAgentSessionTurnId } from '../../../shared/structured-agent-session-projection'
 import type { AgentSessionJournal } from '../agent-session-journal/journal-store'
+import { structuredHandoffRetryResumesStoppedOwner } from './structured-agent-session-handoff-admission'
 import { structuredSessionHasPendingPrompt } from './structured-agent-session-handoff-status'
 
 export function assertScheduledStructuredHandoffIsAdmissible(input: {
@@ -14,7 +15,7 @@ export function assertScheduledStructuredHandoffIsAdmissible(input: {
   tuiStatus: 'idle' | 'busy'
 }): void {
   const { params, record } = input
-  if (params.action === 'retry') {
+  if (params.action === 'retry' && structuredHandoffRetryResumesStoppedOwner(record, params)) {
     return
   }
   const expectedOwner = params.direction === 'to-tui' ? 'native' : 'tui'

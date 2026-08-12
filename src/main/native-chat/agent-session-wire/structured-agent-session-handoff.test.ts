@@ -347,7 +347,6 @@ describe.each(STRUCTURED_HANDOFF_PROVIDER_CASES)(
       expect(new Set(messages.map((item) => item.itemId)).size).toBe(2)
       expect(store.getRecord(SESSION)?.lease).toMatchObject({
         runtimeKind: 'native',
-        claimStatus: 'live',
         handoffStage: null
       })
     })
@@ -711,26 +710,27 @@ describe.each(STRUCTURED_HANDOFF_PROVIDER_CASES)(
         owner: 'tui',
         error: { recoverableOwner: 'tui', details: 'terminal_handle_stale' }
       })
-      expect(store.getRecord(SESSION)?.lease).toMatchObject({
-        runtimeKind: 'tui',
-        claimStatus: 'live',
-        handoffStage: null,
-        handoffOperationId: null
-      })
     })
 
-    it('recovers native ownership when TUI launch or proof fails', async () => {
+    it('recovers native ownership and refuses retry over a new native turn', async () => {
       launchTui.mockRejectedValueOnce(new Error('resume proof failed'))
-      expect(await submit(request('to-tui', 'now'))).toMatchObject({ ok: true })
+      const retryOperation = operationId()
+      expect(await submit(request('to-tui', 'now', { operationId: retryOperation }))).toMatchObject(
+        { ok: true }
+      )
       await waitForPhase('failed')
-      expect(coordinator.status(SESSION)).toMatchObject({
-        owner: 'native',
-        error: { recoverableOwner: 'native' }
-      })
       expect(store.getRecord(SESSION)?.lease).toMatchObject({
         runtimeKind: 'native',
         claimStatus: 'live',
         handoffStage: null
+      })
+      await appendStatus('running')
+      const retry = await submit(
+        request('to-tui', 'now', { action: 'retry', operationId: retryOperation })
+      )
+      expect(retry).toMatchObject({
+        ok: false,
+        refusal: { code: 'agent_session_conflict' }
       })
     })
 

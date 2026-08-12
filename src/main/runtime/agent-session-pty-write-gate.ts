@@ -73,14 +73,21 @@ export class AgentSessionPtyWriteGate {
   admitProof(ptyId: string, authority: { sessionId: string; spawnToken: string }): boolean {
     const binding = this.binding(ptyId)
     const lease = binding?.record?.lease
+    const provingReservation =
+      lease?.claimStatus === 'reserved' &&
+      lease.handoffStage === 'new-owner-proving' &&
+      lease.reservedSpawnToken === authority.spawnToken &&
+      (lease.ownerProcess === null || lease.ownerProcess.spawnToken === authority.spawnToken)
+    const reprovingLiveOwner =
+      lease?.claimStatus === 'live' &&
+      lease.handoffStage === null &&
+      lease.ownerProcess?.spawnToken === authority.spawnToken &&
+      lease.provenHandleLinkId !== null
     return Boolean(
       binding?.sessionId === authority.sessionId &&
       binding.record?.sessionId === authority.sessionId &&
       lease?.runtimeKind === 'tui' &&
-      lease.claimStatus === 'reserved' &&
-      lease.handoffStage === 'new-owner-proving' &&
-      lease.reservedSpawnToken === authority.spawnToken &&
-      (lease.ownerProcess === null || lease.ownerProcess.spawnToken === authority.spawnToken) &&
+      (provingReservation || reprovingLiveOwner) &&
       !lease.unreconciled
     )
   }

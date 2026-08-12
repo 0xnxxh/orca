@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import type { StructuredAgentSessionHandoffTransport } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
+import { agentSessionPtyWriteGate } from './agent-session-pty-write-gate'
 import { OrcaRuntimeService } from './orca-runtime'
 
 const { probeAgentSessionProcessIdentity, readStructuredTuiProcessIdentity } = vi.hoisted(() => ({
@@ -114,6 +115,8 @@ describe('structured TUI launch tab binding', () => {
     })
     expect(reproved.link.linkId).not.toBe('claude-old')
     expect(attestAgentHookCompatibilityAuthority).not.toHaveBeenCalled()
+    expect(agentSessionPtyWriteGate.boundSessionId('pty-claude')).toBe('session-1')
+    agentSessionPtyWriteGate.unbindPty('pty-claude')
   })
 
   it('requires restored hook attestation after the runtime restarts', async () => {
@@ -192,6 +195,7 @@ describe('structured TUI launch tab binding', () => {
     await expect(
       internal.createStructuredAgentSessionHandoffTransport().recoverTuiOwner(record)
     ).rejects.toThrow('launch-token authority')
+    agentSessionPtyWriteGate.unbindPty('pty-restored')
   })
 
   it('proves the published launch tab before returning its revealed renderer binding', async () => {

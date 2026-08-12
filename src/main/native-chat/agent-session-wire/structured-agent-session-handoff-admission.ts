@@ -125,3 +125,14 @@ export function structuredHandoffRetryIsAdmissible(
     status.error?.recoverableOwner !== 'none'
   )
 }
+
+export function structuredHandoffRetryResumesStoppedOwner(
+  record: AgentSessionRecord,
+  params: AgentSessionHandoffRequest
+): boolean {
+  return (
+    record.lease.claimStatus === 'released' &&
+    record.lease.handoffStage === 'old-owner-stopped' &&
+    record.lease.handoffOperationId === params.envelope.clientOperationId
+  )
+}
