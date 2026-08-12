@@ -17,6 +17,7 @@ import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import { isEphemeralSetupTerminalWorktreeId } from '../../../../shared/ephemeral-setup-terminal-worktree-id'
 import { TERMINAL_PAIRED_PARKING_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
 import { TerminalKittyKeyboardModeTracker } from '../../../../shared/terminal-kitty-keyboard-mode-tracker'
+import { parseTerminalKittyKeyboardFlags } from '../../../../shared/terminal-kitty-keyboard-flags'
 import { isRuntimeOwnedSshTargetId, parseExecutionHostId } from '../../../../shared/execution-host'
 import { createTerminalZeroDimensionsMessage } from '../../../../shared/terminal-zero-dimensions-diagnostic'
 import { isWorktreeRemovalFenceError } from '../../../../shared/worktree-removal-fence-error'
@@ -36,7 +37,7 @@ import {
 } from '@/lib/pane-manager/terminal-delivery-credit'
 import { serializeWithAbsoluteCursor } from '../../../../shared/terminal-serialize-absolute-cursor'
 import { isTerminalQueryReply } from '../../../../shared/terminal-query-reply'
-import type { PtyBufferSnapshot, PtyConnectResult } from './pty-transport'
+import type { PtyBufferSnapshot, PtyConnectResult, PtyReplayDataMeta } from './pty-transport'
 import type { IpcPtyTransportOptions, PtyTransportRecoveryState } from './pty-transport-types'
 import { createIpcPtyTransport } from './pty-transport'
 import { createRemoteRuntimePtyTransport } from './remote-runtime-pty-transport'
@@ -4749,12 +4750,21 @@ export function connectPanePty(
                 : serializeWithAbsoluteCursor(pane.serializeAddon, pane.terminal, {
                     scrollback: opts?.scrollbackRows
                   })
+            const orderedSeq = rendererOrderedPtyId === ptyId ? rendererOrderedSeq : null
+            // Why snapshotFlags and not `flags`: this pane may itself have
+            // consumed an old-host snapshot that proved nothing, and its
+            // conservative `0` fallback must not be republished downstream as
+            // a host-proven inactive protocol.
+            const provenKittyFlags = kittyKeyboardModes.hasProvenBaseline
+              ? kittyKeyboardModes.snapshotFlags
+              : undefined
             return {
               data,
               cols: pane.terminal.cols,
               rows: pane.terminal.rows,
-              ...(rendererOrderedPtyId === ptyId && rendererOrderedSeq !== null
-                ? { seq: rendererOrderedSeq }
+              ...(orderedSeq !== null ? { seq: orderedSeq } : {}),
+              ...(orderedSeq !== null && provenKittyFlags !== undefined
+                ? { kittyKeyboardFlags: provenKittyFlags }
                 : {})
             }
           } catch {
@@ -5646,6 +5656,8 @@ export function connectPanePty(
       generation: number
       streamGeneration: number
       pendingEscapeTailAnsi?: string
+      kittyKeyboardFlags?: number
+      snapshotSeq?: number
     }
 
     let pendingReplayData: PendingReplayData | null = null
@@ -5699,7 +5711,7 @@ export function connectPanePty(
         // negotiation; the mirror must re-arm from them after a reload. Replay
         // semantics: relay reconnects redeliver the same window, so pushes
         // apply as sets to keep the mirrored stack from accumulating frames.
-        kittyKeyboardModes.scanReplay(data)
+        applySnapshotKittyKeyboardModes(data, payload)
         await writeReplayDataAsync(data)
         if (!isCurrentPayload()) {
           continue
@@ -5775,7 +5787,7 @@ export function connectPanePty(
     }
     const replayDataCallback = (
       data: string,
-      meta: { clearBeforeReplay?: boolean; pendingEscapeTailAnsi?: string } = {},
+      meta: PtyReplayDataMeta = {},
       streamGeneration = transportStreamGeneration
     ): void => {
       pendingReplayData = {
@@ -5784,7 +5796,15 @@ export function connectPanePty(
         ptyId: transport.getPtyId(),
         generation: (replayPayloadGeneration += 1),
         streamGeneration,
-        ...(meta.pendingEscapeTailAnsi ? { pendingEscapeTailAnsi: meta.pendingEscapeTailAnsi } : {})
+        ...(meta.pendingEscapeTailAnsi
+          ? { pendingEscapeTailAnsi: meta.pendingEscapeTailAnsi }
+          : {}),
+        ...(meta.kittyKeyboardFlags !== undefined && meta.snapshotSeq !== undefined
+          ? {
+              kittyKeyboardFlags: meta.kittyKeyboardFlags,
+              snapshotSeq: meta.snapshotSeq
+            }
+          : {})
       }
       scheduleReplayDataDrain()
     }
@@ -5816,10 +5836,7 @@ export function connectPanePty(
               dataCallback(data, meta, generation)
             }
           },
-          onReplayData: (
-            data: string,
-            meta?: { clearBeforeReplay?: boolean; pendingEscapeTailAnsi?: string }
-          ): void => {
+          onReplayData: (data: string, meta?: PtyReplayDataMeta): void => {
             if (isCurrent()) {
               replayDataCallback(data, meta, generation)
             }
@@ -6792,6 +6809,43 @@ export function connectPanePty(
       }
     }
 
+    /**
+     * Apply an authoritative snapshot to the pane's kitty mirror in the order:
+     * unproven reset, replay-semantics scan of the snapshot
+     * bytes (so screen selection lands first), then the owner's proven flags.
+     *
+     * Why the reset only happens when the owner proved something: an old host
+     * omits the field, and downgrading a mirror that is already tracking live
+     * output would lose correct state instead of preserving it.
+     */
+    function applySnapshotKittyKeyboardModes(
+      snapshotData: string,
+      snapshot: { kittyKeyboardFlags?: number; snapshotSeq?: number }
+    ): void {
+      const proven =
+        snapshot.snapshotSeq === undefined
+          ? undefined
+          : parseTerminalKittyKeyboardFlags(snapshot.kittyKeyboardFlags)
+      if (proven === undefined) {
+        // Why the demotion: a mirror grounded in this PTY's stream keeps its
+        // state, but a constructor-fresh tracker (window reload) holds a
+        // known-zero that was never proven for the reattached PTY — demote it
+        // so the serializer cannot republish it downstream as host-proven
+        // inactive.
+        if (!kittyKeyboardModes.hasProvenBaseline) {
+          kittyKeyboardModes.resetForSnapshot()
+        }
+        kittyKeyboardModes.scanReplay(snapshotData)
+        return
+      }
+      kittyKeyboardModes.resetForSnapshot()
+      kittyKeyboardModes.scanReplay(snapshotData)
+      kittyKeyboardModes.restoreSnapshotFlags(proven)
+      // Why in the same critical section: without the baseline a quiet pane
+      // could not publish a coherent snapshot until unrelated output arrived.
+      recordRendererOrderedSeq({ seq: snapshot.snapshotSeq })
+    }
+
     function recordRendererOrderedSeq(meta?: Pick<PtyDataMeta, 'seq'>): void {
       if (typeof meta?.seq !== 'number') {
         return
@@ -7208,6 +7262,7 @@ export function connectPanePty(
       alternateScreen?: boolean
       scrollbackAnsi?: string
       pendingEscapeTailAnsi?: string
+      kittyKeyboardFlags?: number
     }): Promise<void> {
       const restorePtyId = transport.getPtyId()
       const restoreGeneration = hiddenOutputRestoreGeneration
@@ -7258,6 +7313,13 @@ export function connectPanePty(
                 suppressStructuralReplayPtyResize = false
               }
             }
+            // Why here and not from the writes below: the mirror tracks what the
+            // APPLICATION negotiated, so it must see the snapshot's own bytes
+            // before adopting the flags main proved for this boundary.
+            applySnapshotKittyKeyboardModes(`${snapshot.scrollbackAnsi ?? ''}${snapshot.data}`, {
+              kittyKeyboardFlags: snapshot.kittyKeyboardFlags,
+              snapshotSeq: snapshot.seq
+            })
             // Why shared: the SSH reattach model paint inlines the same
             // choreography (coordinator nesting would deadlock there); one
             // builder keeps the alt-screen branches from drifting.
@@ -7981,7 +8043,10 @@ export function connectPanePty(
                   suppressStructuralReplayPtyResize = false
                 }
               }
-              kittyKeyboardModes.scanReplay(modelData)
+              applySnapshotKittyKeyboardModes(modelData, {
+                kittyKeyboardFlags: snapshot.kittyKeyboardFlags,
+                snapshotSeq: snapshot.seq
+              })
               // Why keep a too-wide frame: preconnect SSH has no live repaint owner or post-restore fit.
               for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot)) {
                 writeReplayData(replayChunk)
@@ -8202,7 +8267,10 @@ export function connectPanePty(
           }
           writeReplayData('\x1b[2J\x1b[3J\x1b[H')
           // Why: re-arm the kitty keyboard mirror from the snapshot preamble so Option chords keep their encoding after a window reload.
-          kittyKeyboardModes.scanReplay(daemonSnapshotReplay)
+          applySnapshotKittyKeyboardModes(daemonSnapshotReplay, {
+            kittyKeyboardFlags: connectResult.snapshotKittyKeyboardFlags,
+            snapshotSeq: connectResult.snapshotSeq
+          })
           // A narrower fit clips the fixed-grid alt frame; drop it and let SIGWINCH repaint.
           // A dead-owner restore keeps history plus its restored-session treatment;
           // a frozen foreign-width frame would look live when no owner remains.
@@ -8270,7 +8338,10 @@ export function connectPanePty(
                 suppressStructuralReplayPtyResize = false
               }
             }
-            kittyKeyboardModes.scanReplay(modelData)
+            applySnapshotKittyKeyboardModes(modelData, {
+              kittyKeyboardFlags: modelSnapshot.kittyKeyboardFlags,
+              snapshotSeq: modelSnapshot.seq
+            })
             // Why shared: park+reveal of an alt-screen TUI needs the same
             // ?1049l/?1049h rebuild as applyMainBufferSnapshot (main strips
             // the ?1049h marker when splitting scrollbackAnsi) — inlined here
@@ -8309,6 +8380,11 @@ export function connectPanePty(
             // Relay replay may overlap xterm's pre-disconnect content; clear first to avoid duplication.
             writeReplayData('\x1b[2J\x1b[3J\x1b[H')
             // Why: raw relay replay may contain the app's own kitty pushes; re-arm with set semantics so redelivery can't grow the stack.
+            // A constructor-fresh mirror (window reload) first demotes to unproven:
+            // the replay window proves nothing about negotiations that predate it.
+            if (!kittyKeyboardModes.hasProvenBaseline) {
+              kittyKeyboardModes.resetForSnapshot()
+            }
             kittyKeyboardModes.scanReplay(connectResult.replay)
             writeReplayData(connectResult.replay)
             writeReplayData(
