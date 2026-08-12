@@ -6,6 +6,8 @@ import {
   isClaudeManagementTitle,
   isCursorAgentTitle,
   isCursorNativeAgentTitle,
+  isOpenCodeNativeTitle,
+  isQuarterCircleSpinnerOnlyAgentTitle,
   isShellProcess,
   normalizeTerminalTitle
 } from '../../shared/agent-detection'
@@ -1298,6 +1300,8 @@ type RuntimePtyWorktreeRecord = {
   paneKey: string | null
   launchConfig: SleepingAgentLaunchConfig | null
   launchToken: string | null
+  // Why: provider PTY IDs can be reused; launch identity belongs only to the process that received the token.
+  launchIncarnationId: PtyIncarnationId | null
   launchAgent: TuiAgent | null
   foregroundAgent: TuiAgent | null
   connected: boolean
@@ -9321,6 +9325,7 @@ export class OrcaRuntimeService {
       isTuiAgent(agentLaunchAuthority.launchAgent)
     ) {
       pty.launchToken = agentLaunchAuthority.launchToken
+      pty.launchIncarnationId = binding.incarnationId
       pty.launchAgent = agentLaunchAuthority.launchAgent
     }
     const pendingIncarnation = this.pendingPtyRegistrationIncarnations.get(ptyId)
@@ -12304,6 +12309,7 @@ export class OrcaRuntimeService {
     }
     this.restoredOrchestrationAuthorityByPtyId.delete(ptyId)
     pty.launchToken = null
+    pty.launchIncarnationId = null
     const paneKeys = new Set<string>()
     if (pty.paneKey && parsePaneKey(pty.paneKey)) {
       paneKeys.add(pty.paneKey)
@@ -16666,6 +16672,20 @@ export class OrcaRuntimeService {
       }
     }
     if (terminal.titleStatus) {
+      // Why: an OpenCode marker and a lone quarter-circle spinner (STA-4028) are activity,
+      // not identity, so resolve both through the identity/foreground evidence path.
+      if (
+        isOpenCodeNativeTitle(terminal.title) ||
+        isQuarterCircleSpinnerOnlyAgentTitle(terminal.title)
+      ) {
+        const isRunningAgent = await this.isTerminalRunningAgent(handle)
+        this.assertTerminalAgentStatusPtyBinding(handle, ptyId)
+        return {
+          handle,
+          isRunningAgent,
+          status: isRunningAgent ? terminal.titleStatus : null
+        }
+      }
       return { handle, isRunningAgent: true, status: terminal.titleStatus }
     }
 
@@ -25548,6 +25568,7 @@ export class OrcaRuntimeService {
               ? copySleepingAgentLaunchConfig(effectiveLaunchConfig)
               : null
             pty.launchToken = launchToken ?? null
+            pty.launchIncarnationId = launchToken ? pty.incarnationId : null
             pty.launchAgent = launchOpts.launchAgent ?? null
           }
           pty.tabId = tabId
@@ -29045,6 +29066,7 @@ export class OrcaRuntimeService {
         paneKey: state.paneKey ?? null,
         launchConfig: null,
         launchToken: null,
+        launchIncarnationId: null,
         launchAgent: null,
         foregroundAgent: null,
         connected: state.connected ?? true,
@@ -31087,15 +31109,24 @@ export class OrcaRuntimeService {
         return await this.isPtyRunningAgent(pty.pty, leaf)
       }
       const { leaf } = this.getLiveLeafForHandle(handle)
+      const trackedPty = leaf.ptyId ? this.ptysById.get(leaf.ptyId) : null
       // Why: check the leaf pane title and the tab title, which already carries OSC-enriched agent indicators (e.g. ✳ prefix).
       const paneTitle = getLatestLeafTitle(leaf, null)
       const paneTitleClassification = classifyAgentTitle(paneTitle)
-      if (paneTitleClassification === 'agent') {
+      if (
+        trackedPty
+          ? ptyTitleProvesAgentPresence(trackedPty, paneTitle, paneTitleClassification)
+          : agentTitleProvesAgentPresence(paneTitle, paneTitleClassification)
+      ) {
         return true
       }
       const tabTitle = this.tabs.get(leaf.tabId)?.title?.trim() || null
       const tabTitleClassification = paneTitle === null ? classifyAgentTitle(tabTitle) : 'neutral'
-      if (tabTitleClassification === 'agent') {
+      if (
+        trackedPty
+          ? ptyTitleProvesAgentPresence(trackedPty, tabTitle, tabTitleClassification)
+          : agentTitleProvesAgentPresence(tabTitle, tabTitleClassification)
+      ) {
         return true
       }
       const waitText = buildTerminalWaitText(leaf.tailBuffer, leaf.tailPartialLine, leaf.preview)
@@ -31143,7 +31174,7 @@ export class OrcaRuntimeService {
         )
       : null
     const leafTitleClassification = classifyAgentTitle(leafTitle)
-    if (leafTitleClassification === 'agent') {
+    if (ptyTitleProvesAgentPresence(pty, leafTitle, leafTitleClassification)) {
       return true
     }
     const ptyTitle = getLatestAgentCandidateTitle(
@@ -31151,7 +31182,7 @@ export class OrcaRuntimeService {
       { title: pty.lastOscTitle, updatedAt: pty.lastOscTitleAt }
     )
     const ptyTitleClassification = classifyAgentTitle(ptyTitle)
-    if (leafTitle === null && ptyTitleClassification === 'agent') {
+    if (leafTitle === null && ptyTitleProvesAgentPresence(pty, ptyTitle, ptyTitleClassification)) {
       return true
     }
     const managementTitleClassification = classifyLatestAgentTitle({
@@ -37052,6 +37083,33 @@ function getLatestLeafTitle(leaf: RuntimeLeafRecord, tabTitle: string | null): s
     { title: leaf.paneTitle, updatedAt: leaf.paneTitleUpdatedAt },
     { title: leaf.lastOscTitle, updatedAt: leaf.lastOscTitleAt },
     { title: tabTitle, updatedAt: 0 }
+  )
+}
+
+// Why: an 'agent' title only proves an agent owns the pane when something other than a
+// quarter-circle spinner carries it — those glyphs are generic progress frames (STA-4028).
+function agentTitleProvesAgentPresence(
+  title: string | null,
+  classification: 'agent' | 'management' | 'neutral'
+): boolean {
+  return (
+    classification === 'agent' &&
+    !isOpenCodeNativeTitle(title) &&
+    !isQuarterCircleSpinnerOnlyAgentTitle(title)
+  )
+}
+
+function ptyTitleProvesAgentPresence(
+  pty: RuntimePtyWorktreeRecord,
+  title: string | null,
+  classification: 'agent' | 'management' | 'neutral'
+): boolean {
+  return (
+    agentTitleProvesAgentPresence(title, classification) ||
+    (isQuarterCircleSpinnerOnlyAgentTitle(title) &&
+      pty.launchAgent === 'claude' &&
+      pty.launchToken !== null &&
+      pty.launchIncarnationId === pty.incarnationId)
   )
 }
 
