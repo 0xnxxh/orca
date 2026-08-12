@@ -254,6 +254,18 @@ relay, install, temporary home, and one-time key material were removed. Guarded 
 `31635145830` passed, and independent reads confirmed SQL `NEVER`/`STOPPED`, every MIG stable at
 zero with no active actions, and API/Auth/Relay minimum scale zero. Supported Windows SSH and the
 time-gated quarantine deletion remain open.
+
+Cloud PR `#355` removed internal publisher and organization identifiers from recipient responses,
+passed code, Terraform, and PostgreSQL 16/17 checks, and merged as
+`b3213bd34d1b224d8a3b11527eceaac883965400`. Guarded wake `31639920301` prepared staging. Deploy
+`31640677572` promoted `orca-cloud-api-staging-00060-qay` at 100% traffic with immutable digest
+`sha256:31cb0a91a7abf1f82e4de08bd31e98fbd71519adc731a005fc95f60480658f73`; authenticated and skill
+candidate/canonical smoke passed. Its unrelated post-promotion storage-monitor image update lacked
+`iam.serviceAccounts.actAs`; the prior monitor image remains serving and unchanged. Guarded sleep
+`31640935616` passed in 8m51s; independent reads verified SQL `NEVER`/`STOPPED`, all three Relay
+MIGs stable and reached at target zero, and the API at minimum scale zero while revision
+`00060-qay` retained 100% traffic.
+
 Production remains untouched.
 
 A final renderer lifecycle review fenced managed-install inventory by request generation so a
@@ -350,7 +362,7 @@ The review dialog shows:
 - Bundle name and selected skill list.
 - Skill, file, and byte counts.
 - Included scripts and executable files, with an expandable review for each skill.
-- Current author identity.
+- The signed-in profile that will own and manage the share.
 - A clear warning that anyone with the unlisted link can inspect and install the bundle.
 - Optional version label and release notes.
 
@@ -371,8 +383,10 @@ deletion still require the owner to sign in.
 ### Installing
 
 Opening a deep link launches Orca and inspects the bundle without installing it. Preview identifies
-the publisher, organization, immutable version, release notes, skill count, scripts, and executable
-files. The recipient can select all or a subset of the contained skills.
+the immutable version, release notes, skill count, scripts, and executable files. V1 deliberately
+omits publisher identity from the recipient response and UI; internal creator and tenant records
+remain private authorization and management data. The recipient can select all or a subset of the
+contained skills.
 
 The destination picker supports the local machine, paired runtimes, WSL, and SSH, in global or
 workspace scope. Before commit, the preview groups selected skills as new, unchanged, updates, or
@@ -1276,7 +1290,8 @@ The detailed threat register and residual release gates live in
 [`docs/reference/agent-skill-sharing-threat-model.md`](./reference/agent-skill-sharing-threat-model.md).
 
 - Treat `SKILL.md` and packaged scripts as executable code for trust messaging.
-- Show author, organization, version, digest, file summary, and executable files before install.
+- Show version, digest, file summary, and executable files before install without exposing internal
+  publisher or organization identifiers.
 - Require the exact active bearer share ID for recipient resolution and every download grant;
   require authentication for publication and owner management.
 - Bind grants to one package version, digest, maximum byte count, and short expiration.

@@ -178,23 +178,6 @@ export function SkillInstallReview({
           {translate('auto.components.skills.SkillInstallReviewContent.f72ee4022a', 'SHA-256')}{' '}
           {version.packageDigest}
         </p>
-        {version.publisher ? (
-          <p className="break-words text-xs text-muted-foreground">
-            {translate(
-              'auto.components.skills.SkillInstallReviewContent.9daf13c180',
-              'Published by Orca user'
-            )}{' '}
-            {version.publisher.userId}
-            {version.publisher.organizationId
-              ? translate(
-                  'auto.components.skills.SkillInstallReviewContent.8cedddfcd5',
-                  ' in organization {{value0}}',
-                  { value0: version.publisher.organizationId }
-                )
-              : ''}
-            .
-          </p>
-        ) : null}
         {version.releaseNotes.trim() ? (
           <p className="break-words whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
             {translate(

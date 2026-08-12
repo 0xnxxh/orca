@@ -24,7 +24,6 @@ export type SkillCloudVersion = {
   createdAt: string
   releaseNotes: string
   manifest: SkillPackageManifestV1 | SkillBundleManifestV1
-  publisher?: { userId: string; organizationId?: string }
 }
 
 export type SkillCloudShare = {

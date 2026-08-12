@@ -40,8 +40,7 @@ function version(): SkillCloudVersion {
         }
       ],
       packageDigest: DIGEST
-    },
-    publisher: { userId: 'author_1', organizationId: 'org_1' }
+    }
   }
 }
 
@@ -139,15 +138,13 @@ afterEach(() => {
 })
 
 describe('SkillInstallDialog', () => {
-  it('renders long Unicode identity and multiline release notes before installation', async () => {
+  it('renders long Unicode metadata and multiline release notes before installation', async () => {
     const sharedVersion = version()
     const longName = `skill-${'n'.repeat(58)}`
-    const organizationId = `組織-${'o'.repeat(252)}`
     const releaseNotes = `First line\n${'r'.repeat(9_989)}`
     sharedVersion.name = longName
     sharedVersion.description = `説明 ${'d'.repeat(512)}`
     sharedVersion.releaseNotes = releaseNotes
-    sharedVersion.publisher = { userId: 'author_1', organizationId }
     const skills = installApi(vi.fn())
     skills.resolveShare.mockResolvedValue({
       status: 'ok',
@@ -158,14 +155,7 @@ describe('SkillInstallDialog', () => {
 
     await inspectSkill(sharedVersion.description)
     expect(screen.getByRole('heading', { name: longName })).toBeTruthy()
-    expect(
-      screen.getByText(
-        (_, element) =>
-          element?.tagName === 'P' &&
-          element.textContent ===
-            `Published by Orca user author_1 in organization ${organizationId}.`
-      )
-    ).toBeTruthy()
+    expect(screen.queryByText(/Published by Orca user/)).toBeNull()
     expect(
       screen.getByText(
         (_, element) =>

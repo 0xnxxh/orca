@@ -11,7 +11,8 @@ Implementation baselines captured by this checklist update:
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   kill-switch discovery PR `#342` merged as `c2bef2ff20fb`; production remains untouched.
   Windows device-name validation PR `#343` merged as `dbb14a658cbc`; explicit disabled production
-  bootstrap PR `#352` merged as `2a23f6ace5`; production remains untouched.
+  bootstrap PR `#352` merged as `2a23f6ace5`; publisher-identity omission PR `#355` merged as
+  `b3213bd34d1b224d8a3b11527eceaac883965400`; production remains untouched.
 
 Validated so far:
 
@@ -272,6 +273,17 @@ Validated so far:
   `503`, before the mutation step. Retry `31631379891` succeeded. Independent reads verified SQL
   `NEVER`/`STOPPED`, all three MIGs stable and reached at target zero with no active actions, and
   the API, Auth, and Relay active-revision minimums at zero. Production was untouched.
+- Cloud PR `#355` removed internal publisher and organization identifiers from anonymous skill
+  responses, passed every code, Terraform, and PostgreSQL 16/17 check, and merged as
+  `b3213bd34d1b224d8a3b11527eceaac883965400`. Guarded wake `31639920301` prepared staging. Deploy
+  `31640677572` promoted `orca-cloud-api-staging-00060-qay` at 100% traffic with immutable digest
+  `sha256:31cb0a91a7abf1f82e4de08bd31e98fbd71519adc731a005fc95f60480658f73`; authenticated and skill
+  candidate/canonical smoke passed. The unrelated post-promotion storage-monitor image update
+  lacked `iam.serviceAccounts.actAs`; the unchanged prior monitor image remains serving, and the
+  API promotion and verification completed successfully. Guarded sleep `31640935616` passed in
+  8m51s. Independent reads verified SQL `NEVER`/`STOPPED`, C1/C2/C3 stable and reached at target
+  zero, and the API at minimum scale zero with revision `00060-qay` retaining 100% traffic.
+  Production was untouched.
 
 Rollout gate: staging infrastructure, OIDC owner identity exchange, anonymous bearer lifecycle,
 owner management, browser-free desktop bundle lifecycle, privacy-safe logging, published-object
@@ -979,8 +991,8 @@ does not mean the surrounding phase is complete.
 
 ### Install experience
 
-- [x] Show authenticated author, organization, description, version, digest, file summary, scripts,
-      and executable files.
+- [x] Show description, version, digest, file summary, scripts, and executable files without
+      exposing internal publisher or organization identifiers.
 - [x] Treat the package as code from its author and require an explicit install action.
 - [x] Show current-machine global installation as the default.
 - [x] Allow selection of connected machine, Git worktree, or plain folder workspace.
@@ -991,8 +1003,8 @@ does not mean the surrounding phase is complete.
       results with actionable recovery.
 - [x] Add incomplete-coverage retry.
 - [x] Open deep links in inspection mode without starting installation.
-- [x] Show publisher, organization, immutable version, skill count, scripts/executables, and
-      release notes before selection.
+- [x] Show immutable version, skill count, scripts/executables, and release notes before selection;
+      V1 omits publisher identity from the public response and recipient UI.
 - [x] Let the recipient select all or a subset, then choose local, paired runtime, WSL, or SSH and
       global or workspace scope.
 - [x] Preview new, unchanged, update, and conflict counts and resolve all per-skill conflicts in one
@@ -1571,9 +1583,10 @@ disconnect boundaries remain separate gates below.
       and tested. The user/admin guides document the lifecycle; Cloud route, integration, restore,
       and cleanup suites cover the implemented contract. Automatic one-day quarantine deletion
       remains a separate time-gated infrastructure observation.
-- [x] The UI identifies author, organization, scripts, and executable content before install.
-      Renderer coverage asserts publisher/organization identity, script and executable summaries,
-      digest, release notes, and long-content behavior before the primary install action.
+- [x] The UI identifies scripts and executable content before install without exposing internal
+      publisher or organization identifiers. Renderer coverage asserts script and executable
+      summaries, digest, release notes, and long-content behavior before the primary install
+      action.
 - [x] Telemetry, logs, and diagnostic bundles contain no credentials or private contents. Cloud
       field-inventory and sensitive-value scans, bounded install-span attributes, and adversarial
       support-bundle collection tests cover the complete first-release data path.

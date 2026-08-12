@@ -132,23 +132,6 @@ export function SkillBundleInstallReview(props: {
           {translate('auto.components.skills.SkillBundleInstallReview.01c5a11e06', 'SHA-256')}{' '}
           {manifest.bundleDigest}
         </p>
-        {props.version.publisher ? (
-          <p className="break-words text-xs text-muted-foreground">
-            {translate(
-              'auto.components.skills.SkillBundleInstallReview.01c5a11e07',
-              'Published by Orca user'
-            )}{' '}
-            {props.version.publisher.userId}
-            {props.version.publisher.organizationId
-              ? translate(
-                  'auto.components.skills.SkillBundleInstallReview.01c5a11e08',
-                  ' in organization {{value0}}',
-                  { value0: props.version.publisher.organizationId }
-                )
-              : ''}
-            .
-          </p>
-        ) : null}
         {props.version.releaseNotes.trim() ? (
           <p className="break-words whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
             {translate(
