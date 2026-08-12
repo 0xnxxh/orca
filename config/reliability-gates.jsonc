@@ -6583,7 +6583,7 @@
     },
     {
       "id": "terminal-input.ime-and-synthetic-forwarding",
-      "title": "IME, native text, and synthetic input commit exactly once and do not leak preedit bytes",
+      "title": "IME, native text, and synthetic input commit exactly once, do not leak preedit bytes, and pair every claimed press with one release",
       "maturity": "experimental",
       "protection": "partial",
       "owner": "terminal-input",
@@ -6600,18 +6600,19 @@
       "providers": ["local", "daemon", "ssh", "remote-runtime"],
       "coveredPlatforms": ["macos", "linux"],
       "coveredProviders": [],
-      "coverageNotes": "Local macOS and containerized Linux evidence, deterministic renderer-unit coverage for the Linux/Sogou candidate-key policy including the legacy orphaned-keyup fallback, and Electron/CDP live-PTY Sogou-style repros. Real Linux/Sogou OS IME automation, Windows ConPTY post-agent reset, and the CJK/Vietnamese/Arabic matrix remain registered gaps.",
+      "coverageNotes": "Local macOS and containerized Linux evidence, deterministic renderer-unit coverage for the Linux/Sogou candidate-key policy including the legacy orphaned-keyup fallback, Electron/CDP live-PTY Sogou-style repros, and a macOS renderer/main slice for Preview kitty commits: claimed press/release pairing in both keyup orderings, and snapshot flag provenance where a proven 0, a proven non-zero, and an absent field stay three distinct facts from daemon through the sequenced remote SnapshotStart frame. Real Linux/Sogou OS IME automation, Windows ConPTY post-agent reset, and the CJK/Vietnamese/Arabic matrix remain registered gaps.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/6699",
         "https://github.com/stablyai/orca/pull/6682",
         "https://github.com/stablyai/orca/pull/6513",
         "https://github.com/stablyai/orca/pull/6999"
       ],
-      "invariant": "Composition, native text forwarding, synthetic input, paste, and platform keyboard bypass paths must not send preedit/control bytes before commit and must commit text exactly once to the intended PTY.",
-      "oracle": "The current renderer-unit slice asserts native text commits route to the intended PTY once, composition/preedit bookkeeping does not leak premature text, input-source classification handles synthetic/native paths, paste/runtime forwarding avoids duplicate terminal payloads for covered fixtures, and Linux/Sogou candidate Space/digit selectors do not leak keydown/keypress/keyup while ordinary and long-held letter-to-digit typing remains available. The Electron/CDP live-PTY repro verifies Sogou-style Space and digit selectors submit only the committed Chinese text, while the legacy orphaned-letter-keyup sequence sends no selector byte to the PTY. Real legacy IME commit preservation and the full CJK/Vietnamese/Arabic/JIS-yen matrix run in follow-up platform soak where automation is possible.",
+      "invariant": "Composition, native text forwarding, synthetic input, paste, and platform keyboard bypass paths must not send preedit/control bytes before commit and must commit text exactly once to the intended PTY. When the snapshot source proves kitty state, macOS Preview commits must use the application's effective flags after the sequenced snapshot and every proven replay/live transition, and a claimed press delivered under report_event_types must produce exactly one matching release regardless of whether keyup arrives before or after insertText and regardless of xterm's defensive internal reset.",
+      "oracle": "Exact outbound bytes from the REAL native-text forwarder behind installPreviewImeBridge after initial snapshot restore, replacement resync, live transitions, and both keydown->insertText->keyup and keydown->keyup->insertText orderings; a wiring-only mock is supporting evidence, not the oracle. The current renderer-unit slice asserts native text commits route to the intended PTY once, composition/preedit bookkeeping does not leak premature text, input-source classification handles synthetic/native paths, paste/runtime forwarding avoids duplicate terminal payloads for covered fixtures, and Linux/Sogou candidate Space/digit selectors do not leak keydown/keypress/keyup while ordinary and long-held letter-to-digit typing remains available. The Electron/CDP live-PTY repro verifies Sogou-style Space and digit selectors submit only the committed Chinese text, while the legacy orphaned-letter-keyup sequence sends no selector byte to the PTY. Real legacy IME commit preservation and the full CJK/Vietnamese/Arabic/JIS-yen matrix run in follow-up platform soak where automation is possible.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-ime-native-text-forwarder.test.ts src/renderer/src/components/terminal-pane/terminal-ime-substituted-text-commit.test.ts src/renderer/src/components/terminal-pane/terminal-ime-macos-keybinding-dict-trace.test.ts src/renderer/src/components/terminal-pane/terminal-paste-runtime.test.ts src/renderer/src/components/terminal-pane/terminal-ime-composition-tracker.test.ts src/renderer/src/components/terminal-pane/terminal-ime-candidate-key-release-guard.test.ts src/renderer/src/components/terminal-pane/xterm-bypass-policy-non-mac.test.ts src/renderer/src/components/terminal-pane/xterm-bypass-policy.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-ime-linux-candidate-state.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/dashboard-popout/preview-terminal-ime-bridge-kitty-bytes.test.ts src/renderer/src/components/dashboard-popout/preview-terminal-snapshot-replay.test.ts src/renderer/src/components/dashboard-popout/AgentTerminalPreview.test.tsx src/shared/terminal-kitty-keyboard-mode-tracker.test.ts src/main/ipc/terminal-preview.test.ts src/main/ipc/terminal-preview-output-stream.test.ts src/renderer/src/runtime/remote-runtime-terminal-snapshot-kitty-flags.test.ts src/main/daemon/daemon-pty-adapter.test.ts",
         "pnpm run test:e2e -- tests/e2e/chinese-ime-chat-input-repro.spec.ts"
       ],
       "testFiles": [
@@ -6624,6 +6625,14 @@
         "src/renderer/src/components/terminal-pane/terminal-ime-linux-candidate-state.test.ts",
         "src/renderer/src/components/terminal-pane/xterm-bypass-policy-non-mac.test.ts",
         "src/renderer/src/components/terminal-pane/xterm-bypass-policy.test.ts",
+        "src/renderer/src/components/dashboard-popout/preview-terminal-ime-bridge-kitty-bytes.test.ts",
+        "src/renderer/src/components/dashboard-popout/preview-terminal-snapshot-replay.test.ts",
+        "src/renderer/src/components/dashboard-popout/AgentTerminalPreview.test.tsx",
+        "src/shared/terminal-kitty-keyboard-mode-tracker.test.ts",
+        "src/main/ipc/terminal-preview.test.ts",
+        "src/main/ipc/terminal-preview-output-stream.test.ts",
+        "src/renderer/src/runtime/remote-runtime-terminal-snapshot-kitty-flags.test.ts",
+        "src/main/daemon/daemon-pty-adapter.test.ts",
         "tests/e2e/chinese-ime-chat-input-repro.spec.ts"
       ],
       "assertionRefs": [
@@ -6689,6 +6698,65 @@
           ]
         },
         {
+          "file": "src/renderer/src/components/dashboard-popout/preview-terminal-ime-bridge-kitty-bytes.test.ts",
+          "assertions": [
+            "the real forwarder behind the Preview bridge encodes the commit from the snapshot-proven flags before any live output",
+            "flags 0/1 commit raw text, flags 2 add one CSI-u release, flags 8 emit one CSI-u press, and flags 10 emit a CSI-u press followed by exactly one release",
+            "both keydown->insertText->keyup and keydown->keyup->insertText orderings produce the same bytes",
+            "the release is emitted by the forwarder while xterm's internal kitty flags stay 0",
+            "the mutable flags getter is read exactly once, at commit time, never on keydown or keyup",
+            "auto-repeat, two-key rollover, a swallowed commit, a retired claim, blur, and disposal each emit at most one release and never synthesize one"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/dashboard-popout/preview-terminal-snapshot-replay.test.ts",
+          "assertions": [
+            "a Preview opened on a snapshot carrying flags 8 adopts 8 before any live output",
+            "a replacement snapshot whose ANSI carries no kitty bytes keeps its proven flags, and a proven 0 clears an earlier 8",
+            "a missing field leaves the mirror unproven at the raw-text fallback and a later live negotiation still upgrades it",
+            "restored flags land on the screen the snapshot scan selected",
+            "a proven post-snapshot suffix advances the stack while redelivered bytes apply idempotently"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/dashboard-popout/AgentTerminalPreview.test.tsx",
+          "assertions": [
+            "the Preview hands the forwarder the live kitty mirror seeded from the snapshot's proven flags"
+          ]
+        },
+        {
+          "file": "src/shared/terminal-kitty-keyboard-mode-tracker.test.ts",
+          "assertions": [
+            "a fresh PTY's known 0 is distinguishable from a snapshot's unproven 0 fallback",
+            "restoreSnapshotFlags proves only the active screen and rejects non-safe-integer values",
+            "provenance survives absolute sets, screen switches, RIS and DECSTR, but a pop past omitted push history returns to unknown rather than a manufactured 0"
+          ]
+        },
+        {
+          "file": "src/main/ipc/terminal-preview.test.ts",
+          "assertions": [
+            "terminalPreview:connect returns image, sequence, and kitty flags from the same capture, including after an overflow retry"
+          ]
+        },
+        {
+          "file": "src/main/ipc/terminal-preview-output-stream.test.ts",
+          "assertions": [
+            "fully covered chunks are dropped, a sliced or strictly newer sequenced suffix gets live mode semantics, and an unsliceable or metadata-less overlap gets replay semantics"
+          ]
+        },
+        {
+          "file": "src/renderer/src/runtime/remote-runtime-terminal-snapshot-kitty-flags.test.ts",
+          "assertions": [
+            "SnapshotStart decodes proven 0 and 8 with their seq into requested and host-pushed snapshot paths",
+            "negative, fractional, unsafe, and non-numeric values are treated as absent rather than clamped",
+            "an old host that omits the field stays usable and is never coerced to a proven 0"
+          ]
+        },
+        {
+          "file": "src/main/daemon/daemon-pty-adapter.test.ts",
+          "assertions": ["daemon provider snapshots publish proven kitty flags including a known 0"]
+        },
+        {
           "file": "tests/e2e/chinese-ime-chat-input-repro.spec.ts",
           "assertions": [
             "Sogou-style Space candidate selection submits only the committed Chinese character",
@@ -6699,6 +6767,15 @@
         }
       ],
       "evidenceRuns": [
+        {
+          "date": "2026-08-11",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/dashboard-popout/preview-terminal-ime-bridge-kitty-bytes.test.ts src/renderer/src/components/dashboard-popout/preview-terminal-snapshot-replay.test.ts src/renderer/src/components/dashboard-popout/AgentTerminalPreview.test.tsx src/shared/terminal-kitty-keyboard-mode-tracker.test.ts src/main/ipc/terminal-preview.test.ts src/main/ipc/terminal-preview-output-stream.test.ts src/renderer/src/runtime/remote-runtime-terminal-snapshot-kitty-flags.test.ts src/main/daemon/daemon-pty-adapter.test.ts",
+          "result": "passed",
+          "durationSeconds": 9.84,
+          "summary": "8 test file(s) passed, 288 tests, covering the Preview kitty slice: real forwarder bytes at snapshot-proven flags, press/release pairing across both keyup/insertText orderings, and flag provenance where a proven 0, a proven non-zero, and an absent field stay three distinct facts — asserted on the daemon snapshot and on a host-pushed remote snapshot that carries the flags with their sequence. The emitter-side rule that a remote SnapshotStart withholds flags without a seq has no direct assertion yet; the client-side gate is what these files pin."
+        },
         {
           "date": "2026-08-09",
           "runner": "local",
@@ -6764,7 +6841,7 @@
       },
       "redGreenEvidence": {
         "status": "partial",
-        "evidence": "Focused tests cover existing native-text, input-source, paste/runtime forwarding, Linux/Sogou candidate selector, post-composition guard contracts, and live-PTY Sogou-style candidate commits. Needs intentional-break proof for duplicate native text forwarding and composition preedit leakage, plus the broader language/platform matrix."
+        "evidence": "Focused tests cover existing native-text, input-source, paste/runtime forwarding, Linux/Sogou candidate selector, post-composition guard contracts, live-PTY Sogou-style candidate commits, and the Preview kitty slice (press/release pairing in both keyup orderings, and snapshot flag provenance separating a proven 0 from an absent field). Needs intentional-break proof for duplicate native text forwarding and composition preedit leakage, plus the broader language/platform matrix."
       },
       "performanceBudget": {
         "required": true,
@@ -6777,7 +6854,9 @@
       ],
       "knownGaps": [
         "Current commands include renderer-unit coverage and a CDP-driven Electron repro; real OS IME automation may need manual or soak evidence.",
-        "Backspace/Enter during composition, JIS yen, Arabic/RTL, paste edge cases, and Windows ConPTY post-agent key reset still need representative gate coverage."
+        "Backspace/Enter during composition, JIS yen, Arabic/RTL, paste edge cases, and Windows ConPTY post-agent key reset still need representative gate coverage.",
+        "An older remote host omits the optional SnapshotStart kitty field, so a new client falls back to raw commits until live negotiation is observed.",
+        "Snapshot authorities expose only the active screen's effective flags, not kitty's complete two-screen push stacks; a pop that crosses the restored boundary degrades to unknown rather than a proven value."
       ],
       "demotionRule": "Cannot promote if success is based only on DOM text without PTY byte/cell evidence."
     },

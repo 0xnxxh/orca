@@ -1569,6 +1569,8 @@ export type PreloadApi = {
       snapshotPrefixAnsi?: string
       snapshotFrameAnsi?: string
       snapshotFrameRestoreAnsi?: string
+      snapshotKittyKeyboardFlags?: number
+      snapshotSeq?: number
       isReattach?: boolean
       isAlternateScreen?: boolean
       replay?: string
@@ -1651,6 +1653,9 @@ export type PreloadApi = {
       /** Trailing incomplete escape the emulator ingested; the restorer must
        *  write it after its post-replay resets, last before live chunks. */
       pendingEscapeTailAnsi?: string
+      /** Effective kitty flags the snapshot owner proved at `seq`. Absent means
+       *  unknown; consumers must not turn that into a known `0`. */
+      kittyKeyboardFlags?: number
     } | null>
     getRendererDeliveryDebugSnapshot: () => Promise<{
       pendingPtyCount: number
@@ -1721,6 +1726,7 @@ export type PreloadApi = {
         rows: number
         seq?: number
         lastTitle?: string
+        kittyKeyboardFlags?: number
       } | null
     ) => void
     declarePendingPaneSerializer: (paneKey: string) => Promise<number>
