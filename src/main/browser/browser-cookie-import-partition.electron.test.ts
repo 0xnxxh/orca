@@ -126,7 +126,13 @@ async function runFixture(): Promise<FixtureResult> {
   })
   writeFileSync(fixturePath, buildFixtureMain(policyPath, resultPath))
   const { ELECTRON_RUN_AS_NODE: _electronRunAsNode, ...env } = process.env
-  const run = spawnSync(electronBinary, [fixturePath, `--user-data-dir=${join(root, 'profile')}`], {
+  const electronArgs = [fixturePath, `--user-data-dir=${join(root, 'profile')}`]
+  const executable = process.platform === 'linux' ? 'xvfb-run' : electronBinary
+  const args =
+    process.platform === 'linux'
+      ? ['--auto-servernum', electronBinary, ...electronArgs, '--no-sandbox']
+      : electronArgs
+  const run = spawnSync(executable, args, {
     encoding: 'utf8',
     env,
     timeout: 60_000
