@@ -251,8 +251,11 @@ does not mean the surrounding phase is complete.
 - [x] Private package bytes remain access-controlled, published versions persist until deletion,
       and incomplete uploads expire automatically.
 - [x] Mixed-version clients and remote hosts fail safely through capability negotiation.
-- [ ] Cloud resources are Terraform-owned, monitored, recoverable, and protected by independent
-      upload, download, and remote-install kill switches.
+- [x] Cloud resources are Terraform-owned, monitored, recoverable, and protected by independent
+      upload, download, and remote-install kill switches. Targeted Terraform is zero-diff; staged
+      generation recovery passed; dashboards, alerts, and runbooks cover the data plane; and Cloud
+      PR `#342` proves all three mutation controls can be disabled independently while unlisted
+      preview remains available.
 - [x] The existing Skills page supports multi-select sharing, selective installation, per-skill
       conflicts/results, and installed-bundle management; Settings → Share Skills provides the
       authenticated owner inventory for copying and revoking active links.
@@ -1399,10 +1402,14 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
 ### First-release gate
 
 - [ ] Threat model and privacy review are approved.
-- [ ] Cross-platform package and transaction suites are required and green.
+- [x] Cross-platform package and transaction suites are required and green. Release publication
+      requires focused macOS, native-Windows, and Ubuntu 20.04/glibc 2.31 jobs with bounded archived
+      results; the latest recorded release and platform passes are green.
 - [ ] `windows 2` native Windows and WSL release gates pass on real filesystems.
 - [ ] Real SSH paths and host-owned resolution pass.
-- [ ] Mixed-version tests pass in both directions.
+- [x] Mixed-version tests pass in both directions. Bundle/install capabilities are additive, the
+      cross-version wire suite passes client-newer and host-newer, and capability-loss tests prove
+      execution is blocked after a stale preview.
 - [ ] Cancellation and crash recovery pass during transfer and every commit boundary.
 - [x] Durable-share authorization, revocation lag, retention, deletion, and recovery are documented
       and tested. The user/admin guides document the lifecycle; Cloud route, integration, restore,
