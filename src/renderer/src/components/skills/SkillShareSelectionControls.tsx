@@ -7,6 +7,69 @@ export function isSkillShareEligible(skill: DiscoveredSkill, local: boolean): bo
   return local && skill.installed && (skill.sourceKind === 'home' || skill.sourceKind === 'repo')
 }
 
+export function skillShareEligibilityReason(
+  skill: DiscoveredSkill,
+  local: boolean,
+  duplicateNameSelected = false
+): string | null {
+  if (!local) {
+    return translate(
+      'auto.components.skills.SkillShareSelectionControls.01c5a15e06',
+      'Open this skill on its owning machine to share it.'
+    )
+  }
+  if (!skill.installed) {
+    return translate(
+      'auto.components.skills.SkillShareSelectionControls.01c5a15e07',
+      'Install this skill before sharing it.'
+    )
+  }
+  if (skill.sourceKind !== 'home' && skill.sourceKind !== 'repo') {
+    return translate(
+      'auto.components.skills.SkillShareSelectionControls.01c5a15e08',
+      'Only home and workspace skills can be shared.'
+    )
+  }
+  return duplicateNameSelected
+    ? translate(
+        'auto.components.skills.SkillShareSelectionControls.01c5a15e09',
+        'A skill with this name is already selected from another source.'
+      )
+    : null
+}
+
+function shareSkillNameKey(skill: DiscoveredSkill): string {
+  return skill.name.toLocaleLowerCase('en-US')
+}
+
+export function selectedShareSkillNameKeys(
+  skills: readonly DiscoveredSkill[],
+  selectedIds: ReadonlySet<string>
+): Set<string> {
+  return new Set(
+    skills.filter((skill) => selectedIds.has(skill.id)).map((skill) => shareSkillNameKey(skill))
+  )
+}
+
+export function addShareableSkillResults(
+  current: ReadonlySet<string>,
+  skills: readonly DiscoveredSkill[],
+  results: readonly DiscoveredSkill[],
+  local: boolean
+): Set<string> {
+  const next = new Set(current)
+  const selectedNames = selectedShareSkillNameKeys(skills, current)
+  for (const skill of results) {
+    const name = shareSkillNameKey(skill)
+    if (!isSkillShareEligible(skill, local) || selectedNames.has(name)) {
+      continue
+    }
+    next.add(skill.id)
+    selectedNames.add(name)
+  }
+  return next
+}
+
 export function updatedSkillSelection(
   current: ReadonlySet<string>,
   skillId: string,

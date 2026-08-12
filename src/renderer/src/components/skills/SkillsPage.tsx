@@ -17,7 +17,7 @@ import { discoverSkillsForRuntimeTarget } from '@/runtime/runtime-skills-client'
 import { useActiveSkillDiscoveryRuntimeTarget } from '@/hooks/use-active-skill-discovery-runtime-target'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import type { DiscoveredSkill, SkillDiscoveryResult } from '../../../../shared/skills'
-import { SkillShareSelectableCard } from './SkillShareSelectableCard'
+import { SkillShareSelectionList } from './SkillShareSelectionList'
 import { SkillShareDialog } from './SkillShareDialog'
 import { SkillInstallDialog } from './SkillInstallDialog'
 import { SkillInstallManagementDialog } from './SkillInstallManagementDialog'
@@ -28,7 +28,7 @@ import { INSTALLED_AGENT_SKILLS_CHANGED_EVENT } from '@/hooks/installed-agent-sk
 import {
   SkillShareSelectionAction,
   SkillShareSelectionStatus,
-  isSkillShareEligible,
+  addShareableSkillResults,
   updatedSkillSelection
 } from './SkillShareSelectionControls'
 
@@ -259,11 +259,12 @@ export default function SkillsPage(): React.JSX.Element {
           <SkillShareSelectionStatus
             selectedCount={selectedSkillIds.size}
             onSelectAll={() =>
-              setSelectedSkillIds(
-                new Set(
-                  visibleSkills
-                    .filter((skill) => isSkillShareEligible(skill, runtimeTarget?.kind === 'local'))
-                    .map((skill) => skill.id)
+              setSelectedSkillIds((current) =>
+                addShareableSkillResults(
+                  current,
+                  skills,
+                  visibleSkills,
+                  runtimeTarget?.kind === 'local'
                 )
               )
             }
@@ -366,23 +367,17 @@ export default function SkillsPage(): React.JSX.Element {
 
       <section className="scrollbar-sleek min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {visibleSkills.length > 0 ? (
-          <div className="mx-auto flex max-w-5xl flex-col gap-3">
-            {visibleSkills.map((skill) => (
-              <SkillShareSelectableCard
-                key={skill.id}
-                skill={skill}
-                local={runtimeTarget?.kind === 'local'}
-                selected={selectedSkillIds.has(skill.id)}
-                selectionMode={selectingShare}
-                onSelectedChange={(selected) =>
-                  setSelectedSkillIds((current) =>
-                    updatedSkillSelection(current, skill.id, selected)
-                  )
-                }
-                onShare={() => setShareSkills([skill])}
-              />
-            ))}
-          </div>
+          <SkillShareSelectionList
+            skills={visibleSkills}
+            allSkills={skills}
+            local={runtimeTarget?.kind === 'local'}
+            selectedIds={selectedSkillIds}
+            selectionMode={selectingShare}
+            onSelectedChange={(skillId, selected) =>
+              setSelectedSkillIds((current) => updatedSkillSelection(current, skillId, selected))
+            }
+            onShare={(skill) => setShareSkills([skill])}
+          />
         ) : (
           <EmptyState
             loading={loading}

@@ -399,8 +399,9 @@ does not mean the surrounding phase is complete.
 - [x] Accept a non-empty ordered selection of skill directories and support at least 30 within the
       global entry/file/byte limits. Focused local creation/extraction now covers one 30-skill
       archive; staging load run `31585710645` finalized the same maximum selection through Cloud.
-- [ ] Reject duplicate normalized skill names and preserve selection across search/filter changes
-      in the caller.
+- [x] Reject duplicate normalized skill names and preserve selection across search/filter changes
+      in the caller. The picker keeps hidden selections, unions explicit filtered selection, and
+      disables a second same-name source before review.
 - [x] Generate deterministic `plugin.json`, `skills/`, and Orca extension metadata.
 - [x] Bind the share review to every staged skill digest and the final bundle digest.
 
@@ -835,7 +836,8 @@ does not mean the surrounding phase is complete.
 - [x] Add selection mode whose selection survives search/filter changes and an explicit **Select
       all results** action; never select all implicitly.
 - [x] Keep the per-card share action as a one-skill bundle shortcut.
-- [ ] Disable ineligible skills with visible reasons and block duplicate skill names before review.
+- [x] Disable ineligible skills with visible, screen-reader-linked reasons and block duplicate
+      skill names before review.
 - [x] Review bundle name, skill/file/byte counts, script/executable warnings, expandable per-skill
       details, unlisted-link behavior, and release notes.
 - [x] Add Settings → **Share Skills** with artifact-like explanation and a route to the Skills page.

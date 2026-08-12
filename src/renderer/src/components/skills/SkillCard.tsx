@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import { BookOpen, Clock, FolderOpen, Share2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -32,6 +33,7 @@ export function SkillCard({
   selected = false,
   selectionMode = false,
   selectionDisabled = false,
+  selectionDisabledReason,
   onSelectionChange
 }: {
   skill: DiscoveredSkill
@@ -39,8 +41,10 @@ export function SkillCard({
   selected?: boolean
   selectionMode?: boolean
   selectionDisabled?: boolean
+  selectionDisabledReason?: string | null
   onSelectionChange?: (selected: boolean) => void
 }): React.JSX.Element {
+  const selectionReasonId = useId()
   const revealSkill = async (): Promise<void> => {
     const result = await window.api.shell.openInFileManager(skill.skillFilePath)
     if (!result.ok) {
@@ -59,6 +63,7 @@ export function SkillCard({
               className="mt-2"
               checked={selected}
               disabled={selectionDisabled}
+              aria-describedby={selectionDisabledReason ? selectionReasonId : undefined}
               aria-label={translate(
                 'auto.components.skills.SkillCard.01c5a16e01',
                 'Select {{value0}}',
@@ -127,6 +132,12 @@ export function SkillCard({
             </Tooltip>
           </div>
         </div>
+
+        {selectionMode && selectionDisabledReason ? (
+          <p id={selectionReasonId} className="text-xs text-muted-foreground">
+            {selectionDisabledReason}
+          </p>
+        ) : null}
 
         <div className="grid gap-2 text-[11px] text-muted-foreground md:grid-cols-[1fr_auto_auto] md:items-center">
           <div className="min-w-0 truncate font-mono" title={skill.skillFilePath}>

@@ -2,6 +2,7 @@
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GlobalSettings } from '../../../../shared/types'
 import type { DiscoveredSkill, SkillDiscoveryResult } from '../../../../shared/skills'
@@ -16,7 +17,7 @@ import SkillsPage from './SkillsPage'
 let root: Root | null = null
 let container: HTMLDivElement | null = null
 
-function skill(name: string): DiscoveredSkill {
+function skill(name: string, overrides: Partial<DiscoveredSkill> = {}): DiscoveredSkill {
   return {
     id: `skill-${name}`,
     name,
@@ -29,12 +30,13 @@ function skill(name: string): DiscoveredSkill {
     skillFilePath: `/home/dev/.agents/skills/${name}/SKILL.md`,
     installed: true,
     fileCount: 1,
-    updatedAt: null
+    updatedAt: null,
+    ...overrides
   }
 }
 
 function discoveryResult(names: string[]): SkillDiscoveryResult {
-  return { skills: names.map(skill), sources: [], scannedAt: 1 }
+  return { skills: names.map((name) => skill(name)), sources: [], scannedAt: 1 }
 }
 
 function skillsApi(discover: ReturnType<typeof vi.fn>) {
@@ -81,6 +83,24 @@ async function flushMicrotasks(): Promise<void> {
 /** Skill names currently rendered as cards. */
 function renderedSkillNames(): string[] {
   return [...(container?.querySelectorAll('h3') ?? [])].map((node) => node.textContent ?? '')
+}
+
+function buttonNamed(name: string): HTMLButtonElement {
+  const button = [...(container?.querySelectorAll('button') ?? [])].find(
+    (candidate) => candidate.textContent?.trim() === name
+  )
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Missing button: ${name}`)
+  }
+  return button
+}
+
+function selectionCheckbox(name: string): HTMLButtonElement {
+  const checkbox = container?.querySelector(`[aria-label="Select ${name}"]`)
+  if (!(checkbox instanceof HTMLButtonElement)) {
+    throw new Error(`Missing selection checkbox: ${name}`)
+  }
+  return checkbox
 }
 
 beforeEach(() => {
@@ -178,5 +198,58 @@ describe('SkillsPage', () => {
     expect(discover).not.toHaveBeenCalled()
     expect(call).not.toHaveBeenCalled()
     expect(container?.textContent).toContain('Scanning skills')
+  })
+
+  it('preserves hidden selections when selecting all filtered results', async () => {
+    const discover = vi.fn().mockResolvedValue(discoveryResult(['alpha', 'beta']))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: skillsApi(discover), runtimeEnvironments: { call: vi.fn() } }
+    })
+
+    await renderPage()
+    await flushMicrotasks()
+    await act(async () => fireEvent.click(buttonNamed('Share skills')))
+    await act(async () => fireEvent.click(selectionCheckbox('alpha')))
+
+    const search = container?.querySelector('input[placeholder="Search skills"]')
+    if (!(search instanceof HTMLInputElement)) {
+      throw new Error('Missing skill search')
+    }
+    await act(async () => fireEvent.input(search, { target: { value: 'beta' } }))
+    expect(container?.textContent).toContain('1 selected')
+
+    await act(async () => fireEvent.click(buttonNamed('Select all results')))
+    expect(container?.textContent).toContain('2 selected')
+    await act(async () => fireEvent.input(search, { target: { value: '' } }))
+    expect(selectionCheckbox('alpha').getAttribute('data-state')).toBe('checked')
+    expect(selectionCheckbox('beta').getAttribute('data-state')).toBe('checked')
+  })
+
+  it('shows why skills are disabled and selects only one duplicate name', async () => {
+    const discover = vi.fn().mockResolvedValue({
+      skills: [
+        skill('same-name', { id: 'home:same-name' }),
+        skill('same-name', { id: 'repo:same-name', sourceKind: 'repo' }),
+        skill('bundled-skill', { sourceKind: 'bundled' })
+      ],
+      sources: [],
+      scannedAt: 1
+    } satisfies SkillDiscoveryResult)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: skillsApi(discover), runtimeEnvironments: { call: vi.fn() } }
+    })
+
+    await renderPage()
+    await flushMicrotasks()
+    await act(async () => fireEvent.click(buttonNamed('Share skills')))
+    expect(container?.textContent).toContain('Only home and workspace skills can be shared.')
+
+    await act(async () => fireEvent.click(buttonNamed('Select all results')))
+    expect(container?.textContent).toContain('1 selected')
+    expect(container?.textContent).toContain(
+      'A skill with this name is already selected from another source.'
+    )
   })
 })

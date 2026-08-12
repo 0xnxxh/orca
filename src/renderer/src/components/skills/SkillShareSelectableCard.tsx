@@ -1,10 +1,11 @@
 import type { DiscoveredSkill } from '../../../../shared/skills'
 import { SkillCard } from './SkillCard'
-import { isSkillShareEligible } from './SkillShareSelectionControls'
+import { isSkillShareEligible, skillShareEligibilityReason } from './SkillShareSelectionControls'
 
 export function SkillShareSelectableCard({
   skill,
   local,
+  duplicateNameSelected,
   selected,
   selectionMode,
   onSelectedChange,
@@ -12,18 +13,21 @@ export function SkillShareSelectableCard({
 }: {
   skill: DiscoveredSkill
   local: boolean
+  duplicateNameSelected: boolean
   selected: boolean
   selectionMode: boolean
   onSelectedChange: (selected: boolean) => void
   onShare: () => void
 }): React.JSX.Element {
   const eligible = isSkillShareEligible(skill, local)
+  const disabledReason = skillShareEligibilityReason(skill, local, duplicateNameSelected)
   return (
     <SkillCard
       skill={skill}
       selected={selected}
       selectionMode={selectionMode}
-      selectionDisabled={!eligible}
+      selectionDisabled={disabledReason !== null}
+      selectionDisabledReason={disabledReason}
       onSelectionChange={onSelectedChange}
       onShare={eligible ? onShare : undefined}
     />

@@ -4327,7 +4327,11 @@
           "01c5a15e01": "Cancel sharing",
           "01c5a15e02": "Share skills",
           "01c5a15e03": "{{value0}} selected",
-          "01c5a15e04": "Select all results"
+          "01c5a15e04": "Select all results",
+          "01c5a15e06": "Open this skill on its owning machine to share it.",
+          "01c5a15e07": "Install this skill before sharing it.",
+          "01c5a15e08": "Only home and workspace skills can be shared.",
+          "01c5a15e09": "A skill with this name is already selected from another source."
         },
         "SkillManagedInstallList": {
           "86c76cb262": "{{count}} skill bundle"
