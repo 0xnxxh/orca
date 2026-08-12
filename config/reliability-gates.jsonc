@@ -7878,15 +7878,22 @@
       "providers": ["local", "daemon", "ssh", "wsl", "remote-runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["local"],
-      "coverageNotes": "Deterministic service tests cover release-versus-reuse ordering, transactional retain and takeover cancellation, exact host/pane/process identity, conservative schema-v23 backfill, immutable transcript and bounded terminal archives, mutation restart, reset cleanup, replay idempotency, and 50-resource accounting. Live SSH, WSL, Windows, paired-runtime, and provider-close lost-ack journeys remain explicit gaps.",
-      "motivatingLinks": ["https://github.com/stablyai/orca/pull/12355", "STA-905"],
-      "invariant": "A settled Dispatch may close only its one coordinator-created terminal lease. Explicit reuse, real user input, retain, identity or host change, ambiguity, and another resource for the same exact host/pane/process must fence closure. Output preservation and the requested-to-releasing transition are atomic, archives remain readable without the provider file, retries resume idempotently, and orchestration reset removes archive and authority state.",
-      "oracle": "Record release intent for a settled owner, attempt exact reuse before close, and require worker-start to fail with terminal_release_in_progress while the terminal stays open; then release the original owner exactly once. Race retain and real user input against a controlled archive promise and require no committed archive or close. Change host or process identity and inject duplicate resource evidence to require retention. Freeze a structured transcript, delete its source file, and require archived worker-read to return the same bounded redacted messages. Restart a pending mutation, reset orchestration state, and create 50 resources while asserting replay convergence, zero orphan rows, two-query worker listing, and no unrelated close.",
+      "coverageNotes": "Deterministic service tests cover release-versus-reuse ordering, transactional retain and takeover cancellation, exact host/pane/process identity, dead external/user-owned/transferred/stopped/abandoned reconciliation, conservative unknown provider and legacy metadata handling, immutable transcript and bounded terminal archives, mutation restart, reset cleanup, replay idempotency, and 50-resource accounting. Injected inventories cover local and SSH provider routing; live SSH, WSL, Windows, paired-runtime, and provider-close lost-ack journeys remain explicit gaps.",
+      "motivatingLinks": [
+        "https://github.com/stablyai/orca/pull/12355",
+        "https://github.com/stablyai/orca/issues/13860",
+        "STA-905",
+        "STA-3932"
+      ],
+      "invariant": "A settled Dispatch may close only its one coordinator-created terminal lease. Explicit reuse, real user input, retain, identity or host change, ambiguity, and another resource for the same exact host/pane/process must fence closure. Once the authoritative owning provider positively excludes the resource's exact immutable process incarnation, even an external, user-owned, or transferred dead resource must converge to released without any process close. Unknown host scope, missing incarnation metadata, or unavailable inventory must remain retained. Output preservation and the requested-to-releasing transition are atomic, archives remain readable without the provider file, retries resume idempotently, and orchestration reset removes archive and authority state.",
+      "oracle": "Record release intent for a settled owner, attempt exact reuse before close, and require worker-start to fail with terminal_release_in_progress while the terminal stays open; then release the original owner exactly once. Race retain and real user input against a controlled archive promise and require no committed archive or close. For retained external, user-owned, transferred, stopped, and abandoned resources, run one fresh inventory against the exact local/WSL or SSH provider: an exact live incarnation and every unknown inventory shape stay retained, while positive absence atomically sets ownership_state and release_state to released with processAction none and zero closeTerminal calls. Change host or process identity and inject duplicate resource evidence to require retention. Freeze a structured transcript, delete its source file, and require archived worker-read to return the same bounded redacted messages. Restart a pending mutation, reset orchestration state, and create 50 resources while asserting replay convergence, zero orphan rows, two-query worker listing, and no unrelated close.",
       "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime-process-incarnation-liveness.test.ts src/main/runtime/rpc/methods/orchestration-worker-release.test.ts src/main/runtime/rpc/methods/orchestration-worker-release-recovery.test.ts src/main/runtime/rpc/orchestration-mutation-ledger.test.ts src/main/runtime/orchestration/worker-transcript-read.test.ts src/renderer/src/lib/worker-terminal-takeover-report.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/methods/orchestration-worker-release.test.ts src/main/runtime/rpc/methods/orchestration-worker-release-recovery.test.ts src/main/runtime/rpc/orchestration-mutation-ledger.test.ts src/main/runtime/orchestration/worker-transcript-read.test.ts src/renderer/src/lib/worker-terminal-takeover-report.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts tests/e2e/completed-worker-retirement-resume.unit.test.ts --reporter=verbose"
       ],
       "testFiles": [
+        "src/main/runtime/orca-runtime-process-incarnation-liveness.test.ts",
         "src/main/runtime/rpc/methods/orchestration-worker-release.test.ts",
         "src/main/runtime/rpc/methods/orchestration-worker-release-recovery.test.ts",
         "src/main/runtime/rpc/orchestration-mutation-ledger.test.ts",
@@ -7896,6 +7903,15 @@
       ],
       "assertionRefs": [
         {
+          "file": "src/main/runtime/orca-runtime-process-incarnation-liveness.test.ts",
+          "assertions": [
+            "classifies only an exact incarnation as live on its owning provider",
+            "keeps missing or malformed identity and unavailable inventory unknown",
+            "does not inspect an unproven host scope",
+            "uses the local provider inventory for local and WSL scopes"
+          ]
+        },
+        {
           "file": "tests/e2e/completed-worker-retirement-resume.unit.test.ts",
           "assertions": [
             "an already-exited succeeded Dispatch reaches released while its late exact close revokes the missing tab's stale resume record"
@@ -7904,6 +7920,10 @@
         {
           "file": "src/main/runtime/rpc/methods/orchestration-worker-release.test.ts",
           "assertions": [
+            "reconciles a dead external terminal without closing a process",
+            "reconciles a dead user-taken-over terminal without closing a process",
+            "reconciles a dead stopped or abandoned worker without closing a process",
+            "reconciles dead transferred ownership after the current owner settles",
             "rejects exact reuse after release intent instead of closing the new worker",
             "lets an explicit retain cancel a release while output capture is pending",
             "retains when the terminal host scope changed instead of closing",
@@ -7927,6 +7947,15 @@
       ],
       "evidenceRuns": [
         {
+          "date": "2026-08-11",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime-process-incarnation-liveness.test.ts src/main/runtime/rpc/methods/orchestration-worker-release.test.ts src/main/runtime/rpc/methods/orchestration-worker-release-recovery.test.ts src/main/runtime/rpc/orchestration-mutation-ledger.test.ts src/main/runtime/orchestration/worker-transcript-read.test.ts src/renderer/src/lib/worker-terminal-takeover-report.test.ts --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 4.98,
+          "summary": "Six focused files passed 67 tests on the rebased candidate, covering dead external, user-owned, stopped, abandoned, and transferred reconciliation; exact local/WSL/SSH provider routing; malformed, missing, and unavailable inventory retention; zero process closes; existing lease, archive, recovery, mutation, and renderer-input contracts."
+        },
+        {
           "date": "2026-08-03",
           "runner": "local",
           "platform": "macos",
@@ -7937,20 +7966,20 @@
         }
       ],
       "runtimeBudget": {
-        "p95Seconds": 8,
+        "p95Seconds": 15,
         "scope": "deterministic runtime, SQLite, transcript, renderer-input, and mutation contracts"
       },
       "flakeHistory": {
         "status": "unknown",
-        "evidence": "First local deterministic run only; focused CI and soak history are not yet available."
+        "evidence": "Repeated local deterministic runs pass; focused CI and soak history are not yet available."
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "The byte-identical 56-test oracle produced 12 deterministic failures and 44 passes with production restored to exact PR head 4aa66b62e3, including ready reuse during release, unsafe migration, stale archives, mutable transcript output, host/identity close gaps, and mutation replay loss. Candidate 457bc4edd1 passed all 56; restoring the same five production files to 4aa66b62e3 reproduced the same red state."
+        "evidence": "The original byte-identical 56-test oracle produced 12 deterministic failures and 44 passes with production restored to exact PR head 4aa66b62e3; candidate 457bc4edd1 passed all 56 and restoring the same production files reproduced red. For issue #13860, the unchanged three-case dead external/user-owned/transferred oracle failed 3/3 on actual latest main 444638d96b because every resource remained retained, passed 3/3 on the rebased candidate, failed 3/3 after restoring production exactly to 444638d96b, and passed 3/3 after restoring the candidate. Every run asserted both durable ownership/release state and zero terminal close calls."
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Release performs constant-count indexed resource and identity queries plus one bounded archive capture. Worker-list uses two set queries rather than one resource lookup per worker. Reconciliation remains serial and adds no polling, timers, subprocesses, renderer subscriptions, or provider-wide listing."
+        "evidence": "Normal owned release performs constant-count indexed resource and identity queries plus one bounded archive capture. A retained release performs exactly one bounded inventory against its authoritative local/WSL or specific SSH provider, with no retry, polling, timer, subprocess, renderer subscription, or per-session follow-up fanout. Worker-list uses two set queries rather than one resource lookup per worker."
       },
       "promotionCriteria": [
         "Collect 100 consecutive focused CI passes or 14 days of soak history.",
@@ -7961,7 +7990,7 @@
       "knownGaps": [
         "Provider close has no durable cross-process operation receipt, so a crash after host mutation but before SQLite settlement remains release_pending until exact inventory returns.",
         "Federated release remains explicitly unsupported and retained.",
-        "Mobile/direct remote input takeover and live Linux, Windows, WSL, SSH, headed, and headless paired-runtime release are not exercised."
+        "Mobile/direct remote input takeover and live Linux, Windows, WSL, SSH, headed, and headless paired-runtime release are not exercised; the current fix changes provider inventory classification and SQLite state only, not ConPTY, filesystem, update, sleep, firewall, or window lifecycle semantics."
       ],
       "demotionRule": "Keep experimental or demote if release can overlap exact reuse, close a conflicting lease, lose immutable output, retain reset archives, fan out per worker, or any focused ordering test flakes without a product or harness defect."
     },
