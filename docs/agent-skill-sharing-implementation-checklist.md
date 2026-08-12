@@ -1011,8 +1011,9 @@ does not mean the surrounding phase is complete.
 - [ ] Test connection loss and resumption or restart behavior at every transfer boundary. Lost
       final install-response convergence is covered for direct and staged paired-runtime paths;
       deterministic cancellation now settles in-flight and queued paired calls across every
-      transport without leaking request admission or disrupting peers. Restart and the remaining
-      physical disconnect boundaries are still open.
+      transport without leaking request admission or disrupting peers. Client-mediated transfer
+      also cancels and cleans a fully uploaded session when cancellation interrupts the commit RPC.
+      Restart and the remaining physical disconnect boundaries are still open.
 
 ### Mixed versions
 
