@@ -99,16 +99,16 @@ export function getAppImageCliArgs(
   if (cliArgs.length === 1 && VERSION_FLAGS.has(cliArgs[0])) {
     return cliArgs
   }
-  if (cliArgs.some((arg) => HELP_FLAGS.has(arg))) {
-    return cliArgs
-  }
-
-  const commandNames = new Set(options.commandNames)
   const firstPositional = findFirstCommandCandidate(cliArgs)
   if (firstPositional === 'serve' && !env.APPIMAGE && !env.APPDIR) {
     // Why: env-less packaged serve already has an in-process pre-GUI path; a blocking child would not receive PID-targeted termination.
     return null
   }
+  if (cliArgs.some((arg) => HELP_FLAGS.has(arg))) {
+    return cliArgs
+  }
+
+  const commandNames = new Set(options.commandNames)
   return firstPositional && commandNames.has(firstPositional) ? cliArgs : null
 }
 

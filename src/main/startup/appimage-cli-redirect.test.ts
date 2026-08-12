@@ -104,13 +104,18 @@ describe('AppImage CLI redirect', () => {
   })
 
   it('keeps env-less serve on the in-process pre-GUI path', () => {
-    expect(
-      getAppImageCliArgs(
-        ['orca-ide', 'serve', '--port', '6768'],
-        {},
-        { platform: 'linux', isPackaged: true, commandNames }
-      )
-    ).toBeNull()
+    for (const serveArgs of [
+      ['serve', '--port', '6768'],
+      ['serve', '--help']
+    ]) {
+      expect(
+        getAppImageCliArgs(
+          ['orca-ide', ...serveArgs],
+          {},
+          { platform: 'linux', isPackaged: true, commandNames }
+        )
+      ).toBeNull()
+    }
   })
 
   it('allows CLI global flags before the command', () => {
