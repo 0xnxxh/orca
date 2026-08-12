@@ -23,7 +23,7 @@ import { Label } from '@/components/ui/label'
 import { getAgentCatalog } from '@/lib/agent-catalog'
 import { getScreenSubmitShortcutLabel, isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
 import { TerminalQuickCommandActionToggle } from './TerminalQuickCommandActionToggle'
-import { TerminalQuickCommandAppendEnterSwitch } from './TerminalQuickCommandAppendEnterSwitch'
+import { TerminalQuickCommandAdvancedSection } from './TerminalQuickCommandAdvancedSection'
 import { TerminalQuickCommandCollapsibleRow } from './TerminalQuickCommandCollapsibleRow'
 import { TerminalQuickCommandContentSection } from './TerminalQuickCommandContentSection'
 import { TerminalQuickCommandDialogFooter } from './TerminalQuickCommandDialogFooter'
@@ -78,6 +78,7 @@ export function TerminalQuickCommandDialog({
   const lastRepoScopeIdRef = useRef<string | null>(
     initialScope.type === 'repo' ? initialScope.repoId : null
   )
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const selectedAction = getTerminalQuickCommandAction(draft)
   const selectedScope = getTerminalQuickCommandScope(draft)
   const isAgentAction = isTerminalAgentQuickCommand(draft)
@@ -96,6 +97,7 @@ export function TerminalQuickCommandDialog({
     draftMemoryRef.current = createTerminalQuickCommandDialogDraftMemory(command, fallbackAgent)
     const commandScope = getTerminalQuickCommandScope(command)
     lastRepoScopeIdRef.current = commandScope.type === 'repo' ? commandScope.repoId : null
+    setAdvancedOpen(false)
     setDraft({ ...command })
   }
 
@@ -221,14 +223,6 @@ export function TerminalQuickCommandDialog({
             setDraft={setDraft}
           />
 
-          <TerminalQuickCommandCollapsibleRow open={!isAgentAction} className="px-1 pt-1 pb-4">
-            <TerminalQuickCommandAppendEnterSwitch
-              appendEnter={isTerminalAgentQuickCommand(draft) ? false : draft.appendEnter}
-              disabled={isAgentAction}
-              onToggle={toggleAppendEnter}
-            />
-          </TerminalQuickCommandCollapsibleRow>
-
           <TerminalQuickCommandScopeField
             repos={repos}
             selectedScope={selectedScope}
@@ -240,6 +234,17 @@ export function TerminalQuickCommandDialog({
             }}
             setDraft={setDraft}
           />
+
+          {/* Why gated on action: Append Enter is the only advanced option and
+              it does not exist for agent prompts. */}
+          <TerminalQuickCommandCollapsibleRow open={!isAgentAction}>
+            <TerminalQuickCommandAdvancedSection
+              appendEnter={isTerminalAgentQuickCommand(draft) ? false : draft.appendEnter}
+              advancedOpen={advancedOpen && !isAgentAction}
+              setAdvancedOpen={setAdvancedOpen}
+              toggleAppendEnter={toggleAppendEnter}
+            />
+          </TerminalQuickCommandCollapsibleRow>
         </div>
 
         <TerminalQuickCommandDialogFooter
