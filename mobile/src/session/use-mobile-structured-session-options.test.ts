@@ -77,18 +77,22 @@ describe('useMobileStructuredSessionOptions', () => {
     controller = null
   })
 
-  it('uses only provider models and hydrates current model and effort', () => {
+  it('unions seeded and provider models and hydrates current model and effort', () => {
     expect(sendRequest).toHaveBeenCalledWith('agentSession.options', { sessionId: 'mobile_1' })
     const model = controller!.snapshot.find((entry) => entry.id === 'model')
     expect(model?.kind).toEqual({
       type: 'select',
       currentValue: 'account-only',
       choices: [
-        { value: 'account-only', label: 'Account Only' },
         { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol Live' },
-        { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra Live' }
+        { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra Live' },
+        { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+        { value: 'gpt-5.5', label: 'GPT-5.5' },
+        { value: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
+        { value: 'account-only', label: 'Account Only' }
       ]
     })
+    expect(model).not.toHaveProperty('action')
     expect(controller!.snapshot.find((entry) => entry.id === 'effort')).toMatchObject({
       kind: { currentValue: 'medium' },
       valueSource: 'reported'

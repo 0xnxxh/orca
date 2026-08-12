@@ -33,20 +33,38 @@ function effortOption(model: AgentSessionOptionsResult['models'][number]): Catal
   }
 }
 
+function discoveredModel(model: AgentSessionOptionsResult['models'][number]): CatalogModel {
+  const effort = effortOption(model)
+  return {
+    id: model.id,
+    label: model.label,
+    ...(model.description ? { description: model.description } : {}),
+    ...(model.isDefault ? { isDefault: true } : {}),
+    options: effort ? [effort] : []
+  }
+}
+
 export function structuredAgentSessionOptionCatalog(
   seed: AgentSessionOptionCatalog,
   result: AgentSessionOptionsResult
 ): AgentSessionOptionCatalog {
-  const models: CatalogModel[] = result.models.map((model) => {
-    const effort = effortOption(model)
-    return {
-      id: model.id,
-      label: model.label,
-      ...(model.description ? { description: model.description } : {}),
-      ...(model.isDefault ? { isDefault: true } : {}),
-      options: effort ? [effort] : []
+  const discovered = new Map(result.models.map((model) => [model.id, discoveredModel(model)]))
+  const models: CatalogModel[] = seed.models.map((seeded) => {
+    const live = discovered.get(seeded.id)
+    if (!live) {
+      return seeded
     }
+    discovered.delete(seeded.id)
+    return live
   })
+  models.push(...discovered.values())
+  if (!models.some((model) => model.id === result.current.model)) {
+    models.push({
+      id: result.current.model,
+      label: result.current.model,
+      options: seed.unknownModelOptions ?? []
+    })
+  }
   return { ...seed, models, defaultModelIsCliDefault: true }
 }
 
@@ -85,7 +103,8 @@ export function structuredAgentSessionOptionSnapshot(
     models: state.catalog.models,
     record: state.record,
     mode: 'live',
-    modelLabel: 'Model'
+    modelLabel: 'Model',
+    liveTransport: 'agent-session'
   })
 }
 

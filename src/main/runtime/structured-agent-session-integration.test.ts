@@ -96,6 +96,24 @@ function fakeCodex(): CodexScript {
         if (method === 'turn/start') {
           return { turn: { id: TURN } }
         }
+        if (method === 'model/list') {
+          return {
+            data: [
+              {
+                model: 'gpt-live',
+                displayName: 'GPT Live',
+                hidden: false,
+                supportedReasoningEfforts: [
+                  { reasoningEffort: 'medium', description: 'Balanced' },
+                  { reasoningEffort: 'high', description: 'Deep reasoning' }
+                ],
+                defaultReasoningEffort: 'medium',
+                isDefault: true
+              }
+            ],
+            nextCursor: null
+          }
+        }
         return {}
       },
       notify: () => {},
@@ -337,6 +355,31 @@ describe('a structured codex session over agentSession.*', () => {
     const stream = await subscribe('sub-1')
     expect(stream[0]).toMatchObject({ type: 'snapshot', sessionId: SESSION })
 
+    // ── options ─────────────────────────────────────────────────────────────
+    const options = await call('agentSession.options', { sessionId: SESSION })
+    expect(options).toMatchObject({
+      ok: true,
+      result: {
+        models: [{ id: 'gpt-live', defaultEffort: 'medium' }],
+        current: { model: 'gpt-live' }
+      }
+    })
+    await ok('agentSession.setOption', {
+      envelope: envelope('agentSession.setOption', { key: 'model', value: 'gpt-live' }, fence),
+      key: 'model',
+      value: 'gpt-live'
+    })
+    await ok('agentSession.setOption', {
+      envelope: envelope('agentSession.setOption', { key: 'effort', value: 'high' }, fence),
+      key: 'effort',
+      value: 'high'
+    })
+    expect(await call('agentSession.options', { sessionId: SESSION })).toMatchObject({
+      ok: true,
+      result: { current: { model: 'gpt-live', effort: 'high' } }
+    })
+    expect(itemsOf(stream)).toEqual([])
+
     // ── send ────────────────────────────────────────────────────────────────
     const body = { kind: 'message', role: 'user', blocks: [{ type: 'text', text: 'list files' }] }
     const sent = await ok<{
@@ -354,7 +397,12 @@ describe('a structured codex session over agentSession.*', () => {
     })
     expect(codex.live().calls.at(-1)).toMatchObject({
       method: 'turn/start',
-      params: { threadId: THREAD, clientUserMessageId: sent.clientMessageId }
+      params: {
+        threadId: THREAD,
+        clientUserMessageId: sent.clientMessageId,
+        model: 'gpt-live',
+        effort: 'high'
+      }
     })
 
     // ── stream ──────────────────────────────────────────────────────────────
