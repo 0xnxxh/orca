@@ -510,7 +510,12 @@ function createOutOfProcessLauncher(
     const classificationRemainingMs = (): number => Math.max(0, classificationDeadline - Date.now())
     try {
       // Why: acquire the full pair before control-only probes so an expired inherited deadline can't fire in the probe-to-adoption gap.
-      await adoptionClient.ensureConnectedWithin(classificationRemainingMs())
+      // Capped: this only acquires a lease that preserveDaemon() re-establishes anyway, and a
+      // daemon that accepts the socket but never answers hello would otherwise spend the whole
+      // classification clock here, leaving nothing for the probes that protect its sessions.
+      await adoptionClient.ensureConnectedWithin(
+        Math.min(OCCUPANCY_CONNECT_BUDGET_MS, classificationRemainingMs())
+      )
       await reconcileDaemonPidOwnership(adoptionClient, pidPath)
     } catch {
       adoptionClient.disconnect()
@@ -641,12 +646,19 @@ function createOutOfProcessLauncher(
             budgetMs: probeBudgetMs(),
             connectBudgetMs
           })
-        // Why grace at all: a wedged-but-connectable daemon (a Windows update relaunch) may
-        // still own live sessions and simply need a moment. A permanent wedge (#8689) spends
-        // the window, and 'rejected' skips it — a refused handshake is never going to be
-        // adopted. Retries stop when the clock can no longer fund a handshake and an answer,
-        // so the count is a ceiling rather than the budget.
-        let occupancy = await askDaemonWhatItHosts(OCCUPANCY_CONNECT_BUDGET_MS)
+        // Why the tolerant question goes first: this path is only reached because a 3s health
+        // check timed out, so a cheap probe re-asks on a stricter budget than the one that
+        // triaged the daemon here and can only ever agree with it. The patient ask is the only
+        // one that can disagree, and asking it last meant asking it with the clock already
+        // spent. It gets every millisecond the answer itself does not still need, and never
+        // less than the cheap ask would have had.
+        const patientConnectBudgetMs = (): number =>
+          Math.max(OCCUPANCY_CONNECT_BUDGET_MS, probeBudgetMs() - OCCUPANCY_REQUEST_BUDGET_MS)
+        let occupancy = await askDaemonWhatItHosts(patientConnectBudgetMs())
+        // Why retry after it: a daemon that recovers on its own answers a cheap question, and
+        // recovering is a different failure from being slow. The patient ask cannot see it,
+        // because it asked before the recovery. Retries stop once the clock can no longer fund
+        // both halves of an ask — funded to knock but not to listen is no ask at all.
         let graceRetry = 0
         while (
           occupancy.state === 'unknown' &&
@@ -657,21 +669,6 @@ function createOutOfProcessLauncher(
         ) {
           occupancy = await askDaemonWhatItHosts(OCCUPANCY_CONNECT_BUDGET_MS)
           graceRetry++
-        }
-        // Why one patient ask after the impatient ones: retrying a four-second handshake never
-        // reaches a daemon that consistently needs longer, and this path is only reached
-        // because a three-second health check already timed out — so every probe so far has
-        // judged it on a stricter budget than the one that triaged it here. Spending what is
-        // left on a single tolerant attempt is the only question that can disagree.
-        if (
-          occupancy.state === 'unknown' &&
-          health !== 'rejected' &&
-          probeBudgetMs() > 0 &&
-          // Nothing to be patient with when the endpoint is provably gone — a cold start
-          // reaches here too, and has no daemon to wait for.
-          !endpointIsProvenDead(await probeSocketConnect(socketPath))
-        ) {
-          occupancy = await askDaemonWhatItHosts(probeBudgetMs())
         }
         // The evidence that separates a wedged daemon still hosting terminals from one with
         // nothing left to lose (#8689). Read once IPC has had its full chance, and only when

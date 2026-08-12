@@ -315,13 +315,15 @@ vi.mock('./daemon-health', () => ({
 
 vi.mock('./client', () => ({
   // Mirror ensureConnected onto the bounded variant so every existing double keeps its
-  // behaviour — including the ones whose whole point is that connecting throws.
+  // behaviour — including the ones whose whole point is that connecting throws. The budget is
+  // forwarded rather than dropped so a test can see what the launcher was willing to wait.
   DaemonClient: function DaemonClientDouble(...args: unknown[]) {
     const instance = (daemonClientMock as unknown as (...a: unknown[]) => Record<string, unknown>)(
       ...args
     )
     if (instance && typeof instance === 'object' && !('ensureConnectedWithin' in instance)) {
-      instance.ensureConnectedWithin = instance.ensureConnected
+      instance.ensureConnectedWithin = (budgetMs?: number) =>
+        (instance.ensureConnected as (ms?: number) => unknown)(budgetMs)
     }
     return instance
   }
@@ -3195,11 +3197,11 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
         '/fake/token'
       )
       expect(forkMock).toHaveBeenCalled()
-      // 1 adoption + 1 initial probe + the retries + 1 patient probe + 1 post-fork adoption.
-      // The patient probe is the point: retrying a four-second handshake never reaches a
-      // daemon that consistently needs longer, so the launcher spends what is left of the
-      // clock on a single tolerant ask before it is willing to replace anything.
-      expect(daemonClientMock).toHaveBeenCalledTimes(4 + WEDGED_DAEMON_GRACE_RETRIES)
+      // 1 adoption + 1 patient probe + the cheap retries + 1 post-fork adoption. The patient
+      // probe comes first and is the point: retrying a four-second handshake never reaches a
+      // daemon that consistently needs longer, and spending the clock on the cheap asks first
+      // left the tolerant one unable to fund an answer.
+      expect(daemonClientMock).toHaveBeenCalledTimes(3 + WEDGED_DAEMON_GRACE_RETRIES)
       // Why: this replace path used to kill the daemon with no log, so a post-hoc
       // reader could not tell it apart from an adoption; the verdict must be recorded.
       expect(warnSpy).toHaveBeenCalledWith(
