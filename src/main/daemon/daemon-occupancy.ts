@@ -20,6 +20,13 @@ export type DaemonOccupancyDeps = {
   inspectPtyOwnership?: typeof inspectDaemonPtyOwnership
 }
 
+/**
+ * Why an explicit budget: the defaults are a 5s hello *per connection step* plus a 30s
+ * request timeout, so one unanswered question can cost 50s. This runs inside a launch that
+ * fails open at a minute, and a caller that asks repeatedly needs each ask to be bounded.
+ */
+export const OCCUPANCY_IPC_BUDGET_MS = 4_000
+
 /** Live session count over the daemon's own socket; null when it could not answer. */
 async function countLiveSessionsOverIpc(
   socketPath: string,
@@ -27,8 +34,12 @@ async function countLiveSessionsOverIpc(
 ): Promise<number | null> {
   const client = new DaemonClient({ socketPath, tokenPath, protocolVersion: PROTOCOL_VERSION })
   try {
-    await client.ensureConnected()
-    const result = await client.request<ListSessionsResult>('listSessions', undefined)
+    await client.ensureConnectedWithin(OCCUPANCY_IPC_BUDGET_MS)
+    const result = await client.request<ListSessionsResult>(
+      'listSessions',
+      undefined,
+      OCCUPANCY_IPC_BUDGET_MS
+    )
     return result.sessions.filter((session) => session.isAlive).length
   } catch {
     return null

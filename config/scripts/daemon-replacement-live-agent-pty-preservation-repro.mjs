@@ -570,14 +570,19 @@ function checkLauncherHoldsOccupiedDaemon() {
     `phase 3: ${relativePath}:${lineOf(source, holdDecl.index)} holdIncumbentDaemon() = ${normalize(holdBody.text)}`
   )
 
-  // 2. The failed-health-check path resolves occupancy from an identity-verified pid.
+  // 2. Process-table evidence is only ever raised from an identity-verified pid — otherwise
+  //    it could describe a recycled pid's children rather than this daemon's terminals.
   const verifiedPidCall = source.search(/readVerifiedDaemonPid\s*\(/)
-  const occupancyCall = source.search(/resolveDaemonOccupancy\s*\(\s*\{/)
+  const evidenceCall = source.match(/raiseOccupancyWithProcessEvidence\s*\(([^)]*)\)/)
   assert(verifiedPidCall !== -1, `${relativePath} never calls readVerifiedDaemonPid()`)
-  assert(occupancyCall !== -1, `${relativePath} never calls resolveDaemonOccupancy()`)
+  assert(evidenceCall !== null, `${relativePath} never raises occupancy with process evidence`)
   assert(
-    verifiedPidCall < occupancyCall,
-    `${relativePath} resolves occupancy before verifying the recorded pid — the evidence could then describe a recycled pid's children`
+    verifiedPidCall < evidenceCall.index,
+    `${relativePath} raises occupancy with process evidence before verifying the recorded pid`
+  )
+  assert(
+    /verifiedPid\b/.test(evidenceCall[1]),
+    `${relativePath} passes a pid to raiseOccupancyWithProcessEvidence that is not the verified one: ${normalize(evidenceCall[1])}`
   )
 
   // 3. The 'occupied' branch holds and never kills.
@@ -611,7 +616,7 @@ function checkLauncherHoldsOccupiedDaemon() {
     `${relativePath}:${occupiedLine} does not return holdIncumbentDaemon() when the session count came from the process table`
   )
   log(
-    `phase 3: ${relativePath}:${occupiedLine} occupancy.state === 'occupied' && occupancy.liveSessions === null -> return holdIncumbentDaemon(); the branch contains no kill`
+    `phase 3: ${relativePath}:${occupiedLine} occupancy.state === 'occupied' + cannot-be-adopted -> return holdIncumbentDaemon(); the branch contains no kill`
   )
 
   // 4. Ordering: every kill on this path is downstream of the occupied branch, so a hold
@@ -619,7 +624,7 @@ function checkLauncherHoldsOccupiedDaemon() {
   const killCalls = [...source.matchAll(/killStaleDaemon\s*\(/g)].map((match) => match.index)
   assert(killCalls.length > 0, `${relativePath} never calls killStaleDaemon()`)
   const killsBeforeTheDecision = killCalls.filter(
-    (index) => index > occupancyCall && index < occupiedBlock.end
+    (index) => index > evidenceCall.index && index < occupiedBlock.end
   )
   assert(
     killsBeforeTheDecision.length === 0,

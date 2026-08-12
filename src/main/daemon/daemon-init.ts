@@ -20,7 +20,11 @@ import {
 } from './daemon-spawner'
 import { DAEMON_EXIT_ENDPOINT_OCCUPIED } from './daemon-endpoint-ownership'
 import { endpointIsProvenDead, probeSocketConnect } from './daemon-endpoint-probe'
-import { raiseOccupancyWithProcessEvidence, resolveDaemonOccupancy } from './daemon-occupancy'
+import {
+  raiseOccupancyWithProcessEvidence,
+  resolveDaemonOccupancy,
+  type DaemonOccupancy
+} from './daemon-occupancy'
 import { DaemonPtyAdapter, type DaemonRespawnReason } from './daemon-pty-adapter'
 import { DaemonPtyRouter } from './daemon-pty-router'
 import { DaemonClient } from './client'
@@ -77,11 +81,14 @@ function logDaemonMilestone(event: string, details: Record<string, unknown> = {}
 // Why: extra hello+listSessions probes (~5s each) giving a wedged-but-connectable daemon ~60s grace to answer and keep its live sessions before a permanent wedge (#8689) is replaced; raise only alongside the fail-open cap.
 export const WEDGED_DAEMON_GRACE_RETRIES = 11
 /**
- * Wall-clock ceiling on the grace window. The retry count alone does not bound it — each
- * probe waits the client's hello timeout — and startup fails open at 60s, abandoning the
- * daemon provider entirely. Overrunning that would trade a wedged daemon for no daemon.
+ * Wall-clock ceiling on the grace window, counted from before the first probe. The retry
+ * count alone does not bound it, and the ceiling is only tested at loop entry, so the real
+ * cost is this plus one in-flight probe plus the health check, pid verification and process
+ * table read on either side of it. Startup fails open at 60s by abandoning the daemon
+ * provider outright, so the whole path has to fit under that with room to spare —
+ * overrunning it would trade a wedged daemon for no daemon at all.
  */
-export const WEDGED_DAEMON_GRACE_BUDGET_MS = 30_000
+export const WEDGED_DAEMON_GRACE_BUDGET_MS = 20_000
 const DAEMON_SELF_SHUTDOWN_WAIT_MS = 5_000
 const DAEMON_CHILD_TERMINATION_GRACE_MS = 5_000
 const DAEMON_CHILD_FORCE_EXIT_WAIT_MS = 1_000
@@ -181,23 +188,6 @@ function probeSocket(socketPath: string): Promise<boolean> {
     sock.on('connect', onConnect)
     sock.on('error', onError)
   })
-}
-
-async function getAliveDaemonSessionCount(
-  socketPath: string,
-  tokenPath: string,
-  protocolVersion = PROTOCOL_VERSION
-): Promise<number | null> {
-  const client = new DaemonClient({ socketPath, tokenPath, protocolVersion })
-  try {
-    await client.ensureConnected()
-    const result = await client.request<ListSessionsResult>('listSessions', undefined)
-    return result.sessions.filter((session) => session.isAlive).length
-  } catch {
-    return null
-  } finally {
-    client.disconnect()
-  }
 }
 
 function createPreservedDaemonHandle(
@@ -430,19 +420,30 @@ function isNoSuchProcessError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH'
 }
 
+/** How a preserve decision reads in a log line, from either evidence source. */
+function describeOccupancy(occupancy: DaemonOccupancy): string {
+  if (occupancy.liveSessions === null) {
+    return 'live session state could not be verified'
+  }
+  return `it owns ${occupancy.liveSessions} live session${occupancy.liveSessions === 1 ? '' : 's'}`
+}
+
+/** IPC only: these callers run against a daemon that just answered a health check. */
+function resolveOccupancyOverIpc(socketPath: string, tokenPath: string): Promise<DaemonOccupancy> {
+  return resolveDaemonOccupancy({ socketPath, tokenPath, recordedPid: null })
+}
+
 async function shouldPreserveDaemonWithLiveSessions(
   socketPath: string,
   tokenPath: string,
   replacementLabel: string
 ): Promise<boolean> {
-  const liveSessionCount = await getAliveDaemonSessionCount(socketPath, tokenPath)
-  if (liveSessionCount === 0) {
+  const occupancy = await resolveOccupancyOverIpc(socketPath, tokenPath)
+  if (occupancy.state === 'empty') {
     return false
   }
   console.warn(
-    liveSessionCount === null
-      ? `[daemon] Preserving daemon ${replacementLabel} because live session state could not be verified`
-      : `[daemon] Preserving daemon ${replacementLabel} because it owns ${liveSessionCount} live session${liveSessionCount === 1 ? '' : 's'}`
+    `[daemon] Preserving daemon ${replacementLabel} because ${describeOccupancy(occupancy)}`
   )
   return true
 }
@@ -514,19 +515,17 @@ function createOutOfProcessLauncher(
       if (health === 'healthy') {
         const resolverHealth = await getMacDaemonSystemResolverHealth(socketPath, tokenPath)
         if (resolverHealth === 'unhealthy') {
-          const liveSessionCount = await getAliveDaemonSessionCount(socketPath, tokenPath)
-          if (liveSessionCount !== 0) {
+          const occupancy = await resolveOccupancyOverIpc(socketPath, tokenPath)
+          if (occupancy.state !== 'empty') {
             console.warn(
-              liveSessionCount === null
-                ? '[daemon] Preserving daemon with unavailable macOS system resolver because live session state could not be verified'
-                : `[daemon] Preserving daemon with unavailable macOS system resolver because it owns ${liveSessionCount} live session${liveSessionCount === 1 ? '' : 's'}`
+              `[daemon] Preserving daemon with unavailable macOS system resolver because ${describeOccupancy(occupancy)}`
             )
             return preserveDaemon()
           }
           console.warn('[daemon] Replacing daemon with unavailable macOS system resolver')
           pendingReplacement = {
             reason: 'unhealthy_resolver',
-            liveSessionCount
+            liveSessionCount: 0
           }
           confirmedReplacement = (await cleanupDaemonForProtocol(runtimeDir, PROTOCOL_VERSION))
             .cleaned
@@ -578,12 +577,12 @@ function createOutOfProcessLauncher(
             if (attributionHealth === 'severed') {
               // Why: replacing with live sessions would kill them; Settings → Developer
               // Permissions surfaces the Manage Sessions → Restart remedy instead.
-              const liveSessionCount = await getAliveDaemonSessionCount(socketPath, tokenPath)
-              if (liveSessionCount === 0) {
+              const occupancy = await resolveOccupancyOverIpc(socketPath, tokenPath)
+              if (occupancy.state === 'empty') {
                 console.warn(
                   '[daemon] Replacing daemon whose macOS TCC attribution is severed (spawning app binary no longer exists)'
                 )
-                pendingReplacement = { reason: 'severed_tcc_attribution', liveSessionCount }
+                pendingReplacement = { reason: 'severed_tcc_attribution', liveSessionCount: 0 }
                 confirmedReplacement = (
                   await cleanupDaemonForProtocol(runtimeDir, PROTOCOL_VERSION)
                 ).cleaned
@@ -603,10 +602,10 @@ function createOutOfProcessLauncher(
         // Why recordedPid is withheld here: the loop below is waiting for *IPC* to recover,
         // and the process table cannot change its answer within a grace window. Scanning it
         // every pass would multiply the launch budget for an answer we already have.
+        const graceDeadline = Date.now() + WEDGED_DAEMON_GRACE_BUDGET_MS
         let occupancy = await resolveDaemonOccupancy({ socketPath, tokenPath, recordedPid: null })
         // Why: a wedged-but-connectable daemon (Windows update relaunch) may still own live sessions, so grace-retry before replacing; a permanent wedge (#8689) exhausts the grace, and 'rejected' skips it (handshake refused = never adoptable).
         let graceRetry = 0
-        const graceDeadline = Date.now() + WEDGED_DAEMON_GRACE_BUDGET_MS
         while (
           occupancy.state === 'unknown' &&
           health !== 'rejected' &&
@@ -625,24 +624,25 @@ function createOutOfProcessLauncher(
             occupancy.liveSessions === null
               ? 'live terminal processes'
               : `${occupancy.liveSessions} live session${occupancy.liveSessions === 1 ? '' : 's'}`
-          if (health === 'pty-spawn-unhealthy') {
-            // Reached only after a successful hello, so this daemon can still be adopted —
-            // it just cannot open new PTYs.
-            console.warn(
-              `[daemon] DEGRADED MODE: preserving daemon that failed the PTY spawn health check because it owns ${owned}. Existing sessions keep working; fresh terminals run on the local provider WITHOUT daemon persistence until you restart the daemon (Manage Sessions → Restart).`
-            )
-            return preserveDaemon('degraded-new-pty-fallback')
-          }
-          // Why hold rather than adopt: adoption opens a hello, and neither of these daemons
-          // can complete one — 'rejected' answered and refused, and a count only the process
-          // table could supply means nothing answered at all. Attempting it would throw and
-          // cost the app its daemon entirely. Holding keeps their terminals alive and routes
-          // fresh ones locally until they recover or the user restarts them.
+
+          // Why this comes first: adoption opens a hello, and neither of these daemons can
+          // complete one — 'rejected' answered and refused, and a count only the process table
+          // could supply means nothing answered across the whole grace window. `health` is a
+          // reading from before that window, so it cannot overrule them. Attempting adoption
+          // anyway throws, and the throw costs the app its daemon entirely.
           if (health === 'rejected' || occupancy.liveSessions === null) {
             console.warn(
               `[daemon] DEGRADED MODE: holding a daemon that cannot be adopted (health=${health}) but still owns ${owned}. Killing it would end them; fresh terminals run on the local provider WITHOUT daemon persistence until it recovers or you restart it (Manage Sessions → Restart).`
             )
             return holdIncumbentDaemon()
+          }
+          if (health === 'pty-spawn-unhealthy') {
+            // It answered listSessions just now, so it is adoptable — it simply cannot open
+            // new PTYs.
+            console.warn(
+              `[daemon] DEGRADED MODE: preserving daemon that failed the PTY spawn health check because it owns ${owned}. Existing sessions keep working; fresh terminals run on the local provider WITHOUT daemon persistence until you restart the daemon (Manage Sessions → Restart).`
+            )
+            return preserveDaemon('degraded-new-pty-fallback')
           }
           console.warn(
             `[daemon] Preserving daemon that failed the health check because it owns ${owned}`
@@ -683,11 +683,7 @@ function createOutOfProcessLauncher(
           // cannot fire on a daemon that still owns sessions, and throwing here would cost the
           // app its daemon handle — taking Manage Sessions → Restart down with it.
           if (!endpointIsProvenDead(await probeSocketConnect(socketPath))) {
-            return createPreservedDaemonHandle(
-              runtimeDir,
-              PROTOCOL_VERSION,
-              'degraded-new-pty-fallback'
-            )
+            return createPreservedDaemonHandle(runtimeDir, PROTOCOL_VERSION, 'held')
           }
           // It died between the probe and the adoption; the endpoint is genuinely free now.
           throw new DaemonEndpointOwnershipError(

@@ -314,7 +314,19 @@ vi.mock('./daemon-health', () => ({
   parseDaemonPidFile: parseDaemonPidFileMock
 }))
 
-vi.mock('./client', () => ({ DaemonClient: daemonClientMock }))
+vi.mock('./client', () => ({
+  // Mirror ensureConnected onto the bounded variant so every existing double keeps its
+  // behaviour — including the ones whose whole point is that connecting throws.
+  DaemonClient: function DaemonClientDouble(...args: unknown[]) {
+    const instance = (daemonClientMock as unknown as (...a: unknown[]) => Record<string, unknown>)(
+      ...args
+    )
+    if (instance && typeof instance === 'object' && !('ensureConnectedWithin' in instance)) {
+      instance.ensureConnectedWithin = instance.ensureConnected
+    }
+    return instance
+  }
+}))
 
 vi.mock('./daemon-lifecycle-event', () => ({
   trackDaemonReplaced: trackDaemonReplacedMock,
@@ -1794,7 +1806,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       '/fake/token',
       FAKE_DAEMON_ENTRY_PATH
     )
-    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined)
+    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined, expect.any(Number))
     expect(disconnectMock).toHaveBeenCalledOnce()
     expect(killStaleDaemonMock).not.toHaveBeenCalled()
     expect(forkMock).not.toHaveBeenCalled()
@@ -1828,7 +1840,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
 
     await launcher('/fake/socket', '/fake/token')
 
-    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined)
+    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined, expect.any(Number))
     expect(disconnectMock).toHaveBeenCalledOnce()
     expect(killStaleDaemonMock).not.toHaveBeenCalled()
     expect(forkMock).not.toHaveBeenCalled()
@@ -1927,7 +1939,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     await launcher('/fake/socket', '/fake/token')
 
     expect(getMacDaemonSystemResolverHealthMock).toHaveBeenCalledWith('/fake/socket', '/fake/token')
-    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined)
+    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined, expect.any(Number))
     expect(disconnectMock).toHaveBeenCalledOnce()
     expect(getDaemonLaunchIdentityMock).not.toHaveBeenCalled()
     expect(killStaleDaemonMock).not.toHaveBeenCalled()
@@ -1964,7 +1976,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
 
     await launcher('/fake/socket', '/fake/token')
 
-    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined)
+    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined, expect.any(Number))
     expect(disconnectMock).toHaveBeenCalledOnce()
     expect(killStaleDaemonMock).not.toHaveBeenCalled()
     expect(forkMock).not.toHaveBeenCalled()
@@ -2905,7 +2917,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
 
     await launcher('/fake/socket', '/fake/token')
 
-    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined)
+    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined, expect.any(Number))
     expect(disconnectMock).toHaveBeenCalledOnce()
     expect(killStaleDaemonMock).not.toHaveBeenCalled()
     expect(forkMock).not.toHaveBeenCalled()
@@ -2943,7 +2955,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
 
     const handle = await launcher('/fake/socket', '/fake/token')
 
-    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined)
+    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined, expect.any(Number))
     expect(handle.mode).toBe('degraded-new-pty-fallback')
     expect(killStaleDaemonMock).not.toHaveBeenCalled()
     expect(forkMock).not.toHaveBeenCalled()
@@ -3245,10 +3257,9 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     }
   })
 
-  it('adopts a PTY-spawn-unhealthy daemon in degraded mode instead of merely holding it', async () => {
-    // Why not 'held': 'pty-spawn-unhealthy' is only reachable after a successful hello, so this
-    // daemon CAN be adopted — it just cannot open new PTYs. Holding it (which never adopts)
-    // because the occupancy count happened to come from the process table strands its sessions.
+  it('adopts a PTY-spawn-unhealthy daemon in degraded mode when it can still answer', async () => {
+    // Why the count must come from IPC: an answered listSessions is what proves the daemon
+    // can still complete a handshake, and adoption opens one.
     const mod = await importFresh()
     await mod.initDaemonPtyProvider()
 
@@ -3259,13 +3270,55 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
         disconnect: vi.fn()
       }
     }
-    // Hello succeeds; only listSessions is unanswerable, so occupancy falls back to the table.
-    daemonClientMock.mockImplementation(function MockPtySpawnUnhealthyClient() {
+    daemonClientMock.mockImplementation(function MockAnsweringDaemonClient() {
+      return {
+        ensureConnected: vi.fn(async () => {}),
+        request: vi.fn(async () => ({ sessions: [{ isAlive: true }] })),
+        getDaemonIdentity: vi.fn(readLaunchedDaemonIdentity),
+        disconnect: vi.fn()
+      }
+    })
+
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void>; mode?: string }>
+    checkDaemonHealthMock.mockResolvedValueOnce('pty-spawn-unhealthy')
+    probeSocketExistsMock.mockReturnValue(true)
+    netConnectMock.mockImplementation(stubAliveSocketConnect)
+
+    try {
+      const handle = await launcher('/fake/socket', '/fake/token')
+
+      expect(handle.mode).toBe('degraded-new-pty-fallback')
+      expect(killStaleDaemonMock).not.toHaveBeenCalled()
+      expect(forkMock).not.toHaveBeenCalled()
+    } finally {
+      daemonClientMock.mockImplementation(answeringDefault)
+    }
+  })
+
+  it('holds a PTY-spawn-unhealthy daemon that has since stopped answering', async () => {
+    // Why: `health` is a reading from before the grace window. If listSessions went
+    // unanswered across all of it, adoption would open a hello the daemon can no longer
+    // complete — and that throw costs the app its daemon.
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+
+    const answeringDefault = function MockDaemonClient() {
+      return {
+        ensureConnected: vi.fn(async () => {}),
+        request: vi.fn(async () => ({ sessions: [] })),
+        disconnect: vi.fn()
+      }
+    }
+    daemonClientMock.mockImplementation(function MockSilentDaemonClient() {
       return {
         ensureConnected: vi.fn(async () => {}),
         request: vi.fn(async () => {
           throw new Error('listSessions timed out')
         }),
+        getDaemonIdentity: vi.fn(readLaunchedDaemonIdentity),
         disconnect: vi.fn()
       }
     })
@@ -3283,7 +3336,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     try {
       const handle = await launcher('/fake/socket', '/fake/token')
 
-      expect(handle.mode).toBe('degraded-new-pty-fallback')
+      expect(handle.mode).toBe('held')
       expect(killStaleDaemonMock).not.toHaveBeenCalled()
       expect(forkMock).not.toHaveBeenCalled()
     } finally {
@@ -3333,7 +3386,9 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     try {
       const handle = await launcher('/fake/socket', '/fake/token')
 
-      expect(handle.mode).toBe('degraded-new-pty-fallback')
+      // 'held', not merely degraded: init must not attempt a lease on a daemon whose
+      // adoption hello just failed — that throw would cost the app its daemon entirely.
+      expect(handle.mode).toBe('held')
       expect(forkMock).not.toHaveBeenCalled()
     } finally {
       daemonClientMock.mockImplementation(answeringDefault)
@@ -3833,7 +3888,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       '/fake/token',
       '1.2.3'
     )
-    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined)
+    expect(requestMock).toHaveBeenCalledWith('listSessions', undefined, expect.any(Number))
     expect(disconnectMock).toHaveBeenCalledOnce()
     expect(killStaleDaemonMock).not.toHaveBeenCalled()
     expect(forkMock).not.toHaveBeenCalled()

@@ -66,17 +66,30 @@ function withDeadline<T>(work: Promise<T>, deadlineMs: number, onDeadline: T): P
  */
 const DAEMON_SELF_SPAWNED_PTY_COMMANDS = [
   // pty-subprocess.ts checkPtySpawnHealth
-  '/bin/sh -c exit 0',
-  // windows-conpty-warmup.ts
-  'cmd.exe /c exit',
-  'cmd /c exit'
+  { program: 'sh', args: '-c exit 0' },
+  // windows-conpty-warmup.ts, which spawns COMSPEC — an absolute path on a stock install
+  { program: 'cmd', args: '/c exit' }
 ]
 
+/** Trailing path segment, with any Windows executable suffix removed. */
+function programBasename(command: string): string {
+  const base = command.split(/[\\/]/).pop() ?? command
+  return base.endsWith('.exe') ? base.slice(0, -'.exe'.length) : base
+}
+
 function isDaemonSelfSpawnedPty(row: ProcessTableRow): boolean {
-  const command = row.command.trim()
-  return DAEMON_SELF_SPAWNED_PTY_COMMANDS.some(
-    (probe) => command.toLowerCase() === probe.toLowerCase()
-  )
+  const command = row.command.trim().toLowerCase()
+  return DAEMON_SELF_SPAWNED_PTY_COMMANDS.some(({ program, args }) => {
+    const suffix = ` ${args}`
+    // Why the argv tail must match exactly: `sh -c` payloads are user-supplied, and treating
+    // one as the daemon's own probe would discard proof that real work is running.
+    if (!command.endsWith(suffix)) {
+      return false
+    }
+    // Only the program may vary, and only by path — COMSPEC is absolute, node-pty execs
+    // '/bin/sh' verbatim — so it is compared by basename rather than by the whole string.
+    return programBasename(command.slice(0, command.length - suffix.length)) === program
+  })
 }
 
 /**
