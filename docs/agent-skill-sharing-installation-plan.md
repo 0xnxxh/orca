@@ -81,10 +81,13 @@ gate.
 
 The release workflow now runs the exact unpacked Linux package under Electron-as-Node in an
 Ubuntu 20.04 container and requires packaged `node-pty` to spawn `/bin/sh`. A physical x64 build at
-`f1dccb4f42` passed the existing 18-binary ABI scan and this load/spawn smoke. The physical run also
+`f1dccb4f42` passed the existing 18-binary ABI scan and this load/spawn smoke. A native ARM64 build
+at `abe92d565b` then passed the same scan for all 18 bundled binaries and emitted
+`orca-node-pty-floor-ok` from an ARM64 Ubuntu 20.04 container on native `aarch64` hardware. The
+isolated ARM64 GCE builder had no service account or scopes, remained clean at the exact source
+commit, and was deleted with its auto-delete boot disk after verification. The physical runs also
 caught and corrected assumptions about the Linux executable name and packaged runtime-module
-location before the gate can protect a real release. Physical packaged ARM64 execution remains an
-explicit separate proof.
+location before the gate protects a real release.
 
 Cloud verification now requires a disposable PostgreSQL 16/17 migration-and-restore drill. An old
 migration process remains connected while a future-additive process advances the schema; both
