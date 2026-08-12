@@ -12,6 +12,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import {
+  NODE_PTY_SOURCE_BUILD_HINT,
+  nodePtyEchoStateRequirementViolation,
+  resolveNodePtyEchoStateSupport
+} from './node-pty-echo-state-requirement'
 import { PtyStartupIngress } from './pty-startup-ingress'
 import {
   createPtySlaveEchoProbe,
@@ -57,6 +62,13 @@ async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<b
 describe('a cooked querier still gets its answer (#12112)', () => {
   let workDir: string | null = null
 
+  // Always runs: a prebuilt node-pty has no echoState, so the fast path this suite
+  // proves cannot fire would be off anyway and every case below would be vacuous.
+  it('has the source-built node-pty this suite needs when CI requires one', async () => {
+    const lookup = resolveNodePtyEchoStateSupport(await import('node-pty'))
+    expect(nodePtyEchoStateRequirementViolation(lookup)).toBeNull()
+  })
+
   afterEach(() => {
     if (workDir) {
       rmSync(workDir, { recursive: true, force: true })
@@ -69,8 +81,14 @@ describe('a cooked querier still gets its answer (#12112)', () => {
   for (const rawDelayMs of [50, 250]) {
     itOnPosix(
       `delivers the reply to a querier that arms raw mode ${rawDelayMs}ms late`,
-      async () => {
+      async ({ skip }) => {
         const nodePty = await import('node-pty')
+        // Skip rather than red a developer whose node_modules predates the patch; CI
+        // sets ORCA_REQUIRE_NODE_PTY_ECHO_STATE=1 so the same state fails there.
+        const echoStateSupport = resolveNodePtyEchoStateSupport(nodePty)
+        if (!echoStateSupport.available) {
+          skip(echoStateSupport.reason)
+        }
         workDir = mkdtempSync(path.join(tmpdir(), 'orca-cooked-querier-'))
         const querierScript = path.join(workDir, 'cooked-querier.mjs')
         writeFileSync(querierScript, QUERIER_SOURCE)
@@ -85,10 +103,13 @@ describe('a cooked querier still gets its answer (#12112)', () => {
 
         const echoProbe = createPtySlaveEchoProbe(readPtySlavePath(term))
         const echoSyncProbe = createPtySlaveEchoSyncProbe(term)
+        // Vacuity guard: a DEFINED probe proves nothing — the JS patch alone yields one
+        // that answers 'unknown' forever. The `verdictsAtQuery` assertion below is the
+        // real check; this one names the cause when the native binding is a prebuild.
         expect(
-          echoSyncProbe,
-          'node-pty must be built from source so Orca’s echoState patch is active'
-        ).toBeDefined()
+          echoSyncProbe?.(),
+          `the sync probe gave no definite verdict, so #13892's same-turn reply is off. ${NODE_PTY_SOURCE_BUILD_HINT}`
+        ).toMatch(/^(quiet|echoing)$/)
 
         let rendered = ''
         const verdictsAtQuery: PtySlaveLineDisciplineEcho[] = []

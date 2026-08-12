@@ -20,6 +20,11 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { fishRequirementViolation, resolveFishBinary } from './fish-binary-requirement'
+import {
+  NODE_PTY_SOURCE_BUILD_HINT,
+  nodePtyEchoStateRequirementViolation,
+  resolveNodePtyEchoStateSupport
+} from './node-pty-echo-state-requirement'
 import { PtyStartupIngress } from './pty-startup-ingress'
 import {
   createPtySlaveEchoProbe,
@@ -75,6 +80,13 @@ describe('a held query reply never reaches the next child process (#13892)', () 
     expect(fishRequirementViolation(FISH)).toBeNull()
   })
 
+  // Same contract for the other half of the setup: a prebuilt node-pty has no echoState,
+  // so the fix under test would be off and the regression below would run vacuously.
+  it('has the source-built node-pty this suite needs when CI requires one', async () => {
+    const lookup = resolveNodePtyEchoStateSupport(await import('node-pty'))
+    expect(nodePtyEchoStateRequirementViolation(lookup)).toBeNull()
+  })
+
   afterEach(() => {
     if (configHome) {
       rmSync(configHome, { recursive: true, force: true })
@@ -84,8 +96,14 @@ describe('a held query reply never reaches the next child process (#13892)', () 
 
   itWithFish(
     'answers OSC 11 in the query turn so the reply cannot land in the child’s stdin',
-    async () => {
+    async ({ skip }) => {
       const nodePty = await import('node-pty')
+      // Skip rather than red a developer whose node_modules predates the patch; CI
+      // sets ORCA_REQUIRE_NODE_PTY_ECHO_STATE=1 so the same state fails there.
+      const echoStateSupport = resolveNodePtyEchoStateSupport(nodePty)
+      if (!echoStateSupport.available) {
+        skip(echoStateSupport.reason)
+      }
 
       configHome = mkdtempSync(path.join(tmpdir(), 'orca-fish-13892-'))
       mkdirSync(path.join(configHome, 'fish'), { recursive: true })
@@ -130,11 +148,13 @@ describe('a held query reply never reaches the next child process (#13892)', () 
 
       const echoProbe = createPtySlaveEchoProbe(readPtySlavePath(term))
       const echoSyncProbe = createPtySlaveEchoSyncProbe(term)
-      // Vacuity guard: without the patched binding there is no fast path to regress.
+      // Vacuity guard: a DEFINED probe proves nothing — the JS patch alone yields one that
+      // answers 'unknown' forever. Only a definite verdict off this live pty proves the
+      // native echoState is really being read, and so that there is a fast path to regress.
       expect(
-        echoSyncProbe,
-        'node-pty must be built from source so Orca’s echoState patch is active'
-      ).toBeDefined()
+        echoSyncProbe?.(),
+        `the sync probe gave no definite verdict, so #13892's same-turn reply is off. ${NODE_PTY_SOURCE_BUILD_HINT}`
+      ).toMatch(/^(quiet|echoing)$/)
 
       let rendered = ''
       const ingress = new PtyStartupIngress({
