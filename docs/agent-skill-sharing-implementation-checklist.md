@@ -1316,8 +1316,10 @@ platform gates below.
       The shared transaction core now serializes two simultaneous installs into one installed and
       one unchanged result, one receipt, and no staging residue. The host request service also
       serializes simultaneous download-grant and trusted-local ingress requests with the same
-      guarantees; contention across separate desktop, headless, CLI, SSH, and recovery processes
-      remains open.
+      guarantees. A real multi-process harness proves an on-disk destination lock returns a
+      retryable busy result without residue, then converges to unchanged after the owning process
+      commits and releases; the release gate runs it on macOS, native Windows, and Ubuntu 20.04.
+      Named desktop/headless/CLI/SSH/recovery process combinations remain open.
 - [ ] Test permission and read-only failures, disk exhaustion, cancellation, process termination,
       and host disconnect. Simulated `EACCES` and `ENOSPC` preservation plus lost-response retry are
       covered; physical failure and termination journeys remain open.
