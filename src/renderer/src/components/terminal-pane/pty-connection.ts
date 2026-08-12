@@ -5131,14 +5131,25 @@ export function connectPanePty(
      * A reattach failed without proving the shell is gone. Show the pane as disconnected with two
      * explicit actions instead of leaving it frozen behind a raw error toast — the user decides,
      * because nothing here knows whether the shell died.
+     *
+     * Returns whether the caller may stop. False means this pane cannot be surfaced that way and
+     * the caller must run its own handling: a local/daemon/runtime pane has no connection to be
+     * unreachable ON, and its provider IS authoritative about its own ptys, so it keeps replacing
+     * in place. Reporting that is the whole point of the return value — an earlier revision guarded
+     * in here but returned void, so four callers paired a conditional publish with an unconditional
+     * `return` and left local panes with neither the card nor the replacement they had before.
      */
-    const publishUnreachablePane = (sessionId: string): void => {
-      // Guards live HERE, not at the seven call sites. They are identical at every one, and the
+    const divertToUnreachableCard = (sessionId: string): boolean => {
+      // Guards live HERE, not at the eight call sites. They are identical at every one, and the
       // review found three separate sites that had each forgotten a different one — a local pane
       // shown an SSH-specific card it can never clear, and a disposed pane republishing state onto
       // a reused numeric pane id. Centralising them makes the next call site correct by default.
-      if (disposed || !connectionId) {
-        return
+      if (disposed) {
+        // Stop, but not because the card is up: a disposed pane must not respawn or report either.
+        return true
+      }
+      if (!connectionId) {
+        return false
       }
       // Both actions clear the banner before acting: nothing else retracts it. The app-SSH
       // transport does not publish recovery states, so a card left up would sit over a live shell
@@ -5156,7 +5167,7 @@ export function connectPanePty(
             // the pane with no shell AND no action surface — worse than the toast this replaced.
             const republishIfDeclined = (scheduled: boolean): void => {
               if (!scheduled) {
-                publishUnreachablePane(sessionId)
+                divertToUnreachableCard(sessionId)
               }
             }
             // Why the generation and instance: a recovery declined by the cooldown only schedules
@@ -5186,7 +5197,7 @@ export function connectPanePty(
               if (!freshPtyId) {
                 // The replacement never started. Keep the old binding and put the card back, or the
                 // pane is left blank and unbound with no way back to a shell that may still be up.
-                publishUnreachablePane(sessionId)
+                divertToUnreachableCard(sessionId)
                 return
               }
               deps.clearExitedPanePtyLayoutBinding(pane.id, sessionId)
@@ -5195,6 +5206,7 @@ export function connectPanePty(
           }
         }
       })
+      return true
     }
     // Why: the hibernation wake fires from noteVisibilityResume in the outer
     // connection scope, long after this deferred-connect closure has run.
@@ -8162,7 +8174,7 @@ export function connectPanePty(
         // so surface it and let the user choose. A daemon/local pane is not ambiguous that way: its
         // provider is authoritative about its own ptys, and it keeps replacing in place.
         if (connectionId && staleSessionId) {
-          publishUnreachablePane(staleSessionId)
+          divertToUnreachableCard(staleSessionId)
           return false
         }
         if (staleSessionId) {
@@ -8188,7 +8200,7 @@ export function connectPanePty(
         // For SSH, `sessionExpired` traces back to the relay's not-found, which it also answers for
         // shells still running under a relay process it replaced — not proof the shell exited.
         if (connectionId && staleSessionId) {
-          publishUnreachablePane(staleSessionId)
+          divertToUnreachableCard(staleSessionId)
           return false
         }
         if (staleSessionId) {
@@ -8844,7 +8856,7 @@ export function connectPanePty(
                   if (rejectObsoleteDirectSshReattach(pendingSessionId)) {
                     return
                   }
-                  publishUnreachablePane(pendingSessionId)
+                  divertToUnreachableCard(pendingSessionId)
                   return
                 }
                 const accepted = await handleReattachResult(
@@ -8890,7 +8902,7 @@ export function connectPanePty(
                 // else leaves the shell running, because respawning with the
                 // restored id resumes the same agent session a second time.
                 if (!isProvenSshSessionGoneError(err)) {
-                  publishUnreachablePane(pendingSessionId)
+                  divertToUnreachableCard(pendingSessionId)
                   return
                 }
                 deps.clearExitedPanePtyLayoutBinding(pane.id, pendingSessionId)
@@ -9078,7 +9090,18 @@ export function connectPanePty(
             if (rejectObsoleteDirectSshReattach(deferredReattachSessionId)) {
               return
             }
-            publishUnreachablePane(deferredReattachSessionId)
+            if (divertToUnreachableCard(deferredReattachSessionId)) {
+              return
+            }
+            // Unlike the direct-SSH flow above, this path is not nested under `connectionId`: a
+            // local pane with a restored id and a runtime-host wake both reach it. Neither can be
+            // shown a card, and their provider is authoritative about its own ptys, so they keep
+            // replacing in place.
+            deps.clearExitedPanePtyLayoutBinding(pane.id, deferredReattachSessionId)
+            deps.clearTabPtyId(deps.tabId, deferredReattachSessionId)
+            startFreshColdRestoreAgentResume(coldRestoreStartup, {
+              forceBlankRestoredViewport: true
+            })
             return
           }
           const accepted = await handleReattachResult(
@@ -9131,9 +9154,13 @@ export function connectPanePty(
           // Why: only proof that the session is gone may respawn. A transport
           // fault, a wedged call, or a source that merely needs re-establishing
           // leaves the shell running, and respawning there resumes the same
-          // agent session a second time into one transcript.
-          if (!isProvenSshSessionGoneError(err)) {
-            publishUnreachablePane(deferredReattachSessionId)
+          // agent session a second time into one transcript. A pane with no card
+          // to show falls through to the replace-in-place below — this path, unlike
+          // the direct-SSH one, is not nested under `connectionId`.
+          if (
+            !isProvenSshSessionGoneError(err) &&
+            divertToUnreachableCard(deferredReattachSessionId)
+          ) {
             return
           }
           deps.clearExitedPanePtyLayoutBinding(pane.id, deferredReattachSessionId)

@@ -9824,6 +9824,48 @@ describe('connectPanePty', () => {
     expect(deps.clearExitedPanePtyLayoutBinding).not.toHaveBeenCalled()
   })
 
+  // The mirror of the clause above, and the reason the diversion REPORTS whether it took the
+  // failure instead of silently doing nothing. This fixture has no connectionId, so there is no
+  // connection for the pane to be unreachable on and no card to show. An earlier revision paired
+  // that silent no-op with an unconditional `return`, which left a local pane with no shell, no
+  // card and no error — strictly worse than the toast the card replaced. A local provider is
+  // authoritative about its own ptys, so this pane must replace in place, as it did before.
+  it('replaces a local pane in place when its restore fails, rather than stranding it', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('tab-pty')
+    transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) => {
+      if (sessionId) {
+        throw new Error('PTY "tab-pty" not found')
+      }
+      return { id: 'respawned-pty' }
+    })
+    transportFactoryQueue.push(transport)
+
+    const pane = createPane(1)
+    const manager = createManager(1)
+    const onPtyRecoveryState = vi.fn<(paneId: number, state: RecoveryStateProbe) => void>()
+    const deps = createDeps({
+      restoredLeafId: LEAF_1,
+      restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' },
+      onPtyRecoveryStateRef: { current: onPtyRecoveryState }
+    })
+
+    connectPanePty(pane as never, manager as never, deps as never)
+    await flushAsyncTicks(30)
+
+    // Producer pin: the restore was attempted and failed, or every clause below is vacuous.
+    expect(transport.connect.mock.calls[0]?.[0]?.sessionId).toBe('tab-pty')
+    // Not divertible, so no card — the SSH-only surface must not appear here.
+    expect(
+      onPtyRecoveryState.mock.calls.find(
+        ([paneId, state]) => paneId === pane.id && state?.phase === 'disconnected'
+      )?.[1]?.unreachablePane
+    ).toBeUndefined()
+    // ...and precisely because no card appeared, the pane must have been replaced in place.
+    expect(deps.clearTabPtyId).toHaveBeenCalledWith('tab-1', 'tab-pty')
+    expect(transport.connect.mock.calls.some(([opts]) => !opts?.sessionId)).toBe(true)
+  })
+
   // The banner's second action must start a NEW shell. The automatic respawn it replaced passed the
   // cold-restore startup, which carries the agent's providerSession — correct when it only ran on
   // proof the shell was gone, but here the shell is probably alive, so resuming would put a second
