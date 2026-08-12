@@ -16,9 +16,11 @@ import {
   type CodexStructuredSessionAdapterDeps
 } from '../codex/codex-structured-session-adapter'
 import { StructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-host'
+import type { StructuredAgentSessionHandoffTransport } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
 import { setStructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-registry'
 import { AgentSessionRecordStore } from './agent-session-record-store'
 import { probeAgentSessionProcessIdentity } from './agent-session-process-identity-probe'
+import { agentSessionPtyWriteGate } from './agent-session-pty-write-gate'
 
 /** Sibling of the journal tree rather than inside it: one file adjudicates every
  *  session's lease, while a journal is per session. */
@@ -38,6 +40,7 @@ export type StructuredAgentSessionRuntimeDeps = {
    *  against a scripted app-server; production spawns the real one. */
   openCodexConnection?: CodexStructuredSessionAdapterDeps['openConnection']
   onError?: (input: { scope: string; error: unknown }) => void
+  handoffTransport?: StructuredAgentSessionHandoffTransport
 }
 
 type InstalledRuntime = {
@@ -64,6 +67,7 @@ export async function stopStructuredAgentSessionRuntime(): Promise<void> {
   const pending = installing
   installing = null
   setStructuredAgentSessionHost(null)
+  agentSessionPtyWriteGate.detachRecordLookup()
   if (!pending) {
     return
   }
@@ -83,25 +87,32 @@ async function install(deps: StructuredAgentSessionRuntimeDeps): Promise<Install
     directory: join(deps.stateDirectory, RECORD_STORE_DIR_NAME),
     hostId: deps.hostId
   })
-  const adapter = new CodexStructuredSessionAdapter({
-    resolveLaunch: createCodexStructuredLaunchResolver({
+  agentSessionPtyWriteGate.attachRecordLookup((sessionId) => store.getRecord(sessionId))
+  try {
+    const adapter = new CodexStructuredSessionAdapter({
+      resolveLaunch: createCodexStructuredLaunchResolver({
+        store,
+        resolveWorkspacePath: deps.resolveWorkspacePath,
+        ...(deps.resolveCodexCommand ? { resolveCommand: deps.resolveCodexCommand } : {})
+      }),
+      ...(deps.openCodexConnection ? { openConnection: deps.openCodexConnection } : {})
+    })
+    const host = new StructuredAgentSessionHost({
       store,
-      resolveWorkspacePath: deps.resolveWorkspacePath,
-      ...(deps.resolveCodexCommand ? { resolveCommand: deps.resolveCodexCommand } : {})
-    }),
-    ...(deps.openCodexConnection ? { openConnection: deps.openCodexConnection } : {})
-  })
-  const host = new StructuredAgentSessionHost({
-    store,
-    adapter,
-    journalRoot: deps.stateDirectory,
-    claimKeyId: deps.claimKeyId,
-    probeOwner: createStructuredAgentSessionOwnerProbe(deps.hostId),
-    onEventSinkError: ({ sessionId, error }) =>
-      deps.onError?.({ scope: `structured-agent-session-journal:${sessionId}`, error })
-  })
-  setStructuredAgentSessionHost(host)
-  return { host, adapter }
+      adapter,
+      journalRoot: deps.stateDirectory,
+      claimKeyId: deps.claimKeyId,
+      probeOwner: createStructuredAgentSessionOwnerProbe(deps.hostId),
+      onEventSinkError: ({ sessionId, error }) =>
+        deps.onError?.({ scope: `structured-agent-session-journal:${sessionId}`, error }),
+      ...(deps.handoffTransport ? { handoffTransport: deps.handoffTransport } : {})
+    })
+    setStructuredAgentSessionHost(host)
+    return { host, adapter }
+  } catch (error) {
+    agentSessionPtyWriteGate.detachRecordLookup()
+    throw error
+  }
 }
 
 /**

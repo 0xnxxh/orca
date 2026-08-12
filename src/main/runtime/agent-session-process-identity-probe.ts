@@ -74,9 +74,26 @@ async function readDarwinProcessStartTimeMs(pid: number): Promise<number | null>
   }
 }
 
+async function readWindowsProcessStartTimeMs(pid: number): Promise<number | null> {
+  try {
+    const script =
+      `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"; ` +
+      'if ($p) { $p.CreationDate.ToUniversalTime().ToString("o") }'
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { timeout: PROCESS_START_TIME_TIMEOUT_MS, windowsHide: true }
+    )
+    const parsed = Date.parse(stdout.trim())
+    return Number.isFinite(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 /**
- * Windows returns null: reading a start time needs a CIM query Orca does not make here, so a
- * Windows child without a token echo qualifies for manual recovery only.
+ * Process start time is the cross-platform PID-reuse guard when no provider hook can echo the
+ * spawn token back to the owner probe.
  */
 export async function readProcessStartTimeMs(
   pid: number,
@@ -87,6 +104,9 @@ export async function readProcessStartTimeMs(
   }
   if (platform === 'darwin') {
     return readDarwinProcessStartTimeMs(pid)
+  }
+  if (platform === 'win32') {
+    return readWindowsProcessStartTimeMs(pid)
   }
   return null
 }

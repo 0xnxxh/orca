@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MobileNativeChatSessionOptionsController } from './use-mobile-native-chat-session-options'
@@ -50,34 +50,48 @@ function options(): MobileNativeChatSessionOptionsController {
 describe('MobileStructuredAgentSessionView command seam', () => {
   let renderer: ReactTestRenderer | null = null
   const onSend = vi.fn(async () => true)
+  const onTuiSend = vi.fn(async () => true)
   let controller: MobileNativeChatSessionOptionsController
+
+  function props(
+    overrides: Partial<ComponentProps<typeof MobileStructuredAgentSessionView>> = {}
+  ): ComponentProps<typeof MobileStructuredAgentSessionView> {
+    return {
+      items: [],
+      status: 'ready',
+      hasOlder: false,
+      loadingOlder: false,
+      onLoadOlder: async () => false,
+      outbox: [],
+      onSend,
+      onTuiSend,
+      onTakeQueuedForEdit: async () => null,
+      onRetry: async () => {},
+      onRespondToPrompt: async () => true,
+      sessionOptions: controller,
+      attachments: [],
+      isAttaching: false,
+      onAttachImage: () => {},
+      onRemoveAttachment: () => {},
+      onCancel: async () => true,
+      handoff: null,
+      onRequestHandoff: async () => true,
+      ...overrides
+    }
+  }
+
+  function render(overrides = {}): void {
+    act(() => {
+      renderer = create(createElement(MobileStructuredAgentSessionView, props(overrides)))
+    })
+  }
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     onSend.mockClear()
+    onTuiSend.mockClear()
     controller = options()
-    act(() => {
-      renderer = create(
-        createElement(MobileStructuredAgentSessionView, {
-          items: [],
-          status: 'ready',
-          hasOlder: false,
-          loadingOlder: false,
-          onLoadOlder: async () => false,
-          outbox: [],
-          onSend,
-          onTakeQueuedForEdit: async () => null,
-          onRetry: async () => {},
-          onRespondToPrompt: async () => true,
-          sessionOptions: controller,
-          attachments: [],
-          isAttaching: false,
-          onAttachImage: () => {},
-          onRemoveAttachment: () => {},
-          onCancel: async () => true
-        })
-      )
-    })
+    render()
   })
 
   afterEach(() => {
@@ -107,5 +121,89 @@ describe('MobileStructuredAgentSessionView command seam', () => {
     expect(
       renderer!.root.findByProps({ accessibilityRole: 'alert' }).findByType('Text').children
     ).toEqual(['/review is not available in chat sessions.'])
+  })
+
+  it('keeps the composer enabled and routes stable TUI ownership through its bridge', async () => {
+    act(() => {
+      renderer!.update(
+        createElement(
+          MobileStructuredAgentSessionView,
+          props({
+            handoff: {
+              owner: 'tui',
+              direction: null,
+              phase: 'idle',
+              stage: null,
+              operationId: null,
+              terminal: { handle: 'term-tui', tabId: 'tab-tui', paneKey: 'pane-tui' }
+            }
+          })
+        )
+      )
+    })
+
+    expect(renderer!.root.findByType('MobileNativeChatComposer').props.disabled).toBe(false)
+    await submit('hello from mobile')
+    expect(onTuiSend).toHaveBeenCalledWith('hello from mobile', [])
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('routes stable TUI slash commands to typed terminal dispatch', async () => {
+    act(() => {
+      renderer!.update(
+        createElement(
+          MobileStructuredAgentSessionView,
+          props({
+            handoff: {
+              owner: 'tui',
+              direction: null,
+              phase: 'idle',
+              stage: null,
+              operationId: null,
+              terminal: { handle: 'term-tui', tabId: 'tab-tui', paneKey: 'pane-tui' }
+            }
+          })
+        )
+      )
+    })
+
+    await submit('/model')
+    expect(onTuiSend).toHaveBeenCalledWith('/model', [])
+    expect(controller.invokeAction).not.toHaveBeenCalled()
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('disables and refuses composer sends while ownership is switching', async () => {
+    act(() => {
+      renderer!.update(
+        createElement(
+          MobileStructuredAgentSessionView,
+          props({
+            handoff: {
+              owner: 'native',
+              direction: 'to-tui',
+              phase: 'switching',
+              stage: 'preparing',
+              operationId: 'handoff-1'
+            }
+          })
+        )
+      )
+    })
+
+    const composer = renderer!.root.findByType('MobileNativeChatComposer')
+    expect(composer.props.disabled).toBe(true)
+    await act(async () => {
+      expect(await composer.props.onSend('racing send')).toBe(false)
+    })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(onTuiSend).not.toHaveBeenCalled()
+  })
+
+  it('keeps native ownership on the structured agent-session send path', async () => {
+    await submit('native message')
+
+    expect(onSend).toHaveBeenCalledWith('native message', [])
+    expect(onTuiSend).not.toHaveBeenCalled()
   })
 })

@@ -5338,6 +5338,7 @@ export function registerPtyHandlers(
         }
         const response = {
           id: result.id,
+          ...(result.pid ? { pid: result.pid } : {}),
           ...(result.incarnationId ? { incarnationId: result.incarnationId } : {}),
           ...(stablePaneOwner && (stablePaneOwner.handle || args.preAllocatedHandle)
             ? {
@@ -5380,6 +5381,17 @@ export function registerPtyHandlers(
       // Why: the backstop for every runtime write path — query replies, followups, deliveries —
       // so a caller that forgets the typed gate still cannot reach a provider.
       if (!admitAgentSessionPtyWrite(ptyId)) {
+        return false
+      }
+      try {
+        getProviderForPty(ptyId).write(ptyId, data)
+        return true
+      } catch {
+        return false
+      }
+    },
+    writeAgentSessionProof: (ptyId, data, authority) => {
+      if (!agentSessionPtyWriteGate.admitProof(ptyId, authority)) {
         return false
       }
       try {

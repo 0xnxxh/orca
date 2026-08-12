@@ -10,7 +10,10 @@ import { agentJournalItemKey } from '../../../shared/agent-session-journal-item-
 import type { AgentSessionJournalIdentity } from '../../../shared/agent-session-journal-types'
 import { readJournalBlob } from './journal-blob-store'
 import { createLegacyIdentityTracker } from './journal-legacy-identity'
-import { importLegacyTranscriptIntoJournal } from './journal-legacy-import'
+import {
+  appendLegacyTranscriptMessages,
+  importLegacyTranscriptIntoJournal
+} from './journal-legacy-import'
 import { DEFAULT_JOURNAL_PAYLOAD_LIMITS } from './journal-payload-bounds'
 import { openAgentSessionJournal, type AgentSessionJournal } from './journal-store'
 
@@ -278,6 +281,46 @@ describe('claude import', () => {
 })
 
 describe('codex import', () => {
+  it('upserts live transcript messages without rolling the structured epoch', async () => {
+    const journal = await open('codex', CODEX_SESSION)
+    const epoch = journal.epoch
+    const message = {
+      id: 'live-tui-message',
+      role: 'assistant' as const,
+      blocks: [{ type: 'text' as const, text: 'first version' }],
+      timestamp: 1_800_000_000_000,
+      source: 'transcript' as const
+    }
+
+    await appendLegacyTranscriptMessages({
+      journal,
+      agent: 'codex',
+      sessionId: CODEX_SESSION,
+      fence: 2,
+      messages: [message]
+    })
+    await appendLegacyTranscriptMessages({
+      journal,
+      agent: 'codex',
+      sessionId: CODEX_SESSION,
+      fence: 2,
+      messages: [{ ...message, blocks: [{ type: 'text', text: 'final version' }] }]
+    })
+
+    expect(journal.epoch).toBe(epoch)
+    expect(journal.snapshot().items).toMatchObject([
+      {
+        itemId: legacyKey('live-tui-message'),
+        revision: 2,
+        body: {
+          kind: 'message',
+          role: 'assistant',
+          blocks: [{ type: 'text', text: 'final version' }]
+        }
+      }
+    ])
+  })
+
   it('keys rollout records in the import-scoped namespace, not as app-server ordinals', async () => {
     const filePath = await writeFixture('rollout.jsonl', CODEX_LINES)
     const journal = await open('codex', CODEX_SESSION)

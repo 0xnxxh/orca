@@ -689,6 +689,8 @@ export type RuntimeTerminalCreate = {
   agentSessionDisposition?: 'created' | 'adopted'
   /** The host attached this request to the existing stable pane owner. */
   isReattach?: true
+  /** Spawn process identity for host-internal ownership proof. */
+  processId?: number
 }
 
 export type RuntimeTerminalSplit = {

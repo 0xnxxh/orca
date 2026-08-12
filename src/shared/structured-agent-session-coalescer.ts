@@ -31,7 +31,11 @@ function mergeBatch(
       items: [...items.values()],
       removedItemIds: [...new Set([...left.batch.removedItemIds, ...right.batch.removedItemIds])],
       submissions: [...submissions.values()]
-    }
+    },
+    ...(right.fence !== undefined || left.fence !== undefined
+      ? { fence: right.fence ?? left.fence }
+      : {}),
+    ...(right.handoff || left.handoff ? { handoff: right.handoff ?? left.handoff } : {})
   }
 }
 

@@ -769,6 +769,9 @@
             "additionalErrors": "{{count}} additional images could not be attached."
           }
         }
+      },
+      "activateAiVaultStructuredSession": {
+        "unavailable": "The structured agent session is not available yet. Retry in a moment."
       }
     },
     "hooks": {
@@ -15115,6 +15118,37 @@
       },
       "status": {
         "responding": "Agent is responding"
+      },
+      "handoff": {
+        "mode": {
+          "switching": "Switching",
+          "terminal": "Terminal",
+          "chat": "Chat"
+        },
+        "switchingAfterTurn": "Switching after this turn",
+        "returningAfterTurn": "Returning after this turn",
+        "cancel": "Cancel",
+        "switchAfterTurn": "Switch after this turn",
+        "stopTurnAndSwitch": "Stop turn and switch",
+        "openAgentTui": "Open agent TUI",
+        "returnAfterTurn": "Return after this turn",
+        "returnToChat": "Return to chat",
+        "agentOpen": "Agent is open in terminal.",
+        "agentOpenOnHost": "Agent is open in terminal on {{value0}}.",
+        "exitTerminal": "Exit the agent terminal to continue in chat.",
+        "switchingOwner": "Switching session owner…",
+        "retry": "Retry",
+        "details": "Details",
+        "stage": {
+          "finishingChat": "Finishing chat session…",
+          "finishingTerminal": "Finishing agent terminal…",
+          "openingTerminal": "Opening agent terminal…",
+          "resumingChat": "Resuming chat session…",
+          "verifyingTerminal": "Verifying agent terminal…",
+          "verifyingChat": "Verifying chat session…",
+          "recovering": "Recovering agent session…",
+          "manualRecovery": "Agent session needs recovery"
+        }
       },
       "jumpToLatest": "Jump to latest",
       "toggle": {

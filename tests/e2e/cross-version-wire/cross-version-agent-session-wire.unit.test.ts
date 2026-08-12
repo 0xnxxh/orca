@@ -46,6 +46,8 @@ const STRUCTURED_CALLS: { method: string; hostMethod: string | null }[] = [
   { method: 'agentSession.respondToApproval', hostMethod: 'respondToPrompt' },
   { method: 'agentSession.respondToQuestion', hostMethod: 'respondToPrompt' },
   { method: 'agentSession.setOption', hostMethod: 'setOption' },
+  { method: 'agentSession.requestHandoff', hostMethod: 'requestHandoff' },
+  { method: 'agentSession.handoffStatus', hostMethod: 'handoffStatus' },
   { method: 'agentSession.options', hostMethod: 'readOptions' },
   { method: 'agentSession.history', hostMethod: 'history' },
   { method: 'agentSession.subscribe', hostMethod: 'subscribe' },
@@ -151,6 +153,10 @@ function paramsFor(method: string): unknown {
       const fields = { key: 'model', value: 'gpt-5' }
       return { envelope: envelope({ method, fields, fence }), ...fields }
     }
+    case 'agentSession.requestHandoff': {
+      const fields = { direction: 'to-tui', mode: 'now', action: 'start' }
+      return { envelope: envelope({ method, fields, fence }), ...fields }
+    }
     case 'agentSession.history':
       return { sessionId: SESSION, direction: 'tail' }
     default:
@@ -235,6 +241,8 @@ describe('cross-version structured agent sessions', () => {
         cancel: vi.fn(async () => ({ ok: true, replayed: false })),
         respondToPrompt: vi.fn(async () => ({ ok: true, replayed: false })),
         setOption: vi.fn(async () => ({ ok: true, replayed: false })),
+        requestHandoff: vi.fn(async () => ({ status: { owner: 'native' } })),
+        handoffStatus: vi.fn(async () => ({ owner: 'native' })),
         readOptions: vi.fn(async () => ({ models: [], current: { model: 'gpt-live' } })),
         history: vi.fn(() => ({ ok: true, page: { items: [] } })),
         subscribe: vi.fn(() => () => undefined),
@@ -295,7 +303,7 @@ describe('cross-version structured agent sessions', () => {
     it('finds no structured method registered on the old build', () => {
       expect(baseline.methodNames.filter((name) => name.startsWith('agentSession.'))).toEqual([])
       expect(current.methodNames.filter((name) => name.startsWith('agentSession.'))).toHaveLength(
-        12
+        STRUCTURED_CALLS.length + 1
       )
     })
 

@@ -154,13 +154,18 @@ describe('owner identity probe', () => {
     ).resolves.toEqual({ outcome: 'identity-matched', matchedOn: ['spawn-token'] })
   })
 
-  it('returns no start time on Windows rather than guessing one', async () => {
-    await expect(readProcessStartTimeMs(process.pid, 'win32')).resolves.toBeNull()
+  it('reads a CIM-backed start time on Windows when running there', async () => {
+    const observed = await readProcessStartTimeMs(process.pid, 'win32')
+    expect(observed === null).toBe(process.platform !== 'win32')
   })
 
   it('reads a start time for the current process on this platform', async () => {
     const observed = await readProcessStartTimeMs(process.pid)
-    if (process.platform === 'linux' || process.platform === 'darwin') {
+    if (
+      process.platform === 'linux' ||
+      process.platform === 'darwin' ||
+      process.platform === 'win32'
+    ) {
       expect(observed).not.toBeNull()
       expect(Math.abs((observed as number) - (Date.now() - process.uptime() * 1000))).toBeLessThan(
         60_000

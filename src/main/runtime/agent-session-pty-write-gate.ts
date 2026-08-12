@@ -69,6 +69,22 @@ export class AgentSessionPtyWriteGate {
     return evaluateAgentSessionPtyWriteAdmission(this.binding(ptyId))
   }
 
+  /** Narrow pre-ownership input for the reserved TUI's provider identity probe. */
+  admitProof(ptyId: string, authority: { sessionId: string; spawnToken: string }): boolean {
+    const binding = this.binding(ptyId)
+    const lease = binding?.record?.lease
+    return Boolean(
+      binding?.sessionId === authority.sessionId &&
+      binding.record?.sessionId === authority.sessionId &&
+      lease?.runtimeKind === 'tui' &&
+      lease.claimStatus === 'reserved' &&
+      lease.handoffStage === 'new-owner-proving' &&
+      lease.ownerProcess === null &&
+      lease.reservedSpawnToken === authority.spawnToken &&
+      !lease.unreconciled
+    )
+  }
+
   /** Re-check a write already in flight against the fence it was admitted under. */
   readmit(ptyId: string, admitted: AgentSessionPtyWriteAdmittance): AgentSessionPtyWriteAdmission {
     if (admitted.sessionId === null && !this.enforcing) {

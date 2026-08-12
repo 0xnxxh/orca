@@ -12,10 +12,8 @@ import {
   computeAgentSessionPayloadFingerprint
 } from '../../../../shared/agent-session-mutation-envelope'
 import { getStructuredAgentSessionHost } from '../../../native-chat/agent-session-wire/structured-agent-session-registry'
-import type {
-  StructuredAgentSessionCaller,
-  StructuredAgentSessionHost
-} from '../../../native-chat/agent-session-wire/structured-agent-session-host'
+import type { StructuredAgentSessionHost } from '../../../native-chat/agent-session-wire/structured-agent-session-host'
+import type { StructuredAgentSessionCaller } from '../../../native-chat/agent-session-wire/structured-agent-session-host-types'
 import { defineMethod, defineStreamingMethod, type RpcAnyMethod, type RpcContext } from '../core'
 import {
   AttachParams,
@@ -23,6 +21,8 @@ import {
   CreateParams,
   CreateSupportParams,
   HistoryParams,
+  HandoffParams,
+  HandoffStatusParams,
   OptionsParams,
   RespondParams,
   SendParams,
@@ -208,6 +208,16 @@ export const STRUCTURED_AGENT_SESSION_METHODS: RpcAnyMethod[] = [
     name: 'agentSession.setOption',
     params: SetOptionParams,
     handler: async (params, ctx) => requireHost(ctx).setOption(callerFor(ctx), params)
+  }),
+  defineMethod({
+    name: 'agentSession.requestHandoff',
+    params: HandoffParams,
+    handler: async (params, ctx) => requireHost(ctx).requestHandoff(callerFor(ctx), params)
+  }),
+  defineMethod({
+    name: 'agentSession.handoffStatus',
+    params: HandoffStatusParams,
+    handler: async (params, ctx) => requireHost(ctx).handoffStatus(params.sessionId)
   }),
   defineMethod({
     name: 'agentSession.options',

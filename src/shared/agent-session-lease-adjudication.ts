@@ -137,7 +137,12 @@ export function evaluateAgentSessionAcquisition(args: {
       // Why: the retry key is operation id + fence + stage; a different id is a different intent.
       return { decision: 'refused', code: 'agent_session_operation_conflict' }
     }
-    if (lease.ownerProcess === null && lease.handoffStage === 'old-owner-stopped') {
+    if (
+      lease.ownerProcess === null &&
+      lease.handoffStage === 'old-owner-stopped' &&
+      lease.claimStatus === 'reserved' &&
+      lease.reservedSpawnToken !== null
+    ) {
       // Why: an idempotent re-run of a reservation that already exists at this fence.
       return { decision: 'retry-reservation', fence: lease.runtimeFence }
     }
