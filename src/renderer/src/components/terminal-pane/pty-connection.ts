@@ -5200,6 +5200,13 @@ export function connectPanePty(
                 divertToUnreachableCard(sessionId)
                 return
               }
+              if (freshPtyId === sessionId) {
+                // Nothing was replaced: the pane's durable binding still named this shell, and it
+                // answered again between the failed reattach and this click, so the spawn adopted
+                // it instead of creating one. Clearing below would unbind a shell that is live and
+                // now attached here — the pane would run with no durable record of what it owns.
+                return
+              }
               deps.clearExitedPanePtyLayoutBinding(pane.id, sessionId)
               deps.clearTabPtyId(deps.tabId, sessionId)
             })
