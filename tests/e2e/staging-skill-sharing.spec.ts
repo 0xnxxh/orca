@@ -167,19 +167,8 @@ async function publish(
   )
   onPrepared?.(preview)
   const operation = await page.evaluate(
-    async ({ preparationId, releaseNotes }) => {
-      const auth = await window.api.orcaProfiles.authStatus()
-      const userId = auth.cloud?.userId
-      if (!userId) {
-        throw new Error('staging user identity unavailable')
-      }
-      return window.api.skills.publishShare({
-        preparationId,
-        releaseNotes,
-        userIds: [userId],
-        shareWithOrganization: false
-      })
-    },
+    ({ preparationId, releaseNotes }) =>
+      window.api.skills.publishShare({ preparationId, releaseNotes }),
     { preparationId: preview.preparationId, releaseNotes }
   )
   expect(operation.status).toBe('ok')
