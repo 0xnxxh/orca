@@ -12,6 +12,10 @@ import type {
 } from '../../src/shared/skill-sharing-contract'
 import { expect, test } from './helpers/orca-app'
 import {
+  launchHeadlessPairedRuntimeHost,
+  type HeadlessPairedRuntimeHost
+} from './helpers/headless-paired-runtime-host'
+import {
   connectStagingSkillSshTarget,
   removeStagingSkillSshTarget,
   stagingSkillSshTargetFromEnvironment
@@ -20,12 +24,16 @@ import {
 const RUN_STAGING = process.env.ORCA_E2E_SKILL_STAGING === '1'
 const AUTH_TOKEN = process.env.ORCA_CLOUD_AUTH_TOKEN?.trim()
 const PHYSICAL_HOST_PAIRING_URL = process.env.ORCA_E2E_SKILL_PHYSICAL_PAIRING_URL?.trim()
+const RUN_HEADLESS_PAIRED = process.env.ORCA_E2E_SKILL_PAIRED_HEADLESS === '1'
 const PHYSICAL_WSL_DISTRO = 'Ubuntu-24.04'
 const SKILL_NAME = `orca-staging-${randomUUID().slice(0, 8)}`
 const SSH_TARGET = RUN_STAGING ? stagingSkillSshTargetFromEnvironment() : null
 
 if (RUN_STAGING && !AUTH_TOKEN) {
   throw new Error('ORCA_CLOUD_AUTH_TOKEN is required for the noninteractive staging journey.')
+}
+if (PHYSICAL_HOST_PAIRING_URL && RUN_HEADLESS_PAIRED) {
+  throw new Error('staging physical pairing and headless pairing are mutually exclusive')
 }
 
 test.use({
@@ -52,9 +60,13 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
   const globalSkill = join(home, '.agents', 'skills', SKILL_NAME)
   let packageId: string | null = null
   let physicalEnvironmentId: string | null = null
+  let pairedHost: HeadlessPairedRuntimeHost | null = null
   let sshTargetId: string | null = null
   try {
-    if (PHYSICAL_HOST_PAIRING_URL) {
+    if (RUN_HEADLESS_PAIRED) {
+      pairedHost = await launchHeadlessPairedRuntimeHost()
+      physicalEnvironmentId = await addPhysicalHost(orcaPage, pairedHost.offer.pairingUrl)
+    } else if (PHYSICAL_HOST_PAIRING_URL) {
       physicalEnvironmentId = await addPhysicalHost(orcaPage, PHYSICAL_HOST_PAIRING_URL)
     }
     if (SSH_TARGET) {
@@ -224,6 +236,7 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
         )
         .catch(() => undefined)
     }
+    await pairedHost?.dispose().catch(() => undefined)
     if (packageId) {
       await orcaPage
         .evaluate((id) => window.api.skills.deletePackage(id), packageId)
@@ -334,7 +347,7 @@ async function addPhysicalHost(page: Page, pairingUrl: string): Promise<string> 
 type ExternalTarget = {
   installEnvironmentId?: string
   managedEnvironmentId: string
-  kind: 'windows' | 'wsl' | 'ssh'
+  kind: 'paired-posix' | 'windows' | 'wsl' | 'ssh'
   destination: SkillInstallDestination
 }
 
@@ -344,23 +357,32 @@ function externalTargets(
 ): ExternalTarget[] {
   return [
     ...(environmentId
-      ? [
-          {
-            installEnvironmentId: environmentId,
-            managedEnvironmentId: environmentId,
-            kind: 'windows' as const,
-            destination: { scope: 'global' as const }
-          },
-          {
-            installEnvironmentId: environmentId,
-            managedEnvironmentId: environmentId,
-            kind: 'wsl' as const,
-            destination: {
-              scope: 'global' as const,
-              executionTarget: { kind: 'wsl' as const, distro: PHYSICAL_WSL_DISTRO }
+      ? RUN_HEADLESS_PAIRED
+        ? [
+            {
+              installEnvironmentId: environmentId,
+              managedEnvironmentId: environmentId,
+              kind: 'paired-posix' as const,
+              destination: { scope: 'global' as const }
             }
-          }
-        ]
+          ]
+        : [
+            {
+              installEnvironmentId: environmentId,
+              managedEnvironmentId: environmentId,
+              kind: 'windows' as const,
+              destination: { scope: 'global' as const }
+            },
+            {
+              installEnvironmentId: environmentId,
+              managedEnvironmentId: environmentId,
+              kind: 'wsl' as const,
+              destination: {
+                scope: 'global' as const,
+                executionTarget: { kind: 'wsl' as const, distro: PHYSICAL_WSL_DISTRO }
+              }
+            }
+          ]
       : []),
     ...(sshTargetId
       ? [
@@ -391,9 +413,12 @@ function expectPhysicalInstall(
   if (target === 'windows') {
     expect(skill?.canonicalPath).toMatch(/^[A-Za-z]:[\\/]/)
     expect(skill?.canonicalPath).toContain(`.agents\\skills\\${SKILL_NAME}`)
-  } else {
+  } else if (target === 'wsl' || target === 'ssh') {
     expect(skill?.canonicalPath).toMatch(/^\/home\/[^/]+\/\.agents\/skills\//)
     expect(skill?.canonicalPath.endsWith(`/${SKILL_NAME}`)).toBe(true)
+  } else {
+    expect(skill?.canonicalPath).toMatch(/^\//)
+    expect(skill?.canonicalPath.endsWith(`/.agents/skills/${SKILL_NAME}`)).toBe(true)
   }
 }
 
@@ -410,7 +435,7 @@ async function expectManagedRemoteVersion(
     throw new Error(`physical host managed-install listing failed: ${installs.status}`)
   }
   const install = installs.value.find((candidate) => {
-    if (target.kind === 'windows') {
+    if (target.kind === 'windows' || target.kind === 'paired-posix') {
       return candidate.destination.scope === 'global' && !candidate.destination.executionTarget
     }
     if (target.kind === 'wsl') {
