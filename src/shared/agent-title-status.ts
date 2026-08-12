@@ -189,7 +189,9 @@ export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
   }
   // Why: only a live OpenCode TUI emits the native `OC | …` marker, and it names no
   // agent token, so the name gate below would drop it as a plain shell title. The
-  // marker states presence, never status, so an undecorated frame reads idle.
+  // marker states presence, never status, and the text after it is a generated session
+  // summary — so whatever the spinner gate above did not claim reads idle rather than
+  // falling through to the keyword gates, where a task name would decide the status.
   if (isOpenCodeNativeTitle(title)) {
     return 'idle'
   }

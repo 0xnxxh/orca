@@ -105,26 +105,37 @@ describe('OpenCode native title detection', () => {
   // Why: `OC | …` names no agent token, so before this the status detector read it as a
   // plain shell title and every status-derived surface (send targets, sidebar rows,
   // runtime agent-presence) dropped a live OpenCode pane.
+  it.each(['OC | Implement the Kitty IME preview', 'tmux | OC | Implement the Kitty IME preview'])(
+    'classifies the native session title %j as a live idle agent',
+    (title) => {
+      expect(getAgentLabel(title)).toBe('OpenCode')
+      expect(detectAgentStatusFromTitle(title)).toBe('idle')
+    }
+  )
+
+  // Why: a spinner glyph is the one status decoration OpenCode adds to the marker, and
+  // its gate runs before the marker's, so an animating frame still reads working (#8940).
+  it('reads a spinner-decorated native frame as working', () => {
+    const title = 'OC | ⠋ ask claude about this'
+    expect(getAgentLabel(title)).toBe('OpenCode')
+    expect(detectAgentStatusFromTitle(title)).toBe('working')
+  })
+
+  // Why: the text after the marker is OpenCode's generated session summary — subject
+  // matter, not status. Routing it through the keyword gates would let an ordinary task
+  // name ("stop the flaky test") park a live pane in working/permission forever, so the
+  // marker asserts presence only. Do not "fix" these into keyword-derived statuses.
   it.each([
-    'OC | Implement the Kitty IME preview',
-    'tmux | OC | Implement the Kitty IME preview',
-    'OC|Build'
-  ])('classifies the native session title %j as a live idle agent', (title) => {
+    'OC | ready to review',
+    'OC | permission prompt keeps reappearing',
+    'OC | waiting on the flaky test',
+    'OC | stop the suite from running'
+  ])('keeps the status word inside the session summary %j inert', (title) => {
     expect(getAgentLabel(title)).toBe('OpenCode')
     expect(detectAgentStatusFromTitle(title)).toBe('idle')
   })
 
-  // Why: the marker states presence, not status, so a decorated frame keeps reading
-  // through the usual status decoration (#8940) — only undecorated frames go idle.
-  it.each([
-    ['OC | ⠋ ask claude about this', 'working'],
-    ['OC | ready to review', 'idle']
-  ] as const)('classifies the decorated frame %j as %s', (title, expectedStatus) => {
-    expect(getAgentLabel(title)).toBe('OpenCode')
-    expect(detectAgentStatusFromTitle(title)).toBe(expectedStatus)
-  })
-
-  it.each(['OC |', 'oc | lowercase lookalike', 'OCTOPUS | build'])(
+  it.each(['OC |', 'OC|Build', 'oc | lowercase lookalike', 'OCTOPUS | build'])(
     'does not treat the lookalike title %j as an agent',
     (title) => {
       expect(detectAgentStatusFromTitle(title)).toBeNull()

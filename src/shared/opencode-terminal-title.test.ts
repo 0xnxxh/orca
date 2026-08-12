@@ -4,7 +4,7 @@ import { isMeaningfulOpenCodeTerminalTitle, isOpenCodeNativeTitle } from './open
 describe('OpenCode terminal titles', () => {
   it('recognizes native session titles', () => {
     expect(isMeaningfulOpenCodeTerminalTitle('OC | Native Stable Session')).toBe(true)
-    expect(isMeaningfulOpenCodeTerminalTitle('  OC|Session  ')).toBe(true)
+    expect(isMeaningfulOpenCodeTerminalTitle('  OC | Session  ')).toBe(true)
     expect(isOpenCodeNativeTitle('OC | Understand about the plugin')).toBe(true)
     expect(isOpenCodeNativeTitle('tmux | OC | ses_123')).toBe(true)
   })
@@ -13,6 +13,9 @@ describe('OpenCode terminal titles', () => {
     expect(isMeaningfulOpenCodeTerminalTitle('OpenCode')).toBe(false)
     expect(isMeaningfulOpenCodeTerminalTitle('OpenCode ready')).toBe(false)
     expect(isMeaningfulOpenCodeTerminalTitle('OC |')).toBe(false)
+    // Why: the native marker always spaces its separator; `OC|x` is another tool's
+    // pipe-delimited title, so accepting it would make a non-OpenCode pane a send target.
+    expect(isMeaningfulOpenCodeTerminalTitle('OC|Session')).toBe(false)
     expect(isMeaningfulOpenCodeTerminalTitle(undefined)).toBe(false)
     // Why: lowercase is not OpenCode's native marker; avoid "oc |" cwd/task noise.
     expect(isOpenCodeNativeTitle('oc | Understand about the plugin')).toBe(false)
