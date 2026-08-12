@@ -56,7 +56,6 @@ const {
   clearAgentHookPaneStateMock,
   registerPaneKeyAliasMock,
   piBuildPtyEnvMock,
-  piBuildStatusOnlyPtyEnvMock,
   piClearPtyMock,
   isPwshAvailableMock,
   wslUncDirectoryExistsAsyncMock,
@@ -96,7 +95,6 @@ const {
   clearAgentHookPaneStateMock: vi.fn(),
   registerPaneKeyAliasMock: vi.fn(),
   piBuildPtyEnvMock: vi.fn(),
-  piBuildStatusOnlyPtyEnvMock: vi.fn(),
   piClearPtyMock: vi.fn(),
   trackMock: vi.fn(),
   classifyErrorMock: vi.fn(),
@@ -182,7 +180,6 @@ vi.mock('../agent-hooks/server', () => ({
 vi.mock('../pi/titlebar-extension-service', () => ({
   piTitlebarExtensionService: {
     buildPtyEnv: piBuildPtyEnvMock,
-    buildStatusOnlyPtyEnv: piBuildStatusOnlyPtyEnvMock,
     clearPty: piClearPtyMock
   }
 }))
@@ -401,7 +398,6 @@ describe('registerPtyHandlers', () => {
     clearAgentHookPaneStateMock.mockReset()
     registerPaneKeyAliasMock.mockReset()
     piBuildPtyEnvMock.mockReset()
-    piBuildStatusOnlyPtyEnvMock.mockReset()
     piClearPtyMock.mockReset()
     isPwshAvailableMock.mockReset()
     wslUncDirectoryExistsAsyncMock.mockReset()
@@ -504,10 +500,6 @@ describe('registerPtyHandlers', () => {
         }
       }
     )
-    piBuildStatusOnlyPtyEnvMock.mockReturnValue({
-      ORCA_PRIME_AGENT_STATUS_EXTENSION:
-        'C:\\Users\\test\\AppData\\Roaming\\Orca\\prime-agent-managed-status-extension\\orca-agent-status.ts'
-    })
     isPwshAvailableMock.mockReturnValue(false)
     spawnMock.mockReturnValue({
       onData: vi.fn(() => makeDisposable()),
@@ -4287,10 +4279,13 @@ describe('registerPtyHandlers', () => {
         })
       })
 
-      it('bridges a host-managed Prime status extension into WSL without redirecting Prime home', async () => {
+      it('does not install or inject a Prime extension for an explicit WSL launch', async () => {
         await withWin32Platform(async () => {
           const env = await daemonSpawnAndGetEnv(
-            { PRIME_AGENT_CODING_AGENT_DIR: 'C:\\Users\\test\\.prime\\agent' },
+            {
+              PRIME_AGENT_CODING_AGENT_DIR: 'C:\\Users\\test\\.prime\\agent',
+              ORCA_PRIME_AGENT_STATUS_EXTENSION: 'C:\\stale\\orca-agent-status.ts'
+            },
             undefined,
             undefined,
             undefined,
@@ -4298,26 +4293,23 @@ describe('registerPtyHandlers', () => {
           )
 
           expect(piBuildPtyEnvMock).not.toHaveBeenCalled()
-          expect(piBuildStatusOnlyPtyEnvMock).toHaveBeenCalledWith('prime-agent')
           expect(env.ORCA_PRIME_AGENT_SOURCE_AGENT_DIR).toBeUndefined()
-          expect(env.ORCA_PRIME_AGENT_STATUS_EXTENSION).toBe(
-            'C:\\Users\\test\\AppData\\Roaming\\Orca\\prime-agent-managed-status-extension\\orca-agent-status.ts'
-          )
-          expect(env.ORCA_WSL_HOOK_INSTANCE).toBe('port5678')
+          expect(env.ORCA_PRIME_AGENT_STATUS_EXTENSION).toBeUndefined()
+          expect(env.ORCA_WSL_HOOK_INSTANCE).toBeUndefined()
           expect(env.PRIME_AGENT_CODING_AGENT_DIR).toBe('C:\\Users\\test\\.prime\\agent')
         })
       })
 
-      it('prepares the Prime bridge for a typed launch in a bare WSL shell', async () => {
+      it('does not prepare a Prime extension for a typed launch in a bare WSL shell', async () => {
         await withWin32Platform(async () => {
           const env = await daemonSpawnAndGetEnv({}, undefined, undefined, undefined, {
             shellOverride: 'wsl.exe'
           })
 
-          expect(piBuildStatusOnlyPtyEnvMock).toHaveBeenCalledWith('prime-agent')
-          expect(env.ORCA_PRIME_AGENT_STATUS_EXTENSION).toContain(
-            'prime-agent-managed-status-extension'
+          expect(piBuildPtyEnvMock.mock.calls.some(([, , kind]) => kind === 'prime-agent')).toBe(
+            false
           )
+          expect(env.ORCA_PRIME_AGENT_STATUS_EXTENSION).toBeUndefined()
           expect(env.PRIME_AGENT_CODING_AGENT_DIR).toBeUndefined()
         })
       })
