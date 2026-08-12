@@ -58,7 +58,8 @@ Cloud bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#
 the bundle desktop smoke update merged through `#329` as `eddb144afe`, generation-aware GCS
 recovery merged through `#330` as `8045c85dad`, and the bounded finalization load gate plus cleanup
 hardening merged through `#332`-`#335` as `bb8bf8b9ac`. The encrypted physical-host credential
-handoff merged through `#336` as `8fce3298ef`.
+handoff merged through `#336` as `8fce3298ef`. The isolated migration coexistence and database
+restore drill merged through `#350` as `c22007384a`.
 The authenticated OIDC smoke landed in `#313`; the narrow Auth release-metadata convergence
 follow-up landed in `#314`; the finalization and lifecycle fixes landed in `#317`. The final
 anonymous bearer-link candidate and canonical smoke now pass in staging. Production remains
@@ -73,6 +74,13 @@ Ubuntu 20.04 container and requires packaged `node-pty` to spawn `/bin/sh`. A ph
 caught and corrected assumptions about the Linux executable name and packaged runtime-module
 location before the gate can protect a real release. Physical packaged ARM64 execution remains an
 explicit separate proof.
+
+Cloud verification now requires a disposable PostgreSQL 16/17 migration-and-restore drill. An old
+migration process remains connected while a future-additive process advances the schema; both
+write successfully, the database is dumped and restored, and both write again against the restored
+copy. PR run `31624484826` and merged-main run `31624717796` passed all code, Terraform, and
+database jobs. The drill is localhost-only, cleans both schemas and its backup, and does not touch
+staging or production services.
 
 The local redesign now has an independently implemented Agent Plugins 1.0.0 skills-only bundle
 manifest, deterministic one-or-many archive creation, bounded bundle extraction, additive bundle

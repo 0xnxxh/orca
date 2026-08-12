@@ -99,6 +99,11 @@ Validated so far:
 - Cloud PR `#349` merged as `6a812c5e11` after proving an older API migration runner preserves a
   newer additive column/table and continues using its existing SQL. Build, lint, typecheck, tests,
   Terraform initialization, and validation passed; no service or infrastructure was deployed.
+- Cloud PR `#350` merged as `c22007384a` and added a required disposable PostgreSQL 16/17 drill.
+  Real old and future-additive Node processes coexist and write against one database, the database
+  is dumped and restored, and both processes write again after restoration. PR run `31624484826`
+  and merged-main run `31624717796` passed every code, Terraform, and database job; no staging or
+  production resource was accessed or deployed.
 - The immutable API deploy path stamps every artifact and skill literal variable plus exactly one
   approved skill-database secret, and rejects secret, Cloud SQL, service-account, scaling, CPU,
   memory, volume, mount, probe, or unexpected-environment drift before traffic promotion.
@@ -805,14 +810,15 @@ does not mean the surrounding phase is complete.
       custom metadata. Published-object metadata contains only aggregate archive/package digests
       and immutable generation identity; per-file paths, sizes, modes, and hashes remain inside the
       authorized archive manifest and immutable PostgreSQL version record.
-- [ ] Test forward migration, rollback strategy, backup restoration, and migration compatibility
+- [x] Test forward migration, rollback strategy, backup restoration, and migration compatibility
       during mixed API versions. Unit coverage proves atomic forward/idempotent migration, ignores
       an additive schema version written by a newer API, and leaves no recorded or partial schema
       after failure. PostgreSQL 16/17 integration coverage proves transactional DDL rollback and
       eight concurrent startup callers converge on one version. Cloud PR `#349` additionally proves
       the older runner and its existing SQL preserve and operate beside a simulated newer additive
-      column/table. A live mixed-binary coexistence run and database backup restore drill remain
-      open.
+      column/table. Cloud PR `#350` requires real old/new Node-process coexistence, writes before
+      and after a `pg_dump`/`pg_restore`, and full cleanup on disposable PostgreSQL 16 and 17; both
+      PR and merged-main runs passed.
 
 ### Authorization and lifecycle model
 
