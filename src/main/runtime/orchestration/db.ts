@@ -3851,7 +3851,7 @@ export class OrchestrationDb {
     return this.db.prepare('SELECT * FROM tasks ORDER BY created_at').all() as TaskRow[]
   }
 
-  // Why: LEFT JOIN keeps non-dispatched tasks (NULL assignee); the MAX(rowid) subquery matches getDispatchContext's most-recent-active-dispatch semantics.
+  // Why: the correlated indexed lookup avoids materializing every retained Dispatch before filtering Tasks.
   listTasksWithDispatch(filter?: {
     status?: TaskStatus
     ready?: boolean
@@ -3879,16 +3879,14 @@ export class OrchestrationDb {
         d.assignee_handle AS assignee_handle,
         d.id              AS dispatch_id
       FROM tasks t
-      LEFT JOIN (
-        SELECT dc.*
-        FROM dispatch_contexts dc
-        INNER JOIN (
-          SELECT task_id, MAX(rowid) AS max_rowid
-          FROM dispatch_contexts
-          WHERE status IN ('pending', 'dispatched')
-          GROUP BY task_id
-        ) latest ON latest.task_id = dc.task_id AND latest.max_rowid = dc.rowid
-      ) d ON d.task_id = t.id
+      LEFT JOIN dispatch_contexts d ON d.rowid = (
+        SELECT candidate.rowid
+        FROM dispatch_contexts candidate
+        WHERE candidate.task_id = t.id
+          AND candidate.status IN ('pending', 'dispatched')
+        ORDER BY candidate.rowid DESC
+        LIMIT 1
+      )
       ${where}
       ORDER BY t.created_at
     `
@@ -5140,7 +5138,11 @@ export class OrchestrationDb {
           result: string
         }
       | { kind: 'rejected'; code: string; reason: string }
-  }): { message: MessageRow; duplicate: boolean } {
+  }): {
+    message: MessageRow
+    duplicate: boolean
+    lifecycle?: WorkerReportSettlement | { action: 'rejected'; code: string; reason: string }
+  } {
     this.db.exec('BEGIN IMMEDIATE')
     try {
       const federated = this.getFederatedDispatch(params.dispatchId)
@@ -5150,18 +5152,14 @@ export class OrchestrationDb {
           `Federated Dispatch ${params.dispatchId} was not found.`
         )
       }
-      if (params.sequence <= federated.to_home_imported_sequence) {
-        const existing = this.getMessageById(params.message.id)
-        if (!existing) {
-          throw new OrchestrationError(
-            'operation_unknown',
-            `Federated relay sequence ${params.sequence} was committed without its message.`
-          )
-        }
-        this.db.exec('COMMIT')
-        return { message: existing, duplicate: true }
+      const duplicate = params.sequence <= federated.to_home_imported_sequence
+      if (duplicate && !this.getMessageById(params.message.id)) {
+        throw new OrchestrationError(
+          'operation_unknown',
+          `Federated relay sequence ${params.sequence} was committed without its message.`
+        )
       }
-      if (params.sequence !== federated.to_home_imported_sequence + 1) {
+      if (!duplicate && params.sequence !== federated.to_home_imported_sequence + 1) {
         throw new OrchestrationError(
           'operation_unknown',
           `Federated relay for ${params.dispatchId} is not contiguous after sequence ${federated.to_home_imported_sequence}.`
@@ -5188,32 +5186,43 @@ export class OrchestrationDb {
           dispatchId: params.dispatchId
         })
       }
-      if (params.lifecycle.kind === 'heartbeat') {
+      let lifecycle:
+        | WorkerReportSettlement
+        | { action: 'rejected'; code: string; reason: string }
+        | undefined
+      if (params.lifecycle.kind === 'heartbeat' && !duplicate) {
         this.recordHeartbeat(params.dispatchId, params.lifecycle.at)
       } else if (params.lifecycle.kind === 'worker_report') {
-        const settlement = this.settleWorkerReportInTransaction({
+        lifecycle = this.settleWorkerReportInTransaction({
           taskId: params.lifecycle.taskId,
           dispatchId: params.dispatchId,
           outcome: params.lifecycle.outcome,
           result: params.lifecycle.result
         })
-        if (settlement.action === 'rejected') {
+        if (lifecycle.action === 'rejected') {
           message = this.convertLifecycleMessageToRejection(
             message.id,
-            settlement.code,
-            settlement.reason
+            lifecycle.code,
+            lifecycle.reason
           ) as MessageRow
         }
-      } else if (params.lifecycle.kind === 'rejected') {
+      } else if (params.lifecycle.kind === 'rejected' && !duplicate) {
+        lifecycle = {
+          action: 'rejected',
+          code: params.lifecycle.code,
+          reason: params.lifecycle.reason
+        }
         message = this.convertLifecycleMessageToRejection(
           message.id,
           params.lifecycle.code,
           params.lifecycle.reason
         ) as MessageRow
       }
-      this.setFederatedHomeImportSequence(params.dispatchId, params.sequence)
+      if (!duplicate) {
+        this.setFederatedHomeImportSequence(params.dispatchId, params.sequence)
+      }
       this.db.exec('COMMIT')
-      return { message, duplicate: false }
+      return { message, duplicate, ...(lifecycle ? { lifecycle } : {}) }
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
