@@ -80,7 +80,9 @@ function logDaemonMilestone(event: string, details: Record<string, unknown> = {}
   }
 }
 
-// Why: extra hello+listSessions probes (~5s each) giving a wedged-but-connectable daemon ~60s grace to answer and keep its live sessions before a permanent wedge (#8689) is replaced; raise only alongside the fail-open cap.
+// Cheap hello+listSessions retries after the patient ask, for a daemon that recovers on its own
+// rather than one that is merely slow. An upper bound only — the classification clock binds
+// first and usually permits far fewer, so raising this alone buys nothing.
 export const WEDGED_DAEMON_GRACE_RETRIES = 11
 /**
  * Ceiling on the whole failed-health classification — every probe, the grace window, the

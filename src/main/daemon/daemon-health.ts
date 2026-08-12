@@ -29,6 +29,8 @@ import {
 } from './types'
 
 export const HEALTH_CHECK_TIMEOUT_MS = 3_000
+/** Ceiling on one identity `ps`; the launch budget reserves against it, so it is exported rather than inline. */
+export const PS_IDENTITY_TIMEOUT_MS = 2_000
 const RESOLVER_HEALTH_CHECK_TIMEOUT_MS = 3_000
 const KILL_WAIT_MS = 3_000
 const KILL_POLL_MS = 100
@@ -442,7 +444,7 @@ function getPsProcessIdentity(pid: number): PsProcessIdentity | null {
   try {
     const output = execFileSync('ps', ['-p', String(pid), '-o', 'lstart=', '-o', 'command='], {
       encoding: 'utf8',
-      timeout: 2_000
+      timeout: PS_IDENTITY_TIMEOUT_MS
     })
     // BSD ps formats lstart as a fixed-width 24-character timestamp.
     const startedAtMs = Date.parse(output.slice(0, 24))

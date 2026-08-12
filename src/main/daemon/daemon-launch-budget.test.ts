@@ -9,6 +9,7 @@ import {
   POSIX_OWNERSHIP_PROBE_DEADLINE_MS,
   PTY_OWNERSHIP_PROBE_ATTEMPTS
 } from './daemon-live-pty-evidence'
+import { PS_IDENTITY_TIMEOUT_MS } from './daemon-health'
 
 /**
  * Kept out of the launcher's own spec because that file mocks daemon-health, which would
@@ -43,10 +44,18 @@ describe('wedged-daemon classification budget', () => {
     // identity re-check and the process-table read still fit inside the same ceiling. Assert
     // the reserve is actually big enough for them — the reserve existing is not the same as
     // the reserve being sufficient, and "big enough" is the part that silently rots.
-    const identityProbeMs = 3_000
     const evidenceMs = POSIX_OWNERSHIP_PROBE_DEADLINE_MS * PTY_OWNERSHIP_PROBE_ATTEMPTS
 
-    expect(CLASSIFICATION_EVIDENCE_RESERVE_MS).toBeGreaterThanOrEqual(identityProbeMs + evidenceMs)
+    if (process.platform === 'win32') {
+      // Neither guarded step runs on Windows — there is no session-leader signal to read, so
+      // the launcher skips both the identity probe and the evidence read. Reserving clock for
+      // work that never happens would only shorten the probes that protect live sessions.
+      expect(CLASSIFICATION_EVIDENCE_RESERVE_MS).toBe(0)
+    } else {
+      expect(CLASSIFICATION_EVIDENCE_RESERVE_MS).toBeGreaterThanOrEqual(
+        PS_IDENTITY_TIMEOUT_MS + evidenceMs
+      )
+    }
     // And a probe must still be fundable once the reserve is set aside, or the grace loop
     // would never run at all.
     expect(
