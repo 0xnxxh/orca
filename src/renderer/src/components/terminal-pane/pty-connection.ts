@@ -4080,7 +4080,7 @@ export function connectPanePty(
     }
   )
 
-  const onDataDisposable = pane.terminal.onData((data) => {
+  const forwardPtyInput = (data: string): void => {
     // Why: xterm auto-replies to embedded query sequences (DA1, DECRQM,
     // OSC 10/11, focus, CPR) via onData. When we replay recorded PTY bytes
     // into xterm for scrollback/cold-restore/snapshot, those queries would
@@ -4215,6 +4215,13 @@ export function connectPanePty(
       clearPendingTerminalInputIntent()
       requestRecoveryForUndeliverableInput()
     }
+  }
+  const onDataDisposable = pane.terminal.onData((data) => {
+    if (deps.deferPtyInput) {
+      deps.deferPtyInput(pane.id, data, forwardPtyInput)
+      return
+    }
+    forwardPtyInput(data)
   })
   const imeCompositionRouteDisposable = installTerminalImeCompositionRoute({
     terminalElement: pane.terminal.element,

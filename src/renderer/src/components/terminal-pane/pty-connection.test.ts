@@ -3148,6 +3148,39 @@ describe('connectPanePty', () => {
     expect(pane.terminal.write).toHaveBeenCalledWith(redraw, expect.any(Function))
   })
 
+  it('routes terminal input through deferPtyInput so the host can withhold it', async () => {
+    // Regression: inlining forwardPtyInput into onData dropped this hop, silently disabling link-click mouse suppression.
+    const { connectPanePty } = await import('./pty-connection')
+    const pane = createPane(1)
+    const transport = createMockTransport('pty-1')
+    transportFactoryQueue.push(transport)
+    const deferPtyInput = vi.fn()
+
+    connectPanePty(pane as never, createManager(1) as never, createDeps({ deferPtyInput }) as never)
+    await flushAsyncTicks()
+    sendTerminalInputThroughPane(pane, 'a')
+
+    expect(deferPtyInput).toHaveBeenCalledWith(1, 'a', expect.any(Function))
+    expect(transport.sendInput).not.toHaveBeenCalled()
+
+    const forward = deferPtyInput.mock.calls[0]?.[2] as (data: string) => void
+    forward('a')
+    expect(transport.sendInput).toHaveBeenCalledWith('a')
+  })
+
+  it('forwards terminal input directly when the host supplies no deferPtyInput', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const pane = createPane(1)
+    const transport = createMockTransport('pty-1')
+    transportFactoryQueue.push(transport)
+
+    connectPanePty(pane as never, createManager(1) as never, createDeps() as never)
+    await flushAsyncTicks()
+    sendTerminalInputThroughPane(pane, 'a')
+
+    expect(transport.sendInput).toHaveBeenCalledWith('a')
+  })
+
   it('does not let OpenTUI-style small ANSI redraw bursts monopolize foreground writes', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const pane = createPane(1)
