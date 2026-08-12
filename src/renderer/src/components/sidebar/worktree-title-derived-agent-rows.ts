@@ -20,6 +20,7 @@ import {
   resolveCompatibleAgentTypeForOwner
 } from '../../../../shared/agent-title-owner'
 import { resolvePaneAgentOwner } from '../../../../shared/pane-agent-owner'
+import { isOpenCodeNativeTitle } from '../../../../shared/opencode-terminal-title'
 
 const EMPTY_RUNTIME_TITLES: Record<string, Record<number, string>> = {}
 const EMPTY_LIVE_PTY_IDS: Record<string, string[]> = {}
@@ -211,6 +212,10 @@ export function resolveTitleDerivedAgentType(
     if (owner && owner !== 'claude') {
       return null
     }
+    return agentType
+  }
+  // Why (#8478): native OC| is provider identity (pane reuse), not a nested child — match tab-agent.
+  if (agentType === 'opencode' && isOpenCodeNativeTitle(title)) {
     return agentType
   }
   // Why (#13341): nested child titles keep the durable owner until launch clears.

@@ -241,18 +241,17 @@ describe('OpenCode native title tab identity', () => {
         launchAgent: 'claude'
       })
     ).toBe('claude')
-    // Why (#13341): nested process under active launch is not stronger than parent ownership.
+    // Why (#8478): native OC| reclaim is durable — process observation must not undo OpenCode.
     expect(
       resolveTabAgentFromSignals({
-        hasObservedAgentSignal: false,
+        hasObservedAgentSignal: true,
         isRemote: false,
         title: 'OC | Greeting',
         hookAgent: null,
         processAgent: 'codex',
-        sleepingSessionAgent: 'claude',
         launchAgent: 'claude'
       })
-    ).toBe('claude')
+    ).toBe('opencode')
 
     for (const title of [
       'OpenCode ready',

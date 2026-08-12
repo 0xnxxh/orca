@@ -155,4 +155,55 @@ describe('resolveTabAgentFromSignals — nested child identity (#13341)', () => 
       })
     ).toBe('codex')
   })
+
+  // Why (#8478): native OC| reclaim must stay OpenCode after observation and under launch.
+  it('keeps OpenCode OC| reclaim after process observation under a non-OpenCode launch', () => {
+    expect(
+      resolveTabAgentFromSignals({
+        hasObservedAgentSignal: false,
+        isRemote: false,
+        title: 'OC | Greeting',
+        hookAgent: null,
+        processAgent: null,
+        launchAgent: 'claude'
+      })
+    ).toBe('opencode')
+    expect(
+      resolveTabAgentFromSignals({
+        hasObservedAgentSignal: true,
+        isRemote: false,
+        title: 'OC | Greeting',
+        hookAgent: null,
+        processAgent: 'claude',
+        launchAgent: 'claude'
+      })
+    ).toBe('opencode')
+  })
+
+  it('still fences nested Codex title under Claude launch (not OC|)', () => {
+    expect(
+      resolveTabAgentFromSignals({
+        hasObservedAgentSignal: true,
+        isRemote: false,
+        title: '✦ Codex',
+        hookAgent: null,
+        processAgent: 'codex',
+        launchAgent: 'claude'
+      })
+    ).toBe('claude')
+  })
+
+  it('clears OpenCode reclaim on shell return so launch can exit', () => {
+    expect(
+      resolveTabAgentFromSignals({
+        hasObservedAgentSignal: true,
+        isRemote: false,
+        title: 'zsh',
+        hookAgent: null,
+        processAgent: null,
+        processShellForeground: true,
+        launchAgent: 'claude'
+      })
+    ).toBeNull()
+  })
 })

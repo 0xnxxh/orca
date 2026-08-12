@@ -239,6 +239,21 @@ describe('buildTitleDerivedAgentRows', () => {
     expect(rows.map((row) => [row.agentType, row.state])).toEqual([['claude', 'working']])
   })
 
+  // Why (#8478): native OC| under a non-OpenCode launch matches tab-agent reclaim (sidebar parity).
+  it('lets a native OpenCode title own the row under an active Claude launch', () => {
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { launchAgent: 'claude' })],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: { 'tab-1': { 1: 'OC | Greeting' } },
+      ptyIdsByTabId: { 'tab-1': ['pty-opencode'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+      now: 2000
+    })
+
+    expect(rows.map((row) => [row.agentType, row.state])).toEqual([['opencode', 'idle']])
+  })
+
   it('produces no row for a spinner-only title when the tab has no launch identity', () => {
     const rows = buildWorktreeAgentRows({
       tabs: [makeTab('tab-1')],

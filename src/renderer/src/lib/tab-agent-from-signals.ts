@@ -114,15 +114,6 @@ export function resolveTabAgentFromSignals(args: {
     processShellForeground: args.processShellForeground
   })
   const activeLaunchAgent = launchedAgentExited ? null : launchAgent
-  // Why: re-own the foreground process within its title-identity group so OMP's nested pi (shell → omp → pi) can't flip an OMP-owned tab's icon.
-  const processAgentRaw = resolveSignalAgentForLaunchOwner(args.processAgent, owner)
-  // Why (#13341): Claude↔Codex nested CLIs become the local foreground process while the
-  // parent session still owns the pane. Do not let that child process rebrand the icon
-  // until launch ownership has exited (then process may name a genuine reuse).
-  const processAgent =
-    activeLaunchAgent && processAgentRaw && processAgentRaw !== activeLaunchAgent
-      ? null
-      : processAgentRaw
 
   // Title carries identity only as a reuse override (names a DIFFERENT-group agent) or a legacy standalone id when no hook — same-group titles say nothing (OMP wraps Pi), so the record wins.
   const explicitTitleAgent = resolveSignalAgentForLaunchOwner(
@@ -131,38 +122,49 @@ export function resolveTabAgentFromSignals(args: {
   )
   const priorIdentity = idleFocusedIdentity ?? activeLaunchAgent
   const nativeOpenCodeTitle = explicitTitleAgent === 'opencode' && isOpenCodeNativeTitle(args.title)
+  // Why (#8478): native `OC |` is provider identity for pane reuse — durable while the frame
+  // remains, including after process observation and under a non-OpenCode launch (#13341 still
+  // fences other cross-group nested titles/processes).
+  const openCodeNativeReclaim =
+    nativeOpenCodeTitle &&
+    (activeLaunchAgent === null || activeLaunchAgent !== 'opencode') &&
+    (priorIdentity === null || priorIdentity !== 'opencode')
+  // Why: re-own the foreground process within its title-identity group so OMP's nested pi (shell → omp → pi) can't flip an OMP-owned tab's icon.
+  const processAgentRaw = resolveSignalAgentForLaunchOwner(args.processAgent, owner)
+  // Why (#13341): Claude↔Codex nested CLIs become the local foreground process while the
+  // parent session still owns the pane. Do not let that child process rebrand the icon
+  // until launch ownership has exited (then process may name a genuine reuse).
+  // Why (#8478): after OC| reclaim, a launch-matching process must not undo OpenCode.
+  const processAgent =
+    openCodeNativeReclaim && processAgentRaw && processAgentRaw !== 'opencode'
+      ? null
+      : activeLaunchAgent && processAgentRaw && processAgentRaw !== activeLaunchAgent
+        ? null
+        : processAgentRaw
   // Why: a "claude" token in another agent's task text is a mention, not identity, so it must
   // not take a pane from its known owner — only a title that PRESENTS Claude may (#8940).
   const titleClaimsIdentity =
     explicitTitleAgent !== 'claude' || isClaudeIdentityFrameTitle(args.title)
-  // Why: native OpenCode titles can reclaim stale launch intent before any observed hook signal.
-  // Why (#13341): once a launch owner is still active, a nested child's title is not pane reuse.
+  // Why (#13341): nested child titles are not pane reuse while launch ownership is active —
+  // except native OC| (#8478), which is provider identity, not a nested CLI.
   const titleReclaimsReusedPane =
     priorIdentity !== null &&
     explicitTitleAgent !== null &&
     explicitTitleAgent !== priorIdentity &&
     titleClaimsIdentity &&
-    !activeLaunchAgent &&
+    (!activeLaunchAgent || nativeOpenCodeTitle) &&
     (args.hasObservedAgentSignal || hasCompletedHook || nativeOpenCodeTitle)
-  // Why: OpenCode's native `OC |` frame is provider identity at startup (before hooks), not a nested child.
-  const openCodeStartupTitle =
-    nativeOpenCodeTitle &&
-    launchAgent !== null &&
-    launchAgent !== 'opencode' &&
-    !args.hasObservedAgentSignal
   // Why: native OpenCode titles lack a provider generation and cannot displace durable ownership.
   const titleAgent =
     processProvesShell ||
     sleepingSessionAgent ||
     (nativeOpenCodeTitle && idleFocusedIdentity !== null)
       ? null
-      : openCodeStartupTitle
+      : openCodeNativeReclaim || titleReclaimsReusedPane
         ? explicitTitleAgent
-        : titleReclaimsReusedPane
-          ? explicitTitleAgent
-          : priorIdentity
-            ? null
-            : explicitTitleAgent
+        : priorIdentity
+          ? null
+          : explicitTitleAgent
 
   // Identity-first precedence (see useTabAgent JSDoc): live hook > process > title > completed > sleeping > launch > sibling.
   return (
