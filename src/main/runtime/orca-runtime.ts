@@ -1318,6 +1318,8 @@ type RuntimePtyWorktreeRecord = {
   paneKey: string | null
   launchConfig: SleepingAgentLaunchConfig | null
   launchToken: string | null
+  // Why: provider PTY IDs can be reused; launch identity belongs only to the process that received the token.
+  launchIncarnationId: PtyIncarnationId | null
   launchAgent: TuiAgent | null
   foregroundAgent: TuiAgent | null
   connected: boolean
@@ -9394,6 +9396,7 @@ export class OrcaRuntimeService {
       isTuiAgent(agentLaunchAuthority.launchAgent)
     ) {
       pty.launchToken = agentLaunchAuthority.launchToken
+      pty.launchIncarnationId = binding.incarnationId
       pty.launchAgent = agentLaunchAuthority.launchAgent
     }
     const pendingIncarnation = this.pendingPtyRegistrationIncarnations.get(ptyId)
@@ -12403,6 +12406,7 @@ export class OrcaRuntimeService {
     }
     this.restoredOrchestrationAuthorityByPtyId.delete(ptyId)
     pty.launchToken = null
+    pty.launchIncarnationId = null
     const paneKeys = new Set<string>()
     if (pty.paneKey && parsePaneKey(pty.paneKey)) {
       paneKeys.add(pty.paneKey)
@@ -25781,6 +25785,7 @@ export class OrcaRuntimeService {
               ? copySleepingAgentLaunchConfig(effectiveLaunchConfig)
               : null
             pty.launchToken = launchToken ?? null
+            pty.launchIncarnationId = launchToken ? pty.incarnationId : null
             pty.launchAgent = launchOpts.launchAgent ?? null
           }
           pty.tabId = tabId
@@ -29405,6 +29410,7 @@ export class OrcaRuntimeService {
         paneKey: state.paneKey ?? null,
         launchConfig: null,
         launchToken: null,
+        launchIncarnationId: null,
         launchAgent: null,
         foregroundAgent: null,
         connected: state.connected ?? true,
@@ -37602,7 +37608,8 @@ function ptyTitleProvesAgentPresence(
     agentTitleProvesAgentPresence(title, classification) ||
     (isQuarterCircleSpinnerOnlyAgentTitle(title) &&
       pty.launchAgent === 'claude' &&
-      pty.launchToken !== null)
+      pty.launchToken !== null &&
+      pty.launchIncarnationId === pty.incarnationId)
   )
 }
 

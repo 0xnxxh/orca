@@ -46,7 +46,7 @@ async function createRuntimeWithTitle(
   })
   const getForegroundProcess = vi.fn(async () => foregroundProcess)
   runtime.setPtyController({
-    spawn: vi.fn().mockResolvedValue({ id: PTY_ID }),
+    spawn: vi.fn().mockResolvedValue({ id: PTY_ID, incarnationId: 'initial-incarnation' }),
     write: () => true,
     kill: () => true,
     getForegroundProcess
@@ -158,6 +158,34 @@ describe('quarter-circle title send authorization (STA-4028)', () => {
       false
     )
 
+    await expect(guardedSendResult(runtime, handle)).resolves.toBe('terminal_guard_no_agent')
+  })
+
+  it('does not carry managed Claude identity into a replacement PTY incarnation', async () => {
+    const { runtime, handle } = await createRuntimeWithTitle(SPINNER_ONLY_TITLE, null, 'claude')
+    const pty = (
+      runtime as unknown as {
+        ptysById: Map<
+          string,
+          { incarnationId: string | null; launchIncarnationId: string | null; launchToken: string }
+        >
+      }
+    ).ptysById.get(PTY_ID)
+    expect(pty).toMatchObject({
+      incarnationId: 'initial-incarnation',
+      launchIncarnationId: 'initial-incarnation'
+    })
+
+    runtime.onPtySpawned(PTY_ID, 'replacement-incarnation', { awaitsRegistration: false })
+
+    expect(pty).toMatchObject({
+      incarnationId: 'replacement-incarnation',
+      launchIncarnationId: 'initial-incarnation',
+      launchToken: expect.any(String)
+    })
+    await expect(runtime.getTerminalAgentStatus(handle)).resolves.toMatchObject({
+      isRunningAgent: false
+    })
     await expect(guardedSendResult(runtime, handle)).resolves.toBe('terminal_guard_no_agent')
   })
 
