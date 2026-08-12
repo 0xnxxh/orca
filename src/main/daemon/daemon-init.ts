@@ -705,7 +705,7 @@ function createOutOfProcessLauncher(
         const evidencePid =
           occupancy.state === 'unknown' &&
           process.platform !== 'win32' &&
-          classificationRemainingMs() < 0
+          classificationRemainingMs() >= CLASSIFICATION_EVIDENCE_MIN_MS
             ? ((await readVerifiedDaemonPid(runtimeDir, socketPath, tokenPath))?.pid ?? null)
             : null
         occupancy = await raiseOccupancyWithProcessEvidence(occupancy, evidencePid)

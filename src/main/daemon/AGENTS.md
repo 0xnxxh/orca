@@ -56,6 +56,21 @@ hands → probe once more → `rename` in one syscall → verify we kept it.
   That was chosen over the alternative, which was killing daemons whose live agents we had
   merely failed to observe — unrecoverable, versus one click.
 
+  **If you ever raise the classification budget, gate the replace path on headroom first.**
+  The budget serves two verdicts with opposite time-costs: reaching "don't kill" slowly is free,
+  because the daemon survives however long it took, while reaching `empty` slowly is not — the
+  kill ladder (~11.5s) and the fork (~10s) still have to fit before the 60s fail-open. At 34s
+  that case cannot arise (34 + 21.5 = 55.5). Raise the budget and it can, and an overrun there
+  is the worst branch available: daemon killed, replacement forked and then discarded, no
+  provider installed, Restart broken. The guard is to hold instead of replacing when the
+  remaining headroom cannot fund the ladder and the fork — safe precisely because that path has
+  proven the daemon empty, so holding costs no agents. Use `holdIncumbentDaemon()`, not
+  `preserveDaemon()`, which opens a non-shared 20s handshake and could overrun the deadline it
+  is meant to respect.
+
+  Note the launcher closure does not receive the startup abort signal, so the guard cannot
+  simply read `signal.aborted` without threading it through `DaemonSpawner`.
+
   **Do not try to fix this by tuning the classification budget.** Ten review rounds each found a
   different timing band where a bounded classification kills a session an unbounded one keeps.
   Matching the old tolerance for a single probe costs more clock than the 60s startup fail-open
