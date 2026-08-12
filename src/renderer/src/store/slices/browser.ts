@@ -121,6 +121,17 @@ export type RemoteBrowserPageHandle = {
   remotePageId: string
 }
 
+export type BrowserCookieImportExecutionResult = BrowserCookieImportResult & {
+  executionHostId: ExecutionHostId
+}
+
+function retainCookieImportExecutionHost(
+  result: BrowserCookieImportResult,
+  executionHostId: ExecutionHostId
+): BrowserCookieImportExecutionResult {
+  return { ...result, executionHostId }
+}
+
 export type BrowserSlice = {
   browserTabsByWorktree: Record<string, BrowserWorkspace[]>
   browserPagesByWorkspace: Record<string, BrowserPage[]>
@@ -205,7 +216,7 @@ export type BrowserSlice = {
     options?: BrowserSessionProfileCreateOptions
   ) => Promise<BrowserSessionProfile | null>
   deleteBrowserSessionProfile: (profileId: string) => Promise<boolean>
-  importCookiesToProfile: (profileId: string) => Promise<BrowserCookieImportResult>
+  importCookiesToProfile: (profileId: string) => Promise<BrowserCookieImportExecutionResult>
   clearBrowserSessionImportState: () => void
   detectedBrowsers: {
     family: string
@@ -219,7 +230,7 @@ export type BrowserSlice = {
     profileId: string,
     browserFamily: string,
     browserProfile?: string
-  ) => Promise<BrowserCookieImportResult>
+  ) => Promise<BrowserCookieImportExecutionResult>
   clearDefaultSessionCookies: () => Promise<boolean>
   browserUrlHistory: BrowserHistoryEntry[]
   addBrowserHistoryEntry: (url: string, title: string) => void
@@ -2023,7 +2034,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
           error: reason
         })
       )
-      return { ok: false as const, reason }
+      return retainCookieImportExecutionHost({ ok: false as const, reason }, hostId)
     }
     set((state) =>
       browserImportStateForHostUpdate(state, hostId, {
@@ -2062,7 +2073,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
           })
         )
       }
-      return result
+      return retainCookieImportExecutionHost(result, hostId)
     } catch (err) {
       const reason = String((err as Error)?.message ?? err)
       set((state) =>
@@ -2073,7 +2084,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
           error: reason
         })
       )
-      return { ok: false as const, reason }
+      return retainCookieImportExecutionHost({ ok: false as const, reason }, hostId)
     }
   },
 
@@ -2173,7 +2184,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
             })
           )
         }
-        return result
+        return retainCookieImportExecutionHost(result, hostId)
       } catch (err) {
         const reason = String((err as Error)?.message ?? err)
         set((state) =>
@@ -2184,7 +2195,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
             error: reason
           })
         )
-        return { ok: false as const, reason }
+        return retainCookieImportExecutionHost({ ok: false as const, reason }, hostId)
       }
     }
     set((state) =>
@@ -2226,7 +2237,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
           })
         )
       }
-      return result
+      return retainCookieImportExecutionHost(result, hostId)
     } catch (err) {
       const reason = String((err as Error)?.message ?? err)
       set((state) =>
@@ -2237,7 +2248,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
           error: reason
         })
       )
-      return { ok: false as const, reason }
+      return retainCookieImportExecutionHost({ ok: false as const, reason }, hostId)
     }
   },
 
