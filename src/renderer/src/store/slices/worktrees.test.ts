@@ -155,7 +155,7 @@ const mockApi = {
   },
   ephemeralVm: {
     cancelProvision: vi.fn().mockResolvedValue({ cancelled: true }),
-    cleanup: vi.fn().mockResolvedValue({}),
+    cleanup: vi.fn().mockResolvedValue({ status: 'cleaned' }),
     listRuntimes: vi.fn().mockResolvedValue([])
   }
 }
@@ -199,6 +199,7 @@ function resetRemoteRuntimeMocks() {
 // earlier describe would silently suppress a row here. Reset for every case, not just the fetch suites.
 beforeEach(() => {
   resetAuthoritativelyRemovedWorktreeMemoryForTests()
+  mockApi.ephemeralVm.cleanup.mockResolvedValue({ status: 'cleaned' })
 })
 
 function createTestStore() {
@@ -405,7 +406,7 @@ describe('setActiveWorktree focus handling', () => {
     vi.clearAllMocks()
     resetRemoteRuntimeMocks()
     mockApi.ephemeralVm.cancelProvision.mockResolvedValue({ cancelled: true })
-    mockApi.ephemeralVm.cleanup.mockResolvedValue({})
+    mockApi.ephemeralVm.cleanup.mockResolvedValue({ status: 'cleaned' })
   })
 
   it('moves focus out of a registered webview before switching worktrees', () => {

@@ -88,7 +88,7 @@ export function installReposRuntimeRoutingHarness(): void {
     runtimeEnvironmentTransportCall.mockReset()
     uiSet.mockReset()
     ephemeralVmListRuntimes.mockReset().mockResolvedValue([])
-    ephemeralVmCleanup.mockReset().mockResolvedValue(undefined)
+    ephemeralVmCleanup.mockReset().mockResolvedValue({ status: 'cleaned' })
     uiSet.mockResolvedValue(undefined)
     runtimeEnvironmentTransportCall.mockImplementation((args: RuntimeEnvironmentCallRequest) => {
       return createCompatibleRuntimeStatusResponseIfNeeded(args) ?? runtimeEnvironmentCall(args)

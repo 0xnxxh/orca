@@ -8,8 +8,15 @@ const mocks = vi.hoisted(() => ({
     modalData: { repoId: 'repo-1', displayName: 'Cloud workspace' } as Record<string, unknown>,
     closeModal: vi.fn(),
     removeProject: vi.fn(),
-    repos: [{ id: 'repo-1', connectionId: null as string | null }],
-    worktreesByRepo: {} as Record<string, { ephemeralVmCheckoutMode?: string }[]>,
+    repos: [
+      {
+        id: 'repo-1',
+        connectionId: null as string | null,
+        executionHostId: undefined as string | undefined
+      }
+    ],
+    worktreesByRepo: {} as Record<string, { hostId?: string; ephemeralVmCheckoutMode?: string }[]>,
+    settings: { activeRuntimeEnvironmentId: null as string | null },
     sshTargetLabels: new Map<string, string>(),
     removedSshTargetLabels: new Map<string, string>()
   }
@@ -46,7 +53,8 @@ vi.mock('@/i18n/i18n', () => ({
 describe('RemoveFolderDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mocks.state.repos = [{ id: 'repo-1', connectionId: null }]
+    mocks.state.modalData = { repoId: 'repo-1', displayName: 'Cloud workspace' }
+    mocks.state.repos = [{ id: 'repo-1', connectionId: null, executionHostId: undefined }]
     mocks.state.worktreesByRepo = {}
   })
 
@@ -68,5 +76,31 @@ describe('RemoveFolderDialog', () => {
     const markup = renderToStaticMarkup(<RemoveFolderDialog />)
 
     expect(markup).toContain('still on your disk')
+  })
+
+  it('keeps local retention copy when a same-id sibling host is provisioned', async () => {
+    mocks.state.modalData = {
+      repoId: 'repo-1',
+      displayName: 'Local workspace',
+      hostId: 'local'
+    }
+    mocks.state.repos = [
+      { id: 'repo-1', connectionId: null, executionHostId: undefined },
+      { id: 'repo-1', connectionId: null, executionHostId: 'runtime:env-1' }
+    ]
+    mocks.state.worktreesByRepo = {
+      'repo-1': [
+        {
+          hostId: 'runtime:env-1',
+          ephemeralVmCheckoutMode: 'provisioned-root'
+        }
+      ]
+    }
+    const { default: RemoveFolderDialog } = await import('./RemoveFolderDialog')
+
+    const markup = renderToStaticMarkup(<RemoveFolderDialog />)
+
+    expect(markup).toContain('still on your disk')
+    expect(markup).not.toContain('cleans up its provisioned environment')
   })
 })

@@ -410,7 +410,9 @@ vercel_args=(); [ -n "$scope" ] && vercel_args+=(--scope "$scope"); [ -n "$proje
 [ -n "$repo_url" ] && [ -n "$repo_ref" ] && [ -n "$repo_branch" ] \
   || { echo "provisioned-root requires repo URL, start ref, and workspace branch" >&2; exit 1; }
 gh_token="${GH_TOKEN:-${GITHUB_TOKEN:-$(command -v gh >/dev/null 2>&1 && gh auth token 2>/dev/null || true)}}"
-name="orca-${ORCA_RECIPE_ID:-vercel-sandbox}-${ORCA_VM_INSTANCE_ID:-$(date +%s)}"  # sanitize+cap to 63 chars
+raw_name="orca-${ORCA_RECIPE_ID:-vercel-sandbox}-${ORCA_VM_INSTANCE_ID:-$(date +%s)}"
+name="$(printf '%s' "$raw_name" | tr '[:upper:]_' '[:lower:]-' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//' | cut -c1-63 | sed -E 's/-+$//')"
+[ -n "$name" ] || { echo "sandbox name is empty after normalization" >&2; exit 1; }
 
 # Arm cleanup BEFORE create so a failing create can't leak a half-built paid sandbox.
 cleanup_on_error() { [ "$?" -ne 0 ] && vercel sandbox remove "$name" "${vercel_args[@]}" >/dev/null 2>&1 || true; }

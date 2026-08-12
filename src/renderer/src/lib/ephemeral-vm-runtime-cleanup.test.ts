@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listRuntimes = vi.fn()
-const cleanup = vi.fn().mockResolvedValue({})
+const cleanup = vi.fn().mockResolvedValue({ status: 'cleaned' })
 
 // @ts-expect-error -- test shim for the preload bridge
 globalThis.window = { api: { ephemeralVm: { listRuntimes, cleanup } } }
@@ -15,7 +15,7 @@ function runtime(overrides: Record<string, unknown>): Record<string, unknown> {
 describe('cleanupEphemeralVmRuntimesForDeleted', () => {
   beforeEach(() => {
     listRuntimes.mockReset()
-    cleanup.mockClear()
+    cleanup.mockReset().mockResolvedValue({ status: 'cleaned' })
   })
 
   it('cleans runtimes matched by workspace id and returns destroyed SSH target ids', async () => {
@@ -66,6 +66,28 @@ describe('cleanupEphemeralVmRuntimesForDeleted', () => {
 
   it('swallows listRuntimes failures', async () => {
     listRuntimes.mockRejectedValue(new Error('boom'))
+    await expect(cleanupEphemeralVmRuntimesForDeleted({ workspaceIds: ['wt-1'] })).resolves.toEqual(
+      { runtimeIds: [], sshTargetIds: [] }
+    )
+  })
+
+  it('does not report runtime or SSH target ids when cleanup fails', async () => {
+    listRuntimes.mockResolvedValue([
+      runtime({ id: 'rt-1', workspaceId: 'wt-1', sshTargetId: 'runtime-ssh-a' })
+    ])
+    cleanup.mockResolvedValue({ status: 'cleanup_failed', cleanupStatus: 'failed' })
+
+    await expect(cleanupEphemeralVmRuntimesForDeleted({ workspaceIds: ['wt-1'] })).resolves.toEqual(
+      { runtimeIds: [], sshTargetIds: [] }
+    )
+  })
+
+  it('does not report runtime or SSH target ids when cleanup rejects', async () => {
+    listRuntimes.mockResolvedValue([
+      runtime({ id: 'rt-1', workspaceId: 'wt-1', sshTargetId: 'runtime-ssh-a' })
+    ])
+    cleanup.mockRejectedValue(new Error('destroy failed'))
+
     await expect(cleanupEphemeralVmRuntimesForDeleted({ workspaceIds: ['wt-1'] })).resolves.toEqual(
       { runtimeIds: [], sshTargetIds: [] }
     )
