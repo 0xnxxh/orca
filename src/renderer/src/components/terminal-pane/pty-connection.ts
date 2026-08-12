@@ -9094,9 +9094,12 @@ export function connectPanePty(
               return
             }
             // Unlike the direct-SSH flow above, this path is not nested under `connectionId`: a
-            // local pane with a restored id and a runtime-host wake both reach it. Neither can be
-            // shown a card, and their provider is authoritative about its own ptys, so they keep
-            // replacing in place.
+            // local pane with a restored id and a runtime-host wake both reach it, and neither can
+            // be shown an SSH card. A local provider is authoritative about its own ptys, so
+            // replacing in place is right for it. A remote runtime shares SSH's ambiguity and is
+            // NOT — but the card is SSH-scoped (its retry dials an SSH target), so serving one is
+            // its own design, not something to graft on here. This keeps the behaviour it has
+            // today rather than quietly changing it.
             deps.clearExitedPanePtyLayoutBinding(pane.id, deferredReattachSessionId)
             deps.clearTabPtyId(deps.tabId, deferredReattachSessionId)
             startFreshColdRestoreAgentResume(coldRestoreStartup, {
