@@ -32,9 +32,10 @@ it('closes the retained connection after a measured request rejects', async () =
     'injected measured request failure'
   )
 
+  expect(requestCount).toBe(4)
   expect.soft(fixture.close).toHaveBeenCalledOnce()
   expect.soft(fixture.socketClose).toHaveBeenCalledOnce()
-  expect(fixture.retainedHandles).toHaveLength(0)
+  expect(fixture.retainedHandleCount()).toBe(0)
 })
 
 it('closes the retained connection after successful measurements', async () => {
@@ -47,7 +48,7 @@ it('closes the retained connection after successful measurements', async () => {
 
   expect(fixture.close).toHaveBeenCalledOnce()
   expect(fixture.socketClose).toHaveBeenCalledOnce()
-  expect(fixture.retainedHandles).toHaveLength(0)
+  expect(fixture.retainedHandleCount()).toBe(0)
 })
 
 describe.runIf(runLiveBenchmark)('federated read RPC transport benchmark', () => {
@@ -182,7 +183,7 @@ function createSharedControlFixture(
   connection: RemoteRuntimeSharedControlConnection
   close: ReturnType<typeof vi.fn>
   socketClose: ReturnType<typeof vi.fn>
-  retainedHandles: string[]
+  retainedHandleCount: () => number
 } {
   const connection = new RemoteRuntimeSharedControlConnection({
     v: 2,
@@ -190,8 +191,7 @@ function createSharedControlFixture(
     deviceToken: 'token',
     publicKeyB64: Buffer.from(new Uint8Array(32).fill(1)).toString('base64')
   })
-  const retainedHandles = ['shared-control WebSocket']
-  const socketClose = vi.fn(() => retainedHandles.splice(0))
+  const socketClose = vi.fn()
   const unsafe = connection as unknown as {
     state: string
     ws: { readyState: number; close: () => void } | null
@@ -203,5 +203,5 @@ function createSharedControlFixture(
   unsafe.sharedKey = new Uint8Array(32).fill(2)
   unsafe.request = vi.fn(request)
   const close = vi.spyOn(connection, 'close')
-  return { connection, close, socketClose, retainedHandles }
+  return { connection, close, socketClose, retainedHandleCount: () => (unsafe.ws ? 1 : 0) }
 }
