@@ -1,12 +1,15 @@
+import { randomUUID } from 'node:crypto'
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
 import type {
   AgentSessionHandoffRequest,
   AgentSessionHandoffStatus
 } from '../../../shared/agent-session-wire'
+import { createStructuredAgentSessionOperationId } from '../../../shared/structured-agent-session-mutation'
 import {
   abandonStoredAgentSessionHandoffAttempt,
   setStoredAgentSessionHandoffStage,
-  stopStoredAgentSessionOwnerForHandoff
+  stopStoredAgentSessionOwnerForHandoff,
+  stopStoredRecoveringTuiOwnerForHandoff
 } from '../../runtime/agent-session-handoff-record-transitions'
 import { handoffStructuredSessionToTui } from './structured-agent-session-handoff-forward'
 import { handoffStructuredSessionToNative } from './structured-agent-session-handoff-reverse'
@@ -126,6 +129,21 @@ async function restoreOnce(input: RestartAccess, record: AgentSessionRecord): Pr
   }
 }
 
+async function recoverUnavailableTuiAsNative(
+  input: RestartAccess,
+  record: AgentSessionRecord
+): Promise<void> {
+  await input.deps.transport!.stopRecoveredOwner(record)
+  const operationId = createStructuredAgentSessionOperationId(randomUUID, input.deps.now())
+  const stopped = await stopStoredRecoveringTuiOwnerForHandoff(input.deps.store, {
+    sessionId: record.sessionId,
+    expectedFence: record.lease.runtimeFence,
+    operationId,
+    now: input.deps.now()
+  })
+  await continueHandoff(input, stopped)
+}
+
 export function canRestoreLiveTuiOwner(record: AgentSessionRecord): boolean {
   return (
     (record.lease.handoffStage === 'recovering' ||
@@ -144,8 +162,14 @@ async function restoreRecoverableLiveTui(
   if (!input.deps.transport) {
     throw new Error('Agent TUI handoff recovery is unavailable on this host.')
   }
-  const recovered = await input.deps.transport.recoverTuiOwner(record)
-  const owner = await input.deps.transport.reproveTuiOwner({ record, owner: recovered })
+  let owner: StructuredTuiOwner
+  try {
+    const recovered = await input.deps.transport.recoverTuiOwner(record)
+    owner = await input.deps.transport.reproveTuiOwner({ record, owner: recovered })
+  } catch {
+    await recoverUnavailableTuiAsNative(input, record)
+    return
+  }
   await setStoredAgentSessionHandoffStage(input.deps.store, {
     sessionId: record.sessionId,
     fence: record.lease.runtimeFence,

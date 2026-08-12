@@ -11,7 +11,8 @@ import type { StructuredAgentSessionHandoffFlowContext } from './structured-agen
 export async function handoffStructuredSessionToNative(
   context: StructuredAgentSessionHandoffFlowContext,
   params: AgentSessionHandoffRequest,
-  retry: boolean
+  retry: boolean,
+  tuiAlreadyExited = false
 ): Promise<void> {
   const { deps } = context
   const sessionId = params.envelope.sessionId
@@ -28,8 +29,10 @@ export async function handoffStructuredSessionToNative(
       if (!owner) {
         throw new Error('The owning agent terminal could not be identified.')
       }
-      owner = await deps.transport!.reproveTuiOwner({ record, owner })
-      context.retainOwner(sessionId, owner)
+      if (!tuiAlreadyExited) {
+        owner = await deps.transport!.reproveTuiOwner({ record, owner })
+        context.retainOwner(sessionId, owner)
+      }
       transcriptPath = owner.transcriptPath ?? transcriptPath
       context.setStatus(sessionId, {
         owner: 'tui',

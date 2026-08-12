@@ -60,6 +60,42 @@ export function rollbackAgentSessionHandoffPreparation(args: {
   })
 }
 
+export function stopRecoveringTuiOwnerForHandoff(args: {
+  record: AgentSessionRecord
+  expectedFence: number
+  operationId: string
+  now: number
+}): AgentSessionRecord {
+  const { record } = args
+  assertFence(record.lease, args.expectedFence)
+  if (
+    (record.lease.handoffStage !== 'recovering' &&
+      record.lease.handoffStage !== 'manual-recovery') ||
+    record.lease.runtimeKind !== 'tui' ||
+    record.lease.handoffOperationId !== null ||
+    record.lease.claimStatus !== 'live' ||
+    record.lease.ownerProcess === null
+  ) {
+    throw new Error('agent_session_ownership_unknown')
+  }
+  return withLease(record, {
+    ...record.lease,
+    runtimeFence: record.lease.runtimeFence + 1,
+    handoffStage: 'old-owner-stopped',
+    handoffOperationId: args.operationId,
+    ownerProcess: null,
+    reservedSpawnToken: null,
+    processlessAt: null,
+    claimStatus: 'released',
+    lastRenewedAt: args.now,
+    deathEvidence: {
+      kind: 'exit-observed',
+      detail: 'recovery proved TUI process exit',
+      observedAt: args.now
+    }
+  })
+}
+
 export function reserveAgentSessionHandoffOwner(args: {
   record: AgentSessionRecord
   expectedFence: number

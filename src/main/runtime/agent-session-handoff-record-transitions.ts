@@ -3,7 +3,8 @@ import {
   abandonAgentSessionHandoffAttempt,
   reserveAgentSessionHandoffOwner,
   rollbackAgentSessionHandoffPreparation,
-  stopAgentSessionOwnerForHandoff
+  stopAgentSessionOwnerForHandoff,
+  stopRecoveringTuiOwnerForHandoff
 } from './agent-session-handoff-lease-transitions'
 import { setAgentSessionHandoffStage } from './agent-session-lease-transitions'
 import {
@@ -41,6 +42,15 @@ export function rollbackStoredAgentSessionHandoffPreparation(
 ) {
   return store.transitionHandoff(args.sessionId, (record) =>
     rollbackAgentSessionHandoffPreparation({ ...args, record })
+  )
+}
+
+export function stopStoredRecoveringTuiOwnerForHandoff(
+  store: AgentSessionRecordStore,
+  args: { sessionId: string; expectedFence: number; operationId: string; now: number }
+) {
+  return store.transitionHandoff(args.sessionId, (record) =>
+    stopRecoveringTuiOwnerForHandoff({ ...args, record })
   )
 }
 

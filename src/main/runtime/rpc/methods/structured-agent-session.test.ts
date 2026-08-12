@@ -93,6 +93,8 @@ function hostStub(): StructuredAgentSessionHost {
     cancel: vi.fn(async () => ({ ok: true, replayed: false })),
     respondToPrompt: vi.fn(async () => ({ ok: true, replayed: false })),
     setOption: vi.fn(async () => ({ ok: true, replayed: false })),
+    requestHandoff: vi.fn(async () => ({ ok: true, replayed: false })),
+    handoffStatus: vi.fn(async () => ({ owner: 'tui', phase: 'queued' })),
     readOptions: vi.fn(async () => ({
       models: [{ id: 'gpt-live', label: 'GPT Live', isDefault: true, efforts: [] }],
       current: { model: 'gpt-live' }
@@ -310,6 +312,22 @@ describe('method routing', () => {
       'approval',
       'question'
     ])
+  })
+
+  it('routes a mobile reverse request through the host-owned handoff coordinator', async () => {
+    const params = {
+      envelope: envelope(),
+      direction: 'to-native',
+      mode: 'after-turn',
+      action: 'start'
+    }
+    const response = await call('agentSession.requestHandoff', params, {
+      ...STRUCTURED_CLIENT,
+      clientId: 'mobile-device-a'
+    })
+
+    expect(response).toMatchObject({ ok: true })
+    expect(hostCalls.requestHandoff).toHaveBeenCalledWith({ callerKey: 'mobile-device-a' }, params)
   })
 })
 

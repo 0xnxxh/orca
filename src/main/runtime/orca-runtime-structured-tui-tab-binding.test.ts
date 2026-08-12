@@ -177,15 +177,19 @@ describe('structured TUI launch tab binding', () => {
       terminalHandle: owner.terminal.handle
     }
     expect(transport.tuiStatus(owner)).toBe('busy')
-    await expect(transport.waitForTuiIdle(owner, new AbortController().signal)).resolves.toBe(false)
+    await expect(
+      transport.waitForTuiIdleOrExit(owner, new AbortController().signal)
+    ).resolves.toBeNull()
 
     explicitStatus = { ...explicitStatus, state: 'done', receivedAt: Date.now() }
     expect(transport.tuiStatus(owner)).toBe('idle')
-    await expect(transport.waitForTuiIdle(owner, new AbortController().signal)).resolves.toBe(true)
+    await expect(transport.waitForTuiIdleOrExit(owner, new AbortController().signal)).resolves.toBe(
+      'idle'
+    )
 
     const pty = (
       runtime as unknown as {
-        ptysById: Map<string, { launchToken: string | null }>
+        ptysById: Map<string, { connected: boolean; launchToken: string | null }>
       }
     ).ptysById.get('pty-structured')!
     pty.launchToken = null
@@ -205,5 +209,12 @@ describe('structured TUI launch tab binding', () => {
     await transport.waitForTuiExit(rebound)
     expect(waitForStructuredTuiPtyExit).toHaveBeenCalledWith('pty-structured')
     expect(waitForStructuredTuiProof).toHaveBeenCalledOnce()
+
+    explicitStatus = null
+    pty.connected = false
+    await expect(
+      transport.waitForTuiIdleOrExit(rebound, new AbortController().signal)
+    ).resolves.toBe('exited')
+    await expect(transport.stopFailedTuiLaunch?.(rebound)).resolves.toBeUndefined()
   })
 })

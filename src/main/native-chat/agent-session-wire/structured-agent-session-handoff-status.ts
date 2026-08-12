@@ -4,6 +4,17 @@ import type {
   AgentSessionHandoffStatus
 } from '../../../shared/agent-session-wire'
 import type { AgentSessionJournal } from '../agent-session-journal/journal-store'
+import type {
+  StructuredAgentSessionHandoffTransport,
+  StructuredTuiOwner
+} from './structured-agent-session-handoff-types'
+
+export function structuredTuiStatus(
+  owner: StructuredTuiOwner | undefined,
+  transport: StructuredAgentSessionHandoffTransport | undefined
+): 'idle' | 'busy' {
+  return owner ? (transport?.tuiStatus(owner) ?? 'busy') : 'busy'
+}
 
 export function idleStructuredHandoffStatus(record: AgentSessionRecord): AgentSessionHandoffStatus {
   if (

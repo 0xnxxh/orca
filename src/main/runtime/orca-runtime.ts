@@ -9170,15 +9170,11 @@ export class OrcaRuntimeService {
         }
       },
       waitForTuiExit: async (owner) => {
-        const current = this.refreshStructuredTuiOwnerBinding(owner)
-        await waitForStructuredTuiExitProof({
-          identity: current.process,
-          waitForExit: () => this.waitForStructuredTuiPtyExit(current.terminal.ptyId)
-        })
-        return current.transcriptPath ? { transcriptPath: current.transcriptPath } : {}
+        await this.waitForStructuredTuiOwnerExit(owner)
+        return owner.transcriptPath ? { transcriptPath: owner.transcriptPath } : {}
       },
-      waitForTuiIdle: async (owner, signal) => {
-        return this.waitForStructuredTuiIdle(owner, signal)
+      waitForTuiIdleOrExit: async (owner, signal) => {
+        return this.waitForStructuredTuiIdleOrExit(owner, signal)
       },
       reproveTuiOwner: async ({ record, owner }) => {
         const current = this.refreshStructuredTuiOwnerBinding(owner)
@@ -9254,12 +9250,17 @@ export class OrcaRuntimeService {
       stopRecoveredOwner: (record) => this.stopStructuredSessionProcess(record),
       tuiStatus: (owner) => this.structuredTuiStatus(owner),
       stopFailedTuiLaunch: async (owner) => {
-        const current = this.refreshStructuredTuiOwnerBinding(owner)
-        await this.closeTerminal(current.terminal.handle)
-        await this.waitForTerminal(current.terminal.handle, {
-          condition: 'exit',
-          timeoutMs: 15_000
-        })
+        if (this.ptysById.get(owner.terminal.ptyId)?.connected) {
+          const current = this.refreshStructuredTuiOwnerBinding(owner)
+          try {
+            await this.closeTerminal(current.terminal.handle)
+          } catch (error) {
+            if (this.ptysById.get(owner.terminal.ptyId)?.connected) {
+              throw error
+            }
+          }
+        }
+        await this.waitForStructuredTuiOwnerExit(owner)
       }
     }
   }
@@ -9305,18 +9306,29 @@ export class OrcaRuntimeService {
     }
   }
 
-  private async waitForStructuredTuiIdle(
+  private async waitForStructuredTuiOwnerExit(owner: StructuredTuiOwner): Promise<void> {
+    await waitForStructuredTuiExitProof({
+      identity: owner.process,
+      waitForExit: () => this.waitForStructuredTuiPtyExit(owner.terminal.ptyId)
+    })
+  }
+
+  private async waitForStructuredTuiIdleOrExit(
     owner: StructuredTuiOwner,
     signal: AbortSignal
-  ): Promise<boolean> {
+  ): Promise<'idle' | 'exited' | null> {
     const deadline = Date.now() + 250
     while (!signal.aborted && Date.now() < deadline) {
+      if (!this.ptysById.get(owner.terminal.ptyId)?.connected) {
+        await this.waitForStructuredTuiOwnerExit(owner)
+        return 'exited'
+      }
       if (this.structuredTuiStatus(owner) === 'idle') {
-        return true
+        return 'idle'
       }
       await new Promise((resolve) => setTimeout(resolve, 50))
     }
-    return false
+    return null
   }
 
   private async stopStructuredSessionProcess(record: AgentSessionRecord): Promise<void> {

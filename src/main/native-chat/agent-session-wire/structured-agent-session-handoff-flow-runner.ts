@@ -29,15 +29,16 @@ export class StructuredAgentSessionHandoffFlowRunner {
     params: AgentSessionHandoffRequest
     turnId: string | null
     fingerprint: string
+    tuiAlreadyExited?: boolean
   }): void {
-    const { callerKey, params, turnId, fingerprint } = input
+    const { callerKey, params, turnId, fingerprint, tuiAlreadyExited = false } = input
     const sessionId = params.envelope.sessionId
     this.input.operationGuard.start(sessionId, {
       callerKey,
       operationId: params.envelope.clientOperationId,
       fingerprint
     })
-    const flow = this.run(params, turnId)
+    const flow = this.run(params, turnId, tuiAlreadyExited)
       .then(() =>
         this.input.deps.store.recordOperationOutcome({
           callerKey,
@@ -58,7 +59,11 @@ export class StructuredAgentSessionHandoffFlowRunner {
     void flow.finally(() => this.active.delete(flow))
   }
 
-  private run(params: AgentSessionHandoffRequest, turnId: string | null): Promise<void> {
+  private run(
+    params: AgentSessionHandoffRequest,
+    turnId: string | null,
+    tuiAlreadyExited: boolean
+  ): Promise<void> {
     const sessionId = params.envelope.sessionId
     return this.input.deps.schedule(sessionId, async () => {
       if (turnId && params.mode === 'stop-turn') {
@@ -72,7 +77,8 @@ export class StructuredAgentSessionHandoffFlowRunner {
         : handoffStructuredSessionToNative(
             this.input.flowContext(),
             params,
-            params.action === 'retry'
+            params.action === 'retry',
+            tuiAlreadyExited
           ))
     })
   }

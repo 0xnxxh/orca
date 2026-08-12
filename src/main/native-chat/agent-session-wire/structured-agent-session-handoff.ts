@@ -27,6 +27,7 @@ import {
   failedStructuredHandoffStatus,
   idleStructuredHandoffStatus,
   structuredSessionHasPendingPrompt,
+  structuredTuiStatus,
   switchingStructuredHandoffStatus
 } from './structured-agent-session-handoff-status'
 import type {
@@ -58,9 +59,7 @@ export class StructuredAgentSessionHandoffCoordinator {
     )
   }
 
-  async drain(): Promise<void> {
-    await this.flowRunner.drain()
-  }
+  drain = (): Promise<void> => this.flowRunner.drain()
 
   async restore(sessionId: string): Promise<void> {
     await restoreStructuredAgentSessionHandoff(
@@ -159,8 +158,11 @@ export class StructuredAgentSessionHandoffCoordinator {
     const turnId = activeStructuredAgentSessionTurnId(
       this.deps.session(record.sessionId).journal.snapshot().items
     )
+    const tuiOwner = this.tuiOwners.get(record.sessionId)
     const busy =
-      expectedOwner === 'native' ? turnId !== null : this.tuiStatus(record.sessionId) !== 'idle'
+      expectedOwner === 'native'
+        ? turnId !== null
+        : structuredTuiStatus(tuiOwner, this.deps.transport) !== 'idle'
     if (busy && params.mode === 'now') {
       return this.refuseAdmitted(
         callerKey,
@@ -209,6 +211,7 @@ export class StructuredAgentSessionHandoffCoordinator {
     fingerprint: string
   ): void {
     const sessionId = params.envelope.sessionId
+    let tuiReadiness: 'idle' | 'exited' | null = null
     this.setStatus(sessionId, {
       owner: params.direction === 'to-tui' ? 'native' : 'tui',
       direction: params.direction,
@@ -220,17 +223,20 @@ export class StructuredAgentSessionHandoffCoordinator {
     const tuiOwner = this.tuiOwners.get(sessionId)
     this.queue.enqueue(
       sessionId,
-      (signal) =>
-        params.direction === 'to-tui'
-          ? !activeStructuredAgentSessionTurnId(
-              this.deps.session(sessionId).journal.snapshot().items
-            )
-          : tuiOwner
-            ? (this.deps.transport?.waitForTuiIdle(tuiOwner, signal) ?? false)
-            : false,
+      async (signal) => {
+        if (params.direction === 'to-tui') {
+          return !activeStructuredAgentSessionTurnId(
+            this.deps.session(sessionId).journal.snapshot().items
+          )
+        }
+        tuiReadiness = tuiOwner
+          ? ((await this.deps.transport?.waitForTuiIdleOrExit(tuiOwner, signal)) ?? null)
+          : null
+        return tuiReadiness !== null
+      },
       () => {
         const next = { ...params, mode: 'now' as const }
-        this.begin(callerKey, next, null, fingerprint)
+        this.begin(callerKey, next, null, fingerprint, tuiReadiness === 'exited')
       }
     )
   }
@@ -239,19 +245,16 @@ export class StructuredAgentSessionHandoffCoordinator {
     callerKey: string,
     params: AgentSessionHandoffRequest,
     turnId: string | null,
-    fingerprint: string
+    fingerprint: string,
+    tuiAlreadyExited = false
   ): void {
     this.flowRunner.begin({
       callerKey,
       params,
       turnId,
-      fingerprint
+      fingerprint,
+      tuiAlreadyExited
     })
-  }
-
-  private tuiStatus(sessionId: string): 'idle' | 'busy' {
-    const owner = this.tuiOwners.get(sessionId)
-    return owner ? (this.deps.transport?.tuiStatus(owner) ?? 'busy') : 'busy'
   }
 
   private flowContext(): StructuredAgentSessionHandoffFlowContext {
@@ -259,9 +262,7 @@ export class StructuredAgentSessionHandoffCoordinator {
       deps: this.deps,
       owner: (sessionId) => this.tuiOwners.get(sessionId),
       retainOwner: (sessionId, owner) => this.tuiOwners.set(sessionId, owner),
-      releaseOwner: (sessionId) => {
-        this.tuiOwners.delete(sessionId)
-      },
+      releaseOwner: (sessionId) => void this.tuiOwners.delete(sessionId),
       setStatus: (sessionId, status) => this.setStatus(sessionId, status),
       enterPreparing: (record, operationId, direction) =>
         this.enterPreparing(record, operationId, direction),
