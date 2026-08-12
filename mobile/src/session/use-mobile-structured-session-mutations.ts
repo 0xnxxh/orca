@@ -12,6 +12,7 @@ import type {
   AgentSessionOptionResult,
   AgentSessionPromptResult
 } from '../../../src/shared/agent-session-wire'
+import { agentSessionRefusalOperationState } from '../../../src/shared/agent-session-refusal-retry'
 import {
   createStructuredAgentSessionOperationId,
   structuredAgentSessionPayloadFingerprint
@@ -103,7 +104,7 @@ export function useMobileStructuredSessionMutations(args: {
       }
       const result = response.result as AgentSessionMutationResult<TValue>
       if (!result.ok) {
-        if (result.refusal.code !== 'agent_session_operation_unknown') {
+        if (agentSessionRefusalOperationState(result.refusal.code) === 'settled-rejected') {
           operationIdsRef.current.delete(mutationKey)
         }
         if (matchesActiveContext(activeContextRef.current, client, sessionId, fence)) {

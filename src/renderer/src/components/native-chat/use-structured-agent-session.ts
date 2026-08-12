@@ -12,6 +12,7 @@ import type {
 } from '../../../../shared/agent-session-wire'
 import { getAgentSessionOptionCatalog } from '../../../../shared/agent-session-option-catalog'
 import type { SessionOptionsSurface } from '../../../../shared/native-chat-session-options'
+import { agentSessionRefusalOperationState } from '../../../../shared/agent-session-refusal-retry'
 import { structuredAgentSessionPayloadFingerprint } from '../../../../shared/structured-agent-session-mutation'
 import {
   applyStructuredAgentSessionOptions,
@@ -105,7 +106,7 @@ export function useStructuredAgentSession(args: {
         return null
       }
       if (!result.ok) {
-        if (result.refusal.code !== 'agent_session_operation_unknown') {
+        if (agentSessionRefusalOperationState(result.refusal.code) === 'settled-rejected') {
           operationIds.current.delete(key)
         }
         if (stateRef.current.fence === targetFence) {

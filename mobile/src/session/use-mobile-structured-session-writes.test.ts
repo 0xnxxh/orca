@@ -424,6 +424,68 @@ describe('useMobileStructuredSessionWrites', () => {
     expect(operationIds[1]).not.toBe(operationIds[0])
   })
 
+  it('reuses a pending ledger operation after an admission refusal without ledger growth', async () => {
+    sendRequest
+      .mockResolvedValueOnce({
+        id: 'set-option-stale',
+        ok: true,
+        _meta: { runtimeId: 'runtime-1' },
+        result: {
+          ok: false,
+          refusal: {
+            code: 'agent_session_checkpoint_stale',
+            message: 'runtime fence advanced',
+            currentFence: 4
+          }
+        }
+      })
+      .mockResolvedValueOnce({
+        id: 'set-option-replayed',
+        ok: true,
+        _meta: { runtimeId: 'runtime-1' },
+        result: {
+          ok: true,
+          replayed: false,
+          fence: 4,
+          cursor: { epoch: 'epoch-1', sequence: 2 },
+          value: {
+            key: 'model',
+            value: 'gpt-5.6-sol',
+            options: { model: 'gpt-5.6-sol' }
+          }
+        }
+      })
+
+    await act(async () => {
+      expect(await api!.setOption('model', 'gpt-5.6-sol')).toBeNull()
+    })
+    fence = 4
+    await act(async () => {
+      renderer!.update(createElement(Probe))
+      await Promise.resolve()
+    })
+    await act(async () => {
+      expect(await api!.setOption('model', 'gpt-5.6-sol')).toMatchObject({
+        options: { model: 'gpt-5.6-sol' }
+      })
+    })
+
+    const operationIds = sendRequest.mock.calls.map(
+      ([, params]) =>
+        (params as { envelope: { clientOperationId: string } }).envelope.clientOperationId
+    )
+    expect(operationIds[0]).toBe(operationIds[1])
+    expect(operationIds[0]).toMatch(/-00000000000040008000000000000001$/)
+    expect(
+      sendRequest.mock.calls.map(
+        ([, params]) =>
+          (params as { envelope: { expectedRuntimeFence: number } }).envelope.expectedRuntimeFence
+      )
+    ).toEqual([3, 4])
+    const crypto = await import('expo-crypto')
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(1)
+  })
+
   it('isolates mutation ids and late errors across session changes', async () => {
     const first = deferred<RpcSuccess>()
     sendRequest.mockImplementationOnce(() => first.promise).mockResolvedValueOnce(accepted('b'))
