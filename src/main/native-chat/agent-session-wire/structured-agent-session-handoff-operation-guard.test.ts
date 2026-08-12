@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   agentSessionLeaseFixture,
   agentSessionRecordFixture
@@ -11,8 +11,13 @@ import type {
   AgentSessionHandoffStatus
 } from '../../../shared/agent-session-wire'
 import { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
-import { queuedStructuredHandoffCanBegin } from './structured-agent-session-handoff-queue'
+import { openAgentSessionJournal } from '../agent-session-journal/journal-store'
+import {
+  queuedStructuredHandoffCanBegin,
+  StructuredAgentSessionHandoffQueue
+} from './structured-agent-session-handoff-queue'
 import { StructuredAgentSessionHandoffOperationGuard } from './structured-agent-session-handoff-operation-guard'
+import { assertScheduledStructuredHandoffIsAdmissible } from './structured-agent-session-handoff-revalidation'
 
 const NOW = 1_800_000_000_000
 const SESSION = 'session-alpha-1'
@@ -157,5 +162,60 @@ describe('queued handoff fence revalidation', () => {
     expect(queuedStructuredHandoffCanBegin(agentSessionRecordFixture(lease), queued, params)).toBe(
       false
     )
+  })
+
+  it('cannot cancel after the idle waiter claims the queued operation', async () => {
+    const queue = new StructuredAgentSessionHandoffQueue()
+    const ready = vi.fn()
+    queue.enqueue(SESSION, () => true, ready)
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce())
+    expect(queue.cancel(SESSION)).toBe(false)
+  })
+})
+
+describe('scheduled handoff revalidation', () => {
+  it('refuses a native turn accepted ahead of the scheduled handoff', async () => {
+    root = await mkdtemp(join(tmpdir(), 'orca-handoff-revalidation-'))
+    const journal = await openAgentSessionJournal({
+      identity: {
+        sessionId: SESSION,
+        workspaceId: 'workspace-1',
+        hostId: 'local',
+        agent: 'claude',
+        providerHandle: { kind: 'claude', sessionId: SESSION, leafUuid: null }
+      },
+      journalDir: join(root, 'journal')
+    })
+    const journalSequence = journal.cursor().sequence
+    await journal.appendItem(
+      { provider: 'orca', clientMessageId: 'turn-running' },
+      { kind: 'status', text: 'running', turnLifecycle: { turnId: 'turn-1', state: 'running' } },
+      { fence: 7 }
+    )
+    const params: AgentSessionHandoffRequest = {
+      envelope: {
+        sessionId: SESSION,
+        clientOperationId: OPERATION_A,
+        expectedRuntimeFence: 7,
+        payloadFingerprint: 'fingerprint'
+      },
+      direction: 'to-tui',
+      mode: 'now',
+      action: 'start'
+    }
+
+    expect(() =>
+      assertScheduledStructuredHandoffIsAdmissible({
+        record: agentSessionRecordFixture(
+          agentSessionLeaseFixture({ runtimeKind: 'native', ownerProcess: null })
+        ),
+        journal,
+        params,
+        turnId: null,
+        journalSequence,
+        tuiAlreadyExited: false,
+        tuiStatus: 'busy'
+      })
+    ).toThrow('session changed')
   })
 })
