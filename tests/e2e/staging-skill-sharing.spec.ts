@@ -413,7 +413,7 @@ function expectPhysicalInstall(
   if (target === 'windows') {
     expect(skill?.canonicalPath).toMatch(/^[A-Za-z]:[\\/]/)
     expect(skill?.canonicalPath).toContain(`.agents\\skills\\${SKILL_NAME}`)
-  } else if (target === 'wsl' || target === 'ssh') {
+  } else if (target === 'wsl') {
     expect(skill?.canonicalPath).toMatch(/^\/home\/[^/]+\/\.agents\/skills\//)
     expect(skill?.canonicalPath.endsWith(`/${SKILL_NAME}`)).toBe(true)
   } else {

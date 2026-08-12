@@ -236,6 +236,15 @@ Guarded wake retry `31630802215` succeeded before that decision. The first clean
 mutation step; guarded sleep retry `31631379891` succeeded. Independent reads verified SQL
 `NEVER`/`STOPPED`, all three Relay MIGs stable and reached at target zero with no active actions,
 and zero minimum instances on each active API, Auth, and Relay revision.
+Guarded wake `31634214856` later restored the configured topology for an isolated native macOS
+ARM64 OpenSSH target whose home, keys, and relay state lived under one temporary root. The full
+publish/install/update/rollback/revoke/remove/delete staging lifecycle passed in 20.1 seconds
+without local fallback. The run also corrected the test oracle to support valid absolute POSIX SSH
+homes outside `/home`. The encrypted GitHub artifact was deleted immediately; the SSH service,
+relay, install, temporary home, and one-time key material were removed. Guarded sleep
+`31635145830` passed, and independent reads confirmed SQL `NEVER`/`STOPPED`, every MIG stable at
+zero with no active actions, and API/Auth/Relay minimum scale zero. Supported Windows SSH and the
+time-gated quarantine deletion remain open.
 Production remains untouched.
 
 A final renderer lifecycle review fenced managed-install inventory by request generation so a

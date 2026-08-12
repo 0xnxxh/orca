@@ -6,7 +6,7 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` through `abe92d565b`; no PR.
+- Orca implementation: `skills-share` through `43a1dbeb88`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   kill-switch discovery PR `#342` merged as `c2bef2ff20fb`; production remains untouched.
@@ -243,6 +243,15 @@ Validated so far:
   package deletion. The remote install, Orca SSH target, encrypted credential artifact, one-time
   keys, and VM were removed. Guarded sleep `31604391897` passed; independent reads verified SQL
   `NEVER`/`STOPPED` and C1/C2/C3 target zero, stable, and reached. Production was untouched.
+- Guarded wake `31634214856` restored the two configured cells at Cloud `dfb8359ff5`. An isolated
+  native `Darwin arm64` OpenSSH target with a separate temporary home then passed the full staging
+  lifecycle in 20.1 seconds: publish v1, SSH-owned install, v2 update, managed-version checks,
+  rollback, revocation with installed-copy preservation, removal, and Cloud package deletion.
+  This corrected the staging oracle to accept absolute POSIX homes outside `/home`. The GitHub
+  ciphertext artifact was deleted immediately; the SSH service, relay, install, temporary home,
+  and one-time keys were removed. Guarded sleep `31635145830` passed; independent reads verified
+  SQL `NEVER`/`STOPPED`, all three MIGs stable and reached at zero with no active actions, and
+  API/Auth/Relay minimum scale zero. Production was untouched.
 - Guarded wake `31605729090` restored the same configured topology. An isolated headless Orca host
   with a separate home/profile then passed the full paired-runtime staging lifecycle in 12.5
   seconds, proving host-owned install, update, managed-install state, rollback, revocation
@@ -260,12 +269,12 @@ Validated so far:
 Rollout gate: staging infrastructure, OIDC owner identity exchange, anonymous bearer lifecycle,
 owner management, browser-free desktop bundle lifecycle, privacy-safe logging, published-object
 recovery, bounded finalization load, and guarded rollback-capable deployment passed. Production
-remains untouched. Native Windows, real Ubuntu 24.04 WSL filesystems, physical Ubuntu 20.04 SSH,
-and paired non-Windows staging passed. On 2026-08-12, the owner accepted the remaining live
-WSL-to-staging journey as duplicate evidence after the combined 449-test physical Windows/WSL run
-and native-Windows staging lifecycle; this does not treat WSL semantics as identical to macOS.
-Physical SSH macOS/Windows and the quarantine lifecycle deletion remain. The shared staging data
-plane is asleep.
+remains untouched. Native Windows, real Ubuntu 24.04 WSL filesystems, physical Ubuntu 20.04 and
+macOS ARM64 SSH, and paired non-Windows staging passed. On 2026-08-12, the owner accepted the
+remaining live WSL-to-staging journey as duplicate evidence after the combined 449-test physical
+Windows/WSL run and native-Windows staging lifecycle; this does not treat WSL semantics as
+identical to macOS. Supported Windows SSH and the quarantine lifecycle deletion remain. The shared
+staging data plane is asleep.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
 
@@ -1236,16 +1245,16 @@ residual follow-up work.
 ## 11. Implement and validate SSH targets
 
 The 2026-08-11 live Orca inventory contained only the connected `windows 2` environment and no
-non-local worktree or repository. The later staging journey registered a disposable Ubuntu 20.04
-host directly through Orca's SSH provider and removed it afterward. Isolated physical SSH macOS
-and supported Windows targets are still required for their platform-specific gates.
+non-local worktree or repository. Later staging journeys registered disposable Ubuntu 20.04 and
+native macOS ARM64 hosts directly through Orca's SSH provider and removed them afterward. A
+supported Windows SSH target remains required for its platform-specific gate.
 
 The Docker-backed Linux SSH harness exercises the production Electron → SSH provider → relay →
 remote installer path. Its loopback package origin is unreachable from the container, forcing
 client-mediated chunk upload. The test independently verifies Cloud request receipts and remote
 files for global, Git-worktree, and plain-folder installs, unchanged preview, listing, and removal.
-The physical staging journey additionally passed the supported Ubuntu 20.04/glibc 2.31 floor;
-physical SSH macOS and supported Windows remain open.
+Physical staging journeys additionally passed the supported Ubuntu 20.04/glibc 2.31 floor and
+native macOS ARM64; supported Windows remains open.
 
 - [x] Define a host-side installer command that invokes the same installer core and structured
       result contract.
@@ -1260,8 +1269,8 @@ physical SSH macOS and supported Windows remain open.
 - [x] Route selective bundle installs through an additive SSH method with direct download,
       client-mediated fallback, per-skill results, and old-host capability fencing.
 - [ ] Test SSH-only macOS, Linux at the supported floor, and Windows where the existing provider
-      supports it. Ubuntu 20.04/glibc 2.31 passed the full live staging lifecycle; macOS and
-      supported Windows remain open.
+      supports it. Ubuntu 20.04/glibc 2.31 and native macOS ARM64 passed the full live staging
+      lifecycle; supported Windows remains open.
 - [x] Test Git worktree and folder-workspace scope over SSH through the disposable Docker Linux
       target and verify the host-owned paths independently.
 - [ ] Test connection loss during upload, extraction, commit, provenance, and result return. Lost
@@ -1420,7 +1429,8 @@ disconnect boundaries remain separate gates below.
       coverage includes global, Git-worktree, and plain-folder scopes, while headless coverage
       includes global and Git-worktree scopes.
 - [ ] Run paired runtimes with both client-newer and server-newer combinations.
-- [ ] Run supported SSH-only macOS, Linux, and Windows targets.
+- [ ] Run supported SSH-only macOS, Linux, and Windows targets. Native macOS ARM64 and Ubuntu
+      20.04/glibc 2.31 passed full staging lifecycles; supported Windows remains open.
 - [x] Run a remote target without outbound Cloud connectivity through chunk transfer. The Docker
       SSH target could not reach the loopback package origin and completed global, worktree, and
       folder installation through client-mediated upload.
@@ -1543,7 +1553,9 @@ disconnect boundaries remain separate gates below.
       passed 449 tests across 67 files, and the owner accepted the additional live WSL Cloud
       journey as duplicate evidence on 2026-08-12. Physical WSL disconnect/cancellation injection
       remains open.
-- [ ] Real SSH paths and host-owned resolution pass.
+- [x] Real SSH paths and host-owned resolution pass. Native macOS ARM64 and Ubuntu 20.04/glibc
+      2.31 independently passed SSH-owned global install, update, rollback, managed inventory,
+      revocation preservation, removal, and Cloud cleanup without local fallback.
 - [x] Mixed-version tests pass in both directions. Bundle/install capabilities are additive, the
       cross-version wire suite passes client-newer and host-newer, and capability-loss tests prove
       execution is blocked after a stale preview.
