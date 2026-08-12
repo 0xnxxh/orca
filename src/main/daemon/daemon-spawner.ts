@@ -30,8 +30,9 @@ export type DaemonPidFile = {
 
 /**
  * 'degraded-new-pty-fallback' — adopted, but it cannot spawn fresh PTYs.
- * 'held' — deliberately kept without adopting it: it owns live terminals but cannot
- * answer a handshake, so there is no lease to take and none must be attempted.
+ * 'held' — deliberately kept without adopting it, because replacing it might end live work:
+ * either it demonstrably owns terminals and cannot answer a handshake, or it could not be
+ * classified at all. Both mean there is no lease to take, and none must be attempted.
  */
 export type DaemonLaunchMode = 'degraded-new-pty-fallback' | 'held'
 
