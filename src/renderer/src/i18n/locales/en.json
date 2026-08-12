@@ -14259,9 +14259,7 @@
           "33741dd973": "Back to runs"
         },
         "AutomationSchedulePicker": {
-          "22359b186a": "AM or PM",
           "9e677335b0": "Minute",
-          "6b802ecc99": "Hour",
           "d90981f766": "Time",
           "6b914c5fbb": "Day",
           "233b8c94b6": "Cadence",
@@ -14270,6 +14268,11 @@
           "57e83307d0": "Weekdays",
           "837d902bba": "Weekly",
           "ddba78647e": "Custom cron"
+        },
+        "AutomationTimeField": {
+          "39ec1383f6": "AM or PM",
+          "32a5e4e35e": "Minute",
+          "aa593eb5e2": "Hour"
         },
         "AutomationSessionField": {
           "f3c76dce51": "Reuse",

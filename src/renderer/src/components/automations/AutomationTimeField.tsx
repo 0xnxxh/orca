@@ -219,17 +219,19 @@ export function AutomationTimeField({
               min={0}
               max={59}
               ariaLabel={translate(
-                'auto.components.automations.AutomationSchedulePicker.9e677335b0',
+                'auto.components.automations.AutomationTimeField.32a5e4e35e',
                 'Minute'
               )}
               onCommit={(minute) => patchTime({ minute })}
             />
             <button
               type="button"
-              aria-label={translate(
-                'auto.components.automations.AutomationSchedulePicker.22359b186a',
+              // The label overrides the visible text, so name the current period explicitly.
+              aria-label={`${translate(
+                'auto.components.automations.AutomationTimeField.39ec1383f6',
                 'AM or PM'
-              )}
+              )}: ${clock.period}`}
+              aria-pressed={clock.period === 'PM'}
               onClick={() => patchTime({ period: clock.period === 'AM' ? 'PM' : 'AM' })}
               className="ml-auto h-7 shrink-0 rounded-sm px-2 text-sm font-medium text-muted-foreground outline-none transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:bg-accent/60 focus-visible:text-foreground"
             >
@@ -246,7 +248,7 @@ export function AutomationTimeField({
               min={0}
               max={59}
               ariaLabel={translate(
-                'auto.components.automations.AutomationSchedulePicker.9e677335b0',
+                'auto.components.automations.AutomationTimeField.32a5e4e35e',
                 'Minute'
               )}
               onCommit={(minute) => patchTime({ minute })}

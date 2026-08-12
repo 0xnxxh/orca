@@ -91,8 +91,23 @@ describe('AutomationTimeField interactions', () => {
 
     expect(screen.getByLabelText('Hour')).toHaveValue('1')
     expect(screen.getByLabelText('Minute')).toHaveValue('15')
-    expect(screen.getByRole('button', { name: 'AM or PM' })).toHaveTextContent('PM')
+    expect(screen.getByRole('button', { name: /^AM or PM:/ })).toHaveTextContent('PM')
     expect(document.querySelector('[data-slot="select"]')).toBeNull()
+  })
+
+  it('names the selected period for assistive technology', async () => {
+    const user = userEvent.setup()
+    render(<ControlledTimeField initialTime="01:15" />)
+
+    const period = screen.getByRole('button', { name: 'AM or PM: AM' })
+    expect(period).toHaveAttribute('aria-pressed', 'false')
+
+    await user.click(period)
+
+    expect(screen.getByRole('button', { name: 'AM or PM: PM' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
   it('renders minute-only mode for hourly cadence', () => {
@@ -100,7 +115,7 @@ describe('AutomationTimeField interactions', () => {
 
     expect(screen.getByLabelText('Minute')).toHaveValue('15')
     expect(screen.queryByLabelText('Hour')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'AM or PM' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^AM or PM:/ })).toBeNull()
   })
 
   it('commits typed hour/minute and toggles AM/PM into 24h storage', async () => {
@@ -120,9 +135,9 @@ describe('AutomationTimeField interactions', () => {
     expect(onTimeChange).toHaveBeenLastCalledWith('11:05')
 
     onTimeChange.mockClear()
-    await user.click(screen.getByRole('button', { name: 'AM or PM' }))
+    await user.click(screen.getByRole('button', { name: /^AM or PM:/ }))
     expect(onTimeChange).toHaveBeenLastCalledWith('23:05')
-    expect(screen.getByRole('button', { name: 'AM or PM' })).toHaveTextContent('PM')
+    expect(screen.getByRole('button', { name: /^AM or PM:/ })).toHaveTextContent('PM')
   })
 
   it('treats empty blur as min and does not re-fire after 2-digit auto-commit', async () => {
