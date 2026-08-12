@@ -18,11 +18,7 @@ export function replayPreviewConnectionSnapshot(args: {
   write: (chunk: string, live: boolean) => void
 }): void {
   const { snapshot, kittyKeyboardModes } = args
-  // Why the carry: a resync snapshot from an owner that proves nothing (grid
-  // change, capture overflow against an old host) must not erase what this
-  // mirror already proved from live output — the pane's own snapshot policy
-  // A constructor-fresh mirror carries nothing: its known-zero was
-  // never proven for the pre-existing PTY the preview attaches to.
+  // Why: carry only live-proven flags across a flagless resync; a fresh mirror's zero is ungrounded.
   const provenFlags =
     parseTerminalKittyKeyboardFlags(snapshot.kittyKeyboardFlags) ??
     (kittyKeyboardModes.hasProvenBaseline ? kittyKeyboardModes.snapshotFlags : undefined)

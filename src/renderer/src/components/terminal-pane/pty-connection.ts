@@ -4755,7 +4755,9 @@ export function connectPanePty(
             // consumed an old-host snapshot that proved nothing, and its
             // conservative `0` fallback must not be republished downstream as
             // a host-proven inactive protocol.
-            const provenKittyFlags = kittyKeyboardModes.snapshotFlags
+            const provenKittyFlags = kittyKeyboardModes.hasProvenBaseline
+              ? kittyKeyboardModes.snapshotFlags
+              : undefined
             return {
               data,
               cols: pane.terminal.cols,

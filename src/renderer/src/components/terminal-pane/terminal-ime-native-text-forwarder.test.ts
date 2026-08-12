@@ -441,6 +441,15 @@ describe('installTerminalImeNativeTextForwarder', () => {
       expect(sendInput.mock.calls.map((call) => call[0])).toEqual(['\x1b[44u', '\x1b[44;1:3u'])
     })
 
+    it('settles an owed release before a fresh same-key press after a lost keyup', () => {
+      const { forwarder, sendInput } = installWithFlags(() => 0b1010)
+      expect(forwarder.claimKeyEvent(keyEvent({ key: ',', code: 'Comma' }))).toBe(true)
+      dispatchInsertText(textarea, '，')
+
+      expect(forwarder.claimKeyEvent(keyEvent({ key: ',', code: 'Comma' }))).toBe(true)
+      expect(sendInput.mock.calls.map((call) => call[0])).toEqual(['\x1b[44u', '\x1b[44;1:3u'])
+    })
+
     it('suppresses the owed release when the app popped kitty mode before the keyup', () => {
       // A TUI that quits on the pressed key pops its negotiation before the
       // keyup; a CSI-u release would land in the successor shell as junk.

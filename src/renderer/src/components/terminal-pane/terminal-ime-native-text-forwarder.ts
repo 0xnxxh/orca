@@ -233,13 +233,17 @@ export function installTerminalImeNativeTextForwarder(args: {
         pendingCommit = null
       }
       if (event.repeat !== true) {
-        // A fresh press of a key we never saw released means its keyup was
-        // lost; drop the stale record rather than releasing it against this
-        // new press. Runs for chorded and composing keydowns too, so a stale
-        // tombstone cannot swallow the keyup of a press xterm itself encoded.
+        // Why: a fresh same-key press proves the prior press ended; settle its owed release first.
         const staleRecordId = findClaimedRecordId(event)
         if (staleRecordId !== null) {
-          claimedKeyRecords.delete(staleRecordId)
+          settleRelease(staleRecordId, {
+            key: event.key,
+            code: event.code,
+            shiftKey: event.shiftKey === true,
+            ctrlKey: event.ctrlKey,
+            altKey: event.altKey,
+            metaKey: event.metaKey
+          })
         }
       }
       if (!isNativeTextKeydown(event, args.isComposing())) {
