@@ -1,0 +1,19 @@
+{
+  "partitioned": {
+    "name": "partitioned-google",
+    "value": "sta4013-live-value",
+    "domain": ".google.com",
+    "path": "/",
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None",
+    "partitionKey": {"topLevelSite": "https://example.com", "hasCrossSiteAncestor": true}
+  },
+  "stale": {
+    "name": "stale",
+    "value": "remove-me",
+    "domain": "stale.example",
+    "path": "/",
+    "secure": true
+  }
+}

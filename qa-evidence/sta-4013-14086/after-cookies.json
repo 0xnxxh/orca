@@ -1,0 +1,27 @@
+{
+  "partitioned": {
+    "name": "partitioned-google",
+    "value": "sta4013-live-value",
+    "domain": ".google.com",
+    "path": "/",
+    "httpOnly": true,
+    "secure": true,
+    "sameSite": "None",
+    "partitionKey": {"topLevelSite": "https://example.com", "hasCrossSiteAncestor": true}
+  },
+  "stalePresent": false,
+  "import": {
+    "ok": true,
+    "browser": "chrome",
+    "profileName": "stably.ai",
+    "sourceCookies": 941,
+    "importedCookies": 869,
+    "domains": 196,
+    "memoryLoaded": 800,
+    "memoryFailed": 69,
+    "skippedGoogleIntegrity": 4,
+    "skippedNonTransplantable": 68,
+    "visibleJarCountAfter": 611
+  },
+  "unchanged": true
+}
