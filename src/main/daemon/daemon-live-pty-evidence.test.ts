@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { inspectDaemonPtyOwnership } from './daemon-live-pty-evidence'
 import type { ProcessTableRow } from '../../shared/process-table-snapshot'
-import type { WindowsProcessCandidate } from '../providers/windows-foreground-process-rows'
 
 const { readFreshProcessTable, readCachedProcessTable } = vi.hoisted(() => ({
   readFreshProcessTable: vi.fn(async () => [] as ProcessTableRow[]),
@@ -25,10 +24,6 @@ const daemonRow = row(DAEMON_PID, 1, { command: 'daemon-entry.js' })
 
 // macOS wraps every terminal in login(1); only the wrapper is the session leader.
 const LOGIN_WRAPPER = '/usr/bin/login -flpq nwparker /bin/bash …'
-
-function windowsCandidate(pid: number): WindowsProcessCandidate {
-  return { pid, ppid: DAEMON_PID, name: 'bash.exe', command: 'bash', executablePath: '', depth: 1 }
-}
 
 function posixTable(rows: ProcessTableRow[]): () => Promise<ProcessTableRow[]> {
   return async () => rows
@@ -257,128 +252,44 @@ describe('inspectDaemonPtyOwnership on POSIX', () => {
       })
     ).resolves.toBe('owns-live-ptys')
   })
-
-  it('never consults the Windows enumerator on POSIX', async () => {
-    const queryWindowsDescendants = vi.fn(async () => [windowsCandidate(101)])
-
-    await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, {
-        platform: 'darwin',
-        readPosixProcessTable: posixTable([daemonRow]),
-        queryWindowsDescendants
-      })
-    ).resolves.toBe('no-live-ptys')
-    expect(queryWindowsDescendants).not.toHaveBeenCalled()
-  })
 })
 
 describe('inspectDaemonPtyOwnership on win32', () => {
-  it('reports live PTY ownership from a non-empty descendant list', async () => {
-    const queryWindowsDescendants = vi.fn(async () => [windowsCandidate(101)])
+  it('abstains rather than counting descendants it cannot classify', async () => {
+    // Why no verdict at all: the POSIX signal is that a hosted terminal is a session leader,
+    // and Windows has no equivalent — so the only available answer was "any descendant",
+    // which counts the orphaned conpty hosts a wedged daemon cannot reap. Holding on those
+    // would make a wedged, empty daemon unreplaceable forever. 'unknown' leaves Windows as it
+    // was before this change instead of trading one failure mode for a worse one.
+    const readPosixProcessTable = vi.fn(async () => [daemonRow, row(101, DAEMON_PID)])
 
     await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'win32', queryWindowsDescendants })
-    ).resolves.toBe('owns-live-ptys')
-    // Why: a cached table can predate the very PTYs this decision protects.
-    expect(queryWindowsDescendants).toHaveBeenCalledWith(DAEMON_PID, { fresh: true })
-  })
-
-  it('reports no live PTYs for an observed root with an empty descendant list', async () => {
-    await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, {
-        platform: 'win32',
-        queryWindowsDescendants: async () => []
-      })
-    ).resolves.toBe('no-live-ptys')
-  })
-
-  it('ignores the conpty warmup processes the daemon spawns for itself', async () => {
-    // Casing and padding vary with how the OS recorded the command line, and this branch counts
-    // *any* descendant — so without the match a daemon hosting nothing would look occupied.
-    await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, {
-        platform: 'win32',
-        queryWindowsDescendants: async () => [
-          { ...windowsCandidate(101), command: '  CMD.EXE /C EXIT  ' },
-          { ...windowsCandidate(102), command: 'Cmd /C Exit' }
-        ]
-      })
-    ).resolves.toBe('no-live-ptys')
-  })
-
-  it('still counts a hosted terminal sitting beside the conpty warmup', async () => {
-    await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, {
-        platform: 'win32',
-        queryWindowsDescendants: async () => [
-          { ...windowsCandidate(101), command: 'cmd.exe /c exit' },
-          { ...windowsCandidate(202), command: 'claude' }
-        ]
-      })
-    ).resolves.toBe('owns-live-ptys')
-  })
-
-  it('does not exclude a command that merely starts with the warmup command', async () => {
-    await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, {
-        platform: 'win32',
-        queryWindowsDescendants: async () => [
-          { ...windowsCandidate(101), command: 'cmd.exe /c exit && npm run dev' }
-        ]
-      })
-    ).resolves.toBe('owns-live-ptys')
-  })
-
-  it('reports unknown when enumeration failed or the root was absent', async () => {
-    await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, {
-        platform: 'win32',
-        queryWindowsDescendants: async () => null
-      })
-    ).resolves.toBe('unknown')
-  })
-
-  it('reports unknown when the enumerator throws', async () => {
-    await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, {
-        platform: 'win32',
-        queryWindowsDescendants: async () => {
-          throw new Error('powershell unavailable')
-        }
-      })
-    ).resolves.toBe('unknown')
-  })
-
-  it('gives up as unknown when enumeration blows its deadline', async () => {
-    // Why bounded: the CIM query has no budget of its own and can queue behind an in-flight
-    // scan, so an unbounded wait would stall the launch path. Blind is safe here; hanging is not.
-    const queryWindowsDescendants = vi.fn(() => new Promise<WindowsProcessCandidate[]>(() => {}))
-
-    await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, {
-        platform: 'win32',
-        windowsDeadlineMs: 5,
-        queryWindowsDescendants
-      })
-    ).resolves.toBe('unknown')
-    expect(queryWindowsDescendants).toHaveBeenCalled()
-  })
-
-  it('never consults the POSIX table on win32', async () => {
-    const readPosixProcessTable = vi.fn(async () => [daemonRow])
-
-    await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, {
-        platform: 'win32',
-        readPosixProcessTable,
-        queryWindowsDescendants: async () => null
-      })
+      inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'win32', readPosixProcessTable })
     ).resolves.toBe('unknown')
     expect(readPosixProcessTable).not.toHaveBeenCalled()
   })
 })
 
 describe('inspectDaemonPtyOwnership sampling', () => {
+  it('will not let a blind confirming read turn emptiness into a verdict', async () => {
+    // Emptiness authorizes a kill, so it needs corroboration. A read that saw nothing at all
+    // corroborates nothing — treating it as agreement is the step this module refuses.
+    const readPosixProcessTable = vi
+      .fn<() => Promise<ProcessTableRow[]>>()
+      .mockResolvedValueOnce([daemonRow])
+      .mockRejectedValueOnce(new Error('ps timed out'))
+
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        posixDeadlineMs: 5,
+        readPosixProcessTable,
+        readCachedPosixProcessTable: async () => {
+          throw new Error('cached read blind too')
+        }
+      })
+    ).resolves.toBe('unknown')
+  })
   it('takes a conclusive answer on the first read, without re-sampling', async () => {
     const readPosixProcessTable = vi.fn(async () => [daemonRow, row(101, DAEMON_PID)])
 

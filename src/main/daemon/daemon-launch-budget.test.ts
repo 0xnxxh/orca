@@ -6,8 +6,7 @@ import { OCCUPANCY_IPC_BUDGET_MS } from './daemon-occupancy'
 import { ENDPOINT_PROBE_TIMEOUT_MS } from './daemon-endpoint-probe'
 import {
   POSIX_OWNERSHIP_PROBE_DEADLINE_MS,
-  PTY_OWNERSHIP_PROBE_ATTEMPTS,
-  WINDOWS_OWNERSHIP_PROBE_DEADLINE_MS
+  PTY_OWNERSHIP_PROBE_ATTEMPTS
 } from './daemon-live-pty-evidence'
 
 /**
@@ -17,8 +16,9 @@ import {
 describe('wedged-daemon classification budget', () => {
   it.each([
     // Identity probe: a synchronous `ps -p` on POSIX, a powershell CIM query on Windows.
+    // Windows reads no process table at all, so its evidence deadline is zero.
     ['posix', POSIX_OWNERSHIP_PROBE_DEADLINE_MS, 2_000],
-    ['win32', WINDOWS_OWNERSHIP_PROBE_DEADLINE_MS, 3_000]
+    ['win32', 0, 3_000]
   ])(
     'is spent well inside the startup fail-open cap on %s',
     (_platform, evidenceDeadlineMs, identityProbeMs) => {

@@ -3,7 +3,6 @@ import {
   getProcessTableSnapshot,
   type ProcessTableRow
 } from '../../shared/process-table-snapshot'
-import { queryWindowsProcessDescendants } from '../providers/windows-foreground-process-rows'
 
 /**
  * Out-of-band answer to "is this daemon still hosting running terminals?".
@@ -25,8 +24,6 @@ export type DaemonPtyOwnershipDeps = {
   platform?: NodeJS.Platform
   readPosixProcessTable?: () => Promise<ProcessTableRow[]>
   readCachedPosixProcessTable?: () => Promise<ProcessTableRow[]>
-  queryWindowsDescendants?: typeof queryWindowsProcessDescendants
-  windowsDeadlineMs?: number
   posixDeadlineMs?: number
 }
 
@@ -37,13 +34,6 @@ export type DaemonPtyOwnershipDeps = {
  * This runs only on the replace path, after ~60s of grace is already spent.
  */
 export const PTY_OWNERSHIP_PROBE_ATTEMPTS = 2
-
-/**
- * Windows enumeration has no budget of its own: each scan is a powershell CIM query that
- * may fall back to wmic, and the shared reader can queue behind an in-flight scan — worst
- * case tens of seconds on the launch path. Blind is a safe answer here; hanging is not.
- */
-export const WINDOWS_OWNERSHIP_PROBE_DEADLINE_MS = 4_000
 
 /**
  * POSIX needs its own ceiling for the same reason: the shared reader's `ps` timeout does not
@@ -78,9 +68,7 @@ function withDeadline<T>(work: Promise<T>, deadlineMs: number, onDeadline: T): P
  */
 const DAEMON_SELF_SPAWNED_PTY_COMMANDS = [
   // pty-subprocess.ts checkPtySpawnHealth
-  { program: 'sh', args: '-c exit 0' },
-  // windows-conpty-warmup.ts, which spawns COMSPEC — an absolute path on a stock install
-  { program: 'cmd', args: '/c exit' }
+  { program: 'sh', args: '-c exit 0' }
 ]
 
 /** Trailing path segment, with any Windows executable suffix removed. */
@@ -166,18 +154,16 @@ async function probeOnce(
   deps: DaemonPtyOwnershipDeps,
   platform: NodeJS.Platform
 ): Promise<DaemonPtyOwnership> {
+  // Why Windows gets no verdict: POSIX evidence rests on a property only a hosted terminal
+  // has — forkpty makes it a session leader — and Windows has no equivalent, so the branch
+  // that lived here counted any descendant. That reads a wedged daemon's orphaned conpty
+  // hosts as live work: ClosePseudoConsole only runs on the daemon's own JS thread, so a
+  // daemon too wedged to answer is also too wedged to reap them, and they accumulate exactly
+  // when this runs. Holding on them would make a wedged, empty daemon unreplaceable forever
+  // (#8689). Answering 'unknown' leaves Windows exactly as it was before this change rather
+  // than trading one failure for a worse one.
   if (platform === 'win32') {
-    const descendants = await withDeadline(
-      (deps.queryWindowsDescendants ?? queryWindowsProcessDescendants)(daemonPid, { fresh: true }),
-      deps.windowsDeadlineMs ?? WINDOWS_OWNERSHIP_PROBE_DEADLINE_MS,
-      null
-    )
-    // null covers enumeration failure, a root absent from the table, and our own deadline.
-    if (descendants === null) {
-      return 'unknown'
-    }
-    const hosted = descendants.filter((row) => !isDaemonSelfSpawnedPty(row))
-    return hosted.length > 0 ? 'owns-live-ptys' : 'no-live-ptys'
+    return 'unknown'
   }
   const deadlineMs = deps.posixDeadlineMs ?? POSIX_OWNERSHIP_PROBE_DEADLINE_MS
   const rows =
@@ -210,8 +196,6 @@ async function probeOnce(
  * running work. Descendants rather than direct children: macOS wraps every shell in
  * login(1) for TCC attribution, so the agent is a grandchild at best.
  *
- * Windows has no session-leader equivalent here, so its branch counts any descendant that
- * is not a known self-spawned probe — it can over-preserve where POSIX would not.
  */
 export async function inspectDaemonPtyOwnership(
   daemonPid: number,
@@ -239,7 +223,9 @@ export async function inspectDaemonPtyOwnership(
       return sample
     }
   }
-  // Only reached when every sample was blind, or when the confirming read disagreed with an
-  // emptiness it could not corroborate.
-  return sawEmpty ? 'no-live-ptys' : 'unknown'
+  // Why not 'no-live-ptys' here: reaching this means the confirming read went blind, and a
+  // blind read cannot corroborate anything. Upgrading an unconfirmed emptiness to a definitive
+  // one is exactly the "absence of proof is proof of absence" step this module exists to
+  // refuse — and emptiness is the answer that authorizes a kill.
+  return 'unknown'
 }
