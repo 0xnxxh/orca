@@ -80,10 +80,6 @@ function logDaemonMilestone(event: string, details: Record<string, unknown> = {}
   }
 }
 
-// Cheap hello+listSessions retries after the patient ask, for a daemon that recovers on its own
-// rather than one that is merely slow. An upper bound only — the classification clock binds
-// first and usually permits far fewer, so raising this alone buys nothing.
-export const WEDGED_DAEMON_GRACE_RETRIES = 11
 /**
  * Ceiling on the whole failed-health classification — every probe, the grace window, the
  * identity check and the process-table read together — enforced at runtime rather than
@@ -105,13 +101,18 @@ export const WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS = 34_000
  * The clock the identity re-check and process-table read need, checked *after* the probes
  * rather than withheld from them.
  *
- * It used to be a reservation, and that was backwards once 'unknown' stopped being lethal.
- * Evidence can only raise 'unknown' to an uncounted 'occupied', and both of those now hold the
- * daemon — so the read changes the wording of a warning and nothing else. Withholding twelve
- * seconds for it starved the one probe whose answer can still restore full daemon mode: a
- * counted reply is what reaches preserveDaemon(). With a reservation the "patient" ask
- * resolved to exactly the cheap ask's four seconds and the grace loop could never afford to
- * run at all.
+ * It used to be a reservation, and that was backwards: withholding twelve seconds starved the
+ * one probe whose answer can still restore full daemon mode, since only a counted reply reaches
+ * preserveDaemon(). With the reservation in place the "patient" ask resolved to exactly the
+ * cheap ask's four seconds.
+ *
+ * Do not read the demotion as "the evidence read is cosmetic" — an earlier version of this
+ * comment said that and it was wrong twice over. The read decides the verdict wherever the
+ * unknown hold declines to: it has no endpointIsProvenDead check and no health !== 'rejected'
+ * check, so evidence is what holds a daemon whose socket entry vanished, and what holds a
+ * hello-rejected daemon that is still hosting agents. Skipping it on a spent clock therefore
+ * withdraws real protection, not a log line; the gate is set so that only probes which already
+ * consumed the budget can trigger it.
  *
  * So the evidence read is opportunistic now. If the probes used the clock, it is skipped and
  * the verdict stays 'unknown' — which holds the daemon exactly as an evidence-raised
@@ -664,28 +665,22 @@ function createOutOfProcessLauncher(
         const patientConnectBudgetMs = (): number =>
           Math.max(OCCUPANCY_CONNECT_BUDGET_MS, probeBudgetMs() - OCCUPANCY_REQUEST_BUDGET_MS)
         let occupancy = await askDaemonWhatItHosts(patientConnectBudgetMs())
-        // Why retry after it: a daemon that recovers on its own answers a cheap question, and
-        // recovering is a different failure from being slow. The patient ask cannot see it,
-        // because it asked before the recovery.
+        // Why there is no retry loop here any more. Cheap retries used to follow this ask, but
+        // the arithmetic makes them unreachable at every ceiling, not just this one:
         //
-        // Worth more since 'unknown' stopped killing, not less — the reverse of the obvious
-        // reading. A retry has three outcomes, and only one of them is a kill: 'empty' replaces
-        // (the daemon's own answer, the one state that licenses it), 'unknown' holds, and a
-        // *counted* 'occupied' reaches preserveDaemon() below — full adoption, where the
-        // alternative was a degraded hold. Retries are how a recovering daemon gets its user
-        // back to normal service without anyone touching the endpoint. Retries stop once the clock can no longer fund
-        // both halves of an ask — funded to knock but not to listen is no ask at all.
-        let graceRetry = 0
-        while (
-          occupancy.state === 'unknown' &&
-          health !== 'rejected' &&
-          graceRetry < WEDGED_DAEMON_GRACE_RETRIES &&
-          probeBudgetMs() >= OCCUPANCY_CONNECT_BUDGET_MS + OCCUPANCY_REQUEST_BUDGET_MS &&
-          !endpointIsProvenDead(await probeSocketConnect(socketPath))
-        ) {
-          occupancy = await askDaemonWhatItHosts(OCCUPANCY_CONNECT_BUDGET_MS)
-          graceRetry++
-        }
+        //   remaining = B - E - max(CONNECT, (B - E) - REQUEST) = REQUEST, whenever B - E > CONNECT + REQUEST
+        //
+        // The patient connect takes every millisecond the answer does not need, so what is left
+        // after it is always exactly OCCUPANCY_REQUEST_BUDGET_MS — never enough to fund another
+        // ask. Raising the budget donates the increase to the same connect and changes nothing.
+        // Funding a real retry needs ~71s of classification, kill ladder and fork against a 60s
+        // fail-open, so the loop cannot be bought back at any price.
+        //
+        // Nothing is lost by dropping it: a 4s retry cannot reach a daemon that needs longer
+        // than 4s to answer, which is the whole wedge population, while this one ask waits ~12s.
+        // The only case a retry caught and this does not is a daemon that recovers within a few
+        // seconds of being asked — and DegradedDaemonFreshSpawnRouter.recover() already restores
+        // it to full daemon service on the next spawn, off the startup clock entirely.
         // Do not delete this because 'unknown' and 'occupied' both hold — twice reviewed, twice
         // proposed for removal, and it regresses both times. The occupied branch below has no
         // endpointIsProvenDead check and the unknown hold does, so this read is the only thing
@@ -757,7 +752,7 @@ function createOutOfProcessLauncher(
           !endpointIsProvenDead(await probeSocketConnect(socketPath))
         ) {
           console.warn(
-            `[daemon] DEGRADED MODE: holding an unreachable daemon (health=${health}, graceRetries=${graceRetry}); its session state could not be verified, and replacing it would end any terminals it still owns. Fresh terminals run on the local provider WITHOUT daemon persistence until it recovers or you restart it (Manage Sessions → Restart). If a restart does not clear this, something other than an Orca daemon is holding the endpoint — quit and relaunch.`
+            `[daemon] DEGRADED MODE: holding an unreachable daemon (health=${health}); its session state could not be verified, and replacing it would end any terminals it still owns. Fresh terminals run on the local provider WITHOUT daemon persistence until it recovers or you restart it (Manage Sessions → Restart). If a restart does not clear this, something other than an Orca daemon is holding the endpoint — quit and relaunch.`
           )
           return holdIncumbentDaemon()
         }
@@ -769,8 +764,8 @@ function createOutOfProcessLauncher(
         pendingReplacement = {
           reason: 'failed_health_check',
           liveSessionCount: occupancy.liveSessions,
-          verdict: `health=${health}, occupancy=${occupancy.state}, graceRetries=${graceRetry}`,
-          announce: occupancy.state === 'empty' || graceRetry > 0 || health === 'rejected'
+          verdict: `health=${health}, occupancy=${occupancy.state}`,
+          announce: occupancy.state === 'empty' || health === 'rejected'
         }
       }
 

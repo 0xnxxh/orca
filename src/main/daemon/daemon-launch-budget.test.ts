@@ -56,10 +56,10 @@ describe('wedged-daemon classification budget', () => {
   })
 
   it('gives the patient ask more clock than the cheap ask it replaced', () => {
-    // The defect this exists to catch shipped once: with the evidence clock withheld from the
-    // probes, this expression resolved to exactly OCCUPANCY_CONNECT_BUDGET_MS, so the "patient"
-    // ask was a cheap ask with a comment claiming otherwise. Every launcher test still passed,
-    // because mocked probes resolve instantly and the budget never binds under a frozen clock.
+    // Kept as arithmetic, but it is NOT the guard: this restates the expression rather than
+    // executing it, so it cannot catch the expression being replaced. daemon-init.test.ts
+    // 'spends a patient connect budget on the wedged ask' watches the launcher actually spend
+    // it, and is the test that fails when this collapses back to the cheap constant.
     const elapsedBeforeAsk = OCCUPANCY_CONNECT_BUDGET_MS + HEALTH_CHECK_TIMEOUT_MS
     const probeBudgetMs = WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS - elapsedBeforeAsk
     const patientConnectMs = Math.max(
@@ -68,17 +68,5 @@ describe('wedged-daemon classification budget', () => {
     )
 
     expect(patientConnectMs).toBeGreaterThan(OCCUPANCY_CONNECT_BUDGET_MS)
-  })
-
-  it('can still afford a grace retry after an ask that fails fast', () => {
-    // The same shortage killed the retry loop outright: the gate needs connect+request, and
-    // with the reservation in place it could never hold after the first ask. A loop that cannot
-    // run is worse than no loop, because WEDGED_DAEMON_GRACE_RETRIES then documents a patience
-    // the launcher does not have.
-    const elapsedAfterAFastAsk = OCCUPANCY_CONNECT_BUDGET_MS + HEALTH_CHECK_TIMEOUT_MS + 5_000
-
-    expect(WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS - elapsedAfterAFastAsk).toBeGreaterThanOrEqual(
-      OCCUPANCY_CONNECT_BUDGET_MS + OCCUPANCY_REQUEST_BUDGET_MS
-    )
   })
 })
