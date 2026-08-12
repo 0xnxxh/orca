@@ -30,6 +30,21 @@ function successfulChild(output: Buffer): ChildProcess {
   return child
 }
 
+function unavailableChild(): ChildProcess {
+  const child = Object.assign(new EventEmitter(), {
+    exitCode: null,
+    signalCode: null,
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn(() => true)
+  }) as unknown as ChildProcess
+  queueMicrotask(() => {
+    const error = Object.assign(new Error('spawn rg ENOENT'), { code: 'ENOENT' })
+    child.emit('error', error)
+  })
+  return child
+}
+
 describe('relay Markdown document producer', () => {
   it('returns only Markdown paths from a real under-limit workspace', async () => {
     const rootPath = await mkdtemp(join(tmpdir(), 'orca-markdown-listing-'))
@@ -40,6 +55,23 @@ describe('relay Markdown document producer', () => {
       await writeFile(join(rootPath, 'docs', 'app.ts'), 'code')
 
       const result = await listRelayMarkdownDocumentPaths(rootPath)
+      expect(result.sort()).toEqual(['README.md', 'docs/Guide.MDX'])
+    } finally {
+      await rm(rootPath, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to bounded filesystem discovery when ripgrep is unavailable', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'orca-markdown-listing-fallback-'))
+    try {
+      await mkdir(join(rootPath, 'docs'))
+      await writeFile(join(rootPath, 'README.md'), 'readme')
+      await writeFile(join(rootPath, 'docs', 'Guide.MDX'), 'guide')
+      await writeFile(join(rootPath, 'docs', 'app.ts'), 'code')
+
+      const result = await listRelayMarkdownDocumentPaths(rootPath, undefined, () =>
+        unavailableChild()
+      )
       expect(result.sort()).toEqual(['README.md', 'docs/Guide.MDX'])
     } finally {
       await rm(rootPath, { recursive: true, force: true })

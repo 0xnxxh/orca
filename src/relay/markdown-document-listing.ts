@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { checkRgAvailable } from './fs-handler-utils'
 import {
   buildRgArgsForQuickOpen,
   normalizeQuickOpenRgLine,
@@ -22,6 +21,7 @@ import {
 import { fileListingCancellationError } from '../shared/file-listing-cancellation'
 import { RelayErrorCode } from './protocol'
 import { GrowingByteBuffer } from '../shared/growing-byte-buffer'
+import { RipgrepUnavailableError } from '../shared/ripgrep-process-availability'
 
 const MARKDOWN_LISTING_TIMEOUT_MS = 25_000
 const MARKDOWN_GLOBS = ['*.md', '*.mdx', '*.markdown']
@@ -165,7 +165,10 @@ export async function listMarkdownPathsWithRg(
         }
       }
       const onStderr = (): void => {}
-      const onError = (error: Error): void => finish(error)
+      const onError = (error: Error): void =>
+        finish(
+          (error as NodeJS.ErrnoException).code === 'ENOENT' ? new RipgrepUnavailableError() : error
+        )
       const onClose = (code: number | null, exitSignal: NodeJS.Signals | null): void => {
         if (exitSignal) {
           finish(new Error(`rg killed by ${exitSignal}`))
@@ -206,11 +209,16 @@ export async function listMarkdownPathsWithRg(
 
 export async function listRelayMarkdownDocumentPaths(
   rootPath: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  spawnProcess?: (args: string[]) => ChildProcess
 ): Promise<string[]> {
   try {
-    if (await checkRgAvailable()) {
-      return await listMarkdownPathsWithRg(rootPath, signal)
+    try {
+      return await listMarkdownPathsWithRg(rootPath, signal, spawnProcess)
+    } catch (error) {
+      if (!(error instanceof RipgrepUnavailableError)) {
+        throw error
+      }
     }
     return await discoverMarkdownRelativePaths(rootPath, {
       ignoreNestedDirectoryErrors: true,
