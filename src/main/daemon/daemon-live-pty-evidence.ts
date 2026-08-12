@@ -14,9 +14,11 @@ import {
  *
  * 'unknown' is not "empty" — it means the process table could not be read, or did not
  * contain the daemon at all. It is not evidence of absence, and it is deliberately not
- * evidence of presence either: the only caller preserves on 'owns-live-ptys' alone and
- * treats 'unknown' as the pre-existing behavior, so that a permanently wedged daemon with
- * nothing to lose stays replaceable (#8689). Widening that is a separate decision.
+ * evidence of presence either: the only caller raises to preserve on 'owns-live-ptys' alone.
+ *
+ * What 'unknown' costs changed with the launcher: it no longer falls through to a kill, it
+ * holds the daemon in degraded mode. So this module's job is now to spare the user that
+ * degradation where it safely can, not to stand between them and a dead agent.
  */
 export type DaemonPtyOwnership = 'owns-live-ptys' | 'no-live-ptys' | 'unknown'
 
@@ -192,9 +194,11 @@ export async function inspectDaemonPtyOwnership(
   // has — forkpty makes it a session leader — and Windows has no equivalent, so the branch
   // that lived here could only count descendants. That reads a wedged daemon's orphaned
   // conpty hosts as live work, since ClosePseudoConsole runs on the daemon's own JS thread
-  // and a daemon too wedged to answer is too wedged to reap them. Holding on those would make
-  // a wedged, empty daemon unreplaceable forever (#8689), so Windows keeps the behaviour it
-  // had before this change rather than trading one failure mode for a worse one.
+  // and a daemon too wedged to answer is too wedged to reap them.
+  //
+  // Abstaining costs Windows nothing it had: this evidence can only ever raise 'unknown' to
+  // 'occupied', and both already hold the daemon. A verdict here would only let Windows print
+  // the more accurate of two identical outcomes, which is not worth guessing for.
   if (platform === 'win32') {
     return 'unknown'
   }

@@ -8,6 +8,7 @@ import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { activateTabAndFocusPane } from '@/lib/activate-tab-and-focus-pane'
 import { useDaemonActions, DaemonActionDialog } from '../shared/useDaemonActions'
 import { ManageSessionKillDialog } from './ManageSessionKillDialog'
+import { DaemonDegradedNotice } from './DaemonDegradedNotice'
 import { ManageSessionsTable } from './ManageSessionsTable'
 import { notifyDaemonSessionInventoryInvalidated } from '../status-bar/daemon-session-inventory-invalidation'
 import {
@@ -20,6 +21,7 @@ type ConfirmKind = 'killOne'
 
 export function ManageSessionsSection(): React.JSX.Element {
   const [sessions, setSessions] = useState<PtyManagementSession[]>([])
+  const [isDaemonDegraded, setIsDaemonDegraded] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(true)
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
   const [pendingKillSession, setPendingKillSession] = useState<PtyManagementSession | null>(null)
@@ -81,6 +83,7 @@ export function ManageSessionsSection(): React.JSX.Element {
       if (!isMounted.current || mutationInFlight.current) {
         return result.sessions
       }
+      setIsDaemonDegraded(result.degraded === true)
       setSessions(result.sessions)
       return result.sessions
     } catch (err) {
@@ -217,6 +220,11 @@ export function ManageSessionsSection(): React.JSX.Element {
         <TerminalTccAttributionNotice
           showManageSessionsButton={false}
           refreshRevision={attributionRefreshRevision}
+        />
+        <DaemonDegradedNotice
+          degraded={isDaemonDegraded}
+          isBusy={isBusy}
+          onRestartDaemon={() => daemonActions.setPending('restart')}
         />
         <ManageSessionsTable
           sessions={sessions}

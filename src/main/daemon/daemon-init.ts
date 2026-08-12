@@ -712,6 +712,28 @@ function createOutOfProcessLauncher(
           )
           return preserveDaemon()
         }
+        // 'unknown' is not permission to kill. Everything above has failed to establish what
+        // this daemon is hosting, and killing it on that basis is what destroyed live agents.
+        // Bounded classification cannot be made safe by budgeting — matching main's tolerance
+        // for one ask costs more clock than the 60s fail-open leaves — so the residual stops
+        // being lethal instead. Being wrong now costs a degraded session, not an agent.
+        //
+        // Two exclusions, both about not holding something that can never be recovered:
+        //   - a proven-dead endpoint is a cold start or a corpse; there is nothing to hold, and
+        //     holding would hand every first launch a provider pointed at no daemon. Read fresh
+        //     here rather than reused, because the daemon can die during the grace window.
+        //   - 'rejected' answered and refused the handshake, so it can never be adopted and its
+        //     sessions can never be reattached. Holding one is permanently degraded for nothing.
+        if (
+          occupancy.state === 'unknown' &&
+          health !== 'rejected' &&
+          !endpointIsProvenDead(await probeSocketConnect(socketPath))
+        ) {
+          console.warn(
+            `[daemon] DEGRADED MODE: holding a daemon that failed the health check (health=${health}, graceRetries=${graceRetry}) because we could not establish whether it still owns live terminals. Replacing it would end them if it does. Fresh terminals run on the local provider WITHOUT daemon persistence until it recovers or you restart it (Manage Sessions → Restart).`
+          )
+          return holdIncumbentDaemon()
+        }
         // Why: a cold start reaches this same fall-through with nothing to replace, so stay
         // quiet unless something actually answered — a verified count, a socket that survived
         // a grace retry, or a refused hello.

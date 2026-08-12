@@ -26,6 +26,25 @@ hands → probe once more → `rename` in one syscall → verify we kept it.
 - **Never collapse "can't tell" into "dead."** Only `connected` means occupied; only
   `refused`/`missing` prove death. A timeout or `EPERM` proves nothing and must decline — treating
   it as death deletes an endpoint still serving every terminal on the host.
+- **"Can't tell" does not license a kill at launch either.** When the launcher cannot establish
+  what a health-check-failing daemon is hosting, it holds it in degraded mode rather than
+  replacing it. Only the daemon itself can prove it is empty, over IPC; the process table may
+  only ever *raise* a verdict toward "occupied", never lower one toward a kill.
+
+  Two exclusions, both about never holding something unrecoverable: an endpoint that is proven
+  dead (a cold start has nothing to hold), and `rejected` (it answered and refused, so it can
+  never be adopted and its sessions can never be reattached).
+
+  The cost is deliberate and known: a wedged-but-empty daemon is no longer replaced at launch,
+  so #8689 degrades to "restart it from Manage Sessions" instead of being handled automatically.
+  That was chosen over the alternative, which was killing daemons whose live agents we had
+  merely failed to observe — unrecoverable, versus one click.
+
+  **Do not try to fix this by tuning the classification budget.** Ten review rounds each found a
+  different timing band where a bounded classification kills a session an unbounded one keeps.
+  Matching the old tolerance for a single probe costs more clock than the 60s startup fail-open
+  leaves once the kill ladder and the fork are paid for. The budget is a latency bound, not a
+  correctness parameter, and it must stay that way.
 - **`link` first, never an unconditional `rename`.** `rename` replaces whatever it finds, so it
   would let a starting daemon destroy a healthy one. `link` fails loudly and forces the liveness
   question.
