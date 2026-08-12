@@ -325,9 +325,8 @@ export default React.memo(function AddRepoDialog({
         isCreating={isCreating}
         hostSelector={<AddRepoHostSelectorSlot hostSelection={hostSelection} />}
         showRemoteAction={false}
-        browseHostKind={
-          selectedHostKind === 'ssh' || selectedHostKind === 'runtime' ? selectedHostKind : 'local'
-        }
+        actionsDisabled={!hostSelection.selectedHostId}
+        browseHostKind={selectedHostKind ?? 'runtime'}
         createDefaultParent={createDefaultParent}
         createGitAvailability={createGitAvailability}
         createRuntimeParentStatus={createRuntimeParentStatus}
