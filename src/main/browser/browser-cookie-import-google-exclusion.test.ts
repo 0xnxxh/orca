@@ -207,7 +207,6 @@ describe('native Chromium import excludes the Google cookie family', () => {
       { domain: '.example.com', name: 'session', value: 'new' }
     ]).close()
     seedTarget([])
-    execFileSyncMock.mockReturnValue('test-password\n')
 
     const result = await importCookiesFromBrowser(chromeBrowser(sourceCookiesPath), 'persist:test')
 
@@ -217,6 +216,7 @@ describe('native Chromium import excludes the Google cookie family', () => {
       skippedCookies: 1,
       googleCookiesSkipped: 1
     })
+    expect(execFileSyncMock).not.toHaveBeenCalled()
     expect(cookiesSetMock.mock.calls.map(([details]) => details.name)).toEqual(['session'])
   })
 
