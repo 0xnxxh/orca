@@ -249,6 +249,9 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       settings: {
         activeRuntimeEnvironmentId: ENVIRONMENT_ID
       },
+      runtimeStatusByEnvironmentId: new Map([
+        [ENVIRONMENT_ID, { status: { capabilities: ['browser.screencast.v1'] }, checkedAt: 1 }]
+      ]),
       activeWorktreeId: WORKTREE_ID,
       browserPagesByWorkspace: {},
       remoteBrowserPageHandlesByPageId: {},
@@ -277,6 +280,27 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     vi.unstubAllGlobals()
     clearRuntimeCompatibilityCacheForTests()
     vi.clearAllMocks()
+  })
+
+  it('rejects before RPC when the selected runtime does not advertise screencast', async () => {
+    mocks.getState.mockReturnValue({
+      settings: { activeRuntimeEnvironmentId: ENVIRONMENT_ID },
+      runtimeStatusByEnvironmentId: new Map([
+        [ENVIRONMENT_ID, { status: { capabilities: [] }, checkedAt: 1 }]
+      ])
+    })
+    const runtimeCall = vi.fn()
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    await expect(
+      createWebRuntimeSessionBrowserTab({
+        worktreeId: WORKTREE_ID,
+        environmentId: ENVIRONMENT_ID
+      })
+    ).rejects.toThrow('does not support browser streaming')
+
+    expect(runtimeCall).not.toHaveBeenCalled()
+    expect(mocks.createBrowserTab).not.toHaveBeenCalled()
   })
 
   it('eagerly applies the host session snapshot after creating a remote browser tab', async () => {
@@ -451,6 +475,9 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       settings: {
         activeRuntimeEnvironmentId: ENVIRONMENT_ID
       },
+      runtimeStatusByEnvironmentId: new Map([
+        [ENVIRONMENT_ID, { status: { capabilities: ['browser.screencast.v1'] }, checkedAt: 1 }]
+      ]),
       activeWorktreeId,
       browserPagesByWorkspace: {},
       remoteBrowserPageHandlesByPageId: {},
