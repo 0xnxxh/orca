@@ -1662,9 +1662,17 @@ export class PtyHandler {
       this.clearPtyFlowState(id)
       // First-hand proof: this process held the shell and its pid is gone. Saying "not found"
       // here throws away the one observation that distinguishes a dead shell from an unknown one.
+      // The reap above happens either way — a dead shell should be cleared no matter who asked —
+      // but the ANSWER still depends on whose shell it was. Under this id a replacement relay may
+      // hold a different shell entirely, and its death says nothing about the caller's, which may
+      // be running orphaned under the relay this one replaced. Same rule as the remembered exit:
+      // proof needs a present, matching expectation.
       this.rememberPtyExit(id, PTY_EXIT_CODE_OBSERVED_GONE, managed.incarnationId)
+      if (expectedIncarnationId && expectedIncarnationId !== managed.incarnationId) {
+        throw new Error(`PTY "${id}" identity mismatch`)
+      }
       throw new Error(
-        clientUnderstandsExitProof
+        clientUnderstandsExitProof && expectedIncarnationId === managed.incarnationId
           ? formatPtyExitedError(id, PTY_EXIT_CODE_OBSERVED_GONE, managed.incarnationId)
           : `PTY "${id}" not found`
       )

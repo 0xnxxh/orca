@@ -1134,7 +1134,8 @@ describe('PtyHandler', () => {
         dispatcher.callRequest('pty.attach', {
           id: 'pty-1',
           suppressReplayNotification: true,
-          exitProofSupported: true
+          exitProofSupported: true,
+          expectedIncarnationId: spawned.incarnationId
         })
       ).rejects.toThrow(/SSH_PTY_EXITED/)
     } finally {
@@ -1165,7 +1166,10 @@ describe('PtyHandler', () => {
       onData: vi.fn(),
       onExit: vi.fn()
     })
-    await dispatcher.callRequest('pty.spawn', {})
+    const spawned = (await dispatcher.callRequest('pty.spawn', {})) as {
+      id: string
+      incarnationId: string
+    }
 
     let shutdown: Promise<unknown> | undefined
     const aliveSpy = vi.spyOn(ptyShellUtils, 'isProcessAlive').mockImplementation(() => {
@@ -1175,7 +1179,11 @@ describe('PtyHandler', () => {
     try {
       // INVERTED with the reap above: proof of exit, not an unknown id.
       await expect(
-        dispatcher.callRequest('pty.attach', { id: 'pty-1', exitProofSupported: true })
+        dispatcher.callRequest('pty.attach', {
+          id: 'pty-1',
+          exitProofSupported: true,
+          expectedIncarnationId: spawned.incarnationId
+        })
       ).rejects.toThrow(/SSH_PTY_EXITED/)
       await expect(shutdown).resolves.toBeUndefined()
     } finally {
@@ -1231,6 +1239,28 @@ describe('PtyHandler', () => {
     expect(await attachRejectionMessage({ id: spawned.id, exitProofSupported: true })).not.toMatch(
       /SSH_PTY_EXITED/
     )
+  })
+
+  // The same rule on the other proof route. A replacement relay can hold a DIFFERENT shell under
+  // this id; if that one dies, its death is not evidence about the caller's, which may be running
+  // orphaned under the relay this one replaced. The reap still happens — a dead shell should be
+  // cleared whoever asked — but the answer must not authorize replacing a live process.
+  it('does not prove a reaped shell to a caller that named a different one', async () => {
+    const spawned = await spawnPty({})
+    const aliveSpy = vi.spyOn(ptyShellUtils, 'isProcessAlive').mockReturnValue(false)
+    try {
+      const message = await attachRejectionMessage({
+        id: spawned.id,
+        exitProofSupported: true,
+        expectedIncarnationId: 'a-shell-from-a-previous-relay'
+      })
+      expect(message).not.toMatch(/SSH_PTY_EXITED/)
+      expect(message).toMatch(/identity mismatch/i)
+    } finally {
+      aliveSpy.mockRestore()
+    }
+    // The reap still ran: the dead entry is gone regardless of who asked.
+    expect(handler.activePtyCount).toBe(0)
   })
 
   it('answers a later attach with the exit it observed, not an unknown id', async () => {
@@ -3605,13 +3635,18 @@ describe('PtyHandler', () => {
       mockPtySpawn.mockReturnValue({ ...mockPtyInstance, onData: vi.fn(), onExit: vi.fn() })
       const poolEmpty = vi.fn()
       handler.onPtyPoolEmpty(poolEmpty)
-      await spawnPty()
+      const spawned = await spawnPty()
 
       const aliveSpy = vi.spyOn(ptyShellUtils, 'isProcessAlive').mockReturnValue(false)
       try {
         // INVERTED with the reap above: proof of exit, not an unknown id.
         await expect(
-          attachPty({ id: 'pty-1', suppressReplayNotification: true, exitProofSupported: true })
+          attachPty({
+            id: 'pty-1',
+            suppressReplayNotification: true,
+            exitProofSupported: true,
+            expectedIncarnationId: spawned.incarnationId
+          })
         ).rejects.toThrow(/SSH_PTY_EXITED/)
       } finally {
         aliveSpy.mockRestore()
