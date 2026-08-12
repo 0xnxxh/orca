@@ -7,6 +7,7 @@ import {
   isCursorAgentTitle,
   isCursorNativeAgentTitle,
   isOpenCodeNativeTitle,
+  isQuarterCircleSpinnerOnlyAgentTitle,
   isShellProcess,
   normalizeTerminalTitle
 } from '../../shared/agent-detection'
@@ -16795,7 +16796,12 @@ export class OrcaRuntimeService {
       }
     }
     if (terminal.titleStatus) {
-      if (isOpenCodeNativeTitle(terminal.title)) {
+      // Why: an OpenCode marker and a lone quarter-circle spinner (STA-4028) are activity,
+      // not identity, so resolve both through the identity/foreground evidence path.
+      if (
+        isOpenCodeNativeTitle(terminal.title) ||
+        isQuarterCircleSpinnerOnlyAgentTitle(terminal.title)
+      ) {
         const isRunningAgent = await this.isTerminalRunningAgent(handle)
         this.assertTerminalAgentStatusPtyBinding(handle, ptyId)
         return {
@@ -31543,12 +31549,12 @@ export class OrcaRuntimeService {
       // Why: check the leaf pane title and the tab title, which already carries OSC-enriched agent indicators (e.g. ✳ prefix).
       const paneTitle = getLatestLeafTitle(leaf, null)
       const paneTitleClassification = classifyAgentTitle(paneTitle)
-      if (paneTitleClassification === 'agent' && !isOpenCodeNativeTitle(paneTitle)) {
+      if (agentTitleProvesAgentPresence(paneTitle, paneTitleClassification)) {
         return true
       }
       const tabTitle = this.tabs.get(leaf.tabId)?.title?.trim() || null
       const tabTitleClassification = paneTitle === null ? classifyAgentTitle(tabTitle) : 'neutral'
-      if (tabTitleClassification === 'agent' && !isOpenCodeNativeTitle(tabTitle)) {
+      if (agentTitleProvesAgentPresence(tabTitle, tabTitleClassification)) {
         return true
       }
       const openCodeMarkerTitle = paneTitle ?? tabTitle
@@ -31597,7 +31603,7 @@ export class OrcaRuntimeService {
         )
       : null
     const leafTitleClassification = classifyAgentTitle(leafTitle)
-    if (leafTitleClassification === 'agent' && !isOpenCodeNativeTitle(leafTitle)) {
+    if (agentTitleProvesAgentPresence(leafTitle, leafTitleClassification)) {
       return true
     }
     const ptyTitle = getLatestAgentCandidateTitle(
@@ -31605,11 +31611,7 @@ export class OrcaRuntimeService {
       { title: pty.lastOscTitle, updatedAt: pty.lastOscTitleAt }
     )
     const ptyTitleClassification = classifyAgentTitle(ptyTitle)
-    if (
-      leafTitle === null &&
-      ptyTitleClassification === 'agent' &&
-      !isOpenCodeNativeTitle(ptyTitle)
-    ) {
+    if (leafTitle === null && agentTitleProvesAgentPresence(ptyTitle, ptyTitleClassification)) {
       return true
     }
     const managementTitleClassification = classifyLatestAgentTitle({
@@ -37566,6 +37568,19 @@ function getLatestLeafTitle(leaf: RuntimeLeafRecord, tabTitle: string | null): s
     { title: leaf.paneTitle, updatedAt: leaf.paneTitleUpdatedAt },
     { title: leaf.lastOscTitle, updatedAt: leaf.lastOscTitleAt },
     { title: tabTitle, updatedAt: 0 }
+  )
+}
+
+// Why: an 'agent' title only proves an agent owns the pane when something other than a
+// quarter-circle spinner carries it — those glyphs are generic progress frames (STA-4028).
+function agentTitleProvesAgentPresence(
+  title: string | null,
+  classification: 'agent' | 'management' | 'neutral'
+): boolean {
+  return (
+    classification === 'agent' &&
+    !isOpenCodeNativeTitle(title) &&
+    !isQuarterCircleSpinnerOnlyAgentTitle(title)
   )
 }
 
