@@ -77,12 +77,23 @@ export class DegradedDaemonFreshSpawnRouter {
       // spawn there costs a hello timeout plus a full launcher re-classification — per terminal,
       // for the rest of the session. Sending the next one to the fallback costs a terminal
       // without daemon persistence instead, and the next probe can promote it back.
-      if (target === this.current && !mapped) {
-        this.target = this.fallback
-        this.retryAfterMs = Date.now() + DEGRADED_DAEMON_RECOVERY_RETRY_MS
-        console.warn(
-          '[daemon] Fresh terminals routed back to the local provider: the daemon failed a spawn after recovering'
-        )
+      if (target === this.current) {
+        if (opts.sessionId) {
+          // Why pin instead of demote: a spawn that names a session may already have created it
+          // on the daemon — the reply can time out after the daemon has acted. Demoting would
+          // send the retry to the fallback, which would answer with a fresh local shell under
+          // the same id while the original keeps running, and the pane would bind to the shell.
+          // `!mapped` cannot tell that apart from a genuinely new session, because the mapping
+          // is only recorded after a reply arrives. So the identity sticks to the provider that
+          // may own it, and only anonymous spawns move the shared route.
+          this.sessionProviders.set(opts.sessionId, target)
+        } else {
+          this.target = this.fallback
+          this.retryAfterMs = Date.now() + DEGRADED_DAEMON_RECOVERY_RETRY_MS
+          console.warn(
+            '[daemon] Fresh terminals routed back to the local provider: the daemon failed a spawn after recovering'
+          )
+        }
       }
       throw error
     }

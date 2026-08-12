@@ -91,6 +91,46 @@ describe('DegradedDaemonFreshSpawnRouter', () => {
     }
   })
 
+  it('never lets a retry of a named session be answered by the fallback', async () => {
+    // The dangerous case `!mapped` could not see: a spawn that names a session may already have
+    // created it on the daemon and then lost the reply. Demoting on that failure would send the
+    // retry to the fallback, which answers with a fresh local shell under the same id while the
+    // agent keeps running on the daemon — the pane binds to the shell and the agent is orphaned.
+    // That is the symptom this whole change exists to prevent, arriving by another door.
+    const lostReply = vi.fn(async () => {
+      throw new Error('Request listSessions timed out after 30000ms')
+    })
+    const {
+      router: r,
+      current,
+      sessionProviders
+    } = router({
+      probe: async () => true,
+      currentSpawn: lostReply
+    })
+
+    await r.recover()
+    await expect(r.spawn({ cwd: '/tmp', sessionId: 'wt-1@@pane-1' } as never)).rejects.toThrow()
+
+    // The identity sticks to the provider that may already own it...
+    expect(sessionProviders.get('wt-1@@pane-1')).toBe(current)
+    // ...and the shared route is untouched, so this failure cannot silently divert other spawns.
+    expect(r.routesToFallback).toBeUndefined()
+  })
+
+  it('still demotes on an anonymous spawn, which cannot be shadowed', async () => {
+    // The case demotion exists for: no session identity, so there is nothing a fallback answer
+    // could shadow, and paying a hello timeout plus a re-classification per terminal is pure loss.
+    const wedged = vi.fn(async () => {
+      throw new Error('Hello response timed out')
+    })
+    const { router: r } = router({ probe: async () => true, currentSpawn: wedged })
+
+    await r.recover()
+    await expect(r.spawn({ cwd: '/tmp' } as never)).rejects.toThrow()
+    expect(r.routesToFallback).toBe(true)
+  })
+
   it('leaves an explicitly mapped session routed where it is', async () => {
     // A mapped id names the provider that actually owns that pty. Rerouting on its failure would
     // send a daemon-owned session to a provider that does not have it.
