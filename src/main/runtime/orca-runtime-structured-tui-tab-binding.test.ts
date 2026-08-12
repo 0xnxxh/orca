@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { StructuredAgentSessionHandoffTransport } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
+import { createEphemeralAgentSessionClaimSigner } from './agent-session-claim-identity'
 import { OrcaRuntimeService } from './orca-runtime'
 
 const { probeAgentSessionProcessIdentity, readStructuredTuiProcessIdentity } = vi.hoisted(() => ({
@@ -33,6 +34,127 @@ function notifier(revealTerminalSession: ReturnType<typeof vi.fn>) {
 }
 
 describe('structured TUI launch tab binding', () => {
+  it('recovers a live TUI from durable owner inventory in a fresh runtime', async () => {
+    const namespace = {
+      machine: 'native:test',
+      principal: 'uid:1',
+      container: 'native',
+      providerRoot: '/tmp/codex-home'
+    }
+    const signer = createEphemeralAgentSessionClaimSigner('profile-test')
+    const claim = signer.createClaim({
+      namespace,
+      identity: { agent: 'codex', providerSession: { key: 'session_id', id: 'thread-1' } },
+      canonicalWorktreeId: WORKTREE_ID
+    })
+    const terminalHandle = 'term_cold_owner'
+    const leafId = '23013912-13f8-44e5-818f-d40a1ff4e8c5'
+    const waitForStructuredTuiProof = vi.fn(async () => ({
+      transcriptPath: '/tmp/codex-home/sessions/thread-1.jsonl'
+    }))
+    const runtime = new OrcaRuntimeService(undefined, undefined, {
+      agentSessionClaimSigner: signer
+    })
+    runtime.setPtyController({
+      listProcesses: vi.fn(async () => [
+        {
+          id: 'pty-cold-owner',
+          incarnationId: 'incarnation-1',
+          cwd: '/tmp/structured-handoff',
+          title: 'codex',
+          worktreeId: WORKTREE_ID,
+          terminalHandle,
+          agentSessionOwners: [
+            {
+              claim,
+              generation: 'generation-1',
+              phase: 'live' as const,
+              ptyId: 'pty-cold-owner',
+              surface: {
+                worktreeId: WORKTREE_ID,
+                tabId: 'tab-cold-owner',
+                leafId,
+                terminalHandle
+              }
+            }
+          ]
+        }
+      ]),
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+    const internal = runtime as unknown as {
+      createStructuredAgentSessionHandoffTransport(): StructuredAgentSessionHandoffTransport
+      refreshMobileSessionPtyRecords(): Promise<Set<string> | null>
+      listResolvedWorktrees(): Promise<unknown[]>
+      resolveTerminalWorkspaceLaunchScope(): Promise<{
+        id: string
+        path: string
+        connectionId: null
+        repo: null
+        folderWorkspace: null
+      }>
+      getAgentSessionExecutionNamespace(): typeof namespace
+      waitForStructuredTuiProof: typeof waitForStructuredTuiProof
+      ptysById: Map<
+        string,
+        { launchToken: string | null; launchAgent: string | null; agentSessionOwners: unknown[] }
+      >
+    }
+    internal.listResolvedWorktrees = vi.fn(async () => [
+      { id: WORKTREE_ID, repoId: 'repo-1', path: '/tmp/structured-handoff' }
+    ])
+    internal.resolveTerminalWorkspaceLaunchScope = vi.fn(async () => ({
+      id: WORKTREE_ID,
+      path: '/tmp/structured-handoff',
+      connectionId: null,
+      repo: null,
+      folderWorkspace: null
+    }))
+    internal.getAgentSessionExecutionNamespace = () => namespace
+    internal.waitForStructuredTuiProof = waitForStructuredTuiProof
+    probeAgentSessionProcessIdentity.mockResolvedValue({
+      outcome: 'identity-matched',
+      matchedOn: ['process-start-time']
+    })
+
+    await internal.refreshMobileSessionPtyRecords()
+    const coldPty = internal.ptysById.get('pty-cold-owner')!
+    expect(coldPty).toMatchObject({ launchToken: null, launchAgent: null })
+    expect(coldPty.agentSessionOwners).toHaveLength(1)
+
+    const owner = await internal.createStructuredAgentSessionHandoffTransport().recoverTuiOwner({
+      sessionId: 'session-1',
+      location: { workspaceId: WORKTREE_ID, executionHostId: 'local' },
+      accountHome: { variable: 'CODEX_HOME', path: namespace.providerRoot },
+      providerHandleChain: [{ handle: { provider: 'codex', threadId: 'thread-1' }, observedAt: 1 }],
+      lease: {
+        ownerProcess: {
+          hostId: 'local',
+          pid: 4243,
+          processStartTimeMs: 10,
+          spawnToken: 'spawn-token'
+        },
+        runtimeFence: 3
+      }
+    } as never)
+
+    expect(owner.terminal).toEqual({
+      handle: terminalHandle,
+      tabId: 'tab-cold-owner',
+      paneKey: `tab-cold-owner:${leafId}`,
+      ptyId: 'pty-cold-owner'
+    })
+    expect(waitForStructuredTuiProof).toHaveBeenCalledWith(
+      expect.objectContaining({
+        handle: terminalHandle,
+        paneKey: `tab-cold-owner:${leafId}`,
+        spawnToken: 'spawn-token'
+      })
+    )
+  })
+
   it('proves the published launch tab before returning its revealed renderer binding', async () => {
     let explicitStatus: {
       state: 'working' | 'done'
