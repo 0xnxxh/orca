@@ -748,7 +748,17 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
         return false
       }
     }
-    get().createBrowserTab(worktreeId, url, { activate: true, sessionProfileId: profileId })
+    const profile = getBrowserProfilesForHost(state, executionHostId).find(
+      (candidate) => candidate.id === profileId
+    )
+    if (!profile) {
+      return false
+    }
+    get().createBrowserTab(worktreeId, url, {
+      activate: true,
+      sessionProfileId: profileId,
+      sessionPartition: profile.partition
+    })
     return true
   },
   closeBrowserTab: (tabId) => {

@@ -166,6 +166,17 @@ describe('createBrowserSlice annotations', () => {
 
   it('opens a local sign-in tab with the imported browser profile', async () => {
     const store = createTestStore()
+    store.setState({
+      browserSessionProfiles: [
+        {
+          id: 'profile-1',
+          scope: 'isolated',
+          partition: 'persist:profile-1',
+          label: 'Profile 1',
+          source: null
+        }
+      ]
+    })
 
     await expect(
       store
@@ -179,8 +190,25 @@ describe('createBrowserSlice annotations', () => {
 
     expect(store.getState().browserTabsByWorktree['wt-1']?.[0]).toMatchObject({
       url: 'https://accounts.google.com/',
-      sessionProfileId: 'profile-1'
+      sessionProfileId: 'profile-1',
+      sessionPartition: 'persist:profile-1'
     })
+  })
+
+  it('refuses to fall back to the default partition when the imported profile is missing', async () => {
+    const store = createTestStore()
+
+    await expect(
+      store
+        .getState()
+        .openBrowserProfileTabInActiveWorkspace(
+          'https://accounts.google.com/',
+          'deleted-profile',
+          'local'
+        )
+    ).resolves.toBe(false)
+
+    expect(store.getState().browserTabsByWorktree['wt-1']).toBeUndefined()
   })
 
   it('clears page annotations when the browser page URL changes', () => {
