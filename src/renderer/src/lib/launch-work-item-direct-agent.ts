@@ -11,6 +11,7 @@ import type { SleepingAgentLaunchConfig } from '../../../shared/agent-session-re
 import type { LaunchSource } from '../../../shared/telemetry-events'
 import type { StartupCommandDelivery } from '../../../shared/codex-startup-delivery'
 import type { TuiAgent } from '../../../shared/types'
+import type { AgentStartupShell } from '../../../shared/tui-agent-startup-shell'
 import {
   resolveTuiAgentLaunchArgs,
   resolveTuiAgentLaunchEnv
@@ -36,6 +37,8 @@ export function buildDirectWorkItemAgentStartupPlan(args: {
     | null
     | undefined
   launchPlatform: NodeJS.Platform
+  /** Dialect that parses the launch line; undefined keeps the platform default. */
+  launchShell?: AgentStartupShell
   nativeChatTranscriptIsLocalReadable?: boolean
   /** Why: SSH remotes deploy the CLI shim as plain `orca`, so the Linux-only
    * `orca-ide` rename must not be applied for remote launches. */
@@ -69,6 +72,7 @@ export function buildDirectWorkItemAgentStartupPlan(args: {
           draft: args.draftContent,
           cmdOverrides: args.settings?.agentCmdOverrides ?? {},
           platform: args.launchPlatform,
+          shell: args.launchShell,
           isRemote: args.isRemote,
           agentArgs: effectiveAgentArgs,
           agentEnv: effectiveAgentEnv,
@@ -101,6 +105,7 @@ export function buildDirectWorkItemAgentStartupPlan(args: {
     prompt: '',
     cmdOverrides: args.settings?.agentCmdOverrides ?? {},
     platform: args.launchPlatform,
+    shell: args.launchShell,
     isRemote: args.isRemote,
     agentArgs: effectiveAgentArgs,
     agentEnv: effectiveAgentEnv,

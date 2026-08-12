@@ -7,6 +7,11 @@ import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 import { isWindowsAbsolutePathLike } from '../../../shared/cross-platform-path'
 import { repoIsRemote } from '../../../shared/agent-launch-remote'
 import { isWslUncPath } from '../../../shared/wsl-paths'
+import type { AgentStartupShell } from '../../../shared/tui-agent-startup-shell'
+import {
+  getWorkspaceExecutionHostKind,
+  resolveClientAgentStartupShell
+} from '@/lib/client-agent-startup-shell'
 
 type LaunchStore = ReturnType<typeof useAppStore.getState>
 type LaunchRepo = LaunchStore['repos'][number]
@@ -19,6 +24,20 @@ export type AgentBackgroundLaunchHost = {
   isRemote: boolean
   /** Accepted status connection; undefined preserves unknown-owner behavior. */
   expectedConnectionId: string | null | undefined
+}
+
+/** Shell dialect that will parse the queued launch line on the resolved host. */
+export function resolveAgentBackgroundLaunchShell(
+  store: LaunchStore,
+  worktreeId: string,
+  host: AgentBackgroundLaunchHost
+): AgentStartupShell | undefined {
+  return resolveClientAgentStartupShell({
+    platform: host.platform,
+    isRemote: host.isRemote,
+    terminalWindowsShell: store.settings?.terminalWindowsShell,
+    executionHostKind: getWorkspaceExecutionHostKind(store, worktreeId)
+  })
 }
 
 function resolveFolderWorkspaceConnectionIdForLaunch(

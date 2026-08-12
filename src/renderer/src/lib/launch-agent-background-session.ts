@@ -12,7 +12,10 @@ import {
   resolveTuiAgentLaunchEnv
 } from '../../../shared/tui-agent-launch-defaults'
 import { TUI_AGENT_CONFIG } from '../../../shared/tui-agent-config'
-import { resolveAgentBackgroundLaunchHost } from '@/lib/agent-background-session-launch-host'
+import {
+  resolveAgentBackgroundLaunchHost,
+  resolveAgentBackgroundLaunchShell
+} from '@/lib/agent-background-session-launch-host'
 import { makePaneKey } from '../../../shared/stable-pane-id'
 import {
   registerEagerPtyBuffer,
@@ -31,7 +34,6 @@ import {
 import { createSshBackgroundStartupDelivery } from '@/lib/ssh-background-startup-delivery'
 import { shouldUseShellReadyStartupDelivery } from '../../../shared/codex-startup-delivery'
 import { isMainTerminalSideEffectAuthorityForPty } from '@/components/terminal-pane/terminal-side-effect-facts-handler'
-import { resolveLocalWindowsAgentStartupShell } from '../../../shared/windows-terminal-shell'
 import { runBestEffortAgentBackgroundCleanups } from '@/lib/agent-background-session-cleanup'
 import type { bindAutomationTerminal } from '@/lib/automation-terminal-ownership'
 import {
@@ -75,11 +77,7 @@ export async function launchAgentBackgroundSession(
     }
   }
   const { platform: launchPlatform, isRemote } = launchHost
-  const startupShell = resolveLocalWindowsAgentStartupShell({
-    platform: launchPlatform,
-    isRemote,
-    terminalWindowsShell: store.settings?.terminalWindowsShell
-  })
+  const startupShell = resolveAgentBackgroundLaunchShell(store, worktreeId, launchHost)
   const trimmedPrompt = prompt?.trim() ?? ''
   const hasPrompt = trimmedPrompt.length > 0
   const isFollowupPath = TUI_AGENT_CONFIG[agent].promptInjectionMode === 'stdin-after-start'

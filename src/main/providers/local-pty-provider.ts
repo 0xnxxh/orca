@@ -16,8 +16,9 @@ import { splitWorktreeIdForFilesystem } from '../../shared/worktree-id'
 import { isBracketedPasteSafeShell } from '../../shared/startup-command-submission'
 import {
   injectHistoryEnv,
-  updateHistFileForFallback,
-  logHistoryInjection
+  updateHistoryEnvForFallback,
+  logHistoryInjection,
+  type HistoryInjectionResult
 } from '../terminal-history'
 import type { IPtyProvider, PtyProcessInfo, PtySpawnOptions, PtySpawnResult } from './types'
 import {
@@ -869,8 +870,9 @@ export class LocalPtyProvider implements IPtyProvider {
       ptySpawn: pty.spawn,
       getShellReadyConfig: getFallbackShellReadyConfig,
       // Why: on zsh→bash fallback HISTFILE still points to zsh_history; update before spawn so the child inherits it (design doc §8).
-      onBeforeFallbackSpawn: historyResult?.histFile
-        ? (env, fallbackShell) => updateHistFileForFallback(env, fallbackShell)
+      onBeforeFallbackSpawn: historyResult?.historyDir
+        ? (env, fallbackShell) =>
+            updateHistoryEnvForFallback(env, fallbackShell, historyResult as HistoryInjectionResult)
         : undefined,
       windowsFallbackAttempts
     })

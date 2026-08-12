@@ -2,7 +2,7 @@ import { CLIENT_PLATFORM } from '@/lib/new-workspace'
 import { resolveWindowsShellOverride } from '@/lib/pane-manager/windows-pty-compatibility'
 import { parseExecutionHostId } from '../../../shared/execution-host'
 import { isWslUncPath } from '../../../shared/wsl-paths'
-import { resolveLocalWindowsAgentStartupShell } from '../../../shared/windows-terminal-shell'
+import { resolveClientAgentStartupShell } from '@/lib/client-agent-startup-shell'
 import type { ProjectExecutionRuntimeResolution } from '../../../shared/project-execution-runtime'
 import type { AgentStartupShell } from '../../../shared/tui-agent-startup-shell'
 
@@ -49,14 +49,15 @@ export function resolveAgentResumeLaunchTarget(
   const platform = resolveResumeLaunchPlatform(args)
   return {
     platform,
-    shell: resolveLocalWindowsAgentStartupShell({
+    shell: resolveClientAgentStartupShell({
       platform,
       isRemote:
         Boolean(args.connectionId) || parseExecutionHostId(args.executionHostId)?.kind !== 'local',
       terminalWindowsShell: resolveWindowsShellOverride(
         args.tabShellOverride,
         args.terminalWindowsShell
-      )
+      ),
+      executionHostKind: parseExecutionHostId(args.executionHostId)?.kind ?? null
     })
   }
 }

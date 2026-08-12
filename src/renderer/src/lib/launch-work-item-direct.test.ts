@@ -407,6 +407,7 @@ describe('launchWorkItemDirect', () => {
       agentEnv: {},
       sessionOptions: undefined,
       platform: 'win32',
+      shell: 'powershell',
       isRemote: false
     })
     expect(buildAgentStartupPlan).not.toHaveBeenCalledWith(

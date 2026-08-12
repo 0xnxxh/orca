@@ -64,8 +64,10 @@ import {
   resolveShellKind,
   ensureHistoryDir,
   injectHistoryEnv,
-  updateHistFileForFallback
+  updateHistoryEnvForFallback,
+  type HistoryInjectionResult
 } from './terminal-history'
+import { fishHistorySessionName, resolveFishHistoryFilePath } from './fish-history-session'
 import { hashWorktreeId } from './terminal-history-paths'
 import {
   deleteWorktreeHistoryDir,
@@ -82,6 +84,7 @@ describe('terminal-history', () => {
     vi.clearAllMocks()
     // Why: clearAllMocks keeps implementations, so a throwing rename from one test would leak forward.
     renameSyncMock.mockReset()
+    readFileSyncMock.mockReset()
     getPathMock.mockReturnValue('/fake/userData')
     existsSyncMock.mockReturnValue(true)
     statSyncMock.mockReturnValue({ isDirectory: () => true, size: 100 })
@@ -228,12 +231,37 @@ describe('terminal-history', () => {
       expect(result.histFile).toBeNull()
     })
 
-    it('does not inject HISTFILE for fish (Phase 2)', () => {
+    it('scopes fish by session name instead of HISTFILE, which fish ignores', () => {
       const env: Record<string, string> = {}
       const result = injectHistoryEnv(env, 'repo-1::/path/wt', '/usr/bin/fish', '/path/wt')
 
       expect(env.HISTFILE).toBeUndefined()
       expect(result.shell).toBe('fish')
+      expect(result.fishSession).toBe(fishHistorySessionName(hashWorktreeId('repo-1::/path/wt')))
+      expect(env.fish_history).toBe(result.fishSession)
+      // Deletion can only find the out-of-tree fish file through this record.
+      expect(writeFileSyncMock).toHaveBeenCalledWith(
+        expect.stringContaining('meta.json'),
+        expect.stringContaining(`"fishSession":"${result.fishSession}"`),
+        expect.anything()
+      )
+    })
+
+    it('gives two fish worktrees different history sessions', () => {
+      const envA: Record<string, string> = {}
+      injectHistoryEnv(envA, 'repo-1::/path/wt-a', '/usr/bin/fish', '/path/wt-a')
+      const envB: Record<string, string> = {}
+      injectHistoryEnv(envB, 'repo-1::/path/wt-b', '/usr/bin/fish', '/path/wt-b')
+
+      expect(envA.fish_history).not.toBe(envB.fish_history)
+    })
+
+    it('preserves a caller-supplied fish_history', () => {
+      const env: Record<string, string> = { fish_history: 'mine' }
+      const result = injectHistoryEnv(env, 'repo-1::/path/wt', '/usr/bin/fish', '/path/wt')
+
+      expect(env.fish_history).toBe('mine')
+      expect(result.fishSession).toBeNull()
     })
 
     it('degrades gracefully when directory creation fails', () => {
@@ -249,12 +277,19 @@ describe('terminal-history', () => {
     })
   })
 
-  describe('updateHistFileForFallback', () => {
+  describe('updateHistoryEnvForFallback', () => {
+    const zshInjection = (): HistoryInjectionResult => ({
+      shell: 'zsh',
+      histFile: '/fake/userData/terminal-history/abc123/zsh_history',
+      fishSession: null,
+      historyDir: '/fake/userData/terminal-history/abc123'
+    })
+
     it('updates HISTFILE to match fallback shell', () => {
       const env: Record<string, string> = {
         HISTFILE: '/fake/userData/terminal-history/abc123/zsh_history'
       }
-      updateHistFileForFallback(env, '/bin/bash')
+      updateHistoryEnvForFallback(env, '/bin/bash', zshInjection())
       expect(env.HISTFILE).toBe('/fake/userData/terminal-history/abc123/bash_history')
     })
 
@@ -262,14 +297,56 @@ describe('terminal-history', () => {
       const env: Record<string, string> = {
         HISTFILE: '/fake/userData/terminal-history/abc123/zsh_history'
       }
-      updateHistFileForFallback(env, '/bin/sh')
+      updateHistoryEnvForFallback(env, '/bin/sh', zshInjection())
       expect(env.HISTFILE).toBeUndefined()
     })
 
-    it('is a no-op when HISTFILE is not set', () => {
+    it('is a no-op when nothing was injected', () => {
       const env: Record<string, string> = {}
-      updateHistFileForFallback(env, '/bin/bash')
+      updateHistoryEnvForFallback(env, '/bin/bash', {
+        shell: 'unknown',
+        histFile: null,
+        fishSession: null,
+        historyDir: null
+      })
       expect(env.HISTFILE).toBeUndefined()
+    })
+
+    it('swaps an injected fish session for the fallback shell HISTFILE', () => {
+      const env: Record<string, string> = { fish_history: 'orca_abc123' }
+      updateHistoryEnvForFallback(env, '/bin/bash', {
+        shell: 'fish',
+        histFile: null,
+        fishSession: 'orca_abc123',
+        historyDir: '/fake/userData/terminal-history/abc123'
+      })
+      expect(env.fish_history).toBeUndefined()
+      expect(env.HISTFILE).toBe('/fake/userData/terminal-history/abc123/bash_history')
+    })
+
+    it('keeps a caller-supplied fish_history the injection never claimed', () => {
+      const env: Record<string, string> = { fish_history: 'mine' }
+      updateHistoryEnvForFallback(env, '/bin/bash', zshInjection())
+      expect(env.fish_history).toBe('mine')
+    })
+  })
+
+  describe('resolveFishHistoryFilePath', () => {
+    it('uses an absolute XDG_DATA_HOME', () => {
+      expect(resolveFishHistoryFilePath('orca_abc123', { XDG_DATA_HOME: '/data' })).toBe(
+        ['', 'data', 'fish', 'orca_abc123_history'].join(sep)
+      )
+    })
+
+    it('falls back to ~/.local/share when XDG_DATA_HOME is relative, as fish does', () => {
+      expect(
+        resolveFishHistoryFilePath('orca_abc123', { XDG_DATA_HOME: 'rel', HOME: '/home/u' })
+      ).toBe(['', 'home', 'u', '.local', 'share', 'fish', 'orca_abc123_history'].join(sep))
+    })
+
+    it('refuses a session name it did not mint', () => {
+      expect(resolveFishHistoryFilePath('../../evil', { HOME: '/home/u' })).toBeNull()
+      expect(resolveFishHistoryFilePath('fish', { HOME: '/home/u' })).toBeNull()
     })
   })
 
@@ -283,6 +360,30 @@ describe('terminal-history', () => {
         expect.stringContaining('.pending-delete'),
         expect.objectContaining({ recursive: true, force: true })
       )
+      await flushPendingWorktreeHistoryDeletions()
+    })
+
+    it('removes the fish session file recorded in meta.json, which lives outside the tree', async () => {
+      // Pinned: fish resolves its data dir from the ambient XDG_DATA_HOME/HOME.
+      const originalDataHome = process.env.XDG_DATA_HOME
+      process.env.XDG_DATA_HOME = ['', 'pinned', 'data'].join(sep)
+      try {
+        existsSyncMock.mockReturnValue(true)
+        readFileSyncMock.mockReturnValue(
+          JSON.stringify({ worktreeId: 'repo-1::/path/wt', fishSession: 'orca_abc123' })
+        )
+        deleteWorktreeHistoryDir('repo-1::/path/wt')
+        expect(rmSyncMock).toHaveBeenCalledWith(
+          ['', 'pinned', 'data', 'fish', 'orca_abc123_history'].join(sep),
+          expect.objectContaining({ force: true })
+        )
+      } finally {
+        if (originalDataHome === undefined) {
+          delete process.env.XDG_DATA_HOME
+        } else {
+          process.env.XDG_DATA_HOME = originalDataHome
+        }
+      }
       await flushPendingWorktreeHistoryDeletions()
     })
 

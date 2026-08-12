@@ -97,8 +97,6 @@ describe('fish startup shell dialect', () => {
     expect(resolveLoginShellStartupDialect(undefined)).toBe('posix')
   })
 
-  // Contract-only: no POSIX caller threads a shell into buildAgentDraftLaunchPlan yet
-  // (`selectedRepoStartupShell` is Windows-only), so fish users still get `unset` here.
   it('clears an agent draft prefill variable with fish syntax', () => {
     const plan = buildAgentDraftLaunchPlan({
       agent: 'pi',

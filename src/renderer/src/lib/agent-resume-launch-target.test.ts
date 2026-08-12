@@ -138,12 +138,14 @@ describe('resolveAgentResumeLaunchTarget off Windows', () => {
     restoreNavigator()
   })
 
+  // 'posix' rather than undefined: off Windows the dialect now comes from the
+  // client's login shell, and an unknown $SHELL in this harness resolves to sh.
   it('ignores a stale Windows shell setting on a mac client', async () => {
     await expect(
       resolveWith({
         worktreePath: '/Users/neil/repo',
         terminalWindowsShell: 'cmd.exe'
       })
-    ).resolves.toEqual({ platform: 'darwin', shell: undefined })
+    ).resolves.toEqual({ platform: 'darwin', shell: 'posix' })
   })
 })

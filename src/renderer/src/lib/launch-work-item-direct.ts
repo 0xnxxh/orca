@@ -33,6 +33,10 @@ import type { LaunchWorkItemDirectArgs } from '@/lib/launch-work-item-direct-typ
 import { resolveSourceControlLaunchPlatform } from '@/lib/source-control-launch-platform'
 import { getSettingsForRepoRuntimeOwner } from '@/lib/repo-runtime-owner'
 import {
+  getWorkspaceExecutionHostKind,
+  resolveClientAgentStartupShell
+} from '@/lib/client-agent-startup-shell'
+import {
   getLocalProjectExecutionRuntimeContext,
   getLocalRepoProjectExecutionRuntimeContext
 } from '@/lib/local-preflight-context'
@@ -279,6 +283,12 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
         promptDelivery,
         settings,
         launchPlatform,
+        launchShell: resolveClientAgentStartupShell({
+          platform: launchPlatform,
+          isRemote: typeof launchConnectionId === 'string',
+          terminalWindowsShell: settings?.terminalWindowsShell,
+          executionHostKind: getWorkspaceExecutionHostKind(useAppStore.getState(), worktreeId)
+        }),
         nativeChatTranscriptIsLocalReadable:
           isNativeChatTranscriptLocalReadable(launchConnectionId),
         // Why: SSH hosts run the plain `orca` shim, so the Linux-only `orca-ide`

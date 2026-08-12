@@ -9,7 +9,8 @@ import { TUI_AGENT_CONFIG } from '../../../shared/tui-agent-config'
 import { isTuiAgentEnabled } from '../../../shared/tui-agent-selection'
 import type { TuiAgent } from '../../../shared/types'
 import { translate } from '@/i18n/i18n'
-import { resolveLocalWindowsAgentStartupShell } from '../../../shared/windows-terminal-shell'
+import { resolveClientAgentStartupShell } from '@/lib/client-agent-startup-shell'
+import type { ExecutionHostKind } from '../../../shared/execution-host'
 import type { SessionOptionValue } from '../../../shared/native-chat-session-options'
 
 export type SourceControlLaunchPlanDelivery =
@@ -43,6 +44,8 @@ export function planSourceControlAgentActionLaunch(args: {
   /** Why: SSH remotes deploy the CLI shim as plain `orca`, so the Linux-only
    * `orca-ide` rename must not be applied for remote launches. */
   isRemote?: boolean
+  /** Execution owner of the target workspace; anything but a local host parses the line elsewhere. */
+  executionHostKind?: ExecutionHostKind | null
 }): SourceControlLaunchPlanResult {
   const agent = args.agent
   if (!agent) {
@@ -88,10 +91,11 @@ export function planSourceControlAgentActionLaunch(args: {
   const platform = args.platform ?? CLIENT_PLATFORM
   const isRemote = args.isRemote ?? false
   const shell =
-    resolveLocalWindowsAgentStartupShell({
+    resolveClientAgentStartupShell({
       platform,
       isRemote,
-      terminalWindowsShell: args.terminalWindowsShell
+      terminalWindowsShell: args.terminalWindowsShell,
+      executionHostKind: args.executionHostKind ?? null
     }) ?? (platform === 'win32' ? 'powershell' : 'posix')
   const plannedArgs = planAgentCliArgsSuffix(args.agentArgs, shell)
   if (!plannedArgs.ok) {

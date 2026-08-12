@@ -6,6 +6,8 @@ import type {
 } from '../../../../shared/source-control-ai-actions'
 import type { SourceControlAiWriteTarget } from '../../../../shared/source-control-ai-recipe-save'
 import type { GlobalSettings, Repo, TuiAgent } from '../../../../shared/types'
+import { useAppStore } from '@/store'
+import { getWorkspaceExecutionHostKind } from '@/lib/client-agent-startup-shell'
 import { buildSourceControlAgentDeliveryPlan } from './buildSourceControlAgentDeliveryPlan'
 import type { SourceControlAgentActionDeliveryPlanState } from './SourceControlAgentActionDialogForm'
 import { runSourceControlAgentActionStart } from './runSourceControlAgentActionStart'
@@ -109,7 +111,8 @@ export function useSourceControlAgentActionStart({
         detectedAgents: currentDetectedAgents,
         connectionUnavailable,
         launchPlatform,
-        isRemote
+        isRemote,
+        executionHostKind: getWorkspaceExecutionHostKind(useAppStore.getState(), worktreeId)
       })
     },
     [
@@ -120,7 +123,8 @@ export function useSourceControlAgentActionStart({
       refreshDetectedAgents,
       selectedAgent,
       launchPlatform,
-      isRemote
+      isRemote,
+      worktreeId
     ]
   )
 

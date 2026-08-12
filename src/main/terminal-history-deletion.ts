@@ -1,6 +1,8 @@
 import { basename, join } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, renameSync } from 'node:fs'
 import { removeHostTree } from './host-tree-removal'
+import { deleteFishHistoryFile } from './fish-history-session'
+import { readHistoryMeta } from './terminal-history'
 import {
   getHistoryRoot,
   hashWorktreeId,
@@ -93,6 +95,12 @@ function scheduleHistoryTreeRemoval(dir: string): void {
 /** Tombstone one history tree and queue its recursive removal off the caller's critical path.
  *  Returns false when the rename failed, leaving the tree for a later GC pass to reclaim. */
 export function scheduleWorktreeHistoryTreeDeletion(dir: string, historyRoot: string): boolean {
+  // Why first: fish keeps its history in the user's fish data dir, outside this tree,
+  // so the meta.json naming the session must still be readable when we look it up.
+  const fishSession = readHistoryMeta(dir)?.fishSession
+  if (fishSession) {
+    deleteFishHistoryFile(fishSession)
+  }
   const tombstone = tombstoneHistoryTree(dir, historyRoot)
   if (!tombstone) {
     return false

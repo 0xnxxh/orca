@@ -22,7 +22,7 @@ import {
 import { buildAgentDraftLaunchPlan, buildAgentStartupPlan } from '@/lib/tui-agent-startup'
 import { filterEnabledTuiAgents, isTuiAgentEnabled } from '../../../shared/tui-agent-selection'
 import { repoIsRemote } from '../../../shared/agent-launch-remote'
-import { resolveLocalWindowsAgentStartupShell } from '../../../shared/windows-terminal-shell'
+import { resolveClientAgentStartupShell } from '@/lib/client-agent-startup-shell'
 import { resolveInitialNativeChatSessionOptions } from '@/components/native-chat/native-chat-launch-session-options'
 import { seedNativeChatAppliedSessionOptions } from '@/components/native-chat/native-chat-session-option-cache'
 import {
@@ -883,10 +883,11 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   }, [activeRepoId, projects, repos, selectedRepo, settings, worktreesByRepo])
   // Why: SSH remotes deploy the CLI shim as plain `orca`, so the Linux-only `orca-ide` rename must not apply to remote launch commands.
   const selectedRepoIsRemote = selectedRepo ? repoIsRemote(selectedRepo) : false
-  const selectedRepoStartupShell = resolveLocalWindowsAgentStartupShell({
+  const selectedRepoStartupShell = resolveClientAgentStartupShell({
     platform: selectedRepoAgentLaunchPlatform,
     isRemote: selectedRepoIsRemote,
-    terminalWindowsShell: settings?.terminalWindowsShell
+    terminalWindowsShell: settings?.terminalWindowsShell,
+    executionHostKind: parseExecutionHostId(selectedRepoExecutionHostId)?.kind ?? null
   })
   const selectedRepoProjectId =
     selectedWorkspaceTarget.status === 'ready' ? selectedWorkspaceTarget.target.projectId : null
