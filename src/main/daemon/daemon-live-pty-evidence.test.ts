@@ -270,6 +270,39 @@ describe('inspectDaemonPtyOwnership on win32', () => {
   })
 })
 
+describe('inspectDaemonPtyOwnership login(1) handling', () => {
+  it('counts a childless login(1) as live work off darwin', async () => {
+    // Orca only wraps terminals in login(1) on macOS, so elsewhere this pattern is the user's
+    // own login — and one still prompting for credentials has no child yet. Excluding it there
+    // discards real work to solve a macOS problem.
+    const rows = [
+      daemonRow,
+      row(5000, DAEMON_PID, { stat: 'Ss', command: '/usr/bin/login nwparker' })
+    ]
+
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'linux',
+        readPosixProcessTable: async () => rows
+      })
+    ).resolves.toBe('owns-live-ptys')
+  })
+
+  it('still excludes a childless login(1) on darwin (#13764)', async () => {
+    const rows = [
+      daemonRow,
+      row(5000, DAEMON_PID, { stat: 'Ss', command: '/usr/bin/login -pf nwparker /bin/zsh' })
+    ]
+
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        readPosixProcessTable: async () => rows
+      })
+    ).resolves.toBe('no-live-ptys')
+  })
+})
+
 describe('inspectDaemonPtyOwnership sampling', () => {
   it('will not confirm emptiness from the cached table the first read already used', async () => {
     // Two agreeing samples are only worth more than one if they are two observations. When the

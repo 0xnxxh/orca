@@ -106,6 +106,12 @@ export async function resolveDaemonOccupancy(args: {
       connectBudgetMs
     )
     if (counted !== null) {
+      // Why validate a number we just asked for: 'empty' is the one verdict that licenses a
+      // kill, and `counted > 0` quietly reads NaN, -1 and every other non-count as emptiness.
+      // The dep is injectable, so that is reachable without the daemon ever being asked.
+      if (!Number.isInteger(counted) || counted < 0) {
+        return unknown
+      }
       return counted > 0
         ? { state: 'occupied', liveSessions: counted }
         : { state: 'empty', liveSessions: 0 }

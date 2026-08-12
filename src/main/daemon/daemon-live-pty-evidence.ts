@@ -107,11 +107,27 @@ function isLivePtySessionLeader(row: ProcessTableRow): boolean {
  * would hold a daemon whose sessions have all ended, on hosts where they accumulate by the
  * hundred. A wrapper still doing its job always has the shell it exec'd beneath it.
  */
-function isStrandedLoginWrapper(row: ProcessTableRow, hasChildren: boolean): boolean {
-  return !hasChildren && row.command.trim().startsWith(MACOS_LOGIN_WRAPPER_PREFIX)
+function isStrandedLoginWrapper(
+  row: ProcessTableRow,
+  hasChildren: boolean,
+  platform: NodeJS.Platform
+): boolean {
+  // Why darwin only: Orca wraps terminals in login(1) for TCC attribution on macOS and nowhere
+  // else, so off darwin this pattern can only ever be a user's own login(1) — and one that is
+  // still prompting for credentials has no child yet, which is exactly the shape excluded here.
+  // Applied POSIX-wide it discarded real work to solve a macOS problem.
+  return (
+    platform === 'darwin' &&
+    !hasChildren &&
+    row.command.trim().startsWith(MACOS_LOGIN_WRAPPER_PREFIX)
+  )
 }
 
-function collectLivePtyDescendants(rows: ProcessTableRow[], rootPid: number): ProcessTableRow[] {
+function collectLivePtyDescendants(
+  rows: ProcessTableRow[],
+  rootPid: number,
+  platform: NodeJS.Platform
+): ProcessTableRow[] {
   const childrenByPpid = new Map<number, ProcessTableRow[]>()
   for (const row of rows) {
     if (row.pid === rootPid) {
@@ -137,7 +153,7 @@ function collectLivePtyDescendants(rows: ProcessTableRow[], rootPid: number): Pr
       queue.push(child.pid)
       if (
         isLivePtySessionLeader(child) &&
-        !isStrandedLoginWrapper(child, childrenByPpid.has(child.pid))
+        !isStrandedLoginWrapper(child, childrenByPpid.has(child.pid), platform)
       ) {
         live.push(child)
       }
@@ -187,7 +203,9 @@ async function probeOnce(
   if (rows === null || !rows.some((row) => row.pid === daemonPid)) {
     return 'unknown'
   }
-  return collectLivePtyDescendants(rows, daemonPid).length > 0 ? 'owns-live-ptys' : 'no-live-ptys'
+  return collectLivePtyDescendants(rows, daemonPid, deps.platform ?? process.platform).length > 0
+    ? 'owns-live-ptys'
+    : 'no-live-ptys'
 }
 
 /**

@@ -254,3 +254,16 @@ describe('resolveDaemonOccupancy when an injected dep throws', () => {
     ).resolves.toEqual({ state: 'unknown', liveSessions: null })
   })
 })
+
+describe('resolveDaemonOccupancy with a nonsense count', () => {
+  it.each([Number.NaN, -1, 1.5])('refuses to read %p as emptiness', async (counted) => {
+    // 'empty' is the only verdict that licenses a kill, and `counted > 0` reads every one of
+    // these as empty. The dep is injectable, so it is reachable without asking the daemon.
+    await expect(
+      resolve({
+        listSessions: async () => counted,
+        inspectPtyOwnership: ownershipIs('unknown')
+      })
+    ).resolves.toEqual({ state: 'unknown', liveSessions: null })
+  })
+})
