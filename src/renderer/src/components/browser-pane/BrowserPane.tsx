@@ -60,7 +60,10 @@ import { Label } from '@/components/ui/label'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { useAppStore } from '@/store'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
-import { takeKagiPrivateInitialNavigation } from '@/lib/kagi-private-initial-navigation'
+import {
+  discardKagiPrivateInitialNavigation,
+  getKagiPrivateInitialNavigation
+} from '@/lib/kagi-private-initial-navigation'
 import { ORCA_BROWSER_BLANK_URL, ORCA_BROWSER_PARTITION } from '../../../../shared/constants'
 import { BROWSER_CERTIFICATE_TRUST_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
 import { getOrcaProfileBrowserDefaultPartition } from '../../../../shared/orca-profiles'
@@ -3741,6 +3744,16 @@ function BrowserPagePane({
       if (event.isMainFrame !== false && pendingRecoveryNavigation?.started) {
         pendingRecoveryNavigation.committed = true
       }
+      if (event.isMainFrame !== false) {
+        const committedUrl = event.url ?? webview.getURL() ?? webview.src ?? 'about:blank'
+        const normalizedCommittedUrl = normalizeBrowserNavigationUrl(committedUrl)
+        if (
+          !isChromiumErrorPage(committedUrl) &&
+          normalizedCommittedUrl !== ORCA_BROWSER_BLANK_URL
+        ) {
+          discardKagiPrivateInitialNavigation(browserTab.id)
+        }
+      }
       const preserveRecoveryError =
         activeLoadFailureRef.current?.code === BROWSER_GUEST_RECOVERY_ERROR_CODE
       handleDidNavigate(event, true, preserveRecoveryError)
@@ -3864,7 +3877,7 @@ function BrowserPagePane({
       // Why: set src only after listeners attach so a fast localhost failure isn't missed; only non-blank tabs show the loading indicator.
       const modelUrl =
         normalizeBrowserNavigationUrl(initialBrowserUrlRef.current) ?? ORCA_BROWSER_BLANK_URL
-      const initialNavigation = takeKagiPrivateInitialNavigation(browserTab.id, modelUrl)
+      const initialNavigation = getKagiPrivateInitialNavigation(browserTab.id, modelUrl)
       trackNextLoadingEventRef.current = initialNavigation.navigationUrl !== ORCA_BROWSER_BLANK_URL
       // Why: URL sync compares against the persisted model URL; retaining the bearer here would immediately replace the authenticated navigation.
       lastKnownWebviewUrlRef.current = initialNavigation.modelUrl

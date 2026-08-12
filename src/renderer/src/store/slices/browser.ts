@@ -17,7 +17,7 @@ import type {
 import { GRAB_BUDGET, type BrowserPageAnnotation } from '../../../../shared/browser-grab-types'
 import { FLOATING_TERMINAL_WORKTREE_ID, ORCA_BROWSER_BLANK_URL } from '../../../../shared/constants'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
-import { redactKagiSessionToken } from '../../../../shared/browser-url'
+import { normalizeKagiSessionLink, redactKagiSessionToken } from '../../../../shared/browser-url'
 import {
   MAX_BROWSER_HISTORY_ENTRIES,
   normalizeBrowserHistoryEntries,
@@ -42,7 +42,10 @@ import type {
   BrowserProfileListResult
 } from '../../../../shared/runtime-types'
 import { createBrowserUuid } from '@/lib/browser-uuid'
-import { discardKagiPrivateInitialNavigation } from '@/lib/kagi-private-initial-navigation'
+import {
+  discardKagiPrivateInitialNavigation,
+  queueKagiPrivateInitialNavigation
+} from '@/lib/kagi-private-initial-navigation'
 import { translate } from '@/i18n/i18n'
 import {
   getExecutionHostLabel,
@@ -69,7 +72,6 @@ import {
 
 type CreateBrowserTabOptions = {
   activate?: boolean
-  initialPageId?: string
   title?: string
   sessionProfileId?: string | null
   sessionPartition?: string | null
@@ -392,12 +394,11 @@ function buildBrowserPage(
   worktreeId: string,
   url: string,
   title?: string,
-  browserRuntimeEnvironmentId?: string | null,
-  pageId = createBrowserUuid()
+  browserRuntimeEnvironmentId?: string | null
 ): BrowserPage {
   const normalizedUrl = normalizeUrl(url)
   return {
-    id: pageId,
+    id: createBrowserUuid(),
     workspaceId,
     worktreeId,
     url: normalizedUrl,
@@ -410,6 +411,15 @@ function buildBrowserPage(
     loadError: null,
     createdAt: Date.now(),
     ...(browserRuntimeEnvironmentId !== undefined ? { browserRuntimeEnvironmentId } : {})
+  }
+}
+
+function queuePrivateBrowserPageInitialNavigation(page: BrowserPage, rawUrl: string): void {
+  const trimmedUrl = rawUrl.trim()
+  const isClientOwned =
+    page.browserRuntimeEnvironmentId === null || page.browserRuntimeEnvironmentId === undefined
+  if (isClientOwned && normalizeKagiSessionLink(trimmedUrl)) {
+    queueKagiPrivateInitialNavigation(page.id, trimmedUrl)
   }
 }
 
@@ -607,8 +617,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
       worktreeId,
       url,
       options?.title,
-      options?.browserRuntimeEnvironmentId,
-      options?.initialPageId
+      options?.browserRuntimeEnvironmentId
     )
     // Why: with no explicit profile, inherit the user's default so a Settings preference applies to new tabs.
     const sessionProfileId =
@@ -625,6 +634,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
       sessionProfileId,
       options?.sessionPartition
     )
+    queuePrivateBrowserPageInitialNavigation(page, url)
 
     set((s) => {
       const existingTabs = s.browserTabsByWorktree[worktreeId] ?? []
@@ -695,7 +705,6 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
           : s.pendingAddressBarFocusByTabId
       }
     })
-
     const state = get()
     const alreadyHasUnifiedTab = (state.unifiedTabsByWorktree[worktreeId] ?? []).some(
       (t) => t.contentType === 'browser' && t.entityId === workspaceId
@@ -1107,6 +1116,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
       options?.title,
       options?.browserRuntimeEnvironmentId
     )
+    queuePrivateBrowserPageInitialNavigation(page, url)
 
     set((s) => {
       const pages = s.browserPagesByWorkspace[workspaceId] ?? []
@@ -1153,7 +1163,6 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
           : s.pendingAddressBarFocusByTabId
       }
     })
-
     const nextWorkspace = findWorkspace(get().browserTabsByWorktree, workspaceId)
     if (nextWorkspace?.activePageId === page.id) {
       const item = Object.values(get().unifiedTabsByWorktree)
