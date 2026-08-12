@@ -8901,6 +8901,9 @@ export function connectPanePty(
                 // Why: only proof that the session is gone may respawn. Anything
                 // else leaves the shell running, because respawning with the
                 // restored id resumes the same agent session a second time.
+                // Nothing proves it yet (see reattach-failure-classification), and this flow is
+                // nested under `connectionId`, so the respawn below is unreachable today. It is
+                // the shape the proof capability plugs into, not forgotten code.
                 if (!isProvenSshSessionGoneError(err)) {
                   divertToUnreachableCard(pendingSessionId)
                   return

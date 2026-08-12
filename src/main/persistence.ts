@@ -7359,6 +7359,10 @@ export class Store {
     tabId: string,
     leafId: string
   ): string | undefined {
+    // Deliberately does NOT require the tab to still exist, unlike findTerminalTabIdForLeaf, which
+    // must — binding a live shell to a deleted tab registers a ghost pane. Here the consequence
+    // runs the other way: a binding under a departed tab only ever keeps a lease alive, and not
+    // retiring is the safe direction when nothing has proved the shell dead.
     const findLeafBinding = (session: WorkspaceSessionState | undefined): string | undefined => {
       const layouts = session?.terminalLayoutsByTabId
       return (

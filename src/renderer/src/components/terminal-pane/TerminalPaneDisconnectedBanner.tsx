@@ -32,11 +32,11 @@ export function TerminalPaneDisconnectedBanner({
       )
     : retrying
       ? translate(
-          'auto.components.terminal.pane.TerminalRemoteRuntimeReconnectBanner.retryingTitle',
+          'auto.components.terminal.pane.TerminalPaneDisconnectedBanner.retryingTitle',
           'Reconnecting to remote runtime'
         )
       : translate(
-          'auto.components.terminal.pane.TerminalRemoteRuntimeReconnectBanner.disconnectedTitle',
+          'auto.components.terminal.pane.TerminalPaneDisconnectedBanner.disconnectedTitle',
           'Remote runtime disconnected'
         )
 
@@ -47,11 +47,11 @@ export function TerminalPaneDisconnectedBanner({
       )
     : retrying
       ? translate(
-          'auto.components.terminal.pane.TerminalRemoteRuntimeReconnectBanner.retryingBody',
+          'auto.components.terminal.pane.TerminalPaneDisconnectedBanner.retryingBody',
           'Orca will retry for up to one minute. This terminal will resume if the connection returns.'
         )
       : translate(
-          'auto.components.terminal.pane.TerminalRemoteRuntimeReconnectBanner.disconnectedBody',
+          'auto.components.terminal.pane.TerminalPaneDisconnectedBanner.disconnectedBody',
           'Automatic retries stopped. Reconnect to resume this terminal session.'
         )
 
@@ -86,7 +86,7 @@ export function TerminalPaneDisconnectedBanner({
                     'Try again'
                   )
                 : translate(
-                    'auto.components.terminal.pane.TerminalRemoteRuntimeReconnectBanner.reconnectButton',
+                    'auto.components.terminal.pane.TerminalPaneDisconnectedBanner.reconnectButton',
                     'Reconnect'
                   )}
             </Button>
