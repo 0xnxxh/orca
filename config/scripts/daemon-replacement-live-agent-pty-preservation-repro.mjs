@@ -1,5 +1,84 @@
 #!/usr/bin/env node
 /**
+ * Regression proof: daemon replacement must not kill live coding-agent terminals.
+ *
+ * The protection is no longer a veto inside `killStaleDaemon()` — that was policy
+ * buried in a mechanism. `killStaleDaemon()` is now purely "make this pid go away"
+ * and will happily kill a daemon that is hosting live agents. The decision moved
+ * up to the launcher, ahead of any kill:
+ *
+ *   readVerifiedDaemonPid()  -> which process, identity-verified, is the daemon
+ *   resolveDaemonOccupancy() -> is it hosting work, and how sure are we
+ *   daemon-init.ts           -> 'occupied' with an unverifiable count => HOLD
+ *
+ * `resolveDaemonOccupancy()` asks the daemon over IPC first (a reply is
+ * authoritative both ways); only when it cannot answer does it consult the OS
+ * process table via `inspectDaemonPtyOwnership()`, and that evidence may only
+ * RAISE the answer to 'occupied' — it can never prove 'empty'.
+ *
+ * Three phases, real processes throughout:
+ *   PHASE 1 (the danger is real): a SIGSTOPped daemon owning 2 live agent
+ *     processes presents exactly the launcher's inputs — health 'unreachable',
+ *     an endpoint that is NOT proven dead, no IPC session count. Calling
+ *     killStaleDaemon() directly at that moment kills the daemon and both agents.
+ *     This is what the decision is protecting against, not a bug in the kill.
+ *   PHASE 2 (the decision protects it): same staging, fresh daemon and agents.
+ *     readVerifiedDaemonPid() names the daemon, resolveDaemonOccupancy() returns
+ *     { state: 'occupied', liveSessions: null } — IPC could not answer, the
+ *     process table raised it to occupied — which is the exact input that makes
+ *     the launcher hold. Nothing is signalled: daemon and agents are alive, and
+ *     after SIGCONT the daemon is healthy and reports its 2 sessions again, so
+ *     the wedge was transient and the preserved work was genuinely recoverable.
+ *   PHASE 3 (the launcher actually holds): daemon-init.ts imports electron and
+ *     cannot be executed here, so its failed-health-check branch is verified
+ *     statically — the 'occupied' branch returns holdIncumbentDaemon() and
+ *     contains no kill, and every killStaleDaemon() call sits after it.
+ *
+ * SIGSTOP is the faithful stand-in for the wedge: the socket still accepts
+ * connections while no RPC is ever answered — exactly the "busy machine can time
+ * out the health check on a live daemon" case daemon-init.ts calls out.
+ *
+ * Usage: node config/scripts/daemon-replacement-live-agent-pty-preservation-repro.mjs
+ */
+import { fork } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { checkLauncherHoldsOccupiedDaemon } from './daemon-replacement-launcher-hold-source-assertions.mjs'
+import {
+  findTaggedPid,
+  isMarkerAlive,
+  isProcessAlive,
+  processArgs,
+  processState,
+  snapshotForeignDaemons,
+  waitFor
+} from './daemon-replacement-process-inspection.mjs'
+
+const repoRoot = resolve(import.meta.dirname, '..', '..')
+const entryPath = join(repoRoot, 'out', 'main', 'daemon-entry.js')
+const READY_TIMEOUT_MS = 30_000
+const MARKER_SPAWN_TIMEOUT_MS = 30_000
+const SESSION_COUNT = 2
+
+const startedAt = Date.now()
+const timeline = []
+
+function log(message) {
+  const elapsed = `+${String(Date.now() - startedAt).padStart(6, ' ')}ms`
+  timeline.push(`${elapsed}  ${message}`)
+  process.stdout.write(`[daemon-pty-preservation] ${elapsed}  ${message}\n`)
+}
+
+function assert(condition, message) {
+  if (!condition) {
+    throw new Error(message)
+  }
+}
+
+/**
  * Bundles the real daemon primitives into a loadable ESM module.
  *
  * Why: the decision primitives live in TypeScript modules that the built
