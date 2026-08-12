@@ -436,6 +436,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
   targetGroupId?: string
   clientTargetGroupId?: string
   clientTargetGroupCreated?: boolean
+  focusOnCreate?: boolean
   selectWorktree?: boolean
   stagedTitle?: string
   stagedFocusAddressBar?: boolean
@@ -450,6 +451,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
   }
   const intentOwner = captureWebSessionIntentOwner(environmentId)
   const callEnvironment = captureRuntimeEnvironmentCall(environmentId, intentOwner.pairingRevision)
+  const shouldFocusOnCreate = args.focusOnCreate !== false
   const shouldSelectWorktree = args.selectWorktree !== false
   const provisionalPageId = createBrowserUuid()
   if (args.clientTargetGroupId) {
@@ -463,17 +465,16 @@ export async function createWebRuntimeSessionBrowserTab(args: {
   if (shouldSelectWorktree) {
     selectWebRuntimeSessionBrowserWorktree(args.worktreeId, environmentId)
   }
-  const initialFocusState = useAppStore.getState()
-  const expectedActiveWorktreeId = initialFocusState.activeWorktreeId
-  const expectedActiveWorkspaceExecutionHostId = initialFocusState.activeWorkspaceExecutionHostId
-  const expectedCurrentLocalTabId = resolveWebSessionVisibleTabId(
-    initialFocusState,
-    args.worktreeId
-  )
+  const initialFocusState = shouldFocusOnCreate ? useAppStore.getState() : null
+  const expectedActiveWorktreeId = initialFocusState?.activeWorktreeId
+  const expectedActiveWorkspaceExecutionHostId = initialFocusState?.activeWorkspaceExecutionHostId
+  const expectedCurrentLocalTabId = initialFocusState
+    ? resolveWebSessionVisibleTabId(initialFocusState, args.worktreeId)
+    : null
   let unsubscribeFocusGuard = (): void => {}
   let guardedPageId = provisionalPageId
   try {
-    if (matchesWebSessionIntentOwner(intentOwner)) {
+    if (shouldFocusOnCreate && matchesWebSessionIntentOwner(intentOwner)) {
       recordWebSessionFocusIntent(
         intentOwner,
         args.worktreeId,
@@ -512,8 +513,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
           worktree: toRuntimeWorktreeSelector(args.worktreeId),
           url: args.url,
           profileId: args.profileId ?? undefined,
-          // Why: user clicked "New Browser Tab", so mark it active in the snapshot, else the reconcile snaps back to a terminal.
-          activate: true,
+          activate: shouldFocusOnCreate,
           // Why: place the new browser in the clicked split group so the host snapshot is authoritative for it (no left-snap).
           ...(args.targetGroupId ? { targetGroupId: args.targetGroupId } : {}),
           // Why: web clients need the local tab now; waiting for host webview registration makes the workspace appear to close.
@@ -529,7 +529,9 @@ export async function createWebRuntimeSessionBrowserTab(args: {
         fromRemotePageId: provisionalPageId,
         toRemotePageId: created.browserPageId
       })
-      const focusIntent = peekWebSessionFocusIntent(intentOwner, args.worktreeId)
+      const focusIntent = shouldFocusOnCreate
+        ? peekWebSessionFocusIntent(intentOwner, args.worktreeId)
+        : null
       if (focusIntent?.hostTabId === provisionalPageId) {
         recordWebSessionFocusIntent(
           intentOwner,
@@ -552,7 +554,9 @@ export async function createWebRuntimeSessionBrowserTab(args: {
         error instanceof Error ? error.message : String(error)
       )
     }
-    const remainingFocusIntent = peekWebSessionFocusIntent(intentOwner, args.worktreeId)
+    const remainingFocusIntent = shouldFocusOnCreate
+      ? peekWebSessionFocusIntent(intentOwner, args.worktreeId)
+      : null
     if (
       remainingFocusIntent?.hostTabId === guardedPageId &&
       remainingFocusIntent.expectedCurrentLocalTabId === expectedCurrentLocalTabId
@@ -568,7 +572,9 @@ export async function createWebRuntimeSessionBrowserTab(args: {
       worktreeId: args.worktreeId,
       remotePageId: provisionalPageId
     })
-    clearWebSessionFocusIntentIfMatches(intentOwner, args.worktreeId, provisionalPageId)
+    if (shouldFocusOnCreate) {
+      clearWebSessionFocusIntentIfMatches(intentOwner, args.worktreeId, provisionalPageId)
+    }
     if (args.clientTargetGroupId && args.clientTargetGroupCreated) {
       const reserved = isWebSessionBrowserPlacementGroupReserved({
         environmentId,

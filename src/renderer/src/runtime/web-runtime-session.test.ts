@@ -597,7 +597,7 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     expect(mocks.createBrowserTab).not.toHaveBeenCalled()
   })
 
-  it('keeps the requested split reserved until a pre-published browser gains a unified tab', async () => {
+  it('creates an unfocused browser while preserving its requested split', async () => {
     mocks.getState.mockReturnValue({
       settings: { activeRuntimeEnvironmentId: ENVIRONMENT_ID },
       activeWorktreeId: WORKTREE_ID,
@@ -634,10 +634,29 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       createWebRuntimeSessionBrowserTab({
         worktreeId: WORKTREE_ID,
         environmentId: ENVIRONMENT_ID,
-        clientTargetGroupId: 'client-preview-group'
+        clientTargetGroupId: 'client-preview-group',
+        focusOnCreate: false
       })
     ).resolves.toBe(true)
 
+    expect(runtimeCall).toHaveBeenNthCalledWith(1, {
+      selector: ENVIRONMENT_ID,
+      method: 'browser.tabCreate',
+      params: {
+        worktree: `id:${WORKTREE_ID}`,
+        url: undefined,
+        profileId: undefined,
+        activate: false,
+        waitForRegistration: false
+      },
+      timeoutMs: 15_000
+    })
+    expect(mocks.subscribe).not.toHaveBeenCalled()
+    expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toBeNull()
+    expect(mocks.acceptReplayedWebSessionTabsSnapshot).toHaveBeenCalledWith(
+      ENVIRONMENT_ID,
+      WORKTREE_ID
+    )
     expect(
       isWebSessionBrowserPlacementGroupReserved({
         environmentId: ENVIRONMENT_ID,

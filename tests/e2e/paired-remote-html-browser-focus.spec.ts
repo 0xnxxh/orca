@@ -11,7 +11,7 @@ import { ensureTerminalVisible, waitForActiveWorktree, waitForSessionReady } fro
 
 const FIXTURE_NAME = 'paired-html-focus.html'
 
-test('keeps a selected remote HTML browser tab focused after host adoption', async ({
+test('keeps remote HTML preview placement and focuses it only after a click', async ({
   orcaPage,
   testRepoPath
 }, testInfo) => {
@@ -202,6 +202,30 @@ test('keeps a selected remote HTML browser tab focused after host adoption', asy
       page.locator(`[data-tab-group-body-id="${htmlTabInventory.clientUnifiedTabs[0]!.groupId}"]`)
     ).toBeVisible()
     await expect(page.getByTestId('remote-browser-frame')).toBeVisible({ timeout: 60_000 })
+
+    const previewFocus = await page.evaluate(
+      ({ sourceGroupId, sourceTabId, worktreeId: targetWorktreeId }) => {
+        const state = window.__store?.getState()
+        const activeGroup = (state?.groupsByWorktree[targetWorktreeId] ?? []).find(
+          (group) => group.id === state?.activeGroupIdByWorktree[targetWorktreeId]
+        )
+        return {
+          activeGroupId: activeGroup?.id ?? null,
+          activeTabId: activeGroup?.activeTabId ?? null,
+          activeTabType: state?.activeTabTypeByWorktree[targetWorktreeId] ?? null,
+          sourceGroupId,
+          sourceTabId
+        }
+      },
+      { sourceGroupId, sourceTabId: sourceEditor.tabId, worktreeId }
+    )
+    expect(previewFocus).toEqual({
+      activeGroupId: sourceGroupId,
+      activeTabId: sourceEditor.tabId,
+      activeTabType: 'editor',
+      sourceGroupId,
+      sourceTabId: sourceEditor.tabId
+    })
 
     const tabIds = await page.evaluate(
       ({ fixtureName, worktreeId: targetWorktreeId }) => {

@@ -147,6 +147,7 @@ export function openFilePreviewToSide(params: {
         url: target.url,
         clientTargetGroupId: targetGroupId,
         clientTargetGroupCreated: !existingSibling,
+        focusOnCreate: false,
         stagedTitle: target.title,
         stagedFocusAddressBar: false
       })
