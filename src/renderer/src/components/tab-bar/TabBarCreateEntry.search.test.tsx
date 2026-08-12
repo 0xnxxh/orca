@@ -286,6 +286,19 @@ describe('TabBarCreateEntry search behavior', () => {
     )
   })
 
+  it('treats a bare search prefix as a prompt rather than a submission error', () => {
+    const onOpenEntry = vi.fn().mockResolvedValue(undefined)
+    renderEntry({ onOpenEntry })
+    setQuery('?')
+
+    expect(container.querySelectorAll('[role="option"]')).toHaveLength(0)
+    submit()
+
+    expect(onOpenEntry).not.toHaveBeenCalled()
+    expect(container.querySelector('#tab-create-entry-error')).toBeNull()
+    expect(container.querySelector('input')?.getAttribute('aria-errormessage')).toBeNull()
+  })
+
   it('blocks oversized forced input without surfacing global actions', () => {
     renderEntry({
       menuOptions: [

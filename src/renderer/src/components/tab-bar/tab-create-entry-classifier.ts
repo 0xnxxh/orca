@@ -209,7 +209,9 @@ export function getTabEntryOptions(
     if (hostUrl?.kind === 'host-url') {
       return toOptions([hostUrl], limit, fileStatus)
     }
-    if (newFile && isLikelyNewFileIntent(trimmed)) {
+    // Why: path-shaped text waits on the scan whether or not it is creatable, so
+    // "src/" reports the scan instead of flashing a path error it will not keep.
+    if (isLikelyNewFileIntent(trimmed)) {
       return [fileStatus]
     }
     if (pathError) {
@@ -243,7 +245,12 @@ export function getTabEntryOptions(
     return toOptions([hostUrl, ...fuzzyExistingFiles], actionLimit)
   }
   if (pathError || !newFile) {
-    return [invalidPathOption(pathError)]
+    // Why: an unusable path is still a live quick-open prefix — "src/" cannot be
+    // created, but it matches real files, and dropping them turns every typed
+    // separator into an error row mid-keystroke.
+    return fuzzyExistingFiles.length > 0
+      ? toOptions(fuzzyExistingFiles, actionLimit)
+      : [invalidPathOption(pathError)]
   }
   if (isLikelyNewFileIntent(trimmed)) {
     return toOptions([newFile, search, ...fuzzyExistingFiles], actionLimit)

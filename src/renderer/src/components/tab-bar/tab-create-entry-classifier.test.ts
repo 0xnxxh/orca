@@ -70,6 +70,21 @@ describe('tab create entry classification', () => {
     }
   })
 
+  it('picks http for private IPv4 hosts and https for public ones', () => {
+    for (const input of ['192.168.1.5:5173', '10.0.0.2', '172.16.4.1:8080', '100.64.0.1']) {
+      expect(classifyTabEntryQuery(input, readyFiles([])), input).toMatchObject({
+        kind: 'host-url',
+        url: expect.stringMatching(/^http:\/\//)
+      })
+    }
+    for (const input of ['8.8.8.8', '1.1.1.1:8080']) {
+      expect(classifyTabEntryQuery(input, readyFiles([])), input).toMatchObject({
+        kind: 'host-url',
+        url: expect.stringMatching(/^https:\/\//)
+      })
+    }
+  })
+
   it('blocks malformed bracketed IPv6 URL attempts', () => {
     for (const input of ['[::1]:abc', '[::1]:99999', '[2001:db8::1]:nope/path']) {
       expect(classifyTabEntryQuery(input, readyFiles([])), input).toMatchObject({ kind: 'blocked' })
@@ -241,7 +256,7 @@ describe('tab create entry classification', () => {
   })
 
   it('blocks malformed explicit and host-like URLs unless an exact file exists', () => {
-    for (const query of ['https://', 'example.com:', 'example.com:nope', 'example.com:99999']) {
+    for (const query of ['https://', 'example.com:99999']) {
       expect(classifyTabEntryQuery(query, readyFiles([]))).toMatchObject({ kind: 'blocked' })
     }
     expect(classifyTabEntryQuery('example.com:99999', readyFiles(['example.com:99999']))).toEqual({
@@ -265,6 +280,40 @@ describe('tab create entry classification', () => {
     expect(
       getTabEntryOptions('example.com:99999', loading).map((option) => option.classification.kind)
     ).toEqual(['blocked'])
+  })
+
+  it('keeps file matches for path prefixes that cannot be created', () => {
+    const files = ['src/main/index.ts', 'src/renderer/App.tsx']
+    // A trailing separator is an ordinary keystroke on the way to a nested path,
+    // so the matches it finds must survive the unusable-path verdict.
+    for (const query of ['src/', 'src/renderer/']) {
+      expect(
+        getTabEntryOptions(query, readyFiles(files)).map((option) => option.classification.kind),
+        query
+      ).toEqual(expect.arrayContaining(['existing-file']))
+    }
+    expect(getTabEntryOptions('src/', readyFiles([]))).toMatchObject([
+      { classification: { kind: 'blocked' } }
+    ])
+  })
+
+  it('reports the running scan for path-shaped text it cannot create yet', () => {
+    expect(
+      getTabEntryOptions('src/', { files: [], loading: true, loadError: null }).map(
+        (option) => option.id
+      )
+    ).toEqual(['loading'])
+  })
+
+  it('falls through to file and search actions for host-like text with a non-numeric port', () => {
+    expect(
+      getTabEntryOptions('docker.io:latest', readyFiles([])).map(
+        (option) => option.classification.kind
+      )
+    ).toEqual(['new-file', 'search'])
+    expect(
+      getTabEntryOptions('example.com:', readyFiles([])).map((option) => option.classification.kind)
+    ).toEqual(['new-file', 'search'])
   })
 
   it('never turns invalid paths into search actions', () => {

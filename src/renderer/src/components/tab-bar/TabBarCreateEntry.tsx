@@ -235,7 +235,11 @@ function TabBarCreateEntrySession({
         setSelectionGuidance(getTabEntryChooseActionMessage())
         return
       }
-      setError(statusMessage)
+      // Why: an 'empty' status is the placeholder prompt, not a failure — showing
+      // it as an error turns a bare "?" into a red row that reads like a bug.
+      if (statusOption?.classification.kind !== 'empty') {
+        setError(statusMessage)
+      }
       return
     }
     if (selectedOption.kind === 'tab') {

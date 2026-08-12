@@ -141,6 +141,7 @@ describe('openWorkspaceBrowserTab', () => {
       intent: { kind: 'search', engine: 'google' }
     })
 
+    expect(mocks.createRemote).toHaveBeenCalledOnce()
     expect(createBrowserTab).toHaveBeenCalledWith(
       WORKSPACE_ID,
       'https://www.google.com/search?q=hooks',
@@ -179,6 +180,7 @@ describe('openWorkspaceBrowserTab', () => {
       mocks.state = state
       await expect(openWorkspaceBrowserTab(request)).rejects.toThrow('Unable to search with Kagi.')
     }
+    expect(mocks.createRemote).not.toHaveBeenCalled()
 
     mocks.state = {
       ...ownerState(toRuntimeExecutionHostId('hub-a')),

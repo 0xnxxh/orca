@@ -65,6 +65,10 @@ function intentPresentation(
 // Why: the UI string stays friendly and query-free, but the diagnosable reason
 // rides along as `cause` so a failed open is not indistinguishable in logs.
 function openFailure(message: string, reason: string, cause?: unknown): Error {
+  // Why: callers only surface `message`, so log the reason here or a failed open
+  // leaves no trace at all. The reason alone — never `cause` — keeps the typed
+  // URL and search query out of the console.
+  console.warn(`[workspace-browser-tab-open] ${reason}`)
   return new Error(message, {
     cause: new Error(reason, cause === undefined ? undefined : { cause })
   })

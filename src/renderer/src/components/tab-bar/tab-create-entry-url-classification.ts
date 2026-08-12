@@ -74,6 +74,24 @@ function splitHostCandidate(query: string): { host: string; port: string | null 
   return { host, port }
 }
 
+// Why: a bare LAN/dev address almost never serves TLS, but a public IP still
+// deserves https — plaintext there would be a downgrade, and IPs get no HSTS.
+function isPrivateIpv4(host: string): boolean {
+  if (!IPV4_PATTERN.test(host)) {
+    return false
+  }
+  const [first = 0, second = 0] = host.split('.').map(Number)
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) || // CGNAT, incl. Tailscale
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 169 && second === 254) ||
+    (first === 192 && second === 168)
+  )
+}
+
 function hasSourceExtensionBeforeColon(query: string): boolean {
   const colonIndex = query.indexOf(':')
   if (colonIndex < 0) {
@@ -118,11 +136,13 @@ export function classifyHostUrl(query: string): HostUrlClassification | null {
     return BRACKETED_IPV6_ATTEMPT_PATTERN.test(query) ? invalidUrl() : null
   }
   if (candidate.port !== null && !/^\d+$/.test(candidate.port)) {
-    return invalidUrl()
+    // Why: "docker.io:latest" reads as a tag, not a URL attempt — fall through so
+    // file matches and search still get offered instead of blocking every row.
+    return null
   }
   try {
     const scheme =
-      candidate.host.toLowerCase() === 'localhost' || IPV4_PATTERN.test(candidate.host)
+      candidate.host.toLowerCase() === 'localhost' || isPrivateIpv4(candidate.host)
         ? 'http'
         : 'https'
     const url = new URL(`${scheme}://${query}`)
