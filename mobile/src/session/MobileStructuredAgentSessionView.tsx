@@ -330,7 +330,8 @@ function MobileStructuredHandoffBanner(props: {
         ) : (
           <Pressable
             style={({ pressed }) => [styles.handoffButton, pressed && styles.pressed]}
-            onPress={() => void props.onRequest('to-tui', 'now')}
+            // A submitted turn can reach the host before isWorking updates; after-turn is immediate when idle.
+            onPress={() => void props.onRequest('to-tui', 'after-turn')}
           >
             <Text style={styles.handoffButtonText}>Open agent TUI</Text>
           </Pressable>
