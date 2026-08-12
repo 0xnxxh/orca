@@ -196,7 +196,10 @@ describe('wslClaudeProjectsDirs', () => {
 
   it('lists the Claude projects root for each distro home', async () => {
     await expect(
-      wslClaudeProjectsDirs({ platform: 'win32', listWslHomeDirs: async () => [UBUNTU_HOME] })
-    ).resolves.toEqual([`${UBUNTU_HOME}\\.claude\\projects`])
+      wslClaudeProjectsDirs({
+        platform: 'win32',
+        listWslHomeDirs: async () => [UBUNTU_HOME, DEBIAN_HOME]
+      })
+    ).resolves.toEqual([`${UBUNTU_HOME}\\.claude\\projects`, `${DEBIAN_HOME}\\.claude\\projects`])
   })
 })

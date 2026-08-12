@@ -33,6 +33,7 @@ function readDirectory(dirPath: string, signal: AbortSignal): Promise<Dirent[]> 
   )
 }
 
+// Why: WSL scan paths can contain either separator when tests run off Windows.
 function sessionFileName(path: string): string {
   return win32.basename(path, win32.extname(path))
 }

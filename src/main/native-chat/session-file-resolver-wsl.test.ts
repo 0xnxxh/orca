@@ -43,7 +43,7 @@ const scanned = vi.hoisted(() => ({
   dirs: [] as string[],
   hostClaudeHasTranscript: false,
   hostRootHasRollout: false,
-  wslClaudeHasTranscript: false
+  wslClaudeTranscriptDir: null as string | null
 }))
 vi.mock('../ai-vault/session-scanner-discovery', () => ({
   walkSessionFiles: async (dir: string, agent: string) => {
@@ -52,7 +52,7 @@ vi.mock('../ai-vault/session-scanner-discovery', () => ({
     if (agent === 'claude' && !isWslRoot && scanned.hostClaudeHasTranscript) {
       return [HOST_CLAUDE_TRANSCRIPT]
     }
-    if (agent === 'claude' && isWslRoot && scanned.wslClaudeHasTranscript) {
+    if (agent === 'claude' && dir === scanned.wslClaudeTranscriptDir) {
       return [WSL_CLAUDE_TRANSCRIPT]
     }
     return scanned.hostRootHasRollout && !isWslRoot
@@ -83,7 +83,7 @@ beforeEach(() => {
   scanned.dirs = []
   scanned.hostClaudeHasTranscript = false
   scanned.hostRootHasRollout = false
-  scanned.wslClaudeHasTranscript = false
+  scanned.wslClaudeTranscriptDir = null
   setPlatform('win32')
 })
 
@@ -93,11 +93,24 @@ afterEach(() => {
 
 describe('resolveSessionFilePath on a Windows host with WSL', () => {
   it('resolves a Claude transcript from WSL when no hook path is known', async () => {
-    scanned.wslClaudeHasTranscript = true
+    scanned.wslClaudeTranscriptDir = WSL_CLAUDE_PROJECTS_DIR
 
     await expect(resolveSessionFilePath('claude', 'claude-wsl-sess')).resolves.toBe(
       WSL_CLAUDE_TRANSCRIPT
     )
+  })
+
+  it('continues to later WSL Claude roots after a root misses', async () => {
+    vi.mocked(listWslDistrosAsync).mockResolvedValueOnce(['Missing', 'Ubuntu'])
+    vi.mocked(getWslHomeAsync).mockImplementation(async (distro) =>
+      distro === 'Missing' ? '\\\\wsl.localhost\\Missing\\home\\ada' : UBUNTU_HOME
+    )
+    scanned.wslClaudeTranscriptDir = WSL_CLAUDE_PROJECTS_DIR
+
+    await expect(resolveSessionFilePath('claude', 'claude-wsl-sess')).resolves.toBe(
+      WSL_CLAUDE_TRANSCRIPT
+    )
+    expect(scanned.dirs).toContain('\\\\wsl.localhost\\Missing\\home\\ada\\.claude\\projects')
   })
 
   it('does not enumerate WSL distros when the host Claude root has the transcript', async () => {
@@ -108,6 +121,17 @@ describe('resolveSessionFilePath on a Windows host with WSL', () => {
     )
 
     expect(scanned.dirs.some((dir) => dir.startsWith('\\\\wsl.localhost\\'))).toBe(false)
+    expect(vi.mocked(listWslDistrosAsync)).not.toHaveBeenCalled()
+    expect(vi.mocked(getWslHomeAsync)).not.toHaveBeenCalled()
+  })
+
+  it('does not enumerate WSL distros when a Claude root override misses', async () => {
+    await expect(
+      resolveSessionFilePath('claude', 'missing', {
+        claudeProjectsDir: 'C:\\override\\claude-projects'
+      })
+    ).resolves.toBeNull()
+
     expect(vi.mocked(listWslDistrosAsync)).not.toHaveBeenCalled()
     expect(vi.mocked(getWslHomeAsync)).not.toHaveBeenCalled()
   })
