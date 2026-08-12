@@ -48,6 +48,7 @@ export type LocalSkillInstallInput = {
   expectedPackageDigest?: string
   expectedPackageId?: string
   expectedVersionId?: string
+  sourceBundleDigest?: string
   conflictResolution?: 'replace-unmodified' | 'replace-and-discard-local' | 'cancel'
   filesystem?: SkillInstallFilesystem
   wslDistro?: string
@@ -59,6 +60,12 @@ export type LocalSkillInstallPreview = {
   manifest: SkillPackageManifestV1
   canonicalPath: string
   currentState: SkillCanonicalState
+}
+
+export type LocalExtractedSkillPackage = {
+  extractionPath: string
+  manifest: SkillPackageManifestV1
+  archiveSha256: string
 }
 
 export type SkillInstallJournalBoundary = 'before' | 'after'
@@ -74,11 +81,9 @@ function lockPath(stateDirectory: string, canonicalPath: string): string {
   return join(stateDirectory, 'locks', `${skillInstallStateKey(canonicalPath)}.lock`)
 }
 
-async function inspectExtractedPackage(input: LocalSkillInstallInput): Promise<{
-  extractionPath: string
-  manifest: SkillPackageManifestV1
-  archiveSha256: string
-}> {
+async function inspectExtractedPackage(
+  input: LocalSkillInstallInput
+): Promise<LocalExtractedSkillPackage> {
   await mkdir(input.destinationRoot, { recursive: true })
   const extractionPath = join(input.destinationRoot, `.orca-skill-extract-${randomUUID()}`)
   const extracted = await extractSkillPackageArchive({
@@ -114,20 +119,28 @@ export async function previewLocalSkillPackage(
   input: LocalSkillInstallInput
 ): Promise<LocalSkillInstallPreview> {
   const extracted = await inspectExtractedPackage(input)
-  const canonicalPath = join(input.destinationRoot, extracted.manifest.name)
   try {
-    const receipt = await readSkillInstallReceipt(input.stateDirectory, canonicalPath)
-    return {
-      manifest: extracted.manifest,
-      canonicalPath,
-      currentState: await inspectSkillCanonicalState({
-        canonicalPath,
-        manifest: extracted.manifest,
-        receipt
-      })
-    }
+    return previewLocalExtractedSkillPackage(input, extracted)
   } finally {
     await (input.filesystem ?? nativeSkillInstallFilesystem).remove(extracted.extractionPath)
+  }
+}
+
+export async function previewLocalExtractedSkillPackage(
+  input: LocalSkillInstallInput,
+  extracted: LocalExtractedSkillPackage
+): Promise<LocalSkillInstallPreview> {
+  const canonicalPath = join(input.destinationRoot, extracted.manifest.name)
+  const receipt = await readSkillInstallReceipt(input.stateDirectory, canonicalPath)
+  return {
+    manifest: extracted.manifest,
+    canonicalPath,
+    currentState: await inspectSkillCanonicalState({
+      canonicalPath,
+      manifest: extracted.manifest,
+      receipt,
+      filesystem: input.filesystem
+    })
   }
 }
 
@@ -135,8 +148,16 @@ export async function installLocalSkillPackage(
   input: LocalSkillInstallInput,
   dependencies: SkillInstallTransactionDependencies = {}
 ): Promise<SkillInstallResult> {
-  const filesystem = input.filesystem ?? nativeSkillInstallFilesystem
   const extracted = await inspectExtractedPackage(input)
+  return installLocalExtractedSkillPackage(input, extracted, dependencies)
+}
+
+export async function installLocalExtractedSkillPackage(
+  input: LocalSkillInstallInput,
+  extracted: LocalExtractedSkillPackage,
+  dependencies: SkillInstallTransactionDependencies = {}
+): Promise<SkillInstallResult> {
+  const filesystem = input.filesystem ?? nativeSkillInstallFilesystem
   const canonicalPath = join(input.destinationRoot, extracted.manifest.name)
   let releaseLock: (() => Promise<void>) | null = null
   let journal: SkillInstallJournalV1 | null = null

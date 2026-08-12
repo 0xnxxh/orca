@@ -93,6 +93,7 @@ export function SkillSharePreparationReview({
   progress: SkillShareProgress | null
   progressPercent: number
 }): React.JSX.Element {
+  const skillPreviews = preview.skills ?? []
   return (
     <div className="space-y-5">
       <section className="space-y-2">
@@ -106,6 +107,13 @@ export function SkillSharePreparationReview({
           </div>
         </div>
         <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+          <Badge variant="outline">
+            {translate(
+              'auto.components.skills.SkillShareReviewContent.01c5a17e01',
+              '{{value0}} skills',
+              { value0: preview.skillCount ?? preview.skills?.length ?? 1 }
+            )}
+          </Badge>
           <Badge variant="outline">
             {preview.fileCount}{' '}
             {translate('auto.components.skills.SkillShareReviewContent.3121f44358', 'files')}
@@ -124,6 +132,33 @@ export function SkillSharePreparationReview({
           {translate('auto.components.skills.SkillShareReviewContent.b3b1d4b911', 'SHA-256')}{' '}
           {preview.packageDigest}
         </p>
+        {skillPreviews.length > 1 ? (
+          <details className="rounded-md border border-border px-3 py-2 text-xs">
+            <summary className="cursor-pointer font-medium">
+              {translate(
+                'auto.components.skills.SkillShareReviewContent.01c5a17e02',
+                'Review included skills'
+              )}
+            </summary>
+            <div className="mt-2 space-y-2">
+              {skillPreviews.map((skill) => (
+                <div key={skill.id} className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{skill.name}</p>
+                    <p className="truncate text-muted-foreground">{skill.description}</p>
+                  </div>
+                  <span className="shrink-0 text-muted-foreground">
+                    {translate(
+                      'auto.components.skills.SkillShareReviewContent.01c5a17e03',
+                      '{{value0}} files · {{value1}}',
+                      { value0: skill.fileCount, value1: byteLabel(skill.totalBytes) }
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </details>
+        ) : null}
       </section>
 
       <section className="space-y-2">

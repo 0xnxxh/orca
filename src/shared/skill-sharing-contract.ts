@@ -10,6 +10,12 @@ import type {
   SkillPackageIdentity,
   ManagedSkillInstall
 } from './skill-install-contract'
+import type {
+  SkillBundleInstallPreview,
+  SkillBundleInstallResult,
+  SkillBundlePackageIdentity,
+  SkillBundleSelectedSkill
+} from './skill-bundle-install-contract'
 
 export type SkillSharePreview = {
   preparationId: string
@@ -18,6 +24,17 @@ export type SkillSharePreview = {
   name: string
   description: string
   packageDigest: string
+  skillCount?: number
+  skills?: {
+    id: string
+    name: string
+    description: string
+    digest: string
+    fileCount: number
+    totalBytes: number
+    scriptPaths: string[]
+    executablePaths: string[]
+  }[]
   archiveSha256: string
   fileCount: number
   totalBytes: number
@@ -71,6 +88,44 @@ export type SkillShareInstallOperation =
   | { status: 'ok'; value: SkillInstallResult }
   | { status: 'unconfigured'; message: string }
   | { status: 'reconnect-required' }
+  | { status: 'unsupported'; message: string }
+
+export type SkillBundleShareInstallInput = {
+  shareId: string
+  operationId?: string
+  versionId?: string
+  environmentId?: string
+  selectedSkillIds: string[]
+  destination: SkillInstallDestination
+  conflictDecisions?: {
+    skillId: string
+    resolution: 'keep-local' | 'replace-unmodified' | 'replace-and-discard-local'
+  }[]
+}
+
+export type SkillBundlePackageVersionInstallInput = Omit<
+  SkillBundleShareInstallInput,
+  'shareId'
+> & {
+  packageId: string
+  versionId: string
+}
+
+export type SkillBundleShareInstallOperation =
+  | { status: 'ok'; value: SkillBundleInstallResult }
+  | { status: 'unconfigured'; message: string }
+  | { status: 'reconnect-required' }
+  | { status: 'unsupported'; message: string }
+
+export type SkillBundleInstallPreviewInput = {
+  environmentId?: string
+  package: SkillBundlePackageIdentity
+  selectedSkills: SkillBundleSelectedSkill[]
+  destination: SkillInstallDestination
+}
+
+export type SkillBundleInstallPreviewOperation =
+  | { status: 'ok'; value: SkillBundleInstallPreview }
   | { status: 'unsupported'; message: string }
 
 export type SkillInstallPreviewInput = {

@@ -1,5 +1,3 @@
-import { open } from 'node:fs/promises'
-import { join } from 'node:path'
 import {
   SKILL_INSTALL_CAPABILITY,
   SKILL_MANAGEMENT_CAPABILITY,
@@ -17,78 +15,28 @@ import {
   type SkillRemoveRequest
 } from '../../shared/skill-install-contract'
 import {
-  SKILL_SSH_RELAY_BEGIN_UPLOAD_METHOD,
   SKILL_SSH_RELAY_CANCEL_UPLOAD_METHOD,
-  SKILL_SSH_RELAY_COMMIT_UPLOAD_METHOD,
   SKILL_SSH_RELAY_INSTALL_METHOD,
   SKILL_SSH_RELAY_LIST_METHOD,
   SKILL_SSH_RELAY_PREVIEW_METHOD,
   SKILL_SSH_RELAY_REMOVE_METHOD,
-  SKILL_SSH_RELAY_UPLOAD_CHUNK_METHOD,
   type SkillSshWorkspaceAuthority
 } from '../../shared/skill-ssh-relay-contract'
-import {
-  SKILL_UPLOAD_CHUNK_MAX_BYTES,
-  SkillUploadBeginResultSchema
-} from '../../shared/skill-upload-session-contract'
 import type { IPtyProvider } from '../providers/pty-provider-contract'
-import { downloadSkillPackageGrant } from './skill-package-download'
-import { retrySkillTransferRpc, throwIfSkillTransferCancelled } from './skill-transfer-rpc-retry'
-
-const REQUEST_TIMEOUT_MS = 5 * 60_000
-const DIRECT_DOWNLOAD_FAILURE = 'skill-download-transport-failed'
-const DEVELOPMENT_DOWNLOAD_POLICY_FAILURES = new Set([
-  'skill-download-url-rejected',
-  'skill-download-origin-rejected'
-])
-
-type SkillSshRelayClient = NonNullable<IPtyProvider['requestHostRpc']>
-
-function requireClient(provider: IPtyProvider): SkillSshRelayClient {
-  if (!provider.requestHostRpc) {
-    throw new Error('skill-install-ssh-relay-unavailable')
-  }
-  return provider.requestHostRpc
-}
-
-function allowedOrigins(requireHttps: boolean): string[] {
-  const origins = ['https://storage.googleapis.com']
-  if (!requireHttps && process.env.ORCA_SKILL_PACKAGE_DOWNLOAD_ORIGINS) {
-    origins.push(
-      ...process.env.ORCA_SKILL_PACKAGE_DOWNLOAD_ORIGINS.split(',')
-        .map((origin) => origin.trim())
-        .filter(Boolean)
-    )
-  }
-  return [...new Set(origins)]
-}
-
-function shouldUseClientTransfer(error: unknown, requireHttps: boolean): boolean {
-  const message = error instanceof Error ? error.message : ''
-  return (
-    message === DIRECT_DOWNLOAD_FAILURE ||
-    (!requireHttps && DEVELOPMENT_DOWNLOAD_POLICY_FAILURES.has(message))
-  )
-}
-
-function retryableSshTransportError(error: unknown): boolean {
-  return (
-    typeof (error as { code?: unknown })?.code !== 'number' &&
-    (error as Error)?.name !== 'AbortError'
-  )
-}
-
-async function capabilities(client: SkillSshRelayClient): Promise<string[]> {
-  const status = (await client('relay.status', {}, { timeoutMs: 15_000 })) as {
-    capabilities?: unknown
-  }
-  return Array.isArray(status.capabilities)
-    ? status.capabilities.filter((value): value is string => typeof value === 'string')
-    : []
-}
+import { retrySkillTransferRpc } from './skill-transfer-rpc-retry'
+import { transferSkillPackageToSshHost } from './skill-ssh-package-transfer'
+import {
+  SKILL_SSH_REQUEST_TIMEOUT_MS,
+  requireSkillSshRelayClient,
+  retryableSkillSshTransportError,
+  shouldUseSkillSshClientTransfer,
+  skillSshRelayCapabilities
+} from './skill-ssh-relay-client'
 
 export async function supportsSkillManagementOnSsh(provider: IPtyProvider): Promise<boolean> {
-  return (await capabilities(requireClient(provider))).includes(SKILL_MANAGEMENT_CAPABILITY)
+  return (await skillSshRelayCapabilities(requireSkillSshRelayClient(provider))).includes(
+    SKILL_MANAGEMENT_CAPABILITY
+  )
 }
 
 export async function installSkillOnSshHost(input: {
@@ -100,8 +48,8 @@ export async function installSkillOnSshHost(input: {
   signal?: AbortSignal
   fetcher?: typeof fetch
 }): Promise<SkillInstallResult> {
-  const client = requireClient(input.provider)
-  const supported = await capabilities(client)
+  const client = requireSkillSshRelayClient(input.provider)
+  const supported = await skillSshRelayCapabilities(client)
   if (!supported.includes(SKILL_INSTALL_CAPABILITY)) {
     throw new Error('skill-install-ssh-update-required')
   }
@@ -109,19 +57,19 @@ export async function installSkillOnSshHost(input: {
     return SkillInstallResultSchema.parse(
       await retrySkillTransferRpc({
         signal: input.signal,
-        retryable: retryableSshTransportError,
+        retryable: retryableSkillSshTransportError,
         call: () =>
           client(
             SKILL_SSH_RELAY_INSTALL_METHOD,
             { request: input.request, workspace: input.workspace },
-            { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
+            { timeoutMs: SKILL_SSH_REQUEST_TIMEOUT_MS, signal: input.signal }
           )
       })
     )
   } catch (error) {
     if (
       input.request.ingress.kind !== 'download-grant' ||
-      !shouldUseClientTransfer(error, input.requireHttps)
+      !shouldUseSkillSshClientTransfer(error, input.requireHttps)
     ) {
       throw error
     }
@@ -131,7 +79,7 @@ export async function installSkillOnSshHost(input: {
   }
   return retrySkillTransferRpc({
     signal: input.signal,
-    retryable: retryableSshTransportError,
+    retryable: retryableSkillSshTransportError,
     call: async () => {
       const uploadId = await transferSkillPackageToSshHost(client, input)
       try {
@@ -145,7 +93,7 @@ export async function installSkillOnSshHost(input: {
               },
               workspace: input.workspace
             },
-            { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
+            { timeoutMs: SKILL_SSH_REQUEST_TIMEOUT_MS, signal: input.signal }
           )
         )
       } finally {
@@ -160,8 +108,8 @@ export async function previewSkillInstallOnSshHost(input: {
   request: SkillInstallPreviewRequest
   workspace?: SkillSshWorkspaceAuthority
 }): Promise<SkillInstallPreview> {
-  const client = requireClient(input.provider)
-  if (!(await capabilities(client)).includes(SKILL_MANAGEMENT_CAPABILITY)) {
+  const client = requireSkillSshRelayClient(input.provider)
+  if (!(await skillSshRelayCapabilities(client)).includes(SKILL_MANAGEMENT_CAPABILITY)) {
     throw new Error('skill-install-ssh-update-required')
   }
   return SkillInstallPreviewSchema.parse(
@@ -178,15 +126,15 @@ export async function removeSkillInstallOnSshHost(input: {
   request: SkillRemoveRequest
   workspace?: SkillSshWorkspaceAuthority
 }): Promise<SkillInstallResult> {
-  const client = requireClient(input.provider)
-  if (!(await capabilities(client)).includes(SKILL_MANAGEMENT_CAPABILITY)) {
+  const client = requireSkillSshRelayClient(input.provider)
+  if (!(await skillSshRelayCapabilities(client)).includes(SKILL_MANAGEMENT_CAPABILITY)) {
     throw new Error('skill-install-ssh-update-required')
   }
   return SkillInstallResultSchema.parse(
     await client(
       SKILL_SSH_RELAY_REMOVE_METHOD,
       { request: input.request, workspace: input.workspace },
-      { timeoutMs: REQUEST_TIMEOUT_MS }
+      { timeoutMs: SKILL_SSH_REQUEST_TIMEOUT_MS }
     )
   )
 }
@@ -196,8 +144,8 @@ export async function listSkillInstallsOnSshHost(input: {
   connectionId: string
   workspaces: SkillSshWorkspaceAuthority[]
 }): Promise<ManagedSkillInstall[]> {
-  const client = requireClient(input.provider)
-  if (!(await capabilities(client)).includes(SKILL_MANAGEMENT_CAPABILITY)) {
+  const client = requireSkillSshRelayClient(input.provider)
+  if (!(await skillSshRelayCapabilities(client)).includes(SKILL_MANAGEMENT_CAPABILITY)) {
     throw new Error('skill-install-ssh-update-required')
   }
   return ManagedSkillInstallListSchema.parse(
@@ -216,97 +164,4 @@ export async function listSkillInstallsOnSshHost(input: {
           }
         : install.destination
   }))
-}
-
-async function transferSkillPackageToSshHost(
-  client: SkillSshRelayClient,
-  input: Parameters<typeof installSkillOnSshHost>[0]
-): Promise<string> {
-  if (input.request.ingress.kind !== 'download-grant') {
-    throw new Error('skill-install-ssh-ingress-invalid')
-  }
-  const downloaded = await downloadSkillPackageGrant({
-    url: input.request.ingress.url,
-    expiresAt: input.request.ingress.expiresAt,
-    expectedArchiveSha256: input.request.package.archiveSha256,
-    expectedCompressedBytes: input.request.package.compressedBytes,
-    temporaryRoot: join(input.userDataPath, 'skill-installs', 'ssh-transfers'),
-    allowedOrigins: allowedOrigins(input.requireHttps),
-    requireHttps: input.requireHttps,
-    signal: input.signal,
-    fetcher: input.fetcher
-  })
-  let uploadId: string | null = null
-  try {
-    const begun = SkillUploadBeginResultSchema.parse(
-      await retrySkillTransferRpc({
-        signal: input.signal,
-        checkCancellationAfterSuccess: false,
-        retryable: retryableSshTransportError,
-        call: () =>
-          client(
-            SKILL_SSH_RELAY_BEGIN_UPLOAD_METHOD,
-            { package: input.request.package, transferId: input.request.operationId },
-            { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
-          )
-      })
-    )
-    uploadId = begun.uploadId
-    throwIfSkillTransferCancelled(input.signal)
-    const chunkBytes = Math.min(begun.chunkBytes, SKILL_UPLOAD_CHUNK_MAX_BYTES)
-    if (
-      begun.acknowledgedOffset > input.request.package.compressedBytes ||
-      !Number.isInteger(chunkBytes) ||
-      chunkBytes < 1
-    ) {
-      throw new Error('skill-transfer-ssh-begin-invalid')
-    }
-    const handle = await open(downloaded.archivePath, 'r')
-    try {
-      let offset = begun.acknowledgedOffset
-      while (offset < input.request.package.compressedBytes) {
-        const bytes = Buffer.alloc(
-          Math.min(chunkBytes, input.request.package.compressedBytes - offset)
-        )
-        const read = await handle.read(bytes, 0, bytes.length, offset)
-        if (read.bytesRead !== bytes.length) {
-          throw new Error('skill-transfer-source-changed')
-        }
-        const acknowledged = (await retrySkillTransferRpc({
-          signal: input.signal,
-          retryable: retryableSshTransportError,
-          call: () =>
-            client(
-              SKILL_SSH_RELAY_UPLOAD_CHUNK_METHOD,
-              { uploadId, offset, bytesBase64: bytes.toString('base64') },
-              { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
-            )
-        })) as { acknowledgedOffset: number }
-        if (acknowledged.acknowledgedOffset !== offset + bytes.length) {
-          throw new Error('skill-transfer-ack-invalid')
-        }
-        offset = acknowledged.acknowledgedOffset
-      }
-    } finally {
-      await handle.close()
-    }
-    await retrySkillTransferRpc({
-      signal: input.signal,
-      retryable: retryableSshTransportError,
-      call: () =>
-        client(
-          SKILL_SSH_RELAY_COMMIT_UPLOAD_METHOD,
-          { uploadId },
-          { timeoutMs: REQUEST_TIMEOUT_MS, signal: input.signal }
-        )
-    })
-    const committedId = uploadId
-    uploadId = null
-    return committedId
-  } finally {
-    await downloaded.cleanup()
-    if (uploadId) {
-      await client(SKILL_SSH_RELAY_CANCEL_UPLOAD_METHOD, { uploadId }).catch(() => undefined)
-    }
-  }
 }

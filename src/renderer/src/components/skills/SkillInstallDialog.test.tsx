@@ -43,6 +43,42 @@ function version(): SkillCloudVersion {
   }
 }
 
+function bundleVersion(): SkillCloudVersion {
+  const skill = (id: string, name: string) => ({
+    id,
+    name,
+    description: `${name} description`,
+    digest: DIGEST,
+    files: [
+      {
+        path: 'SKILL.md',
+        size: 1,
+        executable: false,
+        classification: 'text' as const,
+        sha256: DIGEST,
+        identitySha256: DIGEST
+      }
+    ]
+  })
+  return {
+    ...version(),
+    name: 'team-bundle',
+    description: 'Two private skills',
+    packageDigest: 'c'.repeat(64),
+    releaseNotes: 'Initial team bundle',
+    manifest: {
+      schemaVersion: 1,
+      packageId: 'pkg_1',
+      versionId: 'ver_1',
+      bundleName: 'team-bundle',
+      description: 'Two private skills',
+      createdAt: '2026-08-11T00:00:00.000Z',
+      skills: [skill('skill-alpha', 'alpha'), skill('skill-beta', 'beta')],
+      bundleDigest: 'c'.repeat(64)
+    }
+  }
+}
+
 function installApi(previewInstall: ReturnType<typeof vi.fn>) {
   let progressListener:
     | ((progress: { operationId: string; phase: 'authorizing' | 'installing' }) => void)
@@ -52,6 +88,7 @@ function installApi(previewInstall: ReturnType<typeof vi.fn>) {
       .fn()
       .mockResolvedValue({ status: 'ok', value: { id: 'share_1', version: version() } }),
     previewInstall,
+    previewBundleInstall: vi.fn(),
     installShare: vi.fn().mockResolvedValue({
       status: 'ok',
       value: {
@@ -62,6 +99,7 @@ function installApi(previewInstall: ReturnType<typeof vi.fn>) {
         placements: []
       }
     }),
+    installBundleShare: vi.fn(),
     cancelInstall: vi.fn().mockResolvedValue({ cancelled: true }),
     listWslDistros: vi.fn().mockResolvedValue([]),
     onInstallProgress: vi.fn((listener) => {
@@ -75,12 +113,12 @@ function installApi(previewInstall: ReturnType<typeof vi.fn>) {
   }
 }
 
-async function inspectSkill(): Promise<void> {
+async function inspectSkill(expectedDescription = 'A private skill'): Promise<void> {
   fireEvent.change(screen.getByLabelText('Orca skill link'), {
     target: { value: 'https://app.orca.dev/skills/share/share_1' }
   })
   fireEvent.click(screen.getByRole('button', { name: 'Inspect skill' }))
-  await screen.findByText('A private skill')
+  await screen.findByText(expectedDescription)
 }
 
 beforeEach(() => {
@@ -102,6 +140,105 @@ afterEach(() => {
 })
 
 describe('SkillInstallDialog', () => {
+  it('installs a selected subset from a shared bundle', async () => {
+    const skills = installApi(vi.fn())
+    skills.resolveShare.mockResolvedValue({
+      status: 'ok',
+      value: { id: 'share_1', version: bundleVersion() }
+    })
+    Object.assign(skills, {
+      previewBundleInstall: vi.fn().mockResolvedValue({
+        status: 'ok',
+        value: {
+          packageId: 'pkg_1',
+          versionId: 'ver_1',
+          bundleDigest: 'c'.repeat(64),
+          destinationIdentity: 'local:global',
+          skills: [{ id: 'skill-beta', name: 'beta', digest: DIGEST, currentState: 'missing' }]
+        }
+      }),
+      installBundleShare: vi.fn().mockResolvedValue({
+        status: 'ok',
+        value: {
+          operationId: 'op_1',
+          packageId: 'pkg_1',
+          versionId: 'ver_1',
+          bundleDigest: 'c'.repeat(64),
+          status: 'complete',
+          skills: [
+            {
+              skillId: 'skill-beta',
+              name: 'beta',
+              digest: DIGEST,
+              status: 'installed',
+              placements: []
+            }
+          ]
+        }
+      })
+    })
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+    await inspectSkill('Two private skills')
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /alpha/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Install 1 skills' }))
+
+    await screen.findByText('Skills installed and verified.')
+    expect(skills.installBundleShare).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedSkillIds: ['skill-beta'] })
+    )
+  })
+
+  it('keeps bundle conflicts local unless replacement is selected', async () => {
+    const skills = installApi(vi.fn())
+    skills.resolveShare.mockResolvedValue({
+      status: 'ok',
+      value: { id: 'share_1', version: bundleVersion() }
+    })
+    Object.assign(skills, {
+      previewBundleInstall: vi.fn().mockResolvedValue({
+        status: 'ok',
+        value: {
+          packageId: 'pkg_1',
+          versionId: 'ver_1',
+          bundleDigest: 'c'.repeat(64),
+          destinationIdentity: 'local:global',
+          skills: [
+            { id: 'skill-alpha', name: 'alpha', digest: DIGEST, currentState: 'modified' },
+            { id: 'skill-beta', name: 'beta', digest: DIGEST, currentState: 'missing' }
+          ]
+        }
+      }),
+      installBundleShare: vi.fn().mockResolvedValue({
+        status: 'ok',
+        value: {
+          operationId: 'op_1',
+          packageId: 'pkg_1',
+          versionId: 'ver_1',
+          bundleDigest: 'c'.repeat(64),
+          status: 'partial',
+          skills: []
+        }
+      })
+    })
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+    await inspectSkill('Two private skills')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install 2 skills' }))
+    await screen.findByText('Local copies need a decision')
+    expect(skills.installBundleShare).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install 2 skills' }))
+    await waitFor(() => expect(skills.installBundleShare).toHaveBeenCalledOnce())
+    expect(skills.installBundleShare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conflictDecisions: [{ skillId: 'skill-alpha', resolution: 'keep-local' }]
+      })
+    )
+  })
+
   it('preserves a modified install until the user explicitly discards it', async () => {
     const previewInstall = vi.fn().mockResolvedValue({
       status: 'ok',

@@ -3,6 +3,10 @@ import { app, ipcMain } from 'electron'
 import { z } from 'zod'
 import { SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE } from '../../shared/skill-install-capability'
 import {
+  SkillBundleInstallPreviewRequestSchema,
+  SkillBundleInstallPreviewSchema
+} from '../../shared/skill-bundle-install-contract'
+import {
   ManagedSkillInstallListSchema,
   SkillInstallDestinationSchema,
   SkillInstallPreviewSchema,
@@ -10,7 +14,10 @@ import {
   SkillPackageIdentitySchema
 } from '../../shared/skill-install-contract'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
-import { supportsSkillRuntimeManagement } from '../skills/skill-runtime-capability'
+import {
+  supportsSkillRuntimeBundleInstall,
+  supportsSkillRuntimeManagement
+} from '../skills/skill-runtime-capability'
 import { listWslDistrosAsync } from '../wsl'
 import { callRuntimeEnvironment } from './runtime-environment-transport-routing'
 
@@ -32,6 +39,52 @@ const removeSchema = z
     conflictResolution: z.enum(['replace-and-discard-local', 'cancel']).optional()
   })
   .strict()
+
+type BundlePreviewInput = z.infer<typeof SkillBundleInstallPreviewRequestSchema> & {
+  environmentId?: string
+}
+
+async function previewBundleInstall(runtime: OrcaRuntimeService, input: BundlePreviewInput) {
+  const previews = await Promise.all(
+    input.selectedSkills.map(async (skill) => {
+      const request = {
+        package: {
+          packageId: input.package.packageId,
+          versionId: input.package.versionId,
+          packageDigest: skill.digest,
+          archiveSha256: input.package.archiveSha256,
+          compressedBytes: input.package.compressedBytes
+        },
+        name: skill.name,
+        destination: input.destination
+      }
+      if (!input.environmentId) {
+        return runtime.previewSharedSkillInstallRequest(request)
+      }
+      const response = await callRuntimeEnvironment(
+        app.getPath('userData'),
+        input.environmentId,
+        'skills.previewInstall',
+        request,
+        30_000
+      )
+      if (response.ok !== true) {
+        throw new Error(`skill-bundle-preview-remote-${response.error.code}`)
+      }
+      return SkillInstallPreviewSchema.parse(response.result)
+    })
+  )
+  return SkillBundleInstallPreviewSchema.parse({
+    packageId: input.package.packageId,
+    versionId: input.package.versionId,
+    bundleDigest: input.package.bundleDigest,
+    destinationIdentity: previews[0]?.destinationIdentity ?? '',
+    skills: input.selectedSkills.map((skill, index) => ({
+      ...skill,
+      currentState: previews[index].currentState
+    }))
+  })
+}
 
 export function registerSkillInstallManagementIpcHandlers(runtime: OrcaRuntimeService): void {
   ipcMain.handle('skills:listWslDistros', async (_event, environmentIdValue: unknown) => {
@@ -74,6 +127,25 @@ export function registerSkillInstallManagementIpcHandlers(runtime: OrcaRuntimeSe
       throw new Error(`skill-preview-remote-${response.error.code}`)
     }
     return { status: 'ok' as const, value: SkillInstallPreviewSchema.parse(response.result) }
+  })
+  ipcMain.handle('skills:previewBundleInstall', async (_event, value: unknown) => {
+    const parsed = z
+      .object({
+        environmentId: environmentIdSchema.optional(),
+        package: SkillBundleInstallPreviewRequestSchema.shape.package,
+        selectedSkills: SkillBundleInstallPreviewRequestSchema.shape.selectedSkills,
+        destination: SkillInstallDestinationSchema
+      })
+      .strict()
+      .parse(value)
+    if (
+      parsed.environmentId &&
+      (!(await supportsSkillRuntimeManagement(app.getPath('userData'), parsed.environmentId)) ||
+        !(await supportsSkillRuntimeBundleInstall(app.getPath('userData'), parsed.environmentId)))
+    ) {
+      return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
+    }
+    return { status: 'ok' as const, value: await previewBundleInstall(runtime, parsed) }
   })
   ipcMain.handle('skills:removeInstall', async (_event, value: unknown) => {
     const input = removeSchema.parse(value)

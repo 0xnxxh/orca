@@ -6,6 +6,7 @@ import {
   SkillInstallRequestSchema,
   SkillRemoveRequestSchema
 } from '../../../../shared/skill-install-contract'
+import { SkillBundleInstallRequestSchema } from '../../../../shared/skill-bundle-install-contract'
 import {
   SkillUploadBeginRequestSchema,
   SkillUploadChunkRequestSchema,
@@ -52,6 +53,12 @@ export const SKILL_METHODS: RpcMethod[] = [
       }
       return result
     }
+  }),
+  defineMethod({
+    name: 'skills.installBundle',
+    params: SkillBundleInstallRequestSchema,
+    handler: (params, { runtime, signal }) =>
+      runtime.installSharedSkillBundleRequest(params, signal)
   }),
   defineMethod({
     name: 'skills.cancelInstall',

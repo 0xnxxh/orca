@@ -7,8 +7,8 @@ Last updated: 2026-08-11.
 Implementation baselines captured by this checklist update:
 
 - Orca implementation: `6ba6107dba` on `skills-share` (pushed; no PR).
-- Orca Cloud: `4e91cf9` on `main` (skill OIDC smoke in `stablyai/orca-cloud#313` and
-  release-metadata convergence in `#314`).
+- Orca Cloud: `be00db10` on `main` (opaque audience IDs in `stablyai/orca-cloud#317`, with the
+  skill OIDC smoke and release-metadata convergence from `#313` and `#314`).
 
 Validated so far:
 
@@ -73,6 +73,16 @@ Validated so far:
   lifecycle; skill upload/finalize/download; two immutable versions; recipient and outsider
   authorization; local and remote grants; rollback selection; expiry; revocation; package
   deletion; and signed-object cleanup.
+- Cloud PR `#317` passed both required checks and merged as `be00db10`. Deploy run `31546194596`
+  promoted revision `orca-cloud-api-staging-00048-xom` at 100% traffic with
+  `authenticatedSmoke: true` and `skillSmoke: true`; canonical health and the immutable image
+  digest independently matched after promotion.
+- The signed-in macOS desktop staging journey reached upload, finalize, durable share creation,
+  and global install after replacing an invalid colon in the audience-derived idempotency key.
+  The retry test now requires a stable path-safe key, and the live test records the package ID
+  before publication so a failed share can still clean up its finalized package. Its update phase
+  uncovered same-name discovery ambiguity; the harness now selects the exact workspace source
+  directory instead of the first same-named global skill. A final full live rerun remains open.
 - The serving API has all four controls `true`, zero revision errors, and privacy-safe structured
   request logs. The log field inventory contains no principals, credentials, signed URLs, object
   paths, or private contents; a sensitive-value scan returned zero matches.
@@ -80,9 +90,9 @@ Validated so far:
   `31536141357`, merged as `4e91cf9`, and passed `main` run `31536329459`. The targeted Auth/API
   plan then reported zero intended changes. Known SQL and artifact-bucket drift was excluded and
   never applied.
-- Guarded sleep run `31536547916` stopped all three Relay cells. Read-only status run
-  `31537525219` verified Cloud SQL policy `NEVER`, every MIG target at zero, and both managed Cloud
-  Run active-revision minimums at zero.
+- Guarded sleep run `31546908228` stopped all three Relay cells after the physical staging work.
+  Independent GCP reads verified Cloud SQL policy `NEVER`, every MIG target at zero, and both
+  managed Cloud Run minimums at zero.
 
 Rollout gate: staging infrastructure, OIDC identity exchange, route registration, and the
 authenticated artifact/skill lifecycle smoke passed. The shared staging data plane is back in its
@@ -97,14 +107,16 @@ does not mean the surrounding phase is complete.
 
 ## Definition of done
 
-- [ ] A user can package a private local skill, choose its audience, and receive a durable Orca
-      share URL.
-- [ ] An authorized recipient can inspect and install an immutable version globally or into a Git
-      worktree or plain folder workspace.
+- [ ] A user can select one or many private local skills, publish one immutable Skill Bundle, and
+      receive one durable Orca share URL.
+- [ ] An authorized recipient can inspect a bundle, choose all or a subset of its skills, and
+      install them globally or into a Git worktree or plain folder workspace.
 - [ ] Installation works on local macOS, Linux, native Windows, WSL, paired Orca runtimes, and
       supported SSH targets.
-- [x] One canonical `.agents/skills/<skill-name>` copy is installed; provider-specific placements
-      are reconciled only for detected agents.
+- [ ] The portable archive root conforms to Agent Plugins 1.0.0 for skills-only packages and keeps
+      Orca integrity metadata in `dev.orca.skill-sharing/manifest.json`.
+- [x] One canonical `.agents/skills/<skill-name>` copy is installed for each selected skill;
+      provider-specific placements are reconciled only for detected agents.
 - [x] Install, update, rollback, and removal preserve modified or unowned local content unless the
       user explicitly approves replacement.
 - [x] Package ingestion rejects unsafe archives before any destination mutation.
@@ -114,6 +126,8 @@ does not mean the surrounding phase is complete.
 - [x] Mixed-version clients and remote hosts fail safely through capability negotiation.
 - [ ] Cloud resources are Terraform-owned, monitored, recoverable, and protected by independent
       upload, download, and remote-install kill switches.
+- [ ] The existing Skills page supports multi-select sharing, selective installation, per-skill
+      conflicts/results, and installed/shared bundle management.
 
 ## 0. Confirm scope and ownership
 
@@ -125,6 +139,13 @@ does not mean the surrounding phase is complete.
 - [x] Decide Orca will not depend on the upstream CLI or an unsupported programmatic API.
 - [x] Decide V1 accepts Orca package sources only; Git, npm, and community registries remain with
       existing tools.
+- [x] Record Agent Plugins 1.0.0 commit `bd383552095128f6effe895b9257cfd580a6d179`
+      as the portable-format reference.
+- [x] Decide to implement from the specification without copying its CC BY prose or vendoring its
+      Apache-licensed schemas.
+- [x] Treat the archive as a Skill Bundle, not an Orca plugin product or executable plugin runtime.
+- [x] Limit V1 bundles to skills; exclude MCP servers, hooks, processes, connectors, and
+      permissions.
 - [ ] Review the architecture decision record covering the reference-only boundary with
       engineering and legal owners.
 - [x] Add a review check that flags any proposed copied or mechanically translated upstream
@@ -151,6 +172,14 @@ does not mean the surrounding phase is complete.
       unshare/delete—while retaining skill-specific version, ACL, trust, and install semantics.
 - [x] Confirm V1 has no checked-in workspace desired-state lockfile and no automatic fleet-wide
       installation.
+- [x] Confirm one skill is a one-item bundle and a bundle may contain large selections such as 30
+      skills behind one durable link.
+- [x] Keep bundle identity, access, versions, transport, update/rollback, revocation, and deletion
+      at bundle scope.
+- [x] Keep installation selection, conflicts, provenance, modification protection, and outcomes at
+      skill scope.
+- [x] Keep loose-skill installation as the universal/default path and treat provider-native plugin
+      adapters as optional compatibility outputs.
 
 ### Existing-code and provider research
 
@@ -171,11 +200,34 @@ does not mean the surrounding phase is complete.
 
 ## 1. Define package and install contracts
 
+### Bundle contract replacement
+
+- [ ] Replace the unpublished single-skill envelope with root `plugin.json`, `skills/<name>/`, and
+      `dev.orca.skill-sharing/manifest.json`; do not add an outer `bundle/` directory.
+- [x] Define `SkillBundleManifestV1` with stable package/version identity, bundle metadata, ordered
+      skill entries, per-skill identity and file lists, globally unique archive paths, and a bundle
+      digest.
+- [x] Validate Agent Plugins 1.0.0 `plugin.json` fields from independently authored local rules;
+      never fetch a schema during loading.
+- [ ] Create fresh staging roots and reject unknown, malformed, or conflicting imported
+      `dev.orca.skill-sharing` namespaces without overwriting them.
+- [x] Keep the detailed manifest inside the archive for export, remote/SSH transport, and offline
+      validation; keep GCS metadata compact and PostgreSQL searchable.
+- [x] Add selected skill IDs and per-skill conflict choices to preview/install requests.
+- [x] Return aggregate status plus ordered installed, unchanged, kept-local, and failed per-skill
+      outcomes; support retrying failed items only.
+- [x] Add `skills.install.bundle.v1` and additive bundle RPC methods so mixed-version peers fail
+      before transfer.
+- [x] Decide to dispose of the unpublished staging-only single-skill records before changing the
+      Cloud schema; there
+      is no production compatibility commitment to the unpublished single-skill format.
+
 ### Shared package manifest
 
 - [x] Add `src/shared/skill-package-manifest.ts`.
-- [x] Define `SkillPackageManifestV1` with schema version, stable package ID, immutable version ID,
-      name, description, creation time, file identities, and package digest.
+- [x] Define the original single-skill `SkillPackageManifestV1` prototype with schema version,
+      stable package ID, immutable version ID, name, description, creation time, file identities,
+      and package digest.
 - [x] Normalize manifest paths to `/` while keeping filesystem conversion host-owned.
 - [x] Define the canonical digest algorithm over normalized paths, file identity, executable state,
       and classification.
@@ -246,6 +298,12 @@ does not mean the surrounding phase is complete.
 - [x] Include only `skill/` contents in the eventual installed directory.
 - [x] Bind the user-visible share preview to the final staged digest.
 - [x] Clean staging files on success, cancellation, source drift, and error.
+- [ ] Accept a non-empty ordered selection of skill directories and support at least 30 within the
+      global entry/file/byte limits.
+- [ ] Reject duplicate normalized skill names and preserve selection across search/filter changes
+      in the caller.
+- [x] Generate deterministic `plugin.json`, `skills/`, and Orca extension metadata.
+- [ ] Bind the share review to every staged skill digest and the final bundle digest.
 
 ### Bounded extraction
 
@@ -258,6 +316,9 @@ does not mean the surrounding phase is complete.
 - [x] Convert manifest paths with the destination runtime's path APIs.
 - [x] Re-observe extracted `skill/` and compare every file identity and package digest.
 - [x] Delete partial extraction bytes on cancellation or failure.
+- [x] Validate the portable root, Orca extension namespace, bundle manifest, and every selected
+      `skills/<name>` subtree before destination mutation.
+- [ ] Extract selected skill subtrees without requiring installation of unselected skills.
 
 ### Package tests
 
@@ -381,6 +442,12 @@ does not mean the surrounding phase is complete.
       installations.
 - [x] Detect an agent before creating its provider-specific configuration root.
 - [x] Avoid modifying roots for agents that consume `.agents/skills` directly.
+- [ ] Keep loose-skill placement as the universal/default installation path.
+- [ ] Use the portable root directly for compatible Cursor installations.
+- [ ] Generate validated `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` adapters only
+      for detected clients where native plugin installation is useful.
+- [ ] Fall back to loose skills for unsupported plugin clients, including the current Codex IDE
+      extension, and retain bundle/version provenance for every installed skill.
 
 ### Placement reconciliation
 
@@ -551,6 +618,14 @@ does not mean the surrounding phase is complete.
       tenant-scoped archive and final GCS key/generation constraints.
 - [x] Add active-share, ACL-principal, and pending-upload expiration indexes.
 - [x] Add foreign keys preventing blob-reference deletion while a published version uses it.
+- [x] Accept and stream-validate both the pre-release single-skill envelope and the new Agent
+      Plugins skills-only bundle envelope during the desktop migration.
+- [x] Store the detailed bundle manifest in the existing immutable version catalog and derive the
+      searchable bundle name and digest without changing object or ACL semantics.
+- [ ] Adapt package/version records to bundle-level identity and add ordered per-version skill rows
+      with identity, digest, counts, warnings, and archive roots.
+- [ ] Keep detailed file identity in the in-archive manifest rather than duplicating it into GCS
+      custom metadata.
 - [ ] Test forward migration, rollback strategy, backup restoration, and migration compatibility
       during mixed API versions.
 
@@ -646,6 +721,16 @@ does not mean the surrounding phase is complete.
 - [x] Return a copyable durable Orca URL after publication.
 - [x] Add access editing, version publishing, unshare, and package deletion actions.
 - [x] Make clear that unsharing blocks future installs but does not remove installed copies.
+- [ ] Add **Share skills**, **Install from link**, and unified **Manage** to the existing Skills page
+      header. The first two are present; management still covers installed packages only.
+- [x] Add selection mode whose selection survives search/filter changes and an explicit **Select
+      all results** action; never select all implicitly.
+- [x] Keep the per-card share action as a one-skill bundle shortcut.
+- [ ] Disable ineligible skills with visible reasons and block duplicate skill names before review.
+- [x] Review bundle name, skill/file/byte counts, script/executable warnings, expandable per-skill
+      details, audience, and release notes.
+- [ ] Show named preparation, upload, verification, and link-publication progress and return one
+      durable link for the bundle.
 
 ### Install experience
 
@@ -660,6 +745,16 @@ does not mean the surrounding phase is complete.
 - [x] Render installed, unchanged, updated, partial, conflict, unsupported, cancelled, and failed
       results with actionable recovery.
 - [x] Add incomplete-coverage retry.
+- [ ] Open deep links in inspection mode without starting installation.
+- [x] Show publisher, organization, immutable version, skill count, scripts/executables, and
+      release notes before selection.
+- [x] Let the recipient select all or a subset, then choose local, paired runtime, WSL, or SSH and
+      global or workspace scope.
+- [x] Preview new, unchanged, update, and conflict counts and resolve all per-skill conflicts in one
+      surface with **Keep local** as the default.
+- [ ] Label the primary action **Install N skills** and show aggregate progress plus current skill.
+      The label and aggregate phases are implemented; current-skill progress is not yet emitted.
+- [x] Group results into installed, unchanged, kept local, and failed; retry failed items only.
 
 ### Skills page lifecycle
 
@@ -668,6 +763,13 @@ does not mean the surrounding phase is complete.
 - [x] Show whether a package came from Orca Cloud and its accessible version history.
 - [x] Refresh discovery and installation state after local or remote actions.
 - [x] Keep Cloud deletion, share revocation, and local removal clearly separate.
+- [ ] Add installed-bundle update, rollback, install-on-another-machine, inspect, and remove actions.
+      Grouped inspection, selective update/rollback, and one-surface safe removal are implemented;
+      install-on-another-machine remains.
+- [ ] Add shared-bundle copy-link, access, revoke, publish-version, and Cloud-delete actions. Access,
+      revoke, version/package deletion are bundle-compatible; copy-link and publish-version remain.
+- [x] Protect locally modified skills during bundle update and removal, including when only part of
+      a bundle remains managed. Keep-local is the default and destructive replacement is explicit.
 
 ### UX validation
 
@@ -715,6 +817,8 @@ does not mean the surrounding phase is complete.
 
 ### Mixed versions
 
+- [x] Advertise additive bundle installation separately on paired and SSH hosts; never send the
+      bundle method to an older peer that lacks `skills.install.bundle.v1`.
 - [x] Hide or disable remote install when `skills.install.v1` is absent.
 - [x] Show a specific host-update-required message instead of attempting the RPC.
 - [x] Test new client/old server and old client/new server.
@@ -872,6 +976,8 @@ This does not substitute for physical SSH macOS/Windows or the supported Linux f
 - [x] If unsupported, offer a package download or explicit command; never install into the
       desktop's home as fallback.
 - [x] Propagate cancellation and clean partial SSH transfers and staging.
+- [x] Route selective bundle installs through an additive SSH method with direct download,
+      client-mediated fallback, per-skill results, and old-host capability fencing.
 - [ ] Test SSH-only macOS, Linux at the supported floor, and Windows where the existing provider
       supports it.
 - [x] Test Git worktree and folder-workspace scope over SSH through the disposable Docker Linux
@@ -1018,6 +1124,11 @@ still require the listed split metrics, latency panels, and alerts.
 - [ ] Run upload/finalize/download tests for expiry, denial, oversize, corruption, deduplication,
       revocation, deletion, and cleanup.
 - [ ] Run desktop-to-local, paired-runtime, `windows 2`, WSL, and SSH journeys in staging.
+      The macOS desktop journey has live upload, finalize, share, and first-install evidence; its
+      exact-source update, rollback, revocation, removal, and deletion rerun remains.
+- [ ] Give the live staging E2E an owner-private persisted test profile or a short-lived
+      non-interactive test credential so reruns do not open PKCE login tabs or copy a user's
+      primary Orca session.
 - [x] Verify staging skill request logs contain only route, method, status, duration, and standard
       process/request metadata, with zero credential or private-content matches.
 - [ ] Verify logs, metrics, traces, diagnostics, and support bundles contain no grants or private
@@ -1027,23 +1138,22 @@ still require the listed split metrics, latency panels, and alerts.
 - [ ] Exercise at least one quarantine lifecycle deletion and published-object soft-delete
       recovery.
 
-### Production infrastructure and internal rollout
+### Production infrastructure and launch
 
 - [ ] Apply the approved production Terraform plan and verify no unrelated replacement.
 - [ ] Run production database migrations before routing skill traffic.
 - [ ] Deploy the API with all skill flags disabled.
-- [ ] Enable internal accounts only.
+- [ ] After every first-release gate passes, enable the feature for all accounts in one launch.
 - [ ] Verify one complete share, local install, remote install, update, rollback, revoke, local
       removal, Cloud deletion, upload expiry, and soft-delete recovery journey.
 - [ ] Verify upload, download, and remote-install kill switches independently.
 - [ ] Review error budgets, cost, authorization denials, saturation, orphan counts, and support
       signals.
 
-### Gradual availability
+### Launch operations
 
-- [ ] Expand by account/organization cohort with rollback criteria and an on-call owner.
 - [ ] Keep upload grants, download grants, and remote installation independently controllable.
-- [ ] Pause expansion on unexplained digest mismatch, archive containment failure, data leak,
+- [ ] Disable the affected operation on unexplained digest mismatch, archive containment failure, data leak,
       unrecoverable local mutation, or cross-tenant authorization defect.
 - [ ] Publish user documentation for sharing, access, install destinations, updates, rollback,
       removal, retention, and trust.

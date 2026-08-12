@@ -1,11 +1,19 @@
 import type { RuntimeCapability } from '../../shared/protocol-version'
 import type { RuntimeRpcResponse } from '../../shared/runtime-rpc-envelope'
 import {
+  SkillBundleInstallResultSchema,
+  type SkillBundleInstallRequest,
+  type SkillBundleInstallResult
+} from '../../shared/skill-bundle-install-contract'
+import {
   SkillInstallResultSchema,
   type SkillInstallRequest,
   type SkillInstallResult
 } from '../../shared/skill-install-contract'
-import { SKILL_UPLOAD_CAPABILITY } from '../../shared/skill-install-capability'
+import {
+  SKILL_BUNDLE_INSTALL_CAPABILITY,
+  SKILL_UPLOAD_CAPABILITY
+} from '../../shared/skill-install-capability'
 import { callRuntimeEnvironment } from '../ipc/runtime-environment-transport-routing'
 import { transferSkillPackageToRuntime } from './skill-client-mediated-transfer'
 import { SkillInstallFailureSchema } from '../../shared/skill-install-failure'
@@ -31,6 +39,20 @@ async function install(
     userDataPath,
     environmentId,
     'skills.install',
+    request,
+    5 * 60_000
+  )) as RuntimeRpcResponse<unknown>
+}
+
+async function installBundle(
+  userDataPath: string,
+  environmentId: string,
+  request: SkillBundleInstallRequest
+): Promise<RuntimeRpcResponse<unknown>> {
+  return (await callRuntimeEnvironment(
+    userDataPath,
+    environmentId,
+    'skills.installBundle',
     request,
     5 * 60_000
   )) as RuntimeRpcResponse<unknown>
@@ -119,6 +141,64 @@ export async function installSkillOnRemoteRuntime(input: {
           throw remoteFailure(staged)
         }
         return SkillInstallResultSchema.parse(staged.result)
+      } finally {
+        await transfer.cleanup().catch(() => undefined)
+      }
+    }
+  })
+}
+
+export async function installSkillBundleOnRemoteRuntime(input: {
+  userDataPath: string
+  environmentId: string
+  request: SkillBundleInstallRequest
+  capabilities: readonly RuntimeCapability[]
+  requireHttps: boolean
+  signal?: AbortSignal
+}): Promise<SkillBundleInstallResult> {
+  if (
+    input.request.ingress.kind !== 'download-grant' ||
+    !input.capabilities.includes(SKILL_BUNDLE_INSTALL_CAPABILITY)
+  ) {
+    throw new Error('skill-bundle-remote-ingress-invalid')
+  }
+  const grant = input.request.ingress
+  const direct = await retrySkillTransferRpc({
+    signal: input.signal,
+    retryable: retryableRemoteInstallTransportError,
+    call: () => installBundle(input.userDataPath, input.environmentId, input.request)
+  })
+  if (!isDirectDownloadUnavailable(direct, input.requireHttps)) {
+    if (direct.ok !== true) {
+      throw remoteFailure(direct)
+    }
+    return SkillBundleInstallResultSchema.parse(direct.result)
+  }
+  if (!input.capabilities.includes(SKILL_UPLOAD_CAPABILITY)) {
+    throw new Error('skill-bundle-remote-download-unavailable')
+  }
+  return retrySkillTransferRpc({
+    signal: input.signal,
+    retryable: retryableRemoteInstallTransportError,
+    call: async () => {
+      const transfer = await transferSkillPackageToRuntime({
+        userDataPath: input.userDataPath,
+        environmentId: input.environmentId,
+        transferId: input.request.operationId,
+        package: input.request.package,
+        grant,
+        requireHttps: input.requireHttps,
+        signal: input.signal
+      })
+      try {
+        const staged = await installBundle(input.userDataPath, input.environmentId, {
+          ...input.request,
+          ingress: { kind: 'staged-upload', uploadId: transfer.uploadId }
+        })
+        if (staged.ok !== true) {
+          throw remoteFailure(staged)
+        }
+        return SkillBundleInstallResultSchema.parse(staged.result)
       } finally {
         await transfer.cleanup().catch(() => undefined)
       }

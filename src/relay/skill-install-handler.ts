@@ -1,6 +1,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
+  SKILL_BUNDLE_INSTALL_CAPABILITY,
   SKILL_INSTALL_CAPABILITY,
   SKILL_MANAGEMENT_CAPABILITY,
   SKILL_UPLOAD_CAPABILITY
@@ -10,11 +11,13 @@ import {
   SKILL_SSH_RELAY_BEGIN_UPLOAD_METHOD,
   SKILL_SSH_RELAY_CANCEL_UPLOAD_METHOD,
   SKILL_SSH_RELAY_COMMIT_UPLOAD_METHOD,
+  SKILL_SSH_RELAY_INSTALL_BUNDLE_METHOD,
   SKILL_SSH_RELAY_INSTALL_METHOD,
   SKILL_SSH_RELAY_LIST_METHOD,
   SKILL_SSH_RELAY_PREVIEW_METHOD,
   SKILL_SSH_RELAY_REMOVE_METHOD,
   SKILL_SSH_RELAY_UPLOAD_CHUNK_METHOD,
+  SkillSshInstallBundleParamsSchema,
   SkillSshInstallParamsSchema,
   SkillSshListParamsSchema,
   SkillSshPreviewParamsSchema,
@@ -40,6 +43,7 @@ import {
 } from '../main/skills/skill-install-management-service'
 import { listManagedSkillInstalls } from '../main/skills/skill-install-provenance'
 import { executeSkillInstallRequest } from '../main/skills/skill-install-request-service'
+import { executeSkillBundleInstallRequest } from '../main/skills/skill-bundle-install-request-service'
 import { SkillUploadSessionService } from '../main/skills/skill-upload-session-service'
 import {
   SkillInstallOperationError,
@@ -50,6 +54,7 @@ const SSH_SKILL_ENVIRONMENT_ID = 'ssh-host'
 
 export const SKILL_RELAY_CAPABILITIES = [
   SKILL_INSTALL_CAPABILITY,
+  SKILL_BUNDLE_INSTALL_CAPABILITY,
   SKILL_UPLOAD_CAPABILITY,
   SKILL_MANAGEMENT_CAPABILITY
 ] as const
@@ -82,6 +87,20 @@ export class SkillInstallHandler {
       const input = SkillSshInstallParamsSchema.parse(params)
       return this.executeSkillOperation(() =>
         executeSkillInstallRequest(input.request, {
+          authority: this.authority(input.workspace),
+          stateDirectory: this.stateDirectory,
+          allowedDownloadOrigins: ['https://storage.googleapis.com'],
+          requireHttps: true,
+          resolveStagedUpload: (uploadId, identity) => this.uploads.take(uploadId, identity),
+          detectProviders: this.detectProviders,
+          signal: context.signal
+        })
+      )
+    })
+    this.dispatcher.onRequest(SKILL_SSH_RELAY_INSTALL_BUNDLE_METHOD, async (params, context) => {
+      const input = SkillSshInstallBundleParamsSchema.parse(params)
+      return this.executeSkillOperation(() =>
+        executeSkillBundleInstallRequest(input.request, {
           authority: this.authority(input.workspace),
           stateDirectory: this.stateDirectory,
           allowedDownloadOrigins: ['https://storage.googleapis.com'],

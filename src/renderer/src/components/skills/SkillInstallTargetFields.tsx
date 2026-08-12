@@ -24,6 +24,7 @@ export function SkillInstallTargetFields(props: {
   runtimeStatus: Map<string, { status: { capabilities?: string[] } | null }>
   sshConnections: { id: string; label: string; connected: boolean }[]
   workspaceChoices: SkillInstallWorkspaceChoice[]
+  requiredCapability?: string
 }): React.JSX.Element {
   const [wslDistros, setWslDistros] = useState<string[]>([])
 
@@ -82,7 +83,9 @@ export function SkillInstallTargetFields(props: {
                 const unsupported =
                   status !== null &&
                   status !== undefined &&
-                  status.capabilities?.includes(SKILL_INSTALL_CAPABILITY) !== true
+                  status.capabilities?.includes(
+                    props.requiredCapability ?? SKILL_INSTALL_CAPABILITY
+                  ) !== true
                 return (
                   <SelectItem key={environment.id} value={environment.id} disabled={unsupported}>
                     {environment.name}{' '}

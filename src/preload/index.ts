@@ -135,6 +135,11 @@ import type {
   SkillCloudPackageDetails
 } from '../shared/skill-cloud-contract'
 import type {
+  SkillBundleInstallPreviewInput,
+  SkillBundleInstallPreviewOperation,
+  SkillBundlePackageVersionInstallInput,
+  SkillBundleShareInstallInput,
+  SkillBundleShareInstallOperation,
   SkillInstallPreviewInput,
   SkillInstallPreviewOperation,
   ManagedSkillInstallListOperation,
@@ -2519,7 +2524,8 @@ const api = {
     acknowledgeUpdateRun: (): Promise<void> => ipcRenderer.invoke('skills:acknowledgeUpdateRun'),
     getUpdateRun: (): Promise<SkillUpdateRun> => ipcRenderer.invoke('skills:getUpdateRun'),
     prepareShare: (input: {
-      skillId: string
+      skillIds: string[]
+      bundleName: string
       target?: SkillDiscoveryTarget
       packageId?: string
     }): Promise<SkillSharePreview> => ipcRenderer.invoke('skills:prepareShare', input),
@@ -2535,6 +2541,14 @@ const api = {
       ipcRenderer.invoke('skills:createDownloadGrant', shareId),
     installShare: (input: SkillShareInstallInput): Promise<SkillShareInstallOperation> =>
       ipcRenderer.invoke('skills:installShare', input),
+    installBundleShare: (
+      input: SkillBundleShareInstallInput
+    ): Promise<SkillBundleShareInstallOperation> =>
+      ipcRenderer.invoke('skills:installBundleShare', input),
+    installBundlePackageVersion: (
+      input: SkillBundlePackageVersionInstallInput
+    ): Promise<SkillBundleShareInstallOperation> =>
+      ipcRenderer.invoke('skills:installBundlePackageVersion', input),
     installPackageVersion: (
       input: SkillPackageVersionInstallInput
     ): Promise<SkillShareInstallOperation> =>
@@ -2543,6 +2557,10 @@ const api = {
       ipcRenderer.invoke('skills:cancelInstall', input),
     previewInstall: (input: SkillInstallPreviewInput): Promise<SkillInstallPreviewOperation> =>
       ipcRenderer.invoke('skills:previewInstall', input),
+    previewBundleInstall: (
+      input: SkillBundleInstallPreviewInput
+    ): Promise<SkillBundleInstallPreviewOperation> =>
+      ipcRenderer.invoke('skills:previewBundleInstall', input),
     removeInstall: (input: SkillRemoveInput): Promise<SkillRemoveOperation> =>
       ipcRenderer.invoke('skills:removeInstall', input),
     listManagedInstalls: (environmentId?: string): Promise<ManagedSkillInstallListOperation> =>

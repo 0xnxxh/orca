@@ -15,7 +15,8 @@ Provider registry:
 
 ## Decision summary
 
-Orca will own a focused skill packaging and installation pipeline for private sharing.
+Orca will own a focused Skill Bundle packaging and installation pipeline for private sharing. A
+bundle contains one or many skills; sharing one skill is the same flow with one selected item.
 
 The community [`vercel-labs/skills`](https://github.com/vercel-labs/skills) project will
 remain a behavioral reference, not a runtime dependency or source donor. Its npm package
@@ -24,14 +25,22 @@ not provide the transaction, provenance, or private-package semantics Orca needs
 
 Orca will:
 
-1. Package a local skill into an immutable, content-addressed artifact.
+1. Package one or many local skills into one immutable, content-addressed artifact and durable
+   link.
 2. Store private artifacts behind Orca Cloud authorization and durable share records.
 3. Resolve a share into a short-lived download grant after checking access.
 4. Execute installation on the machine that will use the skill.
 5. Validate, stage, commit, and verify the package without silently overwriting local work.
-6. Install once into `.agents/skills` and add aliases only for detected agents that need
-   provider-specific paths.
-7. Record Orca-owned provenance independently from the community CLI's lockfiles.
+6. Let the recipient install all or a selected subset, with conflicts and results reported per
+   skill.
+7. Install each selected skill once into `.agents/skills` and add aliases only for detected agents
+   that need provider-specific paths.
+8. Record bundle/version provenance independently from the community CLI's lockfiles.
+
+The portable archive root follows Agent Plugins 1.0.0 for a skills-only package. Orca does not
+present Skill Bundles as a new executable plugin system: MCP servers, hooks, processes, connectors,
+and permissions are out of scope. Loose-skill installation remains the universal/default delivery
+path, with provider-native plugin adapters generated only where they improve compatibility.
 
 The first release will support Orca package sources only. Arbitrary Git, npm, and community
 registry sources remain delegated to existing tools until there is a product need to own
@@ -39,13 +48,31 @@ that larger package-manager surface.
 
 ## Current execution status
 
-Orca implementation through `6ba6107dba` is pushed on `skills-share` without an Orca pull request.
-Orca Cloud implementation is merged on `main` through `4e91cf9`. The authenticated OIDC smoke
-landed in `stablyai/orca-cloud#313`; the narrow Auth release-metadata convergence follow-up landed
-in `#314`. Staging infrastructure and skill routes are deployed and validated; production remains
-untouched. Local, Windows, WSL, paired-runtime, and
+The last pushed Orca baseline is `41a7b45c4e`; current Skill Bundle work remains uncommitted on
+`skills-share` and no Orca pull request exists. Orca Cloud implementation is merged on `main`
+through `be00db10`. The authenticated OIDC smoke landed in `stablyai/orca-cloud#313`; the narrow
+Auth release-metadata convergence follow-up landed in `#314`; the finalization and lifecycle fixes
+landed in `#317`. Staging infrastructure and skill routes are deployed and validated; production
+remains untouched. Local, Windows, WSL, paired-runtime, and
 Docker-backed SSH validation are substantially complete; the implementation checklist records the
 exact evidence and remaining physical-host and failure-recovery gates.
+
+The local redesign now has an independently implemented Agent Plugins 1.0.0 skills-only bundle
+manifest, deterministic one-or-many archive creation, bounded bundle extraction, additive bundle
+install contracts, per-skill conflict/results orchestration, and bundle provenance on installed
+skill receipts. The recipient dialog now recognizes bundle versions, defaults to all skills,
+supports subset selection, previews aggregate destination state, keeps conflicts local by default,
+and groups per-skill outcomes with failed-only retry. Local and paired-runtime bundle grants use the
+additive bundle RPC with staged-upload fallback. SSH now uses a separately advertised additive
+bundle relay method with the same direct-download and staged-upload fallback; older hosts are
+rejected before transfer. The original single-skill path remains active for legacy shares while
+bundle management migrates.
+
+Cloud bundle validation is pushed on isolated branch `feat/skill-bundles` at `d7d1026`. It accepts
+both envelopes during migration, stores the detailed bundle manifest with the immutable version,
+and leaves object storage, ACLs, shares, and download grants unchanged. The full API suite passes
+136 tests with one skipped. It is not merged or deployed until the desktop publisher emits the new
+format and the staging smoke is updated.
 
 The latest resilience pass adds bounded convergence after a lost final install response for both
 paired runtimes and SSH. A staged retry creates a new upload instead of reusing a consumed upload.
@@ -84,6 +111,15 @@ are end-user install journeys, load, quarantine lifecycle deletion, and soft-del
 The upstream assessment used `vercel-labs/skills` commit
 `c6f69c631292444cc541ac6d91e2226b0ff247da`.
 
+The portable bundle assessment used
+[`agentplugins/agent-plugins-spec`](https://github.com/agentplugins/agent-plugins-spec) commit
+`bd383552095128f6effe895b9257cfd580a6d179`, specifically `spec/1.0.0.md`. The local reviewed clone
+is `/Users/jinwoo/refs/misc/agent-plugins-spec`; the example repository is
+`/Users/jinwoo/refs/misc/agent-plugins-example`. Orca independently implements the reviewed
+behavior. The specification prose is CC BY 4.0 and its schemas/software are Apache 2.0, so Orca
+will not copy the prose or vendor the schemas unless the corresponding notices are deliberately
+handled.
+
 Useful upstream behavior:
 
 - A canonical `.agents/skills/<name>` location.
@@ -108,7 +144,8 @@ attribution. Revisit this decision if implementation work ever proposes copying 
 
 ## Goals
 
-- Share a private skill with a teammate through a durable, intuitive link.
+- Share one or many private skills with a teammate through one durable, intuitive link.
+- Select and review large bundles, including groups of 30 skills, without repetitive dialogs.
 - Install on the local computer or any compatible connected Orca runtime.
 - Support global scope and folder-workspace/project scope.
 - Work on macOS, Linux, and Windows.
@@ -122,6 +159,7 @@ attribution. Revisit this decision if implementation work ever proposes copying 
 - Support immutable versions, updates, removal, and eventual team-wide reconciliation.
 - Remain compatible with independently updated desktop clients and remote Orca servers.
 - Treat ordinary folder workspaces as first-class; Git is not required.
+- Preserve enough portable metadata for export, SSH/remote transfer, and offline validation.
 
 ## Non-goals for the first release
 
@@ -132,6 +170,9 @@ attribution. Revisit this decision if implementation work ever proposes copying 
 - Merging local modifications with a newer shared package version.
 - Treating installation as a security sandbox. A skill contains instructions and scripts and
   must be presented to the user as code from its author.
+- Shipping a full plugin runtime, MCP servers, hooks, processes, connectors, or portable
+  permissions.
+- Requiring a provider-native plugin installer; unsupported agents still receive loose skills.
 - End-to-end encryption from Orca Cloud operators in the initial trust model. Private means
   access-controlled to authorized Orca users and organizations. Application-level package
   encryption can be added later without changing package identity.
@@ -140,19 +181,26 @@ attribution. Revisit this decision if implementation work ever proposes copying 
 
 ### Sharing
 
-The user opens an installed or workspace skill and chooses **Share skill**.
+The existing Skills page has three header actions: **Share skills**, **Install from link**, and
+**Manage**. **Share skills** enters selection mode across installed and workspace skills. Search
+and filter changes retain selections; **Select all results** is explicit and Orca never silently
+selects everything. The existing per-card share action remains a one-skill shortcut.
 
-Orca shows:
+Ineligible skills are disabled with a visible reason. Duplicate skill names must be resolved before
+publication because they would collide in both the archive and destination roots.
 
-- Skill name and description.
-- Package file count and total size.
-- Included scripts and executable files.
+The review dialog shows:
+
+- Bundle name and selected skill list.
+- Skill, file, and byte counts.
+- Included scripts and executable files, with an expandable review for each skill.
 - Current author identity and organization.
 - Access choice: organization or selected people.
 - Optional version label and release notes.
 
-After confirmation, Orca validates and packages the exact bytes shown in the preview, uploads
-them, and returns a durable URL such as:
+After confirmation, Orca validates and packages the exact bytes shown in the preview. Progress is
+named **Preparing skills**, **Uploading**, **Verifying**, and **Publishing link**. Completion returns
+one durable URL such as:
 
 ```text
 https://app.orca.dev/skills/share/<share-id>
@@ -165,32 +213,33 @@ copied.
 
 ### Installing
 
-Opening a share shows:
+Opening a deep link launches Orca and inspects the bundle without installing it. Preview identifies
+the publisher, organization, immutable version, release notes, skill count, scripts, and executable
+files. The recipient can select all or a subset of the contained skills.
 
-- Author and organization.
-- Skill description, version, file summary, and package digest.
-- Whether an installed skill with the same name already exists.
-- Destination machine.
-- Global or workspace scope.
-- Detected agents that will receive coverage.
-- Any conflict that requires a decision.
+The destination picker supports the local machine, paired runtimes, WSL, and SSH, in global or
+workspace scope. Before commit, the preview groups selected skills as new, unchanged, updates, or
+conflicts and shows detected-agent coverage. Conflicts are handled per skill in one review surface,
+not one dialog per conflict. **Keep local** is the default; replacement is explicit. The primary
+action says **Install N skills**.
 
-The default action installs on the current machine globally. Connected machines and folder
-workspaces are selectable. The action reports one of:
+Installation shows aggregate progress plus the current skill. Results are grouped as installed,
+unchanged, kept local, and failed; failed items can be retried without repeating successful work.
+An incompatible selected runtime receives an update-required result before transfer.
 
-- Installed.
-- Already installed.
-- Updated.
-- Installed with incomplete agent coverage.
-- Needs a conflict decision.
-- Unsupported because the selected runtime must be updated.
+**Manage** separates:
+
+- Installed bundles: update, rollback, install on another machine, inspect skills, and remove.
+- Shared bundles: copy link, change access, revoke, publish version, and delete the Cloud package.
+
+Bundle update or removal never silently destroys locally modified skills.
 
 The UI must follow `docs/STYLEGUIDE.md` and use existing design tokens and shadcn primitives.
 
 ## Target architecture
 
 ```text
-Skill folder
+Selected skill folders
     |
     v
 Package builder -- validates and creates immutable artifact
@@ -206,10 +255,10 @@ Destination runtime
     |
     +-- package ingress
     +-- package inspection
-    +-- install planning
+    +-- per-skill selection and install planning
     +-- staged transaction
     +-- provider placement reconciliation
-    +-- provenance publication
+    +-- bundle and per-skill provenance publication
     +-- post-install discovery
 ```
 
@@ -220,59 +269,89 @@ the bytes.
 ## Package format
 
 Use a versioned tar archive so executable modes can be represented without a platform-specific
-side channel. The archive contains an envelope rather than placing Orca metadata inside the
-installed skill:
+side channel. The extracted archive root is an Agent Plugins 1.0.0-compatible, skills-only plugin:
 
 ```text
-manifest.json
-skill/
-  SKILL.md
-  scripts/
-  references/
-  assets/
+plugin.json
+skills/
+├── skill-a/
+│   └── SKILL.md
+├── skill-b/
+│   └── SKILL.md
+└── ...
+dev.orca.skill-sharing/
+└── manifest.json
 ```
 
 Conceptual manifest:
 
 ```ts
-type SkillPackageManifestV1 = {
+type SkillBundleManifestV1 = {
   schemaVersion: 1
   packageId: string
   versionId: string
-  name: string
+  bundleName: string
   description: string
   createdAt: string
-  files: Array<{
-    path: string
-    size: number
-    executable: boolean
-    sha256: string
+  skills: Array<{
+    id: string
+    name: string
+    description: string
+    digest: string
+    files: Array<{
+      path: string
+      size: number
+      executable: boolean
+      sha256: string
+    }>
   }>
-  packageDigest: string
+  bundleDigest: string
 }
 ```
 
 Rules:
 
 - `packageId` is stable across versions; `versionId` identifies one immutable publication.
-- `packageDigest` is derived from normalized paths, executable state, classification, and file
-  identity using Orca's existing skill-package identity rules.
-- `skill/SKILL.md` is required and must parse successfully.
-- The installed folder receives only the contents of `skill/`.
+- `plugin.json` uses the canonical Agent Plugins 1.0.0 `$schema`, a valid portable plugin name,
+  bundle version, description, and optional standard metadata. Orca validates from locally owned
+  rules and never fetches the schema while loading.
+- Every immediate `skills/<name>/SKILL.md` is required and must parse successfully.
+- Each skill digest uses normalized relative paths, executable state, classification, and file
+  identity. The bundle digest commits to the ordered skill identities and their globally unique
+  archive paths.
+- The installed folders receive only the selected children of `skills/`.
+- Bundle identity, access, immutable versions, upload/download, update/rollback, and Cloud deletion
+  are bundle-level. Conflict handling, provenance, selection, local-modification protection, and
+  results are skill-level.
 - Paths use `/` in the manifest and are converted with the executing host's path API.
 - LF and CRLF non-executable text share one normalized package identity, while each immutable
   archive retains and hashes its exact source bytes; executable and binary files always use exact
   bytes for identity.
 - Names are normalized once during publication. Installation never silently renames a conflict.
+- The archive has no outer `bundle/` wrapper, so its root remains directly consumable by agents
+  that implement Agent Plugins.
+- Orca-specific integrity and version data lives in `dev.orca.skill-sharing/manifest.json` rather
+  than a top-level custom field or GCS metadata alone. It therefore survives export, SSH/remote
+  transfer, and offline validation and can describe every skill and file.
+- GCS custom metadata stays compact and operational. PostgreSQL remains the searchable package,
+  share, and version catalog.
+- Orca constructs a fresh staging root. If imported content already contains
+  `dev.orca.skill-sharing`, Orca accepts only an appropriate recognized schema and rejects unknown,
+  malformed, or conflicting contents; it never overwrites the namespace silently.
 - V1 rejects symlinks and special files. A later package-builder feature may safely dereference
   internal links after proving they remain within the source root.
 - Existing limits remain the starting contract: depth 16, 2,048 entries, 512 files, 4 MiB per
   file, and 32 MiB total extracted bytes. Compressed download size also receives an explicit cap.
 - Archive and manifest schema changes are additive or introduced as a new schema version.
 
-The package builder observes the source, copies it into a private staging directory, observes
-the staged copy again, and only packages it if the two identities agree. The preview shown to
-the user is bound to that final digest.
+The package builder observes every selected source, copies it into a fresh private staging root,
+observes the staged copies again, and only packages them if every identity agrees. The preview
+shown to the user is bound to that final bundle digest.
+
+The original unpublished `manifest.json + skill/` staging format has no production compatibility
+commitment. Orca will replace it before launch and migrate or discard staging-only records. Remote
+bundle RPCs use a new `skills.install.bundle.v1` capability and additive methods so older peers do
+not interpret bundle requests as single-skill requests.
 
 ## GCP deployment plan
 
@@ -439,10 +518,13 @@ No long-lived GCP key is shipped in Orca or stored on a remote runtime.
 
 Create migrations for:
 
-- `skill_packages`: stable package identity, owner organization, slug/name, creator, timestamps,
+- `skill_packages`: stable bundle identity, owner organization, slug/name, creator, timestamps,
   and deletion state.
 - `skill_package_versions`: immutable version, package digest, archive SHA-256, GCS object key and
-  generation, byte counts, manifest JSON, release notes, creator, and publication state.
+  generation, byte and skill counts, compact searchable metadata, release notes, creator, and
+  publication state.
+- `skill_package_version_skills`: ordered per-skill identity, name, description, digest, file and
+  byte counts, warnings, and archive root for preview and selective installation.
 - `skill_package_uploads`: tenant/user binding, quarantine key and generation, expected identities,
   expiration, finalization state, and failure category.
 - `skill_package_acl`: organization or user principal, permission, creator, and timestamps.
@@ -566,16 +648,16 @@ policies, signed URLs, or ACL membership.
    startup applies PostgreSQL migrations without registering the skill routes.
 7. Verify the migration-ready event, zero error logs, ordinary artifact behavior, and `404` skill
    route boundary before changing any control.
-8. Enable route registration for the staging test cohort and run upload/finalize/download tests,
+8. Enable route registration for the staging identity and run upload/finalize/download tests,
    including expired policies, ACL denial, oversized uploads, corrupt archives, deduplication,
    revocation, and object cleanup.
 9. Run a staging desktop-to-runtime installation and verify logs contain no grants or private
    contents.
 10. Apply the reviewed production Terraform plan.
-11. Run migrations, deploy the API, and enable internal accounts only.
-12. Observe at least one complete soft-delete, upload-expiry, update, rollback, and revoke journey.
-13. Expand the feature flag gradually, retaining separate kill switches for upload grants,
-    download grants, and remote installation.
+11. Run migrations and deploy the API with availability disabled.
+12. After every release gate passes, enable the feature for all accounts in one launch.
+13. Observe at least one complete soft-delete, upload-expiry, update, rollback, and revoke journey,
+    retaining separate kill switches for upload grants, download grants, and remote installation.
 
 Production verification uses read-only commands such as:
 
@@ -661,14 +743,30 @@ Policy:
 Provider releases and official documentation are reviewed periodically. Orca's registry changes
 only through normal review and platform tests; no upstream synchronization script owns it.
 
+The portable root does not imply every agent can install it as a native plugin. Cursor can consume
+the root `plugin.json` package directly. Claude expects `.claude-plugin/plugin.json`; Codex and
+ChatGPT expect `.codex-plugin/plugin.json`; the Codex IDE extension does not currently support
+plugins. Orca therefore installs loose skills by default and may generate provider-native adapters
+for detected compatible clients:
+
+- Cursor: use the portable package directly.
+- Claude: generate `.claude-plugin/plugin.json` from validated bundle metadata.
+- Codex/ChatGPT: generate `.codex-plugin/plugin.json` from validated bundle metadata.
+- Other or unsupported agents: install the selected loose skills.
+
+Native plugin installation never becomes the only path. Provenance connects every loose installed
+skill to its source bundle and immutable version.
+
 ## Installer components
 
 Create narrow modules with explicit responsibilities:
 
 ### Shared contracts
 
-- `src/shared/skill-package-manifest.ts`: package manifest schema and canonical validation.
-- `src/shared/skill-install-contract.ts`: request, preview, conflict, placement, and result types.
+- `src/shared/skill-package-manifest.ts`: bundle manifest, portable plugin manifest, and canonical
+  validation.
+- `src/shared/skill-install-contract.ts`: bundle selection, per-skill preview, conflict, placement,
+  and result types.
 - `src/shared/skill-install-capability.ts`: runtime capability name and compatibility message.
 
 ### Main/runtime implementation
@@ -716,27 +814,29 @@ neutral.
 
 ### Renderer
 
-- Share preview and access dialog.
+- Multi-select bundle share review and access dialog.
 - Share completion dialog with copyable durable link.
 - Access editing, active-link revocation, immutable-version deletion, and Cloud-package deletion
   with explicit confirmation and copy explaining that installed copies remain local.
-- Install preview with destination, scope, coverage, and conflict state.
-- Install progress and structured outcome.
-- Installed version, update, removal, and incomplete-coverage actions on the Skills page.
+- Selective install preview with destination, scope, coverage, and per-skill conflict state.
+- Aggregate install progress and grouped per-skill outcomes.
+- Installed/shared bundle management, update, rollback, removal, and incomplete-coverage actions on
+  the Skills page.
 
 ## Install request and result contract
 
 Conceptual request:
 
 ```ts
-type SkillInstallRequest = {
+type SkillBundleInstallRequest = {
   operationId: string
   package: {
     packageId: string
     versionId: string
-    packageDigest: string
+    bundleDigest: string
     compressedBytes: number
   }
+  selectedSkillIds: string[]
   ingress:
     | { kind: 'download-grant'; url: string; expiresAt: string }
     | { kind: 'staged-upload'; uploadId: string }
@@ -744,7 +844,10 @@ type SkillInstallRequest = {
   destination:
     | { scope: 'global'; environmentId?: string }
     | { scope: 'workspace'; worktreeId?: string; folderWorkspaceId?: string }
-  conflictResolution?: 'replace-unmodified' | 'replace-and-discard-local' | 'cancel'
+  conflictResolutions?: Record<
+    string,
+    'keep-local' | 'replace-unmodified' | 'replace-and-discard-local'
+  >
 }
 ```
 
@@ -754,24 +857,30 @@ arbitrary remote RPC path.
 Conceptual result:
 
 ```ts
-type SkillInstallResult = {
+type SkillBundleInstallResult = {
   operationId: string
-  status: 'installed' | 'updated' | 'unchanged' | 'conflict' | 'partial' | 'failed'
-  name: string
-  packageDigest: string
-  canonicalPath?: string
-  placements: Array<{
-    provider: string
-    path: string
-    topology: 'canonical-copy' | 'provider-alias' | 'independent-copy'
-    status: 'installed' | 'unchanged' | 'skipped' | 'failed'
+  packageId: string
+  versionId: string
+  bundleDigest: string
+  status: 'complete' | 'partial' | 'failed'
+  skills: Array<{
+    skillId: string
+    name: string
+    status: 'installed' | 'updated' | 'unchanged' | 'kept-local' | 'failed'
+    canonicalPath?: string
+    placements: Array<{
+      provider: string
+      path: string
+      topology: 'canonical-copy' | 'provider-alias' | 'independent-copy'
+      status: 'installed' | 'unchanged' | 'skipped' | 'failed'
+      errorCategory?: string
+    }>
+    conflict?: {
+      kind: 'modified' | 'unowned' | 'external-link' | 'name-collision'
+      existingDigest?: string
+    }
     errorCategory?: string
   }>
-  conflict?: {
-    kind: 'modified' | 'unowned' | 'external-link' | 'name-collision'
-    existingDigest?: string
-  }
-  errorCategory?: string
 }
 ```
 
@@ -781,15 +890,15 @@ The response never includes a download grant or credentials.
 
 ### 1. Admission
 
-- Validate all request fields and package identifiers.
+- Validate all request fields, package identifiers, selected skill IDs, and per-skill decisions.
 - Resolve the destination through host-owned runtime state.
 - Confirm the requested scope is writable and contained in an allowed home or workspace root.
 - Reject an expired grant before network access.
-- Deduplicate retries using `operationId` and the package/destination identity.
+- Deduplicate retries using `operationId`, package/version, selected skill set, and destination.
 
 ### 2. Lock
 
-- Acquire a cross-process lock scoped to canonical destination and skill name.
+- Acquire locks for selected canonical destinations in deterministic skill-name order.
 - Use an atomic lock-directory or exclusive-file creation supported on all target platforms.
 - Record a random owner token and start time.
 - Recover a stale lock only after validating its journal and owner liveness policy.

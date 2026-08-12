@@ -3,24 +3,35 @@ import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { z } from 'zod'
 import { SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE } from '../../shared/skill-install-capability'
-import { SkillInstallDestinationSchema } from '../../shared/skill-install-contract'
 import type { SkillInstallProgress } from '../../shared/skill-sharing-contract'
 import { SkillDiscoveryTargetSchema, type SkillDiscoveryResult } from '../../shared/skills'
 import type { SkillCloudDownloadGrant } from '../../shared/skill-cloud-contract'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
-import { installSkillCloudGrant } from '../skills/skill-cloud-grant-installation'
+import {
+  installSkillBundleCloudGrant,
+  installSkillCloudGrant
+} from '../skills/skill-cloud-grant-installation'
 import { SkillRemoteInstallCancellation } from '../skills/skill-remote-install-cancellation'
 import { classifySkillCloudInstallTarget } from '../skills/skill-cloud-install-target'
 import { SkillSharePreparationService } from '../skills/skill-share-preparation-service'
-import { supportsSkillRuntimeInstall } from '../skills/skill-runtime-capability'
+import {
+  supportsSkillRuntimeBundleInstall,
+  supportsSkillRuntimeInstall
+} from '../skills/skill-runtime-capability'
 import { callRuntimeEnvironment } from './runtime-environment-transport-routing'
 import { registerSkillInstallManagementIpcHandlers } from './skill-install-management-ipc-handlers'
-
-const environmentIdSchema = z.string().min(1).max(128)
+import {
+  skillCloudBundlePackageVersionInstallSchema,
+  skillCloudBundleShareInstallSchema,
+  skillCloudInstallEnvironmentIdSchema,
+  skillCloudPackageVersionInstallSchema,
+  skillCloudShareInstallSchema
+} from './skill-cloud-install-ipc-schemas'
 
 const sharePrepareSchema = z
   .object({
-    skillId: z.string().min(1).max(4096),
+    skillIds: z.array(z.string().min(1).max(4096)).min(1).max(512),
+    bundleName: z.string().regex(/^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$/),
     target: SkillDiscoveryTargetSchema.optional(),
     packageId: z.string().min(1).max(128).optional()
   })
@@ -30,40 +41,15 @@ const sharePublishSchema = z
   .object({
     preparationId: z.string().uuid(),
     releaseNotes: z.string().max(10_000),
-    userIds: z.array(z.string().min(1).max(128)).max(100),
+    userIds: z.array(z.string().min(1).max(255)).max(100),
     shareWithOrganization: z.boolean()
-  })
-  .strict()
-
-const installDestinationFields = {
-  operationId: z.string().min(1).max(128).optional(),
-  environmentId: environmentIdSchema.optional(),
-  destination: SkillInstallDestinationSchema,
-  conflictResolution: z
-    .enum(['replace-unmodified', 'replace-and-discard-local', 'cancel'])
-    .optional()
-} as const
-
-const shareInstallSchema = z
-  .object({
-    shareId: z.string().min(1).max(128),
-    versionId: z.string().min(1).max(128).optional(),
-    ...installDestinationFields
-  })
-  .strict()
-
-const packageVersionInstallSchema = z
-  .object({
-    packageId: z.string().min(1).max(128),
-    versionId: z.string().min(1).max(128),
-    ...installDestinationFields
   })
   .strict()
 
 const replaceAccessSchema = z
   .object({
     packageId: z.string().min(1).max(128),
-    userIds: z.array(z.string().min(1).max(128)).max(100),
+    userIds: z.array(z.string().min(1).max(255)).max(100),
     shareWithOrganization: z.boolean()
   })
   .strict()
@@ -81,17 +67,24 @@ function registerSharingHandlers(
 ): void {
   const preparations = new SkillSharePreparationService(
     join(app.getPath('userData'), 'skill-share-preparations'),
-    { publish: (request) => runtime.publishSkillPackage(request) }
+    {
+      publishVersion: (request) => runtime.publishSkillPackageVersion(request),
+      createShare: (packageId, request) => runtime.createSkillPackageShare(packageId, request)
+    }
   )
   ipcMain.handle('skills:prepareShare', async (_event, value: unknown) => {
     const input = sharePrepareSchema.parse(value)
     const result = await discover(input.target)
-    const skill = result.skills.find((candidate) => candidate.id === input.skillId)
-    if (!skill) {
+    const requested = new Set(input.skillIds)
+    const skills = result.skills.filter((candidate) => requested.has(candidate.id))
+    if (skills.length !== requested.size) {
       throw new Error('skill-share-source-not-found')
     }
     return preparations.prepare({
-      sourceDirectory: skill.directoryPath,
+      sources: skills.map((skill) => ({ id: skill.name, sourceDirectory: skill.directoryPath })),
+      bundleName: input.bundleName,
+      description:
+        skills.length === 1 ? (skills[0].description ?? '') : `${skills.length} shared skills`,
       packageId: input.packageId
     })
   })
@@ -117,7 +110,9 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
   const remoteInstallCancellation = new SkillRemoteInstallCancellation()
   const installAuthorizedGrant = async (
     grant: SkillCloudDownloadGrant,
-    input: z.infer<typeof shareInstallSchema> | z.infer<typeof packageVersionInstallSchema>
+    input:
+      | z.infer<typeof skillCloudShareInstallSchema>
+      | z.infer<typeof skillCloudPackageVersionInstallSchema>
   ) => {
     if (!input.environmentId || input.environmentId.startsWith('ssh:')) {
       return installSkillCloudGrant(runtime, grant, {
@@ -129,6 +124,26 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
     const signal = remoteInstallCancellation.begin(operationId)
     try {
       return await installSkillCloudGrant(runtime, grant, { ...input, operationId }, signal)
+    } finally {
+      remoteInstallCancellation.finish(operationId, signal)
+    }
+  }
+  const installAuthorizedBundleGrant = async (
+    grant: SkillCloudDownloadGrant,
+    input:
+      | z.infer<typeof skillCloudBundleShareInstallSchema>
+      | z.infer<typeof skillCloudBundlePackageVersionInstallSchema>
+  ) => {
+    if (!input.environmentId || input.environmentId.startsWith('ssh:')) {
+      return installSkillBundleCloudGrant(runtime, grant, {
+        ...input,
+        operationId: input.operationId ?? randomUUID()
+      })
+    }
+    const operationId = input.operationId ?? randomUUID()
+    const signal = remoteInstallCancellation.begin(operationId)
+    try {
+      return await installSkillBundleCloudGrant(runtime, grant, { ...input, operationId }, signal)
     } finally {
       remoteInstallCancellation.finish(operationId, signal)
     }
@@ -148,7 +163,7 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
     }
   }
   ipcMain.handle('skills:installShare', async (event, value: unknown) => {
-    const parsed = shareInstallSchema.parse(value)
+    const parsed = skillCloudShareInstallSchema.parse(value)
     const input = { ...parsed, operationId: parsed.operationId ?? randomUUID() }
     sendProgress(event, { operationId: input.operationId, phase: 'authorizing' })
     if (
@@ -167,8 +182,29 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
     }
     return grant.status === 'ok' ? installAuthorizedGrant(grant.value, input) : grant
   })
+  ipcMain.handle('skills:installBundleShare', async (event, value: unknown) => {
+    const parsed = skillCloudBundleShareInstallSchema.parse(value)
+    const input = { ...parsed, operationId: parsed.operationId ?? randomUUID() }
+    sendProgress(event, { operationId: input.operationId, phase: 'authorizing' })
+    if (
+      input.environmentId &&
+      !input.environmentId.startsWith('ssh:') &&
+      !(await supportsSkillRuntimeBundleInstall(app.getPath('userData'), input.environmentId))
+    ) {
+      return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
+    }
+    const installTarget = await classifySkillCloudInstallTarget(runtime, input)
+    const grant = await runtime.createSkillDownloadGrant(input.shareId, {
+      versionId: input.versionId,
+      installTarget
+    })
+    if (grant.status === 'ok') {
+      sendProgress(event, { operationId: input.operationId, phase: 'installing' })
+    }
+    return grant.status === 'ok' ? installAuthorizedBundleGrant(grant.value, input) : grant
+  })
   ipcMain.handle('skills:installPackageVersion', async (event, value: unknown) => {
-    const parsed = packageVersionInstallSchema.parse(value)
+    const parsed = skillCloudPackageVersionInstallSchema.parse(value)
     const input = { ...parsed, operationId: parsed.operationId ?? randomUUID() }
     sendProgress(event, { operationId: input.operationId, phase: 'authorizing' })
     if (
@@ -188,11 +224,33 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
     }
     return grant.status === 'ok' ? installAuthorizedGrant(grant.value, input) : grant
   })
+  ipcMain.handle('skills:installBundlePackageVersion', async (event, value: unknown) => {
+    const parsed = skillCloudBundlePackageVersionInstallSchema.parse(value)
+    const input = { ...parsed, operationId: parsed.operationId ?? randomUUID() }
+    sendProgress(event, { operationId: input.operationId, phase: 'authorizing' })
+    if (
+      input.environmentId &&
+      !input.environmentId.startsWith('ssh:') &&
+      !(await supportsSkillRuntimeBundleInstall(app.getPath('userData'), input.environmentId))
+    ) {
+      return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
+    }
+    const installTarget = await classifySkillCloudInstallTarget(runtime, input)
+    const grant = await runtime.createSkillPackageVersionDownloadGrant(
+      input.packageId,
+      input.versionId,
+      { installTarget }
+    )
+    if (grant.status === 'ok') {
+      sendProgress(event, { operationId: input.operationId, phase: 'installing' })
+    }
+    return grant.status === 'ok' ? installAuthorizedBundleGrant(grant.value, input) : grant
+  })
   ipcMain.handle('skills:cancelInstall', async (_event, value: unknown) => {
     const input = z
       .object({
         operationId: z.string().min(1).max(128),
-        environmentId: environmentIdSchema.optional()
+        environmentId: skillCloudInstallEnvironmentIdSchema.optional()
       })
       .strict()
       .parse(value)

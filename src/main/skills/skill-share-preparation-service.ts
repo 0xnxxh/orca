@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
@@ -7,35 +7,58 @@ import type {
   SkillSharePublishInput,
   SkillSharePublishOperation
 } from '../../shared/skill-sharing-contract'
-import { createSkillPackageArchive, type CreatedSkillPackage } from './skill-package-creation'
+import type { SkillCloudVersion } from '../../shared/skill-cloud-contract'
+import { createSkillBundleArchive, type CreatedSkillBundle } from './skill-bundle-creation'
 import type { SkillCloudService } from './skill-cloud-service'
 
 const PREPARATION_TTL_MS = 30 * 60 * 1000
 const MAX_PREPARATIONS = 8
 
 type Preparation = {
-  created: CreatedSkillPackage
+  created: CreatedSkillBundle
   expiresAt: number
   controller: AbortController | null
+  publishedVersion: SkillCloudVersion | null
+}
+
+function shareIdempotencyKey(preparationId: string, input: SkillSharePublishInput): string {
+  const audience = JSON.stringify({
+    shareWithOrganization: input.shareWithOrganization,
+    userIds: [...new Set(input.userIds)].sort()
+  })
+  const digest = createHash('sha256').update(audience).digest('hex').slice(0, 32)
+  return `${preparationId}_${digest}`
 }
 
 function preview(id: string, value: Preparation): SkillSharePreview {
   const manifest = value.created.manifest
+  const files = manifest.skills.flatMap((skill) => skill.files)
   return {
     preparationId: id,
     packageId: manifest.packageId,
     versionId: manifest.versionId,
-    name: manifest.name,
+    name: manifest.bundleName,
     description: manifest.description,
-    packageDigest: manifest.packageDigest,
+    packageDigest: manifest.bundleDigest,
+    skillCount: manifest.skills.length,
+    skills: manifest.skills.map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      digest: skill.digest,
+      fileCount: skill.files.length,
+      totalBytes: skill.files.reduce((total, file) => total + file.size, 0),
+      scriptPaths: skill.files
+        .filter((file) => file.path.startsWith('scripts/'))
+        .map((file) => file.path),
+      executablePaths: skill.files.filter((file) => file.executable).map((file) => file.path)
+    })),
     archiveSha256: value.created.archiveSha256,
-    fileCount: manifest.files.length,
-    totalBytes: manifest.files.reduce((total, file) => total + file.size, 0),
+    fileCount: files.length,
+    totalBytes: files.reduce((total, file) => total + file.size, 0),
     compressedBytes: value.created.compressedBytes,
-    scriptPaths: manifest.files
-      .filter((file) => file.path.startsWith('scripts/'))
-      .map((file) => file.path),
-    executablePaths: manifest.files.filter((file) => file.executable).map((file) => file.path),
+    scriptPaths: files.filter((file) => file.path.startsWith('scripts/')).map((file) => file.path),
+    executablePaths: files.filter((file) => file.executable).map((file) => file.path),
     expiresAt: new Date(value.expiresAt).toISOString()
   }
 }
@@ -45,11 +68,14 @@ export class SkillSharePreparationService {
 
   constructor(
     private readonly root: string,
-    private readonly cloud: Pick<SkillCloudService, 'publish'>
+    private readonly cloud: Pick<SkillCloudService, 'createShare' | 'publishVersion'>
   ) {}
 
   async prepare(input: {
-    sourceDirectory: string
+    sources?: { id?: string; sourceDirectory: string }[]
+    sourceDirectory?: string
+    bundleName?: string
+    description?: string
     packageId?: string
   }): Promise<SkillSharePreview> {
     await this.prune()
@@ -60,8 +86,12 @@ export class SkillSharePreparationService {
     const directory = join(this.root, preparationId)
     await mkdir(directory, { recursive: true, mode: 0o700 })
     try {
-      const created = await createSkillPackageArchive({
-        sourceDirectory: input.sourceDirectory,
+      const sources =
+        input.sources ?? (input.sourceDirectory ? [{ sourceDirectory: input.sourceDirectory }] : [])
+      const created = await createSkillBundleArchive({
+        sources,
+        bundleName: input.bundleName ?? 'shared-skill',
+        description: input.description,
         archivePath: join(directory, 'package.tar.gz'),
         packageId: input.packageId ?? randomUUID(),
         versionId: randomUUID()
@@ -69,7 +99,8 @@ export class SkillSharePreparationService {
       const value: Preparation = {
         created,
         expiresAt: Date.now() + PREPARATION_TTL_MS,
-        controller: null
+        controller: null,
+        publishedVersion: null
       }
       this.preparations.set(preparationId, value)
       return preview(preparationId, value)
@@ -94,21 +125,39 @@ export class SkillSharePreparationService {
     const controller = new AbortController()
     preparation.controller = controller
     try {
-      const result = await this.cloud.publish({
-        archivePath: preparation.created.archivePath,
-        archiveSha256: preparation.created.archiveSha256,
-        compressedBytes: preparation.created.compressedBytes,
-        packageId: preparation.created.manifest.packageId,
-        releaseNotes: input.releaseNotes,
+      let version = preparation.publishedVersion
+      if (!version) {
+        const published = await this.cloud.publishVersion({
+          archivePath: preparation.created.archivePath,
+          archiveSha256: preparation.created.archiveSha256,
+          compressedBytes: preparation.created.compressedBytes,
+          packageId: preparation.created.manifest.packageId,
+          releaseNotes: input.releaseNotes,
+          userIds: input.userIds,
+          shareWithOrganization: input.shareWithOrganization,
+          signal: controller.signal,
+          onProgress: (progress) =>
+            onProgress?.({ preparationId: input.preparationId, ...progress })
+        })
+        if (published.status !== 'ok') {
+          return published
+        }
+        version = published.value
+        preparation.publishedVersion = version
+      }
+      const shared = await this.cloud.createShare(version.packageId, {
         userIds: input.userIds,
         shareWithOrganization: input.shareWithOrganization,
-        signal: controller.signal,
-        onProgress: (progress) => onProgress?.({ preparationId: input.preparationId, ...progress })
+        idempotencyKey: shareIdempotencyKey(input.preparationId, input)
       })
-      if (result.status === 'ok') {
-        await this.release(input.preparationId)
+      if (shared.status !== 'ok') {
+        return shared
       }
-      return result satisfies SkillSharePublishOperation
+      await this.release(input.preparationId)
+      return {
+        status: 'ok',
+        value: { version, share: shared.value }
+      } satisfies SkillSharePublishOperation
     } finally {
       const current = this.preparations.get(input.preparationId)
       if (current) {

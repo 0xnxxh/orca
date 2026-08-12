@@ -80,6 +80,7 @@ export function createSkillInstallReceipt(input: {
     packageId: input.manifest.packageId,
     versionId: input.manifest.versionId,
     packageDigest: input.manifest.packageDigest,
+    ...(input.request.sourceBundleDigest ? { bundleDigest: input.request.sourceBundleDigest } : {}),
     archiveSha256: input.archiveSha256,
     scope: input.request.scope,
     destinationIdentity: input.request.destinationIdentity,

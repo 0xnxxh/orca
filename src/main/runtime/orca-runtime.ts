@@ -152,7 +152,12 @@ import type {
   ManagedSkillInstall,
   SkillRemoveRequest
 } from '../../shared/skill-install-contract'
+import type {
+  SkillBundleInstallRequest,
+  SkillBundleInstallResult
+} from '../../shared/skill-bundle-install-contract'
 import { executeSkillInstallRequest } from '../skills/skill-install-request-service'
+import { executeSkillBundleInstallRequest } from '../skills/skill-bundle-install-request-service'
 import type { SkillInstallDestinationAuthority } from '../skills/skill-install-destinations'
 import {
   previewSharedSkillInstall,
@@ -168,6 +173,7 @@ import type {
 } from '../../shared/skill-upload-session-contract'
 import { SkillUploadSessionService } from '../skills/skill-upload-session-service'
 import type { SkillSshWorkspaceAuthority } from '../../shared/skill-ssh-relay-contract'
+import { installSkillBundleOnSshHost } from '../skills/skill-bundle-ssh-relay-service'
 import {
   installSkillOnSshHost,
   listSkillInstallsOnSshHost,
@@ -4581,6 +4587,24 @@ export class OrcaRuntimeService {
     return this.requireSkillCloudService().publish(request)
   }
 
+  publishSkillPackageVersion(
+    request: SkillCloudPublishRequest
+  ): Promise<SkillCloudOperation<SkillCloudVersion>> {
+    return this.requireSkillCloudService().publishVersion(request)
+  }
+
+  createSkillPackageShare(
+    packageId: string,
+    request: SkillCloudOptions & {
+      pinnedVersionId?: string
+      userIds: string[]
+      shareWithOrganization: boolean
+      idempotencyKey?: string
+    }
+  ) {
+    return this.requireSkillCloudService().createShare(packageId, request)
+  }
+
   resolveSkillShare(
     shareId: string,
     options: SkillCloudOptions
@@ -4664,6 +4688,66 @@ export class OrcaRuntimeService {
     this.skillInstallOperations.set(request.operationId, controller)
     try {
       return await this.executeSharedSkillInstall(request, controller.signal)
+    } finally {
+      signal?.removeEventListener('abort', abort)
+      if (this.skillInstallOperations.get(request.operationId) === controller) {
+        this.skillInstallOperations.delete(request.operationId)
+      }
+    }
+  }
+
+  async installSharedSkillBundleRequest(
+    request: SkillBundleInstallRequest,
+    signal?: AbortSignal
+  ): Promise<SkillBundleInstallResult> {
+    if (this.skillInstallOperations.has(request.operationId)) {
+      throw new Error('skill-install-operation-in-progress')
+    }
+    const controller = new AbortController()
+    const abort = (): void => controller.abort()
+    if (signal?.aborted) {
+      abort()
+    } else {
+      signal?.addEventListener('abort', abort, { once: true })
+    }
+    this.skillInstallOperations.set(request.operationId, controller)
+    try {
+      const runtimeId = this.getStatus().runtimeId
+      const sshTarget = await this.resolveSkillSshTarget(request.destination)
+      if (sshTarget) {
+        return installSkillBundleOnSshHost({
+          provider: sshTarget.provider,
+          userDataPath: app.getPath('userData'),
+          request: {
+            ...request,
+            destination:
+              request.destination.scope === 'global'
+                ? { scope: 'global', executionTarget: { kind: 'host' } }
+                : request.destination
+          },
+          workspace: sshTarget.workspace,
+          requireHttps: app.isPackaged,
+          signal: controller.signal
+        })
+      }
+      const allowedDownloadOrigins = ['https://storage.googleapis.com']
+      if (!app.isPackaged && process.env.ORCA_SKILL_PACKAGE_DOWNLOAD_ORIGINS) {
+        allowedDownloadOrigins.push(
+          ...process.env.ORCA_SKILL_PACKAGE_DOWNLOAD_ORIGINS.split(',')
+            .map((origin) => origin.trim())
+            .filter(Boolean)
+        )
+      }
+      return await executeSkillBundleInstallRequest(request, {
+        authority: this.skillInstallDestinationAuthority(runtimeId),
+        stateDirectory: app.getPath('userData'),
+        allowedDownloadOrigins: [...new Set(allowedDownloadOrigins)],
+        requireHttps: app.isPackaged,
+        resolveStagedUpload: (uploadId, identity) =>
+          this.requireSkillUploadSessions().take(uploadId, identity),
+        detectProviders: detectInstalledAgentsWithShellPathHydration,
+        signal: controller.signal
+      })
     } finally {
       signal?.removeEventListener('abort', abort)
       if (this.skillInstallOperations.get(request.operationId) === controller) {

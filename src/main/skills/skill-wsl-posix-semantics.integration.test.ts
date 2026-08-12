@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -11,6 +11,8 @@ import {
   type SkillPackageFile
 } from '../../shared/skill-package-manifest'
 import { installSharedSkill } from './skill-install-service'
+import { createSkillBundleArchive } from './skill-bundle-creation'
+import { installSkillBundle } from './skill-bundle-install-service'
 import { writeSkillTarGzip } from './skill-package-tar'
 import { detectSkillProvidersInWsl } from './skill-wsl-provider-detection'
 import { createWslSkillInstallFilesystem } from './skill-wsl-install-filesystem'
@@ -123,5 +125,55 @@ describe.runIf(RUN_REAL_WSL)('real WSL POSIX skill semantics', () => {
     await expect(runWsl('stat', '-c', '%a', `${skill}/scripts/run.sh`)).resolves.toBe('700')
     await expect(runWsl('test', '!', '-e', `${skill}/skill.md`)).resolves.toBe('')
     await expect(runWsl(`${skill}/scripts/run.sh`)).resolves.toBe('ok')
+  })
+
+  it('installs only selected bundle skills into the distro-owned home', async () => {
+    const sources = join(localRoot, 'bundle-sources')
+    const alpha = join(sources, 'wsl-alpha')
+    const beta = join(sources, 'wsl-beta')
+    await Promise.all([mkdir(alpha, { recursive: true }), mkdir(beta, { recursive: true })])
+    await writeFile(
+      join(alpha, 'SKILL.md'),
+      '---\nname: wsl-alpha\ndescription: WSL alpha\n---\n\n# Alpha\n'
+    )
+    await writeFile(
+      join(beta, 'SKILL.md'),
+      '---\nname: wsl-beta\ndescription: WSL beta\n---\n\n# Beta\n'
+    )
+    const bundle = await createSkillBundleArchive({
+      sources: [{ sourceDirectory: alpha }, { sourceDirectory: beta }],
+      archivePath: join(localRoot, 'wsl-bundle.tar.gz'),
+      packageId: 'package-wsl-bundle',
+      versionId: 'version-wsl-bundle',
+      bundleName: 'wsl-bundle'
+    })
+    const homeDirectory = uncPath(`${guestRoot}/home`)
+    const filesystem = createWslSkillInstallFilesystem({ distro: DISTRO, homeDirectory })
+
+    const result = await installSkillBundle({
+      operationId: 'wsl-bundle-install',
+      archivePath: bundle.archivePath,
+      packageId: bundle.manifest.packageId,
+      versionId: bundle.manifest.versionId,
+      bundleDigest: bundle.manifest.bundleDigest,
+      selectedSkillIds: ['wsl-alpha'],
+      expectedArchiveSha256: bundle.archiveSha256,
+      scope: 'global',
+      homeDirectory,
+      orcaStateDirectory: join(localRoot, 'bundle-state'),
+      detectedProviders: [],
+      destinationIdentity: 'global:wsl-bundle',
+      hostIdentity: 'windows-2',
+      filesystem,
+      wslDistro: DISTRO
+    })
+
+    expect(result).toMatchObject({ status: 'complete', skills: [{ name: 'wsl-alpha' }] })
+    await expect(
+      runWsl('test', '-f', `${guestRoot}/home/.agents/skills/wsl-alpha/SKILL.md`)
+    ).resolves.toBe('')
+    await expect(
+      runWsl('test', '!', '-e', `${guestRoot}/home/.agents/skills/wsl-beta`)
+    ).resolves.toBe('')
   })
 })

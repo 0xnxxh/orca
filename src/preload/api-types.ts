@@ -407,6 +407,11 @@ import type {
   SkillCloudPackageDetails
 } from '../shared/skill-cloud-contract'
 import type {
+  SkillBundleInstallPreviewInput,
+  SkillBundleInstallPreviewOperation,
+  SkillBundlePackageVersionInstallInput,
+  SkillBundleShareInstallInput,
+  SkillBundleShareInstallOperation,
   SkillInstallPreviewInput,
   SkillInstallPreviewOperation,
   ManagedSkillInstallListOperation,
@@ -2569,7 +2574,8 @@ export type PreloadApi = {
     acknowledgeUpdateRun: () => Promise<void>
     getUpdateRun: () => Promise<SkillUpdateRun>
     prepareShare: (input: {
-      skillId: string
+      skillIds: string[]
+      bundleName: string
       target?: SkillDiscoveryTarget
       packageId?: string
     }) => Promise<SkillSharePreview>
@@ -2579,11 +2585,20 @@ export type PreloadApi = {
     resolveShare: (shareId: string) => Promise<SkillShareResolvedOperation>
     createDownloadGrant: (shareId: string) => Promise<SkillCloudOperation<SkillCloudDownloadGrant>>
     installShare: (input: SkillShareInstallInput) => Promise<SkillShareInstallOperation>
+    installBundleShare: (
+      input: SkillBundleShareInstallInput
+    ) => Promise<SkillBundleShareInstallOperation>
+    installBundlePackageVersion: (
+      input: SkillBundlePackageVersionInstallInput
+    ) => Promise<SkillBundleShareInstallOperation>
     installPackageVersion: (
       input: SkillPackageVersionInstallInput
     ) => Promise<SkillShareInstallOperation>
     cancelInstall: (input: SkillInstallCancelInput) => Promise<{ cancelled: boolean }>
     previewInstall: (input: SkillInstallPreviewInput) => Promise<SkillInstallPreviewOperation>
+    previewBundleInstall: (
+      input: SkillBundleInstallPreviewInput
+    ) => Promise<SkillBundleInstallPreviewOperation>
     removeInstall: (input: SkillRemoveInput) => Promise<SkillRemoveOperation>
     listManagedInstalls: (environmentId?: string) => Promise<ManagedSkillInstallListOperation>
     getPackage: (packageId: string) => Promise<SkillCloudOperation<SkillCloudPackageDetails>>

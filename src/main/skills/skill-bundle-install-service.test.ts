@@ -1,0 +1,88 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { createSkillBundleArchive } from './skill-bundle-creation'
+import { installSkillBundle } from './skill-bundle-install-service'
+import { listManagedSkillInstalls } from './skill-install-provenance'
+
+const temporaryDirectories: string[] = []
+
+async function temporaryDirectory(): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), 'orca-skill-bundle-install-test-'))
+  temporaryDirectories.push(directory)
+  return directory
+}
+
+async function createSkill(root: string, name: string): Promise<string> {
+  const directory = join(root, name)
+  await mkdir(directory, { recursive: true })
+  await writeFile(
+    join(directory, 'SKILL.md'),
+    `---\nname: ${name}\ndescription: ${name}\n---\n\n# ${name}\n`
+  )
+  return directory
+}
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true }))
+  )
+})
+
+describe('skill bundle installation', () => {
+  it('installs a selected subset and keeps an unowned conflict local', async () => {
+    const root = await temporaryDirectory()
+    const alpha = await createSkill(join(root, 'sources'), 'alpha-skill')
+    const beta = await createSkill(join(root, 'sources'), 'beta-skill')
+    const homeDirectory = join(root, 'home')
+    const existingBeta = join(homeDirectory, '.agents', 'skills', 'beta-skill')
+    await mkdir(existingBeta, { recursive: true })
+    await writeFile(
+      join(existingBeta, 'SKILL.md'),
+      '---\nname: beta-skill\ndescription: Local\n---\n\n# Keep me\n'
+    )
+    const bundle = await createSkillBundleArchive({
+      sources: [{ sourceDirectory: alpha }, { sourceDirectory: beta }],
+      archivePath: join(root, 'bundle.tar.gz'),
+      packageId: 'package_1',
+      versionId: 'version_1',
+      bundleName: 'team-skills',
+      createdAt: '2026-08-11T12:00:00.000Z'
+    })
+
+    const result = await installSkillBundle({
+      operationId: 'operation_1',
+      archivePath: bundle.archivePath,
+      packageId: bundle.manifest.packageId,
+      versionId: bundle.manifest.versionId,
+      bundleDigest: bundle.manifest.bundleDigest,
+      selectedSkillIds: ['alpha-skill', 'beta-skill'],
+      expectedArchiveSha256: bundle.archiveSha256,
+      scope: 'global',
+      homeDirectory,
+      orcaStateDirectory: join(root, 'state'),
+      detectedProviders: [],
+      destinationIdentity: 'local-global',
+      hostIdentity: 'host_1'
+    })
+
+    expect(result.status).toBe('partial')
+    expect(result.skills.map((skill) => [skill.name, skill.status])).toEqual([
+      ['alpha-skill', 'installed'],
+      ['beta-skill', 'kept-local']
+    ])
+    expect(
+      await readFile(join(homeDirectory, '.agents', 'skills', 'alpha-skill', 'SKILL.md'), 'utf8')
+    ).toContain('# alpha-skill')
+    expect(await readFile(join(existingBeta, 'SKILL.md'), 'utf8')).toContain('# Keep me')
+    await expect(listManagedSkillInstalls(join(root, 'state', 'skill-installs'))).resolves.toEqual([
+      expect.objectContaining({
+        name: 'alpha-skill',
+        packageId: 'package_1',
+        versionId: 'version_1',
+        bundleDigest: bundle.manifest.bundleDigest
+      })
+    ])
+  })
+})

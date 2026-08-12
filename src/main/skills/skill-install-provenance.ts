@@ -11,6 +11,7 @@ export type SkillInstallReceiptV1 = {
   packageId: string
   versionId: string
   packageDigest: string
+  bundleDigest?: string
   archiveSha256: string
   scope: 'global' | 'workspace'
   destinationIdentity: string
@@ -60,6 +61,7 @@ function isReceipt(value: unknown): value is SkillInstallReceiptV1 {
     typeof receipt.packageId === 'string' &&
     typeof receipt.versionId === 'string' &&
     typeof receipt.packageDigest === 'string' &&
+    (receipt.bundleDigest === undefined || typeof receipt.bundleDigest === 'string') &&
     typeof receipt.archiveSha256 === 'string' &&
     (receipt.scope === 'global' || receipt.scope === 'workspace') &&
     typeof receipt.destinationIdentity === 'string' &&
@@ -104,6 +106,7 @@ export async function listManagedSkillInstalls(
         packageId: parsed.packageId,
         versionId: parsed.versionId,
         packageDigest: parsed.packageDigest,
+        ...(parsed.bundleDigest ? { bundleDigest: parsed.bundleDigest } : {}),
         scope: parsed.scope,
         destinationIdentity: parsed.destinationIdentity,
         installedAt: parsed.installedAt,

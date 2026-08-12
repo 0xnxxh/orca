@@ -112,6 +112,7 @@ export type ManagedSkillInstall = {
   packageId: string
   versionId: string
   packageDigest: string
+  bundleDigest?: string
   scope: 'global' | 'workspace'
   destinationIdentity: string
   destination: SkillInstallDestination
@@ -124,6 +125,10 @@ export const ManagedSkillInstallSchema: z.ZodType<ManagedSkillInstall> = z.objec
   packageId: z.string(),
   versionId: z.string(),
   packageDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  bundleDigest: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   scope: z.enum(['global', 'workspace']),
   destinationIdentity: z.string(),
   destination: SkillInstallDestinationSchema,

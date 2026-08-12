@@ -2,6 +2,7 @@ import { open } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { RuntimeRpcResponse } from '../../shared/runtime-rpc-envelope'
 import type { SkillPackageIdentity } from '../../shared/skill-install-contract'
+import type { SkillBundlePackageIdentity } from '../../shared/skill-bundle-install-contract'
 import {
   SKILL_UPLOAD_CHUNK_MAX_BYTES,
   SkillUploadBeginResultSchema
@@ -48,7 +49,7 @@ export async function transferSkillPackageToRuntime(input: {
   userDataPath: string
   environmentId: string
   transferId: string
-  package: SkillPackageIdentity
+  package: SkillPackageIdentity | SkillBundlePackageIdentity
   grant: { url: string; expiresAt: string }
   requireHttps: boolean
   signal?: AbortSignal

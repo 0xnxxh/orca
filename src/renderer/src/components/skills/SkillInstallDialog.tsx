@@ -17,7 +17,8 @@ import type {
 } from '../../../../shared/skill-install-contract'
 import { parseSkillShareId } from './skill-share-link'
 import { skillInstallWorkspaceChoices } from './skill-install-workspace-choices'
-import type { ResolvedSkillShare } from './skill-share-version-summary'
+import { isSkillBundleVersion, type ResolvedSkillShare } from './skill-share-version-summary'
+import { SkillBundleInstallFlow } from './SkillBundleInstallFlow'
 import { SkillInstallTargetFields } from './SkillInstallTargetFields'
 import {
   SkillInstallOutcome,
@@ -53,6 +54,7 @@ export function SkillInstallDialog({
     null
   )
   const [busy, setBusy] = useState(false)
+  const [bundleBusy, setBundleBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<SkillInstallResult | null>(null)
   const [destinationPreview, setDestinationPreview] = useState<SkillInstallPreview | null>(null)
@@ -209,18 +211,26 @@ export function SkillInstallDialog({
     setScope('global')
     setWorkspace('')
     setExecutionTarget(null)
+    setBundleBusy(false)
     onOpenChange(false)
   }
 
+  const bundleVersion = preview && isSkillBundleVersion(preview.version) ? preview.version : null
+
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && !busy && close()}>
+    <Dialog open={open} onOpenChange={(next) => !next && !busy && !bundleBusy && close()}>
       <DialogContent className="max-h-[calc(100vh-3rem)] overflow-y-auto scrollbar-sleek sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>
-            {translate(
-              'auto.components.skills.SkillInstallDialog.fcbec627cc',
-              'Install shared skill'
-            )}
+            {bundleVersion
+              ? translate(
+                  'auto.components.skills.SkillInstallDialog.01c5a14e01',
+                  'Install shared skills'
+                )
+              : translate(
+                  'auto.components.skills.SkillInstallDialog.fcbec627cc',
+                  'Install shared skill'
+                )}
           </DialogTitle>
           <DialogDescription>
             {translate(
@@ -236,6 +246,13 @@ export function SkillInstallDialog({
             busy={busy}
             onLinkChange={setLink}
             onSubmit={() => void inspect()}
+          />
+        ) : bundleVersion ? (
+          <SkillBundleInstallFlow
+            shareId={preview.shareId}
+            version={bundleVersion}
+            onClose={close}
+            onBusyChange={setBundleBusy}
           />
         ) : result && result.status !== 'conflict' ? (
           <SkillInstallOutcome result={result} />
@@ -276,51 +293,57 @@ export function SkillInstallDialog({
           </SkillInstallReview>
         )}
 
-        {error ? (
+        {!bundleVersion && error ? (
           <p className="text-xs text-destructive" role="alert">
             {error}
           </p>
         ) : null}
-        {installProgress.phaseLabel ? (
+        {!bundleVersion && installProgress.phaseLabel ? (
           <p className="text-xs text-muted-foreground" role="status" aria-live="polite">
             {installProgress.phaseLabel}
           </p>
         ) : null}
-        <DialogFooter>
-          <Button type="button" variant="ghost" onClick={close} disabled={busy}>
-            {translate('auto.components.skills.SkillInstallDialog.d198ec91e5', 'Close')}
-          </Button>
-          {busy && installProgress.activeOperationId ? (
-            <Button type="button" variant="secondary" onClick={() => void cancelInstall()}>
-              {translate(
-                'auto.components.skills.SkillInstallDialog.05588076a9',
-                'Cancel installation'
-              )}
+        {!bundleVersion ? (
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={close} disabled={busy}>
+              {translate('auto.components.skills.SkillInstallDialog.d198ec91e5', 'Close')}
             </Button>
-          ) : null}
-          {preview &&
-          (!result || ['conflict', 'partial', 'failed', 'cancelled'].includes(result.status)) ? (
-            <Button
-              type="button"
-              disabled={busy || (scope === 'workspace' && !workspace)}
-              onClick={() => void install()}
-              className="w-32"
-            >
-              {busy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-              {busy
-                ? translate('auto.components.skills.SkillInstallDialog.241e72f9d6', 'Installing…')
-                : result
-                  ? translate(
-                      'auto.components.skills.SkillInstallDialog.59c3b76cdd',
-                      'Retry install'
-                    )
-                  : translate(
-                      'auto.components.skills.SkillInstallDialog.39acb9e8f4',
-                      'Install skill'
-                    )}
-            </Button>
-          ) : null}
-        </DialogFooter>
+            {busy && installProgress.activeOperationId ? (
+              <Button type="button" variant="secondary" onClick={() => void cancelInstall()}>
+                {translate(
+                  'auto.components.skills.SkillInstallDialog.05588076a9',
+                  'Cancel installation'
+                )}
+              </Button>
+            ) : null}
+            {preview &&
+            (!result || ['conflict', 'partial', 'failed', 'cancelled'].includes(result.status)) ? (
+              <Button
+                type="button"
+                disabled={busy || (scope === 'workspace' && !workspace)}
+                onClick={() => void install()}
+                className="w-32"
+              >
+                {busy ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Download className="size-4" />
+                )}
+                {busy
+                  ? translate('auto.components.skills.SkillInstallDialog.241e72f9d6', 'Installing…')
+                  : result
+                    ? translate(
+                        'auto.components.skills.SkillInstallDialog.59c3b76cdd',
+                        'Retry install'
+                      )
+                    : translate(
+                        'auto.components.skills.SkillInstallDialog.39acb9e8f4',
+                        'Install skill'
+                      )}
+              </Button>
+            ) : null}
+          </DialogFooter>
+        ) : null}
       </DialogContent>
     </Dialog>
   )

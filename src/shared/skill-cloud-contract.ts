@@ -1,4 +1,5 @@
 import type { SkillPackageManifestV1 } from './skill-package-manifest'
+import type { SkillBundleManifestV1 } from './skill-bundle-manifest'
 
 export type SkillCloudOptions = {
   apiUrl?: string
@@ -22,7 +23,7 @@ export type SkillCloudVersion = {
   compressedBytes: number
   createdAt: string
   releaseNotes: string
-  manifest: SkillPackageManifestV1
+  manifest: SkillPackageManifestV1 | SkillBundleManifestV1
   publisher?: { userId: string; organizationId?: string }
 }
 

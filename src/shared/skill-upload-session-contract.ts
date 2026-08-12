@@ -1,11 +1,12 @@
 import { z } from 'zod'
 import { SkillPackageIdentitySchema } from './skill-install-contract'
+import { SkillBundlePackageIdentitySchema } from './skill-bundle-install-contract'
 
 export const SKILL_UPLOAD_CHUNK_MAX_BYTES = 256 * 1024
 
 export const SkillUploadBeginRequestSchema = z
   .object({
-    package: SkillPackageIdentitySchema,
+    package: z.union([SkillPackageIdentitySchema, SkillBundlePackageIdentitySchema]),
     transferId: z.string().min(1).max(128).optional()
   })
   .strict()

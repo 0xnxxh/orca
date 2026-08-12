@@ -17,7 +17,7 @@ import { discoverSkillsForRuntimeTarget } from '@/runtime/runtime-skills-client'
 import { useActiveSkillDiscoveryRuntimeTarget } from '@/hooks/use-active-skill-discovery-runtime-target'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import type { DiscoveredSkill, SkillDiscoveryResult } from '../../../../shared/skills'
-import { SkillCard } from './SkillCard'
+import { SkillShareSelectableCard } from './SkillShareSelectableCard'
 import { SkillShareDialog } from './SkillShareDialog'
 import { SkillInstallDialog } from './SkillInstallDialog'
 import { SkillInstallManagementDialog } from './SkillInstallManagementDialog'
@@ -25,6 +25,12 @@ import { pluralize, sourceLabels } from './skill-display-labels'
 import { countSkillsBySource, filterSkills, type SkillsFilterState } from './skills-filter'
 import { translate } from '@/i18n/i18n'
 import { INSTALLED_AGENT_SKILLS_CHANGED_EVENT } from '@/hooks/installed-agent-skills-change-event'
+import {
+  SkillShareSelectionAction,
+  SkillShareSelectionStatus,
+  isSkillShareEligible,
+  updatedSkillSelection
+} from './SkillShareSelectionControls'
 
 const EMPTY_SKILLS: DiscoveredSkill[] = []
 
@@ -83,7 +89,9 @@ export default function SkillsPage(): React.JSX.Element {
   const runtimeTarget = useActiveSkillDiscoveryRuntimeTarget()
   const [result, setResult] = useState<SkillDiscoveryResult | null>(null)
   const [loading, setLoading] = useState(true)
-  const [shareSkill, setShareSkill] = useState<DiscoveredSkill | null>(null)
+  const [shareSkills, setShareSkills] = useState<DiscoveredSkill[]>([])
+  const [selectingShare, setSelectingShare] = useState(false)
+  const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(() => new Set())
   const [installOpen, setInstallOpen] = useState(false)
   const [installLink, setInstallLink] = useState('')
   const [managementOpen, setManagementOpen] = useState(false)
@@ -191,8 +199,6 @@ export default function SkillsPage(): React.JSX.Element {
   const skills = result?.skills ?? EMPTY_SKILLS
   const visibleSkills = useMemo(() => filterSkills(skills, filters), [filters, skills])
   const sourceCounts = useMemo(() => countSkillsBySource(skills), [skills])
-  const activeSourceCount = result?.sources.filter((source) => source.exists).length ?? 0
-
   return (
     <main className="flex min-h-0 flex-1 flex-col bg-background">
       <header className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-3">
@@ -214,10 +220,22 @@ export default function SkillsPage(): React.JSX.Element {
             <p className="truncate text-xs text-muted-foreground">
               {pluralize(skills.length, 'skill')}{' '}
               {translate('auto.components.skills.SkillsPage.e46e162e2e', 'from')}
-              {pluralize(activeSourceCount, 'source')}
+              {pluralize(result?.sources.filter((source) => source.exists).length ?? 0, 'source')}
             </p>
           </div>
         </div>
+        <SkillShareSelectionAction
+          selecting={selectingShare}
+          selectedCount={selectedSkillIds.size}
+          onClick={() => {
+            if (selectingShare && selectedSkillIds.size > 0) {
+              setShareSkills(skills.filter((skill) => selectedSkillIds.has(skill.id)))
+              return
+            }
+            setSelectingShare((value) => !value)
+            setSelectedSkillIds(new Set())
+          }}
+        />
         <Button
           type="button"
           variant="outline"
@@ -237,6 +255,20 @@ export default function SkillsPage(): React.JSX.Element {
       </header>
 
       <section className="flex shrink-0 flex-col gap-3 border-b border-border px-5 py-4">
+        {selectingShare ? (
+          <SkillShareSelectionStatus
+            selectedCount={selectedSkillIds.size}
+            onSelectAll={() =>
+              setSelectedSkillIds(
+                new Set(
+                  visibleSkills
+                    .filter((skill) => isSkillShareEligible(skill, runtimeTarget?.kind === 'local'))
+                    .map((skill) => skill.id)
+                )
+              )
+            }
+          />
+        ) : null}
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -336,16 +368,18 @@ export default function SkillsPage(): React.JSX.Element {
         {visibleSkills.length > 0 ? (
           <div className="mx-auto flex max-w-5xl flex-col gap-3">
             {visibleSkills.map((skill) => (
-              <SkillCard
+              <SkillShareSelectableCard
                 key={skill.id}
                 skill={skill}
-                onShare={
-                  runtimeTarget?.kind === 'local' &&
-                  skill.installed &&
-                  (skill.sourceKind === 'home' || skill.sourceKind === 'repo')
-                    ? () => setShareSkill(skill)
-                    : undefined
+                local={runtimeTarget?.kind === 'local'}
+                selected={selectedSkillIds.has(skill.id)}
+                selectionMode={selectingShare}
+                onSelectedChange={(selected) =>
+                  setSelectedSkillIds((current) =>
+                    updatedSkillSelection(current, skill.id, selected)
+                  )
                 }
+                onShare={() => setShareSkills([skill])}
               />
             ))}
           </div>
@@ -358,9 +392,15 @@ export default function SkillsPage(): React.JSX.Element {
         )}
       </section>
       <SkillShareDialog
-        skill={shareSkill}
-        open={shareSkill !== null}
-        onOpenChange={(nextOpen) => !nextOpen && setShareSkill(null)}
+        skills={shareSkills}
+        open={shareSkills.length > 0}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setShareSkills([])
+            setSelectingShare(false)
+            setSelectedSkillIds(new Set())
+          }
+        }}
       />
       <SkillInstallDialog
         key={installLink || 'manual-install'}

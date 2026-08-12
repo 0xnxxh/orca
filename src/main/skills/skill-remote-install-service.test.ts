@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SkillInstallRequest, SkillInstallResult } from '../../shared/skill-install-contract'
+import type {
+  SkillBundleInstallRequest,
+  SkillBundleInstallResult
+} from '../../shared/skill-bundle-install-contract'
 
 const mocks = vi.hoisted(() => ({
   callRuntimeEnvironment: vi.fn(),
@@ -13,7 +17,10 @@ vi.mock('./skill-client-mediated-transfer', () => ({
   transferSkillPackageToRuntime: mocks.transferSkillPackageToRuntime
 }))
 
-import { installSkillOnRemoteRuntime } from './skill-remote-install-service'
+import {
+  installSkillBundleOnRemoteRuntime,
+  installSkillOnRemoteRuntime
+} from './skill-remote-install-service'
 
 const request: SkillInstallRequest = {
   operationId: 'operation-1',
@@ -38,6 +45,30 @@ const result: SkillInstallResult = {
   name: 'example',
   packageDigest: request.package.packageDigest,
   placements: []
+}
+
+const bundleRequest: SkillBundleInstallRequest = {
+  operationId: 'bundle-operation-1',
+  package: {
+    packageId: 'package-1',
+    versionId: 'version-1',
+    bundleDigest: 'c'.repeat(64),
+    archiveSha256: 'b'.repeat(64),
+    compressedBytes: 12
+  },
+  selectedSkillIds: ['skill-1'],
+  ingress: request.ingress,
+  destination: { scope: 'global' },
+  conflictDecisions: []
+}
+
+const bundleResult: SkillBundleInstallResult = {
+  operationId: bundleRequest.operationId,
+  packageId: bundleRequest.package.packageId,
+  versionId: bundleRequest.package.versionId,
+  bundleDigest: bundleRequest.package.bundleDigest,
+  status: 'complete',
+  skills: []
 }
 
 function success(value: unknown) {
@@ -234,5 +265,60 @@ describe('installSkillOnRemoteRuntime', () => {
       })
     ).rejects.toThrow('skill-install-remote-failed')
     expect(mocks.transferSkillPackageToRuntime).not.toHaveBeenCalled()
+  })
+})
+
+describe('installSkillBundleOnRemoteRuntime', () => {
+  beforeEach(() => {
+    mocks.callRuntimeEnvironment.mockReset()
+    mocks.transferSkillPackageToRuntime.mockReset()
+  })
+
+  it('uses the additive bundle RPC for direct remote installation', async () => {
+    mocks.callRuntimeEnvironment.mockResolvedValue(success(bundleResult))
+
+    await expect(
+      installSkillBundleOnRemoteRuntime({
+        userDataPath: '/state',
+        environmentId: 'environment-1',
+        request: bundleRequest,
+        capabilities: ['skills.install.bundle.v1', 'skills.upload.v1'],
+        requireHttps: true
+      })
+    ).resolves.toEqual(bundleResult)
+    expect(mocks.callRuntimeEnvironment).toHaveBeenCalledWith(
+      '/state',
+      'environment-1',
+      'skills.installBundle',
+      bundleRequest,
+      5 * 60_000
+    )
+  })
+
+  it('falls back to staged upload while preserving the bundle selection', async () => {
+    const cleanup = vi.fn(async () => undefined)
+    mocks.callRuntimeEnvironment
+      .mockResolvedValueOnce({
+        id: 'rpc-1',
+        ok: false,
+        error: { code: 'runtime_error', message: 'skill-download-transport-failed' }
+      })
+      .mockResolvedValueOnce(success(bundleResult))
+    mocks.transferSkillPackageToRuntime.mockResolvedValue({ uploadId: 'upload-1', cleanup })
+
+    await expect(
+      installSkillBundleOnRemoteRuntime({
+        userDataPath: '/state',
+        environmentId: 'environment-1',
+        request: bundleRequest,
+        capabilities: ['skills.install.bundle.v1', 'skills.upload.v1'],
+        requireHttps: true
+      })
+    ).resolves.toEqual(bundleResult)
+    expect(mocks.callRuntimeEnvironment.mock.calls[1]?.[3]).toMatchObject({
+      selectedSkillIds: ['skill-1'],
+      ingress: { kind: 'staged-upload', uploadId: 'upload-1' }
+    })
+    expect(cleanup).toHaveBeenCalledOnce()
   })
 })

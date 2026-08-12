@@ -64,24 +64,42 @@ function packageDetails(versions: SkillCloudVersion[]): SkillCloudPackageDetails
 }
 
 function skillsApi(
-  installed: ManagedSkillInstall,
+  installedInput: ManagedSkillInstall | ManagedSkillInstall[],
   versions: SkillCloudVersion[],
   details = packageDetails(versions)
 ) {
+  const installed = Array.isArray(installedInput) ? installedInput : [installedInput]
   let progressListener:
     | ((progress: { operationId: string; phase: 'authorizing' | 'installing' }) => void)
     | null = null
   return {
-    listManagedInstalls: vi.fn().mockResolvedValue({ status: 'ok', value: [installed] }),
+    listManagedInstalls: vi.fn().mockResolvedValue({ status: 'ok', value: installed }),
     getPackage: vi.fn().mockResolvedValue({ status: 'ok', value: details }),
     installPackageVersion: vi.fn().mockResolvedValue({
       status: 'ok',
       value: {
         operationId: 'operation_1',
         status: 'updated',
-        name: installed.name,
+        name: installed[0]?.name ?? 'private-skill',
         packageDigest: DIGEST,
         placements: []
+      }
+    }),
+    installBundlePackageVersion: vi.fn().mockResolvedValue({
+      status: 'ok',
+      value: {
+        operationId: 'operation_bundle',
+        packageId: 'pkg_1',
+        versionId: versions[0]?.versionId ?? 'ver_1',
+        bundleDigest: DIGEST,
+        status: 'complete',
+        skills: installed.map((skill) => ({
+          skillId: skill.name,
+          name: skill.name,
+          digest: skill.packageDigest,
+          status: 'updated',
+          placements: []
+        }))
       }
     }),
     removeInstall: vi.fn().mockResolvedValue({
@@ -89,7 +107,7 @@ function skillsApi(
       value: {
         operationId: 'operation_2',
         status: 'removed',
-        name: installed.name,
+        name: installed[0]?.name ?? 'private-skill',
         packageDigest: DIGEST,
         placements: []
       }
@@ -108,6 +126,34 @@ function skillsApi(
     emitInstallProgress: (progress: { operationId: string; phase: 'authorizing' | 'installing' }) =>
       progressListener?.(progress)
   }
+}
+
+function bundleVersion(versionId: string, names: string[]): SkillCloudVersion {
+  const createdAt = '2026-08-12T00:00:00.000Z'
+  return {
+    ...version(versionId, createdAt),
+    name: 'team-skills',
+    manifest: {
+      schemaVersion: 1,
+      packageId: 'pkg_1',
+      versionId,
+      bundleName: 'team-skills',
+      description: 'Team skills',
+      createdAt,
+      bundleDigest: DIGEST,
+      skills: names.map((name) => ({
+        id: name,
+        name,
+        description: `${name} description`,
+        digest: DIGEST,
+        files: []
+      }))
+    }
+  }
+}
+
+function bundleInstall(name: string, state: ManagedSkillInstall['state'] = 'unchanged') {
+  return { ...install('ver_1'), name, bundleDigest: DIGEST, state }
 }
 
 async function selectInstall(versionId: string): Promise<void> {
@@ -277,5 +323,70 @@ describe('SkillInstallManagementDialog', () => {
     expect(skills.installPackageVersion.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ packageId: 'pkg_1', versionId: 'ver_2' })
     )
+  })
+
+  it('groups bundle receipts and updates only the managed bundle skills', async () => {
+    const installed = [bundleInstall('alpha-skill'), bundleInstall('beta-skill')]
+    const bundle = bundleVersion('ver_2', ['alpha-skill', 'beta-skill', 'new-skill'])
+    const skills = skillsApi(installed, [bundle])
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /2 skill bundle.*ver_1/ }))
+    await screen.findByText('team-skills')
+    fireEvent.click(screen.getByRole('button', { name: 'Install 2 skills' }))
+
+    await waitFor(() => expect(skills.installBundlePackageVersion).toHaveBeenCalledOnce())
+    expect(skills.installBundlePackageVersion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        packageId: 'pkg_1',
+        versionId: 'ver_2',
+        selectedSkillIds: ['alpha-skill', 'beta-skill']
+      })
+    )
+    expect(skills.installPackageVersion).not.toHaveBeenCalled()
+  })
+
+  it('removes a bundle with one confirmation and preserves modified skills', async () => {
+    const installed = [bundleInstall('alpha-skill'), bundleInstall('beta-skill', 'modified')]
+    const skills = skillsApi(installed, [bundleVersion('ver_1', ['alpha-skill', 'beta-skill'])])
+    skills.removeInstall
+      .mockResolvedValueOnce({
+        status: 'ok',
+        value: {
+          operationId: 'remove_alpha',
+          status: 'removed',
+          name: 'alpha-skill',
+          packageDigest: DIGEST,
+          placements: []
+        }
+      })
+      .mockResolvedValueOnce({
+        status: 'ok',
+        value: {
+          operationId: 'keep_beta',
+          status: 'conflict',
+          name: 'beta-skill',
+          packageDigest: DIGEST,
+          placements: []
+        }
+      })
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /2 skill bundle.*ver_1/ }))
+    await screen.findByText('team-skills')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove 2 skills' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm remove 2 skills' }))
+
+    await screen.findByText('1 removed · 1 modified skill preserved.')
+    expect(skills.removeInstall).toHaveBeenCalledTimes(2)
+    expect(skills.removeInstall.mock.calls).toEqual(
+      expect.arrayContaining([
+        [expect.objectContaining({ name: 'alpha-skill' })],
+        [expect.objectContaining({ name: 'beta-skill' })]
+      ])
+    )
+    expect(skills.removeInstall.mock.calls[1]?.[0]).not.toHaveProperty('conflictResolution')
   })
 })

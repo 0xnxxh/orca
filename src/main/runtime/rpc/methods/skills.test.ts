@@ -87,6 +87,34 @@ describe('skills.discover RPC', () => {
 })
 
 describe('skills.install RPC', () => {
+  it('routes one bundle request without changing the single-skill method', async () => {
+    const installSharedSkillBundleRequest = vi.fn(async () => ({ status: 'complete' }))
+    const request = {
+      operationId: 'operation_1',
+      package: {
+        packageId: 'package_1',
+        versionId: 'version_1',
+        bundleDigest: 'a'.repeat(64),
+        archiveSha256: 'b'.repeat(64),
+        compressedBytes: 100
+      },
+      selectedSkillIds: ['alpha'],
+      ingress: {
+        kind: 'download-grant' as const,
+        url: 'https://storage.googleapis.com/package',
+        expiresAt: '2026-08-11T12:00:00.000Z'
+      },
+      destination: { scope: 'global' as const },
+      conflictDecisions: []
+    }
+
+    await method('skills.installBundle').handler(request, {
+      runtime: { installSharedSkillBundleRequest }
+    } as unknown as RpcContext)
+
+    expect(installSharedSkillBundleRequest).toHaveBeenCalledWith(request, undefined)
+  })
+
   it('delegates installation to the executing runtime service', async () => {
     const installSharedSkillRequest = vi.fn(async () => ({ status: 'installed' }))
     const runtime = {

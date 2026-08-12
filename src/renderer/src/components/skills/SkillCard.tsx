@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Checkbox } from '@/components/ui/checkbox'
 import { translate } from '@/i18n/i18n'
 import type { DiscoveredSkill, SkillProvider } from '../../../../shared/skills'
 import { pluralize, sourceLabels } from './skill-display-labels'
@@ -27,10 +28,18 @@ function formatUpdatedAt(value: number | null): string {
 
 export function SkillCard({
   skill,
-  onShare
+  onShare,
+  selected = false,
+  selectionMode = false,
+  selectionDisabled = false,
+  onSelectionChange
 }: {
   skill: DiscoveredSkill
   onShare?: () => void
+  selected?: boolean
+  selectionMode?: boolean
+  selectionDisabled?: boolean
+  onSelectionChange?: (selected: boolean) => void
 }): React.JSX.Element {
   const revealSkill = async (): Promise<void> => {
     const result = await window.api.shell.openInFileManager(skill.skillFilePath)
@@ -45,6 +54,19 @@ export function SkillCard({
     <Card className="rounded-lg">
       <CardContent className="space-y-3 p-4">
         <div className="flex min-w-0 items-start gap-3">
+          {selectionMode ? (
+            <Checkbox
+              className="mt-2"
+              checked={selected}
+              disabled={selectionDisabled}
+              aria-label={translate(
+                'auto.components.skills.SkillCard.01c5a16e01',
+                'Select {{value0}}',
+                { value0: skill.name }
+              )}
+              onCheckedChange={(value) => onSelectionChange?.(value === true)}
+            />
+          ) : null}
           <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-background">
             <BookOpen className="size-4 text-muted-foreground" />
           </div>

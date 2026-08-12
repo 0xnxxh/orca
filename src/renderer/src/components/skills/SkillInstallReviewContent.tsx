@@ -160,7 +160,7 @@ export function SkillInstallReview({
         </div>
         <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
           <Badge variant="outline">
-            {version.manifest.files.length}{' '}
+            {versionSummary.fileCount}{' '}
             {translate('auto.components.skills.SkillInstallReviewContent.fab8fce842', 'files')}
           </Badge>
           <Badge variant="outline">

@@ -26,9 +26,22 @@ function id(value: string): string {
 export class SkillCloudService {
   constructor(private readonly userDataPath: string) {}
 
-  publish(
+  async publish(
     request: SkillCloudPublishRequest
   ): Promise<SkillCloudOperation<SkillCloudPublishResult>> {
+    const version = await this.publishVersion(request)
+    if (version.status !== 'ok') {
+      return version
+    }
+    const share = await this.createShare(version.value.packageId, request)
+    return share.status === 'ok'
+      ? { status: 'ok', value: { version: version.value, share: share.value } }
+      : share
+  }
+
+  publishVersion(
+    request: SkillCloudPublishRequest
+  ): Promise<SkillCloudOperation<SkillCloudVersion>> {
     return this.withAuth(request, async (token, apiUrl) => {
       const upload = await skillCloudRequest<{
         upload: {
@@ -76,20 +89,33 @@ export class SkillCloudService {
       if (finalized.version.packageId !== request.packageId) {
         throw new Error('skill-cloud-published-package-mismatch')
       }
+      return finalized.version
+    })
+  }
+
+  createShare(
+    packageId: string,
+    request: SkillCloudOptions & {
+      pinnedVersionId?: string
+      userIds: string[]
+      shareWithOrganization: boolean
+      idempotencyKey?: string
+    }
+  ): Promise<SkillCloudOperation<SkillCloudShare>> {
+    return this.withAuth(request, async (token, apiUrl) => {
       const shared = await skillCloudRequest<{ share: SkillCloudShare }>({
         apiUrl,
         authToken: token,
-        path: `/v1/skill-packages/${id(request.packageId)}/shares`,
+        path: `/v1/skill-packages/${id(packageId)}/shares`,
         method: 'POST',
         body: {
           pinnedVersionId: request.pinnedVersionId,
           userIds: request.userIds,
           shareWithOrganization: request.shareWithOrganization
         },
-        idempotencyKey: randomUUID(),
-        signal: request.signal
+        idempotencyKey: request.idempotencyKey ?? randomUUID()
       })
-      return { version: finalized.version, share: shared.share }
+      return shared.share
     })
   }
 

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Loader2, RotateCcw, Trash2 } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
+import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -22,16 +21,18 @@ import type {
   ManagedSkillInstall,
   SkillInstallResult
 } from '../../../../shared/skill-install-contract'
+import type { SkillBundleInstallResult } from '../../../../shared/skill-bundle-install-contract'
 import type { SkillCloudPackageDetails } from '../../../../shared/skill-cloud-contract'
 import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkills'
-import { SkillCloudManagementActions } from './SkillCloudManagementActions'
 import { skillInstallResultLabel } from './skill-install-result-label'
 import { skillInstallManagementCopy } from './skill-install-management-copy'
 import { useSkillInstallProgress } from './skill-install-progress-state'
-
-function installKey(install: ManagedSkillInstall): string {
-  return `${install.destinationIdentity}:${install.name}:${install.packageId}`
-}
+import { SkillManagedInstallList } from './SkillManagedInstallList'
+import { SkillManagedInstallDetails } from './SkillManagedInstallDetails'
+import {
+  groupManagedSkillInstalls,
+  type SkillManagedInstallGroup
+} from './skill-managed-install-groups'
 
 export function SkillInstallManagementDialog({
   open,
@@ -52,14 +53,17 @@ export function SkillInstallManagementDialog({
   const [busy, setBusy] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [result, setResult] = useState<SkillInstallResult | null>(null)
+  const [bundleResult, setBundleResult] = useState<SkillBundleInstallResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const installProgress = useSkillInstallProgress()
 
+  const groups = useMemo(() => groupManagedSkillInstalls(installs), [installs])
   const selected = useMemo(
-    () => installs.find((install) => installKey(install) === selectedKey) ?? null,
-    [installs, selectedKey]
+    () => groups.find((group) => group.key === selectedKey) ?? null,
+    [groups, selectedKey]
   )
+  const selectedInstall = selected?.installs[0] ?? null
 
   const load = useCallback(async (): Promise<void> => {
     if (!open) {
@@ -91,15 +95,16 @@ export function SkillInstallManagementDialog({
     void load()
   }, [load])
 
-  const selectInstall = async (install: ManagedSkillInstall): Promise<void> => {
-    setSelectedKey(installKey(install))
+  const selectInstall = async (group: SkillManagedInstallGroup): Promise<void> => {
+    setSelectedKey(group.key)
     setBusy(true)
     setError(null)
     setNotice(null)
     setResult(null)
+    setBundleResult(null)
     setConfirmRemove(false)
     try {
-      const operation = await window.api.skills.getPackage(install.packageId)
+      const operation = await window.api.skills.getPackage(group.packageId)
       if (operation.status !== 'ok') {
         setError(
           operation.status === 'reconnect-required'
@@ -109,7 +114,7 @@ export function SkillInstallManagementDialog({
         return
       }
       setDetails(operation.value)
-      setVersionId(operation.value.versions[0]?.versionId ?? install.versionId)
+      setVersionId(operation.value.versions[0]?.versionId ?? group.versionId)
     } catch (cause) {
       console.warn('[skills] package history failed:', cause)
       setError('Version history is unavailable for this skill.')
@@ -141,7 +146,7 @@ export function SkillInstallManagementDialog({
   }
 
   const installVersion = async (discardLocal = false): Promise<void> => {
-    if (!selected || !versionId) {
+    if (!selected || !selectedInstall || !versionId) {
       return
     }
     setBusy(true)
@@ -150,6 +155,53 @@ export function SkillInstallManagementDialog({
     const operationId = crypto.randomUUID()
     installProgress.begin(operationId)
     try {
+      const version = details?.versions.find((candidate) => candidate.versionId === versionId)
+      const bundleManifest =
+        version?.manifest && 'skills' in version.manifest ? version.manifest : null
+      if (bundleManifest) {
+        const installedNames = new Set(selected.installs.map((install) => install.name))
+        const selectedSkills = bundleManifest.skills.filter((skill) =>
+          installedNames.has(skill.name)
+        )
+        if (selectedSkills.length === 0) {
+          setError('This version does not contain any of the installed bundle skills.')
+          return
+        }
+        const operation = await window.api.skills.installBundlePackageVersion({
+          packageId: selected.packageId,
+          versionId,
+          operationId,
+          ...(environmentId === 'local' || environmentId.startsWith('ssh:')
+            ? {}
+            : { environmentId }),
+          selectedSkillIds: selectedSkills.map((skill) => skill.id),
+          destination: selected.destination,
+          ...(discardLocal
+            ? {
+                conflictDecisions: selectedSkills.map((skill) => ({
+                  skillId: skill.id,
+                  resolution: 'replace-and-discard-local' as const
+                }))
+              }
+            : {})
+        })
+        if (operation.status !== 'ok') {
+          setError(
+            operation.status === 'reconnect-required'
+              ? 'Reconnect your Orca account before changing versions.'
+              : operation.message
+          )
+          return
+        }
+        setBundleResult(operation.value)
+        if (!['failed', 'cancelled'].includes(operation.value.status)) {
+          notifyInstalledAgentSkillsChanged()
+          if (operation.value.status === 'complete') {
+            await load()
+          }
+        }
+        return
+      }
       const operation = await window.api.skills.installPackageVersion({
         packageId: selected.packageId,
         versionId,
@@ -207,19 +259,41 @@ export function SkillInstallManagementDialog({
     setError(null)
     setNotice(null)
     try {
-      const operation = await window.api.skills.removeInstall({
-        ...(environmentId === 'local' || environmentId.startsWith('ssh:') ? {} : { environmentId }),
-        name: selected.name,
-        destination: selected.destination,
-        ...(discardLocal ? { conflictResolution: 'replace-and-discard-local' } : {})
-      })
-      if (operation.status !== 'ok') {
-        setError(operation.message)
+      const targets = discardLocal
+        ? selected.installs.filter((install) => install.state === 'modified')
+        : selected.installs
+      const operations = await Promise.all(
+        targets.map((install) =>
+          window.api.skills.removeInstall({
+            ...(environmentId === 'local' || environmentId.startsWith('ssh:')
+              ? {}
+              : { environmentId }),
+            name: install.name,
+            destination: install.destination,
+            ...(discardLocal ? { conflictResolution: 'replace-and-discard-local' as const } : {})
+          })
+        )
+      )
+      const unsupported = operations.find((operation) => operation.status !== 'ok')
+      if (unsupported?.status === 'unsupported') {
+        setError(unsupported.message)
         return
       }
-      setResult(operation.value)
-      if (!['conflict', 'failed', 'cancelled'].includes(operation.value.status)) {
+      const values = operations.flatMap((operation) =>
+        operation.status === 'ok' ? [operation.value] : []
+      )
+      const removed = values.filter((value) => value.status === 'removed').length
+      const preserved = values.filter((value) => value.status === 'conflict').length
+      setResult(values.at(-1) ?? null)
+      setNotice(
+        selected.installs.length > 1
+          ? `${removed} removed${preserved ? ` · ${preserved} modified skill${preserved === 1 ? '' : 's'} preserved` : ''}.`
+          : null
+      )
+      if (removed > 0) {
         notifyInstalledAgentSkillsChanged()
+      }
+      if (preserved === 0 && values.every((value) => value.status !== 'failed')) {
         await load()
       }
     } catch (cause) {
@@ -236,11 +310,14 @@ export function SkillInstallManagementDialog({
     setError(null)
     setNotice(null)
     setResult(null)
+    setBundleResult(null)
     setConfirmRemove(false)
     onOpenChange(false)
   }
 
-  const destructiveConflict = result?.status === 'conflict' || selected?.state === 'modified'
+  const destructiveConflict =
+    result?.status === 'conflict' ||
+    Boolean(selected?.installs.some((install) => install.state === 'modified'))
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && !busy && close()}>
@@ -279,101 +356,31 @@ export function SkillInstallManagementDialog({
             {copy.noInstalls}
           </p>
         ) : null}
-        <div className="grid gap-2 sm:grid-cols-2">
-          {installs.map((install) => (
-            <Button
-              key={installKey(install)}
-              type="button"
-              variant={selectedKey === installKey(install) ? 'secondary' : 'outline'}
-              className="h-auto justify-start p-3 text-left"
-              onClick={() => void selectInstall(install)}
-            >
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-medium">{install.name}</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {install.scope} · {install.versionId}
-                </span>
-              </span>
-              <Badge
-                variant={install.state === 'unchanged' ? 'outline' : 'destructive'}
-                className="ml-auto"
-              >
-                {install.state}
-              </Badge>
-            </Button>
-          ))}
-        </div>
+        <SkillManagedInstallList
+          groups={groups}
+          selectedKey={selectedKey}
+          onSelect={(group) => void selectInstall(group)}
+        />
 
         {selected && details ? (
-          <section className="space-y-3 rounded-md border border-border p-3">
-            <div>
-              <h3 className="text-sm font-semibold">{selected.name}</h3>
-              <p className="text-xs text-muted-foreground">
-                {copy.installedVersion} {selected.versionId}
-              </p>
-            </div>
-            <Select value={versionId} onValueChange={setVersionId}>
-              <SelectTrigger>
-                <SelectValue placeholder={copy.chooseVersion} />
-              </SelectTrigger>
-              <SelectContent>
-                {details.versions.map((version) => (
-                  <SelectItem key={version.versionId} value={version.versionId}>
-                    {version.versionId} · {new Date(version.createdAt).toLocaleDateString()}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {destructiveConflict ? (
-              <div className="space-y-2 rounded-md border border-border p-3" role="alert">
-                <p className="flex items-center gap-2 text-sm font-medium">
-                  <AlertTriangle className="size-4" /> {copy.modified}
-                </p>
-                <p className="text-xs text-muted-foreground">{copy.preserveModified}</p>
-                <Button variant="destructive" size="sm" onClick={() => void installVersion(true)}>
-                  {copy.discardAndInstall}
-                </Button>
-                <Button variant="destructive" size="sm" onClick={() => void remove(true)}>
-                  {copy.discardAndRemove}
-                </Button>
-              </div>
-            ) : null}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                disabled={
-                  busy || (versionId === selected.versionId && result?.status !== 'partial')
-                }
-                onClick={() => void installVersion()}
-              >
-                {busy ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <RotateCcw className="size-4" />
-                )}
-                {result?.status === 'partial' ? copy.retryCoverage : copy.installVersion}
-              </Button>
-              {installProgress.activeOperationId ? (
-                <Button variant="secondary" size="sm" onClick={() => void cancelInstall()}>
-                  {copy.cancelInstall}
-                </Button>
-              ) : null}
-              <Button
-                variant={confirmRemove ? 'destructive' : 'outline'}
-                size="sm"
-                disabled={busy}
-                onClick={() => void remove()}
-              >
-                <Trash2 className="size-4" /> {confirmRemove ? copy.confirmRemove : copy.remove}
-              </Button>
-            </div>
-            <SkillCloudManagementActions
-              details={details}
-              selectedVersionId={versionId}
-              onChanged={refreshPackageDetails}
-              onPackageDeleted={packageDeleted}
-            />
-          </section>
+          <SkillManagedInstallDetails
+            selected={selected}
+            details={details}
+            versionId={versionId}
+            busy={busy}
+            confirmRemove={confirmRemove}
+            result={result}
+            bundleResult={bundleResult}
+            installActive={Boolean(installProgress.activeOperationId)}
+            destructiveConflict={destructiveConflict}
+            copy={copy}
+            onVersionChange={setVersionId}
+            onInstall={(discardLocal) => void installVersion(discardLocal)}
+            onCancelInstall={() => void cancelInstall()}
+            onRemove={(discardLocal) => void remove(discardLocal)}
+            onCloudChanged={refreshPackageDetails}
+            onPackageDeleted={packageDeleted}
+          />
         ) : null}
         {result ? (
           <p className="text-xs text-muted-foreground" role="status" aria-live="polite">

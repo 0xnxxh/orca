@@ -106,7 +106,8 @@ describe('SkillShareDialog', () => {
     await screen.findByRole('heading', { name: 'Publish new skill version' })
     expect(screen.getByRole('button', { name: 'Publish new version' })).toBeTruthy()
     expect(skills.prepareShare).toHaveBeenCalledWith({
-      skillId: skill.id,
+      skillIds: [skill.id],
+      bundleName: skill.name,
       packageId: 'pkg_1'
     })
   })
@@ -120,7 +121,8 @@ describe('SkillShareDialog', () => {
     await screen.findByRole('heading', { name: 'Share skill' })
     await waitFor(() =>
       expect(skills.prepareShare).toHaveBeenCalledWith({
-        skillId: skill.id
+        skillIds: [skill.id],
+        bundleName: skill.name
       })
     )
   })

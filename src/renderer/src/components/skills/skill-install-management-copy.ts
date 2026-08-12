@@ -64,6 +64,34 @@ export function skillInstallManagementCopy() {
       'Confirm remove'
     ),
     remove: translate('auto.components.skills.SkillInstallManagementDialog.e91af0079f', 'Remove'),
+    installedBundleSkills: translate(
+      'auto.components.skills.SkillInstallManagementDialog.1c9e7f420a',
+      'Installed bundle skills'
+    ),
+    installSkills: (count: number) =>
+      translate(
+        'auto.components.skills.SkillInstallManagementDialog.34c2ef9e71',
+        'Install {{count}} skills',
+        { count }
+      ),
+    removeSkills: (count: number) =>
+      translate(
+        'auto.components.skills.SkillInstallManagementDialog.a0cab67c2f',
+        'Remove {{count}} skills',
+        { count }
+      ),
+    confirmRemoveSkills: (count: number) =>
+      translate(
+        'auto.components.skills.SkillInstallManagementDialog.f970d8088d',
+        'Confirm remove {{count}} skills',
+        { count }
+      ),
+    bundleResult: (installed: number, updated: number, keptLocal: number) =>
+      translate(
+        'auto.components.skills.SkillInstallManagementDialog.dab29e4b54',
+        '{{installed}} installed · {{updated}} updated · {{keptLocal}} kept local',
+        { installed, updated, keptLocal }
+      ),
     close: translate('auto.components.skills.SkillInstallManagementDialog.8095927ff3', 'Close')
   }
 }

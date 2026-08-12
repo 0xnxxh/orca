@@ -3083,10 +3083,14 @@ function createSkillsApi(): NonNullable<Partial<PreloadApi>['skills']> {
     createDownloadGrant: () =>
       Promise.reject(new Error('Skill installation requires the desktop app.')),
     installShare: () => Promise.reject(new Error('Skill installation requires the desktop app.')),
+    installBundleShare: () =>
+      Promise.reject(new Error('Skill installation requires the desktop app.')),
     installPackageVersion: () =>
       Promise.reject(new Error('Skill installation requires the desktop app.')),
     cancelInstall: () => Promise.resolve({ cancelled: false }),
     previewInstall: () => Promise.reject(new Error('Skill installation requires the desktop app.')),
+    previewBundleInstall: () =>
+      Promise.reject(new Error('Skill installation requires the desktop app.')),
     removeInstall: () => Promise.reject(new Error('Skill installation requires the desktop app.')),
     listManagedInstalls: () =>
       Promise.reject(new Error('Skill installation requires the desktop app.')),

@@ -19,7 +19,8 @@ import {
 import { matchingManagedSkillInstall } from './skill-share-package-selection'
 
 type SkillShareDialogProps = {
-  skill: DiscoveredSkill | null
+  skills?: DiscoveredSkill[]
+  skill?: DiscoveredSkill | null
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -37,10 +38,12 @@ function operationError(status: string): string {
 }
 
 export function SkillShareDialog({
+  skills,
   skill,
   open,
   onOpenChange
 }: SkillShareDialogProps): React.JSX.Element {
+  const selectedSkills = useMemo(() => skills ?? (skill ? [skill] : []), [skill, skills])
   const [preview, setPreview] = useState<SkillSharePreview | null>(null)
   const [members, setMembers] = useState<SelectableOrgMember[]>([])
   const [author, setAuthor] = useState('')
@@ -59,7 +62,7 @@ export function SkillShareDialog({
   const cancellationRequested = useRef(false)
 
   useEffect(() => {
-    if (!open || !skill) {
+    if (!open || selectedSkills.length === 0) {
       return
     }
     const current = ++generation.current
@@ -74,14 +77,18 @@ export function SkillShareDialog({
       try {
         const operation = await window.api.skills.listManagedInstalls()
         if (operation.status === 'ok') {
-          managedInstall = matchingManagedSkillInstall(skill, operation.value)
+          managedInstall =
+            selectedSkills.length === 1
+              ? matchingManagedSkillInstall(selectedSkills[0], operation.value)
+              : null
         }
       } catch (cause) {
         console.warn('[skills] managed install lookup failed during share:', cause)
       }
       const [nextPreview, auth] = await Promise.all([
         window.api.skills.prepareShare({
-          skillId: skill.id,
+          skillIds: selectedSkills.map((skill) => skill.id),
+          bundleName: selectedSkills.length === 1 ? selectedSkills[0].name : 'shared-skills',
           ...(managedInstall ? { packageId: managedInstall.packageId } : {})
         }),
         window.api.orcaProfiles.authStatus()
@@ -129,7 +136,7 @@ export function SkillShareDialog({
           setPreparing(false)
         }
       })
-  }, [open, skill])
+  }, [open, selectedSkills])
 
   useEffect(() => {
     if (!preview) {
