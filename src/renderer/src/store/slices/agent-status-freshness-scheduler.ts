@@ -54,14 +54,11 @@ export function createFreshnessScheduler(deps: FreshnessSchedulerDeps): Freshnes
       if (expiryAt >= now) {
         nextExpiryAt = Math.min(nextExpiryAt, expiryAt)
       }
-      // Why: Smart Sort drops a completed pane out of the Done class at completion + threshold, which
-      // can land well before hook freshness expires (same-state `done` writes push updatedAt, never the
-      // completion). Already-passed deadlines are skipped for the same anti-spin reason as above.
+      // Completion and hook freshness have independent expiry times.
       const completedAt = agentEntryCompletionAt(entry)
       if (completedAt !== null) {
         const completionExpiryAt = completedAt + AGENT_STATUS_STALE_AFTER_MS
-        // Why: an overdue callback can be cleared by a same-state update after sleep; detect
-        // the crossed stable completion deadline before that update extends hook freshness.
+        // Detect a missed completion expiry before a same-state update extends hook freshness.
         if (
           lastCheckedAt !== null &&
           completionExpiryAt >= lastCheckedAt &&
