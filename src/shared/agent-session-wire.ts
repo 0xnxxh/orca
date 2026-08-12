@@ -12,6 +12,39 @@ import type {
   AgentJournalSnapshot,
   AgentJournalSubmission
 } from './agent-session-journal-types'
+import type { AgentSessionHandoffStage, AgentSessionOwnerRuntimeKind } from './agent-session-record'
+
+export type AgentSessionHandoffDirection = 'to-tui' | 'to-native'
+export type AgentSessionHandoffMode = 'now' | 'after-turn' | 'stop-turn'
+export type AgentSessionHandoffAction = 'start' | 'cancel-queued' | 'retry'
+
+export type AgentSessionHandoffStatus = {
+  owner: AgentSessionOwnerRuntimeKind | 'none'
+  direction: AgentSessionHandoffDirection | null
+  phase: 'idle' | 'queued' | 'switching' | 'waiting-for-exit' | 'failed'
+  stage: AgentSessionHandoffStage | null
+  operationId: string | null
+  hostLabel?: string
+  terminal?: {
+    handle: string
+    tabId: string
+    paneKey: string
+  }
+  error?: {
+    message: string
+    details?: string
+    recoverableOwner: AgentSessionOwnerRuntimeKind | 'none'
+  }
+}
+
+export type AgentSessionHandoffRequest = {
+  envelope: AgentSessionMutationEnvelope
+  direction: AgentSessionHandoffDirection
+  mode: AgentSessionHandoffMode
+  action?: AgentSessionHandoffAction
+}
+
+export type AgentSessionHandoffResult = { status: AgentSessionHandoffStatus }
 
 /** Backward paging is the client's normal read; 40 matches the page size the
  *  mobile list renders without a visible fill-in. */
@@ -80,14 +113,28 @@ export type AgentSessionJournalBatch = {
 }
 
 export type AgentSessionSubscribeEvent =
-  | { type: 'snapshot'; sessionId: string; snapshot: AgentJournalSnapshot; fence: number }
-  | { type: 'batch'; sessionId: string; batch: AgentSessionJournalBatch }
+  | {
+      type: 'snapshot'
+      sessionId: string
+      snapshot: AgentJournalSnapshot
+      fence: number
+      handoff?: AgentSessionHandoffStatus
+    }
+  | {
+      type: 'batch'
+      sessionId: string
+      batch: AgentSessionJournalBatch
+      /** Added with handoff state so mixed-version cursors retain the ownership fence. */
+      fence?: number
+      handoff?: AgentSessionHandoffStatus
+    }
   | {
       type: 'reset'
       sessionId: string
       reset: AgentJournalResetReason
       snapshot: AgentJournalSnapshot
       fence: number
+      handoff?: AgentSessionHandoffStatus
     }
   | { type: 'end' }
 

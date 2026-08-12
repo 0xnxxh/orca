@@ -18,6 +18,7 @@ export async function restoreStructuredAgentSessionsOnRestart(input: {
   serialize: <T>(sessionId: string, task: () => Promise<T>) => Promise<T>
   hasSession: (sessionId: string) => boolean
   onReadable: (sessionId: string, restored: RestoredStructuredAgentSessionRead) => void
+  restoreHandoff: (sessionId: string) => Promise<void>
 }): Promise<void> {
   await Promise.all(
     input.records.map(async ({ sessionId }) => {
@@ -26,10 +27,12 @@ export async function restoreStructuredAgentSessionsOnRestart(input: {
       if (
         !unreconciled &&
         current?.lease.claimStatus === 'released' &&
+        current.lease.handoffStage === null &&
         (await input.resume(
           attachParamsForRecord(current, {
             clientOperationId: input.operationId(),
-            expectedRuntimeFence: current.lease.runtimeFence
+            expectedRuntimeFence: current.lease.runtimeFence,
+            runtimeKind: 'native'
           })
         ))
       ) {
@@ -48,6 +51,9 @@ export async function restoreStructuredAgentSessionsOnRestart(input: {
           input.onReadable(sessionId, restored)
         }
       })
+      if (input.hasSession(sessionId)) {
+        await input.restoreHandoff(sessionId)
+      }
     })
   )
 }

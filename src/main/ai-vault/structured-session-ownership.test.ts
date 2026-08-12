@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { agentSessionLeaseFixture } from '../../shared/agent-session-record.test-fixture'
+import {
+  agentSessionLeaseFixture,
+  agentSessionRecordFixture
+} from '../../shared/agent-session-record.test-fixture'
 import type { AiVaultListResult, AiVaultSession } from '../../shared/ai-vault-types'
 import type { StructuredProviderSessionOwnership } from '../native-chat/agent-session-wire/structured-provider-session-ownership'
-import { agentSessionRecordFixture } from '../../shared/agent-session-record.test-fixture'
 import { setStructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-registry'
 import {
   assertLegacyAiVaultResumeAllowed,

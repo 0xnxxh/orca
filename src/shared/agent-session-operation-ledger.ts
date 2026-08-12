@@ -52,6 +52,28 @@ export function agentSessionOperationKey(callerKey: string, operationId: string)
   return `${callerKey}${OPERATION_KEY_SEPARATOR}${operationId}`
 }
 
+export function settleAgentSessionOperation(
+  rows: ReadonlyMap<string, AgentSessionOperationRow>,
+  args: {
+    /** Restart reconciliation omits this because the lease persists no client identity. */
+    callerKey?: string
+    operationId: string
+    outcome: AgentSessionOperationOutcome
+  }
+): Map<string, AgentSessionOperationRow> {
+  const targetKey = args.callerKey
+    ? agentSessionOperationKey(args.callerKey, args.operationId)
+    : null
+  return new Map(
+    [...rows].map(([key, row]) => [
+      key,
+      (targetKey ? key === targetKey : row.operationId === args.operationId)
+        ? { ...row, outcome: args.outcome }
+        : row
+    ])
+  )
+}
+
 /**
  * Retention floor. The tombstone must outlive the window in which its id could still be admitted
  * as new, plus the accepted future skew — otherwise a retry arriving in the gap becomes a second

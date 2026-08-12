@@ -8,11 +8,20 @@ import type {
   AgentJournalCursor,
   AgentJournalResetReason
 } from '../../../shared/agent-session-journal-types'
-import type { AgentSessionSubscribeEvent } from '../../../shared/agent-session-wire'
+import type {
+  AgentSessionHandoffStatus,
+  AgentSessionSubscribeEvent
+} from '../../../shared/agent-session-wire'
 import type { AgentSessionJournal } from '../agent-session-journal/journal-store'
 import { projectJournalBatch } from './agent-session-journal-batch'
 
 export type AgentSessionSubscriberEmit = (event: AgentSessionSubscribeEvent) => void
+export type AgentSessionSubscribeInput = {
+  id: string
+  sessionId: string
+  emit: AgentSessionSubscriberEmit
+  cursor?: AgentJournalCursor
+}
 
 type Subscriber = {
   id: string
@@ -34,6 +43,7 @@ export class AgentSessionSubscribers {
     fence: number
     emit: AgentSessionSubscriberEmit
     cursor?: AgentJournalCursor
+    handoff?: AgentSessionHandoffStatus
   }): () => void {
     const snapshot = input.journal.snapshot()
     const subscriber: Subscriber = {
@@ -48,13 +58,14 @@ export class AgentSessionSubscribers {
     this.bySession.set(input.sessionId, session)
 
     if (input.cursor) {
-      this.deliver(subscriber, input.journal)
+      this.deliver(subscriber, input.journal, input.handoff)
     } else {
       this.emit(subscriber, {
         type: 'snapshot',
         sessionId: input.sessionId,
         snapshot,
-        fence: input.fence
+        fence: input.fence,
+        ...(input.handoff ? { handoff: input.handoff } : {})
       })
       subscriber.cursor = snapshot.cursor
     }
@@ -107,11 +118,29 @@ export class AgentSessionSubscribers {
     }
   }
 
+  handoff(
+    sessionId: string,
+    journal: AgentSessionJournal,
+    fence: number,
+    handoff: AgentSessionHandoffStatus
+  ): void {
+    const snapshot = journal.snapshot()
+    for (const subscriber of this.subscribers(sessionId)) {
+      this.emit(subscriber, { type: 'snapshot', sessionId, snapshot, fence, handoff })
+      subscriber.cursor = snapshot.cursor
+      subscriber.fence = fence
+    }
+  }
+
   private subscribers(sessionId: string): Subscriber[] {
     return [...(this.bySession.get(sessionId)?.values() ?? [])]
   }
 
-  private deliver(subscriber: Subscriber, journal: AgentSessionJournal): void {
+  private deliver(
+    subscriber: Subscriber,
+    journal: AgentSessionJournal,
+    handoff?: AgentSessionHandoffStatus
+  ): void {
     const since = journal.readSince(subscriber.cursor)
     const snapshot = journal.snapshot()
     if (!since.ok) {
@@ -120,12 +149,27 @@ export class AgentSessionSubscribers {
         sessionId: subscriber.sessionId,
         reset: since.reset,
         snapshot,
-        fence: subscriber.fence
+        fence: subscriber.fence,
+        ...(handoff ? { handoff } : {})
       })
       subscriber.cursor = snapshot.cursor
       return
     }
     if (since.rows.length === 0) {
+      if (handoff) {
+        this.emit(subscriber, {
+          type: 'batch',
+          sessionId: subscriber.sessionId,
+          batch: {
+            cursor: snapshot.cursor,
+            items: [],
+            removedItemIds: [],
+            submissions: []
+          },
+          fence: subscriber.fence,
+          handoff
+        })
+      }
       return
     }
     const projected = projectJournalBatch({
@@ -139,7 +183,8 @@ export class AgentSessionSubscribers {
         sessionId: subscriber.sessionId,
         reset: projected.reset,
         snapshot,
-        fence: subscriber.fence
+        fence: subscriber.fence,
+        ...(handoff ? { handoff } : {})
       })
       subscriber.cursor = snapshot.cursor
       return
@@ -147,7 +192,9 @@ export class AgentSessionSubscribers {
     this.emit(subscriber, {
       type: 'batch',
       sessionId: subscriber.sessionId,
-      batch: projected.batch
+      batch: projected.batch,
+      ...(handoff ? { fence: subscriber.fence } : {}),
+      ...(handoff ? { handoff } : {})
     })
     subscriber.cursor = projected.batch.cursor
   }

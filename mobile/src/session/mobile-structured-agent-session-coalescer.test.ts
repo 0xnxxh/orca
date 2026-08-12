@@ -38,6 +38,42 @@ describe('mobile structured event coalescer', () => {
     vi.useRealTimers()
   })
 
+  it('retains ownership projection while merging a reconnect batch', () => {
+    vi.useFakeTimers()
+    const seen: AgentSessionSubscribeEvent[] = []
+    const coalescer = createMobileStructuredEventCoalescer((event) => seen.push(event))
+    coalescer.push({
+      type: 'batch',
+      sessionId: 'session-a',
+      batch: {
+        cursor: { epoch: 'epoch-a', sequence: 1 },
+        items: [],
+        removedItemIds: [],
+        submissions: []
+      },
+      fence: 3,
+      handoff: {
+        owner: 'tui',
+        direction: null,
+        phase: 'idle',
+        stage: null,
+        operationId: null,
+        terminal: { handle: 'term-1', tabId: 'tab-1', paneKey: 'tab-1:leaf-1' }
+      }
+    })
+    coalescer.push(batch(2, 'continued'))
+    vi.advanceTimersByTime(48)
+
+    expect(seen).toEqual([
+      expect.objectContaining({
+        type: 'batch',
+        fence: 3,
+        handoff: expect.objectContaining({ owner: 'tui', phase: 'idle' })
+      })
+    ])
+    vi.useRealTimers()
+  })
+
   it('flushes pending text before a lifecycle row', () => {
     vi.useFakeTimers()
     const seen: AgentSessionSubscribeEvent[] = []

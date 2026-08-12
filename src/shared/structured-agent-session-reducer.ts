@@ -4,7 +4,11 @@ import type {
   AgentJournalSnapshot,
   AgentJournalSubmission
 } from './agent-session-journal-types'
-import type { AgentSessionHistoryPage, AgentSessionSubscribeEvent } from './agent-session-wire'
+import type {
+  AgentSessionHandoffStatus,
+  AgentSessionHistoryPage,
+  AgentSessionSubscribeEvent
+} from './agent-session-wire'
 
 export type StructuredAgentSessionState = {
   epoch: string | null
@@ -15,11 +19,13 @@ export type StructuredAgentSessionState = {
   hasOlder: boolean
   status: 'idle' | 'loading' | 'ready' | 'error'
   error?: string
+  handoff: AgentSessionHandoffStatus | null
 }
 
 export type StructuredAgentSessionAction =
   | { type: 'loading' }
   | { type: 'error'; message: string }
+  | { type: 'handoff'; handoff: AgentSessionHandoffStatus }
   | { type: 'event'; event: AgentSessionSubscribeEvent }
   | { type: 'tail-page'; page: AgentSessionHistoryPage }
   | { type: 'older-page'; requestedEpoch: string; page: AgentSessionHistoryPage }
@@ -31,12 +37,14 @@ export const EMPTY_STRUCTURED_AGENT_SESSION: StructuredAgentSessionState = {
   items: [],
   submissions: [],
   hasOlder: false,
-  status: 'idle'
+  status: 'idle',
+  handoff: null
 }
 
 function replaceSnapshot(
   snapshot: AgentJournalSnapshot,
-  fence: number
+  fence: number,
+  handoff?: AgentSessionHandoffStatus
 ): StructuredAgentSessionState {
   return {
     epoch: snapshot.cursor.epoch,
@@ -45,7 +53,8 @@ function replaceSnapshot(
     items: [...snapshot.items].sort((left, right) => left.sequence - right.sequence),
     submissions: snapshot.submissions,
     hasOlder: snapshot.items.length >= 40,
-    status: 'ready'
+    status: 'ready',
+    handoff: handoff ?? null
   }
 }
 
@@ -88,6 +97,9 @@ export function reduceStructuredAgentSession(
   if (action.type === 'error') {
     return { ...state, status: 'error', error: action.message }
   }
+  if (action.type === 'handoff') {
+    return { ...state, handoff: action.handoff }
+  }
   if (action.type === 'tail-page') {
     const pageCursor = action.page.liveCursor ?? action.page.window.newest
     if (
@@ -104,7 +116,8 @@ export function reduceStructuredAgentSession(
       items: action.page.items,
       submissions: action.page.submissions,
       hasOlder: action.page.hasOlder,
-      status: 'ready'
+      status: 'ready',
+      handoff: state.handoff
     }
   }
   if (action.type === 'older-page') {
@@ -123,7 +136,7 @@ export function reduceStructuredAgentSession(
     return state
   }
   if (event.type === 'snapshot' || event.type === 'reset') {
-    return replaceSnapshot(event.snapshot, event.fence)
+    return replaceSnapshot(event.snapshot, event.fence, event.handoff)
   }
   if (state.epoch !== event.batch.cursor.epoch) {
     return state
@@ -134,10 +147,12 @@ export function reduceStructuredAgentSession(
   return {
     ...state,
     cursor: event.batch.cursor,
+    fence: event.fence ?? state.fence,
     items: mergeItems(state.items, event.batch.items, event.batch.removedItemIds),
     submissions: mergeSubmissions(state.submissions, event.batch.submissions),
     status: 'ready',
-    error: undefined
+    error: undefined,
+    handoff: event.handoff ?? state.handoff
   }
 }
 

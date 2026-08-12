@@ -74,6 +74,30 @@ import {
 import { ensureStructuredAgentSessionHost as installStructuredAgentSessionHost } from './structured-agent-session-runtime'
 import { getStructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-registry'
 import type { AgentSessionAttachParams } from '../native-chat/agent-session-wire/structured-agent-session-attach'
+import type {
+  StructuredAgentSessionHandoffTransport,
+  StructuredTuiOwner
+} from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
+import type { AgentSessionRecord } from '../../shared/agent-session-record'
+import { agentSessionProviderHandlesEqual } from '../../shared/agent-session-provider-handle'
+import { completeClaudeTuiExit } from '../claude/claude-tui-exit'
+import {
+  createClaudeTuiResumeLaunchBuilder,
+  type ClaudeTuiResumeLaunch
+} from '../claude/claude-tui-resume-launch'
+import {
+  proveClaudeTuiResume,
+  readClaudeTuiSessionStartEvidence
+} from '../claude/claude-tui-resume-proof'
+import { claudeProviderHandleLink } from '../claude/claude-structured-owner-identity'
+import { codexProviderHandleLink } from '../codex/codex-structured-owner-identity'
+import { proveCodexTuiRollout } from '../codex/codex-tui-rollout-proof'
+import { resolveSessionFilePath } from '../native-chat/session-file-resolver'
+import { agentHookServer } from '../agent-hooks/server'
+import { probeAgentSessionProcessIdentity } from './agent-session-process-identity-probe'
+import { waitForStructuredTuiExitProof } from './structured-tui-exit-proof'
+import { readStructuredTuiProcessIdentity } from './structured-tui-process-identity'
+import { hasStructuredTuiIdleEvidence } from './structured-tui-idle-evidence'
 import { getProfileUserDataPath } from '../orca-profiles/profile-storage-paths'
 import { getSystemCodexHomePath } from '../codex/codex-home-paths'
 import {
@@ -119,7 +143,7 @@ import {
 import { getGitCloneFailureMessage } from '../../shared/git-clone-failure-message'
 import { GIT_FETCH_SKIP_AUTO_MAINTENANCE_CONFIG_ARGS } from '../../shared/git-fetch-auto-maintenance'
 import { createHash, randomUUID } from 'node:crypto'
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { resolveWorktreeCreateBase } from '../worktree-create-base'
@@ -427,7 +451,10 @@ import type { PtyIncarnationId } from '../../shared/pty-incarnation'
 import {
   buildAgentDraftLaunchPlan,
   buildAgentResumeStartupPlan,
-  buildAgentStartupPlan
+  buildAgentStartupPlan,
+  buildShellCommandFromArgv,
+  quoteStartupArg,
+  resolveStartupShell
 } from '../../shared/tui-agent-startup'
 import { repoIsRemote } from '../../shared/agent-launch-remote'
 import {
@@ -1390,6 +1417,7 @@ type TerminalCreateOptions = {
   // Why: only the host-derived structured resume path may attach provider
   // identity; opaque terminal.create commands remain ordinary shells.
   agentSessionClaim?: AgentSessionExecutionClaim
+  structuredAgentSessionId?: string
   agentSessionCreateOperationId?: string
   signal?: AbortSignal
   // Why: idempotent create operations must retain their fence after the PTY
@@ -1400,6 +1428,13 @@ type TerminalCreateOptions = {
   // intermediate pty-backed publish so the new tab doesn't briefly flash in
   // the wrong (active) group before the corrected snapshot lands.
   deferMobileSessionPublish?: boolean
+}
+
+type StructuredAgentSessionHandoffAuthority = {
+  spawnToken: string
+  providerHome: string
+  sessionId: string
+  launch?: ClaudeTuiResumeLaunch
 }
 
 function mergeTerminalEnvDeletionKeys(
@@ -1705,12 +1740,18 @@ type RuntimePtyController = {
     }
   }): Promise<{
     id: string
+    pid?: number
     incarnationId?: PtyIncarnationId
     wslDistro?: string
     stablePaneOwner?: { handle: string; tabId: string; leafId: string }
     agentSessionEnsure?: AgentSessionClaimedSpawnResult
   }>
   write(ptyId: string, data: string): boolean
+  writeAgentSessionProof?(
+    ptyId: string,
+    data: string,
+    authority: { sessionId: string; spawnToken: string }
+  ): boolean
   /** Attach-only adoption of a live local daemon session so its output streams
    *  to main without a renderer pane; never creates, resizes, or focuses.
    *  False on doubt (absent session, SSH-scoped id, non-daemon provider). */
@@ -9088,6 +9129,442 @@ export class OrcaRuntimeService {
       resolveClaudeLaunchEnv: () => {
         const settings = this.requireStore().getSettings()
         return resolveTuiAgentLaunchEnv('claude', settings.agentDefaultEnv)
+      },
+      handoffTransport: this.createStructuredAgentSessionHandoffTransport()
+    })
+  }
+
+  private createStructuredAgentSessionHandoffTransport(): StructuredAgentSessionHandoffTransport {
+    return {
+      hostLabel: hostname(),
+      launchTui: async ({ record, fence, spawnToken }) => {
+        const head = record.providerHandleChain.at(-1)
+        if (!head) {
+          throw new Error('agent_session_identity_required')
+        }
+        const agent = head.handle.provider
+        const providerSessionId =
+          head.handle.provider === 'claude' ? head.handle.sessionId : head.handle.threadId
+        let claudeProof:
+          | { prove: () => ReturnType<typeof proveClaudeTuiResume>; dispose: () => void }
+          | undefined
+        let claudeLaunch: ClaudeTuiResumeLaunch | undefined
+        if (head.handle.provider === 'claude') {
+          const expectedTranscriptPath = await resolveSessionFilePath('claude', providerSessionId, {
+            claudeProjectsDir: join(record.accountHome.path, 'projects')
+          })
+          if (!expectedTranscriptPath) {
+            throw new Error('The Claude transcript could not be resolved before TUI resume.')
+          }
+          claudeLaunch = await createClaudeTuiResumeLaunchBuilder({
+            resolveWorkspacePath: async (workspaceId) =>
+              (await this.resolveRuntimeFileTarget(`id:${workspaceId}`)).worktree.path,
+            resolveEnv: () => {
+              const settings = this.requireStore().getSettings()
+              return resolveTuiAgentLaunchEnv('claude', settings.agentDefaultEnv)
+            }
+          })({ record, spawnToken })
+          claudeProof = this.createClaudeTuiResumeProofWaiter({
+            expectedSessionId: providerSessionId,
+            expectedTranscriptPath,
+            expectedLaunchToken: spawnToken
+          })
+        }
+        let launched: RuntimeEnsureAgentSessionResult
+        try {
+          launched = await this.ensureAgentSession(
+            {
+              kind: 'explicit',
+              worktree: `id:${record.location.workspaceId}`,
+              agent,
+              providerSession: { key: 'session_id', id: providerSessionId },
+              presentation: 'background'
+            },
+            {},
+            {
+              spawnToken,
+              providerHome: record.accountHome.path,
+              sessionId: record.sessionId,
+              ...(claudeLaunch ? { launch: claudeLaunch } : {})
+            }
+          )
+        } catch (error) {
+          claudeProof?.dispose()
+          throw error
+        }
+        const terminal = launched.terminal
+        try {
+          if (!terminal.processId || !terminal.paneKey || !terminal.tabId || !terminal.ptyId) {
+            throw new Error('The resumed terminal did not publish a process identity.')
+          }
+          await this.waitForTerminal(terminal.handle, {
+            condition: 'tui-idle',
+            timeoutMs: 30_000
+          })
+          const proof =
+            head.handle.provider === 'codex'
+              ? await this.waitForStructuredTuiProof({
+                  handle: terminal.handle,
+                  paneKey: terminal.paneKey,
+                  threadId: head.handle.threadId,
+                  spawnToken,
+                  codexHome: record.accountHome.path,
+                  sessionId: record.sessionId
+                })
+              : await claudeProof!.prove()
+          const revealed = await this.focusTerminal(terminal.handle)
+          return this.refreshStructuredTuiOwnerBinding({
+            terminal: {
+              handle: terminal.handle,
+              tabId: revealed.tabId,
+              paneKey: terminal.paneKey,
+              ptyId: terminal.ptyId
+            },
+            process: await readStructuredTuiProcessIdentity({
+              hostId: record.location.executionHostId,
+              rootPid: terminal.processId,
+              spawnToken,
+              agent
+            }),
+            link:
+              head.handle.provider === 'codex'
+                ? codexProviderHandleLink({
+                    threadId: head.handle.threadId,
+                    resumed: true,
+                    fence,
+                    observedAt: Date.now()
+                  })
+                : claudeProviderHandleLink({
+                    sessionId: head.handle.sessionId,
+                    leafUuid: head.handle.leafUuid,
+                    resumed: true,
+                    fence,
+                    observedAt: Date.now()
+                  }),
+            ...(proof.transcriptPath ? { transcriptPath: proof.transcriptPath } : {})
+          })
+        } catch (error) {
+          await this.closeTerminal(terminal.handle)
+          await this.waitForTerminal(terminal.handle, {
+            condition: 'exit',
+            timeoutMs: 15_000
+          })
+          throw error
+        } finally {
+          claudeProof?.dispose()
+        }
+      },
+      waitForTuiExit: async (owner, persistHandle) => {
+        if (owner.link.handle.provider === 'claude') {
+          if (!owner.transcriptPath) {
+            throw new Error('The Claude TUI owner did not retain its transcript path.')
+          }
+          const completed = await completeClaudeTuiExit({
+            childPid: owner.process.pid,
+            waitForChildExit: async () => {
+              await this.waitForStructuredTuiOwnerExit(owner)
+              return { pid: owner.process.pid, exitCode: null, signal: null }
+            },
+            sessionId: owner.link.handle.sessionId,
+            transcriptPath: owner.transcriptPath,
+            fence: owner.link.mintedAtFence,
+            persistHandle
+          })
+          return { transcriptPath: completed.transcriptPath }
+        }
+        await this.waitForStructuredTuiOwnerExit(owner)
+        return owner.transcriptPath ? { transcriptPath: owner.transcriptPath } : {}
+      },
+      waitForTuiIdleOrExit: async (owner, signal) => {
+        return this.waitForStructuredTuiIdleOrExit(owner, signal)
+      },
+      reproveTuiOwner: async ({ record, owner }) => {
+        const current = this.refreshStructuredTuiOwnerBinding(owner)
+        const persisted = record.lease.ownerProcess
+        if (
+          !persisted ||
+          persisted.hostId !== current.process.hostId ||
+          persisted.pid !== current.process.pid ||
+          persisted.processStartTimeMs !== current.process.processStartTimeMs ||
+          persisted.spawnToken !== current.process.spawnToken
+        ) {
+          throw new Error('The owning terminal does not match the persisted launch identity.')
+        }
+        const proof = await probeAgentSessionProcessIdentity({ identity: current.process })
+        if (proof.outcome !== 'identity-matched' || proof.matchedOn.length === 0) {
+          throw new Error('The owning agent child process could not be re-proved.')
+        }
+        const head = record.providerHandleChain.at(-1)
+        if (
+          !head ||
+          (record.lease.provenHandleLinkId !== null &&
+            current.link.linkId !== record.lease.provenHandleLinkId) ||
+          !agentSessionProviderHandlesEqual(current.link.handle, head.handle)
+        ) {
+          throw new Error('agent_session_identity_required')
+        }
+        return current
+      },
+      recoverTuiOwner: async (record) => {
+        const identity = record.lease.ownerProcess
+        const head = record.providerHandleChain.at(-1)
+        if (!identity || !head) {
+          throw new Error('agent_session_identity_required')
+        }
+        const candidate = [...this.ptysById.values()].find(
+          (pty) =>
+            pty.connected &&
+            pty.launchToken === identity.spawnToken &&
+            pty.launchAgent === head.handle.provider &&
+            pty.tabId &&
+            pty.paneKey
+        )
+        const handle = candidate ? this.issueStructuredTuiPtyHandle(candidate) : null
+        if (!candidate?.tabId || !candidate.paneKey || !handle) {
+          throw new Error('The owning agent terminal could not be recovered.')
+        }
+        const transcriptPath =
+          head.handle.provider === 'codex'
+            ? (
+                await this.waitForStructuredTuiProof({
+                  handle,
+                  paneKey: candidate.paneKey,
+                  threadId: head.handle.threadId,
+                  spawnToken: identity.spawnToken,
+                  codexHome: record.accountHome.path,
+                  sessionId: record.sessionId
+                })
+              ).transcriptPath
+            : await resolveSessionFilePath('claude', head.handle.sessionId, {
+                claudeProjectsDir: join(record.accountHome.path, 'projects')
+              })
+        if (head.handle.provider === 'claude' && !transcriptPath) {
+          throw new Error('The owning Claude transcript could not be recovered.')
+        }
+        return {
+          terminal: {
+            handle,
+            tabId: candidate.tabId,
+            paneKey: candidate.paneKey,
+            ptyId: candidate.ptyId
+          },
+          process: identity,
+          link:
+            head.handle.provider === 'codex'
+              ? codexProviderHandleLink({
+                  threadId: head.handle.threadId,
+                  resumed: true,
+                  fence: record.lease.runtimeFence,
+                  observedAt: Date.now()
+                })
+              : head,
+          ...(transcriptPath ? { transcriptPath } : {})
+        }
+      },
+      stopRecoveredOwner: (record) => this.stopStructuredSessionProcess(record),
+      tuiStatus: (owner) => this.structuredTuiStatus(owner),
+      stopFailedTuiLaunch: async (owner) => {
+        if (this.ptysById.get(owner.terminal.ptyId)?.connected) {
+          const current = this.refreshStructuredTuiOwnerBinding(owner)
+          try {
+            await this.closeTerminal(current.terminal.handle)
+          } catch (error) {
+            if (this.ptysById.get(owner.terminal.ptyId)?.connected) {
+              throw error
+            }
+          }
+        }
+        await this.waitForStructuredTuiOwnerExit(owner)
+      }
+    }
+  }
+
+  private refreshStructuredTuiOwnerBinding(owner: StructuredTuiOwner): StructuredTuiOwner {
+    const pty = this.ptysById.get(owner.terminal.ptyId)
+    if (!pty?.connected) {
+      throw new Error('The owning agent terminal lost its launch identity.')
+    }
+    const handle = this.issueStructuredTuiPtyHandle(pty)
+    if (handle === owner.terminal.handle) {
+      return owner
+    }
+    return { ...owner, terminal: { ...owner.terminal, handle } }
+  }
+
+  private issueStructuredTuiPtyHandle(pty: RuntimePtyWorktreeRecord): string {
+    const existingHandle = this.findHandleForPtyRecord(pty.ptyId)
+    if (existingHandle) {
+      this.handleByPtyId.set(pty.ptyId, existingHandle)
+      return existingHandle
+    }
+    const handle = `term_${randomUUID()}`
+    const syntheticId = `pty:${pty.ptyId}`
+    this.syntheticTerminalHandles.add(handle)
+    this.handles.set(handle, {
+      handle,
+      runtimeId: this.runtimeId,
+      rendererGraphEpoch: this.rendererGraphEpoch,
+      worktreeId: pty.worktreeId,
+      tabId: syntheticId,
+      leafId: syntheticId,
+      ptyId: pty.ptyId,
+      ptyGeneration: 0
+    })
+    this.handleByPtyId.set(pty.ptyId, handle)
+    return handle
+  }
+
+  private async waitForStructuredTuiPtyExit(ptyId: string): Promise<void> {
+    while (this.ptysById.get(ptyId)?.connected === true) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
+  private async waitForStructuredTuiOwnerExit(owner: StructuredTuiOwner): Promise<void> {
+    await waitForStructuredTuiExitProof({
+      identity: owner.process,
+      waitForExit: () => this.waitForStructuredTuiPtyExit(owner.terminal.ptyId)
+    })
+  }
+
+  private async waitForStructuredTuiIdleOrExit(
+    owner: StructuredTuiOwner,
+    signal: AbortSignal
+  ): Promise<'idle' | 'exited' | null> {
+    const deadline = Date.now() + 250
+    while (!signal.aborted && Date.now() < deadline) {
+      if (!this.ptysById.get(owner.terminal.ptyId)?.connected) {
+        await this.waitForStructuredTuiOwnerExit(owner)
+        return 'exited'
+      }
+      if (this.structuredTuiStatus(owner) === 'idle') {
+        return 'idle'
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    return null
+  }
+
+  private async stopStructuredSessionProcess(record: AgentSessionRecord): Promise<void> {
+    const identity = record.lease.ownerProcess
+    if (!identity) {
+      return
+    }
+    const proof = await probeAgentSessionProcessIdentity({ identity })
+    if (proof.outcome === 'pid-absent' || proof.outcome === 'identity-mismatch') {
+      return
+    }
+    if (proof.outcome !== 'identity-matched' || proof.matchedOn.length === 0) {
+      throw new Error('The recovered owner process could not be stopped safely.')
+    }
+    try {
+      process.kill(identity.pid, 'SIGTERM')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+        throw error
+      }
+      return
+    }
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      const current = await probeAgentSessionProcessIdentity({ identity })
+      if (current.outcome === 'pid-absent' || current.outcome === 'identity-mismatch') {
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    throw new Error('The recovered owner process did not exit.')
+  }
+
+  private structuredTuiStatus(owner: StructuredTuiOwner): 'idle' | 'busy' {
+    const pty = this.ptysById.get(owner.terminal.ptyId)
+    const paneKey = pty?.paneKey ?? owner.terminal.paneKey
+    const explicit = this.getFreshExplicitAgentStatusForHandle(owner.terminal.handle, paneKey)
+    if (explicit) {
+      return explicit.status === 'idle' ? 'idle' : 'busy'
+    }
+    if (pty?.connected) {
+      const text = buildTerminalWaitText(pty.tailBuffer, pty.tailPartialLine, pty.preview)
+      return hasStructuredTuiIdleEvidence({
+        blocked: detectTerminalWaitBlockedReason(text) !== null,
+        status: pty.lastAgentStatus,
+        statusObservedLive: pty.lastAgentStatusObservedLive
+      })
+        ? 'idle'
+        : 'busy'
+    }
+    return 'busy'
+  }
+
+  private createClaudeTuiResumeProofWaiter(input: {
+    expectedSessionId: string
+    expectedTranscriptPath: string
+    expectedLaunchToken: string
+  }) {
+    let resolveEnvelope!: (envelope: unknown) => void
+    const envelope = new Promise<unknown>((resolve) => {
+      resolveEnvelope = resolve
+    })
+    const dispose = agentHookServer.subscribeClaudeHookEnvelopes((candidate) => {
+      const evidence = readClaudeTuiSessionStartEvidence(candidate)
+      if (
+        evidence?.launchToken === input.expectedLaunchToken &&
+        evidence.sessionId === input.expectedSessionId
+      ) {
+        resolveEnvelope(candidate)
+      }
+    })
+    return {
+      prove: () =>
+        proveClaudeTuiResume({
+          ...input,
+          waitForSessionStart: () => envelope
+        }),
+      dispose
+    }
+  }
+
+  private async waitForStructuredTuiProof(input: {
+    handle: string
+    paneKey: string
+    threadId: string
+    spawnToken: string
+    codexHome: string
+    sessionId: string
+  }): Promise<{ transcriptPath?: string }> {
+    const readBoundPty = (): RuntimePtyWorktreeRecord => {
+      const pty = this.getLivePtyForHandle(input.handle)?.pty
+      if (
+        !pty?.connected ||
+        pty.paneKey !== input.paneKey ||
+        pty.launchAgent !== 'codex' ||
+        pty.launchToken !== input.spawnToken
+      ) {
+        throw new Error('The resumed terminal lost its launch identity.')
+      }
+      return pty
+    }
+    const initialPty = readBoundPty()
+    const kittyKeyboardFlags = this.providerModeTrackersByPtyId.get(initialPty.ptyId)?.flags ?? 0
+    return proveCodexTuiRollout({
+      codexHome: input.codexHome,
+      threadId: input.threadId,
+      kittyKeyboardFlags,
+      readOutput: () => {
+        const pty = readBoundPty()
+        return {
+          text: buildTerminalWaitText(pty.tailBuffer, pty.tailPartialLine, pty.preview),
+          lastOutputAt: pty.lastOutputAt
+        }
+      },
+      write: (data) => {
+        const pty = readBoundPty()
+        return (
+          this.ptyController?.writeAgentSessionProof?.(pty.ptyId, data, {
+            sessionId: input.sessionId,
+            spawnToken: input.spawnToken
+          }) ?? false
+        )
       }
     })
   }
@@ -13820,6 +14297,7 @@ export class OrcaRuntimeService {
       this.intentionalHandlelessPtyStops.has(ptyId) &&
       (intentionalStopIncarnation === null || intentionalStopIncarnation === incarnationId)
     advertisedUrlWatcher.unbindPty(ptyId)
+    agentSessionPtyWriteGate.unbindPty(ptyId)
     // Clean up new mobile state for this PTY
     this.mobileSubscribers.delete(ptyId)
     this.remoteTerminalViewSubscriberCounts.delete(ptyId)
@@ -17347,11 +17825,14 @@ export class OrcaRuntimeService {
     return true
   }
 
-  private getFreshExplicitAgentStatusForHandle(handle: string): {
+  private getFreshExplicitAgentStatusForHandle(
+    handle: string,
+    paneKeyOverride?: string | null
+  ): {
     status: NonNullable<RuntimeTerminalAgentStatus['status']>
     updatedAt: number
   } | null {
-    const paneKey = this.getPaneKeyForTerminalHandle(handle)
+    const paneKey = paneKeyOverride ?? this.getPaneKeyForTerminalHandle(handle)
     const now = Date.now()
     let bestStatus: NonNullable<RuntimeTerminalAgentStatus['status']> | null = null
     let bestUpdatedAt = -1
@@ -25346,7 +25827,8 @@ export class OrcaRuntimeService {
 
   async ensureAgentSession(
     request: RuntimeEnsureAgentSessionRequest,
-    _caller: RuntimeAgentSessionRpcCaller = {}
+    _caller: RuntimeAgentSessionRpcCaller = {},
+    handoffAuthority?: StructuredAgentSessionHandoffAuthority
   ): Promise<RuntimeEnsureAgentSessionResult> {
     if (request.kind === 'automatic') {
       // Legacy renderer sleep records are migration evidence, not host authority.
@@ -25356,7 +25838,11 @@ export class OrcaRuntimeService {
       throw new Error('runtime_unavailable')
     }
     const workspace = await this.resolveTerminalWorkspaceLaunchScope(request.worktree)
-    const namespace = this.getAgentSessionExecutionNamespace(workspace, request.agent)
+    const resolvedNamespace = this.getAgentSessionExecutionNamespace(workspace, request.agent)
+    const namespace =
+      resolvedNamespace && handoffAuthority
+        ? { ...resolvedNamespace, providerRoot: handoffAuthority.providerHome }
+        : resolvedNamespace
     if (
       !namespace ||
       !(await this.executionOwnerSupportsAgentSessionOperation(workspace, 'resume', _caller.signal))
@@ -25382,21 +25868,43 @@ export class OrcaRuntimeService {
       isRemote,
       terminalWindowsShell: settings.terminalWindowsShell
     })
-    const startup = buildAgentResumeStartupPlan({
-      agent: request.agent,
-      providerSession: identity.providerSession,
-      cmdOverrides: settings.agentCmdOverrides ?? {},
-      agentArgs:
-        request.agentArgs !== undefined
-          ? request.agentArgs
-          : resolveTuiAgentLaunchArgs(request.agent, settings.agentDefaultArgs),
-      agentEnv: resolveTuiAgentLaunchEnv(request.agent, settings.agentDefaultEnv),
-      ompResumeFilePath: request.ompResumeFilePath,
-      sessionOptions: this.toAgentSessionOptions(request.launchPreferences),
-      platform,
-      shell,
-      isRemote
-    })
+    const startupShell = resolveStartupShell(platform, shell)
+    const startup = handoffAuthority?.launch
+      ? {
+          agent: request.agent,
+          launchCommand: buildShellCommandFromArgv(
+            [handoffAuthority.launch.command, ...handoffAuthority.launch.args],
+            startupShell
+          ),
+          expectedProcess: TUI_AGENT_CONFIG[request.agent].expectedProcess,
+          followupPrompt: null,
+          launchConfig: {
+            agentCommand: handoffAuthority.launch.command,
+            agentArgs: handoffAuthority.launch.args
+              .map((arg) => quoteStartupArg(arg, startupShell))
+              .join(' '),
+            agentEnv: handoffAuthority.launch.env
+          },
+          env: handoffAuthority.launch.env
+        }
+      : buildAgentResumeStartupPlan({
+          agent: request.agent,
+          providerSession: identity.providerSession,
+          cmdOverrides: settings.agentCmdOverrides ?? {},
+          agentArgs:
+            request.agentArgs !== undefined
+              ? request.agentArgs
+              : resolveTuiAgentLaunchArgs(request.agent, settings.agentDefaultArgs),
+          agentEnv: {
+            ...resolveTuiAgentLaunchEnv(request.agent, settings.agentDefaultEnv),
+            ...(handoffAuthority ? { CODEX_HOME: handoffAuthority.providerHome } : {})
+          },
+          ompResumeFilePath: request.ompResumeFilePath,
+          sessionOptions: this.toAgentSessionOptions(request.launchPreferences),
+          platform,
+          shell,
+          isRemote
+        })
     if (!startup) {
       throw new Error('agent_session_identity_required')
     }
@@ -25414,6 +25922,7 @@ export class OrcaRuntimeService {
     }
     const terminal = await this.createTerminal(`id:${workspace.id}`, {
       command: startup.launchCommand,
+      ...(handoffAuthority?.launch ? { cwd: handoffAuthority.launch.cwd } : {}),
       env: startup.env,
       launchConfig: startup.launchConfig,
       launchAgent: request.agent,
@@ -25422,6 +25931,12 @@ export class OrcaRuntimeService {
       leafId: request.placement?.leafId,
       persistHostSessionBinding: true,
       agentSessionClaim: claim,
+      ...(handoffAuthority
+        ? {
+            launchToken: handoffAuthority.spawnToken,
+            structuredAgentSessionId: handoffAuthority.sessionId
+          }
+        : {}),
       signal: _caller.signal
     })
     return {
@@ -25925,6 +26440,9 @@ export class OrcaRuntimeService {
           leafId,
           ...(result.incarnationId ? { incarnationId: result.incarnationId } : {})
         })
+        if (launchOpts.structuredAgentSessionId) {
+          agentSessionPtyWriteGate.bindPty(result.id, launchOpts.structuredAgentSessionId)
+        }
         const pty = this.getOrCreatePtyWorktreeRecord(result.id)
         if (pty) {
           if (persistHostSessionBinding) {
@@ -26002,6 +26520,7 @@ export class OrcaRuntimeService {
           title: pty?.title ?? launchOpts.title ?? null,
           ...this.getPtyExecutionHostMetadata(result.id),
           surface,
+          ...(result.pid ? { processId: result.pid } : {}),
           ...(result.agentSessionEnsure
             ? { agentSessionDisposition: result.agentSessionEnsure.disposition }
             : {}),

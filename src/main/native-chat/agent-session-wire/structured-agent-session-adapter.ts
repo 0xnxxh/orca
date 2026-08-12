@@ -105,4 +105,6 @@ export type StructuredAgentSessionAdapter = {
   /** Transcript path for journal recovery. Omit to let the existing session-file
    *  resolver discover it from the provider session id. */
   historyFilePath?(input: { identity: AgentSessionJournalIdentity }): Promise<string | null>
+  /** Gracefully stops the structured owner after its event stream is drained. */
+  closeSession?(sessionId: string): Promise<void>
 }

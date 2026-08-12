@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -13,9 +13,16 @@ import type {
   openClaudeStreamJsonConnection
 } from '../claude/claude-stream-json-connection'
 import { claudeSessionIdForOrcaSession } from '../claude/claude-structured-launch-resolution'
-import { CLAUDE_SPAWN_TOKEN_ENV } from '../claude/claude-structured-owner-identity'
+import {
+  CLAUDE_SPAWN_TOKEN_ENV,
+  claudeProviderHandleLink
+} from '../claude/claude-structured-owner-identity'
 import { attachFingerprintFields } from '../native-chat/agent-session-wire/structured-agent-session-attach'
 import { getStructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-registry'
+import type {
+  StructuredAgentSessionHandoffTransport,
+  StructuredTuiOwner
+} from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
 import type { OrcaRuntimeService } from './orca-runtime'
 import type { RpcRequest, RpcResponse } from './rpc/core'
 import { RpcDispatcher } from './rpc/dispatcher'
@@ -142,7 +149,7 @@ function ensureParams(fence: number) {
     },
     provider: 'claude' as const,
     agent: 'claude',
-    accountHome: { variable: 'CLAUDE_CONFIG_DIR' as const, path: '/accounts/claude' },
+    accountHome: { variable: 'CLAUDE_CONFIG_DIR' as const, path: join(root, 'claude-home') },
     runtimeKind: 'native' as const,
     providerHandle: {
       kind: 'claude' as const,
@@ -169,10 +176,20 @@ function ensureParams(fence: number) {
   }
 }
 
+function handoffParams(direction: 'to-native' | 'to-tui', fence: number) {
+  const fields = { direction, mode: 'now' as const, action: 'start' as const }
+  return {
+    envelope: envelope('agentSession.requestHandoff', fields, fence),
+    ...fields
+  }
+}
+
 let claude: ReturnType<typeof fakeClaude>
 let root: string
 let dispatcher: RpcDispatcher
 let cleanups: Map<string, () => void>
+let tuiOwner: StructuredTuiOwner | null
+let transcriptPath: string
 
 async function call(method: string, params: unknown): Promise<RpcResponse> {
   const replies: RpcResponse[] = []
@@ -237,8 +254,63 @@ function textOf(item: AgentJournalRenderItem): string {
 beforeEach(async () => {
   operations = 0
   root = await mkdtemp(join(tmpdir(), 'orca-claude-structured-integration-'))
+  transcriptPath = join(root, 'claude-home', 'projects', 'workspace', `${PROVIDER_SESSION}.jsonl`)
+  await mkdir(join(root, 'claude-home', 'projects', 'workspace'), { recursive: true })
   claude = fakeClaude()
+  tuiOwner = null
   cleanups = new Map()
+  const handoffTransport: StructuredAgentSessionHandoffTransport = {
+    hostLabel: 'Scripted Claude host',
+    launchTui: async ({ record, fence, spawnToken }) => {
+      const head = record.providerHandleChain.at(-1)?.handle
+      tuiOwner = {
+        terminal: {
+          handle: 'term-claude-tui',
+          tabId: 'tab-claude-tui',
+          paneKey: 'tab-claude-tui:leaf-claude-tui',
+          ptyId: 'pty-claude-tui'
+        },
+        process: {
+          hostId: 'local',
+          pid: 7331,
+          processStartTimeMs: 100,
+          spawnToken
+        },
+        link: claudeProviderHandleLink({
+          sessionId: PROVIDER_SESSION,
+          leafUuid: head?.provider === 'claude' ? head.leafUuid : null,
+          resumed: true,
+          fence,
+          observedAt: Date.now()
+        }),
+        transcriptPath
+      }
+      return tuiOwner
+    },
+    reproveTuiOwner: async ({ owner }) => owner,
+    recoverTuiOwner: async () => {
+      if (!tuiOwner) {
+        throw new Error('scripted TUI owner missing')
+      }
+      return tuiOwner
+    },
+    stopRecoveredOwner: async () => {},
+    waitForTuiExit: async (owner, persistHandle) => {
+      await persistHandle(
+        claudeProviderHandleLink({
+          sessionId: PROVIDER_SESSION,
+          leafUuid: 'tui-assistant',
+          resumed: true,
+          fence: owner.link.mintedAtFence,
+          observedAt: Date.now()
+        })
+      )
+      return { transcriptPath }
+    },
+    waitForTuiIdleOrExit: async () => 'idle',
+    tuiStatus: () => 'idle',
+    stopFailedTuiLaunch: async () => {}
+  }
   const runtime = {
     getRuntimeId: () => 'runtime-1',
     getStructuredAgentSessionCreateSupport: async () => ({ supported: true }),
@@ -260,7 +332,8 @@ beforeEach(async () => {
           ANTHROPIC_AUTH_TOKEN: 'configured-token',
           ANTHROPIC_BASE_URL: 'https://gateway.example.test'
         }),
-        openClaudeConnection: claude.openConnection
+        openClaudeConnection: claude.openConnection,
+        handoffTransport
       }).then(() => undefined),
     registerSubscriptionCleanup: (id: string, dispose: () => void) => cleanups.set(id, dispose),
     cleanupSubscription: (id: string) => cleanups.get(id)?.(),
@@ -306,7 +379,7 @@ describe('a structured Claude session over agentSession.*', () => {
     expect(claude.live().launch.env).toEqual({
       ANTHROPIC_AUTH_TOKEN: 'configured-token',
       ANTHROPIC_BASE_URL: 'https://gateway.example.test',
-      CLAUDE_CONFIG_DIR: '/accounts/claude',
+      CLAUDE_CONFIG_DIR: join(root, 'claude-home'),
       [CLAUDE_SPAWN_TOKEN_ENV]: expect.any(String)
     })
     const stream = await subscribe()
@@ -396,6 +469,79 @@ describe('a structured Claude session over agentSession.*', () => {
         leafUuid: 'assistant-leaf'
       },
       origin: 'resumed'
+    })
+  })
+
+  it('completes a scripted native to TUI to native cycle with provider-history rehydration', async () => {
+    const created = await ok<{ fence: number }>('agentSession.create', createIntentParams())
+    await writeFile(
+      transcriptPath,
+      [
+        {
+          type: 'user',
+          uuid: 'native-user',
+          message: { role: 'user', content: [{ type: 'text', text: 'NATIVE_USER' }] }
+        },
+        {
+          type: 'assistant',
+          uuid: 'native-assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'NATIVE_ASSISTANT' }] }
+        },
+        {
+          type: 'user',
+          uuid: 'tui-user',
+          message: { role: 'user', content: [{ type: 'text', text: 'TUI_USER' }] }
+        },
+        {
+          type: 'assistant',
+          uuid: 'tui-assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'TUI_ASSISTANT' }] }
+        },
+        { type: 'last-prompt', leafUuid: 'tui-assistant' }
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join('\n')
+    )
+
+    await ok('agentSession.requestHandoff', handoffParams('to-tui', created.fence))
+    const host = getStructuredAgentSessionHost()!
+    await vi.waitFor(async () =>
+      expect(await host.handoffStatus(SESSION)).toMatchObject({ owner: 'tui', phase: 'idle' })
+    )
+    expect(claude.connections[0]?.closed).toBe(true)
+
+    const tuiFence = (
+      host as unknown as {
+        deps: { store: { getRecord: (id: string) => { lease: { runtimeFence: number } } } }
+      }
+    ).deps.store.getRecord(SESSION).lease.runtimeFence
+    await ok('agentSession.requestHandoff', handoffParams('to-native', tuiFence))
+    await vi.waitFor(async () =>
+      expect(await host.handoffStatus(SESSION)).toMatchObject({ owner: 'native', phase: 'idle' })
+    )
+
+    const frames = await subscribe()
+    const texts = itemsOf(frames).map(textOf).filter(Boolean)
+    expect(texts).toEqual(
+      expect.arrayContaining(['NATIVE_USER', 'NATIVE_ASSISTANT', 'TUI_USER', 'TUI_ASSISTANT'])
+    )
+    expect(new Set(texts).size).toBe(texts.length)
+    expect(claude.connections).toHaveLength(2)
+    expect(claude.live().launch.args.slice(-2)).toEqual(['--resume', PROVIDER_SESSION])
+    const record = (
+      host as unknown as {
+        deps: {
+          store: {
+            getRecord: (id: string) => {
+              providerHandleChain: { handle: { provider: string; leafUuid?: string | null } }[]
+            }
+          }
+        }
+      }
+    ).deps.store.getRecord(SESSION)
+    expect(record.providerHandleChain.at(-1)?.handle).toMatchObject({
+      provider: 'claude',
+      leafUuid: 'tui-assistant'
     })
   })
 })

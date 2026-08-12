@@ -91,6 +91,49 @@ describe('admission through the store', () => {
     })
   })
 
+  it.each(['preparing', 'old-owner-stopped', 'new-owner-proving'] as const)(
+    'refuses TUI writes while handoff stage %s is active',
+    (handoffStage) => {
+      publish(agentSessionLeaseFixture({ runtimeKind: 'tui', handoffStage }))
+      const admission = gate.admit(PTY_ID)
+      expect(admission.admitted).toBe(false)
+      if (!admission.admitted) {
+        expect(admission.refusal).toMatchObject({
+          code: 'agent_session_conflict',
+          handoffStage,
+          ownerRuntimeKind: 'tui'
+        })
+      }
+    }
+  )
+
+  it('admits only the reserved TUI proof token before ownership', () => {
+    publish(
+      agentSessionLeaseFixture({
+        runtimeKind: 'tui',
+        claimStatus: 'reserved',
+        handoffStage: 'new-owner-proving',
+        ownerProcess: null,
+        reservedSpawnToken: 'proof-token'
+      })
+    )
+    expect(gate.admit(PTY_ID).admitted).toBe(false)
+    expect(gate.admitProof(PTY_ID, { sessionId: SESSION_ID, spawnToken: 'proof-token' })).toBe(true)
+    expect(gate.admitProof(PTY_ID, { sessionId: SESSION_ID, spawnToken: 'wrong-token' })).toBe(
+      false
+    )
+    expect(
+      gate.admitProof(PTY_ID, { sessionId: 'session-beta-2', spawnToken: 'proof-token' })
+    ).toBe(false)
+  })
+
+  it('refuses proof input after ownership is live', () => {
+    publish(agentSessionLeaseFixture({ reservedSpawnToken: 'proof-token' }))
+    expect(gate.admitProof(PTY_ID, { sessionId: SESSION_ID, spawnToken: 'proof-token' })).toBe(
+      false
+    )
+  })
+
   it('refuses when the record vanished from the store', () => {
     const admission = gate.admit(PTY_ID)
     expect(admission.admitted).toBe(false)

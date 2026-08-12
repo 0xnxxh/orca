@@ -229,6 +229,7 @@ import { TerminalPaneView } from '../../../../src/session/TerminalPaneView'
 import { MobileNativeChatOverlay } from '../../../../src/session/MobileNativeChatOverlay'
 import { MobileStructuredAgentSessionView } from '../../../../src/session/MobileStructuredAgentSessionView'
 import { MobileStructuredSessionCreateError } from '../../../../src/session/MobileStructuredSessionCreateError'
+import * as mobileStructuredTuiSend from '../../../../src/session/mobile-structured-tui-send'
 import { useMobileStructuredSessionEntry } from '../../../../src/session/use-mobile-structured-session-entry'
 import {
   isMobileStructuredAgent,
@@ -4671,6 +4672,31 @@ export default function SessionScreen() {
                   }
                   return accepted
                 }}
+                onTuiSend={async (text, restored) => {
+                  const terminal = mobileStructuredTuiSend.getMobileStructuredTuiTerminal(
+                    structuredSessionEntry.session.handoff
+                  )
+                  if (!client || connState !== 'connected' || !terminal) {
+                    showToast('Message not sent (disconnected)', 1800)
+                    return false
+                  }
+                  const outcome = await mobileStructuredTuiSend.sendMobileStructuredTuiMessage({
+                    client,
+                    terminal,
+                    deviceToken: deviceTokenRef.current,
+                    text,
+                    attachments: [...restored, ...structuredSessionEntry.attachments.attachments]
+                  })
+                  if (outcome === 'rejected') {
+                    showToast('Message not sent', 1800)
+                    return false
+                  }
+                  structuredSessionEntry.attachments.clear()
+                  if (outcome === 'unknown') {
+                    showToast('Delivery unconfirmed — check chat before retrying', 2400)
+                  }
+                  return true
+                }}
                 onTakeQueuedForEdit={structuredSessionEntry.writes.takeQueuedForEdit}
                 onRetry={structuredSessionEntry.writes.retry}
                 onRespondToPrompt={structuredSessionEntry.writes.respondToPrompt}
@@ -4680,6 +4706,8 @@ export default function SessionScreen() {
                 onAttachImage={() => void structuredSessionEntry.attachments.attach('library')}
                 onRemoveAttachment={structuredSessionEntry.attachments.remove}
                 onCancel={structuredSessionEntry.writes.cancel}
+                handoff={structuredSessionEntry.session.handoff}
+                onRequestHandoff={structuredSessionEntry.writes.requestHandoff}
               />
             ) : activePendingTerminalTab ? (
               <View style={styles.emptyState}>

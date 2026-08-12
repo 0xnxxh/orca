@@ -10,8 +10,9 @@
  */
 
 import {
-  pruneAgentSessionOperationRows,
   agentSessionOperationKey,
+  pruneAgentSessionOperationRows,
+  settleAgentSessionOperation,
   type AgentSessionOperationDecision,
   type AgentSessionOperationOutcome,
   type AgentSessionOperationRow
@@ -25,22 +26,20 @@ import type { AgentSessionProviderHandleLink } from '../../shared/agent-session-
 import {
   agentSessionScopeKey,
   type AgentSessionExecutionLocation,
-  type AgentSessionHandoffStage,
   type AgentSessionJournalCheckpoint,
   type AgentSessionRecord
 } from '../../shared/agent-session-record'
 import {
   applyAgentSessionRestartAdjudication,
-  agentSessionReconciliationTargetMatches,
   commitAgentSessionProcessIdentity,
   evictAgentSessionOwner,
   proveAgentSessionOwner,
   renewAgentSessionLease,
-  setAgentSessionHandoffStage,
   setAgentSessionJournalCheckpoint,
   type AgentSessionProcessIdentityCommit
 } from './agent-session-lease-transitions'
 import { recordAgentSessionProviderHandle } from './agent-session-provider-handle-transition'
+import { agentSessionReconciliationTargetMatches } from './agent-session-reconciliation-target'
 import {
   setAgentSessionReservationProcesslessProof,
   type AgentSessionReservationProcesslessProof
@@ -238,14 +237,11 @@ export class AgentSessionRecordStore {
     return this.mutate(args.sessionId, (record) => evictAgentSessionOwner({ ...args, record }))
   }
 
-  async setHandoffStage(args: {
-    sessionId: string
-    fence: number
-    stage: AgentSessionHandoffStage | null
-    handoffOperationId: string | null
-    now: number
-  }): Promise<AgentSessionRecord> {
-    return this.mutate(args.sessionId, (record) => setAgentSessionHandoffStage({ ...args, record }))
+  async transitionHandoff(
+    sessionId: string,
+    transition: (record: AgentSessionRecord) => AgentSessionRecord
+  ): Promise<AgentSessionRecord> {
+    return this.mutate(sessionId, transition)
   }
 
   async setJournalCheckpoint(args: {
@@ -304,16 +300,12 @@ export class AgentSessionRecordStore {
   }
 
   async recordOperationOutcome(args: {
-    callerKey: string
+    callerKey?: string
     operationId: string
     outcome: AgentSessionOperationOutcome
   }): Promise<void> {
     await this.transact(() => {
-      const key = agentSessionOperationKey(args.callerKey, args.operationId)
-      const row = this.state.operations.get(key)
-      if (row) {
-        this.state.operations.set(key, { ...row, outcome: args.outcome })
-      }
+      this.state.operations = settleAgentSessionOperation(this.state.operations, args)
     })
   }
 

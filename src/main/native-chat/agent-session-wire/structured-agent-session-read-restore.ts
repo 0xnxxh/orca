@@ -1,4 +1,7 @@
-import type { AgentSessionRecord } from '../../../shared/agent-session-record'
+import type {
+  AgentSessionOwnerRuntimeKind,
+  AgentSessionRecord
+} from '../../../shared/agent-session-record'
 import type { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
 import { loadJournal } from '../agent-session-journal/journal-open'
 import { journalDirectoryFor } from '../agent-session-journal/journal-paths'
@@ -49,7 +52,11 @@ export async function restoreStructuredAgentSessionRead(
 
 export function attachParamsForRecord(
   record: AgentSessionRecord,
-  input: { clientOperationId: string; expectedRuntimeFence: number }
+  input: {
+    clientOperationId: string
+    expectedRuntimeFence: number
+    runtimeKind?: AgentSessionOwnerRuntimeKind
+  }
 ): AgentSessionAttachParams {
   const params: AgentSessionAttachParams = {
     envelope: {
@@ -62,7 +69,7 @@ export function attachParamsForRecord(
     provider: record.provider,
     agent: record.provider,
     accountHome: record.accountHome,
-    runtimeKind: record.lease.runtimeKind
+    runtimeKind: input.runtimeKind ?? record.lease.runtimeKind
   }
   return {
     ...params,

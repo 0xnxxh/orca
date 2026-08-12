@@ -1,5 +1,6 @@
 import { toast } from 'sonner'
 import type { AiVaultSession } from '../../../shared/ai-vault-types'
+import { translate } from '@/i18n/i18n'
 import { activateAndRevealWorktree } from './worktree-activation'
 import { activateStructuredAgentSessionById } from './structured-agent-session-tab-activation'
 import { useAppStore } from '@/store'
@@ -15,7 +16,12 @@ export function activateAiVaultStructuredSession(session: AiVaultSession): boole
       sessionId: structured.sessionId
     })
   ) {
-    toast.error('The structured agent session is not available yet. Retry in a moment.')
+    toast.error(
+      translate(
+        'auto.lib.activateAiVaultStructuredSession.unavailable',
+        'The structured agent session is not available yet. Retry in a moment.'
+      )
+    )
     return true
   }
   if (useAppStore.getState().activeWorktreeId !== structured.workspaceId) {
