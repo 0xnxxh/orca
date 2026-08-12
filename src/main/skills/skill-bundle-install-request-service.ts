@@ -12,6 +12,7 @@ import { installSkillBundle } from './skill-bundle-install-service'
 import { downloadSkillPackageGrant } from './skill-package-download'
 import { detectSkillProvidersInWsl } from './skill-wsl-provider-detection'
 import { createWslSkillInstallFilesystem } from './skill-wsl-install-filesystem'
+import { startSkillBundleInstallOperation } from './skill-operation-observability'
 
 type StagedSkillBundle = { archivePath: string; cleanup(): Promise<void> }
 
@@ -60,17 +61,17 @@ async function resolveIngress(
   return { archivePath: request.ingress.path, cleanup: async () => undefined }
 }
 
-export async function executeSkillBundleInstallRequest(
-  input: unknown,
+async function executeParsedSkillBundleInstallRequest(
+  request: SkillBundleInstallRequest,
   dependencies: SkillBundleInstallRequestDependencies
 ): Promise<SkillBundleInstallResult> {
-  const request = SkillBundleInstallRequestSchema.parse(input)
-  const destination = await resolveSkillInstallDestination(
-    request.destination,
-    dependencies.authority
-  )
-  const ingress = await resolveIngress(request, dependencies)
+  let ingress: StagedSkillBundle | null = null
   try {
+    const destination = await resolveSkillInstallDestination(
+      request.destination,
+      dependencies.authority
+    )
+    ingress = await resolveIngress(request, dependencies)
     const detectedProviders = destination.wslDistro
       ? await detectSkillProvidersInWsl(destination.wslDistro)
       : await dependencies.detectProviders()
@@ -105,6 +106,22 @@ export async function executeSkillBundleInstallRequest(
       onProgress: dependencies.onProgress
     })
   } finally {
-    await ingress.cleanup()
+    await ingress?.cleanup()
+  }
+}
+
+export async function executeSkillBundleInstallRequest(
+  input: unknown,
+  dependencies: SkillBundleInstallRequestDependencies
+): Promise<SkillBundleInstallResult> {
+  const request = SkillBundleInstallRequestSchema.parse(input)
+  const operation = startSkillBundleInstallOperation(request)
+  try {
+    const result = await executeParsedSkillBundleInstallRequest(request, dependencies)
+    operation.complete(result)
+    return result
+  } catch (error) {
+    operation.fail(error)
+    throw error
   }
 }

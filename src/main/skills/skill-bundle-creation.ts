@@ -22,6 +22,7 @@ import { renameSkillPathWithWindowsRetry } from './skill-filesystem-retry'
 import { extractSkillBundleArchive } from './skill-bundle-extraction'
 import { observeSkillPackage, type ObservedSkillPackage } from './skill-package-identity'
 import { writeSkillTarGzip, type SkillTarWriteEntry } from './skill-package-tar'
+import { startSkillPhaseOperation } from './skill-operation-observability'
 
 export type SkillBundleSource = { id?: string; sourceDirectory: string }
 
@@ -110,7 +111,7 @@ async function stageSkill(input: {
   })
 }
 
-export async function createSkillBundleArchive(
+async function createSkillBundleArchiveUnobserved(
   input: {
     sources: readonly SkillBundleSource[]
     archivePath: string
@@ -221,5 +222,38 @@ export async function createSkillBundleArchive(
   } finally {
     await rm(workDirectory, { recursive: true, force: true })
     await rm(temporaryArchive, { force: true }).catch(() => undefined)
+  }
+}
+
+export async function createSkillBundleArchive(
+  input: {
+    sources: readonly SkillBundleSource[]
+    archivePath: string
+    packageId: string
+    versionId: string
+    bundleName: string
+    description?: string
+    createdAt?: string
+  },
+  dependencies: SkillBundleCreationDependencies = {}
+): Promise<CreatedSkillBundle> {
+  const operation = startSkillPhaseOperation({
+    phase: 'package',
+    packageKind: 'bundle',
+    skillCount: input.sources.length
+  })
+  try {
+    const created = await createSkillBundleArchiveUnobserved(input, dependencies)
+    const files = created.manifest.skills.flatMap((skill) => skill.files)
+    operation.complete({
+      status: 'complete',
+      fileCount: files.length,
+      totalBytes: files.reduce((total, file) => total + file.size, 0),
+      compressedBytes: created.compressedBytes
+    })
+    return created
+  } catch (error) {
+    operation.fail(error)
+    throw error
   }
 }

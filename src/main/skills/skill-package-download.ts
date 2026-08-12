@@ -7,6 +7,7 @@ import {
 } from '../../shared/skill-package-manifest'
 import { SKILL_INSTALL_CANCELLED_FAILURE } from '../../shared/skill-install-failure'
 import { SkillInstallOperationError } from './skill-install-operation-error'
+import { startSkillPhaseOperation } from './skill-operation-observability'
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 const MAX_REDIRECTS = 3
@@ -117,7 +118,7 @@ function hashesEqual(actual: string, expected: string): boolean {
   return timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'))
 }
 
-export async function downloadSkillPackageGrant(
+async function downloadSkillPackageGrantUnobserved(
   input: SkillPackageDownloadInput
 ): Promise<SkillPackageDownloadResult> {
   input.fetcher ??= fetch
@@ -208,6 +209,24 @@ export async function downloadSkillPackageGrant(
     }
   } catch (error) {
     await rm(temporaryDirectory, { recursive: true, force: true })
+    throw error
+  }
+}
+
+export async function downloadSkillPackageGrant(
+  input: SkillPackageDownloadInput
+): Promise<SkillPackageDownloadResult> {
+  const operation = startSkillPhaseOperation({
+    phase: 'download',
+    transport: 'download-grant',
+    compressedBytes: input.expectedCompressedBytes
+  })
+  try {
+    const downloaded = await downloadSkillPackageGrantUnobserved(input)
+    operation.complete({ status: 'complete', compressedBytes: downloaded.compressedBytes })
+    return downloaded
+  } catch (error) {
+    operation.fail(error)
     throw error
   }
 }

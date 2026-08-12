@@ -1201,11 +1201,11 @@ physical SSH macOS and supported Windows remain open.
 
 ### Metrics and dashboards
 
-- [ ] Record bounded package byte/file counts and package, upload, finalization, download, transfer,
+- [x] Record bounded package byte/file counts and package, upload, finalization, download, transfer,
       install, placement, and recovery durations.
-- [ ] Record outcomes by error category, OS, destination kind, transport, conflict type, and
+- [x] Record outcomes by error category, OS, destination kind, transport, conflict type, and
       placement topology.
-- [ ] Record junction, alias, copy-fallback, rollback, recovery, capability-absence, and orphan
+- [x] Record junction, alias, copy-fallback, rollback, recovery, capability-absence, and orphan
       reconciliation counts.
 - [x] Add dashboards for grant/finalize/share rates, authorization and rate limits, finalization
       saturation, archive rejection, and digest mismatch.
@@ -1241,6 +1241,18 @@ targeted staging apply added 18 observability resources, updated the existing da
 replaced only the inert descriptor-propagation timer. A manual run emitted only aggregate fixed-
 namespace measurements with zero overdue objects; the post-apply targeted plan is zero-diff, SQL
 remained `NEVER`/`STOPPED`, all Relay MIG targets remained zero, and production remained disabled.
+
+Desktop operations now emit local diagnostic spans for package creation, direct upload,
+finalization, grant download, client-mediated runtime/SSH transfer, single and bundle install,
+provider placement, transaction rollback settlement, and startup recovery. Package bytes/files,
+OS, destination kind, transport, conflicts, placement topology/mechanism, copy fallback,
+capability absence, recovered transactions, stale extraction/lock cleanup, and failure categories
+use fixed or bounded values; bundle error-category cardinality is capped at 32. The implementation
+adds no product telemetry event, RPC field, persisted schema, or remote opcode. The skill-sharing
+release suite passes 423 tests with 29 expected platform skips, the focused affected matrix passes
+98 tests with one expected skip, typecheck and the full lint pipeline pass, and the real-process
+macOS recovery matrix passes all 17 crash boundaries. Physical Windows/WSL reruns remain separate
+platform gates below.
 
 ### Logging and privacy
 

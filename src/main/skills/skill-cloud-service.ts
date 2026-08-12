@@ -15,6 +15,7 @@ import { resolveArtifactCloudApiUrl } from '../artifacts/artifact-cloud-config'
 import { runSkillCloudOperation } from './skill-cloud-auth'
 import { uploadSkillPackageToSignedPolicy } from './skill-cloud-direct-upload'
 import { skillCloudRequest } from './skill-cloud-request'
+import { startSkillPhaseOperation } from './skill-operation-observability'
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
 
@@ -62,34 +63,58 @@ export class SkillCloudService {
         idempotencyKey: randomUUID(),
         signal: request.signal
       })
-      await uploadSkillPackageToSignedPolicy({
-        policy: upload.upload.policy,
-        archivePath: request.archivePath,
-        expectedBytes: request.compressedBytes,
-        signal: request.signal,
-        onProgress: (bytesSent) =>
-          request.onProgress?.({
-            phase: 'uploading',
-            bytesSent,
-            totalBytes: request.compressedBytes
-          })
+      const uploadOperation = startSkillPhaseOperation({
+        phase: 'upload',
+        compressedBytes: request.compressedBytes
       })
+      try {
+        await uploadSkillPackageToSignedPolicy({
+          policy: upload.upload.policy,
+          archivePath: request.archivePath,
+          expectedBytes: request.compressedBytes,
+          signal: request.signal,
+          onProgress: (bytesSent) =>
+            request.onProgress?.({
+              phase: 'uploading',
+              bytesSent,
+              totalBytes: request.compressedBytes
+            })
+        })
+        uploadOperation.complete({
+          status: 'complete',
+          compressedBytes: request.compressedBytes
+        })
+      } catch (error) {
+        uploadOperation.fail(error)
+        throw error
+      }
       request.onProgress?.({
         phase: 'finalizing',
         bytesSent: request.compressedBytes,
         totalBytes: request.compressedBytes
       })
-      const finalized = await skillCloudRequest<{ version: SkillCloudVersion }>({
-        apiUrl,
-        authToken: token,
-        path: `/v1/skill-packages/uploads/${id(upload.upload.id)}/finalize`,
-        method: 'POST',
-        body: { releaseNotes: request.releaseNotes },
-        idempotencyKey: upload.upload.id,
-        signal: request.signal
+      const finalizationOperation = startSkillPhaseOperation({
+        phase: 'finalization',
+        compressedBytes: request.compressedBytes
       })
-      if (finalized.version.packageId !== request.packageId) {
-        throw new Error('skill-cloud-published-package-mismatch')
+      let finalized: { version: SkillCloudVersion }
+      try {
+        finalized = await skillCloudRequest<{ version: SkillCloudVersion }>({
+          apiUrl,
+          authToken: token,
+          path: `/v1/skill-packages/uploads/${id(upload.upload.id)}/finalize`,
+          method: 'POST',
+          body: { releaseNotes: request.releaseNotes },
+          idempotencyKey: upload.upload.id,
+          signal: request.signal
+        })
+        if (finalized.version.packageId !== request.packageId) {
+          throw new Error('skill-cloud-published-package-mismatch')
+        }
+        finalizationOperation.complete({ status: 'complete' })
+      } catch (error) {
+        finalizationOperation.fail(error)
+        throw error
       }
       return finalized.version
     })

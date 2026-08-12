@@ -23,6 +23,7 @@ import {
   type SkillSshWorkspaceAuthority
 } from '../../shared/skill-ssh-relay-contract'
 import type { IPtyProvider } from '../providers/pty-provider-contract'
+import { recordSkillCapabilityAbsence } from './skill-operation-observability'
 import { retrySkillTransferRpc } from './skill-transfer-rpc-retry'
 import { transferSkillPackageToSshHost } from './skill-ssh-package-transfer'
 import {
@@ -51,6 +52,10 @@ export async function installSkillOnSshHost(input: {
   const client = requireSkillSshRelayClient(input.provider)
   const supported = await skillSshRelayCapabilities(client)
   if (!supported.includes(SKILL_INSTALL_CAPABILITY)) {
+    recordSkillCapabilityAbsence({
+      capability: SKILL_INSTALL_CAPABILITY,
+      destination: 'global-ssh'
+    })
     throw new Error('skill-install-ssh-update-required')
   }
   try {
@@ -75,6 +80,10 @@ export async function installSkillOnSshHost(input: {
     }
   }
   if (!supported.includes(SKILL_UPLOAD_CAPABILITY)) {
+    recordSkillCapabilityAbsence({
+      capability: SKILL_UPLOAD_CAPABILITY,
+      destination: 'global-ssh'
+    })
     throw new Error('skill-install-ssh-download-unavailable')
   }
   return retrySkillTransferRpc({

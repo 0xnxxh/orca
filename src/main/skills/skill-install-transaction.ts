@@ -36,6 +36,7 @@ import {
   skillInstallFailureResult,
   skillInstallReplacementAllowed
 } from './skill-install-transaction-result'
+import { settleObservedSkillTransactionRecovery } from './skill-transaction-recovery-observability'
 
 export { recoverSkillInstallTransaction } from './skill-install-recovery'
 export type {
@@ -286,9 +287,11 @@ export async function installLocalExtractedSkillPackage(
     }
   } catch (error) {
     if (journal) {
-      await recoverSkillInstallTransaction(input.stateDirectory, canonicalPath, filesystem).catch(
-        () => undefined
-      )
+      await settleObservedSkillTransactionRecovery({
+        rollback: journal.phase === 'backup-created',
+        recover: () =>
+          recoverSkillInstallTransaction(input.stateDirectory, canonicalPath, filesystem)
+      })
     }
     const result = skillInstallFailureResult(input, extracted.manifest, canonicalPath, error)
     if (result) {

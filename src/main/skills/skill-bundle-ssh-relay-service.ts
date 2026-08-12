@@ -27,6 +27,7 @@ import {
 import { transferSkillPackageToSshHost } from './skill-ssh-package-transfer'
 import { retrySkillTransferRpc } from './skill-transfer-rpc-retry'
 import { startSkillInstallProgressPolling } from './skill-install-progress-polling'
+import { recordSkillCapabilityAbsence } from './skill-operation-observability'
 
 export async function installSkillBundleOnSshHost(input: {
   provider: IPtyProvider
@@ -41,6 +42,10 @@ export async function installSkillBundleOnSshHost(input: {
   const client = requireSkillSshRelayClient(input.provider)
   const supported = await skillSshRelayCapabilities(client)
   if (!supported.includes(SKILL_BUNDLE_INSTALL_CAPABILITY)) {
+    recordSkillCapabilityAbsence({
+      capability: SKILL_BUNDLE_INSTALL_CAPABILITY,
+      destination: 'global-ssh'
+    })
     throw new Error('skill-bundle-ssh-update-required')
   }
   const stopProgress =
@@ -84,6 +89,10 @@ export async function installSkillBundleOnSshHost(input: {
       }
     }
     if (!supported.includes(SKILL_UPLOAD_CAPABILITY)) {
+      recordSkillCapabilityAbsence({
+        capability: SKILL_UPLOAD_CAPABILITY,
+        destination: 'global-ssh'
+      })
       throw new Error('skill-bundle-ssh-download-unavailable')
     }
     return await retrySkillTransferRpc({

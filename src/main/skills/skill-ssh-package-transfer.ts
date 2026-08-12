@@ -13,6 +13,7 @@ import {
   SkillUploadBeginResultSchema
 } from '../../shared/skill-upload-session-contract'
 import { downloadSkillPackageGrant } from './skill-package-download'
+import { startSkillPhaseOperation } from './skill-operation-observability'
 import {
   SKILL_SSH_REQUEST_TIMEOUT_MS,
   retryableSkillSshTransportError,
@@ -40,7 +41,7 @@ function allowedOrigins(requireHttps: boolean): string[] {
   return [...new Set(origins)]
 }
 
-export async function transferSkillPackageToSshHost(
+async function transferSkillPackageToSshHostUnobserved(
   client: SkillSshRelayClient,
   input: SkillSshTransferInput
 ): Promise<string> {
@@ -130,5 +131,28 @@ export async function transferSkillPackageToSshHost(
     if (uploadId) {
       await client(SKILL_SSH_RELAY_CANCEL_UPLOAD_METHOD, { uploadId }).catch(() => undefined)
     }
+  }
+}
+
+export async function transferSkillPackageToSshHost(
+  client: SkillSshRelayClient,
+  input: SkillSshTransferInput
+): Promise<string> {
+  const operation = startSkillPhaseOperation({
+    phase: 'transfer',
+    transport: 'ssh-relay',
+    destination: 'global-ssh',
+    compressedBytes: input.request.package.compressedBytes
+  })
+  try {
+    const uploadId = await transferSkillPackageToSshHostUnobserved(client, input)
+    operation.complete({
+      status: 'complete',
+      compressedBytes: input.request.package.compressedBytes
+    })
+    return uploadId
+  } catch (error) {
+    operation.fail(error)
+    throw error
   }
 }

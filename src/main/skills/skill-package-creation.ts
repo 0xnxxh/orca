@@ -10,6 +10,7 @@ import {
 } from '../../shared/skill-package-manifest'
 import { summarizeSkillMarkdown } from '../../shared/skill-metadata'
 import { renameSkillPathWithWindowsRetry } from './skill-filesystem-retry'
+import { startSkillPhaseOperation } from './skill-operation-observability'
 import { observeSkillPackage, type ObservedSkillPackage } from './skill-package-identity'
 import { extractSkillPackageArchive } from './skill-package-extraction'
 import { writeSkillTarGzip, type SkillTarWriteEntry } from './skill-package-tar'
@@ -70,7 +71,7 @@ function packageManifest(input: {
   })
 }
 
-export async function createSkillPackageArchive(
+async function createSkillPackageArchiveUnobserved(
   input: {
     sourceDirectory: string
     archivePath: string
@@ -143,5 +144,35 @@ export async function createSkillPackageArchive(
   } finally {
     await rm(workDirectory, { recursive: true, force: true })
     await rm(temporaryArchive, { force: true }).catch(() => undefined)
+  }
+}
+
+export async function createSkillPackageArchive(
+  input: {
+    sourceDirectory: string
+    archivePath: string
+    packageId: string
+    versionId: string
+    createdAt?: string
+  },
+  dependencies: SkillPackageCreationDependencies = {}
+): Promise<CreatedSkillPackage> {
+  const operation = startSkillPhaseOperation({
+    phase: 'package',
+    packageKind: 'single',
+    skillCount: 1
+  })
+  try {
+    const created = await createSkillPackageArchiveUnobserved(input, dependencies)
+    operation.complete({
+      status: 'complete',
+      fileCount: created.manifest.files.length,
+      totalBytes: created.manifest.files.reduce((total, file) => total + file.size, 0),
+      compressedBytes: created.compressedBytes
+    })
+    return created
+  } catch (error) {
+    operation.fail(error)
+    throw error
   }
 }

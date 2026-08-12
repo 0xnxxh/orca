@@ -170,7 +170,8 @@ async function completeSharedSkillInstall(input: {
       previousReceipt: input.previousReceipt,
       packageDigest: result.packageDigest,
       fileModes: input.manifest.files,
-      filesystem: input.input.filesystem
+      filesystem: input.input.filesystem,
+      ...(input.input.wslDistro ? { targetPlatform: 'linux' as const } : {})
     })
     if (placement) {
       placements.push(placement)

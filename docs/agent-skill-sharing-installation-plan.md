@@ -91,6 +91,18 @@ SSH now carries only schema-validated structured skill failures through optional
 when it is absent. Invalid gzip input has a stable archive category, and deterministic `EACCES`
 and `ENOSPC` injection proves failed updates preserve the previous installed version.
 
+Desktop skill operations now have privacy-bounded local diagnostic spans for package creation,
+Cloud upload and finalization, grant download, client-mediated runtime and SSH transfer, single
+and bundle installation, provider placement, transaction rollback settlement, and startup
+recovery. They record aggregate bytes/files, phase duration, OS, destination and transport,
+conflict/topology/mechanism outcomes, copy fallback, capability absence, recovery/orphan counts,
+and bounded error categories without paths, skill names, contents, share URLs, grants, host IDs,
+or credentials. Bundle summaries are aggregate and cap error-category cardinality at 32. This is
+not product telemetry and changes no RPC, persisted state, or remote opcode, so old clients and
+hosts remain compatible. The release suite passes 423 tests, full typecheck/lint pass, and the
+real-process macOS crash-recovery matrix passes all 17 boundaries; physical platform reruns remain
+tracked in the checklist.
+
 The dedicated staging bucket, IAM, database, principal, enabled secret version, metrics, dashboard,
 and alerts exist in `onorca-cloud-staging`. The complete skill-infrastructure target is zero-diff.
 After `#314`, the targeted Auth/API plan also reports zero intended changes. Known shared Cloud SQL

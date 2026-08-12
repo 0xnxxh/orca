@@ -17,6 +17,7 @@ import type { SkillCloudDownloadGrant } from '../../shared/skill-cloud-contract'
 import { getRuntimeEnvironmentStatus } from '../ipc/runtime-environment-transport-routing'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import { skillInstallFailureFromError } from './skill-install-operation-error'
+import { recordSkillCapabilityAbsence } from './skill-operation-observability'
 import {
   installSkillBundleOnRemoteRuntime,
   installSkillOnRemoteRuntime
@@ -104,6 +105,12 @@ export async function installSkillBundleCloudGrant(
       status.ok !== true ||
       status.result.capabilities?.includes(SKILL_BUNDLE_INSTALL_CAPABILITY) !== true
     ) {
+      if (status.ok === true) {
+        recordSkillCapabilityAbsence({
+          capability: SKILL_BUNDLE_INSTALL_CAPABILITY,
+          destination: 'remote-runtime'
+        })
+      }
       return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
     }
     return {
@@ -160,6 +167,12 @@ export async function installSkillCloudGrant(
       status.ok !== true ||
       status.result.capabilities?.includes(SKILL_INSTALL_CAPABILITY) !== true
     ) {
+      if (status.ok === true) {
+        recordSkillCapabilityAbsence({
+          capability: SKILL_INSTALL_CAPABILITY,
+          destination: 'remote-runtime'
+        })
+      }
       return { status: 'unsupported' as const, message: SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE }
     }
     return {

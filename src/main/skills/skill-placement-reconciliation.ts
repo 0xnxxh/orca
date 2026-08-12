@@ -12,6 +12,9 @@ import {
   createSkillPlacementCopyAtMissingDestination,
   replaceOwnedSkillPlacementCopy
 } from './skill-placement-copy'
+import { startSkillPhaseOperation } from './skill-operation-observability'
+
+type PlacementObservation = { copyFallback: boolean }
 
 function normalizedPath(path: string): string {
   const normalized = resolve(path)
@@ -70,6 +73,7 @@ async function reconcileExistingPlacement(input: {
   packageDigest: string
   filesystem: SkillInstallFilesystem
   fileModes?: readonly SkillInstalledFileMode[]
+  observation: PlacementObservation
 }): Promise<SkillPlacementResult> {
   const previous = previousPlacement(
     input.previousReceipt,
@@ -114,7 +118,8 @@ async function reconcileExistingPlacement(input: {
         destinationPath: input.destinationPath,
         destination: input.destination,
         filesystem: input.filesystem,
-        fileModes: input.fileModes
+        fileModes: input.fileModes,
+        observation: input.observation
       })
     }
     return {
@@ -174,6 +179,7 @@ async function createMissingPlacement(input: {
   destination: SkillProviderDestination
   filesystem: SkillInstallFilesystem
   fileModes?: readonly SkillInstalledFileMode[]
+  observation: PlacementObservation
 }): Promise<SkillPlacementResult> {
   try {
     await createProviderAlias(input.canonicalPath, input.destinationPath, input.filesystem)
@@ -184,6 +190,7 @@ async function createMissingPlacement(input: {
       status: 'installed'
     }
   } catch {
+    input.observation.copyFallback = true
     try {
       await createSkillPlacementCopyAtMissingDestination(
         input.canonicalPath,
@@ -217,23 +224,59 @@ export async function reconcileSkillProviderPlacement(input: {
   packageDigest: string
   filesystem?: SkillInstallFilesystem
   fileModes?: readonly SkillInstalledFileMode[]
+  targetPlatform?: 'darwin' | 'linux' | 'win32' | 'other'
 }): Promise<SkillPlacementResult | null> {
   if (input.destination.readsCanonicalRoot) {
     return null
   }
   const destinationPath = join(input.destination.rootPath, input.skillName)
   const filesystem = input.filesystem ?? nativeSkillInstallFilesystem
+  const observation: PlacementObservation = { copyFallback: false }
+  const operation = startSkillPhaseOperation({
+    phase: 'placement',
+    platform: input.targetPlatform,
+    destination: 'provider-placement',
+    provider: input.destination.provider
+  })
   try {
-    return (await pathExists(destinationPath))
-      ? await reconcileExistingPlacement({ ...input, destinationPath, filesystem })
-      : await createMissingPlacement({ ...input, destinationPath, filesystem })
+    const result = (await pathExists(destinationPath))
+      ? await reconcileExistingPlacement({
+          ...input,
+          destinationPath,
+          filesystem,
+          observation
+        })
+      : await createMissingPlacement({ ...input, destinationPath, filesystem, observation })
+    operation.complete({
+      status: result.status,
+      errorCategory: result.errorCategory ?? 'none',
+      topology: result.topology,
+      aliasMechanism:
+        result.topology !== 'provider-alias'
+          ? 'none'
+          : filesystem.createAlias
+            ? 'filesystem'
+            : process.platform === 'win32'
+              ? 'junction'
+              : 'symlink',
+      copyFallbackCount: observation.copyFallback ? 1 : 0
+    })
+    return result
   } catch {
-    return {
+    const result: SkillPlacementResult = {
       provider: input.destination.provider,
       path: destinationPath,
       topology: 'independent-copy',
       status: 'failed',
       ...placementFailure('skill-placement-reconciliation-failed', true)
     }
+    operation.complete({
+      status: result.status,
+      errorCategory: result.errorCategory,
+      topology: result.topology,
+      aliasMechanism: 'none',
+      copyFallbackCount: observation.copyFallback ? 1 : 0
+    })
+    return result
   }
 }

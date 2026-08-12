@@ -21,6 +21,7 @@ import { callRuntimeEnvironment } from '../ipc/runtime-environment-transport-rou
 import { transferSkillPackageToRuntime } from './skill-client-mediated-transfer'
 import { SkillInstallFailureSchema } from '../../shared/skill-install-failure'
 import { SkillInstallOperationError } from './skill-install-operation-error'
+import { recordSkillCapabilityAbsence } from './skill-operation-observability'
 import { startSkillInstallProgressPolling } from './skill-install-progress-polling'
 import { retrySkillTransferRpc } from './skill-transfer-rpc-retry'
 import {
@@ -135,6 +136,10 @@ export async function installSkillOnRemoteRuntime(input: {
     return SkillInstallResultSchema.parse(direct.result)
   }
   if (!input.capabilities.includes(SKILL_UPLOAD_CAPABILITY)) {
+    recordSkillCapabilityAbsence({
+      capability: SKILL_UPLOAD_CAPABILITY,
+      destination: 'remote-runtime'
+    })
     throw new Error('skill-install-remote-download-unavailable')
   }
 
@@ -181,10 +186,14 @@ export async function installSkillBundleOnRemoteRuntime(input: {
   signal?: AbortSignal
   onProgress?: (progress: SkillBundleInstallProgress) => void
 }): Promise<SkillBundleInstallResult> {
-  if (
-    input.request.ingress.kind !== 'download-grant' ||
-    !input.capabilities.includes(SKILL_BUNDLE_INSTALL_CAPABILITY)
-  ) {
+  if (input.request.ingress.kind !== 'download-grant') {
+    throw new Error('skill-bundle-remote-ingress-invalid')
+  }
+  if (!input.capabilities.includes(SKILL_BUNDLE_INSTALL_CAPABILITY)) {
+    recordSkillCapabilityAbsence({
+      capability: SKILL_BUNDLE_INSTALL_CAPABILITY,
+      destination: 'remote-runtime'
+    })
     throw new Error('skill-bundle-remote-ingress-invalid')
   }
   const stopProgress =
@@ -214,6 +223,10 @@ export async function installSkillBundleOnRemoteRuntime(input: {
       return SkillBundleInstallResultSchema.parse(direct.result)
     }
     if (!input.capabilities.includes(SKILL_UPLOAD_CAPABILITY)) {
+      recordSkillCapabilityAbsence({
+        capability: SKILL_UPLOAD_CAPABILITY,
+        destination: 'remote-runtime'
+      })
       throw new Error('skill-bundle-remote-download-unavailable')
     }
     return retrySkillTransferRpc({

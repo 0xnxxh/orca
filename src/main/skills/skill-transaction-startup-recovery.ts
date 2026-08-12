@@ -16,6 +16,7 @@ import {
   readSkillRemovalRecoveryJournal,
   recoverSkillRemovalTransaction
 } from './skill-remove-recovery'
+import { startSkillPhaseOperation } from './skill-operation-observability'
 import { WslSkillInstallFilesystem } from './skill-wsl-install-filesystem'
 
 const MAX_PENDING_TRANSACTION_JOURNALS = 64
@@ -31,6 +32,8 @@ type PendingTransaction = {
 export type SkillTransactionStartupRecoveryReport = {
   scanned: number
   recovered: number
+  orphanedExtractionsRecovered: number
+  orphanedLocksReclaimed: number
   failures: { journalKey: string; code: string }[]
   truncated: boolean
 }
@@ -119,7 +122,7 @@ function pendingTransactions(
   return [...pending.values()]
 }
 
-export async function recoverPendingSkillTransactions(
+async function recoverPendingSkillTransactionsUnobserved(
   stateDirectory: string
 ): Promise<SkillTransactionStartupRecoveryReport> {
   const [installs, removals, extractions, locks] = await Promise.all([
@@ -131,6 +134,8 @@ export async function recoverPendingSkillTransactions(
   const report: SkillTransactionStartupRecoveryReport = {
     scanned: installs.candidates.length + removals.candidates.length + extractions.scanned,
     recovered: extractions.recovered,
+    orphanedExtractionsRecovered: extractions.recovered,
+    orphanedLocksReclaimed: locks.reclaimed,
     failures: [...installs.failures, ...removals.failures, ...extractions.failures],
     truncated: installs.truncated || removals.truncated || extractions.truncated || locks.truncated
   }
@@ -178,4 +183,25 @@ export async function recoverPendingSkillTransactions(
     }
   }
   return report
+}
+
+export async function recoverPendingSkillTransactions(
+  stateDirectory: string
+): Promise<SkillTransactionStartupRecoveryReport> {
+  const operation = startSkillPhaseOperation({ phase: 'recovery', destination: 'startup' })
+  try {
+    const report = await recoverPendingSkillTransactionsUnobserved(stateDirectory)
+    operation.complete({
+      status: report.failures.length || report.truncated ? 'partial' : 'complete',
+      scannedCount: report.scanned,
+      recoveredCount: report.recovered,
+      failureCount: report.failures.length,
+      orphanCount: report.orphanedExtractionsRecovered + report.orphanedLocksReclaimed,
+      truncated: report.truncated
+    })
+    return report
+  } catch (error) {
+    operation.fail(error)
+    throw error
+  }
 }

@@ -9,6 +9,7 @@ import {
 } from '../../shared/skill-upload-session-contract'
 import { callRuntimeEnvironment } from '../ipc/runtime-environment-transport-routing'
 import { downloadSkillPackageGrant } from './skill-package-download'
+import { startSkillPhaseOperation } from './skill-operation-observability'
 import { retrySkillTransferRpc, throwIfSkillTransferCancelled } from './skill-transfer-rpc-retry'
 
 const REMOTE_TRANSFER_TIMEOUT_MS = 5 * 60_000
@@ -48,7 +49,7 @@ async function remoteCall<T>(
   return response.result
 }
 
-export async function transferSkillPackageToRuntime(input: {
+type SkillClientTransferInput = {
   userDataPath: string
   environmentId: string
   transferId: string
@@ -56,7 +57,11 @@ export async function transferSkillPackageToRuntime(input: {
   grant: { url: string; expiresAt: string }
   requireHttps: boolean
   signal?: AbortSignal
-}): Promise<{ uploadId: string; cleanup(): Promise<void> }> {
+}
+
+async function transferSkillPackageToRuntimeUnobserved(
+  input: SkillClientTransferInput
+): Promise<{ uploadId: string; cleanup(): Promise<void> }> {
   const downloaded = await downloadSkillPackageGrant({
     url: input.grant.url,
     expiresAt: input.grant.expiresAt,
@@ -163,5 +168,24 @@ export async function transferSkillPackageToRuntime(input: {
         REMOTE_TRANSFER_CLEANUP_TIMEOUT_MS
       ).catch(() => undefined)
     }
+  }
+}
+
+export async function transferSkillPackageToRuntime(
+  input: SkillClientTransferInput
+): Promise<{ uploadId: string; cleanup(): Promise<void> }> {
+  const operation = startSkillPhaseOperation({
+    phase: 'transfer',
+    transport: 'runtime-rpc',
+    destination: 'remote-runtime',
+    compressedBytes: input.package.compressedBytes
+  })
+  try {
+    const transfer = await transferSkillPackageToRuntimeUnobserved(input)
+    operation.complete({ status: 'complete', compressedBytes: input.package.compressedBytes })
+    return transfer
+  } catch (error) {
+    operation.fail(error)
+    throw error
   }
 }
