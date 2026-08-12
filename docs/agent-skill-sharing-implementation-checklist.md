@@ -1272,8 +1272,9 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
 - [x] Add a CLI-only developer harness for local and remote integration tests.
 - [x] Keep CI commands compatible with macOS, Linux, Windows PowerShell/cmd, and WSL.
 - [ ] Archive bounded test results and security evidence without secrets or private contents.
-- [ ] Make package safety, transaction recovery, platform, and mixed-version suites required release
-      checks.
+- [x] Make package safety, transaction recovery, platform, and mixed-version suites required release
+      checks. Release publication now depends on focused macOS, real native-Windows, and Ubuntu
+      20.04/glibc 2.31 jobs that archive bounded machine-readable results.
 
 ## 14. Stage and release
 
