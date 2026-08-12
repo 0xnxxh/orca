@@ -56,6 +56,27 @@ hands → probe once more → `rename` in one syscall → verify we kept it.
   That was chosen over the alternative, which was killing daemons whose live agents we had
   merely failed to observe — unrecoverable, versus one click.
 
+  Three paths still reach a kill, and each is a residual rather than a guarantee. Adversarial
+  review named all three; none is a regression against the pre-hold behaviour, and none should
+  be closed by weakening the rules above.
+
+  - **`unknown` + a proven-dead endpoint, when process evidence is unavailable.** The endpoint
+    probe proves the *entry* is gone, not the *process*; a socket entry can vanish while the
+    daemon still hosts agents. Evidence covers that on POSIX — it runs for any `unknown`, not
+    only a live endpoint — so the gap is where evidence cannot answer: the clock is spent, the
+    pid will not verify, or `ps` is blind. Not reachable on Windows, where a named pipe vanishes
+    with its process, so a dead endpoint there implies a dead daemon and no agents to lose.
+  - **`unknown` + `rejected`, when evidence is unavailable.** "Cannot be adopted" is not the
+    same as "cannot be preserved": its agents keep running even though nothing can ever reattach
+    to them. Killing is chosen deliberately, because a daemon that can never be adopted and is
+    never replaced leaves the app permanently degraded with no route back. Reconsider only with
+    a way for the user to choose.
+  - **TOCTOU between the verdict and the kill.** An `empty` answer can go stale — another Orca
+    instance may create a session before the ladder runs — and a dead endpoint can be
+    republished. Nothing revalidates immediately before the kill, and `liveOwnerSurvived` is
+    read only afterwards. Pre-existing, and narrowed by this change rather than widened: the
+    window now opens only after the daemon has itself reported zero sessions.
+
   **If you ever raise the classification budget, gate the replace path on headroom first.**
   The budget serves two verdicts with opposite time-costs: reaching "don't kill" slowly is free,
   because the daemon survives however long it took, while reaching `empty` slowly is not — the
