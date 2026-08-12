@@ -220,6 +220,32 @@ describe('native Chromium import excludes the Google cookie family', () => {
     expect(cookiesSetMock.mock.calls.map(([details]) => details.name)).toEqual(['session'])
   })
 
+  it('does not request an encryption key for excluded Google rows', async () => {
+    const sourceCookiesPath = join(tmpDir, 'Chrome', 'Default', 'Network', 'Cookies')
+    createChromiumCookieTestDatabase(sourceCookiesPath, [
+      {
+        domain: '.google.com',
+        name: 'SID',
+        value: '',
+        encryptedValue: Buffer.from('v10-invalid')
+      }
+    ]).close()
+    seedTarget([])
+
+    const result = await importCookiesFromBrowser(chromeBrowser(sourceCookiesPath), 'persist:test')
+
+    expect(result.ok && result.summary).toEqual({
+      totalCookies: 1,
+      importedCookies: 0,
+      skippedCookies: 1,
+      googleCookiesSkipped: 1,
+      domains: []
+    })
+    expect(execFileSyncMock).not.toHaveBeenCalled()
+    expect(clearStorageDataMock).not.toHaveBeenCalled()
+    expect(cookiesSetMock).not.toHaveBeenCalled()
+  })
+
   it('keeps the live Google rows in the staged restart-fallback database', async () => {
     const sourceCookiesPath = seedSource([
       { domain: '.google.com', name: 'SID', value: 'transplanted-sid' },

@@ -1591,6 +1591,11 @@ export async function importCookiesFromBrowser(
     }
 
     const needsSourceKey = sourceRows.some((sourceRow) => {
+      const domain = sourceRow.host_key as string
+      const name = sourceRow.name as string
+      if (isGoogleSourceBoundCookie(name, domain) || isNonTransplantableCookieDomain(domain)) {
+        return false
+      }
       const encRaw = sourceRow.encrypted_value
       return encRaw instanceof Uint8Array && encRaw.length > 0
     })
