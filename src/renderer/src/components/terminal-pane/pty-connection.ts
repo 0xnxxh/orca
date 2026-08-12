@@ -8126,14 +8126,19 @@ export function connectPanePty(
           paneId: pane.id,
           ptyId: staleSessionId ?? null
         })
-        // Why: a stale restored session can fail reattach after mount; don't leave xterm alive without a backing PTY.
-        if (staleSessionId) {
-          deps.clearExitedPanePtyLayoutBinding(pane.id, staleSessionId)
-        } else {
-          deps.syncPanePtyLayoutBinding(pane.id, null)
+        // For an SSH pane a missing id says the reattach could not answer, not that the shell
+        // exited — a replaced relay reports that for shells still running under its predecessor —
+        // so surface it and let the user choose. A daemon/local pane is not ambiguous that way: its
+        // provider is authoritative about its own ptys, and it keeps replacing in place.
+        if (connectionId && staleSessionId) {
+          publishUnreachablePane(staleSessionId)
+          return false
         }
         if (staleSessionId) {
+          deps.clearExitedPanePtyLayoutBinding(pane.id, staleSessionId)
           deps.clearTabPtyId(deps.tabId, staleSessionId)
+        } else {
+          deps.syncPanePtyLayoutBinding(pane.id, null)
         }
         startFreshColdRestoreAgentResume(coldRestoreStartup, {
           forceBlankRestoredViewport: true
@@ -8149,15 +8154,18 @@ export function connectPanePty(
             : {})
       })
       if (connectResult?.sessionExpired) {
+        // For SSH, `sessionExpired` traces back to the relay's not-found, which it also answers for
+        // shells still running under a relay process it replaced — not proof the shell exited.
+        if (connectionId && staleSessionId) {
+          publishUnreachablePane(staleSessionId)
+          return false
+        }
         if (staleSessionId) {
           deps.clearExitedPanePtyLayoutBinding(pane.id, staleSessionId)
+          deps.clearTabPtyId(deps.tabId, staleSessionId)
         } else {
           deps.syncPanePtyLayoutBinding(pane.id, null)
         }
-        if (staleSessionId) {
-          deps.clearTabPtyId(deps.tabId, staleSessionId)
-        }
-        // Why: SSH sleep/reconnect can invalidate the relay PTY while the tab stays mounted; replace the dead lease in-place, not a stale overlay.
         startFreshColdRestoreAgentResume(coldRestoreStartup, {
           forceBlankRestoredViewport: true
         })

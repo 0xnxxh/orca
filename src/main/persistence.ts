@@ -7356,14 +7356,31 @@ export class Store {
    */
   /** The PTY a pane is durably bound to. The desktop plane's home is `local` — the renderer is its
    *  only publisher of pane membership. Hedging into `ssh:<target>` let the headless plane's copy
-   *  outvote the live binding and silently no-op supersession (STA-3077). */
+   *  outvote the live binding and silently no-op supersession (STA-3077).
+   *
+   *  Keyed on the leaf, falling back across tabs: a lease freezes its tabId at write time, and
+   *  `detachTerminalPaneToTab` moves a live pane, so the named tab can be the one the pane left.
+   *  Missing the binding there makes it lose to recency and retires the pane's own shell. */
   private durablyBoundPtyIdForPane(
     targetId: string,
     tabId: string,
     leafId: string
   ): string | undefined {
+    const findLeafBinding = (session: WorkspaceSessionState | undefined): string | undefined => {
+      const layouts = session?.terminalLayoutsByTabId
+      return (
+        layouts?.[tabId]?.ptyIdsByLeafId?.[leafId] ??
+        Object.values(layouts ?? {}).find((layout) => layout?.ptyIdsByLeafId?.[leafId])
+          ?.ptyIdsByLeafId?.[leafId]
+      )
+    }
+    // Local FIRST, and only then the headless plane. Local-first is what STA-3077 needed: the old
+    // code preferred `ssh:<target>`, so a copy no live writer maintained outvoted the real binding
+    // and supersession no-opped. The fallback is not that hedge — it only speaks for a pane local
+    // says nothing about, so a headless-owned pane still gets a vote before its lease is retired.
     const boundPtyId =
-      this.state.workspaceSession?.terminalLayoutsByTabId?.[tabId]?.ptyIdsByLeafId?.[leafId]
+      findLeafBinding(this.state.workspaceSession) ??
+      findLeafBinding(this.state.workspaceSessionsByHostId?.[toSshExecutionHostId(targetId)])
     return boundPtyId ? this.getRelayPtyIdForSshLeaseComparison(targetId, boundPtyId) : undefined
   }
 

@@ -9719,6 +9719,52 @@ describe('connectPanePty', () => {
   // shells still running under a relay process it replaced. Respawning there starts a second
   // `--resume` against the same agent session and both processes append to one transcript. This is
   // the last route to that defect, and it is the reason this pane surfaces as disconnected instead.
+  // The reattach can also FULFIL with a result that says the session expired, or with no usable
+  // pty id at all. Both trace back to the same relay not-found, so neither proves the shell exited —
+  // and both used to clear the binding and cold-restore resume the agent, which is the duplicate
+  // transcript this pane exists to prevent. SSH only: a daemon/local provider is authoritative
+  // about its own ptys and keeps replacing in place.
+  it.each([
+    ['a result flagged sessionExpired', { id: 'tab-pty', sessionExpired: true }],
+    ['a result carrying no pty id', {}]
+  ])('surfaces the pane instead of resuming when an SSH reattach returns %s', async (_l, res) => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('tab-pty')
+    transport.getPtyId.mockImplementation(() => null)
+    transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) =>
+      sessionId ? res : { id: 'respawned-pty' }
+    )
+    transportFactoryQueue.push(transport)
+
+    // connectionId resolves from the store's repo list, not from deps — an SSH-owned repo is what
+    // makes this pane SSH, and the branch under test is SSH-only by design.
+    mockStoreState = {
+      ...mockStoreState,
+      repos: [{ id: 'repo1', connectionId: 'target-a', displayName: 'orca' }]
+    } as StoreState
+    const pane = createPane(1)
+    const manager = createManager(1)
+    const onPtyRecoveryState = vi.fn<(paneId: number, state: RecoveryStateProbe) => void>()
+    const deps = createDeps({
+      restoredLeafId: LEAF_1,
+      restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' },
+      onPtyRecoveryStateRef: { current: onPtyRecoveryState }
+    })
+
+    connectPanePty(pane as never, manager as never, deps as never)
+    await flushAsyncTicks(30)
+
+    // Producer pin: the restore ran and returned this shape, or the clauses below are vacuous.
+    expect(transport.connect.mock.calls[0]?.[0]?.sessionId).toBe('tab-pty')
+    expect(
+      onPtyRecoveryState.mock.calls.find(
+        ([paneId, state]) => paneId === pane.id && state?.phase === 'disconnected'
+      )?.[1]?.unreachablePane
+    ).toBeDefined()
+    expect(transport.connect).toHaveBeenCalledTimes(1)
+    expect(deps.clearTabPtyId).not.toHaveBeenCalled()
+  })
+
   it('does not respawn a pane whose restore was answered with a not-found', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('tab-pty')

@@ -225,6 +225,40 @@ describe('STA-3077 step P: one pane, one live claim across partitions', () => {
   })
 })
 
+describe('STA-3077: arbitration follows the pane, not the tab it was written in', () => {
+  // A lease freezes its tabId when written; `detachTerminalPaneToTab` then moves the live pane and
+  // its PTY into a new tab. Looking the binding up under the frozen tab finds nothing, so the bound
+  // shell loses to recency and supersession retires the pane's OWN shell in favour of a stale one.
+  it('finds the binding after the pane has been moved to another tab', async () => {
+    const MOVED_TAB = 'tab-moved-to'
+    const store = await createStore()
+    // The renderer publishes the pane in its NEW tab; the lease still names the old one.
+    store.setWorkspaceSession(
+      {
+        ...getDefaultWorkspaceSession(),
+        tabsByWorktree: { [WORKTREE]: [{ id: MOVED_TAB, worktreeId: WORKTREE }] },
+        terminalLayoutsByTabId: {
+          [MOVED_TAB]: {
+            root: { type: 'leaf' as const, leafId: LEAF },
+            activeLeafId: LEAF,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [LEAF]: appPtyId('pty-bound') }
+          }
+        }
+      } as never,
+      LOCAL_EXECUTION_HOST_ID
+    )
+    sshSpawnUpsertsLease(store, 'pty-bound')
+    // A newer, unbound lease arrives for the same pane under the lease's frozen tab.
+    sshSpawnUpsertsLease(store, 'pty-newer')
+
+    store.supersedeDuplicatePaneLeases(TARGET)
+
+    // The bound shell must win. Keyed on the frozen tab, it is invisible and recency retires it.
+    expect(liveLeaseIdsForPane(store)).toEqual(['pty-bound'])
+  })
+})
+
 describe('STA-3077 step P: the desktop plane resolves from its own home', () => {
   // INVERTED. This clause used to require the two partitions to AGREE after load, which assumed
   // `ssh:<target>` was a stale spill of this plane's state. It is not — it is the headless/CLI
