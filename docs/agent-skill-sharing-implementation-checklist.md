@@ -542,12 +542,13 @@ does not mean the surrounding phase is complete.
       installations.
 - [x] Detect an agent before creating its provider-specific configuration root.
 - [x] Avoid modifying roots for agents that consume `.agents/skills` directly.
-- [ ] Keep loose-skill placement as the universal/default installation path.
-- [ ] Use the portable root directly for compatible Cursor installations.
-- [ ] Generate validated `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` adapters only
-      for detected clients where native plugin installation is useful.
-- [ ] Fall back to loose skills for unsupported plugin clients, including the current Codex IDE
-      extension, and retain bundle/version provenance for every installed skill.
+- [x] Keep loose-skill placement as the universal/default installation path.
+- [x] Do not add Cursor-specific placement in V1; keep the Agent Plugins-compatible root as the
+      portable archive shape while installing contained skills through canonical loose-skill paths.
+- [x] Do not generate `.claude-plugin/plugin.json` or `.codex-plugin/plugin.json` adapters in V1;
+      native plugin installation remains a separately reviewed follow-up if it becomes useful.
+- [x] Use loose skills for plugin clients, including the current Codex IDE extension, and retain
+      bundle/version provenance for every installed skill.
 
 ### Placement reconciliation
 
@@ -886,7 +887,10 @@ does not mean the surrounding phase is complete.
 ### UX validation
 
 - [ ] Test keyboard shortcuts and labels with platform-aware macOS versus Windows/Linux behavior.
-- [ ] Test loading, error, cancellation, partial, conflict, and stale-preview states.
+- [x] Test loading, error, cancellation, partial, conflict, and stale-preview states. Renderer
+      coverage includes scan loading, unavailable links, upload/install cancellation, partial
+      provider results, keep-local conflicts, capability loss after preview, and selection
+      reconciliation after a changed discovery scan; package tests cover source drift.
 - [ ] Test screen-reader names, focus order, progress announcements, and destructive confirmations.
 - [ ] Test long names, release notes, paths, organization names, and localized copy.
 - [ ] Review trust and privacy wording with security and design.

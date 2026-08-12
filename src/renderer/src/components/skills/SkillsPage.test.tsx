@@ -252,4 +252,26 @@ describe('SkillsPage', () => {
       'A skill with this name is already selected from another source.'
     )
   })
+
+  it('drops stale selections when a refreshed scan no longer contains the skill', async () => {
+    const discover = vi
+      .fn()
+      .mockResolvedValueOnce(discoveryResult(['alpha', 'beta']))
+      .mockResolvedValueOnce(discoveryResult(['beta']))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: skillsApi(discover), runtimeEnvironments: { call: vi.fn() } }
+    })
+
+    await renderPage()
+    await flushMicrotasks()
+    await act(async () => fireEvent.click(buttonNamed('Share skills')))
+    await act(async () => fireEvent.click(selectionCheckbox('alpha')))
+    expect(container?.textContent).toContain('1 selected')
+
+    await act(async () => fireEvent.click(buttonNamed('Refresh')))
+    await flushMicrotasks()
+    expect(container?.textContent).toContain('0 selected')
+    expect(renderedSkillNames()).toEqual(['beta'])
+  })
 })

@@ -70,6 +70,24 @@ export function addShareableSkillResults(
   return next
 }
 
+export function retainedShareableSkillSelection(
+  current: Set<string>,
+  skills: readonly DiscoveredSkill[],
+  local: boolean
+): Set<string> {
+  const next = new Set<string>()
+  const names = new Set<string>()
+  for (const skill of skills) {
+    const name = shareSkillNameKey(skill)
+    if (!current.has(skill.id) || !isSkillShareEligible(skill, local) || names.has(name)) {
+      continue
+    }
+    next.add(skill.id)
+    names.add(name)
+  }
+  return next.size === current.size ? current : next
+}
+
 export function updatedSkillSelection(
   current: ReadonlySet<string>,
   skillId: string,

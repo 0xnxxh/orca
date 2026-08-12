@@ -29,6 +29,7 @@ import {
   SkillShareSelectionAction,
   SkillShareSelectionStatus,
   addShareableSkillResults,
+  retainedShareableSkillSelection,
   updatedSkillSelection
 } from './SkillShareSelectionControls'
 
@@ -117,8 +118,12 @@ export default function SkillsPage(): React.JSX.Element {
     }
     try {
       const nextResult = await discoverSkillsForRuntimeTarget(runtimeTarget)
+      const local = runtimeTarget.kind === 'local'
       if (isCurrentScan()) {
         setResult(nextResult)
+        setSelectedSkillIds((current) =>
+          retainedShareableSkillSelection(current, nextResult.skills, local)
+        )
       }
     } catch (error) {
       console.error('Failed to discover skills:', error)
