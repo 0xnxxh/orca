@@ -44,7 +44,7 @@ export const SkillPackageManifestV1Schema = z
 export type SkillPackageManifestV1 = z.infer<typeof SkillPackageManifestV1Schema>
 
 export function validateSkillPackageName(name: string): void {
-  if (!SKILL_NAME_PATTERN.test(name)) {
+  if (!SKILL_NAME_PATTERN.test(name) || WINDOWS_RESERVED_SEGMENT.test(name)) {
     throw new Error('skill-package-skill-name-invalid')
   }
 }
@@ -96,6 +96,7 @@ export function parseSkillPackageManifest(value: unknown): SkillPackageManifestV
   if (!parsed.success) {
     throw new Error('skill-package-manifest-invalid')
   }
+  validateSkillPackageName(parsed.data.name)
   let previousPath: string | null = null
   const foldedPaths = new Set<string>()
   let totalBytes = 0

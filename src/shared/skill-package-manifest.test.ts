@@ -37,6 +37,15 @@ describe('skill package manifest', () => {
     expect(parseSkillPackageManifest(manifest()).name).toBe('test-skill')
   })
 
+  it.each(['con', 'prn', 'aux', 'nul', 'com1', 'com9', 'lpt1', 'lpt9'])(
+    'rejects the Windows device skill name %s',
+    (name) => {
+      expect(() => parseSkillPackageManifest({ ...(manifest() as object), name })).toThrow(
+        'skill-package-skill-name-invalid'
+      )
+    }
+  )
+
   it.each([
     '../SKILL.md',
     '/SKILL.md',
