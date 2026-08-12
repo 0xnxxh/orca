@@ -485,6 +485,7 @@ describePosix('local PTY shell-ready launch config', () => {
     const zshrc = readFileSync(join(userDataPath, 'shell-ready', 'zsh', '.zshrc'), 'utf8')
     const zlogin = readFileSync(join(userDataPath, 'shell-ready', 'zsh', '.zlogin'), 'utf8')
     expect(zshenv).toContain('_orca_user_zdotdir="${_orca_spawn_orig_zdotdir:-$HOME}"')
+    expect(zshenv).toContain('printf "\\033]777;orca-shell-start:%s\\007" "$$"')
     expect(zshenv).toContain('*/shell-ready/zsh) _orca_user_zdotdir="$HOME" ;;')
     expect(zshenv).toContain('""|*/shell-ready/zsh) export ORCA_ORIG_ZDOTDIR="$HOME" ;;')
     expectZdotdirSourceContext(zprofile, '.zprofile')

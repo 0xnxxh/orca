@@ -76,6 +76,15 @@ import {
   readPtySlavePath
 } from '../../shared/pty-slave-line-discipline-echo'
 import {
+  createShellStartupIdentityScanState,
+  drainShellStartupIdentityHeldBytes,
+  scanForShellStartupIdentity
+} from '../shell-startup-identity-scanner'
+import {
+  createShellPromptReadinessProbe,
+  type ShellPromptReadinessProbe
+} from '../shell-prompt-readiness-probe'
+import {
   expandWindowsEnvironmentVariables,
   expandWindowsPathEnvironmentVariables
 } from '../../shared/windows-environment-expansion'
@@ -951,6 +960,11 @@ export class LocalPtyProvider implements IPtyProvider {
     // Shell-ready startup command support
     let resolveShellReady: ((signal: ShellReadySignal) => void) | null = null
     let shellReadyTimeout: ReturnType<typeof setTimeout> | null = null
+    let shellStartupPid: number | null = null
+    let shellPromptReadinessProbe: ShellPromptReadinessProbe | null = null
+    let shellStartupIdentityScanState = shellReadyLaunch?.supportsReadyMarker
+      ? createShellStartupIdentityScanState()
+      : null
     const shellReadyScanState = shellReadyLaunch?.supportsReadyMarker
       ? createShellReadyScanState()
       : null
@@ -967,6 +981,8 @@ export class LocalPtyProvider implements IPtyProvider {
         clearTimeout(shellReadyTimeout)
         shellReadyTimeout = null
       }
+      shellPromptReadinessProbe?.dispose()
+      shellPromptReadinessProbe = null
       const resolve = resolveShellReady
       resolveShellReady = null
       resolve(signal)
@@ -975,11 +991,34 @@ export class LocalPtyProvider implements IPtyProvider {
       if (!shellReadyScanState) {
         return
       }
-      const heldBytes = drainShellReadyHeldBytes(shellReadyScanState)
+      let heldBytes = shellStartupIdentityScanState
+        ? drainShellStartupIdentityHeldBytes(shellStartupIdentityScanState)
+        : ''
+      shellStartupIdentityScanState = null
+      if (heldBytes) {
+        heldBytes = scanForShellReady(shellReadyScanState, heldBytes).output
+      }
+      heldBytes += drainShellReadyHeldBytes(shellReadyScanState)
       if (heldBytes.length === 0) {
         return
       }
       startupIngress.accept(heldBytes)
+    }
+    if (shellReadyScanState) {
+      shellPromptReadinessProbe = createShellPromptReadinessProbe({
+        slavePath: readPtySlavePath(proc),
+        shellPath,
+        shellCwd: effectiveCwd,
+        shellPathEnv: finalEnv.PATH,
+        getShellPid: () => shellStartupPid,
+        onPromptReady: () => {
+          console.warn(
+            `[pty] ${id}: shell-ready wrapper was replaced before its marker; releasing at the identified shell prompt. OSC 133 integration may be unavailable.`
+          )
+          releaseHeldShellReadyBytes()
+          finishShellReady({ postMarkerBytesObserved: true })
+        }
+      })
     }
     if (args.command) {
       if (shellReadyLaunch?.supportsReadyMarker) {
@@ -1002,20 +1041,33 @@ export class LocalPtyProvider implements IPtyProvider {
         startupCommandCleanup?.()
         startupCommandCleanup = null
         resolveShellReady = null
+        shellPromptReadinessProbe?.dispose()
+        shellPromptReadinessProbe = null
       })
     }
 
     const disposables: { dispose: () => void }[] = []
     const onDataDisposable = proc.onData((rawData) => {
       let data = rawData
+      if (shellStartupIdentityScanState && resolveShellReady) {
+        const scanned = scanForShellStartupIdentity(shellStartupIdentityScanState, data)
+        data = scanned.output
+        if (scanned.shellPid) {
+          shellStartupPid = scanned.shellPid
+          shellStartupIdentityScanState = null
+        }
+      }
       if (shellReadyScanState && resolveShellReady) {
-        const scanned = scanForShellReady(shellReadyScanState, rawData)
+        const scanned = scanForShellReady(shellReadyScanState, data)
         data = scanned.output
         if (scanned.matched) {
           finishShellReady({ postMarkerBytesObserved: scanned.postMarkerBytesObserved })
         }
       }
       startupIngress.accept(data)
+      if (resolveShellReady && data.length > 0) {
+        shellPromptReadinessProbe?.notifyOutput(data)
+      }
     })
     if (onDataDisposable) {
       disposables.push(onDataDisposable)
@@ -1033,6 +1085,8 @@ export class LocalPtyProvider implements IPtyProvider {
         shellReadyTimeout = null
       }
       startupCommandCleanup?.()
+      shellPromptReadinessProbe?.dispose()
+      shellPromptReadinessProbe = null
       clearPtyState(id)
       startupIngress.drainAndClose()
       startupIngressByPty.delete(id)
