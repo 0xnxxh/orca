@@ -195,6 +195,31 @@ describe('native Chromium import excludes the Google cookie family', () => {
     ])
   })
 
+  it('reports an excluded Google row even when its encrypted value is invalid', async () => {
+    const sourceCookiesPath = join(tmpDir, 'Chrome', 'Default', 'Network', 'Cookies')
+    createChromiumCookieTestDatabase(sourceCookiesPath, [
+      {
+        domain: '.google.com',
+        name: 'SID',
+        value: '',
+        encryptedValue: Buffer.from('v10-invalid')
+      },
+      { domain: '.example.com', name: 'session', value: 'new' }
+    ]).close()
+    seedTarget([])
+    execFileSyncMock.mockReturnValue('test-password\n')
+
+    const result = await importCookiesFromBrowser(chromeBrowser(sourceCookiesPath), 'persist:test')
+
+    expect(result.ok && result.summary).toMatchObject({
+      totalCookies: 2,
+      importedCookies: 1,
+      skippedCookies: 1,
+      googleCookiesSkipped: 1
+    })
+    expect(cookiesSetMock.mock.calls.map(([details]) => details.name)).toEqual(['session'])
+  })
+
   it('keeps the live Google rows in the staged restart-fallback database', async () => {
     const sourceCookiesPath = seedSource([
       { domain: '.google.com', name: 'SID', value: 'transplanted-sid' },

@@ -1655,6 +1655,20 @@ export async function importCookiesFromBrowser(
     }
 
     for (const sourceRow of sourceRows) {
+      const domain = sourceRow.host_key as string
+      const name = sourceRow.name as string
+
+      if (isGoogleSourceBoundCookie(name, domain)) {
+        integritySkipped++
+        continue
+      }
+
+      // Why: transplanting these replaces a working sign-in with a session the site rejects.
+      if (isNonTransplantableCookieDomain(domain)) {
+        nonTransplantableSkipped++
+        continue
+      }
+
       const encRaw = sourceRow.encrypted_value
       // Why: node:sqlite returns BLOBs as Uint8Array; treat any other type as missing, not an empty buffer that would silently blank the cookie value.
       const encBuf = encRaw instanceof Uint8Array ? Buffer.from(encRaw) : null
@@ -1674,20 +1688,6 @@ export async function importCookiesFromBrowser(
         decryptedValue = Buffer.from(plainRaw, 'latin1')
       } else {
         decryptedValue = Buffer.alloc(0)
-      }
-
-      const domain = sourceRow.host_key as string
-      const name = sourceRow.name as string
-
-      if (isGoogleSourceBoundCookie(name, domain)) {
-        integritySkipped++
-        continue
-      }
-
-      // Why: transplanting these replaces a working sign-in with a session the site rejects.
-      if (isNonTransplantableCookieDomain(domain)) {
-        nonTransplantableSkipped++
-        continue
       }
 
       let validDomain = sourceDomainValidity.get(domain)
