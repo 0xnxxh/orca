@@ -257,6 +257,9 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       settings: {
         activeRuntimeEnvironmentId: ENVIRONMENT_ID
       },
+      runtimeStatusByEnvironmentId: new Map([
+        [ENVIRONMENT_ID, { status: { capabilities: ['browser.screencast.v1'] }, checkedAt: 1 }]
+      ]),
       activeWorktreeId: WORKTREE_ID,
       activeWorkspaceExecutionHostId: RUNTIME_EXECUTION_HOST_ID,
       activeTabType: 'editor',
@@ -304,6 +307,27 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     resetWebSessionBrowserPlacementsForTests()
     resetWebSessionFocusIntentForTests()
     vi.clearAllMocks()
+  })
+
+  it('rejects before RPC when the selected runtime does not advertise screencast', async () => {
+    mocks.getState.mockReturnValue({
+      settings: { activeRuntimeEnvironmentId: ENVIRONMENT_ID },
+      runtimeStatusByEnvironmentId: new Map([
+        [ENVIRONMENT_ID, { status: { capabilities: [] }, checkedAt: 1 }]
+      ])
+    })
+    const runtimeCall = vi.fn()
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    await expect(
+      createWebRuntimeSessionBrowserTab({
+        worktreeId: WORKTREE_ID,
+        environmentId: ENVIRONMENT_ID
+      })
+    ).rejects.toThrow('does not support browser streaming')
+
+    expect(runtimeCall).not.toHaveBeenCalled()
+    expect(mocks.createBrowserTab).not.toHaveBeenCalled()
   })
 
   it('applies an empty host snapshot without retaining delayed browser focus', async () => {
@@ -605,6 +629,9 @@ describe('createWebRuntimeSessionBrowserTab', () => {
   it('creates an unfocused browser while preserving its requested split', async () => {
     mocks.getState.mockReturnValue({
       settings: { activeRuntimeEnvironmentId: ENVIRONMENT_ID },
+      runtimeStatusByEnvironmentId: new Map([
+        [ENVIRONMENT_ID, { status: { capabilities: ['browser.screencast.v1'] }, checkedAt: 1 }]
+      ]),
       activeWorktreeId: WORKTREE_ID,
       browserPagesByWorkspace: {
         'host-browser-workspace': [
@@ -770,6 +797,9 @@ describe('createWebRuntimeSessionBrowserTab', () => {
   it('does not reselect an already active browser worktree on the same runtime', async () => {
     mocks.getState.mockReturnValue({
       settings: { activeRuntimeEnvironmentId: ENVIRONMENT_ID },
+      runtimeStatusByEnvironmentId: new Map([
+        [ENVIRONMENT_ID, { status: { capabilities: ['browser.screencast.v1'] }, checkedAt: 1 }]
+      ]),
       activeWorktreeId: WORKTREE_ID,
       activeWorkspaceExecutionHostId: RUNTIME_EXECUTION_HOST_ID,
       browserPagesByWorkspace: {},
@@ -851,6 +881,9 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       settings: {
         activeRuntimeEnvironmentId: ENVIRONMENT_ID
       },
+      runtimeStatusByEnvironmentId: new Map([
+        [ENVIRONMENT_ID, { status: { capabilities: ['browser.screencast.v1'] }, checkedAt: 1 }]
+      ]),
       activeWorktreeId,
       browserPagesByWorkspace: {},
       remoteBrowserPageHandlesByPageId: {},
