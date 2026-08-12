@@ -74,9 +74,10 @@ import {
 import { ensureStructuredAgentSessionHost as installStructuredAgentSessionHost } from './structured-agent-session-runtime'
 import { getStructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-registry'
 import type { AgentSessionAttachParams } from '../native-chat/agent-session-wire/structured-agent-session-attach'
-import type {
-  StructuredAgentSessionHandoffTransport,
-  StructuredTuiOwner
+import {
+  StructuredTuiLaunchCleanupError,
+  type StructuredAgentSessionHandoffTransport,
+  type StructuredTuiOwner
 } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
 import type { AgentSessionRecord } from '../../shared/agent-session-record'
 import { agentSessionProviderHandlesEqual } from '../../shared/agent-session-provider-handle'
@@ -1390,6 +1391,7 @@ type TerminalCreateOptions = {
   resumeProviderSession?: AgentProviderSessionMetadata
   launchToken?: string
   launchAgent?: TuiAgent
+  preserveClaudeAuthEnv?: boolean
   // Why: agent ids are not shell commands (`cursor` is the Cursor desktop app; its
   // CLI is `cursor-agent`). Callers that know the agent name it here instead of
   // guessing a command, and the runtime builds the configured launch.
@@ -1705,6 +1707,7 @@ type RuntimePtyController = {
     cwd?: string
     command?: string
     launchAgent?: TuiAgent
+    preserveClaudeAuthEnv?: boolean
     commandDelivery?: 'renderer' | 'provider'
     startupCommandDelivery?: WorktreeStartupLaunch['startupCommandDelivery']
     env?: Record<string, string>
@@ -9137,7 +9140,7 @@ export class OrcaRuntimeService {
   private createStructuredAgentSessionHandoffTransport(): StructuredAgentSessionHandoffTransport {
     return {
       hostLabel: hostname(),
-      launchTui: async ({ record, fence, spawnToken }) => {
+      launchTui: async ({ record, fence, spawnToken, onSpawned }) => {
         const head = record.providerHandleChain.at(-1)
         if (!head) {
           throw new Error('agent_session_identity_required')
@@ -9149,10 +9152,12 @@ export class OrcaRuntimeService {
           | { prove: () => ReturnType<typeof proveClaudeTuiResume>; dispose: () => void }
           | undefined
         let claudeLaunch: ClaudeTuiResumeLaunch | undefined
+        let expectedTranscriptPath: string | undefined
         if (head.handle.provider === 'claude') {
-          const expectedTranscriptPath = await resolveSessionFilePath('claude', providerSessionId, {
-            claudeProjectsDir: join(record.accountHome.path, 'projects')
-          })
+          expectedTranscriptPath =
+            (await resolveSessionFilePath('claude', providerSessionId, {
+              claudeProjectsDir: join(record.accountHome.path, 'projects')
+            })) ?? undefined
           if (!expectedTranscriptPath) {
             throw new Error('The Claude transcript could not be resolved before TUI resume.')
           }
@@ -9197,26 +9202,10 @@ export class OrcaRuntimeService {
           if (!terminal.processId || !terminal.paneKey || !terminal.tabId || !terminal.ptyId) {
             throw new Error('The resumed terminal did not publish a process identity.')
           }
-          await this.waitForTerminal(terminal.handle, {
-            condition: 'tui-idle',
-            timeoutMs: 30_000
-          })
-          const proof =
-            head.handle.provider === 'codex'
-              ? await this.waitForStructuredTuiProof({
-                  handle: terminal.handle,
-                  paneKey: terminal.paneKey,
-                  threadId: head.handle.threadId,
-                  spawnToken,
-                  codexHome: record.accountHome.path,
-                  sessionId: record.sessionId
-                })
-              : await claudeProof!.prove()
-          const revealed = await this.focusTerminal(terminal.handle)
-          return this.refreshStructuredTuiOwnerBinding({
+          const spawnedOwner = this.refreshStructuredTuiOwnerBinding({
             terminal: {
               handle: terminal.handle,
-              tabId: revealed.tabId,
+              tabId: terminal.tabId,
               paneKey: terminal.paneKey,
               ptyId: terminal.ptyId
             },
@@ -9241,14 +9230,46 @@ export class OrcaRuntimeService {
                     fence,
                     observedAt: Date.now()
                   }),
+            ...(expectedTranscriptPath ? { transcriptPath: expectedTranscriptPath } : {})
+          })
+          await onSpawned?.(spawnedOwner)
+          await this.waitForTerminal(terminal.handle, {
+            condition: 'tui-idle',
+            timeoutMs: 30_000
+          })
+          const proof =
+            head.handle.provider === 'codex'
+              ? await this.waitForStructuredTuiProof({
+                  handle: terminal.handle,
+                  paneKey: terminal.paneKey,
+                  threadId: head.handle.threadId,
+                  spawnToken,
+                  codexHome: record.accountHome.path,
+                  sessionId: record.sessionId
+                })
+              : await claudeProof!.prove()
+          const revealed = await this.focusTerminal(terminal.handle)
+          return this.refreshStructuredTuiOwnerBinding({
+            ...spawnedOwner,
+            terminal: {
+              handle: terminal.handle,
+              tabId: revealed.tabId,
+              paneKey: terminal.paneKey,
+              ptyId: terminal.ptyId
+            },
+            process: spawnedOwner.process,
             ...(proof.transcriptPath ? { transcriptPath: proof.transcriptPath } : {})
           })
         } catch (error) {
-          await this.closeTerminal(terminal.handle)
-          await this.waitForTerminal(terminal.handle, {
-            condition: 'exit',
-            timeoutMs: 15_000
-          })
+          try {
+            await this.closeTerminal(terminal.handle)
+            await this.waitForTerminal(terminal.handle, {
+              condition: 'exit',
+              timeoutMs: 15_000
+            })
+          } catch (cleanupError) {
+            throw new StructuredTuiLaunchCleanupError(error, cleanupError)
+          }
           throw error
         } finally {
           claudeProof?.dispose()
@@ -25926,6 +25947,7 @@ export class OrcaRuntimeService {
       env: startup.env,
       launchConfig: startup.launchConfig,
       launchAgent: request.agent,
+      ...(handoffAuthority?.launch ? { preserveClaudeAuthEnv: true } : {}),
       presentation: request.presentation ?? 'background',
       tabId: request.placement?.tabId,
       leafId: request.placement?.leafId,
@@ -26359,6 +26381,7 @@ export class OrcaRuntimeService {
               ? launchOpts.command
               : (agentTeamsPlan?.command ?? launchOpts.command),
             launchAgent: launchOpts.launchAgent,
+            preserveClaudeAuthEnv: launchOpts.preserveClaudeAuthEnv,
             commandDelivery: 'provider',
             startupCommandDelivery: launchOpts.startupCommandDelivery,
             env,

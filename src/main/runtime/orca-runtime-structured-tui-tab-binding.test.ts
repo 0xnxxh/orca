@@ -130,6 +130,7 @@ describe('structured TUI launch tab binding', () => {
     })
 
     const transport = internal.createStructuredAgentSessionHandoffTransport()
+    const onSpawned = vi.fn(async () => {})
     const owner = await transport.launchTui({
       record: {
         sessionId: 'session-1',
@@ -140,7 +141,8 @@ describe('structured TUI launch tab binding', () => {
         ]
       } as never,
       fence: 3,
-      spawnToken: 'spawn-token'
+      spawnToken: 'spawn-token',
+      onSpawned
     })
 
     const reveal = revealTerminalSession.mock.calls[0]?.[1] as {
@@ -157,6 +159,15 @@ describe('structured TUI launch tab binding', () => {
       expect.objectContaining({ condition: 'tui-idle' })
     )
     expect(waitForStructuredTuiProof).toHaveBeenCalledOnce()
+    expect(onSpawned).toHaveBeenCalledWith(
+      expect.objectContaining({
+        terminal: expect.objectContaining({ ptyId: 'pty-structured' }),
+        process: expect.objectContaining({ spawnToken: 'spawn-token' })
+      })
+    )
+    expect(onSpawned.mock.invocationCallOrder[0]).toBeLessThan(
+      waitForTerminal.mock.invocationCallOrder[0]!
+    )
     expect(waitForStructuredTuiProof.mock.invocationCallOrder[0]).toBeLessThan(
       revealTerminalSession.mock.invocationCallOrder[0]!
     )
