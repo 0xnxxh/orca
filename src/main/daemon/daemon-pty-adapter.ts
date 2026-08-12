@@ -1226,6 +1226,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       if (!snapshot || typeof snapshot.outputSequence !== 'number') {
         return null
       }
+      const kittyKeyboardFlags = parseTerminalKittyKeyboardFlags(snapshot.modes.kittyKeyboardFlags)
       return {
         data: snapshot.rehydrateSequences + snapshot.snapshotAnsi,
         frameRestoreAnsi: snapshot.frameRestoreAnsi,
@@ -1240,9 +1241,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         alternateScreen: snapshot.modes.alternateScreen,
         // Why known `0` is carried too: it proves the app negotiated nothing at
         // this boundary, which is a different fact from a source that cannot say.
-        ...(parseTerminalKittyKeyboardFlags(snapshot.modes.kittyKeyboardFlags) !== undefined
-          ? { kittyKeyboardFlags: snapshot.modes.kittyKeyboardFlags }
-          : {}),
+        ...(kittyKeyboardFlags !== undefined ? { kittyKeyboardFlags } : {}),
         ...(snapshot.pendingEscapeTailAnsi
           ? { pendingEscapeTailAnsi: snapshot.pendingEscapeTailAnsi }
           : {})

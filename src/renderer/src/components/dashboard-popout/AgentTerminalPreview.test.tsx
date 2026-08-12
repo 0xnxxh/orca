@@ -292,7 +292,7 @@ describe('AgentTerminalPreview', () => {
 
     // Live output keeps advancing the same mirror the forwarder reads.
     act(() => {
-      emitData?.({ type: 'data', ptyId: 'pty-1', data: '\x1b[<u', bytes: 5 })
+      emitData?.({ type: 'data', ptyId: 'pty-1', data: '\x1b[<u', bytes: 4 })
     })
     expect(imeHarness.forwarders[0]!.getKittyKeyboardFlags()).toBe(0)
   })

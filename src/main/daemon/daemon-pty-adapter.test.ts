@@ -1339,6 +1339,31 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       })
     })
 
+    // The other half of that contract: a daemon that cannot say must leave the
+    // key absent, so consumers keep the state unknown instead of reading a `0`.
+    it('omits kitty flags when the daemon snapshot has none', async () => {
+      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+      lastSubprocess._simulateData('plain output\r\n')
+      const realRequest = DaemonClient.prototype.request
+      const legacyClient = vi
+        .spyOn(DaemonClient.prototype, 'request')
+        .mockImplementation(async function (this: DaemonClient, type, payload, timeoutMs) {
+          const result = await realRequest.call(this, type, payload, timeoutMs)
+          if (type !== 'getSnapshot') {
+            return result
+          }
+          const { snapshot } = result as { snapshot: { modes: Record<string, unknown> } }
+          const { kittyKeyboardFlags: _omitted, ...modes } = snapshot.modes
+          return { snapshot: { ...snapshot, modes } }
+        })
+
+      const snapshot = await adapter.getBufferSnapshot(id)
+      legacyClient.mockRestore()
+
+      expect(snapshot).not.toBeNull()
+      expect(snapshot).not.toHaveProperty('kittyKeyboardFlags')
+    })
+
     it('exposes live state separately from the visible frame', async () => {
       const { id } = await adapter.spawn({ cols: 80, rows: 24 })
       lastSubprocess._simulateData('\x1b[?1049h\x1b[?1004h\x1b[?25lframe')

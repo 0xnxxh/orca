@@ -6718,7 +6718,7 @@
       "providers": ["local", "daemon", "ssh", "remote-runtime"],
       "coveredPlatforms": ["macos", "linux"],
       "coveredProviders": [],
-      "coverageNotes": "Local macOS and containerized Linux evidence, deterministic renderer-unit coverage for the Linux/Sogou candidate-key policy including the legacy orphaned-keyup fallback, and Electron/CDP live-PTY Sogou-style repros. Real Linux/Sogou OS IME automation, Windows ConPTY post-agent reset, and the CJK/Vietnamese/Arabic matrix remain registered gaps.",
+      "coverageNotes": "Local macOS and containerized Linux evidence, deterministic renderer-unit coverage for the Linux/Sogou candidate-key policy including the legacy orphaned-keyup fallback, Electron/CDP live-PTY Sogou-style repros, and a macOS renderer/main slice for Preview kitty commits: claimed press/release pairing in both keyup orderings, and snapshot flag provenance where a proven 0, a proven non-zero, and an absent field stay three distinct facts from daemon through the sequenced remote SnapshotStart frame. Real Linux/Sogou OS IME automation, Windows ConPTY post-agent reset, and the CJK/Vietnamese/Arabic matrix remain registered gaps.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/6699",
         "https://github.com/stablyai/orca/pull/6682",
@@ -6886,6 +6886,15 @@
       ],
       "evidenceRuns": [
         {
+          "date": "2026-08-11",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/dashboard-popout/preview-terminal-ime-bridge-kitty-bytes.test.ts src/renderer/src/components/dashboard-popout/preview-terminal-snapshot-replay.test.ts src/renderer/src/components/dashboard-popout/AgentTerminalPreview.test.tsx src/shared/terminal-kitty-keyboard-mode-tracker.test.ts src/main/ipc/terminal-preview.test.ts src/main/ipc/terminal-preview-output-stream.test.ts src/renderer/src/runtime/remote-runtime-terminal-snapshot-kitty-flags.test.ts src/main/daemon/daemon-pty-adapter.test.ts",
+          "result": "passed",
+          "durationSeconds": 9.84,
+          "summary": "8 test file(s) passed, 288 tests, covering the Preview kitty slice: real forwarder bytes at snapshot-proven flags, press/release pairing across both keyup/insertText orderings, and flag provenance where a proven 0, a proven non-zero, and an absent field stay three distinct facts — asserted on the daemon snapshot and on a host-pushed remote snapshot that carries the flags with their sequence. The emitter-side rule that a remote SnapshotStart withholds flags without a seq has no direct assertion yet; the client-side gate is what these files pin."
+        },
+        {
           "date": "2026-08-09",
           "runner": "local",
           "platform": "macos",
@@ -6950,7 +6959,7 @@
       },
       "redGreenEvidence": {
         "status": "partial",
-        "evidence": "Focused tests cover existing native-text, input-source, paste/runtime forwarding, Linux/Sogou candidate selector, post-composition guard contracts, and live-PTY Sogou-style candidate commits. Needs intentional-break proof for duplicate native text forwarding and composition preedit leakage, plus the broader language/platform matrix."
+        "evidence": "Focused tests cover existing native-text, input-source, paste/runtime forwarding, Linux/Sogou candidate selector, post-composition guard contracts, live-PTY Sogou-style candidate commits, and the Preview kitty slice (press/release pairing in both keyup orderings, and snapshot flag provenance separating a proven 0 from an absent field). Needs intentional-break proof for duplicate native text forwarding and composition preedit leakage, plus the broader language/platform matrix."
       },
       "performanceBudget": {
         "required": true,
