@@ -598,12 +598,17 @@ function createOutOfProcessLauncher(
       } else {
         // Why: a busy machine can time out the health check on a live daemon; re-verify what
         // it is hosting before killing its sessions.
-        // Why recordedPid is withheld here: the loop below is waiting for *IPC* to recover,
-        // and the process table cannot change its answer within a grace window. Scanning it
-        // every pass would multiply the launch budget for an answer we already have.
+        //
+        // No recordedPid: this loop waits for *IPC* to recover, and the process table cannot
+        // change its answer within a grace window, so scanning it every pass would multiply
+        // the launch budget for an answer we already have. It is read once, after the wait.
+        const askDaemonWhatItHosts = (): Promise<DaemonOccupancy> =>
+          resolveDaemonOccupancy({ socketPath, tokenPath, recordedPid: null })
+        // Why grace at all: a wedged-but-connectable daemon (a Windows update relaunch) may still
+        // own live sessions and simply need a moment. A permanent wedge (#8689) exhausts the
+        // window, and 'rejected' skips it — a refused handshake is never going to be adopted.
         const graceDeadline = Date.now() + WEDGED_DAEMON_GRACE_BUDGET_MS
-        let occupancy = await resolveDaemonOccupancy({ socketPath, tokenPath, recordedPid: null })
-        // Why: a wedged-but-connectable daemon (Windows update relaunch) may still own live sessions, so grace-retry before replacing; a permanent wedge (#8689) exhausts the grace, and 'rejected' skips it (handshake refused = never adoptable).
+        let occupancy = await askDaemonWhatItHosts()
         let graceRetry = 0
         while (
           occupancy.state === 'unknown' &&
@@ -612,13 +617,14 @@ function createOutOfProcessLauncher(
           Date.now() < graceDeadline &&
           !endpointIsProvenDead(await probeSocketConnect(socketPath))
         ) {
-          occupancy = await resolveDaemonOccupancy({ socketPath, tokenPath, recordedPid: null })
+          occupancy = await askDaemonWhatItHosts()
           graceRetry++
         }
-        // One scan, once IPC has had its full chance: this is the evidence that separates a
-        // wedged daemon still hosting terminals from one with nothing left to lose (#8689).
-        // Why re-verify: the grace window is long enough for the daemon to die and its pid to
-        // be recycled, and the evidence would then describe a stranger's children.
+        // The evidence that separates a wedged daemon still hosting terminals from one with
+        // nothing left to lose (#8689). Read once IPC has had its full chance, and only when
+        // it never answered — both because it costs a process scan, and because identity has
+        // to be re-verified first: the grace window is long enough for the daemon to die and
+        // its pid to be recycled, and the evidence would then describe a stranger's children.
         const evidencePid =
           occupancy.state === 'unknown'
             ? ((await readVerifiedDaemonPid(runtimeDir, socketPath, tokenPath))?.pid ?? null)

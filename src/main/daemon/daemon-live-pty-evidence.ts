@@ -71,14 +71,8 @@ const DAEMON_SELF_SPAWNED_PTY_COMMANDS = [
   { program: 'sh', args: '-c exit 0' }
 ]
 
-/** Trailing path segment, with any Windows executable suffix removed. */
-function programBasename(command: string): string {
-  const base = command.split(/[\\/]/).pop() ?? command
-  return base.endsWith('.exe') ? base.slice(0, -'.exe'.length) : base
-}
-
 function isDaemonSelfSpawnedPty(row: Pick<ProcessTableRow, 'command'>): boolean {
-  const command = row.command.trim().toLowerCase()
+  const command = row.command.trim()
   return DAEMON_SELF_SPAWNED_PTY_COMMANDS.some(({ program, args }) => {
     const suffix = ` ${args}`
     // Why the argv tail must match exactly: `sh -c` payloads are user-supplied, and treating
@@ -86,9 +80,10 @@ function isDaemonSelfSpawnedPty(row: Pick<ProcessTableRow, 'command'>): boolean 
     if (!command.endsWith(suffix)) {
       return false
     }
-    // Only the program may vary, and only by path — COMSPEC is absolute, node-pty execs
-    // '/bin/sh' verbatim — so it is compared by basename rather than by the whole string.
-    return programBasename(command.slice(0, command.length - suffix.length)) === program
+    // Only the program may vary, and only by path, so compare its trailing segment rather
+    // than the whole string.
+    const executable = command.slice(0, command.length - suffix.length)
+    return (executable.split('/').pop() ?? executable) === program
   })
 }
 
@@ -149,22 +144,11 @@ function collectLivePtyDescendants(rows: ProcessTableRow[], rootPid: number): Pr
   return live
 }
 
+/** POSIX only; Windows abstains before this is reached. */
 async function probeOnce(
   daemonPid: number,
-  deps: DaemonPtyOwnershipDeps,
-  platform: NodeJS.Platform
+  deps: DaemonPtyOwnershipDeps
 ): Promise<DaemonPtyOwnership> {
-  // Why Windows gets no verdict: POSIX evidence rests on a property only a hosted terminal
-  // has — forkpty makes it a session leader — and Windows has no equivalent, so the branch
-  // that lived here counted any descendant. That reads a wedged daemon's orphaned conpty
-  // hosts as live work: ClosePseudoConsole only runs on the daemon's own JS thread, so a
-  // daemon too wedged to answer is also too wedged to reap them, and they accumulate exactly
-  // when this runs. Holding on them would make a wedged, empty daemon unreplaceable forever
-  // (#8689). Answering 'unknown' leaves Windows exactly as it was before this change rather
-  // than trading one failure for a worse one.
-  if (platform === 'win32') {
-    return 'unknown'
-  }
   const deadlineMs = deps.posixDeadlineMs ?? POSIX_OWNERSHIP_PROBE_DEADLINE_MS
   const rows =
     (await withDeadline(
@@ -195,28 +179,37 @@ async function probeOnce(
  * A session-leader descendant is positive proof that killing this daemon would destroy
  * running work. Descendants rather than direct children: macOS wraps every shell in
  * login(1) for TCC attribution, so the agent is a grandchild at best.
- *
  */
 export async function inspectDaemonPtyOwnership(
   daemonPid: number,
   deps: DaemonPtyOwnershipDeps = {}
 ): Promise<DaemonPtyOwnership> {
   const platform = deps.platform ?? process.platform
-  let sawEmpty = false
+  // Why Windows gets no verdict at all: the POSIX signal is a property only a hosted terminal
+  // has — forkpty makes it a session leader — and Windows has no equivalent, so the branch
+  // that lived here could only count descendants. That reads a wedged daemon's orphaned
+  // conpty hosts as live work, since ClosePseudoConsole runs on the daemon's own JS thread
+  // and a daemon too wedged to answer is too wedged to reap them. Holding on those would make
+  // a wedged, empty daemon unreplaceable forever (#8689), so Windows keeps the behaviour it
+  // had before this change rather than trading one failure mode for a worse one.
+  if (platform === 'win32') {
+    return 'unknown'
+  }
+  let emptyAwaitingConfirmation = false
   for (let attempt = 0; attempt < PTY_OWNERSHIP_PROBE_ATTEMPTS; attempt++) {
     let sample: DaemonPtyOwnership
     try {
-      sample = await probeOnce(daemonPid, deps, platform)
+      sample = await probeOnce(daemonPid, deps)
     } catch {
       sample = 'unknown'
     }
-    // Why a second look before accepting emptiness on POSIX: a terminal contributes exactly
+    // Why a second look before accepting emptiness: a terminal contributes exactly
     // one session leader — on macOS the login wrapper — and it is invisible for the moment
     // between forkpty creating it and the shell appearing beneath it. One snapshot cannot tell
     // that from a wrapper whose shell has gone. Emptiness authorizes a kill, so it is the
     // answer worth paying a second read for; 'owns-live-ptys' needs no confirmation.
-    if (sample === 'no-live-ptys' && platform !== 'win32' && !sawEmpty) {
-      sawEmpty = true
+    if (sample === 'no-live-ptys' && !emptyAwaitingConfirmation) {
+      emptyAwaitingConfirmation = true
       continue
     }
     if (sample !== 'unknown') {
