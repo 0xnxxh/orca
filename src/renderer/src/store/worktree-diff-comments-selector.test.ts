@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { DiffComment, Worktree } from '../../../shared/types'
+import type { DiffComment, FolderWorkspace, Worktree } from '../../../shared/types'
 import type { AppState } from './types'
 import {
   selectWorktreeDiffComments,
@@ -7,7 +7,6 @@ import {
 } from './worktree-diff-comments-selector'
 import { getIndexedWorktreeById } from './worktree-repo-index'
 import { folderWorkspaceKey } from '../../../shared/workspace-scope'
-import type { FolderWorkspace } from '../../../shared/types'
 
 function makeComment(id: string): DiffComment {
   return {
