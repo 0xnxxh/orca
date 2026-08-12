@@ -3,12 +3,15 @@ import type { StructuredAgentSessionHandoffTransport } from '../native-chat/agen
 import { createEphemeralAgentSessionClaimSigner } from './agent-session-claim-identity'
 import { OrcaRuntimeService } from './orca-runtime'
 
-const { probeAgentSessionProcessIdentity, readStructuredTuiProcessIdentity } = vi.hoisted(() => ({
-  probeAgentSessionProcessIdentity: vi.fn(),
-  readStructuredTuiProcessIdentity: vi.fn()
-}))
+const { probeAgentSessionProcessIdentity, proveCodexTuiRollout, readStructuredTuiProcessIdentity } =
+  vi.hoisted(() => ({
+    probeAgentSessionProcessIdentity: vi.fn(),
+    proveCodexTuiRollout: vi.fn(),
+    readStructuredTuiProcessIdentity: vi.fn()
+  }))
 
 vi.mock('./structured-tui-process-identity', () => ({ readStructuredTuiProcessIdentity }))
+vi.mock('../codex/codex-tui-rollout-proof', () => ({ proveCodexTuiRollout }))
 vi.mock('./agent-session-process-identity-probe', async (importOriginal) => ({
   ...(await importOriginal()),
   probeAgentSessionProcessIdentity
@@ -49,9 +52,17 @@ describe('structured TUI launch tab binding', () => {
     })
     const terminalHandle = 'term_cold_owner'
     const leafId = '23013912-13f8-44e5-818f-d40a1ff4e8c5'
-    const waitForStructuredTuiProof = vi.fn(async () => ({
-      transcriptPath: '/tmp/codex-home/sessions/thread-1.jsonl'
-    }))
+    proveCodexTuiRollout.mockImplementation(
+      async (input: {
+        readOutput(): { text: string; lastOutputAt: number | null }
+        write(data: string): boolean
+      }) => {
+        input.readOutput()
+        expect(input.write('/status')).toBe(true)
+        input.readOutput()
+        return { transcriptPath: '/tmp/codex-home/sessions/thread-1.jsonl' }
+      }
+    )
     const runtime = new OrcaRuntimeService(undefined, undefined, {
       agentSessionClaimSigner: signer
     })
@@ -82,6 +93,7 @@ describe('structured TUI launch tab binding', () => {
       ]),
       write: () => true,
       kill: () => true,
+      writeAgentSessionProof: vi.fn(() => true),
       getForegroundProcess: async () => null
     })
     const internal = runtime as unknown as {
@@ -96,7 +108,6 @@ describe('structured TUI launch tab binding', () => {
         folderWorkspace: null
       }>
       getAgentSessionExecutionNamespace(): typeof namespace
-      waitForStructuredTuiProof: typeof waitForStructuredTuiProof
       ptysById: Map<
         string,
         { launchToken: string | null; launchAgent: string | null; agentSessionOwners: unknown[] }
@@ -113,7 +124,6 @@ describe('structured TUI launch tab binding', () => {
       folderWorkspace: null
     }))
     internal.getAgentSessionExecutionNamespace = () => namespace
-    internal.waitForStructuredTuiProof = waitForStructuredTuiProof
     probeAgentSessionProcessIdentity.mockResolvedValue({
       outcome: 'identity-matched',
       matchedOn: ['process-start-time']
@@ -146,13 +156,7 @@ describe('structured TUI launch tab binding', () => {
       paneKey: `tab-cold-owner:${leafId}`,
       ptyId: 'pty-cold-owner'
     })
-    expect(waitForStructuredTuiProof).toHaveBeenCalledWith(
-      expect.objectContaining({
-        handle: terminalHandle,
-        paneKey: `tab-cold-owner:${leafId}`,
-        spawnToken: 'spawn-token'
-      })
-    )
+    expect(proveCodexTuiRollout).toHaveBeenCalledOnce()
   })
 
   it('proves the published launch tab before returning its revealed renderer binding', async () => {

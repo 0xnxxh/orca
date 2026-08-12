@@ -81,6 +81,7 @@ import type {
 } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
 import type { AgentSessionRecord } from '../../shared/agent-session-record'
 import {
+  agentSessionOwnerBindingsEqual,
   cloneAgentSessionOwnerBinding,
   scopedAgentSessionClaimsEqual
 } from '../../shared/claimed-agent-pty-owner-snapshot'
@@ -9226,6 +9227,7 @@ export class OrcaRuntimeService {
             pty.paneKey
         )
         let handle = candidate ? this.issueStructuredTuiPtyHandle(candidate) : null
+        let durableOwner: { binding: AgentSessionOwnerBinding; incarnationId: string } | undefined
         if (!candidate) {
           const workspace = await this.resolveTerminalWorkspaceLaunchScope(
             `id:${record.location.workspaceId}`
@@ -9273,6 +9275,13 @@ export class OrcaRuntimeService {
             recovered.owner.surface.leafId
           )
           handle = this.issueRecoveredStructuredTuiPtyHandle(candidate, recovered.owner.surface)
+          const recoveredIncarnationId = candidate.incarnationId
+          if (handle && recoveredIncarnationId) {
+            durableOwner = {
+              binding: cloneAgentSessionOwnerBinding(recovered.owner),
+              incarnationId: recoveredIncarnationId
+            }
+          }
         }
         if (!candidate?.tabId || !candidate.paneKey || !handle) {
           throw new Error('The owning agent terminal could not be recovered.')
@@ -9283,7 +9292,8 @@ export class OrcaRuntimeService {
           threadId: head.handle.threadId,
           spawnToken: identity.spawnToken,
           codexHome: record.accountHome.path,
-          sessionId: record.sessionId
+          sessionId: record.sessionId,
+          ...(durableOwner ? { durableOwner } : {})
         })
         return {
           terminal: {
@@ -9470,14 +9480,25 @@ export class OrcaRuntimeService {
     spawnToken: string
     codexHome: string
     sessionId: string
+    durableOwner?: { binding: AgentSessionOwnerBinding; incarnationId: string }
   }): Promise<{ transcriptPath?: string }> {
     const readBoundPty = (): RuntimePtyWorktreeRecord => {
       const pty = this.getLivePtyForHandle(input.handle)?.pty
+      const durableOwner = input.durableOwner
+      const launchIdentityMatches =
+        pty?.launchAgent === 'codex' && pty.launchToken === input.spawnToken
+      const durableIdentityMatches = Boolean(
+        pty &&
+        durableOwner &&
+        pty.incarnationId === durableOwner.incarnationId &&
+        pty.agentSessionOwners.some((owner) =>
+          agentSessionOwnerBindingsEqual(owner, durableOwner.binding)
+        )
+      )
       if (
         !pty?.connected ||
         pty.paneKey !== input.paneKey ||
-        pty.launchAgent !== 'codex' ||
-        pty.launchToken !== input.spawnToken
+        (!launchIdentityMatches && !durableIdentityMatches)
       ) {
         throw new Error('The resumed terminal lost its launch identity.')
       }
