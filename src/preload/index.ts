@@ -1175,6 +1175,7 @@ const api = {
           transformed?: boolean
           background?: boolean
           droppedOutput?: boolean
+          sidecarOnly?: boolean
         }
       ) => callback(data)
       ipcRenderer.on('pty:data', listener)

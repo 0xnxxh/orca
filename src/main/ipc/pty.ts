@@ -170,9 +170,11 @@ import {
   isHiddenRendererPty,
   markHiddenRendererPty,
   recordHiddenRendererPtyDataDrop,
+  recordHiddenRendererPtyViewGap,
   resetHiddenRendererPtyDeliveryDebugCounters,
   resetRendererScopedHiddenPtyDeliveryState,
   setRendererPtyDeliveryInterest,
+  shouldDeliverHiddenRendererPtyDataToSidecarsOnly,
   shouldDropHiddenRendererPtyData,
   unmarkHiddenRendererPty
 } from './pty-hidden-delivery-gate'
@@ -2494,6 +2496,7 @@ export function registerPtyHandlers(
     transformed?: boolean
     background?: boolean
     droppedOutput?: boolean
+    sidecarOnly?: boolean
   }
 
   // Why: bounded batch windows amortize renderer IPC; keystroke echo/redraws bypass them below.
@@ -2910,9 +2913,13 @@ export function registerPtyHandlers(
     startSeq: number | undefined,
     containsBackgroundOutput: boolean | undefined,
     rawLength = data.length,
-    transformed = false
+    transformed = false,
+    viewSuppressed = false
   ): PtyDataPayload {
     const payload: PtyDataPayload = { id, data }
+    if (viewSuppressed) {
+      payload.sidecarOnly = true
+    }
     if (typeof startSeq === 'number') {
       payload.seq = startSeq + rawLength
     }
@@ -3074,6 +3081,12 @@ export function registerPtyHandlers(
     payload: PtyDataPayload,
     projectionAdmissionIds?: readonly string[]
   ): { sent: boolean; projectionsTransferred: boolean } {
+    // Why the caller decides: ownership was captured at ingestion (same tick and
+    // module state as the runtime's reply decision), so a reveal that lands
+    // before the flush cannot hand these bytes to an xterm main already answered for.
+    if (payload.sidecarOnly === true && recordHiddenRendererPtyViewGap(id).shouldEmitRestoreMarker) {
+      sendModelRestoreNeededMarker(id, 'hidden-drop', runtime?.getPtyOutputSequence(id))
+    }
     const charCount = getPtyPayloadCharCount(payload)
     const accounting = rendererDeliveryAccountingByPty.get(id)
     const hadAccounting = accounting !== undefined
@@ -3253,6 +3266,7 @@ export function registerPtyHandlers(
     return {
       data: extractDroppedPtyQueryBytes(pending.data).slice(0, DROPPED_QUERY_SALVAGE_MAX_CHARS),
       droppedOutput: true,
+      ...(pending.viewSuppressed === true ? { viewSuppressed: true as const } : {}),
       droppedMode2031Data: mode2031.data,
       droppedMode2031ScanState: mode2031.state
     }
@@ -3300,7 +3314,8 @@ export function registerPtyHandlers(
     containsBackgroundOutput: boolean,
     rawLength = data.length,
     transformed = false,
-    projectionSemanticsId?: string
+    projectionSemanticsId?: string,
+    viewSuppressed = false
   ): PendingPtyData {
     // Why stay dropped at O(1): once over the cap the restore sentinel supersedes interim bytes; queries still get carved out (bounded) so replies survive the whole episode.
     if (existing?.droppedOutput === true) {
@@ -3326,13 +3341,17 @@ export function registerPtyHandlers(
     const projectionState = compactPendingProjectionState(existing ?? {}, projectionSemanticsId)
     const nextContainsBackgroundOutput =
       existing?.containsBackgroundOutput === true || containsBackgroundOutput
+    // Why sticky: one byte main already answered for taints the whole coalesced
+    // entry — the view heals from the model snapshot, a double reply does not.
+    const nextViewSuppressed = existing?.viewSuppressed === true || viewSuppressed
     if (!existing) {
       const pending: PendingPtyData = {
         data,
         ...(typeof startSeq === 'number' ? { startSeq } : {}),
         ...(rawLength !== data.length ? { rawLength } : {}),
         ...(transformed ? { transformed: true } : {}),
-        ...(nextContainsBackgroundOutput ? { containsBackgroundOutput: true } : {})
+        ...(nextContainsBackgroundOutput ? { containsBackgroundOutput: true } : {}),
+        ...(nextViewSuppressed ? { viewSuppressed: true as const } : {})
       }
       updatePendingProjectionAdmissions(pending, projectionState)
       return dropOversizedPendingPtyData(id, pending)
@@ -3343,7 +3362,8 @@ export function registerPtyHandlers(
       ...(!preservesSeq || existing.transformed || transformed
         ? { rawLength: existingRawLength + rawLength, transformed: true as const }
         : {}),
-      ...(nextContainsBackgroundOutput ? { containsBackgroundOutput: true } : {})
+      ...(nextContainsBackgroundOutput ? { containsBackgroundOutput: true } : {}),
+      ...(nextViewSuppressed ? { viewSuppressed: true as const } : {})
     }
     updatePendingProjectionAdmissions(next, projectionState)
     if (typeof existing.startSeq === 'number') {
@@ -3452,7 +3472,8 @@ export function registerPtyHandlers(
               {
                 id,
                 data: pending.data + getDroppedMode2031RendererData(pending),
-                droppedOutput: true
+                droppedOutput: true,
+                ...(pending.viewSuppressed === true ? { sidecarOnly: true } : {})
               },
               pending.projectionAdmissionIds
             ).sent
@@ -3476,6 +3497,9 @@ export function registerPtyHandlers(
           if (pending.containsBackgroundOutput === true) {
             nextPending.containsBackgroundOutput = true
           }
+          if (pending.viewSuppressed === true) {
+            nextPending.viewSuppressed = true
+          }
           if (pending.projectionAdmissionIds) {
             nextPending.projectionAdmissionIds = pending.projectionAdmissionIds
           }
@@ -3496,7 +3520,8 @@ export function registerPtyHandlers(
             pending.startSeq,
             pending.containsBackgroundOutput,
             pending.rawLength,
-            pending.transformed
+            pending.transformed,
+            pending.viewSuppressed === true
           ),
           pending.projectionAdmissionIds
         )
@@ -3608,7 +3633,8 @@ export function registerPtyHandlers(
             {
               id: payload.id,
               data: remaining.data,
-              droppedOutput: true
+              droppedOutput: true,
+              ...(remaining.viewSuppressed === true ? { sidecarOnly: true } : {})
             },
             remaining.projectionAdmissionIds
           )
@@ -3621,7 +3647,8 @@ export function registerPtyHandlers(
               remaining.startSeq,
               remaining.containsBackgroundOutput,
               remaining.rawLength,
-              remaining.transformed
+              remaining.transformed,
+              remaining.viewSuppressed === true
             ),
             remaining.projectionAdmissionIds
           )
@@ -3762,7 +3789,8 @@ export function registerPtyHandlers(
       containsBackgroundOutput,
       rawLength,
       payload.transformed === true,
-      projectionId
+      projectionId,
+      shouldDeliverHiddenRendererPtyDataToSidecarsOnly(payload.id, getSettings?.())
     )
     const shouldEmitPendingCapRestoreMarker =
       pending.droppedOutput === true &&
@@ -3804,7 +3832,8 @@ export function registerPtyHandlers(
               : {}),
             ...(pending.transformed ? { transformed: true } : {}),
             ...(pending.containsBackgroundOutput === true ? { background: true } : {}),
-            ...(pending.droppedOutput === true ? { droppedOutput: true } : {})
+            ...(pending.droppedOutput === true ? { droppedOutput: true } : {}),
+            ...(pending.viewSuppressed === true ? { sidecarOnly: true } : {})
           },
           pending.projectionAdmissionIds
         )

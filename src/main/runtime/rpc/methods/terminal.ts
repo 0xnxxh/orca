@@ -140,6 +140,11 @@ type TerminalMultiplexStream = {
   supportsOutputPause: boolean
   supportsWriteUnavailable: boolean
   outputPaused: boolean
+  /** Releases whichever presence this stream currently holds — view (query
+   *  authority) while it receives output, raw-only while it is paused. */
+  releaseViewPresence: () => void
+  /** null until this stream registers presence at all. */
+  holdsViewAuthority: boolean | null
   supportsDesktopViewportClaims: boolean
   desktopClaimTail: Promise<boolean>
   // Whether THIS stream registered the width driver, so detach won't release a peer stream's floor.
@@ -412,6 +417,30 @@ function assertTerminalSendExactPtyBinding(
     // Fall through to the stable guarded-send result below.
   }
   throw new Error('terminal_guard_not_writable')
+}
+
+/**
+ * Query authority follows what the client can actually SEE. A paused stream
+ * receives no bytes, so its remote xterm cannot answer DA1/DSR/OSC probes —
+ * holding view presence there leaves nobody answering and fish blocks ~10s at
+ * every prompt paint. Raw presence still pins the provider so unpausing
+ * resumes the same PTY. Both flags flip synchronously in main, so the model
+ * takes over exactly for the chunks the client never receives (no double
+ * answer, no gap).
+ */
+function setRemoteStreamViewAuthority(
+  runtime: OrcaRuntimeService,
+  stream: TerminalMultiplexStream,
+  holdsViewAuthority: boolean
+): void {
+  if (stream.holdsViewAuthority === holdsViewAuthority) {
+    return
+  }
+  stream.holdsViewAuthority = holdsViewAuthority
+  stream.releaseViewPresence()
+  stream.releaseViewPresence = holdsViewAuthority
+    ? runtime.registerRemoteTerminalViewSubscriber(stream.ptyId)
+    : runtime.registerRawTerminalViewSubscriber(stream.ptyId)
 }
 
 function appendPendingMultiplexOutput(
@@ -2195,6 +2224,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             stream.ackPendingOutputBytes = 0
             stream.ackPendingOutputOverflowed = false
           }
+          setRemoteStreamViewAuthority(runtime, stream, !stream.outputPaused)
           return
         }
         if (frame.opcode === TerminalStreamOpcode.Resize && stream.client) {
@@ -2522,6 +2552,8 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           supportsOutputPause: request.capabilities?.outputPause === 1,
           supportsWriteUnavailable: request.capabilities?.writeUnavailable === 1,
           outputPaused: false,
+          releaseViewPresence: () => {},
+          holdsViewAuthority: null,
           supportsDesktopViewportClaims: request.capabilities?.desktopViewportClaims === 1,
           desktopClaimTail: Promise.resolve(true),
           registeredRemoteDesktopDriver: false,
@@ -2577,10 +2609,12 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             }
             stream.outputBatcher.push(data, meta)
           })
-          // Why: a multiplexed stream feeds a remote xterm view with query authority, so the main model responder yields while attached (terminal-query-authority.md).
-          const releaseViewSubscriber = runtime.registerRemoteTerminalViewSubscriber(ptyId)
+          // Why: a multiplexed stream feeds a remote xterm view with query authority, so the main model responder yields while attached (terminal-query-authority.md) — until the client pauses output, which hands authority back.
+          setRemoteStreamViewAuthority(runtime, stream, !stream.outputPaused)
           stream.unsubscribeData = () => {
-            releaseViewSubscriber()
+            stream.releaseViewPresence()
+            stream.releaseViewPresence = () => {}
+            stream.holdsViewAuthority = null
             unsubscribeStreamData()
           }
 

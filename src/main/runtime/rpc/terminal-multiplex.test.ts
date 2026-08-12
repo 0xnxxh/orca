@@ -34,6 +34,8 @@ function stubRuntime(overrides: Partial<OrcaRuntimeService> = {}): OrcaRuntimeSe
     // Why: every multiplex stream registers as a remote view subscriber for
     // Phase-5 query-authority suppression (terminal-query-authority.md).
     registerRemoteTerminalViewSubscriber: () => () => {},
+    // Why: a paused stream swaps view presence for raw presence — it can no longer answer queries.
+    registerRawTerminalViewSubscriber: () => () => {},
     // Why: the multiplex subscribe path resolves handles via
     // resolveLiveLeafForHandle (#7718). Default to a live pty so tests that
     // only stub the legacy resolveLeafForHandle still bind; tests that need a
@@ -4552,6 +4554,50 @@ describe('terminal multiplex RPC', () => {
         .filter((frame) => frame?.opcode === TerminalStreamOpcode.Error)
         .map((frame) => (frame ? decodeTerminalStreamText(frame.payload) : ''))
     ).toEqual([])
+    harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
+    await harness.dispatchPromise
+  })
+
+  // Why: a paused stream receives no bytes, so its remote xterm cannot answer
+  // DA1/DSR/OSC probes. Holding view presence there left NOBODY answering and a
+  // remote fish pane blocked ~10s at every prompt paint.
+  it('hands query authority back to the model while a stream pauses output', async () => {
+    const releaseView = vi.fn()
+    const releaseRaw = vi.fn()
+    const registerRemoteTerminalViewSubscriber = vi.fn().mockReturnValue(releaseView)
+    const registerRawTerminalViewSubscriber = vi.fn().mockReturnValue(releaseRaw)
+    const harness = startDesktopMultiplexSubscribe({
+      registerRemoteTerminalViewSubscriber,
+      registerRawTerminalViewSubscriber
+    })
+    await vi.waitFor(() =>
+      expect(harness.messages.some((msg) => JSON.parse(msg).result?.type === 'ready')).toBe(true)
+    )
+    sendDesktopMultiplexSubscribe(harness.handlers, { ackOutput: 1, outputPause: 1 })
+    await vi.waitFor(() => expect(registerRemoteTerminalViewSubscriber).toHaveBeenCalledTimes(1))
+
+    const setPaused = (paused: boolean, seq: number): void => {
+      harness.handlers.get(7)?.(
+        decodeTerminalStreamFrame(
+          encodeTerminalStreamFrame({
+            opcode: SET_OUTPUT_PAUSED_OPCODE,
+            streamId: 7,
+            seq,
+            payload: encodeTerminalStreamJson({ paused })
+          })
+        )!
+      )
+    }
+
+    setPaused(true, 2)
+    expect(releaseView).toHaveBeenCalledTimes(1)
+    // Raw presence still pins the provider, without claiming reply ownership.
+    expect(registerRawTerminalViewSubscriber).toHaveBeenCalledTimes(1)
+
+    setPaused(false, 3)
+    expect(releaseRaw).toHaveBeenCalledTimes(1)
+    expect(registerRemoteTerminalViewSubscriber).toHaveBeenCalledTimes(2)
+
     harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
     await harness.dispatchPromise
   })
