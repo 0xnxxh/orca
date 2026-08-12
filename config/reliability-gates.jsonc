@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-10",
+  "updatedAt": "2026-08-12",
   "policy": {
     "maturityLevels": ["experimental", "soak", "blocking", "accepted-gap", "deprecated"],
     "blockingPromotion": {
@@ -10,6 +10,103 @@
     }
   },
   "gates": [
+    {
+      "id": "terminal-session.shell-ready-exec-prompt-fallback",
+      "title": "Startup exec falls back to the identified shell's line editor",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "terminal-session-readiness",
+      "layer": "posix-pty-and-shell-startup",
+      "surfaces": ["queued terminal startup commands", "zsh and bash startup files"],
+      "platforms": ["macos", "linux"],
+      "providers": ["local", "local-daemon", "ssh-daemon", "ssh-relay", "paired-runtime"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["local", "local-daemon", "ssh-relay"],
+      "coverageNotes": "Real macOS node-pty integration covers zsh 5.9 .zshenv/.zprofile and bash 3.2 profile replacement shells, including exec -a names, same-shell and child-process silent reads, a blocking zle-line-init hook, non-shell readline replacements, and a non-shell image renamed zsh. An Ubuntu 20.04 container confirms compatible zsh/bash termios. Deterministic owner contracts cover local, daemon, and SSH relay identity stripping plus provider- and renderer-owned delivery. Renderer-owned relay fallback publishes the existing ready marker, so mixed client/host versions need no new wire capability. Live SSH, paired-runtime, and WSL remain gaps.",
+      "motivatingLinks": ["https://github.com/stablyai/orca/issues/13767"],
+      "invariant": "Before user startup files run, the wrapper publishes its shell PID. If a later exec discards the ready marker, prompt fallback releases queued startup input only after the launched shell's actual executable image with that exact PID owns the PTY foreground, emits its post-hook line-editor enable sequence, and exposes zle/readline termios; startup reads, line-init hooks, child foreground processes, and non-shell readline replacements cannot trigger early fallback release.",
+      "oracle": "Run the real generated wrappers under node-pty with disposable zsh and bash startup files. Plain and exec -a replacement shells must receive one queued command at their first completed line editor without waiting for the 15-second timeout. The identical oracle must time out without the startup identity and prompt fallback. Same-shell reads, child-process reads, a blocking zle-line-init hook, sqlite3, and sqlite3 renamed zsh must not trigger prompt fallback. Relay owner coverage must strip the identity and release through the same prompt contract.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts src/main/line-editor-ready-output-scanner.test.ts src/main/shell-startup-identity-scanner.test.ts src/main/shell-prompt-readiness-probe.test.ts src/shared/pty-slave-line-discipline-echo.test.ts src/shared/shell-process-readiness.test.ts src/main/daemon/session.test.ts src/main/daemon/shell-ready.test.ts src/main/providers/local-pty-shell-ready.test.ts src/main/providers/local-pty-provider.test.ts src/relay/pty-shell-launch.test.ts src/relay/pty-handler.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts src/relay/pty-handler.test.ts"
+      ],
+      "testFiles": [
+        "src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts",
+        "src/main/line-editor-ready-output-scanner.test.ts",
+        "src/main/shell-startup-identity-scanner.test.ts",
+        "src/main/shell-prompt-readiness-probe.test.ts",
+        "src/shared/pty-slave-line-discipline-echo.test.ts",
+        "src/shared/shell-process-readiness.test.ts",
+        "src/main/daemon/session.test.ts",
+        "src/main/daemon/shell-ready.test.ts",
+        "src/main/providers/local-pty-shell-ready.test.ts",
+        "src/main/providers/local-pty-provider.test.ts",
+        "src/relay/pty-shell-launch.test.ts",
+        "src/relay/pty-handler.test.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts",
+          "assertions": [
+            "real zsh .zshenv/.zprofile and bash profile replacement shells receive queued input exactly once",
+            "same-shell raw silent reads retain queued input",
+            "child-process raw silent reads retain queued input while the identified shell is not foreground",
+            "a blocking zle-line-init read retains queued input until the hook completes",
+            "sqlite3 and a sqlite3 image renamed zsh cannot impersonate the launched shell executable path",
+            "zsh configurations without a line-editor enable sequence retain the existing timeout backstop"
+          ]
+        },
+        {
+          "file": "src/relay/pty-handler.test.ts",
+          "assertions": [
+            "the SSH relay owner strips startup identity and releases provider-delivered input through prompt readiness",
+            "renderer-owned SSH delivery receives the existing ready marker after authoritative relay prompt readiness",
+            "normal renderer-owned ready markers pass through unchanged and retain no readiness state"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts src/main/line-editor-ready-output-scanner.test.ts src/main/shell-startup-identity-scanner.test.ts src/main/shell-prompt-readiness-probe.test.ts src/shared/pty-slave-line-discipline-echo.test.ts src/shared/shell-process-readiness.test.ts src/main/daemon/session.test.ts src/main/daemon/shell-ready.test.ts src/main/providers/local-pty-shell-ready.test.ts src/main/providers/local-pty-provider.test.ts src/relay/pty-shell-launch.test.ts src/relay/pty-handler.test.ts",
+          "result": "passed",
+          "durationSeconds": 4,
+          "summary": "All real exec, silent-read, line-init-hook, renamed-image, disabled-bracketed-paste, and relay-owner oracles plus identity, foreground, executable-image, protocol, and line-editor contracts passed."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 6,
+        "scope": "real local zsh/bash exec and silent-read integration gate"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "Fresh deterministic local runs pass; CI and soak history have not started."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "Oracle SHA-256 b13b08006a38b2adc2acb51ae9342909514e55ab4822fac4fbb76cd49b344cc6 is byte-identical across runs. Latest main 09ec516ae5 and the candidate with its production implementation reverted both failed exactly the three zsh .zprofile/.zshenv and bash exec cases by deterministic 5-second timeout; the zle-line-init oracle also exposed unsafe baseline delivery, while all ten other safety controls passed. The candidate passed all 14 on macOS."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "The normal ready-marker path cancels before external probing. A missing marker triggers a debounced stty read only after a line-editor enable sequence, followed by narrow PID status and executable-image inspection only when termios matches. Slow ordinary startup output triggers zero probes; rejected protocol emissions are capped at four probes per startup. There is no per-command hook or steady-state polling."
+      },
+      "promotionCriteria": [
+        "Collect Linux, SSH-daemon, and paired-runtime live evidence.",
+        "Collect CI and soak history without unexplained flakes.",
+        "Keep same-shell, child-process, line-init-hook, and non-shell readline contracts green."
+      ],
+      "knownGaps": [
+        "The fallback requires a readable POSIX PTY slave; WSL through wsl.exe, ConPTY, and native Windows retain the existing timeout backstop.",
+        "An exec integration that forks a replacement shell instead of retaining the identified shell PID retains the existing timeout backstop.",
+        "A zsh configuration that disables bracketed-paste output emits no safe post-hook protocol signal and retains the existing timeout backstop.",
+        "The pre-existing timeout backstop can still deliver queued input to a non-shell replacement after it expires; this fallback prevents indefinite startup hangs and is unchanged by the prompt fallback.",
+        "The fallback restores safe startup-command delivery but cannot recreate OSC 133 hooks or overlay restores already discarded by exec.",
+        "Startup code running in the launched shell can deliberately spoof the public line-editor enable sequence after configuring matching termios; the existing timeout path already trusts a public OSC marker from the same startup code."
+      ],
+      "demotionRule": "Keep experimental or demote if prompt fallback enters a normal, child, or line-init read; a non-shell executable triggers prompt fallback; the identified shell PID is not foreground; delivery duplicates; ordinary startup output spawns probes; probe attempts exceed four; or the focused gate flakes without an identified harness defect."
+    },
     {
       "id": "editor.restored-sibling-owner-reparent",
       "title": "Restored sibling tabs migrate filesystem authority before becoming editable",

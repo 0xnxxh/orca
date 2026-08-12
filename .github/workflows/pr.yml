@@ -239,7 +239,8 @@ jobs:
 
       - name: Test real shell contracts
         run: |
-          pnpm exec vitest run --config config/vitest.config.ts \
+          pnpm exec vitest run --config config/vitest.config.ts --maxWorkers=1 \
+            src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts \
             src/main/daemon/shell-ready.test.ts \
             src/main/daemon/node-pty-fd-leak.test.ts \
             src/main/providers/local-pty-shell-ready.test.ts \
@@ -275,6 +276,7 @@ jobs:
       - name: Test shard
         run: |
           pnpm exec vitest run --config config/vitest.config.ts \
+            --exclude=src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts \
             --exclude=src/main/daemon/shell-ready.test.ts \
             --exclude=src/main/daemon/node-pty-fd-leak.test.ts \
             --exclude=src/main/providers/local-pty-shell-ready.test.ts \
