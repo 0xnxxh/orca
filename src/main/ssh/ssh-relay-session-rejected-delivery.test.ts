@@ -495,6 +495,30 @@ describe('SshRelaySession rejected PTY delivery recovery', () => {
     expect(mux.dispose).not.toHaveBeenCalled()
   })
 
+  // The counterpart to the clause above, and the distinction the whole design rests on. hasPty is
+  // three-state: null means the provider has not listed the host yet, which is precisely the state
+  // a fresh provider is in right after the reconnect that produces rejected frames. Reading that
+  // as death drops the attempt and schedules nothing, and the delivery token is already retired,
+  // so nothing can revive it — the pane stays dark. Only an explicit false is proof.
+  it('keeps retrying while the PTY liveness is merely unknown', async () => {
+    const { internals, mux, session } = prepareSession()
+    const reattach = vi.fn().mockResolvedValue(false)
+    internals.reattachRejectedPty = reattach
+    getSshPtyProviderMock.mockReturnValue({ hasPty: () => null } as unknown as SshPtyProvider)
+    const onTerminalError = vi.fn()
+    session.setOnTerminalRelayError(onTerminalError)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await internals.acceptPtyData(rejectedPayload())
+
+    // More than one attempt is the whole point: unknown liveness must not end recovery.
+    await vi.waitFor(() => expect(reattach.mock.calls.length).toBeGreaterThan(1), {
+      timeout: 10_000
+    })
+    expect(onTerminalError).not.toHaveBeenCalled()
+    expect(mux.dispose).not.toHaveBeenCalled()
+  })
+
   // Why bounded: the bulk reconnect path caps the identical attach work at 8, and a relay that
   // starts rejecting across every PTY at once would otherwise open one attach round trip per PTY.
   it('caps concurrent targeted reattaches and coalesces repeats for one PTY', async () => {

@@ -1939,7 +1939,16 @@ export class SshRelaySession {
     appPtyId: string
   ): void {
     const ptyProvider = getSshPtyProvider(this.targetId) as SshPtyProvider | undefined
-    if (!ptyProvider || typeof ptyProvider.hasPty !== 'function' || !ptyProvider.hasPty(appPtyId)) {
+    // Why `=== false` and not `!`: hasPty is three-state, and null means the provider has not
+    // listed the host yet — ignorance, not death, which is exactly the state a fresh provider is
+    // in right after the reconnect that produces these rejected frames. Treating it as death
+    // dropped the recovery attempt and scheduled nothing, and since the delivery token is already
+    // retired, no later frame could revive it: the pane stayed dark. Only proof stops us.
+    if (
+      !ptyProvider ||
+      typeof ptyProvider.hasPty !== 'function' ||
+      ptyProvider.hasPty(appPtyId) === false
+    ) {
       this.rejectedPtyRecoveryAttempts.delete(appPtyId)
       return
     }
