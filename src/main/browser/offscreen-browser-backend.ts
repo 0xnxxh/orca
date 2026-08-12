@@ -23,11 +23,7 @@ export class OffscreenBrowserBackend implements BrowserBackend {
   constructor(private readonly browserManager: BrowserManager) {}
 
   async createTab(params: BrowserBackendCreateTab): Promise<{ browserPageId: string }> {
-    const browserPageId = params.browserPageId ?? randomUUID()
-    const existing = this.windowsByPageId.get(browserPageId)
-    if (existing && !existing.isDestroyed()) {
-      return { browserPageId }
-    }
+    const browserPageId = randomUUID()
     // Why: profiles map to Electron partitions; using the profile's partition
     // makes cookies/storage persist in the same SQLite DB the desktop path uses.
     const profile = params.profileId
@@ -56,10 +52,8 @@ export class OffscreenBrowserBackend implements BrowserBackend {
     // teardown), drop the registry entry so commands fail cleanly instead of
     // resolving a dead WebContents.
     win.webContents.once('destroyed', () => {
-      if (this.windowsByPageId.get(browserPageId) === win) {
-        this.windowsByPageId.delete(browserPageId)
-        this.browserManager.unregisterGuest(browserPageId)
-      }
+      this.windowsByPageId.delete(browserPageId)
+      this.browserManager.unregisterGuest(browserPageId)
     })
 
     // Why: register the guest and return immediately so the new tab appears

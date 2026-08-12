@@ -1,4 +1,5 @@
-// Why: separate schemas keep dispatch wiring scannable and both files under the cap.
+// Why: browser schemas stay separate from handler registration so both sides
+// remain under the line cap and dispatch wiring stays scannable.
 import { z } from 'zod'
 import {
   BrowserTarget,
@@ -115,16 +116,19 @@ export const TabCreate = z.object({
   worktree: OptionalString,
   profileId: OptionalString,
   waitForRegistration: z.boolean().optional(),
+  // User-initiated opens focus the tab; agent/automation opens stay background.
   activate: z.boolean().optional(),
-  // Why: headless hosts need the clicked split instead of their first/active group.
-  targetGroupId: OptionalString,
-  requestedPageId: z.uuid().optional()
+  // Why: the split group whose "+" was clicked, so a headless host places the
+  // new browser tab there instead of coalescing into the first/active group.
+  targetGroupId: OptionalString
 })
 
 export const TabShow = z.object({
   page: requiredString('Missing required --page'),
   worktree: OptionalString
 })
+
+export const TabCurrent = z.object({ worktree: OptionalString })
 
 export const TabClose = z.object({
   index: z

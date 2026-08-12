@@ -95,7 +95,6 @@ function createHost(overrides: Partial<RuntimeBrowserCommandHost> = {}): Runtime
       }))
     } as unknown as AgentBrowserBridge)
   return {
-    getRuntimeId: () => 'runtime-1',
     resolveWorktreeSelector: async (selector) => ({ id: selector.replace(/^id:/, '') }),
     getAuthoritativeWindow: vi.fn(),
     getAvailableAuthoritativeWindow: vi.fn(() => null),
@@ -642,40 +641,11 @@ describe('RuntimeBrowserCommands headless offscreen routing', () => {
     expect(createTab).toHaveBeenCalledWith({
       url: 'https://example.com',
       worktreeId: 'wt-1',
-      profileId: undefined,
-      browserPageId: undefined
+      profileId: undefined
     })
     // No renderer round-trip in headless mode.
     expect(waitForTabRegistrationMock).not.toHaveBeenCalled()
     expect(setActiveTab).toHaveBeenCalledWith(202, 'wt-1')
-  })
-
-  it('forwards deterministic page identity to the headless backend', async () => {
-    const { RuntimeBrowserCommands } = await import('./orca-runtime-browser')
-    const pageId = '00000000-0000-4000-8000-000000000001'
-    const createTab = vi.fn(async () => ({ browserPageId: pageId }))
-    const bridge = {
-      getRegisteredTabs: vi.fn(() => new Map([[pageId, 202]])),
-      setActiveTab: vi.fn()
-    } as unknown as AgentBrowserBridge
-    const commands = new RuntimeBrowserCommands(
-      createHost({
-        getAgentBrowserBridge: () => bridge,
-        getAvailableAuthoritativeWindow: vi.fn(() => null),
-        getOffscreenBrowserBackend: vi.fn(() => ({ createTab, closeTab: vi.fn() }))
-      })
-    )
-
-    await expect(
-      commands.browserTabCreate({ url: 'https://example.com', requestedPageId: pageId })
-    ).resolves.toEqual({ browserPageId: pageId })
-
-    expect(createTab).toHaveBeenCalledWith({
-      url: 'https://example.com',
-      worktreeId: undefined,
-      profileId: undefined,
-      browserPageId: pageId
-    })
   })
 
   it('rejects tab creation when neither a renderer nor an offscreen backend is available', async () => {

@@ -492,7 +492,6 @@ import {
 } from '../../shared/agent-scratch-worktrees'
 import {
   BROWSER_HEADLESS_RUNTIME_CAPABILITY,
-  BROWSER_DETERMINISTIC_PAGE_CREATE_RUNTIME_CAPABILITY,
   BROWSER_CERTIFICATE_TRUST_RUNTIME_CAPABILITY,
   MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION,
   ORCHESTRATION_CONTRACT_RUNTIME_CAPABILITY,
@@ -4878,7 +4877,6 @@ export class OrcaRuntimeService {
     )
     if (hasOffscreen) {
       capabilities.push(BROWSER_HEADLESS_RUNTIME_CAPABILITY)
-      capabilities.push(BROWSER_DETERMINISTIC_PAGE_CREATE_RUNTIME_CAPABILITY)
     }
     // Why: certificate proceed is owned by the browser-hosting process for both
     // desktop webviews and offscreen pages. Advertise whenever either backend

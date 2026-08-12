@@ -21,6 +21,7 @@ import {
   Scroll,
   Select,
   SelectorPath,
+  TabCurrent,
   TabSetProfile,
   TabClose,
   TabCreate,
@@ -101,7 +102,7 @@ export const BROWSER_CORE_METHODS: RpcMethod[] = [
   }),
   defineMethod({
     name: 'browser.tabCurrent',
-    params: TabList,
+    params: TabCurrent,
     handler: async (params, { runtime }) => runtime.browserTabCurrent(params)
   }),
   defineMethod({

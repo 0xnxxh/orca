@@ -3380,7 +3380,13 @@ describe('applyWebSessionTabsSnapshot', () => {
       isPreview: false,
       isPinned: false
     }
-    recordWebSessionFocusIntent({ environmentId: ENV }, WT, 'host-browser')
+    recordWebSessionFocusIntent(
+      { environmentId: ENV },
+      WT,
+      'host-browser',
+      undefined,
+      'previous-local-tab'
+    )
 
     const patch = applyWebSessionTabsSnapshot(
       makeState({
@@ -3467,7 +3473,13 @@ describe('applyWebSessionTabsSnapshot', () => {
       isPreview: false,
       isPinned: false
     }
-    recordWebSessionFocusIntent({ environmentId: ENV }, WT, 'host-browser')
+    recordWebSessionFocusIntent(
+      { environmentId: ENV },
+      WT,
+      'host-browser',
+      undefined,
+      'previous-local-tab'
+    )
 
     const patch = applyWebSessionTabsSnapshot(
       makeState({

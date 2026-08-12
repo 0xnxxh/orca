@@ -54,7 +54,8 @@ import { toRuntimeWorktreeSelector } from './runtime-worktree-selector'
 import {
   clearWebSessionFocusIntent,
   clearWebSessionFocusIntentsForOwner,
-  peekWebSessionFocusIntent
+  peekWebSessionFocusIntent,
+  resolveWebSessionVisibleTabId
 } from './web-session-focus-intent'
 import {
   clearWebSessionCloseIntentsForOwner,
@@ -2310,52 +2311,6 @@ function toVisibleTabType(tab: Tab): WebSessionTabsSyncState['activeTabType'] {
   return 'editor'
 }
 
-function runtimeTabMatchesVisibleType(
-  tab: RuntimeMobileSessionTabsResult['tabs'][number],
-  visibleType: WebSessionTabsSyncState['activeTabType'] | null
-): boolean {
-  if (tab.type === 'browser' || tab.type === 'terminal') {
-    return tab.type === visibleType
-  }
-  return visibleType === 'editor'
-}
-
-function findCurrentVisibleUnifiedTabId(args: {
-  state: WebSessionTabsSyncState
-  worktreeId: string
-  nextUnifiedTabs: readonly Tab[] | null
-}): string | null {
-  const { state, worktreeId, nextUnifiedTabs } = args
-  if (!nextUnifiedTabs) {
-    return null
-  }
-  const currentVisibleType =
-    state.activeTabTypeByWorktree[worktreeId] ??
-    (state.activeWorktreeId === worktreeId ? state.activeTabType : null)
-  if (currentVisibleType === 'terminal') {
-    const terminalTabId = state.activeTabIdByWorktree[worktreeId]
-    return terminalTabId && nextUnifiedTabs.some((tab) => tab.id === terminalTabId)
-      ? terminalTabId
-      : null
-  }
-  if (currentVisibleType === 'browser') {
-    const browserWorkspaceId = state.activeBrowserTabIdByWorktree[worktreeId]
-    return (
-      nextUnifiedTabs.find(
-        (tab) => tab.contentType === 'browser' && tab.entityId === browserWorkspaceId
-      )?.id ?? null
-    )
-  }
-  if (currentVisibleType === 'editor') {
-    const fileId = state.activeFileIdByWorktree[worktreeId]
-    return (
-      nextUnifiedTabs.find((tab) => tab.contentType === 'editor' && tab.entityId === fileId)?.id ??
-      null
-    )
-  }
-  return null
-}
-
 function applyWebSessionTabsSnapshotWithContext(
   state: WebSessionTabsSyncState,
   rawSnapshot: RuntimeMobileSessionTabsResult,
@@ -2411,12 +2366,12 @@ function applyWebSessionTabsSnapshotWithContext(
               (tab.type === 'terminal' && tab.parentTabId === focusIntentHostTabId) ||
               (tab.type === 'browser' && tab.browserPageId === focusIntentHostTabId)
           ) ?? null)
-  const currentVisibleType =
-    state.activeTabTypeByWorktree[worktreeId] ??
-    (state.activeWorktreeId === worktreeId ? state.activeTabType : null)
+  const expectedCurrentLocalTabId = focusIntent?.expectedCurrentLocalTabId
+  const currentVisibleLocalTabId = resolveWebSessionVisibleTabId(state, worktreeId)
   const callerFocusIntentTab =
     matchingFocusIntentTab &&
-    runtimeTabMatchesVisibleType(matchingFocusIntentTab, currentVisibleType)
+    (expectedCurrentLocalTabId === undefined ||
+      expectedCurrentLocalTabId === currentVisibleLocalTabId)
       ? matchingFocusIntentTab
       : null
   const followIntentTab =
@@ -2743,11 +2698,11 @@ function applyWebSessionTabsSnapshotWithContext(
       ? (activeMirroredEditorFileId ?? mirroredEditorTabs[0]?.file.id)
       : mirroredEditorTabs[0]?.file.id) ??
     null
-  const currentVisibleUnifiedTabId = findCurrentVisibleUnifiedTabId({
+  const currentVisibleUnifiedTabId = resolveWebSessionVisibleTabId(
     state,
     worktreeId,
-    nextUnifiedTabs
-  })
+    nextUnifiedTabs ?? []
+  )
   // Why: a client-initiated activation also drives the visible unified tab, overriding the sticky current-visible tab.
   const intentUnifiedTabId = honorSnapshotActiveFocus
     ? navigationIntentTab?.type === 'browser'

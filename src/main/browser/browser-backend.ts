@@ -10,7 +10,6 @@ export type BrowserBackendCreateTab = {
   url: string
   worktreeId?: string
   profileId?: string
-  browserPageId?: string
 }
 
 export type BrowserBackend = {

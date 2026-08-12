@@ -162,6 +162,7 @@ export class RuntimeBrowserCommands {
   private readonly activeScreencastPageIds = new Set<string>()
   private readonly activeScreencastsByPageId = new Map<string, ActiveBrowserScreencastPage>()
   private readonly stoppingScreencastPageIds = new Map<string, Promise<void>>()
+
   constructor(private readonly host: RuntimeBrowserCommandHost) {}
 
   private requireAgentBrowserBridge(): AgentBrowserBridge {
@@ -1297,7 +1298,6 @@ export class RuntimeBrowserCommands {
     waitForRegistration?: boolean
     activate?: boolean
     targetGroupId?: string
-    requestedPageId?: string
   }): Promise<{ browserPageId: string }> {
     const url = params.url ?? 'about:blank'
     const worktreeId = params.worktree
@@ -1322,8 +1322,7 @@ export class RuntimeBrowserCommands {
         worktreeId,
         params.profileId,
         params.activate,
-        params.targetGroupId,
-        params.requestedPageId
+        params.targetGroupId
       )
     }
     const { browserPageId } = await this.createBrowserTabInRenderer(
@@ -1707,15 +1706,9 @@ export class RuntimeBrowserCommands {
     worktreeId?: string,
     profileId?: string,
     activate?: boolean,
-    targetGroupId?: string,
-    requestedPageId?: string
+    targetGroupId?: string
   ): Promise<{ browserPageId: string }> {
-    const { browserPageId } = await offscreen.createTab({
-      url,
-      worktreeId,
-      profileId,
-      browserPageId: requestedPageId
-    })
+    const { browserPageId } = await offscreen.createTab({ url, worktreeId, profileId })
     const bridge = this.host.getAgentBrowserBridge()
     const wcId = bridge?.getRegisteredTabs(worktreeId).get(browserPageId)
     if (bridge && wcId != null) {

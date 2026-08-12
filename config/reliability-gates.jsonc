@@ -1378,35 +1378,31 @@
       "providers": ["remote-runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["remote-runtime"],
-      "coverageNotes": "A headed macOS desktop host and separate paired web client exercise the Explorer eye-button path with a real remote file URL, host browser DOM, renderer split layout, terminal focus transitions, and browser close. Unit contracts cover routing, one-shot split placement, manual moves, overlapping opens, teardown, non-secure LAN UUID generation, and capability-gated deterministic headless page creation after response loss. Linux, Windows, and a live headless-server journey remain gaps.",
+      "coverageNotes": "A headed macOS desktop host and separate paired web client exercise the Explorer eye-button path with a real remote file URL, host browser DOM, renderer split layout, terminal focus transitions, and browser close. Unit contracts cover owning-runtime routing, one-shot split placement, focus ordering against the exact predecessor tab, manual moves, overlapping opens, failure cleanup, and teardown. Linux, Windows, and a live headless-server journey remain gaps.",
       "motivatingLinks": [
         "https://linear.app/stably/issue/STA-3872/unable-to-open-html-files-in-remote-server",
         "https://github.com/stablyai/orca/pull/13876"
       ],
       "invariant": "Opening one HTML preview from a paired client creates exactly one browser page on the worktree-owning runtime and exactly one mirrored client browser workspace. The preview remains in the requested client-side split, activating it remains authoritative after a terminal was active, and closing it removes only the browser identities while the source editor and terminal survive.",
-      "oracle": "Open a real HTML file through Explorer on a separate client paired to an isolated headed desktop host. Require one new host browser tab, one client browser workspace and unified tab, two visible split groups, an exact client-handle-to-host-page identity, rendered fixture DOM, host and client browser focus after a terminal-to-browser click, and browser-only close convergence with the editor and terminal still visible. Separately drop create responses and retry the same requested page identity, requiring one physical headless page. Run the byte-identical Electron test on latest main, the candidate, and the candidate with its fix reverted.",
+      "oracle": "Open a real HTML file through Explorer on a separate client paired to an isolated headed desktop host. Require one new host browser tab, one client browser workspace and unified tab, two visible split groups, an exact client-handle-to-host-page identity, rendered fixture DOM, host and client browser focus after a terminal-to-browser click, and browser-only close convergence with the editor and terminal still visible. Run the byte-identical Electron test on latest main, the candidate, and the candidate with owning-runtime routing disabled.",
       "commands": [
-        "pnpm exec vitest run --config config/vitest.config.ts src/main/browser/offscreen-browser-backend.test.ts src/main/runtime/orca-runtime-browser.test.ts src/main/runtime/rpc/methods/browser.test.ts src/renderer/src/lib/file-preview.test.ts src/renderer/src/runtime/web-session-browser-placement.test.ts src/renderer/src/runtime/web-runtime-session.test.ts src/renderer/src/runtime/web-session-tabs-sync.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime-browser.test.ts src/main/runtime/rpc/methods/browser.test.ts src/renderer/src/lib/file-preview.test.ts src/renderer/src/runtime/web-session-browser-placement.test.ts src/renderer/src/runtime/web-runtime-session.test.ts src/renderer/src/runtime/web-session-tabs-sync.test.ts src/renderer/src/runtime/remote-server-parity.test.ts",
         "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
         "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1 --repeat-each=3",
         "SKIP_BUILD=1 ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
         "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1"
       ],
       "testFiles": [
-        "src/main/browser/offscreen-browser-backend.test.ts",
         "src/main/runtime/orca-runtime-browser.test.ts",
         "src/main/runtime/rpc/methods/browser.test.ts",
         "src/renderer/src/lib/file-preview.test.ts",
         "src/renderer/src/runtime/web-session-browser-placement.test.ts",
         "src/renderer/src/runtime/web-runtime-session.test.ts",
         "src/renderer/src/runtime/web-session-tabs-sync.test.ts",
+        "src/renderer/src/runtime/remote-server-parity.test.ts",
         "tests/e2e/paired-remote-html-browser-focus.spec.ts"
       ],
       "assertionRefs": [
-        {
-          "file": "src/main/browser/offscreen-browser-backend.test.ts",
-          "assertions": ["retrying one requested page identity returns one physical offscreen page"]
-        },
         {
           "file": "src/renderer/src/runtime/web-session-browser-placement.test.ts",
           "assertions": [
@@ -1420,6 +1416,12 @@
             "a host browser page stays in its exact client-owned preview group",
             "a reserved empty split survives a pre-publication host snapshot",
             "later client moves supersede initial preview placement"
+          ]
+        },
+        {
+          "file": "src/renderer/src/runtime/remote-server-parity.test.ts",
+          "assertions": [
+            "a caller-created browser gains focus when the exact predecessor tab is still visible"
           ]
         },
         {
@@ -1439,7 +1441,7 @@
           "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1 --repeat-each=3",
           "result": "passed",
           "durationSeconds": 16.1,
-          "summary": "Deterministic-identity candidate on merge-base 7319d59a103311a5fbf3affb5d293f3ba1b9594a passed exact host/client cardinality, split stability, rendered DOM, focus authority, close convergence, and surviving editor and terminal."
+          "summary": "The candidate passed exact host/client cardinality, split stability, rendered DOM, focus authority, close convergence, and surviving editor and terminal."
         },
         {
           "date": "2026-08-12",
@@ -1471,7 +1473,7 @@
       ],
       "runtimeBudget": {
         "p95Seconds": 60,
-        "scope": "six focused host/renderer contracts plus one isolated headed paired-runtime journey"
+        "scope": "seven focused host/renderer contracts plus one isolated headed paired-runtime journey"
       },
       "flakeHistory": {
         "status": "unknown",
@@ -1483,16 +1485,16 @@
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "The change adds no timer, polling, subprocess, RPC method, stream opcode, receipt ledger, or host publication. One optional requested-page field is capability-gated for mixed versions. Pending client placements are capped at 128 and cleared on adoption or worktree/environment teardown."
+        "evidence": "The change adds no timer, polling, retry, subprocess, RPC method, stream opcode, receipt ledger, or host publication. It performs one bounded scan of the current worktree's local tabs at user-initiated browser creation. Pending client placements are capped at 128 and cleared on adoption, failure, or worktree/environment teardown."
       },
       "promotionCriteria": [
         "Collect Linux and physical Windows paired-server evidence.",
-        "Collect a live headless-serve response-loss journey.",
+        "Collect a live headless-serve HTML preview journey.",
         "Collect 100 consecutive focused CI passes or 14 days without an unexplained flake."
       ],
       "knownGaps": [
         "Live paired-server validation currently covers macOS only.",
-        "A live headless-serve response-loss journey and multiple simultaneous viewers are not exercised by the Electron journey; deterministic host/renderer contracts cover response-loss replay.",
+        "A live headless-serve journey and multiple simultaneous viewers are not exercised by the Electron journey.",
         "Direct SSH remote file URLs remain intentionally unsupported and local file previews retain their existing path."
       ],
       "demotionRule": "Demote if one paired HTML action can create duplicate client or host browser identities, lose the requested split, bounce browser focus to another surface, or remove unrelated editor or terminal state on close."
