@@ -21,6 +21,7 @@ import {
 import { DAEMON_EXIT_ENDPOINT_OCCUPIED } from './daemon-endpoint-ownership'
 import { endpointIsProvenDead, probeSocketConnect } from './daemon-endpoint-probe'
 import {
+  OCCUPANCY_CONNECT_BUDGET_MS,
   raiseOccupancyWithProcessEvidence,
   resolveDaemonOccupancy,
   type DaemonOccupancy
@@ -96,6 +97,14 @@ export const WEDGED_DAEMON_GRACE_RETRIES = 11
  * ladder and the daemon fork.
  */
 export const WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS = 38_000
+
+/**
+ * Held back from the probes for the two steps that follow them inside the same ceiling: the
+ * identity re-check and the process-table read. Without it the loop would spend the clock to
+ * the last millisecond and those two would run past it — which is precisely how the previous
+ * budget kept overrunning, one unremembered term at a time.
+ */
+export const CLASSIFICATION_EVIDENCE_RESERVE_MS = 12_000
 const DAEMON_SELF_SHUTDOWN_WAIT_MS = 5_000
 const DAEMON_CHILD_TERMINATION_GRACE_MS = 5_000
 const DAEMON_CHILD_FORCE_EXIT_WAIT_MS = 1_000
@@ -613,25 +622,29 @@ function createOutOfProcessLauncher(
         // No recordedPid: this loop waits for *IPC* to recover, and the process table cannot
         // change its answer within a grace window, so scanning it every pass would multiply
         // the launch budget for an answer we already have. It is read once, after the wait.
+        // Every probe spends the shared clock, minus what the evidence read still needs, so no
+        // probe can eat the reserve however long the daemon takes to answer.
+        const probeBudgetMs = (): number =>
+          classificationRemainingMs() - CLASSIFICATION_EVIDENCE_RESERVE_MS
         const askDaemonWhatItHosts = (): Promise<DaemonOccupancy> =>
           resolveDaemonOccupancy({
             socketPath,
             tokenPath,
             recordedPid: null,
-            budgetMs: classificationRemainingMs()
+            budgetMs: probeBudgetMs()
           })
         // Why grace at all: a wedged-but-connectable daemon (a Windows update relaunch) may
         // still own live sessions and simply need a moment. A permanent wedge (#8689) spends
         // the window, and 'rejected' skips it — a refused handshake is never going to be
-        // adopted. Retries stop when the shared clock runs out, so this count is a ceiling
-        // rather than the budget.
+        // adopted. Retries stop when the clock can no longer fund a handshake, so the count
+        // is a ceiling rather than the budget.
         let occupancy = await askDaemonWhatItHosts()
         let graceRetry = 0
         while (
           occupancy.state === 'unknown' &&
           health !== 'rejected' &&
           graceRetry < WEDGED_DAEMON_GRACE_RETRIES &&
-          classificationRemainingMs() > 0 &&
+          probeBudgetMs() >= OCCUPANCY_CONNECT_BUDGET_MS &&
           !endpointIsProvenDead(await probeSocketConnect(socketPath))
         ) {
           occupancy = await askDaemonWhatItHosts()

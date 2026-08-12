@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS } from '../startup/first-window-startup-services'
-import { WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS } from './daemon-init'
+import {
+  CLASSIFICATION_EVIDENCE_RESERVE_MS,
+  WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS
+} from './daemon-init'
+import { OCCUPANCY_CONNECT_BUDGET_MS, OCCUPANCY_REQUEST_BUDGET_MS } from './daemon-occupancy'
+import {
+  POSIX_OWNERSHIP_PROBE_DEADLINE_MS,
+  PTY_OWNERSHIP_PROBE_ATTEMPTS
+} from './daemon-live-pty-evidence'
 
 /**
  * Kept out of the launcher's own spec because that file mocks daemon-health, which would
@@ -26,5 +34,21 @@ describe('wedged-daemon classification budget', () => {
       LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS
     )
     expect(afterClassificationMs).toBeGreaterThanOrEqual(20_000)
+  })
+
+  it('reserves enough of the clock for the steps that run after the probes', () => {
+    // The launcher holds CLASSIFICATION_EVIDENCE_RESERVE_MS back from every probe so the
+    // identity re-check and the process-table read still fit inside the same ceiling. Assert
+    // the reserve is actually big enough for them — the reserve existing is not the same as
+    // the reserve being sufficient, and "big enough" is the part that silently rots.
+    const identityProbeMs = 3_000
+    const evidenceMs = POSIX_OWNERSHIP_PROBE_DEADLINE_MS * PTY_OWNERSHIP_PROBE_ATTEMPTS
+
+    expect(CLASSIFICATION_EVIDENCE_RESERVE_MS).toBeGreaterThanOrEqual(identityProbeMs + evidenceMs)
+    // And a probe must still be fundable once the reserve is set aside, or the grace loop
+    // would never run at all.
+    expect(
+      WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS - CLASSIFICATION_EVIDENCE_RESERVE_MS
+    ).toBeGreaterThanOrEqual(OCCUPANCY_CONNECT_BUDGET_MS + OCCUPANCY_REQUEST_BUDGET_MS)
   })
 })
