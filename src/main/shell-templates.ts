@@ -187,16 +187,29 @@ end`
  *
  * The POSIX wrappers do this from their rc files; fish has no such hook, so
  * without this a fish pane silently loses both halves of the contract.
+ *
+ * One text serves all three launch sites (local PTY, daemon/SSH, relay): fish expands
+ * an unset variable to nothing, so each site's unused shim variables drop out of the
+ * loop. Forking a per-site copy is how the POSIX call sites drifted apart before.
  */
 export function getFishInitCommand(escapedMarker: string): string {
   return `begin
   # Why: macOS fish's bundled config.fish runs path_helper, which rebuilds PATH and
   # appends inherited entries last — the attribution shim lands near-last and commits
   # from fish panes lose the Orca trailer. The begin block keeps the loop variable out
-  # of the user's session. Order matches the POSIX wrappers: attribution, then teams.
-  for __orca_shim_dir in $ORCA_ATTRIBUTION_SHIM_DIR $ORCA_AGENT_TEAMS_SHIM_DIR
+  # of the user's session. Order matches the POSIX wrappers: attribution, then teams,
+  # and the relay's own shim (ORCA_REMOTE_CLI_BIN_DIR) last so it ends up first.
+  for __orca_shim_dir in $ORCA_ATTRIBUTION_SHIM_DIR $ORCA_AGENT_TEAMS_SHIM_DIR $ORCA_REMOTE_CLI_BIN_DIR
     if test -n "$__orca_shim_dir"; and test "$PATH[1]" != "$__orca_shim_dir"
-      set -gx PATH "$__orca_shim_dir" $PATH
+      # Why drop existing copies instead of a plain prepend: this text can run twice in
+      # one session (a re-initialized pane), and a plain prepend grows PATH by one
+      # duplicate per shim per run. Filtered by string compare, not \`string match\`,
+      # because a shim path may contain glob characters.
+      set -l __orca_kept_path
+      for __orca_path_entry in $PATH
+        test "$__orca_path_entry" = "$__orca_shim_dir"; or set -a __orca_kept_path "$__orca_path_entry"
+      end
+      set -gx PATH "$__orca_shim_dir" $__orca_kept_path
     end
   end
 end

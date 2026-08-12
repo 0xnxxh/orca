@@ -11,13 +11,18 @@
  *
  * Both are asserted against a control spawn with the init command removed, so a
  * regression that makes the init command a no-op cannot pass this file.
+ *
+ * Every path here is deliberately spacey (and one carries glob characters), because the
+ * dirs this text moves around are really "~/Library/Application Support/...".
  */
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { getAttributionShellLaunchConfig } from './daemon/shell-ready'
 import { getAttributionShellLaunchConfig as getLocalPtyAttributionShellLaunchConfig } from './providers/local-pty-shell-ready'
+import { getFishInitCommand } from './shell-templates'
 import { fishRequirementViolation, resolveFishBinary } from '../shared/fish-binary-requirement'
 
 const FISH = resolveFishBinary()
@@ -33,10 +38,25 @@ const TERMINAL_QUERY_REPLIES: readonly (readonly [string, string])[] = [
 ]
 const QUERY_CARRY_LEN = Math.max(...TERMINAL_QUERY_REPLIES.map(([query]) => query.length))
 
-const SHIM_DIR = '/orca-test/attribution-shim'
-const USER_BIN_DIR = '/orca-test/user-bin'
-const ORCA_CODEX_HOME = '/orca-test/routed-codex-home'
-const USER_CODEX_HOME = '/orca-test/user-codex-home'
+// Spaces on purpose: "~/Library/Application Support/..." is the real shape of an Orca
+// shim dir on macOS, and an unquoted fish `set` would silently split it into two entries.
+const SHIM_DIR = '/orca test/attribution shim'
+const TEAMS_SHIM_DIR = '/orca test/agent teams shim'
+// Glob characters on purpose: fish treats an unmatched glob as a hard error, so a filter
+// written with `string match` instead of a plain compare would take the whole init down.
+const RELAY_SHIM_DIR = '/orca test/relay [cli] bin'
+const USER_BIN_DIR = '/orca test/user bin'
+const ORCA_CODEX_HOME = '/orca test/routed codex home'
+const USER_CODEX_HOME = '/orca test/user codex home'
+const SHELL_READY_MARKER = '\\033]777;orca-shell-ready\\007'
+
+/**
+ * fish single quotes are NOT POSIX single quotes: `\\` and `\'` still escape inside them,
+ * and a trailing backslash before the closing quote is a syntax error. Verified on 4.7.1.
+ */
+function fishQuote(value: string): string {
+  return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+}
 
 /**
  * Spawns fish on a real PTY with the given args and returns what the session looks
@@ -48,7 +68,7 @@ async function readFirstPromptEnvironment(args: string[]): Promise<{
   codexHome: string
 }> {
   const pty = await import('node-pty')
-  const home = mkdtempSync(join(tmpdir(), 'orca-fish-startup-'))
+  const home = mkdtempSync(join(tmpdir(), 'orca fish startup '))
   const resultPath = join(home, 'probe-result')
   const donePath = join(home, 'probe-done')
   try {
@@ -60,14 +80,14 @@ async function readFirstPromptEnvironment(args: string[]): Promise<{
         'function fish_prompt; printf "> "; end',
         'function fish_right_prompt; end',
         '# A user who routes their own agent home: Orca must still win.',
-        `set -gx CODEX_HOME ${USER_CODEX_HOME}`,
+        `set -gx CODEX_HOME ${fishQuote(USER_CODEX_HOME)}`,
         '# Stands in for macOS path_helper (which really does run here on macOS):',
         '# whatever Orca prepended at spawn is no longer first once config.fish ran.',
-        `set -gx PATH ${USER_BIN_DIR} $PATH`,
+        `set -gx PATH ${fishQuote(USER_BIN_DIR)} $PATH`,
         'function __orca_probe --on-event fish_prompt',
-        `  echo "PATH1=$PATH[1]" >"${resultPath}"`,
-        `  echo "CODEX_HOME=$CODEX_HOME" >>"${resultPath}"`,
-        `  echo done >"${donePath}"`,
+        `  echo "PATH1=$PATH[1]" >${fishQuote(resultPath)}`,
+        `  echo "CODEX_HOME=$CODEX_HOME" >>${fishQuote(resultPath)}`,
+        `  echo done >${fishQuote(donePath)}`,
         'end',
         ''
       ].join('\n')
@@ -172,4 +192,57 @@ describe('fish startup environment', () => {
     },
     45_000
   )
+
+  itWithFish('runs clean and unchanged when a pane re-runs it', () => {
+    // Why: a re-initialized pane can evaluate this text a second time in the same
+    // session. A plain prepend would grow PATH by one duplicate per shim per run.
+    const home = mkdtempSync(join(tmpdir(), 'orca fish idempotent '))
+    try {
+      const initPath = join(home, 'init.fish')
+      writeFileSync(initPath, getFishInitCommand(SHELL_READY_MARKER))
+      const result = spawnSync(
+        FISH.path as string,
+        [
+          // --no-config so the outcome is the init text alone, not a developer's config.fish.
+          '--no-config',
+          '-c',
+          [
+            'set -gx PATH /usr/bin /bin',
+            `source ${fishQuote(initPath)}`,
+            `source ${fishQuote(initPath)}`,
+            'for __probe_entry in $PATH; echo "PATH=$__probe_entry"; end',
+            'echo "CODEX_HOME=$CODEX_HOME"',
+            // Nothing the init text declares may survive into the user's session.
+            'echo "LEAKED=$__orca_shim_dir$__orca_kept_path$__orca_path_entry"'
+          ].join('\n')
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            PATH: process.env.PATH ?? '/usr/bin:/bin',
+            HOME: home,
+            // All three shim variables, because the duplication only shows up once a
+            // later shim displaces an earlier one from PATH[1]. ORCA_REMOTE_CLI_BIN_DIR
+            // is the relay's name for it and is only ever set on an SSH host.
+            ORCA_ATTRIBUTION_SHIM_DIR: SHIM_DIR,
+            ORCA_AGENT_TEAMS_SHIM_DIR: TEAMS_SHIM_DIR,
+            ORCA_REMOTE_CLI_BIN_DIR: RELAY_SHIM_DIR,
+            ORCA_CODEX_HOME,
+            ORCA_SHELL_READY_MARKER: '0'
+          }
+        }
+      )
+
+      expect(result.stderr).toBe('')
+      expect(result.status).toBe(0)
+      const pathEntries = [...result.stdout.matchAll(/^PATH=(.*)$/gm)].map((match) => match[1])
+      // Two `source`s, one entry each — and the relay shim ends up first, matching where
+      // the relay's own bash/zsh wrappers put it.
+      expect(pathEntries).toEqual([RELAY_SHIM_DIR, TEAMS_SHIM_DIR, SHIM_DIR, '/usr/bin', '/bin'])
+      expect(result.stdout).toContain(`CODEX_HOME=${ORCA_CODEX_HOME}`)
+      expect(result.stdout).toContain('LEAKED=\n')
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
 })

@@ -391,7 +391,7 @@ describePosix('local PTY shell-ready launch config', () => {
     expect(config.env).toEqual({ ORCA_SHELL_READY_MARKER: '0' })
     expect(config.args?.slice(0, 2)).toEqual(['-l', '-C'])
     const init = config.args?.[2] ?? ''
-    expect(init).toContain('set -gx PATH "$__orca_shim_dir" $PATH')
+    expect(init).toContain('set -gx PATH "$__orca_shim_dir" $__orca_kept_path')
     expect(init).toContain('set -gx CODEX_HOME "$ORCA_CODEX_HOME"')
     expect(init).toContain('if test "$ORCA_SHELL_READY_MARKER" = 1')
   })
