@@ -393,8 +393,9 @@ does not mean the surrounding phase is complete.
 
 ### Phase 1 contract gate
 
-- [ ] Review package, ingress, conflict, result, and capability contracts before implementing
-      filesystem mutation or Cloud APIs.
+- [x] Review package, ingress, conflict, result, and capability contracts. Shared schema, runtime
+      method, Relay handler, ingress, planner, and stable-failure suites now form the release-gated
+      contract evidence; no existing discovery method or stream opcode changed.
 - [x] Freeze stable V1 error categories used by desktop, runtime, SSH, and Cloud tests.
 
 ## 2. Build and validate packages
@@ -1351,7 +1352,9 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
       and tested. The user/admin guides document the lifecycle; Cloud route, integration, restore,
       and cleanup suites cover the implemented contract. Automatic one-day quarantine deletion
       remains a separate time-gated infrastructure observation.
-- [ ] The UI identifies author, organization, scripts, and executable content before install.
+- [x] The UI identifies author, organization, scripts, and executable content before install.
+      Renderer coverage asserts publisher/organization identity, script and executable summaries,
+      digest, release notes, and long-content behavior before the primary install action.
 - [ ] Telemetry, logs, and diagnostic bundles contain no credentials or private contents.
 - [ ] Kill switches are tested without affecting discovery or existing installations.
 
