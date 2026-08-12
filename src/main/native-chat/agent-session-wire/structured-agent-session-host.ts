@@ -164,7 +164,10 @@ export class StructuredAgentSessionHost {
           spawnToken: this.deps.mintSpawnToken?.() ?? randomUUID(),
           claimKeyId: this.deps.claimKeyId,
           handoffOperationId: params.envelope.clientOperationId,
-          probe: await this.runtimeState.probeOwner(sessionId)
+          probe: await this.runtimeState.probeOwner(sessionId),
+          ...(this.deps.resolveLaunchEnv
+            ? { launchEnv: this.deps.resolveLaunchEnv(params.provider) }
+            : {})
         },
         callerKey: caller.callerKey,
         params,

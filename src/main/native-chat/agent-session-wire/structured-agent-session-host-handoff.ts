@@ -1,4 +1,6 @@
+import { join } from 'node:path'
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
+import type { LegacyImportOptions } from '../agent-session-journal/journal-legacy-import'
 import { importLegacyTranscriptIntoJournal } from '../agent-session-journal/journal-legacy-import'
 import { journalIdentityFor } from './structured-agent-session-attach'
 import { canRestoreLiveTuiOwner } from './structured-agent-session-handoff-restart'
@@ -72,17 +74,30 @@ async function importTuiHistory(
   }
   const providerSessionId =
     head.handle.provider === 'claude' ? head.handle.sessionId : head.handle.threadId
+  const options = structuredTuiTranscriptImportOptions(record, input.transcriptPath)
   const imported = await importLegacyTranscriptIntoJournal({
     journal: session.journal,
     agent: head.handle.provider,
     sessionId: providerSessionId,
     fence: input.fence,
-    ...(input.transcriptPath ? { options: { filePath: input.transcriptPath } } : {})
+    options
   })
   if (!imported.ok) {
     throw new Error(imported.error)
   }
   host.subscribers.reset(input.sessionId, session.journal, 'epoch_changed', input.fence)
+}
+
+export function structuredTuiTranscriptImportOptions(
+  record: AgentSessionRecord,
+  transcriptPath?: string
+): LegacyImportOptions {
+  if (transcriptPath) {
+    return { filePath: transcriptPath }
+  }
+  return record.provider === 'claude'
+    ? { claudeProjectsDir: join(record.accountHome.path, 'projects') }
+    : { codexSessionsDirs: [join(record.accountHome.path, 'sessions')] }
 }
 
 async function acquireNativeHandoffOwner(

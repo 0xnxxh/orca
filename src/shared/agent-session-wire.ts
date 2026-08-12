@@ -16,7 +16,7 @@ import type { AgentSessionHandoffStage, AgentSessionOwnerRuntimeKind } from './a
 
 export type AgentSessionHandoffDirection = 'to-tui' | 'to-native'
 export type AgentSessionHandoffMode = 'now' | 'after-turn' | 'stop-turn'
-export type AgentSessionHandoffAction = 'start' | 'cancel-queued' | 'retry'
+export type AgentSessionHandoffAction = 'start' | 'cancel-queued' | 'retry' | 'recover'
 
 export type AgentSessionHandoffStatus = {
   owner: AgentSessionOwnerRuntimeKind | 'none'
@@ -34,6 +34,7 @@ export type AgentSessionHandoffStatus = {
     message: string
     details?: string
     recoverableOwner: AgentSessionOwnerRuntimeKind | 'none'
+    canRetryProof?: boolean
   }
 }
 

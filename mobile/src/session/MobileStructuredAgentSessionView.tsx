@@ -75,7 +75,7 @@ type Props = {
   onRequestHandoff: (
     direction: AgentSessionHandoffDirection,
     mode: AgentSessionHandoffMode,
-    action?: 'start' | 'cancel-queued' | 'retry'
+    action?: 'start' | 'cancel-queued' | 'retry' | 'recover'
   ) => Promise<boolean>
 }
 
@@ -357,6 +357,10 @@ function MobileStructuredHandoffBanner(props: {
       ) : status.owner === 'tui' && status.phase === 'idle' ? (
         <Pressable onPress={() => void props.onRequest('to-native', 'after-turn')}>
           <Text style={styles.handoffButtonText}>Return to chat</Text>
+        </Pressable>
+      ) : status.phase === 'failed' && status.direction && status.error?.canRetryProof ? (
+        <Pressable onPress={() => void props.onRequest(status.direction!, 'now', 'recover')}>
+          <Text style={styles.handoffButtonText}>Retry proof</Text>
         </Pressable>
       ) : status.phase === 'failed' &&
         status.direction &&

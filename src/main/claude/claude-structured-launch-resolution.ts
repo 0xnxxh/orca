@@ -89,7 +89,11 @@ export function createClaudeStructuredLaunchResolver(
       command: spawnCmd,
       args: spawnArgs,
       cwd: await deps.resolveWorkspacePath(record.location.workspaceId),
-      ...(deps.resolveEnv ? { env: deps.resolveEnv() } : {}),
+      ...(record.launchEnv
+        ? { env: { ...record.launchEnv } }
+        : deps.resolveEnv
+          ? { env: deps.resolveEnv() }
+          : {}),
       claudeConfigDir: record.accountHome.path,
       providerSessionId,
       resumeLeafUuid: head?.handle.provider === 'claude' ? head.handle.leafUuid : null,

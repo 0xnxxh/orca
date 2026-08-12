@@ -16,7 +16,14 @@ import {
 } from './structured-agent-session-handoff-admission'
 import { createStructuredHandoffFlowContext } from './structured-agent-session-handoff-flow-context'
 import { StructuredAgentSessionHandoffFlowRunner } from './structured-agent-session-handoff-flow-runner'
-import { StructuredAgentSessionHandoffQueue } from './structured-agent-session-handoff-queue'
+import {
+  beginStructuredManualRecovery,
+  structuredManualRecoveryIsAdmissible
+} from './structured-agent-session-manual-recovery'
+import {
+  enqueueStructuredHandoffAfterTurn,
+  StructuredAgentSessionHandoffQueue
+} from './structured-agent-session-handoff-queue'
 import { StructuredAgentSessionHandoffOperationGuard } from './structured-agent-session-handoff-operation-guard'
 import { restoreStructuredAgentSessionHandoff } from './structured-agent-session-handoff-restart'
 import {
@@ -126,6 +133,28 @@ export class StructuredAgentSessionHandoffCoordinator {
         'Agent TUI handoff is unavailable on this host.'
       )
     }
+    if (action === 'recover') {
+      if (!structuredManualRecoveryIsAdmissible(record, currentStatus)) {
+        return this.refuseAdmitted(
+          callerKey,
+          params,
+          'agent_session_operation_conflict',
+          'This session no longer has a recoverable TUI proof.'
+        )
+      }
+      const recovery = beginStructuredManualRecovery({
+        deps: this.deps,
+        operationGuard: this.operationGuard,
+        callerKey,
+        params,
+        fingerprint,
+        requireRecord: (sessionId) => this.requireRecord(sessionId),
+        restore: (sessionId) => this.restore(sessionId),
+        setStatus: (sessionId, status) => this.setStatus(sessionId, status)
+      })
+      this.flowRunner.track(recovery)
+      return this.success(record.sessionId, false)
+    }
     if (action === 'retry') {
       if (!structuredHandoffRetryIsAdmissible(this.status(record.sessionId), params)) {
         return this.refuseAdmitted(
@@ -172,7 +201,14 @@ export class StructuredAgentSessionHandoffCoordinator {
       )
     }
     if (busy && params.mode === 'after-turn') {
-      this.queueAfterTurn(callerKey, params, fingerprint)
+      enqueueStructuredHandoffAfterTurn({
+        deps: this.deps,
+        queue: this.queue,
+        params,
+        tuiOwner,
+        setStatus: (status) => this.setStatus(record.sessionId, status),
+        begin: (next, exited) => this.begin(callerKey, next, null, fingerprint, exited)
+      })
       return this.success(record.sessionId, false)
     }
     if (busy && expectedOwner === 'tui' && params.mode === 'stop-turn') {
@@ -201,45 +237,8 @@ export class StructuredAgentSessionHandoffCoordinator {
     })
   }
 
-  private success(sessionId: string, replayed: boolean) {
-    return structuredHandoffSuccess(this.deps, sessionId, replayed, this.status(sessionId))
-  }
-
-  private queueAfterTurn(
-    callerKey: string,
-    params: AgentSessionHandoffRequest,
-    fingerprint: string
-  ): void {
-    const sessionId = params.envelope.sessionId
-    let tuiReadiness: 'idle' | 'exited' | null = null
-    this.setStatus(sessionId, {
-      owner: params.direction === 'to-tui' ? 'native' : 'tui',
-      direction: params.direction,
-      phase: 'queued',
-      stage: null,
-      operationId: params.envelope.clientOperationId,
-      hostLabel: this.deps.transport?.hostLabel
-    })
-    const tuiOwner = this.tuiOwners.get(sessionId)
-    this.queue.enqueue(
-      sessionId,
-      async (signal) => {
-        if (params.direction === 'to-tui') {
-          return !activeStructuredAgentSessionTurnId(
-            this.deps.session(sessionId).journal.snapshot().items
-          )
-        }
-        tuiReadiness = tuiOwner
-          ? ((await this.deps.transport?.waitForTuiIdleOrExit(tuiOwner, signal)) ?? null)
-          : null
-        return tuiReadiness !== null
-      },
-      () => {
-        const next = { ...params, mode: 'now' as const }
-        this.begin(callerKey, next, null, fingerprint, tuiReadiness === 'exited')
-      }
-    )
-  }
+  private success = (sessionId: string, replayed: boolean) =>
+    structuredHandoffSuccess(this.deps, sessionId, replayed, this.status(sessionId))
 
   private begin(
     callerKey: string,

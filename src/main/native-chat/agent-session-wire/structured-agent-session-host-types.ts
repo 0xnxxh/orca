@@ -21,6 +21,9 @@ export type StructuredAgentSessionHostDeps = {
   claimKeyId: string
   probeOwner?: (record: AgentSessionRecord) => Promise<AgentSessionOwnerProbe>
   mintSpawnToken?: () => string
+  resolveLaunchEnv?: (
+    provider: AgentSessionRecord['provider']
+  ) => Record<string, string> | undefined
   now?: () => number
   onEventSinkError?: (input: { sessionId: string; error: unknown }) => void
   handoffTransport?: StructuredAgentSessionHandoffTransport

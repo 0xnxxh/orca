@@ -86,10 +86,15 @@ describe('claude structured launch resolution', () => {
     expect(launch.args.slice(-2)).toEqual(['--resume', 'provider-current'])
   })
 
-  it('resolves configured environment live without storing it in the session record', async () => {
-    let token = 'first-token'
-    const resolver = resolverFor(record(), () => ({
-      ANTHROPIC_AUTH_TOKEN: token,
+  it('keeps the session launch environment pinned after account settings change', async () => {
+    const pinned = record({
+      launchEnv: {
+        ANTHROPIC_AUTH_TOKEN: 'first-token',
+        ANTHROPIC_BASE_URL: 'https://gateway.example.test'
+      }
+    })
+    const resolver = resolverFor(pinned, () => ({
+      ANTHROPIC_AUTH_TOKEN: 'rotated-token',
       ANTHROPIC_BASE_URL: 'https://gateway.example.test'
     }))
 
@@ -97,9 +102,7 @@ describe('claude structured launch resolution', () => {
       ANTHROPIC_AUTH_TOKEN: 'first-token',
       ANTHROPIC_BASE_URL: 'https://gateway.example.test'
     })
-    token = 'rotated-token'
-    expect((await resolver({ identity: IDENTITY })).env?.ANTHROPIC_AUTH_TOKEN).toBe('rotated-token')
-    expect(JSON.stringify(record())).not.toContain('token')
+    expect((await resolver({ identity: IDENTITY })).env?.ANTHROPIC_AUTH_TOKEN).toBe('first-token')
   })
 
   it('refuses other hosts, WSL, providers, and account-home variables', async () => {

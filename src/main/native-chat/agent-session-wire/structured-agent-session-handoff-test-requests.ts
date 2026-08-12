@@ -1,12 +1,13 @@
 import { computeAgentSessionPayloadFingerprint } from '../../../shared/agent-session-mutation-envelope'
 import type {
   AgentSessionHandoffDirection,
+  AgentSessionHandoffAction,
   AgentSessionHandoffMode,
   AgentSessionHandoffRequest
 } from '../../../shared/agent-session-wire'
 
 export type StructuredHandoffTestRequestOptions = {
-  action?: 'start' | 'cancel-queued' | 'retry'
+  action?: AgentSessionHandoffAction
   operationId?: string
 }
 

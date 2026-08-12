@@ -166,6 +166,24 @@ afterEach(async () => {
 })
 
 describe('attach', () => {
+  it('pins the provider launch environment when the session is created', async () => {
+    host = new StructuredAgentSessionHost({
+      store,
+      adapter: adapter(),
+      journalRoot: root,
+      claimKeyId: 'key-1',
+      mintSpawnToken: () => 'spawn-a',
+      resolveLaunchEnv: () => ({ ANTHROPIC_AUTH_TOKEN: 'pinned-token' }),
+      now: () => NOW
+    })
+
+    await host.attach(CALLER, attachParams())
+
+    expect(store.getRecord(SESSION)?.launchEnv).toEqual({
+      ANTHROPIC_AUTH_TOKEN: 'pinned-token'
+    })
+  })
+
   it('reserves the lease, spawns through the adapter, and opens the journal', async () => {
     const result = await host.attach(CALLER, attachParams())
     expect(result).toMatchObject({ ok: true, replayed: false })

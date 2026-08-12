@@ -20,7 +20,7 @@ export class StructuredAgentSessionHandoffOperationGuard {
     sessionId: string
     operationId: string
     fingerprint: string
-    action: 'start' | 'cancel-queued' | 'retry'
+    action: 'start' | 'cancel-queued' | 'retry' | 'recover'
     status?: AgentSessionHandoffStatus
     now: number
   }): Promise<HandoffOperationDecision> {

@@ -73,6 +73,22 @@ describe('Claude TUI resume launch', () => {
     expect(launch.env.CLAUDE_CODE_SESSION_ID).toBeUndefined()
   })
 
+  it('uses the durable session environment instead of current account settings', async () => {
+    const build = createClaudeTuiResumeLaunchBuilder({
+      resolveWorkspacePath: async () => '/workspace',
+      resolveCommand: () => 'claude',
+      resolveEnv: () => ({ ANTHROPIC_AUTH_TOKEN: 'rotated-token' }),
+      inheritedEnv: {}
+    })
+
+    const launch = await build({
+      record: record({ launchEnv: { ANTHROPIC_AUTH_TOKEN: 'pinned-token' } }),
+      spawnToken: 'spawn'
+    })
+
+    expect(launch.env.ANTHROPIC_AUTH_TOKEN).toBe('pinned-token')
+  })
+
   it('resolves the durable chain head instead of an earlier Claude leaf', async () => {
     const nextRecord = record({
       providerHandleChain: [

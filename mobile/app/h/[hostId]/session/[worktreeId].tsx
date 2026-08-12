@@ -4672,31 +4672,19 @@ export default function SessionScreen() {
                   }
                   return accepted
                 }}
-                onTuiSend={async (text, restored) => {
-                  const terminal = mobileStructuredTuiSend.getMobileStructuredTuiTerminal(
-                    structuredSessionEntry.session.handoff
-                  )
-                  if (!client || connState !== 'connected' || !terminal) {
-                    showToast('Message not sent (disconnected)', 1800)
-                    return false
-                  }
-                  const outcome = await mobileStructuredTuiSend.sendMobileStructuredTuiMessage({
+                onTuiSend={(text, restored) =>
+                  mobileStructuredTuiSend.sendMobileStructuredTuiComposerMessage({
                     client,
-                    terminal,
+                    connected: connState === 'connected',
+                    agent: activeStructuredTab.agent,
+                    handoff: structuredSessionEntry.session.handoff,
                     deviceToken: deviceTokenRef.current,
                     text,
-                    attachments: [...restored, ...structuredSessionEntry.attachments.attachments]
+                    attachments: [...restored, ...structuredSessionEntry.attachments.attachments],
+                    onAccepted: structuredSessionEntry.attachments.clear,
+                    onToast: showToast
                   })
-                  if (outcome === 'rejected') {
-                    showToast('Message not sent', 1800)
-                    return false
-                  }
-                  structuredSessionEntry.attachments.clear()
-                  if (outcome === 'unknown') {
-                    showToast('Delivery unconfirmed — check chat before retrying', 2400)
-                  }
-                  return true
-                }}
+                }
                 onTakeQueuedForEdit={structuredSessionEntry.writes.takeQueuedForEdit}
                 onRetry={structuredSessionEntry.writes.retry}
                 onRespondToPrompt={structuredSessionEntry.writes.respondToPrompt}
