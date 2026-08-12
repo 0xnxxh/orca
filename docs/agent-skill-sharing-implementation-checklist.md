@@ -723,8 +723,10 @@ does not mean the surrounding phase is complete.
 - [x] Verify bucket IAM contains neither `allUsers` nor `allAuthenticatedUsers`.
 - [x] Do not grant desktop, remote runtime, or end-user identities direct bucket IAM.
 - [x] Do not create or distribute long-lived GCP service-account keys.
-- [ ] Keep deployment-account permissions unchanged except for reviewed Terraform management
-      requirements.
+- [x] Keep deployment-account permissions unchanged except for reviewed Terraform management
+      requirements. Skill sharing adds no deployment-account IAM binding: immutable API and
+      monitor-image updates use its existing `roles/run.developer`, while storage inventory and
+      scheduling use separate least-privilege service accounts.
 
 ### Cloud Run configuration
 
