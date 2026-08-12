@@ -6,7 +6,7 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `a29e25edf4`; no PR.
+- Orca implementation: `skills-share` at `a62f522ed4`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   production remains untouched.
@@ -1330,11 +1330,13 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
 - [x] Verify staging application logs contain only route templates, method, status, duration, and
       standard process metadata, with zero credential or private-content matches. Exclude per-link
       Cloud Run platform request logs through Terraform and verify zero are retained.
-- [ ] Verify logs, metrics, traces, diagnostics, and support bundles contain no grants or private
+- [x] Verify logs, metrics, traces, diagnostics, and support bundles contain no grants or private
       package data. The physical SSH window emitted 27 structured route-template events whose
       complete application field inventory was only duration, event, hostname, level, method,
-      process ID, route template, status, and time; it emitted zero API error logs. Broader trace,
-      diagnostic, and support-bundle inspection remains open.
+      process ID, route template, status, and time; it emitted zero API error logs. Install traces
+      retain only bounded IDs, counts, labels, and enums. The support-bundle suite injects private
+      paths, filenames, contents, share URLs, signed grants, policies, ACLs, and credentials and
+      proves none survive collection. No skill-sharing product telemetry event is registered.
 - [x] Load-test finalization and choose the fixed semaphore from observed memory, CPU, request
       latency, and database usage. Run `31585710645` kept the existing semaphore: its 12 concurrent
       30-skill bundles produced two immediate successes and ten explicit saturation responses,
@@ -1387,7 +1389,9 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
 - [x] The UI identifies author, organization, scripts, and executable content before install.
       Renderer coverage asserts publisher/organization identity, script and executable summaries,
       digest, release notes, and long-content behavior before the primary install action.
-- [ ] Telemetry, logs, and diagnostic bundles contain no credentials or private contents.
+- [x] Telemetry, logs, and diagnostic bundles contain no credentials or private contents. Cloud
+      field-inventory and sensitive-value scans, bounded install-span attributes, and adversarial
+      support-bundle collection tests cover the complete first-release data path.
 - [ ] Kill switches are tested without affecting discovery or existing installations.
 
 ## 15. Post-release multi-machine management and reconciliation
