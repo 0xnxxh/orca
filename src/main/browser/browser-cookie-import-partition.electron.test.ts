@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { build as buildVite } from 'vite'
+import { createChromiumCookieTestDatabase } from './browser-cookie-import-test-database'
 
 const electronBinary = createRequire(import.meta.url)('electron') as string
 const fixtureRoots: string[] = []
@@ -19,14 +20,19 @@ type FixtureResult = {
   before: Record<string, unknown>
   after: Record<string, unknown>
   electronCookieKeys: string[]
+  importResult: Record<string, unknown>
   remainingNames: string[]
 }
 
-function buildFixtureMain(policyPath: string, resultPath: string): string {
+function buildFixtureMain(
+  importPath: string,
+  resultPath: string,
+  sourceCookiesPath: string
+): string {
   return `
 const { app, BrowserWindow, session } = require('electron')
 const { writeFileSync } = require('node:fs')
-const { isNonTransplantableCookieDomain, removeAllCookiesExcept } = require(${JSON.stringify(policyPath)})
+const { importCookiesFromBrowser } = require(${JSON.stringify(importPath)})
 const resultPath = ${JSON.stringify(resultPath)}
 let currentStep = 'starting'
 const mark = (step) => {
@@ -76,10 +82,15 @@ async function run() {
   if (!before || !electronCookie) throw new Error('Partitioned fixture cookie was not created')
   mark('cookies read')
 
-  await removeAllCookiesExcept(targetSession.cookies, (cookie) =>
-    isNonTransplantableCookieDomain(cookie.domain || '')
-  )
-  mark('selective removal complete')
+  const importResult = await importCookiesFromBrowser({
+    family: 'chrome',
+    label: 'Chromium fixture',
+    cookiesPath: ${JSON.stringify(sourceCookiesPath)},
+    profiles: [{ name: 'Default', directory: 'Default' }],
+    selectedProfile: 'Default'
+  }, partition)
+  if (!importResult.ok) throw new Error('Native import failed: ' + importResult.reason)
+  mark('native import complete')
 
   const afterCookies = (await debug.sendCommand('Network.getAllCookies')).cookies
   const after = afterCookies.find((cookie) => cookie.name === 'partitioned-google')
@@ -89,6 +100,7 @@ async function run() {
     before,
     after,
     electronCookieKeys: Object.keys(electronCookie).sort(),
+    importResult,
     remainingNames: afterCookies.map((cookie) => cookie.name).sort()
   }))
   debug.detach()
@@ -106,25 +118,45 @@ run().catch((error) => {
 async function runFixture(): Promise<FixtureResult> {
   const root = mkdtempSync(join(tmpdir(), 'orca-partition-cookie-'))
   fixtureRoots.push(root)
-  const policyPath = join(root, 'browser-cookie-import-policy.cjs')
+  const importPath = join(root, 'browser-cookie-import.cjs')
+  const registryStubPath = join(root, 'browser-session-registry.cjs')
   const resultPath = join(root, 'result.json')
+  const sourceCookiesPath = join(root, 'source', 'Network', 'Cookies')
   const fixturePath = join(root, 'main.cjs')
+  createChromiumCookieTestDatabase(sourceCookiesPath, [
+    { domain: '.example.com', name: 'imported', value: 'new-value' }
+  ]).close()
+  writeFileSync(
+    registryStubPath,
+    'exports.browserSessionRegistry = { clearPendingCookieImport() {}, setPendingCookieImport() {} }\n'
+  )
   await buildVite({
     configFile: false,
     logLevel: 'silent',
+    plugins: [
+      {
+        name: 'stub-browser-session-registry',
+        resolveId(source, importer) {
+          return source === './browser-session-registry' &&
+            importer?.endsWith('browser-cookie-import.ts')
+            ? registryStubPath
+            : null
+        }
+      }
+    ],
     build: {
       emptyOutDir: false,
       lib: {
-        entry: join(process.cwd(), 'src/main/browser/browser-cookie-import-policy.ts'),
+        entry: join(process.cwd(), 'src/main/browser/browser-cookie-import.ts'),
         formats: ['cjs'],
-        fileName: () => 'browser-cookie-import-policy.cjs'
+        fileName: () => 'browser-cookie-import.cjs'
       },
       outDir: root,
       target: 'node20',
-      rollupOptions: { external: ['electron'] }
+      rollupOptions: { external: ['electron', /^node:/] }
     }
   })
-  writeFileSync(fixturePath, buildFixtureMain(policyPath, resultPath))
+  writeFileSync(fixturePath, buildFixtureMain(importPath, resultPath, sourceCookiesPath))
   const { ELECTRON_RUN_AS_NODE: _electronRunAsNode, ...env } = process.env
   const electronArgs = [fixturePath, `--user-data-dir=${join(root, 'profile')}`]
   const executable = process.platform === 'linux' ? 'xvfb-run' : electronBinary
@@ -153,6 +185,10 @@ describe('native Chromium excluded partition cookie under Electron', () => {
     })
     expect(result.electronCookieKeys).not.toContain('partitionKey')
     expect(result.after).toEqual(result.before)
-    expect(result.remainingNames).toEqual(['partitioned-google'])
+    expect(result.importResult).toMatchObject({
+      ok: true,
+      summary: { importedCookies: 1, domains: ['example.com'] }
+    })
+    expect(result.remainingNames).toEqual(['imported', 'partitioned-google'])
   }, 90_000)
 })
