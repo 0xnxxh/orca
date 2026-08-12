@@ -36,7 +36,7 @@ export function DaemonDegradedNotice(props: {
           <p className="text-xs leading-snug">
             {translate(
               'auto.components.settings.DaemonDegradedNotice.body',
-              'The terminal host stopped responding. Orca kept it rather than ending anything it might still be hosting, but it can’t reach those terminals until the host responds again — the panes reconnect on their own if it recovers. New terminals open outside the host and close when you quit Orca. Restarting the host usually clears this, and ends every terminal — both the ones it is still holding and the ones running outside it.'
+              'The terminal host stopped responding. Orca kept it rather than ending anything it might still be hosting, but it can’t reach those terminals until the host responds again — reopening a pane retries, and works once it does. New terminals open outside the host and close when you quit Orca. Restarting the host usually clears this, and ends every terminal — both the ones it is still holding and the ones running outside it.'
             )}
           </p>
         </div>

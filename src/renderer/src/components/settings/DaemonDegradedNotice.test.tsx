@@ -37,6 +37,10 @@ describe('DaemonDegradedNotice', () => {
     const html = render()
     expect(html).toMatch(/can’t reach those terminals until the host responds/)
     expect(html).not.toMatch(/already open keep working/)
+    // And it must not promise automatic recovery: TerminalErrorToast already tells the user to
+    // "Reopen this pane to retry", because nothing re-attaches a failed pane on its own.
+    expect(html).not.toMatch(/reconnect on their own/)
+    expect(html).toMatch(/reopening a pane retries/)
   })
 
   it('says the restart ends the local terminals too, not just the held ones', () => {
