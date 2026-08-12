@@ -40,16 +40,15 @@ in the env and emits a `pairingCode`; §7c/§7f) vs **SSH** (`create` runs no se
 `connection.type:"ssh"` block Orca dials into; §7g/§7h). Settle this first — it changes the `create`
 output shape and half the templates.
 
-Settle **checkout ownership** at the same time:
+Preserve Orca's existing checkout behavior by default: omit `checkoutMode`, emit schema version 1, and
+let Orca create the child Git worktree. Do not ask most users about checkout ownership. Discuss the
+optional `provisioned-root` mode only when the user explicitly requests it, an existing recipe already
+uses it, or the requested design requires each environment to create the exact final workspace checkout.
+If that requirement is unclear, keep the default; do not infer it from the provider, connection type, or
+the fact that an environment is disposable.
 
-- **Provisioned root:** each fresh runtime is the workspace isolation boundary and `create` checks out
-  the requested branch at `projectRoot`. Configure `checkoutMode: provisioned-root` and emit the
-  schema-v2 handshake (§8).
-- **Orca worktree:** the returned host/repo is reusable and Orca should create a child Git worktree.
-  Omit `checkoutMode` (or use `orca-worktree`) and emit schema version 1.
-
-**Quick-start (happy path):** interview the user (connection mode, checkout ownership, provider, agent
-CLI, git auth — §1.2) + read the provider's CLI docs → scaffold `scripts/orca-vm/` from §7 → run the
+**Quick-start (happy path):** interview the user (connection mode, provider, agent CLI, git auth — §1.2),
+then read the provider's CLI docs → scaffold `scripts/orca-vm/` from §7 → run the
 base-snapshot script, then the auth script (you invoke these by hand; not via `orca.yaml`) → wire
 `environmentRecipes` in `orca.yaml` → `orca vm recipe doctor <id> --json` (free) → then the `--provision`
 self-test loop (§9) until it passes.
@@ -68,9 +67,10 @@ a long time, or need the user at the keyboard. Never create an Orca workspace or
    - **Connection mode:** how Orca attaches to the environment — an **Orca server** (the VM runs
      `orca serve` and Orca pairs over its pairing URL; worked example §7f) or **SSH** (Orca connects to
      the host over SSH; §7g). This decides the recipe's connection shape, so settle it first.
-   - **Checkout ownership:** whether each provisioned runtime is already the one-workspace isolation
-     boundary (`provisioned-root`) or Orca should create a child worktree on a reusable host
-     (`orca-worktree`). Do not infer this from SSH vs Orca-server; either connection can use either mode.
+   - **Checkout behavior:** do not ask by default. Omit `checkoutMode` and retain Orca's existing
+     worktree creation. Only if the user or existing design requires the environment to create the exact
+     final checkout, ask in plain language: "Should this environment create the finished workspace
+     checkout itself, or should Orca create it?" Use `provisioned-root` only after the former is clear.
    - **Provider:** Vercel Sandbox, Fly, Modal, an existing SSH host, … For non-obvious providers, also
      ask scope/project/region and plan limits (§2). Then **read that provider's CLI/SDK docs** (or
      `<cli> --help`) before scaffolding — you need its exact create/exec/snapshot/remove verbs.
@@ -115,8 +115,8 @@ token`; §5).
 The user's responsibility; verify what's verifiable, ask for the rest, invent nothing. State which
 items you verified vs. which the user asserted.
 
-- **Connection mode** (Orca server vs SSH) and **checkout ownership** (provisioned root vs Orca
-  worktree) confirmed with the user — see §1 step 2; together they shape the recipe.
+- **Connection mode** (Orca server vs SSH) confirmed with the user. Keep Orca-owned worktree creation
+  unless the narrow `provisioned-root` opt-in conditions in §1 step 2 apply.
 - **Cloud account + plan** that allows sandboxes/VMs. Ask.
 - **Provider CLI installed + authenticated** — detect (`command -v <cli>`), check auth (e.g.
   `vercel whoami`). If missing, point at the provider's docs; don't log them in.
@@ -581,9 +581,10 @@ node -e 'const [host,port,user,idf,jh,pc,io,root]=process.argv.slice(1);
 sleep/wake/delete — that's separate from these scripts.)
 
 If the SSH host is instead an **ephemeral/snapshot-capable VM** (your hypervisor, or a cloud VM with
-image support), keep the §7f Phase-2/3 base-image model for provisioning. Prefer provisioned-root
-ownership for one VM per workspace: check out `ORCA_REPO_BRANCH` from `ORCA_REPO_REF`, emit the v2 SSH
-shape above, and never start `orca serve`.
+image support), keep the §7f Phase-2/3 base-image model for provisioning. Continue using the default
+Orca-owned checkout unless the user explicitly wants each VM to create the finished workspace itself;
+for that opt-in, check out `ORCA_REPO_BRANCH` from `ORCA_REPO_REF`, emit the v2 SSH shape above, and
+never start `orca serve`.
 
 ### 7h. Worked example — local Docker SSH (SSH connection mode)
 
@@ -591,9 +592,9 @@ Local Docker can model an ephemeral SSH VM without cloud cost: build a base imag
 repo prerequisites, and the agent CLI; run an **interactive auth container** once; then `docker commit`
 that container as the authenticated image used by per-workspace `create`.
 
-Because each container is disposable per workspace, the normal choice here is `provisioned-root`: the
-container checks out `ORCA_REPO_BRANCH` from `ORCA_REPO_REF` and emits the v2 SSH result. Use schema v1
-only if the container intentionally acts as a reusable parent for multiple Orca worktrees.
+Disposability alone does not select checkout ownership. Keep the schema-v1 Orca-worktree default unless
+the user explicitly wants the container to create the finished workspace checkout. In that opt-in mode,
+the container checks out `ORCA_REPO_BRANCH` from `ORCA_REPO_REF` and emits the v2 SSH result.
 
 Key points:
 
@@ -670,7 +671,6 @@ Once the authenticated snapshot exists, this runs on every workspace create. Def
 environmentRecipes:
   - id: cloud-sandbox
     name: Cloud Sandbox
-    checkoutMode: provisioned-root
     create: ./scripts/orca-vm/cloud-sandbox-create.sh
     suspend: ./scripts/orca-vm/cloud-sandbox-suspend.sh
     resume: ./scripts/orca-vm/cloud-sandbox-resume.sh
@@ -682,7 +682,11 @@ environmentRecipes:
 - `orca-worktree` (default) imports `projectRoot` as a repo and creates a child Git worktree.
 - `provisioned-root` adopts `projectRoot` itself as the workspace and never runs `git worktree add`.
 
-Use `provisioned-root` only when `create` materializes the exact checkout. `projectRoot` must be the
+Omit `checkoutMode` for new and existing recipes unless the user deliberately opts into the niche
+behavior below. Never migrate a working schema-v1 recipe merely because its runtime is disposable.
+
+Use `provisioned-root` only when `create` materializes the exact checkout and this ownership was explicit.
+`projectRoot` must be the
 absolute main Git checkout root, and the recipe should use `ORCA_REPO_URL`, `ORCA_REPO_REF`, and
 `ORCA_REPO_BRANCH` to clone/check out the requested source. Orca verifies the root before adoption;
 removing the workspace removes its project and invokes `destroy`.
