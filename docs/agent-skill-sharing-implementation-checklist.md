@@ -6,7 +6,7 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` through `43a1dbeb88`; no PR.
+- Orca implementation: `skills-share` through `607e31dd04`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   kill-switch discovery PR `#342` merged as `c2bef2ff20fb`; production remains untouched.
@@ -15,6 +15,13 @@ Implementation baselines captured by this checklist update:
 
 Validated so far:
 
+- The final reliability hardening at `607e31dd04` adds a 60-second Cloud request deadline;
+  cancellable, journaled bundle extraction; bounded package creation, verification, and preview
+  fanout; atomic share-preparation admission and abandoned-archive cleanup; process-owned download
+  staging; SSH startup recovery; and additive paired-client cancellation-result negotiation. The
+  focused suite passed 78 ordinary tests plus a real process-death recovery test. Full Node, CLI,
+  and web typechecks, repository lint and reliability gates, changed-file formatting, and diff
+  checks passed. Mobile-facing wire changes remain additive, and no mobile app surface changed.
 - A final performance and React lifecycle review found one stale-response race in managed-install
   inventory: a slower previous machine could overwrite the newly selected machine's list. The
   generation fence and regression test now preserve destination ownership; bundle busy state also

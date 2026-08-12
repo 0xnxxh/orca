@@ -53,7 +53,7 @@ that larger package-manager surface.
 
 ## Current execution status
 
-The Orca implementation is on `skills-share` through `44d1266641`; no Orca pull request exists.
+The Orca implementation is on `skills-share` through `607e31dd04`; no Orca pull request exists.
 Cloud bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`;
 the bundle desktop smoke update merged through `#329` as `eddb144afe`, generation-aware GCS
 recovery merged through `#330` as `8045c85dad`, and the bounded finalization load gate plus cleanup
@@ -69,6 +69,15 @@ untouched. Local, Windows, WSL, paired-runtime, Docker-backed SSH, browser-free 
 physical Ubuntu 20.04 SSH, published-object recovery, and bounded finalization-load validation are
 substantially complete; the implementation checklist records the exact evidence and remaining
 physical-host and lifecycle gates.
+
+The final reliability hardening gives every skill Cloud request a default deadline, makes bundle
+extraction cancellable and recoverable through the durable extraction journal, bounds package and
+preview fanout, atomically caps concurrent share preparation, removes abandoned private staging,
+and waits for SSH transaction recovery before install management. Paired clients advertise the
+additive install-result capability so cancellation remains cancellation across mixed versions.
+Regression coverage includes a real killed child process with partially extracted private bytes
+and bounded 17-skill remote preview fanout. Full Node, CLI, and web typechecks plus repository lint
+and reliability gates pass at that baseline.
 
 The final combined physical `windows 2` run at `44d1266641` passed 449 tests across 67 files with
 17 intentional platform skips while native-Windows, real-process, and Ubuntu 24.04 WSL coverage
