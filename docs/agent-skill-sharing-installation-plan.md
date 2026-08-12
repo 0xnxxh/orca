@@ -36,6 +36,8 @@ Orca will:
 7. Install each selected skill once into `.agents/skills` and add aliases only for detected agents
    that need provider-specific paths.
 8. Record bundle/version provenance independently from the community CLI's lockfiles.
+9. Keep every share unlisted: bundles are reachable only through their durable link and never
+   appear in search, browse, organization-library, or marketplace surfaces.
 
 The portable archive root follows Agent Plugins 1.0.0 for a skills-only package. Orca does not
 present Skill Bundles as a new executable plugin system: MCP servers, hooks, processes, connectors,
@@ -333,8 +335,8 @@ Rules:
 - Orca-specific integrity and version data lives in `dev.orca.skill-sharing/manifest.json` rather
   than a top-level custom field or GCS metadata alone. It therefore survives export, SSH/remote
   transfer, and offline validation and can describe every skill and file.
-- GCS custom metadata stays compact and operational. PostgreSQL remains the searchable package,
-  share, and version catalog.
+- GCS custom metadata stays compact and operational. PostgreSQL stores only the package, share,
+  version, ACL, and lifecycle records needed to resolve a known link or manage an owned bundle.
 - Orca constructs a fresh staging root. If imported content already contains
   `dev.orca.skill-sharing`, Orca accepts only an appropriate recognized schema and rejects unknown,
   malformed, or conflicting contents; it never overwrites the namespace silently.
@@ -521,10 +523,8 @@ Create migrations for:
 - `skill_packages`: stable bundle identity, owner organization, slug/name, creator, timestamps,
   and deletion state.
 - `skill_package_versions`: immutable version, package digest, archive SHA-256, GCS object key and
-  generation, byte and skill counts, compact searchable metadata, release notes, creator, and
-  publication state.
-- `skill_package_version_skills`: ordered per-skill identity, name, description, digest, file and
-  byte counts, warnings, and archive root for preview and selective installation.
+  generation, byte and skill counts, release notes, creator, publication state, and the validated
+  bundle manifest needed to inspect a known share without downloading its private archive.
 - `skill_package_uploads`: tenant/user binding, quarantine key and generation, expected identities,
   expiration, finalization state, and failure category.
 - `skill_package_acl`: organization or user principal, permission, creator, and timestamps.
@@ -539,6 +539,7 @@ Required constraints and indexes include:
 - Unique immutable version ID and package digest identity.
 - Tenant-scoped archive identity and final GCS object key/generation pair.
 - Share lookup by unpredictable ID and active/revoked state.
+- No package, version, or contained-skill search/list index; share links are intentionally unlisted.
 - ACL lookup by package and principal.
 - Pending-upload lookup by owner and expiration.
 - Foreign keys that prevent removing a blob reference while a published version uses it.
@@ -797,7 +798,7 @@ and test the same contract accurately.
 - Skill upload grant creation and finalization.
 - Share creation, resolution, revocation, and access management.
 - Download grant creation.
-- Package catalog and version lookup.
+- Owned-package management and exact package/version lookup by ID; no browse or search API.
 - Manager-only package details include current user/organization access and active, unexpired
   share records; non-managers never receive that management metadata.
 
@@ -1318,11 +1319,10 @@ Exit criteria:
 
 Estimate: 4–7 engineer-days, depending on host-helper availability.
 
-### Phase 5: team library and reconciliation
+### Phase 5: multi-machine management and reconciliation
 
 Deliver:
 
-- Organization skill library and version history.
 - “Install on another machine” and multi-machine progress.
 - Optional desired-version policy for selected personal or organization machines.
 - Drift and missing-install reconciliation.

@@ -139,6 +139,8 @@ does not mean the surrounding phase is complete.
 - [x] Decide Orca will not depend on the upstream CLI or an unsupported programmatic API.
 - [x] Decide V1 accepts Orca package sources only; Git, npm, and community registries remain with
       existing tools.
+- [x] Decide every Skill Bundle share is unlisted and reachable only through its durable link; do
+      not add search, browsing, organization-library, marketplace, or contained-skill indexes.
 - [x] Record Agent Plugins 1.0.0 commit `bd383552095128f6effe895b9257cfd580a6d179`
       as the portable-format reference.
 - [x] Decide to implement from the specification without copying its CC BY prose or vendoring its
@@ -212,7 +214,7 @@ does not mean the surrounding phase is complete.
 - [ ] Create fresh staging roots and reject unknown, malformed, or conflicting imported
       `dev.orca.skill-sharing` namespaces without overwriting them.
 - [x] Keep the detailed manifest inside the archive for export, remote/SSH transport, and offline
-      validation; keep GCS metadata compact and PostgreSQL searchable.
+      validation; keep GCS metadata compact and PostgreSQL limited to exact link/ownership lookup.
 - [x] Add selected skill IDs and per-skill conflict choices to preview/install requests.
 - [x] Return aggregate status plus ordered installed, unchanged, kept-local, and failed per-skill
       outcomes; support retrying failed items only.
@@ -620,10 +622,10 @@ does not mean the surrounding phase is complete.
 - [x] Add foreign keys preventing blob-reference deletion while a published version uses it.
 - [x] Accept and stream-validate both the pre-release single-skill envelope and the new Agent
       Plugins skills-only bundle envelope during the desktop migration.
-- [x] Store the detailed bundle manifest in the existing immutable version catalog and derive the
-      searchable bundle name and digest without changing object or ACL semantics.
-- [ ] Adapt package/version records to bundle-level identity and add ordered per-version skill rows
-      with identity, digest, counts, warnings, and archive roots.
+- [x] Store the detailed bundle manifest in the existing immutable version record without changing
+      object, share, or ACL semantics; expose it only after exact-link authorization or to owners.
+- [x] Keep contained skills out of separate database rows and search indexes. Selective inspection
+      reads the validated manifest attached to the exact immutable version.
 - [ ] Keep detailed file identity in the in-archive manifest rather than duplicating it into GCS
       custom metadata.
 - [ ] Test forward migration, rollback strategy, backup restoration, and migration compatibility
@@ -1177,11 +1179,10 @@ still require the listed split metrics, latency panels, and alerts.
 - [ ] Telemetry, logs, and diagnostic bundles contain no credentials or private contents.
 - [ ] Kill switches are tested without affecting discovery or existing installations.
 
-## 15. Post-release team library and reconciliation
+## 15. Post-release multi-machine management and reconciliation
 
 - [ ] Measure sharing, installation, update, conflict, fallback, failure, and multi-machine demand
       without collecting private contents.
-- [ ] Design an organization skill library and immutable version history from usage evidence.
 - [ ] Add **Install on another machine** and bounded multi-machine progress.
 - [ ] Add optional desired-version policy for selected personal or organization machines.
 - [ ] Add opt-in drift and missing-install reconciliation that never overwrites modifications.
