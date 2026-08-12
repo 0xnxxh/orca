@@ -7411,7 +7411,7 @@ export class Store {
    *
    * Returns the number of leases retired, for logging.
    */
-  supersedeDuplicatePaneLeases(targetId: string): number {
+  async supersedeDuplicatePaneLeases(targetId: string): Promise<number> {
     const live = (this.state.sshRemotePtyLeases ?? []).filter(
       (lease) =>
         lease.targetId === targetId && lease.state !== 'terminated' && lease.state !== 'expired'
@@ -7455,9 +7455,12 @@ export class Store {
     const sessionsBefore = this.cloneSshLeaseBindingSessions(targetId)
     this.clearSshRemotePtyBindingsForLeases(targetId, superseded, 'local')
     try {
-      // Why flushOrThrow: flush() swallows write errors, which would leave these
-      // leases retired in memory but attached on disk for the rest of the session.
-      this.flushOrThrow()
+      // Why the ASYNC twin: the sync flush fsyncs a multi-MB file from the Electron main thread,
+      // and this runs on every reconnect. On a stalled network profile mount that syscall is
+      // uninterruptible and nothing can bound it — see flushAsync. Why "OrThrow" and not plain
+      // flush(): flush() swallows write errors, which would leave these leases retired in memory
+      // but attached on disk for the rest of the session.
+      await this.flushDurableStateOrThrowAsync()
     } catch (err) {
       for (const undo of restore) {
         undo()

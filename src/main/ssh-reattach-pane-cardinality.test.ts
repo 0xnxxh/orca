@@ -145,7 +145,7 @@ describe('STA-3077: superseding respects the durable pane binding', () => {
     )
 
     // Arbitration keeps the bound lease, not the newer one.
-    expect(store.supersedeDuplicatePaneLeases(TARGET)).toBe(1)
+    expect(await store.supersedeDuplicatePaneLeases(TARGET)).toBe(1)
     expect(liveLeasesForPane(store).map((lease) => lease.ptyId)).toEqual(['relay-pty-a'])
   })
 })
@@ -161,7 +161,7 @@ describe('STA-3077: existing duplicate leases are healed, not revived', () => {
       }))
     })
 
-    const retired = store.supersedeDuplicatePaneLeases(TARGET)
+    const retired = await store.supersedeDuplicatePaneLeases(TARGET)
 
     expect(retired).toBe(19)
     expect(liveLeasesForPane(store).map((lease) => lease.ptyId)).toEqual(['relay-pty-19'])
@@ -182,7 +182,7 @@ describe('STA-3077: existing duplicate leases are healed, not revived', () => {
     // Arrives later but no pane is bound to it.
     store.upsertSshRemotePtyLease({ ...leaseFor('relay-pty-newer', 99), createdAt: 99 })
 
-    store.supersedeDuplicatePaneLeases(TARGET)
+    await store.supersedeDuplicatePaneLeases(TARGET)
 
     expect(liveLeasesForPane(store).map((lease) => lease.ptyId)).toEqual(['relay-pty-bound'])
   })
@@ -196,11 +196,16 @@ describe('STA-3077: existing duplicate leases are healed, not revived', () => {
         { ...leaseFor('relay-pty-b', 2), createdAt: 2 }
       ]
     })
-    vi.spyOn(store, 'flushOrThrow').mockImplementation(() => {
-      throw new Error('disk full')
-    })
+    // The durable write is the async twin: retirement runs on reconnect, and the sync flush
+    // fsyncs a multi-MB file from the main thread. Reaching for a private name is not ideal,
+    // but the property under test is the rollback, and it must follow whichever writer the
+    // retirement actually awaits.
+    vi.spyOn(
+      store as unknown as { flushDurableStateOrThrowAsync: () => Promise<void> },
+      'flushDurableStateOrThrowAsync'
+    ).mockRejectedValue(new Error('disk full'))
 
-    expect(store.supersedeDuplicatePaneLeases(TARGET)).toBe(0)
+    expect(await store.supersedeDuplicatePaneLeases(TARGET)).toBe(0)
     expect(liveLeasesForPane(store)).toHaveLength(2)
   })
 
@@ -213,7 +218,7 @@ describe('STA-3077: existing duplicate leases are healed, not revived', () => {
       ]
     })
 
-    expect(store.supersedeDuplicatePaneLeases(TARGET)).toBe(0)
+    expect(await store.supersedeDuplicatePaneLeases(TARGET)).toBe(0)
     expect(store.getSshRemotePtyLeases(TARGET).filter((l) => l.state === 'attached')).toHaveLength(
       2
     )

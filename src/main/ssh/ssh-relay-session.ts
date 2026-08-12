@@ -2212,7 +2212,7 @@ export class SshRelaySession {
   ): Promise<void> {
     // Why: installs predating pane-keyed supersession carry duplicate live leases;
     // fanning out over them is what grafted panes the user never opened (STA-3077).
-    const retired = this.store.supersedeDuplicatePaneLeases(this.targetId)
+    const retired = await this.store.supersedeDuplicatePaneLeases(this.targetId)
     if (retired > 0) {
       console.info(
         `[ssh-relay-session] Retired ${retired} duplicate pane lease(s) for ${this.targetId}; their remote shells are left running.`
@@ -2514,8 +2514,7 @@ export class SshRelaySession {
       // The lease's tabId was frozen when it was written and the pane may have moved since, so the
       // live layout outranks it. Resolved before the write, so a throw cannot lose it and leave the
       // graph registered under the tab the pane left.
-      const tabId =
-        resolvePaneShellTabId(this.store, lease.leafId) ?? lease.tabId
+      const tabId = resolvePaneShellTabId(this.store, lease.leafId) ?? lease.tabId
       let bind: { bound: boolean; tabId: string } | null = null
       try {
         bind = bindPaneShell({

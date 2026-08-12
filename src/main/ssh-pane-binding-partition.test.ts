@@ -191,7 +191,7 @@ describe('STA-3077 step P: one pane, one live claim across partitions', () => {
     sshSpawnUpsertsLease(store, 'pty-2')
     expect(relayReattachBindsPane(store, 'pty-2')).toBe(true)
 
-    store.supersedeDuplicatePaneLeases(TARGET)
+    await store.supersedeDuplicatePaneLeases(TARGET)
 
     expect(liveLeaseIdsForPane(store)).toEqual(['pty-2'])
   })
@@ -318,7 +318,7 @@ describe('STA-3077: arbitration follows the pane, not the tab it was written in'
     // A newer, unbound lease arrives for the same pane under the lease's frozen tab.
     sshSpawnUpsertsLease(store, 'pty-newer')
 
-    store.supersedeDuplicatePaneLeases(TARGET)
+    await store.supersedeDuplicatePaneLeases(TARGET)
 
     // The bound shell must win. Keyed on the frozen tab, it is invisible and recency retires it.
     expect(liveLeaseIdsForPane(store)).toEqual(['pty-bound'])
@@ -344,9 +344,9 @@ describe('STA-3077 step P: the desktop plane resolves from its own home', () => 
     somethingRewritesTheSshPartition(store, 'pty-1')
     sshSpawnUpsertsLease(store, 'pty-2')
 
-    expect(
-      store.getWorkspaceSession().terminalLayoutsByTabId?.[TAB]?.ptyIdsByLeafId?.[LEAF]
-    ).toBe(appPtyId('pty-2'))
+    expect(store.getWorkspaceSession().terminalLayoutsByTabId?.[TAB]?.ptyIdsByLeafId?.[LEAF]).toBe(
+      appPtyId('pty-2')
+    )
     expect(liveLeaseIdsForPane(store)).toEqual(['pty-2'])
   })
 })
