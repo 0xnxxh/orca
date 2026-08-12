@@ -1,4 +1,5 @@
 import type { AgentStatus } from './agent-status'
+import { isOpenCodeNativeTitle } from '../../../shared/opencode-terminal-title'
 import { classifyTitleActivity, resolveTitleActivityLabel } from '@/lib/pane-agent-evidence'
 
 const EXPLICIT_IDLE_SEND_TITLE_RE = /(^|\s)(ready|idle|done)(\s|$|[.!?])/i
@@ -24,6 +25,10 @@ export function detectAgentSendTitleStatus(title: string | null | undefined): Ag
 function isExplicitIdleSendTitle(title: string): boolean {
   return (
     EXPLICIT_IDLE_SEND_TITLE_RE.test(title) ||
+    // Why: OpenCode only publishes `OC | <session>` from inside a running TUI session,
+    // so the marker is readiness proof the way `✳` is for Claude — it is the only
+    // pre-hook signal a hookless OpenCode pane ever emits.
+    isOpenCodeNativeTitle(title) ||
     title.startsWith(CLAUDE_IDLE_PREFIX) ||
     title.startsWith('* ') ||
     title.includes(GEMINI_IDLE_PREFIX) ||

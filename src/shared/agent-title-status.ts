@@ -23,6 +23,7 @@ import {
   isPiTerminalTitle
 } from './agent-title-core'
 import type { AgentStatus } from './agent-title-core'
+import { isOpenCodeNativeTitle } from './opencode-terminal-title'
 import { getPiCompatibleSyntheticAgentStatus } from './pi-compatible-synthetic-title'
 import { isGrokRotatingWorkingTitle } from './terminal-title-agent-type'
 
@@ -185,6 +186,12 @@ export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
   }
   if (containsAgentSpinnerGlyph(title)) {
     return 'working'
+  }
+  // Why: only a live OpenCode TUI emits the native `OC | …` marker, and it names no
+  // agent token, so the name gate below would drop it as a plain shell title. The
+  // marker states presence, never status, so an undecorated frame reads idle.
+  if (isOpenCodeNativeTitle(title)) {
+    return 'idle'
   }
 
   const hasDroidAgentName = DROID_AGENT_NAME_RE.test(title)

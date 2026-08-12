@@ -101,6 +101,37 @@ describe('MiMo title detection', () => {
   )
 })
 
+describe('OpenCode native title detection', () => {
+  // Why: `OC | …` names no agent token, so before this the status detector read it as a
+  // plain shell title and every status-derived surface (send targets, sidebar rows,
+  // runtime agent-presence) dropped a live OpenCode pane.
+  it.each([
+    'OC | Implement the Kitty IME preview',
+    'tmux | OC | Implement the Kitty IME preview',
+    'OC|Build'
+  ])('classifies the native session title %j as a live idle agent', (title) => {
+    expect(getAgentLabel(title)).toBe('OpenCode')
+    expect(detectAgentStatusFromTitle(title)).toBe('idle')
+  })
+
+  // Why: the marker states presence, not status, so a decorated frame keeps reading
+  // through the usual status decoration (#8940) — only undecorated frames go idle.
+  it.each([
+    ['OC | ⠋ ask claude about this', 'working'],
+    ['OC | ready to review', 'idle']
+  ] as const)('classifies the decorated frame %j as %s', (title, expectedStatus) => {
+    expect(getAgentLabel(title)).toBe('OpenCode')
+    expect(detectAgentStatusFromTitle(title)).toBe(expectedStatus)
+  })
+
+  it.each(['OC |', 'oc | lowercase lookalike', 'OCTOPUS | build'])(
+    'does not treat the lookalike title %j as an agent',
+    (title) => {
+      expect(detectAgentStatusFromTitle(title)).toBeNull()
+    }
+  )
+})
+
 describe('Pi-compatible title detection', () => {
   it.each([
     ['\u280b OMP', 'OMP', 'working'],
