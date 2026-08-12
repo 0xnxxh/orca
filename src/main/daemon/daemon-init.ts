@@ -464,6 +464,7 @@ function createOutOfProcessLauncher(
       | undefined
     let confirmedReplacement = false
     let healthCheckReplacementVerdict: string | null = null
+    let healthCheckReplacementAnnounced = false
     let adoptionClient: DaemonClient | null = new DaemonClient({
       socketPath,
       tokenPath
@@ -603,10 +604,13 @@ function createOutOfProcessLauncher(
           )
           return preserveDaemon()
         }
-        // Why: a cold start reaches this same fall-through with nothing to replace, but the
-        // old "did anything answer?" guard also silenced the one case that destroys user
-        // work — an unverifiable count from a daemon that never answered. Announce on the
-        // post-kill truth instead: that is silent on a cold start because nothing was killed.
+        // Why: a cold start reaches this same fall-through with nothing to replace, so stay
+        // quiet unless something actually answered — a count, a socket that survived a grace
+        // retry, or a refused hello. The confirmed-kill case is added below because the one
+        // replacement that destroys user work, an unverifiable count from a daemon that never
+        // answered, satisfies none of those and used to be killed in total silence.
+        healthCheckReplacementAnnounced =
+          liveSessionCount !== null || graceRetry > 0 || health === 'rejected'
         healthCheckReplacementVerdict = `health=${health}, liveSessions=${liveSessionCount ?? 'unverifiable'}, graceRetries=${graceRetry}`
         // Why: telemetry gates on confirmedReplacement below — the post-kill truth — so a
         // cold start that killed nothing never reports a replacement.
@@ -619,11 +623,11 @@ function createOutOfProcessLauncher(
       // Why: a raw socket can outlive a broken daemon; kill by PID before respawn so the new daemon doesn't race the stale one.
       adoptionClient?.disconnect()
       adoptionClient = null
-      // Why: only the unverifiable-state branch needs the live-PTY veto. The branches above
-      // positively confirmed zero live sessions, and vetoing an explicit user restart would
-      // make a wedged daemon unkillable.
+      // Why: the veto answers "we could not verify", not "we failed the health check" — a
+      // daemon that answered listSessions with 0 lands in this same branch and must stay
+      // replaceable, as must an explicit user restart.
       const killOutcome =
-        pendingReplacement?.reason === 'failed_health_check'
+        pendingReplacement?.liveSessionCount === null
           ? await killStaleDaemon(runtimeDir, socketPath, tokenPath, PROTOCOL_VERSION, {
               preserveWhenOwningLivePtys: true
             })
@@ -639,13 +643,28 @@ function createOutOfProcessLauncher(
         try {
           return await preserveDaemon('degraded-new-pty-fallback')
         } catch {
+          // Why: adoption needs a hello, which is exactly what a daemon wedged enough to be
+          // preserved cannot answer. A still-listening endpoint means it is wedged, not gone,
+          // so keep a lease-free handle: the lease only cancels the adoption watchdog, which
+          // cannot fire on a daemon that still owns sessions, and throwing here would cost the
+          // app its daemon handle — taking Manage Sessions → Restart down with it.
+          if (await probeSocket(socketPath)) {
+            return createPreservedDaemonHandle(
+              runtimeDir,
+              PROTOCOL_VERSION,
+              'degraded-new-pty-fallback'
+            )
+          }
           // It died between the probe and the adoption; the endpoint is genuinely free now.
           throw new DaemonEndpointOwnershipError(
             'Daemon replacement aborted: the existing daemon could not be confirmed stopped'
           )
         }
       }
-      if (killOutcome.killed && healthCheckReplacementVerdict) {
+      if (
+        healthCheckReplacementVerdict &&
+        (healthCheckReplacementAnnounced || killOutcome.killed)
+      ) {
         console.warn(
           `[daemon] Replacing daemon that failed the health check (${healthCheckReplacementVerdict})`
         )
@@ -996,7 +1015,13 @@ export async function initDaemonPtyProvider(
   let routedAdapter: DaemonProvider = newAdapter
   try {
     // Why: the launcher's temporary pair closes only after this permanent pair is established, leaving no adoption gap.
-    await newAdapter.establishLifecycleLease()
+    // Why tolerated in degraded mode: it exists for a daemon we deliberately kept without
+    // being able to talk to it, so a lease it cannot grant must not abort init — that would
+    // leave the app with no spawner at all, and restartDaemon() throws without one. The lease
+    // only cancels the adoption watchdog, which never fires on a daemon that owns sessions.
+    await (launchMode === 'degraded-new-pty-fallback'
+      ? newAdapter.establishLifecycleLease().catch(() => {})
+      : newAdapter.establishLifecycleLease())
     releaseDaemonAdoptionLease(newSpawner.getHandle())
 
     legacyAdapters = await createLegacyDaemonAdapters(runtimeDir)
@@ -1017,7 +1042,9 @@ export async function initDaemonPtyProvider(
           : newAdapter
     if (routedAdapter instanceof DegradedDaemonPtyProvider) {
       // Why: preserved daemon can't create fresh terminals; discover its live session ids so only they route to it (fresh panes fall back locally).
-      await routedAdapter.discoverDaemonSessions()
+      // Best-effort for the same reason as the lease above: a wedged daemon answers nothing,
+      // and routing everything locally is the correct degradation — not a reason to have no daemon.
+      await routedAdapter.discoverDaemonSessions().catch(() => {})
     } else if (routedAdapter instanceof DaemonPtyRouter) {
       await routedAdapter.discoverLegacySessions()
     }

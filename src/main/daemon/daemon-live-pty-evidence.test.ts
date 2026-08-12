@@ -1,81 +1,115 @@
 import { describe, expect, it, vi } from 'vitest'
 import { inspectDaemonPtyOwnership } from './daemon-live-pty-evidence'
-import type { DescendantSnapshot, ProcessTableRow } from '../pty-descendant-termination'
+import type { ProcessTableRow } from '../../shared/process-table-snapshot'
 import type { WindowsProcessCandidate } from '../providers/windows-foreground-process-rows'
 
 const DAEMON_PID = 4242
 
-function posixRow(pid: number): ProcessTableRow {
-  return { pid, ppid: DAEMON_PID, pgid: pid, startedAt: 'Mon Jul 13 12:54:47 2026' }
+function row(pid: number, ppid: number, overrides: Partial<ProcessTableRow> = {}): ProcessTableRow {
+  return { pid, ppid, stat: 'Ss', command: '/bin/bash', ...overrides }
 }
 
-function posixSnapshot(overrides: Partial<DescendantSnapshot> = {}): DescendantSnapshot {
-  return { rootPgid: DAEMON_PID, descendants: [], capturedAtMs: 1_700_000_000_000, ...overrides }
-}
+const daemonRow = row(DAEMON_PID, 1, { command: 'daemon-entry.js' })
 
 function windowsCandidate(pid: number): WindowsProcessCandidate {
   return { pid, ppid: DAEMON_PID, name: 'bash.exe', command: 'bash', executablePath: '', depth: 1 }
 }
 
+function posixTable(rows: ProcessTableRow[]): () => Promise<ProcessTableRow[]> {
+  return async () => rows
+}
+
 describe('inspectDaemonPtyOwnership on POSIX', () => {
-  it.each(['darwin', 'linux'] as const)(
-    'reports live PTY ownership from descendants on %s',
-    async (platform) => {
-      const capturePosixDescendants = vi.fn(
-        async (_pid: number, _deps?: { platform?: NodeJS.Platform; timeoutMs?: number }) =>
-          posixSnapshot({ descendants: [posixRow(101), posixRow(102)] })
-      )
+  it.each(['darwin', 'linux'] as const)('reports live PTY ownership on %s', async (platform) => {
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform,
+        readPosixProcessTable: posixTable([daemonRow, row(101, DAEMON_PID)])
+      })
+    ).resolves.toBe('owns-live-ptys')
+  })
 
-      await expect(
-        inspectDaemonPtyOwnership(DAEMON_PID, { platform, capturePosixDescendants })
-      ).resolves.toBe('owns-live-ptys')
-      // The walk must run on the caller's platform, not the host's, and with a budget
-      // generous enough to survive the load that wedged the daemon in the first place.
-      expect(capturePosixDescendants.mock.calls[0]?.[1]).toMatchObject({ platform })
-      expect(capturePosixDescendants.mock.calls[0]?.[1]?.timeoutMs ?? 0).toBeGreaterThanOrEqual(
-        5_000
-      )
-    }
-  )
-
-  it('reports no live PTYs only when the root itself was observed', async () => {
+  it('counts a grandchild, since macOS wraps every shell in login(1)', async () => {
+    // daemon -> login(1) -> shell: a direct-children test would miss the agent entirely.
     await expect(
       inspectDaemonPtyOwnership(DAEMON_PID, {
         platform: 'darwin',
-        capturePosixDescendants: async () => posixSnapshot({ rootPgid: DAEMON_PID })
+        readPosixProcessTable: posixTable([
+          daemonRow,
+          row(101, DAEMON_PID, { command: '/usr/bin/login -flpq nwparker' }),
+          row(202, 101, { command: 'claude' })
+        ])
+      })
+    ).resolves.toBe('owns-live-ptys')
+  })
+
+  it('reports no live PTYs for an observed root with no descendants', async () => {
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        readPosixProcessTable: posixTable([daemonRow, row(999, 1)])
       })
     ).resolves.toBe('no-live-ptys')
   })
 
-  it('reports unknown when the walk never saw the root, despite zero descendants', async () => {
-    // Why: an unobserved root yields the same empty list as a childless one —
+  it('does not count zombies, which a wedged daemon cannot reap', async () => {
+    // Why this matters: the daemon is wedged precisely because its event loop is blocked,
+    // so every already-exited agent lingers as <defunct>. Counting them would read
+    // "all agents finished" as "agents still running" — correlated with the wedge itself.
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        readPosixProcessTable: posixTable([
+          daemonRow,
+          row(101, DAEMON_PID, { stat: 'Z+', command: '<defunct>' }),
+          row(102, DAEMON_PID, { stat: 'Z', command: '<defunct>' })
+        ])
+      })
+    ).resolves.toBe('no-live-ptys')
+  })
+
+  it('still counts a live descendant hidden behind a zombie parent', async () => {
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        readPosixProcessTable: posixTable([
+          daemonRow,
+          row(101, DAEMON_PID, { stat: 'Z', command: '<defunct>' }),
+          row(202, 101, { command: 'codex' })
+        ])
+      })
+    ).resolves.toBe('owns-live-ptys')
+  })
+
+  it('reports unknown when the table never contained the daemon', async () => {
+    // Why: an unobserved root yields the same empty result as a childless one —
     // reading that as "empty" authorizes killing a daemon full of live agents.
     await expect(
       inspectDaemonPtyOwnership(DAEMON_PID, {
         platform: 'darwin',
-        capturePosixDescendants: async () => posixSnapshot({ rootPgid: null })
+        readPosixProcessTable: posixTable([row(999, 1)])
       })
     ).resolves.toBe('unknown')
   })
 
-  it('reports unknown when the process table could not be read', async () => {
+  it('reports unknown when the process table cannot be read', async () => {
     await expect(
       inspectDaemonPtyOwnership(DAEMON_PID, {
         platform: 'darwin',
-        capturePosixDescendants: async () => null
-      })
-    ).resolves.toBe('unknown')
-  })
-
-  it('reports unknown when the capture throws', async () => {
-    await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, {
-        platform: 'darwin',
-        capturePosixDescendants: async () => {
+        readPosixProcessTable: async () => {
           throw new Error('ps timed out')
         }
       })
     ).resolves.toBe('unknown')
+  })
+
+  it('tolerates a ppid cycle without hanging', async () => {
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        readPosixProcessTable: posixTable([daemonRow, row(101, 102), row(102, 101)])
+      })
+    ).resolves.toBe('no-live-ptys')
   })
 
   it('never consults the Windows enumerator on POSIX', async () => {
@@ -84,7 +118,7 @@ describe('inspectDaemonPtyOwnership on POSIX', () => {
     await expect(
       inspectDaemonPtyOwnership(DAEMON_PID, {
         platform: 'darwin',
-        capturePosixDescendants: async () => posixSnapshot(),
+        readPosixProcessTable: posixTable([daemonRow]),
         queryWindowsDescendants
       })
     ).resolves.toBe('no-live-ptys')
@@ -132,59 +166,75 @@ describe('inspectDaemonPtyOwnership on win32', () => {
     ).resolves.toBe('unknown')
   })
 
-  it('never consults the POSIX walk on win32', async () => {
-    const capturePosixDescendants = vi.fn(async () => posixSnapshot())
+  it('never consults the POSIX table on win32', async () => {
+    const readPosixProcessTable = vi.fn(async () => [daemonRow])
 
     await expect(
       inspectDaemonPtyOwnership(DAEMON_PID, {
         platform: 'win32',
-        capturePosixDescendants,
+        readPosixProcessTable,
         queryWindowsDescendants: async () => null
       })
     ).resolves.toBe('unknown')
-    expect(capturePosixDescendants).not.toHaveBeenCalled()
+    expect(readPosixProcessTable).not.toHaveBeenCalled()
   })
 })
 
-describe('inspectDaemonPtyOwnership retries', () => {
-  it('retries a blind probe, because the load that wedges the daemon also blinds ps', async () => {
-    const capturePosixDescendants = vi
-      .fn()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(posixSnapshot({ descendants: [posixRow(101)] }))
+describe('inspectDaemonPtyOwnership sampling', () => {
+  it('discards a transient child that is gone by the second sample', async () => {
+    // A resolver probe or PTY-spawn health check is a descendant for milliseconds; it must
+    // not read as an agent and strand the daemon in degraded mode.
+    const readPosixProcessTable = vi
+      .fn<() => Promise<ProcessTableRow[]>>()
+      .mockResolvedValueOnce([daemonRow, row(101, DAEMON_PID, { command: 'scutil --dns' })])
+      .mockResolvedValueOnce([daemonRow])
 
     await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', capturePosixDescendants })
-    ).resolves.toBe('owns-live-ptys')
-    expect(capturePosixDescendants).toHaveBeenCalledTimes(2)
-  })
-
-  it('stops retrying once the answer is conclusive', async () => {
-    const capturePosixDescendants = vi.fn(async () => posixSnapshot({ rootPgid: DAEMON_PID }))
-
-    await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', capturePosixDescendants })
+      inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', readPosixProcessTable })
     ).resolves.toBe('no-live-ptys')
-    expect(capturePosixDescendants).toHaveBeenCalledTimes(1)
+    expect(readPosixProcessTable).toHaveBeenCalledTimes(2)
   })
 
-  it('gives up as unknown rather than guessing when every probe stays blind', async () => {
-    const capturePosixDescendants = vi.fn(async () => null)
+  it('retries a blind read, because the load that wedges the daemon also blinds ps', async () => {
+    const readPosixProcessTable = vi
+      .fn<() => Promise<ProcessTableRow[]>>()
+      .mockRejectedValueOnce(new Error('ps timed out'))
+      .mockResolvedValueOnce([daemonRow, row(101, DAEMON_PID)])
 
     await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', capturePosixDescendants })
-    ).resolves.toBe('unknown')
-    expect(capturePosixDescendants.mock.calls.length).toBeGreaterThan(1)
-  })
-
-  it('retries a throwing probe too', async () => {
-    const capturePosixDescendants = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('ps died'))
-      .mockResolvedValueOnce(posixSnapshot({ descendants: [posixRow(101)] }))
-
-    await expect(
-      inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', capturePosixDescendants })
+      inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', readPosixProcessTable })
     ).resolves.toBe('owns-live-ptys')
+  })
+
+  it('preserves on a sighting the second read could not contradict', async () => {
+    // Why: a blind read is not evidence against a live one. Killing agents is unrecoverable.
+    const readPosixProcessTable = vi
+      .fn<() => Promise<ProcessTableRow[]>>()
+      .mockResolvedValueOnce([daemonRow, row(101, DAEMON_PID)])
+      .mockRejectedValueOnce(new Error('ps timed out'))
+
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', readPosixProcessTable })
+    ).resolves.toBe('owns-live-ptys')
+  })
+
+  it('answers no-live-ptys on the first conclusive read without re-sampling', async () => {
+    const readPosixProcessTable = vi.fn(async () => [daemonRow])
+
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', readPosixProcessTable })
+    ).resolves.toBe('no-live-ptys')
+    expect(readPosixProcessTable).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives up as unknown rather than guessing when every read stays blind', async () => {
+    const readPosixProcessTable = vi.fn(async (): Promise<ProcessTableRow[]> => {
+      throw new Error('ps timed out')
+    })
+
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', readPosixProcessTable })
+    ).resolves.toBe('unknown')
+    expect(readPosixProcessTable.mock.calls.length).toBeGreaterThan(1)
   })
 })

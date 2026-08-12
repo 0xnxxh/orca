@@ -2926,9 +2926,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(killStaleDaemonMock).toHaveBeenCalledWith(
       FAKE_RUNTIME_DIR,
       '/fake/socket',
-      '/fake/token',
-      PROTOCOL_VERSION,
-      { preserveWhenOwningLivePtys: true }
+      '/fake/token'
     )
     expect(forkMock).toHaveBeenCalled()
   })
@@ -3197,6 +3195,53 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     }
   })
 
+  it('keeps a daemon handle when the preserved daemon is too wedged to be adopted', async () => {
+    // Why: adoption needs a hello, which is exactly what a daemon wedged enough to be
+    // preserved cannot answer. Throwing here would abort initDaemonPtyProvider, leaving no
+    // spawner — and restartDaemon() throws without one, so the user loses the documented
+    // Manage Sessions → Restart remedy on top of having no daemon.
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+
+    const answeringDefault = function MockDaemonClient() {
+      return {
+        ensureConnected: vi.fn(async () => {}),
+        request: vi.fn(async () => ({ sessions: [] })),
+        disconnect: vi.fn()
+      }
+    }
+    // Permanently wedged: every client, including the adoption client, fails its hello.
+    daemonClientMock.mockImplementation(function MockWedgedDaemonClient() {
+      return {
+        ensureConnected: vi.fn(async () => {
+          throw new Error('Hello response timed out')
+        }),
+        getDaemonIdentity: vi.fn(readLaunchedDaemonIdentity),
+        request: vi.fn(),
+        disconnect: vi.fn()
+      }
+    })
+    killStaleDaemonMock.mockResolvedValueOnce({ killed: false, liveOwnerSurvived: true })
+
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void>; mode?: string }>
+    checkDaemonHealthMock.mockResolvedValueOnce('unreachable')
+    // The endpoint still listens, so the daemon is wedged rather than gone.
+    probeSocketExistsMock.mockReturnValue(true)
+    netConnectMock.mockImplementation(stubAliveSocketConnect)
+
+    try {
+      const handle = await launcher('/fake/socket', '/fake/token')
+
+      expect(handle.mode).toBe('degraded-new-pty-fallback')
+      expect(forkMock).not.toHaveBeenCalled()
+    } finally {
+      daemonClientMock.mockImplementation(answeringDefault)
+    }
+  })
+
   it('grace budget is generous enough to ride out a ~60s transient wedge', () => {
     // Why: each probe waits the client's 5s hello timeout, so 1 + 11 probes ≈ 60s of drain grace; don't cut without telemetry.
     expect(WEDGED_DAEMON_GRACE_RETRIES).toBeGreaterThanOrEqual(11)
@@ -3292,9 +3337,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(killStaleDaemonMock).toHaveBeenCalledWith(
       FAKE_RUNTIME_DIR,
       '/fake/socket',
-      '/fake/token',
-      PROTOCOL_VERSION,
-      { preserveWhenOwningLivePtys: true }
+      '/fake/token'
     )
     expect(forkMock).toHaveBeenCalled()
     // 'rejected' gets no grace window (probed once): count = initial adoption + rejected probe + fresh daemon lease.
@@ -3427,9 +3470,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(killStaleDaemonMock).toHaveBeenCalledWith(
       FAKE_RUNTIME_DIR,
       '/fake/socket',
-      '/fake/token',
-      PROTOCOL_VERSION,
-      { preserveWhenOwningLivePtys: true }
+      '/fake/token'
     )
     expect(forkMock).toHaveBeenCalledWith(
       FAKE_DAEMON_ENTRY_PATH,
