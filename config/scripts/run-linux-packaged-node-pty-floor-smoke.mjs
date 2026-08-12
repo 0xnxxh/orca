@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const FLOOR_IMAGE = 'ubuntu:20.04'
+const LINUX_EXECUTABLE = 'orca-ide'
 const FLOOR_PACKAGES = [
   'ca-certificates',
   'libasound2',
@@ -33,7 +34,7 @@ export function packagedNodePtyFloorDockerArgs({ workspaceDirectory, appDirector
     'export DEBIAN_FRONTEND=noninteractive',
     'apt-get update -qq',
     `apt-get install -y -qq ${FLOOR_PACKAGES.join(' ')} >/dev/null`,
-    `ELECTRON_RUN_AS_NODE=1 ${containerAppDirectory}/orca ` +
+    `ELECTRON_RUN_AS_NODE=1 ${containerAppDirectory}/${LINUX_EXECUTABLE} ` +
       '/workspace/config/scripts/linux-packaged-node-pty-floor-child.cjs ' +
       `${containerAppDirectory}/resources`
   ].join(' && ')
@@ -69,7 +70,7 @@ export function runPackagedNodePtyFloorSmoke({
     throw new Error('linux-packaged-node-pty-floor-smoke-requires-linux')
   }
   const absoluteAppDirectory = resolve(workspaceDirectory, appDirectory)
-  if (!existsSync(resolve(absoluteAppDirectory, 'orca'))) {
+  if (!existsSync(resolve(absoluteAppDirectory, LINUX_EXECUTABLE))) {
     throw new Error(`linux-packaged-node-pty-floor-executable-missing: ${absoluteAppDirectory}`)
   }
   const result = spawn(

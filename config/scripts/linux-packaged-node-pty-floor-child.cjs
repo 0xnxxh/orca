@@ -5,7 +5,7 @@ if (!resourcesDirectory) {
   throw new Error('linux-packaged-node-pty-floor-resources-required')
 }
 
-const pty = require(join(resourcesDirectory, 'app.asar', 'node_modules', 'node-pty'))
+const pty = require(join(resourcesDirectory, 'node_modules', 'node-pty'))
 const expected = 'orca-node-pty-floor-ok'
 let output = ''
 let settled = false
