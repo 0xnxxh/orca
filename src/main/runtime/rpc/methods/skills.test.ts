@@ -190,6 +190,22 @@ describe('skills.install RPC', () => {
     expect(result).toEqual({ cancelled: true })
     expect(cancelSharedSkillInstall).toHaveBeenCalledWith('operation_1')
   })
+
+  it('returns active bundle progress without requiring it from older clients', async () => {
+    const progress = {
+      operationId: 'operation_1',
+      skillId: 'alpha',
+      skillName: 'alpha',
+      skillIndex: 1,
+      skillCount: 2
+    }
+    const getSharedSkillInstallProgress = vi.fn(() => progress)
+    expect(
+      method('skills.getInstallProgress').handler({ operationId: 'operation_1' }, {
+        runtime: { getSharedSkillInstallProgress }
+      } as unknown as RpcContext)
+    ).toEqual(progress)
+  })
 })
 
 describe('skill management RPC', () => {

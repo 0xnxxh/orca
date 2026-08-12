@@ -4342,6 +4342,9 @@
         },
         "SkillManagedInstallList": {
           "86c76cb262": "{{count}} skill bundle"
+        },
+        "skill-install-progress-state": {
+          "currentSkill": "Installing {{value0}} of {{value1}}: {{value2}}…"
         }
       },
       "sidebar": {

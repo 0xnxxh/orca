@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
+  SkillBundleInstallProgress,
   SkillBundleInstallResult,
   SkillBundleSkillResult
 } from '../../shared/skill-bundle-install-contract'
@@ -33,6 +34,7 @@ export type SkillBundleInstallServiceInput = Omit<
     string,
     'keep-local' | 'replace-unmodified' | 'replace-and-discard-local'
   >
+  onProgress?: (progress: SkillBundleInstallProgress) => void
 }
 
 function skillManifest(input: {
@@ -157,7 +159,18 @@ export async function installSkillBundle(
       throw new Error('skill-bundle-selection-invalid')
     }
     const results: SkillBundleSkillResult[] = []
-    for (const skill of skills) {
+    for (const [index, skill] of skills.entries()) {
+      try {
+        input.onProgress?.({
+          operationId: input.operationId,
+          skillId: skill.id,
+          skillName: skill.name,
+          skillIndex: index + 1,
+          skillCount: skills.length
+        })
+      } catch {
+        // Why: progress observers cannot participate in the install transaction.
+      }
       if (input.signal?.aborted) {
         results.push({
           skillId: skill.id,

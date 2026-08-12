@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import type { SkillInstallProgress } from '../../../../shared/skill-sharing-contract'
+import { translate } from '@/i18n/i18n'
 
 const INSTALL_PHASE_LABELS = {
   authorizing: 'Authorizing package access…',
@@ -13,13 +15,13 @@ export function useSkillInstallProgress(): {
 } {
   const [activeOperationId, setActiveOperationId] = useState<string | null>(null)
   const activeOperationIdRef = useRef<string | null>(null)
-  const [phase, setPhase] = useState<keyof typeof INSTALL_PHASE_LABELS | null>(null)
+  const [progress, setProgress] = useState<SkillInstallProgress | null>(null)
 
   useEffect(
     () =>
       window.api.skills.onInstallProgress((progress) => {
         if (progress.operationId === activeOperationIdRef.current) {
-          setPhase(progress.phase)
+          setProgress(progress)
         }
       }),
     []
@@ -27,16 +29,28 @@ export function useSkillInstallProgress(): {
 
   return {
     activeOperationId,
-    phaseLabel: phase ? INSTALL_PHASE_LABELS[phase] : null,
+    phaseLabel: progress?.currentSkill
+      ? translate(
+          'auto.components.skills.skill-install-progress-state.currentSkill',
+          'Installing {{value0}} of {{value1}}: {{value2}}…',
+          {
+            value0: progress.currentSkill.index,
+            value1: progress.currentSkill.total,
+            value2: progress.currentSkill.name
+          }
+        )
+      : progress
+        ? INSTALL_PHASE_LABELS[progress.phase]
+        : null,
     begin: (operationId) => {
       activeOperationIdRef.current = operationId
       setActiveOperationId(operationId)
-      setPhase('authorizing')
+      setProgress({ operationId, phase: 'authorizing' })
     },
     finish: () => {
       activeOperationIdRef.current = null
       setActiveOperationId(null)
-      setPhase(null)
+      setProgress(null)
     }
   }
 }

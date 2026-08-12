@@ -153,6 +153,7 @@ import type {
   SkillRemoveRequest
 } from '../../shared/skill-install-contract'
 import type {
+  SkillBundleInstallProgress,
   SkillBundleInstallRequest,
   SkillBundleInstallResult
 } from '../../shared/skill-bundle-install-contract'
@@ -3298,6 +3299,7 @@ export class OrcaRuntimeService {
   private skillCloudService: SkillCloudService | null = null
   private skillUploadSessions: SkillUploadSessionService | null = null
   private readonly skillInstallOperations = new Map<string, AbortController>()
+  private readonly skillInstallProgress = new Map<string, SkillBundleInstallProgress>()
   private readonly claudeAgentTeams = new ClaudeAgentTeamsService()
   private mobileDictation: {
     id: string
@@ -4692,7 +4694,8 @@ export class OrcaRuntimeService {
 
   async installSharedSkillBundleRequest(
     request: SkillBundleInstallRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onProgress?: (progress: SkillBundleInstallProgress) => void
   ): Promise<SkillBundleInstallResult> {
     if (this.skillInstallOperations.has(request.operationId)) {
       throw new Error('skill-install-operation-in-progress')
@@ -4705,6 +4708,14 @@ export class OrcaRuntimeService {
       signal?.addEventListener('abort', abort, { once: true })
     }
     this.skillInstallOperations.set(request.operationId, controller)
+    const reportProgress = (progress: SkillBundleInstallProgress): void => {
+      this.skillInstallProgress.set(request.operationId, progress)
+      try {
+        onProgress?.(progress)
+      } catch {
+        // Why: renderer teardown must not change the host-owned install outcome.
+      }
+    }
     try {
       const runtimeId = this.getStatus().runtimeId
       const sshTarget = await this.resolveSkillSshTarget(request.destination)
@@ -4721,7 +4732,8 @@ export class OrcaRuntimeService {
           },
           workspace: sshTarget.workspace,
           requireHttps: app.isPackaged,
-          signal: controller.signal
+          signal: controller.signal,
+          onProgress: reportProgress
         })
       }
       const allowedDownloadOrigins = ['https://storage.googleapis.com']
@@ -4740,14 +4752,20 @@ export class OrcaRuntimeService {
         resolveStagedUpload: (uploadId, identity) =>
           this.requireSkillUploadSessions().take(uploadId, identity),
         detectProviders: detectInstalledAgentsWithShellPathHydration,
-        signal: controller.signal
+        signal: controller.signal,
+        onProgress: reportProgress
       })
     } finally {
       signal?.removeEventListener('abort', abort)
       if (this.skillInstallOperations.get(request.operationId) === controller) {
         this.skillInstallOperations.delete(request.operationId)
       }
+      this.skillInstallProgress.delete(request.operationId)
     }
+  }
+
+  getSharedSkillInstallProgress(operationId: string): SkillBundleInstallProgress | null {
+    return this.skillInstallProgress.get(operationId) ?? null
   }
 
   cancelSharedSkillInstall(operationId: string): boolean {

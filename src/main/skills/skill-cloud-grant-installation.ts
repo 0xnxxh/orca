@@ -5,6 +5,7 @@ import {
   SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE
 } from '../../shared/skill-install-capability'
 import type {
+  SkillBundleInstallProgress,
   SkillBundleInstallRequest,
   SkillBundleInstallResult
 } from '../../shared/skill-bundle-install-contract'
@@ -69,7 +70,8 @@ export async function installSkillBundleCloudGrant(
   runtime: OrcaRuntimeService,
   grant: SkillCloudDownloadGrant,
   input: SkillBundleCloudGrantInstallInput,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: (progress: SkillBundleInstallProgress) => void
 ) {
   const manifest = grant.version.manifest
   if (!('skills' in manifest)) {
@@ -93,7 +95,7 @@ export async function installSkillBundleCloudGrant(
     if (!input.environmentId) {
       return {
         status: 'ok' as const,
-        value: await runtime.installSharedSkillBundleRequest(request)
+        value: await runtime.installSharedSkillBundleRequest(request, undefined, onProgress)
       }
     }
     const userDataPath = app.getPath('userData')
@@ -112,7 +114,8 @@ export async function installSkillBundleCloudGrant(
         request,
         capabilities: status.result.capabilities ?? [],
         requireHttps: app.isPackaged,
-        signal
+        signal,
+        onProgress
       })
     }
   } catch (error) {

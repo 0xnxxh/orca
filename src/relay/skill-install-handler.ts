@@ -3,21 +3,25 @@ import { join } from 'node:path'
 import {
   SKILL_BUNDLE_INSTALL_CAPABILITY,
   SKILL_INSTALL_CAPABILITY,
+  SKILL_INSTALL_PROGRESS_CAPABILITY,
   SKILL_MANAGEMENT_CAPABILITY,
   SKILL_UPLOAD_CAPABILITY
 } from '../shared/skill-install-capability'
 import type { ManagedSkillInstall } from '../shared/skill-install-contract'
+import type { SkillBundleInstallProgress } from '../shared/skill-bundle-install-contract'
 import {
   SKILL_SSH_RELAY_BEGIN_UPLOAD_METHOD,
   SKILL_SSH_RELAY_CANCEL_UPLOAD_METHOD,
   SKILL_SSH_RELAY_COMMIT_UPLOAD_METHOD,
   SKILL_SSH_RELAY_INSTALL_BUNDLE_METHOD,
   SKILL_SSH_RELAY_INSTALL_METHOD,
+  SKILL_SSH_RELAY_GET_INSTALL_PROGRESS_METHOD,
   SKILL_SSH_RELAY_LIST_METHOD,
   SKILL_SSH_RELAY_PREVIEW_METHOD,
   SKILL_SSH_RELAY_REMOVE_METHOD,
   SKILL_SSH_RELAY_UPLOAD_CHUNK_METHOD,
   SkillSshInstallBundleParamsSchema,
+  SkillSshInstallProgressParamsSchema,
   SkillSshInstallParamsSchema,
   SkillSshListParamsSchema,
   SkillSshPreviewParamsSchema,
@@ -55,6 +59,7 @@ const SSH_SKILL_ENVIRONMENT_ID = 'ssh-host'
 export const SKILL_RELAY_CAPABILITIES = [
   SKILL_INSTALL_CAPABILITY,
   SKILL_BUNDLE_INSTALL_CAPABILITY,
+  SKILL_INSTALL_PROGRESS_CAPABILITY,
   SKILL_UPLOAD_CAPABILITY,
   SKILL_MANAGEMENT_CAPABILITY
 ] as const
@@ -64,6 +69,7 @@ export class SkillInstallHandler {
   private readonly stateDirectory: string
   private readonly uploads: SkillUploadSessionService
   private readonly detectProviders: () => Promise<readonly string[]>
+  private readonly installProgress = new Map<string, SkillBundleInstallProgress>()
 
   constructor(
     private readonly dispatcher: RelayDispatcher,
@@ -99,17 +105,26 @@ export class SkillInstallHandler {
     })
     this.dispatcher.onRequest(SKILL_SSH_RELAY_INSTALL_BUNDLE_METHOD, async (params, context) => {
       const input = SkillSshInstallBundleParamsSchema.parse(params)
-      return this.executeSkillOperation(() =>
-        executeSkillBundleInstallRequest(input.request, {
-          authority: this.authority(input.workspace),
-          stateDirectory: this.stateDirectory,
-          allowedDownloadOrigins: ['https://storage.googleapis.com'],
-          requireHttps: true,
-          resolveStagedUpload: (uploadId, identity) => this.uploads.take(uploadId, identity),
-          detectProviders: this.detectProviders,
-          signal: context.signal
-        })
-      )
+      return this.executeSkillOperation(async () => {
+        try {
+          return await executeSkillBundleInstallRequest(input.request, {
+            authority: this.authority(input.workspace),
+            stateDirectory: this.stateDirectory,
+            allowedDownloadOrigins: ['https://storage.googleapis.com'],
+            requireHttps: true,
+            resolveStagedUpload: (uploadId, identity) => this.uploads.take(uploadId, identity),
+            detectProviders: this.detectProviders,
+            signal: context.signal,
+            onProgress: (progress) => this.installProgress.set(input.request.operationId, progress)
+          })
+        } finally {
+          this.installProgress.delete(input.request.operationId)
+        }
+      })
+    })
+    this.dispatcher.onRequest(SKILL_SSH_RELAY_GET_INSTALL_PROGRESS_METHOD, async (params) => {
+      const input = SkillSshInstallProgressParamsSchema.parse(params)
+      return this.installProgress.get(input.operationId) ?? null
     })
     this.dispatcher.onRequest(SKILL_SSH_RELAY_PREVIEW_METHOD, async (params) => {
       const input = SkillSshPreviewParamsSchema.parse(params)

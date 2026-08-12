@@ -295,6 +295,35 @@ describe('installSkillBundleOnRemoteRuntime', () => {
     )
   })
 
+  it('polls current-skill progress only when the destination advertises it', async () => {
+    const onProgress = vi.fn()
+    const progress = {
+      operationId: bundleRequest.operationId,
+      skillId: 'skill-1',
+      skillName: 'alpha',
+      skillIndex: 1,
+      skillCount: 30
+    }
+    mocks.callRuntimeEnvironment.mockImplementation(async (_state, _environment, method: string) =>
+      method === 'skills.getInstallProgress' ? success(progress) : success(bundleResult)
+    )
+
+    await installSkillBundleOnRemoteRuntime({
+      userDataPath: '/state',
+      environmentId: 'environment-1',
+      request: bundleRequest,
+      capabilities: ['skills.install.bundle.v1', 'skills.install-progress.v1'],
+      requireHttps: true,
+      onProgress
+    })
+
+    expect(onProgress).toHaveBeenCalledWith(progress)
+    expect(mocks.callRuntimeEnvironment.mock.calls.map((call) => call[2])).toEqual([
+      'skills.getInstallProgress',
+      'skills.installBundle'
+    ])
+  })
+
   it('falls back to staged upload while preserving the bundle selection', async () => {
     const cleanup = vi.fn(async () => undefined)
     mocks.callRuntimeEnvironment

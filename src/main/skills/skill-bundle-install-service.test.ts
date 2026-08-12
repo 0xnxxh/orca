@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createSkillBundleArchive } from './skill-bundle-creation'
 import { installSkillBundle } from './skill-bundle-install-service'
 import { listManagedSkillInstalls } from './skill-install-provenance'
@@ -51,6 +51,11 @@ describe('skill bundle installation', () => {
       createdAt: '2026-08-11T12:00:00.000Z'
     })
 
+    const onProgress = vi.fn((progress: { skillIndex: number }) => {
+      if (progress.skillIndex === 1) {
+        throw new Error('renderer closed')
+      }
+    })
     const result = await installSkillBundle({
       operationId: 'operation_1',
       archivePath: bundle.archivePath,
@@ -64,13 +69,30 @@ describe('skill bundle installation', () => {
       orcaStateDirectory: join(root, 'state'),
       detectedProviders: [],
       destinationIdentity: 'local-global',
-      hostIdentity: 'host_1'
+      hostIdentity: 'host_1',
+      onProgress
     })
 
     expect(result.status).toBe('partial')
     expect(result.skills.map((skill) => [skill.name, skill.status])).toEqual([
       ['alpha-skill', 'installed'],
       ['beta-skill', 'kept-local']
+    ])
+    expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
+      {
+        operationId: 'operation_1',
+        skillId: 'alpha-skill',
+        skillName: 'alpha-skill',
+        skillIndex: 1,
+        skillCount: 2
+      },
+      {
+        operationId: 'operation_1',
+        skillId: 'beta-skill',
+        skillName: 'beta-skill',
+        skillIndex: 2,
+        skillCount: 2
+      }
     ])
     expect(
       await readFile(join(homeDirectory, '.agents', 'skills', 'alpha-skill', 'SKILL.md'), 'utf8')

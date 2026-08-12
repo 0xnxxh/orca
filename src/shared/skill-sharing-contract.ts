@@ -66,6 +66,12 @@ export type SkillShareProgress = {
 export type SkillInstallProgress = {
   operationId: string
   phase: 'authorizing' | 'installing'
+  currentSkill?: {
+    id: string
+    name: string
+    index: number
+    total: number
+  }
 }
 
 export type SkillShareInstallInput = {

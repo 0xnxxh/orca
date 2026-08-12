@@ -881,8 +881,10 @@ does not mean the surrounding phase is complete.
       global or workspace scope.
 - [x] Preview new, unchanged, update, and conflict counts and resolve all per-skill conflicts in one
       surface with **Keep local** as the default.
-- [ ] Label the primary action **Install N skills** and show aggregate progress plus current skill.
-      The label and aggregate phases are implemented; current-skill progress is not yet emitted.
+- [x] Label the primary action **Install N skills** and show aggregate progress plus current skill.
+      The destination-owned installer emits the current name and one-based bundle position. Local
+      installs forward it directly; paired and SSH hosts expose a capability-gated read-only
+      progress method, with phase-only fallback for mixed-version older hosts.
 - [x] Group results into installed, unchanged, kept local, and failed; retry failed items only.
 
 ### Skills page lifecycle

@@ -3,9 +3,9 @@ import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { z } from 'zod'
 import { SKILL_INSTALL_UPDATE_REQUIRED_MESSAGE } from '../../shared/skill-install-capability'
-import type { SkillInstallProgress } from '../../shared/skill-sharing-contract'
 import { SkillDiscoveryTargetSchema, type SkillDiscoveryResult } from '../../shared/skills'
 import type { SkillCloudDownloadGrant } from '../../shared/skill-cloud-contract'
+import type { SkillBundleInstallProgress } from '../../shared/skill-bundle-install-contract'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import {
   installSkillBundleCloudGrant,
@@ -21,6 +21,7 @@ import {
 } from '../skills/skill-runtime-capability'
 import { callRuntimeEnvironment } from './runtime-environment-transport-routing'
 import { registerSkillInstallManagementIpcHandlers } from './skill-install-management-ipc-handlers'
+import { sendBundleInstallProgress, sendSkillInstallProgress } from './skill-install-progress-ipc'
 import {
   skillCloudBundlePackageVersionInstallSchema,
   skillCloudBundleShareInstallSchema,
@@ -123,18 +124,31 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
     grant: SkillCloudDownloadGrant,
     input:
       | z.infer<typeof skillCloudBundleShareInstallSchema>
-      | z.infer<typeof skillCloudBundlePackageVersionInstallSchema>
+      | z.infer<typeof skillCloudBundlePackageVersionInstallSchema>,
+    onProgress: (progress: SkillBundleInstallProgress) => void
   ) => {
     if (!input.environmentId || input.environmentId.startsWith('ssh:')) {
-      return installSkillBundleCloudGrant(runtime, grant, {
-        ...input,
-        operationId: input.operationId ?? randomUUID()
-      })
+      return installSkillBundleCloudGrant(
+        runtime,
+        grant,
+        {
+          ...input,
+          operationId: input.operationId ?? randomUUID()
+        },
+        undefined,
+        onProgress
+      )
     }
     const operationId = input.operationId ?? randomUUID()
     const signal = remoteInstallCancellation.begin(operationId)
     try {
-      return await installSkillBundleCloudGrant(runtime, grant, { ...input, operationId }, signal)
+      return await installSkillBundleCloudGrant(
+        runtime,
+        grant,
+        { ...input, operationId },
+        signal,
+        onProgress
+      )
     } finally {
       remoteInstallCancellation.finish(operationId, signal)
     }
@@ -145,18 +159,10 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
   ipcMain.handle('skills:createDownloadGrant', (_event, shareId: unknown) =>
     runtime.createSkillDownloadGrant(z.string().min(1).max(128).parse(shareId), {})
   )
-  const sendProgress = (
-    event: Electron.IpcMainInvokeEvent,
-    progress: SkillInstallProgress
-  ): void => {
-    if (!event.sender.isDestroyed()) {
-      event.sender.send('skills:installProgress', progress)
-    }
-  }
   ipcMain.handle('skills:installShare', async (event, value: unknown) => {
     const parsed = skillCloudShareInstallSchema.parse(value)
     const input = { ...parsed, operationId: parsed.operationId ?? randomUUID() }
-    sendProgress(event, { operationId: input.operationId, phase: 'authorizing' })
+    sendSkillInstallProgress(event, { operationId: input.operationId, phase: 'authorizing' })
     if (
       input.environmentId &&
       !(await supportsSkillRuntimeInstall(app.getPath('userData'), input.environmentId))
@@ -169,14 +175,14 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
       installTarget
     })
     if (grant.status === 'ok') {
-      sendProgress(event, { operationId: input.operationId, phase: 'installing' })
+      sendSkillInstallProgress(event, { operationId: input.operationId, phase: 'installing' })
     }
     return grant.status === 'ok' ? installAuthorizedGrant(grant.value, input) : grant
   })
   ipcMain.handle('skills:installBundleShare', async (event, value: unknown) => {
     const parsed = skillCloudBundleShareInstallSchema.parse(value)
     const input = { ...parsed, operationId: parsed.operationId ?? randomUUID() }
-    sendProgress(event, { operationId: input.operationId, phase: 'authorizing' })
+    sendSkillInstallProgress(event, { operationId: input.operationId, phase: 'authorizing' })
     if (
       input.environmentId &&
       !input.environmentId.startsWith('ssh:') &&
@@ -190,14 +196,18 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
       installTarget
     })
     if (grant.status === 'ok') {
-      sendProgress(event, { operationId: input.operationId, phase: 'installing' })
+      sendSkillInstallProgress(event, { operationId: input.operationId, phase: 'installing' })
     }
-    return grant.status === 'ok' ? installAuthorizedBundleGrant(grant.value, input) : grant
+    return grant.status === 'ok'
+      ? installAuthorizedBundleGrant(grant.value, input, (progress) =>
+          sendBundleInstallProgress(event, progress)
+        )
+      : grant
   })
   ipcMain.handle('skills:installPackageVersion', async (event, value: unknown) => {
     const parsed = skillCloudPackageVersionInstallSchema.parse(value)
     const input = { ...parsed, operationId: parsed.operationId ?? randomUUID() }
-    sendProgress(event, { operationId: input.operationId, phase: 'authorizing' })
+    sendSkillInstallProgress(event, { operationId: input.operationId, phase: 'authorizing' })
     if (
       input.environmentId &&
       !(await supportsSkillRuntimeInstall(app.getPath('userData'), input.environmentId))
@@ -211,14 +221,14 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
       { installTarget }
     )
     if (grant.status === 'ok') {
-      sendProgress(event, { operationId: input.operationId, phase: 'installing' })
+      sendSkillInstallProgress(event, { operationId: input.operationId, phase: 'installing' })
     }
     return grant.status === 'ok' ? installAuthorizedGrant(grant.value, input) : grant
   })
   ipcMain.handle('skills:installBundlePackageVersion', async (event, value: unknown) => {
     const parsed = skillCloudBundlePackageVersionInstallSchema.parse(value)
     const input = { ...parsed, operationId: parsed.operationId ?? randomUUID() }
-    sendProgress(event, { operationId: input.operationId, phase: 'authorizing' })
+    sendSkillInstallProgress(event, { operationId: input.operationId, phase: 'authorizing' })
     if (
       input.environmentId &&
       !input.environmentId.startsWith('ssh:') &&
@@ -233,9 +243,13 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
       { installTarget }
     )
     if (grant.status === 'ok') {
-      sendProgress(event, { operationId: input.operationId, phase: 'installing' })
+      sendSkillInstallProgress(event, { operationId: input.operationId, phase: 'installing' })
     }
-    return grant.status === 'ok' ? installAuthorizedBundleGrant(grant.value, input) : grant
+    return grant.status === 'ok'
+      ? installAuthorizedBundleGrant(grant.value, input, (progress) =>
+          sendBundleInstallProgress(event, progress)
+        )
+      : grant
   })
   ipcMain.handle('skills:cancelInstall', async (_event, value: unknown) => {
     const input = z

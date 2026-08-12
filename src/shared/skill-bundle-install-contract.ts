@@ -149,3 +149,15 @@ export type SkillBundleInstallResult = z.infer<typeof SkillBundleInstallResultSc
 export type SkillBundleSkillResult = SkillBundleInstallResult['skills'][number]
 export type SkillBundlePlacementResult = SkillBundleSkillResult['placements'][number]
 export type SkillBundleInstallFailure = SkillInstallFailure
+
+export const SkillBundleInstallProgressSchema = z
+  .object({
+    operationId: z.string().min(1).max(128),
+    skillId: z.string().min(1).max(128),
+    skillName: z.string().min(1).max(128),
+    skillIndex: z.number().int().min(1).max(512),
+    skillCount: z.number().int().min(1).max(512)
+  })
+  .strict()
+
+export type SkillBundleInstallProgress = z.infer<typeof SkillBundleInstallProgressSchema>

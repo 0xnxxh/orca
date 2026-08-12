@@ -1,5 +1,6 @@
 import { isAbsolute, join } from 'node:path'
 import {
+  type SkillBundleInstallProgress,
   SkillBundleInstallRequestSchema,
   type SkillBundleInstallRequest,
   type SkillBundleInstallResult,
@@ -21,6 +22,7 @@ export type SkillBundleInstallRequestDependencies = {
   requireHttps: boolean
   allowTrustedLocalFile?: boolean
   signal?: AbortSignal
+  onProgress?: (progress: SkillBundleInstallProgress) => void
   fetcher?: typeof fetch
   detectProviders: () => Promise<readonly string[]>
   resolveStagedUpload?: (
@@ -99,7 +101,8 @@ export async function executeSkillBundleInstallRequest(
       expectedArchiveSha256: request.package.archiveSha256,
       filesystem,
       wslDistro: destination.wslDistro,
-      signal: dependencies.signal
+      signal: dependencies.signal,
+      onProgress: dependencies.onProgress
     })
   } finally {
     await ingress.cleanup()

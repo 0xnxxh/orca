@@ -6,7 +6,10 @@ import {
   SkillInstallRequestSchema,
   SkillRemoveRequestSchema
 } from '../../../../shared/skill-install-contract'
-import { SkillBundleInstallRequestSchema } from '../../../../shared/skill-bundle-install-contract'
+import {
+  SkillBundleInstallProgressSchema,
+  SkillBundleInstallRequestSchema
+} from '../../../../shared/skill-bundle-install-contract'
 import {
   SkillUploadBeginRequestSchema,
   SkillUploadChunkRequestSchema,
@@ -66,6 +69,14 @@ export const SKILL_METHODS: RpcMethod[] = [
     handler: (params, { runtime }) => ({
       cancelled: runtime.cancelSharedSkillInstall(params.operationId)
     })
+  }),
+  defineMethod({
+    name: 'skills.getInstallProgress',
+    params: z.object({ operationId: z.string().min(1).max(128) }).strict(),
+    handler: (params, { runtime }) => {
+      const progress = runtime.getSharedSkillInstallProgress(params.operationId)
+      return progress ? SkillBundleInstallProgressSchema.parse(progress) : null
+    }
   }),
   defineMethod({
     name: 'skills.previewInstall',

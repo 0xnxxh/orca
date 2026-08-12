@@ -15,6 +15,7 @@ export const SKILL_SSH_RELAY_BEGIN_UPLOAD_METHOD = 'skills.beginUpload' as const
 export const SKILL_SSH_RELAY_UPLOAD_CHUNK_METHOD = 'skills.uploadChunk' as const
 export const SKILL_SSH_RELAY_COMMIT_UPLOAD_METHOD = 'skills.commitUpload' as const
 export const SKILL_SSH_RELAY_CANCEL_UPLOAD_METHOD = 'skills.cancelUpload' as const
+export const SKILL_SSH_RELAY_GET_INSTALL_PROGRESS_METHOD = 'skills.getInstallProgress' as const
 
 const SkillSshWorkspaceAuthoritySchema = z.discriminatedUnion('kind', [
   z
@@ -35,6 +36,10 @@ export const SkillSshInstallBundleParamsSchema = z
     request: SkillBundleInstallRequestSchema,
     workspace: SkillSshWorkspaceAuthoritySchema.optional()
   })
+  .strict()
+
+export const SkillSshInstallProgressParamsSchema = z
+  .object({ operationId: z.string().min(1).max(128) })
   .strict()
 
 export const SkillSshPreviewParamsSchema = z

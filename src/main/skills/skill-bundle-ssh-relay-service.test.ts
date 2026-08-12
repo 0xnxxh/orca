@@ -89,6 +89,48 @@ describe('installSkillBundleOnSshHost', () => {
     expect(requestHostRpc).toHaveBeenCalledOnce()
   })
 
+  it('polls current-skill progress only when the SSH host advertises it', async () => {
+    const bytes = Buffer.from('private bundle archive')
+    const onProgress = vi.fn()
+    const progress = {
+      operationId: 'bundle-operation',
+      skillId: 'skill-1',
+      skillName: 'alpha',
+      skillIndex: 1,
+      skillCount: 30
+    }
+    const requestHostRpc = vi.fn(async (method: string) => {
+      if (method === 'relay.status') {
+        return {
+          capabilities: ['skills.install.bundle.v1', 'skills.install-progress.v1']
+        }
+      }
+      if (method === 'skills.getInstallProgress') {
+        return progress
+      }
+      if (method === 'skills.installBundle') {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        return result()
+      }
+      throw new Error(`unexpected method ${method}`)
+    })
+
+    await installSkillBundleOnSshHost({
+      provider: { requestHostRpc } as unknown as IPtyProvider,
+      userDataPath: await userDataPath(),
+      request: request(bytes),
+      requireHttps: true,
+      onProgress
+    })
+
+    expect(onProgress).toHaveBeenCalledWith(progress)
+    expect(requestHostRpc.mock.calls.map(([method]) => method)).toEqual([
+      'relay.status',
+      'skills.getInstallProgress',
+      'skills.installBundle'
+    ])
+  })
+
   it('falls back to client-mediated transfer after direct download fails', async () => {
     const bytes = Buffer.from('private bundle archive')
     const requestHostRpc = vi.fn(async (method: string, params: unknown) => {
