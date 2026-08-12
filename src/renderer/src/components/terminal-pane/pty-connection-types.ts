@@ -48,6 +48,8 @@ export type PtyConnectionDeps = {
   } | null
   restoredLeafId?: string | null
   restoredPtyIdByLeafId?: Record<string, string>
+  /** Preserves park intent across StrictMode's passive-effect replay. */
+  mountFollowsTerminalPark: boolean
   paneTransportsRef: React.RefObject<Map<number, PtyTransport>>
   paneMode2031Ref: React.RefObject<Map<number, boolean>>
   /** Per-pane mirror of the kitty keyboard flags the pane's application
