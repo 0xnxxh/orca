@@ -453,6 +453,12 @@ function teardown(staged) {
     staged.daemon.child.unref()
   }
   for (const marker of staged.markers ?? []) {
+    // Why re-verify by tag: phase 1 waits for these pids to die, and teardown runs a minute
+    // later. Signalling a remembered pid after that would be signalling whatever the OS has
+    // since recycled it onto — which is the mistake this whole script exists to study.
+    if (!isMarkerAlive(marker)) {
+      continue
+    }
     for (const pid of [marker.pid, marker.sessionPid]) {
       try {
         process.kill(pid, 'SIGKILL')

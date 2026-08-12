@@ -7444,9 +7444,15 @@ export function registerPtyHandlers(
 
   ipcMain.removeAllListeners('pty:signal')
   ipcMain.on('pty:signal', (_event, args: { id: string; signal: string }) => {
-    tryGetProviderForPty(args.id)
-      ?.sendSignal(args.id, args.signal)
-      .catch(() => {})
+    try {
+      // Why try/catch as well as .catch: routing refuses a session whose host is unreachable,
+      // and it may do so synchronously. Nothing sits above an ipcMain.on listener to catch it.
+      tryGetProviderForPty(args.id)
+        ?.sendSignal(args.id, args.signal)
+        .catch(() => {})
+    } catch {
+      /* unreachable host — the signal is undeliverable and there is no caller to tell */
+    }
   })
 
   ipcMain.removeAllListeners('pty:clearBuffer')

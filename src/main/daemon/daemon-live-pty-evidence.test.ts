@@ -23,6 +23,9 @@ function row(pid: number, ppid: number, overrides: Partial<ProcessTableRow> = {}
 
 const daemonRow = row(DAEMON_PID, 1, { command: 'daemon-entry.js' })
 
+// macOS wraps every terminal in login(1); only the wrapper is the session leader.
+const LOGIN_WRAPPER = '/usr/bin/login -flpq nwparker /bin/bash …'
+
 function windowsCandidate(pid: number): WindowsProcessCandidate {
   return { pid, ppid: DAEMON_PID, name: 'bash.exe', command: 'bash', executablePath: '', depth: 1 }
 }
@@ -49,7 +52,7 @@ describe('inspectDaemonPtyOwnership on POSIX', () => {
         readPosixProcessTable: posixTable([
           daemonRow,
           row(101, DAEMON_PID, { command: '/usr/bin/login -flpq nwparker' }),
-          row(202, 101, { command: 'claude' })
+          row(202, 101, { stat: 'S+', command: 'claude' })
         ])
       })
     ).resolves.toBe('owns-live-ptys')
@@ -87,7 +90,7 @@ describe('inspectDaemonPtyOwnership on POSIX', () => {
         readPosixProcessTable: posixTable([
           daemonRow,
           row(101, DAEMON_PID, { stat: 'Z', command: '<defunct>' }),
-          row(202, 101, { command: 'codex' })
+          row(202, 101, { stat: 'Ss', command: 'codex' })
         ])
       })
     ).resolves.toBe('owns-live-ptys')
@@ -408,13 +411,32 @@ describe('inspectDaemonPtyOwnership sampling', () => {
     ).resolves.toBe('owns-live-ptys')
   })
 
-  it('answers no-live-ptys on the first conclusive read without re-sampling', async () => {
+  it('confirms emptiness with a second read before letting it authorize a kill', async () => {
     const readPosixProcessTable = vi.fn(async () => [daemonRow])
 
     await expect(
       inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', readPosixProcessTable })
     ).resolves.toBe('no-live-ptys')
-    expect(readPosixProcessTable).toHaveBeenCalledTimes(1)
+    expect(readPosixProcessTable).toHaveBeenCalledTimes(2)
+  })
+
+  it('sees a terminal whose shell had not yet appeared on the first read', async () => {
+    // A terminal contributes exactly one session leader — on macOS the login wrapper — and it
+    // is childless for the moment between forkpty creating it and the shell appearing. One
+    // snapshot cannot tell that from a wrapper whose shell has gone, and guessing wrong here
+    // kills a live terminal.
+    const readPosixProcessTable = vi
+      .fn<() => Promise<ProcessTableRow[]>>()
+      .mockResolvedValueOnce([daemonRow, row(101, DAEMON_PID, { command: LOGIN_WRAPPER })])
+      .mockResolvedValueOnce([
+        daemonRow,
+        row(101, DAEMON_PID, { command: LOGIN_WRAPPER }),
+        row(202, 101, { stat: 'S+', command: '/opt/homebrew/bin/bash --rcfile …' })
+      ])
+
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', readPosixProcessTable })
+    ).resolves.toBe('owns-live-ptys')
   })
 
   it('gives up as unknown rather than guessing when every read stays blind', async () => {

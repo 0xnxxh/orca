@@ -89,7 +89,7 @@ function programBasename(command: string): string {
   return base.endsWith('.exe') ? base.slice(0, -'.exe'.length) : base
 }
 
-function isDaemonSelfSpawnedPty(row: ProcessTableRow): boolean {
+function isDaemonSelfSpawnedPty(row: Pick<ProcessTableRow, 'command'>): boolean {
   const command = row.command.trim().toLowerCase()
   return DAEMON_SELF_SPAWNED_PTY_COMMANDS.some(({ program, args }) => {
     const suffix = ` ${args}`
@@ -176,9 +176,7 @@ async function probeOnce(
     if (descendants === null) {
       return 'unknown'
     }
-    const hosted = descendants.filter(
-      (row) => !isDaemonSelfSpawnedPty({ command: row.command } as ProcessTableRow)
-    )
+    const hosted = descendants.filter((row) => !isDaemonSelfSpawnedPty(row))
     return hosted.length > 0 ? 'owns-live-ptys' : 'no-live-ptys'
   }
   const deadlineMs = deps.posixDeadlineMs ?? POSIX_OWNERSHIP_PROBE_DEADLINE_MS
@@ -220,6 +218,7 @@ export async function inspectDaemonPtyOwnership(
   deps: DaemonPtyOwnershipDeps = {}
 ): Promise<DaemonPtyOwnership> {
   const platform = deps.platform ?? process.platform
+  let sawEmpty = false
   for (let attempt = 0; attempt < PTY_OWNERSHIP_PROBE_ATTEMPTS; attempt++) {
     let sample: DaemonPtyOwnership
     try {
@@ -227,9 +226,20 @@ export async function inspectDaemonPtyOwnership(
     } catch {
       sample = 'unknown'
     }
+    // Why a second look before accepting emptiness on POSIX: a terminal contributes exactly
+    // one session leader — on macOS the login wrapper — and it is invisible for the moment
+    // between forkpty creating it and the shell appearing beneath it. One snapshot cannot tell
+    // that from a wrapper whose shell has gone. Emptiness authorizes a kill, so it is the
+    // answer worth paying a second read for; 'owns-live-ptys' needs no confirmation.
+    if (sample === 'no-live-ptys' && platform !== 'win32' && !sawEmpty) {
+      sawEmpty = true
+      continue
+    }
     if (sample !== 'unknown') {
       return sample
     }
   }
-  return 'unknown'
+  // Only reached when every sample was blind, or when the confirming read disagreed with an
+  // emptiness it could not corroborate.
+  return sawEmpty ? 'no-live-ptys' : 'unknown'
 }
