@@ -150,20 +150,23 @@ async function probeOnce(
   deps: DaemonPtyOwnershipDeps
 ): Promise<DaemonPtyOwnership> {
   const deadlineMs = deps.posixDeadlineMs ?? POSIX_OWNERSHIP_PROBE_DEADLINE_MS
+  const deadline = Date.now() + deadlineMs
+  const remaining = (): number => Math.max(1, deadline - Date.now())
   const rows =
     (await withDeadline(
       (deps.readPosixProcessTable ?? getFreshProcessTableSnapshot)(),
-      deadlineMs,
+      remaining(),
       null
     )) ??
     // Why fall back instead of answering 'unknown': the uncached reader queues behind the
     // scans every agent pane already drives, so the busiest host — the one this evidence
     // exists to protect — is the likeliest to blow the deadline on queueing alone. A table a
     // few hundred milliseconds old still shows whether this daemon has children, and going
-    // blind here gets them killed.
+    // blind here gets them killed. It shares the attempt's budget rather than doubling it,
+    // so an attempt costs what the launch budget was told it costs.
     (await withDeadline(
       (deps.readCachedPosixProcessTable ?? getProcessTableSnapshot)(),
-      deadlineMs,
+      remaining(),
       null
     ))
   // Why: a walk that never saw the root reports zero descendants for a process it

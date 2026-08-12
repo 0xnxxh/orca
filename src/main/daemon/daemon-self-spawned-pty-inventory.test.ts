@@ -8,8 +8,16 @@ import { join } from 'node:path'
  * is only safe while it is complete — a self-spawned PTY nobody excluded reads as user work
  * and holds a daemon that owns nothing, which is how the list grew a reviewer at a time.
  *
- * So pin the input instead of the list: every PTY the daemon can open, enumerated from the
- * source. A new spawn site fails this test until someone decides which side it belongs on.
+ * So pin the input instead of the list: every PTY the daemon opens *directly*, enumerated
+ * from the source. A new spawn site fails this test until someone decides which side it
+ * belongs on.
+ *
+ * Scope, stated so the next reader does not over-trust it: this sees node-pty calls in this
+ * directory only. The daemon can also open a PTY through a helper binary — the macOS login
+ * session probe shells out to `expect`, whose own `spawn` forkpty's a `login` wrapper that
+ * surfaces as a session-leader grandchild (`macos-login-session-pty-probe.ts`). That one is
+ * caught by the stranded-wrapper filter rather than by this list, and it is the shape a
+ * future escape will take: indirect, and outside this directory.
  */
 const KNOWN_DAEMON_PTY_SPAWN_SITES = [
   // The user's terminal — the thing the evidence exists to protect.

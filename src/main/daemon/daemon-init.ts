@@ -81,14 +81,18 @@ function logDaemonMilestone(event: string, details: Record<string, unknown> = {}
 // Why: extra hello+listSessions probes (~5s each) giving a wedged-but-connectable daemon ~60s grace to answer and keep its live sessions before a permanent wedge (#8689) is replaced; raise only alongside the fail-open cap.
 export const WEDGED_DAEMON_GRACE_RETRIES = 11
 /**
- * Wall-clock ceiling on the grace window, counted from before the first probe. The retry
- * count alone does not bound it, and the ceiling is only tested at loop entry, so the real
- * cost is this plus one in-flight probe plus the health check, pid verification and process
- * table read on either side of it. Startup fails open at 60s by abandoning the daemon
- * provider outright, so the whole path has to fit under that with room to spare —
- * overrunning it would trade a wedged daemon for no daemon at all.
+ * Wall-clock ceiling on the grace window, counted from before the first probe and tested at
+ * loop entry, so the real cost is this plus one in-flight probe. Startup fails open at 60s by
+ * abandoning the daemon provider outright — and ensureRunning() is not abortable, so the
+ * launcher runs to completion regardless — which is why the whole path has to fit under it.
+ *
+ * Platform-aware because the two platforms spend the rest of that budget differently, and
+ * because grace is worth more where there is nothing else. On POSIX a daemon that outlasts
+ * the window is still protected by process-table evidence; on Windows there is no such
+ * evidence, so the window is the only thing standing between a transient wedge and a kill,
+ * and it gets everything the budget can spare. Sized by daemon-launch-budget.test.ts.
  */
-export const WEDGED_DAEMON_GRACE_BUDGET_MS = 12_000
+export const WEDGED_DAEMON_GRACE_BUDGET_MS = process.platform === 'win32' ? 26_000 : 16_000
 const DAEMON_SELF_SHUTDOWN_WAIT_MS = 5_000
 const DAEMON_CHILD_TERMINATION_GRACE_MS = 5_000
 const DAEMON_CHILD_FORCE_EXIT_WAIT_MS = 1_000
@@ -626,7 +630,7 @@ function createOutOfProcessLauncher(
         // to be re-verified first: the grace window is long enough for the daemon to die and
         // its pid to be recycled, and the evidence would then describe a stranger's children.
         const evidencePid =
-          occupancy.state === 'unknown'
+          occupancy.state === 'unknown' && process.platform !== 'win32'
             ? ((await readVerifiedDaemonPid(runtimeDir, socketPath, tokenPath))?.pid ?? null)
             : null
         occupancy = await raiseOccupancyWithProcessEvidence(occupancy, evidencePid)

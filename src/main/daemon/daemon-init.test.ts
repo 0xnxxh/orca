@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
 import { PROTOCOL_VERSION } from './types'
 import { WEDGED_DAEMON_GRACE_BUDGET_MS, WEDGED_DAEMON_GRACE_RETRIES } from './daemon-init'
+import { OCCUPANCY_IPC_BUDGET_MS } from './daemon-occupancy'
 
 const FAKE_USER_DATA_PATH = '/fake/userData'
 const FAKE_RUNTIME_DIR = join(FAKE_USER_DATA_PATH, 'daemon')
@@ -3442,11 +3443,14 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     }
   })
 
-  it('grace budget is generous enough to ride out a ~60s transient wedge', () => {
-    // Why still pinned: the wall-clock ceiling binds first, so this is an upper bound on
-    // retries rather than the real budget — but lowering it silently shortens the drain
-    // window for a daemon whose process table cannot be read, which has no other protection.
-    expect(WEDGED_DAEMON_GRACE_RETRIES).toBeGreaterThanOrEqual(11)
+  it('bounds grace by the wall clock, with the retry count only a ceiling above it', () => {
+    // Why phrased this way: the retry count used to be the budget, and its old name promised
+    // ~60s of drain. It no longer buys that — each probe costs OCCUPANCY_IPC_BUDGET_MS and the
+    // wall-clock ceiling binds first — so what it pins now is only that the count never
+    // becomes the binding limit. The window itself is asserted in daemon-launch-budget.test.ts.
+    expect(WEDGED_DAEMON_GRACE_RETRIES * OCCUPANCY_IPC_BUDGET_MS).toBeGreaterThan(
+      WEDGED_DAEMON_GRACE_BUDGET_MS
+    )
   })
 
   it('stops grace-retrying when the wall-clock budget runs out, with retries still left', async () => {
@@ -3511,8 +3515,13 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     }
   })
 
-  it('preserves a daemon that stays wedged until the LAST allowed grace retry', async () => {
-    // Why: daemon drains only on the last allowed probe (1 + WEDGED_DAEMON_GRACE_RETRIES) — must be preserved, not replaced.
+  it('preserves a daemon that drains on the last probe the budget allows', async () => {
+    // Why the clock is frozen: the probes here are instantaneous, so without pinning time the
+    // wall-clock ceiling would never bind and this would assert a retry depth the real code
+    // cannot reach. Freezing it lets the loop run to its retry ceiling deliberately, which is
+    // the thing under test — that a daemon draining on the final allowed probe is preserved.
+    const frozenNow = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(frozenNow)
     const mod = await importFresh()
     await mod.initDaemonPtyProvider()
 
@@ -3556,6 +3565,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     } finally {
       daemonClientMock.mockImplementation(answeringDefault)
     }
+    nowSpy.mockRestore()
   })
 
   it('replaces a hello-rejected daemon even though its pipe accepts connections', async () => {

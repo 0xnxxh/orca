@@ -15,13 +15,14 @@ import {
  */
 describe('wedged-daemon classification budget', () => {
   it.each([
-    // Identity probe: a synchronous `ps -p` on POSIX, a powershell CIM query on Windows.
-    // Windows reads no process table at all, so its evidence deadline is zero.
-    ['posix', POSIX_OWNERSHIP_PROBE_DEADLINE_MS, 2_000],
-    ['win32', 0, 3_000]
+    // Windows reads no process table, so it pays neither the evidence deadline nor the
+    // identity probe that only exists to feed it. POSIX pays both: a synchronous `ps -p`
+    // for identity, then the evidence read itself.
+    ['posix', POSIX_OWNERSHIP_PROBE_DEADLINE_MS, 2_000, 16_000],
+    ['win32', 0, 0, 26_000]
   ])(
     'is spent well inside the startup fail-open cap on %s',
-    (_platform, evidenceDeadlineMs, identityProbeMs) => {
+    (_platform, evidenceDeadlineMs, identityProbeMs, graceBudgetMs) => {
       // Why sum the declared budgets rather than compare one of them: startup abandons the
       // daemon provider entirely at the cap, and classification is only the first half of the
       // path — a replacement still has to be killed and forked after it. Comparing the grace
@@ -29,7 +30,7 @@ describe('wedged-daemon classification budget', () => {
       // against a 5s assumption. Raising any term below now has to face this.
       const classificationMs =
         HEALTH_CHECK_TIMEOUT_MS +
-        WEDGED_DAEMON_GRACE_BUDGET_MS +
+        graceBudgetMs +
         // The ceiling is tested at loop entry, so one probe — connect, then request — plus the
         // endpoint check that ends the loop always run past it.
         OCCUPANCY_IPC_BUDGET_MS * 2 +
@@ -47,4 +48,11 @@ describe('wedged-daemon classification budget', () => {
       )
     }
   )
+
+  it('spends the grace budget the platform it is running on was sized for', () => {
+    // Why pinned: the two platforms get different windows on purpose — POSIX has evidence to
+    // fall back on when the window runs out, Windows has nothing — and the numbers above are
+    // only meaningful if the code actually uses them.
+    expect(WEDGED_DAEMON_GRACE_BUDGET_MS).toBe(process.platform === 'win32' ? 26_000 : 16_000)
+  })
 })
