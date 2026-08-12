@@ -6314,7 +6314,8 @@ describe('worktree remote runtime mutations', () => {
         allowUnverifiedPtyStop: false,
         runHooks: true
       },
-      timeoutMs: 60_000
+      timeoutMs: 60_000,
+      expectedEnvironmentPairingRevision: undefined
     })
     expect(mockApi.worktrees.remove).not.toHaveBeenCalled()
     expect(store.getState().worktreesByRepo['repo-ssh']).toEqual([])
@@ -6572,13 +6573,15 @@ describe('worktree remote runtime mutations', () => {
         cleanups: [
           {
             worktree: `id:${wt.id}`,
+            cleanupId: expect.any(String),
             branchName: 'feature/old-runtime',
             expectedHead: 'saved-head',
             hostId: 'ssh:old-runtime-target'
           }
         ]
       },
-      timeoutMs: 15_000
+      timeoutMs: 15_000,
+      expectedEnvironmentPairingRevision: undefined
     })
   })
 

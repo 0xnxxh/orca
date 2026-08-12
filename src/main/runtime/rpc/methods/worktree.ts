@@ -291,18 +291,13 @@ export const WORKTREE_METHODS: RpcMethod[] = [
     name: 'worktree.forceDeleteBranch',
     params: WorktreeForceDeleteBranch,
     handler: async (params, { runtime }) =>
-      params.hostId
-        ? runtime.forceDeletePreservedBranch(
-            params.worktree,
-            params.branchName,
-            params.expectedHead,
-            params.hostId
-          )
-        : runtime.forceDeletePreservedBranch(
-            params.worktree,
-            params.branchName,
-            params.expectedHead
-          )
+      runtime.forceDeletePreservedBranch(
+        params.worktree,
+        params.branchName,
+        params.expectedHead,
+        params.hostId,
+        params.cleanupId
+      )
   }),
   WORKTREE_PRESERVED_CLEANUP_RELEASE_METHOD
 ]

@@ -1409,6 +1409,7 @@ export type PreloadApi = {
       hostId?: ExecutionHostId
     }) => Promise<RemoveWorktreeResult>
     forceDeletePreservedBranch: (args: {
+      cleanupId?: string
       worktreeId: string
       branchName: string
       expectedHead: string

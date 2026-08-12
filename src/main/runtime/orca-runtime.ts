@@ -2147,6 +2147,7 @@ type RuntimeWorktreeRemovalInFlight = {
 }
 
 type PreservedBranchCleanupTarget = {
+  cleanupId?: string
   worktreeId: string
   hostId?: ExecutionHostId
   branchName: string
@@ -24236,6 +24237,8 @@ export class OrcaRuntimeService {
     pushTarget: GitPushTarget | undefined
   ): void {
     if (result?.preservedBranch) {
+      const cleanupId = randomUUID()
+      result.preservedBranch.cleanupId = cleanupId
       const head = result.preservedBranch.head ?? fallbackHead
       if (!head) {
         throw new Error(
@@ -24245,6 +24248,7 @@ export class OrcaRuntimeService {
       this.preservedBranchCleanupByScope.set(
         preservedBranchCleanupScopeKey({ worktreeId, hostId }),
         {
+          ...(cleanupId ? { cleanupId } : {}),
           worktreeId,
           ...(hostId ? { hostId } : {}),
           branchName: result.preservedBranch.branchName,
@@ -24279,7 +24283,8 @@ export class OrcaRuntimeService {
     worktreeSelector: string,
     branchName: string,
     expectedHead: string,
-    hostId?: string
+    hostId?: string,
+    cleanupId?: string
   ): Promise<ForceDeleteWorktreeBranchResult> {
     if (!this.store) {
       throw new Error('runtime_unavailable')
@@ -24305,7 +24310,8 @@ export class OrcaRuntimeService {
       !removalTarget ||
       !cleanupTarget ||
       cleanupTarget.branchName !== branchName ||
-      cleanupTarget.head !== expectedHead
+      cleanupTarget.head !== expectedHead ||
+      (cleanupId && cleanupTarget.cleanupId !== cleanupId)
     ) {
       throw new Error(`No preserved branch cleanup is pending for "${branchName}".`)
     }
@@ -24365,6 +24371,7 @@ export class OrcaRuntimeService {
 
   releasePreservedBranchCleanups(
     cleanups: readonly {
+      cleanupId?: string
       worktreeSelector: string
       branchName: string
       expectedHead?: string
@@ -24386,7 +24393,8 @@ export class OrcaRuntimeService {
         !worktree ||
         !cleanup.expectedHead ||
         target?.branchName !== cleanup.branchName ||
-        target.head !== cleanup.expectedHead
+        target.head !== cleanup.expectedHead ||
+        (cleanup.cleanupId && target.cleanupId !== cleanup.cleanupId)
       ) {
         continue
       }

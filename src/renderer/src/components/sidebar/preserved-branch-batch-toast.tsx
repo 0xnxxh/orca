@@ -192,6 +192,9 @@ export async function forceDeletePreservedBranchBatch(
             size="sm"
             className="w-full"
             onClick={() => {
+              if (retryStarted) {
+                return
+              }
               retryStarted = true
               void forceDeletePreservedBranchBatch(failedBranches)
             }}

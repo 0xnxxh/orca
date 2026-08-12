@@ -526,6 +526,7 @@ type WorktreeRemovalInFlight = {
 }
 
 type PreservedBranchCleanupTarget = {
+  cleanupId?: string
   worktreeId: string
   hostId: ExecutionHostId
   branchName: string
@@ -551,6 +552,8 @@ function rememberPreservedBranchCleanupTarget(
   pushTarget: GitPushTarget | undefined
 ): void {
   if (result?.preservedBranch) {
+    const cleanupId = randomUUID()
+    result.preservedBranch.cleanupId = cleanupId
     const head = result.preservedBranch.head ?? fallbackHead
     if (!head) {
       throw new Error(
@@ -558,6 +561,7 @@ function rememberPreservedBranchCleanupTarget(
       )
     }
     preservedBranchCleanupByScope.set(preservedBranchCleanupScopeKey({ worktreeId, hostId }), {
+      ...(cleanupId ? { cleanupId } : {}),
       worktreeId,
       hostId,
       branchName: result.preservedBranch.branchName,
@@ -589,7 +593,8 @@ function getPreservedBranchCleanupTarget(
   worktreeId: string,
   branchName: string,
   expectedHead: string,
-  hostId?: ExecutionHostId
+  hostId?: ExecutionHostId,
+  cleanupId?: string
 ): PreservedBranchCleanupTarget {
   const exactTarget = hostId
     ? preservedBranchCleanupByScope.get(preservedBranchCleanupScopeKey({ worktreeId, hostId }))
@@ -603,7 +608,12 @@ function getPreservedBranchCleanupTarget(
           target.head === expectedHead
       )
   const target = exactTarget ?? (legacyMatches.length === 1 ? legacyMatches[0] : undefined)
-  if (!target || target.branchName !== branchName || target.head !== expectedHead) {
+  if (
+    !target ||
+    target.branchName !== branchName ||
+    target.head !== expectedHead ||
+    (cleanupId && target.cleanupId !== cleanupId)
+  ) {
     throw new Error(`No preserved branch cleanup is pending for "${branchName}".`)
   }
   return target
@@ -620,7 +630,8 @@ function releasePreservedBranchCleanupTargets(cleanups: readonly PreservedBranch
         cleanup.worktreeId,
         cleanup.branchName,
         cleanup.expectedHead,
-        cleanup.hostId
+        cleanup.hostId,
+        cleanup.cleanupId
       )
       preservedBranchCleanupByScope.delete(
         preservedBranchCleanupScopeKey({ worktreeId: target.worktreeId, hostId: target.hostId })
@@ -3121,6 +3132,7 @@ export function registerWorktreeHandlers(
     async (
       _event,
       args: {
+        cleanupId?: string
         worktreeId: string
         branchName: string
         expectedHead: string
@@ -3132,7 +3144,8 @@ export function registerWorktreeHandlers(
         args.worktreeId,
         args.branchName,
         args.expectedHead,
-        args.hostId
+        args.hostId,
+        args.cleanupId
       )
       const repo = getRepoForWorktreeRemoval(store, repoId, cleanupTarget.hostId)
       if (!repo) {

@@ -4611,7 +4611,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       const preservedBranch = removalResult?.preservedBranch
       const cleanup = preservedBranch
         ? {
-            cleanupId: createBrowserUuid(),
+            cleanupId: preservedBranch.cleanupId ?? createBrowserUuid(),
             worktreeId,
             branchName: preservedBranch.branchName,
             expectedHead: preservedBranch.head,
@@ -4790,6 +4790,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         getActiveRuntimeTarget(settingsForWorktreeOwner(get(), worktreeId))
       const result = await (target.kind === 'local'
         ? window.api.worktrees.forceDeletePreservedBranch({
+            ...(requestedCleanup.cleanupId ? { cleanupId: requestedCleanup.cleanupId } : {}),
             worktreeId,
             branchName,
             expectedHead,
@@ -4799,6 +4800,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             target,
             'worktree.forceDeleteBranch',
             {
+              ...(requestedCleanup.cleanupId ? { cleanupId: requestedCleanup.cleanupId } : {}),
               worktree: toRuntimeWorktreeSelector(worktreeId),
               branchName,
               expectedHead,
@@ -4887,6 +4889,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
                 'worktree.releasePreservedBranchCleanups',
                 {
                   cleanups: targetCleanups.map((cleanup) => ({
+                    ...(cleanup.cleanupId ? { cleanupId: cleanup.cleanupId } : {}),
                     worktree: toRuntimeWorktreeSelector(cleanup.worktreeId),
                     branchName: cleanup.branchName,
                     expectedHead: cleanup.expectedHead,

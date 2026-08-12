@@ -57,6 +57,17 @@ function renderToastBody(): HTMLElement {
   return container
 }
 
+function renderErrorToastBody(): HTMLElement {
+  const description = vi.mocked(toast.error).mock.calls.at(-1)?.[1]
+    ?.description as React.ReactElement
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  mountedRoots.push(root)
+  act(() => root.render(description))
+  return container
+}
+
 function renderReviewModal(branches: readonly PreservedBranchCleanup[]): Root {
   mocks.state.activeModal = 'preserved-branch-review'
   mocks.state.modalData = { branches }
@@ -342,6 +353,30 @@ describe('showPreservedBranchBatchToast', () => {
 
     expect(mocks.state.releasePreservedBranchCleanups).toHaveBeenCalledOnce()
     expect(mocks.state.releasePreservedBranchCleanups).toHaveBeenCalledWith([failedBranch])
+  })
+
+  it('starts only one retry when its button is clicked twice', async () => {
+    const failedBranch = {
+      worktreeId: 'repo-a::one',
+      branchName: 'feature/one',
+      expectedHead: 'head-one'
+    }
+    mocks.state.forceDeletePreservedBranch
+      .mockResolvedValueOnce({ ok: false, error: 'busy' })
+      .mockImplementation(() => new Promise(() => {}))
+
+    await forceDeletePreservedBranchBatch([failedBranch])
+    const body = renderErrorToastBody()
+    const button = body.querySelector('button')
+    if (!button) {
+      throw new Error('retry button not found')
+    }
+    act(() => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(mocks.state.forceDeletePreservedBranch).toHaveBeenCalledTimes(2)
   })
 
   it('keeps concurrent failed batches on distinct retry toasts', async () => {
