@@ -49,6 +49,9 @@ export const WINDOWS_OWNERSHIP_PROBE_DEADLINE_MS = 6_000
  */
 export const POSIX_OWNERSHIP_PROBE_DEADLINE_MS = 4_000
 
+/** macos-tcc-login-shell.ts wraps every darwin terminal in this. */
+const MACOS_LOGIN_WRAPPER_PREFIX = '/usr/bin/login '
+
 function withDeadline<T>(work: Promise<T>, deadlineMs: number, onDeadline: T): Promise<T> {
   return new Promise<T>((resolve) => {
     const timer = setTimeout(() => resolve(onDeadline), deadlineMs)
@@ -111,6 +114,16 @@ function isLivePtySessionLeader(row: ProcessTableRow): boolean {
   return !row.stat.startsWith('Z') && row.stat.includes('s') && !isDaemonSelfSpawnedPty(row)
 }
 
+/**
+ * macOS wraps every terminal in `/usr/bin/login` for TCC attribution, and the wrapper can
+ * outlive the shell it wrapped (#13764) — a session leader hosting nothing. Counting those
+ * would hold a daemon whose sessions have all ended, on hosts where they accumulate by the
+ * hundred. A wrapper still doing its job always has the shell it exec'd beneath it.
+ */
+function isStrandedLoginWrapper(row: ProcessTableRow, hasChildren: boolean): boolean {
+  return !hasChildren && row.command.trim().startsWith(MACOS_LOGIN_WRAPPER_PREFIX)
+}
+
 function collectLivePtyDescendants(rows: ProcessTableRow[], rootPid: number): ProcessTableRow[] {
   const childrenByPpid = new Map<number, ProcessTableRow[]>()
   for (const row of rows) {
@@ -135,7 +148,10 @@ function collectLivePtyDescendants(rows: ProcessTableRow[], rootPid: number): Pr
       }
       visited.add(child.pid)
       queue.push(child.pid)
-      if (isLivePtySessionLeader(child)) {
+      if (
+        isLivePtySessionLeader(child) &&
+        !isStrandedLoginWrapper(child, childrenByPpid.has(child.pid))
+      ) {
         live.push(child)
       }
     }

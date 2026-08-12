@@ -163,6 +163,35 @@ describe('inspectDaemonPtyOwnership on POSIX', () => {
     ).resolves.toBe('owns-live-ptys')
   })
 
+  it('ignores a login wrapper stranded without its shell (#13764)', async () => {
+    // Why: the macOS TCC wrapper can outlive the shell it wrapped, leaving a session leader
+    // hosting nothing. On hosts where those accumulate, counting them would hold a daemon
+    // whose sessions have all ended — indefinitely, and for no live work.
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        readPosixProcessTable: posixTable([
+          daemonRow,
+          row(101, DAEMON_PID, { command: '/usr/bin/login -flpq nwparker /bin/bash …' }),
+          row(102, DAEMON_PID, { command: '/usr/bin/login -flpq nwparker /bin/bash …' })
+        ])
+      })
+    ).resolves.toBe('no-live-ptys')
+  })
+
+  it('still counts a login wrapper that has its shell', async () => {
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        readPosixProcessTable: posixTable([
+          daemonRow,
+          row(101, DAEMON_PID, { command: '/usr/bin/login -flpq nwparker /bin/bash …' }),
+          row(202, 101, { command: '/opt/homebrew/bin/bash --rcfile …' })
+        ])
+      })
+    ).resolves.toBe('owns-live-ptys')
+  })
+
   it('reports unknown when the table never contained the daemon', async () => {
     // Why: an unobserved root yields the same empty result as a childless one —
     // reading that as "empty" authorizes killing a daemon full of live agents.
