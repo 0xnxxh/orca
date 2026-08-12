@@ -25,6 +25,15 @@ function Parent() {
   return <Child />
 }
 
+function parkTab(): void {
+  parkedWatchersByTabId.set(TAB_ID, {
+    worktreeId: 'wt-1',
+    tabPtyId: 'pty-1',
+    paneIdByPtyId: new Map([['pty-1', 1]]),
+    disposersByPtyId: new Map([['pty-1', () => {}]])
+  })
+}
+
 afterEach(() => {
   observations.length = 0
   disposeParkedTabWatchers(TAB_ID)
@@ -32,12 +41,7 @@ afterEach(() => {
 
 describe('useTerminalParkMountIntent', () => {
   it('survives StrictMode effect replay after the parent disposes the watcher', () => {
-    parkedWatchersByTabId.set(TAB_ID, {
-      worktreeId: 'wt-1',
-      tabPtyId: 'pty-1',
-      paneIdByPtyId: new Map([['pty-1', 1]]),
-      disposersByPtyId: new Map([['pty-1', () => {}]])
-    })
+    parkTab()
     const container = document.createElement('div')
     const root = createRoot(container)
 
@@ -50,6 +54,23 @@ describe('useTerminalParkMountIntent', () => {
     })
 
     expect(observations).toEqual([true, true])
+    act(() => root.unmount())
+  })
+
+  // Why: the lifecycle effect re-runs on cwd changes for the same component
+  // instance, so intent cached per instance would resupply a stale park reveal.
+  it('re-reads park intent when the same instance re-renders after disposal', () => {
+    parkTab()
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    act(() => root.render(<Child />))
+    expect(observations).toEqual([true])
+
+    disposeParkedTabWatchers(TAB_ID)
+    act(() => root.render(<Child />))
+
+    expect(observations).toEqual([true, false])
     act(() => root.unmount())
   })
 })

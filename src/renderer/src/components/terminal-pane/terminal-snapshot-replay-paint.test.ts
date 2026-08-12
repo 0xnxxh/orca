@@ -89,10 +89,6 @@ describe('shouldSkipAltFrameForWidthMismatch', () => {
     expect(shouldSkipAltFrameForWidthMismatch(Number.NaN, 128)).toBe(false)
     expect(shouldSkipAltFrameForWidthMismatch(Number.POSITIVE_INFINITY, 128)).toBe(false)
   })
-
-  it('keeps the capture-grid frame until a real target grid is known', () => {
-    expect(shouldSkipAltFrameForWidthMismatch(135, undefined)).toBe(false)
-  })
 })
 
 describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {

@@ -480,6 +480,19 @@ export function splitPaneWithOneShotStartup<TPane>(
   }
 }
 
+/** Scopes `deps.mountFollowsTerminalPark` to the restored-layout replay. */
+export function replayLayoutWithOneShotParkIntent<TRestored>(
+  deps: { mountFollowsTerminalPark: boolean },
+  replayLayout: () => TRestored
+): TRestored {
+  // Why: only panes reconstructed by this replay belong to the park reveal; later splits must use ordinary reconnect semantics.
+  try {
+    return replayLayout()
+  } finally {
+    deps.mountFollowsTerminalPark = false
+  }
+}
+
 export function shouldDetachPaneTransportOnUnmount(args: {
   tabStillExists: boolean
   tabId: string
@@ -1564,9 +1577,9 @@ export function useTerminalPaneLifecycle({
       window.__paneManagers = window.__paneManagers ?? new Map()
       window.__paneManagers.set(tabId, manager)
     }
-    const restoredPaneByLeafId = replayTerminalLayout(manager, initialLayoutRef.current, isActive)
-    // Why: only panes reconstructed by this replay belong to the park reveal; later splits must use ordinary reconnect semantics.
-    ptyDeps.mountFollowsTerminalPark = false
+    const restoredPaneByLeafId = replayLayoutWithOneShotParkIntent(ptyDeps, () =>
+      replayTerminalLayout(manager, initialLayoutRef.current, isActive)
+    )
 
     const restoredBuffers = initialLayoutRef.current.buffersByLeafId
     restoreScrollbackBuffers(

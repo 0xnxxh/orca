@@ -48,7 +48,8 @@ export type PtyConnectionDeps = {
   } | null
   restoredLeafId?: string | null
   restoredPtyIdByLeafId?: Record<string, string>
-  /** Preserves park intent across StrictMode's passive-effect replay. */
+  /** Park intent sampled at render time, before the host disposes the tab's
+   *  watchers; consumed once the restored layout has been replayed. */
   mountFollowsTerminalPark: boolean
   paneTransportsRef: React.RefObject<Map<number, PtyTransport>>
   paneMode2031Ref: React.RefObject<Map<number, boolean>>
