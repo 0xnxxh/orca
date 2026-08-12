@@ -50,7 +50,6 @@ export const BRAILLE_SPINNER_RE = /[\u2800-\u28ff]/g
 // Why: Claude Code 2.1.228 swapped its busy title spinner from braille to
 // quarter circles (#13889), which read as "no agent" and looked like an exit.
 // Reserve the whole quarter-circle block so a later frame addition cannot regress this.
-// eslint-disable-next-line no-control-regex -- intentional unicode range
 export const QUARTER_CIRCLE_SPINNER_RE = /[\u25d0-\u25d3]/g
 
 export function isGeminiTerminalTitle(title: string): boolean {
