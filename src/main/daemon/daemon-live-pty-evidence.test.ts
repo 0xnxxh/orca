@@ -1,7 +1,19 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { inspectDaemonPtyOwnership } from './daemon-live-pty-evidence'
 import type { ProcessTableRow } from '../../shared/process-table-snapshot'
 import type { WindowsProcessCandidate } from '../providers/windows-foreground-process-rows'
+
+const { readFreshProcessTable, readCachedProcessTable } = vi.hoisted(() => ({
+  readFreshProcessTable: vi.fn(async () => [] as ProcessTableRow[]),
+  readCachedProcessTable: vi.fn(async () => [] as ProcessTableRow[])
+}))
+
+// Spread the original: the Windows enumerator builds its reader from this module too.
+vi.mock('../../shared/process-table-snapshot', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getFreshProcessTableSnapshot: readFreshProcessTable,
+  getProcessTableSnapshot: readCachedProcessTable
+}))
 
 const DAEMON_PID = 4242
 
@@ -103,13 +115,20 @@ describe('inspectDaemonPtyOwnership on POSIX', () => {
     ).resolves.toBe('unknown')
   })
 
-  it('tolerates a ppid cycle without hanging', async () => {
+  it('tolerates a ppid cycle reachable from the daemon without hanging', async () => {
+    // Why this shape: `ps` is not atomic, so a re-parented process can appear twice and
+    // close a loop. The cycle must be reachable from the root or the walk never enters it.
     await expect(
       inspectDaemonPtyOwnership(DAEMON_PID, {
         platform: 'darwin',
-        readPosixProcessTable: posixTable([daemonRow, row(101, 102), row(102, 101)])
+        readPosixProcessTable: posixTable([
+          daemonRow,
+          row(101, DAEMON_PID),
+          row(102, 101),
+          row(101, 102)
+        ])
       })
-    ).resolves.toBe('no-live-ptys')
+    ).resolves.toBe('owns-live-ptys')
   })
 
   it('never consults the Windows enumerator on POSIX', async () => {
@@ -164,6 +183,21 @@ describe('inspectDaemonPtyOwnership on win32', () => {
         }
       })
     ).resolves.toBe('unknown')
+  })
+
+  it('gives up as unknown when enumeration blows its deadline', async () => {
+    // Why bounded: the CIM query has no budget of its own and can queue behind an in-flight
+    // scan, so an unbounded wait would stall the launch path. Blind is safe here; hanging is not.
+    const queryWindowsDescendants = vi.fn(() => new Promise<WindowsProcessCandidate[]>(() => {}))
+
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'win32',
+        windowsDeadlineMs: 5,
+        queryWindowsDescendants
+      })
+    ).resolves.toBe('unknown')
+    expect(queryWindowsDescendants).toHaveBeenCalled()
   })
 
   it('never consults the POSIX table on win32', async () => {
@@ -236,5 +270,23 @@ describe('inspectDaemonPtyOwnership sampling', () => {
       inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', readPosixProcessTable })
     ).resolves.toBe('unknown')
     expect(readPosixProcessTable.mock.calls.length).toBeGreaterThan(1)
+  })
+})
+
+describe('inspectDaemonPtyOwnership POSIX process-table source', () => {
+  beforeEach(() => {
+    readFreshProcessTable.mockReset()
+    readCachedProcessTable.mockReset()
+    readFreshProcessTable.mockResolvedValue([daemonRow, row(101, DAEMON_PID)])
+    readCachedProcessTable.mockResolvedValue([])
+  })
+
+  it('reads an uncached table, since the cached one can predate the PTYs it protects', async () => {
+    // The 500ms TTL would also hand both samples the same array, collapsing the confirmation.
+    await expect(inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin' })).resolves.toBe(
+      'owns-live-ptys'
+    )
+    expect(readFreshProcessTable).toHaveBeenCalled()
+    expect(readCachedProcessTable).not.toHaveBeenCalled()
   })
 })

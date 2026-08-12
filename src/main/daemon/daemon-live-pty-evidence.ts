@@ -21,16 +21,41 @@ export type DaemonPtyOwnershipDeps = {
   platform?: NodeJS.Platform
   readPosixProcessTable?: () => Promise<ProcessTableRow[]>
   queryWindowsDescendants?: typeof queryWindowsProcessDescendants
+  windowsDeadlineMs?: number
 }
 
 /**
- * Why generous, and why sampled twice: the load that wedges the daemon is the same
- * load that makes `ps` miss a tight budget, so the evidence would go blind exactly
- * when it matters most. A positive is confirmed by a second sample so a short-lived
- * child — a resolver probe, a health-check shell — cannot masquerade as an agent.
+ * Why sampled twice: the load that wedges the daemon is the same load that can blind
+ * the process-table read, so a single blind sample would lose the evidence exactly when
+ * it matters most. A second sample also lets a short-lived child — a resolver probe, a
+ * health-check shell — be recognized as transient rather than mistaken for an agent.
  * This runs only on the replace path, after ~60s of grace is already spent.
  */
 const PTY_OWNERSHIP_PROBE_ATTEMPTS = 2
+
+/**
+ * Windows enumeration has no budget of its own: each scan is a powershell CIM query that
+ * may fall back to wmic, and the shared reader can queue behind an in-flight scan — worst
+ * case tens of seconds on the launch path. Blind is a safe answer here; hanging is not.
+ */
+const WINDOWS_OWNERSHIP_PROBE_DEADLINE_MS = 6_000
+
+function withDeadline<T>(work: Promise<T>, deadlineMs: number, onDeadline: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => resolve(onDeadline), deadlineMs)
+    timer.unref?.()
+    void work.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      () => {
+        clearTimeout(timer)
+        resolve(onDeadline)
+      }
+    )
+  })
+}
 
 // A wedged daemon cannot reap, so its exited PTYs linger as zombies. Counting them
 // would read "every agent already exited" as "agents still running" — and that
@@ -77,11 +102,12 @@ async function probeOnce(
   platform: NodeJS.Platform
 ): Promise<DaemonPtyOwnership> {
   if (platform === 'win32') {
-    const descendants = await (deps.queryWindowsDescendants ?? queryWindowsProcessDescendants)(
-      daemonPid,
-      { fresh: true }
+    const descendants = await withDeadline(
+      (deps.queryWindowsDescendants ?? queryWindowsProcessDescendants)(daemonPid, { fresh: true }),
+      deps.windowsDeadlineMs ?? WINDOWS_OWNERSHIP_PROBE_DEADLINE_MS,
+      null
     )
-    // null covers both enumeration failure and a root absent from the table.
+    // null covers enumeration failure, a root absent from the table, and our own deadline.
     if (descendants === null) {
       return 'unknown'
     }
@@ -97,10 +123,14 @@ async function probeOnce(
 }
 
 /**
- * PTY children are the daemon's only long-lived descendants, so a descendant that
- * survives two samples is positive proof that killing it would destroy running work.
- * Descendants rather than direct children: macOS wraps every shell in login(1) for
- * TCC attribution, so the agent is a grandchild at best.
+ * PTY children are the daemon's only long-lived descendants, so a live descendant is
+ * positive proof that killing it would destroy running work. Descendants rather than
+ * direct children: macOS wraps every shell in login(1) for TCC attribution, so the
+ * agent is a grandchild at best.
+ *
+ * Resolution between disagreeing samples: an observed-empty root wins (it is conclusive,
+ * and it is how a transient child is recognized), and otherwise a single sighting is
+ * enough to preserve — a blind read is not evidence against a live one.
  */
 export async function inspectDaemonPtyOwnership(
   daemonPid: number,

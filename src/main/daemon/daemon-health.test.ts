@@ -22,6 +22,16 @@ import {
   startTimesWithinTolerance
 } from './daemon-health'
 import type { SubprocessHandle } from './session'
+import type { DaemonPtyOwnership } from './daemon-live-pty-evidence'
+
+// Why: the veto's production default is otherwise never exercised — every other test injects it.
+const { inspectDaemonPtyOwnershipMock } = vi.hoisted(() => ({
+  inspectDaemonPtyOwnershipMock: vi.fn(async (_pid: number) => 'unknown' as DaemonPtyOwnership)
+}))
+
+vi.mock('./daemon-live-pty-evidence', () => ({
+  inspectDaemonPtyOwnership: inspectDaemonPtyOwnershipMock
+}))
 
 function createMockSubprocess(): SubprocessHandle {
   return {
@@ -692,6 +702,26 @@ describe.skipIf(process.platform === 'win32')('killStaleDaemon live PTY ownershi
         })
       ).resolves.toEqual({ killed: true, liveOwnerSurvived: false })
       expect(killSpy).toHaveBeenCalledWith(stubPid, 'SIGTERM')
+    } finally {
+      killSpy.mockRestore()
+    }
+  })
+
+  it('routes the opt-in through the real ownership inspector when no hook is injected', async () => {
+    // Why: production passes no hook, so a default that never sees live PTYs would ship a
+    // veto that silently never fires — indistinguishable from having no veto at all.
+    inspectDaemonPtyOwnershipMock.mockResolvedValueOnce('owns-live-ptys')
+    const killSpy = vi.spyOn(process, 'kill')
+
+    try {
+      await expect(
+        killStaleDaemon(dir, socketPath, tokenPath, undefined, {
+          probeEndpoint: async () => 'missing',
+          preserveWhenOwningLivePtys: true
+        })
+      ).resolves.toEqual({ killed: false, liveOwnerSurvived: true })
+      expect(inspectDaemonPtyOwnershipMock).toHaveBeenCalledWith(stubPid)
+      expect(terminationSignals(killSpy)).toEqual([])
     } finally {
       killSpy.mockRestore()
     }

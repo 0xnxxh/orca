@@ -1196,6 +1196,50 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     }
   })
 
+  it('falls back to killStaleDaemon without the live-PTY veto, so an explicit restart always wins', async () => {
+    // Why: this is the documented escape hatch (Settings → Manage Sessions → Restart). Opting
+    // into the veto here would report liveOwnerSurvived and throw, leaving the user no daemon.
+    probeSocketExistsMock.mockReturnValue(true)
+    netConnectMock.mockImplementation(() => {
+      const handlers: Record<string, (() => void)[]> = { connect: [], error: [] }
+      return {
+        on(event: string, cb: () => void) {
+          handlers[event]?.push(cb)
+          if (event === 'connect') {
+            queueMicrotask(() => cb())
+          }
+          return this
+        },
+        removeListener(event: string, cb: () => void) {
+          handlers[event] = handlers[event]?.filter((handler) => handler !== cb) ?? []
+          return this
+        },
+        destroy() {}
+      }
+    })
+    const mod = await importFresh()
+    daemonClientMock.mockImplementationOnce(function MockWedgedDaemonClient() {
+      return {
+        ensureConnected: vi.fn(async () => {
+          throw new Error('Hello response timed out')
+        }),
+        request: vi.fn(),
+        disconnect: vi.fn()
+      }
+    })
+
+    await expect(
+      mod.cleanupDaemonForProtocol('/fake/daemon', PROTOCOL_VERSION)
+    ).resolves.toMatchObject({ cleaned: true })
+
+    expect(killStaleDaemonMock).toHaveBeenCalledWith(
+      '/fake/daemon',
+      `/fake/daemon/daemon-v${PROTOCOL_VERSION}.sock`,
+      `/fake/daemon/daemon-v${PROTOCOL_VERSION}.token`,
+      PROTOCOL_VERSION
+    )
+  })
+
   it('coalesces concurrent restartDaemon() calls so the 7-step sequence runs exactly once', async () => {
     const mod = await importFresh()
     await mod.initDaemonPtyProvider()
@@ -2884,7 +2928,10 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(forkMock).not.toHaveBeenCalled()
   })
 
-  it('replaces a health-check-failing daemon when live sessions cannot be verified and the pipe is dead', async () => {
+  // Note: only the adoption client is wedged here; the session probe answers, so this is the
+  // verified-zero case and the live-PTY veto stays off. The unverifiable path is covered by
+  // the grace-retry tests below.
+  it('replaces a health-check-failing daemon that reports no sessions when the pipe is dead', async () => {
     const mod = await importFresh()
     await mod.initDaemonPtyProvider()
 
