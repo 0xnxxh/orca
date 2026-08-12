@@ -104,7 +104,9 @@ describe('skill transaction startup recovery', () => {
       failures: [{ journalKey: extraction.ownerToken, code: 'skill-extraction-journal-invalid' }]
     })
     expect(await readFile(join(outsidePath, 'keep'), 'utf8')).toBe('owned elsewhere')
-    expect(await readFile(journalPath, 'utf8')).toContain(outsidePath)
+    expect(JSON.parse(await readFile(journalPath, 'utf8'))).toMatchObject({
+      extractionPath: outsidePath
+    })
   })
 
   it('publishes a committed install after restart and reclaims its dead lock', async () => {

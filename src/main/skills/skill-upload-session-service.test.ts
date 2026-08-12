@@ -111,26 +111,31 @@ describe('SkillUploadSessionService', () => {
   it('keeps a taken archive until its new owner cleans it', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-skill-upload-session-'))
     roots.push(root)
-    const service = new SkillUploadSessionService(join(root, 'uploads'), { idleMs: 20 })
-    const bytes = Buffer.from('owned package')
-    const packageIdentity = identity(bytes)
-    const begun = await service.begin({ package: packageIdentity })
-    await service.append({
-      uploadId: begun.uploadId,
-      offset: 0,
-      bytesBase64: bytes.toString('base64')
-    })
-    await service.commit(begun.uploadId)
-    const staged = await service.take(begun.uploadId, packageIdentity)
+    vi.useFakeTimers()
+    try {
+      const service = new SkillUploadSessionService(join(root, 'uploads'), { idleMs: 20 })
+      const bytes = Buffer.from('owned package')
+      const packageIdentity = identity(bytes)
+      const begun = await service.begin({ package: packageIdentity })
+      await service.append({
+        uploadId: begun.uploadId,
+        offset: 0,
+        bytesBase64: bytes.toString('base64')
+      })
+      await service.commit(begun.uploadId)
+      const staged = await service.take(begun.uploadId, packageIdentity)
 
-    await new Promise((resolve) => setTimeout(resolve, 40))
-    await expect(readFile(staged.archivePath)).resolves.toEqual(bytes)
-    await expect(service.take(begun.uploadId, packageIdentity)).rejects.toThrow(
-      'skill-upload-session-unavailable'
-    )
-    await staged.cleanup()
-    await staged.cleanup()
-    await expect(readFile(staged.archivePath)).rejects.toThrow()
+      await vi.advanceTimersByTimeAsync(40)
+      await expect(readFile(staged.archivePath)).resolves.toEqual(bytes)
+      await expect(service.take(begun.uploadId, packageIdentity)).rejects.toThrow(
+        'skill-upload-session-unavailable'
+      )
+      await staged.cleanup()
+      await staged.cleanup()
+      await expect(readFile(staged.archivePath)).rejects.toThrow()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('rejects gaps, changed retries, and an archive hash mismatch', async () => {
