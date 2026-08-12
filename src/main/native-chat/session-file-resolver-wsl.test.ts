@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as NodeFsPromisesModule from 'node:fs/promises'
 
 const UBUNTU_HOME = '\\\\wsl.localhost\\Ubuntu\\home\\ada'
+const WSL_CLAUDE_PROJECTS_DIR = `${UBUNTU_HOME}\\.claude\\projects`
+const WSL_CLAUDE_TRANSCRIPT = `${WSL_CLAUDE_PROJECTS_DIR}\\-home-ada-repo\\claude-wsl-sess.jsonl`
 const WSL_MANAGED_SESSIONS_DIR = `${UBUNTU_HOME}\\.local\\share\\orca\\codex-runtime-home\\home\\sessions`
 const ROLLOUT_LINUX =
   '/home/ada/.local/share/orca/codex-runtime-home/home/sessions/2026/07/24/rollout-wsl-sess.jsonl'
@@ -36,11 +38,23 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 })
 
 const HOST_ROLLOUT = 'C:\\host\\sessions\\rollout-wsl-sess.jsonl'
-const scanned = vi.hoisted(() => ({ dirs: [] as string[], hostRootHasRollout: false }))
+const HOST_CLAUDE_TRANSCRIPT = 'C:\\host\\claude-projects\\-repo\\claude-wsl-sess.jsonl'
+const scanned = vi.hoisted(() => ({
+  dirs: [] as string[],
+  hostClaudeHasTranscript: false,
+  hostRootHasRollout: false,
+  wslClaudeHasTranscript: false
+}))
 vi.mock('../ai-vault/session-scanner-discovery', () => ({
-  walkSessionFiles: async (dir: string) => {
+  walkSessionFiles: async (dir: string, agent: string) => {
     scanned.dirs.push(dir)
     const isWslRoot = dir.startsWith('\\\\wsl.localhost\\')
+    if (agent === 'claude' && !isWslRoot && scanned.hostClaudeHasTranscript) {
+      return [HOST_CLAUDE_TRANSCRIPT]
+    }
+    if (agent === 'claude' && isWslRoot && scanned.wslClaudeHasTranscript) {
+      return [WSL_CLAUDE_TRANSCRIPT]
+    }
     return scanned.hostRootHasRollout && !isWslRoot
       ? ['C:\\host\\sessions\\rollout-wsl-sess.jsonl']
       : []
@@ -57,12 +71,19 @@ function setPlatform(platform: NodeJS.Platform): void {
   Object.defineProperty(process, 'platform', { value: platform, configurable: true })
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  return { promise: new Promise<T>((done) => (resolve = done)), resolve }
+}
+
 beforeEach(() => {
   resetHostReadableTranscriptPathCacheForTests()
   vi.mocked(getWslHomeAsync).mockClear()
   vi.mocked(listWslDistrosAsync).mockClear()
   scanned.dirs = []
+  scanned.hostClaudeHasTranscript = false
   scanned.hostRootHasRollout = false
+  scanned.wslClaudeHasTranscript = false
   setPlatform('win32')
 })
 
@@ -71,6 +92,39 @@ afterEach(() => {
 })
 
 describe('resolveSessionFilePath on a Windows host with WSL', () => {
+  it('resolves a Claude transcript from WSL when no hook path is known', async () => {
+    scanned.wslClaudeHasTranscript = true
+
+    await expect(resolveSessionFilePath('claude', 'claude-wsl-sess')).resolves.toBe(
+      WSL_CLAUDE_TRANSCRIPT
+    )
+  })
+
+  it('does not enumerate WSL distros when the host Claude root has the transcript', async () => {
+    scanned.hostClaudeHasTranscript = true
+
+    await expect(resolveSessionFilePath('claude', 'claude-wsl-sess')).resolves.toBe(
+      HOST_CLAUDE_TRANSCRIPT
+    )
+
+    expect(scanned.dirs.some((dir) => dir.startsWith('\\\\wsl.localhost\\'))).toBe(false)
+    expect(vi.mocked(listWslDistrosAsync)).not.toHaveBeenCalled()
+    expect(vi.mocked(getWslHomeAsync)).not.toHaveBeenCalled()
+  })
+
+  it('honors cancellation while Claude WSL roots are loading', async () => {
+    const home = deferred<string | null>()
+    vi.mocked(getWslHomeAsync).mockReturnValueOnce(home.promise)
+    const controller = new AbortController()
+    const resolution = resolveSessionFilePath('claude', 'missing', {}, controller.signal)
+    await vi.waitFor(() => expect(getWslHomeAsync).toHaveBeenCalledOnce())
+
+    controller.abort(new Error('closed'))
+    home.resolve(null)
+
+    await expect(resolution).rejects.toThrow('closed')
+  })
+
   it('translates a WSL hook transcript path to its host-readable UNC twin (#10326)', async () => {
     const resolved = await resolveSessionFilePath('codex', 'wsl-sess', {
       transcriptPath: ROLLOUT_LINUX,

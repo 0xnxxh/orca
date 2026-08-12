@@ -11,8 +11,13 @@ import {
   findGrokChatHistoryBySessionId,
   resolveGrokSessionsDir
 } from '../../shared/grok-session-paths'
-import { toHostReadableTranscriptPath, wslCodexSessionsDirs } from './host-readable-transcript-path'
+import {
+  toHostReadableTranscriptPath,
+  wslClaudeProjectsDirs,
+  wslCodexSessionsDirs
+} from './host-readable-transcript-path'
 import { findWslCodexSessionPath } from './wsl-codex-session-path-scan'
+import { findWslSessionPath } from './wsl-session-path-scan'
 
 // Why: these mirror the path constants in ai-vault/session-scanner.ts. Reads
 // run in the main process against the runtime's own home directory; over SSH
@@ -109,9 +114,11 @@ export async function resolveSessionFilePath(
   }
 
   if (transcriptAgent === 'claude') {
+    const overrideDir = options.claudeProjectsDir
     return resolveClaudeSessionFile(
       trimmedId,
-      options.claudeProjectsDir ?? claudeProjectsDir(),
+      overrideDir ?? claudeProjectsDir(),
+      overrideDir ? undefined : wslClaudeProjectsDirs,
       signal
     )
   }
@@ -138,8 +145,34 @@ export async function resolveSessionFilePath(
 async function resolveClaudeSessionFile(
   sessionId: string,
   projectsDir: string,
+  loadFallbackDirs?: () => Promise<string[]>,
   signal?: AbortSignal
 ): Promise<string | null> {
+  const hit = await findClaudeTranscript(projectsDir, sessionId, signal)
+  if (hit || !loadFallbackDirs) {
+    return hit
+  }
+  signal?.throwIfAborted()
+  const loadedFallbackDirs = await loadFallbackDirs()
+  signal?.throwIfAborted()
+  const fallbackDirs = loadedFallbackDirs.filter((dir) => dir !== projectsDir)
+  for (const fallbackDir of fallbackDirs) {
+    const fallbackHit = await findClaudeTranscript(fallbackDir, sessionId, signal)
+    if (fallbackHit) {
+      return fallbackHit
+    }
+  }
+  return null
+}
+
+async function findClaudeTranscript(
+  projectsDir: string,
+  sessionId: string,
+  signal?: AbortSignal
+): Promise<string | null> {
+  if (isWslUncPath(projectsDir)) {
+    return findWslSessionPath('claude', projectsDir, sessionId, signal)
+  }
   const targetName = `${sessionId}.jsonl`
   const files = await walkSessionFiles(projectsDir, 'claude', [], {
     extensions: new Set(['.jsonl']),

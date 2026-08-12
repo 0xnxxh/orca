@@ -182,6 +182,18 @@ export async function wslCodexSessionsDirs(
   ])
 }
 
+/** Each WSL distro's Claude projects root, searched after the host root misses. */
+export async function wslClaudeProjectsDirs(
+  deps: Pick<HostReadableTranscriptPathDeps, 'platform' | 'listWslHomeDirs'> = {}
+): Promise<string[]> {
+  const platform = deps.platform ?? process.platform
+  if (platform !== 'win32') {
+    return []
+  }
+  const homeDirs = await wslHomeDirs(deps.listWslHomeDirs ?? defaultListWslHomeDirs)
+  return homeDirs.map((home) => joinUnderWslHome(home, '.claude', 'projects'))
+}
+
 // Why: node:path.join is posix-flavoured off Windows and would mangle the
 // `\\wsl.localhost\` share prefix these roots must keep.
 function joinUnderWslHome(home: string, ...segments: string[]): string {

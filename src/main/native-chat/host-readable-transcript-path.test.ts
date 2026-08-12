@@ -5,6 +5,7 @@ import {
   needsWslHostTranslation,
   resetHostReadableTranscriptPathCacheForTests,
   toHostReadableTranscriptPath,
+  wslClaudeProjectsDirs,
   wslCodexSessionsDirs
 } from './host-readable-transcript-path'
 
@@ -133,6 +134,7 @@ describe('toHostReadableTranscriptPath', () => {
       })
     }
     await wslCodexSessionsDirs({ platform: 'win32', listWslHomeDirs })
+    await wslClaudeProjectsDirs({ platform: 'win32', listWslHomeDirs })
     expect(listWslHomeDirs).toHaveBeenCalledTimes(1)
   })
 
@@ -182,5 +184,19 @@ describe('wslCodexSessionsDirs', () => {
       `${UBUNTU_HOME}\\.local\\share\\orca\\codex-runtime-home\\home\\sessions`,
       `${UBUNTU_HOME}\\.codex\\sessions`
     ])
+  })
+})
+
+describe('wslClaudeProjectsDirs', () => {
+  it('returns nothing off Windows', async () => {
+    await expect(
+      wslClaudeProjectsDirs({ platform: 'linux', listWslHomeDirs: async () => [UBUNTU_HOME] })
+    ).resolves.toEqual([])
+  })
+
+  it('lists the Claude projects root for each distro home', async () => {
+    await expect(
+      wslClaudeProjectsDirs({ platform: 'win32', listWslHomeDirs: async () => [UBUNTU_HOME] })
+    ).resolves.toEqual([`${UBUNTU_HOME}\\.claude\\projects`])
   })
 })
