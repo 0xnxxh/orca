@@ -31,6 +31,27 @@ export function needsWslHostTranslation(
   return platform === 'win32' && isGuestAbsoluteLinuxPath(path.trim())
 }
 
+export function isTranscriptPathCompatibleWithHost(
+  path: string,
+  transcriptHost: NativeChatTranscriptHost,
+  platform: NodeJS.Platform = process.platform
+): boolean {
+  if (platform !== 'win32') {
+    return true
+  }
+  const unc = parseWslUncPath(path)
+  if (transcriptHost.kind === 'host') {
+    return !unc && !needsWslHostTranslation(path, platform)
+  }
+  const distro = transcriptHost.distro.trim()
+  return (
+    distro.length > 0 &&
+    (unc
+      ? unc.distro.toLowerCase() === distro.toLowerCase()
+      : needsWslHostTranslation(path, platform))
+  )
+}
+
 export type HostReadableTranscriptPathDeps = {
   platform?: NodeJS.Platform
   pathExists?: (path: string) => Promise<boolean>
@@ -135,18 +156,12 @@ export async function toHostReadableTranscriptPath(
     deps.pathExists ?? ((candidate: string) => pathExistsAsync(candidate, deps.signal))
   const platform = deps.platform ?? process.platform
   if (platform === 'win32' && deps.transcriptHost) {
+    if (!isTranscriptPathCompatibleWithHost(path, deps.transcriptHost, platform)) {
+      return null
+    }
     const unc = parseWslUncPath(path)
     if (unc) {
-      if (
-        deps.transcriptHost.kind === 'host' ||
-        unc.distro.toLowerCase() !== deps.transcriptHost.distro.trim().toLowerCase()
-      ) {
-        return null
-      }
       return (await pathExists(path)) ? path : null
-    }
-    if (deps.transcriptHost.kind === 'wsl' && !needsWslHostTranslation(path, platform)) {
-      return null
     }
   }
   // Why: classify BEFORE probing — Win32 resolves a bare `/home/…` against the

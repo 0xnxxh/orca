@@ -117,6 +117,76 @@ describe('native chat transcript resolve polling', () => {
     subscription.unsubscribe()
   })
 
+  it.each([
+    [
+      'host provenance on WSL UNC',
+      { kind: 'host' as const },
+      '\\\\wsl.localhost\\Ubuntu\\home\\ada\\session.jsonl'
+    ],
+    [
+      'wrong WSL distro provenance',
+      { kind: 'wsl' as const, distro: 'Debian' },
+      '\\\\wsl.localhost\\Ubuntu\\home\\ada\\session.jsonl'
+    ],
+    [
+      'WSL provenance on a host drive',
+      { kind: 'wsl' as const, distro: 'Ubuntu' },
+      'C:\\Users\\ada\\session.jsonl'
+    ],
+    [
+      'host provenance on extended WSL UNC',
+      { kind: 'host' as const },
+      '\\\\?\\UNC\\wsl.localhost\\Ubuntu\\home\\ada\\session.jsonl'
+    ]
+  ])('does not fast-install %s after an initial miss', async (_name, transcriptHost, path) => {
+    setPlatform('win32')
+    const subscription = await subscribeNativeChatTranscript({
+      agent: 'claude',
+      sessionId: 'session-id',
+      transcriptPath: path,
+      transcriptHost,
+      resolvePollIntervalMs: 10,
+      onAppend: () => {}
+    })
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mocks.install).not.toHaveBeenCalled()
+    subscription.unsubscribe()
+  })
+
+  it('preserves raw exact-path retries when provenance is unavailable', async () => {
+    setPlatform('win32')
+    const unc = '\\\\wsl.localhost\\Ubuntu\\home\\ada\\session.jsonl'
+    const subscription = await subscribeNativeChatTranscript({
+      agent: 'claude',
+      sessionId: 'session-id',
+      transcriptPath: unc,
+      resolvePollIntervalMs: 10,
+      onAppend: () => {}
+    })
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mocks.install).toHaveBeenCalledWith(unc, expect.any(Function), expect.any(Object))
+    subscription.unsubscribe()
+  })
+
+  it('fast-installs an exact path that matches WSL provenance', async () => {
+    setPlatform('win32')
+    const unc = '\\\\wsl.localhost\\Ubuntu\\home\\ada\\session.jsonl'
+    const subscription = await subscribeNativeChatTranscript({
+      agent: 'claude',
+      sessionId: 'session-id',
+      transcriptPath: unc,
+      transcriptHost: { kind: 'wsl', distro: 'Ubuntu' },
+      resolvePollIntervalMs: 10,
+      onAppend: () => {}
+    })
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mocks.install).toHaveBeenCalledWith(unc, expect.any(Function), expect.any(Object))
+    subscription.unsubscribe()
+  })
+
   it('keeps resolving on every retry when no exact hook path is available', async () => {
     const subscription = await subscribeNativeChatTranscript({
       agent: 'claude',

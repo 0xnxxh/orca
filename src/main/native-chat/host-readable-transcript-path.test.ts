@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   isGuestAbsoluteLinuxPath,
+  isTranscriptPathCompatibleWithHost,
   needsWslHostTranslation,
   resetHostReadableTranscriptPathCacheForTests,
   toHostReadableTranscriptPath,
@@ -41,6 +42,28 @@ describe('needsWslHostTranslation', () => {
     expect(needsWslHostTranslation(ROLLOUT_LINUX, 'win32')).toBe(true)
     expect(needsWslHostTranslation(ROLLOUT_LINUX, 'darwin')).toBe(false)
     expect(needsWslHostTranslation(ROLLOUT_UNC, 'win32')).toBe(false)
+  })
+})
+
+describe('isTranscriptPathCompatibleWithHost', () => {
+  it('constrains exact Windows paths to their authoritative host', () => {
+    expect(
+      isTranscriptPathCompatibleWithHost(ROLLOUT_UNC, { kind: 'wsl', distro: 'Ubuntu' }, 'win32')
+    ).toBe(true)
+    expect(
+      isTranscriptPathCompatibleWithHost(ROLLOUT_UNC, { kind: 'wsl', distro: 'Debian' }, 'win32')
+    ).toBe(false)
+    expect(isTranscriptPathCompatibleWithHost(ROLLOUT_UNC, { kind: 'host' }, 'win32')).toBe(false)
+    expect(
+      isTranscriptPathCompatibleWithHost('C:\\Users\\ada\\x.jsonl', { kind: 'host' }, 'win32')
+    ).toBe(true)
+    expect(
+      isTranscriptPathCompatibleWithHost(
+        'C:\\Users\\ada\\x.jsonl',
+        { kind: 'wsl', distro: 'Ubuntu' },
+        'win32'
+      )
+    ).toBe(false)
   })
 })
 
