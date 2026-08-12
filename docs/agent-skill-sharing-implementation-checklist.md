@@ -1152,10 +1152,11 @@ This does not substitute for physical SSH macOS/Windows or the supported Linux f
       Data Access audit logging; evidence is in Orca Cloud `69b388e`.
 - [ ] Add budget alerts for GCS storage/egress, Cloud Run growth, and Cloud SQL storage.
 
-Partial dashboard evidence in Orca Cloud `41ef335`: upload-grant, finalize, share, and
+Dashboard evidence in Orca Cloud `41ef335` and `f67ee2c`: upload-grant, finalize, share, and
 download-grant success; bounded security failures; Cloud Run CPU, memory, instances, and latency;
-GCS bytes and object count; and Cloud SQL connections and disk use. The broader unchecked items
-still require the listed split metrics, latency panels, and alerts.
+GCS bytes and object count; and Cloud SQL connections, disk use, p99 skill-principal query latency,
+and skill-database transaction rate. The broader unchecked items still require the listed split
+metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thresholds.
 
 ### Logging and privacy
 
