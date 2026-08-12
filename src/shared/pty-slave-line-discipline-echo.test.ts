@@ -3,7 +3,11 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 const execFileMock = vi.hoisted(() => vi.fn())
 vi.mock('node:child_process', () => ({ execFile: execFileMock }))
 
-import { createPtySlaveEchoProbe, readPtySlavePath } from './pty-slave-line-discipline-echo'
+import {
+  createPtySlaveEchoProbe,
+  createPtySlaveLineEditorProbe,
+  readPtySlavePath
+} from './pty-slave-line-discipline-echo'
 
 /** Replies to the next stty call with the given output, or an error when `output` is null. */
 function answerStty(output: string | null): void {
@@ -130,5 +134,39 @@ describe('createPtySlaveEchoProbe', () => {
     answerStty(RAW)
     await createPtySlaveEchoProbe('/dev/pts/3', 'linux')?.()
     expect(execFileMock.mock.calls[1]?.[1]).toEqual(['-a', '-F', '/dev/pts/3'])
+  })
+})
+
+describe('createPtySlaveLineEditorProbe', () => {
+  it('has no probe to offer when there is no POSIX slave to read', () => {
+    expect(createPtySlaveLineEditorProbe('/dev/ttys048', 'win32')).toBeUndefined()
+    expect(createPtySlaveLineEditorProbe(undefined, 'darwin')).toBeUndefined()
+  })
+
+  it('reports a line editor only when the tty is both silent and raw', async () => {
+    const probe = createPtySlaveLineEditorProbe('/dev/ttys048', 'darwin')
+    answerStty(RAW)
+    await expect(probe?.()).resolves.toBe('line-editor')
+    answerStty(COOKED)
+    await expect(probe?.()).resolves.toBe('cooked')
+  })
+
+  it('does not mistake a password-style read for a prompt', async () => {
+    const probe = createPtySlaveLineEditorProbe('/dev/ttys048', 'darwin')
+    // Why: `read -s` in a startup file clears ECHO but stays canonical (measured on
+    // zsh 5.9 and bash 3.2.57). Reading that as ready flushes a queued startup command
+    // into the user's password prompt (#13767 review).
+    answerStty('lflags: icanon isig iexten -echo echoe echok echoctl\n')
+    await expect(probe?.()).resolves.toBe('cooked')
+  })
+
+  it('reports unknown rather than a prompt when the slave cannot be read', async () => {
+    const probe = createPtySlaveLineEditorProbe('/dev/ttys048', 'darwin')
+    answerStty(null)
+    await expect(probe?.()).resolves.toBe('unknown')
+    const partial = createPtySlaveLineEditorProbe('/dev/ttys049', 'darwin')
+    // A tty report with no icanon token at all must not be read as a prompt.
+    answerStty('lflags: -echo\n')
+    await expect(partial?.()).resolves.toBe('unknown')
   })
 })

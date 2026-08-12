@@ -10,10 +10,17 @@ export type PtySlaveLineDisciplineEcho = 'echoing' | 'quiet' | 'unknown'
 
 export type PtySlaveEchoProbe = () => Promise<PtySlaveLineDisciplineEcho>
 
+/** Whether a line editor (zle/readline) currently owns the slave. `cooked` covers
+ *  both a shell still running startup files and a plain canonical-mode read. */
+export type PtySlaveLineEditorState = 'line-editor' | 'cooked' | 'unknown'
+
+export type PtySlaveLineEditorProbe = () => Promise<PtySlaveLineEditorState>
+
 const STTY_TIMEOUT_MS = 2_000
 // `stty -a` prints the lflags as a space-separated list where a disabled flag is
 // prefixed with `-`, so `echo` and `-echo` are the two tokens that matter.
 const ECHO_FLAG = /(?:^|\s)(-?)echo(?:\s|$)/
+const ICANON_FLAG = /(?:^|\s)(-?)icanon(?:\s|$)/
 
 function sttyArgs(ptsName: string, platform: NodeJS.Platform): readonly string[] {
   // BSD/macOS take `-f`; Linux (GNU coreutils) takes `-F`.
@@ -30,7 +37,23 @@ function parseEchoFlag(sttyOutput: string): PtySlaveLineDisciplineEcho {
   return match[1] === '-' ? 'quiet' : 'echoing'
 }
 
-type SttyProbeResult = { state: PtySlaveLineDisciplineEcho; permanent: boolean }
+/**
+ * Why both flags: ECHO alone does not mean "at a prompt". A password-style `read -s`
+ * in a startup file clears ECHO while leaving the line discipline canonical, so echo
+ * state on its own reports a prompt that is not there (measured: `-echo icanon` at
+ * 0.02s for `read -s`, vs `-echo -icanon` for a real prompt). zle and readline take
+ * the tty out of canonical mode; requiring both is what separates the two.
+ */
+function parseLineEditorState(sttyOutput: string): PtySlaveLineEditorState {
+  const echo = ECHO_FLAG.exec(sttyOutput)
+  const icanon = ICANON_FLAG.exec(sttyOutput)
+  if (!echo || !icanon) {
+    return 'unknown'
+  }
+  return echo[1] === '-' && icanon[1] === '-' ? 'line-editor' : 'cooked'
+}
+
+type SttyProbeResult = { stdout: string | null; permanent: boolean }
 
 /**
  * A spawn that never ran (`stty` absent) or a device that answered non-zero (reaped,
@@ -54,8 +77,8 @@ function runStty(ptsName: string, platform: NodeJS.Platform): Promise<SttyProbeR
       (error, stdout) => {
         resolve(
           error
-            ? { state: 'unknown', permanent: isPermanentSttyFailure(error) }
-            : { state: parseEchoFlag(stdout), permanent: false }
+            ? { stdout: null, permanent: isPermanentSttyFailure(error) }
+            : { stdout, permanent: false }
         )
       }
     )
@@ -83,6 +106,30 @@ export function createPtySlaveEchoProbe(
   ptsName: string | undefined,
   platform: NodeJS.Platform = process.platform
 ): PtySlaveEchoProbe | undefined {
+  return createSttyFlagProbe(ptsName, platform, parseEchoFlag)
+}
+
+/**
+ * Probe for whether a line editor owns the slave right now — i.e. the shell has
+ * reached an interactive prompt. Unlike the shell-ready marker this cannot be lost to
+ * an `exec` in a user rc file (#13767), because it is kernel state on the pty rather
+ * than something Orca's wrapper has to print.
+ *
+ * Same undefined/`unknown` contract as createPtySlaveEchoProbe: callers must never
+ * read `unknown` as `line-editor`.
+ */
+export function createPtySlaveLineEditorProbe(
+  ptsName: string | undefined,
+  platform: NodeJS.Platform = process.platform
+): PtySlaveLineEditorProbe | undefined {
+  return createSttyFlagProbe(ptsName, platform, parseLineEditorState)
+}
+
+function createSttyFlagProbe<T extends string>(
+  ptsName: string | undefined,
+  platform: NodeJS.Platform,
+  parse: (sttyOutput: string) => T | 'unknown'
+): (() => Promise<T | 'unknown'>) | undefined {
   if (platform === 'win32' || !ptsName) {
     return undefined
   }
@@ -101,6 +148,6 @@ export function createPtySlaveEchoProbe(
     })
     const result = await inFlight
     unavailable = result.permanent
-    return result.state
+    return result.stdout === null ? 'unknown' : parse(result.stdout)
   }
 }

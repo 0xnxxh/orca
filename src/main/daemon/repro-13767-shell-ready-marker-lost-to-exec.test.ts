@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Session } from './session'
 import { PROMPT_READINESS_PROBE_GRACE_MS } from '../../shared/pty-prompt-readiness-probe'
-import type { PtySlaveLineDisciplineEcho } from '../../shared/pty-slave-line-discipline-echo'
+import type { PtySlaveLineEditorState } from '../../shared/pty-slave-line-discipline-echo'
 import type { ShellReadyState } from './types'
 
 // Why this repro exists: an `exec` in a user rc file (Kiro CLI / Amazon Q / Fig / Warp)
@@ -9,10 +9,11 @@ import type { ShellReadyState } from './types'
 // and the shell-ready marker is never printed. The barrier then waited out its full
 // 15s on every spawn (#13767). The slave's line discipline still reports the prompt.
 
-const echoStateRef = vi.hoisted(() => ({ current: 'echoing' as PtySlaveLineDisciplineEcho }))
+const ttyStateRef = vi.hoisted(() => ({ current: 'cooked' as PtySlaveLineEditorState }))
 vi.mock('../../shared/pty-slave-line-discipline-echo', () => ({
-  createPtySlaveEchoProbe: (ptsName: string | undefined) =>
-    ptsName ? async () => echoStateRef.current : undefined
+  createPtySlaveEchoProbe: () => undefined,
+  createPtySlaveLineEditorProbe: (ptsName: string | undefined) =>
+    ptsName ? async () => ttyStateRef.current : undefined
 }))
 
 vi.mock('../pty-descendant-termination', () => ({ killWithDescendantSweep: vi.fn() }))
@@ -55,7 +56,7 @@ describe('#13767 — shell-ready marker stripped by an exec in user rc files', (
 
   beforeEach(() => {
     vi.useFakeTimers()
-    echoStateRef.current = 'echoing'
+    ttyStateRef.current = 'cooked'
   })
 
   afterEach(() => {
@@ -86,7 +87,7 @@ describe('#13767 — shell-ready marker stripped by an exec in user rc files', (
     expect(s.shellState).toBe('pending' satisfies ShellReadyState)
 
     // The replacement shell draws its prompt: zle/readline clear ECHO on the slave.
-    echoStateRef.current = 'quiet'
+    ttyStateRef.current = 'line-editor'
     await vi.advanceTimersByTimeAsync(PROMPT_READINESS_PROBE_GRACE_MS)
 
     expect(s.shellState).toBe('ready' satisfies ShellReadyState)
@@ -98,7 +99,7 @@ describe('#13767 — shell-ready marker stripped by an exec in user rc files', (
     s.write('claude\r')
     expect(subprocess.written).toEqual([])
 
-    echoStateRef.current = 'quiet'
+    ttyStateRef.current = 'line-editor'
     await vi.advanceTimersByTimeAsync(PROMPT_READINESS_PROBE_GRACE_MS + 100)
 
     expect(subprocess.written).toEqual(['claude\r'])
@@ -108,7 +109,7 @@ describe('#13767 — shell-ready marker stripped by an exec in user rc files', (
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     createSession()
 
-    echoStateRef.current = 'quiet'
+    ttyStateRef.current = 'line-editor'
     await vi.advanceTimersByTimeAsync(PROMPT_READINESS_PROBE_GRACE_MS + 500)
 
     const messages = warn.mock.calls.map((call) => String(call[0]))
@@ -119,11 +120,23 @@ describe('#13767 — shell-ready marker stripped by an exec in user rc files', (
   it('keeps waiting while the shell is still running its startup files', async () => {
     const { session: s } = createSession()
 
-    // A slow rc (oh-my-zsh, nvm) leaves the slave echoing until the first prompt.
-    echoStateRef.current = 'echoing'
+    // A slow rc (oh-my-zsh, nvm) leaves the slave in cooked mode until the first prompt.
+    ttyStateRef.current = 'cooked'
     await vi.advanceTimersByTimeAsync(PROMPT_READINESS_PROBE_GRACE_MS + 3_000)
 
     expect(s.shellState).toBe('pending' satisfies ShellReadyState)
+  })
+
+  it('does not flush a startup command into a password read during startup', async () => {
+    const { session: s, subprocess } = createSession()
+    s.write('claude\r')
+
+    // `read -s` in an rc file clears ECHO but stays canonical, so it reports `cooked`.
+    ttyStateRef.current = 'cooked'
+    await vi.advanceTimersByTimeAsync(PROMPT_READINESS_PROBE_GRACE_MS + 2_000)
+
+    expect(s.shellState).toBe('pending' satisfies ShellReadyState)
+    expect(subprocess.written).toEqual([])
   })
 
   it('lets the real marker win when the wrapper survived', async () => {
@@ -136,7 +149,7 @@ describe('#13767 — shell-ready marker stripped by an exec in user rc files', (
 
     expect(s.shellState).toBe('ready' satisfies ShellReadyState)
 
-    echoStateRef.current = 'quiet'
+    ttyStateRef.current = 'line-editor'
     await vi.advanceTimersByTimeAsync(PROMPT_READINESS_PROBE_GRACE_MS + 500)
 
     expect(warn.mock.calls.map((call) => String(call[0])).join('\n')).not.toContain(
@@ -147,7 +160,7 @@ describe('#13767 — shell-ready marker stripped by an exec in user rc files', (
   it('still times out when the slave cannot be probed', async () => {
     const { session: s } = createSession(null)
 
-    echoStateRef.current = 'quiet'
+    ttyStateRef.current = 'line-editor'
     await vi.advanceTimersByTimeAsync(SHELL_READY_TIMEOUT_MS - 1)
     expect(s.shellState).toBe('pending' satisfies ShellReadyState)
 

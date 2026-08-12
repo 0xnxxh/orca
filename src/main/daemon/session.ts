@@ -33,7 +33,10 @@ import type {
   TerminalSnapshot
 } from './types'
 import type { PtyOwnerBackend } from '../../shared/pty-owner-backend'
-import { createPtySlaveEchoProbe } from '../../shared/pty-slave-line-discipline-echo'
+import {
+  createPtySlaveEchoProbe,
+  createPtySlaveLineEditorProbe
+} from '../../shared/pty-slave-line-discipline-echo'
 
 const SHELL_READY_TIMEOUT_MS = 15_000
 // Why: Codex skips marker-gated command delivery; this only bounds older daemon/local paths that still report shell-ready for Codex.
@@ -192,9 +195,10 @@ export class Session {
     const echoProbe = createPtySlaveEchoProbe(this.subprocess.slavePath)
     // Why: an `exec` in the user's rc files strips the wrapper that prints the marker,
     // so without this the barrier burns its full timeout on every spawn (#13767).
-    if (this._shellState === 'pending' && echoProbe) {
+    const lineEditorProbe = createPtySlaveLineEditorProbe(this.subprocess.slavePath)
+    if (this._shellState === 'pending' && lineEditorProbe) {
       this.stopPromptReadinessProbe = startPtyPromptReadinessProbe({
-        probe: echoProbe,
+        probe: lineEditorProbe,
         onPromptReady: () => this.onPromptReadinessDetected()
       })
     }

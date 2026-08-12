@@ -13,7 +13,7 @@ describe('startPtyPromptReadinessProbe', () => {
     vi.useRealTimers()
   })
 
-  function start(probe: () => Promise<'echoing' | 'quiet' | 'unknown'>) {
+  function start(probe: () => Promise<'line-editor' | 'cooked' | 'unknown'>) {
     const onPromptReady = vi.fn()
     const stop = startPtyPromptReadinessProbe({
       probe,
@@ -25,7 +25,7 @@ describe('startPtyPromptReadinessProbe', () => {
   }
 
   it('does not probe at all during the grace window', async () => {
-    const probe = vi.fn().mockResolvedValue('quiet')
+    const probe = vi.fn().mockResolvedValue('line-editor')
     const { onPromptReady } = start(probe)
 
     await vi.advanceTimersByTimeAsync(GRACE_MS - 1)
@@ -35,7 +35,7 @@ describe('startPtyPromptReadinessProbe', () => {
   })
 
   it('reports ready once the line editor has taken the tty', async () => {
-    const probe = vi.fn().mockResolvedValue('quiet')
+    const probe = vi.fn().mockResolvedValue('line-editor')
     const { onPromptReady } = start(probe)
 
     await vi.advanceTimersByTimeAsync(GRACE_MS)
@@ -43,12 +43,12 @@ describe('startPtyPromptReadinessProbe', () => {
     expect(onPromptReady).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps polling while the slave is still echoing', async () => {
+  it('keeps polling while the slave is still in cooked mode', async () => {
     const probe = vi
       .fn()
-      .mockResolvedValueOnce('echoing')
-      .mockResolvedValueOnce('echoing')
-      .mockResolvedValue('quiet')
+      .mockResolvedValueOnce('cooked')
+      .mockResolvedValueOnce('cooked')
+      .mockResolvedValue('line-editor')
     const { onPromptReady } = start(probe)
 
     await vi.advanceTimersByTimeAsync(GRACE_MS)
@@ -69,7 +69,7 @@ describe('startPtyPromptReadinessProbe', () => {
   })
 
   it('fires only once even as polling continues', async () => {
-    const probe = vi.fn().mockResolvedValue('quiet')
+    const probe = vi.fn().mockResolvedValue('line-editor')
     const { onPromptReady } = start(probe)
 
     await vi.advanceTimersByTimeAsync(GRACE_MS + INTERVAL_MS * 10)
@@ -77,8 +77,38 @@ describe('startPtyPromptReadinessProbe', () => {
     expect(onPromptReady).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps polling instead of crashing when the probe rejects', async () => {
+    const probe = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('stty: fork failed'))
+      .mockResolvedValue('line-editor')
+    const { onPromptReady } = start(probe)
+
+    await vi.advanceTimersByTimeAsync(GRACE_MS)
+    expect(onPromptReady).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS)
+    expect(onPromptReady).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not raise an unhandled rejection when onPromptReady throws', async () => {
+    const probe = vi.fn().mockResolvedValue('line-editor')
+    const onPromptReady = vi.fn(() => {
+      throw new Error('teardown raced the probe')
+    })
+    startPtyPromptReadinessProbe({
+      probe,
+      onPromptReady,
+      graceMs: GRACE_MS,
+      intervalMs: INTERVAL_MS
+    })
+
+    await expect(vi.advanceTimersByTimeAsync(GRACE_MS + INTERVAL_MS * 2)).resolves.not.toThrow()
+    expect(onPromptReady).toHaveBeenCalledTimes(1)
+  })
+
   it('stops polling after stop()', async () => {
-    const probe = vi.fn().mockResolvedValue('echoing')
+    const probe = vi.fn().mockResolvedValue('cooked')
     const { onPromptReady, stop } = start(probe)
 
     await vi.advanceTimersByTimeAsync(GRACE_MS)
@@ -91,10 +121,10 @@ describe('startPtyPromptReadinessProbe', () => {
   })
 
   it('does not report ready when stopped while a probe is in flight', async () => {
-    const pending: { resolve?: (state: 'quiet') => void } = {}
+    const pending: { resolve?: (state: 'line-editor') => void } = {}
     const probe = vi.fn(
       () =>
-        new Promise<'quiet'>((resolve) => {
+        new Promise<'line-editor'>((resolve) => {
           pending.resolve = resolve
         })
     )
@@ -104,7 +134,7 @@ describe('startPtyPromptReadinessProbe', () => {
     expect(pending.resolve).toBeDefined()
 
     stop()
-    pending.resolve?.('quiet')
+    pending.resolve?.('line-editor')
     await vi.advanceTimersByTimeAsync(INTERVAL_MS)
 
     expect(onPromptReady).not.toHaveBeenCalled()

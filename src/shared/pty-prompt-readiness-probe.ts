@@ -1,22 +1,24 @@
-import type { PtySlaveEchoProbe } from './pty-slave-line-discipline-echo'
+import type {
+  PtySlaveLineEditorProbe,
+  PtySlaveLineEditorState
+} from './pty-slave-line-discipline-echo'
 
 // Why this exists: the shell-ready marker is printed by Orca's own wrapper, so it is
 // only as durable as the wrapper. An `exec` in a user rc file — what every
 // figterm-style integration does (Kiro CLI, Amazon Q, Fig, Warp) — replaces the process
 // image, dropping ZDOTDIR/--rcfile, so no wrapper file is ever read again and the marker
-// never arrives (#13767). The line discipline cannot be lost that way: zle/readline
-// clear ECHO on the slave exactly when the line editor takes the tty at the first
+// never arrives (#13767). The line discipline cannot be lost that way: zle/readline take
+// the slave out of canonical mode exactly when the line editor owns the tty at the first
 // prompt — after a slow rc, and after an exec. Polling it turns a stripped wrapper into
 // a short wait instead of the full shell-ready timeout.
 
 /** Why: a healthy wrapper marks ready far inside this, so the normal path never spawns
- *  an `stty` — and a shell that legitimately reads input during startup is past that
- *  window before the fallback can mistake its raw mode for a prompt. */
+ *  an `stty` at all. */
 export const PROMPT_READINESS_PROBE_GRACE_MS = 750
 export const PROMPT_READINESS_PROBE_INTERVAL_MS = 250
 
 export type PtyPromptReadinessProbeOptions = {
-  probe: PtySlaveEchoProbe
+  probe: PtySlaveLineEditorProbe
   /** Fired at most once, when the slave's line editor has taken the tty. */
   onPromptReady: () => void
   graceMs?: number
@@ -33,7 +35,10 @@ export function startPtyPromptReadinessProbe(options: PtyPromptReadinessProbeOpt
   const schedule = (delayMs: number): void => {
     timer = setTimeout(() => {
       timer = null
-      void tick()
+      // Why catch: this is fire-and-forget off a timer, so a throwing onPromptReady
+      // would otherwise surface as an unhandled rejection and take the daemon down.
+      // Readiness then degrades to the shell-ready timeout, which is the old behavior.
+      void tick().catch(() => {})
     }, delayMs)
   }
 
@@ -41,14 +46,22 @@ export function startPtyPromptReadinessProbe(options: PtyPromptReadinessProbeOpt
     if (stopped) {
       return
     }
-    const state = await options.probe()
+    let state: PtySlaveLineEditorState
+    try {
+      state = await options.probe()
+    } catch {
+      // Why: a probe that rejects is no evidence of a prompt — keep polling, and let the
+      // shell-ready timeout remain the backstop.
+      state = 'unknown'
+    }
     // Why re-check: the probe awaits a child process, so a stop can land mid-flight.
     if (stopped) {
       return
     }
-    // Why only 'quiet': `unknown` means the probe could not read the slave, and reading
-    // that as ready would flush a startup command into a shell that cannot take it.
-    if (state === 'quiet') {
+    // Why only 'line-editor': `unknown` means the probe could not read the slave, and
+    // `cooked` covers a startup file's own `read` — flushing into either would push a
+    // startup command at a shell that cannot take it (or into a password prompt).
+    if (state === 'line-editor') {
       stopped = true
       options.onPromptReady()
       return
