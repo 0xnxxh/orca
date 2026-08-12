@@ -161,6 +161,10 @@ export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
     return null
   }
 
+  if (isOpenCodeNativeTitle(title)) {
+    return containsAgentSpinnerGlyph(title) ? 'working' : 'idle'
+  }
+
   if (title.includes(GEMINI_PERMISSION)) {
     return 'permission'
   }
@@ -187,15 +191,6 @@ export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
   if (containsAgentSpinnerGlyph(title)) {
     return 'working'
   }
-  // Why: only a live OpenCode TUI emits the native `OC | …` marker, and it names no
-  // agent token, so the name gate below would drop it as a plain shell title. The
-  // marker states presence, never status, and the text after it is a generated session
-  // summary — so whatever the spinner gate above did not claim reads idle rather than
-  // falling through to the keyword gates, where a task name would decide the status.
-  if (isOpenCodeNativeTitle(title)) {
-    return 'idle'
-  }
-
   const hasDroidAgentName = DROID_AGENT_NAME_RE.test(title)
   const hasHermesAgentName = HERMES_AGENT_NAME_RE.test(title)
   const hasAgyAgentName = AGY_AGENT_NAME_RE.test(title)

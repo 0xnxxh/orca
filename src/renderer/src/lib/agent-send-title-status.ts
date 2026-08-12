@@ -25,9 +25,8 @@ export function detectAgentSendTitleStatus(title: string | null | undefined): Ag
 function isExplicitIdleSendTitle(title: string): boolean {
   return (
     EXPLICIT_IDLE_SEND_TITLE_RE.test(title) ||
-    // Why: OpenCode only publishes `OC | <session>` from inside a running TUI session,
-    // so the marker is readiness proof the way `✳` is for Claude — it is the only
-    // pre-hook signal a hookless OpenCode pane ever emits.
+    // Why: this title-level filter exposes hookless OpenCode targets; the runtime
+    // still requires launch or foreground-process evidence before writing.
     isOpenCodeNativeTitle(title) ||
     title.startsWith(CLAUDE_IDLE_PREFIX) ||
     title.startsWith('* ') ||

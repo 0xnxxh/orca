@@ -102,11 +102,10 @@ describe('MiMo title detection', () => {
 })
 
 describe('OpenCode native title detection', () => {
-  // Why: `OC | …` names no agent token, so before this the status detector read it as a
-  // plain shell title and every status-derived surface (send targets, sidebar rows,
-  // runtime agent-presence) dropped a live OpenCode pane.
+  // Why: `OC | …` names no agent token, so title-derived display and target surfaces
+  // previously dropped OpenCode panes. Runtime sends corroborate the title separately.
   it.each(['OC | Implement the Kitty IME preview', 'tmux | OC | Implement the Kitty IME preview'])(
-    'classifies the native session title %j as a live idle agent',
+    'classifies the native session title %j as title-derived idle OpenCode',
     (title) => {
       expect(getAgentLabel(title)).toBe('OpenCode')
       expect(detectAgentStatusFromTitle(title)).toBe('idle')
@@ -120,6 +119,14 @@ describe('OpenCode native title detection', () => {
     expect(getAgentLabel(title)).toBe('OpenCode')
     expect(detectAgentStatusFromTitle(title)).toBe('working')
   })
+
+  it.each(['OC | ✦ Gemini CLI', 'OC | ✋ review Gemini permission handling'])(
+    'does not let a Gemini glyph in OpenCode session text override identity for %j',
+    (title) => {
+      expect(getAgentLabel(title)).toBe('OpenCode')
+      expect(detectAgentStatusFromTitle(title)).toBe('idle')
+    }
+  )
 
   // Why: the text after the marker is OpenCode's generated session summary — subject
   // matter, not status. Routing it through the keyword gates would let an ordinary task

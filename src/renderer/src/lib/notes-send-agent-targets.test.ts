@@ -679,7 +679,7 @@ describe('notes send agent targets', () => {
     ])
   })
 
-  it('promotes a stale OpenCode status row when the native title proves the pane is live', () => {
+  it('promotes a stale OpenCode status row from the native title hint', () => {
     const paneKey = makePaneKey(LAUNCH_TAB_ID, LEAF_A)
     const targets = deriveNotesSendAgentTargets(
       state({
