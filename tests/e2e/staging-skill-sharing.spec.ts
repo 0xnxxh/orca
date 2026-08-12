@@ -8,14 +8,20 @@ import type { SkillSharePreview } from '../../src/shared/skill-sharing-contract'
 import { expect, test } from './helpers/orca-app'
 
 const RUN_STAGING = process.env.ORCA_E2E_SKILL_STAGING === '1'
+const AUTH_TOKEN = process.env.ORCA_CLOUD_AUTH_TOKEN?.trim()
 const SKILL_NAME = `orca-staging-${randomUUID().slice(0, 8)}`
+
+if (RUN_STAGING && !AUTH_TOKEN) {
+  throw new Error('ORCA_CLOUD_AUTH_TOKEN is required for the noninteractive staging journey.')
+}
 
 test.use({
   orcaAppExtraEnv: {
     ORCA_ARTIFACTS_API_URL: 'https://cloud-api-staging.onorca.dev',
     ORCA_CLOUD_API_URL: 'https://auth-staging.onorca.dev',
     ORCA_CLOUD_AUTH_URL: 'https://auth-staging.onorca.dev',
-    ORCA_CLOUD_CLIENT_ID: 'orca-desktop'
+    ORCA_CLOUD_CLIENT_ID: 'orca-desktop',
+    ...(AUTH_TOKEN ? { ORCA_CLOUD_AUTH_TOKEN: AUTH_TOKEN } : {})
   }
 })
 
@@ -35,8 +41,6 @@ test('publishes, updates, revokes, and deletes without losing local state', asyn
   try {
     mkdirSync(source, { recursive: true })
     writeSkill(source, 'v1')
-    await connectCloud(orcaPage)
-
     const first = await publish(
       orcaPage,
       sourceRoot,
@@ -131,11 +135,6 @@ function writeSkill(directory: string, version: string): void {
     join(directory, 'SKILL.md'),
     `---\nname: ${SKILL_NAME}\ndescription: Orca staging installation journey\n---\n\n# Staging journey\n\nversion: ${version}\n`
   )
-}
-
-async function connectCloud(page: Page): Promise<void> {
-  const result = await page.evaluate(() => window.api.orcaProfiles.connectCurrent())
-  expect(result.status).toBe('connected')
 }
 
 async function publish(
