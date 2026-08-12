@@ -6,8 +6,9 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `5a05992e26`; no PR.
-- Orca Cloud: PR `#320` merged to `main` as `0579cc1a71`; production remains untouched.
+- Orca implementation: `skills-share` at `efb54221c8`; no PR.
+- Orca Cloud: PR `#320` merged to `main` as `0579cc1a71`; docs follow-up `#322` merged as
+  `03c7d41a6d`; production remains untouched.
 
 Validated so far:
 
@@ -16,6 +17,8 @@ Validated so far:
   extraction, and coverage; changed-code quality; max-lines; and diff checks.
 - The final Cloud change passed PR run `31564069382` and merged-`main` run `31564235724`, including
   the full monorepo build, lint, typecheck, tests, Terraform format, and Terraform validation.
+- The opt-in desktop staging harness now publishes a bearer share without retired audience fields;
+  Node typecheck and Playwright test discovery pass without starting Orca or a browser login flow.
 - Local Node and web typechecks, changed-code quality gates, 94 skill-domain files with 770 tests
   passed and 3 skipped, 134 Orca Cloud API tests with one opt-in integration skip, the full Cloud
   monorepo test/typecheck/lint/build gates, and isolated Terraform formatting and validation.
@@ -1176,7 +1179,9 @@ still require the listed split metrics, latency panels, and alerts.
       integration suite.
 - [ ] Run desktop-to-local, paired-runtime, `windows 2`, WSL, and SSH journeys in staging.
       The macOS desktop journey has live upload, finalize, share, and first-install evidence; its
-      exact-source update, rollback, revocation, removal, and deletion rerun remains.
+      exact-source update, rollback, revocation, removal, and deletion rerun remains. The harness
+      now uses bearer-only publication; execution remains paused until the test has a persisted or
+      noninteractive profile that cannot open a PKCE login tab.
 - [ ] Give the live staging E2E an owner-private persisted test profile or a short-lived
       non-interactive test credential so reruns do not open PKCE login tabs or copy a user's
       primary Orca session.

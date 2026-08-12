@@ -53,8 +53,9 @@ that larger package-manager surface.
 
 ## Current execution status
 
-The Orca implementation is on `skills-share` at `5a05992e26`; no Orca pull request exists. Cloud
-bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`.
+The Orca implementation is on `skills-share` at `efb54221c8`; no Orca pull request exists. Cloud
+bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`;
+the bearer/all-at-once runbook follow-up `#322` merged as `03c7d41a6d`.
 The authenticated OIDC smoke landed in `#313`; the narrow Auth release-metadata convergence
 follow-up landed in `#314`; the finalization and lifecycle fixes landed in `#317`. The final
 anonymous bearer-link candidate and canonical smoke now pass in staging. Production remains
