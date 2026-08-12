@@ -676,6 +676,14 @@ function createOutOfProcessLauncher(
         // Funding a real retry needs ~71s of classification, kill ladder and fork against a 60s
         // fail-open, so the loop cannot be bought back at any price.
         //
+        // One shape did reach it, and the earlier claim that none could was wrong: a connect
+        // that fails *fast* leaves the budget nearly whole, and while a refused or missing
+        // endpoint is caught by the proven-dead guard, the EPERM/EMFILE class reads 'unknown'
+        // and would have passed. Dropping it costs that case a retry — which retrying was never
+        // going to fix, because an fd-exhausted or permission-denied connect fails the same way
+        // the second time, and recover() puts the daemon back into full service on the next
+        // spawn once the condition clears.
+        //
         // Nothing is lost by dropping it: a 4s retry cannot reach a daemon that needs longer
         // than 4s to answer, which is the whole wedge population, while this one ask waits ~12s.
         // The only case a retry caught and this does not is a daemon that recovers within a few
