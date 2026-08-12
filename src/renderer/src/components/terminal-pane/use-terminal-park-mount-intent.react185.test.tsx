@@ -1,6 +1,5 @@
 /** @vitest-environment happy-dom */
-import { StrictMode, useEffect } from 'react'
-import { act } from 'react'
+import { StrictMode, act, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 import { disposeParkedTabWatchers, parkedWatchersByTabId } from './terminal-parked-watcher-registry'
