@@ -6,7 +6,7 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `cea10667ba`; no PR.
+- Orca implementation: `skills-share` at `a29e25edf4`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   production remains untouched.
@@ -1170,10 +1170,11 @@ physical SSH macOS and supported Windows remain open.
 - [ ] Test connection loss during upload, extraction, commit, provenance, and result return. Lost
       result-return recovery is covered for direct and staged SSH installs; the other physical
       boundaries remain open.
-- [ ] Prove SSH and paired runtimes return the same result and error-category contracts. Focused
-      coverage now proves invalid staged archives preserve the stable archive category through SSH
-      and that only schema-valid failure data crosses Relay JSON-RPC; the complete category matrix
-      remains open.
+- [x] Prove SSH and paired runtimes return the same result and error-category contracts. The full
+      nine-category matrix now passes through both transports with exact code and retryability
+      preservation. This exposed and fixed SSH's numeric JSON-RPC code taking precedence over its
+      validated structured skill failure; arbitrary error data remains rejected by the strict
+      schema.
 
 ## 12. Add observability, operations, and security controls
 
