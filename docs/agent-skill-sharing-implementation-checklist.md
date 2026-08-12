@@ -672,8 +672,12 @@ does not mean the surrounding phase is complete.
       pipeline.
 - [x] Confirm or create a separate staging GCP project before exercising new lifecycle and IAM
       behavior.
-- [ ] Confirm production names and quotas, including availability of
-      `onorca-cloud-skill-packages`.
+- [x] Confirm production names and quotas, including availability of
+      `onorca-cloud-skill-packages`. A read-only 2026-08-12 check returned `404` for the global
+      bucket name, found no production `orca_skills` database or skill-database secret collision,
+      and confirmed the intended existing API service and runtime identity. Cloud Run exposes a
+      1,000-job regional quota and 180 job runs per minute, while V1 reuses the existing API at a
+      20-instance ceiling and existing Cloud SQL instance; no quota increase is required.
 - [x] Confirm `US` storage satisfies initial residency requirements.
 - [x] Confirm Cloud SQL connection and PostgreSQL user provisioning conventions.
 - [x] Keep Firestore, Cloud Tasks, and new Pub/Sub dependencies out of V1.
@@ -1098,6 +1102,8 @@ source snapshot, dependencies, and package-manager store were removed after the 
       transaction preserves the old bytes and returns retryable
       `skill-install-filesystem-failed`; the real Windows source remains intact for retry.
 - [ ] Terminate the runtime before and after each journal boundary and verify startup recovery.
+      The real-process macOS harness passes all 17 extraction, install, and removal crash points;
+      a fresh physical Windows/WSL run remains open.
 - [ ] Test permission-denied, read-only, disk-full, cancellation, runtime disconnect, and partial
       provider-coverage paths. Deterministic `EACCES` and `ENOSPC` transaction injection now proves
       the prior installed version remains intact; physical read-only/disk-full and disconnect

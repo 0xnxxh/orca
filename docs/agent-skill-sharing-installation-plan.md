@@ -134,6 +134,12 @@ completed successfully and emitted only aggregate published and quarantine measu
 zero overdue objects and no identifiers or paths. SQL remained `NEVER`/`STOPPED`, all three Relay
 MIG targets remained zero, and production remained disabled and untouched.
 
+A separate read-only production prerequisite check confirmed that
+`onorca-cloud-skill-packages` is currently unallocated, the production skill database and secret
+names do not collide, and the intended API service and runtime identity already exist. Cloud Run
+quota headroom exceeds the existing 20-instance API ceiling; V1 adds no database instance and
+requires no quota increase. No production resource was planned or changed.
+
 Auth deploy run `31535179937` promoted `orca-cloud-auth-staging-00017-dug` with exact staging-only
 GitHub OIDC constraints, healthy JWKS, and zero deployment-window errors. API run `31535438327`
 promoted `orca-cloud-api-staging-00042-hef` with `authenticatedSmoke: true` and `skillSmoke: true`.
