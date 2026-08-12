@@ -40,6 +40,7 @@ export async function restoreStructuredAgentSessionsOnRestart(input: {
       }
       await input.serialize(sessionId, async () => {
         if (input.hasSession(sessionId)) {
+          await input.restoreHandoff(sessionId)
           return
         }
         const restored = await restoreStructuredAgentSessionRead(
@@ -47,13 +48,12 @@ export async function restoreStructuredAgentSessionsOnRestart(input: {
           input.journalRoot,
           sessionId
         )
-        if (restored) {
-          input.onReadable(sessionId, restored)
+        if (!restored) {
+          return
         }
-      })
-      if (input.hasSession(sessionId)) {
+        input.onReadable(sessionId, restored)
         await input.restoreHandoff(sessionId)
-      }
+      })
     })
   )
 }

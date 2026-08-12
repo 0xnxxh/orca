@@ -118,16 +118,20 @@ export class AgentSessionSubscribers {
     }
   }
 
-  handoff(
-    sessionId: string,
-    journal: AgentSessionJournal,
-    fence: number,
-    handoff: AgentSessionHandoffStatus
-  ): void {
-    const snapshot = journal.snapshot()
+  handoff(sessionId: string, fence: number, handoff: AgentSessionHandoffStatus): void {
     for (const subscriber of this.subscribers(sessionId)) {
-      this.emit(subscriber, { type: 'snapshot', sessionId, snapshot, fence, handoff })
-      subscriber.cursor = snapshot.cursor
+      this.emit(subscriber, {
+        type: 'batch',
+        sessionId,
+        batch: {
+          cursor: subscriber.cursor,
+          items: [],
+          removedItemIds: [],
+          submissions: []
+        },
+        fence,
+        handoff
+      })
       subscriber.fence = fence
     }
   }
