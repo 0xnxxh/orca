@@ -109,7 +109,9 @@ describe('a genuine absence is still a death', () => {
 // for a new shell, and in exactly that case the pane and tab both still match,
 // so it accepted the wrong shell anyway.
 describe('reattach does not ask the relay to police pane identity', () => {
-  async function attachParams(): Promise<Record<string, unknown>> {
+  async function attachParams(
+    extraOptions: Record<string, unknown> = {}
+  ): Promise<Record<string, unknown>> {
     const request = vi.fn().mockRejectedValue(new Error('boom'))
     try {
       await reattachSshPtySession({
@@ -121,7 +123,8 @@ describe('reattach does not ask the relay to police pane identity', () => {
           rows: 24,
           paneKey: 'tab-new:leaf-1',
           tabId: 'tab-new',
-          env: { ORCA_PANE_KEY: 'tab-old:leaf-1', ORCA_TAB_ID: 'tab-old' }
+          env: { ORCA_PANE_KEY: 'tab-old:leaf-1', ORCA_TAB_ID: 'tab-old' },
+          ...extraOptions
         } as never
       })
     } catch {
@@ -137,5 +140,27 @@ describe('reattach does not ask the relay to police pane identity', () => {
 
   it('sends no expected tab id', async () => {
     expect(await attachParams()).not.toHaveProperty('expectedTabId')
+  })
+
+  // The producer pin for the relay's incarnation guard. The guard is only worth having if the
+  // expectation actually leaves the client, and nothing else here would notice if it stopped:
+  // the relay stays permissive on an absent field, so a silent regression reads as "all green".
+  it('sends the expected incarnation when the host attested one', async () => {
+    expect(await attachParams({ expectedIncarnationId: 'inc-host-7' })).toMatchObject({
+      expectedIncarnationId: 'inc-host-7'
+    })
+  })
+
+  // A stand-in minted locally when the host reported none. It is first-write-wins and is dropped
+  // when provider state resets, so the same live shell can present a different one after a
+  // reconnect — sending it would make the relay refuse the pane its own shell.
+  it('sends no expected incarnation when the value was synthesized locally', async () => {
+    expect(await attachParams({ expectedIncarnationId: 'legacy:23:0:pty-7' })).not.toHaveProperty(
+      'expectedIncarnationId'
+    )
+  })
+
+  it('sends no expected incarnation when there is none to send', async () => {
+    expect(await attachParams()).not.toHaveProperty('expectedIncarnationId')
   })
 })

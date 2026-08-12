@@ -329,17 +329,13 @@ export type PtyExitListener = (event: { id: string; paneKey?: string }) => void
 
 type PtyIdentity = { paneKey?: string; tabId?: string }
 
-/**
- * True when a reattach's expected pane identity contradicts the target PTY's own.
- * Rejects cross-relay-generation id collisions (a reset relay reuses `pty-N`).
- * Only compares fields present on both sides; absent identity stays permissive.
- */
-export function attachIdentityMismatches(expected: PtyIdentity, managed: PtyIdentity): boolean {
-  return Boolean(
-    (expected.paneKey && managed.paneKey && expected.paneKey !== managed.paneKey) ||
-    (expected.tabId && managed.tabId && expected.tabId !== managed.tabId)
-  )
-}
+/* Why there is no attach-time pane-identity comparison here any more: it keyed on the paneKey and
+ * tabId frozen at spawn, so moving a pane to another tab made the relay refuse its own live shell,
+ * and refuse by saying "not found" — which the client read as death and answered by resuming the
+ * agent a second time. Cross-generation id collisions, the thing it was actually for, are rejected
+ * by the incarnation comparison in `attach` instead: that is the shell's own identity, so it
+ * follows the pane wherever it moves. `attachIdentity` is still recorded and still round-trips
+ * through serialize/revive; it just no longer gates an attach. */
 /** Returns env to merge into the PTY's spawn env. Receives spawn context so augmenters can derive per-PTY identity from paneKey.
  *  `command` is the renderer-chosen agent launch command (`pi`, `omp`, …); undefined for CLI-launched bare shells. */
 export type PtyEnvAugmenter = (ctx: {
@@ -1611,16 +1607,18 @@ export class PtyHandler {
       throw new Error(`PTY "${id}" not found`)
     }
 
-    // Why: generation resets can reuse PTY IDs; reject conflicting identities.
-    const mismatch = attachIdentityMismatches(
-      {
-        paneKey: typeof params.expectedPaneKey === 'string' ? params.expectedPaneKey : undefined,
-        tabId: typeof params.expectedTabId === 'string' ? params.expectedTabId : undefined
-      },
-      managed.attachIdentity ?? { paneKey: managed.paneKey, tabId: managed.tabId }
-    )
-    if (mismatch) {
-      throw new Error(`PTY "${id}" not found (identity mismatch)`)
+    // Why: a reset relay restarts its ids at pty-1, so an id alone can name somebody else's shell.
+    // The incarnation is the shell's OWN identity, so it discriminates a recycled id without
+    // caring where the pane lives. The pane identity this replaced froze the TAB at spawn, so a
+    // pane moved to another tab was refused — and refused as "not found", which read as death and
+    // resumed the agent a second time. Absent expectation stays permissive: an older client sends
+    // none, and refusing there would strand every pane it owns.
+    const expectedIncarnationId =
+      typeof params.expectedIncarnationId === 'string' ? params.expectedIncarnationId : undefined
+    if (expectedIncarnationId && expectedIncarnationId !== managed.incarnationId) {
+      // Deliberately NOT worded "not found": that phrasing is what the client maps to an expired
+      // session, and expiry authorizes a respawn onto a shell this branch just proved is alive.
+      throw new Error(`PTY "${id}" identity mismatch`)
     }
 
     managed.startupIngress?.snapshotBarrier()

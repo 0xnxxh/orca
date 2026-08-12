@@ -1,5 +1,9 @@
 import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
-import { isPtyIncarnationId, type PtyIncarnationId } from '../../shared/pty-incarnation'
+import {
+  isPtyIncarnationId,
+  isRelayAttestedPtyIncarnationId,
+  type PtyIncarnationId
+} from '../../shared/pty-incarnation'
 import {
   SSH_PTY_IDENTITY_MISMATCH_ERROR,
   SSH_SESSION_EXPIRED_ERROR,
@@ -197,7 +201,14 @@ export async function reattachSshPtySession(args: {
         id: relaySessionId,
         cols: args.options.cols,
         rows: args.options.rows,
-        suppressReplayNotification: true
+        suppressReplayNotification: true,
+        // The shell's own identity, so it survives a pane moving between tabs — unlike the pane
+        // identity this replaced. Sent only when the host attested it: a locally synthesized
+        // stand-in is not stable across reconnects and would refuse the pane its own shell. An
+        // older relay ignores the field, which leaves today's permissive behaviour.
+        ...(isRelayAttestedPtyIncarnationId(args.options.expectedIncarnationId)
+          ? { expectedIncarnationId: args.options.expectedIncarnationId }
+          : {})
       },
       installSourceActivation: args.installSourceActivation,
       rememberPtyIncarnation: args.rememberPtyIncarnation

@@ -42,7 +42,6 @@ import {
   IMMEDIATE_PTY_EXIT_TIMEOUT_MS,
   MAX_RELAY_PTY_SESSIONS,
   PtyHandler,
-  attachIdentityMismatches,
   formatNodePtyUnavailableMessage
 } from './pty-handler'
 import { RelayDispatcher } from './dispatcher'
@@ -1168,6 +1167,68 @@ describe('PtyHandler', () => {
 
     expect(mockKill).toHaveBeenCalledWith('SIGKILL')
     expect(handler.activePtyCount).toBe(0)
+  })
+
+  // INVERTED from the deleted `attachIdentityMismatches` suite. That guard compared the paneKey and
+  // tabId frozen at spawn; it caught a recycled id, but it also refused a pane that had merely moved
+  // to another tab — and refused as "not found", which the client read as death and answered by
+  // resuming the agent a second time. The property worth keeping is "a recycled id must not attach";
+  // the property that had to go is "identity is where the pane lives". Both are pinned below, now
+  // against the shell's own incarnation.
+  it('refuses an attach whose expected incarnation names a different shell', async () => {
+    const first = await spawnPty({})
+
+    await expect(
+      dispatcher.callRequest('pty.attach', {
+        id: first.id,
+        expectedIncarnationId: 'incarnation-from-a-previous-relay'
+      })
+    ).rejects.toThrow(/identity mismatch/i)
+  })
+
+  // The wording matters as much as the refusal: "not found" is what the client maps to an expired
+  // session, and expiry authorizes a respawn onto the very shell this branch proved is alive.
+  it('does not word an incarnation refusal as not-found', async () => {
+    const first = await spawnPty({})
+
+    await expect(
+      dispatcher.callRequest('pty.attach', {
+        id: first.id,
+        expectedIncarnationId: 'incarnation-from-a-previous-relay'
+      })
+    ).rejects.toThrow(expect.not.stringMatching(/not found/i))
+  })
+
+  it('attaches when the expected incarnation is the shell it names', async () => {
+    const first = await spawnPty({})
+
+    await expect(
+      attachPty({ id: first.id, expectedIncarnationId: first.incarnationId })
+    ).resolves.toMatchObject({ incarnationId: first.incarnationId })
+  })
+
+  // An older client sends no expectation. Refusing there would strand every pane it owns.
+  it('stays permissive when the caller supplies no expected incarnation', async () => {
+    const first = await spawnPty({})
+
+    await expect(attachPty({ id: first.id })).resolves.toMatchObject({
+      incarnationId: first.incarnationId
+    })
+  })
+
+  // The regression the old tab-keyed guard caused. A pane carries its shell to a new tab; the
+  // relay still holds the paneKey/tabId frozen at spawn. That must not refuse the attach.
+  it('attaches a pane that has moved to another tab', async () => {
+    const first = await spawnPty({ paneKey: 'tab-a:0', tabId: 'tab-a' })
+
+    await expect(
+      attachPty({
+        id: first.id,
+        expectedIncarnationId: first.incarnationId,
+        expectedPaneKey: 'tab-b:0',
+        expectedTabId: 'tab-b'
+      })
+    ).resolves.toMatchObject({ incarnationId: first.incarnationId })
     expect(vi.getTimerCount()).toBe(0)
   })
 
@@ -1876,13 +1937,19 @@ describe('PtyHandler', () => {
     expect(spawnOptions.env.ORCA_PANE_KEY).toBeUndefined()
     expect(spawnOptions.env.ORCA_TAB_ID).toBeUndefined()
 
+    // INVERTED: this used to require a differing pane identity to be REFUSED. That refusal is the
+    // defect — the paneKey and tabId are frozen at spawn, so it also refused a pane that had merely
+    // moved tabs, and it refused as "not found", which read as death and resumed the agent twice.
+    // The metadata is still recorded and still kept out of the shell env (asserted above); it just
+    // no longer gates an attach. A recycled id is rejected on the incarnation instead, which is
+    // pinned separately.
     await expect(
       attachPty({
         id: 'pty-1',
         expectedPaneKey: 'tab-b:leaf-b',
         expectedTabId: 'tab-b'
       })
-    ).rejects.toThrow('PTY "pty-1" not found')
+    ).resolves.toEqual({ incarnationId: spawn.incarnationId })
 
     await expect(
       attachPty({
@@ -3116,13 +3183,17 @@ describe('PtyHandler', () => {
     expect(callArgs.env.ORCA_PANE_KEY).toBeUndefined()
     expect(callArgs.env.ORCA_TAB_ID).toBeUndefined()
 
+    // INVERTED, same reason as the spawn-side clause: the revived PTY still carries the pane
+    // identity it was serialized with, and that identity no longer gates an attach. What the
+    // clause still proves is that revive PRESERVES the metadata and keeps it out of the shell env
+    // (asserted above) — it just may not refuse a pane for living somewhere else now.
     await expect(
       dispatcher.callRequest('pty.attach', {
         id: 'pty-1',
         expectedPaneKey: 'tab-other:leaf',
         expectedTabId: 'tab-other'
       })
-    ).rejects.toThrow('PTY "pty-1" not found')
+    ).resolves.toMatchObject({ incarnationId: expect.any(String) })
   })
 
   it('invokes the exit listener with the spawn-time paneKey', async () => {
@@ -3591,41 +3662,5 @@ describe('PtyHandler', () => {
     await pending
     expect(handler.activePtyCount).toBe(1)
     expect(handler.pendingPtyCreationCount).toBe(0)
-  })
-})
-
-describe('attachIdentityMismatches', () => {
-  it('rejects a paneKey collision across relay generations', () => {
-    // Old lease expects tab-a's pane; the reset relay's pty-1 belongs to tab-b.
-    expect(
-      attachIdentityMismatches({ paneKey: 'tab-a:0' }, { paneKey: 'tab-b:0', tabId: 'tab-b' })
-    ).toBe(true)
-  })
-
-  it('rejects a tabId collision when only tab identity is known', () => {
-    expect(attachIdentityMismatches({ tabId: 'tab-a' }, { tabId: 'tab-b' })).toBe(true)
-  })
-
-  it('accepts a matching identity', () => {
-    expect(
-      attachIdentityMismatches(
-        { paneKey: 'tab-a:0', tabId: 'tab-a' },
-        { paneKey: 'tab-a:0', tabId: 'tab-a' }
-      )
-    ).toBe(false)
-  })
-
-  it('stays permissive when the caller supplies no identity', () => {
-    expect(attachIdentityMismatches({}, { paneKey: 'tab-a:0', tabId: 'tab-a' })).toBe(false)
-  })
-
-  it('stays permissive when the managed PTY predates identity capture', () => {
-    expect(attachIdentityMismatches({ paneKey: 'tab-a:0', tabId: 'tab-a' }, {})).toBe(false)
-  })
-
-  it('does not reject on tabId when paneKey matches (split panes share a tab)', () => {
-    expect(
-      attachIdentityMismatches({ paneKey: 'tab-a:1' }, { paneKey: 'tab-a:1', tabId: 'tab-a' })
-    ).toBe(false)
   })
 })
