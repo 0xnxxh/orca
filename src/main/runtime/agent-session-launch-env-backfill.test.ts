@@ -66,4 +66,25 @@ describe('legacy agent session launch environment', () => {
       ANTHROPIC_AUTH_TOKEN: 'pinned-token'
     })
   })
+
+  it('rejects an environment that could not be reloaded before writing it', async () => {
+    const store = await AgentSessionRecordStore.open({ directory, hostId: 'local' })
+    const launchEnv = Object.fromEntries(
+      Array.from({ length: 257 }, (_, index) => [`KEY_${index}`, 'value'])
+    )
+
+    await expect(store.reserveOwner(request({ launchEnv }))).rejects.toThrow(
+      'agent_session_launch_env_invalid'
+    )
+    expect(store.getRecord(SESSION)).toBeNull()
+  })
+
+  it('rejects an overlong environment key before writing it', async () => {
+    const store = await AgentSessionRecordStore.open({ directory, hostId: 'local' })
+
+    await expect(
+      store.reserveOwner(request({ launchEnv: { ['K'.repeat(513)]: 'value' } }))
+    ).rejects.toThrow('agent_session_launch_env_invalid')
+    expect(store.getRecord(SESSION)).toBeNull()
+  })
 })

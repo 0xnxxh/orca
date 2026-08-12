@@ -16,6 +16,7 @@ import type { AgentSessionOwnerProbe } from '../../shared/agent-session-lease-ad
 import {
   AGENT_SESSION_RECORD_SCHEMA_VERSION,
   agentSessionExecutionLocationsEqual,
+  isAgentSessionLaunchEnv,
   type AgentSessionAccountHome,
   type AgentSessionExecutionLocation,
   type AgentSessionLaunchEnv,
@@ -95,6 +96,9 @@ export function applyAgentSessionReservation(
   record: AgentSessionRecord
   disposition: Exclude<AgentSessionReserveDisposition, 'replayed'>
 } {
+  if (request.launchEnv && !isAgentSessionLaunchEnv(request.launchEnv)) {
+    throw new Error('agent_session_launch_env_invalid')
+  }
   const reservation: AgentSessionReservation = {
     runtimeKind: request.runtimeKind,
     spawnToken: request.spawnToken,

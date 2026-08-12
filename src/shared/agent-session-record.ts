@@ -196,7 +196,7 @@ function isAgentSessionAccountHome(value: unknown): value is AgentSessionAccount
   )
 }
 
-function isAgentSessionLaunchEnv(value: unknown): value is AgentSessionLaunchEnv {
+export function isAgentSessionLaunchEnv(value: unknown): value is AgentSessionLaunchEnv {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false
   }
