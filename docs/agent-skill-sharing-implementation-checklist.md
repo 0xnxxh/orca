@@ -6,10 +6,10 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `a62f522ed4`; no PR.
+- Orca implementation: `skills-share` at `96a70b2269`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
-  production remains untouched.
+  kill-switch discovery PR `#342` merged as `c2bef2ff20fb`; production remains untouched.
 
 Validated so far:
 
@@ -1392,7 +1392,10 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
 - [x] Telemetry, logs, and diagnostic bundles contain no credentials or private contents. Cloud
       field-inventory and sensitive-value scans, bounded install-span attributes, and adversarial
       support-bundle collection tests cover the complete first-release data path.
-- [ ] Kill switches are tested without affecting discovery or existing installations.
+- [x] Kill switches are tested without affecting discovery or existing installations. Cloud PR
+      `#342` proves unlisted-link preview remains available with upload, download, and remote
+      installation controls disabled; existing route coverage proves remote-off retains local
+      grants. Existing installations and local discovery use only host-owned files and receipts.
 
 ## 15. Post-release multi-machine management and reconciliation
 
