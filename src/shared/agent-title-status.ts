@@ -33,7 +33,11 @@ import { isGrokRotatingWorkingTitle } from './terminal-title-agent-type'
  * Strip working-status indicators so stale exit titles stop reporting working.
  */
 export function clearWorkingIndicators(title: string): string {
-  let cleaned = clearOmpNativeWorkingStatus(title) ?? title
+  const clearedOmpNativeWorkingStatus = clearOmpNativeWorkingStatus(title)
+  if (clearedOmpNativeWorkingStatus) {
+    return clearedOmpNativeWorkingStatus
+  }
+  let cleaned = title
 
   cleaned = cleaned.replace(GEMINI_WORKING, '')
   cleaned = cleaned.replace(GEMINI_SILENT_WORKING, '')
@@ -120,7 +124,7 @@ export function normalizeTerminalTitle(title: string): string {
     return title
   }
 
-  if (isGeminiTerminalTitle(title)) {
+  if (!getOmpNativeTitleStatus(title) && isGeminiTerminalTitle(title)) {
     const status = detectAgentStatusFromTitle(title)
     if (status === 'permission') {
       return `${GEMINI_PERMISSION} Gemini CLI`
@@ -167,6 +171,11 @@ export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
     return containsAgentSpinnerGlyph(title) ? 'working' : 'idle'
   }
 
+  const ompNativeStatus = getOmpNativeTitleStatus(title)
+  if (ompNativeStatus) {
+    return ompNativeStatus
+  }
+
   if (title.includes(GEMINI_PERMISSION)) {
     return 'permission'
   }
@@ -175,11 +184,6 @@ export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
   }
   if (title.includes(GEMINI_IDLE)) {
     return 'idle'
-  }
-
-  const ompNativeStatus = getOmpNativeTitleStatus(title)
-  if (ompNativeStatus) {
-    return ompNativeStatus
   }
 
   // Why: resolve synthetic Pi/OMP permission/idle labels before the broader

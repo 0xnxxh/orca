@@ -137,19 +137,19 @@ describe('main title tracker parity with the renderer transport processor', () =
   })
 
   it('clears a stale wrapped native OMP working title in both paths', () => {
-    feedBoth(paths, `${ESC}]0;zsh | π : release | π > note | π ! note${BEL}`)
+    feedBoth(paths, `${ESC}]0;zsh | π : release | π > note | π ! note ✦ ⏲ ◇ ✋ ⠋${BEL}`)
     feedBoth(paths, 'title-free output')
     vi.advanceTimersByTime(3_000)
 
     expect(paths.main.events).toEqual(paths.renderer.events)
     expect(paths.main.events).toContainEqual({
       kind: 'title',
-      normalized: 'zsh | π > release | π > note | π ! note',
-      raw: 'zsh | π > release | π > note | π ! note'
+      normalized: 'zsh | π > release | π > note | π ! note ✦ ⏲ ◇ ✋ ⠋',
+      raw: 'zsh | π > release | π > note | π ! note ✦ ⏲ ◇ ✋ ⠋'
     })
     expect(paths.main.events).toContainEqual({
       kind: 'became-idle',
-      title: 'zsh | π > release | π > note | π ! note'
+      title: 'zsh | π > release | π > note | π ! note ✦ ⏲ ◇ ✋ ⠋'
     })
   })
 

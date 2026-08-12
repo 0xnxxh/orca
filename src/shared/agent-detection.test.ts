@@ -196,6 +196,22 @@ describe('Pi-compatible title detection', () => {
     expect(detectAgentStatusFromTitle(title)).toBe(expectedStatus)
   })
 
+  it.each([
+    ['π : session ✦ ⏲ ◇ ✋', 'working'],
+    ['π > session ✦ ⏲ ◇ ✋', 'idle'],
+    ['π ! session ✦ ⏲ ◇ ✋', 'permission'],
+    ['zsh | π : session ✦ ⏲ ◇ ✋', 'working'],
+    ['zsh | π > session ✦ ⏲ ◇ ✋', 'idle'],
+    ['zsh | π ! session ✦ ⏲ ◇ ✋', 'permission']
+  ] as const)('prioritizes native OMP state over glyphs in its label: %s', (title, status) => {
+    expect(detectAgentStatusFromTitle(title)).toBe(status)
+  })
+
+  it('does not normalize a wrapped OMP title as Gemini from label glyphs', () => {
+    const title = 'zsh | π > session ✦ ⏲ ◇ ✋'
+    expect(normalizeTerminalTitle(title)).toBe(title)
+  })
+
   it('re-detects status after display-title normalization for Pi idle frames', () => {
     expect(normalizeTerminalTitle('π - my-project')).toBe('Pi')
     expect(detectAgentStatusFromTitle(normalizeTerminalTitle('π - my-project'))).toBe('idle')
