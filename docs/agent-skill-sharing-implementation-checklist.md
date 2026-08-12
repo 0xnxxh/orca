@@ -920,6 +920,9 @@ source snapshot, dependencies, and package-manager store were removed after the 
 - [x] Test Linux case sensitivity and executable modes inside the installed distro. Real
       `Ubuntu-24.04` coverage passed at `cdafe43542` with `0600` regular files and `0700`
       executable files.
+- [x] Install a multi-skill bundle selectively into a distro-owned home and prove unselected skills
+      are absent. The first `windows 2` run found missing filesystem preparation; the fix at
+      `70b847c38e` passed all 3 real `Ubuntu-24.04` tests and the temporary worktree was removed.
 - [ ] Repeat Linux case-sensitivity and executable-mode coverage in the second distro after its
       isolated setup.
 - [ ] Test a distro-owned Git worktree and plain folder workspace.
