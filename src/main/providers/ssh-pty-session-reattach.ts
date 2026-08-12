@@ -10,6 +10,7 @@ import {
   isSshPtyExitedError,
   isSshPtyIdentityMismatchError
 } from './ssh-pty-errors'
+import { parsePtyExitedError } from '../../shared/ssh-pty-failure-tokens'
 import { toAppSshPtyId, toRelaySshPtyId } from './ssh-pty-id'
 import type { PtySpawnOptions, PtySpawnResult } from './types'
 import type { SshPtySpawnExitRaceTracker } from './ssh-pty-spawn-exit-race'
@@ -241,9 +242,17 @@ export async function reattachSshPtySession(args: {
       throw new Error(`${SSH_PTY_IDENTITY_MISMATCH_ERROR}: ${relaySessionId}`)
     }
     // The relay WATCHED this shell exit, which is the only answer that proves it is gone, so this
-    // is the one route that may authorize a replacement.
+    // is the one route that may authorize a replacement. The proof still has to be about OUR shell:
+    // the host applies that rule too, but the host is the party whose answer is in question and
+    // versions differ, so a proof we cannot tie to the incarnation we asked about is not proof and
+    // falls through to the disconnected pane instead of replacing a shell that may be running.
     if (isSshPtyExitedError(error)) {
-      throw new Error(`${SSH_SESSION_EXPIRED_ERROR}: ${relaySessionId}`)
+      const proof = parsePtyExitedError(error instanceof Error ? error.message : String(error))
+      const expected = args.options.expectedIncarnationId
+      if (proof && isRelayAttestedPtyIncarnationId(expected) && proof.incarnationId === expected) {
+        throw new Error(`${SSH_SESSION_EXPIRED_ERROR}: ${relaySessionId}`)
+      }
+      throw error
     }
     // A bare not-found deliberately does NOT become expiry any more. It means the relay we asked
     // cannot hand the id back, which is proof of an exit only if that relay is the one that minted

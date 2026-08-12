@@ -44,14 +44,23 @@ function muxThatFailsAttachWith(message: string): { mux: unknown } {
   }
 }
 
-async function reattachError(attachFailure: string): Promise<Error> {
+async function reattachError(
+  attachFailure: string,
+  expectedIncarnationId?: string
+): Promise<Error> {
   const { mux } = muxThatFailsAttachWith(attachFailure)
   try {
     await reattachSshPtySession({
       mux: mux as never,
       connectionId: CONNECTION_ID,
       sessionId: RELAY_PTY_ID,
-      options: { cols: 80, rows: 24, paneKey: 'tab-new:leaf-1', tabId: 'tab-new' } as never
+      options: {
+        cols: 80,
+        rows: 24,
+        paneKey: 'tab-new:leaf-1',
+        tabId: 'tab-new',
+        ...(expectedIncarnationId ? { expectedIncarnationId } : {})
+      } as never
     })
   } catch (error) {
     return error as Error
@@ -86,7 +95,10 @@ describe('only an exit the relay watched is a death', () => {
   // Clause-selectivity: a fix that silences real expiry would strand panes on a
   // shell that truly went away, so the contrast has to hold.
   it('publishes expiry when the relay reports the exit it observed', async () => {
-    const error = await reattachError(formatPtyExitedError(RELAY_PTY_ID, 0, 'inc-host-7'))
+    const error = await reattachError(
+      formatPtyExitedError(RELAY_PTY_ID, 0, 'inc-host-7'),
+      'inc-host-7'
+    )
 
     expect(error.message).toContain(SSH_SESSION_EXPIRED_ERROR)
     expect(error.message).not.toContain(SSH_PTY_IDENTITY_MISMATCH_ERROR)
@@ -98,6 +110,24 @@ describe('only an exit the relay watched is a death', () => {
   // A replaced relay answers exactly this for shells still running under its predecessor, so
   // expiry there cleared ownership and resumed the agent a second time onto a live shell. The
   // death that is real is still detected — by the clause above, from an exit the relay watched.
+  // Enforcement cannot live only on the host: the host is the party whose answer is in question,
+  // and versions differ. A proof we cannot tie to the shell we asked about is not proof.
+  it('does not publish expiry for an exit that names a different shell', async () => {
+    const error = await reattachError(
+      formatPtyExitedError(RELAY_PTY_ID, 0, 'inc-some-other-shell'),
+      'inc-host-7'
+    )
+
+    expect(error.message).not.toContain(SSH_SESSION_EXPIRED_ERROR)
+    expect(transportWouldReportSessionExpired(error.message)).toBe(false)
+  })
+
+  it('does not publish expiry for an exit when the pane knows no incarnation', async () => {
+    const error = await reattachError(formatPtyExitedError(RELAY_PTY_ID, 0, 'inc-host-7'))
+
+    expect(error.message).not.toContain(SSH_SESSION_EXPIRED_ERROR)
+  })
+
   it('does not publish expiry when the relay merely has no such PTY', async () => {
     const error = await reattachError(`PTY "${RELAY_PTY_ID}" not found`)
 

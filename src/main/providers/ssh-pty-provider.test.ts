@@ -673,9 +673,14 @@ describe('SshPtyProvider', () => {
         new Error(formatPtyExitedError('pty-old', 0, 'inc-host-old'))
       )
 
-      await expect(provider.spawn({ cols: 80, rows: 24, sessionId: 'pty-old' })).rejects.toThrow(
-        'SSH_SESSION_EXPIRED: pty-old'
-      )
+      await expect(
+        provider.spawn({
+          cols: 80,
+          rows: 24,
+          sessionId: 'pty-old',
+          expectedIncarnationId: 'inc-host-old'
+        })
+      ).rejects.toThrow('SSH_SESSION_EXPIRED: pty-old')
 
       expect(mux.request).toHaveBeenNthCalledWith(
         1,
@@ -685,7 +690,8 @@ describe('SshPtyProvider', () => {
           cols: 80,
           rows: 24,
           suppressReplayNotification: true,
-          exitProofSupported: true
+          exitProofSupported: true,
+          expectedIncarnationId: 'inc-host-old'
         },
         sourceActivationRequestOptions
       )

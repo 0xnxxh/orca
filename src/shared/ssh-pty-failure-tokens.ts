@@ -36,11 +36,35 @@ export function formatPtyExitedError(id: string, code: number, incarnationId: st
  * percent-encoded at the source so neither can contain a space and forge the fields after it.
  */
 const SSH_PTY_EXITED_MESSAGE = new RegExp(
-  `(?:^|[^A-Z_])${SSH_PTY_EXITED_ERROR}: [^\\s]+ code=-?\\d+ incarnation=[^\\s]+`
+  `(?:^|[^A-Z_])${SSH_PTY_EXITED_ERROR}: ([^\\s]+) code=(-?\\d+) incarnation=([^\\s]+)`
 )
 
 export function isSshPtyExitedMessage(message: string): boolean {
   return SSH_PTY_EXITED_MESSAGE.test(message)
+}
+
+/**
+ * The shell the proof is about. A caller must check this against the shell it asked for before
+ * acting: the host enforces the same rule, but the host is the party whose answer is in question,
+ * and versions differ. An unverifiable proof is simply not proof.
+ */
+export function parsePtyExitedError(
+  message: string
+): { id: string; code: number; incarnationId: string } | null {
+  const match = SSH_PTY_EXITED_MESSAGE.exec(message)
+  if (!match) {
+    return null
+  }
+  try {
+    return {
+      id: decodeURIComponent(match[1]!),
+      code: Number(match[2]),
+      incarnationId: decodeURIComponent(match[3]!)
+    }
+  } catch {
+    // Malformed encoding cannot be trusted to name a shell, so it names none.
+    return null
+  }
 }
 
 export function isSshPtyIdentityMismatchMessage(message: string): boolean {
