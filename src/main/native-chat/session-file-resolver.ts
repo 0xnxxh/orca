@@ -153,7 +153,14 @@ async function resolveSessionFileById(
   if (transcriptAgent === 'grok') {
     return resolveGrokSessionFile(trimmedId, options.grokSessionsDir ?? grokSessionsDir(), signal)
   }
-  return resolveOmpSessionFile(trimmedId, options.ompSessionsDir ?? ompSessionsDir(), signal)
+  if (transcriptAgent === 'omp') {
+    return resolveOmpSessionFile(trimmedId, options.ompSessionsDir ?? ompSessionsDir(), signal)
+  }
+  // Why: a new transcript agent must pick its own resolver. Falling through to
+  // OMP's scan would search the wrong root with a foreign session id, so fail
+  // the build here instead of resolving silently wrong at runtime.
+  transcriptAgent satisfies never
+  return null
 }
 
 async function resolveClaudeSessionFile(
