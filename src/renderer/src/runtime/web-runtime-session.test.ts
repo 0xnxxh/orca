@@ -42,6 +42,7 @@ import {
 const mocks = vi.hoisted(() => ({
   getState: vi.fn(),
   setState: vi.fn(),
+  subscribe: vi.fn(),
   setActiveWorktree: vi.fn(),
   createBrowserTab: vi.fn(),
   closeEmptyGroup: vi.fn(),
@@ -60,7 +61,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../store', () => ({
   useAppStore: {
     getState: mocks.getState,
-    setState: mocks.setState
+    setState: mocks.setState,
+    subscribe: mocks.subscribe
   }
 }))
 
@@ -283,6 +285,7 @@ describe('createWebRuntimeSessionBrowserTab', () => {
         activeWorktreeId: WORKTREE_ID
       })
     })
+    mocks.subscribe.mockReturnValue(vi.fn())
     mocks.createBrowserTab.mockReturnValue({
       id: 'local-browser-workspace-1',
       activePageId: 'local-page-1',
@@ -362,6 +365,13 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       snapshot,
       ENVIRONMENT_ID
     )
+    expect(mocks.acceptReplayedWebSessionTabsSnapshot).toHaveBeenCalledWith(
+      ENVIRONMENT_ID,
+      WORKTREE_ID
+    )
+    expect(mocks.acceptReplayedWebSessionTabsSnapshot.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.applyFreshWebSessionTabsSnapshot.mock.invocationCallOrder[0]!
+    )
     expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toEqual({
       hostTabId: 'remote-browser-page-1',
       expectedCurrentLocalTabId: 'local-editor-tab'
@@ -406,6 +416,59 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toEqual({
       hostTabId: 'newer-host-browser'
     })
+  })
+
+  it('does not focus a slow browser create after an editor A-B-A selection', async () => {
+    let resolveCreate!: (response: unknown) => void
+    const createResponse = new Promise((resolve) => {
+      resolveCreate = resolve
+    })
+    let state = mocks.getState()
+    let listener: ((next: typeof state, previous: typeof state) => void) | null = null
+    mocks.getState.mockImplementation(() => state)
+    mocks.subscribe.mockImplementation((nextListener) => {
+      listener = nextListener
+      return vi.fn()
+    })
+    const runtimeCall = vi.fn(async (request: { method: string }) => {
+      if (request.method === 'browser.tabCreate') {
+        return createResponse
+      }
+      return { id: 'list', ok: true, result: makeSnapshot() }
+    })
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    const pendingCreate = createWebRuntimeSessionBrowserTab({ worktreeId: WORKTREE_ID })
+    await vi.waitFor(() => expect(listener).not.toBeNull())
+    const editorBState = {
+      ...state,
+      activeFileIdByWorktree: { [WORKTREE_ID]: '/worktree/other.html' },
+      unifiedTabsByWorktree: {
+        [WORKTREE_ID]: [
+          ...state.unifiedTabsByWorktree[WORKTREE_ID],
+          {
+            id: 'other-editor-tab',
+            entityId: '/worktree/other.html',
+            contentType: 'editor'
+          }
+        ]
+      }
+    }
+    listener!(editorBState, state)
+    const editorAState = {
+      ...editorBState,
+      activeFileIdByWorktree: { [WORKTREE_ID]: '/worktree/index.html' }
+    }
+    listener!(editorAState, editorBState)
+    state = editorAState
+    resolveCreate({
+      id: 'create',
+      ok: true,
+      result: { browserPageId: 'created-host-browser' }
+    })
+    await expect(pendingCreate).resolves.toBe(true)
+
+    expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toBeNull()
   })
 
   it('does not retry a failed browser create', async () => {

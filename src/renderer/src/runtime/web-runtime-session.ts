@@ -467,6 +467,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
   if (shouldSelectWorktree) {
     selectWebRuntimeSessionBrowserWorktree(args.worktreeId, environmentId)
   }
+  let unsubscribeFocusGuard = (): void => {}
   try {
     if (matchesWebSessionIntentOwner(intentOwner)) {
       recordWebSessionFocusIntent(
@@ -476,6 +477,24 @@ export async function createWebRuntimeSessionBrowserTab(args: {
         undefined,
         expectedCurrentLocalTabId
       )
+      unsubscribeFocusGuard = useAppStore.subscribe((state, previousState) => {
+        if (
+          state.activeBrowserTabIdByWorktree === previousState.activeBrowserTabIdByWorktree &&
+          state.activeFileIdByWorktree === previousState.activeFileIdByWorktree &&
+          state.activeTabIdByWorktree === previousState.activeTabIdByWorktree &&
+          state.activeTabType === previousState.activeTabType &&
+          state.activeTabTypeByWorktree === previousState.activeTabTypeByWorktree &&
+          state.activeWorktreeId === previousState.activeWorktreeId &&
+          state.unifiedTabsByWorktree === previousState.unifiedTabsByWorktree
+        ) {
+          return
+        }
+        if (resolveWebSessionVisibleTabId(state, args.worktreeId) === expectedCurrentLocalTabId) {
+          return
+        }
+        clearWebSessionFocusIntentIfMatches(intentOwner, args.worktreeId, provisionalPageId)
+        unsubscribeFocusGuard()
+      })
     }
     const created = unwrapRuntimeRpcResult(
       (await callEnvironment({
@@ -494,6 +513,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
         timeoutMs: 15_000
       })) as RuntimeRpcResponse<BrowserTabCreateResult>
     )
+    unsubscribeFocusGuard()
     if (created.browserPageId !== provisionalPageId) {
       moveWebSessionBrowserPlacement({
         environmentId,
@@ -514,7 +534,8 @@ export async function createWebRuntimeSessionBrowserTab(args: {
     }
     try {
       await refreshWebRuntimeSessionTabsSnapshot(environmentId, args.worktreeId, {
-        expectedEnvironmentPairingRevision: intentOwner.pairingRevision
+        expectedEnvironmentPairingRevision: intentOwner.pairingRevision,
+        acceptCurrentSnapshot: true
       })
     } catch (error) {
       console.warn(
@@ -524,6 +545,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
     }
     return true
   } catch (error) {
+    unsubscribeFocusGuard()
     forgetWebSessionBrowserPlacement({
       environmentId,
       worktreeId: args.worktreeId,

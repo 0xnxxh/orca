@@ -34,6 +34,7 @@ import {
   resetWebAgentSessionHandoffsForTests
 } from './web-agent-session-handoff'
 import {
+  moveWebSessionBrowserPlacement,
   recordWebSessionBrowserPlacement,
   takeWebSessionBrowserPlacementGroup
 } from './web-session-browser-placement'
@@ -4204,6 +4205,134 @@ describe('applyWebSessionTabsSnapshot', () => {
       { activeTabId: 'local-editor', tabOrder: ['local-editor'] }
     )
     expect(patch.browserTabsByWorktree?.[WT]).toHaveLength(1)
+  })
+
+  it('replays a pre-response browser snapshot after canonical placement and focus are known', () => {
+    const editorGroupId = 'client-editor-group'
+    const previewGroupId = 'client-preview-group'
+    const editorFileId = '/srv/repo/example.html'
+    const editorTab: Tab = {
+      id: 'host-editor',
+      worktreeId: WT,
+      groupId: editorGroupId,
+      contentType: 'editor',
+      entityId: editorFileId,
+      label: 'example.html',
+      sortOrder: 0,
+      createdAt: NOW,
+      isPreview: false,
+      isPinned: false,
+      customLabel: null,
+      color: null
+    }
+    const state = makeState({
+      activeFileId: editorFileId,
+      activeFileIdByWorktree: { [WT]: editorFileId },
+      activeTabType: 'editor',
+      activeTabTypeByWorktree: { [WT]: 'editor' },
+      activeGroupIdByWorktree: { [WT]: editorGroupId },
+      groupsByWorktree: {
+        [WT]: [
+          {
+            id: editorGroupId,
+            worktreeId: WT,
+            activeTabId: editorTab.id,
+            tabOrder: [editorTab.id]
+          },
+          {
+            id: previewGroupId,
+            worktreeId: WT,
+            activeTabId: null,
+            tabOrder: []
+          }
+        ]
+      },
+      layoutByWorktree: {
+        [WT]: {
+          type: 'split',
+          direction: 'horizontal',
+          first: { type: 'leaf', groupId: editorGroupId },
+          second: { type: 'leaf', groupId: previewGroupId },
+          ratio: 0.5
+        }
+      },
+      unifiedTabsByWorktree: { [WT]: [editorTab] }
+    })
+    const snapshot = makeSnapshot(
+      [
+        {
+          type: 'file',
+          id: 'host-editor',
+          title: 'example.html',
+          filePath: editorFileId,
+          relativePath: 'example.html',
+          language: 'html',
+          isDirty: false,
+          isActive: false
+        },
+        {
+          type: 'browser',
+          id: 'host-browser-tab',
+          title: 'example.html',
+          browserWorkspaceId: 'host-browser-workspace',
+          browserPageId: 'host-browser-page',
+          url: 'file:///srv/repo/example.html',
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          isActive: true
+        }
+      ],
+      { activeTabId: 'host-browser-tab', activeTabType: 'browser' }
+    )
+    recordWebSessionBrowserPlacement({
+      environmentId: ENV,
+      worktreeId: WT,
+      remotePageId: 'provisional-browser-page',
+      groupId: previewGroupId
+    })
+
+    const subscriptionPatch = applyFreshWebSessionTabsSnapshot(state, snapshot, ENV, NOW)
+    const afterSubscription = {
+      ...state,
+      ...(subscriptionPatch as Partial<WebSessionTabsSyncState>)
+    }
+    expect(afterSubscription.activeTabType).toBe('editor')
+    expect(
+      afterSubscription.unifiedTabsByWorktree[WT]?.find((tab) => tab.contentType === 'browser')
+        ?.groupId
+    ).not.toBe(previewGroupId)
+
+    moveWebSessionBrowserPlacement({
+      environmentId: ENV,
+      worktreeId: WT,
+      fromRemotePageId: 'provisional-browser-page',
+      toRemotePageId: 'host-browser-page'
+    })
+    recordWebSessionFocusIntent(
+      { environmentId: ENV },
+      WT,
+      'host-browser-page',
+      undefined,
+      editorTab.id
+    )
+    acceptReplayedWebSessionTabsSnapshot(ENV, WT)
+    const replayPatch = applyFreshWebSessionTabsSnapshot(
+      afterSubscription,
+      snapshot,
+      ENV,
+      NOW + 1
+    ) as Partial<WebSessionTabsSyncState>
+    const afterReplay = { ...afterSubscription, ...replayPatch }
+
+    expect(
+      afterReplay.unifiedTabsByWorktree[WT]?.find((tab) => tab.contentType === 'browser')
+    ).toMatchObject({ id: 'host-browser-tab', groupId: previewGroupId })
+    expect(
+      afterReplay.groupsByWorktree[WT]?.find((group) => group.id === previewGroupId)
+    ).toMatchObject({ activeTabId: 'host-browser-tab', tabOrder: ['host-browser-tab'] })
+    expect(afterReplay.activeBrowserTabIdByWorktree[WT]).toBe('host-browser-workspace')
+    expect(afterReplay.activeTabTypeByWorktree[WT]).toBe('browser')
   })
 
   it('keeps a reserved side-preview split across a pre-publication snapshot', () => {
