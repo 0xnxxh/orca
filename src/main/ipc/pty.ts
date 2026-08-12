@@ -13,7 +13,7 @@ import {
 } from 'electron'
 export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-ready'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
-import type { Store } from '../persistence'
+import type { PtyBindingSourceExpectation, Store } from '../persistence'
 import { retireTerminalSurfaceFromPersistence } from '../runtime/mobile-session-terminal-persistence-retirement'
 import type { GlobalSettings, TuiAgent } from '../../shared/types'
 import { toSshExecutionHostId } from '../../shared/execution-host'
@@ -4589,6 +4589,7 @@ export function registerPtyHandlers(
         worktreeId: string
         tabId: string
         leafId: string
+        expectedSourceBinding?: PtyBindingSourceExpectation
       } | null = null
       if (shouldPersistHostSessionBinding) {
         if (
@@ -4607,7 +4608,10 @@ export function registerPtyHandlers(
           store,
           worktreeId: args.worktreeId,
           tabId: args.tabId,
-          leafId: args.leafId
+          leafId: args.leafId,
+          ...(args.expectedSourceBinding
+            ? { expectedSourceBinding: args.expectedSourceBinding }
+            : {})
         }
       }
       const sshScopedEnv = stripRemotePaneEnvWhenHooksDisabled(args.connectionId, args.env)
@@ -5244,15 +5248,19 @@ export function registerPtyHandlers(
               leafId: hostSessionBinding.leafId,
               ptyId: result.id,
               ...(result.incarnationId ? { incarnationId: result.incarnationId } : {}),
-              ...(cwd ? { startupCwd: cwd } : {})
+              ...(cwd ? { startupCwd: cwd } : {}),
+              ...(hostSessionBinding.expectedSourceBinding
+                ? { expectedSourceBinding: hostSessionBinding.expectedSourceBinding }
+                : {})
             }
-            if (args.connectionId) {
-              hostSessionBinding.store.persistPtyBinding(
-                binding,
-                toSshExecutionHostId(args.connectionId)
-              )
-            } else {
-              hostSessionBinding.store.persistPtyBinding(binding)
+            const persisted = args.connectionId
+              ? hostSessionBinding.store.persistPtyBinding(
+                  binding,
+                  toSshExecutionHostId(args.connectionId)
+                )
+              : hostSessionBinding.store.persistPtyBinding(binding)
+            if (persisted === false) {
+              throw new Error('terminal_split_source_not_found')
             }
           } catch (err) {
             console.error('[pty] failed to persist runtime PTY binding after spawn:', err)
@@ -5264,6 +5272,9 @@ export function registerPtyHandlers(
                 console.warn('[pty] failed to clean up PTY after persistence failure:', shutdownErr)
               }
               clearProviderPtyState(result.id)
+            }
+            if (err instanceof Error && err.message === 'terminal_split_source_not_found') {
+              throw err
             }
             throw Object.assign(new Error(createTerminalSessionStateSaveFailureMessage()), {
               agentSessionOperationOutcome: 'unknown' as const
