@@ -6,7 +6,7 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `3ce85a8958`; no PR.
+- Orca implementation: `skills-share` at `df259119f6`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   production remains untouched.
@@ -202,12 +202,19 @@ Validated so far:
   package deletion. The remote install, Orca SSH target, encrypted credential artifact, one-time
   keys, and VM were removed. Guarded sleep `31604391897` passed; independent reads verified SQL
   `NEVER`/`STOPPED` and C1/C2/C3 target zero, stable, and reached. Production was untouched.
+- Guarded wake `31605729090` restored the same configured topology. An isolated headless Orca host
+  with a separate home/profile then passed the full paired-runtime staging lifecycle in 12.5
+  seconds, proving host-owned install, update, managed-install state, rollback, revocation
+  preservation, removal, and Cloud deletion without local fallback. The paired environment,
+  install, package, encrypted credential artifact, and one-time keys were removed. Guarded sleep
+  `31606600532` passed; independent reads again verified SQL `NEVER`/`STOPPED` and all MIGs at
+  stable, reached target zero.
 
 Rollout gate: staging infrastructure, OIDC owner identity exchange, anonymous bearer lifecycle,
 owner management, browser-free desktop bundle lifecycle, privacy-safe logging, published-object
 recovery, bounded finalization load, and guarded rollback-capable deployment passed. Production
-remains untouched. Native Windows and physical Ubuntu 20.04 SSH staging passed; physical WSL,
-paired non-Windows, SSH macOS/Windows, and the quarantine lifecycle deletion remain. The shared
+remains untouched. Native Windows, physical Ubuntu 20.04 SSH, and paired non-Windows staging
+passed; physical WSL, SSH macOS/Windows, and the quarantine lifecycle deletion remain. The shared
 staging data plane is asleep.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
@@ -1310,8 +1317,9 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
       native Windows passed the same lifecycle through run `31591275227`, including remote-owned
       path and digest verification with no macOS fallback. A disposable Ubuntu 20.04/glibc 2.31
       host passed the same SSH lifecycle after guarded wake `31603249983`; guarded sleep
-      `31604391897` restored the low-cost state. Paired non-Windows and physical WSL still need the
-      same live staging Cloud journey.
+      `31604391897` restored the low-cost state. An isolated headless host passed the paired
+      non-Windows lifecycle after guarded wake `31605729090`; guarded sleep `31606600532` restored
+      the low-cost state. Physical WSL still needs the same live staging Cloud journey.
 - [x] Give the live staging E2E an owner-private persisted test profile or a short-lived
       non-interactive test credential so reruns do not open PKCE login tabs or copy a user's
       primary Orca session.

@@ -53,7 +53,7 @@ that larger package-manager surface.
 
 ## Current execution status
 
-The Orca implementation is on `skills-share` at `3ce85a8958`; no Orca pull request exists. Cloud
+The Orca implementation is on `skills-share` at `df259119f6`; no Orca pull request exists. Cloud
 bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`;
 the bundle desktop smoke update merged through `#329` as `eddb144afe`, generation-aware GCS
 recovery merged through `#330` as `8045c85dad`, and the bounded finalization load gate plus cleanup
@@ -147,9 +147,13 @@ no-service-account Ubuntu 20.04/glibc 2.31 VM passed the full live SSH staging l
 seconds, including host-owned install, update, rollback, revocation preservation, removal, and
 Cloud deletion. The encrypted credential artifact, one-time keys, Orca SSH target, remote install,
 and VM were removed. Guarded sleep `31604391897` passed and independent reads confirmed SQL
-`NEVER`/`STOPPED` plus all three Relay MIGs at stable target zero. Remaining staging gates are
-physical WSL, paired non-Windows, physical SSH macOS/Windows, and the time-gated quarantine
-lifecycle deletion. Production remains untouched.
+`NEVER`/`STOPPED` plus all three Relay MIGs at stable target zero. Guarded wake `31605729090` then
+enabled the same topology for an isolated headless paired host with a separate home/profile. The
+full paired-runtime staging lifecycle passed in 12.5 seconds without local fallback, and its
+environment, install, Cloud package, encrypted credential artifact, and one-time keys were
+removed. Guarded sleep `31606600532` passed with the same independently verified low-cost state.
+Remaining staging gates are physical WSL, physical SSH macOS/Windows, and the time-gated
+quarantine lifecycle deletion. Production remains untouched.
 
 ## Research baseline
 
