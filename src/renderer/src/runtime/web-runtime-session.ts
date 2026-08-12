@@ -20,7 +20,7 @@ import type {
 } from '../../../shared/agent-session-resume'
 import {
   AGENT_SESSION_OMP_RESUME_PATH_RUNTIME_CAPABILITY,
-  BROWSER_TAB_CREATE_IDEMPOTENCY_RUNTIME_CAPABILITY
+  BROWSER_DETERMINISTIC_PAGE_CREATE_RUNTIME_CAPABILITY
 } from '../../../shared/protocol-version'
 import { isRecoverableRemoteRuntimeConnectionError } from '../../../shared/remote-runtime-client-error-classification'
 import type {
@@ -31,11 +31,12 @@ import type {
 } from '../../../shared/agent-session-host-authority'
 import type { TerminalPaneLayoutNode, TuiAgent } from '../../../shared/types'
 import type { AppState } from '../store/types'
+import { createBrowserUuid } from '../lib/browser-uuid'
 import { getRuntimeEnvironmentIdForWorktree } from '../lib/worktree-runtime-owner'
 import { useAppStore } from '../store'
 import {
   RuntimeRpcCallError,
-  runtimeEnvironmentSupportsCapability,
+  getRuntimeEnvironmentStatus,
   unwrapRuntimeRpcResult
 } from './runtime-rpc-client'
 import {
@@ -46,6 +47,7 @@ import { parseRemoteRuntimePtyId } from './runtime-terminal-stream'
 import { toRuntimeWorktreeSelector } from './runtime-worktree-selector'
 import {
   clearWebSessionFocusIntentIfMatches,
+  peekWebSessionFocusIntent,
   recordWebSessionFocusIntent
 } from './web-session-focus-intent'
 import { clearWebSessionCloseIntent, recordWebSessionCloseIntent } from './web-session-close-intent'
@@ -73,9 +75,10 @@ import { getRuntimeEnvironmentRevision } from './runtime-environment-revision'
 import { parsePaneKey } from '../../../shared/stable-pane-id'
 import { toRuntimeExecutionHostId } from '../../../shared/execution-host'
 import {
-  recordWebSessionBrowserPlacement,
-  releaseWebSessionBrowserPlacementGroup,
-  reserveWebSessionBrowserPlacementGroup
+  forgetWebSessionBrowserPlacement,
+  isWebSessionBrowserPlacementGroupReserved,
+  moveWebSessionBrowserPlacement,
+  recordWebSessionBrowserPlacement
 } from './web-session-browser-placement'
 
 export {
@@ -455,13 +458,13 @@ export async function createWebRuntimeSessionBrowserTab(args: {
   }
   const intentOwner = captureWebSessionIntentOwner(environmentId)
   const callEnvironment = captureRuntimeEnvironmentCall(environmentId, intentOwner.pairingRevision)
-
   const shouldSelectWorktree = args.selectWorktree !== false
-  const stagedFromWorktreeId = useAppStore.getState().activeWorktreeId
+  const requestedPageId = createBrowserUuid()
   if (args.clientTargetGroupId) {
-    reserveWebSessionBrowserPlacementGroup({
+    recordWebSessionBrowserPlacement({
       environmentId,
       worktreeId: args.worktreeId,
+      remotePageId: requestedPageId,
       groupId: args.clientTargetGroupId
     })
   }
@@ -469,7 +472,12 @@ export async function createWebRuntimeSessionBrowserTab(args: {
     selectWebRuntimeSessionBrowserWorktree(args.worktreeId, environmentId)
   }
   try {
-    const clientOperationId = crypto.randomUUID()
+    const status = await getRuntimeEnvironmentStatus(environmentId, 15_000)
+    const supportsDeterministicCreate =
+      status.capabilities?.includes(BROWSER_DETERMINISTIC_PAGE_CREATE_RUNTIME_CAPABILITY) === true
+    if (matchesWebSessionIntentOwner(intentOwner)) {
+      recordWebSessionFocusIntent(intentOwner, args.worktreeId, requestedPageId)
+    }
     const create = async (): Promise<BrowserTabCreateResult> =>
       unwrapRuntimeRpcResult(
         (await callEnvironment({
@@ -484,7 +492,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
             ...(args.targetGroupId ? { targetGroupId: args.targetGroupId } : {}),
             // Why: web clients need the local tab now; waiting for host webview registration makes the workspace appear to close.
             waitForRegistration: false,
-            clientOperationId
+            ...(supportsDeterministicCreate ? { requestedPageId } : {})
           },
           timeoutMs: 15_000
         })) as RuntimeRpcResponse<BrowserTabCreateResult>
@@ -495,42 +503,45 @@ export async function createWebRuntimeSessionBrowserTab(args: {
     } catch (error) {
       const retryable =
         error instanceof RuntimeRpcCallError && isRecoverableRemoteRuntimeConnectionError(error)
-      const hostSupportsRetry =
-        retryable &&
-        (await runtimeEnvironmentSupportsCapability(
-          environmentId,
-          BROWSER_TAB_CREATE_IDEMPOTENCY_RUNTIME_CAPABILITY
-        ).catch(() => false))
-      if (!hostSupportsRetry) {
+      if (!retryable || !supportsDeterministicCreate) {
         throw error
       }
-      created = await create()
+      try {
+        created = await create()
+      } catch (retryError) {
+        const retryOutcomeUnknown =
+          retryError instanceof RuntimeRpcCallError &&
+          isRecoverableRemoteRuntimeConnectionError(retryError)
+        if (!retryOutcomeUnknown) {
+          throw retryError
+        }
+        try {
+          await refreshWebRuntimeSessionTabsSnapshot(environmentId, args.worktreeId, {
+            expectedEnvironmentPairingRevision: intentOwner.pairingRevision
+          })
+        } catch {
+          // Why: the deterministic page may already exist; its next snapshot adopts it without duplicating.
+          return true
+        }
+        if (
+          hasLocalBrowserPageForRemotePage(useAppStore.getState(), environmentId, requestedPageId)
+        ) {
+          return true
+        }
+        throw retryError
+      }
     }
-    // Why: record focus intent (tab id === browserPageId on a headless host) so the reconcile follows to the new browser tab.
-    if (matchesWebSessionIntentOwner(intentOwner)) {
-      recordWebSessionFocusIntent(intentOwner, args.worktreeId, created.browserPageId)
-    }
-    if (args.clientTargetGroupId) {
-      recordWebSessionBrowserPlacement({
+    if (created.browserPageId !== requestedPageId) {
+      moveWebSessionBrowserPlacement({
         environmentId,
         worktreeId: args.worktreeId,
-        remotePageId: created.browserPageId,
-        groupId: args.clientTargetGroupId
+        fromRemotePageId: requestedPageId,
+        toRemotePageId: created.browserPageId
       })
+      if (peekWebSessionFocusIntent(intentOwner, args.worktreeId)?.hostTabId === requestedPageId) {
+        recordWebSessionFocusIntent(intentOwner, args.worktreeId, created.browserPageId)
+      }
     }
-    const staged = stageWebRuntimeBrowserTab({
-      environmentId,
-      worktreeId: args.worktreeId,
-      remotePageId: created.browserPageId,
-      url: args.url,
-      targetGroupId: args.clientTargetGroupId ?? args.targetGroupId,
-      title: args.stagedTitle,
-      focusAddressBar: args.stagedFocusAddressBar,
-      restoreFocus:
-        shouldSelectWorktree &&
-        (stagedFromWorktreeId === args.worktreeId ||
-          useAppStore.getState().activeWorktreeId === args.worktreeId)
-    })
     try {
       await refreshWebRuntimeSessionTabsSnapshot(environmentId, args.worktreeId, {
         expectedEnvironmentPairingRevision: intentOwner.pairingRevision
@@ -541,40 +552,21 @@ export async function createWebRuntimeSessionBrowserTab(args: {
         error instanceof Error ? error.message : String(error)
       )
     }
-    if (!staged) {
-      const stagedAfterRefresh = stageWebRuntimeBrowserTab({
-        environmentId,
-        worktreeId: args.worktreeId,
-        remotePageId: created.browserPageId,
-        url: args.url,
-        targetGroupId: args.clientTargetGroupId,
-        title: args.stagedTitle,
-        focusAddressBar: args.stagedFocusAddressBar,
-        restoreFocus: shouldSelectWorktree
-      })
-      if (stagedAfterRefresh && args.clientTargetGroupId) {
-        releaseWebSessionBrowserPlacementGroup({
-          environmentId,
-          worktreeId: args.worktreeId,
-          groupId: args.clientTargetGroupId
-        })
-      }
-    } else if (args.clientTargetGroupId) {
-      releaseWebSessionBrowserPlacementGroup({
-        environmentId,
-        worktreeId: args.worktreeId,
-        groupId: args.clientTargetGroupId
-      })
-    }
     return true
   } catch (error) {
-    if (args.clientTargetGroupId) {
-      releaseWebSessionBrowserPlacementGroup({
+    forgetWebSessionBrowserPlacement({
+      environmentId,
+      worktreeId: args.worktreeId,
+      remotePageId: requestedPageId
+    })
+    clearWebSessionFocusIntentIfMatches(intentOwner, args.worktreeId, requestedPageId)
+    if (args.clientTargetGroupId && args.clientTargetGroupCreated) {
+      const reserved = isWebSessionBrowserPlacementGroupReserved({
         environmentId,
         worktreeId: args.worktreeId,
         groupId: args.clientTargetGroupId
       })
-      if (args.clientTargetGroupCreated) {
+      if (!reserved) {
         useAppStore.getState().closeEmptyGroup(args.worktreeId, args.clientTargetGroupId)
       }
     }
@@ -588,73 +580,6 @@ export async function createWebRuntimeSessionBrowserTab(args: {
     }
     return false
   }
-}
-
-function stageWebRuntimeBrowserTab(args: {
-  environmentId: string
-  worktreeId: string
-  remotePageId: string
-  url?: string
-  targetGroupId?: string
-  title?: string
-  focusAddressBar?: boolean
-  restoreFocus?: boolean
-}): boolean {
-  const remotePageId = args.remotePageId.trim()
-  if (!remotePageId) {
-    return false
-  }
-
-  const existing = findLocalBrowserPageForRemotePage(
-    useAppStore.getState(),
-    args.environmentId,
-    remotePageId
-  )
-  if (args.restoreFocus !== false) {
-    selectWebRuntimeSessionBrowserWorktree(args.worktreeId, args.environmentId)
-  }
-
-  if (existing) {
-    if (args.targetGroupId) {
-      const state = useAppStore.getState()
-      const unifiedTab = (state.unifiedTabsByWorktree[args.worktreeId] ?? []).find(
-        (tab) => tab.contentType === 'browser' && tab.entityId === existing.workspaceId
-      )
-      if (!unifiedTab) {
-        return false
-      }
-      if (
-        unifiedTab.groupId !== args.targetGroupId &&
-        !state.moveUnifiedTabToGroup(unifiedTab.id, args.targetGroupId, { activate: true })
-      ) {
-        return false
-      }
-    }
-    if (args.restoreFocus !== false) {
-      useAppStore
-        .getState()
-        .focusBrowserTabInWorktree(args.worktreeId, existing.pageId, { surfacePane: true })
-    }
-    return true
-  }
-
-  const url = args.url?.trim() || 'about:blank'
-  // Why: the snapshot can arrive after React renders a fallback; stage the handle now so the worktree stays selected.
-  const browserTab = useAppStore.getState().createBrowserTab(args.worktreeId, url, {
-    title: args.title ?? (url === 'about:blank' ? 'New Browser Tab' : url),
-    focusAddressBar: args.focusAddressBar ?? true,
-    browserRuntimeEnvironmentId: args.environmentId,
-    targetGroupId: args.targetGroupId
-  })
-  const pageId = browserTab.activePageId ?? browserTab.pageIds?.[0] ?? null
-  if (!pageId) {
-    return false
-  }
-  useAppStore.getState().setRemoteBrowserPageHandle(pageId, {
-    environmentId: args.environmentId,
-    remotePageId
-  })
-  return true
 }
 
 function selectWebRuntimeSessionWorktree(worktreeId: string, environmentId: string): void {
@@ -671,20 +596,20 @@ function selectWebRuntimeSessionBrowserWorktree(worktreeId: string, environmentI
   }
 }
 
-function findLocalBrowserPageForRemotePage(
+function hasLocalBrowserPageForRemotePage(
   state: AppState,
   environmentId: string,
   remotePageId: string
-): { pageId: string; workspaceId: string } | null {
-  for (const [workspaceId, pages] of Object.entries(state.browserPagesByWorkspace)) {
+): boolean {
+  for (const pages of Object.values(state.browserPagesByWorkspace)) {
     for (const page of pages) {
       const handle = state.remoteBrowserPageHandlesByPageId[page.id]
       if (handle?.environmentId === environmentId && handle.remotePageId === remotePageId) {
-        return { pageId: page.id, workspaceId }
+        return true
       }
     }
   }
-  return null
+  return false
 }
 
 export async function refreshWebRuntimeSessionTabsSnapshot(

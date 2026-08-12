@@ -34,9 +34,8 @@ import {
   resetWebAgentSessionHandoffsForTests
 } from './web-agent-session-handoff'
 import {
-  getWebSessionBrowserPlacementGroup,
   recordWebSessionBrowserPlacement,
-  reserveWebSessionBrowserPlacementGroup
+  takeWebSessionBrowserPlacementGroup
 } from './web-session-browser-placement'
 import {
   _getWebSessionTabsTrackingCountsForTest,
@@ -4205,9 +4204,10 @@ describe('applyWebSessionTabsSnapshot', () => {
       second: { type: 'leaf', groupId: previewGroupId },
       ratio: 0.5
     }
-    reserveWebSessionBrowserPlacementGroup({
+    recordWebSessionBrowserPlacement({
       environmentId: ENV,
       worktreeId: WT,
+      remotePageId: 'pending-browser-page',
       groupId: previewGroupId
     })
 
@@ -4269,7 +4269,7 @@ describe('applyWebSessionTabsSnapshot', () => {
       remotePageId: 'host-browser-page',
       groupId: 'client-preview-group'
     })
-    getWebSessionBrowserPlacementGroup({
+    takeWebSessionBrowserPlacementGroup({
       environmentId: ENV,
       worktreeId: WT,
       remotePageId: 'host-browser-page'
@@ -4278,7 +4278,7 @@ describe('applyWebSessionTabsSnapshot', () => {
     applyWebSessionTabsSnapshot(makeState(), makeSnapshot([]), ENV, NOW)
 
     expect(
-      getWebSessionBrowserPlacementGroup({
+      takeWebSessionBrowserPlacementGroup({
         environmentId: ENV,
         worktreeId: WT,
         remotePageId: 'host-browser-page'
@@ -4371,7 +4371,7 @@ describe('applyWebSessionTabsSnapshot', () => {
     const unifiedTab: Tab = {
       id: 'local-browser-unified',
       entityId: workspace.id,
-      groupId: 'host-group-1',
+      groupId: 'client-moved-group',
       worktreeId: WT,
       contentType: 'browser',
       label: 'New Tab',
@@ -4394,7 +4394,7 @@ describe('applyWebSessionTabsSnapshot', () => {
         groupsByWorktree: {
           [WT]: [
             {
-              id: 'host-group-1',
+              id: 'client-moved-group',
               worktreeId: WT,
               activeTabId: unifiedTab.id,
               tabOrder: [unifiedTab.id],
@@ -4439,6 +4439,7 @@ describe('applyWebSessionTabsSnapshot', () => {
         title: 'Example Domain'
       }
     ])
+    expect(patch.unifiedTabsByWorktree?.[WT]?.[0]?.groupId).toBe('client-moved-group')
     // Absent key, not a missing handle: the seeded { ENV, 'host-browser-page' } handle matched.
     expect(patch.remoteBrowserPageHandlesByPageId).toBeUndefined()
     expect(patch.unifiedTabsByWorktree?.[WT]?.map((tab) => tab.id)).toEqual([

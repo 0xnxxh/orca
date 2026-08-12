@@ -1,6 +1,7 @@
 /* eslint-disable max-lines */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeMobileSessionTabsResult } from '../../../shared/runtime-types'
+import type * as RuntimeRpcClientModule from './runtime-rpc-client'
 import {
   activateWebRuntimeSessionWorktree,
   activateWebRuntimeSessionTab,
@@ -34,7 +35,7 @@ import {
   resetWebAgentSessionHandoffsForTests
 } from './web-agent-session-handoff'
 import { toRuntimeExecutionHostId } from '../../../shared/execution-host'
-import { BROWSER_TAB_CREATE_IDEMPOTENCY_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
+import { BROWSER_DETERMINISTIC_PAGE_CREATE_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
 import {
   isWebSessionBrowserPlacementGroupReserved,
   resetWebSessionBrowserPlacementsForTests
@@ -55,7 +56,8 @@ const mocks = vi.hoisted(() => ({
   trackTerminalPaneSplit: vi.fn(),
   deliverLaunchPromptToAgentTab: vi.fn(),
   seedNativeChatLaunchDraftForAgentTab: vi.fn(),
-  getRuntimeEnvironmentIdForWorktree: vi.fn()
+  getRuntimeEnvironmentIdForWorktree: vi.fn(),
+  getRuntimeEnvironmentStatus: vi.fn()
 }))
 
 vi.mock('../store', () => ({
@@ -71,6 +73,11 @@ vi.mock('./web-session-tabs-sync', () => ({
   applyWebSessionTabsStorePatch: (buildPatch: (state: unknown) => unknown) =>
     mocks.setState(buildPatch),
   resolveHostSessionTabIdForWebSessionTab: mocks.resolveHostSessionTabIdForWebSessionTab
+}))
+
+vi.mock('./runtime-rpc-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof RuntimeRpcClientModule>()),
+  getRuntimeEnvironmentStatus: mocks.getRuntimeEnvironmentStatus
 }))
 
 vi.mock('@/lib/feature-education-telemetry', () => ({
@@ -282,12 +289,17 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     mocks.applyFreshWebSessionTabsSnapshot.mockReturnValue({ state: 'after' })
     mocks.resolveHostSessionTabIdForWebSessionTab.mockReturnValue(null)
     mocks.deliverLaunchPromptToAgentTab.mockResolvedValue(true)
+    mocks.getRuntimeEnvironmentStatus.mockResolvedValue({
+      runtimeId: 'runtime-1',
+      capabilities: [BROWSER_DETERMINISTIC_PAGE_CREATE_RUNTIME_CAPABILITY]
+    })
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
     clearRuntimeCompatibilityCacheForTests()
     resetWebSessionBrowserPlacementsForTests()
+    resetWebSessionFocusIntentForTests()
     vi.clearAllMocks()
   })
 
@@ -335,7 +347,7 @@ describe('createWebRuntimeSessionBrowserTab', () => {
         // headless host marks it active in the session snapshot.
         activate: true,
         waitForRegistration: false,
-        clientOperationId: expect.any(String)
+        requestedPageId: expect.any(String)
       },
       timeoutMs: 15_000
     })
@@ -352,38 +364,14 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       snapshot,
       ENVIRONMENT_ID
     )
-    expect(mocks.createBrowserTab).toHaveBeenCalledWith(WORKTREE_ID, 'https://example.com/', {
-      title: 'https://example.com/',
-      focusAddressBar: true,
-      browserRuntimeEnvironmentId: ENVIRONMENT_ID
-    })
-    expect(mocks.setRemoteBrowserPageHandle).toHaveBeenCalledWith('local-page-1', {
-      environmentId: ENVIRONMENT_ID,
-      remotePageId: 'remote-browser-page-1'
-    })
+    expect(mocks.getRuntimeEnvironmentStatus).toHaveBeenCalledWith(ENVIRONMENT_ID, 15_000)
+    expect(mocks.createBrowserTab).not.toHaveBeenCalled()
   })
 
-  it('retries an ambiguous create with the same operation id on a capable host', async () => {
+  it('retries an ambiguous create with the same page identity on a capable host', async () => {
     let createAttempts = 0
     const runtimeCall = vi.fn(
       async (request: { method: string; params?: Record<string, string> }) => {
-        if (request.method === 'status.get') {
-          return {
-            id: 'status',
-            ok: true,
-            result: {
-              runtimeId: 'runtime-1',
-              rendererGraphEpoch: 1,
-              graphStatus: 'ready',
-              authoritativeWindowId: null,
-              liveTabCount: 0,
-              liveLeafCount: 0,
-              runtimeProtocolVersion: 3,
-              minCompatibleRuntimeClientVersion: 2,
-              capabilities: [BROWSER_TAB_CREATE_IDEMPOTENCY_RUNTIME_CAPABILITY]
-            }
-          }
-        }
         if (request.method === 'browser.tabCreate' && createAttempts++ === 0) {
           return {
             id: 'create-lost',
@@ -411,10 +399,154 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       ([request]) => request.method === 'browser.tabCreate'
     )
     expect(createCalls).toHaveLength(2)
-    expect(createCalls[1]?.[0].params?.clientOperationId).toBe(
-      createCalls[0]?.[0].params?.clientOperationId
+    expect(createCalls[1]?.[0].params?.requestedPageId).toBe(
+      createCalls[0]?.[0].params?.requestedPageId
     )
-    expect(mocks.createBrowserTab).toHaveBeenCalledOnce()
+    expect(mocks.createBrowserTab).not.toHaveBeenCalled()
+  })
+
+  it('creates a deterministic page in non-secure LAN contexts without randomUUID', async () => {
+    vi.stubGlobal('crypto', {
+      getRandomValues: (bytes: Uint8Array) => {
+        bytes.fill(7)
+        return bytes
+      }
+    })
+    const runtimeCall = vi.fn(
+      async (request: { method: string; params?: { requestedPageId?: string } }) => {
+        if (request.method === 'browser.tabCreate') {
+          return {
+            id: 'create',
+            ok: true,
+            result: { browserPageId: request.params?.requestedPageId }
+          }
+        }
+        return { id: 'list', ok: true, result: makeSnapshot() }
+      }
+    )
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    await expect(
+      createWebRuntimeSessionBrowserTab({ worktreeId: WORKTREE_ID, url: 'https://example.com/' })
+    ).resolves.toBe(true)
+
+    const createRequest = runtimeCall.mock.calls.find(
+      ([request]) => request.method === 'browser.tabCreate'
+    )
+    expect(createRequest?.[0].params?.requestedPageId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    )
+  })
+
+  it('does not let a slow browser create replace a newer browser selection', async () => {
+    let resolveCreate!: (response: unknown) => void
+    const createResponse = new Promise((resolve) => {
+      resolveCreate = resolve
+    })
+    mocks.resolveHostSessionTabIdForWebSessionTab.mockReturnValue('newer-host-browser')
+    const runtimeCall = vi.fn(async (request: { method: string }) => {
+      if (request.method === 'browser.tabCreate') {
+        return createResponse
+      }
+      if (request.method === 'session.tabs.activate') {
+        return { id: 'activate', ok: true, result: {} }
+      }
+      return { id: 'list', ok: true, result: makeSnapshot() }
+    })
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    const pendingCreate = createWebRuntimeSessionBrowserTab({ worktreeId: WORKTREE_ID })
+    await vi.waitFor(() =>
+      expect(
+        runtimeCall.mock.calls.some(([request]) => request.method === 'browser.tabCreate')
+      ).toBe(true)
+    )
+    await activateWebRuntimeSessionTab({
+      worktreeId: WORKTREE_ID,
+      tabId: 'newer-local-browser'
+    })
+    resolveCreate({
+      id: 'create',
+      ok: true,
+      result: { browserPageId: 'created-host-browser' }
+    })
+    await expect(pendingCreate).resolves.toBe(true)
+
+    expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toEqual({
+      hostTabId: 'newer-host-browser'
+    })
+  })
+
+  it('does not retry an ambiguous create on a host without deterministic identity', async () => {
+    mocks.getRuntimeEnvironmentStatus.mockResolvedValue({
+      runtimeId: 'runtime-1',
+      capabilities: []
+    })
+    const runtimeCall = vi.fn().mockResolvedValue({
+      id: 'create-lost',
+      ok: false,
+      error: { code: 'remote_runtime_unavailable', message: 'response lost' }
+    })
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    await expect(
+      createWebRuntimeSessionBrowserTab({ worktreeId: WORKTREE_ID, url: 'https://example.com/' })
+    ).resolves.toBe(false)
+
+    expect(runtimeCall).toHaveBeenCalledOnce()
+    expect(mocks.createBrowserTab).not.toHaveBeenCalled()
+  })
+
+  it('adopts the deterministic page after both create replies are lost', async () => {
+    let snapshotApplied = false
+    mocks.getState.mockImplementation(() => ({
+      settings: { activeRuntimeEnvironmentId: ENVIRONMENT_ID },
+      activeWorktreeId: WORKTREE_ID,
+      browserPagesByWorkspace: snapshotApplied
+        ? { 'browser-workspace': [{ id: 'local-page', workspaceId: 'browser-workspace' }] }
+        : {},
+      remoteBrowserPageHandlesByPageId: snapshotApplied
+        ? {
+            'local-page': {
+              environmentId: ENVIRONMENT_ID,
+              remotePageId: '07070707-0707-4707-8707-070707070707'
+            }
+          }
+        : {},
+      closeEmptyGroup: mocks.closeEmptyGroup,
+      setActiveWorktree: mocks.setActiveWorktree
+    }))
+    vi.stubGlobal('crypto', {
+      getRandomValues: (bytes: Uint8Array) => {
+        bytes.fill(7)
+        return bytes
+      }
+    })
+    let createAttempts = 0
+    const runtimeCall = vi.fn(async (request: { method: string }) => {
+      if (request.method === 'browser.tabCreate') {
+        createAttempts += 1
+        return {
+          id: `create-lost-${createAttempts}`,
+          ok: false,
+          error: { code: 'remote_runtime_unavailable', message: 'response lost' }
+        }
+      }
+      snapshotApplied = true
+      return { id: 'list', ok: true, result: makeSnapshot() }
+    })
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    await expect(
+      createWebRuntimeSessionBrowserTab({
+        worktreeId: WORKTREE_ID,
+        clientTargetGroupId: 'preview-group',
+        clientTargetGroupCreated: true
+      })
+    ).resolves.toBe(true)
+
+    expect(createAttempts).toBe(2)
+    expect(mocks.closeEmptyGroup).not.toHaveBeenCalled()
   })
 
   it('keeps the requested split reserved until a pre-published browser gains a unified tab', async () => {
@@ -714,7 +846,7 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     expect(mocks.setRemoteBrowserPageHandle).not.toHaveBeenCalled()
   })
 
-  it('uses renderer-local staged presentation without changing the RPC shape', async () => {
+  it('keeps client presentation fields out of the RPC shape', async () => {
     const runtimeCall = vi
       .fn()
       .mockResolvedValueOnce({
@@ -736,15 +868,7 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       })
     ).resolves.toBe(true)
 
-    expect(mocks.createBrowserTab).toHaveBeenCalledWith(
-      WORKTREE_ID,
-      'https://example.com/?q=private',
-      {
-        title: 'Search Google',
-        focusAddressBar: false,
-        browserRuntimeEnvironmentId: ENVIRONMENT_ID
-      }
-    )
+    expect(mocks.createBrowserTab).not.toHaveBeenCalled()
     expect(runtimeCall.mock.calls[0][0].params).not.toHaveProperty('stagedTitle')
   })
 

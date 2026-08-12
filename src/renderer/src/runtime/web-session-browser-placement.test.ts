@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   clearWebSessionBrowserPlacementsForEnvironment,
   clearWebSessionBrowserPlacementsForWorktree,
-  getWebSessionBrowserPlacementGroup,
+  forgetWebSessionBrowserPlacement,
   isWebSessionBrowserPlacementGroupReserved,
   recordWebSessionBrowserPlacement,
-  reserveWebSessionBrowserPlacementGroup,
-  resetWebSessionBrowserPlacementsForTests
+  resetWebSessionBrowserPlacementsForTests,
+  takeWebSessionBrowserPlacementGroup
 } from './web-session-browser-placement'
 
 const ENVIRONMENT_ID = 'environment-1'
@@ -15,7 +15,44 @@ const WORKTREE_ID = 'worktree-1'
 afterEach(resetWebSessionBrowserPlacementsForTests)
 
 describe('web session browser placement', () => {
-  it('bounds pending page placements and group reservations', () => {
+  it('keeps a shared target group reserved until every pending page settles', () => {
+    for (const remotePageId of ['page-1', 'page-2']) {
+      recordWebSessionBrowserPlacement({
+        environmentId: ENVIRONMENT_ID,
+        worktreeId: WORKTREE_ID,
+        remotePageId,
+        groupId: 'preview-group'
+      })
+    }
+
+    forgetWebSessionBrowserPlacement({
+      environmentId: ENVIRONMENT_ID,
+      worktreeId: WORKTREE_ID,
+      remotePageId: 'page-1'
+    })
+    expect(
+      isWebSessionBrowserPlacementGroupReserved({
+        environmentId: ENVIRONMENT_ID,
+        worktreeId: WORKTREE_ID,
+        groupId: 'preview-group'
+      })
+    ).toBe(true)
+
+    forgetWebSessionBrowserPlacement({
+      environmentId: ENVIRONMENT_ID,
+      worktreeId: WORKTREE_ID,
+      remotePageId: 'page-2'
+    })
+    expect(
+      isWebSessionBrowserPlacementGroupReserved({
+        environmentId: ENVIRONMENT_ID,
+        worktreeId: WORKTREE_ID,
+        groupId: 'preview-group'
+      })
+    ).toBe(false)
+  })
+
+  it('bounds pending page placements', () => {
     for (let index = 0; index < 129; index += 1) {
       recordWebSessionBrowserPlacement({
         environmentId: ENVIRONMENT_ID,
@@ -23,15 +60,10 @@ describe('web session browser placement', () => {
         remotePageId: `page-${index}`,
         groupId: `group-${index}`
       })
-      reserveWebSessionBrowserPlacementGroup({
-        environmentId: ENVIRONMENT_ID,
-        worktreeId: WORKTREE_ID,
-        groupId: `group-${index}`
-      })
     }
 
     expect(
-      getWebSessionBrowserPlacementGroup({
+      takeWebSessionBrowserPlacementGroup({
         environmentId: ENVIRONMENT_ID,
         worktreeId: WORKTREE_ID,
         remotePageId: 'page-0'
@@ -45,7 +77,7 @@ describe('web session browser placement', () => {
       })
     ).toBe(false)
     expect(
-      getWebSessionBrowserPlacementGroup({
+      takeWebSessionBrowserPlacementGroup({
         environmentId: ENVIRONMENT_ID,
         worktreeId: WORKTREE_ID,
         remotePageId: 'page-128'
@@ -61,22 +93,12 @@ describe('web session browser placement', () => {
         remotePageId: `page-${index}`,
         groupId: `group-${index}`
       })
-      reserveWebSessionBrowserPlacementGroup({
-        environmentId: ENVIRONMENT_ID,
-        worktreeId: WORKTREE_ID,
-        groupId: `group-${index}`
-      })
     }
 
     recordWebSessionBrowserPlacement({
       environmentId: ENVIRONMENT_ID,
       worktreeId: WORKTREE_ID,
       remotePageId: 'page-127',
-      groupId: 'group-127'
-    })
-    reserveWebSessionBrowserPlacementGroup({
-      environmentId: ENVIRONMENT_ID,
-      worktreeId: WORKTREE_ID,
       groupId: 'group-127'
     })
 
@@ -88,7 +110,7 @@ describe('web session browser placement', () => {
       })
     ).toBe(true)
     expect(
-      getWebSessionBrowserPlacementGroup({
+      takeWebSessionBrowserPlacementGroup({
         environmentId: ENVIRONMENT_ID,
         worktreeId: WORKTREE_ID,
         remotePageId: 'page-0'
@@ -108,24 +130,19 @@ describe('web session browser placement', () => {
         remotePageId: `page-${suffix}`,
         groupId: `group-${suffix}`
       })
-      reserveWebSessionBrowserPlacementGroup({
-        environmentId,
-        worktreeId,
-        groupId: `group-${suffix}`
-      })
     }
 
     clearWebSessionBrowserPlacementsForWorktree(ENVIRONMENT_ID, WORKTREE_ID)
 
     expect(
-      getWebSessionBrowserPlacementGroup({
+      takeWebSessionBrowserPlacementGroup({
         environmentId: ENVIRONMENT_ID,
         worktreeId: WORKTREE_ID,
         remotePageId: 'page-target'
       })
     ).toBeUndefined()
     expect(
-      getWebSessionBrowserPlacementGroup({
+      takeWebSessionBrowserPlacementGroup({
         environmentId: ENVIRONMENT_ID,
         worktreeId: 'worktree-2',
         remotePageId: 'page-sibling'
@@ -135,7 +152,7 @@ describe('web session browser placement', () => {
     clearWebSessionBrowserPlacementsForEnvironment('environment-2')
 
     expect(
-      getWebSessionBrowserPlacementGroup({
+      takeWebSessionBrowserPlacementGroup({
         environmentId: 'environment-2',
         worktreeId: WORKTREE_ID,
         remotePageId: 'page-other-environment'

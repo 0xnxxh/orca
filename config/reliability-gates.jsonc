@@ -1378,19 +1378,20 @@
       "providers": ["remote-runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["remote-runtime"],
-      "coverageNotes": "A headed macOS desktop host and separate paired web client exercise the Explorer eye-button path with a real remote file URL, host browser DOM, renderer split layout, terminal focus transitions, and browser close. Unit contracts cover routing, pre-publication split retention, exact page placement, bounded bookkeeping, teardown, and capability-gated response-loss replay with one host page. Linux, Windows, a live headless-server journey, and multiple simultaneous viewers remain gaps.",
+      "coverageNotes": "A headed macOS desktop host and separate paired web client exercise the Explorer eye-button path with a real remote file URL, host browser DOM, renderer split layout, terminal focus transitions, and browser close. Unit contracts cover routing, one-shot split placement, manual moves, overlapping opens, teardown, non-secure LAN UUID generation, and capability-gated deterministic headless page creation after response loss. Linux, Windows, and a live headless-server journey remain gaps.",
       "motivatingLinks": [
         "https://linear.app/stably/issue/STA-3872/unable-to-open-html-files-in-remote-server",
         "https://github.com/stablyai/orca/pull/13876"
       ],
       "invariant": "Opening one HTML preview from a paired client creates exactly one browser page on the worktree-owning runtime and exactly one mirrored client browser workspace. The preview remains in the requested client-side split, activating it remains authoritative after a terminal was active, and closing it removes only the browser identities while the source editor and terminal survive.",
-      "oracle": "Open a real HTML file through Explorer on a separate client paired to an isolated headed desktop host. Require one new host browser tab, one client browser workspace and unified tab, two visible split groups, an exact client-handle-to-host-page identity, rendered fixture DOM, host and client browser focus after a terminal-to-browser click, and browser-only close convergence with the editor and terminal still visible. Separately drop the first create response and replay the same operation ID, requiring one physical host page. Run the byte-identical Electron test on latest main, the candidate, and the candidate with its fix reverted.",
+      "oracle": "Open a real HTML file through Explorer on a separate client paired to an isolated headed desktop host. Require one new host browser tab, one client browser workspace and unified tab, two visible split groups, an exact client-handle-to-host-page identity, rendered fixture DOM, host and client browser focus after a terminal-to-browser click, and browser-only close convergence with the editor and terminal still visible. Separately drop create responses and retry the same requested page identity, requiring one physical headless page. Run the byte-identical Electron test on latest main, the candidate, and the candidate with its fix reverted.",
       "commands": [
-        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime-browser.test.ts src/main/runtime/rpc/methods/browser.test.ts src/renderer/src/lib/file-preview.test.ts src/renderer/src/runtime/web-session-browser-placement.test.ts src/renderer/src/runtime/web-runtime-session.test.ts src/renderer/src/runtime/web-session-tabs-sync.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/browser/offscreen-browser-backend.test.ts src/main/runtime/orca-runtime-browser.test.ts src/main/runtime/rpc/methods/browser.test.ts src/renderer/src/lib/file-preview.test.ts src/renderer/src/runtime/web-session-browser-placement.test.ts src/renderer/src/runtime/web-runtime-session.test.ts src/renderer/src/runtime/web-session-tabs-sync.test.ts",
         "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
         "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1 --repeat-each=3"
       ],
       "testFiles": [
+        "src/main/browser/offscreen-browser-backend.test.ts",
         "src/main/runtime/orca-runtime-browser.test.ts",
         "src/main/runtime/rpc/methods/browser.test.ts",
         "src/renderer/src/lib/file-preview.test.ts",
@@ -1401,16 +1402,13 @@
       ],
       "assertionRefs": [
         {
-          "file": "src/main/runtime/orca-runtime-browser.test.ts",
-          "assertions": [
-            "concurrent and completed replays of one operation ID create one host page",
-            "operation ID reuse with changed input is rejected"
-          ]
+          "file": "src/main/browser/offscreen-browser-backend.test.ts",
+          "assertions": ["retrying one requested page identity returns one physical offscreen page"]
         },
         {
           "file": "src/renderer/src/runtime/web-session-browser-placement.test.ts",
           "assertions": [
-            "pending placements and reservations are bounded",
+            "pending page placements are bounded and independently reserve shared groups",
             "worktree and environment teardown clear only their own placement state"
           ]
         },
@@ -1419,7 +1417,7 @@
           "assertions": [
             "a host browser page stays in its exact client-owned preview group",
             "a reserved empty split survives a pre-publication host snapshot",
-            "placement is forgotten after the host page disappears"
+            "later client moves supersede initial preview placement"
           ]
         },
         {
@@ -1438,26 +1436,8 @@
           "platform": "macos",
           "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1 --repeat-each=3",
           "result": "passed",
-          "durationSeconds": 30.4,
-          "summary": "Three consecutive pre-rebase candidate runs passed after a fresh build, following one prior independent pass. Each proved exact host/client cardinality, split stability, rendered DOM, focus authority, close convergence, and surviving editor and terminal."
-        },
-        {
-          "date": "2026-08-12",
-          "runner": "local",
-          "platform": "macos",
-          "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
-          "result": "passed",
-          "durationSeconds": 16.0,
-          "summary": "Candidate rebased onto origin/main 7319d59a103311a5fbf3affb5d293f3ba1b9594a passed exact host/client cardinality, split, DOM, focus, close, and unrelated-tab survival gates."
-        },
-        {
-          "date": "2026-08-12",
-          "runner": "local",
-          "platform": "macos",
-          "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
-          "result": "failed",
-          "durationSeconds": 11.1,
-          "summary": "Both latest origin/main and the candidate with its fix commit reverted created two matching client browser workspaces for one HTML open, failing the uniqueness assertion."
+          "durationSeconds": 16.1,
+          "summary": "Deterministic-identity candidate on merge-base 7319d59a103311a5fbf3affb5d293f3ba1b9594a passed exact host/client cardinality, split stability, rendered DOM, focus authority, close convergence, and surviving editor and terminal."
         }
       ],
       "runtimeBudget": {
@@ -1466,15 +1446,15 @@
       },
       "flakeHistory": {
         "status": "unknown",
-        "evidence": "The candidate passed five local macOS runs, including one after rebasing onto origin/main 7319d59a103311a5fbf3affb5d293f3ba1b9594a; longer CI and soak history is not yet available."
+        "evidence": "The deterministic-identity candidate passed one local macOS Electron run on merge-base 7319d59a103311a5fbf3affb5d293f3ba1b9594a; longer CI and soak history is not yet available."
       },
       "redGreenEvidence": {
-        "status": "complete",
-        "evidence": "The same committed Electron oracle is red on the previously tested origin/main and on the candidate with its fix commit reverted because one action creates two client browser workspaces. It is green on the candidate in five runs through uniqueness, split, DOM, focus, close, and unrelated-tab survival gates; the latest green run used merge-base 7319d59a103311a5fbf3affb5d293f3ba1b9594a."
+        "status": "partial",
+        "evidence": "The deterministic-identity candidate is green on merge-base 7319d59a103311a5fbf3affb5d293f3ba1b9594a. Byte-identical latest-main and final candidate-with-fix-disabled red controls remain required after the final rebase."
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "The change adds no timer, polling, subprocess, RPC method, stream opcode, or host publication. One optional create-operation field is capability-gated for mixed versions. Host receipts, page placements, and split reservations are each capped at 128; placement state is pruned on page disappearance and worktree/environment teardown."
+        "evidence": "The change adds no timer, polling, subprocess, RPC method, stream opcode, receipt ledger, or host publication. One optional requested-page field is capability-gated for mixed versions. Pending client placements are capped at 128 and cleared on adoption or worktree/environment teardown."
       },
       "promotionCriteria": [
         "Collect Linux and physical Windows paired-server evidence.",

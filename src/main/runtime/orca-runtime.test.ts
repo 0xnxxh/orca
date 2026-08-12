@@ -2182,6 +2182,7 @@ describe('OrcaRuntimeService', () => {
     expect(capabilities).toContain('browser.screencast.v1')
     // ...and the headless marker tells clients not to fall back to a local tab.
     expect(capabilities).toContain('browser.headless.v1')
+    expect(capabilities).toContain('browser.deterministic-page-create.v1')
     expect(capabilities).toContain('browser.certificate-trust.v1')
   })
   it('surfaces live offscreen load failures in headless browser snapshots', () => {
@@ -2307,6 +2308,7 @@ describe('OrcaRuntimeService', () => {
     runtime.setOffscreenBrowserBackend({ createTab: vi.fn(), closeTab: vi.fn() })
 
     expect(runtime.getStatus().capabilities).not.toContain('browser.headless.v1')
+    expect(runtime.getStatus().capabilities).not.toContain('browser.deterministic-page-create.v1')
     // Desktop webviews still host certificate trust, so the proceed capability stays advertised for remote clients controlling those pages.
     expect(runtime.getStatus().capabilities).toContain('browser.certificate-trust.v1')
   })
