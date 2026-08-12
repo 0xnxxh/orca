@@ -664,7 +664,9 @@ does not mean the surrounding phase is complete.
 - [x] Store its connection URL in Secret Manager as `orca-cloud-skills-database-url`.
 - [x] Attach the existing Cloud SQL instance to `orca-cloud-api` without replacing the service.
 - [x] Inject only the skill database secret into the API service.
-- [ ] Verify backups and point-in-time recovery cover the new database.
+- [x] Verify backups and point-in-time recovery cover the new database. `orca_skills` shares the
+      Terraform-managed Cloud SQL instance whose live staging and production settings both have
+      backups, replication-log archiving, seven retained backups, and seven-day PITR enabled.
 
 ### IAM
 
@@ -740,8 +742,10 @@ does not mean the surrounding phase is complete.
       after exact-link bearer authorization or to owners.
 - [x] Keep contained skills out of separate database rows and search indexes. Selective inspection
       reads the validated manifest attached to the exact immutable version.
-- [ ] Keep detailed file identity in the in-archive manifest rather than duplicating it into GCS
-      custom metadata.
+- [x] Keep detailed file identity in the in-archive manifest rather than duplicating it into GCS
+      custom metadata. Published-object metadata contains only aggregate archive/package digests
+      and immutable generation identity; per-file paths, sizes, modes, and hashes remain inside the
+      authorized archive manifest and immutable PostgreSQL version record.
 - [ ] Test forward migration, rollback strategy, backup restoration, and migration compatibility
       during mixed API versions.
 
@@ -1298,7 +1302,11 @@ still require the listed split metrics, latency panels, and alerts.
 
 ### Launch operations
 
-- [ ] Keep upload grants, download grants, and remote installation independently controllable.
+- [x] Keep upload grants, download grants, and remote installation independently controllable.
+      Separate Terraform-owned Cloud Run variables gate upload/finalize/share publication,
+      download grants, and remote-target grants. Route tests prove each narrow control while local
+      grants remain available when only remote installation is disabled; staging advertises all
+      three explicit controls.
 - [ ] Disable the affected operation on unexplained digest mismatch, archive containment failure, data leak,
       unrecoverable local mutation, or cross-tenant authorization defect.
 - [ ] Publish user documentation for sharing, access, install destinations, updates, rollback,
