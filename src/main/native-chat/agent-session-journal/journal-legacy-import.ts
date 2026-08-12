@@ -41,6 +41,7 @@ export type LegacyImportOptions = ResolveSessionFileOptions & {
   /** Resolve directly to this file, skipping path discovery. */
   filePath?: string
   limits?: JournalPayloadLimits
+  decodedMessageIdentities?: true
 }
 
 export type LegacyImportResult =
@@ -100,7 +101,8 @@ export async function importLegacyTranscriptIntoJournal(input: {
       filePath,
       transcriptAgent,
       agent: input.agent,
-      sessionId: input.sessionId
+      sessionId: input.sessionId,
+      decodedMessageIdentities: options.decodedMessageIdentities
     })
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -140,6 +142,7 @@ async function decodeWithIdentities(input: {
   transcriptAgent: keyof typeof TRANSCRIPT_DECODERS
   agent: AgentType
   sessionId: string
+  decodedMessageIdentities?: true
 }): Promise<{ messages: NativeChatMessage[]; identities: AgentJournalItemIdentity[] }> {
   const tracker = createLegacyIdentityTracker({
     transcriptAgent: input.transcriptAgent,
@@ -156,11 +159,20 @@ async function decodeWithIdentities(input: {
     input.filePath,
     0,
     (line, fallbackId) => {
-      const identity = tracker.identify(line, lineIndex)
+      const trackedIdentity = tracker.identify(line, lineIndex)
       lineIndex += 1
       const message = decode(line, fallbackId)
       if (message) {
-        identities.push(identity)
+        identities.push(
+          input.decodedMessageIdentities
+            ? {
+                provider: 'legacy',
+                agent: input.agent,
+                sessionId: input.sessionId,
+                recordId: message.id
+              }
+            : trackedIdentity
+        )
       }
       return message
     },

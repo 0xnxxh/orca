@@ -58,6 +58,9 @@ let operations: number
 let prepareTuiHistoryCatchup: ReturnType<
   typeof vi.fn<(sessionId: string, fence: number) => Promise<void>>
 >
+let recoverTuiHistoryCatchup: ReturnType<
+  typeof vi.fn<(sessionId: string, fence: number) => Promise<void>>
+>
 let activateTuiHistoryCatchup: ReturnType<typeof vi.fn<(sessionId: string) => Promise<void>>>
 let stopTuiHistoryCatchup: ReturnType<typeof vi.fn<(sessionId: string) => void>>
 
@@ -226,6 +229,7 @@ function createCoordinator(): StructuredAgentSessionHandoffCoordinator {
       )
     },
     prepareTuiHistoryCatchup,
+    recoverTuiHistoryCatchup,
     activateTuiHistoryCatchup,
     stopTuiHistoryCatchup,
     publish: (_sessionId, status) => statuses.push(status),
@@ -261,6 +265,7 @@ beforeEach(async () => {
   nativeAcquireFailure = null
   acquireNativeCalls = 0
   prepareTuiHistoryCatchup = vi.fn(async () => undefined)
+  recoverTuiHistoryCatchup = vi.fn(async () => undefined)
   activateTuiHistoryCatchup = vi.fn(async () => undefined)
   stopTuiHistoryCatchup = vi.fn()
   stopRecoveredOwner = vi.fn(async () => undefined)
@@ -495,6 +500,10 @@ describe('structured session ownership handoff', () => {
       handoffStage: null
     })
     expect(coordinator.status(SESSION)).toMatchObject({ owner: 'tui', phase: 'idle' })
+    expect(recoverTuiHistoryCatchup).toHaveBeenCalledWith(
+      SESSION,
+      store.getRecord(SESSION)?.lease.runtimeFence
+    )
   })
 
   it('clears stale recovery after re-proving the live TUI owner', async () => {
@@ -508,6 +517,7 @@ describe('structured session ownership handoff', () => {
       now: NOW
     })
     coordinator = createCoordinator()
+    recoverTuiHistoryCatchup.mockClear()
 
     await coordinator.restore(SESSION)
     expect(coordinator.status(SESSION)).toMatchObject({
@@ -517,6 +527,7 @@ describe('structured session ownership handoff', () => {
       terminal: { handle: 'term-tui' }
     })
     expect(reproveTuiOwner).toHaveBeenCalledOnce()
+    expect(recoverTuiHistoryCatchup).toHaveBeenCalledWith(SESSION, record.lease.runtimeFence)
     expect(store.getRecord(SESSION)?.lease).toMatchObject({
       runtimeKind: 'tui',
       claimStatus: 'live',

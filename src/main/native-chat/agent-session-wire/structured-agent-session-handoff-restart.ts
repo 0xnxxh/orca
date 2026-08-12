@@ -268,7 +268,7 @@ async function startRecoveredTuiCatchup(
   input: RestartAccess,
   record: AgentSessionRecord
 ): Promise<void> {
-  await input.deps.prepareTuiHistoryCatchup?.(record.sessionId, record.lease.runtimeFence)
+  await input.deps.recoverTuiHistoryCatchup?.(record.sessionId, record.lease.runtimeFence)
   await input.deps.activateTuiHistoryCatchup?.(record.sessionId)
 }
 

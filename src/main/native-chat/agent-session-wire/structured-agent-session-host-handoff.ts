@@ -47,6 +47,10 @@ export function createStructuredAgentSessionHostHandoff(
       const session = host.session(sessionId)
       host.subscribers.publish(sessionId, session.journal)
     },
+    reset: (sessionId, fence) => {
+      const session = host.session(sessionId)
+      host.subscribers.reset(sessionId, session.journal, 'epoch_changed', fence)
+    },
     ...(deps.onEventSinkError ? { onError: deps.onEventSinkError } : {})
   })
   const coordinator = new StructuredAgentSessionHandoffCoordinator({
@@ -64,6 +68,7 @@ export function createStructuredAgentSessionHostHandoff(
       (await deps.adapter.cancelTurn({ sessionId, turnId, fence })).cancelled,
     importTuiHistory: (input) => importTuiHistory(deps, host, input),
     prepareTuiHistoryCatchup: (sessionId, fence) => tuiHistoryCatchup.prepare(sessionId, fence),
+    recoverTuiHistoryCatchup: (sessionId, fence) => tuiHistoryCatchup.recover(sessionId, fence),
     activateTuiHistoryCatchup: (sessionId) => tuiHistoryCatchup.activate(sessionId),
     stopTuiHistoryCatchup: (sessionId) => tuiHistoryCatchup.stop(sessionId),
     publish: (sessionId, status) => {

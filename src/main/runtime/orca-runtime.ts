@@ -2806,6 +2806,7 @@ export class OrcaRuntimeService {
   private readonly terminalFocusNavigationCoalescer =
     new TerminalFocusNavigationCoalescer<RuntimeTerminalFocus>()
   private pendingMobileSessionPtyInventoryRefresh: Promise<Set<string> | null> | null = null
+  private structuredAgentSessionTabRestorePromise: Promise<void> | null = null
   private leaves = new Map<string, RuntimeLeafRecord>()
   // Why: PTY output is a per-keystroke hot path. Looking up affected leaves by
   // ptyId keeps active TUI redraws independent of the total open terminal count.
@@ -9509,7 +9510,24 @@ export class OrcaRuntimeService {
     }
   }
 
-  async restoreStructuredAgentSessionTabs(): Promise<void> {
+  restoreStructuredAgentSessionTabs(): Promise<void> {
+    this.structuredAgentSessionTabRestorePromise ??=
+      this.restoreStructuredAgentSessionTabsOnce().catch((error) => {
+        this.structuredAgentSessionTabRestorePromise = null
+        throw error
+      })
+    return this.structuredAgentSessionTabRestorePromise
+  }
+
+  private async restoreStructuredAgentSessionTabsOnce(): Promise<void> {
+    for (const worktreeId of this.getKnownWorkspaceSessionWorktreeIds()) {
+      this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId, {
+        allowAttachedWindow: true,
+        onlyRuntimeOwnedTerminals: true
+      })
+    }
+    this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession()
+    await this.refreshMobileSessionPtyRecords()
     await this.ensureStructuredAgentSessionHost()
     const host = getStructuredAgentSessionHost()
     await host?.restoreReadableSessions()

@@ -1,13 +1,26 @@
+import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { NativeChatMessage } from '../../../shared/native-chat-types'
 import type { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
-import { appendLegacyTranscriptMessages } from '../agent-session-journal/journal-legacy-import'
+import {
+  appendLegacyTranscriptMessages,
+  importLegacyTranscriptIntoJournal
+} from '../agent-session-journal/journal-legacy-import'
 import { resolveSessionFilePath } from '../session-file-resolver'
+import {
+  readIncrementalTranscriptMessages,
+  type IncrementalTranscriptState
+} from '../transcript-incremental-reader'
+import { nativeChatLineDecoderForAgent } from '../transcript-tail-reader'
 import {
   subscribeNativeChatTranscript,
   type NativeChatTranscriptSubscription
 } from '../transcript-watch'
 import type { StructuredAgentSessionHostSession } from './structured-agent-session-host-types'
+import {
+  readStructuredTuiTranscriptBoundary,
+  writeStructuredTuiTranscriptBoundary
+} from './structured-tui-transcript-boundary'
 
 type CatchupState = {
   active: boolean
@@ -27,11 +40,20 @@ export class StructuredTuiTranscriptCatchup {
       session: (sessionId: string) => StructuredAgentSessionHostSession
       schedule: (sessionId: string, task: () => Promise<void>) => Promise<void>
       publish: (sessionId: string) => void
+      reset: (sessionId: string, fence: number) => void
       onError?: (input: { sessionId: string; error: unknown }) => void
     }
   ) {}
 
   async prepare(sessionId: string, fence: number): Promise<void> {
+    await this.start(sessionId, fence, false)
+  }
+
+  async recover(sessionId: string, fence: number): Promise<void> {
+    await this.start(sessionId, fence, true)
+  }
+
+  private async start(sessionId: string, fence: number, recovering: boolean): Promise<void> {
     this.stop(sessionId)
     const record = this.input.store.getRecord(sessionId)
     const head = record?.providerHandleChain.at(-1)
@@ -39,11 +61,17 @@ export class StructuredTuiTranscriptCatchup {
       return
     }
     const providerSessionId = head.handle.threadId
+    const journal = this.input.session(sessionId).journal
     const codexSessionsDirs = [join(record.accountHome.path, 'sessions')]
+    const boundary = recovering
+      ? await readStructuredTuiTranscriptBoundary(journal.directory)
+      : null
     const filePath = await resolveSessionFilePath('codex', providerSessionId, {
-      codexSessionsDirs
+      codexSessionsDirs,
+      ...(boundary?.filePath ? { transcriptPath: boundary.filePath } : {})
     })
     let initialReady: (() => void) | null = null
+    let baselineOffset = 0
     const ready = filePath ? new Promise<void>((resolve) => (initialReady = resolve)) : null
     const state: CatchupState = {
       active: false,
@@ -61,7 +89,8 @@ export class StructuredTuiTranscriptCatchup {
         sessionId: providerSessionId,
         codexSessionsDirs,
         ...(filePath ? { filePath, initialLimit: 0 } : {}),
-        onInitialSnapshot: (messages) => {
+        onInitialSnapshot: (messages, _hasMore, beforeOffset) => {
+          baselineOffset = beforeOffset
           receive(messages)
           initialReady?.()
           initialReady = null
@@ -69,6 +98,33 @@ export class StructuredTuiTranscriptCatchup {
         onAppend: receive
       })
       await ready
+      if (!recovering) {
+        await writeStructuredTuiTranscriptBoundary(journal.directory, {
+          providerSessionId,
+          runtimeFence: fence,
+          filePath,
+          offset: baselineOffset
+        })
+      } else if (
+        filePath &&
+        boundary?.providerSessionId === providerSessionId &&
+        boundary.runtimeFence === fence &&
+        boundary.filePath === filePath
+      ) {
+        await this.readRecoveryGap(sessionId, state, filePath, boundary.offset)
+      } else if (filePath) {
+        const imported = await importLegacyTranscriptIntoJournal({
+          journal,
+          agent: 'codex',
+          sessionId: providerSessionId,
+          fence,
+          options: { filePath, decodedMessageIdentities: true }
+        })
+        if (!imported.ok) {
+          throw new Error(imported.error)
+        }
+        this.input.reset(sessionId, fence)
+      }
     } catch (error) {
       if (this.states.get(sessionId) === state) {
         this.states.delete(sessionId)
@@ -76,6 +132,45 @@ export class StructuredTuiTranscriptCatchup {
       state.subscription?.unsubscribe()
       throw error
     }
+  }
+
+  private async readRecoveryGap(
+    sessionId: string,
+    state: CatchupState,
+    filePath: string,
+    offset: number
+  ): Promise<void> {
+    let size: number
+    try {
+      size = (await stat(filePath)).size
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return
+      }
+      throw error
+    }
+    const start = offset <= size ? offset : 0
+    const incremental: IncrementalTranscriptState = {
+      offset: start,
+      pendingChunks: [],
+      pendingStart: start,
+      pendingBytes: 0,
+      droppingOversizedRecord: false
+    }
+    const decode = nativeChatLineDecoderForAgent('codex')
+    if (!decode) {
+      throw new Error('Transcript unavailable')
+    }
+    let messages: NativeChatMessage[]
+    try {
+      messages = await readIncrementalTranscriptMessages(filePath, incremental, decode)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return
+      }
+      throw error
+    }
+    this.receive(sessionId, state, messages)
   }
 
   async activate(sessionId: string): Promise<void> {
@@ -130,7 +225,14 @@ export class StructuredTuiTranscriptCatchup {
     ) {
       return
     }
-    const fresh = messages.filter((message) => !state.seen.has(message.id))
+    const ids = new Set(state.seen)
+    const fresh = messages.filter((message) => {
+      if (ids.has(message.id)) {
+        return false
+      }
+      ids.add(message.id)
+      return true
+    })
     if (fresh.length === 0) {
       return
     }
