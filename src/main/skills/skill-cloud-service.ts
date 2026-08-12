@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type {
   SkillCloudDownloadGrant,
   SkillCloudInstallTarget,
+  SkillCloudOwnedShare,
   SkillCloudOperation,
   SkillCloudOptions,
   SkillCloudPackageDetails,
@@ -10,6 +11,7 @@ import type {
   SkillCloudShare,
   SkillCloudVersion
 } from '../../shared/skill-cloud-contract'
+import { resolveArtifactCloudApiUrl } from '../artifacts/artifact-cloud-config'
 import { runSkillCloudOperation } from './skill-cloud-auth'
 import { uploadSkillPackageToSignedPolicy } from './skill-cloud-direct-upload'
 import { skillCloudRequest } from './skill-cloud-request'
@@ -97,8 +99,6 @@ export class SkillCloudService {
     packageId: string,
     request: SkillCloudOptions & {
       pinnedVersionId?: string
-      userIds: string[]
-      shareWithOrganization: boolean
       idempotencyKey?: string
     }
   ): Promise<SkillCloudOperation<SkillCloudShare>> {
@@ -109,9 +109,7 @@ export class SkillCloudService {
         path: `/v1/skill-packages/${id(packageId)}/shares`,
         method: 'POST',
         body: {
-          pinnedVersionId: request.pinnedVersionId,
-          userIds: request.userIds,
-          shareWithOrganization: request.shareWithOrganization
+          pinnedVersionId: request.pinnedVersionId
         },
         idempotencyKey: request.idempotencyKey ?? randomUUID()
       })
@@ -123,10 +121,10 @@ export class SkillCloudService {
     shareId: string,
     options: SkillCloudOptions
   ): Promise<SkillCloudOperation<{ id: string; version: SkillCloudVersion }>> {
-    return this.withAuth(options, async (token, apiUrl) => {
+    return this.withoutAuth(options, async (apiUrl) => {
       const result = await skillCloudRequest<{
         share: { id: string; version: SkillCloudVersion }
-      }>({ apiUrl, authToken: token, path: `/v1/skill-shares/${id(shareId)}` })
+      }>({ apiUrl, path: `/v1/skill-shares/${id(shareId)}` })
       return result.share
     })
   }
@@ -135,10 +133,9 @@ export class SkillCloudService {
     shareId: string,
     options: SkillCloudOptions & { versionId?: string; installTarget?: SkillCloudInstallTarget }
   ): Promise<SkillCloudOperation<SkillCloudDownloadGrant>> {
-    return this.withAuth(options, (token, apiUrl) =>
+    return this.withoutAuth(options, (apiUrl) =>
       skillCloudRequest<SkillCloudDownloadGrant>({
         apiUrl,
-        authToken: token,
         path: `/v1/skill-shares/${id(shareId)}/download-grants`,
         method: 'POST',
         body: {
@@ -179,21 +176,17 @@ export class SkillCloudService {
     })
   }
 
-  replaceAccess(
-    packageId: string,
-    access: { userIds: string[]; shareWithOrganization: boolean },
+  listOwnedShares(
     options: SkillCloudOptions
-  ): Promise<SkillCloudOperation<void>> {
-    return this.withAuth(options, (token, apiUrl) =>
-      skillCloudRequest<void>({
+  ): Promise<SkillCloudOperation<SkillCloudOwnedShare[]>> {
+    return this.withAuth(options, async (token, apiUrl) => {
+      const result = await skillCloudRequest<{ shares: SkillCloudOwnedShare[] }>({
         apiUrl,
         authToken: token,
-        path: `/v1/skill-packages/${id(packageId)}/access`,
-        method: 'PUT',
-        body: access,
-        idempotencyKey: randomUUID()
+        path: '/v1/skill-shares'
       })
-    )
+      return result.shares
+    })
   }
 
   revokeShare(shareId: string, options: SkillCloudOptions): Promise<SkillCloudOperation<void>> {
@@ -242,5 +235,13 @@ export class SkillCloudService {
       options,
       operation
     })
+  }
+
+  private async withoutAuth<T>(
+    options: SkillCloudOptions,
+    operation: (apiUrl: string) => Promise<T>
+  ): Promise<SkillCloudOperation<T>> {
+    const value = await operation(resolveArtifactCloudApiUrl(options.apiUrl))
+    return { status: 'ok', value }
   }
 }

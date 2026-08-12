@@ -13,11 +13,10 @@ const details: SkillCloudPackageDetails = {
   canManage: true,
   versions: [],
   management: {
-    userIds: ['legacy_user'],
-    shareWithOrganization: false,
     shares: [
       {
         id: 'share_1',
+        url: 'https://share.test/skills/share/share_1',
         pinnedVersionId: 'ver_1',
         createdAt: '2026-08-11T00:00:00.000Z'
       }
@@ -27,35 +26,18 @@ const details: SkillCloudPackageDetails = {
 
 function setup() {
   const skills = {
-    replacePackageAccess: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
     revokeShare: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
     deletePackageVersion: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
     deletePackage: vi.fn().mockResolvedValue({ status: 'ok', value: undefined })
   }
+  const writeClipboardText = vi.fn().mockResolvedValue(undefined)
   const onChanged = vi.fn().mockResolvedValue(undefined)
   const onPackageDeleted = vi.fn()
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
       skills,
-      orcaProfiles: {
-        authStatus: vi.fn().mockResolvedValue({
-          cloud: { userId: 'viewer', activeOrgId: 'org_1' }
-        }),
-        orgMembersList: vi.fn().mockResolvedValue({
-          status: 'ok',
-          roster: {
-            members: [
-              {
-                userId: 'user_2',
-                email: 'teammate@example.com',
-                displayName: 'Teammate',
-                role: 'member'
-              }
-            ]
-          }
-        })
-      }
+      ui: { writeClipboardText }
     }
   })
   render(
@@ -66,7 +48,7 @@ function setup() {
       onPackageDeleted={onPackageDeleted}
     />
   )
-  return { skills, onChanged, onPackageDeleted }
+  return { skills, onChanged, onPackageDeleted, writeClipboardText }
 }
 
 afterEach(() => {
@@ -76,31 +58,23 @@ afterEach(() => {
 })
 
 describe('SkillCloudManagementActions', () => {
-  it('saves organization and selected-user access while preserving unknown recipients', async () => {
-    const { skills, onChanged } = setup()
-    const organization = await screen.findByRole('checkbox', { name: 'Current organization' })
-    await waitFor(() => expect((organization as HTMLButtonElement).disabled).toBe(false))
-    fireEvent.click(organization)
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Teammate' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save access' }))
-
-    await waitFor(() => expect(skills.replacePackageAccess).toHaveBeenCalledOnce())
-    expect(skills.replacePackageAccess).toHaveBeenCalledWith({
-      packageId: 'pkg_1',
-      userIds: ['legacy_user', 'user_2'],
-      shareWithOrganization: true
-    })
-    expect(onChanged).toHaveBeenCalledOnce()
-  })
-
   it('requires confirmation before revoking an active link', async () => {
     const { skills } = setup()
-    expect(screen.getByText(/Copies already installed on any machine remain there\./)).toBeTruthy()
+    expect(screen.getByText(/leaves installed copies unchanged/)).toBeTruthy()
+    expect(screen.queryByText('Access')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Unshare' }))
     expect(skills.revokeShare).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm unshare' }))
 
     await waitFor(() => expect(skills.revokeShare).toHaveBeenCalledWith('share_1'))
+  })
+
+  it('copies an active unlisted link', async () => {
+    const { writeClipboardText } = setup()
+    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }))
+    await waitFor(() =>
+      expect(writeClipboardText).toHaveBeenCalledWith('https://share.test/skills/share/share_1')
+    )
   })
 
   it('requires confirmation before deleting the selected immutable version', async () => {

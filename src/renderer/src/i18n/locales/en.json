@@ -901,7 +901,9 @@
         "artifactsTitle": "Artifacts",
         "artifactsDescription": "Share HTML and Markdown files with your team and manage their public links.",
         "automationsTitle": "Automations",
-        "automationsDescription": "Schedule agent work and choose whether Automations appears in the sidebar."
+        "automationsDescription": "Schedule agent work and choose whether Automations appears in the sidebar.",
+        "shareSkillsTitle": "Share Skills",
+        "shareSkillsDescription": "Share one or many skills through unlisted links and manage access by revoking links."
       },
       "useAppMenuPaste": {
         "pasteTooLarge": "Paste is too large."
@@ -4144,7 +4146,9 @@
           "3a51d0f34f": "Cancel upload",
           "e9d652ae3d": "Cancelling…",
           "30985d4fc0": "Cancel",
-          "3af85f6add": "Done"
+          "3af85f6add": "Done",
+          "readyDescriptionV2": "Anyone with this unlisted link can inspect and install the skills.",
+          "descriptionV2": "Review the exact files, then publish an immutable version behind an unlisted link."
         },
         "SkillCard": {
           "d25a1b8ae6": "Share skill",
@@ -4165,7 +4169,10 @@
           "3d346ddce8": "existing recipient",
           "2b8c569ea7": "Current organization",
           "2552c12fea": "Access",
-          "505cd6105c": "Cloud sharing controls"
+          "505cd6105c": "Cloud sharing controls",
+          "linkCopied": "Share link copied",
+          "activeLinkBearerDescription": "Anyone with an active link can inspect and install the skills. Revoking blocks future access but leaves installed copies unchanged.",
+          "copyLink": "Copy link"
         },
         "SkillInstallDialog": {
           "39acb9e8f4": "Install skill",
@@ -4267,7 +4274,10 @@
           "2dca0b720b": "Publish new skill version",
           "01c5a17e01": "{{value0}} skills",
           "01c5a17e02": "Review included skills",
-          "01c5a17e03": "{{value0}} files · {{value1}}"
+          "01c5a17e03": "{{value0}} files · {{value1}}",
+          "unlistedLinkTitle": "Unlisted link",
+          "unlistedPublishingAs": "Publishing as {{value0}}. Anyone with the link can inspect and install these skills.",
+          "unlistedLinkDetails": "The link is not searchable or listed publicly. Revoke it to block future access; installed copies remain."
         },
         "SkillBundleInstallFlow": {
           "01c5a13e01": "Close",
@@ -10785,6 +10795,43 @@
           "on": "On",
           "auto": "Agent",
           "off": "Off"
+        },
+        "shareSkills": {
+          "title": "Share Skills",
+          "description": "Share one or many skills through unlisted, revocable links.",
+          "selectTitle": "Select one or more skills",
+          "selectDescription": "Open Skills, choose Share skills, and select the skills to bundle behind one link.",
+          "reviewTitle": "Review and publish",
+          "reviewDescription": "Review included files, scripts, and executables before uploading the immutable bundle.",
+          "copyTitle": "Copy the unlisted link",
+          "copyDescription": "Anyone with the link can inspect and install all or selected skills without signing in.",
+          "manageTitle": "Manage or revoke links",
+          "manageDescription": "Revoking blocks future access. Skills already installed on another machine remain there.",
+          "linkTitle": "Unlisted skill links",
+          "linkDescription": "Shared bundles are not searchable or listed in Orca. The link is the credential, so send it only to people you trust.",
+          "signInTitle": "Sign in to share skills",
+          "signInWebDescription": "Publishing and link management are available in the Orca desktop app.",
+          "signInDescription": "Use your Orca account to publish bundles and manage their links. Recipients do not need an account.",
+          "signingIn": "Signing in…",
+          "signInAgain": "Sign in again",
+          "signIn": "Sign in to Orca",
+          "howToTitle": "How to share skills",
+          "howToDescription": "Publish one skill or a bundle such as a collection of 30 skills behind one link.",
+          "openSkills": "Open Skills",
+          "openSkillsDescription": "Publish a bundle, install from a link, or manage installed and shared skills.",
+          "searchDescription": "Share one or more skills behind an unlisted, revocable link.",
+          "linksReconnect": "Sign in again to manage shared links.",
+          "linksUnavailable": "Shared links are unavailable right now.",
+          "linkCopied": "Share link copied",
+          "linkRevoked": "Link revoked",
+          "revokeFailed": "Orca could not revoke this link.",
+          "activeLinks": "Active shared links",
+          "activeLinksDescription": "Only people with a link can open it. Unshare a link to block future inspection and installs.",
+          "refreshLinks": "Refresh",
+          "noActiveLinks": "No active links. Publish a skill bundle from Skills to create one.",
+          "copyLink": "Copy link",
+          "confirmUnshare": "Confirm unshare",
+          "unshare": "Unshare"
         }
       },
       "right": {

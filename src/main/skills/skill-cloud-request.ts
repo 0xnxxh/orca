@@ -12,7 +12,7 @@ export class SkillCloudRequestError extends Error {
 
 export async function skillCloudRequest<T>(input: {
   apiUrl?: string
-  authToken: string
+  authToken?: string
   path: string
   method?: 'DELETE' | 'GET' | 'POST' | 'PUT'
   body?: unknown
@@ -28,7 +28,7 @@ export async function skillCloudRequest<T>(input: {
   const response = await (input.fetcher ?? fetch)(url, {
     method: input.method ?? 'GET',
     headers: {
-      authorization: `Bearer ${input.authToken}`,
+      ...(input.authToken ? { authorization: `Bearer ${input.authToken}` } : {}),
       accept: 'application/json',
       ...(input.body === undefined ? {} : { 'content-type': 'application/json' }),
       ...(input.idempotencyKey ? { 'idempotency-key': input.idempotencyKey } : {})

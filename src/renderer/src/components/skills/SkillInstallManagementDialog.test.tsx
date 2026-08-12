@@ -112,7 +112,6 @@ function skillsApi(
         placements: []
       }
     }),
-    replacePackageAccess: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
     revokeShare: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
     deletePackageVersion: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
     deletePackage: vi.fn().mockResolvedValue({ status: 'ok', value: undefined }),
@@ -264,8 +263,6 @@ describe('SkillInstallManagementDialog', () => {
     const details: SkillCloudPackageDetails = {
       ...packageDetails(versions),
       management: {
-        userIds: [],
-        shareWithOrganization: false,
         shares: []
       }
     }

@@ -4597,8 +4597,6 @@ export class OrcaRuntimeService {
     packageId: string,
     request: SkillCloudOptions & {
       pinnedVersionId?: string
-      userIds: string[]
-      shareWithOrganization: boolean
       idempotencyKey?: string
     }
   ) {
@@ -4641,12 +4639,8 @@ export class OrcaRuntimeService {
     return this.requireSkillCloudService().getPackage(packageId, options)
   }
 
-  replaceSkillPackageAccess(
-    packageId: string,
-    access: { userIds: string[]; shareWithOrganization: boolean },
-    options: SkillCloudOptions
-  ): Promise<SkillCloudOperation<void>> {
-    return this.requireSkillCloudService().replaceAccess(packageId, access, options)
+  listOwnedSkillShares(options: SkillCloudOptions) {
+    return this.requireSkillCloudService().listOwnedShares(options)
   }
 
   revokeSkillShare(

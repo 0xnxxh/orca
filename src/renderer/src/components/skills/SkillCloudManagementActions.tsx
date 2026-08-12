@@ -1,16 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Link2Off, Save, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { Clipboard, Link2Off, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import type { OrcaOrgMember } from '../../../../shared/orca-profiles'
 import type {
   SkillCloudOperation,
   SkillCloudPackageDetails
 } from '../../../../shared/skill-cloud-contract'
 import { translate } from '@/i18n/i18n'
 
-type IdentifiedMember = OrcaOrgMember & { userId: string }
 type SkillCloudManagement = NonNullable<SkillCloudPackageDetails['management']>
 type SkillCloudManagementActionsProps = {
   details: SkillCloudPackageDetails
@@ -35,12 +33,7 @@ export function SkillCloudManagementActions(
   if (!props.details.canManage || !management) {
     return null
   }
-  const stateKey = JSON.stringify([
-    props.details.id,
-    management.userIds,
-    management.shareWithOrganization,
-    management.shares
-  ])
+  const stateKey = JSON.stringify([props.details.id, management.shares])
   return <SkillCloudManagementForm key={stateKey} {...props} management={management} />
 }
 
@@ -53,48 +46,22 @@ function SkillCloudManagementForm({
 }: SkillCloudManagementActionsProps & {
   management: SkillCloudManagement
 }): React.JSX.Element {
-  const [members, setMembers] = useState<IdentifiedMember[]>([])
-  const [organizationAvailable, setOrganizationAvailable] = useState(false)
-  const [userIds, setUserIds] = useState<string[]>(management?.userIds ?? [])
-  const [shareWithOrganization, setShareWithOrganization] = useState(
-    management?.shareWithOrganization ?? false
-  )
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [confirmation, setConfirmation] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
-  useEffect(() => {
-    let active = true
-    setOrganizationAvailable(false)
-    setMembers([])
-    void window.api.orcaProfiles
-      .authStatus()
-      .then(async (auth) => {
-        const orgId = auth.cloud?.activeOrgId
-        if (!active || !orgId) {
-          return
-        }
-        setOrganizationAvailable(true)
-        const result = await window.api.orcaProfiles.orgMembersList({ orgId })
-        if (active && result.status === 'ok') {
-          setMembers(
-            result.roster.members.filter(
-              (member): member is IdentifiedMember =>
-                Boolean(member.userId) && member.userId !== auth.cloud?.userId
-            )
-          )
-        }
-      })
-      .catch(() => undefined)
-    return () => {
-      active = false
+  const copyShareLink = async (url?: string): Promise<void> => {
+    if (!url) {
+      return
     }
-  }, [])
-
-  const unknownUserCount = useMemo(
-    () => userIds.filter((id) => !members.some((member) => member.userId === id)).length,
-    [members, userIds]
-  )
+    await window.api.ui.writeClipboardText(url)
+    toast.success(
+      translate(
+        'auto.components.skills.SkillCloudManagementActions.linkCopied',
+        'Share link copied'
+      )
+    )
+  }
 
   const run = async (
     action: string,
@@ -133,77 +100,6 @@ function SkillCloudManagementForm({
     >
       <div className="space-y-2">
         <h4 className="text-xs font-semibold">
-          {translate('auto.components.skills.SkillCloudManagementActions.2552c12fea', 'Access')}
-        </h4>
-        <label className="flex items-center gap-2 text-xs">
-          <Checkbox
-            checked={shareWithOrganization}
-            disabled={!organizationAvailable || busyAction !== null}
-            onCheckedChange={(checked) => setShareWithOrganization(checked === true)}
-          />
-          {translate(
-            'auto.components.skills.SkillCloudManagementActions.2b8c569ea7',
-            'Current organization'
-          )}
-        </label>
-        {members.length > 0 ? (
-          <div className="max-h-28 space-y-1 overflow-y-auto scrollbar-sleek rounded-md border border-border p-2">
-            {members.map((member) => (
-              <label key={member.userId} className="flex items-center gap-2 text-xs">
-                <Checkbox
-                  checked={userIds.includes(member.userId)}
-                  disabled={busyAction !== null}
-                  onCheckedChange={(checked) =>
-                    setUserIds((current) =>
-                      checked
-                        ? [...new Set([...current, member.userId])]
-                        : current.filter((id) => id !== member.userId)
-                    )
-                  }
-                />
-                <span className="truncate">{member.displayName || member.email}</span>
-              </label>
-            ))}
-          </div>
-        ) : null}
-        {unknownUserCount > 0 ? (
-          <p className="text-xs text-muted-foreground">
-            {unknownUserCount}{' '}
-            {translate(
-              'auto.components.skills.SkillCloudManagementActions.3d346ddce8',
-              'existing recipient'
-            )}
-            {unknownUserCount === 1 ? '' : 's'}{' '}
-            {translate(
-              'auto.components.skills.SkillCloudManagementActions.eb603f7888',
-              'outside the current roster will be preserved.'
-            )}
-          </p>
-        ) : null}
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busyAction !== null}
-          onClick={() =>
-            void run('access', () =>
-              window.api.skills.replacePackageAccess({
-                packageId: details.id,
-                userIds,
-                shareWithOrganization
-              })
-            )
-          }
-        >
-          {busyAction === 'access' ? <Loader2 className="size-4 animate-spin" /> : <Save />}
-          {translate(
-            'auto.components.skills.SkillCloudManagementActions.cc8e4ef6ba',
-            'Save access'
-          )}
-        </Button>
-      </div>
-
-      <div className="space-y-2">
-        <h4 className="text-xs font-semibold">
           {translate(
             'auto.components.skills.SkillCloudManagementActions.8cac3b9362',
             'Active links'
@@ -211,8 +107,8 @@ function SkillCloudManagementForm({
         </h4>
         <p className="text-xs text-muted-foreground">
           {translate(
-            'auto.components.skills.SkillCloudManagementActions.c7f2b69122',
-            'Unsharing blocks future installs. Copies already installed on any machine remain there.'
+            'auto.components.skills.SkillCloudManagementActions.activeLinkBearerDescription',
+            'Anyone with an active link can inspect and install the skills. Revoking blocks future access but leaves installed copies unchanged.'
           )}
         </p>
         {management.shares.length === 0 ? (
@@ -229,8 +125,22 @@ function SkillCloudManagementForm({
               className="flex items-center gap-2 rounded-md border border-border p-2"
             >
               <Badge variant="outline" className="min-w-0 truncate font-mono">
-                {share.id}
+                {share.url ?? share.id}
               </Badge>
+              {share.url ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busyAction !== null}
+                  onClick={() => void copyShareLink(share.url)}
+                >
+                  <Clipboard className="size-4" />
+                  {translate(
+                    'auto.components.skills.SkillCloudManagementActions.copyLink',
+                    'Copy link'
+                  )}
+                </Button>
+              ) : null}
               <Button
                 size="sm"
                 variant={confirmation === `share:${share.id}` ? 'destructive' : 'outline'}

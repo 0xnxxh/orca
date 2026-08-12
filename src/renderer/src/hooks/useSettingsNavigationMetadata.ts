@@ -33,6 +33,7 @@ import {
   SquareTerminal,
   TextCursorInput,
   Files,
+  Share2,
   UserCog,
   Wrench
 } from 'lucide-react'
@@ -60,6 +61,7 @@ import { getBrowserPaneCombinedSearchEntries } from '@/components/settings/brows
 import { getNotificationsPaneSearchEntries } from '@/components/settings/notifications-search'
 import { getOrchestrationPaneSearchEntries } from '@/components/settings/orchestration-search'
 import { getArtifactsSettingsSearchEntries } from '@/components/settings/artifacts-settings-search'
+import { getShareSkillsSettingsSearchEntries } from '@/components/settings/share-skills-settings-search'
 import { getAutomationsSettingsSearchEntries } from '@/components/settings/automations-settings-search'
 import { getOrcaAccountSettingsSearchEntries } from '@/components/settings/orca-account-settings-search'
 import { getLinearAgentSkillPaneSearchEntries } from '@/components/settings/linear-agent-skill-search'
@@ -345,6 +347,18 @@ export function buildSettingsNavigationMetadata({
       ),
       icon: Files,
       searchEntries: getArtifactsSettingsSearchEntries(),
+      group: 'workflows',
+      badge: translate('auto.hooks.useSettingsNavigationMetadata.40d80bad8a', 'Beta')
+    },
+    {
+      id: 'share-skills',
+      title: translate('auto.hooks.useSettingsNavigationMetadata.shareSkillsTitle', 'Share Skills'),
+      description: translate(
+        'auto.hooks.useSettingsNavigationMetadata.shareSkillsDescription',
+        'Share one or many skills through unlisted links and manage access by revoking links.'
+      ),
+      icon: Share2,
+      searchEntries: getShareSkillsSettingsSearchEntries(),
       group: 'workflows',
       badge: translate('auto.hooks.useSettingsNavigationMetadata.40d80bad8a', 'Beta')
     },

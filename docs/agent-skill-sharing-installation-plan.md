@@ -2,7 +2,7 @@
 
 Status: implementation and validation in progress.
 
-Last updated: 2026-08-11.
+Last updated: 2026-08-12.
 
 Implementation checklist:
 [Agent skill sharing implementation checklist](./agent-skill-sharing-implementation-checklist.md).
@@ -27,8 +27,9 @@ Orca will:
 
 1. Package one or many local skills into one immutable, content-addressed artifact and durable
    link.
-2. Store private artifacts behind Orca Cloud authorization and durable share records.
-3. Resolve a share into a short-lived download grant after checking access.
+2. Store private artifacts behind unlisted, revocable Orca Cloud share records.
+3. Treat possession of an active share link as recipient authorization, then resolve it into a
+   short-lived download grant.
 4. Execute installation on the machine that will use the skill.
 5. Validate, stage, commit, and verify the package without silently overwriting local work.
 6. Let the recipient install all or a selected subset, with conflicts and results reported per
@@ -38,6 +39,8 @@ Orca will:
 8. Record bundle/version provenance independently from the community CLI's lockfiles.
 9. Keep every share unlisted: bundles are reachable only through their durable link and never
    appear in search, browse, organization-library, or marketplace surfaces.
+10. Give authenticated owners a private active-link inventory for copy and revocation; this is a
+    management surface, not recipient discovery.
 
 The portable archive root follows Agent Plugins 1.0.0 for a skills-only package. Orca does not
 present Skill Bundles as a new executable plugin system: MCP servers, hooks, processes, connectors,
@@ -50,12 +53,14 @@ that larger package-manager surface.
 
 ## Current execution status
 
-The last pushed Orca baseline is `41a7b45c4e`; current Skill Bundle work remains uncommitted on
-`skills-share` and no Orca pull request exists. Orca Cloud implementation is merged on `main`
-through `be00db10`. The authenticated OIDC smoke landed in `stablyai/orca-cloud#313`; the narrow
-Auth release-metadata convergence follow-up landed in `#314`; the finalization and lifecycle fixes
-landed in `#317`. Staging infrastructure and skill routes are deployed and validated; production
-remains untouched. Local, Windows, WSL, paired-runtime, and
+The Orca implementation is on `skills-share`; bearer-link changes follow baseline `6cff2aa507` and
+no Orca pull request exists. Cloud bundle ingestion and bearer-link work are isolated on
+`feat/skill-bundles` after baseline `d7d1026`. The authenticated OIDC smoke landed in
+`stablyai/orca-cloud#313`; the narrow Auth release-metadata convergence
+follow-up landed in `#314`; the finalization and lifecycle fixes landed in `#317`. Staging
+infrastructure exists, but its earlier authenticated recipient smoke predates the anonymous
+bearer-link model and must be replaced before release. Production remains untouched. Local,
+Windows, WSL, paired-runtime, and
 Docker-backed SSH validation are substantially complete; the implementation checklist records the
 exact evidence and remaining physical-host and failure-recovery gates.
 
@@ -71,10 +76,11 @@ rejected before transfer. The original single-skill path remains active for lega
 bundle management migrates.
 
 Cloud bundle validation is pushed on isolated branch `feat/skill-bundles` at `d7d1026`. It accepts
-both envelopes during migration, stores the detailed bundle manifest with the immutable version,
-and leaves object storage, ACLs, shares, and download grants unchanged. The full API suite passes
-136 tests with one skipped. It is not merged or deployed until the desktop publisher emits the new
-format and the staging smoke is updated.
+both envelopes during migration and stores the detailed bundle manifest with the immutable
+version. Local bearer-link changes make active share IDs the recipient credential, keep owner
+operations authenticated, retain legacy ACL rows only as migration storage, and prevent concrete
+share URLs from entering request logs. It is not merged or deployed until the final gates and
+anonymous staging smoke pass.
 
 The latest resilience pass adds bounded convergence after a lost final install response for both
 paired runtimes and SSH. A staged retry creates a new upload instead of reusing a consumed upload.
@@ -167,7 +173,7 @@ attribution. Revisit this decision if implementation work ever proposes copying 
 
 - Reimplementing all `skills` CLI source parsing and provider integrations.
 - Supporting all upstream agent paths on day one.
-- Publishing private package bytes through a public bearer URL.
+- Publishing package bytes through a permanent or directly addressable blob URL.
 - Automatically installing a shared skill on every organization machine.
 - Merging local modifications with a newer shared package version.
 - Treating installation as a security sandbox. A skill contains instructions and scripts and
@@ -196,8 +202,8 @@ The review dialog shows:
 - Bundle name and selected skill list.
 - Skill, file, and byte counts.
 - Included scripts and executable files, with an expandable review for each skill.
-- Current author identity and organization.
-- Access choice: organization or selected people.
+- Current author identity.
+- A clear warning that anyone with the unlisted link can inspect and install the bundle.
 - Optional version label and release notes.
 
 After confirmation, Orca validates and packages the exact bytes shown in the preview. Progress is
@@ -208,10 +214,11 @@ one durable URL such as:
 https://app.orca.dev/skills/share/<share-id>
 ```
 
-The URL identifies a revocable share record, not a blob-storage object or bearer grant. Every
-recipient still authenticates and passes the share ACL. Revocation, organization membership
-changes, version selection, and audit history therefore remain effective after the link has been
-copied.
+The URL identifies a revocable bearer share record, not a blob-storage object or permanent GCS
+grant. Recipients do not sign in: possession of an active, unexpired link authorizes inspection and
+a short-lived download grant. Revocation blocks future resolution and grants, while already
+installed copies remain. Publishing, listing owned shares, version management, revocation, and
+deletion still require the owner to sign in.
 
 ### Installing
 
@@ -232,7 +239,12 @@ An incompatible selected runtime receives an update-required result before trans
 **Manage** separates:
 
 - Installed bundles: update, rollback, install on another machine, inspect skills, and remove.
-- Shared bundles: copy link, change access, revoke, publish version, and delete the Cloud package.
+- Shared bundles: copy link, revoke, publish version, and delete the Cloud package.
+
+Settings includes a **Share Skills** section, parallel to **Artifacts**, explaining unlisted-link
+behavior, retention, revocation, and the fact that installed copies are unaffected. It links to the
+Skills page for publishing and management; it does not introduce a searchable catalog or a second
+sharing workflow.
 
 Bundle update or removal never silently destroys locally modified skills.
 
@@ -247,7 +259,7 @@ Selected skill folders
 Package builder -- validates and creates immutable artifact
     |
     v
-Orca Cloud -- private blob + version metadata + ACL + durable share
+Orca Cloud -- private blob + version metadata + revocable bearer share
     |
     v
 Download grant -- short-lived and scoped to one immutable digest
@@ -336,7 +348,8 @@ Rules:
   than a top-level custom field or GCS metadata alone. It therefore survives export, SSH/remote
   transfer, and offline validation and can describe every skill and file.
 - GCS custom metadata stays compact and operational. PostgreSQL stores only the package, share,
-  version, ACL, and lifecycle records needed to resolve a known link or manage an owned bundle.
+  version, ownership, and lifecycle records needed to resolve a known link or manage an owned
+  bundle. Legacy ACL records may remain during migration but never gate bearer-link access.
 - Orca constructs a fresh staging root. If imported content already contains
   `dev.orca.skill-sharing`, Orca accepts only an appropriate recognized schema and rejects unknown,
   malformed, or conflicting contents; it never overwrites the namespace silently.
@@ -481,7 +494,7 @@ returns `429` or `503` with `Retry-After`; it does not queue unbounded package b
 
 ### Download grants
 
-After resolving a share and rechecking its ACL, `orca-cloud-api` creates a V4 signed GET URL with:
+After resolving an active bearer share, `orca-cloud-api` creates a V4 signed GET URL with:
 
 - Exact final object key and stored generation.
 - Five-minute expiration.
@@ -527,7 +540,8 @@ Create migrations for:
   bundle manifest needed to inspect a known share without downloading its private archive.
 - `skill_package_uploads`: tenant/user binding, quarantine key and generation, expected identities,
   expiration, finalization state, and failure category.
-- `skill_package_acl`: organization or user principal, permission, creator, and timestamps.
+- `skill_package_acl`: legacy organization or user access records retained for migration until a
+  later schema cleanup; these do not authorize or deny bearer-share resolution.
 - `skill_share_records`: unpredictable share ID, package ID, optional pinned version, expiration,
   revocation state, creator, and timestamps.
 - `skill_package_audit_events`: bounded security/lifecycle event metadata without package contents
@@ -540,13 +554,15 @@ Required constraints and indexes include:
 - Tenant-scoped archive identity and final GCS object key/generation pair.
 - Share lookup by unpredictable ID and active/revoked state.
 - No package, version, or contained-skill search/list index; share links are intentionally unlisted.
-- ACL lookup by package and principal.
+- Owner lookup for authenticated management operations.
 - Pending-upload lookup by owner and expiration.
 - Foreign keys that prevent removing a blob reference while a published version uses it.
 
-Every share resolution, grant, update lookup, and revoke mutation begins with an authenticated
-principal and evaluates package ownership plus ACL in the same request. The share ID locates the
-record but does not itself authorize access.
+Share resolution and share-scoped download grants accept no user credential: an unpredictable,
+active, unexpired share ID is the bearer credential. Anonymous requests receive the same
+non-disclosing `404` for missing, expired, revoked, or deleted shares and remain subject to
+distributed per-IP abuse limits. Package/version management, share creation, owner listing,
+revocation, and deletion require an authenticated owner.
 
 ### Cloud Run changes
 
@@ -650,7 +666,7 @@ policies, signed URLs, or ACL membership.
 7. Verify the migration-ready event, zero error logs, ordinary artifact behavior, and `404` skill
    route boundary before changing any control.
 8. Enable route registration for the staging identity and run upload/finalize/download tests,
-   including expired policies, ACL denial, oversized uploads, corrupt archives, deduplication,
+   including expired policies, anonymous bearer resolution, oversized uploads, corrupt archives, deduplication,
    revocation, and object cleanup.
 9. Run a staging desktop-to-runtime installation and verify logs contain no grants or private
    contents.
@@ -796,11 +812,13 @@ and test the same contract accurately.
 ### Cloud client
 
 - Skill upload grant creation and finalization.
-- Share creation, resolution, revocation, and access management.
+- Authenticated share creation and revocation; anonymous share resolution.
 - Download grant creation.
 - Owned-package management and exact package/version lookup by ID; no browse or search API.
-- Manager-only package details include current user/organization access and active, unexpired
-  share records; non-managers never receive that management metadata.
+- Authenticated owner-only active-link inventory for cross-device copy and revocation; no public or
+  recipient inventory.
+- Manager-only package details include ownership and active, unexpired share records; anonymous
+  recipients never receive management metadata.
 
 Exact files follow the repository that owns Orca Cloud APIs; desktop contracts stay provider
 neutral.
@@ -815,10 +833,12 @@ neutral.
 
 ### Renderer
 
-- Multi-select bundle share review and access dialog.
+- Multi-select bundle share review and unlisted-link warning.
 - Share completion dialog with copyable durable link.
-- Access editing, active-link revocation, immutable-version deletion, and Cloud-package deletion
-  with explicit confirmation and copy explaining that installed copies remain local.
+- Active-link copy/revocation, immutable-version deletion, and Cloud-package deletion with explicit
+  confirmation and copy explaining that installed copies remain local.
+- Settings → Share Skills owner inventory so newly published links remain manageable even when the
+  source skill has no managed-install receipt.
 - Selective install preview with destination, scope, coverage, and per-skill conflict state.
 - Aggregate install progress and grouped per-skill outcomes.
 - Installed/shared bundle management, update, rollback, removal, and incomplete-coverage actions on
@@ -1174,8 +1194,8 @@ destination containment, and expected identities must all agree.
 
 ### Cloud tests
 
-- Organization/user/link ACLs and revocation.
-- Expired grants and membership removed between preview and download.
+- Anonymous active-link resolution, expiry, revocation, and non-disclosing missing-link failures.
+- Owner authentication for package and share management.
 - Upload finalization digest mismatch.
 - Blob deduplication without cross-tenant information leakage.
 - Quota and rate-limit behavior.
@@ -1261,19 +1281,19 @@ Deliver:
 - Reviewed Terraform for the dedicated private GCS bucket, lifecycle, CORS, bucket-scoped IAM,
   service-account signing, `orca_skills` database, database secret, Cloud SQL attachment,
   monitoring, and budgets.
-- PostgreSQL migrations for package, version, upload, ACL, share, and audit records.
+- PostgreSQL migrations for package, version, upload, share, ownership, and audit records, with
+  legacy ACL storage tolerated during migration.
 - Upload/finalize APIs using bounded V4 signed POST policies and private content-addressed GCS
   objects.
-- Version, ACL, share, revocation, five-minute download grant, quota, and audit behavior.
-- Share preview and access UI.
+- Version, bearer-share, revocation, five-minute download grant, quota, and audit behavior.
+- Share preview and owner-management UI.
 - Install preview and local-machine installation UI.
 - Durable links and short-lived grants.
 - Update availability and version rollback.
 
 Exit criteria:
 
-- A copied durable link remains inaccessible unless the authenticated recipient passes the share
-  ACL.
+- A copied active durable link can be inspected and installed without recipient sign-in.
 - Revocation immediately blocks new grants.
 - The installed receipt identifies the immutable package without persisting a grant.
 - Production provisioning changes are Terraform-owned and do not replace existing artifact,
@@ -1376,7 +1396,7 @@ than delaying private sharing for organization-wide policy features.
 - One validated installer core, regardless of source or destination transport.
 - One canonical copy, with provider placements reconciled separately.
 - Immutable Cloud versions and mutable local installations are distinct concepts.
-- A durable share is authorization metadata, not a permanent blob URL.
+- An unpredictable durable share ID is a revocable bearer credential, not a permanent blob URL.
 - Installed bytes, not child-process exit codes, determine success.
 - Unknown or modified local state fails closed.
 - Remote hosts own their paths and mutations.

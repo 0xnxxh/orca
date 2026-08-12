@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
@@ -21,13 +21,8 @@ type Preparation = {
   publishedVersion: SkillCloudVersion | null
 }
 
-function shareIdempotencyKey(preparationId: string, input: SkillSharePublishInput): string {
-  const audience = JSON.stringify({
-    shareWithOrganization: input.shareWithOrganization,
-    userIds: [...new Set(input.userIds)].sort()
-  })
-  const digest = createHash('sha256').update(audience).digest('hex').slice(0, 32)
-  return `${preparationId}_${digest}`
+function shareIdempotencyKey(preparationId: string): string {
+  return `${preparationId}_share`
 }
 
 function preview(id: string, value: Preparation): SkillSharePreview {
@@ -133,8 +128,6 @@ export class SkillSharePreparationService {
           compressedBytes: preparation.created.compressedBytes,
           packageId: preparation.created.manifest.packageId,
           releaseNotes: input.releaseNotes,
-          userIds: input.userIds,
-          shareWithOrganization: input.shareWithOrganization,
           signal: controller.signal,
           onProgress: (progress) =>
             onProgress?.({ preparationId: input.preparationId, ...progress })
@@ -146,9 +139,7 @@ export class SkillSharePreparationService {
         preparation.publishedVersion = version
       }
       const shared = await this.cloud.createShare(version.packageId, {
-        userIds: input.userIds,
-        shareWithOrganization: input.shareWithOrganization,
-        idempotencyKey: shareIdempotencyKey(input.preparationId, input)
+        idempotencyKey: shareIdempotencyKey(input.preparationId)
       })
       if (shared.status !== 'ok') {
         return shared

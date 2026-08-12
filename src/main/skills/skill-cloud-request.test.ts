@@ -21,6 +21,18 @@ describe('skillCloudRequest', () => {
     ).resolves.toEqual({ share: { id: 'share_1' } })
   })
 
+  it('omits authorization for bearer-link requests', async () => {
+    const fetcher = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+      expect(new Headers(init?.headers).has('authorization')).toBe(false)
+      return Response.json({ share: { id: 'share_1' } })
+    }) as typeof fetch
+    await skillCloudRequest({
+      apiUrl: 'http://127.0.0.1:8787',
+      path: '/v1/skill-shares/share_1',
+      fetcher
+    })
+  })
+
   it('rejects non-API paths and returns structured errors without response contents', async () => {
     await expect(
       skillCloudRequest({

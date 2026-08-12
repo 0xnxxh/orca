@@ -131,6 +131,7 @@ import type {
 import type { SkillDiscoveryResult, SkillDiscoveryTarget } from '../shared/skills'
 import type {
   SkillCloudDownloadGrant,
+  SkillCloudOwnedShare,
   SkillCloudOperation,
   SkillCloudPackageDetails
 } from '../shared/skill-cloud-contract'
@@ -2567,12 +2568,8 @@ const api = {
       ipcRenderer.invoke('skills:listManagedInstalls', environmentId),
     getPackage: (packageId: string): Promise<SkillCloudOperation<SkillCloudPackageDetails>> =>
       ipcRenderer.invoke('skills:getPackage', packageId),
-    replacePackageAccess: (input: {
-      packageId: string
-      userIds: string[]
-      shareWithOrganization: boolean
-    }): Promise<SkillCloudOperation<void>> =>
-      ipcRenderer.invoke('skills:replacePackageAccess', input),
+    listOwnedShares: (): Promise<SkillCloudOperation<SkillCloudOwnedShare[]>> =>
+      ipcRenderer.invoke('skills:listOwnedShares'),
     revokeShare: (shareId: string): Promise<SkillCloudOperation<void>> =>
       ipcRenderer.invoke('skills:revokeShare', shareId),
     deletePackageVersion: (input: {

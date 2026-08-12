@@ -47,8 +47,6 @@ export type SkillSharePreview = {
 export type SkillSharePublishInput = {
   preparationId: string
   releaseNotes: string
-  userIds: string[]
-  shareWithOrganization: boolean
 }
 
 export type SkillSharePublishOperation = SkillCloudOperation<SkillCloudPublishResult>

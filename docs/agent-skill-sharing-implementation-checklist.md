@@ -2,16 +2,19 @@
 
 Status: implementation and validation in progress.
 
-Last updated: 2026-08-11.
+Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `6ba6107dba` on `skills-share` (pushed; no PR).
-- Orca Cloud: `be00db10` on `main` (opaque audience IDs in `stablyai/orca-cloud#317`, with the
-  skill OIDC smoke and release-metadata convergence from `#313` and `#314`).
+- Orca implementation: `skills-share` (bearer-link changes follow baseline `6cff2aa507`; no PR).
+- Orca Cloud: isolated `feat/skill-bundles` branch (bearer-link changes follow baseline `d7d1026`).
+  Production remains untouched.
 
 Validated so far:
 
+- Final bearer-link changes pass 143 Orca Cloud API tests with one opt-in skip; 58 focused Orca
+  tests; four mixed-version wire tests; desktop/node/web typecheck; localization catalog,
+  extraction, and coverage; changed-code quality; max-lines; and diff checks.
 - Local Node and web typechecks, changed-code quality gates, 94 skill-domain files with 770 tests
   passed and 3 skipped, 134 Orca Cloud API tests with one opt-in integration skip, the full Cloud
   monorepo test/typecheck/lint/build gates, and isolated Terraform formatting and validation.
@@ -68,12 +71,14 @@ Validated so far:
 - Auth deploy run `31535179937` promoted revision `orca-cloud-auth-staging-00017-dug` at 100%
   traffic. Health, JWKS, exact GitHub OIDC claim constraints, and zero deployment-window errors
   passed.
-- API deploy run `31535438327` promoted revision `orca-cloud-api-staging-00042-hef` at 100%
+- The historical ACL-era API deploy run `31535438327` promoted revision
+  `orca-cloud-api-staging-00042-hef` at 100%
   traffic with `authenticatedSmoke: true` and `skillSmoke: true`. The smoke covered artifact
   lifecycle; skill upload/finalize/download; two immutable versions; recipient and outsider
   authorization; local and remote grants; rollback selection; expiry; revocation; package
   deletion; and signed-object cleanup.
-- Cloud PR `#317` passed both required checks and merged as `be00db10`. Deploy run `31546194596`
+- Cloud PR `#317` passed both required checks and merged as `be00db10`. Its historical ACL-era
+  deploy run `31546194596`
   promoted revision `orca-cloud-api-staging-00048-xom` at 100% traffic with
   `authenticatedSmoke: true` and `skillSmoke: true`; canonical health and the immutable image
   digest independently matched after promotion.
@@ -94,10 +99,11 @@ Validated so far:
   Independent GCP reads verified Cloud SQL policy `NEVER`, every MIG target at zero, and both
   managed Cloud Run minimums at zero.
 
-Rollout gate: staging infrastructure, OIDC identity exchange, route registration, and the
-authenticated artifact/skill lifecycle smoke passed. The shared staging data plane is back in its
-low-cost asleep state. Production remains untouched; physical staging install journeys, load,
-quarantine lifecycle, and soft-delete recovery gates remain.
+Rollout gate: staging infrastructure and OIDC owner identity exchange passed. The earlier
+authenticated skill lifecycle smoke predates bearer-link semantics and is not acceptance evidence
+for anonymous recipient access. The shared staging data plane is back in its low-cost asleep state.
+Production remains untouched; the anonymous bearer lifecycle, physical staging install journeys,
+load, quarantine lifecycle, and soft-delete recovery gates remain.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
 
@@ -109,8 +115,9 @@ does not mean the surrounding phase is complete.
 
 - [ ] A user can select one or many private local skills, publish one immutable Skill Bundle, and
       receive one durable Orca share URL.
-- [ ] An authorized recipient can inspect a bundle, choose all or a subset of its skills, and
-      install them globally or into a Git worktree or plain folder workspace.
+- [ ] Anyone with an active unlisted link can inspect a bundle without signing in, choose all or a
+      subset of its skills, and install them globally or into a Git worktree or plain folder
+      workspace.
 - [ ] Installation works on local macOS, Linux, native Windows, WSL, paired Orca runtimes, and
       supported SSH targets.
 - [ ] The portable archive root conforms to Agent Plugins 1.0.0 for skills-only packages and keeps
@@ -126,8 +133,9 @@ does not mean the surrounding phase is complete.
 - [x] Mixed-version clients and remote hosts fail safely through capability negotiation.
 - [ ] Cloud resources are Terraform-owned, monitored, recoverable, and protected by independent
       upload, download, and remote-install kill switches.
-- [ ] The existing Skills page supports multi-select sharing, selective installation, per-skill
-      conflicts/results, and installed/shared bundle management.
+- [x] The existing Skills page supports multi-select sharing, selective installation, per-skill
+      conflicts/results, and installed-bundle management; Settings → Share Skills provides the
+      authenticated owner inventory for copying and revoking active links.
 
 ## 0. Confirm scope and ownership
 
@@ -158,20 +166,28 @@ does not mean the surrounding phase is complete.
 
 ### Product semantics
 
-- [x] Confirm private means authorized Orca users and organizations, not end-to-end encryption
-      from Orca Cloud operators.
+- [x] Confirm private means unlisted and protected by an unpredictable revocable bearer link, not
+      end-to-end encryption from Orca Cloud operators.
 - [x] Confirm a published immutable version persists until package or version deletion; it has no
       age-based object expiry.
 - [x] Confirm an unfinished upload grant expires after 15 minutes and its quarantine object is
       deleted after one day.
-- [x] Confirm a durable share URL identifies an authorization record, not a GCS object or bearer
-      credential.
+- [x] Confirm a durable share URL contains a bearer credential for a revocable authorization
+      record, not a GCS object or permanent blob grant.
 - [x] Confirm a signed download grant lasts five minutes and is the maximum share-revocation lag.
 - [x] Confirm updates create immutable versions and never mutate existing package objects.
 - [x] Confirm rollback installs a selected prior immutable version.
 - [x] Confirm revoking or deleting a Cloud share does not silently remove existing local installs.
-- [x] Confirm sharing and updating use an artifact-like flow—preview, upload, durable link, update,
-      unshare/delete—while retaining skill-specific version, ACL, trust, and install semantics.
+- [x] Confirm sharing and updating use an artifact-like flow—preview, upload, unlisted durable
+      link, update, revoke/delete—while retaining skill-specific version, trust, and install
+      semantics.
+- [x] Confirm recipients do not sign in; publishing and managing owned links still require sign-in.
+- [x] Confirm revocation blocks future resolution/download grants but does not remove installed
+      copies.
+- [x] Add a Settings section named **Share Skills**, parallel to **Artifacts**, without adding any
+      index or discoverability surface.
+- [x] Treat the authenticated owner-only active-link inventory as management, not recipient
+      discoverability; never expose it anonymously or through browse/search APIs.
 - [x] Confirm V1 has no checked-in workspace desired-state lockfile and no automatic fleet-wide
       installation.
 - [x] Confirm one skill is a one-item bundle and a bundle may contain large selections such as 30
@@ -618,12 +634,13 @@ does not mean the surrounding phase is complete.
 - [x] Add bounded `skill_package_audit_events` without contents, filenames, or signed values.
 - [x] Add unique package slug per organization, immutable version and digest constraints, and
       tenant-scoped archive and final GCS key/generation constraints.
-- [x] Add active-share, ACL-principal, and pending-upload expiration indexes.
+- [x] Add active-share, ACL-principal, and pending-upload expiration indexes. The ACL index remains
+      legacy storage and is not used for bearer resolution.
 - [x] Add foreign keys preventing blob-reference deletion while a published version uses it.
 - [x] Accept and stream-validate both the pre-release single-skill envelope and the new Agent
       Plugins skills-only bundle envelope during the desktop migration.
-- [x] Store the detailed bundle manifest in the existing immutable version record without changing
-      object, share, or ACL semantics; expose it only after exact-link authorization or to owners.
+- [x] Store the detailed bundle manifest in the existing immutable version record; expose it only
+      after exact-link bearer authorization or to owners.
 - [x] Keep contained skills out of separate database rows and search indexes. Selective inspection
       reads the validated manifest attached to the exact immutable version.
 - [ ] Keep detailed file identity in the in-archive manifest rather than duplicating it into GCS
@@ -633,12 +650,14 @@ does not mean the surrounding phase is complete.
 
 ### Authorization and lifecycle model
 
-- [x] Begin every share resolution, grant, update lookup, and revoke mutation with an authenticated
-      principal.
-- [x] Evaluate package ownership and ACL in the same request.
-- [x] Ensure share ID locates a record but never authorizes access by itself.
-- [x] Return constant-shape authorization failures that do not disclose package existence.
-- [x] Recheck organization membership for every grant, including after preview.
+- [x] Allow share resolution and share-scoped download grants without an authenticated principal.
+- [x] Treat an unpredictable active, unexpired share ID as the bearer authorization; do not apply
+      legacy package ACLs to recipients.
+- [x] Return the same non-disclosing `404` for missing, expired, revoked, or deleted shares.
+- [x] Keep authenticated owner checks on upload, finalize, package/version management, share
+      creation, revocation, and deletion.
+- [x] Apply distributed per-IP abuse limits to anonymous resolution and grant requests without
+      persisting raw requester addresses.
 - [ ] Apply organization retention and legal deletion rules over product rollback retention.
 - [x] Make package deletion revoke shares before dereferencing immutable objects.
 - [x] Delete an object only after a transaction proves no retained version references it.
@@ -664,20 +683,22 @@ does not mean the surrounding phase is complete.
 - [x] Delete quarantine bytes after success and rely on lifecycle cleanup for abandonment.
 - [x] Make all mutating endpoints accept idempotency keys.
 
-### Package, version, ACL, and share APIs
+### Package, version, and share APIs
 
 - [x] Implement package creation and version publication under a stable package identity.
 - [x] Implement package details and paginated version history.
-- [x] Implement organization and selected-user access management.
+- [x] Stop accepting organization/selected-user audience fields for new bearer shares; retain
+      legacy ACL storage only as migration-compatible data.
 - [x] Implement durable share creation with optional pinned version and expiry.
-- [x] Implement share resolution with authenticated metadata preview.
+- [x] Implement anonymous bearer-link metadata preview.
 - [x] Implement immediate share revocation for new grant requests.
 - [x] Implement Cloud package/version deletion with retention and reference checks.
 - [x] Implement version update lookup and rollback selection.
 
 ### Download grants
 
-- [x] Implement `POST /v1/skill-shares/<share-id>/download-grants` after fresh ACL evaluation.
+- [x] Implement anonymous `POST /v1/skill-shares/<share-id>/download-grants` after fresh active-link
+      evaluation.
 - [x] Generate a five-minute V4 signed GET URL for the exact immutable key and stored generation.
 - [x] Set only response content type and safe attachment filename overrides.
 - [x] Grant no list or write capability.
@@ -687,8 +708,11 @@ does not mean the surrounding phase is complete.
 
 ### Cloud tests
 
-- [x] Test organization, user, pinned-link, expiry, and revocation ACL behavior.
-- [x] Test membership removal between preview, grant, and download.
+- [x] Test anonymous latest/pinned preview and download grants without an Authorization header.
+- [x] Test missing, expired, revoked, and deleted shares all fail without disclosure.
+- [x] Test authenticated owner management remains protected.
+- [x] Test anonymous per-IP rate limiting without recording raw IP addresses.
+- [x] Test the authenticated owner-only active-link inventory and ensure responses are not cached.
 - [x] Test expired, reused, wrong-tenant, wrong-key, wrong-size, and wrong-hash uploads.
 - [x] Test malformed, oversized, and resource-exhausting archives during finalization.
 - [x] Test finalization semaphore saturation and retry behavior.
@@ -704,8 +728,8 @@ does not mean the surrounding phase is complete.
 
 ### Cloud client
 
-- [x] Add typed calls for upload grants, GCS upload, finalization, package/version catalog,
-      ACL/access management, share creation/resolution/revocation, and download grants.
+- [x] Make share resolution and share-scoped download-grant calls anonymous while keeping upload,
+      package/version management, share creation, revocation, and deletion authenticated.
 - [x] Keep desktop contracts storage-provider-neutral.
 - [x] Implement bounded progress, cancellation, retry, and idempotency behavior.
 - [x] Redact signed policies, URLs, credentials, private paths, and package contents at creation.
@@ -714,23 +738,26 @@ does not mean the surrounding phase is complete.
 
 - [x] Read and apply `docs/STYLEGUIDE.md`; use canonical CSS tokens and shadcn primitives.
 - [x] Add **Share skill** to eligible installed and workspace skills.
-- [x] Show name, description, author, organization, file count, total size, scripts, and executable
-      files before upload.
-- [x] Let the author choose organization or selected-person access.
+- [x] Show name, description, author, file count, total size, scripts, executable files, and the
+      unlisted-link warning before upload.
+- [x] Remove organization and selected-person audience controls from bearer-link publishing.
 - [x] Accept optional release label and notes.
 - [x] Package the exact previewed bytes and invalidate preview after source drift.
 - [x] Show bounded upload and finalization progress with cancellation.
 - [x] Return a copyable durable Orca URL after publication.
-- [x] Add access editing, version publishing, unshare, and package deletion actions.
+- [x] Remove access editing from the bearer-share workflow; keep version publishing, revoke, and
+      package deletion actions.
 - [x] Make clear that unsharing blocks future installs but does not remove installed copies.
-- [ ] Add **Share skills**, **Install from link**, and unified **Manage** to the existing Skills page
-      header. The first two are present; management still covers installed packages only.
+- [x] Add **Share skills**, **Install from link**, and installed-package **Manage** to the existing
+      Skills page header; expose active link copy/revocation in Settings → **Share Skills** so links
+      remain manageable even when the source was never a managed install.
 - [x] Add selection mode whose selection survives search/filter changes and an explicit **Select
       all results** action; never select all implicitly.
 - [x] Keep the per-card share action as a one-skill bundle shortcut.
 - [ ] Disable ineligible skills with visible reasons and block duplicate skill names before review.
 - [x] Review bundle name, skill/file/byte counts, script/executable warnings, expandable per-skill
-      details, audience, and release notes.
+      details, unlisted-link behavior, and release notes.
+- [x] Add Settings → **Share Skills** with artifact-like explanation and a route to the Skills page.
 - [ ] Show named preparation, upload, verification, and link-publication progress and return one
       durable link for the bundle.
 

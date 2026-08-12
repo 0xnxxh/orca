@@ -140,6 +140,23 @@ afterEach(() => {
 })
 
 describe('SkillInstallDialog', () => {
+  it('describes unavailable bearer links without asking recipients to sign in', async () => {
+    const skills = installApi(vi.fn())
+    skills.resolveShare.mockRejectedValue(new Error('skill_share_not_found'))
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+
+    fireEvent.change(screen.getByLabelText('Orca skill link'), {
+      target: { value: 'https://app.orca.dev/skills/share/share_1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect skill' }))
+
+    await screen.findByText(
+      'This share is unavailable. The link may be invalid, expired, or revoked.'
+    )
+    expect(screen.queryByText(/sign in|reconnect/i)).toBeNull()
+  })
+
   it('installs a selected subset from a shared bundle', async () => {
     const skills = installApi(vi.fn())
     skills.resolveShare.mockResolvedValue({

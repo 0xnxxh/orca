@@ -32,6 +32,14 @@ export type SkillCloudShare = {
   url: string
 }
 
+export type SkillCloudOwnedShare = SkillCloudShare & {
+  packageId: string
+  name: string
+  description: string
+  createdAt: string
+  expiresAt?: string
+}
+
 export type SkillCloudDownloadGrant = {
   grant: { url: string; expiresAt: string }
   version: SkillCloudVersion
@@ -45,10 +53,9 @@ export type SkillCloudPackageDetails = {
   canManage: boolean
   versions: SkillCloudVersion[]
   management?: {
-    userIds: string[]
-    shareWithOrganization: boolean
     shares: {
       id: string
+      url?: string
       pinnedVersionId?: string
       createdAt: string
       expiresAt?: string
@@ -63,8 +70,6 @@ export type SkillCloudPublishRequest = SkillCloudOptions & {
   packageId: string
   releaseNotes: string
   pinnedVersionId?: string
-  userIds: string[]
-  shareWithOrganization: boolean
   onProgress?: (progress: {
     phase: 'uploading' | 'finalizing'
     bytesSent: number

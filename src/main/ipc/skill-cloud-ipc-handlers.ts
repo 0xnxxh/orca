@@ -16,6 +16,7 @@ import { classifySkillCloudInstallTarget } from '../skills/skill-cloud-install-t
 import { SkillSharePreparationService } from '../skills/skill-share-preparation-service'
 import {
   supportsSkillRuntimeBundleInstall,
+  supportsSkillRuntimeCancellation,
   supportsSkillRuntimeInstall
 } from '../skills/skill-runtime-capability'
 import { callRuntimeEnvironment } from './runtime-environment-transport-routing'
@@ -40,17 +41,7 @@ const sharePrepareSchema = z
 const sharePublishSchema = z
   .object({
     preparationId: z.string().uuid(),
-    releaseNotes: z.string().max(10_000),
-    userIds: z.array(z.string().min(1).max(255)).max(100),
-    shareWithOrganization: z.boolean()
-  })
-  .strict()
-
-const replaceAccessSchema = z
-  .object({
-    packageId: z.string().min(1).max(128),
-    userIds: z.array(z.string().min(1).max(255)).max(100),
-    shareWithOrganization: z.boolean()
+    releaseNotes: z.string().max(10_000)
   })
   .strict()
 
@@ -258,6 +249,9 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
       return { cancelled: runtime.cancelSharedSkillInstall(input.operationId) }
     }
     const transferCancelled = remoteInstallCancellation.cancel(input.operationId)
+    if (!(await supportsSkillRuntimeCancellation(app.getPath('userData'), input.environmentId))) {
+      return { cancelled: transferCancelled }
+    }
     const response = await callRuntimeEnvironment(
       app.getPath('userData'),
       input.environmentId,
@@ -274,17 +268,7 @@ function registerCloudInstallHandlers(runtime: OrcaRuntimeService): void {
   ipcMain.handle('skills:getPackage', (_event, packageId: unknown) =>
     runtime.getSkillPackage(z.string().min(1).max(128).parse(packageId), {})
   )
-  ipcMain.handle('skills:replacePackageAccess', (_event, value: unknown) => {
-    const input = replaceAccessSchema.parse(value)
-    return runtime.replaceSkillPackageAccess(
-      input.packageId,
-      {
-        userIds: input.userIds,
-        shareWithOrganization: input.shareWithOrganization
-      },
-      {}
-    )
-  })
+  ipcMain.handle('skills:listOwnedShares', () => runtime.listOwnedSkillShares({}))
   ipcMain.handle('skills:revokeShare', (_event, shareId: unknown) =>
     runtime.revokeSkillShare(z.string().min(1).max(128).parse(shareId), {})
   )

@@ -1,5 +1,6 @@
 import {
   SKILL_BUNDLE_INSTALL_CAPABILITY,
+  SKILL_INSTALL_CANCEL_CAPABILITY,
   SKILL_INSTALL_CAPABILITY,
   SKILL_MANAGEMENT_CAPABILITY
 } from '../../shared/skill-install-capability'
@@ -23,6 +24,17 @@ export async function supportsSkillRuntimeBundleInstall(
   return (
     status.ok === true &&
     status.result.capabilities?.includes(SKILL_BUNDLE_INSTALL_CAPABILITY) === true
+  )
+}
+
+export async function supportsSkillRuntimeCancellation(
+  userDataPath: string,
+  environmentId: string
+): Promise<boolean> {
+  const status = await getRuntimeEnvironmentStatus(userDataPath, environmentId, 15_000)
+  return (
+    status.ok === true &&
+    status.result.capabilities?.includes(SKILL_INSTALL_CANCEL_CAPABILITY) === true
   )
 }
 

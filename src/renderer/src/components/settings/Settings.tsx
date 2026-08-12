@@ -55,6 +55,7 @@ import { PluginsSettingsSection } from './PluginsSettingsSection'
 import { AgentsPane } from './AgentsPane'
 import { OrchestrationPane } from './OrchestrationPane'
 import { ArtifactsSettingsPane } from './ArtifactsSettingsPane'
+import { ShareSkillsSettingsPane } from './ShareSkillsSettingsPane'
 import { AutomationsSettingsPane } from './AutomationsSettingsPane'
 import { OrcaAccountSettingsPane } from './OrcaAccountSettingsPane'
 import { LinearAgentSkillPane } from './LinearAgentSkillPane'
@@ -1454,6 +1455,19 @@ function Settings(): React.JSX.Element {
                   {isSectionMounted('artifacts') ? (
                     <ArtifactsSettingsPane settings={settings} updateSettings={updateSettings} />
                   ) : null}
+                </SettingsSection>
+
+                <SettingsSection
+                  id="share-skills"
+                  title={translate('auto.components.settings.shareSkills.title', 'Share Skills')}
+                  badge="Beta"
+                  description={translate(
+                    'auto.components.settings.shareSkills.description',
+                    'Share one or many skills through unlisted, revocable links.'
+                  )}
+                  searchEntries={getSectionSearchEntries('share-skills')}
+                >
+                  {isSectionMounted('share-skills') ? <ShareSkillsSettingsPane /> : null}
                 </SettingsSection>
 
                 <SettingsSection

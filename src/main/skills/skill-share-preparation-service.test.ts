@@ -70,9 +70,7 @@ describe('SkillSharePreparationService', () => {
     const preview = await service.prepare({ sourceDirectory: source })
     const input = {
       preparationId: preview.preparationId,
-      releaseNotes: 'retry',
-      userIds: ['user_2'],
-      shareWithOrganization: false
+      releaseNotes: 'retry'
     }
 
     await expect(service.publish(input)).rejects.toThrow('response lost')
@@ -88,18 +86,18 @@ describe('SkillSharePreparationService', () => {
     expect(idempotencyKey).toBe(createShare.mock.calls[1]?.[1].idempotencyKey)
   })
 
-  it('keeps the finalized version when the audience must be corrected', async () => {
+  it('keeps the finalized version while sign-in is reconnected', async () => {
     const { root, source } = await createSource()
     const publishVersion = vi.fn(async (request: { packageId: string }) => ({
       status: 'ok' as const,
-      value: publishedVersion(request.packageId, 'version_audience')
+      value: publishedVersion(request.packageId, 'version_reconnect')
     }))
     const createShare = vi
       .fn()
-      .mockRejectedValueOnce(new Error('skill_package_organization_required'))
+      .mockResolvedValueOnce({ status: 'reconnect-required' })
       .mockResolvedValueOnce({
         status: 'ok',
-        value: { id: 'share_people', url: 'https://share.test/skills/share/share_people' }
+        value: { id: 'share_retry', url: 'https://share.test/skills/share/share_retry' }
       })
     const service = new SkillSharePreparationService(join(root, 'preparations'), {
       publishVersion,
@@ -108,24 +106,14 @@ describe('SkillSharePreparationService', () => {
     const preview = await service.prepare({ sourceDirectory: source })
 
     await expect(
-      service.publish({
-        preparationId: preview.preparationId,
-        releaseNotes: 'retry',
-        userIds: [],
-        shareWithOrganization: true
-      })
-    ).rejects.toThrow('skill_package_organization_required')
+      service.publish({ preparationId: preview.preparationId, releaseNotes: 'retry' })
+    ).resolves.toEqual({ status: 'reconnect-required' })
     await expect(
-      service.publish({
-        preparationId: preview.preparationId,
-        releaseNotes: 'retry',
-        userIds: ['user_2'],
-        shareWithOrganization: false
-      })
-    ).resolves.toMatchObject({ status: 'ok', value: { share: { id: 'share_people' } } })
+      service.publish({ preparationId: preview.preparationId, releaseNotes: 'retry' })
+    ).resolves.toMatchObject({ status: 'ok', value: { share: { id: 'share_retry' } } })
 
     expect(publishVersion).toHaveBeenCalledOnce()
-    expect(createShare.mock.calls[0]?.[1].idempotencyKey).not.toBe(
+    expect(createShare.mock.calls[0]?.[1].idempotencyKey).toBe(
       createShare.mock.calls[1]?.[1].idempotencyKey
     )
   })

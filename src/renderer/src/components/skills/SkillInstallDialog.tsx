@@ -87,16 +87,16 @@ export function SkillInstallDialog({
       const operation = await window.api.skills.resolveShare(shareId)
       if (operation.status !== 'ok') {
         setError(
-          operation.status === 'reconnect-required'
-            ? 'Reconnect your Orca account to inspect this skill.'
-            : operation.message
+          operation.status === 'unconfigured'
+            ? operation.message
+            : 'This share is unavailable. The link may be invalid, expired, or revoked.'
         )
         return
       }
       setPreview({ shareId, version: operation.value.version })
     } catch (cause) {
       console.warn('[skills] share resolution failed:', cause)
-      setError('This share is unavailable or your account does not have access.')
+      setError('This share is unavailable. The link may be invalid, expired, or revoked.')
     } finally {
       setBusy(false)
     }

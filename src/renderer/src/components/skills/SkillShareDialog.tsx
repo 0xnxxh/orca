@@ -13,8 +13,7 @@ import type { DiscoveredSkill } from '../../../../shared/skills'
 import {
   SkillShareDialogHeader,
   SkillSharePreparationReview,
-  SkillSharePublishedLink,
-  type SelectableOrgMember
+  SkillSharePublishedLink
 } from './SkillShareReviewContent'
 import { matchingManagedSkillInstall } from './skill-share-package-selection'
 
@@ -45,11 +44,7 @@ export function SkillShareDialog({
 }: SkillShareDialogProps): React.JSX.Element {
   const selectedSkills = useMemo(() => skills ?? (skill ? [skill] : []), [skill, skills])
   const [preview, setPreview] = useState<SkillSharePreview | null>(null)
-  const [members, setMembers] = useState<SelectableOrgMember[]>([])
   const [author, setAuthor] = useState('')
-  const [organization, setOrganization] = useState('')
-  const [audience, setAudience] = useState<'organization' | 'people'>('organization')
-  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
   const [releaseNotes, setReleaseNotes] = useState('')
   const [progress, setProgress] = useState<SkillShareProgress | null>(null)
   const [shareUrl, setShareUrl] = useState<string | null>(null)
@@ -104,21 +99,6 @@ export function SkillShareDialog({
         setPublishingNewVersion(managedInstall !== null)
         const cloud = auth.cloud
         setAuthor(cloud?.displayName || cloud?.email || '')
-        setOrganization(cloud?.activeOrgName || '')
-        if (!cloud?.activeOrgId) {
-          setAudience('people')
-          setMembers([])
-          return
-        }
-        const result = await window.api.orcaProfiles.orgMembersList({ orgId: cloud.activeOrgId })
-        if (generation.current === current && result.status === 'ok') {
-          setMembers(
-            result.roster.members.filter(
-              (member): member is SelectableOrgMember =>
-                Boolean(member.userId) && member.userId !== cloud.userId
-            )
-          )
-        }
       })
       .catch((cause) => {
         console.warn('[skills] share preparation failed:', cause)
@@ -168,24 +148,13 @@ export function SkillShareDialog({
     if (!preview) {
       return
     }
-    if (audience === 'people' && selectedUserIds.length === 0) {
-      setError(
-        translate(
-          'auto.components.skills.SkillShareDialog.peopleRequired',
-          'Select at least one teammate.'
-        )
-      )
-      return
-    }
     setPublishing(true)
     cancellationRequested.current = false
     setError(null)
     try {
       const result = await window.api.skills.publishShare({
         preparationId: preview.preparationId,
-        releaseNotes,
-        userIds: audience === 'people' ? selectedUserIds : [],
-        shareWithOrganization: audience === 'organization'
+        releaseNotes
       })
       if (result.status !== 'ok') {
         setError(operationError(result.status))
@@ -252,12 +221,6 @@ export function SkillShareDialog({
           <SkillSharePreparationReview
             preview={preview}
             author={author}
-            organization={organization}
-            audience={audience}
-            onAudienceChange={setAudience}
-            members={members}
-            selectedUserIds={selectedUserIds}
-            onSelectedUserIdsChange={setSelectedUserIds}
             releaseNotes={releaseNotes}
             onReleaseNotesChange={setReleaseNotes}
             publishing={publishing}

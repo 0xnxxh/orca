@@ -403,6 +403,7 @@ import type {
 import type { SkillDiscoveryResult, SkillDiscoveryTarget } from '../shared/skills'
 import type {
   SkillCloudDownloadGrant,
+  SkillCloudOwnedShare,
   SkillCloudOperation,
   SkillCloudPackageDetails
 } from '../shared/skill-cloud-contract'
@@ -2602,11 +2603,7 @@ export type PreloadApi = {
     removeInstall: (input: SkillRemoveInput) => Promise<SkillRemoveOperation>
     listManagedInstalls: (environmentId?: string) => Promise<ManagedSkillInstallListOperation>
     getPackage: (packageId: string) => Promise<SkillCloudOperation<SkillCloudPackageDetails>>
-    replacePackageAccess: (input: {
-      packageId: string
-      userIds: string[]
-      shareWithOrganization: boolean
-    }) => Promise<SkillCloudOperation<void>>
+    listOwnedShares: () => Promise<SkillCloudOperation<SkillCloudOwnedShare[]>>
     revokeShare: (shareId: string) => Promise<SkillCloudOperation<void>>
     deletePackageVersion: (input: {
       packageId: string
