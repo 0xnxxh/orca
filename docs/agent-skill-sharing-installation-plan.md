@@ -1154,7 +1154,8 @@ The detailed threat register and residual release gates live in
 
 - Treat `SKILL.md` and packaged scripts as executable code for trust messaging.
 - Show author, organization, version, digest, file summary, and executable files before install.
-- Require authentication for private share resolution and every download grant.
+- Require the exact active bearer share ID for recipient resolution and every download grant;
+  require authentication for publication and owner management.
 - Bind grants to one package version, digest, maximum byte count, and short expiration.
 - Validate grant and redirect hosts to prevent server-side request forgery.
 - Never execute package scripts during installation.

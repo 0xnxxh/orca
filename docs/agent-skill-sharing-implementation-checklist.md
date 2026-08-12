@@ -1331,9 +1331,11 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
       three explicit controls.
 - [ ] Disable the affected operation on unexplained digest mismatch, archive containment failure, data leak,
       unrecoverable local mutation, or cross-tenant authorization defect.
-- [ ] Publish user documentation for sharing, access, install destinations, updates, rollback,
-      removal, retention, and trust.
-- [ ] Publish admin documentation for organization access, user departure, deletion, and retention.
+- [x] Publish user documentation for sharing, access, install destinations, updates, rollback,
+      removal, retention, and trust in
+      [`docs/reference/sharing-agent-skills.md`](./reference/sharing-agent-skills.md).
+- [x] Publish admin documentation for organization access, user departure, deletion, and retention
+      in [`docs/reference/admin-agent-skill-sharing.md`](./reference/admin-agent-skill-sharing.md).
 - [ ] Remove rollout flags only after sustained healthy usage and a reviewed decision.
 
 ### First-release gate
@@ -1344,8 +1346,10 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
 - [ ] Real SSH paths and host-owned resolution pass.
 - [ ] Mixed-version tests pass in both directions.
 - [ ] Cancellation and crash recovery pass during transfer and every commit boundary.
-- [ ] Durable-share authorization, revocation lag, retention, deletion, and recovery are documented
-      and tested.
+- [x] Durable-share authorization, revocation lag, retention, deletion, and recovery are documented
+      and tested. The user/admin guides document the lifecycle; Cloud route, integration, restore,
+      and cleanup suites cover the implemented contract. Automatic one-day quarantine deletion
+      remains a separate time-gated infrastructure observation.
 - [ ] The UI identifies author, organization, scripts, and executable content before install.
 - [ ] Telemetry, logs, and diagnostic bundles contain no credentials or private contents.
 - [ ] Kill switches are tested without affecting discovery or existing installations.
@@ -1360,5 +1364,6 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
 - [ ] Evaluate an explicit, reviewable project desired-state manifest.
 - [ ] Evaluate direct machine-to-machine transfer if Cloud persistence is not appropriate.
 - [ ] Define offline convergence without durable shared credentials.
-- [ ] Document organization removal, user departure, package retention, and reconciliation
-      semantics before enabling policy-driven installs.
+- [x] Document organization removal, user departure, package retention, and reconciliation
+      semantics before enabling policy-driven installs. The admin guide explicitly leaves legal
+      retention and ownership-transfer approval as human release gates.
