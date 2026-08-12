@@ -6,9 +6,10 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `38012f06c1`; no PR.
+- Orca implementation: `skills-share` at `371767014a`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
-  merged as `8045c85dad`; production remains untouched.
+  merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
+  production remains untouched.
 
 Validated so far:
 
@@ -155,12 +156,32 @@ Validated so far:
 - Guarded sleep `31587083752` returned staging to low cost. Independent reads verified Cloud SQL
   `NEVER`/`STOPPED`, C1/C2/C3 target size zero and stable with no current actions, and API, Auth,
   and Relay active-revision minimums at zero. Production was not touched.
+- Cloud PR `#336` added a browser-free physical-host credential handoff restricted to the exact
+  `main`-branch staging workflow identity. It encrypts only the ten-minute owner token to a
+  one-time RSA-3072 key, grants no GCP permissions, retains ciphertext for at most one day, and
+  passed PR run `31588982191` plus merged-main run `31589194501` as merge `8fce3298ef`.
+- Guarded wake `31589384191` restored SQL and the two configured Relay cells without waking C3.
+  Auth deploy `31589963244` promoted `orca-cloud-auth-staging-00025-zuz` at 100% traffic with
+  immutable digest `sha256:2b5cb04060a871f372298786dbed681054a076f5cf75966ea5e2130403db7254`.
+- The physical `windows 2` staging journey passed in 27.6 seconds using credential run
+  `31591275227`. It installed v1 into the Windows-owned global path with the published digest and
+  no macOS fallback, updated only that host to v2, preserved independent local version selection,
+  rolled Windows back to v1, proved revocation left its installed copy intact, removed both host
+  and local installs, and deleted the Cloud package. The encrypted artifact and local one-time key
+  material were deleted immediately after use.
+- The staging skill bucket independently reports the exact age-one-day Delete lifecycle restricted
+  to `uploads/`, seven-day soft deletion, uniform bucket access, and public-access prevention. Its
+  oldest live quarantine object was created at `2026-08-11T22:49:34Z`, so lifecycle execution—not
+  configuration—is still time-gated.
+- Guarded sleep `31592709817` completed at Cloud `8fce3298ef`. Independent reads verified SQL
+  `NEVER`/`STOPPED`, all three Relay MIGs stable at target zero with no active actions, and API,
+  Auth, and Relay active-service minimums at zero.
 
 Rollout gate: staging infrastructure, OIDC owner identity exchange, anonymous bearer lifecycle,
 owner management, browser-free desktop bundle lifecycle, privacy-safe logging, published-object
 recovery, bounded finalization load, and guarded rollback-capable deployment passed. Production
-remains untouched, and the shared staging data plane is asleep; final remote physical-host staging
-journeys and quarantine lifecycle deletion remain.
+remains untouched. Native Windows staging passed; physical WSL and SSH staging journeys plus the
+quarantine lifecycle deletion remain. The shared staging data plane is asleep.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
 
@@ -1215,8 +1236,10 @@ still require the listed split metrics, latency panels, and alerts.
       integration suite.
 - [ ] Run desktop-to-local, paired-runtime, `windows 2`, WSL, and SSH journeys in staging.
       Browser-free macOS run `31569902499` passed publish, install, conflict preservation, update,
-      rollback, revocation, installed-copy preservation, removal, and Cloud deletion. Paired,
-      `windows 2`, WSL, and SSH still need the same live staging Cloud journey.
+      rollback, revocation, installed-copy preservation, removal, and Cloud deletion. Physical
+      native Windows passed the same lifecycle through run `31591275227`, including remote-owned
+      path and digest verification with no macOS fallback. Paired non-Windows, WSL, and SSH still
+      need the same live staging Cloud journey.
 - [x] Give the live staging E2E an owner-private persisted test profile or a short-lived
       non-interactive test credential so reruns do not open PKCE login tabs or copy a user's
       primary Orca session.

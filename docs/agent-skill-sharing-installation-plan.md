@@ -53,11 +53,12 @@ that larger package-manager surface.
 
 ## Current execution status
 
-The Orca implementation is on `skills-share` at `38012f06c1`; no Orca pull request exists. Cloud
+The Orca implementation is on `skills-share` at `371767014a`; no Orca pull request exists. Cloud
 bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`;
 the bundle desktop smoke update merged through `#329` as `eddb144afe`, generation-aware GCS
 recovery merged through `#330` as `8045c85dad`, and the bounded finalization load gate plus cleanup
-hardening merged through `#332`-`#335` as `bb8bf8b9ac`.
+hardening merged through `#332`-`#335` as `bb8bf8b9ac`. The encrypted physical-host credential
+handoff merged through `#336` as `8fce3298ef`.
 The authenticated OIDC smoke landed in `#313`; the narrow Auth release-metadata convergence
 follow-up landed in `#314`; the finalization and lifecycle fixes landed in `#317`. The final
 anonymous bearer-link candidate and canonical smoke now pass in staging. Production remains
@@ -135,8 +136,15 @@ and latency metrics stayed far below their reviewed thresholds. PR `#335` made r
 cleanup-safe, and run `31586684354` removed the exact failed-wave package set before two
 manifest-proven quarantine generations were deleted with GCS preconditions. Guarded sleep
 `31587083752` then returned SQL to `NEVER`/`STOPPED`, all three stable Relay MIGs to zero, and every
-active Cloud Run revision minimum to zero. Remaining staging gates are remote physical-host
-journeys and the time-gated quarantine lifecycle deletion.
+active Cloud Run revision minimum to zero. Guarded wake `31589384191` later restored only the two
+configured Relay cells, and Auth deploy `31589963244` promoted
+`orca-cloud-auth-staging-00025-zuz`. The browser-free physical `windows 2` staging journey then
+passed publish, native Windows install, update, independent local version selection, rollback,
+revocation preservation, removal, and Cloud deletion using encrypted credential run
+`31591275227`; its ciphertext artifact and one-time local key material were deleted immediately.
+Remaining staging gates are physical WSL and SSH journeys and the time-gated quarantine lifecycle
+deletion. Guarded sleep `31592709817` returned SQL to `NEVER`/`STOPPED`, all three stable Relay
+MIGs to zero, and every active Cloud Run service minimum to zero. Production remains untouched.
 
 ## Research baseline
 
