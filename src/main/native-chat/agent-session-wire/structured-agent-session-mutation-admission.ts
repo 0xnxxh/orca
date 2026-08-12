@@ -125,11 +125,22 @@ function turnContext<TValue>(
   journal: AgentSessionJournal,
   fence: number
 ): AgentSessionTurnContext {
+  const persistedOptions = request.store.getRecord(request.envelope.sessionId)?.options
   return {
     sessionId: request.envelope.sessionId,
     journal,
     fence,
     adapter: request.adapter,
+    ...(persistedOptions ? { persistedOptions } : {}),
+    persistOptions: (options) =>
+      request.store
+        .replaceSessionOptions({
+          sessionId: request.envelope.sessionId,
+          fence,
+          options,
+          now: request.now()
+        })
+        .then(() => undefined),
     resolvedBy: request.callerKey,
     publish: () => request.publish(journal),
     now: () => request.now()

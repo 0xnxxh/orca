@@ -1,10 +1,49 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { CodexAppServerConnection } from './codex-app-server-connection'
+import { CodexAcquisitionWindow } from './codex-structured-acquisition-window'
 import {
+  applyCodexStructuredSessionOption,
   readCodexStructuredSessionOptions,
-  reportedCodexThreadOptions
+  reportedCodexThreadOptions,
+  restoredCodexSessionOptions
 } from './codex-structured-session-options'
+import type { CodexSession } from './codex-structured-session-state'
+
+function optionSession(request: CodexAppServerConnection['request']): CodexSession {
+  return {
+    connection: {
+      pid: 1,
+      closed: false,
+      request,
+      notify: () => {},
+      respond: () => {},
+      respondWithError: () => {},
+      close: async () => {}
+    },
+    threadId: 'thread-1',
+    historyPath: null,
+    prompts: new CodexAcquisitionWindow().prompts,
+    options: new Map(),
+    reportedOptions: { model: 'gpt-live', effort: 'high' },
+    turnIdWaiters: [],
+    translator: null
+  }
+}
 
 describe('structured Codex session options', () => {
+  it('filters restored records to recognized turn options', () => {
+    expect(
+      Object.fromEntries(
+        restoredCodexSessionOptions({
+          model: 'gpt-live',
+          effort: 'high',
+          threadId: 'thread-injected',
+          input: 'input-injected'
+        })
+      )
+    ).toEqual({ model: 'gpt-live', effort: 'high' })
+  })
+
   it('hydrates paged provider models and their supported efforts', async () => {
     const request = vi.fn(async (_method: string, params?: Record<string, unknown>) =>
       params?.cursor
@@ -87,5 +126,45 @@ describe('structured Codex session options', () => {
         effort: 'high'
       })
     ).toEqual({ model: 'gpt-live', effort: 'high' })
+  })
+
+  it('reconciles an incompatible effort when only the model changes', async () => {
+    const session = optionSession(
+      vi.fn(async () => ({
+        data: [
+          {
+            model: 'gpt-live',
+            supportedReasoningEfforts: [{ reasoningEffort: 'high' }],
+            defaultReasoningEffort: 'high'
+          },
+          {
+            model: 'gpt-fast',
+            supportedReasoningEfforts: [{ reasoningEffort: 'low' }],
+            defaultReasoningEffort: 'low'
+          }
+        ],
+        nextCursor: null
+      }))
+    )
+
+    await expect(
+      applyCodexStructuredSessionOption(session, 'model', 'gpt-fast', undefined)
+    ).resolves.toEqual({ model: 'gpt-fast', effort: 'low' })
+  })
+
+  it('rejects values absent from the provider catalog', async () => {
+    const session = optionSession(
+      vi.fn(async () => ({
+        data: [{ model: 'gpt-live', supportedReasoningEfforts: [] }],
+        nextCursor: null
+      }))
+    )
+
+    await expect(
+      applyCodexStructuredSessionOption(session, 'model', 'not-entitled', undefined)
+    ).rejects.toThrow('does not offer model not-entitled')
+    await expect(
+      applyCodexStructuredSessionOption(session, 'effort', 'high', undefined)
+    ).rejects.toThrow('does not support high')
   })
 })

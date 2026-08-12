@@ -6,9 +6,10 @@ import {
   AgentSessionPreSpawnError,
   type AgentSessionAcquisition,
   type AgentSessionDispatchOutcome,
-  type StructuredAgentSessionAdapter
+  type StructuredAgentSessionAcquireInput,
+  type StructuredAgentSessionAdapter,
+  type StructuredAgentSessionSetOptionInput
 } from '../native-chat/agent-session-wire/structured-agent-session-adapter'
-import type { StructuredAgentSessionEventSink } from '../native-chat/agent-session-wire/structured-agent-session-event-sink'
 import { createCodexJournalTranslator } from './codex-structured-journal-translation'
 import {
   isCodexAppServerRequestError,
@@ -28,8 +29,10 @@ import { dispatchCodexTurn, isCodexTurnOptionKey } from './codex-structured-turn
 import { supportsCodexStructuredLocation } from './codex-structured-location-support'
 import { closeCodexPublishedSession } from './codex-structured-session-close'
 import {
+  applyCodexStructuredSessionOption,
   readLiveCodexSessionOptions,
-  reportedCodexThreadOptions
+  reportedCodexThreadOptions,
+  restoredCodexSessionOptions
 } from './codex-structured-session-options'
 import {
   cancelCodexAcquisitionAttempt,
@@ -54,12 +57,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
 
   supportsLocation = supportsCodexStructuredLocation
 
-  async acquire(input: {
-    identity: AgentSessionJournalIdentity
-    fence: number
-    spawnToken: string
-    events?: StructuredAgentSessionEventSink
-  }): Promise<AgentSessionAcquisition> {
+  async acquire(input: StructuredAgentSessionAcquireInput): Promise<AgentSessionAcquisition> {
     const sessionId = input.identity.sessionId
     const { previousAttempt, attempt } = this.acquisitions.start(sessionId)
     const acquisition = attempt.window
@@ -138,7 +136,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
         threadId: opened.threadId,
         historyPath: opened.historyPath,
         prompts: acquisition.prompts,
-        options: new Map(),
+        options: restoredCodexSessionOptions(input.options),
         reportedOptions: reportedCodexThreadOptions(opened),
         turnIdWaiters: [],
         translator
@@ -282,19 +280,18 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     answerCodexPrompt(session.prompts, session.connection, input.itemId, input.optionId)
   }
 
-  async setOption(input: {
-    sessionId: string
-    key: string
-    value: string
-    fence: number
-  }): Promise<void> {
-    const session = this.session(input.sessionId)
+  async setOption(
+    input: StructuredAgentSessionSetOptionInput
+  ): Promise<Readonly<Record<string, string>>> {
     if (!isCodexTurnOptionKey(input.key)) {
       throw new Error(`codex app-server has no thread option named ${input.key}`)
     }
-    // Codex applies model, effort, and policy on `turn/start`, so an option set
-    // between turns takes effect on the next one rather than immediately.
-    session.options.set(input.key, input.value)
+    return applyCodexStructuredSessionOption(
+      this.session(input.sessionId),
+      input.key,
+      input.value,
+      this.deps.requestTimeoutMs
+    )
   }
 
   readOptions = (input: { sessionId: string; fence: number }) =>

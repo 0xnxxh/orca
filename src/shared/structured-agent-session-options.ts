@@ -48,16 +48,7 @@ export function structuredAgentSessionOptionCatalog(
   seed: AgentSessionOptionCatalog,
   result: AgentSessionOptionsResult
 ): AgentSessionOptionCatalog {
-  const discovered = new Map(result.models.map((model) => [model.id, discoveredModel(model)]))
-  const models: CatalogModel[] = seed.models.map((seeded) => {
-    const live = discovered.get(seeded.id)
-    if (!live) {
-      return seeded
-    }
-    discovered.delete(seeded.id)
-    return live
-  })
-  models.push(...discovered.values())
+  const models: CatalogModel[] = result.models.map(discoveredModel)
   if (!models.some((model) => model.id === result.current.model)) {
     models.push({
       id: result.current.model,
@@ -138,4 +129,18 @@ export function commitStructuredAgentSessionOption(
   )
   setTrackedSessionOption(state.record, id, value, 'dispatched', effectiveModel)
   return { ...state, pendingId: null }
+}
+
+export function commitStructuredAgentSessionOptionValues(
+  state: StructuredAgentSessionOptionState,
+  values: Readonly<Record<string, string>>
+): StructuredAgentSessionOptionState {
+  let next = state
+  for (const id of ['model', 'effort']) {
+    const value = values[id]
+    if (value) {
+      next = commitStructuredAgentSessionOption(next, id, value)
+    }
+  }
+  return next
 }

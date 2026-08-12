@@ -127,7 +127,13 @@ export function setOptionPlan(params: {
     run: (ctx) => performSetOption(ctx, params),
     // A pending row may have crashed before the adapter call. Reapplying the
     // same assignment is safe; only a settled success can be answered directly.
-    replay: (_ctx, outcome) =>
-      outcome.status === 'succeeded' ? { key: params.key, value: params.value } : null
+    replay: (ctx, outcome) =>
+      outcome.status === 'succeeded'
+        ? {
+            key: params.key,
+            value: params.value,
+            ...(ctx.persistedOptions ? { options: { ...ctx.persistedOptions } } : {})
+          }
+        : null
   }
 }

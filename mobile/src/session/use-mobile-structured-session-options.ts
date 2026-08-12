@@ -3,12 +3,13 @@ import { getAgentSessionOptionCatalog } from '../../../src/shared/agent-session-
 import {
   applyStructuredAgentSessionOptions,
   canSetStructuredAgentSessionOption,
-  commitStructuredAgentSessionOption,
+  commitStructuredAgentSessionOptionValues,
   createStructuredAgentSessionOptionState,
   structuredAgentSessionOptionSnapshot
 } from '../../../src/shared/structured-agent-session-options'
 import type { SessionOptionValue } from '../../../src/shared/native-chat-session-options'
 import type { AgentSessionOptionsResult } from '../../../src/shared/agent-session-wire'
+import type { AgentSessionOptionResult } from '../../../src/shared/agent-session-wire'
 import type { RpcClient } from '../transport/rpc-client'
 import type { MobileNativeChatSessionOptionsController } from './use-mobile-native-chat-session-options'
 
@@ -18,9 +19,10 @@ export function useMobileStructuredSessionOptions(args: {
   client: RpcClient | null
   connected: boolean
   sessionId: string | null
-  setOption: (key: string, value: string) => Promise<boolean>
+  fence: number | null
+  setOption: (key: string, value: string) => Promise<AgentSessionOptionResult | null>
 }): MobileNativeChatSessionOptionsController {
-  const { client, connected, sessionId, setOption: dispatchOption } = args
+  const { client, connected, fence, sessionId, setOption: dispatchOption } = args
   const [optionState, setOptionState] = useState(() =>
     createStructuredAgentSessionOptionState('codex')
   )
@@ -30,7 +32,7 @@ export function useMobileStructuredSessionOptions(args: {
     const next = createStructuredAgentSessionOptionState('codex')
     activeRecordRef.current = next.record
     setOptionState(next)
-  }, [sessionId])
+  }, [fence, sessionId])
 
   useEffect(() => {
     setPickerRequest(null)
@@ -55,7 +57,7 @@ export function useMobileStructuredSessionOptions(args: {
     return () => {
       stale = true
     }
-  }, [client, connected, sessionId])
+  }, [client, connected, fence, sessionId])
 
   const snapshot = useMemo(
     () => (sessionId ? structuredAgentSessionOptionSnapshot(optionState) : []),
@@ -73,11 +75,13 @@ export function useMobileStructuredSessionOptions(args: {
       const targetRecord = optionState.record
       setOptionState((current) => ({ ...current, pendingId: id }))
       try {
-        const applied = await dispatchOption(id, value)
-        if (!applied || activeRecordRef.current !== targetRecord) {
+        const result = await dispatchOption(id, value)
+        if (!result || activeRecordRef.current !== targetRecord) {
           return false
         }
-        setOptionState((current) => commitStructuredAgentSessionOption(current, id, value))
+        setOptionState((current) =>
+          commitStructuredAgentSessionOptionValues(current, result.options ?? { [id]: value })
+        )
         return true
       } finally {
         setOptionState((current) =>

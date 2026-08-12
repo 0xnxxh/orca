@@ -7,6 +7,7 @@ import type { DeferredStructuredAgentSessionEventSink } from './structured-agent
 import type { StructuredAgentSessionHostDeps } from './structured-agent-session-host'
 import type { StructuredAgentSessionHostSession } from './structured-agent-session-host-types'
 import { StructuredAgentSessionHandoffCoordinator } from './structured-agent-session-handoff'
+import { readNativeHandoffSessionOptions } from './structured-agent-session-handoff-options'
 import type { AgentSessionSubscribers } from './structured-agent-session-subscribers'
 import { StructuredTuiTranscriptCatchup } from './structured-tui-transcript-catchup'
 
@@ -129,6 +130,11 @@ async function acquireNativeHandoffOwner(
   })
   let proved: AgentSessionRecord
   try {
+    const options = await readNativeHandoffSessionOptions({
+      adapter: deps.adapter,
+      sessionId: input.sessionId,
+      fence: input.fence
+    })
     await deps.store.commitProcessIdentity({
       sessionId: input.sessionId,
       fence: input.fence,
@@ -139,7 +145,8 @@ async function acquireNativeHandoffOwner(
       sessionId: input.sessionId,
       fence: input.fence,
       link: acquired.link,
-      now: host.now()
+      now: host.now(),
+      ...(options ? { options } : {})
     })
   } catch (error) {
     await deps.adapter.releaseAcquisition?.({ sessionId: input.sessionId })

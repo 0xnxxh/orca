@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcSuccess } from '../transport/types'
 import type { AgentJournalSubmission } from '../../../src/shared/agent-session-journal-types'
+import type { AgentSessionOptionResult } from '../../../src/shared/agent-session-wire'
 import type * as MobileStructuredOutboxStore from './mobile-structured-outbox-store'
 import {
   loadMobileStructuredOutbox,
@@ -367,12 +368,12 @@ describe('useMobileStructuredSessionWrites', () => {
       error: { code: 'forbidden', message: 'not allowed' }
     })
 
-    let applied!: boolean
+    let applied!: AgentSessionOptionResult | null
     await act(async () => {
       applied = await api!.setOption('model', 'gpt-5.6-sol')
     })
 
-    expect(applied).toBe(false)
+    expect(applied).toBeNull()
     expect(api!.error).toBe('not allowed')
   })
 
@@ -380,7 +381,7 @@ describe('useMobileStructuredSessionWrites', () => {
     const first = deferred<RpcSuccess>()
     sendRequest.mockImplementationOnce(() => first.promise).mockResolvedValueOnce(accepted('b'))
 
-    let mutationA!: Promise<boolean>
+    let mutationA!: Promise<AgentSessionOptionResult | null>
     act(() => {
       mutationA = api!.setOption('model', 'gpt-5.6-sol')
     })

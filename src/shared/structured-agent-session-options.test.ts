@@ -57,7 +57,7 @@ describe('structured agent session options', () => {
     })
   })
 
-  it('unions catalog seeds with app-server models and retains the current unknown id', () => {
+  it('uses provider-scoped models and retains the current unknown id', () => {
     const state = applyStructuredAgentSessionOptions(
       createStructuredAgentSessionOptionState('codex'),
       CODEX_SESSION_OPTION_CATALOG,
@@ -76,11 +76,34 @@ describe('structured agent session options', () => {
     const model = structuredAgentSessionOptionSnapshot(state)[0]
     expect(
       model.kind.type === 'select' ? model.kind.choices.map((choice) => choice.value) : []
-    ).toEqual([
-      ...CODEX_SESSION_OPTION_CATALOG.models.map((entry) => entry.id),
-      'account-model',
-      'persisted-unknown'
-    ])
+    ).toEqual(['account-model', 'persisted-unknown'])
     expect(model.kind.type === 'select' ? model.kind.currentValue : null).toBe('persisted-unknown')
+  })
+
+  it('projects live options as directly settable descriptors', () => {
+    const state = applyStructuredAgentSessionOptions(
+      createStructuredAgentSessionOptionState('codex'),
+      CODEX_SESSION_OPTION_CATALOG,
+      {
+        models: [
+          {
+            id: 'account-model',
+            label: 'Account Model',
+            isDefault: true,
+            defaultEffort: 'medium',
+            efforts: [
+              { value: 'medium', label: 'Medium' },
+              { value: 'high', label: 'High' }
+            ]
+          }
+        ],
+        current: { model: 'account-model', effort: 'medium' }
+      }
+    )
+
+    const snapshot = structuredAgentSessionOptionSnapshot(state)
+    expect(snapshot.map((descriptor) => descriptor.id)).toEqual(['model', 'effort'])
+    expect(snapshot.every((descriptor) => descriptor.settable)).toBe(true)
+    expect(snapshot.every((descriptor) => descriptor.action === undefined)).toBe(true)
   })
 })

@@ -6,6 +6,7 @@ import type {
   AgentSessionHandoffDirection,
   AgentSessionHandoffMode,
   AgentSessionHandoffResult,
+  AgentSessionOptionResult,
   AgentSessionOptionsResult,
   AgentSessionPromptResult
 } from '../../../../shared/agent-session-wire'
@@ -15,7 +16,7 @@ import { structuredAgentSessionPayloadFingerprint } from '../../../../shared/str
 import {
   applyStructuredAgentSessionOptions,
   canSetStructuredAgentSessionOption,
-  commitStructuredAgentSessionOption,
+  commitStructuredAgentSessionOptionValues,
   createStructuredAgentSessionOptionState,
   structuredAgentSessionOptionSnapshot
 } from '../../../../shared/structured-agent-session-options'
@@ -48,6 +49,7 @@ export function useStructuredAgentSession(args: {
   const [optionState, setOptionState] = useState(() =>
     createStructuredAgentSessionOptionState(agent)
   )
+  const activeOptionRecordRef = useRef(optionState.record)
   const optionCatalog = useMemo(() => getAgentSessionOptionCatalog(agent), [agent])
   const outboxController = useStructuredAgentSessionOutbox({
     sessionId,
@@ -60,6 +62,12 @@ export function useStructuredAgentSession(args: {
     stateRef.current = state
   }, [state])
 
+  useEffect(() => {
+    const next = createStructuredAgentSessionOptionState(agent)
+    activeOptionRecordRef.current = next.record
+    setOptionState(next)
+  }, [agent, sessionId, state.fence])
+
   const mutate = useCallback(
     async <T>(
       method: string,
@@ -70,18 +78,18 @@ export function useStructuredAgentSession(args: {
       if (stateRef.current.fence === null) {
         return null
       }
+      const targetFence = stateRef.current.fence
       const key = `${fingerprintMethod}:${JSON.stringify(fields)}`
       const clientOperationId =
         operationIdOverride ?? operationIds.current.get(key) ?? structuredSessionOperationId()
       operationIds.current.set(key, clientOperationId)
-      const result = await callStructuredAgentSession<AgentSessionMutationResult<T>>(
-        target,
-        method,
-        {
+      let result: AgentSessionMutationResult<T>
+      try {
+        result = await callStructuredAgentSession<AgentSessionMutationResult<T>>(target, method, {
           envelope: {
             sessionId,
             clientOperationId,
-            expectedRuntimeFence: stateRef.current.fence,
+            expectedRuntimeFence: targetFence,
             payloadFingerprint: structuredAgentSessionPayloadFingerprint({
               method: fingerprintMethod,
               sessionId,
@@ -89,10 +97,20 @@ export function useStructuredAgentSession(args: {
             })
           },
           ...fields
+        })
+      } catch (error) {
+        if (stateRef.current.fence === targetFence) {
+          setWriteError(error instanceof Error ? error.message : 'Request was not sent')
         }
-      )
+        return null
+      }
       if (!result.ok) {
-        setWriteError(result.refusal.message)
+        if (stateRef.current.fence === targetFence) {
+          setWriteError(result.refusal.message)
+        }
+        return null
+      }
+      if (stateRef.current.fence !== targetFence) {
         return null
       }
       operationIds.current.delete(key)
@@ -106,14 +124,24 @@ export function useStructuredAgentSession(args: {
     if (!optionCatalog) {
       return
     }
+    let stale = false
     void callStructuredAgentSession<AgentSessionOptionsResult>(target, 'agentSession.options', {
       sessionId
-    }).then((result) =>
-      setOptionState((current) =>
-        applyStructuredAgentSessionOptions(current, optionCatalog, result)
-      )
-    )
-  }, [optionCatalog, sessionId, target])
+    })
+      .then((result) => {
+        if (!stale) {
+          setOptionState((current) =>
+            current.record === activeOptionRecordRef.current
+              ? applyStructuredAgentSessionOptions(current, optionCatalog, result)
+              : current
+          )
+        }
+      })
+      .catch(() => {})
+    return () => {
+      stale = true
+    }
+  }, [optionCatalog, sessionId, state.fence, target])
 
   const optionSnapshot = useMemo(
     () => structuredAgentSessionOptionSnapshot(optionState),
@@ -130,14 +158,15 @@ export function useStructuredAgentSession(args: {
       const targetRecord = optionState.record
       setOptionState((current) => ({ ...current, pendingId: id }))
       try {
-        const result = await mutate('agentSession.setOption', 'agentSession.setOption', {
-          key: id,
-          value
-        })
-        if (result) {
+        const result = await mutate<AgentSessionOptionResult>(
+          'agentSession.setOption',
+          'agentSession.setOption',
+          { key: id, value }
+        )
+        if (result && activeOptionRecordRef.current === targetRecord) {
           setOptionState((current) =>
             current.record === targetRecord
-              ? commitStructuredAgentSessionOption(current, id, value)
+              ? commitStructuredAgentSessionOptionValues(current, result.options ?? { [id]: value })
               : current
           )
         }

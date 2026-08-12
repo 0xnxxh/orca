@@ -152,6 +152,7 @@ async function acquireOwner(
     fence,
     // Retries must recover the original reservation, not mint a second child.
     spawnToken,
+    ...(record.options ? { options: record.options } : {}),
     ...(input.eventSink ? { events: input.eventSink } : {})
   })
   try {

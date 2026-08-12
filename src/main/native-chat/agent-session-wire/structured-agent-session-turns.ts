@@ -31,6 +31,8 @@ export type AgentSessionTurnContext = {
   journal: AgentSessionJournal
   fence: number
   adapter: StructuredAgentSessionAdapter
+  persistedOptions?: Readonly<Record<string, string>>
+  persistOptions: (options: Readonly<Record<string, string>>) => Promise<void>
   /** Opaque client identity recorded as the resolver of a prompt. */
   resolvedBy: string
   publish: () => void
@@ -260,6 +262,11 @@ export async function performSetOption(
   ctx: AgentSessionTurnContext,
   input: { key: string; value: string }
 ): Promise<TurnOutcome<AgentSessionOptionResult>> {
-  await ctx.adapter.setOption({ sessionId: ctx.sessionId, ...input, fence: ctx.fence })
-  return { ok: true, value: input }
+  const applied = await ctx.adapter.setOption({
+    sessionId: ctx.sessionId,
+    ...input,
+    fence: ctx.fence
+  })
+  await ctx.persistOptions(applied ?? { [input.key]: input.value })
+  return { ok: true, value: { ...input, ...(applied ? { options: { ...applied } } : {}) } }
 }

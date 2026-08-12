@@ -1,13 +1,4 @@
-/**
- * Durable agent-session store for one execution host.
- *
- * Holds the session records, their single-writer leases, and the client-operation ledger that
- * used to live only in memory — all in one file so a reservation and its operation row commit in
- * the same atomic transaction. Mutations are serialized through a single write queue, so two
- * concurrent compare-and-swaps in one or multiple Orca processes cannot both commit one pre-state.
- *
- * Nothing here is wired into the runtime yet; the store is dormant until later parts adopt it.
- */
+/** Durable single-writer session records and their operation ledger. */
 
 import {
   agentSessionOperationKey,
@@ -28,6 +19,7 @@ import {
   agentSessionScopeKey,
   type AgentSessionExecutionLocation,
   type AgentSessionJournalCheckpoint,
+  type AgentSessionOptionsReplacement,
   type AgentSessionRecord
 } from '../../shared/agent-session-record'
 import {
@@ -40,6 +32,7 @@ import {
   type AgentSessionProcessIdentityCommit
 } from './agent-session-lease-transitions'
 import { agentSessionReconciliationTargetMatches } from './agent-session-reconciliation-target'
+import { replaceAgentSessionRecordOptions } from './agent-session-record-options'
 import {
   setAgentSessionReservationProcesslessProof,
   type AgentSessionReservationProcesslessProof
@@ -62,8 +55,8 @@ import {
   markAgentSessionStoreLeasesUnreconciled
 } from './agent-session-store-transaction-queue'
 
-export const AGENT_SESSION_LEASE_TTL_MS = 30_000
-export const AGENT_SESSION_LEASE_RENEW_INTERVAL_MS = 10_000
+export const AGENT_SESSION_LEASE_TTL_MS = 30_000,
+  AGENT_SESSION_LEASE_RENEW_INTERVAL_MS = 10_000
 /** Retired claim keys stay verifiable this long so a rotation cannot strand a running agent. */
 export const AGENT_SESSION_CLAIM_KEY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -190,16 +183,20 @@ export class AgentSessionRecordStore {
     link: AgentSessionProviderHandleLink
     now: number
     leaseTtlMs?: number
+    options?: Readonly<Record<string, string>>
   }): Promise<AgentSessionRecord> {
-    return this.mutate(args.sessionId, (record) =>
-      proveAgentSessionOwner({
+    return this.mutate(args.sessionId, (record) => {
+      const proved = proveAgentSessionOwner({
         record,
         fence: args.fence,
         link: args.link,
         now: args.now,
         leaseTtlMs: args.leaseTtlMs ?? AGENT_SESSION_LEASE_TTL_MS
       })
-    )
+      return args.options
+        ? replaceAgentSessionRecordOptions(proved, { ...args, options: args.options })
+        : proved
+    })
   }
 
   async renewLease(args: {
@@ -310,6 +307,9 @@ export class AgentSessionRecordStore {
       lease: { ...record.lease, claimStatus: 'conflicted', handoffStage: 'manual-recovery' }
     }))
   }
+
+  replaceSessionOptions = (args: AgentSessionOptionsReplacement): Promise<AgentSessionRecord> =>
+    this.mutate(args.sessionId, (record) => replaceAgentSessionRecordOptions(record, args))
 
   async retireClaimKey(keyId: string, now: number): Promise<void> {
     await this.transact(() => {

@@ -604,13 +604,24 @@ describe('respondToPrompt', () => {
 describe('setOption', () => {
   it('goes to the provider and writes nothing to the journal', async () => {
     await attach()
+    setOption.mockResolvedValueOnce({ model: 'gpt-5', effort: 'high' })
     const fields = { key: 'model', value: 'gpt-5' }
-    const result = await host.setOption(CALLER, {
+    const params = {
       envelope: envelope('agentSession.setOption', fields),
       ...fields
+    }
+    const result = await host.setOption(CALLER, params)
+    expect(result).toMatchObject({
+      ok: true,
+      value: { ...fields, options: { model: 'gpt-5', effort: 'high' } }
     })
-    expect(result).toMatchObject({ ok: true, value: fields })
+    expect(await host.setOption(CALLER, params)).toMatchObject({
+      ok: true,
+      replayed: true,
+      value: { ...fields, options: { model: 'gpt-5', effort: 'high' } }
+    })
     expect(setOption).toHaveBeenCalledTimes(1)
+    expect(store.getRecord(SESSION)?.options).toEqual({ model: 'gpt-5', effort: 'high' })
     const page = host.history({ sessionId: SESSION, direction: 'tail' })
     expect(page.ok && page.page.items).toHaveLength(0)
   })

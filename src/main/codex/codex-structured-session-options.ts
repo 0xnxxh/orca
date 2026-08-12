@@ -6,9 +6,16 @@ import type {
 import type { CodexAppServerConnection } from './codex-app-server-connection'
 import type { CodexOpenedThread } from './codex-structured-thread-open'
 import type { CodexSession } from './codex-structured-session-state'
+import { isCodexTurnOptionKey } from './codex-structured-turn-start'
 
 const MODEL_PAGE_LIMIT = 100
 const MAX_MODEL_PAGES = 20
+
+export function restoredCodexSessionOptions(
+  options: Readonly<Record<string, string>> | undefined
+): Map<string, string> {
+  return new Map(Object.entries(options ?? {}).filter(([key]) => isCodexTurnOptionKey(key)))
+}
 
 function record(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null
@@ -132,4 +139,51 @@ export function readLiveCodexSessionOptions(
     current: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
     timeoutMs
   })
+}
+
+export async function applyCodexStructuredSessionOption(
+  session: CodexSession,
+  key: string,
+  value: string,
+  timeoutMs: number | undefined
+): Promise<Readonly<Record<string, string>>> {
+  if (key !== 'model' && key !== 'effort') {
+    session.options.set(key, value)
+    return Object.fromEntries(session.options)
+  }
+  const priorModel = session.options.get('model') ?? session.reportedOptions.model
+  const priorEffort = session.options.get('effort') ?? session.reportedOptions.effort
+  const catalog = await readCodexStructuredSessionOptions({
+    connection: session.connection,
+    current: {
+      ...(priorModel ? { model: priorModel } : {}),
+      ...(priorEffort ? { effort: priorEffort } : {})
+    },
+    timeoutMs
+  })
+  if (key === 'model' && !catalog.models.some((entry) => entry.id === value)) {
+    throw new Error(`codex app-server does not offer model ${value}`)
+  }
+  const modelId = key === 'model' ? value : catalog.current.model
+  const model = catalog.models.find((entry) => entry.id === modelId)
+  const requestedEffort = key === 'effort' ? value : priorEffort
+  if (
+    key === 'effort' &&
+    (!model?.efforts.length || !model.efforts.some((effort) => effort.value === requestedEffort))
+  ) {
+    throw new Error(`codex app-server model ${modelId} does not support ${value}`)
+  }
+  const effort =
+    model?.efforts.length === 0
+      ? undefined
+      : (model?.efforts.find((entry) => entry.value === requestedEffort)?.value ??
+        model?.defaultEffort ??
+        model?.efforts[0]?.value)
+  session.options.set('model', modelId)
+  if (effort) {
+    session.options.set('effort', effort)
+  } else {
+    session.options.delete('effort')
+  }
+  return Object.fromEntries(session.options)
 }
