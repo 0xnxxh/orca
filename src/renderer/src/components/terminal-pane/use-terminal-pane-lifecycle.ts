@@ -39,9 +39,15 @@ import { handleOscLink } from './terminal-osc-link-routing'
 import { handleTerminalWebLinkClick } from './terminal-web-link-click'
 import {
   installHttpLinkClickFallback,
+  type TerminalHttpLinkActionDestinations,
   type TerminalLinkRoutingPreferenceRequester
 } from './terminal-url-link-hit-testing'
 import { installTerminalLinkifierClickPriming } from './terminal-linkifier-click-priming'
+import { installTerminalLinkPointerGesture } from './terminal-link-pointer-gesture'
+import type {
+  TerminalLinkActionContext,
+  TerminalLinkActionRequester
+} from './terminal-link-action-request'
 import {
   resolveLocalhostHttpLinkDisplayUrl,
   type HttpLinkSourceOwner
@@ -82,8 +88,6 @@ import { copyTerminalSelection } from './terminal-selection-copy'
 import { parseOsc7 } from './parse-osc7'
 import { guardParserHandler } from './terminal-parser-handler-guard'
 import { resolveTerminalJisYenInput } from './terminal-jis-yen-input'
-import { resolveTerminalKoreanWonInput } from './terminal-korean-won-input'
-import { isKoreanInputSourceActive } from '@/lib/keyboard-layout/korean-input-source'
 import { installTerminalImeCompositionTracker } from './terminal-ime-composition-tracker'
 import { installTerminalImeLinuxCandidateState } from './terminal-ime-linux-candidate-state'
 import {
@@ -92,10 +96,6 @@ import {
   createTerminalImePendingCandidateKeyReleases,
   shouldApplyTerminalImePendingCandidateKeyRelease
 } from './terminal-ime-candidate-key-release-guard'
-import {
-  DISABLED_MAC_NATIVE_TEXT_INPUT_SOURCE_FEATURES,
-  getMacNativeTextInputSourceTracker
-} from './terminal-ime-input-source'
 import { installTerminalImeNativeTextForwarder } from './terminal-ime-native-text-forwarder'
 import {
   shouldBypassXtermKeyboardEvent,
@@ -261,6 +261,7 @@ type UseTerminalPaneLifecycleDeps = {
   settings: GlobalSettings | null | undefined
   settingsRef: React.RefObject<GlobalSettings | null | undefined>
   requestOpenLinksInAppPreference: TerminalLinkRoutingPreferenceRequester
+  requestTerminalLinkAction: TerminalLinkActionRequester
   /** Resolved Option-as-Alt: `'auto'` already mapped to `'true'|'false'` via the layout probe, which lives outside the settings store. */
   effectiveMacOptionAsAlt: EffectiveMacOptionAsAlt
   effectiveMacOptionAsAltRef: React.RefObject<EffectiveMacOptionAsAlt>
@@ -600,6 +601,7 @@ export function useTerminalPaneLifecycle({
   settings,
   settingsRef,
   requestOpenLinksInAppPreference,
+  requestTerminalLinkAction,
   effectiveMacOptionAsAlt,
   effectiveMacOptionAsAltRef,
   initialLayoutRef,
@@ -662,8 +664,13 @@ export function useTerminalPaneLifecycle({
   const linkProviderDisposablesRef = useRef(new Map<number, IDisposable>())
   const terminalHandleLinkDisposablesRef = useRef(new Map<number, IDisposable>())
   const linkifierClickPrimingDisposablesRef = useRef(new Map<number, IDisposable>())
+  const linkPointerGesturesRef = useRef(
+    new Map<number, ReturnType<typeof installTerminalLinkPointerGesture>>()
+  )
   const fileLinkClickFallbackDisposablesRef = useRef(new Map<number, IDisposable>())
-  const httpLinkClickFallbackDisposablesRef = useRef(new Map<number, IDisposable>())
+  const httpLinkClickFallbackDisposablesRef = useRef(
+    new Map<number, ReturnType<typeof installHttpLinkClickFallback>>()
+  )
   // Why: read settingsRef at fire time so toggling "copy on select" applies without recreating panes.
   const selectionDisposablesRef = useRef(new Map<number, IDisposable>())
   const selectionCaptureTimersRef = useRef(new Map<number, number>())
@@ -704,6 +711,7 @@ export function useTerminalPaneLifecycle({
     const linkDisposables = linkProviderDisposablesRef.current
     const terminalHandleLinkDisposables = terminalHandleLinkDisposablesRef.current
     const linkifierClickPrimingDisposables = linkifierClickPrimingDisposablesRef.current
+    const linkPointerGestures = linkPointerGesturesRef.current
     const fileLinkClickFallbackDisposables = fileLinkClickFallbackDisposablesRef.current
     const httpLinkClickFallbackDisposables = httpLinkClickFallbackDisposablesRef.current
     const selectionDisposables = selectionDisposablesRef.current
@@ -734,6 +742,34 @@ export function useTerminalPaneLifecycle({
       resolvePaneLinkCwd(paneCwdRef.current, paneId, startupCwd)
     const getHttpLinkSourceOwnerForPane = (paneId: number) =>
       resolveTerminalHttpLinkSourceOwner(paneTransportsRef.current.get(paneId))
+    const getHttpLinkActionDestinations = (paneId: number): TerminalHttpLinkActionDestinations => {
+      const sourceOwner = getHttpLinkSourceOwnerForPane(paneId)
+      if (sourceOwner.kind !== 'local') {
+        return { primary: 'system' }
+      }
+      const options = terminalUrlOpenHintOptionsFor(settingsRef.current, sourceOwner)
+      return options.openLinksInApp
+        ? { primary: 'orca', alternate: 'system' }
+        : { primary: 'system', alternate: 'orca' }
+    }
+    const getLinkActionContext = (paneId: number): TerminalLinkActionContext | null => {
+      if (settingsRef.current?.terminalLinkActionPopoverEnabled === false) {
+        return null
+      }
+      const pane = managerRef.current?.getPanes().find((candidate) => candidate.id === paneId)
+      const pointerGesture = linkPointerGestures.get(paneId)
+      const ptyMouseSuppression = httpLinkClickFallbackDisposables.get(paneId)?.ptyMouseSuppression
+      if (!pane || !pointerGesture || !ptyMouseSuppression) {
+        return null
+      }
+      return {
+        paneId,
+        pointerGesture,
+        claimPtyMouse: ptyMouseSuppression.claimAction,
+        request: requestTerminalLinkAction,
+        focusTerminal: () => pane.terminal.focus()
+      }
+    }
     // Why: lifecycle-scoped cache for cross-SSH/runtime existence probes; may hold temporarily stale entries.
     const pathExistsCache = new Map<string, boolean>()
     const linkDeps: LinkHandlerDeps = {
@@ -749,7 +785,8 @@ export function useTerminalPaneLifecycle({
       getRuntimeEnvironmentIdForPane: (paneId) => {
         const sourceOwner = getHttpLinkSourceOwnerForPane(paneId)
         return sourceOwner.kind === 'runtime' ? sourceOwner.runtimeEnvironmentId : null
-      }
+      },
+      getLinkActionContext
     }
     let resizeRaf: number | null = null
     const queueResizeAll = (focusActive: boolean): void => {
@@ -834,10 +871,18 @@ export function useTerminalPaneLifecycle({
       setCacheTimerStartedAt,
       syncPanePtyLayoutBinding,
       clearExitedPanePtyLayoutBinding,
-      // Why: record the main-answered 2031 subscribe in the CSI handler's registries, else theme flips never push CSI 997.
-      recordPaneMode2031Subscription: (paneId: number, repliedMode: 'dark' | 'light') => {
+      deferPtyInput: (paneId, data, forward) => {
+        const suppression = httpLinkClickFallbackDisposables.get(paneId)?.ptyMouseSuppression
+        if (!suppression) {
+          forward(data)
+          return
+        }
+        suppression.handlePtyInput(data, forward)
+      },
+      // Why: record the fact-observed 2031 subscribe in the pane registries, else theme flips never push CSI 997.
+      recordPaneMode2031Subscription: (paneId: number, subscribedMode: 'dark' | 'light') => {
         paneMode2031Ref.current.set(paneId, true)
-        paneLastThemeModeRef.current.set(paneId, repliedMode)
+        paneLastThemeModeRef.current.set(paneId, subscribedMode)
       },
       restoredPtyIdByLeafId: initialLayoutRef.current.ptyIdsByLeafId ?? {}
     }
@@ -853,9 +898,13 @@ export function useTerminalPaneLifecycle({
     const fileOpenLinkHint = getTerminalFileOpenHint()
     // Why: read settingsRef at fire time so toggling link routing applies without recreating panes.
     const getUrlOpenLinkHint = (paneId: number): string =>
-      getTerminalUrlOpenHint(
-        terminalUrlOpenHintOptionsFor(settingsRef.current, getHttpLinkSourceOwnerForPane(paneId))
-      )
+      getTerminalUrlOpenHint({
+        ...terminalUrlOpenHintOptionsFor(
+          settingsRef.current,
+          getHttpLinkSourceOwnerForPane(paneId)
+        ),
+        showActions: settingsRef.current?.terminalLinkActionPopoverEnabled !== false
+      })
     const osc7UncHost = extractUncHost(startupCwd)
 
     let releaseWebviewDragPassthrough: (() => void) | null = null
@@ -914,7 +963,6 @@ export function useTerminalPaneLifecycle({
         const linuxImeCandidateState = isLinux
           ? installTerminalImeLinuxCandidateState(pane.terminal.element)
           : null
-        const macNativeTextInputSourceTracker = isMac ? getMacNativeTextInputSourceTracker() : null
         const imeCompositionTracker = installTerminalImeCompositionTracker(pane.terminal.element)
         imeCompositionDisposablesRef.current.set(pane.id, {
           dispose: () => {
@@ -922,15 +970,14 @@ export function useTerminalPaneLifecycle({
             linuxImeCandidateState?.dispose()
           }
         })
-        // Why: only known macOS native text paths (physical CJK/Vietnamese IME) need the keydown bypass; synthetic Unicode lacks physical key identity.
+        // Why: macOS commits an input source's substituted text through the input event alone, so printable keydowns must not reach xterm's encoder.
         const imeNativeTextForwarder = isMac
           ? installTerminalImeNativeTextForwarder({
               terminalElement: pane.terminal.element,
               isComposing: () => imeCompositionTracker.isActive(),
               sendInput: (data) => pane.terminal.input(data),
-              getInputSourceFeatures: () =>
-                macNativeTextInputSourceTracker?.getFeatures() ??
-                DISABLED_MAC_NATIVE_TEXT_INPUT_SOURCE_FEATURES
+              getKittyKeyboardFlags: () =>
+                paneKittyKeyboardModesRef.current.get(pane.id)?.flags ?? 0
             })
           : {
               claimKeyEvent: () => false,
@@ -1021,21 +1068,6 @@ export function useTerminalPaneLifecycle({
             return false
           }
 
-          // Why: the gate refreshes on focus AND keyboard activity (Caps Lock /
-          // 한영 switches change the input source while the window keeps focus).
-          const koreanWonInput = resolveTerminalKoreanWonInput(e, {
-            enabled: settingsRef.current?.terminalKoreanWonToBackquote === true,
-            isMac,
-            isKoreanKeyboard: isKoreanInputSourceActive()
-          })
-          if (koreanWonInput) {
-            if (koreanWonInput.type === 'input') {
-              // Why: translated character, not a shortcut — keep it on xterm's onData path so PTY input guards still run.
-              pane.terminal.input(koreanWonInput.data)
-            }
-            return false
-          }
-
           if (e.type === 'keydown') {
             const shouldSyncCurrentTerminal = (): boolean =>
               managerRef.current
@@ -1069,6 +1101,8 @@ export function useTerminalPaneLifecycle({
           return !shouldBypass
         })
 
+        const linkPointerGesture = installTerminalLinkPointerGesture(pane.terminal)
+        linkPointerGestures.set(pane.id, linkPointerGesture)
         const linkProviderDisposable = pane.terminal.registerLinkProvider(
           createFilePathLinkProvider(pane.id, linkDeps, pane.linkTooltip, fileOpenLinkHint)
         )
@@ -1080,7 +1114,8 @@ export function useTerminalPaneLifecycle({
                 ?.terminal ?? null,
             getRuntimeEnvironmentId: () =>
               linkDeps.getRuntimeEnvironmentIdForPane?.(pane.id) ?? null,
-            linkTooltip: pane.linkTooltip
+            linkTooltip: pane.linkTooltip,
+            getLinkActionContext: () => getLinkActionContext(pane.id)
           })
         )
         terminalHandleLinkDisposablesRef.current.set(pane.id, terminalHandleLinkDisposable)
@@ -1095,7 +1130,9 @@ export function useTerminalPaneLifecycle({
         const httpLinkClickFallbackDisposable = installHttpLinkClickFallback(pane.terminal, {
           ...linkDeps,
           getSourceOwner: () => getHttpLinkSourceOwnerForPane(pane.id),
-          requestOpenLinksInAppPreference
+          requestOpenLinksInAppPreference,
+          getLinkActionContext: () => getLinkActionContext(pane.id),
+          getActionDestinations: () => getHttpLinkActionDestinations(pane.id)
         })
         httpLinkClickFallbackDisposables.set(pane.id, httpLinkClickFallbackDisposable)
         seedStartupSessionRestoredBanner(ptyDeps.startup, pane.id, onShowSessionRestoredBanner)
@@ -1165,7 +1202,9 @@ export function useTerminalPaneLifecycle({
               startupCwd: getPaneLinkCwd(pane.id),
               runtimeEnvironmentId: linkDeps.getRuntimeEnvironmentIdForPane?.(pane.id) ?? null,
               sourceOwner: getHttpLinkSourceOwnerForPane(pane.id),
-              requestOpenLinksInAppPreference
+              requestOpenLinksInAppPreference,
+              linkActionContext: getLinkActionContext(pane.id),
+              actionDestinations: getHttpLinkActionDestinations(pane.id)
             })
             // Why: link activation can steal focus before the click's mouseup reaches xterm, stranding its drag-select
             // listener (runaway selection until next click/Esc); clearSelection detaches it (SelectionService._removeMouseDownListeners).
@@ -1238,6 +1277,11 @@ export function useTerminalPaneLifecycle({
         if (linkifierClickPrimingDisposable) {
           linkifierClickPrimingDisposable.dispose()
           linkifierClickPrimingDisposablesRef.current.delete(paneId)
+        }
+        const linkPointerGesture = linkPointerGestures.get(paneId)
+        if (linkPointerGesture) {
+          linkPointerGesture.dispose()
+          linkPointerGestures.delete(paneId)
         }
         const fileLinkClickFallbackDisposable =
           fileLinkClickFallbackDisposablesRef.current.get(paneId)
@@ -1482,8 +1526,10 @@ export function useTerminalPaneLifecycle({
       },
       terminalTuiScrollSensitivity: () =>
         normalizeTerminalTuiMouseWheelMultiplier(settingsRef.current?.terminalTuiScrollSensitivity),
-      onLinkClick: (event, url) => {
-        const activePane = managerRef.current?.getActivePane()
+      onLinkClick: (paneId, event, url) => {
+        const activePane = managerRef.current
+          ?.getPanes()
+          .find((candidate) => candidate.id === paneId)
         handleTerminalWebLinkClick(url, event, {
           ...linkDeps,
           terminal: activePane?.terminal ?? null,
@@ -1494,7 +1540,9 @@ export function useTerminalPaneLifecycle({
           sourceOwner: activePane
             ? getHttpLinkSourceOwnerForPane(activePane.id)
             : { kind: 'local' },
-          requestOpenLinksInAppPreference
+          requestOpenLinksInAppPreference,
+          linkActionContext: getLinkActionContext(paneId),
+          actionDestinations: getHttpLinkActionDestinations(paneId)
         })
       },
       linkOpenHint: getUrlOpenLinkHint,
@@ -1736,6 +1784,10 @@ export function useTerminalPaneLifecycle({
         disposable.dispose()
       }
       linkifierClickPrimingDisposables.clear()
+      for (const gesture of linkPointerGestures.values()) {
+        gesture.dispose()
+      }
+      linkPointerGestures.clear()
       for (const disposable of fileLinkClickFallbackDisposables.values()) {
         disposable.dispose()
       }

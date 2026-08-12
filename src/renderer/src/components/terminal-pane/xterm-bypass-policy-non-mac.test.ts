@@ -4,7 +4,7 @@ import {
   shouldPreventDefaultTerminalImeCandidateKey,
   shouldSuppressTerminalImeKeyboardEvent
 } from './xterm-bypass-policy'
-import { event } from './__fixtures__/xterm-bypass-event'
+import { event } from './xterm-bypass-event-fixture'
 
 describe('shouldBypassXtermKeyboardEvent — Windows/Linux', () => {
   const withSel = { isMac: false, hasSelection: true }

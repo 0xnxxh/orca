@@ -33,6 +33,10 @@ import {
   PaletteWorktreeStatusDot
 } from './cmd-j/palette-live-status'
 import {
+  resolveTerminalTabAttentionBadge,
+  terminalTabHasUnreadActivity
+} from '@/components/tab-bar/terminal-tab-activity-status'
+import {
   CommandDialog,
   CommandInput,
   CommandList,
@@ -50,6 +54,11 @@ import {
   isDefaultBranchWorkspace,
   isSleepingSweepExemptWorkspace
 } from '@/components/sidebar/visible-worktrees'
+import {
+  EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
+  getPairedDeviceIdsByEnvironment,
+  isWorkspaceFromOtherDevice
+} from '@/components/sidebar/workspace-creator-visibility'
 import { getLiveAgentStatusByWorktreeId, isInactiveWorkspace } from '@/lib/worktree-activity-state'
 import { orderEmptyQueryWorktrees } from '@/lib/order-empty-query-worktrees'
 import {
@@ -75,7 +84,8 @@ import {
   createWorktreePaletteRequestGuard,
   getNextWorktreePaletteSelection,
   getWorktreePaletteSelectionItemIds,
-  getWorktreePaletteCreateActionState
+  getWorktreePaletteCreateActionState,
+  type WorktreePaletteRequestGuard
 } from '@/lib/worktree-palette-create-action'
 import { getWorkspacePortsByWorktreeId } from '@/lib/workspace-port-groups'
 import {
@@ -106,6 +116,7 @@ import {
 import {
   buildFocusedGroupTabRecency,
   orderRecentWorkspaceTabs,
+  resolveRecentWorkspaceTabStatus,
   type RecentWorkspaceTabRow
 } from '@/lib/recent-workspace-tab-rows'
 import { subscribeCmdJRowIndexJump } from '@/lib/cmd-j-row-index-jump'
@@ -164,6 +175,8 @@ import { resolvePaletteFocusRestoreTarget } from '@/components/cmd-j/palette-foc
 import { selectWorktreePaletteCacheInputs } from '@/components/cmd-j/worktree-palette-cache-inputs'
 import { getRepoHostIdentity } from '@/store/slices/repo-host-identity'
 import { buildPluginQuickActions } from '@/components/cmd-j/plugin-quick-actions'
+import { WorkspaceEmojiSuggestionPopover } from '@/components/workspace-emoji/WorkspaceEmojiSuggestionPopover'
+import { useWorkspaceEmojiShortcodeInput } from '@/components/workspace-emoji/useWorkspaceEmojiShortcodeInput'
 import { usePluginCommands } from '@/store/plugin-panels'
 import {
   getComposerEligibleRepos,
@@ -255,8 +268,11 @@ type PaletteListEntry = PaletteItem | CreateWorktreePaletteItem | SectionHeader 
 
 const CREATE_WORKSPACE_QUICK_ACTION_ITEM_ID = `quick-action:${CREATE_WORKSPACE_QUICK_ACTION_ID}`
 
-// Why: outlast the CommandDialog close animation (~150–200ms) so gated status maps stay live until fading rows are gone.
-const PALETTE_STATUS_INPUTS_LINGER_MS = 300
+// Why: outlast the CommandDialog close animation so its rows do not disappear mid-fade.
+const PALETTE_CLOSE_LINGER_MS = 300
+// Why `jump-palette-item`: selection chrome lives in main.css — flat accent is invisible on light popovers.
+const JUMP_PALETTE_ITEM_CLASSNAME =
+  'jump-palette-item group mx-0.5 flex cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 text-left outline-none transition-[background-color,box-shadow]'
 
 type OpenTabPaletteItem = BrowserPaletteItem | SimulatorPaletteItem | WorkspaceTabPaletteItem
 
@@ -277,6 +293,61 @@ const CONTINUED_SECTION_HEADER_ID_SUFFIX = '__continued'
 
 function isCurrentOpenTabItem(item: OpenTabPaletteItem): boolean {
   return item.type === 'browser-page' ? item.result.isCurrentPage : item.result.isCurrentTab
+}
+
+/** An open tab's recent-section row plus the inputs inclusion needs. */
+type OpenTabRecentRow = {
+  item: OpenTabPaletteItem
+  worktree: Worktree
+  row: RecentWorkspaceTabRow
+}
+
+/**
+ * Empty-query recent section: skip idle "where you already are" rows, but keep the current tab when
+ * it still wants something from you (working, permission, unread). Decided from the open-time status
+ * snapshot, so membership matches the frozen row order for the whole session — a current tab that
+ * goes high-signal mid-open joins Recent on the next open, not under the cursor.
+ */
+function shouldIncludeOpenTabInRecentSection({
+  item,
+  worktree,
+  row,
+  paneSources,
+  unreadTerminalTabs,
+  unreadAgentCompletionPanes,
+  now
+}: {
+  item: OpenTabPaletteItem
+  worktree: Worktree
+  row: RecentWorkspaceTabRow
+  paneSources: TabPaneInputSources
+  unreadTerminalTabs: Record<string, boolean | undefined>
+  unreadAgentCompletionPanes: Record<string, boolean | undefined>
+  now: number
+}): boolean {
+  if (worktree.isArchived) {
+    return false
+  }
+  if (!isCurrentOpenTabItem(item)) {
+    return true
+  }
+  // Current browser/editor rows have no attention ladder to escape "you're already here".
+  if (!row.terminalTab) {
+    return false
+  }
+  // Why the ladder minus `done`: the badge rungs decide entry, but a completion you watched land on
+  // screen (unread auto-acks on the focused tab) is news to nobody, and `done` lingers for the full
+  // 30m staleness window — that slot belongs to a workspace you can't already see. Rows admitted
+  // while working keep their frozen slot and flip to the check.
+  const badge = resolveTerminalTabAttentionBadge({
+    status: resolveRecentWorkspaceTabStatus(row, paneSources, now),
+    hasUnread: terminalTabHasUnreadActivity({
+      terminalTabId: row.terminalTab.id,
+      unreadTerminalTabs,
+      unreadAgentCompletionPanes
+    })
+  })
+  return badge != null && badge !== 'done'
 }
 
 function PaletteRowShortcutBadge({
@@ -446,9 +517,42 @@ function getSettingsTargetFromSectionId(sectionId: string): {
 }
 
 export default function WorktreeJumpPalette(): React.JSX.Element | null {
+  const visible = useAppStore((s) => s.activeModal === 'worktree-palette')
+  const [lingering, setLingering] = useState(visible)
+  useEffect(() => {
+    if (visible) {
+      setLingering(true)
+      return
+    }
+    const timer = window.setTimeout(() => setLingering(false), PALETTE_CLOSE_LINGER_MS)
+    return () => window.clearTimeout(timer)
+  }, [visible])
+  // Why: reopening must invalidate a pending create lookup from the previous content mount.
+  const createLookupGuard = useMemo(() => createWorktreePaletteRequestGuard(), [])
+
+  if (!visible && !lingering) {
+    return null
+  }
+  return (
+    <WorktreeJumpPaletteContent
+      visible={visible}
+      lingering={lingering}
+      createLookupGuard={createLookupGuard}
+    />
+  )
+}
+
+function WorktreeJumpPaletteContent({
+  visible,
+  lingering,
+  createLookupGuard
+}: {
+  visible: boolean
+  lingering: boolean
+  createLookupGuard: WorktreePaletteRequestGuard
+}): React.JSX.Element | null {
   // Why: subscribe to language changes so translated memos recompute without a fake i18n.language dependency.
   useTranslation()
-  const visible = useAppStore((s) => s.activeModal === 'worktree-palette')
   const closeModal = useAppStore((s) => s.closeModal)
   const openModal = useAppStore((s) => s.openModal)
   const openSettingsPage = useAppStore((s) => s.openSettingsPage)
@@ -464,27 +568,14 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   const detectedWorktreesByRepo = useAppStore((s) => s.detectedWorktreesByRepo)
   const pendingWorktreeCreations = useAppStore((s) => s.pendingWorktreeCreations)
   const pluginCommands = usePluginCommands()
-  // Why: keep status maps subscribed through the close animation — dropping them while CommandDialog fades out would flash rows empty mid-animation.
-  const [statusInputsLingering, setStatusInputsLingering] = useState(false)
-  useEffect(() => {
-    if (visible) {
-      setStatusInputsLingering(true)
-      return
-    }
-    const timer = window.setTimeout(
-      () => setStatusInputsLingering(false),
-      PALETTE_STATUS_INPUTS_LINGER_MS
-    )
-    return () => window.clearTimeout(timer)
-  }, [visible])
-  const paletteStatusInputsActive = visible || statusInputsLingering
-  // Why: these hot status maps get a new identity on every app-wide write, so gate the subscription on active-or-closing to stop the always-mounted palette re-rendering on unrelated terminals.
+  const paletteStatusInputsActive = visible || lingering
+  // Why: keep hot status maps live through the shell's close-animation linger.
   // Why: ptyIdsByTabId must be included — slept tabs keep a wake-hint sessionId in tab.ptyId, so without it the palette dot would lie green.
   const { ptyIdsByTabId, terminalLayoutsByTabId, tabsByWorktree } = useAppStore(
     useShallow((s) => selectPaletteStatusInputs(s, paletteStatusInputsActive))
   )
   const { prCache, issueCache, hostedReviewCache } = useAppStore(
-    useShallow((s) => selectWorktreePaletteCacheInputs(s, visible || statusInputsLingering))
+    useShallow((s) => selectWorktreePaletteCacheInputs(s, paletteStatusInputsActive))
   )
   const migrationUnsupportedByPtyId = useAppStore((s) => s.migrationUnsupportedByPtyId)
   const activeView = useAppStore((s) => s.activeView)
@@ -509,7 +600,15 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- these deps ARE the refresh policy, not reads: re-snapshot when the palette opens or the tab set moves under it, never on the agent churn the snapshot exists to ignore.
     [paletteStatusInputsActive, tabsByWorktree, unifiedTabsByWorktree]
   )
-  const { agentStatusByPaneKey, runtimePaneTitlesByTabId } = paletteIndexStatus
+  // Why the unread maps ride the same snapshot: recent-section membership is decided once, with the
+  // same open-time reading the frozen row order uses. Subscribing here would re-render the whole
+  // palette on app-wide unread churn to change membership the frozen order can no longer honour.
+  const {
+    agentStatusByPaneKey,
+    runtimePaneTitlesByTabId,
+    unreadTerminalTabs,
+    unreadAgentCompletionPanes
+  } = paletteIndexStatus
   const openFiles = useAppStore((s) => s.openFiles)
   const activeGroupIdByWorktree = useAppStore((s) => s.activeGroupIdByWorktree)
   const groupsByWorktree = useAppStore((s) => s.groupsByWorktree)
@@ -524,6 +623,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   const hideAutomationGeneratedWorkspaces = useAppStore((s) => s.hideAutomationGeneratedWorkspaces)
   const hideCliCreatedWorkspaces = useAppStore((s) => s.hideCliCreatedWorkspaces)
   const hideDetachedHeadWorkspaces = useAppStore((s) => s.hideDetachedHeadWorkspaces)
+  const hideWorkspacesFromOtherDevices = useAppStore((s) => s.hideWorkspacesFromOtherDevices)
   const showSleepingWorkspaces = useAppStore((s) => s.showSleepingWorkspaces)
   const alwaysShowDefaultBranchWorkspace = useAppStore((s) => s.alwaysShowDefaultBranchWorkspace)
   const lastVisitedAtByWorktreeId = useAppStore((s) => s.lastVisitedAtByWorktreeId)
@@ -540,7 +640,6 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const [selectedItemId, setSelectedItemId] = useState('')
-  const latestQueryRef = useRef('')
   // Why: the id cmdk auto-selected for the last committed list, so a late recent-order snapshot can
   // tell "nobody has moved the highlight yet" from "the user arrowed somewhere deliberately".
   const autoSelectedItemIdRef = useRef<string | null>(null)
@@ -564,7 +663,6 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   const inputRef = useRef<HTMLInputElement>(null)
   const fallbackFocusOuterFrameRef = useRef<number | null>(null)
   const fallbackFocusInnerFrameRef = useRef<number | null>(null)
-  const createLookupGuard = useMemo(() => createWorktreePaletteRequestGuard(), [])
   const preserveCreateLookupOnCloseRef = useRef(false)
 
   const repoMap = useMemo(() => new Map(repos.map((r) => [r.id, r])), [repos])
@@ -658,6 +756,13 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       ),
     [agentStatusByPaneKey, tabsByWorktree]
   )
+  const pairedDeviceIdsByEnvironment = useMemo(
+    () =>
+      hideWorkspacesFromOtherDevices
+        ? getPairedDeviceIdsByEnvironment(runtimeEnvironments, runtimeStatusByEnvironmentId)
+        : EMPTY_PAIRED_DEVICE_IDS_BY_ENVIRONMENT,
+    [hideWorkspacesFromOtherDevices, runtimeEnvironments, runtimeStatusByEnvironmentId]
+  )
 
   // Why: empty-query mirrors sidebar filters so Search opens on the same quiet list; typed search widens to global non-archived scope.
   const emptyQueryVisibleWorktrees = useMemo(
@@ -681,6 +786,12 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
           return false
         }
         if (hideDetachedHeadWorkspaces && isDetachedHeadWorkspace(worktree)) {
+          return false
+        }
+        if (
+          hideWorkspacesFromOtherDevices &&
+          isWorkspaceFromOtherDevice(worktree, pairedDeviceIdsByEnvironment)
+        ) {
           return false
         }
         if (
@@ -709,6 +820,8 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
       hideCliCreatedWorkspaces,
       hideDefaultBranchWorkspace,
       hideDetachedHeadWorkspaces,
+      hideWorkspacesFromOtherDevices,
+      pairedDeviceIdsByEnvironment,
       ptyIdsByTabId,
       showSleepingWorkspaces,
       tabsByWorktree,
@@ -1070,33 +1183,61 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     ]
   )
 
-  // Why: the recent section excludes the current tab (the top slot is never "where you are") and
-  // archived worktrees, both of which the typed-query index still surfaces.
-  const recentTabRows = useMemo<RecentWorkspaceTabRow[]>(() => {
-    const rows: RecentWorkspaceTabRow[] = []
+  // Why unfiltered: a row already frozen into the recent order must keep resolving its badge even
+  // once inclusion would drop it (a current tab that quiets down), or the pip blanks mid-open.
+  const openTabRecentRows = useMemo<OpenTabRecentRow[]>(() => {
+    const entries: OpenTabRecentRow[] = []
     for (const item of openTabItems) {
       const worktree = worktreeMap.get(item.result.worktreeId)
-      if (!worktree || worktree.isArchived || isCurrentOpenTabItem(item)) {
+      if (!worktree) {
         continue
       }
-      rows.push({
-        id: item.id,
-        worktreeId: worktree.id,
-        unifiedTabId: item.type === 'browser-page' ? null : item.result.tabId,
-        terminalTab:
-          item.type === 'workspace-tab' && item.result.contentType === 'terminal'
-            ? (terminalTabsById.get(item.result.entityId) ?? null)
-            : null,
-        worktreeLastActivityAt: worktree.lastActivityAt
+      entries.push({
+        item,
+        worktree,
+        row: {
+          id: item.id,
+          worktreeId: worktree.id,
+          unifiedTabId: item.type === 'browser-page' ? null : item.result.tabId,
+          terminalTab:
+            item.type === 'workspace-tab' && item.result.contentType === 'terminal'
+              ? (terminalTabsById.get(item.result.entityId) ?? null)
+              : null,
+          worktreeLastActivityAt: worktree.lastActivityAt
+        }
       })
     }
-    return rows
+    return entries
   }, [openTabItems, terminalTabsById, worktreeMap])
 
   const recentTabRowById = useMemo(
-    () => new Map(recentTabRows.map((row) => [row.id, row])),
-    [recentTabRows]
+    () => new Map(openTabRecentRows.map(({ row }) => [row.id, row])),
+    [openTabRecentRows]
   )
+
+  // Why: empty-query recent skips idle current tabs ("you're already there") and archived
+  // worktrees; high-signal current agents still surface so working / ask-question / unread
+  // badges stay visible. Typed-query still indexes every open tab.
+  const recentTabRows = useMemo<RecentWorkspaceTabRow[]>(() => {
+    const now = Date.now()
+    const rows: RecentWorkspaceTabRow[] = []
+    for (const { item, worktree, row } of openTabRecentRows) {
+      if (
+        shouldIncludeOpenTabInRecentSection({
+          item,
+          worktree,
+          row,
+          paneSources: recentTabPaneSources,
+          unreadTerminalTabs,
+          unreadAgentCompletionPanes,
+          now
+        })
+      ) {
+        rows.push(row)
+      }
+    }
+    return rows
+  }, [openTabRecentRows, recentTabPaneSources, unreadAgentCompletionPanes, unreadTerminalTabs])
 
   // Why: ordering is captured once on open. Live re-ranking would move rows under the cursor and
   // send ⌘3 to the wrong row; dots keep updating, positions don't.
@@ -1106,21 +1247,23 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   // IDLE; allow one re-capture when entities arrive, then freeze for good.
   const recentTabOrderAttentionReadyRef = useRef(false)
   // Terminal rows without a tabsByWorktree entity can't resolve attention yet (see orderRecent…).
+  // Why current tabs count too: the missing entity is also what decides whether a current tab has a
+  // badge worth listing, so a capture now would freeze it out for the whole open. Archived is the
+  // one exclusion that needs no entity.
   const recentOrderAttentionIncomplete = useMemo(() => {
-    for (const item of openTabItems) {
-      if (item.type !== 'workspace-tab' || item.result.contentType !== 'terminal') {
+    for (const { item, worktree, row } of openTabRecentRows) {
+      if (
+        item.type !== 'workspace-tab' ||
+        item.result.contentType !== 'terminal' ||
+        row.terminalTab ||
+        worktree.isArchived
+      ) {
         continue
       }
-      const worktree = worktreeMap.get(item.result.worktreeId)
-      if (!worktree || worktree.isArchived || isCurrentOpenTabItem(item)) {
-        continue
-      }
-      if (!terminalTabsById.has(item.result.entityId)) {
-        return true
-      }
+      return true
     }
     return false
-  }, [openTabItems, terminalTabsById, worktreeMap])
+  }, [openTabRecentRows])
   // Why layout, not passive: a post-paint capture shows one frame of worktrees-only, which flashes
   // the list, renumbers ⌘1–6 under the user, and lets cmdk latch a worktree as the Enter target.
   useLayoutEffect(() => {
@@ -1730,7 +1873,6 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
           ? document.activeElement
           : null
       skipRestoreFocusRef.current = false
-      latestQueryRef.current = ''
       setQuery('')
       setSelectedItemId('')
       // Why: reset on open, not on close — closing races the fade-out, and a
@@ -1767,16 +1909,23 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
     showCreateAction
   })
 
-  const handleCommandSelectionChange = useCallback(
-    (nextItemId: string) => {
-      // Why: cmdk can report the old list head before the deferred query commits its new ranking.
-      if (latestQueryRef.current !== deferredQuery) {
-        return
-      }
-      setSelectedItemId(nextItemId)
-    },
-    [deferredQuery]
-  )
+  // Why: cmdk writes its internal cursor *before* calling onValueChange. Dropping that
+  // callback (e.g. while deferredQuery lags the keystroke) leaves internal state advanced
+  // while the controlled `value` prop stays put — the next ArrowDown/Up then no-ops on
+  // cmdk's Object.is guard, so keyboard navigation dies after typing. Always accept the
+  // report so the cursor stays aligned; the deferred-commit effect below re-auto-selects
+  // the new ranking head once the list the user sees actually changes.
+  const handleCommandSelectionChange = useCallback((nextItemId: string) => {
+    setSelectedItemId(nextItemId)
+  }, [])
+
+  // Why: while query is mid-deferral, cmdk (and mid-lag arrows) can latch a selection
+  // against the previous ranking. When the deferred list commits, snap Enter back to the
+  // new head — matching handleQueryChange's clear, but covering selection that landed
+  // after the keystroke and before this commit.
+  useLayoutEffect(() => {
+    setSelectedItemId('')
+  }, [deferredQuery])
 
   useEffect(() => {
     const isCreateWorkspaceHighlighted =
@@ -1790,11 +1939,15 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
   }, [commandSelectedItemId, prefetchCreateWorkspaceBaseForComposer, visible])
 
   const handleQueryChange = useCallback((nextQuery: string) => {
-    latestQueryRef.current = nextQuery
     setQuery(nextQuery)
     setSelectedItemId('')
     listRef.current?.scrollTo(0, 0)
   }, [])
+  const emojiInput = useWorkspaceEmojiShortcodeInput({
+    inputRef,
+    onValueChange: handleQueryChange,
+    value: query
+  })
 
   const cancelFallbackFocusFrames = useCallback((): void => {
     if (fallbackFocusOuterFrameRef.current !== null) {
@@ -2357,7 +2510,10 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
           'Search chats, terminals, worktrees, settings, and actions...'
         )}
         value={query}
-        onValueChange={handleQueryChange}
+        onValueChange={emojiInput.handleValueChange}
+        onClick={(event) => emojiInput.syncCursor(event.currentTarget)}
+        onSelect={(event) => emojiInput.syncCursor(event.currentTarget)}
+        onKeyDown={(event) => emojiInput.handleKeyDown(event)}
         wrapperClassName="mx-3 mt-3 rounded-lg border border-border/55 bg-muted/28 px-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
         iconClassName="mr-2.5 h-4 w-4 text-muted-foreground/60"
         className="h-12 text-[14px] placeholder:text-muted-foreground/75"
@@ -2372,6 +2528,19 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
             />
           </div>
         }
+      />
+      <WorkspaceEmojiSuggestionPopover
+        anchorRef={inputRef}
+        open={emojiInput.open}
+        commandValue={emojiInput.commandValue}
+        heading={translate('auto.components.new.workspace.SmartWorkspaceNameField.emoji', 'Emoji')}
+        suggestions={emojiInput.suggestions}
+        onCommandValueChange={emojiInput.onCommandValueChange}
+        onSelect={emojiInput.selectSuggestion}
+        onOpenChange={(open) => !open && emojiInput.close()}
+        portalContainer={dialogElement}
+        side="bottom"
+        contentClassName="w-80"
       />
       <PaletteFilterChips model={filterModel} filter={filter} onFilterChange={setRawFilter} />
       <CommandList
@@ -2425,7 +2594,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                     key={entry.id}
                     value={CREATE_WORKTREE_ITEM_ID}
                     onSelect={handleCreateWorktree}
-                    className="group mx-0.5 mt-1 flex cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 py-1.5 text-left outline-none transition-[background-color,border-color,box-shadow] data-[selected=true]:border-border data-[selected=true]:bg-accent data-[selected=true]:text-foreground"
+                    className={cn(JUMP_PALETTE_ITEM_CLASSNAME, 'mt-1 py-1.5')}
                   >
                     <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-dashed border-border/60 bg-muted/25 text-muted-foreground/70">
                       <Plus size={13} aria-hidden="true" />
@@ -2469,10 +2638,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                     value={entry.id}
                     onSelect={() => handleSelectItem(entry)}
                     data-current={isCurrentWorktree ? 'true' : undefined}
-                    className={cn(
-                      'group mx-0.5 flex cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]',
-                      'data-[selected=true]:border-border data-[selected=true]:bg-accent data-[selected=true]:text-foreground'
-                    )}
+                    className={cn(JUMP_PALETTE_ITEM_CLASSNAME, 'py-2.5')}
                   >
                     <div className="flex h-5 w-4 shrink-0 items-center justify-center self-start">
                       <PaletteWorktreeStatusDot worktree={worktree} />
@@ -2598,10 +2764,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                     key={entry.id}
                     value={entry.id}
                     onSelect={() => handleSelectItem(entry)}
-                    className={cn(
-                      'group mx-0.5 flex cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]',
-                      'data-[selected=true]:border-border data-[selected=true]:bg-accent data-[selected=true]:text-foreground'
-                    )}
+                    className={cn(JUMP_PALETTE_ITEM_CLASSNAME, 'py-2.5')}
                   >
                     <div className="flex h-5 w-4 shrink-0 items-center justify-center self-start text-muted-foreground/85">
                       <FolderTree className="size-3.5" aria-hidden="true" />
@@ -2645,10 +2808,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                     key={entry.id}
                     value={entry.id}
                     onSelect={() => handleSelectItem(entry)}
-                    className={cn(
-                      'group mx-0.5 flex cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]',
-                      'data-[selected=true]:border-border data-[selected=true]:bg-accent data-[selected=true]:text-foreground'
-                    )}
+                    className={cn(JUMP_PALETTE_ITEM_CLASSNAME, 'py-2.5')}
                   >
                     <div className="flex h-5 w-4 shrink-0 items-center justify-center self-start text-muted-foreground/85">
                       <Icon className="size-3.5" aria-hidden="true" />
@@ -2684,8 +2844,8 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                 )
                 const WorkspaceTabIcon =
                   result.contentType === 'terminal' ? SquareTerminal : FileText
-                // Why null on a typed query: the dot belongs to the frozen recent section — the
-                // Open Tabs results a search returns show their content icon instead.
+                // Why null on a typed query: live corner pips belong to the frozen recent section —
+                // Open Tabs search results stay content-icon only (no agent status overlay).
                 const recentRow = hasQuery ? null : (recentTabRowById.get(entry.id) ?? null)
 
                 return (
@@ -2693,10 +2853,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                     key={entry.id}
                     value={entry.id}
                     onSelect={() => handleSelectItem(entry)}
-                    className={cn(
-                      'group mx-0.5 flex cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]',
-                      'data-[selected=true]:border-border data-[selected=true]:bg-accent data-[selected=true]:text-foreground'
-                    )}
+                    className={cn(JUMP_PALETTE_ITEM_CLASSNAME, 'py-2.5')}
                   >
                     <div className="flex h-5 w-4 shrink-0 items-center justify-center self-start text-muted-foreground/85">
                       <PaletteRecentTabStatusDot
@@ -2778,10 +2935,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                     key={entry.id}
                     value={entry.id}
                     onSelect={() => handleSelectItem(entry)}
-                    className={cn(
-                      'group mx-0.5 flex cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]',
-                      'data-[selected=true]:border-border data-[selected=true]:bg-accent data-[selected=true]:text-foreground'
-                    )}
+                    className={cn(JUMP_PALETTE_ITEM_CLASSNAME, 'py-2.5')}
                   >
                     <div className="flex h-5 w-4 shrink-0 items-center justify-center self-start text-muted-foreground/85">
                       <Smartphone className="size-3.5" aria-hidden="true" />
@@ -2857,10 +3011,7 @@ export default function WorktreeJumpPalette(): React.JSX.Element | null {
                   key={entry.id}
                   value={entry.id}
                   onSelect={() => handleSelectItem(entry)}
-                  className={cn(
-                    'group mx-0.5 flex cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]',
-                    'data-[selected=true]:border-border data-[selected=true]:bg-accent data-[selected=true]:text-foreground'
-                  )}
+                  className={cn(JUMP_PALETTE_ITEM_CLASSNAME, 'py-2.5')}
                 >
                   <div className="flex h-5 w-4 shrink-0 items-center justify-center self-start text-muted-foreground/85">
                     <Globe className="size-3.5" aria-hidden="true" />

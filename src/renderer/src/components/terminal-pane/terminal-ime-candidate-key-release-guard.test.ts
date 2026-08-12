@@ -8,7 +8,7 @@ import {
   shouldApplyTerminalImePendingCandidateKeyRelease
 } from './terminal-ime-candidate-key-release-guard'
 import { TERMINAL_IME_CANDIDATE_GUARD_POST_COMPOSITION_MS } from './terminal-ime-composition-tracker'
-import { event } from './__fixtures__/xterm-bypass-event'
+import { event } from './xterm-bypass-event-fixture'
 
 describe('terminal IME candidate key release guard', () => {
   it('recognizes only unmodified Space and digit candidate selectors', () => {
