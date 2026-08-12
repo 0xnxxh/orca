@@ -72,7 +72,7 @@ export function buildAiVaultResumeShellCommand(args: {
     })
   }
 
-  const resumeCommand = `${codexHomeEnvPrefix(codexHome?.trim() || null, platform)}${
+  const resumeCommand = `${codexHomeEnvPrefix(codexHome?.trim() || null, platform, shell)}${
     args.resumeCommand
   }`
   if (platform === 'win32' && shell === 'cmd') {
@@ -89,7 +89,7 @@ export function buildAiVaultResumeShellCommand(args: {
     return `cmd /d /s /c ${quoteWindowsCmdArg(inner)}`
   }
 
-  return `cd ${quoteShellArg(cwd, platform)} && ${resumeCommand}`
+  return `cd ${quoteResumeArg(cwd, platform, shell)} && ${resumeCommand}`
 }
 
 function buildResumeShellCommandForShell(args: {
@@ -184,14 +184,28 @@ function buildAgentResumeInvocation(
   }
 }
 
-function codexHomeEnvPrefix(codexHome: string | null, platform: NodeJS.Platform): string {
+function codexHomeEnvPrefix(
+  codexHome: string | null,
+  platform: NodeJS.Platform,
+  shell?: AgentStartupShell
+): string {
   if (!codexHome) {
     return ''
   }
   if (platform === 'win32') {
     return `set ${quoteWindowsCmdArg(`CODEX_HOME=${codexHome}`)} && `
   }
-  return `CODEX_HOME=${quoteShellArg(codexHome, platform)} `
+  // fish accepts the `NAME=value cmd` prefix (3.1+), but not sh's quoting.
+  return `CODEX_HOME=${quoteResumeArg(codexHome, platform, shell)} `
+}
+
+/** Quotes for the live shell when one is known, else for the platform's default. */
+function quoteResumeArg(
+  value: string,
+  platform: NodeJS.Platform,
+  shell?: AgentStartupShell
+): string {
+  return shell ? quoteStartupArg(value, shell) : quoteShellArg(value, platform)
 }
 
 function quoteShellArg(value: string, platform: NodeJS.Platform): string {

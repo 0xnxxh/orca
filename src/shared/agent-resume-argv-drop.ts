@@ -13,7 +13,9 @@ export type AgentResumeArgvDrop =
   | { status: 'absent' }
   | { status: 'unrecognized' }
 
-const RESUME_ARGV_SHELLS: readonly AgentStartupShell[] = ['posix', 'powershell', 'cmd']
+// fish is listed because its quoting diverges from sh; without it a fish-quoted
+// suffix reads as `unrecognized` and the caller refuses the launch outright.
+const RESUME_ARGV_SHELLS: readonly AgentStartupShell[] = ['posix', 'fish', 'powershell', 'cmd']
 
 function resumeArgvSuffixCandidates(resumeArgs: readonly string[]): string[] {
   const candidates = new Set<string>([resumeArgs.join(' ')])

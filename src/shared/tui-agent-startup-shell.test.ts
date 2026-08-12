@@ -76,16 +76,41 @@ describe('fish startup shell dialect', () => {
     )
   })
 
-  it('shares POSIX quoting, tokenizing and chaining', () => {
-    expect(quoteStartupArg("it's", 'fish')).toBe(quoteStartupArg("it's", 'posix'))
+  it('shares POSIX word splitting and chaining but NOT quoting', () => {
+    // fish single quotes are not literal: `\\` and `\'` are escapes inside them.
+    expect(quoteStartupArg("it's", 'fish')).toBe(String.raw`'it\'s'`)
+    expect(quoteStartupArg(String.raw`\\server\share`, 'fish')).toBe(
+      String.raw`'\\\\server\\share'`
+    )
+    // The sh spelling would have halved those backslashes when fish read it back.
+    expect(quoteStartupArg(String.raw`\\server\share`, 'posix')).toBe(String.raw`'\\server\share'`)
+    // A trailing backslash is a hard syntax error in fish unless it is escaped.
+    expect(quoteStartupArg('ends\\', 'fish')).toBe(String.raw`'ends\\'`)
     expect(buildShellCommandFromArgv(['codex', 'resume', 'a b'], 'fish')).toBe(
       buildShellCommandFromArgv(['codex', 'resume', 'a b'], 'posix')
     )
-    expect(tokenizeStartupCommand('codex --arg "a b"', 'fish')).toEqual(
-      tokenizeStartupCommand('codex --arg "a b"', 'posix')
-    )
     expect(commandSeparator('fish')).toBe('; ')
     expect(isPosixStartupShell('fish')).toBe(true)
+  })
+
+  it('tokenizes with fish escape rules rather than sh ones', () => {
+    const line = String.raw`codex --arg 'a\\b'`
+    expect(tokenizeStartupCommand(line, 'fish')).not.toEqual(tokenizeStartupCommand(line, 'posix'))
+    const fishTokens = tokenizeStartupCommand(line, 'fish')
+    expect(fishTokens.ok && fishTokens.tokens.at(-1)).toBe(String.raw`a\b`)
+  })
+
+  it('round-trips an adversarial argument through quote then tokenize', () => {
+    for (const value of [
+      String.raw`use \d+ and \\server\share`,
+      "it's mine",
+      'ends\\',
+      'a "b" c',
+      '$PATH *.ts'
+    ]) {
+      const tokenized = tokenizeStartupCommand(quoteStartupArg(value, 'fish'), 'fish')
+      expect(tokenized.ok && tokenized.tokens).toEqual([value])
+    }
   })
 
   it('maps login shell paths to their dialect', () => {

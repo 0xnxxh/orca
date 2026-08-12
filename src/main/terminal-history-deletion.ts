@@ -97,9 +97,11 @@ function scheduleHistoryTreeRemoval(dir: string): void {
 export function scheduleWorktreeHistoryTreeDeletion(dir: string, historyRoot: string): boolean {
   // Why first: fish keeps its history in the user's fish data dir, outside this tree,
   // so the meta.json naming the session must still be readable when we look it up.
-  const fishSession = readHistoryMeta(dir)?.fishSession
-  if (fishSession) {
-    deleteFishHistoryFile(fishSession)
+  const meta = readHistoryMeta(dir)
+  if (meta?.fishSession) {
+    deleteFishHistoryFile(meta.fishSession, {
+      recordedPath: meta.fishHistoryPath
+    })
   }
   const tombstone = tombstoneHistoryTree(dir, historyRoot)
   if (!tombstone) {

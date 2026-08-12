@@ -247,6 +247,32 @@ describe('terminal-history', () => {
       )
     })
 
+    it('records the history path from the SPAWN env, not this process env', () => {
+      // Pinned so the assertion cannot accidentally read the developer's own value.
+      const originalDataHome = process.env.XDG_DATA_HOME
+      process.env.XDG_DATA_HOME = ['', 'main', 'process', 'data'].join(sep)
+      try {
+        const env: Record<string, string> = {
+          XDG_DATA_HOME: ['', 'spawn', 'data'].join(sep)
+        }
+        const result = injectHistoryEnv(env, 'repo-1::/path/wt', '/usr/bin/fish', '/path/wt')
+        const meta = JSON.parse(writeFileSyncMock.mock.calls.at(-1)?.[1] as string) as Record<
+          string,
+          string
+        >
+
+        expect(meta.fishHistoryPath).toBe(
+          ['', 'spawn', 'data', 'fish', `${result.fishSession}_history`].join(sep)
+        )
+      } finally {
+        if (originalDataHome === undefined) {
+          delete process.env.XDG_DATA_HOME
+        } else {
+          process.env.XDG_DATA_HOME = originalDataHome
+        }
+      }
+    })
+
     it('gives two fish worktrees different history sessions', () => {
       const envA: Record<string, string> = {}
       injectHistoryEnv(envA, 'repo-1::/path/wt-a', '/usr/bin/fish', '/path/wt-a')
@@ -383,6 +409,79 @@ describe('terminal-history', () => {
         } else {
           process.env.XDG_DATA_HOME = originalDataHome
         }
+      }
+      await flushPendingWorktreeHistoryDeletions()
+    })
+
+    it('prefers the spawn-env path recorded in meta.json over this process env', async () => {
+      const originalDataHome = process.env.XDG_DATA_HOME
+      process.env.XDG_DATA_HOME = ['', 'main', 'data'].join(sep)
+      const recorded = ['', 'spawn', 'data', 'fish', 'orca_abc123_history'].join(sep)
+      try {
+        existsSyncMock.mockReturnValue(true)
+        readFileSyncMock.mockReturnValue(
+          JSON.stringify({
+            worktreeId: 'repo-1::/path/wt',
+            fishSession: 'orca_abc123',
+            fishHistoryPath: recorded
+          })
+        )
+        deleteWorktreeHistoryDir('repo-1::/path/wt')
+        expect(rmSyncMock).toHaveBeenCalledWith(recorded, expect.objectContaining({ force: true }))
+        // The main-process guess stays as a fallback for pre-existing meta.json files.
+        expect(rmSyncMock).toHaveBeenCalledWith(
+          ['', 'main', 'data', 'fish', 'orca_abc123_history'].join(sep),
+          expect.objectContaining({ force: true })
+        )
+      } finally {
+        if (originalDataHome === undefined) {
+          delete process.env.XDG_DATA_HOME
+        } else {
+          process.env.XDG_DATA_HOME = originalDataHome
+        }
+      }
+      await flushPendingWorktreeHistoryDeletions()
+    })
+
+    it('refuses a recorded path that does not name its own session file', async () => {
+      const originalDataHome = process.env.XDG_DATA_HOME
+      process.env.XDG_DATA_HOME = ['', 'main', 'data'].join(sep)
+      try {
+        existsSyncMock.mockReturnValue(true)
+        readFileSyncMock.mockReturnValue(
+          JSON.stringify({
+            worktreeId: 'repo-1::/path/wt',
+            fishSession: 'orca_abc123',
+            fishHistoryPath: ['', 'etc', 'passwd'].join(sep)
+          })
+        )
+        deleteWorktreeHistoryDir('repo-1::/path/wt')
+        expect(rmSyncMock).not.toHaveBeenCalledWith(
+          ['', 'etc', 'passwd'].join(sep),
+          expect.anything()
+        )
+      } finally {
+        if (originalDataHome === undefined) {
+          delete process.env.XDG_DATA_HOME
+        } else {
+          process.env.XDG_DATA_HOME = originalDataHome
+        }
+      }
+      await flushPendingWorktreeHistoryDeletions()
+    })
+
+    it('warns instead of going quiet when no fish history file is found', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        readFileSyncMock.mockReturnValue(
+          JSON.stringify({ worktreeId: 'repo-1::/path/wt', fishSession: 'orca_abc123' })
+        )
+        // The history dir exists (so the tree is deleted) but the fish file does not.
+        existsSyncMock.mockImplementation((path: string) => !path.includes('orca_abc123_history'))
+        deleteWorktreeHistoryDir('repo-1::/path/wt')
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('No fish history file found'))
+      } finally {
+        warn.mockRestore()
       }
       await flushPendingWorktreeHistoryDeletions()
     })

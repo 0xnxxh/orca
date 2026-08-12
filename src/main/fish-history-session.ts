@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
-import { rmSync } from 'node:fs'
+import { basename, isAbsolute, join } from 'node:path'
+import { existsSync, rmSync } from 'node:fs'
 
 /**
  * Per-worktree fish history, which fish models as a session NAME rather than a path.
@@ -45,17 +45,62 @@ export function resolveFishHistoryFilePath(
   return join(dataHome, 'fish', `${session}_history`)
 }
 
-/** Best-effort removal of one worktree's fish history file. */
-export function deleteFishHistoryFile(session: string, env: NodeJS.ProcessEnv = process.env): void {
-  const path = resolveFishHistoryFilePath(session, env)
-  if (!path) {
+/**
+ * Accepts a path recorded at spawn time only if it still names this session's own
+ * history file, so a tampered meta.json cannot steer `rmSync` somewhere else.
+ */
+function isTrustedRecordedPath(session: string, path: string | null | undefined): path is string {
+  return Boolean(
+    path &&
+    SAFE_SESSION_NAME.test(session) &&
+    isAbsolute(path) &&
+    basename(path) === `${session}_history`
+  )
+}
+
+/**
+ * Removes one worktree's fish history file.
+ *
+ * `recordedPath` is the path resolved from the PTY's own spawn env when the
+ * session was minted; the main process env is only a fallback, because the two
+ * disagree whenever Orca was launched with a different `XDG_DATA_HOME`/`HOME`
+ * than the shells it spawns.
+ *
+ * Neither can see a `set -gx XDG_DATA_HOME …` that lives inside the user's
+ * config.fish — fish resolves that after we have handed off. That file cannot be
+ * found from here, so it is reported instead of being dropped silently.
+ */
+export function deleteFishHistoryFile(
+  session: string,
+  options: { recordedPath?: string | null; env?: NodeJS.ProcessEnv } = {}
+): void {
+  const candidates = new Set<string>()
+  if (isTrustedRecordedPath(session, options.recordedPath)) {
+    candidates.add(options.recordedPath)
+  }
+  const fromEnv = resolveFishHistoryFilePath(session, options.env ?? process.env)
+  if (fromEnv) {
+    candidates.add(fromEnv)
+  }
+  if (candidates.size === 0) {
     return
   }
-  try {
-    rmSync(path, { force: true })
-  } catch (err) {
+  let removed = false
+  for (const path of candidates) {
+    try {
+      removed ||= existsSync(path)
+      rmSync(path, { force: true })
+    } catch (err) {
+      console.warn(
+        `[pty:history] Failed to delete fish history ${path}: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  }
+  if (!removed) {
+    // Explicit: a config.fish-set XDG_DATA_HOME leaves a file we cannot locate,
+    // and silence would hide one leaked history file per deleted worktree.
     console.warn(
-      `[pty:history] Failed to delete fish history ${session}: ${err instanceof Error ? err.message : String(err)}`
+      `[pty:history] No fish history file found for session ${session}; if fish keeps history outside ${[...candidates].join(' or ')} (e.g. XDG_DATA_HOME set in config.fish) that file is left behind.`
     )
   }
 }

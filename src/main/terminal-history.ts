@@ -1,6 +1,6 @@
 import { join, basename } from 'node:path'
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { fishHistorySessionName } from './fish-history-session'
+import { fishHistorySessionName, resolveFishHistoryFilePath } from './fish-history-session'
 import { parseWslPath, toLinuxPath } from './wsl'
 import { getHistoryRoot, getHistoryRootWsl, hashWorktreeId } from './terminal-history-paths'
 
@@ -74,11 +74,20 @@ export function ensureHistoryDir(worktreeHash: string, wslDistro?: string): stri
 /** Write meta.json alongside history files, for debuggability and for GC.
  *  `fishSession` is load-bearing, not diagnostic: fish history lives outside this
  *  directory, so deletion can only find it by the name recorded here. */
-function writeMetaFile(dir: string, worktreeId: string, fishSession?: string): void {
+function writeMetaFile(
+  dir: string,
+  worktreeId: string,
+  fish?: { session: string; historyPath: string | null }
+): void {
   try {
     const metaPath = join(dir, 'meta.json')
     const existing = existsSync(metaPath) ? readHistoryMeta(dir) : null
-    if (existing && (!fishSession || existing.fishSession === fishSession)) {
+    if (
+      existing &&
+      (!fish ||
+        (existing.fishSession === fish.session &&
+          existing.fishHistoryPath === (fish.historyPath ?? undefined)))
+    ) {
       return
     }
     writeFileSync(
@@ -86,7 +95,8 @@ function writeMetaFile(dir: string, worktreeId: string, fishSession?: string): v
       JSON.stringify({
         worktreeId,
         createdAt: existing?.createdAt ?? new Date().toISOString(),
-        ...(fishSession ? { fishSession } : {})
+        ...(fish ? { fishSession: fish.session } : {}),
+        ...(fish?.historyPath ? { fishHistoryPath: fish.historyPath } : {})
       }),
       { mode: 0o600 }
     )
@@ -100,6 +110,8 @@ export type HistoryDirMeta = {
   createdAt?: string
   /** fish session name whose history file lives in the user's fish data dir. */
   fishSession?: string
+  /** That file's path resolved from the PTY's spawn env, which the main process env can contradict. */
+  fishHistoryPath?: string
 }
 
 /** Read one history directory's meta.json, or null when it is absent or unparseable. */
@@ -173,7 +185,12 @@ export function injectHistoryEnv(
     // find the session file fish keeps in its own data dir. fish never runs as the
     // inner WSL shell, so histDir needs no /mnt conversion here.
     const session = fishHistorySessionName(worktreeHash)
-    writeMetaFile(histDir, worktreeId, session)
+    // Resolve from the SPAWN env: that is the XDG_DATA_HOME/HOME fish will see,
+    // which need not match the one this process was launched with.
+    writeMetaFile(histDir, worktreeId, {
+      session,
+      historyPath: resolveFishHistoryFilePath(session, spawnEnv)
+    })
     spawnEnv.fish_history = session
     result.fishSession = session
     result.historyDir = histDir

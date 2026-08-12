@@ -1,12 +1,20 @@
 import { tokenizeCustomCommandTemplate, type CommandTokenSpan } from './commit-message-prompt'
+import { tokenizeFishStartupCommand } from './fish-command-tokenizer'
 
-// Why: fish shares POSIX word splitting, quoting and `;` chaining, so it is a
-// separate dialect only where its grammar actually diverges (env clearing).
+// Why: fish shares POSIX word splitting and `;` chaining, but NOT quoting or
+// escaping — see quoteStartupArg and fish-command-tokenizer.ts.
 export type AgentStartupShell = 'posix' | 'fish' | 'powershell' | 'cmd'
 
 type WindowsStartupShell = Extract<AgentStartupShell, 'powershell' | 'cmd'>
 
-/** True for shells parsed with POSIX quoting/word rules (sh family + fish). */
+/**
+ * True for the sh-family grammar: `NAME=value cmd` prefixes, `sh -c` wrapping and
+ * `;` chaining all parse. fish qualifies for those.
+ *
+ * NOT a claim that quoting matches — fish's does not. Anything that builds an
+ * argument must pass the real dialect to `quoteStartupArg`/`tokenizeStartupCommand`,
+ * never hardcode `'posix'` behind this check.
+ */
 export function isPosixStartupShell(shell: AgentStartupShell): boolean {
   return shell === 'posix' || shell === 'fish'
 }
@@ -154,9 +162,10 @@ export function tokenizeStartupCommand(
   value: string,
   shell: AgentStartupShell
 ): StartupCommandTokens {
-  return isWindowsStartupShell(shell)
-    ? tokenizeWindowsStartupCommand(value, shell)
-    : tokenizeCustomCommandTemplate(value)
+  if (isWindowsStartupShell(shell)) {
+    return tokenizeWindowsStartupCommand(value, shell)
+  }
+  return shell === 'fish' ? tokenizeFishStartupCommand(value) : tokenizeCustomCommandTemplate(value)
 }
 
 export function resolveStartupShell(
@@ -172,6 +181,14 @@ export function quoteStartupArg(value: string, shell: AgentStartupShell): string
   }
   if (shell === 'cmd') {
     return `"${value.replace(/([\^&|<>()%!"])/g, '^$1')}"`
+  }
+  // Why: fish single quotes are NOT literal. `\\` and `\'` are escapes inside
+  // them, so the sh `'\''` idiom collapses every backslash (a `\d+` regex, a
+  // `\\server\share` UNC path) and a trailing backslash is a hard syntax error
+  // that kills the launch. Escaping both metacharacters round-trips instead;
+  // verified against fish 4.7.1.
+  if (shell === 'fish') {
+    return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
   }
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
