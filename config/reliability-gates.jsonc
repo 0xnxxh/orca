@@ -1362,6 +1362,115 @@
       "demotionRule": "Demote if a retired runtime transport can leave a renderer subscription without a close event, if a close is delivered more than once, if one failing teardown strands its sibling subscriptions, if payload frames from a retired transport reach the renderer, or if a revealed remote terminal can stay blank or reject input after a reconnect."
     },
     {
+      "id": "browser-session.remote-html-preview-ownership",
+      "title": "Paired HTML previews keep one host page and one stable client split",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "browser-runtime",
+      "layer": "renderer-paired-runtime-reconciliation",
+      "surfaces": [
+        "paired remote HTML file preview",
+        "browser tab focus after terminal activation",
+        "client-only split placement",
+        "remote browser close convergence"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["remote-runtime"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["remote-runtime"],
+      "coverageNotes": "A headed macOS desktop host and separate paired web client exercise the Explorer eye-button path with a real remote file URL, host browser DOM, renderer split layout, terminal focus transition, and browser close. Unit contracts cover routing, pre-publication split retention, exact page placement, bounded bookkeeping, and teardown. Linux, Windows, headless serve, reconnect during creation, and multiple simultaneous viewers remain gaps.",
+      "motivatingLinks": [
+        "https://linear.app/stably/issue/STA-3872/unable-to-open-html-files-in-remote-server",
+        "https://github.com/stablyai/orca/pull/13876"
+      ],
+      "invariant": "Opening one HTML preview from a paired client creates exactly one browser page on the worktree-owning runtime and exactly one mirrored client browser workspace. The preview remains in the requested client-side split, activating it remains authoritative after a terminal was active, and closing it removes only the browser identities while the source editor and terminal survive.",
+      "oracle": "Open a real HTML file through Explorer on a separate client paired to an isolated headed desktop host. Require one new host browser tab, one client browser workspace and unified tab, two visible split groups, an exact client-handle-to-host-page identity, rendered fixture DOM, host and client browser focus after a terminal-to-browser click, and browser-only close convergence with the editor and terminal still visible. Run the byte-identical test on latest main, the candidate, and the candidate with its fix reverted.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/lib/file-preview.test.ts src/renderer/src/runtime/web-session-browser-placement.test.ts src/renderer/src/runtime/web-runtime-session.test.ts src/renderer/src/runtime/web-session-tabs-sync.test.ts",
+        "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+        "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1 --repeat-each=3"
+      ],
+      "testFiles": [
+        "src/renderer/src/lib/file-preview.test.ts",
+        "src/renderer/src/runtime/web-session-browser-placement.test.ts",
+        "src/renderer/src/runtime/web-runtime-session.test.ts",
+        "src/renderer/src/runtime/web-session-tabs-sync.test.ts",
+        "tests/e2e/paired-remote-html-browser-focus.spec.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/renderer/src/runtime/web-session-browser-placement.test.ts",
+          "assertions": [
+            "pending placements and reservations are bounded",
+            "worktree and environment teardown clear only their own placement state"
+          ]
+        },
+        {
+          "file": "src/renderer/src/runtime/web-session-tabs-sync.test.ts",
+          "assertions": [
+            "a host browser page stays in its exact client-owned preview group",
+            "a reserved empty split survives a pre-publication host snapshot",
+            "placement is forgotten after the host page disappears"
+          ]
+        },
+        {
+          "file": "tests/e2e/paired-remote-html-browser-focus.spec.ts",
+          "assertions": [
+            "one HTML open produces one client workspace, one client unified tab, and one host page",
+            "the source editor and remote frame remain visible in separate groups",
+            "terminal-to-browser activation stays authoritative and close preserves the editor and terminal"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1 --repeat-each=3",
+          "result": "passed",
+          "durationSeconds": 30.4,
+          "summary": "Three consecutive candidate runs passed after a fresh build, following one prior independent pass. Each proved exact host/client cardinality, split stability, rendered DOM, focus authority, close convergence, and surviving editor and terminal."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm exec playwright test tests/e2e/paired-remote-html-browser-focus.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "failed",
+          "durationSeconds": 11.1,
+          "summary": "Both latest origin/main and the candidate with its fix commit reverted created two matching client browser workspaces for one HTML open, failing the uniqueness assertion."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 60,
+        "scope": "four focused renderer contracts plus one isolated headed paired-runtime journey"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "The candidate passed four consecutive local macOS runs; longer CI and soak history is not yet available."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "The same committed Electron oracle is red on latest origin/main and on the candidate with the fix commit reverted because one action creates two client browser workspaces. It is green on the candidate in four consecutive runs through uniqueness, split, DOM, focus, close, and unrelated-tab survival gates."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "The change adds no timer, polling, subprocess, transport method, or host publication. Placement state is capped at 128 page records and 128 reservations, pruned when a seen page disappears, and cleared on worktree and environment teardown. Snapshot work is bounded by those caps."
+      },
+      "promotionCriteria": [
+        "Collect Linux and physical Windows paired-server evidence.",
+        "Collect headless serve and reconnect-during-create evidence.",
+        "Collect 100 consecutive focused CI passes or 14 days without an unexplained flake."
+      ],
+      "knownGaps": [
+        "Live paired-server validation currently covers macOS only.",
+        "Headless serve, reconnect during browser creation, and multiple simultaneous viewers are not exercised by the Electron journey.",
+        "Direct SSH remote file URLs remain intentionally unsupported and local file previews retain their existing path."
+      ],
+      "demotionRule": "Demote if one paired HTML action can create duplicate client or host browser identities, lose the requested split, bounce browser focus to another surface, or remove unrelated editor or terminal state on close."
+    },
+    {
       "id": "browser-stream.bounded-reconnect",
       "title": "Remote browser streams recover within a bounded retry budget",
       "maturity": "experimental",
