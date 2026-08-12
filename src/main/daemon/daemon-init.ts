@@ -81,18 +81,21 @@ function logDaemonMilestone(event: string, details: Record<string, unknown> = {}
 // Why: extra hello+listSessions probes (~5s each) giving a wedged-but-connectable daemon ~60s grace to answer and keep its live sessions before a permanent wedge (#8689) is replaced; raise only alongside the fail-open cap.
 export const WEDGED_DAEMON_GRACE_RETRIES = 11
 /**
- * Wall-clock ceiling on the grace window, counted from before the first probe and tested at
- * loop entry, so the real cost is this plus one in-flight probe. Startup fails open at 60s by
- * abandoning the daemon provider outright — and ensureRunning() is not abortable, so the
- * launcher runs to completion regardless — which is why the whole path has to fit under it.
+ * Ceiling on the whole failed-health classification — every probe, the grace window, the
+ * identity check and the process-table read together — enforced at runtime rather than
+ * summed by hand.
  *
- * Platform-aware because the two platforms spend the rest of that budget differently, and
- * because grace is worth more where there is nothing else. On POSIX a daemon that outlasts
- * the window is still protected by process-table evidence; on Windows there is no such
- * evidence, so the window is the only thing standing between a transient wedge and a kill,
- * and it gets everything the budget can spare. Sized by daemon-launch-budget.test.ts.
+ * Why enforced: startup fails open at 60s by abandoning the daemon provider outright, and
+ * ensureRunning() is not abortable, so overrunning costs the app its daemon *and* still kills
+ * the incumbent. Four separate reviews found a term missing from the hand-written sum that
+ * was supposed to prevent that — the launcher's own adoption connect, an identity probe, an
+ * endpoint probe, a doubled evidence deadline. A budget that has to be remembered is a budget
+ * that will be wrong, so the code now spends against a clock and stops when it runs out.
+ *
+ * The remainder of the fail-open window belongs to what follows a replace verdict: the kill
+ * ladder and the daemon fork.
  */
-export const WEDGED_DAEMON_GRACE_BUDGET_MS = process.platform === 'win32' ? 26_000 : 16_000
+export const WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS = 38_000
 const DAEMON_SELF_SHUTDOWN_WAIT_MS = 5_000
 const DAEMON_CHILD_TERMINATION_GRACE_MS = 5_000
 const DAEMON_CHILD_FORCE_EXIT_WAIT_MS = 1_000
@@ -514,6 +517,10 @@ function createOutOfProcessLauncher(
         pidPath
       )
     }
+    // Why the clock starts here: the adoption connect above and the health check below are
+    // both on the classification path, and both were missing from the sum this replaces.
+    const classificationDeadline = Date.now() + WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS
+    const classificationRemainingMs = (): number => Math.max(0, classificationDeadline - Date.now())
     try {
       const health = await checkDaemonHealth(socketPath, tokenPath)
       if (health === 'healthy') {
@@ -607,18 +614,24 @@ function createOutOfProcessLauncher(
         // change its answer within a grace window, so scanning it every pass would multiply
         // the launch budget for an answer we already have. It is read once, after the wait.
         const askDaemonWhatItHosts = (): Promise<DaemonOccupancy> =>
-          resolveDaemonOccupancy({ socketPath, tokenPath, recordedPid: null })
-        // Why grace at all: a wedged-but-connectable daemon (a Windows update relaunch) may still
-        // own live sessions and simply need a moment. A permanent wedge (#8689) exhausts the
-        // window, and 'rejected' skips it — a refused handshake is never going to be adopted.
-        const graceDeadline = Date.now() + WEDGED_DAEMON_GRACE_BUDGET_MS
+          resolveDaemonOccupancy({
+            socketPath,
+            tokenPath,
+            recordedPid: null,
+            budgetMs: classificationRemainingMs()
+          })
+        // Why grace at all: a wedged-but-connectable daemon (a Windows update relaunch) may
+        // still own live sessions and simply need a moment. A permanent wedge (#8689) spends
+        // the window, and 'rejected' skips it — a refused handshake is never going to be
+        // adopted. Retries stop when the shared clock runs out, so this count is a ceiling
+        // rather than the budget.
         let occupancy = await askDaemonWhatItHosts()
         let graceRetry = 0
         while (
           occupancy.state === 'unknown' &&
           health !== 'rejected' &&
           graceRetry < WEDGED_DAEMON_GRACE_RETRIES &&
-          Date.now() < graceDeadline &&
+          classificationRemainingMs() > 0 &&
           !endpointIsProvenDead(await probeSocketConnect(socketPath))
         ) {
           occupancy = await askDaemonWhatItHosts()

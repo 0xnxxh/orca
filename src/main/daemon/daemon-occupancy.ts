@@ -16,29 +16,41 @@ export type DaemonOccupancy =
   | { state: 'unknown'; liveSessions: null }
 
 export type DaemonOccupancyDeps = {
-  listSessions?: (socketPath: string, tokenPath: string) => Promise<number | null>
+  listSessions?: (socketPath: string, tokenPath: string, budgetMs: number) => Promise<number | null>
   inspectPtyOwnership?: typeof inspectDaemonPtyOwnership
 }
 
 /**
- * Why an explicit budget: the defaults are a 5s hello *per connection step* plus a 30s
- * request timeout, so one unanswered question can cost 50s. This runs inside a launch that
- * fails open at a minute, and a caller that asks repeatedly needs each ask to be bounded.
+ * Why two budgets, not one: connecting and answering fail for different reasons and deserve
+ * different patience. A daemon that cannot complete a handshake is wedged, and asking again
+ * shortly is the cheap way to find out whether it recovers — so connect stays tight and the
+ * caller retries it. A daemon that *did* answer the handshake is demonstrably alive, and its
+ * session count is the one thing that settles the question outright, so it is worth waiting
+ * for. Collapsing both into one tight budget is what made a slow-but-answering daemon
+ * indistinguishable from a dead one, and got its agents killed.
  */
-export const OCCUPANCY_IPC_BUDGET_MS = 4_000
+export const OCCUPANCY_CONNECT_BUDGET_MS = 4_000
+export const OCCUPANCY_REQUEST_BUDGET_MS = 15_000
 
-/** Live session count over the daemon's own socket; null when it could not answer. */
+/**
+ * Live session count over the daemon's own socket; null when it could not answer.
+ * `budgetMs` caps the whole exchange, so a caller working to a deadline can hand over what
+ * it has left rather than trusting a constant to still fit.
+ */
 async function countLiveSessionsOverIpc(
   socketPath: string,
-  tokenPath: string
+  tokenPath: string,
+  budgetMs: number
 ): Promise<number | null> {
   const client = new DaemonClient({ socketPath, tokenPath, protocolVersion: PROTOCOL_VERSION })
+  const deadline = Date.now() + budgetMs
+  const remaining = (): number => Math.max(1, deadline - Date.now())
   try {
-    await client.ensureConnectedWithin(OCCUPANCY_IPC_BUDGET_MS)
+    await client.ensureConnectedWithin(Math.min(OCCUPANCY_CONNECT_BUDGET_MS, remaining()))
     const result = await client.request<ListSessionsResult>(
       'listSessions',
       undefined,
-      OCCUPANCY_IPC_BUDGET_MS
+      Math.min(OCCUPANCY_REQUEST_BUDGET_MS, remaining())
     )
     return result.sessions.filter((session) => session.isAlive).length
   } catch {
@@ -61,15 +73,22 @@ export async function resolveDaemonOccupancy(args: {
   socketPath: string
   tokenPath: string
   recordedPid: number | null
+  /** Ceiling for the whole resolution; defaults to the connect plus request budgets. */
+  budgetMs?: number
   deps?: DaemonOccupancyDeps
 }): Promise<DaemonOccupancy> {
   const { socketPath, tokenPath, recordedPid, deps = {} } = args
+  const budgetMs = args.budgetMs ?? OCCUPANCY_CONNECT_BUDGET_MS + OCCUPANCY_REQUEST_BUDGET_MS
   const unknown: DaemonOccupancy = { state: 'unknown', liveSessions: null }
   // Why catch rather than let it propagate: 'unknown' is this module's residual, and a
   // question that could not be asked is the residual's whole purpose. An escaping throw
   // would route a failed observation into the launch path instead.
   try {
-    const counted = await (deps.listSessions ?? countLiveSessionsOverIpc)(socketPath, tokenPath)
+    const counted = await (deps.listSessions ?? countLiveSessionsOverIpc)(
+      socketPath,
+      tokenPath,
+      budgetMs
+    )
     if (counted !== null) {
       return counted > 0
         ? { state: 'occupied', liveSessions: counted }

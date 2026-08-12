@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  OCCUPANCY_CONNECT_BUDGET_MS,
+  OCCUPANCY_REQUEST_BUDGET_MS,
   raiseOccupancyWithProcessEvidence,
   resolveDaemonOccupancy,
   type DaemonOccupancy,
@@ -42,7 +44,7 @@ describe('resolveDaemonOccupancy with a daemon that answered', () => {
       state: 'occupied',
       liveSessions: 3
     })
-    expect(listSessions).toHaveBeenCalledWith(SOCKET_PATH, TOKEN_PATH)
+    expect(listSessions).toHaveBeenCalledWith(SOCKET_PATH, TOKEN_PATH, expect.any(Number))
     // The daemon's own reply is authoritative; process-table evidence could only muddy it.
     expect(inspectPtyOwnership).not.toHaveBeenCalled()
   })
@@ -110,6 +112,34 @@ describe('resolveDaemonOccupancy when the daemon could not answer', () => {
       resolve({ listSessions: ipcAnswers(null), inspectPtyOwnership }, null)
     ).resolves.toEqual({ state: 'unknown', liveSessions: null })
     expect(inspectPtyOwnership).not.toHaveBeenCalled()
+  })
+})
+
+describe('resolveDaemonOccupancy budgets', () => {
+  it('waits longer for an answer than for a handshake', () => {
+    // Why they differ: a daemon that cannot complete a handshake is wedged and worth
+    // re-asking cheaply; one that answered the handshake is demonstrably alive, and its
+    // count settles the question outright. Collapsing both into one tight budget is what
+    // made a slow-but-answering daemon indistinguishable from a dead one.
+    expect(OCCUPANCY_REQUEST_BUDGET_MS).toBeGreaterThan(OCCUPANCY_CONNECT_BUDGET_MS)
+  })
+
+  it('never spends more than the ceiling the caller handed it', async () => {
+    const listSessions = vi.fn(async (_socket: string, _token: string, budgetMs: number) => {
+      expect(budgetMs).toBeLessThanOrEqual(5_000)
+      return null
+    })
+
+    await expect(
+      resolveDaemonOccupancy({
+        socketPath: SOCKET_PATH,
+        tokenPath: TOKEN_PATH,
+        recordedPid: null,
+        budgetMs: 5_000,
+        deps: { listSessions }
+      })
+    ).resolves.toEqual({ state: 'unknown', liveSessions: null })
+    expect(listSessions).toHaveBeenCalledWith(SOCKET_PATH, TOKEN_PATH, 5_000)
   })
 })
 

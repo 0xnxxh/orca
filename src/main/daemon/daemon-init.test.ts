@@ -2,8 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
 import { PROTOCOL_VERSION } from './types'
-import { WEDGED_DAEMON_GRACE_BUDGET_MS, WEDGED_DAEMON_GRACE_RETRIES } from './daemon-init'
-import { OCCUPANCY_IPC_BUDGET_MS } from './daemon-occupancy'
+import { WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS, WEDGED_DAEMON_GRACE_RETRIES } from './daemon-init'
 
 const FAKE_USER_DATA_PATH = '/fake/userData'
 const FAKE_RUNTIME_DIR = join(FAKE_USER_DATA_PATH, 'daemon')
@@ -587,6 +586,10 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
 
   afterEach(() => {
     vi.clearAllMocks()
+    // Why restore too: tests here spy on Date.now, and clearAllMocks keeps the fake
+    // implementation. A failure before an inline restore would freeze the clock for every
+    // later test in the file, turning one red into a cascade.
+    vi.restoreAllMocks()
   })
 
   it('re-binds listeners after the first daemon provider is installed', async () => {
@@ -3443,17 +3446,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     }
   })
 
-  it('bounds grace by the wall clock, with the retry count only a ceiling above it', () => {
-    // Why phrased this way: the retry count used to be the budget, and its old name promised
-    // ~60s of drain. It no longer buys that — each probe costs OCCUPANCY_IPC_BUDGET_MS and the
-    // wall-clock ceiling binds first — so what it pins now is only that the count never
-    // becomes the binding limit. The window itself is asserted in daemon-launch-budget.test.ts.
-    expect(WEDGED_DAEMON_GRACE_RETRIES * OCCUPANCY_IPC_BUDGET_MS).toBeGreaterThan(
-      WEDGED_DAEMON_GRACE_BUDGET_MS
-    )
-  })
-
-  it('stops grace-retrying when the wall-clock budget runs out, with retries still left', async () => {
+  it('stops grace-retrying when the classification clock runs out, with retries still left', async () => {
     const mod = await importFresh()
     await mod.initDaemonPtyProvider()
 
@@ -3492,7 +3485,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     let elapsedMs = 0
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
       const value = startMs + elapsedMs
-      elapsedMs += WEDGED_DAEMON_GRACE_BUDGET_MS / 3
+      elapsedMs += WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS / 3
       return value
     })
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -3521,7 +3514,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     // cannot reach. Freezing it lets the loop run to its retry ceiling deliberately, which is
     // the thing under test — that a daemon draining on the final allowed probe is preserved.
     const frozenNow = Date.now()
-    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(frozenNow)
+    vi.spyOn(Date, 'now').mockReturnValue(frozenNow)
     const mod = await importFresh()
     await mod.initDaemonPtyProvider()
 
@@ -3565,7 +3558,6 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     } finally {
       daemonClientMock.mockImplementation(answeringDefault)
     }
-    nowSpy.mockRestore()
   })
 
   it('replaces a hello-rejected daemon even though its pipe accepts connections', async () => {

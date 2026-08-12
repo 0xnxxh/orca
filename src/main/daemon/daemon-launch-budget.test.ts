@@ -1,58 +1,30 @@
 import { describe, expect, it } from 'vitest'
 import { LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS } from '../startup/first-window-startup-services'
-import { WEDGED_DAEMON_GRACE_BUDGET_MS } from './daemon-init'
-import { HEALTH_CHECK_TIMEOUT_MS } from './daemon-health'
-import { OCCUPANCY_IPC_BUDGET_MS } from './daemon-occupancy'
-import { ENDPOINT_PROBE_TIMEOUT_MS } from './daemon-endpoint-probe'
-import {
-  POSIX_OWNERSHIP_PROBE_DEADLINE_MS,
-  PTY_OWNERSHIP_PROBE_ATTEMPTS
-} from './daemon-live-pty-evidence'
+import { WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS } from './daemon-init'
 
 /**
  * Kept out of the launcher's own spec because that file mocks daemon-health, which would
- * shadow the very constants this is here to hold to account.
+ * shadow constants this is here to hold to account.
+ *
+ * This deliberately asserts one enforced ceiling rather than a sum of the path's parts. The
+ * sum was the earlier design, and four separate reviews each found a different term missing
+ * from it — the launcher's own adoption connect, an identity probe, an endpoint probe, an
+ * evidence deadline applied twice. Every one of them passed this file while the real path
+ * overran. The launcher now spends against a clock, so the only thing left worth asserting
+ * is that the clock leaves room for what comes after it.
  */
 describe('wedged-daemon classification budget', () => {
-  it.each([
-    // Windows reads no process table, so it pays neither the evidence deadline nor the
-    // identity probe that only exists to feed it. POSIX pays both: a synchronous `ps -p`
-    // for identity, then the evidence read itself.
-    ['posix', POSIX_OWNERSHIP_PROBE_DEADLINE_MS, 2_000, 16_000],
-    ['win32', 0, 0, 26_000]
-  ])(
-    'is spent well inside the startup fail-open cap on %s',
-    (_platform, evidenceDeadlineMs, identityProbeMs, graceBudgetMs) => {
-      // Why sum the declared budgets rather than compare one of them: startup abandons the
-      // daemon provider entirely at the cap, and classification is only the first half of the
-      // path — a replacement still has to be killed and forked after it. Comparing the grace
-      // window alone passed while the real path ran to ~112s, because one probe cost 50s
-      // against a 5s assumption. Raising any term below now has to face this.
-      const classificationMs =
-        HEALTH_CHECK_TIMEOUT_MS +
-        graceBudgetMs +
-        // The ceiling is tested at loop entry, so one probe — connect, then request — plus the
-        // endpoint check that ends the loop always run past it.
-        OCCUPANCY_IPC_BUDGET_MS * 2 +
-        ENDPOINT_PROBE_TIMEOUT_MS +
-        // Identity is re-verified before the evidence read, and again inside killStaleDaemon —
-        // the second one fences the signal to this incarnation, so it must not be reused.
-        identityProbeMs +
-        evidenceDeadlineMs * PTY_OWNERSHIP_PROBE_ATTEMPTS
+  it('leaves the kill ladder and the daemon fork room under the startup fail-open', () => {
+    // Startup abandons the daemon provider entirely at the cap, and ensureRunning() is not
+    // abortable — so overrunning costs the app its daemon *and* still kills the incumbent.
+    // What follows a replace verdict is the kill ladder (~10s: identity, SIGTERM, wait,
+    // recheck, SIGKILL confirm) and the fork's own 10s readiness timeout.
+    const afterClassificationMs =
+      LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS - WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS
 
-      expect(classificationMs).toBeLessThan(LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS)
-      // Headroom the kill ladder (~10s) and the daemon fork (10s) still need after a replace
-      // verdict. Classification is only the first half of the path.
-      expect(LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS - classificationMs).toBeGreaterThanOrEqual(
-        22_000
-      )
-    }
-  )
-
-  it('spends the grace budget the platform it is running on was sized for', () => {
-    // Why pinned: the two platforms get different windows on purpose — POSIX has evidence to
-    // fall back on when the window runs out, Windows has nothing — and the numbers above are
-    // only meaningful if the code actually uses them.
-    expect(WEDGED_DAEMON_GRACE_BUDGET_MS).toBe(process.platform === 'win32' ? 26_000 : 16_000)
+    expect(WEDGED_DAEMON_CLASSIFICATION_BUDGET_MS).toBeLessThan(
+      LOCAL_PTY_STARTUP_FAIL_OPEN_TIMEOUT_MS
+    )
+    expect(afterClassificationMs).toBeGreaterThanOrEqual(20_000)
   })
 })
