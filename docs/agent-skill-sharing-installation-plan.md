@@ -99,7 +99,7 @@ conflict/topology/mechanism outcomes, copy fallback, capability absence, recover
 and bounded error categories without paths, skill names, contents, share URLs, grants, host IDs,
 or credentials. Bundle summaries are aggregate and cap error-category cardinality at 32. This is
 not product telemetry and changes no RPC, persisted state, or remote opcode, so old clients and
-hosts remain compatible. The release suite passes 423 tests, full typecheck/lint pass, and the
+hosts remain compatible. The release suite passes 427 tests, full typecheck/lint pass, and the
 real-process macOS crash-recovery matrix passes all 17 boundaries; physical platform reruns remain
 tracked in the checklist.
 

@@ -1249,8 +1249,8 @@ OS, destination kind, transport, conflicts, placement topology/mechanism, copy f
 capability absence, recovered transactions, stale extraction/lock cleanup, and failure categories
 use fixed or bounded values; bundle error-category cardinality is capped at 32. The implementation
 adds no product telemetry event, RPC field, persisted schema, or remote opcode. The skill-sharing
-release suite passes 423 tests with 29 expected platform skips, the focused affected matrix passes
-98 tests with one expected skip, typecheck and the full lint pipeline pass, and the real-process
+release suite passes 427 tests with 29 expected platform skips, the focused affected matrix passes
+102 tests with one expected skip, typecheck and the full lint pipeline pass, and the real-process
 macOS recovery matrix passes all 17 crash boundaries. Physical Windows/WSL reruns remain separate
 platform gates below.
 
@@ -1307,8 +1307,14 @@ platform gates below.
       safe removal.
 - [x] Test modified and unowned canonical and provider conflicts.
 - [ ] Test canonical/provider paths as regular files, directories, aliases, junctions, external
-      links, and broken links.
+      links, and broken links. Deterministic native coverage now preserves canonical regular-file
+      name collisions, unowned provider files/directories, external and broken unowned links,
+      Orca-owned broken-link repair, aliases, and verified copy fallback. Physical Windows
+      junction coverage remains open.
 - [ ] Test concurrent desktop, headless runtime, CLI, SSH, and recovery attempts.
+      The shared transaction core now serializes two simultaneous installs into one installed and
+      one unchanged result, one receipt, and no staging residue; cross-entry-point contention
+      remains open.
 - [ ] Test permission and read-only failures, disk exhaustion, cancellation, process termination,
       and host disconnect. Simulated `EACCES` and `ENOSPC` preservation plus lost-response retry are
       covered; physical failure and termination journeys remain open.

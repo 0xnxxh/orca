@@ -119,6 +119,19 @@ describe('skill install transaction', () => {
     expect(await readFile(join(destination, 'SKILL.md'), 'utf8')).toContain('# Cloud')
   })
 
+  it('preserves a regular file at the canonical destination as a name collision', async () => {
+    const root = await temporaryDirectory()
+    const archive = await packageVersion(root, 'version_1', '# Cloud')
+    const destination = join(root, 'skills', 'test-skill')
+    await mkdir(join(root, 'skills'), { recursive: true })
+    await writeFile(destination, 'unowned regular file')
+
+    const result = await installLocalSkillPackage(installInput(root, archive))
+
+    expect(result).toMatchObject({ status: 'conflict', conflict: { kind: 'name-collision' } })
+    expect(await readFile(destination, 'utf8')).toBe('unowned regular file')
+  })
+
   it('rejects a case-insensitive sibling collision before destination mutation', async () => {
     const root = await temporaryDirectory()
     const archive = await packageVersion(root, 'version_1', '# Cloud')
@@ -270,6 +283,25 @@ describe('skill install transaction', () => {
     } finally {
       await release()
     }
+  })
+
+  it('serializes simultaneous installs without duplicate provenance or staging bytes', async () => {
+    const root = await temporaryDirectory()
+    const archive = await packageVersion(root, 'version_1', '# Concurrent')
+
+    const results = await Promise.all([
+      installLocalSkillPackage(installInput(root, archive, { operationId: 'concurrent-a' })),
+      installLocalSkillPackage(installInput(root, archive, { operationId: 'concurrent-b' }))
+    ])
+
+    expect(results.map((result) => result.status).sort()).toEqual(['installed', 'unchanged'])
+    expect(await readFile(join(root, 'skills', 'test-skill', 'SKILL.md'), 'utf8')).toContain(
+      '# Concurrent'
+    )
+    expect((await readdir(join(root, 'skills'))).filter((name) => name.includes('.orca-'))).toEqual(
+      []
+    )
+    expect(await readdir(join(root, 'state', 'receipts'))).toHaveLength(1)
   })
 
   it('invalidates a plan when destination state changes immediately before commit', async () => {

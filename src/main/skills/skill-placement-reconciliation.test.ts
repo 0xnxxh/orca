@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import type * as NodeFsPromises from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -23,6 +23,48 @@ afterEach(async () => {
 })
 
 describe('skill provider placement reconciliation', () => {
+  it.each(['file', 'directory'] as const)(
+    'preserves an unowned provider %s destination',
+    async (kind) => {
+      const root = await mkdtemp(join(tmpdir(), 'orca-skill-placement-test-'))
+      temporaryDirectories.push(root)
+      const canonicalPath = join(root, 'canonical', 'private-skill')
+      const providerRoot = join(root, 'provider')
+      const destinationPath = join(providerRoot, 'private-skill')
+      await mkdir(canonicalPath, { recursive: true })
+      await writeFile(join(canonicalPath, 'SKILL.md'), 'private skill')
+      await mkdir(providerRoot)
+      if (kind === 'file') {
+        await writeFile(destinationPath, 'unowned file')
+      } else {
+        await mkdir(destinationPath)
+        await writeFile(join(destinationPath, 'SKILL.md'), 'unowned directory')
+      }
+      const observed = await nativeSkillInstallFilesystem.observeSkill(canonicalPath)
+
+      const result = await reconcileSkillProviderPlacement({
+        canonicalPath,
+        skillName: 'private-skill',
+        destination: { provider: 'claude', rootPath: providerRoot, readsCanonicalRoot: false },
+        previousReceipt: null,
+        packageDigest: observed.observedDigest
+      })
+
+      expect(result).toMatchObject({
+        topology: 'independent-copy',
+        status: 'skipped',
+        errorCategory: 'skill-placement-unowned'
+      })
+      const destinationStat = await lstat(destinationPath)
+      expect(kind === 'file' ? destinationStat.isFile() : destinationStat.isDirectory()).toBe(true)
+      if (kind === 'file') {
+        expect(await readFile(destinationPath, 'utf8')).toBe('unowned file')
+      } else {
+        expect(await readFile(join(destinationPath, 'SKILL.md'), 'utf8')).toBe('unowned directory')
+      }
+    }
+  )
+
   it('creates a verified independent copy when native alias creation is denied', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-skill-placement-test-'))
     temporaryDirectories.push(root)
