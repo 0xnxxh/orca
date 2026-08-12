@@ -102,6 +102,18 @@ hands → probe once more → `rename` in one syscall → verify we kept it.
     discarded. Contrived — `exit 0` returns immediately — but it is executable identity the
     match cannot establish.
 
+  The owner check covers the operations that can destroy or corrupt a session — write, resize,
+  shutdown, sendSignal, attach. It does **not** cover `pauseProducer`, `resumeProducer`,
+  `setPtyBackgrounded`, `clearBuffer`, `closeStartupQueryAuthority`, `acknowledgeDataEvent`, or
+  the per-session queries, which still route raw. For an unresolved daemon id those reach the
+  fallback silently: a buffer clear reports success while the daemon's history survives, and
+  flow control paces a producer that is not the one emitting. Pre-existing and unchanged here.
+
+  Before extending the check to them, note that `acknowledgeDataEvent` is called straight from
+  an `ipcMain.on` listener and `setPtyBackgrounded` synchronously from a callback, neither with
+  a boundary — so adding a throwing owner check without changing those call sites converts a
+  silent misroute into an escaping exception.
+
   **If you ever raise the classification budget, gate the replace path on headroom first.**
   The budget serves two verdicts with opposite time-costs: reaching "don't kill" slowly is free,
   because the daemon survives however long it took, while reaching `empty` slowly is not — the
