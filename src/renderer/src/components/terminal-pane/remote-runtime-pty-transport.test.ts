@@ -5109,6 +5109,33 @@ describe('createRemoteRuntimePtyTransport', () => {
 
     await vi.waitFor(() => expect(onStreamRecovered).toHaveBeenCalledTimes(1))
     expect(onReplayData.mock.calls.map((call) => call[0])).toEqual(['INITIAL_SNAPSHOT'])
+
+    subscriptionCallbacks?.onClose?.()
+    await vi.waitFor(() => expect(runtimeSubscribe).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() =>
+      expect(
+        subscriptionSendBinary.mock.calls
+          .map((call) => decodeTerminalStreamFrame(call[0]))
+          .filter((frame) => frame?.opcode === TerminalStreamOpcode.Subscribe)
+      ).toHaveLength(3)
+    )
+    const populatedReconnectStreamId = latestSubscribePayload().streamId
+    emitSnapshot(populatedReconnectStreamId, 'RECOVERY_SNAPSHOT')
+    subscriptionCallbacks?.onResponse({
+      ok: true,
+      result: {
+        type: 'subscribed',
+        streamId: populatedReconnectStreamId,
+        capabilities: { outputPause: 1 }
+      }
+    })
+
+    await vi.waitFor(() => expect(onConnect).toHaveBeenCalledTimes(3))
+    expect(onStreamRecovered).toHaveBeenCalledTimes(1)
+    expect(onReplayData.mock.calls.map((call) => call[0])).toEqual([
+      'INITIAL_SNAPSHOT',
+      'RECOVERY_SNAPSHOT'
+    ])
     transport.destroy?.()
   })
 
