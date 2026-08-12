@@ -223,6 +223,24 @@ describe('STA-3077: existing duplicate leases are healed, not revived', () => {
       2
     )
   })
+
+  // A lease is rebuilt field by field on load, so a field added to the type but not to the
+  // normalizer is dropped on every boot — it would look right in memory and be gone on the next
+  // start, which is how a fence ships silently permitting everything. A synthesized identity is
+  // refused outright rather than carried: it is not stable across reconnects, so one persisted by
+  // another build would later read as a different shell and strand a live pane.
+  it('keeps a host-attested incarnation across a reload and refuses a synthesized one', async () => {
+    const store = await createStore({
+      sshRemotePtyLeases: [
+        { ...leaseFor('relay-pty-a', 1), createdAt: 1, incarnationId: 'inc-host-a' },
+        { ...leaseFor('relay-pty-b', 2), createdAt: 2, incarnationId: 'legacy:23:0:relay-pty-b' }
+      ]
+    })
+
+    const byPtyId = new Map(store.getSshRemotePtyLeases(TARGET).map((l) => [l.ptyId, l]))
+    expect(byPtyId.get('relay-pty-a')?.incarnationId).toBe('inc-host-a')
+    expect(byPtyId.get('relay-pty-b')?.incarnationId).toBeUndefined()
+  })
 })
 
 describe('STA-3077: reattach binds panes, it never creates them', () => {

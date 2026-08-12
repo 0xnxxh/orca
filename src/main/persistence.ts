@@ -37,6 +37,7 @@ import {
   nextAutomationOccurrenceAfter
 } from '../shared/automation-schedules'
 import { getAutomationLegacyRepoId } from '../shared/automation-run-identity'
+import { isRelayAttestedPtyIncarnationId } from '../shared/pty-incarnation'
 import { normalizeAutomationPrecheck } from '../shared/automation-precheck'
 import { normalizeProxyUrl } from '../shared/network-proxy'
 import { normalizeKagiSessionLink } from '../shared/browser-url'
@@ -1619,7 +1620,13 @@ function normalizeSshRemotePtyLease(value: unknown): SshRemotePtyLease | null {
     createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : now,
     ...(typeof raw.lastAttachedAt === 'number' ? { lastAttachedAt: raw.lastAttachedAt } : {}),
-    ...(typeof raw.lastDetachedAt === 'number' ? { lastDetachedAt: raw.lastDetachedAt } : {})
+    ...(typeof raw.lastDetachedAt === 'number' ? { lastDetachedAt: raw.lastDetachedAt } : {}),
+    // Rebuilt field by field, so a lease is only as durable as this list — adding the field to the
+    // type without adding it here drops it on every load. Synthesized values are refused rather
+    // than carried: one written by an older build would later read as a different shell.
+    ...(isRelayAttestedPtyIncarnationId(raw.incarnationId)
+      ? { incarnationId: raw.incarnationId }
+      : {})
   }
 }
 
