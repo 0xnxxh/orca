@@ -103,6 +103,9 @@ export function useMobileStructuredSessionMutations(args: {
       }
       const result = response.result as AgentSessionMutationResult<TValue>
       if (!result.ok) {
+        if (result.refusal.code !== 'agent_session_operation_unknown') {
+          operationIdsRef.current.delete(mutationKey)
+        }
         if (matchesActiveContext(activeContextRef.current, client, sessionId, fence)) {
           onRefusal(result.refusal.message)
         }

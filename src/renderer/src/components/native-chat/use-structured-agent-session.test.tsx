@@ -3,7 +3,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ call: vi.fn() }))
+const mocks = vi.hoisted(() => ({ call: vi.fn(), operationId: vi.fn() }))
 let fence = 3
 
 vi.mock('@/runtime/structured-agent-session-client', () => ({
@@ -27,7 +27,7 @@ vi.mock('./use-structured-agent-session-read', () => ({
 }))
 
 vi.mock('./use-structured-agent-session-outbox', () => ({
-  structuredSessionOperationId: () => 'operation-1',
+  structuredSessionOperationId: mocks.operationId,
   useStructuredAgentSessionOutbox: () => ({
     outbox: [],
     blockedClientMessageId: null,
@@ -71,6 +71,7 @@ describe('useStructuredAgentSession options', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     fence = 3
+    mocks.operationId.mockReturnValueOnce('operation-1').mockReturnValueOnce('operation-2')
     mocks.call.mockImplementation((_target, method) =>
       method === 'agentSession.options' ? Promise.resolve(OPTIONS) : Promise.resolve(null)
     )
@@ -137,6 +138,57 @@ describe('useStructuredAgentSession options', () => {
     expect(result.current.optionSnapshot.find((entry) => entry.id === 'model')).toMatchObject({
       settable: true
     })
+  })
+
+  it('mints a fresh operation when the same option is retried after a typed refusal', async () => {
+    let attempts = 0
+    mocks.call.mockImplementation((_target, method) => {
+      if (method === 'agentSession.options') {
+        return Promise.resolve(OPTIONS)
+      }
+      attempts += 1
+      return Promise.resolve(
+        attempts === 1
+          ? {
+              ok: false,
+              refusal: {
+                code: 'agent_session_operation_invalid',
+                message: 'model list unavailable'
+              }
+            }
+          : {
+              ok: true,
+              value: {
+                key: 'model',
+                value: 'gpt-fast',
+                options: { model: 'gpt-fast', effort: 'low' }
+              }
+            }
+      )
+    })
+    const { result } = renderHook(() =>
+      useStructuredAgentSession({
+        sessionId: 'session-1',
+        target: LOCAL_TARGET,
+        agent: 'codex'
+      })
+    )
+    await waitFor(() => expect(result.current.optionSnapshot).toHaveLength(2))
+
+    await act(async () => {
+      expect(await result.current.setStructuredOption('model', 'gpt-fast')).toBe(false)
+      expect(await result.current.setStructuredOption('model', 'gpt-fast')).toBe(true)
+    })
+
+    const mutations = mocks.call.mock.calls.filter(
+      ([, method]) => method === 'agentSession.setOption'
+    )
+    expect(
+      mutations.map(
+        ([, , params]) =>
+          (params as { envelope: { clientOperationId: string } }).envelope.clientOperationId
+      )
+    ).toEqual(['operation-1', 'operation-2'])
   })
 
   it('ignores an option failure from a superseded fence', async () => {

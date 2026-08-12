@@ -7,6 +7,7 @@ import type { CodexAppServerConnection } from './codex-app-server-connection'
 import type { CodexOpenedThread } from './codex-structured-thread-open'
 import type { CodexSession } from './codex-structured-session-state'
 import { isCodexTurnOptionKey } from './codex-structured-turn-start'
+import { AgentSessionOptionRejectedError } from '../native-chat/agent-session-wire/structured-agent-session-option-error'
 
 const MODEL_PAGE_LIMIT = 100
 const MAX_MODEL_PAGES = 20
@@ -142,6 +143,19 @@ export function readLiveCodexSessionOptions(
 }
 
 export async function applyCodexStructuredSessionOption(
+  session: CodexSession,
+  key: string,
+  value: string,
+  timeoutMs: number | undefined
+): Promise<Readonly<Record<string, string>>> {
+  try {
+    return await applyValidatedCodexStructuredSessionOption(session, key, value, timeoutMs)
+  } catch (error) {
+    throw new AgentSessionOptionRejectedError(error)
+  }
+}
+
+async function applyValidatedCodexStructuredSessionOption(
   session: CodexSession,
   key: string,
   value: string,

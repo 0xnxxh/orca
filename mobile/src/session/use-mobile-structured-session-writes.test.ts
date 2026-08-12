@@ -377,6 +377,53 @@ describe('useMobileStructuredSessionWrites', () => {
     expect(api!.error).toBe('not allowed')
   })
 
+  it('mints a fresh operation when the same option is retried after a typed refusal', async () => {
+    sendRequest
+      .mockResolvedValueOnce({
+        id: 'set-option-rejected',
+        ok: true,
+        _meta: { runtimeId: 'runtime-1' },
+        result: {
+          ok: false,
+          refusal: {
+            code: 'agent_session_operation_invalid',
+            message: 'model list unavailable'
+          }
+        }
+      })
+      .mockResolvedValueOnce({
+        id: 'set-option-applied',
+        ok: true,
+        _meta: { runtimeId: 'runtime-1' },
+        result: {
+          ok: true,
+          replayed: false,
+          fence: 3,
+          cursor: { epoch: 'epoch-1', sequence: 2 },
+          value: {
+            key: 'model',
+            value: 'gpt-5.6-sol',
+            options: { model: 'gpt-5.6-sol' }
+          }
+        }
+      })
+
+    await act(async () => {
+      expect(await api!.setOption('model', 'gpt-5.6-sol')).toBeNull()
+      expect(await api!.setOption('model', 'gpt-5.6-sol')).toMatchObject({
+        options: { model: 'gpt-5.6-sol' }
+      })
+    })
+
+    const operationIds = sendRequest.mock.calls.map(
+      ([, params]) =>
+        (params as { envelope: { clientOperationId: string } }).envelope.clientOperationId
+    )
+    expect(operationIds[0]).toMatch(/-00000000000040008000000000000001$/)
+    expect(operationIds[1]).toMatch(/-00000000000040008000000000000002$/)
+    expect(operationIds[1]).not.toBe(operationIds[0])
+  })
+
   it('isolates mutation ids and late errors across session changes', async () => {
     const first = deferred<RpcSuccess>()
     sendRequest.mockImplementationOnce(() => first.promise).mockResolvedValueOnce(accepted('b'))

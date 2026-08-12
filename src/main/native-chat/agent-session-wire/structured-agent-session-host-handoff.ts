@@ -126,6 +126,7 @@ async function acquireNativeHandoffOwner(
     identity: journalIdentityFor(record, session.params),
     fence: input.fence,
     spawnToken: input.spawnToken,
+    ...(record.options ? { options: record.options } : {}),
     events: eventSink.sink
   })
   let proved: AgentSessionRecord

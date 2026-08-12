@@ -105,6 +105,9 @@ export function useStructuredAgentSession(args: {
         return null
       }
       if (!result.ok) {
+        if (result.refusal.code !== 'agent_session_operation_unknown') {
+          operationIds.current.delete(key)
+        }
         if (stateRef.current.fence === targetFence) {
           setWriteError(result.refusal.message)
         }
