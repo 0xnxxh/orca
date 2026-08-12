@@ -71,17 +71,8 @@ function QuickCommandRow({
   )
 
   return (
-    <div className="group/qc relative flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-accent/60 focus-within:bg-accent/60">
-      {/* Why an overlay button: the row opens the editor, but nested buttons
-          (copy/remove) can't live inside another button. */}
-      <button
-        type="button"
-        aria-label={editLabel}
-        title={editLabel}
-        onClick={() => onEdit(command)}
-        className="absolute inset-0 cursor-pointer rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      />
-      <div className="pointer-events-none min-w-0 flex-1">
+    <div className="group/qc flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-accent/60 focus-within:bg-accent/60">
+      <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <div className="truncate text-sm font-medium">
             {command.label ||
@@ -115,23 +106,21 @@ function QuickCommandRow({
           </span>
         </div>
       </div>
-      <div className="pointer-events-none w-12 shrink-0 text-right text-[11px] text-muted-foreground">
+      <div className="w-12 shrink-0 text-right text-[11px] text-muted-foreground">
         {getRunModeLabel(command)}
       </div>
-      {/* Why can-hover: touch devices never hover, so the actions must stay visible there.
-          Why pointer-events-none on the container: gaps and the decorative pencil
-          must fall through to the row's edit button underneath, so only the real
-          buttons opt back in. */}
-      <div className="relative flex shrink-0 items-center gap-0.5 transition-opacity pointer-events-none can-hover:opacity-0 group-hover/qc:opacity-100 group-focus-within/qc:opacity-100">
-        {/* Why decorative: the row itself is the edit button, so a second real
-            control would duplicate its accessible name and tab stop. This only
-            has to say "clicking here edits". */}
-        <span
-          aria-hidden="true"
-          className="flex size-8 items-center justify-center rounded-md text-muted-foreground"
+      {/* Why can-hover: touch devices never hover, so the actions must stay visible there. */}
+      <div className="flex shrink-0 items-center gap-0.5 transition-opacity can-hover:opacity-0 group-hover/qc:opacity-100 group-focus-within/qc:opacity-100">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={editLabel}
+          title={editLabel}
+          onClick={() => onEdit(command)}
         >
-          <Pencil className="size-4" />
-        </span>
+          <Pencil />
+        </Button>
         <Button
           type="button"
           variant="ghost"
@@ -141,7 +130,6 @@ function QuickCommandRow({
           title={copyLabel}
           onClick={() => void copyText()}
           className={cn(
-            'pointer-events-auto disabled:pointer-events-none',
             status === 'copied' && 'text-status-success',
             status === 'failed' && 'text-destructive'
           )}
@@ -158,7 +146,7 @@ function QuickCommandRow({
             { value0: commandName }
           )}
           onClick={() => onRemove(command)}
-          className="pointer-events-auto text-muted-foreground hover:text-destructive"
+          className="text-muted-foreground hover:text-destructive"
         >
           <Trash2 />
         </Button>
