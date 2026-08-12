@@ -28,16 +28,16 @@ import { createOsc133CommandFinishedScanner } from './terminal-osc133-command-fi
 /** Ms of title-less output after a working title before it is cleared. */
 export const STALE_WORKING_TITLE_TIMEOUT_MS = 3000
 
-// Braille spinner glyphs (U+2800–U+28FF); mirrors the range clearWorkingIndicators strips in agent-detection.ts.
-// eslint-disable-next-line no-control-regex -- intentional unicode range
-const BRAILLE_SPINNER_RE = /[\u2800-\u28FF]/g
+// Braille and quarter-circle spinner glyphs; mirrors the ranges clearWorkingIndicators strips in agent-detection.ts.
+// eslint-disable-next-line no-control-regex -- intentional unicode ranges
+const SPINNER_FRAME_GLYPH_RE = /[\u2800-\u28FF\u25D0-\u25D3]/g
 
 /**
- * Strip decorative braille spinner frame glyphs so titles differing only by the animation frame
+ * Strip decorative spinner frame glyphs so titles differing only by the animation frame
  * compare equal — the gate consumers use to avoid fan-out churn on spinner ticks.
  */
-export function stripBrailleSpinnerGlyphs(title: string): string {
-  return title.replace(BRAILLE_SPINNER_RE, '').trim()
+export function stripSpinnerFrameGlyphs(title: string): string {
+  return title.replace(SPINNER_FRAME_GLYPH_RE, '').trim()
 }
 
 /** Provenance for title/idle facts; `staleWorkingTitleClear` marks facts synthesized by the 3s stale timer — not genuine task completions. */
