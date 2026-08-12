@@ -698,6 +698,7 @@ export class AgentHookServer {
     }
   }
 
+  /** Subscribes to definitive live-row deletions, excluding transient connection clears. */
   subscribeStatusDrop(listener: StatusDropListener): () => void {
     this.statusDropListeners.add(listener)
     return () => {
@@ -705,6 +706,7 @@ export class AgentHookServer {
     }
   }
 
+  /** Notifies pane-owned cleanup only after its status row was deleted. */
   private emitStatusDropped(paneKey: string): void {
     for (const listener of this.statusDropListeners) {
       try {
