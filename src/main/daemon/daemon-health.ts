@@ -10,6 +10,7 @@ import {
 } from '../../shared/process-output-field-scanner'
 import { isStartupDiagnosticsEnabled, logStartupDiagnostic } from '../startup/startup-diagnostics'
 import { encodeNdjson } from './ndjson'
+import { inspectDaemonPtyOwnership, type DaemonPtyOwnership } from './daemon-live-pty-evidence'
 import {
   getDaemonPidPath,
   unlinkDaemonPidFileWhen,
@@ -731,6 +732,18 @@ async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boole
  */
 export type StaleDaemonKillTestHooks = {
   probeEndpoint?: (socketPath: string) => Promise<SocketProbeOutcome>
+  inspectPtyOwnership?: (daemonPid: number) => Promise<DaemonPtyOwnership>
+}
+
+export type StaleDaemonKillOptions = {
+  /**
+   * Refuse to signal a daemon whose process still owns live PTY children.
+   *
+   * Only for callers replacing on *unverifiable* state. Callers that positively
+   * confirmed zero live sessions — or that are carrying out an explicit user
+   * restart — must leave this off, or the daemon becomes unkillable.
+   */
+  preserveWhenOwningLivePtys?: boolean
 }
 
 export type StaleDaemonKillOutcome = {
@@ -749,9 +762,12 @@ export async function killStaleDaemon(
   socketPath: string,
   tokenPath: string,
   protocolVersion = PROTOCOL_VERSION,
-  testHooks?: StaleDaemonKillTestHooks
+  // Why: one trailing bag rather than two optional params — a caller that skipped the
+  // hooks slot silently landed its options in it, disabling the veto with no type error.
+  options?: StaleDaemonKillTestHooks & StaleDaemonKillOptions
 ): Promise<StaleDaemonKillOutcome> {
-  const probeEndpoint = testHooks?.probeEndpoint ?? probeSocketConnect
+  const probeEndpoint = options?.probeEndpoint ?? probeSocketConnect
+  const inspectPtyOwnership = options?.inspectPtyOwnership ?? inspectDaemonPtyOwnership
   const pidPath = getDaemonPidPath(runtimeDir, protocolVersion)
   let killedDaemon = false
   let liveOwnerSurvived = false
@@ -786,6 +802,18 @@ export async function killStaleDaemon(
     }
     if (parsedPid && identity === 'match') {
       const { pid, startedAtMs } = parsedPid
+      // Why: identity is already 'match', so these descendants provably belong to this
+      // daemon incarnation — not to a recycled pid. A wedged daemon cannot list its own
+      // sessions, and treating that silence as "empty" is what killed live agents.
+      if (options?.preserveWhenOwningLivePtys) {
+        const ownership = await inspectPtyOwnership(pid)
+        if (ownership === 'owns-live-ptys') {
+          console.warn(
+            '[daemon] Preserving daemon that could not report its sessions: its process still owns live terminal processes'
+          )
+          return { killed: false, liveOwnerSurvived: true }
+        }
+      }
       try {
         process.kill(pid, 'SIGTERM')
       } catch (error) {

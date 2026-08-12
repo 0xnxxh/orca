@@ -587,3 +587,131 @@ describe('killStaleDaemon ownership decisions', () => {
     }
   )
 })
+
+describe.skipIf(process.platform === 'win32')('killStaleDaemon live PTY ownership veto', () => {
+  let dir: string
+  let socketPath: string
+  let tokenPath: string
+  let stubPid: number
+  let stubExited: Promise<void>
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'daemon-health-pty-veto-test-'))
+    socketPath = daemonTestSocketPath(dir)
+    tokenPath = join(dir, 'daemon.token')
+    // A real process is required: identity 'match' is decided from the live command line.
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        "console.log('ready'); setInterval(() => {}, 1000)",
+        'daemon-entry',
+        socketPath,
+        tokenPath
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] }
+    )
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', reject)
+      child.stdout?.once('data', () => resolve())
+    })
+    stubPid = child.pid as number
+    stubExited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+    writeFileSync(
+      getDaemonPidPath(dir),
+      serializeDaemonPidFile({ pid: stubPid, startedAtMs: null, launchNonce: 'daemon-a' }),
+      { mode: 0o600 }
+    )
+  })
+
+  afterEach(async () => {
+    try {
+      process.kill(stubPid, 'SIGKILL')
+    } catch {
+      // Already gone.
+    }
+    await stubExited
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  function terminationSignals(killSpy: { mock: { calls: unknown[][] } }): unknown[][] {
+    return killSpy.mock.calls.filter(([, sig]) => sig === 'SIGTERM' || sig === 'SIGKILL')
+  }
+
+  it('sends no signal at all when the daemon still owns live PTYs', async () => {
+    // Why: a wedged daemon cannot list its own sessions, so descendants are the
+    // only evidence left that replacing it would destroy running agents.
+    const inspectPtyOwnership = vi.fn(async () => 'owns-live-ptys' as const)
+    const killSpy = vi.spyOn(process, 'kill')
+
+    try {
+      await expect(
+        killStaleDaemon(dir, socketPath, tokenPath, undefined, {
+          probeEndpoint: async () => 'missing',
+          inspectPtyOwnership,
+          preserveWhenOwningLivePtys: true
+        })
+      ).resolves.toEqual({ killed: false, liveOwnerSurvived: true })
+      expect(inspectPtyOwnership).toHaveBeenCalledWith(stubPid)
+      expect(terminationSignals(killSpy)).toEqual([])
+    } finally {
+      killSpy.mockRestore()
+    }
+    expect(() => process.kill(stubPid, 0)).not.toThrow()
+    expect(readFileSync(getDaemonPidPath(dir), 'utf8')).toContain('daemon-a')
+  })
+
+  it('still SIGTERMs a wedged daemon that owns no live PTYs', async () => {
+    // #8689: nothing to lose, so an unresponsive daemon must stay replaceable.
+    const killSpy = vi.spyOn(process, 'kill')
+
+    try {
+      await expect(
+        killStaleDaemon(dir, socketPath, tokenPath, undefined, {
+          probeEndpoint: async () => 'missing',
+          inspectPtyOwnership: async () => 'no-live-ptys',
+          preserveWhenOwningLivePtys: true
+        })
+      ).resolves.toEqual({ killed: true, liveOwnerSurvived: false })
+      expect(killSpy).toHaveBeenCalledWith(stubPid, 'SIGTERM')
+    } finally {
+      killSpy.mockRestore()
+    }
+  })
+
+  it('still SIGTERMs when PTY ownership cannot be determined', async () => {
+    // Residual by design: only positive evidence of live PTYs vetoes the kill.
+    const killSpy = vi.spyOn(process, 'kill')
+
+    try {
+      await expect(
+        killStaleDaemon(dir, socketPath, tokenPath, undefined, {
+          probeEndpoint: async () => 'missing',
+          inspectPtyOwnership: async () => 'unknown',
+          preserveWhenOwningLivePtys: true
+        })
+      ).resolves.toEqual({ killed: true, liveOwnerSurvived: false })
+      expect(killSpy).toHaveBeenCalledWith(stubPid, 'SIGTERM')
+    } finally {
+      killSpy.mockRestore()
+    }
+  })
+
+  it('never consults PTY ownership without the opt-in, so restarts stay killable', async () => {
+    const inspectPtyOwnership = vi.fn(async () => 'owns-live-ptys' as const)
+    const killSpy = vi.spyOn(process, 'kill')
+
+    try {
+      await expect(
+        killStaleDaemon(dir, socketPath, tokenPath, undefined, {
+          probeEndpoint: async () => 'missing',
+          inspectPtyOwnership
+        })
+      ).resolves.toEqual({ killed: true, liveOwnerSurvived: false })
+      expect(inspectPtyOwnership).not.toHaveBeenCalled()
+      expect(killSpy).toHaveBeenCalledWith(stubPid, 'SIGTERM')
+    } finally {
+      killSpy.mockRestore()
+    }
+  })
+})

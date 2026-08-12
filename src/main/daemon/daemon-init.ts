@@ -463,6 +463,7 @@ function createOutOfProcessLauncher(
         }
       | undefined
     let confirmedReplacement = false
+    let healthCheckReplacementVerdict: string | null = null
     let adoptionClient: DaemonClient | null = new DaemonClient({
       socketPath,
       tokenPath
@@ -602,19 +603,13 @@ function createOutOfProcessLauncher(
           )
           return preserveDaemon()
         }
-        // Why: the sibling replace branches announce themselves, but this one used
-        // to kill a daemon silently — leaving no way to tell a replacement apart
-        // from an adoption after the fact. A cold start also lands here with
-        // nothing to replace, so only speak up once something actually answered:
-        // a probe that returned a count, a socket that survived a grace retry, or
-        // a refused hello.
-        if (liveSessionCount !== null || graceRetry > 0 || health === 'rejected') {
-          console.warn(
-            `[daemon] Replacing daemon that failed the health check (health=${health}, liveSessions=${liveSessionCount ?? 'unverifiable'}, graceRetries=${graceRetry})`
-          )
-        }
-        // Why: unlike the log above, telemetry gates on confirmedReplacement below — the
-        // post-kill truth — so a cold start that killed nothing never reports a replacement.
+        // Why: a cold start reaches this same fall-through with nothing to replace, but the
+        // old "did anything answer?" guard also silenced the one case that destroys user
+        // work — an unverifiable count from a daemon that never answered. Announce on the
+        // post-kill truth instead: that is silent on a cold start because nothing was killed.
+        healthCheckReplacementVerdict = `health=${health}, liveSessions=${liveSessionCount ?? 'unverifiable'}, graceRetries=${graceRetry}`
+        // Why: telemetry gates on confirmedReplacement below — the post-kill truth — so a
+        // cold start that killed nothing never reports a replacement.
         pendingReplacement = {
           reason: 'failed_health_check',
           liveSessionCount
@@ -624,7 +619,15 @@ function createOutOfProcessLauncher(
       // Why: a raw socket can outlive a broken daemon; kill by PID before respawn so the new daemon doesn't race the stale one.
       adoptionClient?.disconnect()
       adoptionClient = null
-      const killOutcome = await killStaleDaemon(runtimeDir, socketPath, tokenPath)
+      // Why: only the unverifiable-state branch needs the live-PTY veto. The branches above
+      // positively confirmed zero live sessions, and vetoing an explicit user restart would
+      // make a wedged daemon unkillable.
+      const killOutcome =
+        pendingReplacement?.reason === 'failed_health_check'
+          ? await killStaleDaemon(runtimeDir, socketPath, tokenPath, PROTOCOL_VERSION, {
+              preserveWhenOwningLivePtys: true
+            })
+          : await killStaleDaemon(runtimeDir, socketPath, tokenPath)
       if (killOutcome.liveOwnerSurvived) {
         // Why: forking beside a daemon we could not prove dead is precisely how the endpoint
         // owner and the session host diverge. But refusing outright would leave the user with
@@ -641,6 +644,11 @@ function createOutOfProcessLauncher(
             'Daemon replacement aborted: the existing daemon could not be confirmed stopped'
           )
         }
+      }
+      if (killOutcome.killed && healthCheckReplacementVerdict) {
+        console.warn(
+          `[daemon] Replacing daemon that failed the health check (${healthCheckReplacementVerdict})`
+        )
       }
       confirmedReplacement = killOutcome.killed || confirmedReplacement
       // Why: rank by how well each reason is evidenced. A confirmed kill whose reason positively

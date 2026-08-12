@@ -2926,7 +2926,9 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(killStaleDaemonMock).toHaveBeenCalledWith(
       FAKE_RUNTIME_DIR,
       '/fake/socket',
-      '/fake/token'
+      '/fake/token',
+      PROTOCOL_VERSION,
+      { preserveWhenOwningLivePtys: true }
     )
     expect(forkMock).toHaveBeenCalled()
   })
@@ -2951,6 +2953,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     daemonClientMock
       .mockImplementationOnce(unreachableClient)
       .mockImplementationOnce(unreachableClient)
+    // A cold start has no pid record to act on, so nothing is ever killed.
+    killStaleDaemonMock.mockResolvedValueOnce({ killed: false, liveOwnerSurvived: false })
 
     const launcher = spawnerInstances[0].launcher as (
       socketPath: string,
@@ -3107,7 +3111,9 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       expect(killStaleDaemonMock).toHaveBeenCalledWith(
         FAKE_RUNTIME_DIR,
         '/fake/socket',
-        '/fake/token'
+        '/fake/token',
+        PROTOCOL_VERSION,
+        { preserveWhenOwningLivePtys: true }
       )
       expect(forkMock).toHaveBeenCalled()
       // The launcher probes the full grace budget: 1 initial probe + WEDGED_DAEMON_GRACE_RETRIES retries.
@@ -3123,6 +3129,70 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     } finally {
       warnSpy.mockRestore()
       // Restore the answering default: clearAllMocks clears calls not impls, so the throwing impl would leak into later tests.
+      daemonClientMock.mockImplementation(answeringDefault)
+    }
+  })
+
+  it('adopts a wedged daemon that still owns live PTYs instead of killing its agents', async () => {
+    // Why: the regression that motivated the veto. A daemon too wedged to answer listSessions
+    // still hosts every running agent; killing it destroys work that no restore can recover.
+    // killStaleDaemon owns the veto, so the launcher's contract is to opt in here and to route
+    // the refusal into degraded adoption rather than forking a second daemon beside it.
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+
+    const answeringDefault = function MockDaemonClient() {
+      return {
+        ensureConnected: vi.fn(async () => {}),
+        request: vi.fn(async () => ({ sessions: [] })),
+        disconnect: vi.fn()
+      }
+    }
+    let daemonClientConstructionCount = 0
+    daemonClientMock.mockImplementation(function MockWedgedDaemonClient() {
+      daemonClientConstructionCount++
+      return {
+        ensureConnected: vi.fn(async () => {
+          if (daemonClientConstructionCount <= 2 + WEDGED_DAEMON_GRACE_RETRIES) {
+            throw new Error('Hello response timed out')
+          }
+        }),
+        getDaemonIdentity: vi.fn(readLaunchedDaemonIdentity),
+        request: vi.fn(),
+        disconnect: vi.fn()
+      }
+    })
+    // The real killStaleDaemon refuses and reports the owner alive; this is that verdict.
+    killStaleDaemonMock.mockResolvedValueOnce({ killed: false, liveOwnerSurvived: true })
+
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void>; mode?: string }>
+    checkDaemonHealthMock.mockResolvedValueOnce('unreachable')
+    probeSocketExistsMock.mockReturnValue(true)
+    netConnectMock.mockImplementation(stubAliveSocketConnect)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const handle = await launcher('/fake/socket', '/fake/token')
+
+      expect(killStaleDaemonMock).toHaveBeenCalledWith(
+        FAKE_RUNTIME_DIR,
+        '/fake/socket',
+        '/fake/token',
+        PROTOCOL_VERSION,
+        { preserveWhenOwningLivePtys: true }
+      )
+      // No replacement daemon beside the one still hosting the agents.
+      expect(forkMock).not.toHaveBeenCalled()
+      expect(handle.mode).toBe('degraded-new-pty-fallback')
+      // A refusal is not a replacement, so the replace verdict must not be announced.
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('Replacing daemon that failed the health check')
+      )
+    } finally {
+      warnSpy.mockRestore()
       daemonClientMock.mockImplementation(answeringDefault)
     }
   })
@@ -3222,7 +3292,9 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(killStaleDaemonMock).toHaveBeenCalledWith(
       FAKE_RUNTIME_DIR,
       '/fake/socket',
-      '/fake/token'
+      '/fake/token',
+      PROTOCOL_VERSION,
+      { preserveWhenOwningLivePtys: true }
     )
     expect(forkMock).toHaveBeenCalled()
     // 'rejected' gets no grace window (probed once): count = initial adoption + rejected probe + fresh daemon lease.
@@ -3355,7 +3427,9 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(killStaleDaemonMock).toHaveBeenCalledWith(
       FAKE_RUNTIME_DIR,
       '/fake/socket',
-      '/fake/token'
+      '/fake/token',
+      PROTOCOL_VERSION,
+      { preserveWhenOwningLivePtys: true }
     )
     expect(forkMock).toHaveBeenCalledWith(
       FAKE_DAEMON_ENTRY_PATH,
