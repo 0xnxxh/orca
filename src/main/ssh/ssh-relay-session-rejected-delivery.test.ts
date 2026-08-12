@@ -448,17 +448,20 @@ describe('SshRelaySession rejected PTY delivery recovery', () => {
     )
     expect(reattach).toHaveBeenCalledTimes(12)
 
-    // Each later frame must carry its own delivery token — a retired delivery is dropped at the
-    // top of acceptPtyData, so reusing one would make both clauses below pass without proving
-    // anything. A re-announcing source is exactly what a new token looks like.
-    const nextFrame = (n: number) =>
-      rejectedPayload({
-        source: source({ spanId: `token-bad-${n}:0:4`, deliveryToken: `token-bad-${n}` })
-      })
-
-    // Parked: a further rejected frame must not retry yet, or the cooldown means nothing.
+    // Let the exhaustion loop go quiet first: its last retries are timer-driven and would
+    // otherwise land after the clear below and satisfy the final clause on their own.
+    await new Promise((resolve) => setTimeout(resolve, 1500))
     reattach.mockClear()
-    await internals.acceptPtyData(nextFrame(1))
+
+    // Every frame below reuses the ORIGINAL delivery token, because that is what actually happens:
+    // retirement is ours, not the host's, and a stalled source keeps publishing the token we
+    // retired. It also matters that they are identical — retirement holds ONE key per relay PTY,
+    // so slipping a different token in here would overwrite that key, un-retire the original and
+    // let the final clause pass with the wake-up path still broken.
+
+    // Before the cooldown: parked, so nothing retries.
+    await internals.acceptPtyData(rejectedPayload())
+    await new Promise((resolve) => setTimeout(resolve, 600))
     expect(reattach).not.toHaveBeenCalled()
 
     // Backdate the park instead of burning a minute of real time — the property under test is
@@ -468,7 +471,7 @@ describe('SshRelaySession rejected PTY delivery recovery', () => {
     }
     parked.parkedAt -= 60_000
 
-    await internals.acceptPtyData(nextFrame(2))
+    await internals.acceptPtyData(rejectedPayload())
 
     await vi.waitFor(() => expect(reattach).toHaveBeenCalled(), { timeout: 10_000 })
   })

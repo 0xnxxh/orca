@@ -1774,7 +1774,8 @@ export class SshRelaySession {
     const offeredSource = payload.source
     if (
       offeredSource &&
-      this.retiredSourceDeliveries.has(payload.providerGeneration, offeredSource)
+      this.retiredSourceDeliveries.has(payload.providerGeneration, offeredSource) &&
+      !this.isParkedRecoveryDue(payload.id)
     ) {
       return Promise.resolve()
     }
@@ -1829,6 +1830,19 @@ export class SshRelaySession {
       ...(typeof payload.seq === 'number' ? { sequence: payload.seq } : {}),
       ...(source ? { source } : {})
     })
+  }
+
+  /**
+   * A parked PTY whose cooldown has elapsed must be let back past the retired-delivery filter.
+   * Retirement is ours, not the host's: a stalled source keeps publishing the very token we
+   * retired, so that filter would swallow every frame that could re-arm the park and the pane
+   * would stay dark for good — the failure the cooldown exists to rule out. Letting one through
+   * costs nothing: it is re-classified as rejected and re-retired, so no output reaches the
+   * terminal; it only regains the ability to ask for recovery.
+   */
+  private isParkedRecoveryDue(appPtyId: string): boolean {
+    const attempt = this.rejectedPtyRecoveryAttempts.get(appPtyId)
+    return !!attempt?.parkedAt && Date.now() - attempt.parkedAt >= SSH_REJECTED_PTY_RECOVERY_PARK_MS
   }
 
   private recoverRejectedPtyDelivery(
