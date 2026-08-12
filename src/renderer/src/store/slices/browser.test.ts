@@ -11,6 +11,10 @@ import { GRAB_BUDGET, type BrowserPageAnnotation } from '../../../../shared/brow
 import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rpc-client'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import { getExecutionHostLabel } from '../../../../shared/execution-host'
+import {
+  queueKagiPrivateInitialNavigation,
+  takeKagiPrivateInitialNavigation
+} from '../../lib/kagi-private-initial-navigation'
 
 const createWebRuntimeSessionBrowserTabMock = vi.hoisted(() => vi.fn())
 const runtimeEnvironmentCall = vi.fn()
@@ -164,6 +168,24 @@ function makeAnnotation(pageId: string, id = 'annotation-1'): BrowserPageAnnotat
 }
 
 describe('createBrowserSlice annotations', () => {
+  it('keeps private initial navigation outside page state and clears it on close', () => {
+    const store = createTestStore()
+    const privateUrl = 'https://kagi.com/search?token=session-secret&q=private+project'
+    const modelUrl = 'https://kagi.com/search?q=private+project'
+    queueKagiPrivateInitialNavigation('private-page', privateUrl)
+
+    const tab = store.getState().createBrowserTab('wt-1', modelUrl, {
+      initialPageId: 'private-page'
+    })
+    expect(tab.activePageId).toBe('private-page')
+    expect(store.getState().browserPagesByWorkspace[tab.id]?.[0]?.url).toBe(modelUrl)
+    expect(JSON.stringify(store.getState().browserPagesByWorkspace)).not.toContain('session-secret')
+
+    store.getState().closeBrowserTab(tab.id)
+
+    expect(takeKagiPrivateInitialNavigation('private-page', modelUrl).navigationUrl).toBe(modelUrl)
+  })
+
   it('records browser-tab-created only for the explicit new-tab action', async () => {
     const store = createTestStore()
 

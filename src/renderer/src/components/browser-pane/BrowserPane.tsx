@@ -60,6 +60,7 @@ import { Label } from '@/components/ui/label'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { useAppStore } from '@/store'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
+import { takeKagiPrivateInitialNavigation } from '@/lib/kagi-private-initial-navigation'
 import { ORCA_BROWSER_BLANK_URL, ORCA_BROWSER_PARTITION } from '../../../../shared/constants'
 import { BROWSER_CERTIFICATE_TRUST_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
 import { getOrcaProfileBrowserDefaultPartition } from '../../../../shared/orca-profiles'
@@ -3861,11 +3862,13 @@ function BrowserPagePane({
 
     if (needsInitialNavigation) {
       // Why: set src only after listeners attach so a fast localhost failure isn't missed; only non-blank tabs show the loading indicator.
-      const initialUrl =
+      const modelUrl =
         normalizeBrowserNavigationUrl(initialBrowserUrlRef.current) ?? ORCA_BROWSER_BLANK_URL
-      trackNextLoadingEventRef.current = initialUrl !== ORCA_BROWSER_BLANK_URL
-      lastKnownWebviewUrlRef.current = initialUrl
-      webview.src = initialUrl
+      const initialNavigation = takeKagiPrivateInitialNavigation(browserTab.id, modelUrl)
+      trackNextLoadingEventRef.current = initialNavigation.navigationUrl !== ORCA_BROWSER_BLANK_URL
+      // Why: URL sync compares against the persisted model URL; retaining the bearer here would immediately replace the authenticated navigation.
+      lastKnownWebviewUrlRef.current = initialNavigation.modelUrl
+      webview.src = initialNavigation.navigationUrl
     } else if (isPaintableRef.current) {
       if (isBrowserPageRendererRecoveryPending(browserTab.id)) {
         guestRecovery.recoverRenderer()
