@@ -241,6 +241,7 @@ describe('OpenCode native title tab identity', () => {
         launchAgent: 'claude'
       })
     ).toBe('claude')
+    // Why (#13341): nested process under active launch is not stronger than parent ownership.
     expect(
       resolveTabAgentFromSignals({
         hasObservedAgentSignal: false,
@@ -251,7 +252,7 @@ describe('OpenCode native title tab identity', () => {
         sleepingSessionAgent: 'claude',
         launchAgent: 'claude'
       })
-    ).toBe('codex')
+    ).toBe('claude')
 
     for (const title of [
       'OpenCode ready',

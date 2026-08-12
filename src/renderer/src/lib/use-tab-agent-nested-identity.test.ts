@@ -102,4 +102,57 @@ describe('resolveTabAgentFromSignals — nested child identity (#13341)', () => 
       })
     ).toBe('codex')
   })
+
+  it('treats shell-foreground as exit so a later process can own the icon', () => {
+    expect(
+      resolveTabAgentFromSignals({
+        hasObservedAgentSignal: true,
+        isRemote: false,
+        title: '✳ Claude Code',
+        hookAgent: null,
+        processAgent: null,
+        processShellForeground: true,
+        launchAgent: 'claude'
+      })
+    ).toBeNull()
+    expect(
+      resolveTabAgentFromSignals({
+        hasObservedAgentSignal: true,
+        isRemote: false,
+        title: '✦ Codex',
+        hookAgent: null,
+        processAgent: 'codex',
+        processShellForeground: false,
+        launchAgent: undefined
+      })
+    ).toBe('codex')
+  })
+
+  it('keeps remote parent ownership when only a nested child title is visible', () => {
+    // Remote panes lack local process evidence; nested title alone must not rebrand.
+    expect(
+      resolveTabAgentFromSignals({
+        hasObservedAgentSignal: true,
+        isRemote: true,
+        title: '✦ Codex',
+        hookAgent: null,
+        processAgent: null,
+        launchAgent: 'claude'
+      })
+    ).toBe('claude')
+  })
+
+  it('lets a live different-group hook outrank launch (explicit takeover)', () => {
+    // Why: hooks are ground truth; fenced nested hooks keep parent agentType upstream.
+    expect(
+      resolveTabAgentFromSignals({
+        hasObservedAgentSignal: true,
+        isRemote: false,
+        title: '✦ Codex',
+        hookAgent: 'codex',
+        processAgent: 'codex',
+        launchAgent: 'claude'
+      })
+    ).toBe('codex')
+  })
 })

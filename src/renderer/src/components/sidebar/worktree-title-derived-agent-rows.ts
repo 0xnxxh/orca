@@ -203,22 +203,17 @@ export function resolveTitleDerivedAgentType(
   const agentType = TITLE_AGENT_LABEL_TO_TYPE[label] ?? 'unknown'
   const owner = ownerAgentType && ownerAgentType !== 'unknown' ? ownerAgentType : null
   if (agentType === 'claude') {
-    // Why: Claude's task-title spinner heuristic has no provider identity. In
-    // split panes it can match arbitrary terminal spinners, so sidebar rows only
-    // accept Claude when the title itself names Claude.
+    // Why: spinner heuristic is provider-neutral — require a Claude token.
     if (!CLAUDE_AGENT_TOKEN_RE.test(title)) {
       return null
     }
-    // Why (#8940 + #13341): Claude mentions never steal ownership, and a nested
-    // Claude identity frame under a durable non-Claude owner keeps the parent.
-    // Pane reuse is modeled by clearing launchAgent first (tab-agent path).
+    // Why (#8940/#13341): never steal a non-Claude owner; reclaim after launch clears.
     if (owner && owner !== 'claude') {
       return null
     }
     return agentType
   }
-  // Why (#13341): nested Codex/Gemini/... titles must not rebrand a pane whose
-  // launch owner is still a different agent — fall through to ownerAgentType.
+  // Why (#13341): nested child titles keep the durable owner until launch clears.
   if (owner && agentType !== 'unknown' && agentType !== owner) {
     return null
   }
