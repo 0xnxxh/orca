@@ -15,7 +15,7 @@ import {
   SkillSharePreparationReview,
   SkillSharePublishedLink
 } from './SkillShareReviewContent'
-import { matchingManagedSkillInstall } from './skill-share-package-selection'
+import { matchingManagedSkillShareInstall } from './skill-share-package-selection'
 
 type SkillShareDialogProps = {
   skills?: DiscoveredSkill[]
@@ -72,10 +72,7 @@ export function SkillShareDialog({
       try {
         const operation = await window.api.skills.listManagedInstalls()
         if (operation.status === 'ok') {
-          managedInstall =
-            selectedSkills.length === 1
-              ? matchingManagedSkillInstall(selectedSkills[0], operation.value)
-              : null
+          managedInstall = matchingManagedSkillShareInstall(selectedSkills, operation.value)
         }
       } catch (cause) {
         console.warn('[skills] managed install lookup failed during share:', cause)
@@ -210,6 +207,7 @@ export function SkillShareDialog({
         <SkillShareDialogHeader
           published={Boolean(shareUrl)}
           publishingNewVersion={publishingNewVersion}
+          skillCount={selectedSkills.length}
         />
 
         {preparing ? (
@@ -265,10 +263,15 @@ export function SkillShareDialog({
                       'auto.components.skills.SkillShareDialog.7aa4ba0dba',
                       'Publish new version'
                     )
-                  : translate(
-                      'auto.components.skills.SkillShareDialog.0f07fa2a79',
-                      'Publish skill'
-                    )}
+                  : selectedSkills.length > 1
+                    ? translate(
+                        'auto.components.skills.SkillShareDialog.publishBundle',
+                        'Publish bundle'
+                      )
+                    : translate(
+                        'auto.components.skills.SkillShareDialog.0f07fa2a79',
+                        'Publish skill'
+                      )}
               </Button>
             )
           ) : null}

@@ -12,22 +12,40 @@ import type {
 
 export function SkillShareDialogHeader({
   published,
-  publishingNewVersion
+  publishingNewVersion,
+  skillCount
 }: {
   published: boolean
   publishingNewVersion: boolean
+  skillCount: number
 }): React.JSX.Element {
+  const bundle = skillCount > 1
   return (
     <DialogHeader>
       <DialogTitle>
         {published
-          ? translate('auto.components.skills.SkillShareDialog.ready', 'Skill link ready')
-          : publishingNewVersion
+          ? bundle
             ? translate(
-                'auto.components.skills.SkillShareReviewContent.2dca0b720b',
-                'Publish new skill version'
+                'auto.components.skills.SkillShareReviewContent.bundleReady',
+                'Skill bundle link ready'
               )
-            : translate('auto.components.skills.SkillShareDialog.title', 'Share skill')}
+            : translate('auto.components.skills.SkillShareDialog.ready', 'Skill link ready')
+          : publishingNewVersion
+            ? bundle
+              ? translate(
+                  'auto.components.skills.SkillShareReviewContent.publishBundleVersion',
+                  'Publish new skill bundle version'
+                )
+              : translate(
+                  'auto.components.skills.SkillShareReviewContent.2dca0b720b',
+                  'Publish new skill version'
+                )
+            : bundle
+              ? translate(
+                  'auto.components.skills.SkillShareReviewContent.shareBundle',
+                  'Share skill bundle'
+                )
+              : translate('auto.components.skills.SkillShareDialog.title', 'Share skill')}
       </DialogTitle>
       <DialogDescription>
         {published

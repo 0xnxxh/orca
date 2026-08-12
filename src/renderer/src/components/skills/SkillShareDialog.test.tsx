@@ -41,6 +41,15 @@ const preview: SkillSharePreview = {
   expiresAt: '2026-08-11T01:00:00.000Z'
 }
 
+const secondSkill: DiscoveredSkill = {
+  ...skill,
+  id: 'home:second-skill',
+  name: 'second-skill',
+  description: 'Second skill',
+  directoryPath: '/home/skills/second-skill',
+  skillFilePath: '/home/skills/second-skill/SKILL.md'
+}
+
 function managedInstall(destinationIdentity: string): ManagedSkillInstall {
   return {
     name: 'private-skill',
@@ -55,7 +64,11 @@ function managedInstall(destinationIdentity: string): ManagedSkillInstall {
   }
 }
 
-function setup(installs: ManagedSkillInstall[], organization = false) {
+function setup(
+  installs: ManagedSkillInstall[],
+  organization = false,
+  selectedSkills: DiscoveredSkill[] = [skill]
+) {
   let progressListener: ((progress: SkillShareProgress) => void) | null = null
   const skills = {
     listManagedInstalls: vi.fn().mockResolvedValue({ status: 'ok', value: installs }),
@@ -86,7 +99,7 @@ function setup(installs: ManagedSkillInstall[], organization = false) {
       }
     }
   })
-  render(<SkillShareDialog skill={skill} open onOpenChange={() => undefined} />)
+  render(<SkillShareDialog skills={selectedSkills} open onOpenChange={() => undefined} />)
   return {
     skills,
     emitProgress: (progress: SkillShareProgress) => progressListener?.(progress)
@@ -125,6 +138,26 @@ describe('SkillShareDialog', () => {
         bundleName: skill.name
       })
     )
+  })
+
+  it('publishes a new immutable version for one exact managed bundle', async () => {
+    const installs = [
+      { ...managedInstall('global:local'), bundleDigest: 'd'.repeat(64) },
+      {
+        ...managedInstall('global:local'),
+        name: secondSkill.name,
+        bundleDigest: 'd'.repeat(64)
+      }
+    ]
+    const { skills } = setup(installs, false, [skill, secondSkill])
+
+    await screen.findByRole('heading', { name: 'Publish new skill bundle version' })
+    expect(screen.getByRole('button', { name: 'Publish new version' })).toBeTruthy()
+    expect(skills.prepareShare).toHaveBeenCalledWith({
+      skillIds: [skill.id, secondSkill.id],
+      bundleName: 'shared-skills',
+      packageId: 'pkg_1'
+    })
   })
 
   it('shows bounded upload progress and supports cancellation', async () => {

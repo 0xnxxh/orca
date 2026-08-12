@@ -4148,7 +4148,8 @@
           "30985d4fc0": "Cancel",
           "3af85f6add": "Done",
           "readyDescriptionV2": "Anyone with this unlisted link can inspect and install the skills.",
-          "descriptionV2": "Review the exact files, then publish an immutable version behind an unlisted link."
+          "descriptionV2": "Review the exact files, then publish an immutable version behind an unlisted link.",
+          "publishBundle": "Publish bundle"
         },
         "SkillCard": {
           "d25a1b8ae6": "Share skill",
@@ -4277,7 +4278,10 @@
           "01c5a17e03": "{{value0}} files · {{value1}}",
           "unlistedLinkTitle": "Unlisted link",
           "unlistedPublishingAs": "Publishing as {{value0}}. Anyone with the link can inspect and install these skills.",
-          "unlistedLinkDetails": "The link is not searchable or listed publicly. Revoke it to block future access; installed copies remain."
+          "unlistedLinkDetails": "The link is not searchable or listed publicly. Revoke it to block future access; installed copies remain.",
+          "bundleReady": "Skill bundle link ready",
+          "publishBundleVersion": "Publish new skill bundle version",
+          "shareBundle": "Share skill bundle"
         },
         "SkillBundleInstallFlow": {
           "01c5a13e01": "Close",

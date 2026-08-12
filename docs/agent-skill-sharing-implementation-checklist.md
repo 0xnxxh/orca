@@ -879,8 +879,9 @@ does not mean the surrounding phase is complete.
 - [ ] Add installed-bundle update, rollback, install-on-another-machine, inspect, and remove actions.
       Grouped inspection, selective update/rollback, and one-surface safe removal are implemented;
       install-on-another-machine remains.
-- [ ] Add shared-bundle copy-link, access, revoke, publish-version, and Cloud-delete actions. Access,
-      revoke, version/package deletion are bundle-compatible; copy-link and publish-version remain.
+- [x] Add shared-bundle copy-link, access, revoke, publish-version, and Cloud-delete actions. Exact
+      full-bundle version publishing reuses its package; ambiguous or partial managed-bundle
+      selections create a new package rather than mutating the wrong history.
 - [x] Protect locally modified skills during bundle update and removal, including when only part of
       a bundle remains managed. Keep-local is the default and destructive replacement is explicit.
 
