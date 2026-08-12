@@ -429,6 +429,23 @@ describe('Electron runtime package contract', () => {
     expect(installStep.run).toBe('node config/scripts/install-electron-package-binary.mjs')
   })
 
+  // Why: the cross-version harness imports main-process modules that require
+  // `electron`, whose index.js self-downloads once with no retry. Without this
+  // step the lane reds on any release-CDN blip.
+  it('installs the Electron package binary before the cross-version wire lane', () => {
+    const prWorkflow = readFileSync(join(projectDir, '.github/workflows/pr.yml'), 'utf8')
+    const steps = parse(prWorkflow).jobs['cross-version-wire'].steps
+    const installIndex = steps.findIndex(
+      (step) => step.run === 'node config/scripts/install-electron-package-binary.mjs'
+    )
+    const journeyIndex = steps.findIndex((step) =>
+      step.run?.includes('cross-version-terminal-wire.unit.test.ts')
+    )
+
+    expect(installIndex).toBeGreaterThanOrEqual(0)
+    expect(installIndex).toBeLessThan(journeyIndex)
+  })
+
   it('smokes the packaged CLI from outside the checkout in PR checks', () => {
     const prWorkflow = readFileSync(join(projectDir, '.github/workflows/pr.yml'), 'utf8')
     const parsedWorkflow = parse(prWorkflow)
