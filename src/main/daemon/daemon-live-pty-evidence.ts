@@ -149,7 +149,15 @@ function collectLivePtyDescendants(rows: ProcessTableRow[], rootPid: number): Pr
 /** POSIX only; Windows abstains before this is reached. */
 async function probeOnce(
   daemonPid: number,
-  deps: DaemonPtyOwnershipDeps
+  deps: DaemonPtyOwnershipDeps,
+  /**
+   * The cached table may stand in for a slow read when the answer we are protecting is
+   * 'owns-live-ptys', but never when confirming emptiness: a confirmation drawn from the same
+   * TTL-cached snapshot as the sample it confirms is one observation counted twice, and the
+   * window it is meant to exclude — a login(1) wrapper whose shell has not appeared yet — is
+   * shorter than the cache. Denied there, a slow read answers 'unknown', which holds.
+   */
+  allowCachedFallback = true
 ): Promise<DaemonPtyOwnership> {
   const deadlineMs = deps.posixDeadlineMs ?? POSIX_OWNERSHIP_PROBE_DEADLINE_MS
   const deadline = Date.now() + deadlineMs
@@ -166,11 +174,13 @@ async function probeOnce(
     // few hundred milliseconds old still shows whether this daemon has children, and going
     // blind here gets them killed. It shares the attempt's budget rather than doubling it,
     // so an attempt costs what the launch budget was told it costs.
-    (await withDeadline(
-      (deps.readCachedPosixProcessTable ?? getProcessTableSnapshot)(),
-      remaining(),
-      null
-    ))
+    (allowCachedFallback
+      ? await withDeadline(
+          (deps.readCachedPosixProcessTable ?? getProcessTableSnapshot)(),
+          remaining(),
+          null
+        )
+      : null)
   // Why: a walk that never saw the root reports zero descendants for a process it
   // never examined. Only a root we actually observed can prove emptiness — and a read
   // that blew its deadline saw nothing at all.
@@ -206,7 +216,8 @@ export async function inspectDaemonPtyOwnership(
   for (let attempt = 0; attempt < PTY_OWNERSHIP_PROBE_ATTEMPTS; attempt++) {
     let sample: DaemonPtyOwnership
     try {
-      sample = await probeOnce(daemonPid, deps)
+      // The confirming read must be its own observation, so it is denied the cached table.
+      sample = await probeOnce(daemonPid, deps, !emptyAwaitingConfirmation)
     } catch {
       sample = 'unknown'
     }

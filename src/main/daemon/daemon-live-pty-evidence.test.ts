@@ -271,6 +271,29 @@ describe('inspectDaemonPtyOwnership on win32', () => {
 })
 
 describe('inspectDaemonPtyOwnership sampling', () => {
+  it('will not confirm emptiness from the cached table the first read already used', async () => {
+    // Two agreeing samples are only worth more than one if they are two observations. When the
+    // fresh read is slow — the busy host this evidence exists for — both attempts fell through
+    // to the same TTL-cached snapshot, so a login(1) wrapper photographed before its shell
+    // appeared could be 'confirmed' empty by a second look at the same photograph.
+    const readCachedPosixProcessTable = vi.fn<() => Promise<ProcessTableRow[]>>(async () => [
+      daemonRow
+    ])
+
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        posixDeadlineMs: 5,
+        // Never settles inside the deadline, so every attempt reaches for the cache.
+        readPosixProcessTable: () => new Promise<ProcessTableRow[]>(() => {}),
+        readCachedPosixProcessTable
+      })
+    ).resolves.toBe('unknown')
+
+    // Only the first sample may be served from the cache; the confirming one must not be.
+    expect(readCachedPosixProcessTable).toHaveBeenCalledTimes(1)
+  })
+
   it('will not let a blind confirming read turn emptiness into a verdict', async () => {
     // Emptiness authorizes a kill, so it needs corroboration. A read that saw nothing at all
     // corroborates nothing — treating it as agreement is the step this module refuses.

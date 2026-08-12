@@ -89,6 +89,19 @@ hands → probe once more → `rename` in one syscall → verify we kept it.
     read only afterwards. Pre-existing, and narrowed by this change rather than widened: the
     window now opens only after the daemon has itself reported zero sessions.
 
+  Known limits of the process-table evidence, none of which can license a kill on their own —
+  each only fails to *raise* a verdict, so the cost is a hold not taken:
+
+  - A PTY whose session leader has exited leaves its still-running child reparented outside the
+    daemon's descendant tree. The walk cannot see it, so a daemon with real work can read as
+    childless.
+  - On Windows the evidence abstains entirely. A daemon that closed its listener but is still
+    draining sessions therefore has no protection from the endpoint-dead path.
+  - The self-spawned-probe exclusion matches an exact argv (`sh -c exit 0`). A hosted session
+    leader whose executable basename is `sh` and whose command is exactly that would be
+    discarded. Contrived — `exit 0` returns immediately — but it is executable identity the
+    match cannot establish.
+
   **If you ever raise the classification budget, gate the replace path on headroom first.**
   The budget serves two verdicts with opposite time-costs: reaching "don't kill" slowly is free,
   because the daemon survives however long it took, while reaching `empty` slowly is not — the
