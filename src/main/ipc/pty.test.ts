@@ -17750,6 +17750,87 @@ describe('registerPtyHandlers', () => {
     )
   })
 
+  it('pairs the daemon kitty flags with the reconciled boundary when no bytes crossed mid-spawn', async () => {
+    setLocalPtyProvider({
+      spawn: vi.fn(async () => ({
+        id: 'pty-restored',
+        isReattach: true,
+        providerSequence: { value: 900, generation: 'continued' as const },
+        snapshotKittyKeyboardFlags: 8
+      })),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      shutdown: vi.fn(),
+      onData: vi.fn(() => vi.fn()),
+      onExit: vi.fn(() => vi.fn()),
+      listProcesses: vi.fn(async () => []),
+      getForegroundProcess: vi.fn(async () => null)
+    } as never)
+    const runtime = {
+      setPtyController: vi.fn(),
+      noteTerminalSpawnCommand: vi.fn(),
+      getPtyOutputSequence: vi.fn().mockReturnValue(7),
+      synchronizePtyOutputSequenceFromProvider: vi.fn().mockReturnValue(920),
+      onPtySpawned: vi.fn(),
+      onPtyData: vi.fn(),
+      onPtyExit: vi.fn(),
+      createPreAllocatedTerminalHandle: vi.fn(() => null),
+      preAllocateHandleForPty: vi.fn()
+    }
+    registerPtyHandlers(mainWindow as never, runtime as never)
+
+    const reply = (await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24 })) as {
+      snapshotSeq?: number
+      snapshotKittyKeyboardFlags?: number
+    }
+
+    expect(reply.snapshotKittyKeyboardFlags).toBe(8)
+    expect(reply.snapshotSeq).toBe(920)
+  })
+
+  it('drops the daemon kitty flags claim when bytes crossed the data socket mid-spawn', async () => {
+    setLocalPtyProvider({
+      spawn: vi.fn(async () => ({
+        id: 'pty-restored',
+        isReattach: true,
+        providerSequence: { value: 900, generation: 'continued' as const },
+        snapshotKittyKeyboardFlags: 8
+      })),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      shutdown: vi.fn(),
+      onData: vi.fn(() => vi.fn()),
+      onExit: vi.fn(() => vi.fn()),
+      listProcesses: vi.fn(async () => []),
+      getForegroundProcess: vi.fn(async () => null)
+    } as never)
+    const runtime = {
+      setPtyController: vi.fn(),
+      noteTerminalSpawnCommand: vi.fn(),
+      // 7 at spawn start, 20 at reconcile: bytes arrived during the spawn RPC.
+      getPtyOutputSequence: vi.fn().mockReturnValueOnce(7).mockReturnValue(20),
+      synchronizePtyOutputSequenceFromProvider: vi.fn().mockReturnValue(920),
+      onPtySpawned: vi.fn(),
+      onPtyData: vi.fn(),
+      onPtyExit: vi.fn(),
+      createPreAllocatedTerminalHandle: vi.fn(() => null),
+      preAllocateHandleForPty: vi.fn()
+    }
+    registerPtyHandlers(mainWindow as never, runtime as never)
+
+    const reply = (await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24 })) as {
+      snapshotSeq?: number
+      snapshotKittyKeyboardFlags?: number
+    }
+
+    // The reconciled boundary covers bytes the daemon's flags were proven
+    // BEFORE — publishing both would erase a negotiation the pane scanned live.
+    expect(reply.snapshotKittyKeyboardFlags).toBeUndefined()
+    expect(reply.snapshotSeq).toBeUndefined()
+  })
+
   it('records the launch Codex account for a fresh spawn but not for a reattach', async () => {
     const spawn = vi
       .fn()
