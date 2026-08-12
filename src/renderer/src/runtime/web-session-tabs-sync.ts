@@ -3356,8 +3356,7 @@ export function applyWebSessionTabsStorePatch(
   let mirroredAgentStatusChanged = false
   useAppStore.setState((state) => {
     const patch = buildPatch(state)
-    mirroredAgentStatusChanged =
-      patch !== state && Object.prototype.hasOwnProperty.call(patch, 'agentStatusByPaneKey')
+    mirroredAgentStatusChanged = patch !== state && Object.hasOwn(patch, 'agentStatusByPaneKey')
     return patch
   })
   // Why: paired-web snapshots bypass setAgentStatus, so arm the stale-boundary timer explicitly like local hook events do.

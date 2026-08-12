@@ -3012,7 +3012,7 @@ describe('applyWebSessionTabsSnapshot', () => {
       NOW
     ) as Partial<WebSessionTabsSyncState>
 
-    expect(Object.prototype.hasOwnProperty.call(patch, 'openFiles')).toBe(false)
+    expect(Object.hasOwn(patch, 'openFiles')).toBe(false)
     expect(state.openFiles).toEqual([unchanged])
   })
 
