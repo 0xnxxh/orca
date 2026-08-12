@@ -1,4 +1,4 @@
-import { Check, Copy, TerminalSquare, Trash2 } from 'lucide-react'
+import { Check, Copy, Pencil, TerminalSquare, Trash2 } from 'lucide-react'
 import type {
   Repo,
   TerminalQuickCommand,
@@ -118,8 +118,20 @@ function QuickCommandRow({
       <div className="pointer-events-none w-12 shrink-0 text-right text-[11px] text-muted-foreground">
         {getRunModeLabel(command)}
       </div>
-      {/* Why can-hover: touch devices never hover, so the actions must stay visible there. */}
-      <div className="relative flex shrink-0 items-center gap-0.5 transition-opacity can-hover:opacity-0 group-hover/qc:opacity-100 group-focus-within/qc:opacity-100">
+      {/* Why can-hover: touch devices never hover, so the actions must stay visible there.
+          Why pointer-events-none on the container: gaps and the decorative pencil
+          must fall through to the row's edit button underneath, so only the real
+          buttons opt back in. */}
+      <div className="relative flex shrink-0 items-center gap-0.5 transition-opacity pointer-events-none can-hover:opacity-0 group-hover/qc:opacity-100 group-focus-within/qc:opacity-100">
+        {/* Why decorative: the row itself is the edit button, so a second real
+            control would duplicate its accessible name and tab stop. This only
+            has to say "clicking here edits". */}
+        <span
+          aria-hidden="true"
+          className="flex size-8 items-center justify-center rounded-md text-muted-foreground"
+        >
+          <Pencil className="size-4" />
+        </span>
         <Button
           type="button"
           variant="ghost"
@@ -129,6 +141,7 @@ function QuickCommandRow({
           title={copyLabel}
           onClick={() => void copyText()}
           className={cn(
+            'pointer-events-auto disabled:pointer-events-none',
             status === 'copied' && 'text-status-success',
             status === 'failed' && 'text-destructive'
           )}
@@ -145,7 +158,7 @@ function QuickCommandRow({
             { value0: commandName }
           )}
           onClick={() => onRemove(command)}
-          className="text-muted-foreground hover:text-destructive"
+          className="pointer-events-auto text-muted-foreground hover:text-destructive"
         >
           <Trash2 />
         </Button>
