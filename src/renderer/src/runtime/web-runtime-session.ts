@@ -544,6 +544,13 @@ export async function createWebRuntimeSessionBrowserTab(args: {
         error instanceof Error ? error.message : String(error)
       )
     }
+    const remainingFocusIntent = peekWebSessionFocusIntent(intentOwner, args.worktreeId)
+    if (
+      remainingFocusIntent?.hostTabId === guardedPageId &&
+      remainingFocusIntent.expectedCurrentLocalTabId === expectedCurrentLocalTabId
+    ) {
+      clearWebSessionFocusIntentIfMatches(intentOwner, args.worktreeId, guardedPageId)
+    }
     unsubscribeFocusGuard()
     return true
   } catch (error) {

@@ -305,7 +305,7 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     vi.clearAllMocks()
   })
 
-  it('eagerly applies the host session snapshot after creating a remote browser tab', async () => {
+  it('applies an empty host snapshot without retaining delayed browser focus', async () => {
     const snapshot = makeSnapshot()
     const runtimeCall = vi
       .fn()
@@ -372,10 +372,7 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     expect(mocks.acceptReplayedWebSessionTabsSnapshot.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.applyFreshWebSessionTabsSnapshot.mock.invocationCallOrder[0]!
     )
-    expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toEqual({
-      hostTabId: 'remote-browser-page-1',
-      expectedCurrentLocalTabId: 'local-editor-tab'
-    })
+    expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toBeNull()
     expect(mocks.createBrowserTab).not.toHaveBeenCalled()
   })
 
