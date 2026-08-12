@@ -17,18 +17,16 @@
 Fixes #
 
 ## Visual Proof
-<!-- REQUIRED for UI / behavior changes -->
-<!-- Please attach a BEFORE and AFTER that can easily tabbed/switched -->
-<!-- Use videos for when appropriate over screenshots -->
+<!-- REQUIRED for UI / behavior changes. Please attach a BEFORE and AFTER that can easily tabbed/switched. Use videos for when appropriate over screenshots -->
 <!-- If there is truly no visual or interaction change, write exactly: `N/A` and briefly say why. -->
+<!-- For attachments NEVER add directly to the PR files (do not commit to files), use `gh image` extension or drag + drop (works for any attachment) -->
 
-## How to test
+## Testing
 
 <!-- How did you verify this? Steps a reviewer can follow. Which platforms did you actually test (macOS / Linux / Windows / SSH)? -->
 
 - [ ] I manually tested these changes locally
 - [ ] Automated tests added/updated, or explained why not below
-
 
 
 ## AI Disclosure
