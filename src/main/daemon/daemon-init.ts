@@ -598,7 +598,6 @@ function createOutOfProcessLauncher(
       } else {
         // Why: a busy machine can time out the health check on a live daemon; re-verify what
         // it is hosting before killing its sessions.
-        const verifiedPid = await readVerifiedDaemonPid(runtimeDir, socketPath, tokenPath)
         // Why recordedPid is withheld here: the loop below is waiting for *IPC* to recover,
         // and the process table cannot change its answer within a grace window. Scanning it
         // every pass would multiply the launch budget for an answer we already have.
@@ -618,7 +617,13 @@ function createOutOfProcessLauncher(
         }
         // One scan, once IPC has had its full chance: this is the evidence that separates a
         // wedged daemon still hosting terminals from one with nothing left to lose (#8689).
-        occupancy = await raiseOccupancyWithProcessEvidence(occupancy, verifiedPid?.pid ?? null)
+        // Why re-verify: the grace window is long enough for the daemon to die and its pid to
+        // be recycled, and the evidence would then describe a stranger's children.
+        const evidencePid =
+          occupancy.state === 'unknown'
+            ? ((await readVerifiedDaemonPid(runtimeDir, socketPath, tokenPath))?.pid ?? null)
+            : null
+        occupancy = await raiseOccupancyWithProcessEvidence(occupancy, evidencePid)
         if (occupancy.state === 'occupied') {
           const owned =
             occupancy.liveSessions === null
@@ -966,6 +971,9 @@ function createOutOfProcessLauncher(
         try {
           return await preserveDaemon('degraded-new-pty-fallback')
         } catch {
+          // Why not hold here, unlike the failed-health path: that one declined to kill
+          // because it had proof of live work. This one arrives with occupancy unknown or
+          // empty, so holding would swallow a real launch failure to protect nothing.
           // It stopped answering between the probe and the adoption; report the launch failure.
         }
       }

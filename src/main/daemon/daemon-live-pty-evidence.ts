@@ -25,6 +25,7 @@ export type DaemonPtyOwnershipDeps = {
   readPosixProcessTable?: () => Promise<ProcessTableRow[]>
   queryWindowsDescendants?: typeof queryWindowsProcessDescendants
   windowsDeadlineMs?: number
+  posixDeadlineMs?: number
 }
 
 /**
@@ -41,6 +42,12 @@ const PTY_OWNERSHIP_PROBE_ATTEMPTS = 2
  * case tens of seconds on the launch path. Blind is a safe answer here; hanging is not.
  */
 const WINDOWS_OWNERSHIP_PROBE_DEADLINE_MS = 6_000
+
+/**
+ * POSIX needs its own ceiling for the same reason: the shared reader's `ps` timeout does not
+ * cover queueing behind an in-flight scan, and this runs on a launch that fails open.
+ */
+const POSIX_OWNERSHIP_PROBE_DEADLINE_MS = 4_000
 
 function withDeadline<T>(work: Promise<T>, deadlineMs: number, onDeadline: T): Promise<T> {
   return new Promise<T>((resolve) => {
@@ -156,10 +163,15 @@ async function probeOnce(
     )
     return hosted.length > 0 ? 'owns-live-ptys' : 'no-live-ptys'
   }
-  const rows = await (deps.readPosixProcessTable ?? getFreshProcessTableSnapshot)()
+  const rows = await withDeadline(
+    (deps.readPosixProcessTable ?? getFreshProcessTableSnapshot)(),
+    deps.posixDeadlineMs ?? POSIX_OWNERSHIP_PROBE_DEADLINE_MS,
+    null
+  )
   // Why: a walk that never saw the root reports zero descendants for a process it
-  // never examined. Only a root we actually observed can prove emptiness.
-  if (!rows.some((row) => row.pid === daemonPid)) {
+  // never examined. Only a root we actually observed can prove emptiness — and a read
+  // that blew its deadline saw nothing at all.
+  if (rows === null || !rows.some((row) => row.pid === daemonPid)) {
     return 'unknown'
   }
   return collectLivePtyDescendants(rows, daemonPid).length > 0 ? 'owns-live-ptys' : 'no-live-ptys'

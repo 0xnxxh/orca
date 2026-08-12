@@ -3444,7 +3444,9 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
   })
 
   it('grace budget is generous enough to ride out a ~60s transient wedge', () => {
-    // Why: each probe waits the client's 5s hello timeout, so 1 + 11 probes ≈ 60s of drain grace; don't cut without telemetry.
+    // Why still pinned: the wall-clock ceiling binds first, so this is an upper bound on
+    // retries rather than the real budget — but lowering it silently shortens the drain
+    // window for a daemon whose process table cannot be read, which has no other protection.
     expect(WEDGED_DAEMON_GRACE_RETRIES).toBeGreaterThanOrEqual(11)
   })
 
