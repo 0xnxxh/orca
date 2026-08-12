@@ -24,6 +24,7 @@ import {
   WorktreeSortOrder,
   WorktreeTeardownMissingTerminalsParams
 } from './worktree-schemas'
+import { WORKTREE_PRESERVED_CLEANUP_RELEASE_METHOD } from './worktree-preserved-cleanup-release'
 
 export const WORKTREE_METHODS: RpcMethod[] = [
   defineMethod({
@@ -302,5 +303,6 @@ export const WORKTREE_METHODS: RpcMethod[] = [
             params.branchName,
             params.expectedHead
           )
-  })
+  }),
+  WORKTREE_PRESERVED_CLEANUP_RELEASE_METHOD
 ]

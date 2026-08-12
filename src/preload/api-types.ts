@@ -124,6 +124,7 @@ import type { PluginLanguagePackRegistration } from '../shared/plugins/plugin-la
 import type { PluginChangeEvent } from '../shared/plugins/plugin-change-event'
 import type { PluginManifest } from '../shared/plugins/plugin-manifest'
 import type { PluginMarketplaceGitSource } from '../shared/plugins/plugin-marketplace'
+import type { PreservedBranchCleanup } from '../shared/preserved-branch-cleanup'
 import type {
   LocalhostWorktreeLabelResult,
   LocalhostWorktreeLabelRoute
@@ -1413,6 +1414,9 @@ export type PreloadApi = {
       expectedHead: string
       hostId?: ExecutionHostId
     }) => Promise<ForceDeleteWorktreeBranchResult>
+    releasePreservedBranchCleanups: (args: {
+      cleanups: readonly PreservedBranchCleanup[]
+    }) => Promise<{ released: number }>
     updateMeta: (args: { worktreeId: string; updates: Partial<WorktreeMeta> }) => Promise<Worktree>
     listLineage: () => Promise<{
       lineage: Record<string, WorktreeLineage>

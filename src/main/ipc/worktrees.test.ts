@@ -280,7 +280,9 @@ import {
   LINEAGE_HYDRATION_TIMEOUT_MS,
   __getDetectedWorktreeScanCacheStatsForTests,
   __resetDetectedWorktreeScanCacheForTests,
-  registerWorktreeHandlers
+  getPreservedBranchCleanupTargetCountForTests,
+  registerWorktreeHandlers,
+  resetPreservedBranchCleanupTargetsForTests
 } from './worktrees'
 import { clearConfiguredWorktreeSharedDirectoriesCacheForTests } from '../git/worktree-shared-directories'
 import {
@@ -342,6 +344,7 @@ describe('registerWorktreeHandlers', () => {
     clearConfiguredWorktreeSharedDirectoriesCacheForTests()
     __resetSshWorktreeCreateFetchCacheForTests()
     __resetDetectedWorktreeScanCacheForTests()
+    resetPreservedBranchCleanupTargetsForTests()
     resetSshProviderAuthorities()
     invalidateAuthorizedRootsCache()
     for (const m of [
@@ -9552,6 +9555,58 @@ describe('registerWorktreeHandlers', () => {
       'feature/test',
       'def456'
     )
+  })
+
+  it('releases dismissed preserved-branch cleanup routes', async () => {
+    const cleanups = Array.from({ length: 8 }, (_, index) => ({
+      worktreeId: `repo-1::/workspace/feature-${index}`,
+      branchName: `feature/${index}`,
+      expectedHead: `head-${index}`,
+      hostId: LOCAL_EXECUTION_HOST_ID
+    }))
+
+    for (const cleanup of cleanups) {
+      mockKnownFeatureWorktree(cleanup.worktreeId.split('::')[1])
+      removeWorktreeMock.mockResolvedValueOnce({
+        preservedBranch: { branchName: cleanup.branchName, head: cleanup.expectedHead }
+      })
+      await handlers['worktrees:remove'](null, { worktreeId: cleanup.worktreeId })
+    }
+
+    expect(getPreservedBranchCleanupTargetCountForTests()).toBe(8)
+    await handlers['worktrees:releasePreservedBranchCleanups'](null, {
+      cleanups: cleanups.slice(0, -1)
+    })
+    expect(getPreservedBranchCleanupTargetCountForTests()).toBe(1)
+    await handlers['worktrees:releasePreservedBranchCleanups'](null, {
+      cleanups: cleanups.slice(-1)
+    })
+    expect(getPreservedBranchCleanupTargetCountForTests()).toBe(0)
+  })
+
+  it('does not release a newer cleanup route from a stale dismissal', async () => {
+    const worktreeId = 'repo-1::/workspace/recreated'
+    for (const [branchName, head] of [
+      ['feature/old', 'old-head'],
+      ['feature/new', 'new-head']
+    ] as const) {
+      mockKnownFeatureWorktree('/workspace/recreated')
+      removeWorktreeMock.mockResolvedValueOnce({ preservedBranch: { branchName, head } })
+      await handlers['worktrees:remove'](null, { worktreeId })
+    }
+
+    await handlers['worktrees:releasePreservedBranchCleanups'](null, {
+      cleanups: [
+        {
+          worktreeId,
+          branchName: 'feature/old',
+          expectedHead: 'old-head',
+          hostId: LOCAL_EXECUTION_HOST_ID
+        }
+      ]
+    })
+
+    expect(getPreservedBranchCleanupTargetCountForTests()).toBe(1)
   })
 
   it('force-deletes an SSH branch that was preserved by safe worktree removal', async () => {

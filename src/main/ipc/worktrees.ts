@@ -142,7 +142,10 @@ import {
   registerSshProviderRequestAbort
 } from '../ssh/ssh-provider-authority'
 import { createSenderScopedRequestCancellations } from './sender-scoped-request-cancellation'
-import { preservedBranchCleanupScopeKey } from '../../shared/preserved-branch-cleanup'
+import {
+  preservedBranchCleanupScopeKey,
+  type PreservedBranchCleanup
+} from '../../shared/preserved-branch-cleanup'
 
 type CreateWorktreeArgsWithSystemProvenance = CreateWorktreeArgs & {
   automationProvenance?: AutomationWorkspaceProvenance
@@ -532,6 +535,14 @@ type PreservedBranchCleanupTarget = {
 
 const preservedBranchCleanupByScope = new Map<string, PreservedBranchCleanupTarget>()
 
+export function getPreservedBranchCleanupTargetCountForTests(): number {
+  return preservedBranchCleanupByScope.size
+}
+
+export function resetPreservedBranchCleanupTargetsForTests(): void {
+  preservedBranchCleanupByScope.clear()
+}
+
 function rememberPreservedBranchCleanupTarget(
   worktreeId: string,
   hostId: ExecutionHostId,
@@ -596,6 +607,30 @@ function getPreservedBranchCleanupTarget(
     throw new Error(`No preserved branch cleanup is pending for "${branchName}".`)
   }
   return target
+}
+
+function releasePreservedBranchCleanupTargets(cleanups: readonly PreservedBranchCleanup[]): number {
+  let released = 0
+  for (const cleanup of cleanups) {
+    if (!cleanup.expectedHead) {
+      continue
+    }
+    try {
+      const target = getPreservedBranchCleanupTarget(
+        cleanup.worktreeId,
+        cleanup.branchName,
+        cleanup.expectedHead,
+        cleanup.hostId
+      )
+      preservedBranchCleanupByScope.delete(
+        preservedBranchCleanupScopeKey({ worktreeId: target.worktreeId, hostId: target.hostId })
+      )
+      released += 1
+    } catch {
+      // Stale dismissal must not release newer cleanup authority.
+    }
+  }
+  return released
 }
 
 const loggedUnavailableSshGitProviders = new Set<string>()
@@ -1822,6 +1857,7 @@ export function registerWorktreeHandlers(
   ipcMain.removeHandler('worktrees:remove')
   ipcMain.removeHandler('worktrees:forgetLocal')
   ipcMain.removeHandler('worktrees:forceDeletePreservedBranch')
+  ipcMain.removeHandler('worktrees:releasePreservedBranchCleanups')
   ipcMain.removeHandler('worktrees:updateMeta')
   ipcMain.removeHandler('worktrees:listLineage')
   ipcMain.removeHandler('worktrees:listLineageForHost')
@@ -3149,6 +3185,15 @@ export function registerWorktreeHandlers(
       )
       return { deleted: true }
     }
+  )
+
+  ipcMain.handle(
+    'worktrees:releasePreservedBranchCleanups',
+    (_event, args: { cleanups?: readonly PreservedBranchCleanup[] }) => ({
+      released: releasePreservedBranchCleanupTargets(
+        Array.isArray(args?.cleanups) ? args.cleanups : []
+      )
+    })
   )
 
   ipcMain.handle(

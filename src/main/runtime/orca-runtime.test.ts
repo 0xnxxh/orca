@@ -46884,6 +46884,79 @@ describe('OrcaRuntimeService', () => {
     )
   })
 
+  it('releases dismissed runtime preserved-branch cleanup routes', () => {
+    const runtime = createWorktreeRemovalRuntime()
+    const cleanups = Array.from({ length: 8 }, (_, index) => ({
+      worktreeSelector: `id:${TEST_REPO_ID}::/workspace/feature-${index}`,
+      branchName: `feature/${index}`,
+      expectedHead: `head-${index}`
+    }))
+    const lifecycle = runtime as unknown as {
+      rememberPreservedBranchCleanupTarget: (
+        worktreeId: string,
+        hostId: undefined,
+        result: { preservedBranch: { branchName: string; head: string } },
+        fallbackHead: undefined,
+        pushTarget: undefined
+      ) => void
+      releasePreservedBranchCleanups: (items: typeof cleanups) => { released: number }
+    }
+
+    for (const cleanup of cleanups) {
+      lifecycle.rememberPreservedBranchCleanupTarget(
+        cleanup.worktreeSelector.slice(3),
+        undefined,
+        { preservedBranch: { branchName: cleanup.branchName, head: cleanup.expectedHead } },
+        undefined,
+        undefined
+      )
+    }
+
+    expect(runtime.getPreservedBranchCleanupTargetCountForTests()).toBe(8)
+    expect(lifecycle.releasePreservedBranchCleanups(cleanups.slice(0, -1))).toEqual({ released: 7 })
+    expect(runtime.getPreservedBranchCleanupTargetCountForTests()).toBe(1)
+    expect(lifecycle.releasePreservedBranchCleanups(cleanups.slice(-1))).toEqual({ released: 1 })
+    expect(runtime.getPreservedBranchCleanupTargetCountForTests()).toBe(0)
+  })
+
+  it('does not release a newer runtime cleanup route from a stale dismissal', () => {
+    const runtime = createWorktreeRemovalRuntime()
+    const lifecycle = runtime as unknown as {
+      rememberPreservedBranchCleanupTarget: (
+        worktreeId: string,
+        hostId: undefined,
+        result: { preservedBranch: { branchName: string; head: string } },
+        fallbackHead: undefined,
+        pushTarget: undefined
+      ) => void
+    }
+    lifecycle.rememberPreservedBranchCleanupTarget(
+      TEST_WORKTREE_ID,
+      undefined,
+      { preservedBranch: { branchName: 'feature/old', head: 'old-head' } },
+      undefined,
+      undefined
+    )
+    lifecycle.rememberPreservedBranchCleanupTarget(
+      TEST_WORKTREE_ID,
+      undefined,
+      { preservedBranch: { branchName: 'feature/new', head: 'new-head' } },
+      undefined,
+      undefined
+    )
+
+    expect(
+      runtime.releasePreservedBranchCleanups([
+        {
+          worktreeSelector: `id:${TEST_WORKTREE_ID}`,
+          branchName: 'feature/old',
+          expectedHead: 'old-head'
+        }
+      ])
+    ).toEqual({ released: 0 })
+    expect(runtime.getPreservedBranchCleanupTargetCountForTests()).toBe(1)
+  })
+
   it('force-deletes an SSH branch that was preserved by runtime worktree removal', async () => {
     const remoteRepo = {
       ...store.getRepo(TEST_REPO_ID)!,

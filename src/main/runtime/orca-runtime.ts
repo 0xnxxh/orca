@@ -3216,6 +3216,10 @@ export class OrcaRuntimeService {
   private optimisticReconcileTokens = new Map<string, string>()
   private removeManagedWorktreeInFlight = new Map<string, RuntimeWorktreeRemovalInFlight>()
   private preservedBranchCleanupByScope = new Map<string, PreservedBranchCleanupTarget>()
+
+  getPreservedBranchCleanupTargetCountForTests(): number {
+    return this.preservedBranchCleanupByScope.size
+  }
   private readonly getLocalProviderFn: (() => IPtyProvider) | null
   private readonly getSshProviderFn: ((connectionId: string) => IPtyProvider | undefined) | null
   private readonly onPtyStopped: ((ptyId: string) => void) | null
@@ -24357,6 +24361,41 @@ export class OrcaRuntimeService {
       })
     )
     return { deleted: true }
+  }
+
+  releasePreservedBranchCleanups(
+    cleanups: readonly {
+      worktreeSelector: string
+      branchName: string
+      expectedHead?: string
+      hostId?: string
+    }[]
+  ): { released: number } {
+    let released = 0
+    for (const cleanup of cleanups) {
+      const worktree = parseExactWorktreeIdSelector(cleanup.worktreeSelector)
+      const normalizedHostId = parseExecutionHostId(cleanup.hostId)?.id
+      const target = worktree
+        ? cleanup.hostId && !normalizedHostId
+          ? undefined
+          : this.preservedBranchCleanupByScope.get(
+              preservedBranchCleanupScopeKey({ worktreeId: worktree.id, hostId: normalizedHostId })
+            )
+        : undefined
+      if (
+        !worktree ||
+        !cleanup.expectedHead ||
+        target?.branchName !== cleanup.branchName ||
+        target.head !== cleanup.expectedHead
+      ) {
+        continue
+      }
+      this.preservedBranchCleanupByScope.delete(
+        preservedBranchCleanupScopeKey({ worktreeId: worktree.id, hostId: normalizedHostId })
+      )
+      released += 1
+    }
+    return { released }
   }
 
   async removeManagedWorktree(
