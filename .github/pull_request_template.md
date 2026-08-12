@@ -1,6 +1,6 @@
 ## ELI5
 
-<!-- Explain this change like the reader has never seen the codebase. Plain language, no jargon — what broke or was missing, what you did, and what users notice now. A short paragraph is fine; the PR title is the one-liner. -->
+<!-- Simple high-level explanation -->
 
 ## What Changed
 
@@ -12,27 +12,15 @@
 
 ## Linked Issue
 
-<!-- Link the issue this PR addresses, if any. -->
+<!-- Link the issue this PR addresses, there should ALWAYS be one -->
 
-- Fixes #
+Fixes #
 
-## Screenshots (required for UI / behavior changes)
-
-**Before and after are mandatory** for any user-visible or UI change. Do not open a UI PR with only a description.
-
-- Attach a **before** screenshot (or short recording of the old behavior).
-- Attach an **after** screenshot (or short recording of the new behavior).
-- Side-by-side or labeled before/after is preferred.
-- For motion, transitions, or interactions, include a short **before and after** video (or one video that clearly shows both).
-- If there is truly no visual or interaction change, write exactly: `No visual change` and briefly say why.
-
-### Before
-
-<!-- Attach before image/video -->
-
-### After
-
-<!-- Attach after image/video -->
+## Visual Proof
+<!-- REQUIRED for UI / behavior changes -->
+<!-- Please attach a BEFORE and AFTER that can easily tabbed/switched -->
+<!-- Use videos for when appropriate over screenshots -->
+<!-- If there is truly no visual or interaction change, write exactly: `N/A` and briefly say why. -->
 
 ## How to test
 
@@ -41,34 +29,25 @@
 - [ ] I manually tested these changes locally
 - [ ] Automated tests added/updated, or explained why not below
 
+
+
+## AI Disclosure
+<!-- For all external contributors only: Which AI model if anyone was used, please state the details -->
+
+## Review
+
+Ensure no issues in: Security, Cross-platoform support (Linux, Windows, Mac), Remote SSH, Mobile, general backwards compatibility, performance
+
 ## Checklist
 
 - [ ] This PR is small and focused
 - [ ] I explained what changed and why (including ELI5)
-- [ ] Before/after screenshots or videos attached for UI changes, or `No visual change` with reason
+- [ ] Before/after screenshots or videos attached for UI changes, or `N/A` with reason
 - [ ] Self-reviewed for correctness, security, and performance
 - [ ] Cross-platform, SSH/remote, and path/shortcut impact considered (or N/A)
 - [ ] `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` pass (or CI will cover; local preferred)
 
-## AI assistance
-
-- [ ] This PR was created or substantially assisted by an AI coding agent (optional disclosure)
-- [ ] I reviewed the full diff, understand every change, and can explain it in review
-
-## AI Review Report
-
-Summarize the code review you ran with your AI coding agent. Include the main risks it checked, what it flagged, and what you changed or verified as a result.
-Confirm that the review explicitly checked cross-platform compatibility for macOS, Linux, and Windows, including shortcuts, labels, paths, shell behavior, and any Electron-specific platform differences touched by this PR.
-
-## Security Audit
-
-Provide a basic security audit summary from your AI coding agent. Call out any input handling, command execution, path handling, auth, secrets, dependency, or IPC risks that were reviewed, plus any follow-up needed.
-
-## Notes
-
-Call out any platform-specific behavior, risks, or follow-up work.
-
 ## Author
 
 - X / Twitter: @your_handle
-  <!-- Optional but appreciated — we shout out contributors when we merge features on [@orca_build](https://x.com/orca_build). -->
+  <!-- Optional but appreciated -->
