@@ -35,8 +35,31 @@ export class TerminalHostGoneError extends Error {
   }
 }
 
-// Connect ENOENT/ECONNREFUSED proves the endpoint is absent; open ENOENT can be a missing token file.
+/**
+ * A daemon token file that is gone after this client was authenticated to that daemon. Only a
+ * daemon's own shutdown unlinks the token, so the endpoint it named is provably retired.
+ *
+ * Keeps the errno shape of the underlying `open` failure: recovery paths that retry a respawn on a
+ * missing token match on `code`/`syscall`, and they must keep winning over this classification.
+ */
+export class DaemonEndpointTokenGoneError extends Error implements NodeJS.ErrnoException {
+  readonly code = 'ENOENT'
+  readonly syscall = 'open'
+  readonly path: string
+
+  constructor(tokenPath: string, cause: unknown) {
+    super(`ENOENT: no such file or directory, open '${tokenPath}'`, { cause })
+    this.name = 'DaemonEndpointTokenGoneError'
+    this.path = tokenPath
+  }
+}
+
+// Connect ENOENT/ECONNREFUSED proves the endpoint is absent. A bare open ENOENT does not — an
+// unread token can still front a live daemon — so only the authenticated-disconnect form counts.
 export function isDaemonEndpointGoneError(err: unknown): boolean {
+  if (err instanceof DaemonEndpointTokenGoneError) {
+    return true
+  }
   const candidate = err as { code?: unknown; syscall?: unknown } | null
   return (
     typeof candidate === 'object' &&

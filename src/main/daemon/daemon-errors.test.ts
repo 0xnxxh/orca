@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DaemonEndpointTokenGoneError,
   DaemonProtocolError,
   decodeDaemonResponseError,
   isDaemonEndpointGoneError,
@@ -41,6 +42,26 @@ describe('isDaemonEndpointGoneError', () => {
 
   it('ignores a missing token file, which does not prove the endpoint is gone', () => {
     expect(isDaemonEndpointGoneError(socketError('ENOENT', 'open'))).toBe(false)
+  })
+
+  it('recognizes a token retired after this client was authenticated', () => {
+    expect(
+      isDaemonEndpointGoneError(
+        new DaemonEndpointTokenGoneError(
+          '/tmp/orca/daemon-v32.token',
+          socketError('ENOENT', 'open')
+        )
+      )
+    ).toBe(true)
+  })
+
+  it('keeps the errno shape recovery paths match a missing token on', () => {
+    // Why: a respawn+retry keyed on code/syscall must still win over this classification.
+    const err = new DaemonEndpointTokenGoneError('/tmp/orca/daemon-v32.token', null)
+
+    expect(err.code).toBe('ENOENT')
+    expect(err.syscall).toBe('open')
+    expect(err.path).toBe('/tmp/orca/daemon-v32.token')
   })
 
   it('ignores connect failures that are not proof of absence', () => {

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { DaemonClient } from './client'
+import { DaemonEndpointTokenGoneError, isDaemonEndpointGoneError } from './daemon-errors'
 import { encodeNdjson, NDJSON_MAX_LINE_BYTES, NdjsonLineTooLongError } from './ndjson'
 import type { HelloMessage, DaemonRequest, DaemonEvent } from './types'
 import { getDaemonSocketPath } from './daemon-spawner'
@@ -334,6 +335,41 @@ describe('DaemonClient', () => {
 
       client = new DaemonClient({ socketPath, tokenPath })
       await expect(client.ensureConnected()).rejects.toThrow()
+    })
+
+    it('classifies a token retired after an authenticated disconnect as endpoint gone', async () => {
+      const serverSockets: Socket[] = []
+      await startMockDaemon()
+      server.on('connection', (socket) => serverSockets.push(socket))
+
+      client = new DaemonClient({ socketPath, tokenPath })
+      const disconnected = vi.fn()
+      client.onDisconnected(disconnected)
+      await client.ensureConnected()
+      await waitFor(() => serverSockets.length >= 2)
+      for (const socket of serverSockets) {
+        socket.destroy()
+      }
+      await waitFor(() => disconnected.mock.calls.length > 0, 3000)
+
+      rmSync(tokenPath)
+      const error = await client.ensureConnected().catch((err: unknown) => err)
+
+      expect(error).toBeInstanceOf(DaemonEndpointTokenGoneError)
+      expect(isDaemonEndpointGoneError(error)).toBe(true)
+    })
+
+    it('leaves a missing token unclassified before any authenticated session', async () => {
+      // Why: the daemon writes its token during startup, so an unread token here can still front a
+      // daemon that is about to come up — classifying it gone would retire live panes.
+      rmSync(tokenPath)
+      client = new DaemonClient({ socketPath, tokenPath })
+
+      const error = await client.ensureConnected().catch((err: unknown) => err)
+
+      expect(error).toMatchObject({ code: 'ENOENT', syscall: 'open' })
+      expect(error).not.toBeInstanceOf(DaemonEndpointTokenGoneError)
+      expect(isDaemonEndpointGoneError(error)).toBe(false)
     })
   })
 

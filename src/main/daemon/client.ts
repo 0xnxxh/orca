@@ -18,7 +18,7 @@ import type {
   DaemonEvent
 } from './types'
 import { addNodePtyRecoveryHint } from './node-pty-error-hints'
-import { decodeDaemonResponseError } from './daemon-errors'
+import { DaemonEndpointTokenGoneError, decodeDaemonResponseError } from './daemon-errors'
 
 const CONNECT_TIMEOUT_MS = 5000
 const CONNECTION_ATTEMPT_WAIT_MS = CONNECT_TIMEOUT_MS * 4
@@ -114,12 +114,29 @@ export class DaemonClient {
     }
   }
 
+  /**
+   * Why classify here: the daemon leaves its socket behind on exit but unlinks its token, so a
+   * retired endpoint fails at this read — before the connect whose ENOENT/ECONNREFUSED is what
+   * callers classify. Without this the caller sees a raw errno for a daemon that provably exited.
+   */
+  private readToken(): string {
+    try {
+      return readFileSync(this.tokenPath, 'utf-8').trim()
+    } catch (error) {
+      const errno = error as NodeJS.ErrnoException
+      // A token missing before any authenticated session can still front a live daemon mid-startup.
+      throw errno?.code === 'ENOENT' && this.observedAuthenticatedDisconnect
+        ? new DaemonEndpointTokenGoneError(this.tokenPath, error)
+        : error
+    }
+  }
+
   private async doConnect(
     timeoutMs: number,
     attemptGeneration: number,
     sharedBudget: boolean
   ): Promise<void> {
-    const token = readFileSync(this.tokenPath, 'utf-8').trim()
+    const token = this.readToken()
     const deadlineMs = Date.now() + timeoutMs
     const remainingMs = (): number =>
       sharedBudget ? Math.max(1, deadlineMs - Date.now()) : timeoutMs
