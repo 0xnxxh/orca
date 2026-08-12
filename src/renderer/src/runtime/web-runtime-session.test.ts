@@ -258,6 +258,7 @@ describe('createWebRuntimeSessionBrowserTab', () => {
         activeRuntimeEnvironmentId: ENVIRONMENT_ID
       },
       activeWorktreeId: WORKTREE_ID,
+      activeWorkspaceExecutionHostId: RUNTIME_EXECUTION_HOST_ID,
       activeTabType: 'editor',
       activeTabTypeByWorktree: { [WORKTREE_ID]: 'editor' },
       activeFileIdByWorktree: { [WORKTREE_ID]: '/worktree/index.html' },
@@ -519,6 +520,67 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toBeNull()
   })
 
+  it.each([
+    {
+      label: 'worktree',
+      leave: (state: Record<string, unknown>) => ({
+        ...state,
+        activeWorktreeId: 'repo::/other-worktree'
+      }),
+      returnToStart: (state: Record<string, unknown>) => ({
+        ...state,
+        activeWorktreeId: WORKTREE_ID
+      })
+    },
+    {
+      label: 'runtime owner',
+      leave: (state: Record<string, unknown>) => ({
+        ...state,
+        activeWorkspaceExecutionHostId: 'local'
+      }),
+      returnToStart: (state: Record<string, unknown>) => ({
+        ...state,
+        activeWorkspaceExecutionHostId: RUNTIME_EXECUTION_HOST_ID
+      })
+    }
+  ])(
+    'does not focus after leaving and returning to the $label during reconciliation',
+    async ({ leave, returnToStart }) => {
+      let resolveList!: (response: unknown) => void
+      const listResponse = new Promise((resolve) => {
+        resolveList = resolve
+      })
+      let state = mocks.getState()
+      let listener: ((next: typeof state, previous: typeof state) => void) | null = null
+      mocks.getState.mockImplementation(() => state)
+      mocks.subscribe.mockImplementation((nextListener) => {
+        listener = nextListener
+        return vi.fn()
+      })
+      const runtimeCall = vi
+        .fn()
+        .mockResolvedValueOnce({
+          id: 'create',
+          ok: true,
+          result: { browserPageId: 'created-host-browser' }
+        })
+        .mockReturnValueOnce(listResponse)
+      vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+      const pendingCreate = createWebRuntimeSessionBrowserTab({ worktreeId: WORKTREE_ID })
+      await vi.waitFor(() => expect(runtimeCall).toHaveBeenCalledTimes(2))
+      const awayState = leave(state)
+      listener!(awayState, state)
+      const returnedState = returnToStart(awayState)
+      listener!(returnedState, awayState)
+      state = returnedState
+      resolveList({ id: 'list', ok: true, result: makeSnapshot() })
+      await expect(pendingCreate).resolves.toBe(true)
+
+      expect(peekWebSessionFocusIntent({ environmentId: ENVIRONMENT_ID }, WORKTREE_ID)).toBeNull()
+    }
+  )
+
   it('does not retry a failed browser create', async () => {
     const runtimeCall = vi.fn().mockResolvedValue({
       id: 'create-lost',
@@ -618,6 +680,19 @@ describe('createWebRuntimeSessionBrowserTab', () => {
   it('keeps the requested worktree selected while the browser snapshot catches up', async () => {
     const snapshot = makeSnapshot()
     const setStateResults: unknown[] = []
+    let focusState = {
+      ...mocks.getState(),
+      activeWorktreeId: 'landing',
+      activeWorkspaceExecutionHostId: 'local'
+    }
+    mocks.getState.mockImplementation(() => focusState)
+    mocks.setActiveWorktree.mockImplementation((worktreeId, executionHostId) => {
+      focusState = {
+        ...focusState,
+        activeWorktreeId: worktreeId,
+        activeWorkspaceExecutionHostId: executionHostId
+      }
+    })
     let mockState: Record<string, unknown> = { state: 'before-stage', activeWorktreeId: 'landing' }
     mocks.setState.mockImplementation((updater: (state: unknown) => unknown) => {
       const result = updater(mockState)

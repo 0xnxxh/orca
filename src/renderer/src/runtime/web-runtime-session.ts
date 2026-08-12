@@ -452,10 +452,6 @@ export async function createWebRuntimeSessionBrowserTab(args: {
   const callEnvironment = captureRuntimeEnvironmentCall(environmentId, intentOwner.pairingRevision)
   const shouldSelectWorktree = args.selectWorktree !== false
   const provisionalPageId = createBrowserUuid()
-  const expectedCurrentLocalTabId = resolveWebSessionVisibleTabId(
-    useAppStore.getState(),
-    args.worktreeId
-  )
   if (args.clientTargetGroupId) {
     recordWebSessionBrowserPlacement({
       environmentId,
@@ -467,6 +463,13 @@ export async function createWebRuntimeSessionBrowserTab(args: {
   if (shouldSelectWorktree) {
     selectWebRuntimeSessionBrowserWorktree(args.worktreeId, environmentId)
   }
+  const initialFocusState = useAppStore.getState()
+  const expectedActiveWorktreeId = initialFocusState.activeWorktreeId
+  const expectedActiveWorkspaceExecutionHostId = initialFocusState.activeWorkspaceExecutionHostId
+  const expectedCurrentLocalTabId = resolveWebSessionVisibleTabId(
+    initialFocusState,
+    args.worktreeId
+  )
   let unsubscribeFocusGuard = (): void => {}
   let guardedPageId = provisionalPageId
   try {
@@ -486,11 +489,16 @@ export async function createWebRuntimeSessionBrowserTab(args: {
           state.activeTabType === previousState.activeTabType &&
           state.activeTabTypeByWorktree === previousState.activeTabTypeByWorktree &&
           state.activeWorktreeId === previousState.activeWorktreeId &&
+          state.activeWorkspaceExecutionHostId === previousState.activeWorkspaceExecutionHostId &&
           state.unifiedTabsByWorktree === previousState.unifiedTabsByWorktree
         ) {
           return
         }
-        if (resolveWebSessionVisibleTabId(state, args.worktreeId) === expectedCurrentLocalTabId) {
+        if (
+          state.activeWorktreeId === expectedActiveWorktreeId &&
+          state.activeWorkspaceExecutionHostId === expectedActiveWorkspaceExecutionHostId &&
+          resolveWebSessionVisibleTabId(state, args.worktreeId) === expectedCurrentLocalTabId
+        ) {
           return
         }
         clearWebSessionFocusIntentIfMatches(intentOwner, args.worktreeId, guardedPageId)
