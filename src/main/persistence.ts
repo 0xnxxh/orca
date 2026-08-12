@@ -7344,7 +7344,7 @@ export class Store {
     }
     // Why: matching on lease ptyId first means this scrubs only the predecessor's
     // stale binding — the winner's own binding cannot match and is left intact.
-    this.clearSshRemotePtyBindingsForLeases(winner.targetId, superseded)
+    this.clearSshRemotePtyBindingsForLeases(winner.targetId, superseded, 'local')
   }
 
   /**
@@ -7453,7 +7453,7 @@ export class Store {
       return 0
     }
     const sessionsBefore = this.cloneSshLeaseBindingSessions(targetId)
-    this.clearSshRemotePtyBindingsForLeases(targetId, superseded)
+    this.clearSshRemotePtyBindingsForLeases(targetId, superseded, 'local')
     try {
       // Why flushOrThrow: flush() swallows write errors, which would leave these
       // leases retired in memory but attached on disk for the rest of the session.
@@ -7632,19 +7632,27 @@ export class Store {
     this.clearSshRemotePtyBindingsForLeases(targetId, leases ?? [])
   }
 
+  /** `arbitratedFrom` names the plane a supersession DECISION was made from. A decision reached by
+   *  reading one plane may only mutate that plane: the other plane's binding never got a vote, and
+   *  deleting it strands a shell its owner can still be using. An explicit expiry or termination is
+   *  plane-agnostic — the pty is gone for everyone — so those callers pass nothing. */
   private clearSshRemotePtyBindingsForLeases(
     targetId: string,
-    leases: SshRemotePtyLease[]
+    leases: SshRemotePtyLease[],
+    arbitratedFrom?: 'local'
   ): boolean {
     if (!leases?.length) {
       return false
     }
     let changed = false
     const sessions = new Set(
-      [
-        this.state.workspaceSession,
-        this.state.workspaceSessionsByHostId?.[toSshExecutionHostId(targetId)]
-      ].filter((session): session is WorkspaceSessionState => Boolean(session))
+      (arbitratedFrom === 'local'
+        ? [this.state.workspaceSession]
+        : [
+            this.state.workspaceSession,
+            this.state.workspaceSessionsByHostId?.[toSshExecutionHostId(targetId)]
+          ]
+      ).filter((session): session is WorkspaceSessionState => Boolean(session))
     )
     for (const session of sessions) {
       for (const [worktreeId, tabs] of Object.entries(session.tabsByWorktree ?? {})) {

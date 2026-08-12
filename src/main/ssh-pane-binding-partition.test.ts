@@ -225,6 +225,29 @@ describe('STA-3077 step P: one pane, one live claim across partitions', () => {
   })
 })
 
+describe('STA-3077: a decision made from one plane only mutates that plane', () => {
+  // Arbitration ranks using the desktop plane's binding. The headless plane's binding never gets a
+  // vote, so deleting it here would strand a shell its owner may still be using — and that owner
+  // would then have no durable record to reattach by. An explicit expiry is different: the pty is
+  // gone for everyone, and that path still scrubs both.
+  it('leaves the headless plane binding intact when supersession retires its lease', async () => {
+    const sshSession = paneSession('pty-old') as unknown as Record<string, unknown>
+    const store = await createStore({
+      workspaceSession: paneSession('pty-new'),
+      workspaceSessionsByHostId: { [SSH_PARTITION]: sshSession }
+    })
+    sshSpawnUpsertsLease(store, 'pty-old')
+
+    // Local names pty-new, so arbitration expires pty-old without the other plane being consulted.
+    sshSpawnUpsertsLease(store, 'pty-new')
+
+    expect(liveLeaseIdsForPane(store)).toEqual(['pty-new'])
+    expect(
+      store.getWorkspaceSession(SSH_PARTITION).terminalLayoutsByTabId?.[TAB]?.ptyIdsByLeafId?.[LEAF]
+    ).toBe(appPtyId('pty-old'))
+  })
+})
+
 describe('STA-3077: a pane moved between tabs still supersedes its own predecessor', () => {
   // The reported cardinality growth, in its surviving form. A lease freezes its tabId at write
   // time. Break the pane out into a new tab and its next lease carries the NEW tab, so matching
@@ -314,7 +337,10 @@ describe('STA-3077 step P: the desktop plane resolves from its own home', () => 
 
     rendererPublishesPane(store, 'pty-1')
     expect(relayReattachBindsPane(store, 'pty-2')).toBe(true)
-    // The other plane still names the predecessor, and is deliberately left alone.
+    // The other plane names the predecessor. It does not get a vote here — local speaking about
+    // this leaf IS the desktop plane's live view, and letting the other copy outrank it is the
+    // STA-3077 defect. Its binding to the loser is then scrubbed with every other reference to
+    // that retired lease, so the two planes do not drift further apart.
     somethingRewritesTheSshPartition(store, 'pty-1')
     sshSpawnUpsertsLease(store, 'pty-2')
 
