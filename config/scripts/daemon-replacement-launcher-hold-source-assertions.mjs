@@ -128,6 +128,27 @@ export function checkLauncherHoldsOccupiedDaemon({ log, assert }) {
     `phase 3: ${relativePath}:${occupiedLine} occupancy.state === 'occupied' + cannot-be-adopted -> return holdIncumbentDaemon(); the branch contains no kill`
   )
 
+  // 3b. The unknown-hold: the protection that no longer depends on any timing budget. An
+  //     unclassifiable daemon is held, not replaced, except where holding is unrecoverable.
+  const unknownHold = source.match(
+    /if\s*\(\s*occupancy\.state === 'unknown' &&[\s\S]{0,1500}?return holdIncumbentDaemon\(\)/
+  )
+  assert(
+    unknownHold !== null,
+    `${relativePath} does not hold on occupancy.state === 'unknown' — a daemon we could not classify is being replaced`
+  )
+  assert(
+    unknownHold[0].includes("health !== 'rejected'"),
+    `the unknown-hold does not exclude 'rejected', which can never be adopted: ${normalize(unknownHold[0])}`
+  )
+  assert(
+    unknownHold[0].includes('endpointIsProvenDead'),
+    `the unknown-hold does not exclude a proven-dead endpoint, so a cold start would be held: ${normalize(unknownHold[0])}`
+  )
+  log(
+    `phase 3: ${relativePath}:${lineOf(source, unknownHold.index)} occupancy.state === 'unknown' + not-proven-dead + not-rejected -> return holdIncumbentDaemon()`
+  )
+
   // 4. Ordering: every kill on this path is downstream of the occupied branch, so a hold
   //    returns before any of them can run.
   const killCalls = [...source.matchAll(/killStaleDaemon\s*\(/g)].map((match) => match.index)
@@ -139,7 +160,14 @@ export function checkLauncherHoldsOccupiedDaemon({ log, assert }) {
     killsBeforeTheDecision.length === 0,
     `${relativePath} kills at line(s) ${killsBeforeTheDecision.map((i) => lineOf(source, i)).join(', ')}, between resolving occupancy and the hold`
   )
-  const fallThroughKill = killCalls.find((index) => index > occupiedBlock.end)
+  const killsBeforeTheUnknownHold = killCalls.filter(
+    (index) => index > evidenceCall.index && index < unknownHold.index
+  )
+  assert(
+    killsBeforeTheUnknownHold.length === 0,
+    `${relativePath} kills at line(s) ${killsBeforeTheUnknownHold.map((i) => lineOf(source, i)).join(', ')}, before the unknown-hold can return`
+  )
+  const fallThroughKill = killCalls.find((index) => index > unknownHold.index)
   assert(
     fallThroughKill !== undefined,
     `${relativePath} has no killStaleDaemon() after the occupied branch — the replacement path is gone`
