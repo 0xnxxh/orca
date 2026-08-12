@@ -6,7 +6,7 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `df259119f6`; no PR.
+- Orca implementation: `skills-share` at `cea10667ba`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   production remains untouched.
@@ -1257,7 +1257,10 @@ metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thr
 - [ ] Test permission and read-only failures, disk exhaustion, cancellation, process termination,
       and host disconnect. Simulated `EACCES` and `ENOSPC` preservation plus lost-response retry are
       covered; physical failure and termination journeys remain open.
-- [ ] Test independent-copy drift and incomplete provider coverage.
+- [x] Test independent-copy drift and incomplete provider coverage. Deterministic transaction
+      coverage preserves modified independent copies, retains canonical success when an unowned,
+      failed, or cancelled provider placement cannot be reconciled, reports the exact partial
+      placement outcome, and repairs interrupted coverage on retry.
 
 ### Platform and target matrix
 
