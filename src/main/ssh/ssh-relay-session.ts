@@ -142,6 +142,11 @@ const SSH_PTY_REATTACH_RETRY_JITTER_MS = 200
 // forever — each one costs a store read, an attach round trip and a store write. Exhausting it parks
 // this PTY's delivery; it never authorizes tearing anything down.
 const SSH_REJECTED_PTY_RECOVERY_MAX_GENERATION_ATTEMPTS = 12
+// Why a park expires: exhaustion parks one PTY's delivery instead of dropping the shared channel,
+// and the escape it names — the next relay open — may never come while that channel stays healthy.
+// A pane with no output and no way back is the state this change exists to prevent, so the park is
+// a cooldown rather than a verdict: recovery is rate-limited, never abandoned.
+const SSH_REJECTED_PTY_RECOVERY_PARK_MS = 60_000
 const SSH_REJECTED_PTY_RECOVERY_RETRY_DELAY_MS = 150
 const SSH_SOURCE_RECOVERY_CANCELLATION_FAILED = 'ssh_source_recovery_cancellation_failed'
 
@@ -324,6 +329,8 @@ export class SshRelaySession {
       providerGeneration: number
       generationAttempts: number
       reported: boolean
+      /** When the budget ran out; 0 while it has not. Drives the park cooldown. */
+      parkedAt: number
     }
   >()
   private readonly rejectedPtyRecoveryRetries = new Set<ReturnType<typeof setTimeout>>()
@@ -1858,20 +1865,27 @@ export class SshRelaySession {
     const attempt =
       previous?.providerGeneration === providerGeneration
         ? previous
-        : { providerGeneration, generationAttempts: 0, reported: false }
+        : { providerGeneration, generationAttempts: 0, reported: false, parkedAt: 0 }
     if (attempt.generationAttempts >= SSH_REJECTED_PTY_RECOVERY_MAX_GENERATION_ATTEMPTS) {
-      if (!attempt.reported) {
-        attempt.reported = true
-        // Why park instead of dropping the relay channel: a retry count is not proof of anything, and
-        // the channel is shared — dropping it rotates provider authority, aborts every in-flight fs
-        // and git request on the target and stalls every sibling PTY over one PTY's delivery. The
-        // remote shell keeps running, its lease stands, and the next relay open reattaches it with a
-        // fresh delivery generation.
-        console.warn(
-          `[ssh-relay-session] PTY ${relayPtyId} delivery recovery exhausted for ${this.targetId}; parking its delivery until the next relay open`
-        )
+      // Why park instead of dropping the relay channel: a retry count is not proof of anything, and
+      // the channel is shared — dropping it rotates provider authority, aborts every in-flight fs
+      // and git request on the target and stalls every sibling PTY over one PTY's delivery. The
+      // remote shell keeps running and its lease stands.
+      if (attempt.parkedAt && Date.now() - attempt.parkedAt >= SSH_REJECTED_PTY_RECOVERY_PARK_MS) {
+        // The park has served its cooldown. Re-arm rather than leave the pane dark for good.
+        attempt.generationAttempts = 0
+        attempt.reported = false
+        attempt.parkedAt = 0
+      } else {
+        if (!attempt.reported) {
+          attempt.reported = true
+          attempt.parkedAt = Date.now()
+          console.warn(
+            `[ssh-relay-session] PTY ${relayPtyId} delivery recovery exhausted for ${this.targetId}; parking its delivery for ${SSH_REJECTED_PTY_RECOVERY_PARK_MS}ms or until the next relay open`
+          )
+        }
+        return
       }
-      return
     }
     attempt.generationAttempts++
     this.rejectedPtyRecoveryAttempts.set(appPtyId, attempt)

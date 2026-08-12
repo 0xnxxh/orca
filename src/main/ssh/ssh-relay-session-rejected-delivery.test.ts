@@ -427,6 +427,52 @@ describe('SshRelaySession rejected PTY delivery recovery', () => {
     )
   })
 
+  // The clause above pins the containment; this one pins that containment is not abandonment. The
+  // park's only stated escape is the next relay open, and a shared channel that stays healthy never
+  // gives it one — so a pane could sit with no output and no way back, which is the exact state
+  // this change exists to prevent. The park has to expire.
+  it('re-arms a parked PTY once its cooldown has passed rather than leaving it dark', async () => {
+    const { internals } = prepareSession()
+    const reattach = vi.fn().mockResolvedValue(false)
+    internals.reattachRejectedPty = reattach
+    getSshPtyProviderMock.mockReturnValue({ hasPty: () => true } as unknown as SshPtyProvider)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await internals.acceptPtyData(rejectedPayload())
+    await vi.waitFor(
+      () =>
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining('PTY pty-bad delivery recovery exhausted')
+        ),
+      { timeout: 10_000 }
+    )
+    expect(reattach).toHaveBeenCalledTimes(12)
+
+    // Each later frame must carry its own delivery token — a retired delivery is dropped at the
+    // top of acceptPtyData, so reusing one would make both clauses below pass without proving
+    // anything. A re-announcing source is exactly what a new token looks like.
+    const nextFrame = (n: number) =>
+      rejectedPayload({
+        source: source({ spanId: `token-bad-${n}:0:4`, deliveryToken: `token-bad-${n}` })
+      })
+
+    // Parked: a further rejected frame must not retry yet, or the cooldown means nothing.
+    reattach.mockClear()
+    await internals.acceptPtyData(nextFrame(1))
+    expect(reattach).not.toHaveBeenCalled()
+
+    // Backdate the park instead of burning a minute of real time — the property under test is
+    // elapsed time, not which timer implementation measures it.
+    const parked = internals.rejectedPtyRecoveryAttempts.get('ssh:target-1@@pty-bad') as {
+      parkedAt: number
+    }
+    parked.parkedAt -= 60_000
+
+    await internals.acceptPtyData(nextFrame(2))
+
+    await vi.waitFor(() => expect(reattach).toHaveBeenCalled(), { timeout: 10_000 })
+  })
+
   it('stops without an error when the rejected PTY exited during recovery', async () => {
     const { internals, mux, session } = prepareSession()
     const reattach = vi.fn().mockResolvedValue(false)
