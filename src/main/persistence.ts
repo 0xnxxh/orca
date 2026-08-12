@@ -7331,7 +7331,8 @@ export class Store {
         lease.ptyId !== winner.ptyId &&
         lease.targetId === winner.targetId &&
         lease.worktreeId === winner.worktreeId &&
-        lease.tabId === winner.tabId &&
+        // Leaf only: a lease freezes its tabId, and a pane broken out to a new tab would otherwise
+        // never compete with its own predecessor — which is the reported cardinality growth.
         lease.leafId === winner.leafId &&
         lease.state !== 'terminated' &&
         lease.state !== 'expired'
@@ -7420,7 +7421,9 @@ export class Store {
       if (!lease.worktreeId || !lease.tabId || !lease.leafId) {
         continue
       }
-      const paneKey = [lease.worktreeId, lease.tabId, lease.leafId].join('\0')
+      // Keyed on the leaf, not the frozen tabId: the same pane moved between tabs must land in one
+      // bucket, or its duplicates never arbitrate against each other.
+      const paneKey = [lease.worktreeId, lease.leafId].join('\0')
       const incumbent = winnerByPane.get(paneKey)
       if (!incumbent || this.outranksForPane(lease, incumbent, targetId)) {
         winnerByPane.set(paneKey, lease)

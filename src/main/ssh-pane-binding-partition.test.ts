@@ -225,6 +225,49 @@ describe('STA-3077 step P: one pane, one live claim across partitions', () => {
   })
 })
 
+describe('STA-3077: a pane moved between tabs still supersedes its own predecessor', () => {
+  // The reported cardinality growth, in its surviving form. A lease freezes its tabId at write
+  // time. Break the pane out into a new tab and its next lease carries the NEW tab, so matching
+  // siblings on tabId means the two leases for one pane never meet — the predecessor is never
+  // superseded and the count grows on every reconnect, exactly as reported.
+  function leaseInTab(store: TestStore, relayPtyId: string, tabId: string): void {
+    store.upsertSshRemotePtyLease({
+      targetId: TARGET,
+      ptyId: toRelaySshPtyId(TARGET, appPtyId(relayPtyId)),
+      worktreeId: WORKTREE,
+      tabId,
+      leafId: LEAF,
+      state: 'attached',
+      lastAttachedAt: Date.now()
+    })
+  }
+  const liveForLeaf = (store: TestStore): string[] =>
+    store
+      .getSshRemotePtyLeases(TARGET)
+      .filter((l) => l.leafId === LEAF && l.state !== 'terminated' && l.state !== 'expired')
+      .map((l) => l.ptyId)
+      .sort()
+
+  it('supersedes a predecessor whose lease names the tab the pane left', async () => {
+    const store = await createStore()
+    leaseInTab(store, 'pty-old', TAB)
+
+    leaseInTab(store, 'pty-new', 'tab-moved-to')
+
+    expect(liveForLeaf(store)).toEqual(['pty-new'])
+  })
+
+  it('holds the count flat across ten reconnects that each land in a new tab', async () => {
+    const store = await createStore()
+    leaseInTab(store, 'pty-0', TAB)
+    for (let n = 1; n <= 10; n += 1) {
+      leaseInTab(store, `pty-${n}`, `tab-${n}`)
+    }
+
+    expect(liveForLeaf(store)).toEqual(['pty-10'])
+  })
+})
+
 describe('STA-3077: arbitration follows the pane, not the tab it was written in', () => {
   // A lease freezes its tabId when written; `detachTerminalPaneToTab` then moves the live pane and
   // its PTY into a new tab. Looking the binding up under the frozen tab finds nothing, so the bound
