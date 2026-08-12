@@ -20,13 +20,19 @@ export function skillInstallFailureFromError(error: unknown): SkillInstallFailur
   if (error instanceof SkillInstallOperationError) {
     return error.data
   }
+  if (error && typeof error === 'object' && 'data' in error) {
+    const parsed = SkillInstallFailureSchema.safeParse((error as { data: unknown }).data)
+    if (parsed.success) {
+      return parsed.data
+    }
+  }
   if (error instanceof Error) {
     const classified = classifySkillInstallFailureCode(error.message)
     if (classified) {
       return classified
     }
     const code = (error as NodeJS.ErrnoException).code
-    if (code) {
+    if (typeof code === 'string') {
       return {
         category: 'filesystem',
         code: 'skill-install-filesystem-failed',
@@ -34,9 +40,5 @@ export function skillInstallFailureFromError(error: unknown): SkillInstallFailur
       }
     }
   }
-  if (!error || typeof error !== 'object' || !('data' in error)) {
-    return null
-  }
-  const parsed = SkillInstallFailureSchema.safeParse((error as { data: unknown }).data)
-  return parsed.success ? parsed.data : null
+  return null
 }
