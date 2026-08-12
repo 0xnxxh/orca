@@ -11,6 +11,7 @@ import { ORCHESTRATION_HANDLERS } from './orchestration'
 afterEach(() => {
   process.exitCode = originalExitCode
   vi.clearAllMocks()
+  callMock.mockReset()
 })
 
 it('raises a lifecycle rejection for the CLI error boundary', async () => {
@@ -138,6 +139,31 @@ it('fails closed when an older runtime leaves worker_done dispatched without a v
   })
 })
 
+it('normalizes compatibility-read failures to operation_unknown', async () => {
+  callMock
+    .mockResolvedValueOnce({
+      result: { message: { id: 'msg_unconfirmed', run_id: 'run_1' } }
+    })
+    .mockRejectedValueOnce(new Error('runtime disconnected'))
+    .mockResolvedValueOnce({ result: { tasks: [] } })
+
+  await expect(
+    ORCHESTRATION_HANDLERS['orchestration send']({
+      flags: new Map([
+        ['from', 'term_worker'],
+        ['subject', 'done'],
+        ['type', 'worker_done'],
+        ['task-id', 'task_1'],
+        ['dispatch-id', 'ctx_1'],
+        ['outcome', 'succeeded']
+      ]),
+      client: { call: callMock },
+      cwd: '/tmp/repo',
+      json: true
+    } as never)
+  ).rejects.toMatchObject({ code: 'operation_unknown' })
+})
+
 it('accepts a legacy response only after the authoritative dispatch is terminal', async () => {
   callMock
     .mockResolvedValueOnce({
@@ -176,7 +202,7 @@ it('accepts a legacy response only after the authoritative dispatch is terminal'
     json: true
   } as never)
 
-  expect(process.exitCode).not.toBe(1)
+  expect(callMock).toHaveBeenCalledTimes(3)
   expect(callMock).toHaveBeenNthCalledWith(2, 'orchestration.dispatchShow', { task: 'task_1' })
 })
 
@@ -216,7 +242,7 @@ it('accepts a legacy failed report only after the authoritative dispatch failed'
     json: true
   } as never)
 
-  expect(process.exitCode).not.toBe(1)
+  expect(callMock).toHaveBeenCalledTimes(3)
 })
 
 it('accepts an idempotent retry whose first report already settled', async () => {
@@ -258,7 +284,7 @@ it('accepts an idempotent retry whose first report already settled', async () =>
     json: true
   } as never)
 
-  expect(process.exitCode).not.toBe(1)
+  expect(callMock).toHaveBeenCalledTimes(3)
 })
 
 it('rejects an unrelated failed Dispatch that left its Task blocked', async () => {

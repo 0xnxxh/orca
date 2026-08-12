@@ -48,6 +48,7 @@ describe('orchestration CLI migration recovery', () => {
         waitForLifecycleSettlement: true,
         devMode: false
       })
+      expect(call).toHaveBeenCalledOnce()
     }
   )
 })

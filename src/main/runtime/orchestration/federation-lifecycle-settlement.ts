@@ -27,6 +27,10 @@ export function waitForFederatedLifecycleSettlement(
   options: { timeoutMs: number; signal?: AbortSignal }
 ): Promise<FederatedLifecycleSettlement | undefined> {
   return new Promise((resolve) => {
+    if (options.signal?.aborted) {
+      resolve(undefined)
+      return
+    }
     const runtimeWaiters = getRuntimeWaiters(runtime)
     const key = settlementKey(dispatchId, sequence)
     const waiters = runtimeWaiters.get(key) ?? new Set<Waiter>()

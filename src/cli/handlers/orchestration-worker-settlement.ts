@@ -21,7 +21,9 @@ export async function requireWorkerDoneSettlement(
       client.call<{
         tasks: { id: string; status: string; result: string | null }[]
       }>('orchestration.taskList', { status: target.expectedStatus, run: receipt.runId })
-    ])
+    ]).catch(() => {
+      throw workerDoneSettlementUnknown()
+    })
     const task = taskVerification.result.tasks.find((candidate) => candidate.id === target.taskId)
     if (
       dispatchVerification.result.dispatch?.id === target.dispatchId &&
@@ -32,7 +34,11 @@ export async function requireWorkerDoneSettlement(
       return
     }
   }
-  throw new RuntimeClientError(
+  throw workerDoneSettlementUnknown()
+}
+
+function workerDoneSettlementUnknown(): RuntimeClientError {
+  return new RuntimeClientError(
     'operation_unknown',
     'The runtime accepted worker_done but did not confirm that the exact report settled its Task and Dispatch. Retry from the assigned worker after verifying its active Dispatch.'
   )

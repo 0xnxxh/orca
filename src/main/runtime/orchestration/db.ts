@@ -5094,13 +5094,44 @@ export class OrchestrationDb {
     dispatchId: string
     direction: FederationRelayDirection
     throughSequence: number
+    settleRemoteReport?: { sequence: number; outcome: WorkerReportOutcome }
   }): void {
-    this.db
-      .prepare(
-        `UPDATE federation_relay_items SET acked_at = COALESCE(acked_at, datetime('now'))
-         WHERE dispatch_id = ? AND direction = ? AND sequence <= ?`
-      )
-      .run(params.dispatchId, params.direction, params.throughSequence)
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      if (params.settleRemoteReport) {
+        const report = this.getFederationRelayItem(
+          params.dispatchId,
+          params.direction,
+          params.settleRemoteReport.sequence
+        )
+        if (
+          params.direction !== 'to_home' ||
+          params.settleRemoteReport.sequence > params.throughSequence ||
+          report?.kind !== 'worker_done' ||
+          parseFederatedWorkerReportOutcome(report.payload) !== params.settleRemoteReport.outcome
+        ) {
+          throw new OrchestrationError(
+            'request_mismatch',
+            `Federation acknowledgment for ${params.dispatchId} does not match its queued worker_done.`
+          )
+        }
+        this.settleRemoteAttachmentInRelayTransaction(
+          params.dispatchId,
+          params.settleRemoteReport.outcome,
+          'worker_report_settled'
+        )
+      }
+      this.db
+        .prepare(
+          `UPDATE federation_relay_items SET acked_at = COALESCE(acked_at, datetime('now'))
+           WHERE dispatch_id = ? AND direction = ? AND sequence <= ?`
+        )
+        .run(params.dispatchId, params.direction, params.throughSequence)
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   setFederatedHomeImportSequence(dispatchId: string, sequence: number): void {
@@ -5199,24 +5230,26 @@ export class OrchestrationDb {
           outcome: params.lifecycle.outcome,
           result: params.lifecycle.result
         })
-        if (lifecycle.action === 'rejected') {
+        if (lifecycle.action === 'rejected' && !duplicate) {
           message = this.convertLifecycleMessageToRejection(
             message.id,
             lifecycle.code,
             lifecycle.reason
           ) as MessageRow
         }
-      } else if (params.lifecycle.kind === 'rejected' && !duplicate) {
+      } else if (params.lifecycle.kind === 'rejected') {
         lifecycle = {
           action: 'rejected',
           code: params.lifecycle.code,
           reason: params.lifecycle.reason
         }
-        message = this.convertLifecycleMessageToRejection(
-          message.id,
-          params.lifecycle.code,
-          params.lifecycle.reason
-        ) as MessageRow
+        if (!duplicate) {
+          message = this.convertLifecycleMessageToRejection(
+            message.id,
+            params.lifecycle.code,
+            params.lifecycle.reason
+          ) as MessageRow
+        }
       }
       if (!duplicate) {
         this.setFederatedHomeImportSequence(params.dispatchId, params.sequence)
@@ -5323,19 +5356,37 @@ export class OrchestrationDb {
 
   private settleRemoteAttachmentInRelayTransaction(
     dispatchId: string,
-    outcome: WorkerReportOutcome | undefined
+    outcome: WorkerReportOutcome | undefined,
+    stage = 'worker_report_queued'
   ): void {
     if (!outcome) {
       return
     }
+    const attachment = this.getRemoteDispatchAttachment(dispatchId)
+    const state = outcome === 'succeeded' ? 'succeeded' : 'failed'
+    if (!attachment) {
+      throw new OrchestrationError(
+        'dispatch_not_found',
+        `Remote Dispatch ${dispatchId} was not found.`
+      )
+    }
+    if (attachment.state === state) {
+      return
+    }
+    if (attachment.state !== 'ready') {
+      throw new OrchestrationError(
+        'request_mismatch',
+        `Remote Dispatch ${dispatchId} cannot settle as ${state} from ${attachment.state}.`
+      )
+    }
     this.db
       .prepare(
         `UPDATE remote_dispatch_attachments
-         SET state = ?, stage = 'worker_report_queued', capability_hash = NULL,
+         SET state = ?, stage = ?, capability_hash = NULL,
              updated_at = datetime('now')
          WHERE dispatch_id = ? AND state = 'ready'`
       )
-      .run(outcome === 'succeeded' ? 'succeeded' : 'failed', dispatchId)
+      .run(state, stage, dispatchId)
   }
 
   isDispatchProcessCurrent(params: {
@@ -6811,5 +6862,20 @@ export class OrchestrationDb {
 
   close(): void {
     this.db.close()
+  }
+}
+
+function parseFederatedWorkerReportOutcome(payload: string): WorkerReportOutcome | undefined {
+  try {
+    const message = JSON.parse(payload) as { payload?: unknown }
+    if (typeof message.payload !== 'string') {
+      return undefined
+    }
+    const report = JSON.parse(message.payload) as { outcome?: unknown }
+    return report.outcome === 'succeeded' || report.outcome === 'failed'
+      ? report.outcome
+      : undefined
+  } catch {
+    return undefined
   }
 }

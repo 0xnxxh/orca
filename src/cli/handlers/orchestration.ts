@@ -596,15 +596,9 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
     }
     printResult(result, json, (r) => {
       if ('message' in r) {
-        if (r.lifecycle?.action === 'rejected') {
-          return `Rejected ${r.message.id}: ${r.lifecycle.reason}`
-        }
         return `Sent ${r.message.id}`
       }
       if ('relay' in r) {
-        if (r.lifecycle?.action === 'rejected') {
-          return `Rejected ${r.relay.messageId}: ${r.lifecycle.reason}`
-        }
         if (r.relay.destination === 'worker') {
           return `Queued ${r.relay.messageId} for worker Dispatch ${r.relay.dispatchId}`
         }

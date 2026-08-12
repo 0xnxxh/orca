@@ -7598,7 +7598,7 @@
         "pnpm exec vitest run --config config/vitest.config.ts src/cli/handlers/orchestration.test.ts src/cli/handlers/orchestration-check-identity.test.ts src/cli/handlers/orchestration-worker-cli.test.ts src/main/runtime/rpc/methods/orchestration.test.ts src/main/ssh/ssh-remote-orca-cli.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/cli/handlers/orchestration-lifecycle-rejection.test.ts src/cli/handlers/orchestration-lifecycle-json-rejection.test.ts src/cli/handlers/orchestration-migration.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration/formatter.test.ts src/main/runtime/rpc/methods/orchestration-federation.test.ts",
-        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration/orchestration-legacy-worker-terminal-recovery.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration/orchestration-creator-authority-performance.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts",
@@ -7715,7 +7715,12 @@
             "a remote worker_done waits for Run-home settlement even when an older CLI omits the wait hint",
             "older negotiated federation protocols reject before queueing",
             "a committed settlement is replayed after an acknowledgment is lost",
-            "an aborted settlement wait returns operation_unknown instead of accepted success"
+            "an aborted settlement wait returns operation_unknown instead of accepted success",
+            "an already-aborted signal registers no settlement waiter",
+            "a Run-home terminal verdict settles the remote attachment and revokes its capability",
+            "a terminal verdict cannot settle an unrelated relay item",
+            "a terminal verdict cannot contradict the exact queued worker report outcome",
+            "a rejected report replays its exact verdict without mutating durable rejection mail twice"
           ]
         },
         {
@@ -7804,6 +7809,15 @@
           "result": "passed",
           "durationSeconds": 0.4,
           "summary": "Three focused files passed 12 deterministic tests covering explicit current and Run-home verdicts, JSON failure output, exact report and terminal-state verification for stripped responses, stale/stopped rejection, idempotent retry, and first/replayed attested legacy settlements."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 4.58,
+          "summary": "Nine deterministic tests passed for protocol negotiation, Run-home completion and rejection, already-aborted waits, authoritative remote-attachment settlement bound to the exact queued worker_done outcome, and exact verdict replay after lost acknowledgments without mutating durable rejection mail twice."
         },
         {
           "date": "2026-07-28",

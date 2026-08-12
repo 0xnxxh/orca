@@ -81,20 +81,41 @@ export const ORCHESTRATION_FEDERATION_RELAY_METHODS: RpcMethod[] = [
     params: FederationAckParams,
     handler: (params, { runtime, authenticatedCallerFingerprint }) => {
       requireHomeAttachment(runtime, params.dispatchId, authenticatedCallerFingerprint)
+      const settlements = (params.settlements ?? []).filter(
+        (settlement) => settlement.sequence <= params.throughSequence
+      )
+      const terminalSettlements = settlements.filter(
+        (settlement) =>
+          settlement.lifecycle.action === 'completed' || settlement.lifecycle.action === 'failed'
+      )
+      if (terminalSettlements.length > 1) {
+        throw new OrchestrationError(
+          'request_mismatch',
+          `Federation acknowledgment for ${params.dispatchId} contains conflicting settlements.`
+        )
+      }
+      const terminalSettlement = terminalSettlements[0]
       runtime.getOrchestrationDb().acknowledgeFederationRelay({
         dispatchId: params.dispatchId,
         direction: 'to_home',
-        throughSequence: params.throughSequence
+        throughSequence: params.throughSequence,
+        ...(!terminalSettlement
+          ? {}
+          : {
+              settleRemoteReport: {
+                sequence: terminalSettlement.sequence,
+                outcome:
+                  terminalSettlement.lifecycle.action === 'completed' ? 'succeeded' : 'failed'
+              }
+            })
       })
-      for (const settlement of params.settlements ?? []) {
-        if (settlement.sequence <= params.throughSequence) {
-          publishFederatedLifecycleSettlement(
-            runtime,
-            params.dispatchId,
-            settlement.sequence,
-            settlement.lifecycle as FederatedLifecycleSettlement
-          )
-        }
+      for (const settlement of settlements) {
+        publishFederatedLifecycleSettlement(
+          runtime,
+          params.dispatchId,
+          settlement.sequence,
+          settlement.lifecycle as FederatedLifecycleSettlement
+        )
       }
       return { dispatchId: params.dispatchId, acknowledgedThrough: params.throughSequence }
     }

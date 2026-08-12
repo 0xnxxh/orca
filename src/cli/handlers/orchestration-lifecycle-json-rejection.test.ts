@@ -38,6 +38,7 @@ it('prints a rejected lifecycle verdict as a JSON failure envelope', async () =>
     rejection = error
   }
 
+  expect(rejection).toBeDefined()
   reportCliError(rejection, true, { commandPath: ['orchestration', 'send'] })
 
   expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
