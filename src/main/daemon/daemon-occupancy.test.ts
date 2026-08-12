@@ -109,22 +109,24 @@ describe('resolveDaemonOccupancy when the daemon could not answer', () => {
 })
 
 describe('resolveDaemonOccupancy when an injected dep throws', () => {
-  it('propagates an inspector rejection rather than degrading to unknown', async () => {
-    // Pins current behavior, and it is a gap: the shipped inspector swallows its own
-    // failures, so this only bites an injected or future-refactored one. A throw here
-    // escapes into the launch path instead of landing on the safe 'unknown' residual.
+  it('degrades an inspector rejection to unknown', async () => {
+    // Why: a question that could not be asked is exactly what the residual is for. Letting
+    // it escape would route a failed observation into the launch path.
     const inspectPtyOwnership = vi.fn<typeof inspectDaemonPtyOwnership>(async () => {
       throw new Error('process table read exploded')
     })
 
-    await expect(resolve({ listSessions: ipcAnswers(null), inspectPtyOwnership })).rejects.toThrow(
-      'process table read exploded'
+    await expect(resolve({ listSessions: ipcAnswers(null), inspectPtyOwnership })).resolves.toEqual(
+      {
+        state: 'unknown',
+        liveSessions: null
+      }
     )
   })
 
-  it('propagates a failing listSessions dep, which the real one never does', async () => {
+  it('degrades a failing listSessions dep to unknown', async () => {
     // countLiveSessionsOverIpc catches internally and returns null; an injected dep is
-    // not held to that, and the module adds no guard of its own.
+    // not held to that, so the module guards it.
     await expect(
       resolve({
         listSessions: async () => {
@@ -132,6 +134,6 @@ describe('resolveDaemonOccupancy when an injected dep throws', () => {
         },
         inspectPtyOwnership: ownershipIs('owns-live-ptys')
       })
-    ).rejects.toThrow('socket vanished')
+    ).resolves.toEqual({ state: 'unknown', liveSessions: null })
   })
 })

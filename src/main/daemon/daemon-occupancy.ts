@@ -53,17 +53,23 @@ export async function resolveDaemonOccupancy(args: {
   deps?: DaemonOccupancyDeps
 }): Promise<DaemonOccupancy> {
   const { socketPath, tokenPath, recordedPid, deps = {} } = args
-  const counted = await (deps.listSessions ?? countLiveSessionsOverIpc)(socketPath, tokenPath)
-  if (counted !== null) {
-    return counted > 0
-      ? { state: 'occupied', liveSessions: counted }
-      : { state: 'empty', liveSessions: 0 }
+  const unknown: DaemonOccupancy = { state: 'unknown', liveSessions: null }
+  // Why catch rather than let it propagate: 'unknown' is this module's residual, and a
+  // question that could not be asked is the residual's whole purpose. An escaping throw
+  // would route a failed observation into the launch path instead.
+  try {
+    const counted = await (deps.listSessions ?? countLiveSessionsOverIpc)(socketPath, tokenPath)
+    if (counted !== null) {
+      return counted > 0
+        ? { state: 'occupied', liveSessions: counted }
+        : { state: 'empty', liveSessions: 0 }
+    }
+    if (recordedPid === null) {
+      return unknown
+    }
+    const ownership = await (deps.inspectPtyOwnership ?? inspectDaemonPtyOwnership)(recordedPid)
+    return ownership === 'owns-live-ptys' ? { state: 'occupied', liveSessions: null } : unknown
+  } catch {
+    return unknown
   }
-  if (recordedPid === null) {
-    return { state: 'unknown', liveSessions: null }
-  }
-  const ownership = await (deps.inspectPtyOwnership ?? inspectDaemonPtyOwnership)(recordedPid)
-  return ownership === 'owns-live-ptys'
-    ? { state: 'occupied', liveSessions: null }
-    : { state: 'unknown', liveSessions: null }
 }
