@@ -74,6 +74,7 @@ const BrowserOverlaySlot = memo(function BrowserOverlaySlot({
   const { measuredRect, useCssAnchors } = useOverlaySlotGeometry({
     overlayRef,
     groupId,
+    worktreeId: browserTab.worktreeId,
     cssAnchorsSupported: shouldUseCssAnchorPositioning(),
     isVisible: isPaintable
   })

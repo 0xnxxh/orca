@@ -40,6 +40,7 @@ const SimulatorOverlaySlot = memo(function SimulatorOverlaySlot({
   const { measuredRect, useCssAnchors } = useOverlaySlotGeometry({
     overlayRef,
     groupId,
+    worktreeId: tab.worktreeId,
     cssAnchorsSupported: shouldUseCssAnchorPositioning(),
     isVisible: isActive
   })

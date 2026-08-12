@@ -63,6 +63,7 @@ export const TerminalOverlaySlot = memo(function TerminalOverlaySlot({
   const { measuredRect, forceMeasured, useCssAnchors } = useOverlaySlotGeometry({
     overlayRef,
     groupId,
+    worktreeId,
     cssAnchorsSupported: shouldUseCssAnchorPositioning(),
     isVisible
   })

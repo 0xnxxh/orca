@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from 'react'
+import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import {
   findTabGroupBodyElement,
   measureOverlaySlotRect,
@@ -32,6 +32,7 @@ function stabilizeMeasuredRect(
 export function useOverlaySlotGeometry(args: {
   overlayRef: RefObject<HTMLElement | null>
   groupId: string | undefined
+  worktreeId?: string
   /** When false (e.g. web client), always use measured geometry. */
   cssAnchorsSupported: boolean
   isVisible: boolean
@@ -42,45 +43,55 @@ export function useOverlaySlotGeometry(args: {
 } {
   const [measuredRect, setMeasuredRect] = useState<OverlaySlotRect | null>(null)
   const [forceMeasured, setForceMeasured] = useState(false)
+  const forceMeasuredRef = useRef(false)
+  forceMeasuredRef.current = forceMeasured
 
-  useLayoutEffect(() => {
-    setForceMeasured(false)
-  }, [args.groupId])
-
+  // Why: single layout effect owns group transitions + RO so forceMeasured
+  // reset and re-observe cannot race across two effects in the same commit.
   useLayoutEffect(() => {
     if (!args.groupId) {
       return
     }
 
+    forceMeasuredRef.current = false
+    setForceMeasured(false)
+
     const update = (): void => {
       const overlay = args.overlayRef.current
       const parent = overlay?.parentElement
-      const body = findTabGroupBodyElement(args.groupId!)
+      const body = findTabGroupBodyElement(args.groupId!, args.worktreeId)
       if (!parent || !body) {
-        setMeasuredRect(null)
+        // Why: mid-reparent body absence is transient; keep last good measured
+        // box so we do not expand to width 100% over tab chrome.
         return
       }
       const next = measureOverlaySlotRect(parent, body)
       setMeasuredRect((prev) => stabilizeMeasuredRect(prev, next))
 
-      if (!args.cssAnchorsSupported || forceMeasured) {
+      if (!args.cssAnchorsSupported) {
         return
       }
       const decision = shouldPreferMeasuredOverlayGeometry({
         overlay: overlay ?? null,
         groupId: args.groupId,
-        forceMeasured: false
+        worktreeId: args.worktreeId,
+        forceMeasured: forceMeasuredRef.current,
+        mayLatchDesync: args.isVisible
       })
-      if (decision.preferMeasured) {
+      if (decision.preferMeasured && !forceMeasuredRef.current) {
+        forceMeasuredRef.current = true
         setForceMeasured(true)
-        if (decision.measured) {
-          setMeasuredRect((prev) => stabilizeMeasuredRect(prev, decision.measured!))
-        }
+      }
+      if (decision.measured) {
+        setMeasuredRect((prev) => stabilizeMeasuredRect(prev, decision.measured!))
       }
     }
 
     update()
-    const body = findTabGroupBodyElement(args.groupId)
+    // Why: rAF catches the frame after a pane-column snap reflow when RO may
+    // not fire (body size unchanged but anchor resolution changed).
+    const rafId = requestAnimationFrame(update)
+    const body = findTabGroupBodyElement(args.groupId, args.worktreeId)
     const parent = args.overlayRef.current?.parentElement
     const resizeObserver = new ResizeObserver(update)
     if (body) {
@@ -91,6 +102,7 @@ export function useOverlaySlotGeometry(args: {
     }
     window.addEventListener('resize', update)
     return () => {
+      cancelAnimationFrame(rafId)
       resizeObserver.disconnect()
       window.removeEventListener('resize', update)
     }
@@ -99,7 +111,7 @@ export function useOverlaySlotGeometry(args: {
     args.groupId,
     args.isVisible,
     args.overlayRef,
-    forceMeasured
+    args.worktreeId
   ])
 
   return {

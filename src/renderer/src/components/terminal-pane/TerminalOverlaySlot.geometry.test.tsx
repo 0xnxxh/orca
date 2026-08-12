@@ -109,6 +109,7 @@ beforeEach(() => {
 
   bodyEl = document.createElement('div')
   bodyEl.setAttribute('data-tab-group-body-id', GROUP_ID)
+  bodyEl.setAttribute('data-worktree-id', 'wt-1')
   bodyRect = createRect({ top: 36, left: 500, width: 500, height: 764 })
   bodyEl.getBoundingClientRect = () => bodyRect
   document.body.appendChild(bodyEl)
@@ -141,5 +142,42 @@ describe('TerminalOverlaySlot geometry after pane-column snap', () => {
     expect(overlay.style.left).toBe('500px')
     expect(overlay.style.width).toBe('500px')
     expect(overlay.style.height).toBe('764px')
+  })
+
+  it('does not permanently latch measured geometry while the slot is hidden', () => {
+    root = createRoot(container)
+    act(() => {
+      root.render(
+        <TerminalOverlaySlot
+          terminalTabId={TAB_ID}
+          terminalGeneration={0}
+          worktreeId="wt-1"
+          worktreePath="wt-1"
+          startupCwd={undefined}
+          groupId={GROUP_ID}
+          isWorktreeActive
+          isVisible={false}
+          isActive={false}
+          activityTerminalPortal={null}
+          onFocusOwningGroup={vi.fn()}
+          consumeSuppressedPtyExit={() => false}
+          leaveWorktreeIfEmpty={vi.fn()}
+        />
+      )
+    })
+    const overlay = container.querySelector<HTMLElement>('[data-terminal-overlay-tab-id]')
+    expect(overlay).not.toBeNull()
+    if (!overlay) {
+      throw new Error('overlay not mounted')
+    }
+    overlay.getBoundingClientRect = () => createRect({ width: 0, height: 0 })
+
+    act(() => {
+      resizeCallback?.()
+    })
+
+    // Why: hidden slots stay on the CSS-anchor path so a later reveal can still
+    // detect a real post-snap desync instead of inheriting a false latch.
+    expect(overlay.dataset.overlayGeometry).toBe('anchor')
   })
 })
