@@ -53,15 +53,16 @@ that larger package-manager surface.
 
 ## Current execution status
 
-The Orca implementation is on `skills-share` at `efb54221c8`; no Orca pull request exists. Cloud
+The Orca implementation is on `skills-share` at `38012f06c1`; no Orca pull request exists. Cloud
 bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`;
-the bearer/all-at-once runbook follow-up `#322` merged as `03c7d41a6d`.
+the bundle desktop smoke update merged through `#329` as `eddb144afe`, and generation-aware GCS
+recovery merged through `#330` as `8045c85dad`.
 The authenticated OIDC smoke landed in `#313`; the narrow Auth release-metadata convergence
 follow-up landed in `#314`; the finalization and lifecycle fixes landed in `#317`. The final
 anonymous bearer-link candidate and canonical smoke now pass in staging. Production remains
-untouched. Local, Windows, WSL, paired-runtime, and Docker-backed SSH validation are substantially
-complete; the implementation checklist records the exact evidence and remaining physical-host and
-failure-recovery gates.
+untouched. Local, Windows, WSL, paired-runtime, Docker-backed SSH, browser-free staging desktop,
+and published-object recovery validation are substantially complete; the implementation checklist
+records the exact evidence and remaining physical-host, load, and lifecycle gates.
 
 The local redesign now has an independently implemented Agent Plugins 1.0.0 skills-only bundle
 manifest, deterministic one-or-many archive creation, bounded bundle extraction, additive bundle
@@ -120,9 +121,14 @@ smoke covered owner upload/finalize/share creation/inventory/revocation and anon
 local/remote download grants, version selection, expiry, uniform unavailable responses, package
 deletion, and cleanup. Requests with no Authorization header and an invalid header returned the
 same non-cached `404`; the serving revision produced zero errors, and Cloud Logging retained zero
-per-link platform request logs. Guarded sleep run `31565009141` restored SQL to `NEVER`/`STOPPED`
-and all Relay MIG targets to zero. Remaining staging gates are end-user install journeys, load,
-quarantine lifecycle deletion, and soft-delete recovery.
+per-link platform request logs. Cloud PR `#329` and desktop run `31569902499` subsequently passed
+the complete browser-free publish/install/conflict/update/rollback/revoke/remove/delete journey.
+Cloud PR `#330` merged as `8045c85dad`; deploy `31579844413` promoted revision
+`orca-cloud-api-staging-00057-kat`, and recovery smoke `31580071168` proved generation-aware GCS
+soft-delete restoration, transactional reference repointing, bearer download, and cleanup.
+Guarded sleep `31580339694` restored SQL to `NEVER`/`STOPPED` and all Relay MIG targets to zero.
+Remaining staging gates are remote physical-host journeys, bounded finalization load, and the
+time-gated quarantine lifecycle deletion.
 
 ## Research baseline
 

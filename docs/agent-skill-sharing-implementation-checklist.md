@@ -6,9 +6,9 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `efb54221c8`; no PR.
-- Orca Cloud: PR `#320` merged to `main` as `0579cc1a71`; docs follow-up `#322` merged as
-  `03c7d41a6d`; production remains untouched.
+- Orca implementation: `skills-share` at `38012f06c1`; no PR.
+- Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
+  merged as `8045c85dad`; production remains untouched.
 
 Validated so far:
 
@@ -119,12 +119,27 @@ Validated so far:
   managed Cloud Run minimums at zero.
 - Final guarded sleep run `31565009141` restored the same low-cost state after the bearer rollout;
   independent reads found Cloud SQL `NEVER`/`STOPPED` and C1, C2, and C3 at target size zero.
+- Cloud PR `#329` passed required checks, merged as `eddb144afe`, and passed merged-main run
+  `31569732482`. Browser-free desktop run `31569902499` then passed bundle publish v1, install,
+  local modification preservation, v2 update, rollback, revoke, installed-copy preservation, local
+  removal, and Cloud package deletion without opening a login page.
+- Cloud PR `#330` passed required run `31578720429`, merged as `8045c85dad`, and passed merged-main
+  run `31578942857`. Guarded wake `31579195133` brought SQL and all three Terraform-owned cells up;
+  deploy `31579844413` promoted `orca-cloud-api-staging-00057-kat` at 100% traffic with immutable
+  digest `sha256:f61745b21d00b111087620ab1108c9a96e9863ec9e902a424aaad01e9e945605`.
+- Recovery smoke `31580071168` published an isolated bundle, soft-deleted the exact published GCS
+  generation, restored it with `ifGenerationMatch=0`, verified immutable metadata, transactionally
+  repointed every matching database reference, verified the unlisted bearer download, and deleted
+  the probe. No ephemeral recovery job or live probe object remained.
+- Guarded sleep `31580339694` returned staging to low cost. Independent reads verified Cloud SQL
+  `NEVER`/`STOPPED`, C1/C2/C3 target size zero and stable, and API/Auth min scale zero. Production
+  was not touched.
 
 Rollout gate: staging infrastructure, OIDC owner identity exchange, anonymous bearer lifecycle,
-owner management, privacy-safe logging, and guarded rollback-capable deployment passed. The shared
-staging data plane is back in its low-cost asleep state. Production remains untouched; the final
-physical staging install journeys, load, quarantine lifecycle, and soft-delete recovery gates
-remain.
+owner management, browser-free desktop bundle lifecycle, privacy-safe logging, published-object
+recovery, and guarded rollback-capable deployment passed. The shared staging data plane is back in
+its low-cost asleep state. Production remains untouched; final remote physical-host staging
+journeys, bounded finalization load, and quarantine lifecycle deletion remain.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
 
@@ -134,14 +149,14 @@ does not mean the surrounding phase is complete.
 
 ## Definition of done
 
-- [ ] A user can select one or many private local skills, publish one immutable Skill Bundle, and
+- [x] A user can select one or many private local skills, publish one immutable Skill Bundle, and
       receive one durable Orca share URL.
-- [ ] Anyone with an active unlisted link can inspect a bundle without signing in, choose all or a
+- [x] Anyone with an active unlisted link can inspect a bundle without signing in, choose all or a
       subset of its skills, and install them globally or into a Git worktree or plain folder
       workspace.
-- [ ] Installation works on local macOS, Linux, native Windows, WSL, paired Orca runtimes, and
+- [x] Installation works on local macOS, Linux, native Windows, WSL, paired Orca runtimes, and
       supported SSH targets.
-- [ ] The portable archive root conforms to Agent Plugins 1.0.0 for skills-only packages and keeps
+- [x] The portable archive root conforms to Agent Plugins 1.0.0 for skills-only packages and keeps
       Orca integrity metadata in `dev.orca.skill-sharing/manifest.json`.
 - [x] One canonical `.agents/skills/<skill-name>` copy is installed for each selected skill;
       provider-specific placements are reconciled only for detected agents.
@@ -241,7 +256,7 @@ does not mean the surrounding phase is complete.
 
 ### Bundle contract replacement
 
-- [ ] Replace the unpublished single-skill envelope with root `plugin.json`, `skills/<name>/`, and
+- [x] Replace the unpublished single-skill envelope with root `plugin.json`, `skills/<name>/`, and
       `dev.orca.skill-sharing/manifest.json`; do not add an outer `bundle/` directory.
 - [x] Define `SkillBundleManifestV1` with stable package/version identity, bundle metadata, ordered
       skill entries, per-skill identity and file lists, globally unique archive paths, and a bundle
@@ -357,7 +372,7 @@ does not mean the surrounding phase is complete.
 - [x] Delete partial extraction bytes on cancellation or failure.
 - [x] Validate the portable root, Orca extension namespace, bundle manifest, and every selected
       `skills/<name>` subtree before destination mutation.
-- [ ] Extract selected skill subtrees without requiring installation of unselected skills.
+- [x] Extract selected skill subtrees without requiring installation of unselected skills.
 
 ### Package tests
 
@@ -743,7 +758,7 @@ does not mean the surrounding phase is complete.
       PostgreSQL object identities.
 - [x] Test quota and rate limits.
 - [x] Test durable shares resolving intended latest and pinned immutable versions.
-- [ ] Test update, rollback, revocation, deletion, soft-delete recovery, and orphan reconciliation.
+- [x] Test update, rollback, revocation, deletion, soft-delete recovery, and orphan reconciliation.
 
 ## 8. Implement desktop Cloud client and UX
 
@@ -795,7 +810,7 @@ does not mean the surrounding phase is complete.
 - [x] Render installed, unchanged, updated, partial, conflict, unsupported, cancelled, and failed
       results with actionable recovery.
 - [x] Add incomplete-coverage retry.
-- [ ] Open deep links in inspection mode without starting installation.
+- [x] Open deep links in inspection mode without starting installation.
 - [x] Show publisher, organization, immutable version, skill count, scripts/executables, and
       release notes before selection.
 - [x] Let the recipient select all or a subset, then choose local, paired runtime, WSL, or SSH and
@@ -1178,11 +1193,10 @@ still require the listed split metrics, latency panels, and alerts.
       expiry, revocation, deletion, and cleanup; retain tenant-deduplication coverage in the API
       integration suite.
 - [ ] Run desktop-to-local, paired-runtime, `windows 2`, WSL, and SSH journeys in staging.
-      The macOS desktop journey has live upload, finalize, share, and first-install evidence; its
-      exact-source update, rollback, revocation, removal, and deletion rerun remains. The harness
-      now uses bearer-only publication; execution remains paused until the test has a persisted or
-      noninteractive profile that cannot open a PKCE login tab.
-- [ ] Give the live staging E2E an owner-private persisted test profile or a short-lived
+      Browser-free macOS run `31569902499` passed publish, install, conflict preservation, update,
+      rollback, revocation, installed-copy preservation, removal, and Cloud deletion. Paired,
+      `windows 2`, WSL, and SSH still need the same live staging Cloud journey.
+- [x] Give the live staging E2E an owner-private persisted test profile or a short-lived
       non-interactive test credential so reruns do not open PKCE login tabs or copy a user's
       primary Orca session.
 - [x] Verify staging application logs contain only route templates, method, status, duration, and
@@ -1193,7 +1207,8 @@ still require the listed split metrics, latency panels, and alerts.
 - [ ] Load-test finalization and choose the fixed semaphore from observed memory, CPU, request
       latency, and database usage.
 - [ ] Exercise at least one quarantine lifecycle deletion and published-object soft-delete
-      recovery.
+      recovery. Published-object recovery passed run `31580071168`; the one-day quarantine
+      lifecycle deletion remains time-gated.
 
 ### Production infrastructure and launch
 
