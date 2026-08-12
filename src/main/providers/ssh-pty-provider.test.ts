@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { formatPtyExitedError } from '../../shared/ssh-pty-failure-tokens'
 import { SshPtyProvider } from './ssh-pty-provider'
 import { POWERLEVEL10K_WIZARD_DISABLE_ENV } from '../pty/powerlevel10k-wizard-env'
 import { PTY_STARTUP_INGRESS_VERSION } from '../../shared/pty-startup-ingress'
@@ -660,8 +661,14 @@ describe('SshPtyProvider', () => {
       })
     })
 
-    it('does not fresh-spawn over an expired reattach session', async () => {
-      mux.request.mockRejectedValueOnce(new Error('PTY "pty-old" not found'))
+    it('does not fresh-spawn over a reattach whose shell the relay saw exit', async () => {
+      // INVERTED to drive the exit the relay OBSERVED. A bare not-found no longer becomes expiry —
+      // it proves nothing when the answering relay may be a replacement — so the observed exit is
+      // now what carries this through to expiry. The property under test is unchanged: a failed
+      // reattach throws instead of quietly spawning a second shell over the pane.
+      mux.request.mockRejectedValueOnce(
+        new Error(formatPtyExitedError('pty-old', 0, 'inc-host-old'))
+      )
 
       await expect(provider.spawn({ cols: 80, rows: 24, sessionId: 'pty-old' })).rejects.toThrow(
         'SSH_SESSION_EXPIRED: pty-old'
@@ -677,6 +684,18 @@ describe('SshPtyProvider', () => {
           suppressReplayNotification: true
         },
         sourceActivationRequestOptions
+      )
+      expect(mux.request).toHaveBeenCalledTimes(1)
+    })
+
+    // The sibling case, and the one the change is for: an id the relay simply does not know may be
+    // a shell still running under a relay this one replaced. It must still refuse to fresh-spawn,
+    // and must NOT be dressed up as expiry, which is what authorized the replacement.
+    it('does not fresh-spawn, nor claim expiry, when the relay merely has no such PTY', async () => {
+      mux.request.mockRejectedValueOnce(new Error('PTY "pty-old" not found'))
+
+      await expect(provider.spawn({ cols: 80, rows: 24, sessionId: 'pty-old' })).rejects.toThrow(
+        'PTY "pty-old" not found'
       )
       expect(mux.request).toHaveBeenCalledTimes(1)
     })

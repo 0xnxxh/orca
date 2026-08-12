@@ -7,8 +7,8 @@ import {
 import {
   SSH_PTY_IDENTITY_MISMATCH_ERROR,
   SSH_SESSION_EXPIRED_ERROR,
-  isSshPtyIdentityMismatchError,
-  isSshPtyNotFoundError
+  isSshPtyExitedError,
+  isSshPtyIdentityMismatchError
 } from './ssh-pty-errors'
 import { toAppSshPtyId, toRelaySshPtyId } from './ssh-pty-id'
 import type { PtySpawnOptions, PtySpawnResult } from './types'
@@ -236,9 +236,17 @@ export async function reattachSshPtySession(args: {
     if (isSshPtyIdentityMismatchError(error)) {
       throw new Error(`${SSH_PTY_IDENTITY_MISMATCH_ERROR}: ${relaySessionId}`)
     }
-    if (isSshPtyNotFoundError(error)) {
+    // The relay WATCHED this shell exit, which is the only answer that proves it is gone, so this
+    // is the one route that may authorize a replacement.
+    if (isSshPtyExitedError(error)) {
       throw new Error(`${SSH_SESSION_EXPIRED_ERROR}: ${relaySessionId}`)
     }
+    // A bare not-found deliberately does NOT become expiry any more. It means the relay we asked
+    // cannot hand the id back, which is proof of an exit only if that relay is the one that minted
+    // it — and a replaced relay answers exactly this for shells still running under its
+    // predecessor. Treating it as death cleared ownership and resumed the agent a second time onto
+    // a live shell. Unproven now falls through to the caller, which shows the pane as
+    // disconnected and lets the user decide.
     throw error
   }
 }

@@ -17,7 +17,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { reattachSshPtySession } from './ssh-pty-session-reattach'
 import {
   SSH_SESSION_EXPIRED_ERROR,
-  SSH_PTY_IDENTITY_MISMATCH_ERROR
+  SSH_PTY_IDENTITY_MISMATCH_ERROR,
+  formatPtyExitedError
 } from '../../shared/ssh-pty-failure-tokens'
 
 /** The renderer converts a failure into `sessionExpired: true` on these tokens
@@ -81,15 +82,27 @@ describe('an identity mismatch is not a death', () => {
   })
 })
 
-describe('a genuine absence is still a death', () => {
+describe('only an exit the relay watched is a death', () => {
   // Clause-selectivity: a fix that silences real expiry would strand panes on a
   // shell that truly went away, so the contrast has to hold.
-  it('still publishes expiry when the relay simply has no such PTY', async () => {
-    const error = await reattachError(`PTY "${RELAY_PTY_ID}" not found`)
+  it('publishes expiry when the relay reports the exit it observed', async () => {
+    const error = await reattachError(formatPtyExitedError(RELAY_PTY_ID, 0, 'inc-host-7'))
 
     expect(error.message).toContain(SSH_SESSION_EXPIRED_ERROR)
     expect(error.message).not.toContain(SSH_PTY_IDENTITY_MISMATCH_ERROR)
     expect(transportWouldReportSessionExpired(error.message)).toBe(true)
+  })
+
+  // INVERTED. This used to require a bare absence to publish expiry. That is the defect: the relay
+  // we asked cannot hand the id back, which proves an exit ONLY if it is the relay that minted it.
+  // A replaced relay answers exactly this for shells still running under its predecessor, so
+  // expiry there cleared ownership and resumed the agent a second time onto a live shell. The
+  // death that is real is still detected — by the clause above, from an exit the relay watched.
+  it('does not publish expiry when the relay merely has no such PTY', async () => {
+    const error = await reattachError(`PTY "${RELAY_PTY_ID}" not found`)
+
+    expect(error.message).not.toContain(SSH_SESSION_EXPIRED_ERROR)
+    expect(transportWouldReportSessionExpired(error.message)).toBe(false)
   })
 
   it('leaves an unrelated failure untouched rather than guessing', async () => {
@@ -107,7 +120,8 @@ describe('a genuine absence is still a death', () => {
 //
 // Nothing is lost: the check existed to catch a relay restart recycling pty-N
 // for a new shell, and in exactly that case the pane and tab both still match,
-// so it accepted the wrong shell anyway.
+// so it accepted the wrong shell anyway. What IS sent is the shell's own
+// incarnation, which catches that case and follows the pane between tabs.
 describe('reattach does not ask the relay to police pane identity', () => {
   async function attachParams(
     extraOptions: Record<string, unknown> = {}

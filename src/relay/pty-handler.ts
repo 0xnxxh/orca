@@ -26,6 +26,7 @@ import {
   normalizeRuntimePathForComparison
 } from '../shared/cross-platform-path'
 import { splitWorktreeId } from '../shared/worktree-id'
+import { formatPtyExitedError } from '../shared/ssh-pty-failure-tokens'
 import { PhysicalExitTracker } from '../shared/physical-exit-tracker'
 import {
   createShellReadyScanState,
@@ -166,6 +167,12 @@ type RelayAgentSessionCreateResult = {
   agentSessionEnsure?: unknown
   sourceActivation?: PtySourceReceivingActivation
 }
+
+/** Enough to cover every pane a host could plausibly have lost since the client last looked. */
+const MAX_REMEMBERED_PTY_EXITS = 256
+
+/** No exit status to report: the relay found the pid gone rather than watching it go. */
+const PTY_EXIT_CODE_OBSERVED_GONE = -1
 
 const AGENT_SESSION_CREATE_OPERATION_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/
 const AGENT_SESSION_CREATE_OPERATION_RETENTION_MS = 24 * 60 * 60 * 1000
@@ -360,6 +367,14 @@ export class PtyHandler {
   private outputFlushTimer: ReturnType<typeof setTimeout> | null = null
   private pendingOutputByPty = new Map<string, PendingPtyOutput[]>()
   private pendingExitByPty = new Map<string, { id: string; code: number; incarnationId: string }>()
+  /**
+   * Shells this process WATCHED exit, kept after the exit is published. Attach can then answer
+   * "it exited" instead of "not found", and only that first-hand answer is proof: a relay that
+   * merely never knew the id may be a replacement whose predecessor's shells are still running.
+   * Bounded and oldest-evicted — losing one costs a respawn the user has to ask for, never a wrong
+   * one. A crash loses them all, which correctly reads as no knowledge.
+   */
+  private exitedPtys = new Map<string, { code: number; incarnationId: string }>()
   private pausedOutputPtys = new Set<string>()
   private consumerPausedOutputPtys = new Set<string>()
   private removeLegacyCapacityListener: (() => void) | null = null
@@ -728,6 +743,7 @@ export class PtyHandler {
         code: exitCode,
         incarnationId: managed.incarnationId
       })
+      this.rememberPtyExit(managed.id, exitCode, managed.incarnationId)
       this.publishPendingExit(managed.id)
       this.notifyExitListener(managed)
       this.agentSessionOwners.release(managed.id)
@@ -736,6 +752,19 @@ export class PtyHandler {
       // Why: release the ptmx fd on natural exit, else the master fd leaks until GC (docs/fix-pty-fd-leak.md).
       disposeManagedPty(managed)
     })
+  }
+
+  /** Oldest-evicted: a Map iterates in insertion order, so the first key is the oldest. */
+  private rememberPtyExit(id: string, code: number, incarnationId: string): void {
+    this.exitedPtys.delete(id)
+    this.exitedPtys.set(id, { code, incarnationId })
+    while (this.exitedPtys.size > MAX_REMEMBERED_PTY_EXITS) {
+      const oldest = this.exitedPtys.keys().next()
+      if (oldest.done) {
+        break
+      }
+      this.exitedPtys.delete(oldest.value)
+    }
   }
 
   private releaseRelayIngress(managed: ManagedPty): void {
@@ -1588,9 +1617,21 @@ export class PtyHandler {
     sourceActivation?: PtySourceReceivingActivation
   }> {
     const id = params.id as string
+    const expectedIncarnationId =
+      typeof params.expectedIncarnationId === 'string' ? params.expectedIncarnationId : undefined
     const managed = this.ptys.get(id)
     // Why: after dispose, pty.kill is a POSIX no-op; treat disposed as not-found so failures aren't silent.
     if (!managed || managed.disposed) {
+      // `disposed` is a teardown flag, not an observed exit, so only a genuinely absent pty may be
+      // answered from what this process watched exit.
+      if (!managed) {
+        const exited = this.exitedPtys.get(id)
+        // A remembered exit for a DIFFERENT shell says nothing about the caller's: answer the
+        // ordinary unknown instead, or a recycled id would report somebody else's death as ours.
+        if (exited && (!expectedIncarnationId || expectedIncarnationId === exited.incarnationId)) {
+          throw new Error(formatPtyExitedError(id, exited.code, exited.incarnationId))
+        }
+      }
       throw new Error(`PTY "${id}" not found`)
     }
 
@@ -1604,7 +1645,10 @@ export class PtyHandler {
       disposeManagedPty(managed)
       this.removePty(id)
       this.clearPtyFlowState(id)
-      throw new Error(`PTY "${id}" not found`)
+      // First-hand proof: this process held the shell and its pid is gone. Saying "not found"
+      // here throws away the one observation that distinguishes a dead shell from an unknown one.
+      this.rememberPtyExit(id, PTY_EXIT_CODE_OBSERVED_GONE, managed.incarnationId)
+      throw new Error(formatPtyExitedError(id, PTY_EXIT_CODE_OBSERVED_GONE, managed.incarnationId))
     }
 
     // Why: a reset relay restarts its ids at pty-1, so an id alone can name somebody else's shell.
@@ -1613,8 +1657,6 @@ export class PtyHandler {
     // pane moved to another tab was refused — and refused as "not found", which read as death and
     // resumed the agent a second time. Absent expectation stays permissive: an older client sends
     // none, and refusing there would strand every pane it owns.
-    const expectedIncarnationId =
-      typeof params.expectedIncarnationId === 'string' ? params.expectedIncarnationId : undefined
     if (expectedIncarnationId && expectedIncarnationId !== managed.incarnationId) {
       // Deliberately NOT worded "not found": that phrasing is what the client maps to an expired
       // session, and expiry authorizes a respawn onto a shell this branch just proved is alive.

@@ -1103,7 +1103,7 @@ describe('PtyHandler', () => {
     }
   )
 
-  it('reports not-found and reaps a reattach whose backing shell is dead', async () => {
+  it('proves the exit and reaps a reattach whose backing shell is dead', async () => {
     // Why: a lingering managed entry whose child died without an onExit would
     // otherwise attach-succeed with an empty replay and strand the pane on a
     // black shell. A provably-dead pid must surface as not-found so the SSH
@@ -1125,9 +1125,12 @@ describe('PtyHandler', () => {
 
     const aliveSpy = vi.spyOn(ptyShellUtils, 'isProcessAlive').mockReturnValue(false)
     try {
+      // INVERTED: the reap is unchanged, but its answer is no longer the ordinary unknown. The
+      // relay held this shell and found its pid gone, which is first-hand proof of death — the
+      // one observation that separates a dead shell from one a replacement relay never knew.
       await expect(
         dispatcher.callRequest('pty.attach', { id: 'pty-1', suppressReplayNotification: true })
-      ).rejects.toThrow('PTY "pty-1" not found')
+      ).rejects.toThrow(/SSH_PTY_EXITED/)
     } finally {
       aliveSpy.mockRestore()
     }
@@ -1136,9 +1139,11 @@ describe('PtyHandler', () => {
     // is freed so a later attach also cleanly reports not-found.
     expect(exits).toEqual([{ id: 'pty-1', paneKey: 'tab-dead:0' }])
     expect(handler.activePtyCount).toBe(0)
+    // INVERTED: a LATER attach still answers, and now answers with what this process observed —
+    // the remembered exit outlives the reap, which is the whole point of remembering it.
     await expect(
       dispatcher.callRequest('pty.attach', { id: 'pty-1', suppressReplayNotification: true })
-    ).rejects.toThrow('PTY "pty-1" not found')
+    ).rejects.toThrow(/SSH_PTY_EXITED/)
   })
 
   it('settles concurrent immediate shutdown when attach proves the shell exited', async () => {
@@ -1157,8 +1162,9 @@ describe('PtyHandler', () => {
       return false
     })
     try {
+      // INVERTED with the reap above: proof of exit, not an unknown id.
       await expect(dispatcher.callRequest('pty.attach', { id: 'pty-1' })).rejects.toThrow(
-        'PTY "pty-1" not found'
+        /SSH_PTY_EXITED/
       )
       await expect(shutdown).resolves.toBeUndefined()
     } finally {
@@ -1167,6 +1173,37 @@ describe('PtyHandler', () => {
 
     expect(mockKill).toHaveBeenCalledWith('SIGKILL')
     expect(handler.activePtyCount).toBe(0)
+  })
+
+  // A relay that never knew an id may be a replacement whose predecessor's shells are still
+  // running, so "not found" proves nothing. A relay that WATCHED the shell exit knows first-hand.
+  // Keeping that observation is what lets the client tell a dead shell from an unknown one, and
+  // therefore what lets it respawn without risking a second agent on a live transcript.
+  it('answers a later attach with the exit it observed, not an unknown id', async () => {
+    const spawned = await spawnPty({})
+    let onExitCb: ((evt: { exitCode: number }) => void) | undefined
+    // The exit listener was captured at spawn by the shared mock; drive a real exit through it.
+    onExitCb = mockPtyInstance.onExit.mock.calls.at(-1)?.[0] as typeof onExitCb
+    expect(onExitCb).toBeDefined()
+    onExitCb!({ exitCode: 3 })
+
+    await expect(attachPty({ id: spawned.id })).rejects.toThrow(/SSH_PTY_EXITED/)
+    await expect(attachPty({ id: spawned.id })).rejects.toThrow(/code=3/)
+  })
+
+  // The dangerous shape: a replaced relay hands pty-1 to a new shell, that one exits, and the
+  // pane still bound to the ORIGINAL pty-1 asks about its own. Reporting the stranger's death as
+  // proof would authorize a respawn onto a shell that may still be running.
+  it('does not report a remembered exit for a shell the caller did not ask about', async () => {
+    const spawned = await spawnPty({})
+    const onExitCb = mockPtyInstance.onExit.mock.calls.at(-1)?.[0] as
+      | ((evt: { exitCode: number }) => void)
+      | undefined
+    onExitCb?.({ exitCode: 3 })
+
+    await expect(
+      attachPty({ id: spawned.id, expectedIncarnationId: 'a-different-shell' })
+    ).rejects.toThrow(expect.not.stringMatching(/SSH_PTY_EXITED/))
   })
 
   // INVERTED from the deleted `attachIdentityMismatches` suite. That guard compared the paneKey and
@@ -3509,8 +3546,9 @@ describe('PtyHandler', () => {
 
       const aliveSpy = vi.spyOn(ptyShellUtils, 'isProcessAlive').mockReturnValue(false)
       try {
+        // INVERTED with the reap above: proof of exit, not an unknown id.
         await expect(attachPty({ id: 'pty-1', suppressReplayNotification: true })).rejects.toThrow(
-          'PTY "pty-1" not found'
+          /SSH_PTY_EXITED/
         )
       } finally {
         aliveSpy.mockRestore()
