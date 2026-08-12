@@ -202,6 +202,10 @@ export async function reattachSshPtySession(args: {
         cols: args.options.cols,
         rows: args.options.rows,
         suppressReplayNotification: true,
+        // Declares that this client can act on a proven exit. Without it a host must keep answering
+        // in the older wording, because an older client reads anything else as an unknown failure
+        // and leaves the pane with no shell and no way back.
+        exitProofSupported: true,
         // The shell's own identity, so it survives a pane moving between tabs — unlike the pane
         // identity this replaced. Sent only when the host attested it: a locally synthesized
         // stand-in is not stable across reconnects and would refuse the pane its own shell. An

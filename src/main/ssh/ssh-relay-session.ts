@@ -11,7 +11,7 @@ import { SshPtyProvider } from '../providers/ssh-pty-provider'
 import type { SshPtyAttachResult } from '../providers/ssh-pty-session-reattach'
 import type { SshPtyDataCallback, SshPtyExitCallback } from '../providers/ssh-pty-provider-contract'
 import type { SshPtyRecoveryActivationLease } from '../providers/ssh-pty-notification-routing'
-import { isSshPtyNotFoundError } from '../providers/ssh-pty-errors'
+import { isSshPtyExitedError, isSshPtyNotFoundError } from '../providers/ssh-pty-errors'
 import { toAppSshPtyId, toRelaySshPtyId } from '../providers/ssh-pty-id'
 import { SshFilesystemProvider } from '../providers/ssh-filesystem-provider'
 import { isMethodNotFoundError } from './ssh-filesystem-stream-reader'
@@ -2601,7 +2601,15 @@ export class SshRelaySession {
         return await this.attachPtyWithDeadline(ptyProvider, ptyId, recoveryRequest)
       } catch (error) {
         lastError = error
-        if (!shouldContinue() || isSshPtyNotFoundError(error) || attempt === 1) {
+        // A proven exit is as final as an unknown id: retrying either only burns the wait before
+        // the same answer. Without this the liveness-probe reap, which now answers with proof
+        // rather than "not found", would no longer match and would cost a needless retry.
+        if (
+          !shouldContinue() ||
+          isSshPtyNotFoundError(error) ||
+          isSshPtyExitedError(error) ||
+          attempt === 1
+        ) {
           throw error
         }
         await this.waitForPtyReattachRetry()

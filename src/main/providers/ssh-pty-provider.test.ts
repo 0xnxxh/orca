@@ -585,7 +585,8 @@ describe('SshPtyProvider', () => {
           id: 'pty-old',
           cols: 80,
           rows: 24,
-          suppressReplayNotification: true
+          suppressReplayNotification: true,
+          exitProofSupported: true
         },
         sourceActivationRequestOptions
       )
@@ -631,7 +632,8 @@ describe('SshPtyProvider', () => {
         id: 'pty-old',
         cols: 80,
         rows: 24,
-        suppressReplayNotification: true
+        suppressReplayNotification: true,
+        exitProofSupported: true
       })
       expect(result).toEqual({
         id: 'ssh:conn-1@@pty-old',
@@ -657,7 +659,8 @@ describe('SshPtyProvider', () => {
         id: 'pty-old',
         cols: 80,
         rows: 24,
-        suppressReplayNotification: true
+        suppressReplayNotification: true,
+        exitProofSupported: true
       })
     })
 
@@ -681,7 +684,8 @@ describe('SshPtyProvider', () => {
           id: 'pty-old',
           cols: 80,
           rows: 24,
-          suppressReplayNotification: true
+          suppressReplayNotification: true,
+          exitProofSupported: true
         },
         sourceActivationRequestOptions
       )

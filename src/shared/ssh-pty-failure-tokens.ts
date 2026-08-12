@@ -26,11 +26,21 @@ export const SSH_PTY_EXITED_ERROR = 'SSH_PTY_EXITED'
 
 /** The carrier is the message: the relay's error transport drops structured payloads. */
 export function formatPtyExitedError(id: string, code: number, incarnationId: string): string {
-  return `${SSH_PTY_EXITED_ERROR}: ${id} code=${code} incarnation=${incarnationId}`
+  return `${SSH_PTY_EXITED_ERROR}: ${encodeURIComponent(id)} code=${code} incarnation=${encodeURIComponent(incarnationId)}`
 }
 
+/**
+ * Anchored on the WHOLE grammar, not the token. This answer authorizes replacing a shell, so a
+ * substring test would let any text that merely quotes the token — a log line, a wrapped error, a
+ * shell printing it — stand in for the relay's own observation. Ids and incarnations are
+ * percent-encoded at the source so neither can contain a space and forge the fields after it.
+ */
+const SSH_PTY_EXITED_MESSAGE = new RegExp(
+  `(?:^|[^A-Z_])${SSH_PTY_EXITED_ERROR}: [^\\s]+ code=-?\\d+ incarnation=[^\\s]+`
+)
+
 export function isSshPtyExitedMessage(message: string): boolean {
-  return message.includes(SSH_PTY_EXITED_ERROR)
+  return SSH_PTY_EXITED_MESSAGE.test(message)
 }
 
 export function isSshPtyIdentityMismatchMessage(message: string): boolean {

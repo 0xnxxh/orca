@@ -1619,6 +1619,11 @@ export class PtyHandler {
     const id = params.id as string
     const expectedIncarnationId =
       typeof params.expectedIncarnationId === 'string' ? params.expectedIncarnationId : undefined
+    // Why gated: what the host answers reaches clients that predate this reply, and one of those
+    // reads an unrecognized attach error as neither death nor recovery — it strands the pane. A
+    // client that understands the proof says so; everyone else keeps the wording they already act
+    // on. Nothing is lost by staying quiet, because an older client could not have used it.
+    const clientUnderstandsExitProof = params.exitProofSupported === true
     const managed = this.ptys.get(id)
     // Why: after dispose, pty.kill is a POSIX no-op; treat disposed as not-found so failures aren't silent.
     if (!managed || managed.disposed) {
@@ -1628,7 +1633,17 @@ export class PtyHandler {
         const exited = this.exitedPtys.get(id)
         // A remembered exit for a DIFFERENT shell says nothing about the caller's: answer the
         // ordinary unknown instead, or a recycled id would report somebody else's death as ours.
-        if (exited && (!expectedIncarnationId || expectedIncarnationId === exited.incarnationId)) {
+        // The expectation must be PRESENT and match. A caller that names no shell is not asking
+        // about this one, and answering it anyway is how a remembered exit becomes a claim about
+        // somebody else's shell: relay A is killed leaving pty-1 alive and orphaned, relay B mints
+        // its own pty-1 and that one exits, and a pane with no recorded identity would be told its
+        // shell is gone — then replace a process that is still running. A pane with nothing to
+        // compare gets the disconnected card instead, which is the safe direction.
+        if (
+          clientUnderstandsExitProof &&
+          exited &&
+          expectedIncarnationId === exited.incarnationId
+        ) {
           throw new Error(formatPtyExitedError(id, exited.code, exited.incarnationId))
         }
       }
@@ -1648,7 +1663,11 @@ export class PtyHandler {
       // First-hand proof: this process held the shell and its pid is gone. Saying "not found"
       // here throws away the one observation that distinguishes a dead shell from an unknown one.
       this.rememberPtyExit(id, PTY_EXIT_CODE_OBSERVED_GONE, managed.incarnationId)
-      throw new Error(formatPtyExitedError(id, PTY_EXIT_CODE_OBSERVED_GONE, managed.incarnationId))
+      throw new Error(
+        clientUnderstandsExitProof
+          ? formatPtyExitedError(id, PTY_EXIT_CODE_OBSERVED_GONE, managed.incarnationId)
+          : `PTY "${id}" not found`
+      )
     }
 
     // Why: a reset relay restarts its ids at pty-1, so an id alone can name somebody else's shell.

@@ -84,6 +84,7 @@ import {
 import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery'
 import {
   SSH_SESSION_EXPIRED_ERROR,
+  isSshPtyExitedError,
   isSshPtyIdentityMismatchError,
   isSshPtyNotFoundError
 } from '../providers/ssh-pty-errors'
@@ -1100,7 +1101,11 @@ function normalizeNodePtySpawnError(err: unknown): Error {
 
 function isPtyAlreadyGoneError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err)
-  return isSshPtyNotFoundError(err) || /Session not found/i.test(message)
+  // A proven exit is the strongest form of "already gone"; it only reads differently because the
+  // relay now says what it observed instead of reporting an unknown id.
+  return (
+    isSshPtyNotFoundError(err) || isSshPtyExitedError(err) || /Session not found/i.test(message)
+  )
 }
 
 function delay(ms: number): Promise<void> {
