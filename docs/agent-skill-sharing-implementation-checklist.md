@@ -6,15 +6,16 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` (bearer-link changes follow baseline `6cff2aa507`; no PR).
-- Orca Cloud: isolated `feat/skill-bundles` branch (bearer-link changes follow baseline `d7d1026`).
-  Production remains untouched.
+- Orca implementation: `skills-share` at `5a05992e26`; no PR.
+- Orca Cloud: PR `#320` merged to `main` as `0579cc1a71`; production remains untouched.
 
 Validated so far:
 
 - Final bearer-link changes pass 143 Orca Cloud API tests with one opt-in skip; 58 focused Orca
   tests; four mixed-version wire tests; desktop/node/web typecheck; localization catalog,
   extraction, and coverage; changed-code quality; max-lines; and diff checks.
+- The final Cloud change passed PR run `31564069382` and merged-`main` run `31564235724`, including
+  the full monorepo build, lint, typecheck, tests, Terraform format, and Terraform validation.
 - Local Node and web typechecks, changed-code quality gates, 94 skill-domain files with 770 tests
   passed and 3 skipped, 134 Orca Cloud API tests with one opt-in integration skip, the full Cloud
   monorepo test/typecheck/lint/build gates, and isolated Terraform formatting and validation.
@@ -95,15 +96,32 @@ Validated so far:
   `31536141357`, merged as `4e91cf9`, and passed `main` run `31536329459`. The targeted Auth/API
   plan then reported zero intended changes. Known SQL and artifact-bucket drift was excluded and
   never applied.
+- Cloud PR `#320` passed both required checks and merged as `0579cc1a71`. Targeted Terraform added
+  only `google_logging_project_exclusion.skill_share_bearer_request_urls` in staging: one addition,
+  zero changes, and zero deletions. This prevents per-link Cloud Run request URLs from entering
+  log storage while retaining route-template application telemetry.
+- Guarded wake run `31564370807` prepared the reviewed staging topology. Deploy run `31564803943`
+  promoted `orca-cloud-api-staging-00051-yoq` at 100% traffic with immutable image digest
+  `sha256:511c0196511d2079bd9138092ad3cf065304b46a089b02d8df9318e0ae2e656a` and reported
+  `authenticatedSmoke: true` and `skillSmoke: true`.
+- Candidate and canonical smoke produced 60 privacy-safe route-template events covering owner
+  upload/finalize/share creation/inventory/revocation and anonymous pinned/latest preview,
+  local/remote download grants, version selection, expiry, uniform unavailable responses,
+  package deletion, and object cleanup. Anonymous requests with no Authorization header and an
+  invalid header both returned the same `404 skill_share_not_found` response with `no-store`.
+  The serving revision had zero error logs and Cloud Logging retained zero per-link platform
+  request logs.
 - Guarded sleep run `31546908228` stopped all three Relay cells after the physical staging work.
   Independent GCP reads verified Cloud SQL policy `NEVER`, every MIG target at zero, and both
   managed Cloud Run minimums at zero.
+- Final guarded sleep run `31565009141` restored the same low-cost state after the bearer rollout;
+  independent reads found Cloud SQL `NEVER`/`STOPPED` and C1, C2, and C3 at target size zero.
 
-Rollout gate: staging infrastructure and OIDC owner identity exchange passed. The earlier
-authenticated skill lifecycle smoke predates bearer-link semantics and is not acceptance evidence
-for anonymous recipient access. The shared staging data plane is back in its low-cost asleep state.
-Production remains untouched; the anonymous bearer lifecycle, physical staging install journeys,
-load, quarantine lifecycle, and soft-delete recovery gates remain.
+Rollout gate: staging infrastructure, OIDC owner identity exchange, anonymous bearer lifecycle,
+owner management, privacy-safe logging, and guarded rollback-capable deployment passed. The shared
+staging data plane is back in its low-cost asleep state. Production remains untouched; the final
+physical staging install journeys, load, quarantine lifecycle, and soft-delete recovery gates
+remain.
 
 Source plan: [Agent skill sharing and installation plan](./agent-skill-sharing-installation-plan.md).
 
@@ -1150,19 +1168,21 @@ still require the listed split metrics, latency panels, and alerts.
 
 - [x] Apply reviewed Terraform and migrations to staging.
 - [x] Deploy `orca-cloud-api` skill routes disabled by server-side flags.
-- [x] Enable all four staging controls and pass the GitHub OIDC-authenticated artifact and skill
-      lifecycle smoke, including authorization, immutable versions, local/remote grants, rollback,
-      expiry, revocation, deletion, and object cleanup.
-- [ ] Run upload/finalize/download tests for expiry, denial, oversize, corruption, deduplication,
-      revocation, deletion, and cleanup.
+- [x] Enable all four staging controls and pass the GitHub OIDC owner plus anonymous bearer-link
+      lifecycle smoke, including owner management, immutable versions, local/remote grants,
+      rollback selection, expiry, revocation, deletion, and object cleanup.
+- [x] Run staging upload/finalize/download smoke for anonymous denial, oversize, corruption,
+      expiry, revocation, deletion, and cleanup; retain tenant-deduplication coverage in the API
+      integration suite.
 - [ ] Run desktop-to-local, paired-runtime, `windows 2`, WSL, and SSH journeys in staging.
       The macOS desktop journey has live upload, finalize, share, and first-install evidence; its
       exact-source update, rollback, revocation, removal, and deletion rerun remains.
 - [ ] Give the live staging E2E an owner-private persisted test profile or a short-lived
       non-interactive test credential so reruns do not open PKCE login tabs or copy a user's
       primary Orca session.
-- [x] Verify staging skill request logs contain only route, method, status, duration, and standard
-      process/request metadata, with zero credential or private-content matches.
+- [x] Verify staging application logs contain only route templates, method, status, duration, and
+      standard process metadata, with zero credential or private-content matches. Exclude per-link
+      Cloud Run platform request logs through Terraform and verify zero are retained.
 - [ ] Verify logs, metrics, traces, diagnostics, and support bundles contain no grants or private
       package data.
 - [ ] Load-test finalization and choose the fixed semaphore from observed memory, CPU, request

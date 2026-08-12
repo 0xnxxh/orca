@@ -53,16 +53,14 @@ that larger package-manager surface.
 
 ## Current execution status
 
-The Orca implementation is on `skills-share`; bearer-link changes follow baseline `6cff2aa507` and
-no Orca pull request exists. Cloud bundle ingestion and bearer-link work are isolated on
-`feat/skill-bundles` after baseline `d7d1026`. The authenticated OIDC smoke landed in
-`stablyai/orca-cloud#313`; the narrow Auth release-metadata convergence
-follow-up landed in `#314`; the finalization and lifecycle fixes landed in `#317`. Staging
-infrastructure exists, but its earlier authenticated recipient smoke predates the anonymous
-bearer-link model and must be replaced before release. Production remains untouched. Local,
-Windows, WSL, paired-runtime, and
-Docker-backed SSH validation are substantially complete; the implementation checklist records the
-exact evidence and remaining physical-host and failure-recovery gates.
+The Orca implementation is on `skills-share` at `5a05992e26`; no Orca pull request exists. Cloud
+bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`.
+The authenticated OIDC smoke landed in `#313`; the narrow Auth release-metadata convergence
+follow-up landed in `#314`; the finalization and lifecycle fixes landed in `#317`. The final
+anonymous bearer-link candidate and canonical smoke now pass in staging. Production remains
+untouched. Local, Windows, WSL, paired-runtime, and Docker-backed SSH validation are substantially
+complete; the implementation checklist records the exact evidence and remaining physical-host and
+failure-recovery gates.
 
 The local redesign now has an independently implemented Agent Plugins 1.0.0 skills-only bundle
 manifest, deterministic one-or-many archive creation, bounded bundle extraction, additive bundle
@@ -75,12 +73,11 @@ bundle relay method with the same direct-download and staged-upload fallback; ol
 rejected before transfer. The original single-skill path remains active for legacy shares while
 bundle management migrates.
 
-Cloud bundle validation is pushed on isolated branch `feat/skill-bundles` at `d7d1026`. It accepts
-both envelopes during migration and stores the detailed bundle manifest with the immutable
-version. Local bearer-link changes make active share IDs the recipient credential, keep owner
-operations authenticated, retain legacy ACL rows only as migration storage, and prevent concrete
-share URLs from entering request logs. It is not merged or deployed until the final gates and
-anonymous staging smoke pass.
+Cloud bundle ingestion accepts both envelopes during migration and stores the detailed bundle
+manifest with the immutable version. Active share IDs are the recipient credential, owner
+operations remain authenticated, and legacy ACL rows remain only as migration storage. A
+Terraform-managed Cloud Logging exclusion prevents per-link Cloud Run request URLs from being
+stored while privacy-safe route-template telemetry remains available.
 
 The latest resilience pass adds bounded convergence after a lost final install response for both
 paired runtimes and SSH. A staged retry creates a new upload instead of reusing a consumed upload.
@@ -111,8 +108,20 @@ promoted `orca-cloud-api-staging-00042-hef` with `authenticatedSmoke: true` and 
 The ten-minute, non-refreshable smoke principals exercised artifact CRUD and skill upload,
 finalize, immutable versions, recipient/outsider authorization, local and remote grants, rollback,
 expiry, revocation, deletion, and signed-object cleanup. Structured skill logs exposed only
-privacy-safe request metadata and produced zero sensitive-value matches. Remaining staging gates
-are end-user install journeys, load, quarantine lifecycle deletion, and soft-delete recovery.
+privacy-safe request metadata and produced zero sensitive-value matches.
+
+Cloud PR `#320` passed PR run `31564069382`, merged-`main` run `31564235724`, and a targeted
+staging logging-exclusion plan of one addition, zero changes, and zero deletions. Guarded wake run
+`31564370807` prepared staging. Deploy run `31564803943` promoted
+`orca-cloud-api-staging-00051-yoq` at 100% traffic with immutable image digest
+`sha256:511c0196511d2079bd9138092ad3cf065304b46a089b02d8df9318e0ae2e656a`. Candidate and canonical
+smoke covered owner upload/finalize/share creation/inventory/revocation and anonymous preview,
+local/remote download grants, version selection, expiry, uniform unavailable responses, package
+deletion, and cleanup. Requests with no Authorization header and an invalid header returned the
+same non-cached `404`; the serving revision produced zero errors, and Cloud Logging retained zero
+per-link platform request logs. Guarded sleep run `31565009141` restored SQL to `NEVER`/`STOPPED`
+and all Relay MIG targets to zero. Remaining staging gates are end-user install journeys, load,
+quarantine lifecycle deletion, and soft-delete recovery.
 
 ## Research baseline
 
@@ -182,8 +191,8 @@ attribution. Revisit this decision if implementation work ever proposes copying 
   permissions.
 - Requiring a provider-native plugin installer; unsupported agents still receive loose skills.
 - End-to-end encryption from Orca Cloud operators in the initial trust model. Private means
-  access-controlled to authorized Orca users and organizations. Application-level package
-  encryption can be added later without changing package identity.
+  unlisted and accessible through an active bearer link, with authenticated owner management.
+  Application-level package encryption can be added later without changing package identity.
 
 ## Product experience
 
