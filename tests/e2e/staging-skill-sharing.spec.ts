@@ -156,13 +156,14 @@ async function publish(
     throw new Error('staging skill source was not discovered')
   }
   const preview = await page.evaluate(
-    ({ skillId, cwd, packageId }) =>
+    ({ skillId, bundleName, cwd, packageId }) =>
       window.api.skills.prepareShare({
-        skillId,
+        skillIds: [skillId],
+        bundleName,
         target: { cwd },
         ...(packageId ? { packageId } : {})
       }),
-    { skillId: skill.id, cwd, packageId }
+    { skillId: skill.id, bundleName: SKILL_NAME, cwd, packageId }
   )
   onPrepared?.(preview)
   const operation = await page.evaluate(
