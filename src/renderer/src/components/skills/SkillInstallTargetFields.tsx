@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -27,6 +27,7 @@ export function SkillInstallTargetFields(props: {
   requiredCapability?: string
 }): React.JSX.Element {
   const [wslDistros, setWslDistros] = useState<string[]>([])
+  const fieldId = useId()
 
   useEffect(() => {
     let active = true
@@ -57,7 +58,7 @@ export function SkillInstallTargetFields(props: {
     <>
       <section className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label>
+          <Label htmlFor={`${fieldId}-machine`}>
             {translate('auto.components.skills.SkillInstallTargetFields.b8a0b706ad', 'Machine')}
           </Label>
           <Select
@@ -68,7 +69,7 @@ export function SkillInstallTargetFields(props: {
               props.onExecutionTargetChange(null)
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger id={`${fieldId}-machine`} className="w-full min-w-0">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -120,14 +121,14 @@ export function SkillInstallTargetFields(props: {
           </Select>
         </div>
         <div className="space-y-2">
-          <Label>
+          <Label htmlFor={`${fieldId}-destination`}>
             {translate('auto.components.skills.SkillInstallTargetFields.63cc9e31fe', 'Destination')}
           </Label>
           <Select
             value={props.scope}
             onValueChange={(value) => props.onScopeChange(value as 'global' | 'workspace')}
           >
-            <SelectTrigger>
+            <SelectTrigger id={`${fieldId}-destination`} className="w-full min-w-0">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -150,7 +151,7 @@ export function SkillInstallTargetFields(props: {
 
       {props.scope === 'global' && wslDistros.length > 0 ? (
         <section className="space-y-2">
-          <Label>
+          <Label htmlFor={`${fieldId}-execution`}>
             {translate(
               'auto.components.skills.SkillInstallTargetFields.cb47652227',
               'Execution environment'
@@ -164,7 +165,7 @@ export function SkillInstallTargetFields(props: {
               )
             }
           >
-            <SelectTrigger>
+            <SelectTrigger id={`${fieldId}-execution`} className="w-full min-w-0">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -187,11 +188,11 @@ export function SkillInstallTargetFields(props: {
 
       {props.scope === 'workspace' ? (
         <section className="space-y-2">
-          <Label>
+          <Label htmlFor={`${fieldId}-workspace`}>
             {translate('auto.components.skills.SkillInstallTargetFields.0e5b43a9e3', 'Workspace')}
           </Label>
           <Select value={props.workspace} onValueChange={props.onWorkspaceChange}>
-            <SelectTrigger>
+            <SelectTrigger id={`${fieldId}-workspace`} className="w-full min-w-0">
               <SelectValue
                 placeholder={translate(
                   'auto.components.skills.SkillInstallTargetFields.5845cfe543',

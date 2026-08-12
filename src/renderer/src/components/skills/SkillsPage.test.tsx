@@ -127,6 +127,54 @@ afterEach(async () => {
 })
 
 describe('SkillsPage', () => {
+  it('uses platform-neutral Escape navigation without stealing editable input Escape', async () => {
+    const closeSkillsPage = vi.fn()
+    const discover = vi.fn().mockResolvedValue(discoveryResult(['alpha']))
+    useAppStore.setState({ closeSkillsPage })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: skillsApi(discover), runtimeEnvironments: { call: vi.fn() } }
+    })
+    await renderPage()
+    await flushMicrotasks()
+
+    const search = container?.querySelector('input[placeholder="Search skills"]')
+    if (!(search instanceof HTMLInputElement)) {
+      throw new Error('Missing skill search')
+    }
+    await act(async () => {
+      search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(closeSkillsPage).not.toHaveBeenCalled()
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(closeSkillsPage).toHaveBeenCalledOnce()
+  })
+
+  it('contains long cross-platform skill paths while preserving the full path', async () => {
+    const longPath = `C:\\Users\\orca\\${'nested-folder\\'.repeat(30)}SKILL.md`
+    const discover = vi.fn().mockResolvedValue({
+      skills: [skill('long-path', { skillFilePath: longPath })],
+      sources: [],
+      scannedAt: 1
+    } satisfies SkillDiscoveryResult)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: skillsApi(discover), runtimeEnvironments: { call: vi.fn() } }
+    })
+
+    await renderPage()
+    await flushMicrotasks()
+
+    const path = [...(container?.querySelectorAll('[title]') ?? [])].find(
+      (element) => element.getAttribute('title') === longPath
+    )
+    expect(path?.classList.contains('truncate')).toBe(true)
+    expect(path?.textContent).toBe(longPath)
+  })
+
   it('scans the connected remote runtime instead of the client disk', async () => {
     const discover = vi.fn().mockResolvedValue(discoveryResult(['local-only']))
     const call = vi.fn(

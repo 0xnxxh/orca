@@ -185,9 +185,10 @@ export default function SkillsPage(): React.JSX.Element {
       if (hasVisibleOverlay()) {
         return
       }
-      const target = event.target as HTMLElement | null
+      const target = event.target
       if (
-        target?.matches('input, textarea, select, [contenteditable="true"], [contenteditable=""]')
+        target instanceof HTMLElement &&
+        target.matches('input, textarea, select, [contenteditable="true"], [contenteditable=""]')
       ) {
         return
       }

@@ -113,6 +113,17 @@ afterEach(() => {
 })
 
 describe('SkillShareDialog', () => {
+  it('accepts multiline release notes up to the published limit', async () => {
+    setup([], false, [skill, secondSkill])
+    await screen.findByRole('heading', { name: 'Share skill bundle' })
+    const notes = screen.getByRole('textbox', { name: 'Release notes' }) as HTMLTextAreaElement
+    const value = `Release summary\n${'x'.repeat(9_984)}`
+
+    expect(notes.maxLength).toBe(10_000)
+    fireEvent.change(notes, { target: { value } })
+    expect(notes.value).toBe(value)
+  })
+
   it('publishes a new immutable version for one exact managed-install match', async () => {
     const { skills } = setup([managedInstall('global:local')])
 
@@ -172,6 +183,9 @@ describe('SkillShareDialog', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Publish skill' }))
     await screen.findByRole('button', { name: 'Cancel upload' })
+    expect(
+      screen.getByRole('progressbar', { name: 'Uploading…' }).getAttribute('aria-valuenow')
+    ).toBe('0')
     emitProgress({
       preparationId: preview.preparationId,
       phase: 'uploading',
@@ -179,6 +193,9 @@ describe('SkillShareDialog', () => {
       totalBytes: 96
     })
     await screen.findByText('50%')
+    expect(
+      screen.getByRole('progressbar', { name: 'Uploading…' }).getAttribute('aria-valuenow')
+    ).toBe('50')
     emitProgress({
       preparationId: preview.preparationId,
       phase: 'finalizing',
@@ -186,6 +203,9 @@ describe('SkillShareDialog', () => {
       totalBytes: 96
     })
     await screen.findByText('Verifying package…')
+    expect(
+      screen.getByRole('progressbar', { name: 'Verifying package…' }).getAttribute('aria-valuenow')
+    ).toBe('100')
     emitProgress({
       preparationId: preview.preparationId,
       phase: 'publishing',
@@ -193,6 +213,7 @@ describe('SkillShareDialog', () => {
       totalBytes: 96
     })
     await screen.findByText('Publishing link…')
+    expect(screen.getByRole('progressbar', { name: 'Publishing link…' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel upload' }))
     await waitFor(() => expect(skills.cancelShare).toHaveBeenCalledWith(preview.preparationId))
     rejectPublish(new Error('aborted'))

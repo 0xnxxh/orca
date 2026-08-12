@@ -4232,7 +4232,8 @@
           "69236de8d6": "Checking…",
           "27672470d9": "Opening the link does not install anything. Review the immutable version first.",
           "66cff7a804": "https://app.orca.dev/skills/share/…",
-          "93eb0fe8c7": "Orca skill link"
+          "93eb0fe8c7": "Orca skill link",
+          "releaseNotes": "Release notes:"
         },
         "SkillInstallTargetFields": {
           "8e6a972229": "No workspaces are known on this machine.",

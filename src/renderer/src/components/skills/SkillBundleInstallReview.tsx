@@ -46,9 +46,11 @@ export function SkillBundleInstallReview(props: {
     <div className="space-y-5">
       <section className="space-y-2">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold">{manifest.bundleName}</h3>
-            <p className="text-xs leading-5 text-muted-foreground">{manifest.description}</p>
+          <div className="min-w-0">
+            <h3 className="break-words text-sm font-semibold">{manifest.bundleName}</h3>
+            <p className="break-words text-xs leading-5 text-muted-foreground">
+              {manifest.description}
+            </p>
           </div>
           <Badge variant="outline">
             {translate(
@@ -131,7 +133,7 @@ export function SkillBundleInstallReview(props: {
           {manifest.bundleDigest}
         </p>
         {props.version.publisher ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="break-words text-xs text-muted-foreground">
             {translate(
               'auto.components.skills.SkillBundleInstallReview.01c5a11e07',
               'Published by Orca user'
@@ -148,7 +150,7 @@ export function SkillBundleInstallReview(props: {
           </p>
         ) : null}
         {props.version.releaseNotes.trim() ? (
-          <p className="text-xs leading-5 text-muted-foreground">
+          <p className="break-words whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
             {translate(
               'auto.components.skills.SkillBundleInstallReview.01c5a11e09',
               'Release notes:'

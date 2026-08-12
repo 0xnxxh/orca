@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SkillCloudVersion } from '../../../../shared/skill-cloud-contract'
+import type { SkillInstallProgress } from '../../../../shared/skill-sharing-contract'
 import { useAppStore } from '@/store'
 import { SkillInstallDialog } from './SkillInstallDialog'
 
@@ -80,9 +82,7 @@ function bundleVersion(): SkillCloudVersion {
 }
 
 function installApi(previewInstall: ReturnType<typeof vi.fn>) {
-  let progressListener:
-    | ((progress: { operationId: string; phase: 'authorizing' | 'installing' }) => void)
-    | null = null
+  let progressListener: ((progress: SkillInstallProgress) => void) | null = null
   return {
     resolveShare: vi
       .fn()
@@ -108,8 +108,7 @@ function installApi(previewInstall: ReturnType<typeof vi.fn>) {
         progressListener = null
       }
     }),
-    emitInstallProgress: (progress: { operationId: string; phase: 'authorizing' | 'installing' }) =>
-      progressListener?.(progress)
+    emitInstallProgress: (progress: SkillInstallProgress) => progressListener?.(progress)
   }
 }
 
@@ -140,6 +139,74 @@ afterEach(() => {
 })
 
 describe('SkillInstallDialog', () => {
+  it('renders long Unicode identity and multiline release notes before installation', async () => {
+    const sharedVersion = version()
+    const longName = `skill-${'n'.repeat(58)}`
+    const organizationId = `組織-${'o'.repeat(252)}`
+    const releaseNotes = `First line\n${'r'.repeat(9_989)}`
+    sharedVersion.name = longName
+    sharedVersion.description = `説明 ${'d'.repeat(512)}`
+    sharedVersion.releaseNotes = releaseNotes
+    sharedVersion.publisher = { userId: 'author_1', organizationId }
+    const skills = installApi(vi.fn())
+    skills.resolveShare.mockResolvedValue({
+      status: 'ok',
+      value: { id: 'share_1', version: sharedVersion }
+    })
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallDialog open onOpenChange={() => undefined} />)
+
+    await inspectSkill(sharedVersion.description)
+    expect(screen.getByRole('heading', { name: longName })).toBeTruthy()
+    expect(
+      screen.getByText(
+        (_, element) =>
+          element?.tagName === 'P' &&
+          element.textContent ===
+            `Published by Orca user author_1 in organization ${organizationId}.`
+      )
+    ).toBeTruthy()
+    expect(
+      screen.getByText(
+        (_, element) =>
+          element?.tagName === 'P' && element.textContent === `Release notes: ${releaseNotes}`
+      )
+    ).toBeTruthy()
+  })
+
+  it('focuses the link first and programmatically names destination controls', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    const skills = installApi(
+      vi.fn().mockResolvedValue({
+        status: 'ok',
+        value: {
+          name: 'private-skill',
+          packageDigest: DIGEST,
+          destinationIdentity: 'local:global',
+          currentState: 'missing',
+          providers: []
+        }
+      })
+    )
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallDialog open onOpenChange={onOpenChange} />)
+
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Orca skill link' }))
+    await user.type(
+      screen.getByRole('textbox', { name: 'Orca skill link' }),
+      'https://app.orca.dev/skills/share/share_1'
+    )
+    await user.tab()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Inspect skill' }))
+    await user.keyboard('{Enter}')
+    await screen.findByText('A private skill')
+    expect(screen.getByRole('combobox', { name: 'Machine' })).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: 'Destination' })).toBeTruthy()
+    await user.keyboard('{Escape}')
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
   it('describes unavailable bearer links without asking recipients to sign in', async () => {
     const skills = installApi(vi.fn())
     skills.resolveShare.mockRejectedValue(new Error('skill_share_not_found'))
@@ -393,6 +460,14 @@ describe('SkillInstallDialog', () => {
     const operationId = skills.installShare.mock.calls[0]?.[0].operationId
     skills.emitInstallProgress({ operationId, phase: 'installing' })
     await screen.findByText('Downloading, verifying, and installing…')
+    skills.emitInstallProgress({
+      operationId,
+      phase: 'installing',
+      currentSkill: { id: 'private-skill', name: 'private-skill', index: 1, total: 1 }
+    })
+    expect((await screen.findByRole('status')).textContent).toBe(
+      'Installing 1 of 1: private-skill…'
+    )
     settleInstall?.({
       status: 'ok',
       value: {

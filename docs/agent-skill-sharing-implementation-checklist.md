@@ -908,13 +908,26 @@ does not mean the surrounding phase is complete.
 
 ### UX validation
 
-- [ ] Test keyboard shortcuts and labels with platform-aware macOS versus Windows/Linux behavior.
+- [x] Test keyboard shortcuts and labels with platform-aware macOS versus Windows/Linux behavior.
+      Skill sharing adds no modifier shortcut or shortcut label. Renderer coverage proves its
+      platform-neutral Escape navigation closes the page, leaves editable controls alone, and
+      remains owned by open dialogs; the compatibility scan found no hardcoded Meta-only binding,
+      macOS glyph, or platform-specific accelerator in the feature.
 - [x] Test loading, error, cancellation, partial, conflict, and stale-preview states. Renderer
       coverage includes scan loading, unavailable links, upload/install cancellation, partial
       provider results, keep-local conflicts, capability loss after preview, and selection
       reconciliation after a changed discovery scan; package tests cover source drift.
-- [ ] Test screen-reader names, focus order, progress announcements, and destructive confirmations.
-- [ ] Test long names, release notes, paths, organization names, and localized copy.
+- [x] Test screen-reader names, focus order, progress announcements, and destructive confirmations.
+      The link field receives initial focus, Tab reaches the enabled primary action, Escape closes
+      the dialog, and machine, destination, WSL, and workspace selectors have programmatic names.
+      Upload progress exposes its phase and numeric value from 0 through publication; dialog-level
+      install tests announce authorization, installation, and current-skill position. Link revoke,
+      Cloud deletion, and local removal retain focus while switching to exact confirmation names.
+- [x] Test long names, release notes, paths, organization names, and localized copy. Renderer
+      coverage exercises the 64-character bundle/skill-name boundary, a 10,000-character multiline
+      release note, long Unicode descriptions and organization IDs, long Windows-style skill paths,
+      and long workspace labels. Review copy wraps without losing full values, selectors constrain
+      labels to dialog width, and localization catalog, extraction, and coverage gates pass.
 - [ ] Review trust and privacy wording with security and design.
 
 ## 9. Implement paired runtime installation

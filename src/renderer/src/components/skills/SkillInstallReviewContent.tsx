@@ -147,9 +147,11 @@ export function SkillInstallReview({
     <div className="space-y-5">
       <section className="space-y-2">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold">{version.name}</h3>
-            <p className="text-xs leading-5 text-muted-foreground">{version.description}</p>
+          <div className="min-w-0">
+            <h3 className="break-words text-sm font-semibold">{version.name}</h3>
+            <p className="break-words text-xs leading-5 text-muted-foreground">
+              {version.description}
+            </p>
           </div>
           <Badge variant="outline">
             {translate(
@@ -177,7 +179,7 @@ export function SkillInstallReview({
           {version.packageDigest}
         </p>
         {version.publisher ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="break-words text-xs text-muted-foreground">
             {translate(
               'auto.components.skills.SkillInstallReviewContent.9daf13c180',
               'Published by Orca user'
@@ -191,6 +193,15 @@ export function SkillInstallReview({
                 )
               : ''}
             .
+          </p>
+        ) : null}
+        {version.releaseNotes.trim() ? (
+          <p className="break-words whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
+            {translate(
+              'auto.components.skills.SkillInstallReviewContent.releaseNotes',
+              'Release notes:'
+            )}{' '}
+            {version.releaseNotes}
           </p>
         ) : null}
         <p className="text-xs leading-5 text-muted-foreground">

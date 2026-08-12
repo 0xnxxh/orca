@@ -249,9 +249,13 @@ describe('SkillInstallManagementDialog', () => {
     render(<SkillInstallManagementDialog open onOpenChange={() => undefined} />)
     await selectInstall('ver_2')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    const remove = screen.getByRole('button', { name: 'Remove' })
+    remove.focus()
+    fireEvent.click(remove)
     expect(skills.removeInstall).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm remove' }))
+    const confirm = screen.getByRole('button', { name: 'Confirm remove' })
+    expect(document.activeElement).toBe(confirm)
+    fireEvent.click(confirm)
 
     await waitFor(() => expect(skills.removeInstall).toHaveBeenCalledOnce())
     expect(skills.removeInstall).toHaveBeenCalledWith(

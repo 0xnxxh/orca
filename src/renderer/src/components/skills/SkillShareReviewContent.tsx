@@ -111,6 +111,7 @@ export function SkillSharePreparationReview({
   progressPercent: number
 }): React.JSX.Element {
   const skillPreviews = preview.skills ?? []
+  const phaseLabel = publishingPhaseLabel(progress)
   return (
     <div className="space-y-5">
       <section className="space-y-2">
@@ -227,10 +228,21 @@ export function SkillSharePreparationReview({
       {publishing ? (
         <section className="space-y-2" aria-live="polite">
           <div className="flex justify-between text-xs text-muted-foreground">
-            <span>{publishingPhaseLabel(progress)}</span>
-            <span>{progress?.phase === 'uploading' ? `${progressPercent}%` : '100%'}</span>
+            <span id="skill-share-progress-label">{phaseLabel}</span>
+            <span>
+              {progress?.phase === 'finalizing' || progress?.phase === 'publishing'
+                ? '100%'
+                : `${progressPercent}%`}
+            </span>
           </div>
-          <Progress value={progress?.phase === 'uploading' ? progressPercent : 100} />
+          <Progress
+            aria-labelledby="skill-share-progress-label"
+            value={
+              progress?.phase === 'finalizing' || progress?.phase === 'publishing'
+                ? 100
+                : progressPercent
+            }
+          />
         </section>
       ) : null}
     </div>
