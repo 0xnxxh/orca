@@ -86,7 +86,10 @@ import {
   scopedAgentSessionClaimsEqual
 } from '../../shared/claimed-agent-pty-owner-snapshot'
 import { codexProviderHandleLink } from '../codex/codex-structured-owner-identity'
-import { proveCodexTuiRollout } from '../codex/codex-tui-rollout-proof'
+import {
+  proveCodexTuiRollout,
+  resolvePinnedCodexRolloutProof
+} from '../codex/codex-tui-rollout-proof'
 import { probeAgentSessionProcessIdentity } from './agent-session-process-identity-probe'
 import { waitForStructuredTuiExitProof } from './structured-tui-exit-proof'
 import { readStructuredTuiProcessIdentity } from './structured-tui-process-identity'
@@ -9286,15 +9289,22 @@ export class OrcaRuntimeService {
         if (!candidate?.tabId || !candidate.paneKey || !handle) {
           throw new Error('The owning agent terminal could not be recovered.')
         }
-        const proof = await this.waitForStructuredTuiProof({
-          handle,
-          paneKey: candidate.paneKey,
-          threadId: head.handle.threadId,
-          spawnToken: identity.spawnToken,
-          codexHome: record.accountHome.path,
-          sessionId: record.sessionId,
-          ...(durableOwner ? { durableOwner } : {})
-        })
+        const proof = durableOwner
+          ? await this.resolveRecoveredStructuredTuiTranscript({
+              handle,
+              paneKey: candidate.paneKey,
+              threadId: head.handle.threadId,
+              codexHome: record.accountHome.path,
+              durableOwner
+            })
+          : await this.waitForStructuredTuiProof({
+              handle,
+              paneKey: candidate.paneKey,
+              threadId: head.handle.threadId,
+              spawnToken: identity.spawnToken,
+              codexHome: record.accountHome.path,
+              sessionId: record.sessionId
+            })
         return {
           terminal: {
             handle,
@@ -9480,25 +9490,14 @@ export class OrcaRuntimeService {
     spawnToken: string
     codexHome: string
     sessionId: string
-    durableOwner?: { binding: AgentSessionOwnerBinding; incarnationId: string }
   }): Promise<{ transcriptPath?: string }> {
     const readBoundPty = (): RuntimePtyWorktreeRecord => {
       const pty = this.getLivePtyForHandle(input.handle)?.pty
-      const durableOwner = input.durableOwner
-      const launchIdentityMatches =
-        pty?.launchAgent === 'codex' && pty.launchToken === input.spawnToken
-      const durableIdentityMatches = Boolean(
-        pty &&
-        durableOwner &&
-        pty.incarnationId === durableOwner.incarnationId &&
-        pty.agentSessionOwners.some((owner) =>
-          agentSessionOwnerBindingsEqual(owner, durableOwner.binding)
-        )
-      )
       if (
         !pty?.connected ||
         pty.paneKey !== input.paneKey ||
-        (!launchIdentityMatches && !durableIdentityMatches)
+        pty.launchAgent !== 'codex' ||
+        pty.launchToken !== input.spawnToken
       ) {
         throw new Error('The resumed terminal lost its launch identity.')
       }
@@ -9527,6 +9526,35 @@ export class OrcaRuntimeService {
         )
       }
     })
+  }
+
+  private async resolveRecoveredStructuredTuiTranscript(input: {
+    handle: string
+    paneKey: string
+    threadId: string
+    codexHome: string
+    durableOwner: { binding: AgentSessionOwnerBinding; incarnationId: string }
+  }): Promise<{ transcriptPath: string }> {
+    const assertDurableOwner = (): void => {
+      const pty = this.getLivePtyForHandle(input.handle)?.pty
+      if (
+        !pty?.connected ||
+        pty.paneKey !== input.paneKey ||
+        pty.incarnationId !== input.durableOwner.incarnationId ||
+        !pty.agentSessionOwners.some((owner) =>
+          agentSessionOwnerBindingsEqual(owner, input.durableOwner.binding)
+        )
+      ) {
+        throw new Error('The resumed terminal lost its durable owner identity.')
+      }
+    }
+    assertDurableOwner()
+    const transcriptPath = await resolvePinnedCodexRolloutProof(input.codexHome, input.threadId)
+    assertDurableOwner()
+    if (!transcriptPath) {
+      throw new Error('The agent terminal did not prove the expected Codex rollout.')
+    }
+    return { transcriptPath }
   }
 
   async getStructuredAgentSessionCreateSupport(
