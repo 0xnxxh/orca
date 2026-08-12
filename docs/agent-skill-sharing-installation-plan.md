@@ -53,8 +53,8 @@ that larger package-manager surface.
 
 ## Current execution status
 
-The Orca implementation is on `skills-share` at `df259119f6`; no Orca pull request exists. Cloud
-bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`;
+The Orca implementation is on `skills-share` through `f1dccb4f42`; no Orca pull request exists.
+Cloud bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`;
 the bundle desktop smoke update merged through `#329` as `eddb144afe`, generation-aware GCS
 recovery merged through `#330` as `8045c85dad`, and the bounded finalization load gate plus cleanup
 hardening merged through `#332`-`#335` as `bb8bf8b9ac`. The encrypted physical-host credential
@@ -66,6 +66,13 @@ untouched. Local, Windows, WSL, paired-runtime, Docker-backed SSH, browser-free 
 physical Ubuntu 20.04 SSH, published-object recovery, and bounded finalization-load validation are
 substantially complete; the implementation checklist records the exact evidence and remaining
 physical-host and lifecycle gates.
+
+The release workflow now runs the exact unpacked Linux package under Electron-as-Node in an
+Ubuntu 20.04 container and requires packaged `node-pty` to spawn `/bin/sh`. A physical x64 build at
+`f1dccb4f42` passed the existing 18-binary ABI scan and this load/spawn smoke. The physical run also
+caught and corrected assumptions about the Linux executable name and packaged runtime-module
+location before the gate can protect a real release. Physical packaged ARM64 execution remains an
+explicit separate proof.
 
 The local redesign now has an independently implemented Agent Plugins 1.0.0 skills-only bundle
 manifest, deterministic one-or-many archive creation, bounded bundle extraction, additive bundle

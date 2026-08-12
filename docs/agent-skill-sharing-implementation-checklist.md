@@ -6,7 +6,7 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `9100431212`; no PR.
+- Orca implementation: `skills-share` through `f1dccb4f42`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   kill-switch discovery PR `#342` merged as `c2bef2ff20fb`; production remains untouched.
@@ -72,6 +72,12 @@ Validated so far:
 - The same 26/26 portable package suite passed at `109272dab1` on a disposable native x86_64
   Ubuntu 22.04 GCE host using Linux 6.8 and Node 24.18. The VM had no service account or scopes;
   its boot disk, uploaded Git bundle, and temporary project SSH metadata were removed afterward.
+- The exact x64 Electron directory package at `f1dccb4f42` passed its after-pack ABI scan for all
+  18 bundled native binaries, then loaded packaged `node-pty` and spawned `/bin/sh` inside an
+  Ubuntu 20.04/glibc 2.31 container. The physical run corrected the gate to use Linux's actual
+  `orca-ide` executable and `resources/node_modules` layout. Physical packaged ARM64 proof remains
+  separate. The no-service-account builder, boot disk, temporary project SSH metadata, and local
+  source archive were removed and independently verified absent.
 - Real native Windows global, linked Git-worktree, and plain folder installs with spaces and
   non-ASCII paths, plus privacy-safe install diagnostics and owner-private staging tests.
 - Docker-backed SSH relay installation from the real Electron client passed global, remote Git
@@ -1345,7 +1351,9 @@ platform gates below.
 
 - [ ] Run macOS ARM64 and x64 behavior where supported.
 - [ ] Run Linux against Ubuntu 20.04/glibc 2.31 and verify bundled native binaries respect the
-      floor.
+      floor. The exact x64 directory package passed its 18-binary ABI scan and packaged
+      `node-pty` load/spawn smoke inside Ubuntu 20.04 at `f1dccb4f42`; physical packaged ARM64
+      execution remains open.
 - [x] Run native Windows and WSL scenarios on `windows 2`.
 - [x] Run local and remote Git worktrees and plain folder workspaces. Native Windows covered a
       linked worktree and folder; paired desktop and Docker SSH covered host-owned worktrees and
