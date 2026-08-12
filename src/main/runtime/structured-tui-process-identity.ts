@@ -9,6 +9,9 @@ import { readProcessStartTimeMs } from './agent-session-process-identity-probe'
 
 type ProcessRow = { pid: number; ppid: number; command: string; foreground: boolean }
 
+const STRUCTURED_TUI_PROCESS_WAIT_MS = 5_000
+const STRUCTURED_TUI_PROCESS_POLL_MS = 50
+
 function descendants(rows: ProcessRow[], rootPid: number): (ProcessRow & { depth: number })[] {
   const children = new Map<number, ProcessRow[]>()
   for (const row of rows) {
@@ -69,29 +72,43 @@ export async function readStructuredTuiProcessIdentity(input: {
   readPosixRows?: () => Promise<ProcessTableRow[]>
   readWindowsRows?: typeof queryWindowsProcessRowsFresh
   readStartTime?: (pid: number, platform?: NodeJS.Platform) => Promise<number | null>
+  timeoutMs?: number
+  pollIntervalMs?: number
+  now?: () => number
+  sleep?: (delayMs: number) => Promise<void>
 }): Promise<AgentSessionProcessIdentity> {
   const platform = input.platform ?? process.platform
-  const rows: ProcessRow[] =
-    platform === 'win32'
-      ? (await (input.readWindowsRows ?? queryWindowsProcessRowsFresh)()).map((row) => ({
-          pid: row.pid,
-          ppid: row.ppid,
-          command: row.command,
-          foreground: false
-        }))
-      : posixRows(await (input.readPosixRows ?? getFreshProcessTableSnapshot)())
-  if (!rows.some((row) => row.pid === input.rootPid)) {
-    throw new Error('The terminal root process was not present in the process snapshot.')
-  }
-  const pid = resolveStructuredTuiChildPid(rows, input.rootPid, input.agent)
-  if (pid === null) {
-    const agentName = input.agent === 'claude' ? 'Claude' : 'Codex'
-    throw new Error(`The resumed terminal did not expose one exact ${agentName} child process.`)
-  }
-  return {
-    hostId: input.hostId,
-    pid,
-    processStartTimeMs: await (input.readStartTime ?? readProcessStartTimeMs)(pid, platform),
-    spawnToken: input.spawnToken
+  const now = input.now ?? Date.now
+  const sleep = input.sleep ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)))
+  const deadline = now() + (input.timeoutMs ?? STRUCTURED_TUI_PROCESS_WAIT_MS)
+  const agentName = input.agent === 'claude' ? 'Claude' : 'Codex'
+
+  while (true) {
+    const rows: ProcessRow[] =
+      platform === 'win32'
+        ? (await (input.readWindowsRows ?? queryWindowsProcessRowsFresh)()).map((row) => ({
+            pid: row.pid,
+            ppid: row.ppid,
+            command: row.command,
+            foreground: false
+          }))
+        : posixRows(await (input.readPosixRows ?? getFreshProcessTableSnapshot)())
+    if (!rows.some((row) => row.pid === input.rootPid)) {
+      throw new Error('The terminal root process was not present in the process snapshot.')
+    }
+    const pid = resolveStructuredTuiChildPid(rows, input.rootPid, input.agent)
+    if (pid !== null) {
+      return {
+        hostId: input.hostId,
+        pid,
+        processStartTimeMs: await (input.readStartTime ?? readProcessStartTimeMs)(pid, platform),
+        spawnToken: input.spawnToken
+      }
+    }
+    const remainingMs = deadline - now()
+    if (remainingMs <= 0) {
+      throw new Error(`The resumed terminal did not expose one exact ${agentName} child process.`)
+    }
+    await sleep(Math.min(input.pollIntervalMs ?? STRUCTURED_TUI_PROCESS_POLL_MS, remainingMs))
   }
 }

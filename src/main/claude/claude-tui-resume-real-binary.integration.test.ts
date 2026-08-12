@@ -5,10 +5,16 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as pty from 'node-pty'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { AgentSessionJournalIdentity } from '../../shared/agent-session-journal-types'
 import type { AgentSessionRecord } from '../../shared/agent-session-record'
 import { resolveClaudeCommand } from '../codex-cli/command'
-import { buildClaudeChildProcessEnv } from './claude-child-process-environment'
-import { CLAUDE_DEFAULT_SETTING_SOURCES } from './claude-structured-launch-resolution'
+import { readStructuredTuiProcessIdentity } from '../runtime/structured-tui-process-identity'
+import { getSpawnArgsForWindows } from '../win32-utils'
+import { CLAUDE_STRUCTURED_BASE_ARGS } from './claude-structured-launch-resolution'
+import {
+  ClaudeStructuredSessionAdapter,
+  type ClaudeStructuredSessionEvent
+} from './claude-structured-session-adapter'
 import { createClaudeTuiResumeLaunchBuilder } from './claude-tui-resume-launch'
 import { proveClaudeTuiResume } from './claude-tui-resume-proof'
 
@@ -89,15 +95,46 @@ async function waitForHook(
 
 type RunningTui = { proc: pty.IPty; exited: Promise<void> }
 
-function spawnTui(args: string[], env: Record<string, string>): RunningTui {
-  const proc = pty.spawn(command, args, {
-    name: 'xterm-256color',
-    cols: 100,
-    rows: 30,
-    cwd: process.cwd(),
-    env: { ...env, TERM: 'xterm-256color' }
-  })
+function spawnResumeTui(args: string[], env: Record<string, string>): RunningTui {
+  const direct = process.platform === 'win32'
+  const proc = pty.spawn(
+    direct ? command : process.env.SHELL || '/bin/zsh',
+    direct ? args : ['-l'],
+    {
+      name: 'xterm-256color',
+      cols: 100,
+      rows: 30,
+      cwd: process.cwd(),
+      env: { ...env, TERM: 'xterm-256color' }
+    }
+  )
+  if (!direct) {
+    setTimeout(() => {
+      proc.write(`${[command, ...args].map(shellQuote).join(' ')}\r`)
+    }, 100).unref()
+  }
   return { proc, exited: new Promise<void>((resolve) => proc.onExit(() => resolve())) }
+}
+
+function structuredIdentity(providerSessionId: string): AgentSessionJournalIdentity {
+  return {
+    sessionId: 'orca-real-claude-resume',
+    workspaceId: 'workspace-real',
+    hostId: 'local',
+    agent: 'claude',
+    providerHandle: { kind: 'claude', sessionId: providerSessionId, leafUuid: null }
+  }
+}
+
+async function waitForStructuredResult(events: ClaudeStructuredSessionEvent[]): Promise<void> {
+  const deadline = Date.now() + 30_000
+  while (Date.now() < deadline) {
+    if (events.some((event) => event.type === 'message' && event.message.type === 'result')) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  throw new Error('Claude structured session did not finish its product-path turn')
 }
 
 async function stopTui(tui: RunningTui): Promise<void> {
@@ -120,61 +157,58 @@ afterEach(async () => {
 })
 
 describe.skipIf(!claudeAvailable)('real Claude TUI resume proof', () => {
-  it('resumes one session id and proves its SessionStart transcript path', async () => {
+  it('resumes a product-created structured session and proves its exact child', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-claude-tui-resume-'))
     roots.push(root)
     const { eventsPath, settingsPath } = await installCaptureHook(root)
     const providerSessionId = randomUUID()
     const claudeConfigDir = process.env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), '.claude')
-    const settingSources = CLAUDE_DEFAULT_SETTING_SOURCES.join(',')
-    const created = spawnTui(
-      [
-        '--setting-sources',
-        settingSources,
-        '--settings',
-        settingsPath,
-        '--session-id',
-        providerSessionId
-      ],
-      buildClaudeChildProcessEnv({
-        CLAUDE_CONFIG_DIR: claudeConfigDir,
-        ORCA_AGENT_LAUNCH_TOKEN: 'real-create'
-      })
-    )
-    let createdOutput = ''
-    created.proc.onData((data) => {
-      createdOutput = `${createdOutput}${data}`.slice(-4_000)
+    const events: ClaudeStructuredSessionEvent[] = []
+    const structuredLaunch = getSpawnArgsForWindows(command, [
+      ...CLAUDE_STRUCTURED_BASE_ARGS,
+      '--settings',
+      settingsPath,
+      '--session-id',
+      providerSessionId
+    ])
+    const adapter = new ClaudeStructuredSessionAdapter({
+      resolveLaunch: async () => ({
+        command: structuredLaunch.spawnCmd,
+        args: structuredLaunch.spawnArgs,
+        cwd: process.cwd(),
+        claudeConfigDir,
+        providerSessionId,
+        resumeLeafUuid: null,
+        resumed: false
+      }),
+      onEvent: (event) => events.push(event),
+      readProcessStartTime: async () => 1
     })
-    for (const delay of [500, 1_500, 2_500]) {
-      setTimeout(() => {
-        created.proc.write('\r')
-        created.proc.write('\u001b[13u')
-      }, delay).unref()
-    }
     let resumed: RunningTui | null = null
     try {
-      const started = await waitForHook(eventsPath, 'startup').catch((error) => {
-        throw new Error(`${String(error)}\nClaude output: ${createdOutput}`)
+      const acquisition = await adapter.acquire({
+        identity: structuredIdentity(providerSessionId),
+        fence: 1,
+        spawnToken: 'real-create'
       })
-      expect(started.session_id).toBe(providerSessionId)
+      await expect(
+        adapter.dispatch({
+          sessionId: 'orca-real-claude-resume',
+          clientMessageId: 'real-product-turn',
+          fence: 1,
+          body: {
+            kind: 'message',
+            role: 'user',
+            blocks: [{ type: 'text', text: 'Reply only with ORCA_RESUME_READY.' }]
+          }
+        })
+      ).resolves.toMatchObject({ state: 'accepted' })
+      await waitForStructuredResult(events)
+      const started = await waitForHook(eventsPath, 'startup')
       const transcriptPath = String(started.transcript_path)
       transcripts.push(transcriptPath)
-      await stopTui(created)
-      const fixtureLeafUuid = randomUUID()
-      await writeFile(
-        transcriptPath,
-        `${JSON.stringify({
-          parentUuid: null,
-          isSidechain: false,
-          type: 'user',
-          message: { role: 'user', content: 'Orca resume proof fixture' },
-          uuid: fixtureLeafUuid,
-          timestamp: new Date().toISOString(),
-          cwd: process.cwd(),
-          sessionId: providerSessionId,
-          version: '2.1.220'
-        })}\n${JSON.stringify({ type: 'last-prompt', leafUuid: fixtureLeafUuid })}\n`
-      )
+      expect(started.session_id).toBe(providerSessionId)
+      await adapter.closeAll()
 
       const record = {
         sessionId: 'orca-real-claude-resume',
@@ -184,7 +218,7 @@ describe.skipIf(!claudeAvailable)('real Claude TUI resume proof', () => {
         providerHandleChain: [
           {
             linkId: 'created-real',
-            handle: { provider: 'claude', sessionId: providerSessionId, leafUuid: null },
+            handle: acquisition.link.handle,
             origin: 'created',
             mintedAtFence: 1,
             observedAt: 1
@@ -195,13 +229,19 @@ describe.skipIf(!claudeAvailable)('real Claude TUI resume proof', () => {
         resolveWorkspacePath: async () => process.cwd(),
         resolveCommand: () => command
       })({ record, spawnToken: 'real-resume' })
-      resumed = spawnTui([...launch.args, '--settings', settingsPath], launch.env)
+      resumed = spawnResumeTui([...launch.args, '--settings', settingsPath], launch.env)
       let resumedOutput = ''
       resumed.proc.onData((data) => {
         resumedOutput = `${resumedOutput}${data}`.slice(-4_000)
       })
 
-      await expect(
+      const [processIdentity, proof] = await Promise.all([
+        readStructuredTuiProcessIdentity({
+          hostId: 'local',
+          rootPid: resumed.proc.pid,
+          spawnToken: 'real-resume',
+          agent: 'claude'
+        }),
         proveClaudeTuiResume({
           expectedSessionId: providerSessionId,
           expectedTranscriptPath: transcriptPath,
@@ -210,9 +250,18 @@ describe.skipIf(!claudeAvailable)('real Claude TUI resume proof', () => {
         }).catch((error) => {
           throw new Error(`${String(error)}\nClaude output: ${resumedOutput}`)
         })
-      ).resolves.toMatchObject({ sessionId: providerSessionId, transcriptPath })
+      ])
+      expect(processIdentity).toMatchObject({
+        hostId: 'local',
+        spawnToken: 'real-resume',
+        pid: expect.any(Number)
+      })
+      expect(proof).toMatchObject({ sessionId: providerSessionId, transcriptPath })
     } finally {
-      await stopTui(resumed ?? created)
+      await adapter.closeAll()
+      if (resumed) {
+        await stopTui(resumed)
+      }
     }
   }, 30_000)
 })

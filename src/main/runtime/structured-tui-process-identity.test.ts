@@ -39,9 +39,46 @@ describe('structured TUI process identity', () => {
           { pid: 100, ppid: 1, name: 'pwsh.exe', command: 'pwsh.exe', executablePath: '' },
           { pid: 101, ppid: 100, name: 'codex.exe', command: 'codex resume a', executablePath: '' },
           { pid: 102, ppid: 100, name: 'codex.exe', command: 'codex resume b', executablePath: '' }
-        ]
+        ],
+        timeoutMs: 0
       })
     ).rejects.toThrow('one exact Codex child process')
+  })
+
+  it('waits for a shell-delivered Claude child before binding ownership', async () => {
+    let snapshots = 0
+    const delays: number[] = []
+    await expect(
+      readStructuredTuiProcessIdentity({
+        hostId: 'local',
+        rootPid: 100,
+        spawnToken: 'spawn-2',
+        agent: 'claude',
+        platform: 'darwin',
+        readPosixRows: async () => {
+          snapshots += 1
+          return [
+            { pid: 100, ppid: 1, stat: 'Ss', command: '/bin/zsh' },
+            ...(snapshots >= 3
+              ? [{ pid: 101, ppid: 100, stat: 'S+', command: 'claude --resume session-1' }]
+              : [])
+          ]
+        },
+        readStartTime: async () => 1_700_000_000_000,
+        timeoutMs: 1_000,
+        pollIntervalMs: 25,
+        now: () => delays.length * 25,
+        sleep: async (delayMs) => {
+          delays.push(delayMs)
+        }
+      })
+    ).resolves.toEqual({
+      hostId: 'local',
+      pid: 101,
+      processStartTimeMs: 1_700_000_000_000,
+      spawnToken: 'spawn-2'
+    })
+    expect(delays).toEqual([25, 25])
   })
 
   it('fails closed when the process snapshot omitted the PTY root', async () => {
