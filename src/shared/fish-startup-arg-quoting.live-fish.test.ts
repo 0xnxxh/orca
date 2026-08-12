@@ -25,6 +25,20 @@ const itWithFish = FISH.available ? it : it.skip
 
 let home: string | null = null
 
+/**
+ * Fully pinned: nothing ambient reaches fish, and LC_ALL wins over any LANG/LC_*
+ * a host might contribute, so locale-sensitive parsing cannot vary by machine.
+ */
+const fishEnv = (root: string): NodeJS.ProcessEnv => ({
+  PATH: process.env.PATH ?? '/usr/bin:/bin',
+  HOME: root,
+  XDG_CONFIG_HOME: root,
+  XDG_DATA_HOME: path.join(root, 'data'),
+  TERM: 'dumb',
+  LANG: 'en_US.UTF-8',
+  LC_ALL: 'en_US.UTF-8'
+})
+
 /** Runs `commandLine` in a config-free fish and returns the argv it produced. */
 function fishArgv(commandLine: string): string[] {
   const root = home as string
@@ -37,14 +51,7 @@ function fishArgv(commandLine: string): string[] {
   writeFileSync(scriptPath, `string join0 -- ${commandLine} > ${outPath}\nexit 0\n`)
   execFileSync(FISH.path as string, [scriptPath], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      PATH: process.env.PATH ?? '/usr/bin:/bin',
-      HOME: root,
-      XDG_CONFIG_HOME: root,
-      XDG_DATA_HOME: path.join(root, 'data'),
-      TERM: 'dumb',
-      LANG: 'en_US.UTF-8'
-    }
+    env: fishEnv(root)
   })
   const raw = readFileSync(outPath, 'utf8')
   // join0 terminates the last element too, so the trailing empty split is not an argument.
@@ -168,14 +175,7 @@ describe('quoteStartupArg round-trips through real fish', () => {
     execFileSync(FISH.path as string, [scriptPath], {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        PATH: process.env.PATH ?? '/usr/bin:/bin',
-        HOME: root,
-        XDG_CONFIG_HOME: root,
-        XDG_DATA_HOME: path.join(root, 'data'),
-        TERM: 'dumb',
-        LANG: 'en_US.UTF-8'
-      }
+      env: fishEnv(root)
     })
 
     expect(JSON.parse(readFileSync(capturePath, 'utf8'))).toEqual([prompt])
@@ -215,15 +215,7 @@ describe('quoteStartupArg round-trips through real fish', () => {
     execFileSync(FISH.path as string, [scriptPath], {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        PATH: process.env.PATH ?? '/usr/bin:/bin',
-        HOME: root,
-        XDG_CONFIG_HOME: root,
-        XDG_DATA_HOME: path.join(root, 'data'),
-        TERM: 'dumb',
-        LANG: 'en_US.UTF-8',
-        ...plan?.env
-      }
+      env: { ...fishEnv(root), ...plan?.env }
     })
 
     expect(JSON.parse(readFileSync(capturePath, 'utf8'))).toContain(`--query=${prompt}`)

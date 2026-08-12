@@ -6,6 +6,14 @@
  * no `unset`: the sh spelling errors out and leaves the variable exported, which is
  * only observable in the shell — a string assertion cannot tell the two apart.
  *
+ * The negative control is graded on exit status and variable liveness, never on the
+ * error text. fish only installs its own "Unknown command" printer when NON-interactive
+ * (share/config.fish); an interactive fish autoloads `fish_command_not_found`, which
+ * delegates to the distro handler when one exists — `/usr/lib/command-not-found` on
+ * Ubuntu, where the CI fish comes from. That handler prints its own wording, and the
+ * fish fallback is gettext-translated on top of that, so the text varies by host and
+ * locale while the status (127) and the surviving variable do not.
+ *
  * DA1/CPR/OSC-11 probes are answered here because no real xterm is attached;
  * without them fish stalls ~10s on its DA1 read sentinel before the first prompt.
  */
@@ -76,7 +84,10 @@ describe('fish clears an agent draft prefill variable', () => {
           PATH: process.env.PATH ?? '/usr/bin:/bin',
           HOME: home,
           TERM: 'xterm-256color',
+          // LC_ALL wins over any LANG/LC_* a host might otherwise contribute, so
+          // fish's locale is fixed even though nothing here reads its messages.
           LANG: 'en_US.UTF-8',
+          LC_ALL: 'en_US.UTF-8',
           XDG_CONFIG_HOME: home,
           XDG_DATA_HOME: path.join(home, 'data'),
           [VAR]: 'draft text'
@@ -101,28 +112,37 @@ describe('fish clears an agent draft prefill variable', () => {
         exited = true
       })
 
-      // `set -q` exits 0 while the variable exists, so the echoed status is the verdict.
-      const probe = (label: string): Promise<boolean> => {
-        term.write(`set -q ${VAR}; echo ${label}=$status\r`)
-        return waitUntil(() => new RegExp(`${label}=[01]`).test(rendered), 5_000)
+      // \b so a label is never read out of a longer one (`FISHRC` vs `SHRC`), and the
+      // echoed keystrokes (`...=$status`) can never satisfy the digit capture.
+      const statusPattern = (label: string): RegExp => new RegExp(String.raw`\b${label}=(\d+)`)
+      /** Runs one line and labels the `$status` its LAST statement left behind. */
+      // Generous: an unknown command routes through the distro `fish_command_not_found`,
+      // and Ubuntu's is a Python process that opens the apt database before fish moves on.
+      const run = (label: string, command: string): Promise<boolean> => {
+        term.write(`${command}; echo ${label}=$status\r`)
+        return waitUntil(() => statusPattern(label).test(rendered), 15_000)
       }
       const statusOf = (label: string): string =>
-        new RegExp(`${label}=([01])`).exec(rendered)?.[1] ?? 'missing'
+        statusPattern(label).exec(rendered)?.[1] ?? 'missing'
+      // `set -q` exits 0 while the variable exists, so its status is the liveness verdict.
+      const liveness = (label: string): Promise<boolean> => run(label, `set -q ${VAR}`)
 
       try {
         expect(await waitUntil(() => rendered.includes(PROMPT_MARK), 15_000)).toBe(true)
-        expect(await probe('BEFORE')).toBe(true)
+        expect(await liveness('BEFORE')).toBe(true)
         expect(statusOf('BEFORE')).toBe('0')
 
-        // The sh spelling Orca emitted before this dialect was threaded through.
-        term.write(`${clearEnvCommand(VAR, 'posix')}\r`)
-        expect(await probe('AFTERSH')).toBe(true)
-        expect(rendered).toContain('Unknown command')
-        expect(statusOf('AFTERSH')).toBe('0')
+        // The sh spelling Orca emitted before this dialect was threaded through: fish
+        // must reject the command outright AND leave the export standing.
+        expect(await run('POSIXRC', clearEnvCommand(VAR, 'posix'))).toBe(true)
+        expect(statusOf('POSIXRC')).not.toBe('0')
+        expect(await liveness('POSIXLEFT')).toBe(true)
+        expect(statusOf('POSIXLEFT')).toBe('0')
 
-        term.write(`${clearEnvCommand(VAR, 'fish')}\r`)
-        expect(await probe('AFTERFISH')).toBe(true)
-        expect(statusOf('AFTERFISH')).toBe('1')
+        expect(await run('FISHRC', clearEnvCommand(VAR, 'fish'))).toBe(true)
+        expect(statusOf('FISHRC')).toBe('0')
+        expect(await liveness('FISHLEFT')).toBe(true)
+        expect(statusOf('FISHLEFT')).toBe('1')
       } finally {
         term.write('exit\r')
         await waitUntil(() => exited, 5_000)

@@ -85,7 +85,9 @@ describe('fish keeps per-worktree history under the session Orca names', () => {
           PATH: process.env.PATH ?? '/usr/bin:/bin',
           HOME: home,
           TERM: 'xterm-256color',
+          // LC_ALL wins over any LANG/LC_* a host might contribute, pinning fish's locale.
           LANG: 'en_US.UTF-8',
+          LC_ALL: 'en_US.UTF-8',
           XDG_CONFIG_HOME: home,
           XDG_DATA_HOME: dataHome,
           // The production injection under test (terminal-history.ts).
