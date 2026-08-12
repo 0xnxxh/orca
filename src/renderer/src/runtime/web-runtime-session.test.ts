@@ -494,6 +494,42 @@ describe('createWebRuntimeSessionBrowserTab', () => {
     expect(setStateResults.at(-1)).toEqual({ state: 'after' })
   })
 
+  it('does not reselect an already active browser worktree on the same runtime', async () => {
+    mocks.getState.mockReturnValue({
+      settings: { activeRuntimeEnvironmentId: ENVIRONMENT_ID },
+      activeWorktreeId: WORKTREE_ID,
+      activeWorkspaceExecutionHostId: RUNTIME_EXECUTION_HOST_ID,
+      browserPagesByWorkspace: {},
+      remoteBrowserPageHandlesByPageId: {},
+      unifiedTabsByWorktree: {},
+      createBrowserTab: mocks.createBrowserTab,
+      closeEmptyGroup: mocks.closeEmptyGroup,
+      moveUnifiedTabToGroup: mocks.moveUnifiedTabToGroup,
+      setRemoteBrowserPageHandle: mocks.setRemoteBrowserPageHandle,
+      focusBrowserTabInWorktree: mocks.focusBrowserTabInWorktree,
+      setActiveWorktree: mocks.setActiveWorktree
+    })
+    const runtimeCall = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'create',
+        ok: true,
+        result: { browserPageId: 'remote-browser-page-1' }
+      })
+      .mockResolvedValueOnce({ id: 'list', ok: true, result: makeSnapshot() })
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    await expect(
+      createWebRuntimeSessionBrowserTab({
+        worktreeId: WORKTREE_ID,
+        environmentId: ENVIRONMENT_ID,
+        url: 'https://example.com/'
+      })
+    ).resolves.toBe(true)
+
+    expect(mocks.setActiveWorktree).not.toHaveBeenCalled()
+  })
+
   it('can create a browser tab without selecting the target worktree', async () => {
     const setStateResults: unknown[] = []
     mocks.setState.mockImplementation((updater: (state: unknown) => unknown) => {

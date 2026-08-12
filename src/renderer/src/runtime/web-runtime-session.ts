@@ -458,7 +458,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
     })
   }
   if (shouldSelectWorktree) {
-    selectWebRuntimeSessionWorktree(args.worktreeId, environmentId)
+    selectWebRuntimeSessionBrowserWorktree(args.worktreeId, environmentId)
   }
   try {
     const response = await callEnvironment({
@@ -582,7 +582,7 @@ function stageWebRuntimeBrowserTab(args: {
     remotePageId
   )
   if (args.restoreFocus !== false) {
-    selectWebRuntimeSessionWorktree(args.worktreeId, args.environmentId)
+    selectWebRuntimeSessionBrowserWorktree(args.worktreeId, args.environmentId)
   }
 
   if (existing) {
@@ -629,14 +629,17 @@ function stageWebRuntimeBrowserTab(args: {
 }
 
 function selectWebRuntimeSessionWorktree(worktreeId: string, environmentId: string): void {
+  useAppStore.getState().setActiveWorktree(worktreeId, toRuntimeExecutionHostId(environmentId))
+}
+
+function selectWebRuntimeSessionBrowserWorktree(worktreeId: string, environmentId: string): void {
   const state = useAppStore.getState()
   if (
-    state.activeWorktreeId === worktreeId &&
-    state.activeWorkspaceExecutionHostId === toRuntimeExecutionHostId(environmentId)
+    state.activeWorktreeId !== worktreeId ||
+    state.activeWorkspaceExecutionHostId !== toRuntimeExecutionHostId(environmentId)
   ) {
-    return
+    state.setActiveWorktree(worktreeId, toRuntimeExecutionHostId(environmentId))
   }
-  state.setActiveWorktree(worktreeId, toRuntimeExecutionHostId(environmentId))
 }
 
 function findLocalBrowserPageForRemotePage(
