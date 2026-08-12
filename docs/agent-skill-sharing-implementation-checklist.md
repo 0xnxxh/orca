@@ -797,7 +797,11 @@ does not mean the surrounding phase is complete.
       and immutable generation identity; per-file paths, sizes, modes, and hashes remain inside the
       authorized archive manifest and immutable PostgreSQL version record.
 - [ ] Test forward migration, rollback strategy, backup restoration, and migration compatibility
-      during mixed API versions.
+      during mixed API versions. Unit coverage proves atomic forward/idempotent migration, ignores
+      an additive schema version written by a newer API, and leaves no recorded or partial schema
+      after failure. PostgreSQL 16/17 integration coverage proves transactional DDL rollback and
+      eight concurrent startup callers converge on one version. A mixed-binary coexistence run and
+      database backup restore drill remain open.
 
 ### Authorization and lifecycle model
 
