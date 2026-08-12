@@ -809,9 +809,11 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         // Why: cwd fallback is only for fresh local spawns — reattach keeps the session's cwd and SSH transports resolve cwd on the remote host.
         const shouldSendLocalCwdFallback =
           cwdFallback === 'worktree' && !connectionId && !admittedSessionId
-        // Every startup value this transport was CONSTRUCTED with. `suppressSavedStartup` drops the
-        // whole set at once: a "fresh" shell that inherits any of them can resume the agent session
+        // Every constructor value that can LAUNCH OR RESUME an agent. `suppressSavedStartup` drops
+        // the set at once: a "fresh" shell inheriting any one of them can resume the very session
         // it was meant to leave alone, and suppressing them field by field is how two were missed.
+        // `env`/`envToDelete` stay deliberately outside — they cannot start or resume anything on
+        // their own, and the spawn still needs the pane's identity environment.
         const saved = options.suppressSavedStartup
           ? ({} as Partial<{
               command: typeof command
@@ -844,8 +846,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
             : {}),
           ...((options.resumeProviderSession ?? saved.resumeProviderSession)
             ? {
-                resumeProviderSession:
-                  options.resumeProviderSession ?? saved.resumeProviderSession
+                resumeProviderSession: options.resumeProviderSession ?? saved.resumeProviderSession
               }
             : {}),
           ...((options.launchToken ?? saved.launchToken)

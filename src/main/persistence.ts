@@ -7347,14 +7347,6 @@ export class Store {
     this.clearSshRemotePtyBindingsForLeases(winner.targetId, superseded, 'local')
   }
 
-  /**
-   * Heals lease state that predates pane-keyed supersession. Existing installs
-   * carry the duplicates STA-3077 accumulated — one report reached 20 live
-   * leases for a handful of panes — and supersession alone only prevents new
-   * ones. Reattach calls this first so a stale predecessor cannot be revived.
-   *
-   * Returns the number of leases retired, for logging.
-   */
   /** The PTY a pane is durably bound to. The desktop plane's home is `local` — the renderer is its
    *  only publisher of pane membership. Hedging into `ssh:<target>` let the headless plane's copy
    *  outvote the live binding and silently no-op supersession (STA-3077).
@@ -7411,6 +7403,14 @@ export class Store {
     return isNewerSshRemotePtyLease(candidate, incumbent)
   }
 
+  /**
+   * Heals lease state that predates pane-keyed supersession. Existing installs
+   * carry the duplicates STA-3077 accumulated — one report reached 20 live
+   * leases for a handful of panes — and supersession alone only prevents new
+   * ones. Reattach calls this first so a stale predecessor cannot be revived.
+   *
+   * Returns the number of leases retired, for logging.
+   */
   supersedeDuplicatePaneLeases(targetId: string): number {
     const live = (this.state.sshRemotePtyLeases ?? []).filter(
       (lease) =>
