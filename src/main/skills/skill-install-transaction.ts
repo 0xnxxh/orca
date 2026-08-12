@@ -5,11 +5,7 @@ import type { SkillInstallResult } from '../../shared/skill-install-contract'
 import type { SkillPackageManifestV1 } from '../../shared/skill-package-manifest'
 import { acquireSkillInstallLock, skillInstallLockPath } from './skill-install-lock'
 import { inspectSkillCanonicalState, type SkillCanonicalState } from './skill-install-planner'
-import {
-  readSkillInstallReceipt,
-  writeSkillInstallReceipt,
-  writeSkillStateFile
-} from './skill-install-provenance'
+import { readSkillInstallReceipt, writeSkillInstallReceipt } from './skill-install-provenance'
 import { extractSkillPackageArchive } from './skill-package-extraction'
 import { recoverSkillRemovalTransaction } from './skill-remove-transaction'
 import {
@@ -24,6 +20,14 @@ import {
   nativeSkillInstallFilesystem,
   type SkillInstallFilesystem
 } from './skill-install-filesystem'
+import {
+  beginSkillExtractionRecovery,
+  finishSkillExtractionRecovery
+} from './skill-extraction-recovery'
+import {
+  persistSkillInstallJournalTransition,
+  type SkillInstallTransactionDependencies as TransactionDependencies
+} from './skill-install-journal-transition'
 import { SKILL_INSTALL_CANCELLED_FAILURE } from '../../shared/skill-install-failure'
 import { SkillInstallOperationError } from './skill-install-operation-error'
 import {
@@ -34,6 +38,10 @@ import {
 } from './skill-install-transaction-result'
 
 export { recoverSkillInstallTransaction } from './skill-install-recovery'
+export type {
+  SkillInstallJournalBoundary,
+  SkillInstallTransactionDependencies
+} from './skill-install-journal-transition'
 
 export type LocalSkillInstallInput = {
   operationId: string
@@ -67,20 +75,11 @@ export type LocalExtractedSkillPackage = {
   archiveSha256: string
 }
 
-export type SkillInstallJournalBoundary = 'before' | 'after'
-
-export type SkillInstallTransactionDependencies = {
-  onJournalTransition?: (
-    phase: SkillInstallJournalV1['phase'],
-    boundary: SkillInstallJournalBoundary
-  ) => Promise<void>
-}
-
 async function inspectExtractedPackage(
-  input: LocalSkillInstallInput
+  input: LocalSkillInstallInput,
+  extractionPath: string
 ): Promise<LocalExtractedSkillPackage> {
   await mkdir(input.destinationRoot, { recursive: true })
-  const extractionPath = join(input.destinationRoot, `.orca-skill-extract-${randomUUID()}`)
   const extracted = await extractSkillPackageArchive({
     archivePath: input.archivePath,
     destinationDirectory: extractionPath,
@@ -100,24 +99,20 @@ function throwIfCancelled(signal?: AbortSignal): void {
   }
 }
 
-async function persistJournalTransition(
-  statePath: string,
-  journal: SkillInstallJournalV1,
-  dependencies: SkillInstallTransactionDependencies
-): Promise<void> {
-  await dependencies.onJournalTransition?.(journal.phase, 'before')
-  await writeSkillStateFile(statePath, journal)
-  await dependencies.onJournalTransition?.(journal.phase, 'after')
-}
-
 export async function previewLocalSkillPackage(
   input: LocalSkillInstallInput
 ): Promise<LocalSkillInstallPreview> {
-  const extracted = await inspectExtractedPackage(input)
+  const filesystem = input.filesystem ?? nativeSkillInstallFilesystem
+  const recovery = await beginSkillExtractionRecovery(
+    input.stateDirectory,
+    input.destinationRoot,
+    input.wslDistro
+  )
   try {
+    const extracted = await inspectExtractedPackage(input, recovery.extractionPath)
     return previewLocalExtractedSkillPackage(input, extracted)
   } finally {
-    await (input.filesystem ?? nativeSkillInstallFilesystem).remove(extracted.extractionPath)
+    await finishSkillExtractionRecovery(input.stateDirectory, recovery, filesystem)
   }
 }
 
@@ -141,16 +136,26 @@ export async function previewLocalExtractedSkillPackage(
 
 export async function installLocalSkillPackage(
   input: LocalSkillInstallInput,
-  dependencies: SkillInstallTransactionDependencies = {}
+  dependencies: TransactionDependencies = {}
 ): Promise<SkillInstallResult> {
-  const extracted = await inspectExtractedPackage(input)
-  return installLocalExtractedSkillPackage(input, extracted, dependencies)
+  const filesystem = input.filesystem ?? nativeSkillInstallFilesystem
+  const recovery = await beginSkillExtractionRecovery(
+    input.stateDirectory,
+    input.destinationRoot,
+    input.wslDistro
+  )
+  try {
+    const extracted = await inspectExtractedPackage(input, recovery.extractionPath)
+    return await installLocalExtractedSkillPackage(input, extracted, dependencies)
+  } finally {
+    await finishSkillExtractionRecovery(input.stateDirectory, recovery, filesystem)
+  }
 }
 
 export async function installLocalExtractedSkillPackage(
   input: LocalSkillInstallInput,
   extracted: LocalExtractedSkillPackage,
-  dependencies: SkillInstallTransactionDependencies = {}
+  dependencies: TransactionDependencies = {}
 ): Promise<SkillInstallResult> {
   const filesystem = input.filesystem ?? nativeSkillInstallFilesystem
   const canonicalPath = join(input.destinationRoot, extracted.manifest.name)
@@ -226,7 +231,7 @@ export async function installLocalExtractedSkillPackage(
       receipt
     }
     const statePath = skillInstallJournalPath(input.stateDirectory, canonicalPath)
-    await persistJournalTransition(statePath, journal, dependencies)
+    await persistSkillInstallJournalTransition(statePath, journal, dependencies)
     await filesystem.rename(join(extracted.extractionPath, 'skill'), stagingPath)
     throwIfCancelled(input.signal)
     const commitState = await inspectSkillCanonicalState({
@@ -248,12 +253,12 @@ export async function installLocalExtractedSkillPackage(
     if (destinationExists) {
       await filesystem.rename(canonicalPath, backupPath)
       journal.phase = 'backup-created'
-      await persistJournalTransition(statePath, journal, dependencies)
+      await persistSkillInstallJournalTransition(statePath, journal, dependencies)
       throwIfCancelled(input.signal)
     }
     await filesystem.rename(stagingPath, canonicalPath)
     journal.phase = 'canonical-placed'
-    await persistJournalTransition(statePath, journal, dependencies)
+    await persistSkillInstallJournalTransition(statePath, journal, dependencies)
     if (
       !(await skillInstallDestinationMatches(
         canonicalPath,
@@ -266,10 +271,10 @@ export async function installLocalExtractedSkillPackage(
     }
     await writeSkillInstallReceipt(input.stateDirectory, receipt)
     journal.phase = 'receipt-published'
-    await persistJournalTransition(statePath, journal, dependencies)
+    await persistSkillInstallJournalTransition(statePath, journal, dependencies)
     await cleanSkillInstallJournalFiles(journal, filesystem)
     journal.phase = 'complete'
-    await persistJournalTransition(statePath, journal, dependencies)
+    await persistSkillInstallJournalTransition(statePath, journal, dependencies)
     await rm(statePath, { force: true })
     return {
       operationId: input.operationId,

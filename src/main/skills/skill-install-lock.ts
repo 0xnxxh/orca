@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, open, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, open, readdir, readFile, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { SKILL_INSTALL_BUSY_FAILURE } from '../../shared/skill-install-failure'
 import { SkillInstallOperationError } from './skill-install-operation-error'
@@ -7,6 +7,8 @@ import { skillInstallStateKey } from './skill-install-provenance'
 
 const LOCK_RETRY_MS = 50
 const LOCK_STALE_MS = 30 * 60 * 1000
+const MAX_STARTUP_LOCKS = 128
+const LOCK_NAME = /^[a-f0-9]{64}\.lock$/
 
 type SkillInstallLockOwner = {
   token: string
@@ -43,6 +45,36 @@ async function removeStaleLock(path: string): Promise<void> {
   }
   if (Date.now() - lockStat.mtimeMs >= LOCK_STALE_MS) {
     await rm(path, { force: true })
+  }
+}
+
+export async function reclaimDeadSkillInstallLocks(stateDirectory: string): Promise<{
+  scanned: number
+  reclaimed: number
+  truncated: boolean
+}> {
+  const directory = join(stateDirectory, 'locks')
+  const entries = await readdir(directory, { withFileTypes: true }).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return []
+    }
+    throw error
+  })
+  const locks = entries
+    .filter((entry) => entry.isFile() && LOCK_NAME.test(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name))
+  let reclaimed = 0
+  for (const lock of locks.slice(0, MAX_STARTUP_LOCKS)) {
+    const path = join(directory, lock.name)
+    await removeStaleLock(path)
+    if (!(await stat(path).catch(() => null))) {
+      reclaimed += 1
+    }
+  }
+  return {
+    scanned: Math.min(locks.length, MAX_STARTUP_LOCKS),
+    reclaimed,
+    truncated: locks.length > MAX_STARTUP_LOCKS
   }
 }
 

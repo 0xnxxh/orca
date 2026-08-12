@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createSkillPackageArchive } from './skill-package-creation'
 import { extractSkillPackageArchive } from './skill-package-extraction'
 import { skillInstallLockPath } from './skill-install-lock'
+import { beginSkillExtractionRecovery } from './skill-extraction-recovery'
 import {
   readSkillInstallReceipt,
   removeSkillInstallReceipt,
@@ -59,6 +60,53 @@ afterEach(async () => {
 })
 
 describe('skill transaction startup recovery', () => {
+  it('cleans extraction bytes and a dead lock left before the first install journal', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skill-startup-extraction-test-'))
+    roots.push(root)
+    const stateDirectory = join(root, 'state')
+    const destinationRoot = join(root, 'skills')
+    const canonicalPath = join(destinationRoot, 'alpha')
+    const extraction = await beginSkillExtractionRecovery(stateDirectory, destinationRoot)
+    await mkdir(extraction.extractionPath, { recursive: true })
+    await writeFile(join(extraction.extractionPath, 'partial'), 'partial bytes')
+    const lockPath = skillInstallLockPath(stateDirectory, canonicalPath)
+    await mkdir(dirname(lockPath), { recursive: true })
+    await writeFile(
+      lockPath,
+      JSON.stringify({ token: 'killed', pid: 2_147_483_647, createdAt: Date.now() })
+    )
+
+    const report = await recoverPendingSkillTransactions(stateDirectory)
+
+    expect(report).toMatchObject({ scanned: 1, recovered: 1, failures: [], truncated: false })
+    await expect(readFile(join(extraction.extractionPath, 'partial'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(readFile(lockPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('preserves bytes referenced by an extraction journal outside its destination root', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skill-startup-extraction-boundary-test-'))
+    roots.push(root)
+    const stateDirectory = join(root, 'state')
+    const extraction = await beginSkillExtractionRecovery(stateDirectory, join(root, 'skills'))
+    const outsidePath = join(root, 'outside')
+    await mkdir(outsidePath)
+    await writeFile(join(outsidePath, 'keep'), 'owned elsewhere')
+    const journalPath = join(stateDirectory, 'extraction-journals', `${extraction.ownerToken}.json`)
+    await writeSkillStateFile(journalPath, { ...extraction, extractionPath: outsidePath })
+
+    const report = await recoverPendingSkillTransactions(stateDirectory)
+
+    expect(report).toMatchObject({
+      scanned: 1,
+      recovered: 0,
+      failures: [{ journalKey: extraction.ownerToken, code: 'skill-extraction-journal-invalid' }]
+    })
+    expect(await readFile(join(outsidePath, 'keep'), 'utf8')).toBe('owned elsewhere')
+    expect(await readFile(journalPath, 'utf8')).toContain(outsidePath)
+  })
+
   it('publishes a committed install after restart and reclaims its dead lock', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-skill-startup-recovery-test-'))
     roots.push(root)

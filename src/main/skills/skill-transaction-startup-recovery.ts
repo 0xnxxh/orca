@@ -1,7 +1,12 @@
 import { readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { readNodeFileWithinLimit } from '../../shared/node-bounded-file-reader'
-import { acquireSkillInstallLock, skillInstallLockPath } from './skill-install-lock'
+import {
+  acquireSkillInstallLock,
+  reclaimDeadSkillInstallLocks,
+  skillInstallLockPath
+} from './skill-install-lock'
+import { recoverPendingSkillExtractions } from './skill-extraction-recovery'
 import { skillInstallStateKey } from './skill-install-provenance'
 import {
   readSkillInstallRecoveryJournal,
@@ -117,15 +122,17 @@ function pendingTransactions(
 export async function recoverPendingSkillTransactions(
   stateDirectory: string
 ): Promise<SkillTransactionStartupRecoveryReport> {
-  const [installs, removals] = await Promise.all([
+  const [installs, removals, extractions, locks] = await Promise.all([
     scanJournalDirectory(stateDirectory, 'journals'),
-    scanJournalDirectory(stateDirectory, 'removal-journals')
+    scanJournalDirectory(stateDirectory, 'removal-journals'),
+    recoverPendingSkillExtractions(stateDirectory),
+    reclaimDeadSkillInstallLocks(stateDirectory)
   ])
   const report: SkillTransactionStartupRecoveryReport = {
-    scanned: installs.candidates.length + removals.candidates.length,
-    recovered: 0,
-    failures: [...installs.failures, ...removals.failures],
-    truncated: installs.truncated || removals.truncated
+    scanned: installs.candidates.length + removals.candidates.length + extractions.scanned,
+    recovered: extractions.recovered,
+    failures: [...installs.failures, ...removals.failures, ...extractions.failures],
+    truncated: installs.truncated || removals.truncated || extractions.truncated || locks.truncated
   }
   for (const pending of pendingTransactions(installs.candidates, removals.candidates)) {
     let releaseLock: (() => Promise<void>) | null = null
