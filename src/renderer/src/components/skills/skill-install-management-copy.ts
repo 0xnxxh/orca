@@ -55,6 +55,10 @@ export function skillInstallManagementCopy() {
       'auto.components.skills.SkillInstallManagementDialog.561e49ccd1',
       'Install selected version'
     ),
+    installAnotherMachine: translate(
+      'auto.components.skills.SkillInstallManagementDialog.installAnotherMachine',
+      'Install on another machine'
+    ),
     cancelInstall: translate(
       'auto.components.skills.SkillInstallManagementDialog.c1d03ee50d',
       'Cancel installation'

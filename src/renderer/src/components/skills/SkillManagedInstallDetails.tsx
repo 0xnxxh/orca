@@ -1,4 +1,4 @@
-import { AlertTriangle, Loader2, RotateCcw, Trash2 } from 'lucide-react'
+import { AlertTriangle, Loader2, MonitorUp, RotateCcw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -30,6 +30,7 @@ export function SkillManagedInstallDetails({
   onVersionChange,
   onInstall,
   onCancelInstall,
+  onInstallAnotherMachine,
   onRemove,
   onCloudChanged,
   onPackageDeleted
@@ -47,6 +48,7 @@ export function SkillManagedInstallDetails({
   onVersionChange: (versionId: string) => void
   onInstall: (discardLocal?: boolean) => void
   onCancelInstall: () => void
+  onInstallAnotherMachine: (shareId: string) => void
   onRemove: (discardLocal?: boolean) => void
   onCloudChanged: () => Promise<void>
   onPackageDeleted: () => void
@@ -56,6 +58,7 @@ export function SkillManagedInstallDetails({
     selectedVersion?.manifest && 'skills' in selectedVersion.manifest
       ? selectedVersion.manifest
       : null
+  const activeShare = details.management?.shares[0]
   return (
     <section className="space-y-3 rounded-md border border-border p-3">
       <div>
@@ -123,6 +126,16 @@ export function SkillManagedInstallDetails({
         {installActive ? (
           <Button variant="secondary" size="sm" onClick={onCancelInstall}>
             {copy.cancelInstall}
+          </Button>
+        ) : null}
+        {activeShare ? (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={() => onInstallAnotherMachine(activeShare.id)}
+          >
+            <MonitorUp className="size-4" /> {copy.installAnotherMachine}
           </Button>
         ) : null}
         <Button

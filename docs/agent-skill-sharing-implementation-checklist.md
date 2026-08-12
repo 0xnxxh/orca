@@ -889,9 +889,8 @@ does not mean the surrounding phase is complete.
 - [x] Show whether a package came from Orca Cloud and its accessible version history.
 - [x] Refresh discovery and installation state after local or remote actions.
 - [x] Keep Cloud deletion, share revocation, and local removal clearly separate.
-- [ ] Add installed-bundle update, rollback, install-on-another-machine, inspect, and remove actions.
-      Grouped inspection, selective update/rollback, and one-surface safe removal are implemented;
-      install-on-another-machine remains.
+- [x] Add installed-bundle update, rollback, install-on-another-machine, inspect, and remove actions.
+      An active unlisted link opens the existing destination-aware installer for another machine.
 - [x] Add shared-bundle copy-link, access, revoke, publish-version, and Cloud-delete actions. Exact
       full-bundle version publishing reuses its package; ambiguous or partial managed-bundle
       selections create a new package rather than mutating the wrong history.

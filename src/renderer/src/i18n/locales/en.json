@@ -4208,7 +4208,8 @@
           "34c2ef9e71": "Install {{count}} skills",
           "a0cab67c2f": "Remove {{count}} skills",
           "f970d8088d": "Confirm remove {{count}} skills",
-          "dab29e4b54": "{{installed}} installed · {{updated}} updated · {{keptLocal}} kept local"
+          "dab29e4b54": "{{installed}} installed · {{updated}} updated · {{keptLocal}} kept local",
+          "installAnotherMachine": "Install on another machine"
         },
         "SkillInstallReviewContent": {
           "89e2601162": "Discard and replace",

@@ -310,8 +310,6 @@ export function SkillInstallManagementDialog({
     setError(null)
     setNotice(null)
     setResult(null)
-    setBundleResult(null)
-    setConfirmRemove(false)
     onOpenChange(false)
   }
 
@@ -377,6 +375,10 @@ export function SkillInstallManagementDialog({
             onVersionChange={setVersionId}
             onInstall={(discardLocal) => void installVersion(discardLocal)}
             onCancelInstall={() => void cancelInstall()}
+            onInstallAnotherMachine={(shareId) => {
+              close()
+              useAppStore.getState().openSkillShare(shareId)
+            }}
             onRemove={(discardLocal) => void remove(discardLocal)}
             onCloudChanged={refreshPackageDetails}
             onPackageDeleted={packageDeleted}

@@ -165,7 +165,8 @@ beforeEach(() => {
   useAppStore.setState({
     runtimeEnvironments: [],
     sshConnectionStates: new Map(),
-    sshTargetLabels: new Map()
+    sshTargetLabels: new Map(),
+    pendingSkillShareId: null
   })
 })
 
@@ -342,6 +343,33 @@ describe('SkillInstallManagementDialog', () => {
       })
     )
     expect(skills.installPackageVersion).not.toHaveBeenCalled()
+  })
+
+  it('opens an active bundle link in the existing machine installer', async () => {
+    const installed = [bundleInstall('alpha-skill'), bundleInstall('beta-skill')]
+    const versions = [bundleVersion('ver_1', ['alpha-skill', 'beta-skill'])]
+    const details = {
+      ...packageDetails(versions),
+      management: {
+        shares: [
+          {
+            id: 'share_bundle',
+            url: 'https://app.orca.dev/skills/share/share_bundle',
+            createdAt: '2026-08-12T00:00:00.000Z'
+          }
+        ]
+      }
+    }
+    const skills = skillsApi(installed, versions, details)
+    const onOpenChange = vi.fn()
+    Object.defineProperty(window, 'api', { configurable: true, value: { skills } })
+    render(<SkillInstallManagementDialog open onOpenChange={onOpenChange} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /2 skill bundle.*ver_1/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Install on another machine' }))
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(useAppStore.getState().pendingSkillShareId).toBe('share_bundle')
   })
 
   it('removes a bundle with one confirmation and preserves modified skills', async () => {
