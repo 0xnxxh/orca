@@ -133,7 +133,8 @@ async function acquireNativeHandoffOwner(
     const options = await readNativeHandoffSessionOptions({
       adapter: deps.adapter,
       sessionId: input.sessionId,
-      fence: input.fence
+      fence: input.fence,
+      ...(record.options ? { priorOptions: record.options } : {})
     })
     await deps.store.commitProcessIdentity({
       sessionId: input.sessionId,
