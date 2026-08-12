@@ -1,11 +1,10 @@
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
 import { importLegacyTranscriptIntoJournal } from '../agent-session-journal/journal-legacy-import'
 import { journalIdentityFor } from './structured-agent-session-attach'
+import { canRestoreLiveTuiOwner } from './structured-agent-session-handoff-restart'
 import type { DeferredStructuredAgentSessionEventSink } from './structured-agent-session-event-sink'
-import type {
-  StructuredAgentSessionHostDeps,
-  StructuredAgentSessionHostSession
-} from './structured-agent-session-host'
+import type { StructuredAgentSessionHostDeps } from './structured-agent-session-host'
+import type { StructuredAgentSessionHostSession } from './structured-agent-session-host-types'
 import { StructuredAgentSessionHandoffCoordinator } from './structured-agent-session-handoff'
 import type { AgentSessionSubscribers } from './structured-agent-session-subscribers'
 
@@ -19,6 +18,18 @@ type HostHandoffAccess = {
 }
 
 export type StructuredAgentSessionHostHandoff = StructuredAgentSessionHandoffCoordinator
+
+export async function refreshRecoverableStructuredHandoffStatus(
+  handoff: StructuredAgentSessionHostHandoff,
+  store: StructuredAgentSessionHostDeps['store'],
+  sessionId: string
+) {
+  const record = store.getRecord(sessionId)
+  if (record && canRestoreLiveTuiOwner(record)) {
+    await handoff.restore(sessionId)
+  }
+  return handoff.status(sessionId)
+}
 
 export function createStructuredAgentSessionHostHandoff(
   deps: StructuredAgentSessionHostDeps,

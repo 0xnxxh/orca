@@ -16,6 +16,7 @@ export class StructuredAgentSessionLeaseRenewer {
       store: AgentSessionRecordStore
       probe: (record: AgentSessionRecord) => Promise<AgentSessionOwnerProbe>
       now: () => number
+      onRenewed?: (record: AgentSessionRecord) => Promise<void>
       onError?: (input: { sessionId: string; error: unknown }) => void
       intervalMs?: number
     }
@@ -60,12 +61,13 @@ export class StructuredAgentSessionLeaseRenewer {
 
   private async renewRecord(record: AgentSessionRecord): Promise<void> {
     try {
-      await this.input.store.renewLease({
+      const renewed = await this.input.store.renewLease({
         sessionId: record.sessionId,
         fence: record.lease.runtimeFence,
         childProbe: await this.input.probe(record),
         now: this.input.now()
       })
+      await this.input.onRenewed?.(renewed)
     } catch (error) {
       this.input.onError?.({ sessionId: record.sessionId, error })
     }

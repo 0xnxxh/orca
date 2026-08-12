@@ -156,6 +156,20 @@ export class AgentSessionSubscribers {
       return
     }
     if (since.rows.length === 0) {
+      if (handoff) {
+        this.emit(subscriber, {
+          type: 'batch',
+          sessionId: subscriber.sessionId,
+          batch: {
+            cursor: snapshot.cursor,
+            items: [],
+            removedItemIds: [],
+            submissions: []
+          },
+          fence: subscriber.fence,
+          handoff
+        })
+      }
       return
     }
     const projected = projectJournalBatch({

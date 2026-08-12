@@ -480,6 +480,34 @@ describe('structured session ownership handoff', () => {
     expect(coordinator.status(SESSION)).toMatchObject({ owner: 'tui', phase: 'idle' })
   })
 
+  it('clears stale recovery after re-proving the live TUI owner', async () => {
+    await moveToTui()
+    const record = store.getRecord(SESSION)!
+    await setStoredAgentSessionHandoffStage(store, {
+      sessionId: SESSION,
+      fence: record.lease.runtimeFence,
+      stage: 'manual-recovery',
+      handoffOperationId: null,
+      now: NOW
+    })
+    coordinator = createCoordinator()
+
+    await coordinator.restore(SESSION)
+    expect(coordinator.status(SESSION)).toMatchObject({
+      owner: 'tui',
+      phase: 'idle',
+      stage: null,
+      terminal: { handle: 'term-tui' }
+    })
+    expect(reproveTuiOwner).toHaveBeenCalledOnce()
+    expect(store.getRecord(SESSION)?.lease).toMatchObject({
+      runtimeKind: 'tui',
+      claimStatus: 'live',
+      handoffStage: null,
+      handoffOperationId: null
+    })
+  })
+
   it('rejects cancellation once a queued handoff is no longer pending', async () => {
     expect(
       await submit(request('to-tui', 'after-turn', { action: 'cancel-queued' }))
@@ -649,6 +677,11 @@ describe('structured session ownership handoff', () => {
       error: { recoverableOwner: 'none' }
     })
     expect(store.getRecord(SESSION)?.lease.handoffStage).toBe('manual-recovery')
+    await coordinator.restore(SESSION)
+    expect(coordinator.status(SESSION)).toMatchObject({
+      owner: 'none',
+      stage: 'manual-recovery'
+    })
     expect(
       await submit(request('to-tui', 'now', { action: 'retry', operationId: failedOperation }))
     ).toMatchObject({ ok: false, refusal: { code: 'agent_session_operation_conflict' } })

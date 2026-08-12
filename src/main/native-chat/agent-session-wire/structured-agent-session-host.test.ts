@@ -1,19 +1,11 @@
-// The host against a real record store and a real journal, with only the
-// provider adapter stubbed — admission, idempotency, and the journal writes are
-// exactly the ones that ship.
-
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { agentJournalItemKey } from '../../../shared/agent-session-journal-item-key'
-import type { AgentJournalMessageItem } from '../../../shared/agent-session-journal-types'
 import type { AgentSessionOwnerProbe } from '../../../shared/agent-session-lease-adjudication'
 import { computeAgentSessionPayloadFingerprint } from '../../../shared/agent-session-mutation-envelope'
-import type {
-  AgentSessionExecutionLocation,
-  AgentSessionRecord
-} from '../../../shared/agent-session-record'
+import type { AgentSessionRecord } from '../../../shared/agent-session-record'
 import type {
   AgentSessionMutationEnvelope,
   AgentSessionSubscribeEvent
@@ -28,34 +20,19 @@ import type {
   AgentSessionDispatchOutcome,
   StructuredAgentSessionAdapter
 } from './structured-agent-session-adapter'
-import { attachFingerprintFields } from './structured-agent-session-attach'
 import type { AgentSessionAttachParams } from './structured-agent-session-attach'
 import { StructuredAgentSessionHost } from './structured-agent-session-host'
-
-const NOW = 1_800_000_000_000
-const SESSION = 'session-alpha'
-const THREAD = '019fd532-7c11-7a90-b6de-4e1a2c3d5f60'
-
-const LOCATION: AgentSessionExecutionLocation = {
-  executionHostId: 'local',
-  wslDistro: null,
-  workspaceId: 'workspace-1',
-  workspaceKind: 'git-worktree'
-}
+import {
+  HOST_TEST_NOW as NOW,
+  HOST_TEST_SESSION as SESSION,
+  HOST_TEST_THREAD as THREAD,
+  hostTestAttachParams,
+  hostTestMessage,
+  hostTestOperationId,
+  resetHostTestOperationIds
+} from './structured-agent-session-host-test-data'
 
 const CALLER = { callerKey: 'client-1' }
-
-let operations = 0
-
-/** `<13-digit ms>-<32 hex>`, the only shape the durable ledger accepts. */
-function operationId(): string {
-  operations += 1
-  return `${NOW}-${operations.toString(16).padStart(32, '0')}`
-}
-
-function message(text: string): AgentJournalMessageItem {
-  return { kind: 'message', role: 'user', blocks: [{ type: 'text', text }] }
-}
 
 function envelope(
   method: string,
@@ -64,9 +41,7 @@ function envelope(
 ): AgentSessionMutationEnvelope {
   return {
     sessionId: SESSION,
-    clientOperationId: operationId(),
-    // A mutation names the fence it believes it is writing under; only attach
-    // may leave it null.
+    clientOperationId: hostTestOperationId(),
     expectedRuntimeFence: store.getRecord(SESSION)?.lease.runtimeFence ?? 1,
     payloadFingerprint: computeAgentSessionPayloadFingerprint({
       method,
@@ -78,44 +53,11 @@ function envelope(
 }
 
 function attachParams(overrides: Partial<AgentSessionAttachParams> = {}): AgentSessionAttachParams {
-  const params: AgentSessionAttachParams = {
-    envelope: {
-      sessionId: SESSION,
-      clientOperationId: operationId(),
-      expectedRuntimeFence: null,
-      payloadFingerprint: '0'.repeat(64)
-    },
-    location: LOCATION,
-    provider: 'codex',
-    agent: 'codex',
-    accountHome: { variable: 'CODEX_HOME', path: '/home/dev/.codex' },
-    runtimeKind: 'native',
-    providerHandle: { kind: 'codex', threadId: THREAD },
-    ...overrides
-  }
-  return {
-    ...params,
-    envelope: {
-      ...params.envelope,
-      payloadFingerprint: computeAgentSessionPayloadFingerprint({
-        method: 'agentSession.attach',
-        sessionId: params.envelope.sessionId,
-        fields: attachFingerprintFields(params)
-      })
-    }
-  }
+  return hostTestAttachParams(null, overrides)
 }
 
-/** `ensure`: the same transition as create, from a fence the client already holds. */
 function ensureParams(fence: number): AgentSessionAttachParams {
-  return attachParams({
-    envelope: {
-      sessionId: SESSION,
-      clientOperationId: operationId(),
-      expectedRuntimeFence: fence,
-      payloadFingerprint: '0'.repeat(64)
-    }
-  })
+  return hostTestAttachParams(fence)
 }
 
 let root: string
@@ -185,7 +127,7 @@ async function seedApproval(optionId = 'allow'): Promise<{ itemId: string; revis
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'orca-wire-host-'))
-  operations = 0
+  resetHostTestOperationIds()
   ordinal = 0
   acquire = vi.fn(async ({ fence }) => ({
     process: {
@@ -197,8 +139,6 @@ beforeEach(async () => {
     link: {
       linkId: `link-${fence}`,
       handle: { provider: 'codex', threadId: THREAD },
-      // A restarted host re-proves the thread it inherited; only the first
-      // owner of a session may claim to have created it.
       origin: store.getRecord(SESSION)?.providerHandleChain.length ? 'resumed' : 'created',
       mintedAtFence: fence,
       observedAt: NOW
@@ -409,7 +349,7 @@ describe('attach', () => {
 describe('send', () => {
   it('writes the submission before dispatching and resolves it accepted', async () => {
     await attach()
-    const body = message('add a retry')
+    const body = hostTestMessage('add a retry')
     const result = await host.send(CALLER, {
       envelope: envelope('agentSession.send', { body }),
       body
@@ -427,7 +367,7 @@ describe('send', () => {
   it('settles a thrown dispatch as unknown, never as a rejection', async () => {
     await attach()
     dispatch.mockRejectedValueOnce(new Error('socket closed'))
-    const body = message('add a retry')
+    const body = hostTestMessage('add a retry')
     const result = await host.send(CALLER, {
       envelope: envelope('agentSession.send', { body }),
       body
@@ -437,7 +377,7 @@ describe('send', () => {
 
   it('replays a retried send from the journal without dispatching twice', async () => {
     await attach()
-    const body = message('add a retry')
+    const body = hostTestMessage('add a retry')
     const params = { envelope: envelope('agentSession.send', { body }), body }
     await host.send(CALLER, params)
     const retry = await host.send(CALLER, params)
@@ -450,7 +390,7 @@ describe('send', () => {
     dispatch
       .mockRejectedValueOnce(new Error('socket closed'))
       .mockImplementationOnce(async () => accepted())
-    const body = message('possibly delivered')
+    const body = hostTestMessage('possibly delivered')
     const params = { envelope: envelope('agentSession.send', { body }), body }
 
     const first = await host.send(CALLER, params)
@@ -472,7 +412,7 @@ describe('send', () => {
 
   it('refuses a stale fence and hands back the current one', async () => {
     const record = await attach()
-    const body = message('add a retry')
+    const body = hostTestMessage('add a retry')
     const result = await host.send(CALLER, {
       envelope: envelope(
         'agentSession.send',
@@ -489,7 +429,7 @@ describe('send', () => {
 
   it('does not let a refused call leave a ledger row that replays past the fence', async () => {
     const record = await attach()
-    const body = message('add a retry')
+    const body = hostTestMessage('add a retry')
     const params = {
       envelope: envelope(
         'agentSession.send',
@@ -507,7 +447,7 @@ describe('send', () => {
   })
 
   it('refuses any mutation against a session this host has not attached', async () => {
-    const body = message('add a retry')
+    const body = hostTestMessage('add a retry')
     expect(
       await host.send(CALLER, { envelope: envelope('agentSession.send', { body }), body })
     ).toMatchObject({ ok: false, refusal: { code: 'agent_session_ownership_unknown' } })
@@ -738,7 +678,7 @@ describe('restart', () => {
 
   it('restores durable journals for read-only history without acquiring a provider', async () => {
     await attach()
-    const body = message('persisted conversation')
+    const body = hostTestMessage('persisted conversation')
     await host.send(CALLER, { envelope: envelope('agentSession.send', { body }), body })
     await reboot(async () => ({ outcome: 'indeterminate', reason: 'read does not need ownership' }))
     acquire.mockClear()
@@ -753,13 +693,40 @@ describe('restart', () => {
     expect(acquire).not.toHaveBeenCalled()
   })
 
+  it('clears stale TUI recovery when restart successfully reacquires the native owner', async () => {
+    await attach()
+    await store.transitionHandoff(SESSION, (record) => ({
+      ...record,
+      lease: {
+        ...record.lease,
+        runtimeKind: 'tui',
+        handoffStage: 'manual-recovery'
+      }
+    }))
+    await reboot(async () => ({ outcome: 'pid-absent' }))
+    acquire.mockClear()
+
+    await host.restoreReadableSessions()
+
+    expect(acquire).toHaveBeenCalledOnce()
+    expect(store.getRecord(SESSION)?.lease).toMatchObject({
+      runtimeKind: 'native',
+      claimStatus: 'live',
+      handoffStage: null,
+      handoffOperationId: null
+    })
+    await expect(host.handoffStatus(SESSION)).resolves.toMatchObject({
+      owner: 'native',
+      phase: 'idle',
+      stage: null
+    })
+  })
+
   it("keeps a session whose owner cannot be probed out of a live writer's hands", async () => {
     await attach()
     const held = store.getRecord(SESSION)?.lease.runtimeFence ?? 0
     await reboot(async () => ({ outcome: 'indeterminate', reason: 'no probe on this host' }))
 
-    // Nothing proved the previous process dead, so the lease routes to manual
-    // recovery rather than letting a second writer in behind it.
     expect(await host.attach(CALLER, ensureParams(held))).toMatchObject({
       ok: false,
       refusal: { code: 'agent_session_ownership_unknown' }
@@ -776,7 +743,6 @@ describe('restart', () => {
     await reboot(probe)
 
     await expect(host.attach(CALLER, ensureParams(held))).rejects.toThrow('probe exploded')
-    // One unlucky startup must not strand the session for this host's lifetime.
     const reattached = await host.attach(CALLER, ensureParams(await staleFenceFrom(held)))
     expect(reattached).toMatchObject({ ok: true })
     expect(probe).toHaveBeenCalledTimes(2)
@@ -792,7 +758,7 @@ describe('subscribe', () => {
       sessionId: SESSION,
       emit: (event) => events.push(event)
     })
-    const body = message('add a retry')
+    const body = hostTestMessage('add a retry')
     await host.send(CALLER, { envelope: envelope('agentSession.send', { body }), body })
 
     expect(events[0]?.type).toBe('snapshot')
@@ -807,7 +773,7 @@ describe('subscribe', () => {
 
   it('resumes from a client cursor with only the rows it missed', async () => {
     await attach()
-    const body = message('add a retry')
+    const body = hostTestMessage('add a retry')
     const first = await host.send(CALLER, {
       envelope: envelope('agentSession.send', { body }),
       body
@@ -823,10 +789,9 @@ describe('subscribe', () => {
       emit: (event) => events.push(event),
       cursor: first.cursor
     })
-    // Nothing new since that cursor: a resume is silent, not a redundant replay.
-    expect(events).toHaveLength(0)
+    expect(events[0]).toMatchObject({ type: 'batch', handoff: { owner: 'native', phase: 'idle' } })
 
-    const second = message('and a timeout')
+    const second = hostTestMessage('and a timeout')
     await host.send(CALLER, {
       envelope: envelope('agentSession.send', { body: second }),
       body: second
@@ -850,7 +815,7 @@ describe('subscribe', () => {
       sessionId: SESSION,
       emit: (event) => events.push(event)
     })
-    const body = message('survive subscriber failure')
+    const body = hostTestMessage('survive subscriber failure')
 
     const result = await host.send(CALLER, {
       envelope: envelope('agentSession.send', { body }),

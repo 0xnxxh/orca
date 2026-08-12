@@ -1,11 +1,5 @@
-// The structured agent-session host: one place where the lease, the journal,
-// and the provider adapter meet.
-//
-// Every mutating call takes the same route — recompute the fingerprint, admit
-// through the durable operation ledger, check the lease, then act — so no
-// method can grow its own admission rules. Calls against one session are
-// serialized; the journal's own queue orders writes, but admission has to be
-// single-file too or two clients could both read one prompt as pending.
+// Structured agent-session host: where the lease, journal, and provider adapter meet.
+// Mutations share one durable admission path and serialize per session.
 
 import { randomUUID } from 'node:crypto'
 import type { AgentJournalMessageItem } from '../../../shared/agent-session-journal-types'
@@ -31,7 +25,6 @@ import type {
   AgentSessionWireRefusal
 } from '../../../shared/agent-session-wire'
 import type { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
-import type { AgentSessionJournal } from '../agent-session-journal/journal-store'
 import { readAgentSessionHistory } from './agent-session-history-page'
 import type { StructuredAgentSessionAdapter } from './structured-agent-session-adapter'
 import type { AgentSessionAttachParams } from './structured-agent-session-attach'
@@ -58,36 +51,26 @@ import { restoreStructuredAgentSessionsOnRestart } from './structured-agent-sess
 import type { StructuredAgentSessionHandoffTransport } from './structured-agent-session-handoff-types'
 import {
   createStructuredAgentSessionHostHandoff,
+  refreshRecoverableStructuredHandoffStatus,
   type StructuredAgentSessionHostHandoff
 } from './structured-agent-session-host-handoff'
 import { StructuredAgentSessionHostRuntimeState } from './structured-agent-session-host-runtime-state'
-
-export type StructuredAgentSessionCaller = {
-  /** Stable per-client identity; scopes the operation ledger and records who
-   *  answered a prompt. */
-  callerKey: string
-}
+import { listStructuredAgentSessionTabs } from './structured-agent-session-host-tabs'
+import type {
+  StructuredAgentSessionCaller,
+  StructuredAgentSessionHostSession
+} from './structured-agent-session-host-types'
 
 export type StructuredAgentSessionHostDeps = {
   store: AgentSessionRecordStore
   adapter: StructuredAgentSessionAdapter
   journalRoot: string
-  /** Key id the host's claims are minted under. */
   claimKeyId: string
   probeOwner?: (record: AgentSessionRecord) => Promise<AgentSessionOwnerProbe>
   mintSpawnToken?: () => string
   now?: () => number
-  /** A journal append the provider streamed that could not be written. Unset
-   *  drops it: the alternative is throwing inside the provider's notification
-   *  callback, which would take the connection down over one lost row. */
   onEventSinkError?: (input: { sessionId: string; error: unknown }) => void
   handoffTransport?: StructuredAgentSessionHandoffTransport
-}
-
-export type StructuredAgentSessionHostSession = {
-  journal: AgentSessionJournal
-  params: AgentSessionAttachParams
-  fence: number
 }
 
 export class StructuredAgentSessionHost {
@@ -99,7 +82,9 @@ export class StructuredAgentSessionHost {
   private readonly handoffs: StructuredAgentSessionHostHandoff
 
   constructor(readonly deps: StructuredAgentSessionHostDeps) {
-    this.runtimeState = new StructuredAgentSessionHostRuntimeState(deps)
+    this.runtimeState = new StructuredAgentSessionHostRuntimeState(deps, (record) =>
+      this.restoreRenewedHandoff(record.sessionId)
+    )
     this.reconcileLeases = createRestartReconciler({
       store: deps.store,
       probe: (record) => this.runtimeState.probeRecord(record),
@@ -118,24 +103,14 @@ export class StructuredAgentSessionHost {
 
   private now = (): number => this.deps.now?.() ?? Date.now()
 
-  hasSession(sessionId: string): boolean {
-    return this.sessions.has(sessionId)
-  }
+  hasSession = (sessionId: string): boolean => this.sessions.has(sessionId)
 
   supportsCreate(location: AgentSessionExecutionLocation, agent: string): boolean {
     return agent === 'codex' && (this.deps.adapter.supportsLocation?.(location) ?? false)
   }
 
-  listSessionTabs(): {
-    sessionId: string
-    workspaceId: string
-    agent: 'codex'
-  }[] {
-    return [...this.sessions.entries()].map(([sessionId, session]) => ({
-      sessionId,
-      workspaceId: session.params.location.workspaceId,
-      agent: 'codex' as const
-    }))
+  listSessionTabs() {
+    return listStructuredAgentSessionTabs(this.sessions)
   }
 
   async restoreReadableSessions(): Promise<void> {
@@ -161,10 +136,14 @@ export class StructuredAgentSessionHost {
     return this.tasks.serialize(sessionId, task)
   }
 
-  /**
-   * `create` and `ensure` in one: a null expected fence means the session must
-   * not exist yet, any other value is a compare-and-swap against the lease.
-   */
+  private restoreRenewedHandoff(sessionId: string): Promise<void> {
+    return this.serialize(sessionId, async () => {
+      if (this.sessions.has(sessionId)) {
+        await refreshRecoverableStructuredHandoffStatus(this.handoffs, this.deps.store, sessionId)
+      }
+    })
+  }
+
   attach(
     caller: StructuredAgentSessionCaller,
     params: AgentSessionAttachParams
@@ -206,9 +185,6 @@ export class StructuredAgentSessionHost {
           } else {
             this.subscribers.publish(sessionId, attached.journal)
           }
-          // Bound last: everything the provider streamed while the journal was
-          // opening lands after the attach result the client is about to read,
-          // never interleaved with it.
           eventSink.bind({
             journal: attached.journal,
             fence,
@@ -216,8 +192,6 @@ export class StructuredAgentSessionHost {
           })
         }
       })
-      // A refused attach that never reached a journal leaves the sink holding
-      // writes nothing will ever drain.
       if (!attached.ok && !this.sessions.has(sessionId)) {
         eventSink.close()
         this.runtimeState.discardEventSink(sessionId)
@@ -227,16 +201,12 @@ export class StructuredAgentSessionHost {
     return this.tasks.trackAttach(attaching)
   }
 
-  /** Settles every row the provider streamed. Callers that must read the
-   *  journal immediately after provider activity await this first. */
   flushStreamedEvents(sessionId: string): Promise<void> {
     return this.runtimeState.flushEventSink(sessionId)
   }
 
-  /** Settles final provider rows after every child has stopped producing them. */
   async flushAllStreamedEvents(): Promise<void> {
     this.runtimeState.stopLeaseRenewal()
-    // An acquired provider can still be opening its journal; bind before draining.
     await this.tasks.drainAttaches()
     await this.runtimeState.flushAllEventSinks()
   }
@@ -317,16 +287,13 @@ export class StructuredAgentSessionHost {
     return this.handoffs.request(caller.callerKey, params)
   }
 
-  handoffStatus(sessionId: string): AgentSessionHandoffStatus {
+  async handoffStatus(sessionId: string): Promise<AgentSessionHandoffStatus> {
     this.requireSession(sessionId)
-    return this.handoffs.status(sessionId)
+    return this.serialize(sessionId, () =>
+      refreshRecoverableStructuredHandoffStatus(this.handoffs, this.deps.store, sessionId)
+    )
   }
 
-  /**
-   * Paged read. Throws `agent_session_ownership_unknown` for a session this host
-   * has not attached — a reset would tell the client to reload something that
-   * does not exist here.
-   */
   history(request: AgentSessionHistoryRequest): AgentSessionHistoryResult {
     const result = readAgentSessionHistory(this.requireSession(request.sessionId).journal, request)
     const fence = this.deps.store.getRecord(request.sessionId)?.lease.runtimeFence

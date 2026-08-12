@@ -11,11 +11,15 @@ export class StructuredAgentSessionHostRuntimeState {
   private readonly eventSinks = new Map<string, DeferredStructuredAgentSessionEventSink>()
   private readonly leaseRenewer: StructuredAgentSessionLeaseRenewer
 
-  constructor(private readonly deps: StructuredAgentSessionHostDeps) {
+  constructor(
+    private readonly deps: StructuredAgentSessionHostDeps,
+    onLeaseRenewed?: (record: AgentSessionRecord) => Promise<void>
+  ) {
     this.leaseRenewer = new StructuredAgentSessionLeaseRenewer({
       store: deps.store,
       probe: (record) => this.probeRecord(record),
       now: () => deps.now?.() ?? Date.now(),
+      ...(onLeaseRenewed ? { onRenewed: onLeaseRenewed } : {}),
       onError: ({ sessionId, error }) => deps.onEventSinkError?.({ sessionId, error })
     })
   }

@@ -97,16 +97,21 @@ describe('structured agent-session lease renewal', () => {
       outcome: 'identity-matched' as const,
       matchedOn: ['process-start-time' as const]
     }))
+    const onRenewed = vi.fn()
     const renewer = new StructuredAgentSessionLeaseRenewer({
       store,
       probe,
-      now: () => NOW + 10_000
+      now: () => NOW + 10_000,
+      onRenewed
     })
 
     await renewer.renewNow()
 
     expect(probe).toHaveBeenCalledOnce()
     expect(store.getRecord('session-renewal')?.lease.lastRenewedAt).toBe(NOW + 10_000)
+    expect(onRenewed).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'session-renewal' })
+    )
   })
 
   it('stops extending the lease when child proof is no longer sufficient', async () => {

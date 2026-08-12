@@ -32,7 +32,10 @@ export async function restoreStructuredAgentSessionHandoff(
   const initial = input.requireRecord(sessionId)
   const operationId = initial.lease.handoffOperationId
   const initialStage = initial.lease.handoffStage
-  if (initialStage === 'recovering' || initialStage === 'manual-recovery') {
+  if (
+    (initialStage === 'recovering' || initialStage === 'manual-recovery') &&
+    !canRestoreLiveTuiOwner(initial)
+  ) {
     if (operationId) {
       await input.deps.store.recordOperationOutcome({
         operationId,
@@ -93,6 +96,10 @@ export async function restoreStructuredAgentSessionHandoff(
 }
 
 async function restoreOnce(input: RestartAccess, record: AgentSessionRecord): Promise<void> {
+  if (canRestoreLiveTuiOwner(record)) {
+    await restoreRecoverableLiveTui(input, record)
+    return
+  }
   if (!input.deps.transport) {
     if (record.lease.handoffStage !== null || record.lease.runtimeKind === 'tui') {
       throw new Error('Agent TUI handoff recovery is unavailable on this host.')
@@ -117,6 +124,45 @@ async function restoreOnce(input: RestartAccess, record: AgentSessionRecord): Pr
   if (record.lease.handoffStage === 'old-owner-stopped') {
     await continueHandoff(input, record)
   }
+}
+
+export function canRestoreLiveTuiOwner(record: AgentSessionRecord): boolean {
+  return (
+    (record.lease.handoffStage === 'recovering' ||
+      record.lease.handoffStage === 'manual-recovery') &&
+    record.lease.runtimeKind === 'tui' &&
+    record.lease.claimStatus === 'live' &&
+    record.lease.ownerProcess !== null &&
+    record.lease.handoffOperationId === null
+  )
+}
+
+async function restoreRecoverableLiveTui(
+  input: RestartAccess,
+  record: AgentSessionRecord
+): Promise<void> {
+  if (!input.deps.transport) {
+    throw new Error('Agent TUI handoff recovery is unavailable on this host.')
+  }
+  const recovered = await input.deps.transport.recoverTuiOwner(record)
+  const owner = await input.deps.transport.reproveTuiOwner({ record, owner: recovered })
+  await setStoredAgentSessionHandoffStage(input.deps.store, {
+    sessionId: record.sessionId,
+    fence: record.lease.runtimeFence,
+    stage: null,
+    handoffOperationId: null,
+    now: input.deps.now()
+  })
+  input.retainOwner(record.sessionId, owner)
+  input.setStatus(record.sessionId, {
+    owner: 'tui',
+    direction: null,
+    phase: 'idle',
+    stage: null,
+    operationId: null,
+    terminal: owner.terminal,
+    hostLabel: input.deps.transport.hostLabel
+  })
 }
 
 async function restoreLiveTui(input: RestartAccess, record: AgentSessionRecord): Promise<void> {

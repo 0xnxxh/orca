@@ -31,7 +31,8 @@ export async function restoreStructuredAgentSessionsOnRestart(input: {
         (await input.resume(
           attachParamsForRecord(current, {
             clientOperationId: input.operationId(),
-            expectedRuntimeFence: current.lease.runtimeFence
+            expectedRuntimeFence: current.lease.runtimeFence,
+            runtimeKind: 'native'
           })
         ))
       ) {
