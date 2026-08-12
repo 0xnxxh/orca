@@ -6,7 +6,7 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `9fcd72e327`; no PR.
+- Orca implementation: `skills-share` at `f548827c1e`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   production remains untouched.
@@ -21,7 +21,8 @@ Validated so far:
 - Multi-select sharing now preserves hidden selections, reconciles changed discovery scans,
   visibly explains ineligible skills, and blocks duplicate names before review. Exact complete
   managed bundles publish a new immutable version to their existing package; ambiguous or partial
-  selections safely create a new package.
+  selections safely create a new package. Managed bundles with an active link can reopen the
+  destination-aware installer for another machine; the final renderer slice passed 114 tests.
 - The mobile/backcompat review found no persisted mobile keys, routes, deep links, or required
   legacy fields changed. Skill RPC methods and capabilities are additive and capability-gated;
   the cross-platform review found production paths use host path APIs and platform checks, with
