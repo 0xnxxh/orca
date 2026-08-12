@@ -107,6 +107,12 @@ all four controls enabled; production keeps all four disabled. Database migratio
 transaction-scoped advisory lock; transactional rollback and eight concurrent callers pass against
 PostgreSQL 16 and 17.
 
+Cloud PR `#344` passed both required checks and merged as `fcf8655a`. It adds privacy-bounded
+migration-ready and migration-failure metrics, a migration lifecycle dashboard panel, and a
+zero-tolerance migration-failure alert. A read-only targeted staging plan creates only those
+metrics and alert, updates the existing skill dashboard, reruns descriptor propagation, and
+destroys no infrastructure; staging remained asleep and nothing was applied.
+
 Auth deploy run `31535179937` promoted `orca-cloud-auth-staging-00017-dug` with exact staging-only
 GitHub OIDC constraints, healthy JWKS, and zero deployment-window errors. API run `31535438327`
 promoted `orca-cloud-api-staging-00042-hef` with `authenticatedSmoke: true` and `skillSmoke: true`.

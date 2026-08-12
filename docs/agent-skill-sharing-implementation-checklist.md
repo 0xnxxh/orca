@@ -1203,7 +1203,7 @@ physical SSH macOS and supported Windows remain open.
       saturation, archive rejection, and digest mismatch.
 - [ ] Add Cloud Run 5xx, CPU, memory, instance, and skill-route latency panels and alerts.
 - [ ] Add GCS quarantine/published bytes, object count, and lifecycle failure panels and alerts.
-- [ ] Add PostgreSQL connection, storage, query latency, migration, and transaction panels and
+- [x] Add PostgreSQL connection, storage, query latency, migration, and transaction panels and
       alerts.
 - [x] Add signed-policy/URL generation and IAM Credentials failure alerts. Grant-signing failures
       are mapped to a stable application category so the alert does not depend on project-wide
@@ -1213,8 +1213,12 @@ physical SSH macOS and supported Windows remain open.
 Dashboard evidence in Orca Cloud `41ef335` and `f67ee2c`: upload-grant, finalize, share, and
 download-grant success; bounded security failures; Cloud Run CPU, memory, instances, and latency;
 GCS bytes and object count; and Cloud SQL connections, disk use, p99 skill-principal query latency,
-and skill-database transaction rate. The broader unchecked items still require the listed split
-metrics, lifecycle/migration visibility, budget coverage, and reviewed alert thresholds.
+and skill-database transaction rate. Cloud PR `#344` passed both required checks and merged as
+`fcf8655a`; it adds privacy-bounded migration-ready/failure metrics, a migration lifecycle panel,
+and a zero-tolerance migration-failure alert. Its targeted staging plan creates the two metrics and
+alert, updates only the dashboard, reruns descriptor propagation, and destroys no infrastructure.
+The broader unchecked items still require the listed split metrics, lifecycle visibility, budget
+coverage, and reviewed alert thresholds.
 
 ### Logging and privacy
 
