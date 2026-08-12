@@ -200,7 +200,7 @@ function isTransientDownloadError(error) {
     if (transientDownloadErrorCodes.has(candidate?.code)) {
       return true
     }
-    const statusCode = candidate?.statusCode ?? candidate?.response?.statusCode
+    const statusCode = getErrorStatusCode(candidate)
     if (
       statusCode === 408 ||
       statusCode === 425 ||
@@ -211,6 +211,13 @@ function isTransientDownloadError(error) {
     }
   }
   return false
+}
+
+// Why `status`: @electron/get v5 downloads through fetch and throws an HTTPError
+// holding a Response, which exposes `status`. Reading only got's `statusCode`
+// made every 5xx look permanent, so release-CDN 503s failed with zero retries.
+function getErrorStatusCode(candidate) {
+  return candidate?.statusCode ?? candidate?.response?.statusCode ?? candidate?.response?.status
 }
 
 function getErrorChain(error) {
@@ -225,7 +232,7 @@ function getErrorChain(error) {
 
 function formatDownloadError(error) {
   for (const candidate of getErrorChain(error)) {
-    const statusCode = candidate?.statusCode ?? candidate?.response?.statusCode
+    const statusCode = getErrorStatusCode(candidate)
     if (statusCode) {
       return `HTTP ${statusCode}`
     }

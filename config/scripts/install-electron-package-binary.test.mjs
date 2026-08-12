@@ -118,6 +118,51 @@ describe('install-electron-package-binary', () => {
     }
   })
 
+  // Why: the release CDN serves 503s during incidents, and @electron/get v5 reports
+  // them as a fetch Response (`status`). Reading only `statusCode` retried zero times.
+  it('retries transient Electron download failures reported as an HTTP status', () => {
+    const projectDir = mkTempProject()
+
+    try {
+      writeFakeElectronPackage(projectDir)
+      writeFakeElectronGet(projectDir, { downloadFailures: 1, downloadErrorStatus: 503 })
+      writeFakeExtractor(projectDir, { createExecutable: true })
+
+      const result = runInstallScript(projectDir, {
+        ORCA_ELECTRON_PACKAGE_RETRY_DELAYS_MS: '0,0'
+      })
+
+      expect(result.status, result.stderr).toBe(0)
+      expect(
+        readFileSync(join(projectDir, 'electron-get.log'), 'utf8').trim().split('\n')
+      ).toHaveLength(2)
+      expect(result.stderr).toContain('Transient Electron download failure (HTTP 503)')
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not retry an HTTP status that will not recover', () => {
+    const projectDir = mkTempProject()
+
+    try {
+      writeFakeElectronPackage(projectDir)
+      writeFakeElectronGet(projectDir, { downloadFailures: 5, downloadErrorStatus: 404 })
+      writeFakeExtractor(projectDir, { createExecutable: true })
+
+      const result = runInstallScript(projectDir, {
+        ORCA_ELECTRON_PACKAGE_RETRY_DELAYS_MS: '0,0'
+      })
+
+      expect(result.status).toBe(1)
+      expect(
+        readFileSync(join(projectDir, 'electron-get.log'), 'utf8').trim().split('\n')
+      ).toHaveLength(1)
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  })
+
   it('fails after exhausting transient Electron download retries', () => {
     const projectDir = mkTempProject()
 
@@ -279,7 +324,12 @@ module.exports = path.join(__dirname, 'dist', fs.readFileSync(pathFile, 'utf8'))
 
 function writeFakeElectronGet(
   projectDir,
-  { downloadNeverSettles = false, downloadFailures = 0, downloadErrorCode = 'ECONNRESET' } = {}
+  {
+    downloadNeverSettles = false,
+    downloadFailures = 0,
+    downloadErrorCode = 'ECONNRESET',
+    downloadErrorStatus = 0
+  } = {}
 ) {
   const getDir = join(projectDir, 'node_modules', 'electron', 'node_modules', '@electron', 'get')
   mkdirSync(getDir, { recursive: true })
@@ -299,6 +349,14 @@ exports.downloadArtifact = async function downloadArtifact(details) {
     return new Promise(() => {})
   }
   if (downloadAttempt <= ${JSON.stringify(downloadFailures)}) {
+    const status = ${JSON.stringify(downloadErrorStatus)}
+    if (status) {
+      // Mirrors @electron/get v5's HTTPError: a fetch Response, so \`status\` not \`statusCode\`.
+      const httpError = new Error('Response code ' + status + ' for https://example.invalid/e.zip')
+      httpError.name = 'HTTPError'
+      httpError.response = { status, url: 'https://example.invalid/e.zip' }
+      throw httpError
+    }
     const cause = Object.assign(new Error('download failed'), {
       code: ${JSON.stringify(downloadErrorCode)}
     })
