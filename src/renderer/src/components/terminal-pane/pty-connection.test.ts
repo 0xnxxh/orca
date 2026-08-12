@@ -8791,7 +8791,7 @@ describe('connectPanePty', () => {
     expect(writes.join('')).not.toContain('ALT-FRAME-BODY')
   })
 
-  it('drops a live daemon alt frame until a hidden pane has a final grid', async () => {
+  it('keeps a daemon alt frame at its capture grid while the target grid is unknown', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('tab-pty')
     transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) =>
@@ -8829,7 +8829,8 @@ describe('connectPanePty', () => {
 
     const writes = (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])
     expect(writes.join('')).toContain('PREFIX-SCROLLBACK')
-    expect(writes.join('')).not.toContain('ALT-FRAME-BODY')
+    expect(writes.join('')).toContain('ALT-FRAME-BODY')
+    expect(writes.filter((write) => write.includes('ALT-FRAME-BODY'))).toHaveLength(1)
   })
 
   it('falls back to the merged daemon snapshot when split metadata is incomplete', async () => {
@@ -15473,9 +15474,8 @@ describe('connectPanePty', () => {
     disposable.dispose()
   })
 
-  it('pulses a skipped hidden alt frame when reveal keeps the snapshot grid', async () => {
+  it('keeps a hidden-output alt frame at the capture grid below the fit floor', async () => {
     const { connectPanePty } = await import('./pty-connection')
-    const { safeFit } = await import('@/lib/pane-manager/pane-tree-ops')
     const transport = createMockTransport('pty-id')
     let onData: ConnectCallbacks['onData']
     transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
@@ -15497,200 +15497,36 @@ describe('connectPanePty', () => {
       scrollbackAnsi: 'preserved history'
     })
     const pane = createPane(1)
-    let paneRect = createRect(0, 0)
-    pane.container.getBoundingClientRect = vi.fn(() => paneRect)
-    let xtermContainerDisplay = 'none'
-    const xtermContainer = new EventTarget() as HTMLElement
-    Object.defineProperty(xtermContainer, 'parentElement', { value: null })
-    Object.defineProperty(xtermContainer, 'ownerDocument', {
-      value: { defaultView: { getComputedStyle: () => ({ display: xtermContainerDisplay }) } }
+    pane.terminal.cols = 80
+    pane.terminal.rows = 24
+    const writes: string[] = []
+    pane.terminal.write = vi.fn((data: string, callback?: () => void) => {
+      writes.push(data)
+      callback?.()
     })
-    ;(pane as { xtermContainer?: HTMLElement }).xtermContainer = xtermContainer
+    pane.container.getBoundingClientRect = vi.fn(() => createRect(4, 3))
     const deps = createDeps({ isVisibleRef: { current: false } })
-    const disposable = connectPanePty(pane as never, createManager(1) as never, deps as never)
+    const binding = connectPanePty(pane as never, createManager(1) as never, deps as never)
     await flushAsyncTicks(6)
     onData?.(hidden, { seq: hidden.length, rawLength: hidden.length })
+    const { _dispatchPtyModelRestoreNeededForTest } = await import('./pty-model-restore-channel')
+    _dispatchPtyModelRestoreNeededForTest({
+      id: 'pty-id',
+      reason: 'hidden-drop',
+      markerSeq: hidden.length + 1
+    })
     ;(deps.isVisibleRef as { current: boolean }).current = true
-    onData?.('x', { seq: hidden.length + 1, rawLength: 1 })
+    const { requestTerminalBacklogRecovery } =
+      await import('@/lib/pane-manager/pane-terminal-output-scheduler')
+    requestTerminalBacklogRecovery(pane.terminal as never)
     await flushAsyncTicks(20)
 
-    const writes = (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map(
-      (call) => call[0]
-    )
-    expect(writes.join('')).not.toContain('TOO-WIDE-ALT-FRAME')
-    expect(writes.join('')).toContain('\x1b[?1004h\x1b[?25l')
+    expect(writes.join('')).toContain('TOO-WIDE-ALT-FRAME')
+    expect(writes.join('')).toContain('preserved history')
+    expect(writes.filter((write) => write.includes('TOO-WIDE-ALT-FRAME'))).toHaveLength(1)
+    expect(pane.terminal.resize).toHaveBeenCalledWith(120, 40)
     expect(transport.resize).not.toHaveBeenCalled()
-
-    xtermContainerDisplay = 'block'
-    paneRect = createRect(800, 600)
-    safeFit(pane as never)
-    await flushAsyncTicks(12)
-
-    const pulseStart = transport.resize.mock.calls.findIndex(
-      ([cols, rows]) => cols === 119 && rows === 40
-    )
-    expect(pulseStart).toBeGreaterThanOrEqual(0)
-    expect(transport.resize.mock.calls[pulseStart + 1]).toEqual([120, 40])
-    disposable.dispose()
-  })
-
-  // Drives a hidden->visible alt-screen snapshot restore whose captured grid is
-  // 120 cols wide, letting each case control what the pane measures as.
-  async function restoreAltFrameSnapshotForPaneGeometry(options: {
-    frameMarker: string
-    proposeDimensions: () => { cols: number; rows: number } | null
-    measureRect?: () => { width: number; height: number }
-    onWrite?: (data: string) => void
-  }): Promise<{ writes: string; dispose: () => void }> {
-    const { connectPanePty } = await import('./pty-connection')
-    const transport = createMockTransport('pty-id')
-    let onData: ConnectCallbacks['onData']
-    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
-      onData = callbacks.onData
-      return 'pty-id'
-    })
-    transportFactoryQueue.push(transport)
-    const getMainBufferSnapshot = window.api.pty.getMainBufferSnapshot as unknown as ReturnType<
-      typeof vi.fn
-    >
-    const hidden = 'x'.repeat(2 * 1024 * 1024 + 1)
-    getMainBufferSnapshot.mockResolvedValue({
-      data: options.frameMarker,
-      frameRestoreAnsi: '\x1b[?1004h\x1b[?25l',
-      cols: 120,
-      rows: 40,
-      seq: hidden.length + 1,
-      alternateScreen: true,
-      scrollbackAnsi: 'preserved history'
-    })
-    const pane = createPane(1)
-    ;(
-      pane.fitAddon as unknown as {
-        proposeDimensions: () => { cols: number; rows: number } | null
-      }
-    ).proposeDimensions = vi.fn(options.proposeDimensions)
-    const measureRect = options.measureRect
-    if (measureRect) {
-      Object.defineProperty(pane.container, 'getBoundingClientRect', {
-        configurable: true,
-        value: () => {
-          const { width, height } = measureRect()
-          return { width, height, top: 0, left: 0, right: width, bottom: height, x: 0, y: 0 }
-        }
-      })
-    }
-    const onWrite = options.onWrite
-    if (onWrite) {
-      const originalWrite = pane.terminal.write
-      pane.terminal.write = vi.fn((...args: Parameters<typeof originalWrite>) => {
-        onWrite(args[0])
-        return originalWrite(...args)
-      }) as typeof originalWrite
-    }
-    const deps = createDeps({ isVisibleRef: { current: false } })
-    const disposable = connectPanePty(pane as never, createManager(1) as never, deps as never)
-    await flushAsyncTicks(6)
-    onData?.(hidden, { seq: hidden.length, rawLength: hidden.length })
-    ;(deps.isVisibleRef as { current: boolean }).current = true
-    onData?.('x', { seq: hidden.length + 1, rawLength: 1 })
-    await flushAsyncTicks(20)
-    const readWrites = (): string =>
-      (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]).join('')
-    // Why real time: an unmeasurable visible pane must burn the whole bounded
-    // safe-fit retry budget (40 ticks of rAF + a 16ms layout settle) before the
-    // deferred repaint decision is made, so "absent" only means absent after it.
-    for (
-      let waited = 0;
-      waited < 2_500 && !readWrites().includes(options.frameMarker);
-      waited += 25
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, 25))
-      await flushAsyncTicks(10)
-    }
-    await flushAsyncTicks(20)
-    return { writes: readWrites(), dispose: () => disposable.dispose() }
-  }
-
-  // Why: the E2E's deepest split pane is ~W/256 x ~H/256 px, so it fails the
-  // 48x24 pixel floor and proposes nothing. It is visible and permanently
-  // unmeasurable: no fit ever lands, the skip's pulse repaint never runs, and
-  // the captured frame is lost unless the deferral repaints it here.
-  it('repaints the alt frame for a visible pane whose box is below the fit pixel floor', async () => {
-    const { writes, dispose } = await restoreAltFrameSnapshotForPaneGeometry({
-      frameMarker: 'SUB-FLOOR-ALT-FRAME',
-      proposeDimensions: () => null,
-      measureRect: () => ({ width: 4, height: 3 })
-    })
-    expect(writes).toContain('SUB-FLOOR-ALT-FRAME')
-    expect(writes).toContain('preserved history')
-    // The withheld frame arrives after the frame-restore state, not instead of it.
-    expect(writes.indexOf('\x1b[?1004h\x1b[?25l')).toBeLessThan(
-      writes.indexOf('SUB-FLOOR-ALT-FRAME')
-    )
-    dispose()
-  })
-
-  // The 50px divider clamp: measurable box, but the proposal is under the cols floor.
-  it('repaints the alt frame for a visible pane clamped under the fit cols floor', async () => {
-    const { writes, dispose } = await restoreAltFrameSnapshotForPaneGeometry({
-      frameMarker: 'SLIVER-ALT-FRAME',
-      proposeDimensions: () => ({ cols: 5, rows: 40 }),
-      measureRect: () => ({ width: 50, height: 600 })
-    })
-    expect(writes).toContain('SLIVER-ALT-FRAME')
-    expect(writes).toContain('preserved history')
-    dispose()
-  })
-
-  it('still drops an alt frame captured wider than the grid the fit will land on', async () => {
-    const { writes, dispose } = await restoreAltFrameSnapshotForPaneGeometry({
-      frameMarker: 'TOO-WIDE-ALT-FRAME',
-      proposeDimensions: () => ({ cols: 64, rows: 40 })
-    })
-    expect(writes).not.toContain('TOO-WIDE-ALT-FRAME')
-    expect(writes).toContain('\x1b[?1004h\x1b[?25l')
-    dispose()
-  })
-
-  // #13014 must survive the deferral: a pane that is only transiently
-  // unmeasurable gets its fit inside the retry budget, and that narrower fit
-  // would clip the captured frame — so the repaint must not fire for it.
-  it('keeps a too-wide alt frame withheld when a transiently unmeasurable pane later fits narrower', async () => {
-    let probes = 0
-    const measured = (): boolean => {
-      probes += 1
-      return probes > 3
-    }
-    const { writes, dispose } = await restoreAltFrameSnapshotForPaneGeometry({
-      frameMarker: 'NARROWED-ALT-FRAME',
-      proposeDimensions: () => (probes > 3 ? { cols: 64, rows: 40 } : null),
-      measureRect: () => (measured() ? { width: 400, height: 600 } : { width: 4, height: 3 })
-    })
-    expect(writes).not.toContain('NARROWED-ALT-FRAME')
-    expect(writes).toContain('preserved history')
-    expect(writes).toContain('\x1b[?1004h\x1b[?25l')
-    dispose()
-  })
-
-  // Why: the skip is a deferral. If the pane collapses under the fit floor
-  // between the replay and the post-replay fit, no fit and therefore no pulse
-  // repaint ever lands, so the withheld frame must be painted onto the grid the
-  // pane actually kept.
-  it('repaints a skipped alt frame when the post-replay fit never lands', async () => {
-    let collapsed = false
-    const { writes, dispose } = await restoreAltFrameSnapshotForPaneGeometry({
-      frameMarker: 'COLLAPSED-ALT-FRAME',
-      // The frame was withheld against a 64-col fit; then the divider clamps the pane to a sliver.
-      onWrite: (data) => {
-        collapsed ||= data === '\x1b[?1004h\x1b[?25l'
-      },
-      proposeDimensions: () => (collapsed ? { cols: 5, rows: 40 } : { cols: 64, rows: 40 })
-    })
-    expect(writes).toContain('preserved history')
-    expect(writes.indexOf('\x1b[?1004h\x1b[?25l')).toBeLessThan(
-      writes.indexOf('COLLAPSED-ALT-FRAME')
-    )
-    dispose()
+    binding.dispose()
   })
 
   it('drains foreground output after a renderer-sourced hidden-backlog snapshot without seq', async () => {
@@ -21866,7 +21702,7 @@ describe('connectPanePty', () => {
     expect(transport.getPtyId).toHaveReturnedWith(remotePtyId)
   })
 
-  it('restores a local main-model snapshot after a contentless park reattach', async () => {
+  it('keeps a parked main-model alt frame at its capture grid while hidden', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const localPtyId = 'global-floating-terminal@@terminal-1'
     const transport = createMockTransport(localPtyId)
@@ -21877,11 +21713,14 @@ describe('connectPanePty', () => {
     transportFactoryQueue.push(transport)
     const getMainBufferSnapshot = vi.mocked(window.api.pty.getMainBufferSnapshot)
     getMainBufferSnapshot.mockResolvedValue({
-      data: 'FLOATING-PARK-RESTORE-OK\r\n',
+      data: 'FLOATING-PARK-ALT-FRAME',
+      frameRestoreAnsi: '\x1b[?25l',
       cols: 113,
       rows: 32,
       seq: 558,
-      source: 'headless'
+      source: 'headless',
+      alternateScreen: true,
+      scrollbackAnsi: 'FLOATING-PARK-HISTORY\r\n'
     })
     await parkTabForReveal('tab-1', localPtyId, 'global-floating-terminal')
     mockStoreState = {
@@ -21901,6 +21740,7 @@ describe('connectPanePty', () => {
     }
 
     const pane = createPane(1)
+    pane.container.getBoundingClientRect = vi.fn(() => createRect(0, 0))
     const { parseCallbacks, writes } = captureCallbackTerminalWrites(pane)
     const deps = createDeps({
       worktreeId: 'global-floating-terminal',
@@ -21919,7 +21759,10 @@ describe('connectPanePty', () => {
       expect.objectContaining({ sessionId: localPtyId })
     )
     expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(1, localPtyId)
-    expect(writes.join('')).toContain('FLOATING-PARK-RESTORE-OK')
+    expect(writes.join('')).toContain('FLOATING-PARK-HISTORY')
+    expect(writes.join('')).toContain('FLOATING-PARK-ALT-FRAME')
+    expect(writes.filter((write) => write.includes('FLOATING-PARK-ALT-FRAME'))).toHaveLength(1)
+    expect(pane.terminal.resize).toHaveBeenCalledWith(113, 32)
   })
 
   it('falls back to relay replay when the SSH model snapshot stalls', async () => {

@@ -261,12 +261,10 @@ import {
 } from './hidden-output-restore-scheduler'
 import { resolveHiddenRestoreScrollbackRows } from './terminal-hidden-restore-scrollback'
 import {
-  buildDeferredAltFrameReplayWrites,
   buildMainModelSnapshotReplayWrites,
   hasPositiveTerminalDimensions,
   readProposedTerminalCols,
   resolvePositiveTerminalDimensions,
-  shouldRepaintDeferredAltFrame,
   shouldSkipAltFrameForWidthMismatch
 } from './terminal-snapshot-replay-paint'
 import {
@@ -7266,9 +7264,7 @@ export function connectPanePty(
             skippedAltFrame =
               snapshot.alternateScreen === true &&
               snapshot.frameRestoreAnsi !== undefined &&
-              shouldSkipAltFrameForWidthMismatch(snapshot.cols, readProposedTerminalCols(pane), {
-                skipIfTargetUnknown: true
-              })
+              shouldSkipAltFrameForWidthMismatch(snapshot.cols, readProposedTerminalCols(pane))
             for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot, {
               skipAltFrame: skippedAltFrame
             })) {
@@ -7347,26 +7343,11 @@ export function connectPanePty(
                 }
               )
               pendingHiddenSnapshotFit = fit
-              let fitCompleted = false
               try {
-                fitCompleted = await fit.completion
+                await fit.completion
               } finally {
                 if (pendingHiddenSnapshotFit === fit) {
                   pendingHiddenSnapshotFit = null
-                }
-              }
-              if (
-                !fitCompleted &&
-                skippedAltFrame &&
-                isCurrentRestore() &&
-                transport.getPtyId() === currentPtyId &&
-                shouldRepaintDeferredAltFrame(pane, snapshot.cols)
-              ) {
-                // Why: the skip is a deferral, not a deletion. No fit landed, and the pulse
-                // repaint lives in that failed continuation, so paint the frame here unless the
-                // pane is hidden (its reveal fit still owes one) or measurably narrower.
-                for (const replayChunk of buildDeferredAltFrameReplayWrites(snapshot)) {
-                  writeReplayData(replayChunk)
                 }
               }
               if (isCurrentRestore()) {
@@ -8228,8 +8209,7 @@ export function connectPanePty(
             typeof snapshotFrameRestoreAnsi === 'string' &&
             shouldSkipAltFrameForWidthMismatch(
               connectResult.snapshotCols,
-              readProposedTerminalCols(pane),
-              { skipIfTargetUnknown: true }
+              readProposedTerminalCols(pane)
             )
           writeReplayData(
             daemonAltFrameSkippable
@@ -8295,10 +8275,7 @@ export function connectPanePty(
             for (const replayChunk of buildMainModelSnapshotReplayWrites(modelSnapshot, {
               skipAltFrame: shouldSkipAltFrameForWidthMismatch(
                 modelCols,
-                readProposedTerminalCols(pane),
-                {
-                  skipIfTargetUnknown: true
-                }
+                readProposedTerminalCols(pane)
               )
             })) {
               writeReplayData(replayChunk)
