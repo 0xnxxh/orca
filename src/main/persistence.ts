@@ -2859,8 +2859,6 @@ export class Store {
     const loaded = this.load()
     const normalized = normalizePersistedPaneIdentityState(loaded)
     this.state = normalized.state
-    // After the leaf remap, so every folded binding keys on a UUID.
-    const foldedSshPaneBindings = this.foldSshPaneBindingsIntoLocalPartition()
     // Why: activeView is a frequent, tiny preference; keeping it beside the
     // profile avoids serializing the multi-MB recovery store on navigation.
     this.activeViewPreference = new ActiveViewPreference(this.dataFile, this.state.ui?.activeView)
@@ -2879,7 +2877,7 @@ export class Store {
       this.state.legacyPaneKeyAliasEntries = entries
       this.scheduleSave()
     })
-    if (normalized.changed || this.loadNeedsSave || adaptedProjectGroups || foldedSshPaneBindings) {
+    if (normalized.changed || this.loadNeedsSave || adaptedProjectGroups) {
       // Why: rewrite legacy pane:1 leaves so older renderer writes can't revive them; other migrations also set loadNeedsSave.
       this.scheduleSave()
     }
@@ -7356,82 +7354,9 @@ export class Store {
    *
    * Returns the number of leases retired, for logging.
    */
-  /**
-   * One-time fold: SSH pane bindings written to an `ssh:<target>` partition by an older build move
-   * into `local`, the partition the renderer has always published pane membership to. Two homes is
-   * the STA-3077 defect itself — the reattach writer updated one and supersession read the other.
-   * `local` wins on conflict because it is the live publisher; the loser is dropped rather than
-   * demoted to an orphan candidate, since relay pty ids recycle and cannot identify a shell alone.
-   */
-  private foldSshPaneBindingsIntoLocalPartition(): boolean {
-    const partitions = this.state.workspaceSessionsByHostId ?? {}
-    const local = this.state.workspaceSession
-    if (!local) {
-      // Nothing to fold into, and defaulting one here would mutate state on a path that reports no
-      // change — so the save would never be scheduled for it.
-      return false
-    }
-    let changed = false
-    for (const hostId of Object.keys(partitions)) {
-      if (parseExecutionHostId(hostId)?.kind !== 'ssh') {
-        continue
-      }
-      const host: WorkspaceSessionState | undefined = partitions[hostId]
-      const incarnations = host?.terminalPtyIncarnationsByPaneKey
-      for (const [tabId, layout] of Object.entries(host?.terminalLayoutsByTabId ?? {})) {
-        const bindings = layout.ptyIdsByLeafId
-        if (!bindings || Object.keys(bindings).length === 0) {
-          continue
-        }
-        const localLayout = local.terminalLayoutsByTabId?.[tabId]
-        if (!localLayout) {
-          // No local layout owns this tab, so there is no second home to disagree with and nothing
-          // to fold. Clearing here would delete the only record of the binding.
-          continue
-        }
-        const localBindings = localLayout.ptyIdsByLeafId ?? {}
-        // An incarnation is the other half of its binding's fence, so no binding is cleared without
-        // its fence being resolved in the same pass — one of three ways, by which pty ends up
-        // bound. (An incarnation whose binding was already missing before the fold is left alone:
-        // it is a pre-existing orphan, isolated in this partition, and not ours to reinterpret.)
-        for (const [leafId, ptyId] of Object.entries(bindings)) {
-          const paneKey = `${tabId}:${leafId}`
-          const incarnationId = incarnations?.[paneKey]
-          const localPtyId = localBindings[leafId]
-          if (!localPtyId) {
-            // This binding moves, so local's fence for the leaf becomes this partition's — whatever
-            // it is, INCLUDING absent. A local incarnation with no local binding is a leftover, and
-            // leaving it in place would fence the arriving pty with a value never written beside it.
-            local.terminalPtyIncarnationsByPaneKey ??= {}
-            if (incarnationId) {
-              local.terminalPtyIncarnationsByPaneKey[paneKey] = incarnationId
-            } else {
-              delete local.terminalPtyIncarnationsByPaneKey[paneKey]
-            }
-          } else if (incarnationId && localPtyId === ptyId) {
-            // Same shell from both sides; keep whichever fence local already holds.
-            local.terminalPtyIncarnationsByPaneKey ??= {}
-            local.terminalPtyIncarnationsByPaneKey[paneKey] ??= incarnationId
-          }
-          // The remaining case is local winning with a DIFFERENT pty. This incarnation belongs to
-          // the binding that just lost, so it is dropped rather than moved: pairing it with local's
-          // pty would synthesize a pair no writer produced, and leaving it here would orphan it
-          // from a binding that no longer exists.
-          if (incarnationId) {
-            delete incarnations![paneKey]
-          }
-        }
-        localLayout.ptyIdsByLeafId = { ...bindings, ...localBindings }
-        layout.ptyIdsByLeafId = {}
-        changed = true
-      }
-    }
-    return changed
-  }
-
-  /** The PTY a pane is durably bound to. SSH pane bindings live in the local partition only —
-   *  see `foldSshPaneBindingsIntoLocalPartition`. Hedging across two partitions is what let a
-   *  stale `ssh:<target>` copy outvote the live binding and no-op supersession (STA-3077). */
+  /** The PTY a pane is durably bound to. The desktop plane's home is `local` — the renderer is its
+   *  only publisher of pane membership. Hedging into `ssh:<target>` let the headless plane's copy
+   *  outvote the live binding and silently no-op supersession (STA-3077). */
   private durablyBoundPtyIdForPane(
     targetId: string,
     tabId: string,
