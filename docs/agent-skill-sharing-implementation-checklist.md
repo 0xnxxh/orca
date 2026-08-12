@@ -69,6 +69,9 @@ Validated so far:
 - The focused deterministic package suite passed 26/26 tests in Debian Bullseye/glibc 2.31 on
   native Linux ARM64 and emulated Linux x64, plus the real Ubuntu 24.04 WSL distro on `windows 2`;
   every host produced the same package digest and archive SHA-256 golden.
+- The same 26/26 portable package suite passed at `109272dab1` on a disposable native x86_64
+  Ubuntu 22.04 GCE host using Linux 6.8 and Node 24.18. The VM had no service account or scopes;
+  its boot disk, uploaded Git bundle, and temporary project SSH metadata were removed afterward.
 - Real native Windows global, linked Git-worktree, and plain folder installs with spaces and
   non-ASCII paths, plus privacy-safe install diagnostics and owner-private staging tests.
 - Docker-backed SSH relay installation from the real Electron client passed global, remote Git
@@ -471,10 +474,11 @@ does not mean the surrounding phase is complete.
 - [x] Test deterministic manifests, archives, and digests on macOS and native Windows. The exact
       golden passed on both hosts at `8be7275d0d` after replacing zlib-dependent streaming output
       with bounded deterministic stored DEFLATE blocks.
-- [ ] Repeat the portable package golden on native Linux and inside WSL.
+- [x] Repeat the portable package golden on native Linux and inside WSL.
       The focused golden passed in Debian Bullseye/glibc 2.31 containers on native ARM64 and
-      emulated x64, and inside the real Ubuntu 24.04 WSL distro, at `92c8c6a4c6`; a native Linux
-      host remains required for this stricter gate.
+      emulated x64, and inside the real Ubuntu 24.04 WSL distro, at `92c8c6a4c6`. The same 26/26
+      suite passed at `109272dab1` on a disposable native x86_64 Ubuntu 22.04 GCE host; the VM,
+      boot disk, uploaded bundle, and temporary SSH metadata were removed after validation.
 - [x] Test source changes during packaging.
 - [x] Test CRLF/LF behavior explicitly and document whether byte identity changes.
 - [x] Test executable-mode preservation and Windows's mode limitations.
