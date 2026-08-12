@@ -1226,8 +1226,11 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       result.result.dispatch?.status === 'dispatched' &&
       result.result.recovery !== 'recovered' &&
       (result.result.recovery === 'unavailable' ||
-        from === result.result.dispatch.assignee_handle ||
-        claimedFrom === result.result.dispatch.assignee_handle ||
+        Boolean(
+          result.result.dispatch.assignee_handle &&
+          (from === result.result.dispatch.assignee_handle ||
+            claimedFrom === result.result.dispatch.assignee_handle)
+        ) ||
         Boolean(
           compatibilityEvidence?.paneKey &&
           result.result.dispatch.assignee_pane_key &&

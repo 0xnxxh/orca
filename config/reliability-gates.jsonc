@@ -11124,8 +11124,8 @@
           "platform": "macos",
           "result": "failed",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/orchestration-dispatch-preamble-recovery.test.ts src/main/runtime/rpc/methods/orchestration.test.ts src/cli/handlers/orchestration-dispatch-cli.test.ts src/shared/stable-pane-id.test.ts src/cli/runtime-client.test.ts --reporter=dot",
-          "durationSeconds": 3.53,
-          "summary": "Latest main 09ec516ae50b failed 26 tests while 182 controls passed with identical final test bytes: dispatchShow emitted no lifecycle capability, exact-worker settlement failed, reminted handles stayed stale, and CLI recovery requests were absent."
+          "durationSeconds": 3.25,
+          "summary": "Latest main 09ec516ae50b failed 27 tests while 184 controls passed with identical final test bytes: dispatchShow emitted no lifecycle capability, exact-worker settlement failed, reminted sender stayed stale, CLI recovery was absent, and unavailable recovery was not rejected."
         },
         {
           "date": "2026-08-12",
@@ -11133,8 +11133,8 @@
           "platform": "macos",
           "result": "failed",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/orchestration-dispatch-preamble-recovery.test.ts src/main/runtime/rpc/methods/orchestration.test.ts src/cli/handlers/orchestration-dispatch-cli.test.ts src/shared/stable-pane-id.test.ts src/cli/runtime-client.test.ts --reporter=dot",
-          "durationSeconds": 3.31,
-          "summary": "With the final candidate's causal recovery hook disabled and identical test bytes, 11 tests failed and 197 passed: recovered preambles had no capability, reminted commands kept the stale handle, concurrent recovery never reached rotation, and worker_done could not settle."
+          "durationSeconds": 3.41,
+          "summary": "With the final candidate's causal recovery hook disabled and identical test bytes, 11 tests failed and 200 passed: recovered preambles had no capability, reminted commands kept the stale handle, concurrent recovery never reached rotation, and worker_done could not settle."
         },
         {
           "date": "2026-08-12",
@@ -11142,8 +11142,8 @@
           "platform": "macos",
           "result": "passed",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/orchestration-dispatch-preamble-recovery.test.ts src/main/runtime/rpc/methods/orchestration.test.ts src/cli/handlers/orchestration-dispatch-cli.test.ts src/shared/stable-pane-id.test.ts src/cli/runtime-client.test.ts --reporter=dot",
-          "durationSeconds": 3.47,
-          "summary": "The candidate passed all 208 tests across the five focused files, including prompt-write acceptance, actionable CLI refusal, old-runtime request delivery, stable-pane remint identity, scoped fresh and adopted-database preflights, pre-rotation fault handling, direct and streaming dispatch, settlement, host-bound secret-safe concurrent deduplication, handle remint, repeat rotation, and negative authority states."
+          "durationSeconds": 3.72,
+          "summary": "The candidate passed all 211 tests across the five focused files, including prompt-write acceptance, actionable CLI refusal and recovery outcomes, old-runtime request delivery, distinct retry IDs, stable-pane remint identity, scoped fresh and adopted-database preflights, pre-rotation fault handling, direct and streaming dispatch, settlement, host-bound secret-safe concurrent deduplication, handle remint, repeat rotation, and negative authority states."
         }
       ],
       "runtimeBudget": {
@@ -11156,14 +11156,13 @@
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "Latest main 09ec516ae50b fails 26 tests while 182 controls pass with identical final test bytes. The final candidate passes all 208 focused tests. Disabling only the causal recovery hook fails 11 tests while 197 controls pass."
+        "evidence": "Latest main 09ec516ae50b fails 27 tests while 184 controls pass with identical final test bytes. The final candidate passes all 211 focused tests. Disabling only the causal recovery hook fails 11 tests while 200 controls pass."
       },
       "performanceBudget": {
         "required": true,
         "evidence": "Recovery adds one existing indexed active-Dispatch authority preflight, one bounded SQLite transaction, and one constant-size random token/hash update only when an exact worker explicitly requests the preamble. It adds no polling, timer, subprocess, provider scan, network fanout, renderer work, retained plaintext secret, or terminal write."
       },
       "promotionCriteria": [
-        "Collect byte-identical baseline, candidate, and candidate-disabled evidence on the final merge base.",
         "Collect authenticated real-Hermes consumption evidence without a literal placeholder.",
         "Collect live SSH or paired-host evidence plus Linux, Windows, and WSL CI coverage.",
         "Collect 100 consecutive focused CI passes or 14 days of soak history."

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { CliStatusResult, RuntimeStatus } from '../../shared/runtime-types'
 import type { RuntimeOrchestrationEnvelope } from '../../shared/runtime-rpc-envelope'
 import {
+  isDispatchCapabilityRecovery,
   isOrchestrationMutation,
   orchestrationMigrationData
 } from '../../shared/orchestration-rpc-contract'
@@ -73,7 +74,7 @@ export class RuntimeClient {
   ): Promise<RuntimeRpcSuccess<TResult>> {
     const effectiveTimeoutMs = options?.timeoutMs ?? this.resolveMethodTimeoutMs(method, params)
     const orchestrationMutation = isOrchestrationMutation(method, params)
-    if (orchestrationMutation && !isAdditiveDispatchRecovery(method, params)) {
+    if (orchestrationMutation && !isDispatchCapabilityRecovery(method, params)) {
       await this.ensureOrchestrationContractCompatible(effectiveTimeoutMs)
     }
     const orchestrationRequestId = orchestrationMutation
@@ -250,15 +251,6 @@ export class RuntimeClient {
       'Timed out waiting for an Orca desktop window. The runtime may still be running headlessly.'
     )
   }
-}
-
-function isAdditiveDispatchRecovery(method: string, params: unknown): boolean {
-  return (
-    method === 'orchestration.dispatchShow' &&
-    typeof params === 'object' &&
-    params !== null &&
-    (params as { recoverCapability?: unknown }).recoverCapability === true
-  )
 }
 
 function attachMutationRecovery(error: unknown, requestId: string | undefined): unknown {

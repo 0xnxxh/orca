@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto'
-import { isOrchestrationMutation } from '../../../shared/orchestration-rpc-contract'
+import {
+  isDispatchCapabilityRecovery,
+  isOrchestrationMutation
+} from '../../../shared/orchestration-rpc-contract'
 import type { OrcaRuntimeService } from '../orca-runtime'
 import { OrchestrationError } from '../orchestration/orchestration-error'
 import type { RpcRequest } from './core'
@@ -38,7 +41,7 @@ export class OrchestrationMutationExecutor {
       .update(JSON.stringify(canonicalize({ method: request.method, params })))
       .digest('hex')
     const key = `${callerFingerprint}:${requestId}`
-    if (isSecretRecoveryMutation(request.method, params)) {
+    if (isDispatchCapabilityRecovery(request.method, params)) {
       const secretKey = `${key}:${secretRecoveryCallerFingerprint(request)}`
       const active = this.secretRecoveries.get(secretKey)
       if (active) {
@@ -137,15 +140,6 @@ export class OrchestrationMutationExecutor {
       this.inFlight.delete(key)
     }
   }
-}
-
-function isSecretRecoveryMutation(method: string, params: unknown): boolean {
-  return (
-    method === 'orchestration.dispatchShow' &&
-    typeof params === 'object' &&
-    params !== null &&
-    (params as { recoverCapability?: unknown }).recoverCapability === true
-  )
 }
 
 function secretRecoveryCallerFingerprint(request: RpcRequest): string {

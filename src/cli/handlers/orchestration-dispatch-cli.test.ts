@@ -209,6 +209,78 @@ describe('orchestration dispatch coordinator handle', () => {
     ).resolves.toBeUndefined()
   })
 
+  it('keeps tokenless inspection usable when an old runtime omits assignee identity', async () => {
+    getTerminalHandleMock.mockResolvedValue('term_coordinator')
+    callMock.mockResolvedValueOnce({
+      result: {
+        dispatch: { id: 'ctx_1', task_id: 'task_1', status: 'dispatched' },
+        preamble: 'tokenless old-runtime inspection'
+      }
+    })
+
+    await expect(
+      invoke(
+        'orchestration dispatch-show',
+        new Map<string, string | boolean>([
+          ['task', 'task_1'],
+          ['preamble', true]
+        ])
+      )
+    ).resolves.toBeUndefined()
+  })
+
+  it('accepts a recovered preamble for the active assignee', async () => {
+    callMock.mockResolvedValueOnce({
+      result: {
+        dispatch: {
+          id: 'ctx_1',
+          task_id: 'task_1',
+          status: 'dispatched',
+          assignee_handle: 'term_worker'
+        },
+        preamble: 'authorized recovered preamble',
+        recovery: 'recovered'
+      }
+    })
+
+    await expect(
+      invoke(
+        'orchestration dispatch-show',
+        new Map<string, string | boolean>([
+          ['task', 'task_1'],
+          ['preamble', true],
+          ['from', 'term_worker']
+        ])
+      )
+    ).resolves.toBeUndefined()
+  })
+
+  it('rejects an unavailable recovery even when the caller is not the assignee', async () => {
+    callMock.mockResolvedValueOnce({
+      result: {
+        dispatch: {
+          id: 'ctx_1',
+          task_id: 'task_1',
+          status: 'dispatched',
+          assignee_handle: 'term_worker'
+        },
+        preamble: 'unavailable recovered preamble',
+        recovery: 'unavailable'
+      }
+    })
+
+    await expect(
+      invoke(
+        'orchestration dispatch-show',
+        new Map<string, string | boolean>([
+          ['task', 'task_1'],
+          ['preamble', true],
+          ['from', 'term_coordinator']
+        ])
+      )
+    ).rejects.toMatchObject({ code: 'dispatch_capability_unavailable' })
+  })
+
   it.each([undefined, 'inspection'] as const)(
     'rejects a reminted worker tokenless response with recovery %s',
     async (recovery) => {

@@ -226,6 +226,7 @@ describe.skipIf(process.platform === 'win32')('RuntimeClient', () => {
     expect(requests.every((request) => typeof request.orchestrationRequestId === 'string')).toBe(
       true
     )
+    expect(new Set(requests.map((request) => request.orchestrationRequestId)).size).toBe(2)
   })
 
   it('returns the full RPC envelope for successful calls', async () => {
