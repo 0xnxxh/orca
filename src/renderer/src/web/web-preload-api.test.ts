@@ -1591,6 +1591,27 @@ describe('web native chat preload API', () => {
         'remote:other-env@@term-1'
       )
     ).rejects.toThrow('Unknown Orca runtime environment: other-env')
+
+    const frames: unknown[] = []
+    expect(() =>
+      globals.window.api.nativeChat.subscribe(
+        {
+          subscriptionId: 'sub-mismatched-owner',
+          agent: 'claude',
+          sessionId: 'same-id',
+          ptyId: 'remote:other-env@@term-1'
+        },
+        (frame) => frames.push(frame)
+      )
+    ).not.toThrow()
+    expect(frames).toEqual([
+      expect.objectContaining({
+        type: 'snapshot',
+        messages: [],
+        hasMore: false,
+        error: 'Unknown Orca runtime environment: other-env'
+      })
+    ])
   })
 })
 

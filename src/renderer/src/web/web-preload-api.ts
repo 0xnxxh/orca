@@ -1280,13 +1280,25 @@ function createNativeChatApi(): NativeChatApi {
         return () => {}
       }
       const parsedPty = args.ptyId ? parseRemoteRuntimePtyId(args.ptyId) : null
-      const targetEnvironment = parsedPty?.environmentId
-        ? resolveEnvironment(parsedPty.environmentId)
-        : environment
+      let client: ReturnType<typeof getClientForEnvironment>
+      try {
+        const targetEnvironment = parsedPty?.environmentId
+          ? resolveEnvironment(parsedPty.environmentId)
+          : environment
+        client = getClientForEnvironment(targetEnvironment)
+      } catch (error) {
+        onFrame({
+          type: 'snapshot',
+          messages: [],
+          hasMore: false,
+          error: error instanceof Error ? error.message : String(error)
+        })
+        return noopUnsubscribe
+      }
       let handle: { unsubscribe: () => void } | null = null
       let cancelled = false
       let receivedInitial = false
-      void getClientForEnvironment(targetEnvironment)
+      void client
         .subscribe(
           'nativeChat.subscribe',
           {

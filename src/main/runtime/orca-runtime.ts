@@ -3395,14 +3395,17 @@ export class OrcaRuntimeService {
 
   resolveNativeChatTranscriptHost(ptyId: string): NativeChatTranscriptHost | null | undefined {
     const pty = this.ptysById.get(ptyId)
+    if (!pty || pty.connectionId !== null) {
+      return null
+    }
     const distro = this.wslDistroByPtyId.get(ptyId) ?? pty?.wslDistro ?? null
     if (distro) {
       return { kind: 'wsl', distro }
     }
-    if (pty?.connectionId === null && pty.isWsl === false) {
+    if (pty.isWsl === false) {
       return { kind: 'host' }
     }
-    return pty ? undefined : null
+    return undefined
   }
 
   resolveNativeChatTranscriptHostForHandle(

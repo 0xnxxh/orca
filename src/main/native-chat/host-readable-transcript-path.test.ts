@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const wslMocks = vi.hoisted(() => ({
+  getWslHomeAsync: vi.fn(),
+  listWslDistrosAsync: vi.fn()
+}))
+
+vi.mock('../wsl', () => wslMocks)
+
 import {
   isGuestAbsoluteLinuxPath,
   isTranscriptPathCompatibleWithHost,
@@ -326,6 +333,22 @@ describe('wslCodexSessionsDirs', () => {
     finish(UBUNTU_HOME)
     await expect(codex).resolves.toHaveLength(2)
     await expect(claude).resolves.toEqual([`${UBUNTU_HOME}\\.claude\\projects`])
+  })
+
+  it('coalesces concurrent broad and targeted home probes', async () => {
+    let finish!: (home: string | null) => void
+    const pending = new Promise<string | null>((resolve) => (finish = resolve))
+    wslMocks.listWslDistrosAsync.mockResolvedValue(['Ubuntu'])
+    wslMocks.getWslHomeAsync.mockReturnValue(pending)
+
+    const broad = wslCodexSessionsDirs({ platform: 'win32' })
+    await Promise.resolve()
+    const targeted = wslCodexSessionsDirsForDistro('Ubuntu', { platform: 'win32' })
+
+    expect(wslMocks.getWslHomeAsync).toHaveBeenCalledTimes(1)
+    finish(UBUNTU_HOME)
+    await expect(broad).resolves.toHaveLength(2)
+    await expect(targeted).resolves.toHaveLength(2)
   })
 
   it('negatively caches a failed targeted home probe for the retry window', async () => {

@@ -2,6 +2,7 @@ import type { Dirent } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { win32 } from 'node:path'
 import { walkSessionFiles } from '../ai-vault/session-scanner-discovery'
+import { SUBAGENT_DIR_NAME } from '../ai-vault/session-scanner-subagent-transcripts'
 import { runWslTranscriptFsTask } from './wsl-transcript-fs-gate'
 
 type WslSessionScanAgent = 'claude' | 'codex'
@@ -118,6 +119,7 @@ function startScan(scan: ScanGeneration): void {
     const promise = walkSessionFiles(scan.root, scan.agent, [], {
       extensions: new Set(['.jsonl']),
       filePredicate: (path) => matchesRequestedSession(scan.agent, path, scan.sessionIdRefCounts),
+      directoryPredicate: (name) => scan.agent !== 'claude' || name !== SUBAGENT_DIR_NAME,
       readDirectory: (dirPath) => readDirectory(dirPath, scan.controller.signal),
       signal: scan.controller.signal
     })

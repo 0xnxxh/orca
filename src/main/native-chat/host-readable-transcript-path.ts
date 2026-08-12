@@ -99,7 +99,9 @@ const inflightWslHomeByDistro = new Map<string, Promise<string | null>>()
 
 async function defaultListWslHomeDirs(): Promise<string[]> {
   const homes = await Promise.all(
-    (await listWslDistrosAsync()).map((distro) => getWslHomeAsync(distro))
+    (await listWslDistrosAsync()).map((distro) =>
+      wslHomeDirForDistro(distro, { platform: 'win32' })
+    )
   )
   return homes.filter((home): home is string => Boolean(home))
 }

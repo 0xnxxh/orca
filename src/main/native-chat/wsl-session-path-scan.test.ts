@@ -33,4 +33,38 @@ describe('WSL session path scans', () => {
       )
     ).resolves.toBe(transcript)
   })
+
+  it('prunes Claude subagent transcript trees from WSL recovery scans', async () => {
+    mocks.walk.mockImplementation(
+      (
+        _root: string,
+        _agent: string,
+        _issues: unknown[],
+        options: { directoryPredicate?: (name: string, depth: number) => boolean }
+      ) => {
+        expect(options.directoryPredicate?.('project', 0)).toBe(true)
+        expect(options.directoryPredicate?.('session-id', 1)).toBe(true)
+        expect(options.directoryPredicate?.('subagents', 2)).toBe(false)
+        return Promise.resolve([])
+      }
+    )
+
+    await expect(findWslSessionPath('claude', 'claude-root', 'session-id')).resolves.toBeNull()
+  })
+
+  it('does not prune Codex date hierarchy directories', async () => {
+    mocks.walk.mockImplementation(
+      (
+        _root: string,
+        _agent: string,
+        _issues: unknown[],
+        options: { directoryPredicate?: (name: string, depth: number) => boolean }
+      ) => {
+        expect(options.directoryPredicate?.('subagents', 3)).toBe(true)
+        return Promise.resolve([])
+      }
+    )
+
+    await expect(findWslSessionPath('codex', 'codex-root', 'session-id')).resolves.toBeNull()
+  })
 })

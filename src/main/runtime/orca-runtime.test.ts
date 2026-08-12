@@ -10997,7 +10997,7 @@ describe('OrcaRuntimeService', () => {
     })
     expect(runtime.resolveNativeChatTranscriptHost('pty-host')).toEqual({ kind: 'host' })
     expect(runtime.resolveNativeChatTranscriptHost('pty-unknown')).toBeUndefined()
-    expect(runtime.resolveNativeChatTranscriptHost('pty-ssh')).toBeUndefined()
+    expect(runtime.resolveNativeChatTranscriptHost('pty-ssh')).toBeNull()
     expect(runtime.resolveNativeChatTranscriptHost('missing')).toBeNull()
   })
 
