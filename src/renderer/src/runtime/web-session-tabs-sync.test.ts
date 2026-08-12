@@ -20,13 +20,24 @@ import {
   recordWebSessionReorderIntent,
   resetWebSessionReorderIntentForTests
 } from './web-session-reorder-intent'
-import type { BrowserPage, BrowserWorkspace, Tab, TerminalTab } from '../../../shared/types'
+import type {
+  BrowserPage,
+  BrowserWorkspace,
+  Tab,
+  TabGroupLayoutNode,
+  TerminalTab
+} from '../../../shared/types'
 import type { OpenFile } from '../store/slices/editor'
 import {
   confirmWebAgentSessionHandoffAfterCreate,
   recordWebAgentSessionHandoff,
   resetWebAgentSessionHandoffsForTests
 } from './web-agent-session-handoff'
+import {
+  getWebSessionBrowserPlacementGroup,
+  recordWebSessionBrowserPlacement,
+  reserveWebSessionBrowserPlacementGroup
+} from './web-session-browser-placement'
 import {
   _getWebSessionTabsTrackingCountsForTest,
   acceptReplayedWebSessionTabsSnapshot,
@@ -57,6 +68,16 @@ const LEAF_ID = '11111111-1111-4111-8111-111111111111'
 const SECOND_LEAF_ID = '22222222-2222-4222-8222-222222222222'
 const THIRD_LEAF_ID = '33333333-3333-4333-8333-333333333333'
 const HOST_SURFACE_ID = `host-tab-1::${LEAF_ID}`
+
+function layoutHasGroup(layout: TabGroupLayoutNode | undefined, groupId: string): boolean {
+  if (!layout) {
+    return false
+  }
+  if (layout.type === 'leaf') {
+    return layout.groupId === groupId
+  }
+  return layoutHasGroup(layout.first, groupId) || layoutHasGroup(layout.second, groupId)
+}
 
 function makeState(overrides: Partial<WebSessionTabsSyncState> = {}): WebSessionTabsSyncState {
   return {
@@ -3909,6 +3930,187 @@ describe('applyWebSessionTabsSnapshot', () => {
       tabOrder: ['host-browser-unified']
     })
     expect(patch.layoutByWorktree).toBeUndefined()
+  })
+
+  it('keeps one remote browser in its client-owned side-preview group', () => {
+    const editorGroupId = 'client-editor-group'
+    const previewGroupId = 'client-preview-group'
+    recordWebSessionBrowserPlacement({
+      environmentId: ENV,
+      worktreeId: WT,
+      remotePageId: 'host-browser-page',
+      groupId: previewGroupId
+    })
+
+    const patch = applyWebSessionTabsSnapshot(
+      makeState({
+        groupsByWorktree: {
+          [WT]: [
+            {
+              id: editorGroupId,
+              worktreeId: WT,
+              activeTabId: 'local-editor',
+              tabOrder: ['local-editor']
+            },
+            {
+              id: previewGroupId,
+              worktreeId: WT,
+              activeTabId: null,
+              tabOrder: []
+            }
+          ]
+        },
+        layoutByWorktree: {
+          [WT]: {
+            type: 'split',
+            direction: 'horizontal',
+            first: { type: 'leaf', groupId: editorGroupId },
+            second: { type: 'leaf', groupId: previewGroupId },
+            ratio: 0.5
+          }
+        },
+        unifiedTabsByWorktree: {
+          [WT]: [
+            {
+              id: 'local-editor',
+              worktreeId: WT,
+              groupId: editorGroupId,
+              contentType: 'editor',
+              entityId: 'local-file',
+              label: 'example.html',
+              sortOrder: 0,
+              createdAt: NOW,
+              isPreview: false,
+              isPinned: false,
+              customLabel: null,
+              color: null
+            }
+          ]
+        }
+      }),
+      makeSnapshot(
+        [
+          {
+            type: 'browser',
+            id: 'host-browser-tab',
+            title: 'example.html',
+            browserWorkspaceId: 'host-browser-workspace',
+            browserPageId: 'host-browser-page',
+            url: 'file:///srv/repo/example.html',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            isActive: true
+          }
+        ],
+        { activeTabId: 'host-browser-tab', activeTabType: 'browser' }
+      ),
+      ENV,
+      NOW
+    ) as Partial<WebSessionTabsSyncState>
+
+    const browserTab = patch.unifiedTabsByWorktree?.[WT]?.find(
+      (tab) => tab.contentType === 'browser'
+    )
+    expect(browserTab).toMatchObject({ id: 'host-browser-tab', groupId: previewGroupId })
+    expect(
+      patch.groupsByWorktree?.[WT]?.find((group) => group.id === previewGroupId)
+    ).toMatchObject({ activeTabId: 'host-browser-tab', tabOrder: ['host-browser-tab'] })
+    expect(patch.groupsByWorktree?.[WT]?.find((group) => group.id === editorGroupId)).toMatchObject(
+      { activeTabId: 'local-editor', tabOrder: ['local-editor'] }
+    )
+    expect(patch.browserTabsByWorktree?.[WT]).toHaveLength(1)
+  })
+
+  it('keeps a reserved side-preview split across a pre-publication snapshot', () => {
+    const editorGroupId = 'client-editor-group'
+    const previewGroupId = 'client-preview-group'
+    const initialLayout: TabGroupLayoutNode = {
+      type: 'split',
+      direction: 'horizontal',
+      first: { type: 'leaf', groupId: editorGroupId },
+      second: { type: 'leaf', groupId: previewGroupId },
+      ratio: 0.5
+    }
+    reserveWebSessionBrowserPlacementGroup({
+      environmentId: ENV,
+      worktreeId: WT,
+      groupId: previewGroupId
+    })
+
+    const patch = applyWebSessionTabsSnapshot(
+      makeState({
+        groupsByWorktree: {
+          [WT]: [
+            {
+              id: editorGroupId,
+              worktreeId: WT,
+              activeTabId: 'local-editor',
+              tabOrder: ['local-editor']
+            },
+            {
+              id: previewGroupId,
+              worktreeId: WT,
+              activeTabId: null,
+              tabOrder: []
+            }
+          ]
+        },
+        layoutByWorktree: { [WT]: initialLayout },
+        unifiedTabsByWorktree: {
+          [WT]: [
+            {
+              id: 'local-editor',
+              worktreeId: WT,
+              groupId: editorGroupId,
+              contentType: 'editor',
+              entityId: 'local-file',
+              label: 'example.html',
+              sortOrder: 0,
+              createdAt: NOW,
+              isPreview: false,
+              isPinned: false,
+              customLabel: null,
+              color: null
+            }
+          ]
+        }
+      }),
+      makeSnapshot([], {
+        activeTabType: null,
+        tabGroups: [{ id: editorGroupId, activeTabId: null, tabOrder: [], recentTabIds: [] }],
+        tabGroupLayout: { type: 'leaf', groupId: editorGroupId }
+      }),
+      ENV,
+      NOW
+    ) as Partial<WebSessionTabsSyncState>
+
+    expect(patch.groupsByWorktree?.[WT]?.map((group) => group.id)).toContain(previewGroupId)
+    expect(layoutHasGroup(patch.layoutByWorktree?.[WT] ?? initialLayout, previewGroupId)).toBe(true)
+  })
+
+  it('forgets client browser placement after the host removes the page', () => {
+    recordWebSessionBrowserPlacement({
+      environmentId: ENV,
+      worktreeId: WT,
+      remotePageId: 'host-browser-page',
+      groupId: 'client-preview-group'
+    })
+    getWebSessionBrowserPlacementGroup({
+      environmentId: ENV,
+      worktreeId: WT,
+      remotePageId: 'host-browser-page'
+    })
+
+    applyWebSessionTabsSnapshot(makeState(), makeSnapshot([]), ENV, NOW)
+
+    expect(
+      getWebSessionBrowserPlacementGroup({
+        environmentId: ENV,
+        worktreeId: WT,
+        remotePageId: 'host-browser-page'
+      })
+    ).toBeUndefined()
   })
 
   it('creates a rendered web layout group when stale group records do not include it', () => {

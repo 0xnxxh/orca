@@ -34,12 +34,18 @@ import {
   resetWebAgentSessionHandoffsForTests
 } from './web-agent-session-handoff'
 import { toRuntimeExecutionHostId } from '../../../shared/execution-host'
+import {
+  isWebSessionBrowserPlacementGroupReserved,
+  resetWebSessionBrowserPlacementsForTests
+} from './web-session-browser-placement'
 
 const mocks = vi.hoisted(() => ({
   getState: vi.fn(),
   setState: vi.fn(),
   setActiveWorktree: vi.fn(),
   createBrowserTab: vi.fn(),
+  closeEmptyGroup: vi.fn(),
+  moveUnifiedTabToGroup: vi.fn(),
   setRemoteBrowserPageHandle: vi.fn(),
   focusBrowserTabInWorktree: vi.fn(),
   applyFreshWebSessionTabsSnapshot: vi.fn(),
@@ -252,7 +258,10 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       activeWorktreeId: WORKTREE_ID,
       browserPagesByWorkspace: {},
       remoteBrowserPageHandlesByPageId: {},
+      unifiedTabsByWorktree: {},
       createBrowserTab: mocks.createBrowserTab,
+      closeEmptyGroup: mocks.closeEmptyGroup,
+      moveUnifiedTabToGroup: mocks.moveUnifiedTabToGroup,
       setRemoteBrowserPageHandle: mocks.setRemoteBrowserPageHandle,
       focusBrowserTabInWorktree: mocks.focusBrowserTabInWorktree,
       setActiveWorktree: mocks.setActiveWorktree
@@ -268,6 +277,7 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       activePageId: 'local-page-1',
       pageIds: ['local-page-1']
     })
+    mocks.moveUnifiedTabToGroup.mockReturnValue(true)
     mocks.applyFreshWebSessionTabsSnapshot.mockReturnValue({ state: 'after' })
     mocks.resolveHostSessionTabIdForWebSessionTab.mockReturnValue(null)
     mocks.deliverLaunchPromptToAgentTab.mockResolvedValue(true)
@@ -276,6 +286,7 @@ describe('createWebRuntimeSessionBrowserTab', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     clearRuntimeCompatibilityCacheForTests()
+    resetWebSessionBrowserPlacementsForTests()
     vi.clearAllMocks()
   })
 
@@ -348,6 +359,86 @@ describe('createWebRuntimeSessionBrowserTab', () => {
       environmentId: ENVIRONMENT_ID,
       remotePageId: 'remote-browser-page-1'
     })
+  })
+
+  it('keeps the requested split reserved until a pre-published browser gains a unified tab', async () => {
+    mocks.getState.mockReturnValue({
+      settings: { activeRuntimeEnvironmentId: ENVIRONMENT_ID },
+      activeWorktreeId: WORKTREE_ID,
+      browserPagesByWorkspace: {
+        'host-browser-workspace': [
+          { id: 'host-browser-page', workspaceId: 'host-browser-workspace' }
+        ]
+      },
+      remoteBrowserPageHandlesByPageId: {
+        'host-browser-page': {
+          environmentId: ENVIRONMENT_ID,
+          remotePageId: 'remote-browser-page-1'
+        }
+      },
+      unifiedTabsByWorktree: { [WORKTREE_ID]: [] },
+      createBrowserTab: mocks.createBrowserTab,
+      closeEmptyGroup: mocks.closeEmptyGroup,
+      moveUnifiedTabToGroup: mocks.moveUnifiedTabToGroup,
+      setRemoteBrowserPageHandle: mocks.setRemoteBrowserPageHandle,
+      focusBrowserTabInWorktree: mocks.focusBrowserTabInWorktree,
+      setActiveWorktree: mocks.setActiveWorktree
+    })
+    const runtimeCall = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'create',
+        ok: true,
+        result: { browserPageId: 'remote-browser-page-1' }
+      })
+      .mockResolvedValueOnce({ id: 'list', ok: true, result: makeSnapshot() })
+    vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+
+    await expect(
+      createWebRuntimeSessionBrowserTab({
+        worktreeId: WORKTREE_ID,
+        environmentId: ENVIRONMENT_ID,
+        clientTargetGroupId: 'client-preview-group'
+      })
+    ).resolves.toBe(true)
+
+    expect(
+      isWebSessionBrowserPlacementGroupReserved({
+        environmentId: ENVIRONMENT_ID,
+        worktreeId: WORKTREE_ID,
+        groupId: 'client-preview-group'
+      })
+    ).toBe(true)
+    expect(mocks.createBrowserTab).not.toHaveBeenCalled()
+    expect(mocks.closeEmptyGroup).not.toHaveBeenCalled()
+  })
+
+  it('releases and removes a newly-created split when host creation fails', async () => {
+    vi.stubGlobal('window', {
+      api: {
+        runtimeEnvironments: {
+          call: vi.fn().mockRejectedValue(new Error('offline'))
+        }
+      }
+    })
+
+    await expect(
+      createWebRuntimeSessionBrowserTab({
+        worktreeId: WORKTREE_ID,
+        environmentId: ENVIRONMENT_ID,
+        clientTargetGroupId: 'client-preview-group',
+        clientTargetGroupCreated: true
+      })
+    ).resolves.toBe(false)
+
+    expect(mocks.closeEmptyGroup).toHaveBeenCalledWith(WORKTREE_ID, 'client-preview-group')
+    expect(
+      isWebSessionBrowserPlacementGroupReserved({
+        environmentId: ENVIRONMENT_ID,
+        worktreeId: WORKTREE_ID,
+        groupId: 'client-preview-group'
+      })
+    ).toBe(false)
   })
 
   it('keeps the requested worktree selected while the browser snapshot catches up', async () => {
