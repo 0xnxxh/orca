@@ -118,6 +118,11 @@ import { resolveWorktreeCreateBase } from '../worktree-create-base'
 import { resolveWorktreeAddBaseRef } from '../../shared/worktree-base-ref'
 import { OrchestrationDb } from './orchestration/db'
 import { reconcileRequestedWorkerTerminalReleases } from './orchestration/worker-terminal-release-reconciliation'
+import {
+  classifyWorkerTerminalProcessIncarnation,
+  parseWorkerTerminalHostScope,
+  type WorkerTerminalHostScope
+} from './orchestration/worker-terminal-process-liveness'
 import { rollbackWorkspaceSessionAfterFailedAsyncWrite } from './workspace-session-failed-write-rollback'
 import { OrchestrationError } from './orchestration/orchestration-error'
 import {
@@ -1996,10 +2001,7 @@ export type OrchestrationCompatibilityTerminalAuthority = {
   processIncarnation: string | null
   paneKey: string | null
   launchTokenHash: string | null
-  hostScope:
-    | { kind: 'local'; hostId: 'local' }
-    | { kind: 'wsl'; hostId: 'local'; distro: string }
-    | { kind: 'ssh'; targetId: string }
+  hostScope: WorkerTerminalHostScope
 }
 
 export type LegacyWorkerTerminalRecoveryResult = {
@@ -15534,6 +15536,24 @@ export class OrcaRuntimeService {
       totalCount: matchingTerminals.length,
       truncated: matchingTerminals.length > limit
     }
+  }
+
+  async inspectTerminalProcessIncarnationLiveness(
+    processIncarnation: string,
+    serializedHostScope: string | null
+  ): Promise<'live' | 'dead' | 'unknown'> {
+    const hostScope = parseWorkerTerminalHostScope(serializedHostScope)
+    if (!hostScope || !this.ptyController?.listProcesses) {
+      return 'unknown'
+    }
+    const listed = await withTimeoutResult(
+      this.ptyController.listProcesses(hostScope.kind === 'ssh' ? hostScope.targetId : null),
+      PTY_CONTROLLER_LIST_TIMEOUT_MS
+    )
+    if (!listed.ok) {
+      return 'unknown'
+    }
+    return classifyWorkerTerminalProcessIncarnation(processIncarnation, listed.value)
   }
 
   private getTerminalTopologyRevision(worktreeId: string): number {
