@@ -155,6 +155,7 @@ describe('orchestration federation lifecycle settlement', () => {
     await vi.waitFor(() =>
       expect(workerDb.listPendingFederationRelay(dispatch.id, 'to_home')).toHaveLength(1)
     )
+    expect(workerDb.getRemoteDispatchAttachment(dispatch.id)?.state).toBe('ready')
     if (sync) {
       await homeRuntime.syncOrchestrationFederation()
     }
