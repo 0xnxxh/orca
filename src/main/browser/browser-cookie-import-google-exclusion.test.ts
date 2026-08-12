@@ -89,6 +89,7 @@ describe('file import excludes the Google cookie family', () => {
       totalCookies: 4,
       importedCookies: 2,
       skippedCookies: 2,
+      googleCookiesSkipped: 2,
       domains: ['linear.app', 'youtube.com']
     })
     expect(cookiesRemoveMock.mock.calls).toEqual([['https://linear.app/', 'old-linear']])
@@ -110,6 +111,7 @@ describe('file import excludes the Google cookie family', () => {
       totalCookies: 1,
       importedCookies: 0,
       skippedCookies: 1,
+      googleCookiesSkipped: 1,
       domains: []
     })
     expect(cookiesRemoveMock).not.toHaveBeenCalled()
@@ -181,6 +183,7 @@ describe('native Chromium import excludes the Google cookie family', () => {
       totalCookies: 2,
       importedCookies: 1,
       skippedCookies: 1,
+      googleCookiesSkipped: 1,
       domains: ['example.com']
     })
     expect(clearStorageDataMock).toHaveBeenCalledOnce()

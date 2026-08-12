@@ -584,6 +584,7 @@ async function importValidatedCookies(
   )
   const integritySkipped = validDomainCookies.length - sourceBoundFiltered.length
   const nonTransplantableSkipped = sourceBoundFiltered.length - importableCookies.length
+  const googleCookiesSkipped = integritySkipped + nonTransplantableSkipped
   const invalidDomainSkipped = cookies.length - validDomainCookies.length
   diag(
     `importValidatedCookies: ${cookies.length} validated, ${invalidDomainSkipped} unsafe-domain skipped, ${integritySkipped} source-bound skipped, ${nonTransplantableSkipped} non-transplantable skipped of ${totalInput} total, partition="${targetPartition}"`
@@ -693,6 +694,7 @@ async function importValidatedCookies(
     totalCookies: totalInput,
     importedCookies: importedCount,
     skippedCookies: skipped,
+    ...(googleCookiesSkipped > 0 ? { googleCookiesSkipped } : {}),
     domains: [...domainSet].sort()
   }
 
@@ -1740,6 +1742,7 @@ export async function importCookiesFromBrowser(
     diag(
       `  skipped ${integritySkipped} Google integrity cookies (SIDCC/STRP/AEC) and ${nonTransplantableSkipped} non-transplantable-domain cookies`
     )
+    const googleCookiesSkipped = integritySkipped + nonTransplantableSkipped
 
     if (decryptedCookies.length === 0) {
       closeStagingDb()
@@ -1751,6 +1754,7 @@ export async function importCookiesFromBrowser(
           totalCookies: sourceRows.length,
           importedCookies: 0,
           skippedCookies: skipped + integritySkipped + nonTransplantableSkipped,
+          ...(googleCookiesSkipped > 0 ? { googleCookiesSkipped } : {}),
           domains: []
         }
       }
@@ -1844,6 +1848,7 @@ export async function importCookiesFromBrowser(
       totalCookies: sourceRows.length,
       importedCookies: imported,
       skippedCookies: skipped + integritySkipped + nonTransplantableSkipped,
+      ...(googleCookiesSkipped > 0 ? { googleCookiesSkipped } : {}),
       domains: [...domainSet].sort(),
       ...(warning ? { warning } : {})
     }
