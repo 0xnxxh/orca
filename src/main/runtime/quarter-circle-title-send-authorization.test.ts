@@ -18,16 +18,21 @@ const TAB_ID = 'tab-1'
 const WORKTREE_ID = 'wt-1'
 const PTY_ID = 'pty-1'
 
-// A quarter-circle spinner with no agent token — Claude Code 2.1.228's task-text
-// busy frame reads the same as a release script animating its own OSC title.
-const SPINNER_ONLY_TITLE = '◑ Deploying release 4.2'
+// Captured from Claude Code 2.1.228 while it read this repository's package.json.
+const SPINNER_ONLY_TITLE = '◑ Check package version in package.json'
 const SPINNER_WITH_IDENTITY_TITLE = '◐ Claude Code'
 const BRAILLE_SPINNER_ONLY_TITLE = '⠂ Deploying release 4.2'
 
 async function createRuntimeWithTitle(
   paneTitle: string,
-  foregroundProcess: string | null
-): Promise<{ runtime: OrcaRuntimeService; handle: string }> {
+  foregroundProcess: string | null,
+  launchAgent?: 'claude',
+  verifiedLaunch = true
+): Promise<{
+  runtime: OrcaRuntimeService
+  handle: string
+  getForegroundProcess: ReturnType<typeof vi.fn>
+}> {
   const runtime = new OrcaRuntimeService(null)
   const internals = runtime as unknown as {
     resolveTerminalWorkspaceLaunchScope: (selector: string) => Promise<unknown>
@@ -39,16 +44,25 @@ async function createRuntimeWithTitle(
     repo: null,
     folderWorkspace: null
   })
+  const getForegroundProcess = vi.fn(async () => foregroundProcess)
   runtime.setPtyController({
     spawn: vi.fn().mockResolvedValue({ id: PTY_ID }),
     write: () => true,
     kill: () => true,
-    getForegroundProcess: async () => foregroundProcess
+    getForegroundProcess
   })
   const terminal = await runtime.createTerminal(`id:${WORKTREE_ID}`, {
     tabId: TAB_ID,
     leafId: LEAF_ID,
-    title: 'Terminal'
+    title: 'Terminal',
+    ...(launchAgent
+      ? {
+          launchAgent,
+          ...(verifiedLaunch
+            ? { launchConfig: { agentCommand: 'claude', agentArgs: '', agentEnv: {} } }
+            : {})
+        }
+      : {})
   })
   runtime.attachWindow(1)
   runtime.syncWindowGraph(1, {
@@ -72,7 +86,7 @@ async function createRuntimeWithTitle(
       }
     ]
   })
-  return { runtime, handle: terminal.handle }
+  return { runtime, handle: terminal.handle, getForegroundProcess }
 }
 
 const AUTHORIZED = 'authorized'
@@ -112,6 +126,39 @@ describe('quarter-circle title send authorization (STA-4028)', () => {
       status: 'working'
     })
     await expect(guardedSendResult(runtime, handle)).resolves.toBe(AUTHORIZED)
+  })
+
+  it('authorizes a managed Claude launch when the foreground process is unavailable', async () => {
+    const { runtime, handle, getForegroundProcess } = await createRuntimeWithTitle(
+      SPINNER_ONLY_TITLE,
+      null,
+      'claude'
+    )
+    expect(
+      (
+        runtime as unknown as {
+          ptysById: Map<string, { launchAgent: string | null; launchToken: string | null }>
+        }
+      ).ptysById.get(PTY_ID)
+    ).toMatchObject({ launchAgent: 'claude', launchToken: expect.any(String) })
+
+    await expect(runtime.getTerminalAgentStatus(handle)).resolves.toMatchObject({
+      isRunningAgent: true,
+      status: 'working'
+    })
+    await expect(guardedSendResult(runtime, handle)).resolves.toBe(AUTHORIZED)
+    expect(getForegroundProcess).not.toHaveBeenCalled()
+  })
+
+  it('does not trust an unverified Claude launch hint', async () => {
+    const { runtime, handle } = await createRuntimeWithTitle(
+      SPINNER_ONLY_TITLE,
+      null,
+      'claude',
+      false
+    )
+
+    await expect(guardedSendResult(runtime, handle)).resolves.toBe('terminal_guard_no_agent')
   })
 
   it('authorizes a guarded send when the busy title itself names the agent', async () => {

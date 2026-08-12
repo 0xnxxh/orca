@@ -31546,15 +31546,24 @@ export class OrcaRuntimeService {
         return await this.isPtyRunningAgent(pty.pty, leaf)
       }
       const { leaf } = this.getLiveLeafForHandle(handle)
+      const trackedPty = leaf.ptyId ? this.ptysById.get(leaf.ptyId) : null
       // Why: check the leaf pane title and the tab title, which already carries OSC-enriched agent indicators (e.g. ✳ prefix).
       const paneTitle = getLatestLeafTitle(leaf, null)
       const paneTitleClassification = classifyAgentTitle(paneTitle)
-      if (agentTitleProvesAgentPresence(paneTitle, paneTitleClassification)) {
+      if (
+        trackedPty
+          ? ptyTitleProvesAgentPresence(trackedPty, paneTitle, paneTitleClassification)
+          : agentTitleProvesAgentPresence(paneTitle, paneTitleClassification)
+      ) {
         return true
       }
       const tabTitle = this.tabs.get(leaf.tabId)?.title?.trim() || null
       const tabTitleClassification = paneTitle === null ? classifyAgentTitle(tabTitle) : 'neutral'
-      if (agentTitleProvesAgentPresence(tabTitle, tabTitleClassification)) {
+      if (
+        trackedPty
+          ? ptyTitleProvesAgentPresence(trackedPty, tabTitle, tabTitleClassification)
+          : agentTitleProvesAgentPresence(tabTitle, tabTitleClassification)
+      ) {
         return true
       }
       const openCodeMarkerTitle = paneTitle ?? tabTitle
@@ -31603,7 +31612,7 @@ export class OrcaRuntimeService {
         )
       : null
     const leafTitleClassification = classifyAgentTitle(leafTitle)
-    if (agentTitleProvesAgentPresence(leafTitle, leafTitleClassification)) {
+    if (ptyTitleProvesAgentPresence(pty, leafTitle, leafTitleClassification)) {
       return true
     }
     const ptyTitle = getLatestAgentCandidateTitle(
@@ -31611,7 +31620,7 @@ export class OrcaRuntimeService {
       { title: pty.lastOscTitle, updatedAt: pty.lastOscTitleAt }
     )
     const ptyTitleClassification = classifyAgentTitle(ptyTitle)
-    if (leafTitle === null && agentTitleProvesAgentPresence(ptyTitle, ptyTitleClassification)) {
+    if (leafTitle === null && ptyTitleProvesAgentPresence(pty, ptyTitle, ptyTitleClassification)) {
       return true
     }
     const managementTitleClassification = classifyLatestAgentTitle({
@@ -37581,6 +37590,19 @@ function agentTitleProvesAgentPresence(
     classification === 'agent' &&
     !isOpenCodeNativeTitle(title) &&
     !isQuarterCircleSpinnerOnlyAgentTitle(title)
+  )
+}
+
+function ptyTitleProvesAgentPresence(
+  pty: RuntimePtyWorktreeRecord,
+  title: string | null,
+  classification: 'agent' | 'management' | 'neutral'
+): boolean {
+  return (
+    agentTitleProvesAgentPresence(title, classification) ||
+    (isQuarterCircleSpinnerOnlyAgentTitle(title) &&
+      pty.launchAgent === 'claude' &&
+      pty.launchToken !== null)
   )
 }
 
