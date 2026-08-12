@@ -6,10 +6,11 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` at `522e006127`; no PR.
+- Orca implementation: `skills-share` at `9100431212`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   kill-switch discovery PR `#342` merged as `c2bef2ff20fb`; production remains untouched.
+  Windows device-name validation PR `#343` merged as `dbb14a658cbc`; production remains untouched.
 
 Validated so far:
 
@@ -46,6 +47,13 @@ Validated so far:
   and coverage gates without a max-lines exception.
 - Remote upload sessions actively expire abandoned bytes after their bounded idle lifetime, and
   begin/chunk/commit retries resume from the host-acknowledged offset under one stable transfer ID.
+- Paired skill install and upload cancellation now reaches queued calls, capability probes,
+  one-shot sockets, cached request sockets, and shared-control requests instead of waiting for the
+  five-minute transfer timeout. Focused coverage proves queued work never starts, pending request
+  admission is released, late responses are ignored, one-shot sockets close, and unrelated cached
+  or shared-control requests survive; 84 transport/service tests and Node typecheck passed.
+- Standalone and bundled package names reject Windows reserved device names in both Orca and Cloud,
+  preventing a package published on macOS/Linux from failing only when installed on Windows.
 - Identical archives are deduplicated only within an owner tenant. PostgreSQL object identity and
   tenant-hashed GCS keys prevent cross-tenant existence or finalization-timing disclosure.
 - Native Windows package/install/recovery/copy-fallback tests and Node typecheck on `windows 2`;
@@ -993,7 +1001,9 @@ does not mean the surrounding phase is complete.
       client's isolated home.
 - [ ] Test connection loss and resumption or restart behavior at every transfer boundary. Lost
       final install-response convergence is covered for direct and staged paired-runtime paths;
-      restart and the remaining physical disconnect boundaries are still open.
+      deterministic cancellation now settles in-flight and queued paired calls across every
+      transport without leaking request admission or disrupting peers. Restart and the remaining
+      physical disconnect boundaries are still open.
 
 ### Mixed versions
 

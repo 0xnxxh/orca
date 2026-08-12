@@ -1136,6 +1136,13 @@ IDs make commit idempotent, a direct install can converge after its response is 
 install rebuilds the upload before retrying because the first host attempt may already have
 consumed it.
 
+Client cancellation is carried through the local runtime-call queue and every paired request
+transport. A queued call is removed before it starts; an in-flight one-shot request closes only its
+socket; cached and shared-control requests release only their own request state so unrelated users
+of the connection continue. Late responses for cancelled shared requests are retired and ignored.
+This is local transport behavior and does not change the mixed-version wire contract; the existing
+operation-ID cancellation RPC remains responsible for converging host-side installation work.
+
 SSH Relay errors retain JSON-RPC numeric codes on the wire. Known skill failures add optional,
 schema-validated `error.data`; arbitrary handler data is never published. This is additive for
 mixed versions and gives SSH the same stable error categories as native and paired installation
