@@ -164,7 +164,7 @@ describe('native Chromium import excludes the Google cookie family', () => {
     createChromiumCookieTestDatabase(targetCookiesPath, rows).close()
   }
 
-  it('never wipes the jar wholesale and keeps the live Google cookies', async () => {
+  it('bulk clears once and restores the live Google cookies before importing', async () => {
     const sourceCookiesPath = seedSource([
       { domain: '.google.com', name: 'SID', value: 'transplanted-sid' },
       { domain: '.example.com', name: 'session', value: 'new' }
@@ -183,9 +183,13 @@ describe('native Chromium import excludes the Google cookie family', () => {
       skippedCookies: 1,
       domains: ['example.com']
     })
-    expect(clearStorageDataMock).not.toHaveBeenCalled()
-    expect(cookiesRemoveMock.mock.calls).toEqual([['https://example.com/', 'stale']])
-    expect(cookiesSetMock.mock.calls.map(([details]) => details.domain)).toEqual(['.example.com'])
+    expect(clearStorageDataMock).toHaveBeenCalledOnce()
+    expect(clearStorageDataMock).toHaveBeenCalledWith({ storages: ['cookies'] })
+    expect(cookiesRemoveMock).not.toHaveBeenCalled()
+    expect(cookiesSetMock.mock.calls.map(([details]) => details.domain)).toEqual([
+      '.google.com',
+      '.example.com'
+    ])
   })
 
   it('keeps the live Google rows in the staged restart-fallback database', async () => {
@@ -210,6 +214,27 @@ describe('native Chromium import excludes the Google cookie family', () => {
       { host_key: '.example.com', name: 'session', value: 'new' },
       { host_key: '.google.com', name: 'SID', value: 'live-sid' }
     ])
+  })
+
+  it('fails the import and restores the full snapshot when the bulk clear rejects', async () => {
+    const sourceCookiesPath = seedSource([
+      { domain: '.example.com', name: 'session', value: 'new' }
+    ])
+    seedTarget([{ domain: '.example.com', name: 'stale', value: 'stale' }])
+    cookiesGetMock.mockResolvedValue([
+      existingCookie('.google.com', 'SID'),
+      existingCookie('.example.com', 'stale')
+    ])
+    clearStorageDataMock.mockRejectedValue(new Error('cookie store unavailable'))
+
+    const result = await importCookiesFromBrowser(chromeBrowser(sourceCookiesPath), 'persist:test')
+
+    expect(result).toMatchObject({ ok: false })
+    expect(result.ok || result.reason).toContain('Could not clear existing cookies')
+    expect(clearStorageDataMock).toHaveBeenCalledOnce()
+    expect(cookiesRemoveMock).not.toHaveBeenCalled()
+    expect(cookiesSetMock.mock.calls.map(([details]) => details.name)).toEqual(['SID', 'stale'])
+    expect(setPendingCookieImportMock).not.toHaveBeenCalled()
   })
 })
 
