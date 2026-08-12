@@ -239,14 +239,18 @@ export async function reconcileSkillProviderPlacement(input: {
     provider: input.destination.provider
   })
   try {
-    const result = (await pathExists(destinationPath))
-      ? await reconcileExistingPlacement({
-          ...input,
-          destinationPath,
-          filesystem,
-          observation
-        })
-      : await createMissingPlacement({ ...input, destinationPath, filesystem, observation })
+    const aliasExists = filesystem.aliasTargets
+      ? await filesystem.aliasTargets(input.canonicalPath, destinationPath).catch(() => false)
+      : false
+    const result =
+      aliasExists || (await pathExists(destinationPath))
+        ? await reconcileExistingPlacement({
+            ...input,
+            destinationPath,
+            filesystem,
+            observation
+          })
+        : await createMissingPlacement({ ...input, destinationPath, filesystem, observation })
     operation.complete({
       status: result.status,
       errorCategory: result.errorCategory ?? 'none',

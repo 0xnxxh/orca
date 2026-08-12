@@ -116,4 +116,31 @@ describe('skill provider placement reconciliation', () => {
       'private skill'
     )
   })
+
+  it('uses host alias inspection when the client cannot stat the destination', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skill-placement-test-'))
+    temporaryDirectories.push(root)
+    const canonicalPath = join(root, 'canonical', 'private-skill')
+    const providerRoot = join(root, 'provider')
+    await mkdir(canonicalPath, { recursive: true })
+    await writeFile(join(canonicalPath, 'SKILL.md'), 'private skill')
+    const observed = await nativeSkillInstallFilesystem.observeSkill(canonicalPath)
+    const createAlias = vi.fn()
+
+    const result = await reconcileSkillProviderPlacement({
+      canonicalPath,
+      skillName: 'private-skill',
+      destination: { provider: 'claude', rootPath: providerRoot, readsCanonicalRoot: false },
+      previousReceipt: null,
+      packageDigest: observed.observedDigest,
+      filesystem: {
+        ...nativeSkillInstallFilesystem,
+        createAlias,
+        aliasTargets: async () => true
+      }
+    })
+
+    expect(result).toMatchObject({ topology: 'provider-alias', status: 'unchanged' })
+    expect(createAlias).not.toHaveBeenCalled()
+  })
 })

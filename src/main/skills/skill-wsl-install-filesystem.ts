@@ -54,7 +54,7 @@ const CREATE_ALIAS_SCRIPT = [
   'parent=$(dirname -- "$2")',
   'mkdir -p -- "$parent"',
   'chmod 700 -- "$parent"',
-  'ln -s -- "$1" "$2"',
+  'ln -sT -- "$1" "$2"',
   'sync -f "$parent" 2>/dev/null || sync'
 ].join('\n')
 
