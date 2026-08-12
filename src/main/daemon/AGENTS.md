@@ -68,8 +68,33 @@ hands → probe once more → `rename` in one syscall → verify we kept it.
   `preserveDaemon()`, which opens a non-shared 20s handshake and could overrun the deadline it
   is meant to respect.
 
-  Note the launcher closure does not receive the startup abort signal, so the guard cannot
-  simply read `signal.aborted` without threading it through `DaemonSpawner`.
+  Why it is unreachable at 34s is structure, not margin, and the distinction is the point: the
+  hold decoupled long classification from the replace path. A verdict of `empty` means the
+  daemon *answered*, so it resolved fast by construction; `unknown` + proven-dead means nothing
+  is listening, so the probe settles in ~500ms and the ladder short-circuits on ESRCH. The path
+  that actually consumes the budget — a wedge that never answers — now ends in a hold, which
+  pays neither the ladder nor the fork. The long path and the expensive tail are disjoint.
+  Raising the budget is what re-couples them, by extending how late an `empty` may legally
+  arrive (~22s in at 34s; ~32s in at 44s). The raise creates the case; it does not merely
+  expose it.
+
+  Costing the guard honestly: the launcher closure does not receive the startup abort signal,
+  but `createOutOfProcessLauncher` is a factory called from inside `initDaemonPtyProvider`,
+  where `signal` is in scope. A third factory parameter closed over there leaves
+  `DaemonLauncher`'s call signature — all `DaemonSpawner` knows about — unchanged. One
+  parameter, not a spawner change. Record alongside it that a closed-over startup signal is
+  meaningful only for the startup launch: `runRestartDaemon` reuses the same spawner and the
+  `respawn` closure re-enters the same launcher, and both would read a signal that never
+  aborts, because `servicesSettled` clears the fail-open timer once init succeeds. That is
+  correct — later restarts are not under the startup gate — but it reads like a bug without
+  the sentence.
+
+  Two things erode that margin rather than consume it, and neither is bounded by this budget:
+  the `health === 'healthy'` branch never consults `classificationRemainingMs()` at all
+  (`resolveOccupancyOverIpc` passes no `budgetMs`, so it takes the 19s default) and also ends
+  in a cleanup and a fork; and packaged Windows follows the fork with a daemon-host directory
+  copy of unbounded size. Both stay under today only because reaching them requires a verdict
+  that arrives early.
 
   **Do not try to fix this by tuning the classification budget.** Ten review rounds each found a
   different timing band where a bounded classification kills a session an unbounded one keeps.
