@@ -93,6 +93,35 @@ describe('inspectDaemonPtyOwnership on POSIX', () => {
     ).resolves.toBe('owns-live-ptys')
   })
 
+  it('ignores helpers the daemon forked, which are not session leaders', async () => {
+    // Why this and not re-sampling: a hung `scutil`, credential helper or PTY-spawn health
+    // check outlives any sampling gap — often it is *why* the daemon is wedged. Only a PTY
+    // child is a session leader (forkpty calls setsid), so the flag is the real discriminator.
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        readPosixProcessTable: posixTable([
+          daemonRow,
+          row(101, DAEMON_PID, { stat: 'S', command: '/usr/sbin/scutil --dns' }),
+          row(102, DAEMON_PID, { stat: 'R+', command: '/bin/sh -c exit 0' })
+        ])
+      })
+    ).resolves.toBe('no-live-ptys')
+  })
+
+  it('counts a session leader reached through a non-session-leader hop', async () => {
+    await expect(
+      inspectDaemonPtyOwnership(DAEMON_PID, {
+        platform: 'darwin',
+        readPosixProcessTable: posixTable([
+          daemonRow,
+          row(101, DAEMON_PID, { stat: 'S', command: 'wrapper' }),
+          row(202, 101, { stat: 'Ss+', command: 'claude' })
+        ])
+      })
+    ).resolves.toBe('owns-live-ptys')
+  })
+
   it('reports unknown when the table never contained the daemon', async () => {
     // Why: an unobserved root yields the same empty result as a childless one —
     // reading that as "empty" authorizes killing a daemon full of live agents.
@@ -215,18 +244,13 @@ describe('inspectDaemonPtyOwnership on win32', () => {
 })
 
 describe('inspectDaemonPtyOwnership sampling', () => {
-  it('discards a transient child that is gone by the second sample', async () => {
-    // A resolver probe or PTY-spawn health check is a descendant for milliseconds; it must
-    // not read as an agent and strand the daemon in degraded mode.
-    const readPosixProcessTable = vi
-      .fn<() => Promise<ProcessTableRow[]>>()
-      .mockResolvedValueOnce([daemonRow, row(101, DAEMON_PID, { command: 'scutil --dns' })])
-      .mockResolvedValueOnce([daemonRow])
+  it('takes a conclusive answer on the first read, without re-sampling', async () => {
+    const readPosixProcessTable = vi.fn(async () => [daemonRow, row(101, DAEMON_PID)])
 
     await expect(
       inspectDaemonPtyOwnership(DAEMON_PID, { platform: 'darwin', readPosixProcessTable })
-    ).resolves.toBe('no-live-ptys')
-    expect(readPosixProcessTable).toHaveBeenCalledTimes(2)
+    ).resolves.toBe('owns-live-ptys')
+    expect(readPosixProcessTable).toHaveBeenCalledTimes(1)
   })
 
   it('retries a blind read, because the load that wedges the daemon also blinds ps', async () => {

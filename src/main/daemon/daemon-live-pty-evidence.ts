@@ -12,8 +12,11 @@ import { queryWindowsProcessDescendants } from '../providers/windows-foreground-
  * cannot be asked to vouch for its own sessions. Replacing a daemon kills every
  * process it hosts, so that decision needs evidence that survives the wedge.
  *
- * 'unknown' is not "empty" — it means the process table could not be read, or
- * did not contain the daemon at all. Callers must not treat it as permission.
+ * 'unknown' is not "empty" — it means the process table could not be read, or did not
+ * contain the daemon at all. It is not evidence of absence, and it is deliberately not
+ * evidence of presence either: the only caller preserves on 'owns-live-ptys' alone and
+ * treats 'unknown' as the pre-existing behavior, so that a permanently wedged daemon with
+ * nothing to lose stays replaceable (#8689). Widening that is a separate decision.
  */
 export type DaemonPtyOwnership = 'owns-live-ptys' | 'no-live-ptys' | 'unknown'
 
@@ -27,8 +30,7 @@ export type DaemonPtyOwnershipDeps = {
 /**
  * Why sampled twice: the load that wedges the daemon is the same load that can blind
  * the process-table read, so a single blind sample would lose the evidence exactly when
- * it matters most. A second sample also lets a short-lived child — a resolver probe, a
- * health-check shell — be recognized as transient rather than mistaken for an agent.
+ * it matters most. Only blindness is retried — a conclusive answer is taken as given.
  * This runs only on the replace path, after ~60s of grace is already spent.
  */
 const PTY_OWNERSHIP_PROBE_ATTEMPTS = 2
@@ -57,14 +59,22 @@ function withDeadline<T>(work: Promise<T>, deadlineMs: number, onDeadline: T): P
   })
 }
 
-// A wedged daemon cannot reap, so its exited PTYs linger as zombies. Counting them
-// would read "every agent already exited" as "agents still running" — and that
-// false positive is systematically correlated with the wedge we are diagnosing.
-function isZombie(row: ProcessTableRow): boolean {
-  return row.stat.startsWith('Z')
+/**
+ * A PTY child is a session leader — forkpty() calls setsid() — which no ordinary
+ * helper the daemon forks ever is. That single `ps` flag separates a hosted terminal
+ * from the daemon's own subprocesses (a `scutil` resolver probe, a PTY-spawn health
+ * check, a stuck credential helper), any of which can outlive a re-sample and would
+ * otherwise be mistaken for an agent.
+ *
+ * Zombies are excluded for the correlated reason: a wedged daemon cannot reap, so its
+ * already-exited PTYs linger as <defunct> and would read as still running.
+ */
+function isLivePtySessionLeader(row: ProcessTableRow): boolean {
+  // Lowercase 's' is only ever the session-leader flag; no process state code uses it.
+  return !row.stat.startsWith('Z') && row.stat.includes('s')
 }
 
-function collectLiveDescendants(rows: ProcessTableRow[], rootPid: number): ProcessTableRow[] {
+function collectLivePtyDescendants(rows: ProcessTableRow[], rootPid: number): ProcessTableRow[] {
   const childrenByPpid = new Map<number, ProcessTableRow[]>()
   for (const row of rows) {
     if (row.pid === rootPid) {
@@ -88,7 +98,7 @@ function collectLiveDescendants(rows: ProcessTableRow[], rootPid: number): Proce
       }
       visited.add(child.pid)
       queue.push(child.pid)
-      if (!isZombie(child)) {
+      if (isLivePtySessionLeader(child)) {
         live.push(child)
       }
     }
@@ -119,25 +129,22 @@ async function probeOnce(
   if (!rows.some((row) => row.pid === daemonPid)) {
     return 'unknown'
   }
-  return collectLiveDescendants(rows, daemonPid).length > 0 ? 'owns-live-ptys' : 'no-live-ptys'
+  return collectLivePtyDescendants(rows, daemonPid).length > 0 ? 'owns-live-ptys' : 'no-live-ptys'
 }
 
 /**
- * PTY children are the daemon's only long-lived descendants, so a live descendant is
- * positive proof that killing it would destroy running work. Descendants rather than
- * direct children: macOS wraps every shell in login(1) for TCC attribution, so the
- * agent is a grandchild at best.
+ * A session-leader descendant is positive proof that killing this daemon would destroy
+ * running work. Descendants rather than direct children: macOS wraps every shell in
+ * login(1) for TCC attribution, so the agent is a grandchild at best.
  *
- * Resolution between disagreeing samples: an observed-empty root wins (it is conclusive,
- * and it is how a transient child is recognized), and otherwise a single sighting is
- * enough to preserve — a blind read is not evidence against a live one.
+ * Windows has no session-leader equivalent here, so its branch counts any descendant —
+ * it can over-preserve where POSIX would not.
  */
 export async function inspectDaemonPtyOwnership(
   daemonPid: number,
   deps: DaemonPtyOwnershipDeps = {}
 ): Promise<DaemonPtyOwnership> {
   const platform = deps.platform ?? process.platform
-  let sawLivePtys = false
   for (let attempt = 0; attempt < PTY_OWNERSHIP_PROBE_ATTEMPTS; attempt++) {
     let sample: DaemonPtyOwnership
     try {
@@ -145,14 +152,9 @@ export async function inspectDaemonPtyOwnership(
     } catch {
       sample = 'unknown'
     }
-    // An observed root with no live descendants is conclusive, and it settles the transient
-    // case too: a resolver probe or health-check shell seen in one sample is gone by the next.
-    if (sample === 'no-live-ptys') {
+    if (sample !== 'unknown') {
       return sample
     }
-    sawLivePtys ||= sample === 'owns-live-ptys'
   }
-  // Why a single sighting is enough to preserve: a blind second read is not evidence against
-  // the first. Killing live agents is unrecoverable; preserving costs one degraded launch.
-  return sawLivePtys ? 'owns-live-ptys' : 'unknown'
+  return 'unknown'
 }

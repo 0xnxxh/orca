@@ -623,15 +623,21 @@ function createOutOfProcessLauncher(
       // Why: a raw socket can outlive a broken daemon; kill by PID before respawn so the new daemon doesn't race the stale one.
       adoptionClient?.disconnect()
       adoptionClient = null
-      // Why: the veto answers "we could not verify", not "we failed the health check" — a
-      // daemon that answered listSessions with 0 lands in this same branch and must stay
-      // replaceable, as must an explicit user restart.
-      const killOutcome =
-        pendingReplacement?.liveSessionCount === null
-          ? await killStaleDaemon(runtimeDir, socketPath, tokenPath, PROTOCOL_VERSION, {
-              preserveWhenOwningLivePtys: true
-            })
-          : await killStaleDaemon(runtimeDir, socketPath, tokenPath)
+      // Why these three conditions: the veto answers "we could not verify" (a daemon that
+      // answered listSessions with 0 must stay replaceable, as must an explicit user
+      // restart); a 'rejected' daemon answered and refused the handshake, so it can never be
+      // adopted and preserving it would loop forever; and an endpoint nothing can reach
+      // serves no one, so its PTYs are already unreachable and holding it costs the app a
+      // daemon it could otherwise replace.
+      const canPreserveLivePtys =
+        pendingReplacement?.liveSessionCount === null &&
+        health !== 'rejected' &&
+        (await probeSocket(socketPath))
+      const killOutcome = canPreserveLivePtys
+        ? await killStaleDaemon(runtimeDir, socketPath, tokenPath, PROTOCOL_VERSION, {
+            preserveWhenOwningLivePtys: true
+          })
+        : await killStaleDaemon(runtimeDir, socketPath, tokenPath)
       if (killOutcome.liveOwnerSurvived) {
         // Why: forking beside a daemon we could not prove dead is precisely how the endpoint
         // owner and the session host diverge. But refusing outright would leave the user with
@@ -1017,12 +1023,21 @@ export async function initDaemonPtyProvider(
     // Why: the launcher's temporary pair closes only after this permanent pair is established, leaving no adoption gap.
     // Why tolerated in degraded mode: it exists for a daemon we deliberately kept without
     // being able to talk to it, so a lease it cannot grant must not abort init — that would
-    // leave the app with no spawner at all, and restartDaemon() throws without one. The lease
-    // only cancels the adoption watchdog, which never fires on a daemon that owns sessions.
-    await (launchMode === 'degraded-new-pty-fallback'
-      ? newAdapter.establishLifecycleLease().catch(() => {})
-      : newAdapter.establishLifecycleLease())
-    releaseDaemonAdoptionLease(newSpawner.getHandle())
+    // leave the app with no spawner at all, and restartDaemon() throws without one.
+    let permanentLeaseHeld = true
+    if (launchMode === 'degraded-new-pty-fallback') {
+      permanentLeaseHeld = await newAdapter.establishLifecycleLease().then(
+        () => true,
+        () => false
+      )
+    } else {
+      await newAdapter.establishLifecycleLease()
+    }
+    // Why conditional: releasing the launcher's temporary pair with no permanent pair
+    // established is exactly the adoption gap the ordering above exists to prevent.
+    if (permanentLeaseHeld) {
+      releaseDaemonAdoptionLease(newSpawner.getHandle())
+    }
 
     legacyAdapters = await createLegacyDaemonAdapters(runtimeDir)
     routedAdapter =
@@ -1042,9 +1057,7 @@ export async function initDaemonPtyProvider(
           : newAdapter
     if (routedAdapter instanceof DegradedDaemonPtyProvider) {
       // Why: preserved daemon can't create fresh terminals; discover its live session ids so only they route to it (fresh panes fall back locally).
-      // Best-effort for the same reason as the lease above: a wedged daemon answers nothing,
-      // and routing everything locally is the correct degradation — not a reason to have no daemon.
-      await routedAdapter.discoverDaemonSessions().catch(() => {})
+      await routedAdapter.discoverDaemonSessions()
     } else if (routedAdapter instanceof DaemonPtyRouter) {
       await routedAdapter.discoverLegacySessions()
     }
