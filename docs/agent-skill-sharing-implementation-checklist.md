@@ -6,11 +6,12 @@ Last updated: 2026-08-12.
 
 Implementation baselines captured by this checklist update:
 
-- Orca implementation: `skills-share` through `f1dccb4f42`; no PR.
+- Orca implementation: `skills-share` through `44d1266641`; no PR.
 - Orca Cloud: bundle smoke PR `#329` merged as `eddb144afe`; generation-aware recovery PR `#330`
   merged as `8045c85dad`; encrypted physical-host credential PR `#336` merged as `8fce3298ef`;
   kill-switch discovery PR `#342` merged as `c2bef2ff20fb`; production remains untouched.
-  Windows device-name validation PR `#343` merged as `dbb14a658cbc`; production remains untouched.
+  Windows device-name validation PR `#343` merged as `dbb14a658cbc`; explicit disabled production
+  bootstrap PR `#352` merged as `2a23f6ace5`; production remains untouched.
 
 Validated so far:
 
@@ -58,6 +59,13 @@ Validated so far:
   tenant-hashed GCS keys prevent cross-tenant existence or finalization-timing disclosure.
 - Native Windows package/install/recovery/copy-fallback tests and Node typecheck on `windows 2`;
   the current slice passed 284 tests with 21 intentional platform skips across 43 files.
+- The final combined physical `windows 2` run at `44d1266641` enabled native-Windows, real-process,
+  and Ubuntu 24.04 WSL coverage together: 67 files passed, 449 tests passed, and 17 intentional
+  platform skips remained. Commit `97b831dd17` made Windows recovery assertions path-semantic and
+  time-deterministic. Commit `44d1266641` fixed WSL alias reconciliation after proving native UNC
+  `lstat` can miss an existing distro symlink; WSL now inspects the alias in-distro and creates new
+  aliases with `ln -sT`. The checkout remained clean and no `orca-skill-*` directory remained in
+  WSL `/tmp`.
 - Native Windows transaction validation passed all 21 cases at `6d3ce582aa`, including a real
   canonical install beyond `MAX_PATH` while the host's `LongPathsEnabled` policy remained disabled.
 - Real Ubuntu 24.04 WSL global, guest-workspace, and `/mnt/c` workspace transactions, including
@@ -1059,6 +1067,13 @@ runtime ID `68b5e70d-baaf-40a5-b384-be09cc088880`. Validation used the isolated 
 `C:\Users\neil\orca\skills-share-validation` and WSL distro `Ubuntu-24.04`; no production skill
 directory was used for destructive failure injection.
 
+The final combined run used workspace `skills-share-staging-validation` at
+`C:\Users\neil\orca\workspaces\orca\skills-share-staging-validation` on branch
+`OrcaWin/skills-share-staging-validation`. At `44d1266641`, native-Windows, real-process, and real
+WSL coverage ran together: 67 files passed, 449 tests passed, and 17 intentional platform skips
+remained. The Windows checkout was clean afterward, and WSL `/tmp` contained no remaining
+`orca-skill-*` directory.
+
 The 2026-08-11 host inventory recorded Windows 11 Pro `10.0.26200` build `26200`, x64, healthy
 NTFS, Windows Defender, `LongPathsEnabled=0`, no Developer Mode registry grant, and an expected
 `UnauthorizedAccessException` for an unprivileged directory-symlink probe. The current user home
@@ -1089,6 +1104,17 @@ WSL filesystem using an isolated user-owned Node 24 toolchain. The package diges
 SHA-256 matched macOS, native Windows, and Linux container results; the temporary WSL toolchain,
 source snapshot, dependencies, and package-manager store were removed after the run.
 
+Commit `97b831dd17` stabilized the physical Windows recovery harness by asserting parsed JSON paths
+instead of shell-escaped text and by using a fake clock for upload ownership expiry. The combined
+run then exposed a real WSL placement bug: native UNC `lstat` could miss an existing distro symlink,
+so GNU `ln -s` followed it and created a self-link inside the canonical skill. Commit `44d1266641`
+now asks the WSL filesystem whether the alias already targets the canonical path before native
+existence checks and uses `ln -sT` for safe creation.
+
+Only `Ubuntu-24.04` is installed on this host. A second-distro permutation is a post-launch
+resilience follow-up, not a first-release gate; first release still requires the live WSL staging
+journey and the agreed disconnect/cancellation boundaries.
+
 ### Host preparation
 
 - [x] Confirm `windows 2` is saved and reachable through `orca environment list` and
@@ -1107,7 +1133,9 @@ source snapshot, dependencies, and package-manager store were removed after the 
 
 ### Native Windows package and destination tests
 
-- [ ] Package on macOS and install on native Windows; compare manifest and digest.
+- [x] Package on macOS and install on native Windows; compare manifest and digest. The physical
+      staging journey installed the macOS-published archive with the exact published digest, and
+      the portable golden independently matched manifest, package digest, and archive SHA-256.
 - [ ] Package on native Windows and install on macOS/Linux; compare identity and executable-mode
       policy.
 - [x] Test global home resolution without constructing the path on the macOS client.
@@ -1129,9 +1157,9 @@ source snapshot, dependencies, and package-manager store were removed after the 
 - [x] Verify retry exhaustion restores the old version and yields an actionable result. The
       transaction preserves the old bytes and returns retryable
       `skill-install-filesystem-failed`; the real Windows source remains intact for retry.
-- [ ] Terminate the runtime before and after each journal boundary and verify startup recovery.
-      The real-process macOS harness passes all 17 extraction, install, and removal crash points;
-      a fresh physical Windows/WSL run remains open.
+- [x] Terminate the runtime before and after each journal boundary and verify startup recovery.
+      The combined physical Windows run passed the real-process extraction, install, removal, and
+      upload restart suites, including begun, partial, fully uploaded, and committed upload states.
 - [ ] Test permission-denied, read-only, disk-full, cancellation, runtime disconnect, and partial
       provider-coverage paths. Deterministic `EACCES` and `ENOSPC` transaction injection now proves
       the prior installed version remains intact; physical read-only/disk-full and disconnect
@@ -1143,15 +1171,14 @@ source snapshot, dependencies, and package-manager store were removed after the 
       inside the selected distro.
 - [x] Prove the Windows client never constructs a Linux home or mutates the distro through a
       translated Windows path.
-- [ ] Test global installs for at least two distros with different default users/homes.
+- [ ] Post-launch: test global installs for a second distro with a different default user/home.
 - [x] Test Linux case sensitivity and executable modes inside the installed distro. Real
       `Ubuntu-24.04` coverage passed at `cdafe43542` with `0600` regular files and `0700`
       executable files.
 - [x] Install a multi-skill bundle selectively into a distro-owned home and prove unselected skills
       are absent. The first `windows 2` run found missing filesystem preparation; the fix at
       `70b847c38e` passed all 3 real `Ubuntu-24.04` tests and the temporary worktree was removed.
-- [ ] Repeat Linux case-sensitivity and executable-mode coverage in the second distro after its
-      isolated setup.
+- [ ] Post-launch: repeat Linux case-sensitivity and executable-mode coverage in a second distro.
 - [ ] Test a distro-owned Git worktree and plain folder workspace.
 - [x] Test a workspace on the distro filesystem and document behavior for `/mnt/c` separately.
 - [x] Test provider detection and POSIX alias creation inside the distro. Real `Ubuntu-24.04`
@@ -1176,12 +1203,13 @@ source snapshot, dependencies, and package-manager store were removed after the 
 
 ### Windows/WSL release gate
 
-- [ ] Real native Windows passes junction success, junction denial, verified copy fallback,
+- [x] Real native Windows passes junction success, junction denial, verified copy fallback,
       antivirus contention, long paths, crash recovery, Git worktree, and folder-workspace tests.
-- [ ] Real WSL passes two-distro home ownership, Linux semantics, provider placement, offline-GCS
-      fallback, cancellation, and crash recovery tests.
-- [ ] All temporary test installations, terminals, workspaces, and packages are removed through
-      verified, recoverable cleanup.
+      The final combined run passed 449 tests across 67 files at `44d1266641`.
+- [ ] Real WSL passes distro-owned paths, Linux semantics, provider placement, the live staging
+      journey, cancellation, and crash recovery tests. A second distro remains post-launch.
+- [x] Temporary local test installations, workspaces, and packages are removed through verified,
+      recoverable cleanup. The final checkout was clean and WSL `/tmp` had no `orca-skill-*` debris.
 
 ## 11. Implement and validate SSH targets
 
@@ -1277,8 +1305,9 @@ use fixed or bounded values; bundle error-category cardinality is capped at 32. 
 adds no product telemetry event, RPC field, persisted schema, or remote opcode. The skill-sharing
 release suite passes 427 tests with 29 expected platform skips, the focused affected matrix passes
 102 tests with one expected skip, typecheck and the full lint pipeline pass, and the real-process
-macOS recovery matrix passes all 17 crash boundaries. Physical Windows/WSL reruns remain separate
-platform gates below.
+macOS recovery matrix passes all 17 crash boundaries. The final combined physical Windows/WSL run
+passes 449 tests across 67 files with 17 intentional platform skips; live WSL staging and physical
+disconnect boundaries remain separate gates below.
 
 ### Logging and privacy
 

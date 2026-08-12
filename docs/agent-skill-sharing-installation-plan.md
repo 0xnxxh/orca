@@ -53,13 +53,15 @@ that larger package-manager surface.
 
 ## Current execution status
 
-The Orca implementation is on `skills-share` through `f1dccb4f42`; no Orca pull request exists.
+The Orca implementation is on `skills-share` through `44d1266641`; no Orca pull request exists.
 Cloud bundle ingestion and bearer-link work merged through `stablyai/orca-cloud#320` as `0579cc1a71`;
 the bundle desktop smoke update merged through `#329` as `eddb144afe`, generation-aware GCS
 recovery merged through `#330` as `8045c85dad`, and the bounded finalization load gate plus cleanup
 hardening merged through `#332`-`#335` as `bb8bf8b9ac`. The encrypted physical-host credential
 handoff merged through `#336` as `8fce3298ef`. The isolated migration coexistence and database
 restore drill merged through `#350` as `c22007384a`.
+The explicit default-off production bootstrap merged through `#352` as `2a23f6ace5`; it performs
+no deployment unless deliberately selected, and all production skill controls remain disabled.
 The authenticated OIDC smoke landed in `#313`; the narrow Auth release-metadata convergence
 follow-up landed in `#314`; the finalization and lifecycle fixes landed in `#317`. The final
 anonymous bearer-link candidate and canonical smoke now pass in staging. Production remains
@@ -67,6 +69,15 @@ untouched. Local, Windows, WSL, paired-runtime, Docker-backed SSH, browser-free 
 physical Ubuntu 20.04 SSH, published-object recovery, and bounded finalization-load validation are
 substantially complete; the implementation checklist records the exact evidence and remaining
 physical-host and lifecycle gates.
+
+The final combined physical `windows 2` run at `44d1266641` passed 449 tests across 67 files with
+17 intentional platform skips while native-Windows, real-process, and Ubuntu 24.04 WSL coverage
+were enabled together. Windows harness fixes at `97b831dd17` made recovery evidence path-semantic
+and time-deterministic. The run exposed and fixed a WSL alias edge at `44d1266641`: when native UNC
+`lstat` misses an existing distro symlink, Orca now verifies the alias through WSL and uses
+`ln -sT` for creation. The Windows checkout was clean and WSL `/tmp` had no test debris. Only
+Ubuntu 24.04 is installed; second-distro permutations are post-launch rather than a first-release
+gate.
 
 The release workflow now runs the exact unpacked Linux package under Electron-as-Node in an
 Ubuntu 20.04 container and requires packaged `node-pty` to spawn `/bin/sh`. A physical x64 build at
@@ -212,8 +223,9 @@ enabled the same topology for an isolated headless paired host with a separate h
 full paired-runtime staging lifecycle passed in 12.5 seconds without local fallback, and its
 environment, install, Cloud package, encrypted credential artifact, and one-time keys were
 removed. Guarded sleep `31606600532` passed with the same independently verified low-cost state.
-Remaining staging gates are physical WSL, physical SSH macOS/Windows, and the time-gated
-quarantine lifecycle deletion. Production remains untouched.
+Remaining staging gates are the live physical WSL Cloud journey, physical SSH macOS/Windows, and
+the time-gated quarantine lifecycle deletion. The local Windows/WSL release matrix itself is green.
+Production remains untouched.
 
 ## Research baseline
 
