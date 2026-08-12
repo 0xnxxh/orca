@@ -41,6 +41,18 @@ hands → probe once more → `rename` in one syscall → verify we kept it.
 
   The cost is deliberate and known: a wedged-but-empty daemon is no longer replaced at launch,
   so #8689 degrades to "restart it from Manage Sessions" instead of being handled automatically.
+  And an endpoint held by something that accepts connections but never speaks the protocol — a
+  foreign process, or our own permanently wedged daemon — reads as an incumbent on *every*
+  launch, so it stays degraded with no auto-recovery. `killStaleDaemon` only kills a process
+  whose identity matches the pid record, so Restart cannot clear that one; the degraded message
+  says so and points at quit-and-relaunch.
+
+  Two pieces exist only to keep that cost from growing, and both have been proposed for deletion
+  on the reasoning that "'unknown' and 'occupied' now behave the same". They do not. The process-
+  table evidence read is what holds a daemon whose socket entry vanished while it still hosts
+  agents — the occupied branch has no proven-dead check and the unknown hold does. And the
+  grace-retry loop is worth *more* since the hold landed, because a counted `occupied` reaches
+  full adoption where the alternative is a degraded hold.
   That was chosen over the alternative, which was killing daemons whose live agents we had
   merely failed to observe — unrecoverable, versus one click.
 

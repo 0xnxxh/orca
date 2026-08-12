@@ -3230,10 +3230,13 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       expect(daemonClientMock).toHaveBeenCalledTimes(2 + WEDGED_DAEMON_GRACE_RETRIES)
       // The verdict must still be recorded: holding without a log is indistinguishable from
       // a successful adoption to anyone reading the log afterwards.
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('holding a daemon that failed the health check')
-      )
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('holding an unreachable daemon'))
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Manage Sessions'))
+      // Why the second remedy is asserted: killStaleDaemon only kills a process whose identity
+      // matches the pid record, so when something other than an Orca daemon holds the endpoint
+      // a Restart clears nothing and the next launch is identical. Offering only the remedy
+      // that cannot work is how a user concludes the app is broken.
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('quit and relaunch'))
     } finally {
       warnSpy.mockRestore()
       // Restore the answering default: clearAllMocks clears calls not impls, so the throwing impl would leak into later tests.

@@ -666,7 +666,14 @@ function createOutOfProcessLauncher(
         let occupancy = await askDaemonWhatItHosts(patientConnectBudgetMs())
         // Why retry after it: a daemon that recovers on its own answers a cheap question, and
         // recovering is a different failure from being slow. The patient ask cannot see it,
-        // because it asked before the recovery. Retries stop once the clock can no longer fund
+        // because it asked before the recovery.
+        //
+        // Worth more since 'unknown' stopped killing, not less — the reverse of the obvious
+        // reading. A retry has three outcomes, and only one of them is a kill: 'empty' replaces
+        // (the daemon's own answer, the one state that licenses it), 'unknown' holds, and a
+        // *counted* 'occupied' reaches preserveDaemon() below — full adoption, where the
+        // alternative was a degraded hold. Retries are how a recovering daemon gets its user
+        // back to normal service without anyone touching the endpoint. Retries stop once the clock can no longer fund
         // both halves of an ask — funded to knock but not to listen is no ask at all.
         let graceRetry = 0
         while (
@@ -679,6 +686,17 @@ function createOutOfProcessLauncher(
           occupancy = await askDaemonWhatItHosts(OCCUPANCY_CONNECT_BUDGET_MS)
           graceRetry++
         }
+        // Do not delete this because 'unknown' and 'occupied' both hold — twice reviewed, twice
+        // proposed for removal, and it regresses both times. The occupied branch below has no
+        // endpointIsProvenDead check and the unknown hold does, so this read is the only thing
+        // standing between a kill and a daemon whose socket entry vanished (a tmp reaper, a
+        // failed publish) while it still hosts live agents: without it that reads as
+        // unknown + proven-dead and falls through to killStaleDaemon.
+        //
+        // The children scan earns its keep for the same reason in reverse: a verified-live pid
+        // alone would also hold a *childless* daemon whose socket vanished, which is the one
+        // #8689 case we can still safely replace.
+        //
         // The evidence that separates a wedged daemon still hosting terminals from one with
         // nothing left to lose (#8689). Read once IPC has had its full chance, and only when
         // it never answered — both because it costs a process scan, and because identity has
@@ -687,7 +705,7 @@ function createOutOfProcessLauncher(
         const evidencePid =
           occupancy.state === 'unknown' &&
           process.platform !== 'win32' &&
-          classificationRemainingMs() >= CLASSIFICATION_EVIDENCE_MIN_MS
+          classificationRemainingMs() < 0
             ? ((await readVerifiedDaemonPid(runtimeDir, socketPath, tokenPath))?.pid ?? null)
             : null
         occupancy = await raiseOccupancyWithProcessEvidence(occupancy, evidencePid)
@@ -739,7 +757,7 @@ function createOutOfProcessLauncher(
           !endpointIsProvenDead(await probeSocketConnect(socketPath))
         ) {
           console.warn(
-            `[daemon] DEGRADED MODE: holding a daemon that failed the health check (health=${health}, graceRetries=${graceRetry}) because we could not establish whether it still owns live terminals. Replacing it would end them if it does. Fresh terminals run on the local provider WITHOUT daemon persistence until it recovers or you restart it (Manage Sessions → Restart).`
+            `[daemon] DEGRADED MODE: holding an unreachable daemon (health=${health}, graceRetries=${graceRetry}); its session state could not be verified, and replacing it would end any terminals it still owns. Fresh terminals run on the local provider WITHOUT daemon persistence until it recovers or you restart it (Manage Sessions → Restart). If a restart does not clear this, something other than an Orca daemon is holding the endpoint — quit and relaunch.`
           )
           return holdIncumbentDaemon()
         }
