@@ -180,8 +180,11 @@ export function AutomationTimeField({
 }): React.JSX.Element {
   const clock = getAutomationClockParts(time)
   // Why: digit commits close over the latest clock parts without stale hour/minute.
+  // Sync in an effect so render stays pure (React Doctor: no ref writes during render).
   const clockRef = React.useRef(clock)
-  clockRef.current = clock
+  React.useEffect(() => {
+    clockRef.current = getAutomationClockParts(time)
+  }, [time])
 
   const patchTime = (patch: Partial<AutomationClockParts>): void => {
     // Why: apply the patch to the ref immediately so a second digit field commit
@@ -203,7 +206,7 @@ export function AutomationTimeField({
               max={12}
               pad={false}
               ariaLabel={translate(
-                'auto.components.automations.AutomationSchedulePicker.6b802ecc99',
+                'auto.components.automations.AutomationTimeField.aa593eb5e2',
                 'Hour'
               )}
               onCommit={(hour12) => patchTime({ hour12 })}
