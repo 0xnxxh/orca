@@ -14,6 +14,28 @@ function clip(text: string, cap: number): string {
   return text.length > cap ? text.slice(0, cap) + TRUNCATION_MARKER : text
 }
 
+function selectBoundedObjectKey(
+  key: string,
+  result: Record<string, unknown>,
+  maxLength: number
+): string | null {
+  const prefix = key.slice(0, maxLength)
+  if (!Object.hasOwn(result, prefix)) {
+    return prefix
+  }
+  for (let index = 1; index <= MOBILE_TOOL_INPUT_ITEMS_CAP; index++) {
+    const suffix = `~${index.toString(36)}`
+    const candidate =
+      suffix.length <= maxLength
+        ? `${prefix.slice(0, maxLength - suffix.length)}${suffix}`
+        : index.toString(36).slice(-maxLength)
+    if (candidate && !Object.hasOwn(result, candidate)) {
+      return candidate
+    }
+  }
+  return null
+}
+
 function sanitizeBlock(
   block: NativeChatBlock,
   clientKind: RpcContext['clientKind']
@@ -67,7 +89,7 @@ function sanitizeToolInput(
     }
     return result
   }
-  const result: Record<string, unknown> = {}
+  const result = Object.create(null) as Record<string, unknown>
   let count = 0
   for (const key in value) {
     if (!Object.hasOwn(value, key)) {
@@ -77,10 +99,14 @@ function sanitizeToolInput(
       result['…'] = 'truncated'
       break
     }
-    let boundedKey = key.slice(0, Math.min(key.length, budget.remaining, 128))
-    // Why: sibling keys sharing a truncated prefix must not silently collapse.
-    if (Object.hasOwn(result, boundedKey)) {
-      boundedKey = `${boundedKey}~${count}`
+    const boundedKey = selectBoundedObjectKey(
+      key,
+      result,
+      Math.min(key.length, budget.remaining, 128)
+    )
+    if (boundedKey === null) {
+      result['…'] = 'truncated'
+      break
     }
     budget.remaining -= boundedKey.length
     result[boundedKey] = sanitizeToolInput(

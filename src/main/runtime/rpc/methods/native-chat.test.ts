@@ -400,6 +400,60 @@ describe('nativeChat.readSession clientKind truncation gating', () => {
     expect(Object.values(block.input)).toEqual(expect.arrayContaining(['first', 'second']))
   })
 
+  it('does not overwrite an existing key with a generated collision suffix', async () => {
+    cachedResult.value = {
+      messages: [
+        {
+          ...makeMessage('ignored'),
+          blocks: [
+            {
+              type: 'tool-call',
+              name: 'Write',
+              input: { 'prefix~1': 'x'.repeat(3980), prefix: '', prefixExtended: 'third' }
+            }
+          ]
+        }
+      ]
+    }
+    const result = await readSessionHandler()(
+      { agent: 'claude', sessionId: 's' },
+      ctxWith('mobile')
+    )
+    const block = (result as { messages: NativeChatMessage[] }).messages[0].blocks[0] as {
+      input: Record<string, unknown>
+    }
+
+    expect(Object.keys(block.input)).toHaveLength(3)
+    expect(Object.hasOwn(block.input, 'prefix~1')).toBe(true)
+  })
+
+  it('preserves an own __proto__ tool-call key', async () => {
+    cachedResult.value = {
+      messages: [
+        {
+          ...makeMessage('ignored'),
+          blocks: [
+            {
+              type: 'tool-call',
+              name: 'Write',
+              input: { ['__proto__']: 'safe' }
+            }
+          ]
+        }
+      ]
+    }
+    const result = await readSessionHandler()(
+      { agent: 'claude', sessionId: 's' },
+      ctxWith('mobile')
+    )
+    const block = (result as { messages: NativeChatMessage[] }).messages[0].blocks[0] as {
+      input: Record<string, unknown>
+    }
+
+    expect(Object.hasOwn(block.input, '__proto__')).toBe(true)
+    expect(block.input.__proto__).toBe('safe')
+  })
+
   it('passes oversized tool output through intact for runtime (web/desktop) clients', async () => {
     cachedResult.value = { messages: [makeMessage(OVERSIZED)] }
     const result = await readSessionHandler()(

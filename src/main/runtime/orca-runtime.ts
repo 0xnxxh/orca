@@ -3408,10 +3408,14 @@ export class OrcaRuntimeService {
   resolveNativeChatTranscriptHostForHandle(
     handle: string
   ): NativeChatTranscriptHost | null | undefined {
-    const ptyId =
-      this.getLivePtyForHandle(handle)?.pty.ptyId ??
-      this.resolveLiveLeafForHandle(handle)?.ptyId ??
-      null
+    let ptyId = this.getLivePtyForHandle(handle)?.pty.ptyId ?? null
+    if (!ptyId) {
+      try {
+        ptyId = this.resolveLiveLeafForHandle(handle)?.ptyId ?? null
+      } catch {
+        return null
+      }
+    }
     return ptyId ? this.resolveNativeChatTranscriptHost(ptyId) : null
   }
 
