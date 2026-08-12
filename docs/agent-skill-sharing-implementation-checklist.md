@@ -1199,7 +1199,7 @@ physical SSH macOS and supported Windows remain open.
       placement topology.
 - [ ] Record junction, alias, copy-fallback, rollback, recovery, capability-absence, and orphan
       reconciliation counts.
-- [ ] Add dashboards for grant/finalize/share rates, authorization and rate limits, finalization
+- [x] Add dashboards for grant/finalize/share rates, authorization and rate limits, finalization
       saturation, archive rejection, and digest mismatch.
 - [ ] Add Cloud Run 5xx, CPU, memory, instance, and skill-route latency panels and alerts.
 - [ ] Add GCS quarantine/published bytes, object count, and lifecycle failure panels and alerts.
@@ -1217,8 +1217,11 @@ and skill-database transaction rate. Cloud PR `#344` passed both required checks
 `fcf8655a`; it adds privacy-bounded migration-ready/failure metrics, a migration lifecycle panel,
 and a zero-tolerance migration-failure alert. Its targeted staging plan creates the two metrics and
 alert, updates only the dashboard, reruns descriptor propagation, and destroys no infrastructure.
-The broader unchecked items still require the listed split metrics, lifecycle visibility, budget
-coverage, and reviewed alert thresholds.
+Cloud PR `#345` passed both required checks and merged as `06a5c729`; it normalizes malformed
+compression failures to the bounded `skill_package_archive_invalid` category, adds explicit
+finalization-saturation and archive-rejection metrics, and displays successful and failed API
+operations as rates. The broader unchecked items still require the listed split metrics, lifecycle
+visibility, budget coverage, and reviewed alert thresholds.
 
 ### Logging and privacy
 

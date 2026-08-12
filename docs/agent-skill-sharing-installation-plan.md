@@ -113,6 +113,11 @@ zero-tolerance migration-failure alert. A read-only targeted staging plan create
 metrics and alert, updates the existing skill dashboard, reruns descriptor propagation, and
 destroys no infrastructure; staging remained asleep and nothing was applied.
 
+Cloud PR `#345` passed both required checks and merged as `06a5c729`. It completes the initial API
+dashboard coverage with explicit finalization-saturation and archive-rejection series and displays
+successful and failed operations as rates. Malformed compression errors now become the bounded
+`skill_package_archive_invalid` category before they reach persistence, responses, or telemetry.
+
 Auth deploy run `31535179937` promoted `orca-cloud-auth-staging-00017-dug` with exact staging-only
 GitHub OIDC constraints, healthy JWKS, and zero deployment-window errors. API run `31535438327`
 promoted `orca-cloud-api-staging-00042-hef` with `authenticatedSmoke: true` and `skillSmoke: true`.
