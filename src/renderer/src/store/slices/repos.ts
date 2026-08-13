@@ -1781,8 +1781,8 @@ export type RepoSlice = {
   activeRepoId: string | null
   // Monotonic sequence so overlapping catalog fetches can drop stale same-host results (#7020).
   reposFetchGeneration: number
-  pendingSshRepoReadoptions: SshRepoReadoption[]
-  recordSshRepoReadoptions: (readoptions: SshRepoReadoption[]) => void
+  pendingSshRepoReadoptions: readonly SshRepoReadoption[]
+  recordSshRepoReadoptions: (readoptions: readonly SshRepoReadoption[]) => void
   fetchRepos: (options?: RuntimeCatalogFetchOptions) => Promise<void>
   fetchReposForAllHosts: (options?: AllHostCatalogFetchOptions) => Promise<void>
   awaitLocalRepoCatalogSettlement: () => Promise<void>
@@ -2004,6 +2004,10 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
 
   recordSshRepoReadoptions: (readoptions) =>
     set((s) => {
+      // Why: SshPane importConfig() often reports [] on every Manage-pane open.
+      if (readoptions.length === 0 && s.pendingSshRepoReadoptions.length === 0) {
+        return s
+      }
       const pendingSshRepoReadoptions = mergeSshRepoReadoptions(
         s.pendingSshRepoReadoptions,
         readoptions
@@ -2011,19 +2015,35 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       const reconciliation = reconcileReadoptedSshRepoRows(s.repos, pendingSshRepoReadoptions)
       const repos = reconciliation.repos
       const worktreeState = reconcileReadoptedSshWorktreeState(s, pendingSshRepoReadoptions)
-      const projectHostSetups = filterSetupsForPrunedRepoRows(s.projectHostSetups, s.repos, repos)
+      const remainingSetups = filterSetupsForPrunedRepoRows(s.projectHostSetups, s.repos, repos)
       const compatibility = mergeProjectHostSetupCompatibility(
         projectCompatibilityFromRepos(repos),
         {
           projects: s.projects,
-          setups: projectHostSetups
+          setups: remainingSetups
         }
+      )
+      // Why: mergeProjectHostSetupCompatibility always allocates; a no-op readoption
+      // must not churn catalog identity. This write is all-repos, not host-scoped,
+      // so it cannot go through mergeFetchedProjectCompatibilityForHost. Reconcile
+      // hands the store arrays straight back when nothing moved, so writing them
+      // unconditionally still leaves identity-keyed selectors untouched.
+      const projects = reconcileCatalogRows(
+        s.projects,
+        compatibility.projects,
+        (project) => project.id
+      )
+      const projectHostSetups = reconcileCatalogRows(
+        s.projectHostSetups,
+        compatibility.projectHostSetups,
+        getProjectHostSetupOwnerKey
       )
       return {
         repos,
         pendingSshRepoReadoptions: reconciliation.pendingReadoptions,
         ...worktreeState,
-        ...compatibility
+        projects,
+        projectHostSetups
       }
     }),
 
