@@ -23,6 +23,7 @@ const testState = vi.hoisted(() => ({
     repos: [] as { id: string; connectionId: string | null; executionHostId?: string | null }[],
     worktreesByRepo: {} as Record<string, { id: string; repoId: string }[]>
   },
+  storeSubscribers: new Set<(state: { ptyIdsByTabId: Record<string, string[]> }) => void>(),
   ptyObserver: null as ((data: string) => void) | null,
   unsubscribe: vi.fn(),
   subscribeToPtyData: vi.fn(),
@@ -34,7 +35,13 @@ const testState = vi.hoisted(() => ({
 
 vi.mock('@/store', () => ({
   useAppStore: {
-    getState: () => testState.appState
+    getState: () => testState.appState,
+    subscribe: (
+      subscriber: (state: { ptyIdsByTabId: Record<string, string[]> }) => void
+    ): (() => void) => {
+      testState.storeSubscribers.add(subscriber)
+      return () => testState.storeSubscribers.delete(subscriber)
+    }
   }
 }))
 
@@ -71,6 +78,7 @@ describe('pasteDraftWhenAgentReady', () => {
     testState.appState.tabsByWorktree = {}
     testState.appState.repos = []
     testState.appState.worktreesByRepo = {}
+    testState.storeSubscribers.clear()
     testState.ptyObserver = null
     testState.unsubscribe.mockReset()
     testState.subscribeToPtyData.mockReset()
@@ -97,7 +105,7 @@ describe('pasteDraftWhenAgentReady', () => {
     vi.useRealTimers()
   })
 
-  it('pastes into Codex as soon as its composer prompt renders after bracketed paste is enabled', async () => {
+  it('pastes into Codex once its composer and bracketed paste are both ready', async () => {
     const promise = pasteDraftWhenAgentReady({
       tabId: 'tab-1',
       content: ISSUE_URL,
@@ -110,10 +118,6 @@ describe('pasteDraftWhenAgentReady', () => {
     expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
 
     testState.ptyObserver?.(DECSET_BRACKETED_PASTE)
-    await flushMicrotasks()
-    expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
-
-    testState.ptyObserver?.(CODEX_COMPOSER_PROMPT_RENDER)
 
     await expect(promise).resolves.toBe(true)
     expect(testState.sendRuntimePtyInputVerified).toHaveBeenCalledWith(
@@ -121,6 +125,41 @@ describe('pasteDraftWhenAgentReady', () => {
       'pty-1',
       PASTED_ISSUE_URL
     )
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('subscribes during PTY binding before buffered Codex output drains', async () => {
+    testState.appState.ptyIdsByTabId = {}
+    const promise = pasteDraftWhenAgentReady({
+      tabId: 'tab-1',
+      content: ISSUE_URL,
+      agent: 'codex',
+      submit: true
+    })
+
+    expect(testState.storeSubscribers.size).toBe(1)
+    testState.appState.ptyIdsByTabId = { 'tab-1': ['pty-1'] }
+    for (const subscriber of testState.storeSubscribers) {
+      subscriber(testState.appState)
+    }
+    expect(testState.storeSubscribers.size).toBe(0)
+    expect(testState.ptyObserver).not.toBeNull()
+
+    // Matches pty-transport: updateTabPtyId notifies the store before the
+    // pre-handler buffer drains, with Codex 0.147 rendering its glyph first.
+    testState.ptyObserver?.(CODEX_COMPOSER_PROMPT_RENDER)
+    testState.ptyObserver?.(DECSET_BRACKETED_PASTE)
+    await flushMicrotasks()
+
+    expect(testState.sendRuntimePtyInputVerified).toHaveBeenCalledWith(
+      {},
+      'pty-1',
+      PASTED_ISSUE_URL
+    )
+    await vi.advanceTimersByTimeAsync(POST_PASTE_SUBMIT_DELAY_MS)
+    await expect(promise).resolves.toBe(true)
+    expect(testState.sendRuntimePtyInputVerified).toHaveBeenNthCalledWith(2, {}, 'pty-1', '\r')
+    expect(testState.unsubscribe).toHaveBeenCalledTimes(1)
     expect(vi.getTimerCount()).toBe(0)
   })
 
@@ -520,8 +559,9 @@ describe('pasteDraftWhenAgentReady', () => {
     // PTY takes 4s to appear — most of the old shared 8s budget.
     await vi.advanceTimersByTimeAsync(4000)
     testState.appState.ptyIdsByTabId = { 'tab-1': ['pty-1'] }
-    await vi.advanceTimersByTimeAsync(100)
-    await flushMicrotasks(5)
+    for (const subscriber of testState.storeSubscribers) {
+      subscriber(testState.appState)
+    }
 
     testState.ptyObserver?.(DECSET_BRACKETED_PASTE)
     // 19s of cold boot after the PTY appeared: past a shared budget, inside the

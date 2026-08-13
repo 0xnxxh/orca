@@ -109,6 +109,15 @@ describe('createDraftPasteReadyScanner', () => {
       )
     })
 
+    it('is ready when Codex renders its composer before enabling bracketed paste', () => {
+      const scanner = createDraftPasteReadyScanner('codex-composer-prompt')
+      expect(scanner.observe(CODEX_PROMPT)).toEqual({ ready: false, armQuietTimer: false })
+      expect(scanner.observe(DECSET_BRACKETED_PASTE)).toEqual({
+        ready: true,
+        armQuietTimer: false
+      })
+    })
+
     it('never arms the quiet-window fallback', () => {
       const scanner = createDraftPasteReadyScanner('codex-composer-prompt')
       expect(scanner.observe(DECSET_BRACKETED_PASTE)).toEqual({

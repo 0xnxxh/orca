@@ -28,8 +28,8 @@ export type DraftPasteReadyScanResult = {
  * and return types differ.
  *
  * Per agent signal:
- *   - `codex-composer-prompt`: ready when the `›` glyph renders after DECSET
- *     2004; never arms the quiet window (`armQuietTimer` stays false).
+ *   - `codex-composer-prompt`: ready once both the `›` glyph and DECSET 2004
+ *     render, in either order; never arms the quiet window.
  *   - `render-cursor-after-bracketed-paste`: ready when DECTCEM show-cursor
  *     (`\x1b[?25h`) renders after DECSET 2004. Like Codex it does NOT arm the
  *     quiet window: opencode stays silent for ~1.5-2s between enabling
@@ -49,6 +49,7 @@ export function createDraftPasteReadyScanner(readySignal: DraftPasteReadySignal)
   let recent = ''
   let postHandshakeRecent = ''
   let saw2004 = false
+  let sawCodexPrompt = false
 
   const signalMarker =
     readySignal === 'codex-composer-prompt'
@@ -61,12 +62,18 @@ export function createDraftPasteReadyScanner(readySignal: DraftPasteReadySignal)
     observe(data: string): DraftPasteReadyScanResult {
       const combined = recent + data
       recent = combined.slice(-512)
+      if (readySignal === 'codex-composer-prompt' && combined.includes(CODEX_COMPOSER_PROMPT)) {
+        sawCodexPrompt = true
+      }
       if (!saw2004) {
         const markerIndex = combined.indexOf(DECSET_BRACKETED_PASTE)
         if (markerIndex === -1) {
           return { ready: false, armQuietTimer: false }
         }
         saw2004 = true
+        if (sawCodexPrompt) {
+          return { ready: true, armQuietTimer: false }
+        }
         const postHandshakeChunk = combined.slice(markerIndex + DECSET_BRACKETED_PASTE.length)
         if (signalMarker !== null && postHandshakeChunk.includes(signalMarker)) {
           return { ready: true, armQuietTimer: false }

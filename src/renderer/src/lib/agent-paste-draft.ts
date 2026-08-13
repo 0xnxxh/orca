@@ -101,19 +101,23 @@ export async function pasteDraftWhenAgentReady(args: {
   }
 
   const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
-  const ptyId = await waitForPtyId(tabId, PTY_SPAWN_TIMEOUT_MS)
-  if (!ptyId) {
+  const settings = getSettingsForAgentTabRuntimeOwner(tabId)
+  const readinessTimeoutMs =
+    timeoutMs ?? (agent === 'codex' ? CODEX_COMPOSER_READY_TIMEOUT_MS : READINESS_TIMEOUT_MS)
+  const readiness = await waitForAgentDraftInputReadyOnTab({
+    tabId,
+    spawnTimeoutMs: PTY_SPAWN_TIMEOUT_MS,
+    readinessTimeoutMs,
+    readySignal,
+    settings
+  })
+  if (!readiness) {
     onTimeout?.()
     return false
   }
 
-  const settings = getSettingsForAgentTabRuntimeOwner(tabId)
-  // Why: the readiness budget starts once the PTY exists, so a slow spawn
-  // shortens nothing — a cold composer still gets its full window.
-  const budget =
-    timeoutMs ?? (agent === 'codex' ? CODEX_COMPOSER_READY_TIMEOUT_MS : READINESS_TIMEOUT_MS)
-  const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)
-  if (!ready) {
+  const { ptyId } = readiness
+  if (!readiness.ready) {
     // Why: fast-starting TUIs can emit the paste-ready escape sequence before
     // this sidecar subscription attaches. If process/title inspection says the
     // launched agent owns the PTY, fall back to a best-effort paste instead of
@@ -221,22 +225,59 @@ async function sendBracketedPasteToAgent(args: {
   }
 }
 
-/**
- * Why: activation creates the tab synchronously but the PTY spawn is
- * async. Poll the store until the primary PTY id appears or the budget
- * expires. Tight interval because the wait is normally <200ms — only the
- * first launch on a cold app reaches the tail of this.
- */
-async function waitForPtyId(tabId: string, timeoutMs: number): Promise<string | null> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const ptyId = useAppStore.getState().ptyIdsByTabId[tabId]?.[0]
-    if (ptyId) {
-      return ptyId
+function waitForAgentDraftInputReadyOnTab(args: {
+  tabId: string
+  spawnTimeoutMs: number
+  readinessTimeoutMs: number
+  readySignal: Parameters<typeof waitForAgentDraftInputReady>[2]
+  settings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined
+}): Promise<{ ptyId: string; ready: boolean } | null> {
+  return new Promise((resolve) => {
+    let selectedPtyId: string | null = null
+    let settled = false
+    let spawnTimer: number | null = null
+    let unsubscribeStore: (() => void) | null = null
+
+    const finish = (result: { ptyId: string; ready: boolean } | null): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      if (spawnTimer !== null) {
+        window.clearTimeout(spawnTimer)
+      }
+      unsubscribeStore?.()
+      resolve(result)
     }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 50))
-  }
-  return null
+    const bindPty = (ptyId: string): void => {
+      if (selectedPtyId || settled) {
+        return
+      }
+      selectedPtyId = ptyId
+      if (spawnTimer !== null) {
+        window.clearTimeout(spawnTimer)
+      }
+      unsubscribeStore?.()
+      // Why: Zustand subscribers run inside updateTabPtyId. Registering the
+      // sidecar here precedes the transport's immediate pre-handler drain.
+      void waitForAgentDraftInputReady(
+        ptyId,
+        args.readinessTimeoutMs,
+        args.readySignal,
+        args.settings
+      ).then((ready) => finish({ ptyId, ready }))
+    }
+    const bindFromState = (state: ReturnType<typeof useAppStore.getState>): void => {
+      const ptyId = state.ptyIdsByTabId[args.tabId]?.[0]
+      if (ptyId) {
+        bindPty(ptyId)
+      }
+    }
+
+    spawnTimer = window.setTimeout(() => finish(null), args.spawnTimeoutMs)
+    unsubscribeStore = useAppStore.subscribe(bindFromState)
+    bindFromState(useAppStore.getState())
+  })
 }
 
 async function waitForExpectedAgentOnPty(
