@@ -6,7 +6,15 @@
  */
 import { execFileSync } from 'node:child_process'
 
-const REAL_USER_DAEMON_MARKER = 'Library/Application Support/orca/daemon'
+// Electron's userData path differs per platform, and hardcoding the macOS one meant a real
+// daemon could never be recognised on Linux — so the guard that this run harmed nothing was
+// inert on exactly the platform where it would go unnoticed.
+const REAL_USER_DAEMON_MARKERS = {
+  darwin: ['Library/Application Support/orca/daemon'],
+  linux: ['.config/orca/daemon'],
+  win32: ['AppData/Roaming/orca/daemon', 'AppData\\Roaming\\orca\\daemon']
+}
+const REAL_USER_DAEMON_MARKER_LIST = REAL_USER_DAEMON_MARKERS[process.platform] ?? ['orca/daemon']
 
 export function processArgs(pid) {
   try {
@@ -66,6 +74,31 @@ export function isMarkerAlive(marker) {
   return processArgs(marker.pid)?.includes(marker.tag) === true
 }
 
+/**
+ * The session leader of a still-live marker, read now rather than remembered.
+ *
+ * Why not trust the pid captured at staging: teardown runs a minute later, and phase 1 has
+ * deliberately killed things in between. A remembered leader pid may by then belong to whatever
+ * the OS recycled it onto, and SIGKILLing that is precisely the mistake this script exists to
+ * demonstrate. Returns null unless the live marker still claims this leader.
+ */
+export function verifiedSessionLeaderPid(marker) {
+  if (!isMarkerAlive(marker)) {
+    return null
+  }
+  try {
+    const ppid = Number(
+      execFileSync('ps', ['-p', String(marker.pid), '-o', 'ppid='], {
+        encoding: 'utf8',
+        timeout: 5_000
+      }).trim()
+    )
+    return Number.isInteger(ppid) && ppid === marker.sessionPid ? ppid : null
+  } catch {
+    return null
+  }
+}
+
 // Pre-existing daemons (the user's real one above all) must be untouched by this run.
 export function snapshotForeignDaemons() {
   const daemons = []
@@ -77,7 +110,10 @@ export function snapshotForeignDaemons() {
       }
       const pid = Number(line.trim().split(/\s+/, 1)[0])
       if (Number.isInteger(pid) && pid > 0) {
-        daemons.push({ pid, isRealUserDaemon: line.includes(REAL_USER_DAEMON_MARKER) })
+        daemons.push({
+          pid,
+          isRealUserDaemon: REAL_USER_DAEMON_MARKER_LIST.some((marker) => line.includes(marker))
+        })
       }
     }
   } catch {

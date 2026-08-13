@@ -50,6 +50,7 @@ import { checkLauncherHoldsOccupiedDaemon } from './daemon-replacement-launcher-
 import {
   findTaggedPid,
   isMarkerAlive,
+  verifiedSessionLeaderPid,
   isProcessAlive,
   processArgs,
   processState,
@@ -429,7 +430,14 @@ function teardown(staged) {
   if (!staged) {
     return
   }
-  const daemonPid = staged.daemon?.child.pid
+  // Why the exit check: phase 1 kills this daemon on purpose, and once Node has reaped the
+  // child its pid is free for the OS to reuse. Signalling the remembered number after that is
+  // signalling a stranger.
+  const daemonChild = staged.daemon?.child
+  const daemonPid =
+    daemonChild && daemonChild.exitCode === null && daemonChild.signalCode === null
+      ? daemonChild.pid
+      : undefined
   if (daemonPid) {
     for (const signal of staged.stopped ? ['SIGCONT', 'SIGKILL'] : ['SIGKILL']) {
       try {
@@ -451,7 +459,13 @@ function teardown(staged) {
     if (!isMarkerAlive(marker)) {
       continue
     }
-    for (const pid of [marker.pid, marker.sessionPid]) {
+    // The leader is re-read from the live marker rather than remembered: the marker proves its
+    // own identity by tag, but nothing proved the leader's, and it is the one pid here that
+    // could have been recycled while its child stayed alive under a new parent.
+    for (const pid of [marker.pid, verifiedSessionLeaderPid(marker)]) {
+      if (!pid) {
+        continue
+      }
       try {
         process.kill(pid, 'SIGKILL')
       } catch {
