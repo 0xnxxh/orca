@@ -500,6 +500,19 @@ describe('Session', () => {
       ])
     })
 
+    it('exposes drained output beside an includeSnapshot take without changing records', () => {
+      createSession()
+      subprocess.simulateData('kept-for-durable-history\r\n')
+
+      const taken = session.takePendingOutput(true)
+
+      expect(taken?.records).toEqual([])
+      expect(taken?.drainedRecords).toEqual([
+        { kind: 'output', data: 'kept-for-durable-history\r\n' }
+      ])
+      expect(taken?.snapshot).toBeTruthy()
+    })
+
     it('keeps held marker-prefix bytes during live take-with-snapshot', () => {
       createSession({ shellReadySupported: true, shellReadyTimeoutMs: 100 })
       session.write('codex\n')
@@ -510,6 +523,7 @@ describe('Session', () => {
       vi.advanceTimersByTime(30)
 
       expect(taken?.records).toEqual([])
+      expect(taken?.drainedRecords).toEqual([])
       expect(taken?.snapshot).toBeTruthy()
       expect(session.shellState).toBe('ready' satisfies ShellReadyState)
       expect(subprocess.written).toEqual(['codex\n'])

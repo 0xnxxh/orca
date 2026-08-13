@@ -501,6 +501,7 @@ export class Session {
           ? [{ kind: 'output', data: releasedHeldBytes }]
           : []
         : records,
+      ...(includeSnapshot ? { drainedRecords: records } : {}),
       seq: this.pendingOutputSeq,
       overflowed,
       snapshot: includeSnapshot ? this.getSnapshot() : null
