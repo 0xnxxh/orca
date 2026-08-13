@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { wslGatedReadFile } from '../native-chat/wsl-transcript-fs-access'
 import type {
   AiVaultListResult,
   AiVaultScanIssue,
@@ -307,7 +307,7 @@ async function parseSessionCandidate(
 
 async function readOptionalTextFile(path: string): Promise<string | null> {
   try {
-    return await readFile(path, 'utf-8')
+    return await wslGatedReadFile(path, 'utf-8', 'scan')
   } catch {
     return null
   }

@@ -1,8 +1,8 @@
-import { stat } from 'node:fs/promises'
 import type { AgentType } from '../../shared/native-chat-types'
 import { resolveSessionFilePath } from './session-file-resolver'
 import { readNativeChatTranscript, type ReadTranscriptResult } from './transcript-reader'
-import { wslTranscriptFsRefusal } from './wsl-transcript-fs-gate'
+import { wslGatedStat } from './wsl-transcript-fs-access'
+import { WslTranscriptFsError, wslTranscriptFsRefusal } from './wsl-transcript-fs-gate'
 
 // Why: both the desktop IPC handler and the runtime RPC handler read the same
 // host-filesystem transcript, so a single process-global cache keyed by the
@@ -72,9 +72,14 @@ function cacheKey(agent: AgentType, filePath: string): string {
 
 async function fileStat(filePath: string): Promise<{ mtimeMs: number; bytes: number }> {
   try {
-    const stats = await stat(filePath)
+    const stats = await wslGatedStat(filePath, 'exact')
     return { mtimeMs: stats.mtimeMs, bytes: stats.size }
-  } catch {
+  } catch (err) {
+    // Why: swallowing a gate refusal into an unknown mtime falls through to a
+    // full read that burns a second deadline. Let the caller report it instead.
+    if (err instanceof WslTranscriptFsError) {
+      throw err
+    }
     return { mtimeMs: Number.NaN, bytes: 0 }
   }
 }
@@ -105,7 +110,14 @@ export async function readNativeChatTranscriptCached(
   }
 
   const key = cacheKey(agent, filePath)
-  const { mtimeMs, bytes } = await fileStat(filePath)
+  let mtimeMs: number
+  let bytes: number
+  try {
+    ;({ mtimeMs, bytes } = await fileStat(filePath))
+  } catch (err) {
+    // Nothing cached and no `notFound`: the next call re-stats a woken distro.
+    return { error: wslTranscriptFsRefusal(err).message }
+  }
   const cached = cache.get(key)
   if (cached && Number.isFinite(mtimeMs) && cached.mtimeMs === mtimeMs) {
     // Bump recency so a frequently-read session survives eviction.

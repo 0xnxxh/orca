@@ -1,6 +1,7 @@
-import { readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { AiVaultScanIssue } from '../../shared/ai-vault-types'
+import { wslGatedReaddir } from '../native-chat/wsl-transcript-fs-access'
+import { WslTranscriptFsError } from '../native-chat/wsl-transcript-fs-gate'
 import { resolveOpenCodeStorageDirectory } from '../opencode/opencode-data-directory'
 import { listOpenCodeDatabases } from '../opencode-usage/scanner'
 import { discoverOpenCodeSessions } from './session-scanner-opencode-sqlite-discovery'
@@ -16,7 +17,7 @@ export function opencodeDiscoveries(
   return storageDirs.map(async (storageDir, index) =>
     discoverOpenCodeSessions({
       storageDir,
-      dbPaths: await opencodeDbPathsForSource(options, wslHomeDirs, storageDir, index),
+      dbPaths: await opencodeDbPathsForSource(options, wslHomeDirs, storageDir, index, issues),
       limitPerAgent: limit,
       issues
     })
@@ -37,32 +38,41 @@ async function opencodeDbPathsForSource(
   options: AiVaultScanOptions,
   wslHomeDirs: readonly string[],
   storageDir: string,
-  sourceIndex: number
+  sourceIndex: number,
+  issues: AiVaultScanIssue[]
 ): Promise<readonly string[]> {
   if (options.opencodeDbPaths) {
     return sourceIndex === 0 ? options.opencodeDbPaths : []
   }
   // Why: custom OpenCode storage roots still keep SQLite DBs in the parent data dir.
   if (sourceIndex === 0 && options.opencodeStorageDir) {
-    return listOpenCodeDatabasesInDirectory(dirname(storageDir))
+    return listOpenCodeDatabasesInDirectory(dirname(storageDir), issues)
   }
   if (sourceIndex === 0) {
     return listOpenCodeDatabases()
   }
   const wslHomeDir = wslHomeDirs[sourceIndex - 1]
   return wslHomeDir
-    ? listOpenCodeDatabasesInDirectory(join(wslHomeDir, '.local', 'share', 'opencode'))
+    ? listOpenCodeDatabasesInDirectory(join(wslHomeDir, '.local', 'share', 'opencode'), issues)
     : []
 }
 
-async function listOpenCodeDatabasesInDirectory(dataDir: string): Promise<string[]> {
+async function listOpenCodeDatabasesInDirectory(
+  dataDir: string,
+  issues: AiVaultScanIssue[]
+): Promise<string[]> {
   try {
-    const entries = await readdir(dataDir, { withFileTypes: true })
+    const entries = await wslGatedReaddir(dataDir, 'scan')
     return entries
       .filter((entry) => entry.isFile() && /^opencode(?:-[A-Za-z0-9_.-]+)?\.db$/.test(entry.name))
       .map((entry) => join(dataDir, entry.name))
       .sort()
-  } catch {
+  } catch (error) {
+    // A stalled WSL data dir still degrades to "no databases", but the gap has
+    // to be reportable — an empty list otherwise reads as "OpenCode not used".
+    if (error instanceof WslTranscriptFsError) {
+      issues.push({ agent: 'opencode', path: dataDir, message: error.message })
+    }
     return []
   }
 }

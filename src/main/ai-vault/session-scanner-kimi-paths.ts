@@ -1,8 +1,8 @@
-import { stat } from 'node:fs/promises'
-import { createReadStream } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
+import { openTranscriptReadStream, wslGatedStat } from '../native-chat/wsl-transcript-fs-access'
+import { WslTranscriptFsError } from '../native-chat/wsl-transcript-fs-gate'
 import { asRecord, extractString } from './session-scanner-values'
 import {
   KimiSessionIndexCache,
@@ -78,16 +78,17 @@ export function hasKimiSessionIndexCacheEntryForTests(indexPath: string): boolea
 
 export async function readKimiWorkDirBySessionId(indexPath: string): Promise<Map<string, string>> {
   const generation = workDirCacheByIndexPath.beginRead()
-  let identity: Awaited<ReturnType<typeof stat>>
+  let identity: Awaited<ReturnType<typeof wslGatedStat>>
   try {
-    identity = await stat(indexPath)
+    identity = await wslGatedStat(indexPath, 'scan')
   } catch {
     // Missing index (e.g. user deleted it): sessions still list, just without cwd.
     workDirCacheByIndexPath.delete(indexPath, generation)
     return new Map()
   }
 
-  return workDirCacheByIndexPath.get(
+  let refused = false
+  const workDirs = await workDirCacheByIndexPath.get(
     indexPath,
     {
       changeTimeMs: identity.ctimeMs,
@@ -95,18 +96,30 @@ export async function readKimiWorkDirBySessionId(indexPath: string): Promise<Map
       sizeBytes: identity.size
     },
     generation,
-    () => parseKimiSessionIndex(indexPath)
+    () =>
+      parseKimiSessionIndex(indexPath).then((parsed) => {
+        refused = parsed.refused
+        return parsed.map
+      })
   )
+  // Why: a gate refusal is a stalled distro, not a cwd-less index — evicting it
+  // stops the partial map being served until the index's identity changes.
+  if (refused) {
+    workDirCacheByIndexPath.delete(indexPath, generation)
+  }
+  return workDirs
 }
 
-async function parseKimiSessionIndex(indexPath: string): Promise<Map<string, string>> {
+async function parseKimiSessionIndex(
+  indexPath: string
+): Promise<{ map: Map<string, string>; refused: boolean }> {
   const map = new Map<string, string>()
   // Why: never reject. This promise is memoized and shared by every session
   // under one Kimi home; a mid-read failure (file deleted after stat, EACCES)
   // must degrade to whatever was parsed so the other sessions still list.
   try {
     const lines = createInterface({
-      input: createReadStream(indexPath, { encoding: 'utf-8' }),
+      input: openTranscriptReadStream(indexPath, { encoding: 'utf-8' }, 'scan'),
       crlfDelay: Infinity
     })
     for await (const line of lines) {
@@ -126,8 +139,9 @@ async function parseKimiSessionIndex(indexPath: string): Promise<Map<string, str
         map.set(sessionId, workDir)
       }
     }
-  } catch {
+  } catch (error) {
     // Return the partial map gathered before the read error.
+    return { map, refused: error instanceof WslTranscriptFsError }
   }
-  return map
+  return { map, refused: false }
 }

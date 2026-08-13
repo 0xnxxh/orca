@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises'
+import { wslGatedReaddir, wslGatedReadFile } from '../native-chat/wsl-transcript-fs-access'
 import { join } from 'node:path'
 import type { AiVaultSession } from '../../shared/ai-vault-types'
 import type { FileWithMtime, SessionAccumulator } from './session-scanner-types'
@@ -26,7 +26,7 @@ export async function parseOpenCodeSessionFile(
   file: FileWithMtime,
   platform: NodeJS.Platform = process.platform
 ): Promise<AiVaultSession | null> {
-  const record = asRecord(JSON.parse(await readFile(file.path, 'utf-8')) as unknown)
+  const record = asRecord(JSON.parse(await wslGatedReadFile(file.path, 'utf-8', 'scan')) as unknown)
   if (!record) {
     return null
   }
@@ -47,7 +47,7 @@ export async function parseOpenCodeSessionFile(
 async function readOpenCodeMessagesInOrder(messageDir: string): Promise<Record<string, unknown>[]> {
   let entries
   try {
-    entries = await readdir(messageDir, { withFileTypes: true })
+    entries = await wslGatedReaddir(messageDir, 'scan')
   } catch {
     return []
   }
@@ -59,7 +59,7 @@ async function readOpenCodeMessagesInOrder(messageDir: string): Promise<Record<s
     let message: Record<string, unknown> | null = null
     try {
       message = asRecord(
-        JSON.parse(await readFile(join(messageDir, entry.name), 'utf-8')) as unknown
+        JSON.parse(await wslGatedReadFile(join(messageDir, entry.name), 'utf-8', 'scan')) as unknown
       )
     } catch {
       // A live OpenCode process can leave a half-written file; skip it rather

@@ -59,6 +59,7 @@ type ScheduledTask<T> = {
 type UnknownScheduledTask = ScheduledTask<unknown>
 
 let activeScanCount = 0
+let undedupedTaskId = 0
 const activeLaneKeys = new Set<string>()
 const queuedTasks: UnknownScheduledTask[] = []
 const inFlightTasks = new Map<string, UnknownScheduledTask>()
@@ -284,10 +285,13 @@ function pumpTasks(): void {
 /** Bound 9P work without letting scans delay exact transcript probes. */
 export function runWslTranscriptFsTask<T>(
   options: {
-    operation: 'access' | 'readdir'
+    operation: 'access' | 'readdir' | 'stat' | 'lstat' | 'open' | 'read' | 'readfile'
     path: string
     priority: WslTranscriptFsTaskPriority
     signal?: AbortSignal
+    /** Opt out of coalescing when the result is not the whole answer (`open`,
+     *  positional `read`): a joiner would share the handle or the buffer. */
+    dedupe?: boolean
   },
   task: (signal: AbortSignal) => Promise<T>
 ): Promise<T> {
@@ -295,8 +299,12 @@ export function runWslTranscriptFsTask<T>(
     return Promise.reject(abortReason(options.signal))
   }
   // Why: route spelling and Linux path case can change provider behavior, so
-  // only byte-identical filesystem requests are safe to share.
-  const key = JSON.stringify([options.operation, options.path])
+  // only byte-identical filesystem requests are safe to share. A counter key
+  // never collides, so an un-deduped task simply never finds a join target.
+  const key =
+    options.dedupe === false
+      ? `undeduped:${++undedupedTaskId}`
+      : JSON.stringify([options.operation, options.path])
   const existing = inFlightTasks.get(key) as ScheduledTask<T> | undefined
   if (existing) {
     // A stuck target — or a queued target that stuck I/O keeps from ever

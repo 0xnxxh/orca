@@ -1,6 +1,5 @@
 import { remoteSessionContentLines } from './remote-session-content-lines'
-import { createReadStream } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { openTranscriptReadStream, wslGatedReadFile } from '../native-chat/wsl-transcript-fs-access'
 import { basename, dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { AiVaultSession } from '../../shared/ai-vault-types'
@@ -41,7 +40,9 @@ export async function parseRovoSessionFile(
   file: FileWithMtime,
   platform: NodeJS.Platform = process.platform
 ): Promise<AiVaultSession | null> {
-  const metadata = asRecord(JSON.parse(await readFile(file.path, 'utf-8')) as unknown)
+  const metadata = asRecord(
+    JSON.parse(await wslGatedReadFile(file.path, 'utf-8', 'scan')) as unknown
+  )
   if (!metadata) {
     return null
   }
@@ -176,7 +177,7 @@ export async function parseMessageGraphSessionFile(
   platform: NodeJS.Platform = process.platform
 ): Promise<AiVaultSession | null> {
   const lines = createInterface({
-    input: createReadStream(file.path, { encoding: 'utf-8' }),
+    input: openTranscriptReadStream(file.path, { encoding: 'utf-8' }, 'scan'),
     crlfDelay: Infinity
   })
   return parseMessageGraphSessionLines({ agent, file, lines, platform })

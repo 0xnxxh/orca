@@ -1,5 +1,4 @@
-import { createReadStream } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { openTranscriptReadStream, wslGatedReadFile } from '../native-chat/wsl-transcript-fs-access'
 import { createInterface } from 'node:readline'
 import type { AiVaultSession } from '../../shared/ai-vault-types'
 import {
@@ -36,7 +35,9 @@ export async function parseKimiSessionFile(
 ): Promise<AiVaultSession | null> {
   let stateRecord: Record<string, unknown> | null
   try {
-    stateRecord = asRecord(JSON.parse(await readFile(file.path, 'utf-8')) as unknown)
+    stateRecord = asRecord(
+      JSON.parse(await wslGatedReadFile(file.path, 'utf-8', 'scan')) as unknown
+    )
   } catch {
     return null
   }
@@ -85,7 +86,7 @@ async function consumeKimiWireTranscript(
 
   try {
     const lines = createInterface({
-      input: createReadStream(wirePath, { encoding: 'utf-8' }),
+      input: openTranscriptReadStream(wirePath, { encoding: 'utf-8' }, 'scan'),
       crlfDelay: Infinity
     })
     for await (const line of lines) {

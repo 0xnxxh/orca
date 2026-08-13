@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises'
+import { wslGatedStat } from './wsl-transcript-fs-access'
 
 export type TranscriptFileVersion = {
   identity: string
@@ -8,7 +8,7 @@ export type TranscriptFileVersion = {
 }
 
 export async function readTranscriptFileVersion(filePath: string): Promise<TranscriptFileVersion> {
-  const value = await stat(filePath)
+  const value = await wslGatedStat(filePath, 'exact')
   return {
     identity: `${value.dev}:${value.ino}`,
     size: value.size,

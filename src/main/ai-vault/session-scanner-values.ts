@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join } from 'node:path'
-import { readFile } from 'node:fs/promises'
+import { wslGatedReadFile } from '../native-chat/wsl-transcript-fs-access'
 import { asRecord } from './session-scanner-record-value'
 
 export { asRecord }
@@ -76,7 +76,7 @@ export async function readJsonObjectIfExists(
   filePath: string
 ): Promise<Record<string, unknown> | null> {
   try {
-    return asRecord(JSON.parse(await readFile(filePath, 'utf-8')) as unknown)
+    return asRecord(JSON.parse(await wslGatedReadFile(filePath, 'utf-8', 'scan')) as unknown)
   } catch {
     return null
   }

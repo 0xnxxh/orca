@@ -632,3 +632,78 @@ describe('WSL transcript filesystem task scheduling', () => {
     }
   })
 })
+
+describe('WSL transcript filesystem task coalescing opt-out', () => {
+  const READ_PATH = '\\\\wsl.localhost\\Alpine\\home\\ada\\transcript.jsonl'
+
+  function gatedRead(
+    buffer: Buffer,
+    task: (signal: AbortSignal) => Promise<Buffer>
+  ): Promise<Buffer> {
+    void buffer
+    return runWslTranscriptFsTask(
+      { operation: 'read', path: READ_PATH, priority: 'exact', dedupe: false },
+      task
+    )
+  }
+
+  it('fills each caller its own buffer for identical positional reads', async () => {
+    const first = Buffer.alloc(4, 0xa1)
+    const second = Buffer.alloc(4, 0xb2)
+    const bodies = [Buffer.from('AAAA'), Buffer.from('BBBB')]
+
+    const reads = Promise.all([
+      gatedRead(first, async () => {
+        bodies.shift()!.copy(first)
+        return first
+      }),
+      gatedRead(second, async () => {
+        bodies.shift()!.copy(second)
+        return second
+      })
+    ])
+
+    await expect(reads).resolves.toEqual([first, second])
+    expect(first.toString()).toBe('AAAA')
+    expect(second.toString()).toBe('BBBB')
+    // Neither caller kept its sentinel nor received the other's bytes.
+    expect(first.equals(second)).toBe(false)
+  })
+
+  it('gives each open call a distinct handle', async () => {
+    const handles = [
+      { id: 1, closed: false },
+      { id: 2, closed: false }
+    ]
+    let served = 0
+    const opened = await Promise.all(
+      handles.map(() =>
+        runWslTranscriptFsTask(
+          { operation: 'open', path: READ_PATH, priority: 'exact', dedupe: false },
+          async () => handles[served++]
+        )
+      )
+    )
+
+    expect(opened[0]).not.toBe(opened[1])
+    opened[0].closed = true
+    expect(opened[1].closed).toBe(false)
+  })
+
+  it('still coalesces identical work when dedupe is omitted', async () => {
+    const stalled = deferred<string>()
+    const task = vi.fn(() => stalled.promise)
+    const path = '\\\\wsl.localhost\\Alpine\\home\\ada'
+    const first = run(path, 'scan', task)
+    await vi.waitFor(() => expect(task).toHaveBeenCalledOnce())
+    const joiner = run(
+      path,
+      'scan',
+      vi.fn(async () => 'never')
+    )
+
+    stalled.resolve('shared')
+    await expect(Promise.all([first, joiner])).resolves.toEqual(['shared', 'shared'])
+    expect(task).toHaveBeenCalledOnce()
+  })
+})

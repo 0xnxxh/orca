@@ -1,4 +1,3 @@
-import { open, stat } from 'node:fs/promises'
 import type { NativeChatMessage, NativeChatTurnLifecycle } from '../../shared/native-chat-types'
 import {
   readTranscriptFileVersion,
@@ -18,6 +17,8 @@ import type {
   SubscribeNativeChatTranscriptArgs
 } from './transcript-watch-contract'
 import { createTranscriptWatchScheduler } from './transcript-watch-scheduler'
+import { readTranscriptSlice, wslGatedStat } from './wsl-transcript-fs-access'
+import { WslTranscriptFsError } from './wsl-transcript-fs-gate'
 
 const ROTATION_RETRY_MS = 25
 const MAX_ROTATION_RETRY_MS = 2_000
@@ -32,14 +33,8 @@ async function boundaryFingerprint(filePath: string, offset: number): Promise<st
     return ''
   }
   const start = Math.max(0, offset - 64)
-  const handle = await open(filePath, 'r')
-  try {
-    const buffer = Buffer.allocUnsafe(offset - start)
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start)
-    return buffer.subarray(0, bytesRead).toString('base64')
-  } finally {
-    await handle.close()
-  }
+  const slice = await readTranscriptSlice(filePath, start, offset - start, 'exact')
+  return slice.toString('base64')
 }
 
 /**
@@ -54,8 +49,14 @@ export async function installTranscriptWatcher(
   args: SubscribeNativeChatTranscriptArgs
 ): Promise<NativeChatTranscriptSubscription | null> {
   try {
-    await stat(filePath)
-  } catch {
+    await wslGatedStat(filePath, 'exact')
+  } catch (error) {
+    // Why: "not flushed yet" degrades to resolve-polling, but a stalled distro
+    // must reach the caller so it can surface a retryable message instead of
+    // stranding the client at `loading`.
+    if (error instanceof WslTranscriptFsError) {
+      throw error
+    }
     return null
   }
   const { onAppend, onInitialSnapshot, onReplace, initialLimit } = args
@@ -253,7 +254,7 @@ export async function installTranscriptWatcher(
         pendingReadRequested = false
         try {
           await drainOnce()
-        } catch {
+        } catch (error) {
           // Why: unlink/recreate can detach fs.watch from the pathname. Keep one
           // capped-backoff retry alive until a successor appears or we unsubscribe.
           // A still-pending initial drain also surfaces one error snapshot so a
@@ -261,7 +262,12 @@ export async function installTranscriptWatcher(
           // throwing; initialDrain stays true so a recovered read can still win.
           if (!closed && initialDrain && onInitialSnapshot && !initialErrorEmitted) {
             initialErrorEmitted = true
-            onInitialSnapshot([], false, 0, 'Transcript unavailable')
+            onInitialSnapshot(
+              [],
+              false,
+              0,
+              error instanceof WslTranscriptFsError ? error.message : 'Transcript unavailable'
+            )
           }
           scheduleRotationRetry()
           break
