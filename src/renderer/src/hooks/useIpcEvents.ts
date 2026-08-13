@@ -1867,6 +1867,9 @@ export function useIpcEvents(): void {
           (item) => item.id === tabId
         )
         const browserTarget = resolveBrowserSessionTabTarget(store, worktreeId, tabId)
+        if (tab?.contentType === 'agent-session' && store.activeWorktreeId !== worktreeId) {
+          return
+        }
         if (!tab) {
           if (browserTarget) {
             // Why: older/mobile fallback snapshots identify browser tabs by workspace id when no unified tab wrapper exists.
