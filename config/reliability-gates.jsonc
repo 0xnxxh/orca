@@ -11930,7 +11930,7 @@
           "result": "passed",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/daemon-checkpoint-session-queue.test.ts src/main/daemon/daemon-reattach-checkpoint-isolation.test.ts src/main/daemon/daemon-pty-adapter.test.ts --reporter=dot",
           "durationSeconds": 15,
-          "summary": "Three focused files passed 180 tests, including unrelated-session reattach, five-second fallback, post-deadline durable commit, aggregate overlay admission, rejection diagnostics, and final-checkpoint behavior."
+          "summary": "Three focused files passed, including unrelated-session reattach, five-second fallback, post-deadline durable commit, aggregate non-final admission, late-rejection diagnostics, and final-checkpoint behavior."
         }
       ],
       "runtimeBudget": {
