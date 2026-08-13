@@ -2776,10 +2776,9 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
           const previousError = previousEntry?.error
           return {
             workItemsCache: withBoundedCacheEntry(s.workItemsCache, key, {
-              data:
-                previousEntry?.data != null && reconciled === previousEntry.data
-                  ? previousEntry.data
-                  : reconciled,
+              // Why: `reconciled` already is `previousEntry.data` when nothing changed —
+              // reconcileCatalogRows returns the previous array on a structural match.
+              data: reconciled,
               fetchedAt: Date.now(),
               sources:
                 sourcesUnchanged && previousSources !== undefined
