@@ -9,6 +9,7 @@ import {
   POST_REPLAY_MODE_RESET,
   POST_REPLAY_REATTACH_RESET,
   POST_REPLAY_REATTACH_RESET_KEEP_MOUSE,
+  RESET_AFTER_BYTE_GAP,
   RESET_KITTY_KEYBOARD_PROTOCOL,
   RESET_TERMINAL_CURSOR_STYLE
 } from '../../../../shared/terminal-mode-reset-profiles'
@@ -10210,7 +10211,7 @@ describe('connectPanePty', () => {
       claim: true
     })
     expect(written).toContain(viewportClear)
-    expect(written).not.toContain('\x1b[0m\x1b(B\x0f\x1b[2J\x1b[3J\x1b[H')
+    expect(written).not.toContain(`${RESET_AFTER_BYTE_GAP}\x1b[2J\x1b[3J\x1b[H`)
     expect(written).toEqual(
       expect.arrayContaining([coldScrollback, POST_REPLAY_MODE_RESET, blankViewport])
     )
@@ -12119,7 +12120,7 @@ describe('connectPanePty', () => {
       await flushAsyncTicks(4)
 
       const written = pane.terminal.write.mock.calls.map(([data]) => data as string)
-      const gapReset = written.find((data) => data.startsWith('\x1b[0m'))
+      const gapReset = written.find((data) => data === RESET_AFTER_BYTE_GAP)
       expect(gapReset).toBeDefined()
       // charset too: a dropped ESC(B otherwise renders text as box characters
       expect(gapReset).toContain('\x1b(B')
@@ -15488,7 +15489,7 @@ describe('connectPanePty', () => {
     expect(getMainBufferSnapshot).toHaveBeenCalledWith('pty-id', { scrollbackRows: 5000 })
     expect(pane.terminal.resize).toHaveBeenCalledWith(100, 30)
     expect(pane.terminal.write).toHaveBeenCalledWith(
-      '\x1b[0m\x1b(B\x0f\x1b[2J\x1b[3J\x1b[H',
+      `${RESET_AFTER_BYTE_GAP}\x1b[2J\x1b[3J\x1b[H`,
       expect.any(Function)
     )
     expect(pane.terminal.write).toHaveBeenCalledWith('snapshot-state\r\n', expect.any(Function))
@@ -15541,7 +15542,7 @@ describe('connectPanePty', () => {
 
     expect(getMainBufferSnapshot).toHaveBeenCalledWith('pty-id', { scrollbackRows: 5000 })
     expect(pane.terminal.write).toHaveBeenCalledWith(
-      '\x1b[0m\x1b(B\x0f\x1b[?1049l\x1b[2J\x1b[3J\x1b[H',
+      `${RESET_AFTER_BYTE_GAP}\x1b[?1049l\x1b[2J\x1b[3J\x1b[H`,
       expect.any(Function)
     )
     expect(pane.terminal.write).toHaveBeenCalledWith(
@@ -15549,16 +15550,16 @@ describe('connectPanePty', () => {
       expect.any(Function)
     )
     expect(pane.terminal.write).toHaveBeenCalledWith(
-      '\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H',
+      `${RESET_AFTER_BYTE_GAP}\x1b[?1049h\x1b[2J\x1b[H`,
       expect.any(Function)
     )
     const writes = (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map(
       (call) => call[0]
     )
     expect(writes.indexOf('preserved-shell-history\r\n')).toBeLessThan(
-      writes.indexOf('\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H')
+      writes.indexOf(`${RESET_AFTER_BYTE_GAP}\x1b[?1049h\x1b[2J\x1b[H`)
     )
-    expect(writes.indexOf('\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H')).toBeLessThan(
+    expect(writes.indexOf(`${RESET_AFTER_BYTE_GAP}\x1b[?1049h\x1b[2J\x1b[H`)).toBeLessThan(
       writes.indexOf('altscreen-snapshot\r\n')
     )
     expect(pane.terminal.write).toHaveBeenCalledWith('altscreen-snapshot\r\n', expect.any(Function))
@@ -15760,7 +15761,7 @@ describe('connectPanePty', () => {
     disposable.dispose()
   })
 
-  it('abandons a stalled hidden restore and drains pending foreground chunks warning-first', async () => {
+  it('abandons a stalled hidden restore with reset, warning, then pending foreground', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('pty-id')
     const capturedDataCallback: {
@@ -15822,6 +15823,7 @@ describe('connectPanePty', () => {
     const warningIndex = written.findIndex((data) => data.includes('main recovery was unavailable'))
     const combinedLiveIndex = written.indexOf(firstLive + secondLive)
     expect(warningIndex).toBeGreaterThanOrEqual(0)
+    expect(written[warningIndex - 1]).toBe(RESET_AFTER_BYTE_GAP)
     expect(combinedLiveIndex).toBeGreaterThan(warningIndex)
 
     snapshot.resolve({
@@ -15888,7 +15890,7 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(10)
 
     const written = pane.terminal.write.mock.calls.map(([data]) => data as string)
-    const resetIndex = written.findIndex((data) => data.startsWith('\x1b[0m'))
+    const resetIndex = written.indexOf(RESET_AFTER_BYTE_GAP)
     const liveIndex = written.findIndex((data) => data.includes('live-after-reveal'))
     expect(resetIndex).toBeGreaterThanOrEqual(0)
     expect(liveIndex).toBeGreaterThanOrEqual(0)
@@ -16412,7 +16414,7 @@ describe('connectPanePty', () => {
     expect(pane.terminal.clear).toHaveBeenCalled()
     expect(pane.terminal.write).not.toHaveBeenCalledWith(live, expect.any(Function))
     expect(pane.terminal.write).not.toHaveBeenCalledWith(
-      '\x1b[0m\x1b(B\x0f\x1b[2J\x1b[3J\x1b[H',
+      `${RESET_AFTER_BYTE_GAP}\x1b[2J\x1b[3J\x1b[H`,
       expect.any(Function)
     )
     disposable.dispose()
@@ -17310,7 +17312,7 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(6)
 
     expect(pane.terminal.write).not.toHaveBeenCalledWith(
-      '\x1b[0m\x1b(B\x0f\x1b[2J\x1b[3J\x1b[H',
+      `${RESET_AFTER_BYTE_GAP}\x1b[2J\x1b[3J\x1b[H`,
       expect.any(Function)
     )
     expect(pane.terminal.write).toHaveBeenCalledWith(

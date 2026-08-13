@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Terminal } from '@xterm/headless'
+import { RESET_AFTER_BYTE_GAP } from '../../../../shared/terminal-mode-reset-profiles'
 import {
   buildMainModelSnapshotReplayWrites,
   hasPositiveTerminalDimensions,
@@ -10,6 +11,32 @@ import {
 function writeTerminal(terminal: Terminal, data: string): Promise<void> {
   return new Promise((resolve) => terminal.write(data, resolve))
 }
+
+type CellWithOscLink = {
+  extended?: { urlId?: number }
+  isBold: () => number
+}
+
+describe('RESET_AFTER_BYTE_GAP', () => {
+  it('grounds incomplete escapes, SGR, OSC 8, and every charset register', async () => {
+    const terminal = new Terminal({ cols: 40, rows: 2, allowProposedApi: true })
+    try {
+      await writeTerminal(
+        terminal,
+        '\x1b[1m\x1b(0\x1b)0\x1b*0\x1b+0\x0e\x1b]8;;https://example.test\x1b\\q\x1b['
+      )
+      await writeTerminal(terminal, `${RESET_AFTER_BYTE_GAP}A\x0eq\x1bnq\x1boq`)
+
+      const line = terminal.buffer.active.getLine(0)
+      const plainCell = line?.getCell(1) as CellWithOscLink | undefined
+      expect(line?.translateToString(true)).toBe('─Aqqq')
+      expect(plainCell?.isBold()).toBe(0)
+      expect(plainCell?.extended?.urlId ?? 0).toBe(0)
+    } finally {
+      terminal.dispose()
+    }
+  })
+})
 
 describe('hasPositiveTerminalDimensions', () => {
   it('accepts only finite positive numeric pairs', () => {
@@ -42,7 +69,7 @@ describe('resolvePositiveTerminalDimensions', () => {
 describe('buildMainModelSnapshotReplayWrites', () => {
   it('clears normal buffer + scrollback before a normal-buffer snapshot', () => {
     expect(buildMainModelSnapshotReplayWrites({ data: 'shell-output' })).toEqual([
-      '\x1b[0m\x1b(B\x0f\x1b[2J\x1b[3J\x1b[H',
+      `${RESET_AFTER_BYTE_GAP}\x1b[2J\x1b[3J\x1b[H`,
       'shell-output'
     ])
   })
@@ -59,9 +86,9 @@ describe('buildMainModelSnapshotReplayWrites', () => {
         scrollbackAnsi: 'normal-history'
       })
     ).toEqual([
-      '\x1b[0m\x1b(B\x0f\x1b[?1049l\x1b[2J\x1b[3J\x1b[H',
+      `${RESET_AFTER_BYTE_GAP}\x1b[?1049l\x1b[2J\x1b[3J\x1b[H`,
       'normal-history',
-      '\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H',
+      `${RESET_AFTER_BYTE_GAP}\x1b[?1049h\x1b[2J\x1b[H`,
       'alt-frame'
     ])
   })
@@ -69,7 +96,7 @@ describe('buildMainModelSnapshotReplayWrites', () => {
   it('enters a cleared alt screen when no split scrollback is available', () => {
     expect(
       buildMainModelSnapshotReplayWrites({ data: 'alt-frame', alternateScreen: true })
-    ).toEqual(['\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H', 'alt-frame'])
+    ).toEqual([`${RESET_AFTER_BYTE_GAP}\x1b[?1049h\x1b[2J\x1b[H`, 'alt-frame'])
   })
 })
 
@@ -153,9 +180,9 @@ describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
         { skipAltFrame: true }
       )
     ).toEqual([
-      '\x1b[0m\x1b(B\x0f\x1b[?1049l\x1b[2J\x1b[3J\x1b[H',
+      `${RESET_AFTER_BYTE_GAP}\x1b[?1049l\x1b[2J\x1b[3J\x1b[H`,
       'normal-history',
-      '\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H',
+      `${RESET_AFTER_BYTE_GAP}\x1b[?1049h\x1b[2J\x1b[H`,
       'complete-live-state'
     ])
   })
@@ -172,7 +199,7 @@ describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
         },
         { skipAltFrame: true }
       )
-    ).toEqual(['\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H', 'complete-live-state'])
+    ).toEqual([`${RESET_AFTER_BYTE_GAP}\x1b[?1049h\x1b[2J\x1b[H`, 'complete-live-state'])
   })
 
   it('keeps composed data when an older producer omits the mode boundary', () => {
@@ -181,13 +208,13 @@ describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
         { data: 'legacy-modes-and-frame', alternateScreen: true },
         { skipAltFrame: true }
       )
-    ).toEqual(['\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H', 'legacy-modes-and-frame'])
+    ).toEqual([`${RESET_AFTER_BYTE_GAP}\x1b[?1049h\x1b[2J\x1b[H`, 'legacy-modes-and-frame'])
   })
 
   it('never drops a normal-buffer snapshot, whose rows reflow correctly', () => {
     expect(
       buildMainModelSnapshotReplayWrites({ data: 'shell-output' }, { skipAltFrame: true })
-    ).toEqual(['\x1b[0m\x1b(B\x0f\x1b[2J\x1b[3J\x1b[H', 'shell-output'])
+    ).toEqual([`${RESET_AFTER_BYTE_GAP}\x1b[2J\x1b[3J\x1b[H`, 'shell-output'])
   })
 
   // STA-4042: a replay only runs because renderer-bound bytes were dropped, so
@@ -205,7 +232,7 @@ describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
       buildMainModelSnapshotReplayWrites({ data: 'alt-frame', alternateScreen: true })
     ]
     for (const writes of branches) {
-      expect(writes[0].startsWith('\x1b[0m')).toBe(true)
+      expect(writes[0].startsWith(RESET_AFTER_BYTE_GAP)).toBe(true)
       // charset too: a dropped ESC(B renders text as box characters
       expect(writes[0].includes('\x1b(B')).toBe(true)
       // Nothing may be replayed ahead of the first reset.

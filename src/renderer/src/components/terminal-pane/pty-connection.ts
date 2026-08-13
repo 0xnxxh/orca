@@ -413,7 +413,7 @@ const FOREGROUND_GRID_DRIFT_CHECK_MIN_MS = 250
 // Why: this is only shown if hidden renderer output was skipped and main-owned
 // terminal state is unavailable, so the user has an explicit loss signal.
 const HIDDEN_OUTPUT_RESTORE_UNAVAILABLE_WARNING =
-  '\x18\x1b[0m\r\n[Orca skipped hidden terminal output because main recovery was unavailable.]\r\n'
+  '\r\n[Orca skipped hidden terminal output because main recovery was unavailable.]\r\n'
 type E2eTerminalPtyDataInjectionApi = {
   inject: (paneKey: string, data: string, meta?: PtyDataMeta) => boolean
   keys: () => string[]
@@ -7066,16 +7066,9 @@ export function connectPanePty(
         // backpressure must not outlive it — it would re-open recovery and banner a second time.
         clearHiddenOutputRestoreFloodRepaintTimer()
         writeRestoreUnavailableWarning()
+      } else {
+        writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
       }
-      // Why before both exits: the gate dropped renderer-bound bytes, so the pen
-      // that was live when it started dropping is unknown — if the dropped span
-      // held the `ESC[22m`/`ESC[0m` closing a run, xterm still has bold (or any
-      // other attribute) latched. Abandoning means no snapshot will rebuild the
-      // buffer, so nothing else ever clears it and every later cell inherits it
-      // (STA-4042). Same for the charset designation, whose loss renders text as
-      // box characters. Cheap and idempotent; a live TUI re-asserts both on its
-      // next write.
-      writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
       if (hadPendingOverflow) {
         return
       }
@@ -7216,6 +7209,8 @@ export function connectPanePty(
     }
 
     function writeRestoreUnavailableWarning(): void {
+      // The reset must parse before both the warning and any foreground drain.
+      writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
       if (!shouldWritePtyOutputForeground(deps.isVisibleRef.current)) {
         return
       }

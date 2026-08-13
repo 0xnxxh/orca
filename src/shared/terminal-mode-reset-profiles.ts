@@ -40,10 +40,10 @@ export const COLD_RESTORE_SEED_MODE_RESET = RESET_MOUSE_REPORTING
 // drains queued foreground chunks under the stale pen).
 export const RESET_GRAPHIC_RENDITION = '\x1b[0m'
 
-// Designate ASCII into G0 and shift back to it. Same failure as the pen but a
-// louder symptom: a dropped `ESC(B` leaves line-drawing selected and ordinary
-// text renders as box characters.
-const RESET_CHARSET_TO_ASCII = '\x1b(B\x0f'
+// Cancel any partial escape, close OSC 8, restore every ISO 2022 register, and select G0.
+const RESET_INCOMPLETE_ESCAPE = '\x18'
+const RESET_OSC_HYPERLINK = '\x1b]8;;\x1b\\'
+const RESET_CHARSETS_TO_ASCII = '\x1b(B\x1b)B\x1b*B\x1b+B\x0f'
 
 /**
  * State to re-establish when renderer-bound bytes were dropped and the gap
@@ -53,7 +53,7 @@ const RESET_CHARSET_TO_ASCII = '\x1b(B\x0f'
  * negotiates them at startup. So reset the state a gap can strand and that no
  * running TUI re-asserts on its own, and leave the rest to its next repaint.
  */
-export const RESET_AFTER_BYTE_GAP = `${RESET_GRAPHIC_RENDITION}${RESET_CHARSET_TO_ASCII}`
+export const RESET_AFTER_BYTE_GAP = `${RESET_INCOMPLETE_ESCAPE}${RESET_OSC_HYPERLINK}${RESET_GRAPHIC_RENDITION}${RESET_CHARSETS_TO_ASCII}`
 
 // Why: DECTCEM applies in emission order, so the payload's last ?25l/?25h is the cursor state the TUI left.
 export function replayPayloadEndsWithCursorHidden(payload: string): boolean {
