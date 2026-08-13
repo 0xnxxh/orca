@@ -463,6 +463,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
   clientTargetGroupId?: string
   clientTargetGroupCreated?: boolean
   focusOnCreate?: boolean
+  /** Wait until a renderer-backed host can publish the new page in its session snapshot. */
   waitForRegistration?: boolean
   selectWorktree?: boolean
   stagedTitle?: string
