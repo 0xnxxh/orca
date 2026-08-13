@@ -197,8 +197,13 @@ export async function restoreImportedDomainCookies(
 }
 
 // Why: Electron cannot round-trip partition identity, so excluded cookies must never be removed.
+// Why (STA-4061): the same gap forbids rolling a partial clear back. cookies.get() omits
+// partitionKey and cookies.set() silently drops it, so every reconstruction is a coin flip that
+// can downgrade a partitioned (CHIPS) cookie into an unpartitioned one — and nothing in the
+// snapshot says which cookies are at risk. A partially cleared jar is a retryable import failure;
+// a downgraded cookie is unrecoverable auth-state corruption that survives restart.
 export async function removeAllCookiesExcept(
-  store: Pick<Cookies, 'get' | 'remove' | 'set'>,
+  store: Pick<Cookies, 'get' | 'remove'>,
   isExcluded: (cookie: Cookie) => boolean
 ): Promise<void> {
   const existingCookies = await store.get({})
@@ -218,7 +223,6 @@ export async function removeAllCookiesExcept(
     removableGroups.set(key, group)
   }
 
-  const removedCookies: Cookie[] = []
   const results = await mapSettledWithConcurrency(
     [...removableGroups.values()],
     COOKIE_CLEAR_CONCURRENCY,
@@ -226,22 +230,18 @@ export async function removeAllCookiesExcept(
       // Why: identical removal coordinates must stay ordered instead of racing.
       for (const { cookie, url } of group) {
         await store.remove(url, cookie.name)
-        removedCookies.push(cookie)
       }
     }
   )
   const failures = results.flatMap((result) =>
     result.status === 'rejected' ? [result.reason] : []
   )
-  if (failures.length === 0) {
-    return
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      'Could not clear existing cookies; the session was left partially cleared'
+    )
   }
-  try {
-    await restoreImportedDomainCookies(store, removedCookies)
-  } catch (restoreError) {
-    throw new AggregateError([...failures, restoreError], 'Cookie clearing and rollback failed')
-  }
-  throw new AggregateError(failures, 'Could not clear existing cookies')
 }
 
 export async function replaceCookiesForImportedDomains(

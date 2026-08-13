@@ -267,7 +267,9 @@ describe('native Chromium import excludes the Google cookie family', () => {
     ])
   })
 
-  it('fails the import without reconstructing Google cookies when selective removal rejects', async () => {
+  // Why (STA-4061): reconstruction drops partition keys, so a rejected removal must not rebuild
+  // anything — not the excluded Google rows, and not the non-Google rows that were already gone.
+  it('fails the import without reconstructing any cookie when selective removal rejects', async () => {
     const sourceCookiesPath = seedSource([
       { domain: '.example.com', name: 'session', value: 'new' }
     ])
@@ -289,7 +291,7 @@ describe('native Chromium import excludes the Google cookie family', () => {
     expect(result.ok || result.reason).toContain('Could not clear existing cookies')
     expect(clearStorageDataMock).not.toHaveBeenCalled()
     expect(cookiesRemoveMock.mock.calls.map(([, name]) => name)).toEqual(['removed-first', 'stale'])
-    expect(cookiesSetMock.mock.calls.map(([details]) => details.name)).toEqual(['removed-first'])
+    expect(cookiesSetMock).not.toHaveBeenCalled()
     expect(setPendingCookieImportMock).not.toHaveBeenCalled()
   })
 })

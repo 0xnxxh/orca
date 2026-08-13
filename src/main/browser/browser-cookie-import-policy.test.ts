@@ -220,7 +220,7 @@ describe('removeAllCookiesExcept', () => {
     const remove = vi.fn().mockResolvedValue(undefined)
     const set = vi.fn().mockResolvedValue(undefined)
 
-    await removeAllCookiesExcept({ get, remove, set }, (existingCookie) =>
+    await removeAllCookiesExcept({ get, remove }, (existingCookie) =>
       isNonTransplantableCookieDomain(existingCookie.domain ?? '')
     )
 
@@ -231,7 +231,9 @@ describe('removeAllCookiesExcept', () => {
     expect(set).not.toHaveBeenCalled()
   })
 
-  it('restores removed non-Google cookies when another removal fails', async () => {
+  // Why (STA-4061): reconstructing a removed cookie loses its partition key, and the snapshot
+  // cannot say which cookies had one, so a failed clear must stay failed.
+  it('never reconstructs removed cookies when another removal fails', async () => {
     const get = vi
       .fn()
       .mockResolvedValue([
@@ -248,12 +250,12 @@ describe('removeAllCookiesExcept', () => {
     const set = vi.fn().mockResolvedValue(undefined)
 
     await expect(
-      removeAllCookiesExcept({ get, remove, set }, (existingCookie) =>
+      removeAllCookiesExcept({ get, remove }, (existingCookie) =>
         isNonTransplantableCookieDomain(existingCookie.domain ?? '')
       )
-    ).rejects.toThrow('Could not clear existing cookies')
+    ).rejects.toThrow('the session was left partially cleared')
     expect(remove).toHaveBeenCalledTimes(3)
-    expect(set.mock.calls.map(([details]) => details.name).sort()).toEqual(['first', 'third'])
+    expect(set).not.toHaveBeenCalled()
   })
 
   it('bounds parallel removals so large cookie jars do not clear serially or fan out', async () => {
@@ -276,7 +278,7 @@ describe('removeAllCookiesExcept', () => {
     })
     const set = vi.fn().mockResolvedValue(undefined)
 
-    const clearing = removeAllCookiesExcept({ get, remove, set }, () => false)
+    const clearing = removeAllCookiesExcept({ get, remove }, () => false)
     await vi.waitFor(() => expect(remove).toHaveBeenCalledTimes(8))
     expect(maxActive).toBe(8)
     releaseRemovals?.()
@@ -301,9 +303,8 @@ describe('removeAllCookiesExcept', () => {
       .fn()
       .mockImplementationOnce(() => firstReleased)
       .mockResolvedValueOnce(undefined)
-    const set = vi.fn().mockResolvedValue(undefined)
 
-    const clearing = removeAllCookiesExcept({ get, remove, set }, () => false)
+    const clearing = removeAllCookiesExcept({ get, remove }, () => false)
     await vi.waitFor(() => expect(remove).toHaveBeenCalledOnce())
     releaseFirst?.()
     await clearing
