@@ -41,6 +41,7 @@ import {
   type AgentSessionSubscribeInput
 } from './structured-agent-session-subscribers'
 import { StructuredAgentSessionTaskQueue } from './structured-agent-session-task-queue'
+import { StructuredAgentSessionRestartRestoreGate } from './structured-agent-session-restart-restore-gate'
 import {
   createStructuredAgentSessionHostHandoff,
   refreshRecoverableStructuredHandoffStatus,
@@ -64,6 +65,7 @@ export class StructuredAgentSessionHost {
   private readonly reconcileLeases: (sessionId: string) => Promise<AgentSessionWireRefusal | null>
   private readonly handoffs: StructuredAgentSessionHostHandoff
   private readonly readableRestorer: StructuredAgentSessionReadableRestorer
+  private readonly restartRestore = new StructuredAgentSessionRestartRestoreGate()
 
   constructor(readonly deps: StructuredAgentSessionHostDeps) {
     this.runtimeState = new StructuredAgentSessionHostRuntimeState(deps, (record) =>
@@ -112,7 +114,7 @@ export class StructuredAgentSessionHost {
   }
 
   restoreReadableSessions(): Promise<void> {
-    return this.readableRestorer.restore()
+    return this.restartRestore.run(() => this.readableRestorer.restore())
   }
 
   private serialize<T>(sessionId: string, task: () => Promise<T>): Promise<T> {

@@ -76,7 +76,7 @@ export function createStructuredAgentSessionHostHandoff(
     publish: (sessionId, status) => {
       const session = host.session(sessionId)
       const fence = deps.store.getRecord(sessionId)?.lease.runtimeFence ?? session.fence
-      host.subscribers.handoff(sessionId, session.journal, fence, status)
+      host.subscribers.handoff(sessionId, fence, status)
     },
     schedule: host.serialize,
     now: host.now
