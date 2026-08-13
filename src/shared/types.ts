@@ -2851,6 +2851,7 @@ export type GlobalSettings = {
   terminalFontSize: number
   terminalFontFamily: string
   terminalFontWeight: number
+  terminalFontWeightBold: number
   terminalLineHeight: number
   terminalScrollSensitivity: number
   terminalFastScrollSensitivity: number
