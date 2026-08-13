@@ -785,6 +785,7 @@ describe('structured session ownership handoff', () => {
       stage: 'manual-recovery',
       error: { recoverableOwner: 'none' }
     })
+    expect(acquireNativeCalls).toBe(0)
     expect(store.getRecord(SESSION)?.lease.handoffStage).toBe('manual-recovery')
     await coordinator.restore(SESSION)
     expect(coordinator.status(SESSION)).toMatchObject({

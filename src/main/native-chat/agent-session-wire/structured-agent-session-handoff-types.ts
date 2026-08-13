@@ -14,12 +14,23 @@ export type StructuredTuiOwner = {
   transcriptPath?: string
 }
 
+export class StructuredTuiLaunchCleanupError extends Error {
+  constructor(
+    launchError: unknown,
+    readonly cleanupError: unknown
+  ) {
+    super('The failed terminal launch could not be proven stopped.', { cause: launchError })
+    this.name = 'StructuredTuiLaunchCleanupError'
+  }
+}
+
 export type StructuredAgentSessionHandoffTransport = {
   hostLabel: string
   launchTui(input: {
     record: AgentSessionRecord
     fence: number
     spawnToken: string
+    onSpawned?: (owner: StructuredTuiOwner) => Promise<void>
   }): Promise<StructuredTuiOwner>
   reproveTuiOwner(input: {
     record: AgentSessionRecord

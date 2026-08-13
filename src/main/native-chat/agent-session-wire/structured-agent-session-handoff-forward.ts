@@ -10,6 +10,7 @@ import type {
   StructuredAgentSessionHandoffFlowContext,
   StructuredTuiOwner
 } from './structured-agent-session-handoff-types'
+import { StructuredTuiLaunchCleanupError } from './structured-agent-session-handoff-types'
 
 export async function handoffStructuredSessionToTui(
   context: StructuredAgentSessionHandoffFlowContext,
@@ -52,19 +53,32 @@ export async function handoffStructuredSessionToTui(
   })
   context.publishStage(record, 'to-tui')
   let owner: StructuredTuiOwner | null = null
+  let processIdentityCommitted = false
   try {
     await deps.prepareTuiHistoryCatchup?.(sessionId, record.lease.runtimeFence)
     owner = await deps.transport!.launchTui({
       record,
       fence: record.lease.runtimeFence,
-      spawnToken
+      spawnToken,
+      onSpawned: async (spawnedOwner) => {
+        owner = spawnedOwner
+        await deps.store.commitProcessIdentity({
+          sessionId,
+          fence: record.lease.runtimeFence,
+          process: spawnedOwner.process,
+          now: deps.now()
+        })
+        processIdentityCommitted = true
+      }
     })
-    await deps.store.commitProcessIdentity({
-      sessionId,
-      fence: record.lease.runtimeFence,
-      process: owner.process,
-      now: deps.now()
-    })
+    if (!processIdentityCommitted) {
+      await deps.store.commitProcessIdentity({
+        sessionId,
+        fence: record.lease.runtimeFence,
+        process: owner.process,
+        now: deps.now()
+      })
+    }
     record = await deps.store.proveOwner({
       sessionId,
       fence: record.lease.runtimeFence,
@@ -73,14 +87,20 @@ export async function handoffStructuredSessionToTui(
     })
   } catch (error) {
     deps.stopTuiHistoryCatchup?.(sessionId)
+    if (!owner && error instanceof StructuredTuiLaunchCleanupError) {
+      await markManualRecovery(context, sessionId, operationId)
+      throw error
+    }
     if (owner) {
       if (!deps.transport?.stopFailedTuiLaunch) {
+        context.retainOwner(sessionId, owner)
         await markManualRecovery(context, sessionId, operationId)
         throw error
       }
       try {
         await deps.transport.stopFailedTuiLaunch(owner)
       } catch (stopError) {
+        context.retainOwner(sessionId, owner)
         await markManualRecovery(context, sessionId, operationId)
         throw new AggregateError(
           [error, stopError],
