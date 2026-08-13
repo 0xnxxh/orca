@@ -18,6 +18,14 @@ type TranscriptRead = (args: {
   limit: number
 }) => Promise<{ messages: NativeChatMessage[] } | { error: string }>
 
+function transcriptTextIncludesPath(text: string, pathText: string, absolutePath: string): boolean {
+  if (recentTerminalOutputIncludesPath(text, pathText, absolutePath)) {
+    return true
+  }
+  // Mobile excludes a sentence-final period from the tappable path span.
+  return recentTerminalOutputIncludesPath(text, `${pathText}.`, `${absolutePath}.`)
+}
+
 export async function nativeChatTranscriptIncludesPath(args: {
   tabs: readonly RuntimeMobileSessionClientTab[]
   context: RuntimeNativeChatFileContext
@@ -57,7 +65,7 @@ export async function nativeChatTranscriptIncludesPath(args: {
         message.blocks.some(
           (block) =>
             block.type === 'text' &&
-            recentTerminalOutputIncludesPath(block.text, args.pathText, args.absolutePath)
+            transcriptTextIncludesPath(block.text, args.pathText, args.absolutePath)
         )
     )
   } catch {

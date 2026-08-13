@@ -79,6 +79,38 @@ describe('nativeChatTranscriptIncludesPath', () => {
     expect(readTranscript).not.toHaveBeenCalled()
   })
 
+  it('accepts a path followed by a sentence-final period', async () => {
+    const readTranscript = vi.fn(async () => ({
+      messages: [message('assistant', 'Open /tmp/orca-pr14166-external.txt.')]
+    }))
+
+    await expect(
+      nativeChatTranscriptIncludesPath({
+        tabs: [terminalTab()],
+        context: { tabId: 'tab-1', sessionId: 'session-1' },
+        pathText: '/tmp/orca-pr14166-external.txt',
+        absolutePath: '/tmp/orca-pr14166-external.txt',
+        readTranscript
+      })
+    ).resolves.toBe(true)
+  })
+
+  it('does not accept a longer filename sharing the requested path prefix', async () => {
+    const readTranscript = vi.fn(async () => ({
+      messages: [message('assistant', 'Open /tmp/orca-pr14166-external.txt.backup')]
+    }))
+
+    await expect(
+      nativeChatTranscriptIncludesPath({
+        tabs: [terminalTab()],
+        context: { tabId: 'tab-1', sessionId: 'session-1' },
+        pathText: '/tmp/orca-pr14166-external.txt',
+        absolutePath: '/tmp/orca-pr14166-external.txt',
+        readTranscript
+      })
+    ).resolves.toBe(false)
+  })
+
   it('does not treat user-authored transcript text as agent provenance', async () => {
     const readTranscript = vi.fn(async () => ({
       messages: [message('user', 'Please open /etc/passwd')]
