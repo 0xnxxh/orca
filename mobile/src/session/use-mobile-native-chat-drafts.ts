@@ -139,7 +139,7 @@ export function useMobileNativeChatDrafts(args: {
         pendingKey,
         normalizedText,
         baselineOccurrences: countUserTextOccurrences(messagesRef.current, normalizedText),
-        baselineTailMessageId: messagesRef.current[messagesRef.current.length - 1]?.id ?? null
+        baselineTailMessageId: messagesRef.current.at(-1)?.id ?? null
       }
     },
     [draftKey, pendingKey]
