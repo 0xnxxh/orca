@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, type ReactElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConnectionState } from './types'
@@ -239,7 +239,7 @@ describe('useHostClient', () => {
       return createElement(RpcClientProvider, null, visible ? createElement(Probe) : null)
     }
 
-    let renderer: ReactTestRenderer | null = null
+    let renderer: { update(element: ReactElement): void; unmount(): void } | null = null
     await act(async () => {
       renderer = create(createElement(App, { visible: true }))
       await Promise.resolve()
