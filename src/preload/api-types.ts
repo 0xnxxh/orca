@@ -3415,7 +3415,6 @@ export type PreloadApi = {
       params?: unknown
       timeoutMs?: number
       expectedEnvironmentPairingRevision?: number
-      expectedRuntimeId?: string
     }) => Promise<RuntimeRpcResponse<unknown>>
     subscribe: (
       args: {
@@ -3424,7 +3423,6 @@ export type PreloadApi = {
         params?: unknown
         timeoutMs?: number
         expectedEnvironmentPairingRevision?: number
-        expectedRuntimeId?: string
       },
       callbacks: {
         onResponse: (response: RuntimeRpcResponse<unknown>) => void
