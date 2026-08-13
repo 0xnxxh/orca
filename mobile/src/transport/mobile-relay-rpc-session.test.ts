@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   BrowserScreencastOpcode,
   encodeBrowserScreencastFrame
@@ -103,6 +103,7 @@ describe('mobile relay RPC session', () => {
     fakes.linkOptions = null
     fakes.sendText.mockReturnValue(true)
   })
+  afterEach(() => vi.useRealTimers())
 
   it('requires exact resume observations and confirms by request ID before becoming connected', async () => {
     const { session, confirmationRequest } = await authenticateSession()
@@ -237,5 +238,44 @@ describe('mobile relay RPC session', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('requires three fair relay liveness misses', async () => {
+    vi.useFakeTimers()
+    const { session } = await authenticateSession()
+
+    session.notifyForeground()
+    expect(fakes.sendText).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(16_000)
+    expect(session.getState()).toBe('connected')
+    expect(fakes.sendText).toHaveBeenCalledTimes(3)
+
+    await vi.advanceTimersByTimeAsync(8_000)
+    expect(session.getState()).toBe('disconnected')
+    expect(fakes.close).toHaveBeenCalledOnce()
+  })
+
+  it('counts authenticated unknown relay frames as activity', async () => {
+    vi.useFakeTimers()
+    const { session } = await authenticateSession()
+
+    session.notifyForeground()
+    fakes.linkOptions!.onText('{"newer":"message"}')
+    fakes.linkOptions!.onBinary(new Uint8Array([0xff, 0x00]))
+    await vi.advanceTimersByTimeAsync(8_000)
+
+    expect(session.getState()).toBe('connected')
+    expect(fakes.close).not.toHaveBeenCalled()
+    session.close()
+  })
+
+  it('fails the relay session when a liveness probe cannot be written', async () => {
+    const { session } = await authenticateSession()
+    fakes.sendText.mockReturnValue(false)
+
+    session.notifyForeground()
+
+    expect(session.getState()).toBe('disconnected')
+    expect(fakes.close).toHaveBeenCalledOnce()
   })
 })

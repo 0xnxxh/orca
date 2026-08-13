@@ -9,6 +9,7 @@ import { MobileE2EEAuthenticationError } from './mobile-e2ee-v2-physical-channel
 import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
+import { RpcSessionLivenessWatchdog } from './rpc-session-liveness-watchdog'
 import type { RpcClient } from './rpc-client'
 import type { ConnectionState, RpcResponse } from './types'
 
@@ -48,6 +49,7 @@ export function connectMobileRelayRpcSession(args: {
   let resumeConfirmation: DeviceResumeConfirmed | null = null
   let failure: Error | null = null
   let closed = false
+  const livenessIdentity = {}
   const streams = new MobileRelayRpcStreams({
     nextId,
     sendFrame,
@@ -74,8 +76,14 @@ export function connectMobileRelayRpcSession(args: {
       publishState('handshaking')
     },
     onAuthenticated: () => void confirmResume(),
-    onText: handleText,
-    onBinary: handleBinary,
+    onText: (plaintext) => {
+      livenessWatchdog.noteAuthenticatedInbound(livenessIdentity)
+      handleText(plaintext)
+    },
+    onBinary: (plaintext) => {
+      livenessWatchdog.noteAuthenticatedInbound(livenessIdentity)
+      handleBinary(plaintext)
+    },
     onError: fail
   })
 
@@ -103,12 +111,17 @@ export function connectMobileRelayRpcSession(args: {
       stateListeners.add(listener)
       return () => stateListeners.delete(listener)
     },
-    notifyForeground: () => {},
+    notifyForeground: () => {
+      if (state === 'connected') {
+        livenessWatchdog.probeNow(livenessIdentity)
+      }
+    },
     close() {
       if (closed) {
         return
       }
       closed = true
+      livenessWatchdog.stop(livenessIdentity)
       link.close()
       rejectPending(new Error('Client closed'))
       streams.clear()
@@ -119,6 +132,12 @@ export function connectMobileRelayRpcSession(args: {
     getResumeConfirmation: () => resumeConfirmation,
     getFailure: () => failure
   }
+  const livenessWatchdog = new RpcSessionLivenessWatchdog({
+    transport: 'relay',
+    sendProbe: () =>
+      state === 'connected' && sendFrame({ id: nextId(), method: 'status.get', params: undefined }),
+    terminate: () => fail(new Error('relay session liveness timeout'))
+  })
   return client
 
   async function confirmResume(): Promise<void> {
@@ -139,6 +158,7 @@ export function connectMobileRelayRpcSession(args: {
       resumeConfirmation = result.resumeConfirmation
       resumeExpiresAt = result.resumeConfirmation.resumeExpiresAt
       lastConnectedAt = Date.now()
+      livenessWatchdog.start(livenessIdentity)
       publishState('connected')
     } catch (error) {
       fail(asError(error))
@@ -242,6 +262,7 @@ export function connectMobileRelayRpcSession(args: {
     }
     closed = true
     failure = error
+    livenessWatchdog.stop(livenessIdentity)
     link.close()
     rejectPending(error)
     publishState(error instanceof MobileE2EEAuthenticationError ? 'auth-failed' : 'disconnected')

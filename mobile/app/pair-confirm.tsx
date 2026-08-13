@@ -9,7 +9,7 @@ import {
   type PreProfilePairingAttempt
 } from '../src/transport/pre-profile-pairing-coordinator'
 import type { ConnectionLogEntry } from '../src/transport/types'
-import { useCloseHost } from '../src/transport/client-context'
+import { useRefreshHostClient } from '../src/transport/client-context'
 import { colors, spacing, radii, typography } from '../src/theme/mobile-theme'
 import { ConnectionLog } from '../src/components/ConnectionLog'
 import {
@@ -28,7 +28,7 @@ const PAIRING_OVERALL_TIMEOUT_MS = 25_000
 
 export default function PairConfirmScreen() {
   const router = useRouter()
-  const closeHost = useCloseHost()
+  const refreshHostClient = useRefreshHostClient()
   const insets = useSafeAreaInsets()
   const params = useLocalSearchParams<{ code?: string }>()
   const [status, setStatus] = useState<Status>('awaiting-confirm')
@@ -115,7 +115,7 @@ export default function PairConfirmScreen() {
       // destination screen opens a fresh client with the newly-paired
       // profile — the removeHost() path already refreshes on re-pair, and a
       // brand-new host has no cached entry so this is a no-op.
-      closeHost(hostId)
+      refreshHostClient(hostId)
       const onboardingSteps = await loadMobileOnboardingSteps()
       if (!mountedRef.current) {
         return

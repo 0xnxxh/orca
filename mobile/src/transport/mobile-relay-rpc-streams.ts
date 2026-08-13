@@ -114,8 +114,7 @@ export class MobileRelayRpcStreams {
     }
     handleTerminalBinaryFrame(bytes, {
       terminalSnapshots: this.terminalSnapshots,
-      getListener: (streamId) => this.terminalListeners.get(streamId),
-      recordValidatedInboundTraffic: () => {}
+      getListener: (streamId) => this.terminalListeners.get(streamId)
     })
   }
 
