@@ -141,7 +141,7 @@ describe('buildDashboardSnapshot folder workspaces', () => {
     runtimeState.projectGroups = [{ ...projectGroup(), connectionId: null }]
     runtimeState.runtimeEnvironments = [
       { id: 'environment-1', name: 'Build Mac' }
-    ] as DashboardSnapshotState['runtimeEnvironments']
+    ] as unknown as DashboardSnapshotState['runtimeEnvironments']
 
     const snapshot = buildDashboardSnapshot(runtimeState, NOW)
 
@@ -158,7 +158,7 @@ describe('buildDashboardSnapshot folder workspaces', () => {
     runtimeState.projectGroups = [{ ...projectGroup(), connectionId: null }]
     runtimeState.runtimeEnvironments = [
       { id: 'environment-1', name: 'Build Mac' }
-    ] as DashboardSnapshotState['runtimeEnvironments']
+    ] as unknown as DashboardSnapshotState['runtimeEnvironments']
     runtimeState.settings = {
       hostSettingOverrides: {
         'runtime:environment-1': { displayLabel: 'CI Builder' }

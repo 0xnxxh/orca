@@ -616,7 +616,7 @@ describe('buildDashboardSnapshot', () => {
         }
       })
       return environment
-    }) as DashboardSnapshotState['runtimeEnvironments']
+    }) as unknown as DashboardSnapshotState['runtimeEnvironments']
     const executionHostId = `runtime:environment-${environmentCount - 1}` as const
 
     const snapshot = buildDashboardSnapshot(
