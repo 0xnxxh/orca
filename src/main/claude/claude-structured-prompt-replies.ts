@@ -1,4 +1,5 @@
 import type { ClaudeControlRequest } from './claude-stream-json-connection'
+import { decodeAgentSessionQuestionAnswers } from '../../shared/agent-session-question-answer'
 
 export const CLAUDE_APPROVAL_DECISIONS = ['allow', 'allowForSession', 'deny', 'cancel'] as const
 export type ClaudeApprovalDecision = (typeof CLAUDE_APPROVAL_DECISIONS)[number]
@@ -12,7 +13,7 @@ export type ClaudePendingPrompt = {
   input: Record<string, unknown>
   suggestions: unknown[]
   questionIds: readonly string[]
-  answers: Map<string, string>
+  answers: Map<string, string | readonly string[]>
   request: ClaudeControlRequest['request']
 }
 
@@ -211,9 +212,54 @@ function questionResponse(
   if (prompt.questionIds.some((id) => !prompt.answers.has(id))) {
     return null
   }
-  const answers: Record<string, string> = {}
+  const answers: Record<string, string | readonly string[]> = {}
   for (const id of prompt.questionIds) {
     answers[id] = prompt.answers.get(id) as string
+  }
+  return {
+    behavior: 'allow',
+    updatedInput: { ...prompt.input, answers },
+    toolUseID: prompt.toolUseId
+  }
+}
+
+function groupedQuestionResponse(
+  prompt: ClaudePendingPrompt,
+  optionId: string
+): Record<string, unknown> | null {
+  const grouped = decodeAgentSessionQuestionAnswers(optionId)
+  if (!grouped) {
+    return null
+  }
+  const questions = questionsFrom(prompt.input)
+  if (grouped.length !== prompt.questionIds.length) {
+    throw new Error(`Grouped answer does not match Claude prompt ${prompt.promptKey}`)
+  }
+  const answers: Record<string, string | readonly string[]> = {}
+  for (let index = 0; index < questions.length; index += 1) {
+    const question = questions[index]!
+    const providerQuestionId = prompt.questionIds[index]
+    const answer = grouped.find((entry) => entry.questionId === `q${index + 1}`)
+    if (!providerQuestionId || !answer) {
+      throw new Error(`Grouped answer does not name question ${index + 1}`)
+    }
+    const selected = answer.optionIds.map((selectedId) =>
+      questionAnswer(prompt, providerQuestionId, selectedId)
+    )
+    const other = answer.other?.trim()
+    if (question.multiSelect === true) {
+      const values = [...selected, ...(other ? [other] : [])]
+      if (values.length === 0) {
+        throw new Error(`Grouped answer leaves question ${index + 1} empty`)
+      }
+      answers[providerQuestionId] = values
+    } else {
+      const value = other || selected[0]
+      if (!value || selected.length > 1) {
+        throw new Error(`Grouped answer is invalid for question ${index + 1}`)
+      }
+      answers[providerQuestionId] = value
+    }
   }
   return {
     behavior: 'allow',
@@ -226,7 +272,11 @@ export function applyClaudePromptAnswer(
   found: { prompt: ClaudePendingPrompt; questionId?: string },
   optionId: string
 ): Record<string, unknown> | null {
-  return found.prompt.kind === 'approval'
-    ? approvalResponse(found.prompt, optionId)
-    : questionResponse(found.prompt, optionId, found.questionId)
+  if (found.prompt.kind === 'approval') {
+    return approvalResponse(found.prompt, optionId)
+  }
+  return (
+    groupedQuestionResponse(found.prompt, optionId) ??
+    questionResponse(found.prompt, optionId, found.questionId)
+  )
 }

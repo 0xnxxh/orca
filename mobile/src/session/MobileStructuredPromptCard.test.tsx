@@ -12,6 +12,9 @@ vi.mock('./MobileNativeChatPermission', () => ({
 vi.mock('./MobileNativeChatQuestion', () => ({
   MobileNativeChatQuestion: 'MobileNativeChatQuestion'
 }))
+vi.mock('./MobileStructuredQuestionGroupCard', () => ({
+  MobileStructuredQuestionGroupCard: 'MobileStructuredQuestionGroupCard'
+}))
 
 const resolution = {
   state: 'pending' as const,

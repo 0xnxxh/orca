@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { agentJournalItemKey } from '../../../shared/agent-session-journal-item-key'
+import { encodeAgentSessionQuestionAnswers } from '../../../shared/agent-session-question-answer'
 import type { AgentSessionOwnerProbe } from '../../../shared/agent-session-lease-adjudication'
 import { computeAgentSessionPayloadFingerprint } from '../../../shared/agent-session-mutation-envelope'
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
@@ -29,7 +30,8 @@ import {
   hostTestAttachParams,
   hostTestMessage,
   hostTestOperationId,
-  resetHostTestOperationIds
+  resetHostTestOperationIds,
+  seedHostTestQuestionGroup
 } from './structured-agent-session-host-test-data'
 
 const CALLER = { callerKey: 'client-1' }
@@ -511,6 +513,28 @@ describe('cancel', () => {
 })
 
 describe('respondToPrompt', () => {
+  it('round trips one grouped question answer through the durable compare-and-set', async () => {
+    const prompt = await seedHostTestQuestionGroup(root)
+    await attach()
+    const optionId = encodeAgentSessionQuestionAnswers([
+      { questionId: 'q1', optionIds: ['q1:choice-1'], other: 'Desktop' },
+      { questionId: 'q2', optionIds: ['q2:choice-1'] }
+    ])
+    const fields = { itemId: prompt.itemId, expectedRevision: prompt.revision, optionId }
+
+    const result = await host.respondToPrompt(CALLER, {
+      envelope: envelope('agentSession.respondTo:question', fields),
+      kind: 'question',
+      ...fields
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { resolution: { state: 'resolved', selectedOptionId: optionId } }
+    })
+    expect(answerPrompt).toHaveBeenCalledWith(expect.objectContaining({ optionId }))
+  })
+
   it('commits the answer before the provider callback', async () => {
     const prompt = await seedApproval()
     await attach()

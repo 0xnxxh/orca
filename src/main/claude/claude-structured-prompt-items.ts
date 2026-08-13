@@ -2,6 +2,7 @@ import type {
   AgentJournalApprovalItem,
   AgentJournalItemIdentity,
   AgentJournalPromptOption,
+  AgentJournalQuestion,
   AgentJournalQuestionItem
 } from '../../shared/agent-session-journal-types'
 import {
@@ -57,7 +58,6 @@ export function claudeApprovalItem(prompt: ClaudePendingPrompt): AgentJournalApp
 }
 
 export type ClaudeQuestionItem = {
-  questionId: string
   identity: AgentJournalItemIdentity
   body: AgentJournalQuestionItem
 }
@@ -72,8 +72,15 @@ function questionOptions(
   return question.options.flatMap((value, index) => {
     const option = claudeRecord(value)
     const label = claudeText(option?.label)
+    const description = claudeText(option?.description)
     return label
-      ? [{ id: encodeClaudeQuestionOptionId(questionAddress, `choice-${index + 1}`), label }]
+      ? [
+          {
+            id: encodeClaudeQuestionOptionId(questionAddress, `choice-${index + 1}`),
+            label,
+            ...(description ? { description } : {})
+          }
+        ]
       : []
   })
 }
@@ -82,33 +89,46 @@ export function claudeQuestionItems(input: {
   sessionId: string
   prompt: ClaudePendingPrompt
 }): ClaudeQuestionItem[] {
-  const questions = Array.isArray(input.prompt.input.questions) ? input.prompt.input.questions : []
-  return questions.flatMap((value, index) => {
+  const values = Array.isArray(input.prompt.input.questions) ? input.prompt.input.questions : []
+  const questions = values.flatMap((value, index): AgentJournalQuestion[] => {
     const question = claudeRecord(value)
-    const questionId = input.prompt.questionIds[index]
     const questionAddress = `q${index + 1}`
     const text = claudeText(question?.question) ?? claudeText(question?.header)
-    const multiSelect = question?.multiSelect === true
-    return question && questionId && text
+    const header = claudeText(question?.header)
+    return question && input.prompt.questionIds[index] && text
       ? [
           {
-            questionId,
-            identity: claudePromptIdentity({
-              sessionId: input.sessionId,
-              promptKey: input.prompt.promptKey,
-              questionId: questionAddress
-            }),
-            body: {
-              kind: 'question',
-              question: multiSelect
-                ? `${text}\n\nEnter one or more choices separated by commas.`
-                : text,
-              options: multiSelect ? [] : questionOptions(question, questionAddress),
-              freeTextQuestionId: questionAddress,
-              resolution: { ...PENDING }
-            }
+            id: questionAddress,
+            question: text,
+            ...(header ? { header } : {}),
+            options: questionOptions(question, questionAddress),
+            multiSelect: question.multiSelect === true,
+            freeTextQuestionId: questionAddress
           }
         ]
       : []
   })
+  if (questions.length === 0) {
+    return []
+  }
+  const legacyCompatible = questions.length === 1 && questions[0]?.multiSelect === false
+  const first = questions[0]!
+  return [
+    {
+      identity: claudePromptIdentity({
+        sessionId: input.sessionId,
+        promptKey: input.prompt.promptKey
+      }),
+      body: {
+        kind: 'question',
+        question: legacyCompatible
+          ? first.question
+          : `${questions.length} grouped question${questions.length === 1 ? '' : 's'} from Claude`,
+        options: legacyCompatible ? first.options : [],
+        ...(legacyCompatible ? { freeTextQuestionId: first.freeTextQuestionId } : {}),
+        questions,
+        resolution: { ...PENDING }
+      }
+    }
+  ]
 }

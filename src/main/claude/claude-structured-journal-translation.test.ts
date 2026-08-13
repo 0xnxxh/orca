@@ -182,7 +182,7 @@ describe('Claude structured journal translation', () => {
     expect(state.items).toEqual([])
   })
 
-  it('creates addressable approval and multi-question cards and cancels them durably', () => {
+  it('preserves a question group as one addressable prompt and cancels it durably', () => {
     const state = sinkState()
     const bindings: unknown[][] = []
     const translator = createClaudeJournalTranslator({
@@ -224,11 +224,17 @@ describe('Claude structured journal translation', () => {
       questionIds: ['Library?', 'Ship?']
     })
     translator.handle({ type: 'prompt', sessionId: 'orca-session', prompt: questions })
-    expect(state.items.filter((item) => item.body.kind === 'question')).toHaveLength(2)
+    expect(state.items.filter((item) => item.body.kind === 'question')).toHaveLength(1)
+    expect(state.items.at(-1)?.body).toMatchObject({
+      kind: 'question',
+      questions: [
+        { id: 'q1', question: 'Library?', multiSelect: false },
+        { id: 'q2', question: 'Ship?', multiSelect: false }
+      ]
+    })
     expect(bindings.at(-1)).toEqual([
-      'orca:claude-prompt%3Aorca-session%3Aquestions-1%3Aq2',
-      'questions-1',
-      'Ship?'
+      'orca:claude-prompt%3Aorca-session%3Aquestions-1',
+      'questions-1'
     ])
 
     const multiSelect = prompt({
@@ -251,9 +257,17 @@ describe('Claude structured journal translation', () => {
     translator.handle({ type: 'prompt', sessionId: 'orca-session', prompt: multiSelect })
     expect(state.items.at(-1)?.body).toMatchObject({
       kind: 'question',
-      question: 'Libraries?\n\nEnter one or more choices separated by commas.',
+      question: '1 grouped question from Claude',
       options: [],
-      freeTextQuestionId: 'q1'
+      questions: [
+        {
+          id: 'q1',
+          question: 'Libraries?',
+          multiSelect: true,
+          options: [{ label: 'Luxon' }, { label: 'Temporal' }],
+          freeTextQuestionId: 'q1'
+        }
+      ]
     })
 
     translator.handle({
@@ -261,7 +275,7 @@ describe('Claude structured journal translation', () => {
       sessionId: 'orca-session',
       promptKey: 'questions-1'
     })
-    expect(state.tombstones).toHaveLength(2)
+    expect(state.tombstones).toHaveLength(1)
   })
 })
 

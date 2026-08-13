@@ -220,11 +220,7 @@ export function createClaudeJournalTranslator(
       })) {
         identities.push(question.identity)
         deps.sink.appendItem(question.identity, question.body)
-        deps.bindPromptItemId?.(
-          agentJournalItemKey(question.identity),
-          event.prompt.promptKey,
-          question.questionId
-        )
+        deps.bindPromptItemId?.(agentJournalItemKey(question.identity), event.prompt.promptKey)
       }
     } else {
       const identity = claudePromptIdentity({
