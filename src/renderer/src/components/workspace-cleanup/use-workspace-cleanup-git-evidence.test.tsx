@@ -38,7 +38,7 @@ describe('useWorkspaceCleanupGitEvidence', () => {
     })
   })
 
-  it('counts queued rows and isolates a restarted pass from stale settlements', async () => {
+  it('bounds restarted passes and isolates them from stale settlements', async () => {
     const candidates = ['a', 'b', 'c', 'd', 'e', 'f'].map(deferredCandidate)
     const view = renderHook(
       ({ enabled }: { enabled: boolean }) =>
@@ -53,7 +53,8 @@ describe('useWorkspaceCleanupGitEvidence', () => {
     view.rerender({ enabled: false })
     await waitFor(() => expect(view.result.current.pendingWorktreeIds.size).toBe(0))
     view.rerender({ enabled: true })
-    await waitFor(() => expect(holders.scan).toHaveBeenCalledTimes(8))
+    await waitFor(() => expect(view.result.current.pendingWorktreeIds.size).toBe(6))
+    expect(holders.scan).toHaveBeenCalledTimes(4)
     expect(view.result.current.pendingWorktreeIds.size).toBe(6)
 
     await act(async () => {
@@ -63,6 +64,7 @@ describe('useWorkspaceCleanupGitEvidence', () => {
         errors: []
       })
     })
+    await waitFor(() => expect(holders.scan).toHaveBeenCalledTimes(5))
     expect(view.result.current.pendingWorktreeIds.size).toBe(6)
     expect(view.result.current.evidenceByWorktreeId.size).toBe(0)
 
@@ -87,7 +89,7 @@ describe('useWorkspaceCleanupGitEvidence', () => {
 
     await waitFor(() => expect(holders.scan).toHaveBeenCalledTimes(1))
     view.rerender({ scannedAt: 2 })
-    await waitFor(() => expect(holders.scan).toHaveBeenCalledTimes(2))
+    expect(holders.scan).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       pending[0]?.resolve({
@@ -96,6 +98,7 @@ describe('useWorkspaceCleanupGitEvidence', () => {
         errors: []
       })
     })
+    await waitFor(() => expect(holders.scan).toHaveBeenCalledTimes(2))
     expect(view.result.current.evidenceByWorktreeId.size).toBe(0)
     expect(view.result.current.pendingWorktreeIds).toEqual(new Set(['a']))
 

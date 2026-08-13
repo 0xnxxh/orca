@@ -44,6 +44,8 @@ export function useWorkspaceCleanupGitEvidence({
   const queueRef = useRef<string[]>([])
   const queuedRef = useRef(new Set<string>())
   const inFlightRef = useRef(new Set<string>())
+  // Why: restarted filters must share one physical RPC/subprocess cap.
+  const activeRequestWorktreeIdsRef = useRef(new Set<string>())
   const totalRef = useRef(0)
   const enabledRef = useRef(enabled)
   const scannedAtRef = useRef(scannedAt)
@@ -66,15 +68,19 @@ export function useWorkspaceCleanupGitEvidence({
   const pump = useCallback(() => {
     const generation = generationRef.current
     while (
-      inFlightRef.current.size < WORKSPACE_CLEANUP_GIT_EVIDENCE_CONCURRENCY &&
+      activeRequestWorktreeIdsRef.current.size < WORKSPACE_CLEANUP_GIT_EVIDENCE_CONCURRENCY &&
       queueRef.current.length > 0
     ) {
-      const worktreeId = queueRef.current.shift()
-      if (worktreeId === undefined) {
+      const queueIndex = queueRef.current.findIndex(
+        (worktreeId) => !activeRequestWorktreeIdsRef.current.has(worktreeId)
+      )
+      if (queueIndex < 0) {
         break
       }
+      const [worktreeId] = queueRef.current.splice(queueIndex, 1)
       queuedRef.current.delete(worktreeId)
       inFlightRef.current.add(worktreeId)
+      activeRequestWorktreeIdsRef.current.add(worktreeId)
       attemptedRef.current.add(worktreeId)
       void scanWorkspaceCleanup({ worktreeId })
         .then((result) => {
@@ -94,11 +100,10 @@ export function useWorkspaceCleanupGitEvidence({
           // attemptedRef keeps it from retrying in a loop.
         })
         .finally(() => {
-          if (generation !== generationRef.current) {
-            return
+          activeRequestWorktreeIdsRef.current.delete(worktreeId)
+          if (generation === generationRef.current) {
+            inFlightRef.current.delete(worktreeId)
           }
-          inFlightRef.current.delete(worktreeId)
-          publish()
           pump()
         })
     }
