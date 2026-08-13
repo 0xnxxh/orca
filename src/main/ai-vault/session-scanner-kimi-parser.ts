@@ -1,5 +1,5 @@
-import { createReadStream } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { openTranscriptReadStream, wslGatedReadFile } from '../native-chat/wsl-transcript-fs-access'
+import { WslTranscriptFsError } from '../native-chat/wsl-transcript-fs-gate'
 import { createInterface } from 'node:readline'
 import type { AiVaultSession } from '../../shared/ai-vault-types'
 import {
@@ -36,8 +36,16 @@ export async function parseKimiSessionFile(
 ): Promise<AiVaultSession | null> {
   let stateRecord: Record<string, unknown> | null
   try {
-    stateRecord = asRecord(JSON.parse(await readFile(file.path, 'utf-8')) as unknown)
-  } catch {
+    stateRecord = asRecord(
+      JSON.parse(await wslGatedReadFile(file.path, 'utf-8', 'scan')) as unknown
+    )
+  } catch (error) {
+    // Why: a missing/half-written state file is genuinely "no session", but a
+    // gate refusal is not — returning null would let the parse cache store that
+    // degraded answer under the file's unchanged mtime and never retry.
+    if (error instanceof WslTranscriptFsError) {
+      throw error
+    }
     return null
   }
   if (!stateRecord) {
@@ -85,7 +93,7 @@ async function consumeKimiWireTranscript(
 
   try {
     const lines = createInterface({
-      input: createReadStream(wirePath, { encoding: 'utf-8' }),
+      input: openTranscriptReadStream(wirePath, { encoding: 'utf-8' }, 'scan'),
       crlfDelay: Infinity
     })
     for await (const line of lines) {
@@ -111,9 +119,13 @@ async function consumeKimiWireTranscript(
           break
       }
     }
-  } catch {
+  } catch (error) {
     // No transcript yet (session created but never ran a turn) — metadata-only
-    // sessions still belong in the panel.
+    // sessions still belong in the panel. A gate refusal instead means the wire
+    // bytes exist but are unreachable; a partial session must not be cached.
+    if (error instanceof WslTranscriptFsError) {
+      throw error
+    }
   }
   flushAssistant()
 }

@@ -259,6 +259,10 @@ import { normalizeBrowserPageZoomLevel } from '../shared/browser-page-zoom'
 import { persistedUIValuesEqual } from '../shared/persisted-ui-equality'
 import { ActiveViewPreference } from './active-view-preference'
 import {
+  collectFolderWorkspaceDiffComments,
+  normalizeFolderWorkspaceDiffComments
+} from './folder-workspace-diff-comments'
+import {
   normalizeFolderWorkspaceName,
   normalizeFolderWorkspaces
 } from '../shared/folder-workspaces'
@@ -653,6 +657,11 @@ type LegacyTerminalScrollbackSettings = {
   terminalScrollbackBytes?: unknown
 }
 
+type RetiredGlobalSettings = {
+  terminalScrollbackBytes?: unknown
+  enableGitHubAttribution?: unknown
+}
+
 const LEGACY_TERMINAL_TUI_SCROLL_SENSITIVITY_DEFAULT = 3
 
 function readLegacyTerminalScrollbackSettings(settings: unknown): LegacyTerminalScrollbackSettings {
@@ -661,12 +670,16 @@ function readLegacyTerminalScrollbackSettings(settings: unknown): LegacyTerminal
     : {}
 }
 
-function stripLegacyTerminalScrollbackBytes(
+function stripRetiredGlobalSettings(
   settings: Partial<GlobalSettings> | undefined
 ): Partial<GlobalSettings> {
-  const { terminalScrollbackBytes: _legacyScrollbackBytes, ...rest } = (settings ??
-    {}) as Partial<GlobalSettings> & { terminalScrollbackBytes?: unknown }
+  const {
+    terminalScrollbackBytes: _legacyScrollbackBytes,
+    enableGitHubAttribution: _legacyGitHubAttribution,
+    ...rest
+  } = (settings ?? {}) as Partial<GlobalSettings> & RetiredGlobalSettings
   void _legacyScrollbackBytes
+  void _legacyGitHubAttribution
   return rest
 }
 
@@ -2872,6 +2885,7 @@ export class Store {
     // profile avoids serializing the multi-MB recovery store on navigation.
     this.activeViewPreference = new ActiveViewPreference(this.dataFile, this.state.ui?.activeView)
     const adaptedProjectGroups = this.adaptFlatFolderScanProjectGroups()
+    this.hydrateFolderWorkspaceDiffComments()
     for (const entry of normalized.migrationUnsupportedEntries) {
       setMigrationUnsupportedPty(entry)
     }
@@ -2890,6 +2904,33 @@ export class Store {
       // Why: rewrite legacy pane:1 leaves so older renderer writes can't revive them; other migrations also set loadNeedsSave.
       this.scheduleSave()
     }
+  }
+
+  // Why: notes live top-level on disk so an older build's field-by-field
+  // normalizeFolderWorkspaces can't drop them; re-attach them to the in-memory records here.
+  private hydrateFolderWorkspaceDiffComments(): void {
+    const stored = this.state.folderWorkspaceDiffComments
+    let relocatedInline = false
+    for (const workspace of this.state.folderWorkspaces ?? []) {
+      if (Array.isArray(workspace.diffComments) && workspace.diffComments.length > 0) {
+        // Inline wins: an intervening rollback to a #14112 build writes notes inline and leaves the
+        // older map untouched, so inline is the last notes-aware write. Also makes the relocation
+        // durable even if the user never edits anything this session.
+        relocatedInline = true
+        continue
+      }
+      const comments = stored?.[workspace.id]
+      // Not `??`: a degenerate `{ id: [] }` entry must not delete an intact inline value.
+      if (Array.isArray(comments) && comments.length > 0) {
+        workspace.diffComments = comments
+      }
+    }
+    if (relocatedInline) {
+      this.loadNeedsSave = true
+    }
+    // Write-only projection: buildStateToSave() is the only producer, so leaving the loaded map in
+    // state would make it a stale second source of truth that getDurableState() spreads back out.
+    delete this.state.folderWorkspaceDiffComments
   }
 
   private adaptFlatFolderScanProjectGroups(): boolean {
@@ -3172,6 +3213,13 @@ export class Store {
         if (migratedTerminalScrollback.needsSave) {
           this.loadNeedsSave = true
         }
+        if (
+          parsed.settings &&
+          typeof parsed.settings === 'object' &&
+          Object.hasOwn(parsed.settings, 'enableGitHubAttribution')
+        ) {
+          this.loadNeedsSave = true
+        }
         const migratedTerminalTuiScrollSensitivity = migrateTerminalTuiScrollSensitivityDefault(
           parsed.settings
         )
@@ -3434,6 +3482,9 @@ export class Store {
             parsed.folderWorkspaces,
             normalizedProjectGroups
           ),
+          folderWorkspaceDiffComments: normalizeFolderWorkspaceDiffComments(
+            parsed.folderWorkspaceDiffComments
+          ),
           worktreeLineageById: parsed.worktreeLineageById ?? {},
           mobileClientTabSelectionsByDeviceId: normalizePersistedMobileClientTabSelections(
             parsed.mobileClientTabSelectionsByDeviceId
@@ -3444,7 +3495,7 @@ export class Store {
           settings: {
             ...defaults.settings,
             // Why (#7977): keep persisted experimentalNewWorktreeCardStyle:true — v1.4.130's onboarding auto-wrote it as a plain boolean, so it's indistinguishable from a real opt-in; only the default changed.
-            ...stripLegacyTerminalScrollbackBytes(parsed.settings),
+            ...stripRetiredGlobalSettings(parsed.settings),
             prBotAuthorOverrides: normalizePRBotAuthorOverrides(
               parsed.settings?.prBotAuthorOverrides
             ),
@@ -4028,6 +4079,13 @@ export class Store {
     // Why: clone before encrypting secrets so in-memory this.state stays plaintext.
     const stateToSave = {
       ...this.getDurableState(),
+      // Why both keys unconditionally: the explicit keys always win over the spread, and
+      // JSON.stringify drops the `undefined` value so a note-free profile gains no key on disk.
+      // The strip builds a new array here only; this.state records keep their notes in memory.
+      folderWorkspaces: (this.state.folderWorkspaces ?? []).map(
+        ({ diffComments: _relocated, ...rest }) => rest
+      ),
+      folderWorkspaceDiffComments: collectFolderWorkspaceDiffComments(this.state.folderWorkspaces),
       sshPtyConsumerRecoveries: (this.state.sshPtyConsumerRecoveries ?? []).map((record) => ({
         ...record,
         ownerLease: encryptToSentinel(
@@ -4036,7 +4094,7 @@ export class Store {
         )
       })),
       settings: {
-        ...this.state.settings,
+        ...stripRetiredGlobalSettings(this.state.settings),
         opencodeSessionCookie: encryptToSentinel(
           PROTECTED_SECRET_SLOT.opencodeSessionCookie,
           this.state.settings.opencodeSessionCookie
@@ -5842,7 +5900,7 @@ export class Store {
     updates: Partial<GlobalSettings>,
     options: { notifyListeners?: boolean; originWebContentsId?: number } = {}
   ): GlobalSettings {
-    const sanitizedUpdates = stripLegacyTerminalScrollbackBytes(updates)
+    const sanitizedUpdates = stripRetiredGlobalSettings(updates)
     if ('opencodeSessionCookie' in updates && !updates.opencodeSessionCookie) {
       this.protectedSecrets.removeRetainedBlob(PROTECTED_SECRET_SLOT.opencodeSessionCookie)
     }

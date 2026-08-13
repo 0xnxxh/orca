@@ -560,6 +560,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     env,
     envToDelete,
     command,
+    commandDelivery,
     launchConfig,
     resumeProviderSession,
     launchToken,
@@ -819,6 +820,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         const saved = options.suppressSavedStartup
           ? ({} as Partial<{
               command: typeof command
+              commandDelivery: typeof commandDelivery
               launchConfig: typeof launchConfig
               resumeProviderSession: typeof resumeProviderSession
               launchToken: typeof launchToken
@@ -827,6 +829,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
             }>)
           : {
               command,
+              commandDelivery,
               launchConfig,
               resumeProviderSession,
               launchToken,
@@ -851,6 +854,9 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
             ? { envToDelete: options.envToDelete ?? envToDelete }
             : {}),
           command: options.command ?? saved.command,
+          ...((options.commandDelivery ?? saved.commandDelivery)
+            ? { commandDelivery: options.commandDelivery ?? saved.commandDelivery }
+            : {}),
           ...((options.launchConfig ?? saved.launchConfig)
             ? { launchConfig: options.launchConfig ?? saved.launchConfig }
             : {}),

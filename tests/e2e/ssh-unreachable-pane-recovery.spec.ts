@@ -156,10 +156,6 @@ test.describe('an unreachable SSH pane recovers rather than being replaced', () 
 
       // The recorded shell cannot be reached, so this action must CREATE one rather than attach
       // the unreachable one first — which is what left the button doing nothing at all.
-      // The recorded shell cannot be reached, so this action must CREATE one rather than attach
-      // the unreachable one first — which is what left the button doing nothing at all.
-      // The recorded shell cannot be reached, so this action must CREATE one rather than attach
-      // the unreachable one first — which is what left the button doing nothing at all.
       await expect(banner, 'the card stayed up after the pane was given a new shell').toBeHidden({
         timeout: 180_000
       })
