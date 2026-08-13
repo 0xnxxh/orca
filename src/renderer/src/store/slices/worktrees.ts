@@ -4198,10 +4198,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
                   },
                   { timeoutMs: 10 * 60_000 }
                 )
+          let createdWorktree = result.worktree
           // Why: worktrees.onChanged can add this worktree before this callback runs; appending blindly would duplicate it (React key clash).
           set((s) => {
             const hostId = repoHostId(s, repoId)
-            const createdWorktree = withRepoHostOwnership(
+            createdWorktree = withRepoHostOwnership(
               result.worktree,
               hostId,
               getProjectHostSetupForRepoHost(s, repoId, hostId)
@@ -4250,7 +4251,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             openSettingsPage: get().openSettingsPage,
             openSettingsTarget: get().openSettingsTarget
           })
-          return result
+          return { ...result, worktree: createdWorktree }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           const shouldRetry = isRetryableWorktreeCreateConflict(message)
