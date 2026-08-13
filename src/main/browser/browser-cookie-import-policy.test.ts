@@ -303,6 +303,28 @@ describe('removeTransplantableCookies', () => {
     ])
   })
 
+  it('re-reads the jar after a rejected bulk clear', async () => {
+    const beforeAttempt = [cookie('.removed.test', 'gone-before-fallback')]
+    const afterAttempt = [
+      cookie('.google.com', 'SID'),
+      cookie('.survivor.test', 'survived'),
+      cookie('.arrived.test', 'arrived-during-clear')
+    ]
+    const get = vi.fn().mockResolvedValueOnce(beforeAttempt).mockResolvedValueOnce(afterAttempt)
+    const { session, remove } = clearSession(beforeAttempt, {
+      get,
+      clearData: rejectingBulkClear()
+    })
+
+    await removeTransplantableCookies(session)
+
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(remove.mock.calls).toEqual([
+      ['https://survivor.test/', 'survived'],
+      ['https://arrived.test/', 'arrived-during-clear']
+    ])
+  })
+
   // Why: the fallback carries the same exclusion as the bulk call, so a rejected clearData must
   // not become the path that finally deletes a live Google session.
   it('still preserves Google cookies on the per-cookie fallback', async () => {

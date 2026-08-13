@@ -59,6 +59,8 @@ export function normalizeCookieImportDomain(domain: string): string | null {
 // it is copied. Signing in directly inside Orca is the only path that produces a working
 // session, so an import must never write these cookies and never remove them either — the
 // live session is always more valuable than anything an import could put in its place.
+// Entries must be canonical lowercase ASCII (punycode) registrable domains, never subdomains or
+// public suffixes, because clearData derives one excluded origin and matches at that boundary.
 // Adding a site is one entry here.
 // youtube.com is deliberately NOT listed: YouTube accepts a transplanted session and re-issues
 // its cookies via the accounts.youtube.com relay, so excluding it would silently drop imports
@@ -218,8 +220,8 @@ export async function removeTransplantableCookies(
   targetSession: CookieClearSession
 ): Promise<void> {
   const store = targetSession.cookies
-  const existingCookies = await store.get({})
-  if (existingCookies.length === 0) {
+  const initialCookies = await store.get({})
+  if (initialCookies.length === 0) {
     return
   }
 
@@ -234,10 +236,11 @@ export async function removeTransplantableCookies(
     })
     return
   } catch {
-    // Why: a rejected bulk clear can still have emptied part of the jar, so fall through to the
-    // per-cookie path and let it re-remove whatever survived.
+    // Why: a rejected bulk clear can still have changed the jar, so the fallback must act on the
+    // survivors rather than stale removal coordinates from before the attempt.
   }
 
+  const existingCookies = await store.get({})
   const removableGroups = new Map<string, { cookie: Cookie; url: string }[]>()
   for (const cookie of existingCookies) {
     if (isNonTransplantableCookieDomain(cookie.domain ?? '')) {

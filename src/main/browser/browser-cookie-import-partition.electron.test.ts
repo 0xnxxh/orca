@@ -20,7 +20,6 @@ type FixtureResult = {
   before: Record<string, unknown>
   after: Record<string, unknown>
   electronCookieKeys: string[]
-  unfilteredNames: string[]
   importResult: Record<string, unknown>
   remainingNames: string[]
 }
@@ -75,13 +74,26 @@ async function run() {
     value: 'remove-me',
     secure: true
   })
+  // Why: the excluded origin is HTTPS, so prove registrable-domain matching also keeps HTTP.
+  await targetSession.cookies.set({
+    url: 'http://mail.google.com/',
+    name: 'http-google',
+    value: 'live-http-value',
+    secure: false
+  })
+  await targetSession.cookies.set({
+    url: 'https://google.com/',
+    domain: '.google.com',
+    name: 'domain-google',
+    value: 'live-domain-value',
+    secure: true
+  })
   mark('ordinary cookie set')
 
   const beforeCookies = (await debug.sendCommand('Network.getAllCookies')).cookies
   const before = beforeCookies.find((cookie) => cookie.name === 'partitioned-google')
   const electronCookie = (await targetSession.cookies.get({ name: 'partitioned-google' }))[0]
   if (!before || !electronCookie) throw new Error('Partitioned fixture cookie was not created')
-  const unfilteredNames = (await targetSession.cookies.get({})).map((cookie) => cookie.name).sort()
   mark('cookies read')
 
   const importResult = await importCookiesFromBrowser({
@@ -102,7 +114,6 @@ async function run() {
     before,
     after,
     electronCookieKeys: Object.keys(electronCookie).sort(),
-    unfilteredNames,
     importResult,
     remainingNames: afterCookies.map((cookie) => cookie.name).sort()
   }))
@@ -187,14 +198,16 @@ describe('native Chromium excluded partition cookie under Electron', () => {
       hasCrossSiteAncestor: true
     })
     expect(result.electronCookieKeys).not.toContain('partitionKey')
-    // Why: the bulk-clear fast path is gated on an unfiltered get() seeing every excluded cookie,
-    // so a partitioned one going missing here would silently arm a jar-wide wipe.
-    expect(result.unfilteredNames).toEqual(['partitioned-google', 'stale'])
     expect(result.after).toEqual(result.before)
     expect(result.importResult).toMatchObject({
       ok: true,
       summary: { importedCookies: 1, domains: ['example.com'] }
     })
-    expect(result.remainingNames).toEqual(['imported', 'partitioned-google'])
+    expect(result.remainingNames).toEqual([
+      'domain-google',
+      'http-google',
+      'imported',
+      'partitioned-google'
+    ])
   }, 90_000)
 })

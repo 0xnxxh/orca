@@ -78,8 +78,8 @@ async function run() {
 
   await targetSession.cookies.set({ url: 'https://plain.example/', name: 'plain', value: 'stale', secure: true })
   await targetSession.cookies.set({ url: 'https://victim.example/', name: 'victim', value: 'stale', secure: true })
-  // Why (STA-4065): an excluded cookie is what forces the per-cookie path; without one the bulk
-  // fast path clears the jar in a single call and never exercises a partial-failure clear.
+  // Why: keep a live excluded cookie in the partial-failure fixture so the fallback proves it
+  // preserves that cookie while deleting the removable ones it can reach.
   await targetSession.cookies.set({ url: 'https://accounts.google.com/', name: 'SID', value: 'live', secure: true })
   mark('removable cookies set')
 
