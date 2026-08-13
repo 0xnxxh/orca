@@ -38,6 +38,18 @@ const orcaRepo: Repo = {
   addedAt: 0
 }
 
+function gitLabRepo(canonicalKey: string): Repo {
+  return {
+    ...orcaRepo,
+    displayName: 'orca',
+    gitRemoteIdentity: {
+      canonicalKey,
+      remoteName: 'origin',
+      remoteUrl: `git@${canonicalKey.replace('/', ':')}.git`
+    }
+  }
+}
+
 describe('parseCmdJTaskSourceUrl', () => {
   it('parses GitHub issue and pull URLs', () => {
     expect(parseCmdJTaskSourceUrl('https://github.com/stablyai/orca/issues/14198')).toEqual({
@@ -151,6 +163,171 @@ describe('matchWorktreePaletteTaskUrl', () => {
         repo: { ...orcaRepo, displayName: 'Repo 1' }
       })
     ).toMatchObject({ matchedField: 'pr', supportingText: { text: 'PR #12789' } })
+  })
+
+  it('rejects a GitLab MR URL from a different project than the stored URL', () => {
+    const intent = parseCmdJTaskSourceUrl('https://gitlab.com/acme/orca/-/merge_requests/17')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({
+          linkedGitLabMR: 17,
+          linkedWorkItem: {
+            provider: 'gitlab',
+            type: 'mr',
+            number: 17,
+            title: 'Other project MR',
+            url: 'https://gitlab.example.com/other/project/-/merge_requests/17'
+          }
+        }),
+        intent: intent!,
+        repo: gitLabRepo('gitlab.example.com/other/project')
+      })
+    ).toBeNull()
+  })
+
+  it('matches a GitLab MR URL for the same project', () => {
+    const intent = parseCmdJTaskSourceUrl('https://gitlab.com/acme/orca/-/merge_requests/17')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({
+          linkedGitLabMR: 17,
+          linkedWorkItem: {
+            provider: 'gitlab',
+            type: 'mr',
+            number: 17,
+            title: 'Same project MR',
+            url: 'https://gitlab.com/acme/orca/-/merge_requests/17'
+          }
+        }),
+        intent: intent!,
+        repo: gitLabRepo('gitlab.example.com/other/project')
+      })
+    ).toMatchObject({
+      matchedField: 'pr',
+      supportingText: { labelKind: 'mr', text: 'MR #17' }
+    })
+  })
+
+  it('does not match a GitLab issue URL against a stored MR of the same number', () => {
+    const intent = parseCmdJTaskSourceUrl('https://gitlab.com/acme/orca/-/merge_requests/17')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({
+          linkedGitLabIssue: 17,
+          linkedWorkItem: {
+            provider: 'gitlab',
+            type: 'issue',
+            number: 17,
+            title: 'Issue',
+            url: 'https://gitlab.com/acme/orca/-/issues/17'
+          }
+        }),
+        intent: intent!
+      })
+    ).toBeNull()
+  })
+
+  it('does not match a GitLab URL on a different host for the same project path', () => {
+    const intent = parseCmdJTaskSourceUrl('https://gitlab.com/acme/orca/-/merge_requests/17')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({
+          linkedGitLabMR: 17,
+          linkedWorkItem: {
+            provider: 'gitlab',
+            type: 'mr',
+            number: 17,
+            title: 'Self-hosted MR',
+            url: 'https://gitlab.example.com/acme/orca/-/merge_requests/17'
+          }
+        }),
+        intent: intent!,
+        repo: gitLabRepo('gitlab.example.com/acme/orca')
+      })
+    ).toBeNull()
+  })
+
+  it('gates a stored GitLab number with no work item on the repo remote identity', () => {
+    const intent = parseCmdJTaskSourceUrl('https://gitlab.com/acme/orca/-/merge_requests/17')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedGitLabMR: 17 }),
+        intent: intent!,
+        repo: gitLabRepo('gitlab.example.com/other/project')
+      })
+    ).toBeNull()
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedGitLabMR: 17 }),
+        intent: intent!,
+        repo: gitLabRepo('gitlab.com/acme/orca')
+      })
+    ).toMatchObject({ matchedField: 'pr' })
+  })
+
+  it('stays permissive for GitLab numbers when the repo remote identity is unknown', () => {
+    const intent = parseCmdJTaskSourceUrl('https://gitlab.com/acme/orca/-/merge_requests/17')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedGitLabMR: 17 }),
+        intent: intent!,
+        repo: orcaRepo
+      })
+    ).toMatchObject({ matchedField: 'pr' })
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedGitLabMR: 17 }),
+        intent: intent!
+      })
+    ).toMatchObject({ matchedField: 'pr' })
+  })
+
+  it('matches both GitLab issue URL forms and rejects other projects', () => {
+    for (const url of [
+      'https://gitlab.com/acme/orca/-/issues/17',
+      'https://gitlab.com/acme/orca/-/work_items/17'
+    ]) {
+      const intent = parseCmdJTaskSourceUrl(url)
+      expect(intent).toMatchObject({ provider: 'gitlab', link: { type: 'issue', number: 17 } })
+      expect(
+        matchWorktreePaletteTaskUrl({
+          worktree: makeWorktree({ linkedGitLabIssue: 17 }),
+          intent: intent!,
+          repo: gitLabRepo('gitlab.com/acme/orca')
+        })
+      ).toMatchObject({
+        matchedField: 'issue',
+        supportingText: { labelKind: 'issue', text: 'Issue #17' }
+      })
+      expect(
+        matchWorktreePaletteTaskUrl({
+          worktree: makeWorktree({ linkedGitLabIssue: 17 }),
+          intent: intent!,
+          repo: gitLabRepo('gitlab.example.com/other/project')
+        })
+      ).toBeNull()
+    }
+  })
+
+  it('matches a GitLab MR URL via the linked review URL', () => {
+    const intent = parseCmdJTaskSourceUrl('https://gitlab.com/acme/orca/-/merge_requests/17')
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree(),
+        intent: intent!,
+        repo: gitLabRepo('gitlab.example.com/other/project'),
+        review: {
+          provider: 'gitlab',
+          number: 17,
+          title: 'Fork MR',
+          state: 'open',
+          url: 'https://gitlab.com/acme/orca/-/merge_requests/17',
+          status: 'pending',
+          updatedAt: '2026-01-01T00:00:00Z',
+          mergeable: 'UNKNOWN'
+        }
+      })
+    ).toMatchObject({ matchedField: 'pr' })
   })
 
   it('matches a Linear issue URL and rejects a different organization', () => {
