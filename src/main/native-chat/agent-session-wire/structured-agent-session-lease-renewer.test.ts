@@ -132,4 +132,30 @@ describe('structured agent-session lease renewal', () => {
       error: expect.any(Error)
     })
   })
+
+  it('routes a proven dead TUI owner into handoff recovery', async () => {
+    const store = await liveStore()
+    await store.transitionHandoff('session-renewal', (record) => ({
+      ...record,
+      lease: { ...record.lease, runtimeKind: 'tui' }
+    }))
+    const onDeadTuiOwner = vi.fn(async () => undefined)
+    const onError = vi.fn()
+    const renewer = new StructuredAgentSessionLeaseRenewer({
+      store,
+      probe: async () => ({ outcome: 'pid-absent' }),
+      now: () => NOW + 10_000,
+      onDeadTuiOwner,
+      onError
+    })
+
+    await renewer.renewNow()
+
+    expect(onDeadTuiOwner).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'session-renewal' }),
+      { outcome: 'pid-absent' }
+    )
+    expect(store.getRecord('session-renewal')?.lease.lastRenewedAt).toBe(NOW)
+    expect(onError).not.toHaveBeenCalled()
+  })
 })

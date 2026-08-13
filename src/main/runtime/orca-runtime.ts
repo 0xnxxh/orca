@@ -81,7 +81,10 @@ import {
   type StructuredTuiOwner
 } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
 import type { AgentSessionRecord } from '../../shared/agent-session-record'
-import { agentSessionProviderHandlesEqual } from '../../shared/agent-session-provider-handle'
+import {
+  agentSessionProviderHandlesEqual,
+  type AgentSessionProviderHandleLink
+} from '../../shared/agent-session-provider-handle'
 import {
   agentSessionOwnerBindingsEqual,
   cloneAgentSessionOwnerBinding,
@@ -9194,6 +9197,7 @@ export class OrcaRuntimeService {
               worktree: `id:${record.location.workspaceId}`,
               agent,
               providerSession: { key: 'session_id', id: providerSessionId },
+              ...(record.options ? { launchPreferences: record.options } : {}),
               presentation: 'background'
             },
             {},
@@ -9286,27 +9290,8 @@ export class OrcaRuntimeService {
           claudeProof?.dispose()
         }
       },
-      waitForTuiExit: async (owner, persistHandle) => {
-        if (owner.link.handle.provider === 'claude') {
-          if (!owner.transcriptPath) {
-            throw new Error('The Claude TUI owner did not retain its transcript path.')
-          }
-          const completed = await completeClaudeTuiExit({
-            childPid: owner.process.pid,
-            waitForChildExit: async () => {
-              await this.waitForStructuredTuiOwnerExit(owner)
-              return { pid: owner.process.pid, exitCode: null, signal: null }
-            },
-            sessionId: owner.link.handle.sessionId,
-            transcriptPath: owner.transcriptPath,
-            fence: owner.link.mintedAtFence,
-            persistHandle
-          })
-          return { transcriptPath: completed.transcriptPath }
-        }
-        await this.waitForStructuredTuiOwnerExit(owner)
-        return owner.transcriptPath ? { transcriptPath: owner.transcriptPath } : {}
-      },
+      waitForTuiExit: (owner, persistHandle) =>
+        this.finishStructuredTuiOwnerExit(owner, persistHandle),
       waitForTuiIdleOrExit: async (owner, signal) => {
         return this.waitForStructuredTuiIdleOrExit(owner, signal)
       },
@@ -9473,20 +9458,51 @@ export class OrcaRuntimeService {
       },
       stopRecoveredOwner: (record) => this.stopStructuredSessionProcess(record),
       tuiStatus: (owner) => this.structuredTuiStatus(owner),
-      stopFailedTuiLaunch: async (owner) => {
+      closeTuiOwner: (owner, persistHandle) => this.closeStructuredTuiOwner(owner, persistHandle),
+      stopFailedTuiLaunch: async (owner) => void (await this.closeStructuredTuiOwner(owner))
+    }
+  }
+
+  private async closeStructuredTuiOwner(
+    owner: StructuredTuiOwner,
+    persistHandle?: (link: AgentSessionProviderHandleLink) => Promise<void>
+  ): Promise<{ transcriptPath?: string }> {
+    if (this.ptysById.get(owner.terminal.ptyId)?.connected) {
+      const current = this.refreshStructuredTuiOwnerBinding(owner)
+      try {
+        await this.closeTerminal(current.terminal.handle)
+      } catch (error) {
         if (this.ptysById.get(owner.terminal.ptyId)?.connected) {
-          const current = this.refreshStructuredTuiOwnerBinding(owner)
-          try {
-            await this.closeTerminal(current.terminal.handle)
-          } catch (error) {
-            if (this.ptysById.get(owner.terminal.ptyId)?.connected) {
-              throw error
-            }
-          }
+          throw error
         }
-        await this.waitForStructuredTuiOwnerExit(owner)
       }
     }
+    return this.finishStructuredTuiOwnerExit(owner, persistHandle)
+  }
+
+  private async finishStructuredTuiOwnerExit(
+    owner: StructuredTuiOwner,
+    persistHandle?: (link: AgentSessionProviderHandleLink) => Promise<void>
+  ): Promise<{ transcriptPath?: string }> {
+    if (owner.link.handle.provider === 'claude' && persistHandle) {
+      if (!owner.transcriptPath) {
+        throw new Error('The Claude TUI owner did not retain its transcript path.')
+      }
+      const completed = await completeClaudeTuiExit({
+        childPid: owner.process.pid,
+        waitForChildExit: async () => {
+          await this.waitForStructuredTuiOwnerExit(owner)
+          return { pid: owner.process.pid, exitCode: null, signal: null }
+        },
+        sessionId: owner.link.handle.sessionId,
+        transcriptPath: owner.transcriptPath,
+        fence: owner.link.mintedAtFence,
+        persistHandle
+      })
+      return { transcriptPath: completed.transcriptPath }
+    }
+    await this.waitForStructuredTuiOwnerExit(owner)
+    return owner.transcriptPath ? { transcriptPath: owner.transcriptPath } : {}
   }
 
   private recoverClaudeStructuredTuiProof(input: {
@@ -9655,8 +9671,12 @@ export class OrcaRuntimeService {
     }
     if (pty?.connected) {
       const text = buildTerminalWaitText(pty.tailBuffer, pty.tailPartialLine, pty.preview)
+      const blocked = detectTerminalWaitBlockedReason(text) !== null
+      if (!blocked && isKnownReadyPromptPreview(text)) {
+        return 'idle'
+      }
       return hasStructuredTuiIdleEvidence({
-        blocked: detectTerminalWaitBlockedReason(text) !== null,
+        blocked,
         status: pty.lastAgentStatus,
         statusObservedLive: pty.lastAgentStatusObservedLive
       })
@@ -26117,6 +26137,7 @@ export class OrcaRuntimeService {
           },
           ompResumeFilePath: request.ompResumeFilePath,
           sessionOptions: this.toAgentSessionOptions(request.launchPreferences),
+          sessionOptionsOverrideAgentArgs: Boolean(request.launchPreferences),
           platform,
           shell,
           isRemote

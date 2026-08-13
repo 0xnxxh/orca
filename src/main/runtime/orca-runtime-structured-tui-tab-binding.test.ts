@@ -344,7 +344,9 @@ describe('structured TUI launch tab binding', () => {
         getSettings: () => ({
           disabledTuiAgents: [],
           agentCmdOverrides: {},
-          agentDefaultArgs: {},
+          agentDefaultArgs: {
+            codex: '-m gpt-5.6-sol -c model_reasoning_effort=high'
+          },
           agentDefaultEnv: {}
         })
       } as never,
@@ -354,8 +356,9 @@ describe('structured TUI launch tab binding', () => {
       }
     )
     runtime.setNotifier(notifier(revealTerminalSession) as never)
+    const spawn = vi.fn().mockResolvedValue({ id: 'pty-structured', pid: 4242 })
     runtime.setPtyController({
-      spawn: vi.fn().mockResolvedValue({ id: 'pty-structured', pid: 4242 }),
+      spawn,
       write: () => true,
       kill: () => true,
       getForegroundProcess: async () => null
@@ -374,6 +377,7 @@ describe('structured TUI launch tab binding', () => {
       waitForTerminal(): Promise<unknown>
       waitForStructuredTuiProof(): Promise<{ transcriptPath?: string }>
       waitForStructuredTuiPtyExit(): Promise<void>
+      closeTerminal(handle: string): Promise<unknown>
       handles: Map<
         string,
         {
@@ -411,6 +415,8 @@ describe('structured TUI launch tab binding', () => {
     internal.waitForStructuredTuiProof = waitForStructuredTuiProof
     const waitForStructuredTuiPtyExit = vi.fn(async () => {})
     internal.waitForStructuredTuiPtyExit = waitForStructuredTuiPtyExit
+    const closeTerminal = vi.fn(async () => undefined)
+    internal.closeTerminal = closeTerminal
     readStructuredTuiProcessIdentity.mockResolvedValue({
       hostId: 'local',
       pid: 4243,
@@ -429,6 +435,7 @@ describe('structured TUI launch tab binding', () => {
         sessionId: 'session-1',
         location: { workspaceId: WORKTREE_ID, executionHostId: 'local' },
         accountHome: { variable: 'CODEX_HOME', path: '/tmp/codex-home' },
+        options: { model: 'gpt-5.6-terra', effort: 'medium' },
         providerHandleChain: [
           { handle: { provider: 'codex', threadId: 'thread-1' }, observedAt: 1 }
         ]
@@ -464,6 +471,11 @@ describe('structured TUI launch tab binding', () => {
     expect(waitForStructuredTuiProof.mock.invocationCallOrder[0]).toBeLessThan(
       revealTerminalSession.mock.invocationCallOrder[0]!
     )
+    const launchCommand = spawn.mock.calls[0]?.[0]?.command
+    expect(launchCommand).toContain("'-m' 'gpt-5.6-terra'")
+    expect(launchCommand).toContain("'-c' 'model_reasoning_effort=medium'")
+    expect(launchCommand).not.toContain('gpt-5.6-sol')
+    expect(launchCommand).not.toContain('model_reasoning_effort=high')
 
     Object.assign(internal.handles.get(owner.terminal.handle)!, {
       rendererGraphEpoch: -1,
@@ -491,6 +503,37 @@ describe('structured TUI launch tab binding', () => {
       'idle'
     )
 
+    explicitStatus = null
+    const livePty = (
+      runtime as unknown as {
+        ptysById: Map<
+          string,
+          {
+            tailBuffer: string[]
+            tailPartialLine: string
+            preview: string
+            lastAgentStatus: null
+            lastAgentStatusObservedLive: boolean
+          }
+        >
+      }
+    ).ptysById.get('pty-structured')!
+    Object.assign(livePty, {
+      tailBuffer: [
+        'OpenAI Codex (v0.147.0)',
+        'model: gpt-5.6-terra',
+        'directory: /tmp/structured-handoff'
+      ],
+      tailPartialLine: '',
+      preview: '',
+      lastAgentStatus: null,
+      lastAgentStatusObservedLive: false
+    })
+    expect(transport.tuiStatus(owner)).toBe('idle')
+    await expect(transport.waitForTuiIdleOrExit(owner, new AbortController().signal)).resolves.toBe(
+      'idle'
+    )
+
     const pty = (
       runtime as unknown as {
         ptysById: Map<string, { connected: boolean; launchToken: string | null }>
@@ -513,6 +556,11 @@ describe('structured TUI launch tab binding', () => {
     await transport.waitForTuiExit(rebound, async () => {})
     expect(waitForStructuredTuiPtyExit).toHaveBeenCalledWith('pty-structured')
     expect(waitForStructuredTuiProof).toHaveBeenCalledOnce()
+
+    await expect(transport.closeTuiOwner?.(rebound)).resolves.toEqual({
+      transcriptPath: '/tmp/rollout.jsonl'
+    })
+    expect(closeTerminal).toHaveBeenCalledWith(rebound.terminal.handle)
 
     explicitStatus = null
     pty.connected = false

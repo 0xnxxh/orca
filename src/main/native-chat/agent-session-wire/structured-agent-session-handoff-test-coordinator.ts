@@ -19,6 +19,7 @@ type TestCoordinatorInput = {
   launchTui: StructuredAgentSessionHandoffTransport['launchTui']
   reproveTuiOwner: StructuredAgentSessionHandoffTransport['reproveTuiOwner']
   stopRecoveredOwner: StructuredAgentSessionHandoffTransport['stopRecoveredOwner']
+  closeTuiOwner: NonNullable<StructuredAgentSessionHandoffTransport['closeTuiOwner']>
   waitForTuiExit: StructuredAgentSessionHandoffTransport['waitForTuiExit']
   waitForTuiIdleOrExit: StructuredAgentSessionHandoffTransport['waitForTuiIdleOrExit']
   stopFailedTuiLaunch: NonNullable<StructuredAgentSessionHandoffTransport['stopFailedTuiLaunch']>
@@ -46,6 +47,7 @@ export function createStructuredAgentSessionHandoffTestCoordinator(
       reproveTuiOwner: input.reproveTuiOwner,
       recoverTuiOwner: input.recoverTuiOwner,
       stopRecoveredOwner: input.stopRecoveredOwner,
+      closeTuiOwner: input.closeTuiOwner,
       waitForTuiExit: input.waitForTuiExit,
       waitForTuiIdleOrExit: input.waitForTuiIdleOrExit,
       tuiStatus: input.tuiStatus,

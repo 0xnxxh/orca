@@ -89,6 +89,7 @@ export function enqueueStructuredHandoffAfterTurn(input: {
   const { deps, params, queue, tuiOwner } = input
   const sessionId = params.envelope.sessionId
   let tuiReadiness: 'idle' | 'exited' | null = null
+  let observedTuiQueue = false
   input.setStatus({
     owner: params.direction === 'to-tui' ? 'native' : 'tui',
     direction: params.direction,
@@ -103,10 +104,21 @@ export function enqueueStructuredHandoffAfterTurn(input: {
       if (params.direction === 'to-tui') {
         return !activeStructuredAgentSessionTurnId(deps.session(sessionId).journal.snapshot().items)
       }
+      if (!observedTuiQueue) {
+        observedTuiQueue = true
+        return false
+      }
       tuiReadiness = tuiOwner
         ? ((await deps.transport?.waitForTuiIdleOrExit(tuiOwner, signal)) ?? null)
         : null
-      return tuiReadiness !== null
+      if (tuiReadiness === 'exited') {
+        return true
+      }
+      if (!activeStructuredAgentSessionTurnId(deps.session(sessionId).journal.snapshot().items)) {
+        tuiReadiness = 'idle'
+        return true
+      }
+      return false
     },
     () => {
       const record = input.requireRecord()
@@ -115,7 +127,7 @@ export function enqueueStructuredHandoffAfterTurn(input: {
         input.refuse(record)
         return
       }
-      input.begin({ ...params, mode: 'now' }, tuiReadiness === 'exited')
+      input.begin(params, tuiReadiness === 'exited')
     }
   )
 }

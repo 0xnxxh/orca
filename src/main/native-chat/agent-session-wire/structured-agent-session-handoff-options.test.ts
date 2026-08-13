@@ -29,15 +29,19 @@ import type {
 const CALLER = { callerKey: 'client-1' }
 const DEFAULT_MODEL = 'gpt-default'
 const PICKED_MODEL = 'gpt-picked'
+const PICKED_EFFORT = 'medium'
 
 let root: string
 let store: AgentSessionRecordStore
 let host: StructuredAgentSessionHost
 let acquire: Mock<StructuredAgentSessionAdapter['acquire']>
 let activeModel: string
+let activeEffort: string | null
 let transcriptPath: string
 let optionFailure: Error | null
 const dispatchedModels: string[] = []
+const launchedOptions: (Readonly<Record<string, string>> | undefined)[] = []
+const closedTuiOwners: StructuredTuiOwner[] = []
 
 function envelope(method: string, fields: Record<string, unknown>): AgentSessionMutationEnvelope {
   return {
@@ -80,7 +84,10 @@ function tuiOwner(fence: number, spawnToken: string): StructuredTuiOwner {
 function handoffTransport(): StructuredAgentSessionHandoffTransport {
   return {
     hostLabel: 'Test host',
-    launchTui: async ({ fence, spawnToken }) => tuiOwner(fence, spawnToken),
+    launchTui: async ({ record, fence, spawnToken }) => {
+      launchedOptions.push(record.options)
+      return tuiOwner(fence, spawnToken)
+    },
     reproveTuiOwner: async ({ owner }) => owner,
     recoverTuiOwner: async (record) =>
       tuiOwner(
@@ -88,6 +95,10 @@ function handoffTransport(): StructuredAgentSessionHandoffTransport {
         record.lease.ownerProcess?.spawnToken ?? record.lease.reservedSpawnToken ?? 'recovered'
       ),
     stopRecoveredOwner: async () => undefined,
+    closeTuiOwner: async (owner) => {
+      closedTuiOwners.push(owner)
+      return { transcriptPath: owner.transcriptPath }
+    },
     waitForTuiExit: async (owner) => ({ transcriptPath: owner.transcriptPath }),
     waitForTuiIdleOrExit: async () => 'idle',
     tuiStatus: () => 'idle'
@@ -97,6 +108,7 @@ function handoffTransport(): StructuredAgentSessionHandoffTransport {
 function adapter(): StructuredAgentSessionAdapter {
   acquire = vi.fn(async ({ fence, spawnToken, options }) => {
     activeModel = options?.model ?? DEFAULT_MODEL
+    activeEffort = options?.effort ?? null
     return {
       process: {
         hostId: 'local',
@@ -124,16 +136,26 @@ function adapter(): StructuredAgentSessionAdapter {
     }),
     cancelTurn: vi.fn(async () => ({ cancelled: true })),
     answerPrompt: vi.fn(async () => undefined),
-    setOption: vi.fn(async ({ value }) => {
+    setOption: vi.fn(async ({ key, value }) => {
       if (optionFailure) {
         const error = optionFailure
         optionFailure = null
         throw error
       }
-      activeModel = value
-      return { model: value }
+      if (key === 'model') {
+        activeModel = value
+      } else if (key === 'effort') {
+        activeEffort = value
+      }
+      return {
+        model: activeModel,
+        ...(activeEffort ? { effort: activeEffort } : {})
+      }
     }),
-    readOptions: vi.fn(async () => ({ current: { model: activeModel }, models: [] })),
+    readOptions: vi.fn(async () => ({
+      current: { model: activeModel, ...(activeEffort ? { effort: activeEffort } : {}) },
+      models: []
+    })),
     closeSession: vi.fn(async () => {
       activeModel = DEFAULT_MODEL
     })
@@ -144,8 +166,11 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'orca-handoff-options-'))
   resetHostTestOperationIds()
   activeModel = DEFAULT_MODEL
+  activeEffort = null
   optionFailure = null
   dispatchedModels.length = 0
+  launchedOptions.length = 0
+  closedTuiOwners.length = 0
   const accountHome = join(root, 'codex-home')
   const sessionsDir = join(accountHome, 'sessions', '2026', '08', '12')
   transcriptPath = join(sessionsDir, `rollout-2026-08-12T10-00-00-${THREAD}.jsonl`)
@@ -217,6 +242,18 @@ describe('structured session handoff options', () => {
     ).toMatchObject({ ok: true })
     expect(store.getRecord(SESSION)?.options).toEqual({ model: PICKED_MODEL })
 
+    const effortFields = { key: 'effort', value: PICKED_EFFORT }
+    expect(
+      await host.setOption(CALLER, {
+        envelope: envelope('agentSession.setOption', effortFields),
+        ...effortFields
+      })
+    ).toMatchObject({ ok: true })
+    expect(store.getRecord(SESSION)?.options).toEqual({
+      model: PICKED_MODEL,
+      effort: PICKED_EFFORT
+    })
+
     expect(await host.requestHandoff(CALLER, handoff('to-tui'))).toMatchObject({ ok: true })
     await vi.waitFor(async () =>
       expect(await host.handoffStatus(SESSION)).toMatchObject({ owner: 'tui' })
@@ -226,8 +263,16 @@ describe('structured session handoff options', () => {
       expect(await host.handoffStatus(SESSION)).toMatchObject({ owner: 'native' })
     )
 
-    expect(acquire.mock.calls[1]?.[0].options).toEqual({ model: PICKED_MODEL })
-    expect(store.getRecord(SESSION)?.options).toEqual({ model: PICKED_MODEL })
+    expect(launchedOptions).toEqual([{ model: PICKED_MODEL, effort: PICKED_EFFORT }])
+    expect(closedTuiOwners).toHaveLength(1)
+    expect(acquire.mock.calls[1]?.[0].options).toEqual({
+      model: PICKED_MODEL,
+      effort: PICKED_EFFORT
+    })
+    expect(store.getRecord(SESSION)?.options).toEqual({
+      model: PICKED_MODEL,
+      effort: PICKED_EFFORT
+    })
     const body = hostTestMessage('use the selected model')
     expect(
       await host.send(CALLER, {

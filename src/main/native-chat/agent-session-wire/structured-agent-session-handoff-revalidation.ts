@@ -42,7 +42,11 @@ export function assertScheduledStructuredHandoffIsAdmissible(input: {
     }
     return
   }
-  if (!input.tuiAlreadyExited && input.tuiStatus !== 'idle') {
+  if (
+    !input.tuiAlreadyExited &&
+    input.tuiStatus !== 'idle' &&
+    (params.mode !== 'after-turn' || activeTurn !== null)
+  ) {
     throw new Error('The agent terminal became busy before the handoff started.')
   }
 }

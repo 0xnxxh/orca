@@ -38,6 +38,10 @@ export type StructuredAgentSessionHandoffTransport = {
   }): Promise<StructuredTuiOwner>
   recoverTuiOwner(record: AgentSessionRecord): Promise<StructuredTuiOwner>
   stopRecoveredOwner(record: AgentSessionRecord): Promise<void>
+  closeTuiOwner?(
+    owner: StructuredTuiOwner,
+    persistHandle?: (link: AgentSessionProviderHandleLink) => Promise<void>
+  ): Promise<{ transcriptPath?: string }>
   waitForTuiExit(
     owner: StructuredTuiOwner,
     persistHandle: (link: AgentSessionProviderHandleLink) => Promise<void>

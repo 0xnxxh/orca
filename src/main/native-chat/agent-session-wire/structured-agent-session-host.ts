@@ -1,5 +1,4 @@
 // Structured agent-session host: where the lease, journal, and provider adapter meet.
-// Mutations share one durable admission path and serialize per session.
 
 import { randomUUID } from 'node:crypto'
 import type { AgentSessionExecutionLocation } from '../../../shared/agent-session-record'
@@ -71,8 +70,15 @@ export class StructuredAgentSessionHost {
   private readonly restartRestore = new StructuredAgentSessionRestartRestoreGate()
 
   constructor(readonly deps: StructuredAgentSessionHostDeps) {
-    this.runtimeState = new StructuredAgentSessionHostRuntimeState(deps, (record) =>
-      this.restoreRenewedHandoff(record.sessionId)
+    this.runtimeState = new StructuredAgentSessionHostRuntimeState(
+      deps,
+      (record) => this.restoreRenewedHandoff(record.sessionId),
+      (record, probe) =>
+        this.sessions.has(record.sessionId)
+          ? this.tasks.serialize(record.sessionId, () =>
+              this.handoffs.recoverDeadTuiOwner(record.sessionId, record.lease.runtimeFence, probe)
+            )
+          : Promise.resolve()
     )
     this.reconcileLeases = createRestartReconciler({
       store: deps.store,
@@ -83,7 +89,7 @@ export class StructuredAgentSessionHost {
       session: (sessionId) => this.requireSession(sessionId),
       eventSink: (sessionId) => this.runtimeState.eventSinkFor(sessionId),
       flush: (sessionId) => this.flushStreamedEvents(sessionId),
-      serialize: (sessionId, task) => this.serialize(sessionId, task),
+      serialize: (sessionId, task) => this.tasks.serialize(sessionId, task),
       subscribers: this.subscribers,
       now: this.now
     })
@@ -97,7 +103,7 @@ export class StructuredAgentSessionHost {
         this.attach({ callerKey: 'trusted-local:host-restart' }, params).then(
           (result) => result.ok
         ),
-      serialize: (sessionId, task) => this.serialize(sessionId, task),
+      serialize: (sessionId, task) => this.tasks.serialize(sessionId, task),
       hasSession: (sessionId) => this.sessions.has(sessionId),
       onReadable: (sessionId, restored) => this.sessions.set(sessionId, restored),
       restoreHandoff: (sessionId) => this.handoffs.restore(sessionId),
@@ -126,12 +132,8 @@ export class StructuredAgentSessionHost {
     return this.restartRestore.run(() => this.readableRestorer.restore())
   }
 
-  private serialize<T>(sessionId: string, task: () => Promise<T>): Promise<T> {
-    return this.tasks.serialize(sessionId, task)
-  }
-
   private restoreRenewedHandoff(sessionId: string): Promise<void> {
-    return this.serialize(sessionId, async () => {
+    return this.tasks.serialize(sessionId, async () => {
       if (this.sessions.has(sessionId)) {
         await refreshRecoverableStructuredHandoffStatus(this.handoffs, this.deps.store, sessionId)
       }
@@ -142,7 +144,7 @@ export class StructuredAgentSessionHost {
     caller: StructuredAgentSessionCaller,
     params: AgentSessionAttachParams
   ): Promise<AgentSessionMutationResult<AgentSessionAttachResult>> {
-    const attaching = this.serialize(params.envelope.sessionId, async () => {
+    const attaching = this.tasks.serialize(params.envelope.sessionId, async () => {
       const sessionId = params.envelope.sessionId
       const unreconciled = await this.reconcileLeases(sessionId)
       if (unreconciled) {
@@ -244,7 +246,7 @@ export class StructuredAgentSessionHost {
   }
 
   readOptions(sessionId: string): Promise<AgentSessionOptionsResult> {
-    return this.serialize(sessionId, async () => {
+    return this.tasks.serialize(sessionId, async () => {
       const session = this.requireSession(sessionId)
       if (!this.deps.adapter.readOptions) {
         throw new Error('structured_agent_session_options_unsupported')
@@ -258,7 +260,7 @@ export class StructuredAgentSessionHost {
     envelope: AgentSessionMutationEnvelope,
     plan: MutationPlan<TValue>
   ): Promise<AgentSessionMutationResult<TValue>> {
-    return this.serialize(envelope.sessionId, () =>
+    return this.tasks.serialize(envelope.sessionId, () =>
       admitAndRunAgentSessionMutation({
         store: this.deps.store,
         adapter: this.deps.adapter,
@@ -277,14 +279,14 @@ export class StructuredAgentSessionHost {
     params: AgentSessionHandoffRequest
   ): Promise<AgentSessionMutationResult<AgentSessionHandoffResult>> {
     this.requireSession(params.envelope.sessionId)
-    return this.serialize(params.envelope.sessionId, () =>
+    return this.tasks.serialize(params.envelope.sessionId, () =>
       this.handoffs.request(caller.callerKey, params)
     )
   }
 
   async handoffStatus(sessionId: string): Promise<AgentSessionHandoffStatus> {
     this.requireSession(sessionId)
-    return this.serialize(sessionId, () =>
+    return this.tasks.serialize(sessionId, () =>
       refreshRecoverableStructuredHandoffStatus(this.handoffs, this.deps.store, sessionId)
     )
   }

@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import type { AgentSessionOwnerProbe } from '../../../shared/agent-session-lease-adjudication'
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
 import type { LegacyImportOptions } from '../agent-session-journal/journal-legacy-import'
 import { importLegacyTranscriptIntoJournal } from '../agent-session-journal/journal-legacy-import'
@@ -8,6 +9,7 @@ import type { DeferredStructuredAgentSessionEventSink } from './structured-agent
 import type { StructuredAgentSessionHostDeps } from './structured-agent-session-host'
 import type { StructuredAgentSessionHostSession } from './structured-agent-session-host-types'
 import { StructuredAgentSessionHandoffCoordinator } from './structured-agent-session-handoff'
+import { recoverDeadTuiHandoffStatus } from './structured-agent-session-dead-tui-recovery'
 import { readNativeHandoffSessionOptions } from './structured-agent-session-handoff-options'
 import type { AgentSessionSubscribers } from './structured-agent-session-subscribers'
 import { StructuredTuiTranscriptCatchup } from './structured-tui-transcript-catchup'
@@ -23,6 +25,11 @@ type HostHandoffAccess = {
 
 export type StructuredAgentSessionHostHandoff = StructuredAgentSessionHandoffCoordinator & {
   stopTuiHistoryCatchup: () => void
+  recoverDeadTuiOwner: (
+    sessionId: string,
+    expectedFence: number,
+    probe: AgentSessionOwnerProbe
+  ) => Promise<void>
 }
 
 export async function refreshRecoverableStructuredHandoffStatus(
@@ -81,7 +88,29 @@ export function createStructuredAgentSessionHostHandoff(
     schedule: host.serialize,
     now: host.now
   })
-  return Object.assign(coordinator, { stopTuiHistoryCatchup: () => tuiHistoryCatchup.stopAll() })
+  return Object.assign(coordinator, {
+    stopTuiHistoryCatchup: () => tuiHistoryCatchup.stopAll(),
+    recoverDeadTuiOwner: async (
+      sessionId: string,
+      expectedFence: number,
+      probe: AgentSessionOwnerProbe
+    ) => {
+      const record = deps.store.getRecord(sessionId)
+      if (!record) {
+        return
+      }
+      const status = await recoverDeadTuiHandoffStatus({
+        store: deps.store,
+        now: host.now,
+        record,
+        expectedFence,
+        probe
+      })
+      if (status) {
+        coordinator.setStatus(sessionId, status)
+      }
+    }
+  })
 }
 
 async function importTuiHistory(

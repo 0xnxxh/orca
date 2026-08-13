@@ -15119,6 +15119,9 @@
       "status": {
         "responding": "Agent is responding"
       },
+      "providerFrame": {
+        "bytes": "{{value0}} bytes"
+      },
       "handoff": {
         "mode": {
           "switching": "Switching",

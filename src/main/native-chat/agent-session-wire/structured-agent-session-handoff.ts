@@ -200,9 +200,10 @@ export class StructuredAgentSessionHandoffCoordinator {
     )
     const tuiOwner = this.tuiOwners.get(record.sessionId)
     const busy =
-      expectedOwner === 'native'
-        ? turnId !== null
-        : structuredTuiStatus(tuiOwner, this.deps.transport) !== 'idle'
+      turnId !== null ||
+      (expectedOwner === 'tui' &&
+        (params.mode === 'after-turn' ||
+          structuredTuiStatus(tuiOwner, this.deps.transport) !== 'idle'))
     if (busy && params.mode === 'now') {
       return this.refuseAdmitted(
         callerKey,
@@ -302,7 +303,7 @@ export class StructuredAgentSessionHandoffCoordinator {
     )
   }
 
-  private setStatus(sessionId: string, status: AgentSessionHandoffStatus): void {
+  setStatus(sessionId: string, status: AgentSessionHandoffStatus): void {
     this.statuses.set(sessionId, status)
     this.deps.publish(sessionId, status)
   }

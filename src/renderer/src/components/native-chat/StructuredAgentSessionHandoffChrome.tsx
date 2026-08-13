@@ -95,7 +95,7 @@ export function StructuredAgentSessionHandoffChrome({
                 {translate('components.native-chat.handoff.cancel', 'Cancel')}
               </Button>
             </>
-          ) : owner === 'native' && !switching ? (
+          ) : owner === 'native' && phase === 'idle' ? (
             isWorking ? (
               <>
                 <Button
@@ -132,7 +132,7 @@ export function StructuredAgentSessionHandoffChrome({
                 {translate('components.native-chat.handoff.openAgentTui', 'Open agent TUI')}
               </Button>
             )
-          ) : owner === 'tui' && !switching ? (
+          ) : owner === 'tui' && phase === 'idle' ? (
             <Button
               type="button"
               variant="ghost"
