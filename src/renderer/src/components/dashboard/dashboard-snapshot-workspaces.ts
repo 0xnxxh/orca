@@ -6,7 +6,11 @@ import type {
   DashboardCardWorkspaceKind
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
-import { getWorktreeExecutionHostId, type ExecutionHostId } from '../../../../shared/execution-host'
+import {
+  getWorktreeExecutionHostId,
+  parseExecutionHostId,
+  type ExecutionHostId
+} from '../../../../shared/execution-host'
 import { folderWorkspaceToWorktree } from '../../../../shared/folder-workspace-worktree'
 import { isFolderRepo } from '../../../../shared/repo-kind'
 import { parseAppSshPtyId } from '../../../../shared/ssh-pty-id'
@@ -23,6 +27,25 @@ export type ActiveDashboardWorkspace = {
 
 type DashboardWorkspaceState = Pick<AppState, 'repos' | 'worktreesByRepo'> &
   Partial<Pick<AppState, 'folderWorkspaces' | 'projectGroups'>>
+
+type DashboardHostLabelState = Partial<Pick<AppState, 'runtimeEnvironments' | 'sshTargetLabels'>>
+
+export function dashboardExecutionHostLabel(
+  state: DashboardHostLabelState,
+  executionHostId: ExecutionHostId
+): string | undefined {
+  const parsed = parseExecutionHostId(executionHostId)
+  if (parsed?.kind === 'ssh') {
+    return state.sshTargetLabels?.get(parsed.targetId) ?? parsed.targetId
+  }
+  if (parsed?.kind === 'runtime') {
+    return (
+      state.runtimeEnvironments?.find((environment) => environment.id === parsed.environmentId)
+        ?.name ?? parsed.environmentId
+    )
+  }
+  return undefined
+}
 
 function remoteHostKind(
   connectionId: string | null | undefined,

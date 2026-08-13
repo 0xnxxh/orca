@@ -9,23 +9,23 @@ import { DASHBOARD_MAX_LABEL_LENGTH } from '../../../../shared/dashboard-snapsho
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import type { TerminalTab, Worktree } from '../../../../shared/types'
 import { selectRuntimeAgentOrchestrationBatch } from '../sidebar/worktree-agent-orchestration-batch'
-import type * as DashboardSnapshotWorkspacesModule from './dashboard-snapshot-workspaces'
 import type * as AgentRowLineageModule from './agent-row-lineage'
+import type * as DashboardCardHostMetadataModule from './dashboard-card-host-metadata'
 
 const mapMetadataCalls = vi.hoisted(() => ({
   hostKind: vi.fn(),
   parentPaneKey: vi.fn()
 }))
 
-vi.mock('./dashboard-snapshot-workspaces', async (importOriginal) => {
-  const actual = await importOriginal<typeof DashboardSnapshotWorkspacesModule>()
+vi.mock('./dashboard-card-host-metadata', async (importOriginal) => {
+  const actual = await importOriginal<typeof DashboardCardHostMetadataModule>()
   return {
     ...actual,
-    dashboardCardMapWorkspaceMetadata: (
-      ...args: Parameters<typeof actual.dashboardCardMapWorkspaceMetadata>
+    resolveDashboardCardHostMetadata: (
+      ...args: Parameters<typeof actual.resolveDashboardCardHostMetadata>
     ) => {
       mapMetadataCalls.hostKind()
-      return actual.dashboardCardMapWorkspaceMetadata(...args)
+      return actual.resolveDashboardCardHostMetadata(...args)
     }
   }
 })

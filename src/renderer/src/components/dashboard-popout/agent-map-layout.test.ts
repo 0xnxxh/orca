@@ -142,6 +142,25 @@ describe('agent map layout', () => {
     )
   })
 
+  it('preserves remote host presentation on its workspace ring', () => {
+    const layout = deriveAgentMapLayout(
+      [
+        card({
+          executionHostId: 'ssh:opaque-target',
+          hostKind: 'ssh',
+          hostLabel: 'openclaw'
+        })
+      ],
+      NOW
+    )
+
+    expect(layout.projects[0].worktrees[0]).toMatchObject({
+      executionHostId: 'ssh:opaque-target',
+      hostKind: 'ssh',
+      hostLabel: 'openclaw'
+    })
+  })
+
   it('reserves project and workspace header bands above dense ring contents', () => {
     const layout = deriveAgentMapLayout(
       Array.from({ length: 24 }, (_unused, index) =>
