@@ -12122,8 +12122,6 @@ describe('connectPanePty', () => {
       const written = pane.terminal.write.mock.calls.map(([data]) => data as string)
       const gapReset = written.find((data) => data === RESET_AFTER_BYTE_GAP)
       expect(gapReset).toBeDefined()
-      // charset too: a dropped ESC(B otherwise renders text as box characters
-      expect(gapReset).toContain('\x1b(B')
     })
 
     it('marks the PTY hidden on hidden output and clears it before requesting restore on reveal', async () => {

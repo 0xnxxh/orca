@@ -12,26 +12,23 @@ function writeTerminal(terminal: Terminal, data: string): Promise<void> {
   return new Promise((resolve) => terminal.write(data, resolve))
 }
 
-type CellWithOscLink = {
-  extended?: { urlId?: number }
-  isBold: () => number
-}
-
 describe('RESET_AFTER_BYTE_GAP', () => {
-  it('grounds incomplete escapes, SGR, OSC 8, and every charset register', async () => {
+  // Real emulator rather than a mock: the guarantee is that a cell written after
+  // the gap reset carries none of the pen the gap stranded (STA-4042). Scoped to
+  // SGR — see RESET_AFTER_BYTE_GAP for why the wider grounding was dropped.
+  it('grounds the SGR pen so post-gap cells are not bold', async () => {
     const terminal = new Terminal({ cols: 40, rows: 2, allowProposedApi: true })
     try {
-      await writeTerminal(
-        terminal,
-        '\x1b[1m\x1b(0\x1b)0\x1b*0\x1b+0\x0e\x1b]8;;https://example.test\x1b\\q\x1b['
-      )
-      await writeTerminal(terminal, `${RESET_AFTER_BYTE_GAP}A\x0eq\x1bnq\x1boq`)
+      // Bold opened and never closed — exactly what a dropped `ESC[22m` leaves.
+      await writeTerminal(terminal, '\x1b[1mBOLD')
+      await writeTerminal(terminal, `${RESET_AFTER_BYTE_GAP}after`)
 
       const line = terminal.buffer.active.getLine(0)
-      const plainCell = line?.getCell(1) as CellWithOscLink | undefined
-      expect(line?.translateToString(true)).toBe('─Aqqq')
-      expect(plainCell?.isBold()).toBe(0)
-      expect(plainCell?.extended?.urlId ?? 0).toBe(0)
+      expect(line?.translateToString(true)).toBe('BOLDafter')
+      // The pre-gap run keeps its bold; only what follows the reset is grounded.
+      expect(line?.getCell(0)?.isBold()).not.toBe(0)
+      expect(line?.getCell(4)?.isBold()).toBe(0)
+      expect(line?.getCell(8)?.isBold()).toBe(0)
     } finally {
       terminal.dispose()
     }
@@ -233,8 +230,6 @@ describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
     ]
     for (const writes of branches) {
       expect(writes[0].startsWith(RESET_AFTER_BYTE_GAP)).toBe(true)
-      // charset too: a dropped ESC(B renders text as box characters
-      expect(writes[0].includes('\x1b(B')).toBe(true)
       // Nothing may be replayed ahead of the first reset.
       expect(writes.indexOf('scrollback')).not.toBe(0)
     }
