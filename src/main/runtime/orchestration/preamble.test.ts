@@ -136,8 +136,10 @@ describe('buildDispatchPreamble', () => {
     expect(section).toContain('do NOT run a sleep/poll loop')
     expect(section).toContain('do NOT keep calling')
     expect(section).toContain('A direct instruction from the user takes precedence')
-    expect(section).toContain('follow it without coordinator approval or a')
-    expect(section).toContain('do not send lifecycle messages using the settled task')
+    expect(section).toMatch(/follow it without coordinator approval or a\s+fresh Dispatch/)
+    expect(section).toMatch(
+      /do not send lifecycle messages using the settled task or\s+Dispatch IDs/
+    )
     expect(section).toContain('Never refuse a direct user request because you were a worker')
     expect(section).toMatch(/fresh\s+preamble \+ TASK block/)
     expect(section).not.toMatch(/2 minutes/)
