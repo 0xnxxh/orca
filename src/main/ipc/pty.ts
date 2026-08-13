@@ -934,7 +934,7 @@ async function attachStablePaneOwner(
     if (isDaemonEndpointGoneError(error)) {
       throw new TerminalHostGoneError()
     }
-    if (!isPtyAlreadyGoneError(error)) {
+    if (!isPtyProvenGoneForReplacement(error, owner.ptyId)) {
       throw error
     }
     const ownerBeforeRetire = args.resolveOwner?.()
@@ -1098,6 +1098,22 @@ function normalizeNodePtySpawnError(err: unknown): Error {
     return err
   }
   return new Error(hintedMessage)
+}
+
+/**
+ * Retiring a pane's owner authorizes a replacement that carries its agent resume payload, so it
+ * needs proof — unlike a shutdown, where "not found" is simply the outcome we asked for. A bare
+ * not-found proves an exit only from a provider that owns its ptys; a replacement relay answers the
+ * same for shells its predecessor is still running.
+ */
+function isPtyProvenGoneForReplacement(err: unknown, ptyId: string): boolean {
+  if (!parseAppSshPtyId(ptyId)) {
+    return isPtyAlreadyGoneError(err)
+  }
+  // For SSH, the two proving answers are the relay's own observed exit and the expiry the reattach
+  // mints only after verifying that proof names this shell. A bare not-found is neither.
+  const message = err instanceof Error ? err.message : String(err)
+  return isSshPtyExitedError(err) || message.includes(SSH_SESSION_EXPIRED_ERROR)
 }
 
 function isPtyAlreadyGoneError(err: unknown): boolean {

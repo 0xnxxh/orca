@@ -10396,6 +10396,137 @@ describe('registerPtyHandlers', () => {
     expect(runtime.onPtyExit).toHaveBeenCalledWith('pty-already-retired-owner', 0, undefined)
   })
 
+  // Sibling of the clause above, and the reason that one is driven by a proof. Retiring an owner
+  // authorizes a replacement carrying the pane's agent resume payload, so a bare not-found must
+  // not do it: a replaced relay answers exactly that for shells its predecessor still runs.
+  it('does not retire an SSH owner, nor respawn it, on a bare not-found', async () => {
+    const connectionId = 'ssh-unproven-stable-pane'
+    const tabId = 'tab-unproven-ssh-owner'
+    const leafId = '35353535-3535-4535-8535-353535353535'
+    const paneKey = makePaneKey(tabId, leafId)
+    const worktreeId = 'repo-ssh::/remote/unproven-stable-pane'
+    const livePtyId = `ssh:${connectionId}@@live-relay-pty`
+    const freshPtyId = `ssh:${connectionId}@@fresh-relay-pty`
+    const remoteSpawn = vi.fn(async (options: { attachOnly?: boolean; command?: string }) => {
+      if (options.attachOnly) {
+        // The reattach mints this only after verifying the relay's observed exit names this shell.
+        // A bare not-found reaches here too and must NOT retire the owner — pinned by the sibling
+        // clause below, because retirement authorizes a replacement carrying the resume payload.
+        throw new Error('PTY "live-relay-pty" not found')
+      }
+      return { id: freshPtyId, incarnationId: 'inc-fresh-ssh-owner' }
+    })
+    registerSshPtyProvider(connectionId, {
+      spawn: remoteSpawn,
+      write: vi.fn(),
+      resize: vi.fn(),
+      shutdown: vi.fn(),
+      sendSignal: vi.fn(),
+      getCwd: vi.fn(),
+      getInitialCwd: vi.fn(),
+      clearBuffer: vi.fn(),
+      acknowledgeDataEvent: vi.fn(),
+      onData: vi.fn(() => () => {}),
+      onReplay: vi.fn(() => () => {}),
+      onExit: vi.fn(() => () => {}),
+      listProcesses: vi.fn(),
+      hasChildProcesses: vi.fn(),
+      getForegroundProcess: vi.fn(),
+      serialize: vi.fn(),
+      revive: vi.fn(),
+      getDefaultShell: vi.fn(),
+      getProfiles: vi.fn()
+    } as never)
+    let session = {
+      tabsByWorktree: {
+        [worktreeId]: [{ id: tabId, worktreeId, ptyId: livePtyId }]
+      },
+      terminalLayoutsByTabId: {
+        [tabId]: {
+          root: { type: 'leaf' as const, leafId },
+          activeLeafId: leafId,
+          expandedLeafId: null,
+          ptyIdsByLeafId: { [leafId]: livePtyId }
+        }
+      },
+      terminalPtyIncarnationsByPaneKey: { [paneKey]: 'inc-live-ssh-owner' }
+    }
+    const store = {
+      // STA-3077 step P inverted these: the reader/retirer used to target the
+      // per-target `ssh:<connectionId>` partition while the renderer published
+      // pane membership to `local` — two homes, so supersession no-opped. Both
+      // sides now address the single default (local) partition, i.e. no hostId.
+      getWorkspaceSession: vi.fn((requestedHostId?: string) => {
+        expect(requestedHostId).toBeUndefined()
+        return session
+      }),
+      setWorkspaceSession: vi.fn((next, requestedHostId?: string) => {
+        expect(requestedHostId).toBeUndefined()
+        session = next
+      }),
+      flushOrThrow: vi.fn(),
+      persistPtyBinding: vi.fn(),
+      upsertSshRemotePtyLease: vi.fn(),
+      removeSshRemotePtyLease: vi.fn(),
+      markSshRemotePtyLease: vi.fn()
+    }
+    const runtime = {
+      setPtyController: vi.fn(),
+      resolveTerminalPane: vi.fn(() => {
+        throw new Error('terminal_not_found')
+      }),
+      createPreAllocatedTerminalHandle: vi.fn(() => 'term-fresh-ssh-owner'),
+      registerPreAllocatedHandleForPty: vi.fn(),
+      beginPtyRegistration: vi.fn(),
+      cancelPendingPtyRegistration: vi.fn(),
+      assertPtyRegistrationAllowed: vi.fn(),
+      registerPty: vi.fn(),
+      noteTerminalSpawnCommand: vi.fn(),
+      seedHeadlessTerminal: vi.fn(),
+      getDriver: vi.fn(() => ({ kind: 'host' })),
+      onPtySpawned: vi.fn(),
+      onPtyExit: vi.fn(),
+      onPtyData: vi.fn()
+    }
+
+    try {
+      registerPtyHandlers(
+        mainWindow as never,
+        runtime as never,
+        undefined,
+        undefined,
+        undefined,
+        store as never
+      )
+      await expect(
+        handlers.get('pty:spawn')!(null, {
+          cols: 80,
+          rows: 24,
+          cwd: '/remote/unproven-stable-pane',
+          command: 'codex resume a-session-that-may-still-be-running',
+          connectionId,
+          worktreeId,
+          tabId,
+          leafId,
+          env: {
+            ORCA_PANE_KEY: paneKey,
+            ORCA_TAB_ID: tabId,
+            ORCA_WORKTREE_ID: worktreeId
+          }
+        })
+      ).rejects.toThrow(/not found/i)
+
+      // Only the attach ran: no replacement carrying the resume payload.
+      expect(remoteSpawn).toHaveBeenCalledTimes(1)
+      expect(remoteSpawn.mock.calls[0]?.[0]).toMatchObject({ attachOnly: true })
+      // The pane keeps its owner, so the shell stays reattachable.
+      expect(store.setWorkspaceSession).not.toHaveBeenCalled()
+      expect(runtime.onPtyExit).not.toHaveBeenCalled()
+    } finally {
+      unregisterSshPtyProvider(connectionId)
+    }
+  })
+
   it('retires a dead owner from the local session — the one pane-binding home — before fresh recovery', async () => {
     const connectionId = 'ssh-dead-stable-pane'
     const tabId = 'tab-dead-ssh-owner'
@@ -10406,7 +10537,10 @@ describe('registerPtyHandlers', () => {
     const freshPtyId = `ssh:${connectionId}@@fresh-relay-pty`
     const remoteSpawn = vi.fn(async (options: { attachOnly?: boolean; command?: string }) => {
       if (options.attachOnly) {
-        throw new Error('PTY "dead-relay-pty" not found')
+        // The reattach mints this only after verifying the relay's observed exit names this shell.
+        // A bare not-found reaches here too and must NOT retire the owner — pinned by the sibling
+        // clause below, because retirement authorizes a replacement carrying the resume payload.
+        throw new Error('SSH_SESSION_EXPIRED: dead-relay-pty')
       }
       return { id: freshPtyId, incarnationId: 'inc-fresh-ssh-owner' }
     })
