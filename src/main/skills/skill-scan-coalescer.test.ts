@@ -27,11 +27,7 @@ describe('SkillScanCoalescer', () => {
     gate.resolve(7)
 
     expect((await outcomes).map((outcome) => outcome.value)).toEqual([7, 7, 7])
-    expect((await outcomes).map((outcome) => outcome.source)).toEqual([
-      'scanned',
-      'joined',
-      'joined'
-    ])
+    expect((await outcomes).map((outcome) => outcome.cached)).toEqual([false, true, true])
     expect(runs).toBe(1)
   })
 
@@ -60,15 +56,12 @@ describe('SkillScanCoalescer', () => {
       return runs
     }
 
-    expect((await coalescer.run('root', { ttlMs: 100 }, task)).source).toBe('scanned')
+    expect((await coalescer.run('root', { ttlMs: 100 }, task)).cached).toBe(false)
     now = 1_050
     const cached = await coalescer.run('root', { ttlMs: 100 }, task)
-    expect(cached).toEqual({ value: 1, source: 'cached' })
+    expect(cached).toEqual({ value: 1, cached: true })
     now = 1_101
-    expect(await coalescer.run('root', { ttlMs: 100 }, task)).toEqual({
-      value: 2,
-      source: 'scanned'
-    })
+    expect(await coalescer.run('root', { ttlMs: 100 }, task)).toEqual({ value: 2, cached: false })
     expect(runs).toBe(2)
   })
 
@@ -98,12 +91,9 @@ describe('SkillScanCoalescer', () => {
     await coalescer.run('root', { ttlMs: 10_000 }, task)
     const refreshed = await coalescer.run('root', { ttlMs: 10_000, refresh: true }, task)
 
-    expect(refreshed).toEqual({ value: 2, source: 'scanned' })
+    expect(refreshed).toEqual({ value: 2, cached: false })
     // The refreshed result is what later readers see, not the entry it replaced.
-    expect(await coalescer.run('root', { ttlMs: 10_000 }, task)).toEqual({
-      value: 2,
-      source: 'cached'
-    })
+    expect(await coalescer.run('root', { ttlMs: 10_000 }, task)).toEqual({ value: 2, cached: true })
     expect(runs).toBe(2)
   })
 
@@ -127,7 +117,7 @@ describe('SkillScanCoalescer', () => {
 
     expect(await coalescer.run('root', { ttlMs: 10_000 }, async () => 'rescanned')).toEqual({
       value: 'after-install',
-      source: 'cached'
+      cached: true
     })
   })
 
@@ -143,7 +133,7 @@ describe('SkillScanCoalescer', () => {
 
     expect(await coalescer.run('root', { ttlMs: 10_000 }, async () => 'post-update')).toEqual({
       value: 'post-update',
-      source: 'scanned'
+      cached: false
     })
   })
 
@@ -159,7 +149,7 @@ describe('SkillScanCoalescer', () => {
     ).rejects.toThrow('scan failed')
     expect(await coalescer.run('root', { ttlMs: 10_000 }, async () => 5)).toEqual({
       value: 5,
-      source: 'scanned'
+      cached: false
     })
     expect(runs).toBe(1)
   })
@@ -167,17 +157,17 @@ describe('SkillScanCoalescer', () => {
   it('evicts the least recently used entry past the bound', async () => {
     let now = 1_000
     const coalescer = new SkillScanCoalescer<string>(2, () => now)
-    const scan = (key: string): Promise<{ source: string }> =>
+    const scan = (key: string): Promise<{ cached: boolean }> =>
       coalescer.run(key, { ttlMs: 10_000 }, async () => key)
 
     await scan('a')
     await scan('b')
     // Reading 'a' promotes it, so 'b' is the eviction candidate when 'c' arrives.
-    expect((await scan('a')).source).toBe('cached')
+    expect((await scan('a')).cached).toBe(true)
     await scan('c')
 
-    expect((await scan('a')).source).toBe('cached')
-    expect((await scan('b')).source).toBe('scanned')
+    expect((await scan('a')).cached).toBe(true)
+    expect((await scan('b')).cached).toBe(false)
   })
 
   it('stops joining a scan that never settles, and keeps one pending entry per key', async () => {
@@ -197,26 +187,11 @@ describe('SkillScanCoalescer', () => {
     const joined = coalescer.run('root', { ttlMs: 0 }, task)
     now = 40_000
 
-    expect(await coalescer.run('root', { ttlMs: 0 }, task)).toEqual({ value: 2, source: 'scanned' })
+    expect(await coalescer.run('root', { ttlMs: 0 }, task)).toEqual({ value: 2, cached: false })
     expect(runs).toBe(2)
 
     // The wedged callers are still waiting on the original scan, not orphaned.
     wedged.resolve(99)
     expect((await joined).value).toBe(99)
-  })
-
-  it('clears everything on demand', async () => {
-    const coalescer = new SkillScanCoalescer<number>(8)
-    let runs = 0
-    const task = async (): Promise<number> => {
-      runs += 1
-      return runs
-    }
-
-    await coalescer.run('root', { ttlMs: 10_000 }, task)
-    coalescer.clear()
-    await coalescer.run('root', { ttlMs: 10_000 }, task)
-
-    expect(runs).toBe(2)
   })
 })

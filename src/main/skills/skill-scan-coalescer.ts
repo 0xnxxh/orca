@@ -1,10 +1,5 @@
-/** How a scan result was obtained, for diagnostics. */
-export type SkillScanSource = 'scanned' | 'joined' | 'cached'
-
-export type SkillScanOutcome<T> = {
-  value: T
-  source: SkillScanSource
-}
+/** `cached` is false when this call did the filesystem work, for diagnostics. */
+export type SkillScanOutcome<T> = { value: T; cached: boolean }
 
 export type SkillScanRunOptions = {
   /** 0 keeps nothing after the scan settles, so the entry only dedups concurrent callers. */
@@ -56,17 +51,17 @@ export class SkillScanCoalescer<T> {
       // callers therefore duplicate; they are rare (install / explicit recheck).
       this.epoch += 1
       this.cache.delete(key)
-      return { value: await this.start(key, options.ttlMs, task), source: 'scanned' }
+      return { value: await this.start(key, options.ttlMs, task), cached: false }
     }
-    const cached = this.readFresh(key)
-    if (cached) {
-      return { value: cached.value, source: 'cached' }
+    const fresh = this.readFresh(key)
+    if (fresh) {
+      return { value: fresh.value, cached: true }
     }
     const inFlight = this.pending.get(key)
     if (inFlight && this.now() - inFlight.startedAt < MAX_JOINABLE_SCAN_AGE_MS) {
-      return { value: await inFlight.promise, source: 'joined' }
+      return { value: await inFlight.promise, cached: true }
     }
-    return { value: await this.start(key, options.ttlMs, task), source: 'scanned' }
+    return { value: await this.start(key, options.ttlMs, task), cached: false }
   }
 
   /** Drop every cached and in-flight entry (e.g. after a skill update run). */

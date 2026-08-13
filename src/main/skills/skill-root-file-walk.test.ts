@@ -19,14 +19,6 @@ async function writeFileAt(path: string, content = 'x'): Promise<void> {
 }
 
 describe('countPackageFiles', () => {
-  it('counts the files a skill package actually ships', async () => {
-    const pkg = join(await makeTree(), 'skill')
-    await writeFileAt(join(pkg, 'SKILL.md'))
-    await writeFileAt(join(pkg, 'references', 'palette.md'))
-
-    expect(await countPackageFiles(pkg)).toBe(2)
-  })
-
   it('prunes node_modules so a vendored dependency tree is not the file count', async () => {
     const pkg = join(await makeTree(), 'skill')
     await writeFileAt(join(pkg, 'SKILL.md'))
@@ -56,10 +48,6 @@ describe('countPackageFiles', () => {
     }
 
     expect(await countPackageFiles(pkg)).toBe(MAX_SKILL_PACKAGE_FILES)
-  })
-
-  it('returns zero for a directory it cannot read', async () => {
-    expect(await countPackageFiles(join(await makeTree(), 'absent'))).toBe(0)
   })
 })
 

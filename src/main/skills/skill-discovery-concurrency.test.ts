@@ -173,10 +173,9 @@ describe('bounded concurrent skill discovery', () => {
     await discoverSkills({ homeDir: home, repos: [], cwd: noWorkspace })
 
     const line = info.mock.calls.at(0)?.at(0)
-    expect(line).toContain('[skills] scan target=native-host')
-    expect(line).toContain('walked=')
+    expect(line).toContain('[skills] scan roots=14 walked=14 skills=3')
+    expect(line).toContain('ids=')
     expect(line).toContain('home-claude')
-    expect(line).toContain('skills=3')
     expect(line).not.toContain(home)
     expect(line).not.toContain(tmpdir())
 

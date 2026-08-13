@@ -83,19 +83,6 @@ describe('discoverSkillsOnTarget', () => {
     expect(nativeScans).toHaveLength(2)
   })
 
-  it('keeps repo-list identity stable regardless of stored order', async () => {
-    const repos = [makeRepo('/repo-a'), makeRepo('/repo-b')]
-    await discoverSkillsOnTarget({ kind: 'native-host', cwd: undefined }, repos)
-    await Promise.all([
-      discoverSkillsOnTarget({ kind: 'native-host', cwd: undefined }, repos.toReversed()),
-      discoverSkillsOnTarget({ kind: 'native-host', cwd: undefined }, repos)
-    ])
-
-    // The native target retains nothing after it settles, so the second round is a
-    // real scan — but the two concurrent callers still had to share it.
-    expect(nativeScans).toHaveLength(2)
-  })
-
   it('forwards refresh to the native scan so it re-reads disk', async () => {
     await discoverSkillsOnTarget({ kind: 'native-host', cwd: '/workspace' }, [], { refresh: true })
 

@@ -19,8 +19,7 @@ import {
 import { discoverClaudePluginSkillSources } from './claude-plugin-skill-sources'
 import { countPackageFiles, findSkillFiles } from './skill-root-file-walk'
 import { runSkillCandidateTasks } from './skill-candidate-concurrency'
-import { SkillScanCoalescer, type SkillScanSource } from './skill-scan-coalescer'
-import { logSkillDiscoveryDiagnostics } from './skill-discovery-diagnostics'
+import { SkillScanCoalescer, type SkillScanOutcome } from './skill-scan-coalescer'
 
 export { buildSkillDiscoverySources } from './skill-discovery-sources'
 
@@ -128,19 +127,14 @@ function rootScanKey(root: SkillScanRoot): string {
   return `${root.sourceKind}\0${root.path}`
 }
 
-async function scanRootShared(
+function scanRootShared(
   root: SkillScanRoot,
   refresh: boolean
-): Promise<{ scan: RootScan; source: SkillScanSource }> {
-  const outcome = await rootScans.run(
-    rootScanKey(root),
-    { ttlMs: SKILL_ROOT_SCAN_TTL_MS, refresh },
-    async () => {
-      const exists = await pathExists(root.path)
-      return { exists, skills: exists ? await scanRoot(root) : [] }
-    }
-  )
-  return { scan: outcome.value, source: outcome.source }
+): Promise<SkillScanOutcome<RootScan>> {
+  return rootScans.run(rootScanKey(root), { ttlMs: SKILL_ROOT_SCAN_TTL_MS, refresh }, async () => {
+    const exists = await pathExists(root.path)
+    return { exists, skills: exists ? await scanRoot(root) : [] }
+  })
 }
 
 function mergeScannedSkill(seen: Map<string, DiscoveredSkill>, skill: ScannedSkill): void {
@@ -198,31 +192,25 @@ export async function discoverSkills(args: {
   const sources: SkillDiscoverySource[] = roots.map((root, index) => ({
     ...root,
     providers: [...root.providers],
-    exists: scans[index].scan.exists,
-    skippedReason: scans[index].scan.exists ? undefined : 'missing'
+    exists: scans[index].value.exists,
+    skippedReason: scans[index].value.exists ? undefined : 'missing'
   }))
   const seen = new Map<string, DiscoveredSkill>()
-  for (const { scan } of scans) {
-    for (const skill of scan.skills) {
+  for (const { value } of scans) {
+    for (const skill of value.skills) {
       mergeScannedSkill(seen, skill)
     }
   }
   const skills = Array.from(seen.values()).sort(compareSkills)
-  const scannedRootIds = roots
-    .filter((_, index) => scans[index].source === 'scanned')
-    .map((root) => root.id)
-  // Why: a fully cached scan did no filesystem work, so logging it would bury the
-  // bursts this line exists to make visible.
-  if (scannedRootIds.length > 0) {
-    logSkillDiscoveryDiagnostics({
-      target: 'native-host',
-      scannedRootIds,
-      rootCount: roots.length,
-      presentRootCount: sources.filter((source) => source.exists).length,
-      cachedRootCount: roots.length - scannedRootIds.length,
-      skillCount: skills.length,
-      durationMs: Date.now() - startedAt
-    })
+  // Why: root *ids* — a repo/plugin id is already a hash, while its label carries
+  // the repo or plugin name and its path carries the user's directory names. A
+  // fully cached scan did no filesystem work, so it stays silent rather than
+  // burying the bursts this line exists to make visible.
+  const walked = roots.filter((_, index) => !scans[index].cached).map((root) => root.id)
+  if (walked.length > 0) {
+    console.info(
+      `[skills] scan roots=${roots.length} walked=${walked.length} skills=${skills.length} ms=${Date.now() - startedAt} ids=${walked.slice(0, 12).join(',')}`
+    )
   }
   return {
     skills,
