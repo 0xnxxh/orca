@@ -116,6 +116,7 @@ import {
 } from '../../../../src/terminal/terminal-accessory-layout'
 import { createTerminalLiveAccessoryInput } from '../../../../src/terminal/terminal-live-accessory-input'
 import { sendTerminalLiveAccessoryRawBytes } from '../../../../src/terminal/terminal-live-accessory-raw-send'
+import { createTerminalAccessoryRepeatController } from '../../../../src/terminal/terminal-accessory-repeat'
 import {
   clearTerminalLiveInputFocusTimer,
   isTerminalLiveInputWithinByteLimit,
@@ -2947,14 +2948,14 @@ export default function SessionScreen() {
 
   async function handleAccessoryKey(input: ReturnType<typeof createTerminalLiveAccessoryInput>) {
     if (!client || !activeHandle || !canSend) {
-      return
+      return false
     }
     const targetHandle = activeHandle
     const accessoryCommit = await handleLiveInputAccessoryBytes(input)
     if (accessoryCommit.kind !== 'allow-raw') {
-      return
+      return accessoryCommit.kind === 'handled'
     }
-    await sendTerminalLiveAccessoryRawBytes({
+    return sendTerminalLiveAccessoryRawBytes({
       client: clientRef.current,
       targetHandle,
       activeHandle: activeHandleRef.current,
@@ -3347,32 +3348,22 @@ export default function SessionScreen() {
     }
   }
 
-  // Why: hold-to-repeat matches iOS cadence (400ms then 45ms); non-repeatable keys fire once (holding is destructive).
-  const repeatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const repeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const accessoryRepeatRef = useRef(
+    createTerminalAccessoryRepeatController<ReturnType<typeof createTerminalLiveAccessoryInput>>()
+  )
   // Why: ref keeps repeat firing the current callback; else a mid-hold tab switch/reconnect routes bytes to a stale terminal.
   const handleAccessoryKeyRef = useRef(handleAccessoryKey)
   handleAccessoryKeyRef.current = handleAccessoryKey
   const stopAccessoryRepeat = useCallback(() => {
-    if (repeatTimeoutRef.current) {
-      clearTimeout(repeatTimeoutRef.current)
-      repeatTimeoutRef.current = null
-    }
-    if (repeatIntervalRef.current) {
-      clearInterval(repeatIntervalRef.current)
-      repeatIntervalRef.current = null
-    }
+    accessoryRepeatRef.current.stop()
   }, [])
   const startAccessoryRepeat = useCallback(
     (input: ReturnType<typeof createTerminalLiveAccessoryInput>) => {
-      stopAccessoryRepeat()
-      repeatTimeoutRef.current = setTimeout(() => {
-        repeatIntervalRef.current = setInterval(() => {
-          void handleAccessoryKeyRef.current(input)
-        }, 45)
-      }, 400)
+      accessoryRepeatRef.current.start(input, (nextInput) =>
+        handleAccessoryKeyRef.current(nextInput)
+      )
     },
-    [stopAccessoryRepeat]
+    []
   )
   const setMobileSessionRootRef = useCallback(
     (node: View | null): void => {
@@ -4773,7 +4764,6 @@ export default function SessionScreen() {
                             return
                           }
                           const input = createTerminalLiveAccessoryInput(key)
-                          void handleAccessoryKey(input)
                           startAccessoryRepeat(input)
                         }}
                         onPressOut={() => {

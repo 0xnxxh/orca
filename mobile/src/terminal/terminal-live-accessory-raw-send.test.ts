@@ -20,7 +20,7 @@ describe('terminal live accessory raw send', () => {
   it('sends raw bytes now-or-never with the device presence tag', async () => {
     const { client, sendRequest } = captureClient()
 
-    await sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client })
+    await expect(sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client })).resolves.toBe(true)
 
     expect(sendRequest).toHaveBeenCalledWith(
       'terminal.send',
@@ -33,7 +33,9 @@ describe('terminal live accessory raw send', () => {
   it('drops the bytes instead of sending while disconnected', async () => {
     const { client, sendRequest } = captureClient()
 
-    await sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client, connState: 'reconnecting' })
+    await expect(
+      sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client, connState: 'reconnecting' })
+    ).resolves.toBe(false)
 
     expect(sendRequest).not.toHaveBeenCalled()
   })
@@ -41,16 +43,16 @@ describe('terminal live accessory raw send', () => {
   it('drops the bytes when the terminal selection went stale mid-flush', async () => {
     const { client, sendRequest } = captureClient()
 
-    await sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client, activeHandle: 'terminal-b' })
+    await expect(
+      sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client, activeHandle: 'terminal-b' })
+    ).resolves.toBe(false)
 
     expect(sendRequest).not.toHaveBeenCalled()
   })
 
-  it('swallows a rejected send so accessory taps never surface transport errors', async () => {
+  it('reports a rejected send without surfacing transport errors', async () => {
     const { client } = captureClient(Promise.reject(new Error('Not connected: terminal.send')))
 
-    await expect(
-      sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client })
-    ).resolves.toBeUndefined()
+    await expect(sendTerminalLiveAccessoryRawBytes({ ...BASE_ARGS, client })).resolves.toBe(false)
   })
 })

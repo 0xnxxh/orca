@@ -15,7 +15,7 @@ type TerminalLiveAccessoryRawSendArgs = {
 
 export async function sendTerminalLiveAccessoryRawBytes(
   args: TerminalLiveAccessoryRawSendArgs
-): Promise<void> {
+): Promise<boolean> {
   // Why: async IME flushing can outlive the original terminal selection.
   const rawSendTarget = getTerminalLiveAccessoryRawSendTarget({
     targetHandle: args.targetHandle,
@@ -23,9 +23,9 @@ export async function sendTerminalLiveAccessoryRawBytes(
     activeSessionTabType: args.activeSessionTabType
   })
   if (!args.client || !rawSendTarget || args.connState !== 'connected') {
-    return
+    return false
   }
-  await args.client
+  return args.client
     .sendRequest(
       'terminal.send',
       buildTerminalSendParams({
@@ -37,7 +37,7 @@ export async function sendTerminalLiveAccessoryRawBytes(
       TERMINAL_INPUT_SEND_OPTIONS
     )
     .then(
-      () => undefined,
-      () => undefined
+      () => true,
+      () => false
     )
 }
