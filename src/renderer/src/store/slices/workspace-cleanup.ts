@@ -207,6 +207,7 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
       const scan = await window.api.workspaceCleanup.scan(scanArgs, (progress) => {
         enqueueWorkspaceCleanupProgress(progress, scanToken, get, set)
       })
+      await drainWorkspaceCleanupProgressQueue(scanToken)
       const enriched = await enrichWorkspaceCleanupCandidatesForScan(
         scan.candidates,
         get(),
@@ -447,6 +448,17 @@ function enqueueWorkspaceCleanupProgress(
       console.error('Workspace cleanup progress update failed', error)
     })
   workspaceCleanupProgressQueue = { scanToken, promise }
+}
+
+// Why: IPC final follows progress immediately; drain it to share cache and concurrency cap.
+async function drainWorkspaceCleanupProgressQueue(scanToken: number): Promise<void> {
+  while (workspaceCleanupProgressQueue?.scanToken === scanToken) {
+    const queuedProgress = workspaceCleanupProgressQueue.promise
+    await queuedProgress
+    if (workspaceCleanupProgressQueue?.promise === queuedProgress) {
+      return
+    }
+  }
 }
 
 async function applyWorkspaceCleanupProgress(
