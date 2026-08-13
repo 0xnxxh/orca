@@ -6795,9 +6795,14 @@ export class Store {
       expectedBinding?: { ptyId: string; incarnationId?: string }
       expectedSourceBinding?: PtyBindingSourceExpectation
     },
-    hostId?: string | null
+    hostId?: string | null,
+    sshSurfaceLease?: Omit<SshRemotePtyLease, 'createdAt' | 'updatedAt'> &
+      Partial<Pick<SshRemotePtyLease, 'createdAt' | 'updatedAt'>> & { cleanupPending: false }
   ): boolean {
     const resolvedHostId = this.resolveHostId(hostId)
+    if (sshSurfaceLease && resolvedHostId !== toSshExecutionHostId(sshSurfaceLease.targetId)) {
+      throw new Error('SSH surface lease target does not match the binding host')
+    }
     const session = this.getWorkspaceSession(resolvedHostId)
     const paneKey = `${args.tabId}:${args.leafId}`
     const bindingWorktreeId = args.expectedSourceBinding?.worktreeId ?? args.worktreeId
@@ -6841,6 +6846,9 @@ export class Store {
       }
     }
     const sessionBeforeBinding = cloneWorkspaceSessionState(session)
+    const sshRemotePtyLeasesBeforeBinding = sshSurfaceLease
+      ? [...(this.state.sshRemotePtyLeases ?? [])]
+      : undefined
     const reconciledIncarnation =
       args.expectedBinding !== undefined &&
       args.incarnationId !== args.expectedBinding.incarnationId
@@ -6869,6 +6877,14 @@ export class Store {
           ...this.state.workspaceSessionsByHostId,
           [resolvedHostId]: sessionBeforeBinding
         }
+      }
+      if (sshSurfaceLease) {
+        this.state.sshRemotePtyLeases = sshRemotePtyLeasesBeforeBinding ?? []
+      }
+    }
+    const applySshSurfaceLease = (): void => {
+      if (sshSurfaceLease) {
+        this.applySshRemotePtyLease(sshSurfaceLease)
       }
     }
     if (args.incarnationId) {
@@ -6913,6 +6929,7 @@ export class Store {
       // Why: keep legacy renderer-local pane ids out of durable leaf-keyed layout state after the UUID migration.
       advanceTopologyFence()
       try {
+        applySshSurfaceLease()
         this.flushOrThrow()
       } catch (err) {
         restoreSession()
@@ -6961,6 +6978,7 @@ export class Store {
     }
     advanceTopologyFence()
     try {
+      applySshSurfaceLease()
       this.flushOrThrow()
     } catch (err) {
       restoreSession()

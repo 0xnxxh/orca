@@ -5252,6 +5252,7 @@ describe('registerPtyHandlers', () => {
         )
         const store = {
           upsertSshRemotePtyLease: vi.fn(),
+          upsertSshPtyCleanupLeaseAsync: vi.fn(),
           persistPtyBinding: vi.fn()
         }
         registerSshPtyProvider('ssh-1', {
@@ -5326,13 +5327,13 @@ describe('registerPtyHandlers', () => {
         expect(spawnOptions.tabId).toBe('tab-1')
         expect(openCodeBuildPtyEnvMock).not.toHaveBeenCalled()
         expect(piBuildPtyEnvMock).not.toHaveBeenCalled()
-        expect(store.upsertSshRemotePtyLease).toHaveBeenCalledWith(
+        expect(store.upsertSshPtyCleanupLeaseAsync).toHaveBeenCalledWith(
           expect.objectContaining({
             targetId: 'ssh-1',
             ptyId: 'ssh-pty',
             worktreeId: 'wt-1',
-            tabId: 'tab-1',
-            leafId,
+            cleanupPending: true,
+            cleanupExpectedPaneKey: `tab-1:${leafId}`,
             state: 'attached'
           })
         )
@@ -5343,10 +5344,18 @@ describe('registerPtyHandlers', () => {
             leafId,
             ptyId: 'ssh-pty'
           },
-          'ssh:ssh-1'
+          'ssh:ssh-1',
+          expect.objectContaining({
+            targetId: 'ssh-1',
+            ptyId: 'ssh-pty',
+            tabId: 'tab-1',
+            leafId,
+            cleanupPending: false
+          })
         )
 
         store.upsertSshRemotePtyLease.mockClear()
+        store.upsertSshPtyCleanupLeaseAsync.mockClear()
         store.persistPtyBinding.mockClear()
         await handlers.get('pty:spawn')!(null, {
           cols: 80,
@@ -8797,6 +8806,7 @@ describe('registerPtyHandlers', () => {
         'injected cleanup lease persistence failure'
       )
       expect(shutdown).not.toHaveBeenCalled()
+      expect(store.persistPtyBinding).not.toHaveBeenCalled()
       expect(liveRemotePtys.has(appPtyId)).toBe(true)
       expect(getPtyIdsForConnection(connectionId)).toEqual([appPtyId])
 
@@ -8807,6 +8817,7 @@ describe('registerPtyHandlers', () => {
       shutdown.mockClear()
       store.markSshRemotePtyLease.mockClear()
       store.upsertSshPtyCleanupLeaseAsync.mockClear()
+      store.persistPtyBinding.mockClear()
       shutdownFails = true
 
       await expect(spawnRejectedSplit()).rejects.toThrow('terminal_split_source_not_found')
@@ -8828,6 +8839,20 @@ describe('registerPtyHandlers', () => {
       )
       expect(store.upsertSshPtyCleanupLeaseAsync.mock.calls[0]?.[0]).not.toHaveProperty('tabId')
       expect(store.upsertSshPtyCleanupLeaseAsync.mock.calls[0]?.[0]).not.toHaveProperty('leafId')
+      expect(store.upsertSshPtyCleanupLeaseAsync.mock.invocationCallOrder[0]).toBeLessThan(
+        store.persistPtyBinding.mock.invocationCallOrder[0]
+      )
+      expect(store.persistPtyBinding).toHaveBeenCalledWith(
+        expect.objectContaining({ expectedSourceBinding: expect.any(Object) }),
+        `ssh:${connectionId}`,
+        expect.objectContaining({
+          targetId: connectionId,
+          ptyId: 'rejected-split-pty',
+          tabId: 'tab-rejected-split',
+          leafId,
+          cleanupPending: false
+        })
+      )
       expect(warn).toHaveBeenCalledWith(
         '[pty] failed to clean up PTY after persistence failure:',
         expect.objectContaining({ message: 'injected remote shutdown failure' })
@@ -10545,6 +10570,7 @@ describe('registerPtyHandlers', () => {
       flushOrThrow: vi.fn(),
       persistPtyBinding: vi.fn(),
       upsertSshRemotePtyLease: vi.fn(),
+      upsertSshPtyCleanupLeaseAsync: vi.fn(),
       removeSshRemotePtyLease: vi.fn(),
       markSshRemotePtyLease: vi.fn()
     }
@@ -10610,7 +10636,12 @@ describe('registerPtyHandlers', () => {
           leafId,
           ptyId: freshPtyId
         }),
-        hostId
+        hostId,
+        expect.objectContaining({
+          targetId: connectionId,
+          ptyId: 'fresh-relay-pty',
+          cleanupPending: false
+        })
       )
     } finally {
       unregisterSshPtyProvider(connectionId)
@@ -10907,6 +10938,7 @@ describe('registerPtyHandlers', () => {
     } as never)
     const store = {
       upsertSshRemotePtyLease: vi.fn(),
+      upsertSshPtyCleanupLeaseAsync: vi.fn(),
       persistPtyBinding: vi.fn(),
       removeSshRemotePtyLease: vi.fn(),
       markSshRemotePtyLease: vi.fn()
@@ -10947,13 +10979,13 @@ describe('registerPtyHandlers', () => {
       persistHostSessionBinding: true
     })
 
-    expect(store.upsertSshRemotePtyLease).toHaveBeenCalledWith(
+    expect(store.upsertSshPtyCleanupLeaseAsync).toHaveBeenCalledWith(
       expect.objectContaining({
         targetId: 'ssh-1',
         ptyId: 'relay-pty',
         worktreeId: 'wt-remote',
-        tabId: 'tab-remote',
-        leafId,
+        cleanupExpectedPaneKey: `tab-remote:${leafId}`,
+        cleanupPending: true,
         state: 'attached'
       })
     )
@@ -10964,10 +10996,17 @@ describe('registerPtyHandlers', () => {
         leafId,
         ptyId: 'ssh:ssh-1@@relay-pty'
       },
-      'ssh:ssh-1'
+      'ssh:ssh-1',
+      expect.objectContaining({
+        targetId: 'ssh-1',
+        ptyId: 'relay-pty',
+        tabId: 'tab-remote',
+        leafId,
+        cleanupPending: false
+      })
     )
-    expect(store.persistPtyBinding.mock.invocationCallOrder[0]!).toBeLessThan(
-      store.upsertSshRemotePtyLease.mock.invocationCallOrder[0]!
+    expect(store.upsertSshPtyCleanupLeaseAsync.mock.invocationCallOrder[0]!).toBeLessThan(
+      store.persistPtyBinding.mock.invocationCallOrder[0]!
     )
     unregisterSshPtyProvider('ssh-1')
   })
@@ -11174,6 +11213,7 @@ describe('registerPtyHandlers', () => {
     } as never)
     const store = {
       upsertSshRemotePtyLease: vi.fn(),
+      upsertSshPtyCleanupLeaseAsync: vi.fn(),
       persistPtyBinding: vi.fn()
     }
     let controller: RuntimeSpawnController | null = null
@@ -11229,11 +11269,12 @@ describe('registerPtyHandlers', () => {
       expect(env?.ORCA_WORKTREE_ID).toBeUndefined()
       expect(spawnOptions.envToDelete ?? []).not.toContain('CODEX_HOME')
       expect(spawnOptions.envToDelete ?? []).not.toContain('ORCA_CODEX_HOME')
-      expect(store.upsertSshRemotePtyLease).toHaveBeenCalledWith(
+      expect(store.upsertSshPtyCleanupLeaseAsync).toHaveBeenCalledWith(
         expect.objectContaining({
           targetId: 'ssh-runtime-env',
           ptyId: 'relay-pty',
-          leafId,
+          cleanupExpectedPaneKey: `tab-remote:${leafId}`,
+          cleanupPending: true,
           state: 'attached'
         })
       )

@@ -10963,6 +10963,86 @@ describe('Store', () => {
     ])
   })
 
+  it('commits SSH binding and surface purpose atomically', async () => {
+    const store = await createStore()
+    const worktreeId = 'repo-1::/remote/repo'
+    const tabId = 'tab-split'
+    store.upsertSshRemotePtyLease({
+      targetId: 'ssh-1',
+      ptyId: 'pty-split',
+      worktreeId,
+      cleanupPending: true,
+      cleanupExpectedPaneKey: `${tabId}:${TEST_LEAF_2}`,
+      cleanupExpectedTabId: tabId,
+      cleanupExpectedIncarnationId: 'incarnation-split',
+      state: 'attached'
+    })
+    const surfaceLease = {
+      targetId: 'ssh-1',
+      ptyId: 'pty-split',
+      worktreeId,
+      tabId,
+      leafId: TEST_LEAF_2,
+      cleanupPending: false as const,
+      state: 'attached' as const
+    }
+    vi.spyOn(store, 'flushOrThrow').mockImplementationOnce(() => {
+      throw new Error('disk unavailable')
+    })
+
+    expect(() =>
+      store.persistPtyBinding(
+        {
+          worktreeId,
+          tabId,
+          leafId: TEST_LEAF_2,
+          ptyId: 'ssh:ssh-1@@pty-split',
+          incarnationId: 'incarnation-split'
+        },
+        'ssh:ssh-1',
+        surfaceLease
+      )
+    ).toThrow('disk unavailable')
+
+    expect(store.getSshRemotePtyLeases('ssh-1')).toEqual([
+      expect.objectContaining({
+        ptyId: 'pty-split',
+        cleanupPending: true,
+        cleanupExpectedIncarnationId: 'incarnation-split'
+      })
+    ])
+    expect(store.getSshRemotePtyLeases('ssh-1')[0]).not.toHaveProperty('tabId')
+    expect(store.getWorkspaceSession('ssh:ssh-1').terminalLayoutsByTabId?.[tabId]).toBeUndefined()
+
+    const reloaded = await createStore()
+    expect(reloaded.getSshRemotePtyLeases('ssh-1')).toEqual([
+      expect.objectContaining({ ptyId: 'pty-split', cleanupPending: true })
+    ])
+    expect(reloaded.getSshRemotePtyLeases('ssh-1')[0]).not.toHaveProperty('tabId')
+
+    expect(
+      store.persistPtyBinding(
+        {
+          worktreeId,
+          tabId,
+          leafId: TEST_LEAF_2,
+          ptyId: 'ssh:ssh-1@@pty-split',
+          incarnationId: 'incarnation-split'
+        },
+        'ssh:ssh-1',
+        surfaceLease
+      )
+    ).toBe(true)
+    expect(store.getSshRemotePtyLeases('ssh-1')).toEqual([
+      expect.objectContaining({
+        ptyId: 'pty-split',
+        tabId,
+        leafId: TEST_LEAF_2
+      })
+    ])
+    expect(store.getSshRemotePtyLeases('ssh-1')[0]).not.toHaveProperty('cleanupPending')
+  })
+
   it('rolls back failed SSH cleanup retirement without overwriting a replacement', async () => {
     const store = await createStore()
     store.upsertSshRemotePtyLease({
