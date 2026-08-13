@@ -91,6 +91,9 @@ export function useNativeChatSkills(
   useEffect(() => {
     let cancelled = false
     if (!profile || !enabled || !context) {
+      // Why: there is no pane to retry into, so a pending retry intent must not
+      // survive to force an unrelated pane's first scan.
+      forceNextDiscovery.current = false
       setState(IDLE_STATE)
       return
     }

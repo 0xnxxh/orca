@@ -292,6 +292,9 @@ describe('useInstalledAgentSkill', () => {
   })
 
   it('serves a focus rescan from cache so window switching does not walk disk', async () => {
+    // Why: the freshness window is wall-clock, so pin the clock — a stalled runner
+    // could otherwise cross it mid-test and turn this into a flake.
+    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
     const firstScan = deferred<SkillDiscoveryResult>()
     const discover = vi
       .fn<(target?: SkillDiscoveryTarget) => Promise<SkillDiscoveryResult>>()

@@ -83,6 +83,21 @@ describe('discoverSkillsOnTarget', () => {
     expect(nativeScans).toHaveLength(2)
   })
 
+  // Why: two clients can hold the same repo set in a different stored order. If the
+  // digest is order-sensitive they get different keys and each runs a full native
+  // scan — the fan-out this cache exists to bound. ttl is 0 here, so the pin is
+  // that two *concurrent* callers coalesce, which they only do on an equal key.
+  it('keeps repo-list identity stable regardless of stored order', async () => {
+    const repos = [makeRepo('/repo-a'), makeRepo('/repo-b')]
+    await discoverSkillsOnTarget({ kind: 'native-host', cwd: undefined }, repos)
+    await Promise.all([
+      discoverSkillsOnTarget({ kind: 'native-host', cwd: undefined }, repos.toReversed()),
+      discoverSkillsOnTarget({ kind: 'native-host', cwd: undefined }, repos)
+    ])
+
+    expect(nativeScans).toHaveLength(2)
+  })
+
   it('forwards refresh to the native scan so it re-reads disk', async () => {
     await discoverSkillsOnTarget({ kind: 'native-host', cwd: '/workspace' }, [], { refresh: true })
 

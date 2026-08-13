@@ -28,12 +28,6 @@ const MAX_JOINABLE_SCAN_AGE_MS = 30_000
 export class SkillScanCoalescer<T> {
   private readonly pending = new Map<string, PendingEntry<T>>()
   private readonly cache = new Map<string, CacheEntry<T>>()
-  // Why: deleting the cache entry is not enough to invalidate. A scan that began
-  // before the mutation resolves afterwards and would re-cache its pre-mutation
-  // result with a fresh lifetime, so the install that triggered the refresh reads
-  // as missing for a full window. Every scan carries the epoch it started under
-  // and may only publish while that epoch is still current.
-  private epoch = 0
 
   constructor(
     private readonly maximumEntries: number,
@@ -49,7 +43,6 @@ export class SkillScanCoalescer<T> {
       // Why: a forced caller is answering a mutation it just made, so it must not
       // join a scan that may have started before that mutation. Concurrent forced
       // callers therefore duplicate; they are rare (install / explicit recheck).
-      this.epoch += 1
       this.cache.delete(key)
       return { value: await this.start(key, options.ttlMs, task), cached: false }
     }
@@ -66,16 +59,21 @@ export class SkillScanCoalescer<T> {
 
   /** Drop every cached and in-flight entry (e.g. after a skill update run). */
   clear(): void {
-    this.epoch += 1
     this.cache.clear()
     this.pending.clear()
   }
 
   private start(key: string, ttlMs: number, task: () => Promise<T>): Promise<T> {
-    const epoch = this.epoch
     const promise = task()
       .then((value) => {
-        if (ttlMs > 0 && epoch === this.epoch) {
+        // Why: owning the pending slot is what makes a scan publishable, and it is
+        // per key by construction. Deleting the cache entry is not enough to
+        // invalidate — a scan that began before the mutation resolves afterwards
+        // and would re-cache its pre-mutation result with a fresh lifetime. This
+        // one check covers all three ways it can be superseded: `clear()` empties
+        // `pending`, a refresh overwrites the slot, and so does the replacement
+        // for a scan abandoned past MAX_JOINABLE_SCAN_AGE_MS.
+        if (ttlMs > 0 && this.pending.get(key)?.promise === promise) {
           this.write(key, value, ttlMs)
         }
         return value

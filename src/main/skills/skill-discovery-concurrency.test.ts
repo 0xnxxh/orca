@@ -19,7 +19,7 @@ vi.mock('node:fs/promises', async () => {
   }
 })
 
-const { clearSkillRootScanCache, discoverSkills } = await import('./discovery')
+const { clearSkillRootScanCache, discoverSkills, MAX_LOGGED_ROOT_IDS } = await import('./discovery')
 
 async function writeSkill(directory: string, name: string): Promise<void> {
   await mkdir(directory, { recursive: true })
@@ -148,8 +148,13 @@ describe('bounded concurrent skill discovery', () => {
     })
     expect(refreshed.skills.map((skill) => skill.name)).toContain('added-later')
 
+    // Why: asserting only that the skill is present would pass with no caching at
+    // all — the roots would simply re-walk and find it. The refresh has to leave
+    // every root cached, or the next scan re-walks the whole set.
+    readdirPaths.length = 0
     const afterRefresh = await discoverSkills({ homeDir: home, repos: [], cwd: noWorkspace })
     expect(afterRefresh.skills.map((skill) => skill.name)).toContain('added-later')
+    expect(readdirPaths).toEqual([])
   })
 
   it('gives every caller its own arrays so a shared scan cannot be mutated across results', async () => {
@@ -172,12 +177,15 @@ describe('bounded concurrent skill discovery', () => {
 
     await discoverSkills({ homeDir: home, repos: [], cwd: noWorkspace })
 
-    const line = info.mock.calls.at(0)?.at(0)
-    expect(line).toContain('[skills] scan roots=14 walked=14 skills=3')
-    expect(line).toContain('ids=')
+    const line = String(info.mock.calls.at(0)?.at(0))
+    // `present` is the signal that separates "big tree" from "big root set", and
+    // is not derivable from the other counts.
+    expect(line).toContain('[skills] scan roots=14 present=3 walked=14 skills=3')
     expect(line).toContain('home-claude')
     expect(line).not.toContain(home)
     expect(line).not.toContain(tmpdir())
+    // The id list is capped so one line cannot grow with the repo count.
+    expect(line.slice(line.indexOf('ids=')).split(',')).toHaveLength(MAX_LOGGED_ROOT_IDS)
 
     info.mockClear()
     await discoverSkills({ homeDir: home, repos: [], cwd: noWorkspace })

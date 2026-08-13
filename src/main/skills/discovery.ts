@@ -32,9 +32,17 @@ export const SKILL_ROOT_SCAN_TTL_MS = 10_000
 // `12 fixed home roots + 2 per local repo (+ cwd) + plugin roots`, so a bound
 // smaller than a single scan's root count makes that scan evict its own earlier
 // entries and the cache degrades to a ~0% hit rate — exactly the walk this
-// exists to prevent. This holds a ~500-repo install. Most repo roots do not
-// exist, and a missing root caches as `{exists: false, skills: []}`.
+// exists to prevent. The live key space is the union across targets — the fixed
+// home roots plus two per repo plus two per distinct workspace cwd — so this holds
+// a few hundred repos with panes open, not an unbounded install. Past that the LRU
+// keeps the hot home roots and the repo roots thrash, which degrades rather than
+// breaks. Most repo roots do not exist, and a missing root caches as
+// `{exists: false, skills: []}`.
 const MAX_CACHED_SKILL_ROOTS = 1_024
+// Why: roots grow with the repo count, so an uncapped id list would make one log
+// line grow with the install. Root *ids* are safe to log where labels and paths
+// are not — a repo/plugin id is already a hash.
+export const MAX_LOGGED_ROOT_IDS = 12
 
 type RootScan = { exists: boolean; skills: ScannedSkill[] }
 
@@ -208,8 +216,12 @@ export async function discoverSkills(args: {
   // burying the bursts this line exists to make visible.
   const walked = roots.filter((_, index) => !scans[index].cached).map((root) => root.id)
   if (walked.length > 0) {
+    // `present` is not derivable from the rest: "walked 500 roots, 3 existed" is
+    // the shape that says the root set, not the tree, is what costs. The id list
+    // is capped because roots grow with the repo count.
+    const present = sources.filter((source) => source.exists).length
     console.info(
-      `[skills] scan roots=${roots.length} walked=${walked.length} skills=${skills.length} ms=${Date.now() - startedAt} ids=${walked.slice(0, 12).join(',')}`
+      `[skills] scan roots=${roots.length} present=${present} walked=${walked.length} skills=${skills.length} ms=${Date.now() - startedAt} ids=${walked.slice(0, MAX_LOGGED_ROOT_IDS).join(',')}`
     )
   }
   return {

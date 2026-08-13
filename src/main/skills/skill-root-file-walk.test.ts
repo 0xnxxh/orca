@@ -41,6 +41,12 @@ describe('countPackageFiles', () => {
     expect(await countPackageFiles(pkg)).toBe(2)
   })
 
+  // Why: discovery counts `dirname(SKILL.md)`, and a package can vanish between
+  // being found and being counted — an uninstall mid-scan is exactly that race.
+  it('returns zero for a directory it cannot read', async () => {
+    expect(await countPackageFiles(join(await makeTree(), 'absent'))).toBe(0)
+  })
+
   it('stops at the file bound', async () => {
     const pkg = join(await makeTree(), 'skill')
     for (let index = 0; index < MAX_SKILL_PACKAGE_FILES + 25; index += 1) {

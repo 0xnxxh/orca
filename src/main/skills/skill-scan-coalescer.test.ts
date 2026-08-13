@@ -97,6 +97,24 @@ describe('SkillScanCoalescer', () => {
     expect(runs).toBe(2)
   })
 
+  // Why: discovery issues one refreshing run() per root, synchronously. An
+  // invalidation counter shared across keys would let only the last-issued root
+  // publish and silently discard the rest, so every later scan re-walks them.
+  it('caches every key when a refresh fans out across roots', async () => {
+    const coalescer = new SkillScanCoalescer<string>(64)
+    const keys = ['root-a', 'root-b', 'root-c', 'root-d']
+
+    await Promise.all(
+      keys.map((key) => coalescer.run(key, { ttlMs: 10_000, refresh: true }, async () => key))
+    )
+    const readBack = await Promise.all(
+      keys.map((key) => coalescer.run(key, { ttlMs: 10_000 }, async () => 're-walked'))
+    )
+
+    expect(readBack.map((outcome) => outcome.cached)).toEqual([true, true, true, true])
+    expect(readBack.map((outcome) => outcome.value)).toEqual(keys)
+  })
+
   it('does not let a scan that started before a refresh publish its stale result', async () => {
     const coalescer = new SkillScanCoalescer<string>(8)
     const slowScan = deferred<string>()
@@ -170,7 +188,9 @@ describe('SkillScanCoalescer', () => {
     expect((await scan('b')).cached).toBe(false)
   })
 
-  it('stops joining a scan that never settles, and keeps one pending entry per key', async () => {
+  // ttl is non-zero on purpose: with ttl 0 nothing is ever written, which hides
+  // whether the abandoned scan can still publish over the replacement's result.
+  it('stops joining a scan that never settles, and never lets it publish later', async () => {
     let now = 1_000
     const coalescer = new SkillScanCoalescer<number>(8, () => now)
     const wedged = deferred<number>()
@@ -181,17 +201,22 @@ describe('SkillScanCoalescer', () => {
       return runs === 1 ? wedged.promise : Promise.resolve(runs)
     }
 
-    void coalescer.run('root', { ttlMs: 0 }, task)
+    void coalescer.run('root', { ttlMs: 10_000 }, task)
     now = 1_100
     // Still young enough to share.
-    const joined = coalescer.run('root', { ttlMs: 0 }, task)
+    const joined = coalescer.run('root', { ttlMs: 10_000 }, task)
     now = 40_000
 
-    expect(await coalescer.run('root', { ttlMs: 0 }, task)).toEqual({ value: 2, cached: false })
+    expect(await coalescer.run('root', { ttlMs: 10_000 }, task)).toEqual({
+      value: 2,
+      cached: false
+    })
     expect(runs).toBe(2)
 
-    // The wedged callers are still waiting on the original scan, not orphaned.
+    // The wedged callers still receive its eventual value rather than being orphaned...
     wedged.resolve(99)
     expect((await joined).value).toBe(99)
+    // ...but it must not overwrite the replacement's newer result with a fresh ttl.
+    expect(await coalescer.run('root', { ttlMs: 10_000 }, task)).toEqual({ value: 2, cached: true })
   })
 })
