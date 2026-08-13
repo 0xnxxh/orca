@@ -73,7 +73,7 @@ describe('relay Fish history metadata', () => {
     ])
   })
 
-  it('deletes recorded XDG paths and its bounded metadata', () => {
+  it('removes metadata without unlinking an unverified history pathname', () => {
     const metadataRoot = join(root, 'metadata')
     const historyFile = join(dataRoot, 'fish', `${session}_history`)
     mkdirSync(join(dataRoot, 'fish'), { recursive: true })
@@ -83,7 +83,8 @@ describe('relay Fish history metadata', () => {
     deleteRelayFishHistory(worktreeId, metadataRoot)
     deleteRelayFishHistory(worktreeId, metadataRoot)
 
-    expect(existsSync(historyFile)).toBe(false)
+    expect(existsSync(historyFile)).toBe(true)
+    expect(readFileSync(historyFile, 'utf8')).toBe('secret')
     expect(existsSync(join(metadataRoot, `${hash}.json`))).toBe(false)
   })
 })

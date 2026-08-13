@@ -1,6 +1,16 @@
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  closeSync,
+  constants as fsConstants,
+  existsSync,
+  ftruncateSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  writeFileSync
+} from 'node:fs'
 
 /**
  * Per-worktree fish history, which fish models as a session NAME rather than a path.
@@ -98,6 +108,35 @@ function fishHistoryDirectoryIdentity(path: string): FishHistoryDirectoryIdentit
     return identity
   } catch {
     return null
+  }
+}
+
+/** Clear through an attested directory handle; never unlink a pathname after checking it. */
+function clearFishHistoryFile(path: string): boolean {
+  const directory = dirname(path)
+  let directoryFd: number | undefined
+  let fileFd: number | undefined
+  try {
+    directoryFd = openSync(
+      directory,
+      fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW
+    )
+    if (process.platform === 'win32') {
+      return false
+    }
+    const fdRoot = process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd'
+    fileFd = openSync(join(fdRoot, String(directoryFd), basename(path)), fsConstants.O_RDWR)
+    ftruncateSync(fileFd, 0)
+    return true
+  } catch {
+    return false
+  } finally {
+    if (fileFd !== undefined) {
+      closeSync(fileFd)
+    }
+    if (directoryFd !== undefined) {
+      closeSync(directoryFd)
+    }
   }
 }
 
@@ -262,9 +301,8 @@ export function deleteFishHistoryFile(session: string, attestationPath: string):
         if (stat.isSymbolicLink() || !stat.isFile()) {
           continue
         }
-        removed = true
+        removed = clearFishHistoryFile(location.path) || removed
       }
-      rmSync(location.path, { force: true })
     } catch (err) {
       console.warn(
         `[pty:history] Failed to delete fish history ${location.path}: ${err instanceof Error ? err.message : String(err)}`

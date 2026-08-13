@@ -35,7 +35,7 @@ describe('fish history location attestation', () => {
     return join(dataRoot, 'fish', `${session}_history`)
   }
 
-  it('deletes each attested XDG location and caps retained identities', () => {
+  it('retains only bounded attested XDG locations when safe clearing is unavailable', () => {
     const paths: string[] = []
     for (let index = 0; index < MAX_RETAINED_FISH_HISTORY_PATHS + 2; index += 1) {
       const path = historyPath(join(root, `data-${index}`))
@@ -48,7 +48,9 @@ describe('fish history location attestation', () => {
 
     expect(existsSync(paths[0])).toBe(true)
     expect(existsSync(paths[1])).toBe(true)
-    expect(paths.slice(2).every((path) => !existsSync(path))).toBe(true)
+    expect(paths.slice(2).every((path) => readFileSync(path, 'utf8').startsWith('history-'))).toBe(
+      true
+    )
   })
 
   it('ignores a tampered meta.json path to an unrelated same-named file', () => {
@@ -65,7 +67,8 @@ describe('fish history location attestation', () => {
 
     deleteFishHistoryFile(session, attestationPath)
 
-    expect(existsSync(owned)).toBe(false)
+    expect(existsSync(owned)).toBe(true)
+    expect(readFileSync(owned, 'utf8')).toBe('owned')
     expect(readFileSync(unrelated, 'utf8')).toBe('unrelated')
   })
 

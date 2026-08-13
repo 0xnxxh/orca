@@ -82,6 +82,7 @@ import { createPtySlaveEchoProbe, readPtySlavePath } from '../shared/pty-slave-l
 import { fishHistorySessionName } from '../main/fish-history-session'
 import { hashWorktreeId } from '../main/terminal-history-id'
 import { deleteRelayFishHistory, recordRelayFishHistoryPath } from './fish-history-metadata'
+import { deleteRelayHistory, injectRelayHistoryEnv } from './terminal-history'
 
 // Why: only Linux compiles node-pty (no prebuilt), so the build-tools remedy is a closable setup gap
 // there and wrong advice anywhere node-pty ships one. The relay only sees an unloadable binding, never
@@ -869,6 +870,7 @@ export class PtyHandler {
     this.dispatcher.onRequest('pty.deleteWorktreeHistory', async (p) => {
       if (typeof p.worktreeId === 'string') {
         deleteRelayFishHistory(p.worktreeId)
+        deleteRelayHistory(p.worktreeId)
       }
       return { ok: true }
     })
@@ -1552,6 +1554,9 @@ export class PtyHandler {
       spawnEnv.fish_history = fishHistorySessionName(hashWorktreeId(worktreeId))
       recordRelayFishHistoryPath(worktreeId, spawnEnv)
     }
+    if (historyIsolationEnabled && worktreeId) {
+      injectRelayHistoryEnv(spawnEnv, worktreeId, shell)
+    }
     const launchCommandHint = resolveSetupAgentSequenceLaunchCommand(spawnEnv, command)
     // Why: SSH PTYs bypass main's host-env builder, so apply the guard after the relay merges its authoritative env.
     const gitCredentialPromptGuarded = applyTerminalGitCredentialPromptGuard(spawnEnv, {
@@ -2139,6 +2144,9 @@ export class PtyHandler {
     ) {
       spawnEnv.fish_history = fishHistorySessionName(hashWorktreeId(entry.worktreeId))
       recordRelayFishHistoryPath(entry.worktreeId, spawnEnv)
+    }
+    if (historyIsolationEnabled && entry.worktreeId) {
+      injectRelayHistoryEnv(spawnEnv, entry.worktreeId, shell)
     }
     // Why: revive lacks the original launch command, so reuse the fresh-spawn guard decision (legacy defaults to unguarded).
     const gitCredentialPromptGuarded = entry.gitCredentialPromptGuarded === true
