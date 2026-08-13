@@ -241,7 +241,9 @@ describe('WorktreeVisibilityDialog', () => {
   it('links directly to the global visibility defaults', async () => {
     await renderDialog()
 
-    await click(buttonWithText('Manage in Global Settings'))
+    const manageGlobalSettings = buttonWithText('Manage in Global Settings')
+    expect(manageGlobalSettings.querySelector('.lucide-settings')).not.toBeNull()
+    await click(manageGlobalSettings)
 
     expect(mocks.state.closeModal).toHaveBeenCalledOnce()
     expect(mocks.state.openSettingsTarget).toHaveBeenCalledWith({

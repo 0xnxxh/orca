@@ -1,4 +1,5 @@
 import type React from 'react'
+import { Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 import { GLOBAL_WORKTREE_VISIBILITY_SETTINGS_TARGET_ID } from '@/lib/settings-navigation-types'
@@ -24,6 +25,7 @@ export function WorktreeVisibilityGlobalSettingsLink(): React.JSX.Element {
       className="h-auto w-fit px-0"
       onClick={openGlobalWorktreeVisibilitySettings}
     >
+      <Settings className="size-3.5" />
       {translate(
         'auto.components.sidebar.WorktreeVisibilityDialog.openGlobalSettings',
         'Manage in Global Settings'
