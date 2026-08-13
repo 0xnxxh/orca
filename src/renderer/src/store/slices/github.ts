@@ -1853,7 +1853,7 @@ export type GitHubSlice = {
   prRefreshStates: Record<string, PRRefreshState>
   prVisibleRefreshGeneration: number
   // Why: keyed by repoId + limit + query so same-path repos on different SSH targets don't share results.
-  workItemsCache: Record<string, CacheEntry<GitHubWorkItem[]>>
+  workItemsCache: Record<string, CacheEntry<readonly GitHubWorkItem[]>>
   fetchPRForBranch: (
     repoPath: string,
     branch: string,
@@ -1951,7 +1951,7 @@ export type GitHubSlice = {
     query: string,
     repoPath?: string,
     sourceContext?: TaskSourceContext | null
-  ) => GitHubWorkItem[] | null
+  ) => readonly GitHubWorkItem[] | null
   /** Returns a thin view (sources + error, never items) so it stays a cheap selector without dragging the whole work-item array through the equality check. */
   getWorkItemsSourcesAndError: (
     repoId: string,
@@ -2773,7 +2773,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
               data:
                 previousEntry?.data != null && reconciled === previousEntry.data
                   ? previousEntry.data
-                  : reconciled.slice(),
+                  : reconciled,
               fetchedAt: Date.now(),
               sources:
                 sourcesUnchanged && previousSources !== undefined
@@ -4749,7 +4749,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     set((s) => {
       const prefix = `${repoId}::`
       const legacyPrefix = `${repoPath}::`
-      const next: Record<string, CacheEntry<GitHubWorkItem[]>> = {}
+      const next: Record<string, CacheEntry<readonly GitHubWorkItem[]>> = {}
       for (const [key, entry] of Object.entries(s.workItemsCache)) {
         if (!key.startsWith(prefix) && !key.startsWith(legacyPrefix)) {
           next[key] = entry
