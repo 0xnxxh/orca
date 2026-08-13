@@ -325,6 +325,24 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
     })
   })
 
+  it('retires the generated name when flat layout decorates the physical leaf', async () => {
+    computeWorktreePathMock.mockReturnValue('C:\\workspaces\\repo-nautilus')
+    ensurePathWithinWorkspaceMock.mockReturnValue('C:\\workspaces\\repo-nautilus')
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: 'C:/workspaces/repo-nautilus',
+        head: 'abc123',
+        branch: 'refs/heads/nautilus',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+
+    await handlers['worktrees:create'](null, { repoId: 'repo-1', name: 'nautilus' })
+
+    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith('repo-1', 'nautilus')
+  })
+
   it('resolves the Git username when the configured prefix consumes it', async () => {
     store.getSettings.mockReturnValue({
       branchPrefix: 'git-username',

@@ -4055,7 +4055,7 @@ describe('OrcaRuntimeService', () => {
     const runtime = new OrcaRuntimeService({ ...store, addRetiredWorktreeName })
     const staleScan = deferred<typeof MOCK_GIT_WORKTREES>()
     const createdWorktree = {
-      path: '/tmp/workspaces/nautilus',
+      path: '/tmp/workspaces/repo-nautilus',
       head: 'def',
       branch: 'nautilus',
       isBare: false,

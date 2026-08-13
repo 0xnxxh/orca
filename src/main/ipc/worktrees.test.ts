@@ -4672,9 +4672,9 @@ describe('registerWorktreeHandlers', () => {
           isMainWorktree: true
         },
         {
-          path: '/remote/repo-improve-dashboard',
+          path: '/remote/repo-nautilus',
           head: 'abc123',
-          branch: 'refs/heads/improve-dashboard',
+          branch: 'refs/heads/nautilus',
           isBare: false,
           isMainWorktree: false
         }
@@ -4693,7 +4693,7 @@ describe('registerWorktreeHandlers', () => {
 
     const result = await handlers['worktrees:create'](null, {
       repoId: 'repo-ssh',
-      name: 'improve-dashboard',
+      name: 'nautilus',
       linkedIssue: 123,
       linkedPR: 456,
       createdWithAgent: 'codex',
@@ -4711,8 +4711,9 @@ describe('registerWorktreeHandlers', () => {
     )
     expect(provider.listWorktrees).toHaveBeenCalledTimes(1)
     expect(provider.worktreeIsClean).not.toHaveBeenCalled()
+    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith('repo-ssh', 'nautilus')
     expect(store.setWorktreeMeta).toHaveBeenCalledWith(
-      'repo-ssh::/remote/repo-improve-dashboard',
+      'repo-ssh::/remote/repo-nautilus',
       expect.objectContaining({
         linkedIssue: 123,
         linkedPR: 456,

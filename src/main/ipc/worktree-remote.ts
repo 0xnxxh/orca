@@ -135,7 +135,6 @@ import {
   getWorktreeCreateCandidate,
   WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS
 } from '../worktree-create-candidates'
-import { retirableLeafName } from '../worktree-name-retirement'
 
 const SSH_WORKTREE_CREATE_FETCH_FRESHNESS_MS = 30_000
 const SSH_WORKTREE_CREATE_FETCH_CACHE_MAX = 512
@@ -1762,9 +1761,8 @@ export async function createRemoteWorktree(
   }
 
   const worktreeId = `${repo.id}::${created.path}`
-  // Why: retire the leaf the host actually created. Agent state is keyed by cwd on the execution
-  // host, so a reissued name would give the next occupant the prior one's conversation history.
-  store.addRetiredWorktreeName(repo.id, retirableLeafName(created.path))
+  // Why: repo-qualified layouts decorate the physical leaf; retire the generated collision key.
+  store.addRetiredWorktreeName(repo.id, effectiveSanitizedName)
   const now = Date.now()
   // Why: PR/MR worktrees start from a head ref/SHA but Source Control must compare against the review target branch.
   const metadataBaseRef = args.compareBaseRef ?? remoteTrackingBase?.ref ?? baseBranch
@@ -2382,9 +2380,8 @@ export async function createLocalWorktree(
   }
 
   const worktreeId = `${repo.id}::${created.path}`
-  // Why: retire the leaf the host actually created. Agent state is keyed by cwd on the execution
-  // host, so a reissued name would give the next occupant the prior one's conversation history.
-  store.addRetiredWorktreeName(repo.id, retirableLeafName(created.path))
+  // Why: repo-qualified layouts decorate the physical leaf; retire the generated collision key.
+  store.addRetiredWorktreeName(repo.id, effectiveSanitizedName)
   const now = Date.now()
   // Why: PR/MR worktrees start from a head ref/SHA but Source Control must compare against the review target branch.
   const metadataBaseRef = args.compareBaseRef ?? remoteTrackingBase?.ref ?? baseBranch
