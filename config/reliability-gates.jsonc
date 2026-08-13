@@ -11884,7 +11884,7 @@
         "https://linear.app/stably/issue/STA-4173",
         "https://github.com/stablyai/orca/pull/14346"
       ],
-      "invariant": "A stalled durable-history checkpoint may delay only its own daemon session. Warm reattach and deep snapshots degrade to the live window after five seconds, non-final background checkpoints defer after fifteen seconds, same-session writes remain serialized, running plus queued work stays bounded to three per session, overlay compacts stay bounded to four across sessions, and final sleep or disconnect checkpoints remain deadline-free.",
+      "invariant": "A stalled durable-history checkpoint may delay only its own daemon session. Warm reattach and deep snapshots degrade to the live window after five seconds, non-final background checkpoints defer after fifteen seconds, same-session writes remain serialized, non-final running plus queued work stays bounded to three per session, overlay compacts stay bounded to four across sessions, and final sleep or disconnect checkpoints remain deadline-free.",
       "oracle": "Park one session inside the real history checkpoint write, then require an unrelated warm reattach to return within two seconds with its own output while the first write remains parked. Require the stalled session to return its live window after the overlay deadline and later commit the abandoned write. Park four distinct overlay compacts, require a fifth reattach to return its live window without starting another compact, and require fast non-final RPC rejection plus both deadlines to leave diagnostic breadcrumbs.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/daemon-checkpoint-session-queue.test.ts src/main/daemon/daemon-reattach-checkpoint-isolation.test.ts src/main/daemon/daemon-pty-adapter.test.ts --reporter=dot"
@@ -11947,7 +11947,7 @@
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Per-session running plus queued work is capped at three and aggregate overlay admission at four; the existing periodic worker cap remains four. Deadline timers are unrefed, abandoned waits retain admission until the actual write settles, dirty-gated polling remains unchanged, final checkpoints remain unbounded, and the change adds no subprocess, renderer, store, startup probe, or wire work."
+        "evidence": "Non-final per-session running plus queued work is capped at three and aggregate overlay admission at four; the existing periodic worker cap remains four. Deadline timers are unrefed, abandoned waits retain admission until the actual write settles, dirty-gated polling remains unchanged, final checkpoints remain unbounded, and the change adds no subprocess, renderer, store, startup probe, or wire work."
       },
       "promotionCriteria": [
         "Execute the oracle against an affected baseline and retain the exact red result.",
