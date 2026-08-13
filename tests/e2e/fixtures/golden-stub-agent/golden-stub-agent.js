@@ -83,7 +83,8 @@ function consumeInput() {
     pendingInput = pendingInput.slice(1)
     if (char === '\r' || char === '\n') {
       submit()
-    } else if (char === '\x04') {
+    } else if (char === '\x04' || char === '\x03') {
+      // Raw mode delivers Ctrl+C as \x03 instead of raising SIGINT.
       exitCleanly()
     } else if (char === '\x7f' || char === '\b') {
       composer = composer.slice(0, -1)

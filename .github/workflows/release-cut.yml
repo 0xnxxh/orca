@@ -784,6 +784,7 @@ jobs:
             echo "## Release E2E Signal"
             echo ""
             echo "- Platform golden E2E is release-blocking: terminal rendering, restrictive-umask profile writes, and agent TUI launch on Linux/macOS, plus fresh startup on Windows."
+            echo "- Exception: every golden except terminal rendering runs with \`--if-present\`, so it is skipped (not failed) on older tags that predate its script."
             echo "- Full E2E runs separately after publication and cannot change the release result."
             echo "- Terminal rendering release evidence is diagnostic/non-blocking."
             echo ""
