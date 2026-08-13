@@ -1,4 +1,33 @@
 import type { IPtyProvider, PtySpawnOptions, PtySpawnResult } from '../providers/types'
+import { isDaemonGoneError } from './daemon-pty-adapter'
+import { DaemonProtocolError } from './daemon-errors'
+
+/** client.ts rejects a sent request with this shape once its budget expires. */
+const REQUEST_TIMED_OUT = /timed out after \d+ms/
+
+/**
+ * Only a daemon that looks unreachable should cost the next terminal its persistence. A spawn
+ * can fail for reasons that say nothing about the daemon's health — an unusable cwd, a bad
+ * profile — and demoting on those degrades a session the daemon would have served fine.
+ */
+function daemonLooksUnreachable(error: unknown): boolean {
+  return (
+    isDaemonGoneError(error) ||
+    (error instanceof DaemonProtocolError && REQUEST_TIMED_OUT.test(error.message))
+  )
+}
+
+/**
+ * Only a request that was actually sent can hide a session the daemon created before the answer
+ * was lost. A failure that never reached it cannot have created anything, so pinning that id
+ * would strand later attempts on a daemon that has nothing of theirs.
+ */
+function mayHaveCreatedTheSession(error: unknown): boolean {
+  return (
+    error instanceof DaemonProtocolError &&
+    (error.message === 'Connection lost' || REQUEST_TIMED_OUT.test(error.message))
+  )
+}
 
 export const DEGRADED_DAEMON_RECOVERY_RETRY_MS = 30_000
 
@@ -83,7 +112,7 @@ export class DegradedDaemonFreshSpawnRouter {
         // letting a retry reach the fallback would answer with a local shell under the same id
         // while the original keeps running. Demoting protects the NEXT terminal, which is a
         // different session entirely and cannot be shadowed by this one.
-        if (opts.sessionId) {
+        if (opts.sessionId && mayHaveCreatedTheSession(error)) {
           this.sessionProviders.set(opts.sessionId, target)
         }
         // Why not `!opts.sessionId`: every production fresh spawn mints an id before it gets
@@ -92,7 +121,7 @@ export class DegradedDaemonFreshSpawnRouter {
         // paying a hello timeout plus a full re-classification against a daemon already known
         // to be failing. `attachOnly` is the real discriminator: an attach that names a session
         // never reaches this router at all.
-        if (opts.attachOnly !== true) {
+        if (opts.attachOnly !== true && daemonLooksUnreachable(error)) {
           this.target = this.fallback
           this.retryAfterMs = Date.now() + DEGRADED_DAEMON_RECOVERY_RETRY_MS
           console.warn(
