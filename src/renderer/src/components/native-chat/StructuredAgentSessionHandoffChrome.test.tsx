@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentSessionHandoffStatus } from '../../../../shared/agent-session-wire'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { StructuredAgentSessionHandoffChrome } from './StructuredAgentSessionHandoffChrome'
 
 const IDLE_NATIVE: AgentSessionHandoffStatus = {
@@ -22,13 +23,34 @@ describe('StructuredAgentSessionHandoffChrome', () => {
       <StructuredAgentSessionHandoffChrome
         status={IDLE_NATIVE}
         isWorking={false}
+        hasPersistedTurn
         onRequest={onRequest}
-      />
+      />,
+      { wrapper: TooltipProvider }
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Open agent TUI' }))
 
     expect(onRequest).toHaveBeenCalledWith('to-tui', 'after-turn')
+  })
+
+  it('disables zero-turn TUI resume with truthful guidance', async () => {
+    render(
+      <StructuredAgentSessionHandoffChrome
+        status={IDLE_NATIVE}
+        isWorking={false}
+        hasPersistedTurn={false}
+        onRequest={vi.fn()}
+      />,
+      { wrapper: TooltipProvider }
+    )
+
+    const button = screen.getByRole('button', { name: 'Open agent TUI' })
+    expect(button.hasAttribute('disabled')).toBe(true)
+    fireEvent.pointerMove(button.parentElement!)
+    expect(
+      await screen.findAllByText('Send a message first to open the agent TUI.')
+    ).not.toHaveLength(0)
   })
 
   it('offers one Retry action for a recoverable dead TUI owner', () => {
@@ -47,8 +69,10 @@ describe('StructuredAgentSessionHandoffChrome', () => {
           }
         }}
         isWorking={false}
+        hasPersistedTurn
         onRequest={onRequest}
-      />
+      />,
+      { wrapper: TooltipProvider }
     )
 
     expect(screen.queryByRole('button', { name: 'Return to chat' })).toBeNull()

@@ -114,6 +114,27 @@ describe('MobileStructuredAgentSessionView command seam', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
+  it('disables zero-turn TUI resume with truthful guidance', () => {
+    render({
+      handoff: {
+        owner: 'native',
+        direction: null,
+        phase: 'idle',
+        stage: null,
+        operationId: null
+      }
+    })
+
+    const label = renderer!.root
+      .findAllByType('Text')
+      .find((node) => node.children.includes('Open agent TUI'))
+    expect(label?.parent?.props).toMatchObject({
+      disabled: true,
+      accessibilityState: { disabled: true },
+      accessibilityHint: 'Send a message first to open the agent TUI.'
+    })
+  })
+
   it('renders an explicit refusal for unsupported advertised commands', async () => {
     await submit('/review')
 

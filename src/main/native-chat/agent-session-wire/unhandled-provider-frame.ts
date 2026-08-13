@@ -4,6 +4,7 @@ import {
   DEFAULT_JOURNAL_PAYLOAD_LIMITS,
   type JournalPayloadLimits
 } from '../agent-session-journal/journal-payload-bounds'
+import { classifyProviderFrame } from './provider-frame-disposition'
 
 export type UnhandledProviderFrameJournalItem = {
   body: AgentJournalStatusItem
@@ -19,13 +20,16 @@ function serializeProviderPayload(payload: unknown): string {
   }
 }
 
-/** Every adapter fallback becomes a visible, bounded journal row. */
+/** Substantive adapter fallbacks become visible, bounded journal rows. */
 export function unhandledProviderFrameJournalItem(
   provider: string,
   kind: string,
   payload: unknown,
   limits: JournalPayloadLimits = DEFAULT_JOURNAL_PAYLOAD_LIMITS
-): UnhandledProviderFrameJournalItem {
+): UnhandledProviderFrameJournalItem | null {
+  if (classifyProviderFrame(provider, kind) === 'debug-only') {
+    return null
+  }
   const serialized = serializeProviderPayload(payload)
   const bounded = boundPayload(serialized, limits)
   return {

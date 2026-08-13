@@ -33,6 +33,7 @@ import {
   restoreMobileStructuredAttachments,
   type MobileStructuredTimelineRow
 } from './mobile-structured-session-timeline'
+import { hasPersistedStructuredAgentSessionTurn } from '../../../src/shared/structured-agent-session-projection'
 import {
   admitStructuredOlderPage,
   beginStructuredUserScroll,
@@ -128,6 +129,7 @@ export function MobileStructuredAgentSessionView(props: Props): React.JSX.Elemen
       <MobileStructuredHandoffBanner
         status={props.handoff}
         isWorking={turnId !== null}
+        hasPersistedTurn={hasPersistedStructuredAgentSessionTurn(props.items)}
         onRequest={props.onRequestHandoff}
       />
       <FlatList
@@ -295,6 +297,7 @@ export function MobileStructuredAgentSessionView(props: Props): React.JSX.Elemen
 function MobileStructuredHandoffBanner(props: {
   status: AgentSessionHandoffStatus | null
   isWorking: boolean
+  hasPersistedTurn: boolean
   onRequest: Props['onRequestHandoff']
 }): React.JSX.Element | null {
   const status = props.status
@@ -321,7 +324,17 @@ function MobileStructuredHandoffBanner(props: {
           </>
         ) : (
           <Pressable
-            style={({ pressed }) => [styles.handoffButton, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.handoffButton,
+              !props.hasPersistedTurn && styles.disabled,
+              pressed && props.hasPersistedTurn && styles.pressed
+            ]}
+            disabled={!props.hasPersistedTurn}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !props.hasPersistedTurn }}
+            accessibilityHint={
+              props.hasPersistedTurn ? undefined : 'Send a message first to open the agent TUI.'
+            }
             // A submitted turn can reach the host before isWorking updates; after-turn is immediate when idle.
             onPress={() => void props.onRequest('to-tui', 'after-turn')}
           >

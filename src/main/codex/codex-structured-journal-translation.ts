@@ -70,8 +70,11 @@ export function createCodexJournalTranslator(
   let fallbackSequence = 0
 
   const appendUnhandled = (kind: string, payload: unknown): void => {
-    fallbackSequence += 1
     const translated = unhandledProviderFrameJournalItem('codex', kind, payload)
+    if (!translated) {
+      return
+    }
+    fallbackSequence += 1
     deps.sink.appendItem(
       { provider: 'orca', clientMessageId: `provider-frame:codex:${fallbackSequence}` },
       translated.body,

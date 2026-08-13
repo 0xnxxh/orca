@@ -15131,6 +15131,7 @@
         "switchAfterTurn": "Switch after this turn",
         "stopTurnAndSwitch": "Stop turn and switch",
         "openAgentTui": "Open agent TUI",
+        "sendFirst": "Send a message first to open the agent TUI.",
         "returnAfterTurn": "Return after this turn",
         "returnToChat": "Return to chat",
         "agentOpen": "Agent is open in terminal.",

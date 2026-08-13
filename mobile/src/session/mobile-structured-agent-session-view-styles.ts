@@ -36,6 +36,7 @@ export const styles = StyleSheet.create({
   },
   cancelText: { color: colors.statusRed, fontSize: typography.metaSize, fontWeight: '600' },
   pressed: { opacity: 0.7 },
+  disabled: { opacity: 0.45 },
   writeError: {
     alignItems: 'center',
     paddingHorizontal: spacing.lg,

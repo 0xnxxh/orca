@@ -243,10 +243,8 @@ export function codexJournalItem(item: CodexThreadItem): CodexJournalItem {
       handled: true
     }
   }
-  return {
-    ...unhandledProviderFrameJournalItem('codex', `item:${item.type}`, item),
-    handled: false
-  }
+  const unhandled = unhandledProviderFrameJournalItem('codex', `item:${item.type}`, item)
+  return unhandled ? { ...unhandled, handled: false } : { body: null, blobs: [], handled: true }
 }
 
 export function codexItemBody(item: CodexThreadItem): AgentJournalItemBody | null {

@@ -23,6 +23,7 @@ import {
 } from '../../../../shared/structured-agent-session-options'
 import {
   activeStructuredAgentSessionTurnId,
+  hasPersistedStructuredAgentSessionTurn,
   projectStructuredItemsToNativeChat
 } from '../../../../shared/structured-agent-session-projection'
 import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
@@ -233,6 +234,7 @@ export function useStructuredAgentSession(args: {
     send: outboxController.send,
     retry: outboxController.retry,
     isWorking: turnId !== null,
+    hasPersistedTurn: hasPersistedStructuredAgentSessionTurn(state.items),
     turnId,
     cancel: (turnId: string) => mutate('agentSession.cancel', 'agentSession.cancel', { turnId }),
     respond: (item: StructuredPromptItem, optionId: string) =>

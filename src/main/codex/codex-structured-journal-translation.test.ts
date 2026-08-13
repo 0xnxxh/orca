@@ -4,6 +4,7 @@ import type {
   AgentJournalItemIdentity
 } from '../../shared/agent-session-journal-types'
 import { agentJournalItemKey } from '../../shared/agent-session-journal-item-key'
+import { projectStructuredItemsToNativeChat } from '../../shared/structured-agent-session-projection'
 import type { StructuredAgentSessionEventSink } from '../native-chat/agent-session-wire/structured-agent-session-event-sink'
 import { createCodexJournalTranslator } from './codex-structured-journal-translation'
 import {
@@ -440,6 +441,32 @@ describe('codex journal translation', () => {
     expect(
       tap.rows.map((row) => (row.body.kind === 'status' ? row.body.providerFrame?.kind : undefined))
     ).toEqual(['notification:future/notification', 'request:future/request', 'frame:unclassified'])
+  })
+
+  it('keeps a fresh session timeline empty through startup and status notifications', () => {
+    const { translator, tap } = translatorWith()
+
+    translator.handle(notification('thread/started', { thread: { id: THREAD_ID } }))
+    for (let index = 0; index < 8; index += 1) {
+      translator.handle(
+        notification('mcpServer/startupStatus/updated', {
+          server: `server-${index}`,
+          status: 'starting'
+        })
+      )
+    }
+    translator.handle(notification('remoteControl/status/changed', { status: 'disabled' }))
+
+    const timeline = projectStructuredItemsToNativeChat(
+      tap.rows.map((row, index) => ({
+        itemId: row.key,
+        revision: 1,
+        sequence: index + 1,
+        observedAt: index + 1,
+        body: row.body
+      }))
+    )
+    expect(timeline).toEqual([])
   })
 
   it('writes nothing more after dispose', () => {
