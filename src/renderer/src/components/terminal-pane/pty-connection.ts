@@ -7014,6 +7014,7 @@ export function connectPanePty(
         cycle: hiddenOutputRestoreRemoteAbandonCycles
       })
       noteHiddenOutputRestoreFloodBackpressure()
+      writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
       return true
     }
 
@@ -7066,7 +7067,7 @@ export function connectPanePty(
         // backpressure must not outlive it — it would re-open recovery and banner a second time.
         clearHiddenOutputRestoreFloodRepaintTimer()
         writeRestoreUnavailableWarning()
-      } else {
+      } else if (!rearmedRemoteRestore) {
         writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
       }
       if (hadPendingOverflow) {

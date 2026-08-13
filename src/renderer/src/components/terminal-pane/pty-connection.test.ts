@@ -15898,6 +15898,50 @@ describe('connectPanePty', () => {
     disposable.dispose()
   })
 
+  it('grounds byte-gap state before a remote restore re-arms', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const remotePtyId = 'remote:env-1@@terminal-rearm'
+    const transport = createMockTransport(remotePtyId)
+    const capturedDataCallback: {
+      current: ((data: string, meta?: { seq?: number; rawLength?: number }) => void) | null
+    } = { current: null }
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      capturedDataCallback.current = callbacks.onData ?? null
+      return remotePtyId
+    })
+    const snapshot = createDeferred<{ data: string; cols: number; rows: number; seq: number }>()
+    transport.serializeBuffer = vi.fn().mockReturnValue(snapshot.promise)
+    transportFactoryQueue.push(transport)
+    const hidden = 'x'.repeat(2 * 1024 * 1024 + 1)
+    const live = 'remote-live-after-rearm\r\n'
+
+    const pane = createPane(1)
+    const deps = createDeps({ isVisibleRef: { current: false } })
+    const disposable = connectPanePty(pane as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks(6)
+
+    vi.useFakeTimers()
+    capturedDataCallback.current?.(hidden, { seq: hidden.length, rawLength: hidden.length })
+    ;(deps.isVisibleRef as { current: boolean }).current = true
+    capturedDataCallback.current?.(live, {
+      seq: hidden.length + live.length,
+      rawLength: live.length
+    })
+    await flushAsyncTicks(4)
+
+    vi.advanceTimersByTime(750)
+    await flushAsyncTicks(10)
+
+    const written = pane.terminal.write.mock.calls.map(([data]) => data as string)
+    const resetIndex = written.indexOf(RESET_AFTER_BYTE_GAP)
+    const liveIndex = written.indexOf(live)
+    expect(resetIndex).toBeGreaterThanOrEqual(0)
+    expect(liveIndex).toBeGreaterThan(resetIndex)
+    expect(written.join('')).not.toContain('main recovery was unavailable')
+
+    disposable.dispose()
+  })
+
   it('falls back after repeated null hidden restore retries and drains blocked foreground', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('pty-id')
