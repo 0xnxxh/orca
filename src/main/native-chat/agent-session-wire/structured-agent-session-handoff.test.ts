@@ -367,10 +367,10 @@ describe('structured session ownership handoff', () => {
 
   it('durably replays a completed queued cancellation after restart', async () => {
     await appendStatus('running')
-    expect(await submit(request('to-tui', 'after-turn'))).toMatchObject({ ok: true })
+    const queued = request('to-tui', 'after-turn')
+    expect(await submit(queued)).toMatchObject({ ok: true })
     const cancellation = request('to-tui', 'after-turn', { action: 'cancel-queued' })
     expect(await submit(cancellation)).toMatchObject({ ok: true, replayed: false })
-    await coordinator.drain()
 
     store = await AgentSessionRecordStore.open({
       directory: join(root, 'store'),
@@ -379,7 +379,7 @@ describe('structured session ownership handoff', () => {
     coordinator = createCoordinator()
 
     expect(await submit(cancellation)).toMatchObject({ ok: true, replayed: true })
-    expect(launchTui).not.toHaveBeenCalled()
+    expect((await submit(queued)).ok).toBe(false)
   })
 
   it('replays a duplicate active handoff without launching a second owner', async () => {

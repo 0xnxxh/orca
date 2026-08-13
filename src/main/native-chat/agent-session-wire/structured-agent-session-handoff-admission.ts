@@ -70,6 +70,7 @@ export async function admitStructuredHandoffRequest(input: {
       operationId: input.params.envelope.clientOperationId,
       outcome: { status: 'failed', code: 'agent_session_checkpoint_stale' }
     })
+    input.operationGuard.finish(input.record.sessionId, input.params.envelope.clientOperationId)
     return {
       decision: 'refused',
       refusal: {

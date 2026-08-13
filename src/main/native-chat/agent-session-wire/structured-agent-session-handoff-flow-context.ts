@@ -1,5 +1,7 @@
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
 import type { AgentSessionHandoffStatus } from '../../../shared/agent-session-wire'
+import { setStoredAgentSessionHandoffStage } from '../../runtime/agent-session-handoff-record-transitions'
+import { switchingStructuredHandoffStatus } from './structured-agent-session-handoff-status'
 import type {
   StructuredAgentSessionHandoffDeps,
   StructuredAgentSessionHandoffFlowContext,
@@ -12,11 +14,31 @@ export function createStructuredHandoffFlowContext(input: {
   retainOwner: (sessionId: string, owner: StructuredTuiOwner) => void
   releaseOwner: (sessionId: string) => void
   setStatus: (sessionId: string, status: AgentSessionHandoffStatus) => void
-  enterPreparing: StructuredAgentSessionHandoffFlowContext['enterPreparing']
-  publishStage: StructuredAgentSessionHandoffFlowContext['publishStage']
   requireRecord: (sessionId: string) => AgentSessionRecord
 }): StructuredAgentSessionHandoffFlowContext {
-  return input
+  const publishStage: StructuredAgentSessionHandoffFlowContext['publishStage'] = (
+    record,
+    direction
+  ) => {
+    input.setStatus(
+      record.sessionId,
+      switchingStructuredHandoffStatus(record, direction, input.deps.transport?.hostLabel)
+    )
+  }
+  return {
+    ...input,
+    publishStage,
+    enterPreparing: async (record, operationId, direction) => {
+      const prepared = await setStoredAgentSessionHandoffStage(input.deps.store, {
+        sessionId: record.sessionId,
+        fence: record.lease.runtimeFence,
+        stage: 'preparing',
+        handoffOperationId: operationId,
+        now: input.deps.now()
+      })
+      publishStage(prepared, direction)
+    }
+  }
 }
 
 export async function stopStructuredNativeTurn(

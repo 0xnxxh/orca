@@ -107,13 +107,18 @@ describe('admission through the store', () => {
     }
   )
 
-  it('admits only the reserved TUI proof token before ownership', () => {
+  it('admits only the reserved TUI proof token while the new process is proving', () => {
     publish(
       agentSessionLeaseFixture({
         runtimeKind: 'tui',
         claimStatus: 'reserved',
         handoffStage: 'new-owner-proving',
-        ownerProcess: null,
+        ownerProcess: {
+          hostId: 'local',
+          pid: 4200,
+          processStartTimeMs: 10,
+          spawnToken: 'proof-token'
+        },
         reservedSpawnToken: 'proof-token'
       })
     )
@@ -125,6 +130,26 @@ describe('admission through the store', () => {
     expect(
       gate.admitProof(PTY_ID, { sessionId: 'session-beta-2', spawnToken: 'proof-token' })
     ).toBe(false)
+  })
+
+  it('refuses proof input that does not match the committed process identity', () => {
+    publish(
+      agentSessionLeaseFixture({
+        runtimeKind: 'tui',
+        claimStatus: 'reserved',
+        handoffStage: 'new-owner-proving',
+        ownerProcess: {
+          hostId: 'local',
+          pid: 4200,
+          processStartTimeMs: 10,
+          spawnToken: 'other-token'
+        },
+        reservedSpawnToken: 'proof-token'
+      })
+    )
+    expect(gate.admitProof(PTY_ID, { sessionId: SESSION_ID, spawnToken: 'proof-token' })).toBe(
+      false
+    )
   })
 
   it('refuses proof input after ownership is live', () => {

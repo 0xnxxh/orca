@@ -79,8 +79,8 @@ export class AgentSessionPtyWriteGate {
       lease?.runtimeKind === 'tui' &&
       lease.claimStatus === 'reserved' &&
       lease.handoffStage === 'new-owner-proving' &&
-      lease.ownerProcess === null &&
       lease.reservedSpawnToken === authority.spawnToken &&
+      (lease.ownerProcess === null || lease.ownerProcess.spawnToken === authority.spawnToken) &&
       !lease.unreconciled
     )
   }
