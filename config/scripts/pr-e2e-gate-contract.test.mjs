@@ -83,6 +83,15 @@ describe('PR E2E gate contract', () => {
     expect(sshDockerRunner).toContain("'electron-headful'")
   })
 
+  it('installs zsh in every Linux lane that can run paired startup readiness', () => {
+    for (const jobName of ['e2e', 'changed-e2e', 'ssh-docker-watcher-isolation']) {
+      const installStep = e2eWorkflow.jobs[jobName].steps.find((step) =>
+        step.name.startsWith('Install native build')
+      )
+      expect(installStep.run, jobName).toMatch(/\bzsh\b/)
+    }
+  })
+
   it('keeps dedicated E2E workflows out of pull request CI', () => {
     const dedicatedWorkflows = [
       'golden-e2e-experiment.yml',
