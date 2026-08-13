@@ -97,9 +97,7 @@ export function shouldDropHiddenRendererPtyData(
   id: string,
   settings: HiddenPtyDeliveryGateSettings | null | undefined
 ): boolean {
-  return (
-    shouldSuppressHiddenRendererPtyView(id, settings) && !deliveryInterestRendererPtys.has(id)
-  )
+  return shouldSuppressHiddenRendererPtyView(id, settings) && !deliveryInterestRendererPtys.has(id)
 }
 
 /** Bytes a sidecar still needs while the view is suppressed: sent, but flagged

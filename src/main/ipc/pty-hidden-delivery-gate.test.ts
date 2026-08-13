@@ -50,9 +50,9 @@ describe('pty hidden delivery gate', () => {
     expect(shouldSuppressHiddenRendererPtyView(PTY_ID, {})).toBe(true)
     setRendererPtyDeliveryInterest(PTY_ID, true)
     expect(shouldSuppressHiddenRendererPtyView(PTY_ID, {})).toBe(true)
-    expect(
-      shouldSuppressHiddenRendererPtyView(PTY_ID, { terminalHiddenDeliveryGate: false })
-    ).toBe(false)
+    expect(shouldSuppressHiddenRendererPtyView(PTY_ID, { terminalHiddenDeliveryGate: false })).toBe(
+      false
+    )
   })
 
   it('routes a suppressed PTY sidecar-only exactly while interest is registered', () => {
