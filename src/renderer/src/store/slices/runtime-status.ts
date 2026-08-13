@@ -13,6 +13,7 @@ import {
   dismissRuntimeDisconnectedToast,
   showRuntimeDisconnectedToast
 } from './runtime-environment-disconnect-toast'
+import { reconcileCatalogRows } from './repo-identity-reconcile'
 import { createRuntimeStatusHydration } from './runtime-status-hydration'
 import { refreshRuntimeEnvironmentStatus } from './runtime-status-refresh'
 
@@ -151,8 +152,25 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
           removedChanged = true
         }
       }
+      // Why: list()/hydrate always allocate (IPC structuredClone + redact remaps
+      // endpoints[]). Reuse equal rows so Object.is subscribers don't miss 100%.
+      const reconciled = reconcileCatalogRows(
+        s.runtimeEnvironments,
+        environments,
+        (environment) => environment.id
+      )
+      const catalogUnchanged = reconciled === s.runtimeEnvironments
+      if (
+        catalogUnchanged &&
+        s.runtimeEnvironmentCatalogHydrated &&
+        s.runtimeEnvironmentCatalogSettled &&
+        !statusesChanged &&
+        !removedChanged
+      ) {
+        return s
+      }
       return {
-        runtimeEnvironments: environments,
+        runtimeEnvironments: catalogUnchanged ? s.runtimeEnvironments : reconciled.slice(),
         runtimeEnvironmentCatalogHydrated: true,
         runtimeEnvironmentCatalogSettled: true,
         ...(statusesChanged ? { runtimeStatusByEnvironmentId: nextStatuses } : {}),
