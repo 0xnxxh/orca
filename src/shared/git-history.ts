@@ -194,7 +194,15 @@ export async function loadGitHistoryFromExecutor(
 
   // Why: this panel is scoped to the active workspace. Upstream and base refs
   // stay as comparison metadata so old workspaces do not list newly fetched upstream/base commits.
-  const historyRevisions = [headOid]
+  // Why: resuming from the cursor walks only its ancestors, so page N costs one page of output
+  // rather than N pages, and the walk is unaffected by commits landing on HEAD mid-paging.
+  // Why: a cursor can go stale (rebase, amend, prune, branch switch). Resolving it first means a
+  // dead cursor degrades to a fresh first page instead of failing the whole panel on a bad revision.
+  const requestedCursor = options.cursor?.trim() || undefined
+  const cursor = requestedCursor
+    ? ((await resolveCommit(git, cwd, requestedCursor)) ?? undefined)
+    : undefined
+  const historyRevisions = [cursor ?? headOid]
 
   let mergeBase: string | undefined
   if (remoteRef?.revision && currentRef.revision && remoteRef.revision !== currentRef.revision) {
@@ -213,13 +221,18 @@ export async function loadGitHistoryFromExecutor(
       '-z',
       '--topo-order',
       '--decorate=full',
-      `-n${limit + 1}`,
+      // Why: +1 detects a further page. With a cursor the walk re-emits the cursor commit
+      // itself, so one more is needed to still see a full page past it.
+      `-n${limit + (cursor ? 2 : 1)}`,
       ...historyRevisions
     ],
     cwd
   )
   const parsed = parseGitHistoryLog(stdout)
-  const items = parsed.slice(0, limit)
+  // Why: the cursor commit is already on screen. Drop it only when git actually led with it — a
+  // cursor that no longer resolves (rewritten, pruned) would otherwise silently eat a real commit.
+  const page = cursor && parsed[0]?.id === cursor ? parsed.slice(1) : parsed
+  const items = page.slice(0, limit)
   const hasIncomingChanges =
     Boolean(remoteRef?.revision && mergeBase) && remoteRef?.revision !== mergeBase
   const hasOutgoingChanges =
@@ -234,7 +247,7 @@ export async function loadGitHistoryFromExecutor(
     mergeBase,
     hasIncomingChanges,
     hasOutgoingChanges,
-    hasMore: parsed.length > limit,
+    hasMore: page.length > limit,
     limit
   }
 }

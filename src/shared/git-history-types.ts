@@ -56,6 +56,10 @@ export type GitHistoryItem = {
 export type GitHistoryOptions = {
   limit?: number
   baseRef?: string | null
+  // Commit id of the oldest item already loaded. The walk resumes from that commit's ancestors
+  // instead of HEAD, so each page costs one page of git output no matter how deep paging goes.
+  // Anchoring on a commit rather than an offset also keeps pages stitched when HEAD moves.
+  cursor?: string
 }
 
 export type GitHistoryResult = {
