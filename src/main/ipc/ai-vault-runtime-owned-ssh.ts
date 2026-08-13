@@ -1,0 +1,36 @@
+import type { AiVaultListArgs, AiVaultListResult } from '../../shared/ai-vault-types'
+import { isRuntimeOwnedSshTargetId } from '../../shared/execution-host'
+import { scanSshAiVaultSessions } from '../ai-vault/ssh-session-list'
+import type { RuntimeOwnedSshAiVaultHost } from '../ai-vault/runtime-owned-ssh-session-list'
+import { getActiveSshAiVaultHostInfo } from './ssh'
+
+export type RuntimeOwnedSshAiVaultScanner = (
+  environmentId: string,
+  targetId: string,
+  args: AiVaultListArgs,
+  options?: { timeoutMs?: number }
+) => Promise<AiVaultListResult>
+
+export async function scanSshAiVaultSessionsByOwner(args: {
+  targetId: string
+  listArgs?: AiVaultListArgs
+  signal?: AbortSignal
+  timeoutMs: number
+  findOwner?: (targetId: string) => Promise<RuntimeOwnedSshAiVaultHost | null>
+  scanOwned?: RuntimeOwnedSshAiVaultScanner
+}): Promise<AiVaultListResult> {
+  if (
+    !isRuntimeOwnedSshTargetId(args.targetId) &&
+    !getActiveSshAiVaultHostInfo(args.targetId) &&
+    args.findOwner &&
+    args.scanOwned
+  ) {
+    const owner = await args.findOwner(args.targetId)
+    if (owner) {
+      return args.scanOwned(owner.environmentId, owner.targetId, args.listArgs ?? {}, {
+        timeoutMs: args.timeoutMs
+      })
+    }
+  }
+  return scanSshAiVaultSessions(args.targetId, args.listArgs, { signal: args.signal })
+}

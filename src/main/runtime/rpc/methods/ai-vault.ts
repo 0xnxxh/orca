@@ -1,7 +1,16 @@
 import { z } from 'zod'
 import { defineMethod, type RpcMethod } from '../core'
 import { OptionalBoolean } from '../schemas'
-import { restampAiVaultListResult } from '../../../ai-vault/session-list-results'
+import {
+  mergeAiVaultListResults,
+  restampAiVaultListResult
+} from '../../../ai-vault/session-list-results'
+import { parseAiVaultSessionTitlesResult } from '../../../ai-vault/session-title-result-validation'
+import { scanSshAiVaultSessions } from '../../../ai-vault/ssh-session-list'
+import {
+  getActiveSshAiVaultHostInfos,
+  requestActiveSshAiVaultSessionTitles
+} from '../../../ipc/ssh'
 import { AI_VAULT_AGENTS, AI_VAULT_SCOPE_PATHS_MAX_COUNT } from '../../../../shared/ai-vault-types'
 import { AI_VAULT_SESSION_TITLE_REQUEST_MAX_COUNT } from '../../../../shared/ai-vault-session-title'
 import { LOCAL_EXECUTION_HOST_ID, parseExecutionHostId } from '../../../../shared/execution-host'
@@ -12,17 +21,19 @@ import { LOCAL_EXECUTION_HOST_ID, parseExecutionHostId } from '../../../../share
 const AI_VAULT_SCOPE_PATH_MAX_LENGTH = 4096
 const AI_VAULT_LIMIT_MAX = 2000
 
-const executionHostIdSchema = z.string().transform((value, ctx): `runtime:${string}` => {
-  const parsed = parseExecutionHostId(value)
-  if (parsed?.kind === 'runtime') {
-    return parsed.id
-  }
-  ctx.addIssue({
-    code: 'custom',
-    message: 'Invalid runtime execution host id'
+const executionHostIdSchema = z
+  .string()
+  .transform((value, ctx): `runtime:${string}` | `ssh:${string}` => {
+    const parsed = parseExecutionHostId(value)
+    if (parsed?.kind === 'runtime' || parsed?.kind === 'ssh') {
+      return parsed.id
+    }
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Invalid execution host id'
+    })
+    return z.NEVER
   })
-  return z.NEVER
-})
 
 export const AiVaultListSessionsParams = z
   .object({
@@ -42,10 +53,13 @@ export const AiVaultListSessionsParams = z
       // desktop parents) that send more than the bound.
       .transform((paths) => paths.slice(0, AI_VAULT_SCOPE_PATHS_MAX_COUNT))
       .optional(),
-    // Why: desktop/web callers name the runtime host they are addressing; mobile
-    // omits it. The scan itself is host-local either way, so the id must never
-    // change what is scanned — it only restamps the shared cached result.
-    executionHostId: executionHostIdSchema.optional()
+    // Why: desktop/web callers name the runtime host they are addressing; a
+    // paired client can also name an SSH host this runtime owns. Runtime ids
+    // still only restamp the host-local cache. SSH ids route to that host.
+    executionHostId: executionHostIdSchema.optional(),
+    // Why: omitted on old clients so mixed-version peers keep the host-local
+    // projection. New all-hosts callers opt in to this runtime's SSH inventory.
+    includeOwnedSshHosts: OptionalBoolean
   })
   .superRefine((params, ctx) => {
     if (params.unlimited !== true && params.limit && params.limit > AI_VAULT_LIMIT_MAX) {
@@ -69,31 +83,61 @@ export const AiVaultSessionTitlesParams = z.object({
         transcriptPath: z.string().min(1).max(32_768).optional()
       })
     )
-    .max(AI_VAULT_SESSION_TITLE_REQUEST_MAX_COUNT)
+    .max(AI_VAULT_SESSION_TITLE_REQUEST_MAX_COUNT),
+  executionHostId: executionHostIdSchema.optional()
 })
 
 export const AI_VAULT_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'aiVault.resolveSessionTitles',
     params: AiVaultSessionTitlesParams,
-    handler: (params, { runtime, signal }) =>
-      runtime.resolveAiVaultSessionTitles(params.requests, signal)
+    handler: async (params, { runtime, signal }) => {
+      const parsed = params.executionHostId ? parseExecutionHostId(params.executionHostId) : null
+      if (parsed?.kind === 'ssh') {
+        try {
+          const result = await requestActiveSshAiVaultSessionTitles(
+            parsed.targetId,
+            { requests: params.requests },
+            { signal }
+          )
+          return result === null ? { titles: [] } : parseAiVaultSessionTitlesResult(result)
+        } catch {
+          return { titles: [] }
+        }
+      }
+      return runtime.resolveAiVaultSessionTitles(params.requests, signal)
+    }
   }),
   defineMethod({
     name: 'aiVault.listSessions',
     params: AiVaultListSessionsParams,
     handler: async (params, { runtime }) => {
-      const result = await runtime.listAiVaultSessions({
+      const parsed = params.executionHostId ? parseExecutionHostId(params.executionHostId) : null
+      const listArgs = {
         limit: params.unlimited ? undefined : params.limit,
         unlimited: params.unlimited,
         force: params.force,
         scopePaths: params.scopePaths
-      })
+      }
+      if (parsed?.kind === 'ssh') {
+        return scanSshAiVaultSessions(parsed.targetId, listArgs)
+      }
+      const result = await runtime.listAiVaultSessions(listArgs)
       // Why: web clients consume this response directly (no parent-side retag),
-      // so sessions must come back stamped as the runtime host they addressed.
-      return params.executionHostId
-        ? restampAiVaultListResult(result, params.executionHostId)
-        : result
+      // so host-local sessions must come back stamped as the runtime they addressed.
+      const stamped =
+        parsed?.kind === 'runtime' ? restampAiVaultListResult(result, parsed.id) : result
+      if (params.includeOwnedSshHosts !== true) {
+        return stamped
+      }
+      const sshHosts = getActiveSshAiVaultHostInfos()
+      if (sshHosts.length === 0) {
+        return stamped
+      }
+      const sshResults = await Promise.all(
+        sshHosts.map((host) => scanSshAiVaultSessions(host.targetId, listArgs))
+      )
+      return mergeAiVaultListResults([stamped, ...sshResults], listArgs.limit, listArgs.unlimited)
     }
   }),
   defineMethod({

@@ -1609,7 +1609,8 @@ describe('web AI Vault preload API', () => {
           limit: 25,
           force: true,
           scopePaths: ['/srv/app'],
-          executionHostId: 'runtime:web-env-1'
+          executionHostId: 'runtime:web-env-1',
+          includeOwnedSshHosts: true
         }
       }
     ])
@@ -1651,6 +1652,51 @@ describe('web AI Vault preload API', () => {
       scannedAt: expect.any(String)
     })
     expect(runtimeCalls).toEqual([])
+  })
+
+  it('forwards SSH host scope to the paired runtime that owns the target', async () => {
+    const runtimeCalls: { method: string; params: unknown }[] = []
+    const scanResult = {
+      sessions: [],
+      issues: [],
+      scannedAt: '2026-08-12T00:00:00.000Z'
+    }
+    vi.doMock('./web-runtime-client', () => ({
+      WebRuntimeClient: class {
+        call(method: string, params?: unknown): Promise<RuntimeRpcResponse<unknown>> {
+          runtimeCalls.push({ method, params })
+          return Promise.resolve({
+            id: `call-${runtimeCalls.length}`,
+            ok: true,
+            result: scanResult,
+            _meta: { runtimeId: 'runtime-1' }
+          })
+        }
+
+        close(): void {}
+      }
+    }))
+
+    const globals = installBrowserGlobals('Linux')
+    writeStoredRuntimeEnvironment(globals.storage)
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+
+    await expect(
+      globals.window.api.aiVault.listSessions({
+        executionHostScope: 'ssh:hub-owned-host',
+        limit: 25
+      })
+    ).resolves.toEqual(scanResult)
+    expect(runtimeCalls).toEqual([
+      {
+        method: 'aiVault.listSessions',
+        params: {
+          limit: 25,
+          executionHostId: 'ssh:hub-owned-host'
+        }
+      }
+    ])
   })
 })
 

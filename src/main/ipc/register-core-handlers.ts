@@ -91,6 +91,11 @@ import {
   resolveRuntimeAiVaultSessionTitles,
   scanRuntimeAiVaultSessions
 } from '../ai-vault/runtime-session-scanner'
+import {
+  findRuntimeOwningSshAiVaultHost,
+  resolveRuntimeOwnedSshAiVaultSessionTitles,
+  scanRuntimeOwnedSshAiVaultSessions
+} from '../ai-vault/runtime-owned-ssh-session-list'
 import type { PluginService } from '../plugins/plugin-service'
 import type { PluginMarketplaceHandlerServices } from './plugin-marketplaces'
 
@@ -224,6 +229,23 @@ export function registerCoreHandlers(
       scanRuntimeAiVaultSessions(app.getPath('userData'), environmentId, args, options),
     resolveRuntimeAiVaultSessionTitles: async (environmentId, args) =>
       resolveRuntimeAiVaultSessionTitles(app.getPath('userData'), environmentId, args),
+    findRuntimeOwningSshAiVaultHost: async (targetId) =>
+      findRuntimeOwningSshAiVaultHost(app.getPath('userData'), targetId),
+    scanRuntimeOwnedSshAiVaultSessions: async (environmentId, targetId, args, options) =>
+      scanRuntimeOwnedSshAiVaultSessions(
+        app.getPath('userData'),
+        environmentId,
+        targetId,
+        args,
+        options
+      ),
+    resolveRuntimeOwnedSshAiVaultSessionTitles: async (environmentId, targetId, args) =>
+      resolveRuntimeOwnedSshAiVaultSessionTitles(
+        app.getPath('userData'),
+        environmentId,
+        targetId,
+        args
+      ),
     prepareRuntimeSessionResume: async (environmentId, args) =>
       prepareRuntimeAiVaultSessionResume(app.getPath('userData'), environmentId, args)
   })

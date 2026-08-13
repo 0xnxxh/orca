@@ -1578,24 +1578,42 @@ function createAiVaultApi(): NonNullable<Partial<PreloadApi>['aiVault']> {
       const requestedScope = normalizeExecutionHostScope(
         args?.executionHostScope ?? executionHostId
       )
+      const parsedScope = parseExecutionHostId(requestedScope)
+      if (parsedScope?.kind === 'ssh') {
+        return callRuntimeResult<AiVaultListResult>('aiVault.listSessions', {
+          limit: args?.limit,
+          force: args?.force,
+          scopePaths: args?.scopePaths,
+          executionHostId: parsedScope.id
+        })
+      }
       if (requestedScope !== 'all' && requestedScope !== executionHostId) {
         return Promise.resolve(webAiVaultUnavailableResult(requestedScope))
       }
-      // Why: no local filesystem in the browser, so every history scan runs on and is stamped as the paired runtime host.
+      // Why: no local filesystem in the browser, so every history scan runs on
+      // the paired runtime. `all` also asks that runtime for SSH hosts it owns.
       return callRuntimeResult<AiVaultListResult>('aiVault.listSessions', {
         limit: args?.limit,
         force: args?.force,
         scopePaths: args?.scopePaths,
-        executionHostId
+        executionHostId,
+        ...(requestedScope === 'all' ? { includeOwnedSshHosts: true } : {})
       })
     },
     resolveSessionTitles: (args: AiVaultSessionTitlesArgs) => {
       const environment = requireActiveEnvironment()
       const executionHostId = toRuntimeExecutionHostId(environment.id)
-      if (
-        args.executionHostScope &&
-        normalizeExecutionHostScope(args.executionHostScope) !== executionHostId
-      ) {
+      const requestedScope = args.executionHostScope
+        ? normalizeExecutionHostScope(args.executionHostScope)
+        : executionHostId
+      const parsedScope = parseExecutionHostId(requestedScope)
+      if (parsedScope?.kind === 'ssh') {
+        return callRuntimeResult<AiVaultSessionTitlesResult>('aiVault.resolveSessionTitles', {
+          requests: args.requests,
+          executionHostId: parsedScope.id
+        }).catch(() => ({ titles: [] }))
+      }
+      if (requestedScope !== executionHostId) {
         return Promise.resolve({ titles: [] })
       }
       return callRuntimeResult<AiVaultSessionTitlesResult>('aiVault.resolveSessionTitles', {
