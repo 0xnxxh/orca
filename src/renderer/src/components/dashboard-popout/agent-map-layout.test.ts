@@ -467,6 +467,38 @@ describe('agent map layout', () => {
     expect(topologyChanged.cache.packingGeneration).toBe(2)
   })
 
+  it('refreshes saved host labels without repacking geometry', () => {
+    const cards = [
+      card({
+        executionHostId: 'ssh:builder',
+        hostKind: 'ssh',
+        hostLabel: 'Builder'
+      })
+    ]
+    const workspaces = [
+      workspace({
+        worktreeId: 'worktree-1',
+        executionHostId: 'ssh:builder',
+        hostKind: 'ssh',
+        hostLabel: 'Builder'
+      })
+    ]
+    const initial = updateAgentMapLayout(null, cards, NOW, workspaces)
+    packWorktrees.mockClear()
+
+    const updated = updateAgentMapLayout(
+      initial.cache,
+      cards.map((candidate) => ({ ...candidate, hostLabel: 'CI Builder' })),
+      NOW,
+      workspaces.map((candidate) => ({ ...candidate, hostLabel: 'CI Builder' }))
+    )
+
+    expect(updated.cache).toBe(initial.cache)
+    expect(updated.cache.packingGeneration).toBe(1)
+    expect(packWorktrees).not.toHaveBeenCalled()
+    expect(updated.layout.projects[0].worktrees[0].hostLabel).toBe('CI Builder')
+  })
+
   it('packs worktree rings tightly without a square grid', () => {
     const layout = deriveAgentMapLayout(
       Array.from({ length: 36 }, (_, index) =>
