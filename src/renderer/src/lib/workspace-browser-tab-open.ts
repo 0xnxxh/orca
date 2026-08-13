@@ -8,6 +8,7 @@ import {
   type ExecutionHostId
 } from '../../../shared/execution-host'
 import { SEARCH_ENGINE_LABELS, type SearchEngine } from '../../../shared/browser-url'
+import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
 import { BROWSER_SCREENCAST_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
 import {
   getClientCreationActionPolicy,
@@ -27,10 +28,12 @@ export type OpenWorkspaceBrowserTabRequest = {
 
 function isExpectedRuntimeBrowserRoute(
   state: AppState,
+  availability: ClientCreationActionAvailability,
   route: ReturnType<typeof resolveWorktreeOperationRoute>,
+  workspaceId: string,
   expectedRuntimeEnvironmentId: string
 ): boolean {
-  if (!route) {
+  if (availability.state !== 'enabled' || workspaceId === FLOATING_TERMINAL_WORKTREE_ID || !route) {
     return false
   }
   const expectedEnvironmentId = expectedRuntimeEnvironmentId.trim()
@@ -55,8 +58,15 @@ export function canOpenWorkspaceBrowserTabOnRuntime(
   workspaceId: string,
   expectedRuntimeEnvironmentId: string
 ): boolean {
+  const availability = getClientCreationActionPolicy(state, workspaceId)['managed-browser']
   const route = resolveWorktreeOperationRoute(state, workspaceId)
-  return isExpectedRuntimeBrowserRoute(state, route, expectedRuntimeEnvironmentId)
+  return isExpectedRuntimeBrowserRoute(
+    state,
+    availability,
+    route,
+    workspaceId,
+    expectedRuntimeEnvironmentId
+  )
 }
 
 // Why: concurrent URL tabs are indistinguishable under a shared "Open URL"
@@ -172,7 +182,13 @@ export async function openWorkspaceBrowserTab(
   const expectedEnvironmentId = request.expectedRuntimeEnvironmentId?.trim() || null
   if (
     expectedEnvironmentId &&
-    !isExpectedRuntimeBrowserRoute(state, route, expectedEnvironmentId)
+    !isExpectedRuntimeBrowserRoute(
+      state,
+      availability,
+      route,
+      request.workspaceId,
+      expectedEnvironmentId
+    )
   ) {
     throw openFailure(presentation.error, 'asserted runtime cannot provide this managed browser')
   }
