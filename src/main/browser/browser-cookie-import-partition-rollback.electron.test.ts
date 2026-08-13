@@ -24,6 +24,7 @@ type FixtureResult = {
   remainingChips: CdpCookie[]
   remainingPlain: CdpCookie[]
   remainingExcluded: CdpCookie[]
+  remainingArrived: CdpCookie[]
 }
 
 const EXPECTED_PARTITION_KEY = {
@@ -31,7 +32,7 @@ const EXPECTED_PARTITION_KEY = {
   hasCrossSiteAncestor: true
 }
 
-function buildFixtureMain(bundlePath: string, resultPath: string): string {
+function buildFixtureMain(bundlePath: string, resultPath: string, injectArrival: boolean): string {
   return `
 const { app, BrowserWindow, session } = require('electron')
 const { writeFileSync } = require('node:fs')
@@ -95,6 +96,14 @@ async function run() {
     },
     clearData: async () => {
       bulkClearCalls++
+      if (${injectArrival}) {
+        await targetSession.cookies.set({
+          url: 'https://login.example/',
+          name: 'arrived-during-clear',
+          value: 'fresh-login',
+          secure: true
+        })
+      }
       throw new Error('forced bulk clear failure')
     },
     snapshotClearIdentities: (cookies) => cookieClearStore.snapshotClearIdentities(cookies),
@@ -122,7 +131,8 @@ async function run() {
     bulkClearCalls,
     remainingChips: project('chips-auth'),
     remainingPlain: project('plain'),
-    remainingExcluded: project('SID')
+    remainingExcluded: project('SID'),
+    remainingArrived: project('arrived-during-clear')
   }))
   debug.detach()
   window.destroy()
@@ -136,7 +146,7 @@ run().catch((error) => {
 `
 }
 
-async function runFixture(): Promise<FixtureResult> {
+async function runFixture(injectArrival = false): Promise<FixtureResult> {
   const root = mkdtempSync(join(tmpdir(), 'orca-partition-rollback-'))
   fixtureRoots.push(root)
   const bundlePath = join(root, 'cookie-clear-rollback.cjs')
@@ -165,7 +175,7 @@ async function runFixture(): Promise<FixtureResult> {
       rollupOptions: { external: ['electron', /^node:/] }
     }
   })
-  writeFileSync(fixturePath, buildFixtureMain(bundlePath, resultPath))
+  writeFileSync(fixturePath, buildFixtureMain(bundlePath, resultPath, injectArrival))
   const { ELECTRON_RUN_AS_NODE: _electronRunAsNode, ...env } = process.env
   const electronArgs = [fixturePath, `--user-data-dir=${join(root, 'profile')}`]
   const executable = process.platform === 'linux' ? 'xvfb-run' : electronBinary
@@ -198,5 +208,22 @@ describe('non-Google partitioned cookie under a failed Electron cookie clear', (
       { name: 'chips-auth', value: 'keep-me', partitionKey: EXPECTED_PARTITION_KEY }
     ])
     expect(result.remainingPlain).toEqual([{ name: 'plain', value: 'stale' }])
+  }, 90_000)
+
+  // Why (STA-4170): a login cookie that lands after the pre-clear snapshot must come back
+  // when a later fallback removal rejects, including through the real CDP restore path.
+  it('restores a cookie that arrived during the rejected bulk clear', async () => {
+    const result = await runFixture(true)
+
+    expect(result.bulkClearCalls).toBe(1)
+    expect(result.clearError).toContain('existing cookies were restored')
+    expect(result.remainingExcluded.map(({ name }) => name)).toEqual(['SID'])
+    expect(result.remainingChips).toEqual([
+      { name: 'chips-auth', value: 'keep-me', partitionKey: EXPECTED_PARTITION_KEY }
+    ])
+    expect(result.remainingPlain).toEqual([{ name: 'plain', value: 'stale' }])
+    expect(result.remainingArrived).toEqual([
+      { name: 'arrived-during-clear', value: 'fresh-login' }
+    ])
   }, 90_000)
 })

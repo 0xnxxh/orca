@@ -49,6 +49,33 @@ function cookieClearKey(url: string, name: string): string {
   return JSON.stringify([url, name])
 }
 
+function cookieRestoreKey(identity: CookieClearIdentity): string {
+  return JSON.stringify([
+    identity.url,
+    identity.name,
+    identity.domain ?? null,
+    identity.path ?? null,
+    identity.partitionKey ?? null
+  ])
+}
+
+function mergeClearIdentities(
+  primary: readonly CookieClearIdentity[],
+  extras: readonly CookieClearIdentity[]
+): CookieClearIdentity[] {
+  const seen = new Set<string>()
+  const merged: CookieClearIdentity[] = []
+  for (const identity of [...primary, ...extras]) {
+    const key = cookieRestoreKey(identity)
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    merged.push(identity)
+  }
+  return merged
+}
+
 export function identitiesFromClearCookies(
   cookies: readonly { cookie: Cookie; url: string }[]
 ): CookieClearIdentity[] {
@@ -150,6 +177,20 @@ async function restoreClearedCookies(
   )
 }
 
+async function snapshotFencedClearIdentities(
+  targetSession: CookieClearSession,
+  fencedRemovable: readonly { cookie: Cookie; url: string }[],
+  initialIdentities: readonly CookieClearIdentity[]
+): Promise<CookieClearIdentity[]> {
+  try {
+    const fencedIdentities = await targetSession.snapshotClearIdentities(fencedRemovable)
+    assertClearIdentitiesCoverRemovable(fencedRemovable, fencedIdentities)
+    return fencedIdentities
+  } catch (error) {
+    return restoreClearedCookies(targetSession, initialIdentities, [error])
+  }
+}
+
 export async function removeTransplantableCookies(
   targetSession: CookieClearSession
 ): Promise<void> {
@@ -179,10 +220,22 @@ export async function removeTransplantableCookies(
       // Why: a rejected bulk clear can still have emptied part of the jar.
     }
 
-    const existingCookies = await store.get({})
-    const removableGroups = groupRemovableCookies(removableCookieEntries(existingCookies))
+    const leftoverCookies = await store.get({})
+    const fencedRemovable = removableCookieEntries(leftoverCookies)
+    if (fencedRemovable.length === 0) {
+      return
+    }
+
+    // Why (STA-4170): snapshot the exact leftover set before any fallback remove so an
+    // arrival can be restored if a later removal fails. Fail closed on snapshot errors.
+    const fencedIdentities = await snapshotFencedClearIdentities(
+      targetSession,
+      fencedRemovable,
+      identities
+    )
+
     const results = await mapSettledWithConcurrency(
-      [...removableGroups.values()],
+      [...groupRemovableCookies(fencedRemovable).values()],
       COOKIE_CLEAR_CONCURRENCY,
       async (group) => {
         // Why: identical removal coordinates must stay ordered instead of racing.
@@ -195,7 +248,11 @@ export async function removeTransplantableCookies(
       result.status === 'rejected' ? [result.reason] : []
     )
     if (failures.length > 0) {
-      await restoreClearedCookies(targetSession, identities, failures)
+      await restoreClearedCookies(
+        targetSession,
+        mergeClearIdentities(fencedIdentities, identities),
+        failures
+      )
     }
   })
 }

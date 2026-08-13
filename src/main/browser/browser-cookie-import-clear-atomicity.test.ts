@@ -150,6 +150,129 @@ describe('STA-4090 failed full cookie clear', () => {
     )
   })
 
+  // Why (STA-4170): fallback re-reads the live jar, so a login cookie that arrives after
+  // the pre-clear snapshot can be deleted. Rollback must restore that arrival too.
+  it('restores a post-snapshot arrival when a later fallback removal fails', async () => {
+    let jar = [
+      cookie('.example.com', 'pre-existing', '/one'),
+      cookie('.other.test', 'later-fail', '/two')
+    ]
+    const removedNames: string[] = []
+    const restoredNames: string[] = []
+    const session: CookieClearSession & { names: () => string[] } = {
+      cookies: {
+        get: async () => [...jar],
+        remove: async (_url, name) => {
+          if (name === 'later-fail') {
+            throw new Error('cookie store unavailable')
+          }
+          removedNames.push(name)
+          jar = jar.filter((entry) => entry.name !== name)
+        }
+      },
+      clearData: async () => {
+        jar = [
+          cookie('.login.test', 'arrived-during-clear'),
+          cookie('.other.test', 'later-fail', '/two')
+        ]
+        throw new Error('storage busy')
+      },
+      snapshotClearIdentities: async (items) => identitiesFromClearCookies(items),
+      restoreClearIdentities: async (identities) => {
+        restoredNames.push(...identities.map((identity) => identity.name))
+        for (const identity of identities) {
+          if (jar.some((entry) => entry.name === identity.name)) {
+            continue
+          }
+          jar.push(cookie(identity.domain ?? '', identity.name, identity.path, identity.secure))
+        }
+      },
+      names: () => jar.map((entry) => entry.name).sort()
+    }
+
+    await expect(removeTransplantableCookies(session)).rejects.toThrow(
+      /existing cookies were restored/
+    )
+
+    expect(removedNames).toEqual(['arrived-during-clear'])
+    expect(restoredNames).toEqual(expect.arrayContaining(['arrived-during-clear', 'pre-existing']))
+    expect(session.names()).toEqual(['arrived-during-clear', 'later-fail', 'pre-existing'])
+  })
+
+  it('restores the pre-clear snapshot when leftover identity capture fails', async () => {
+    let jar = [
+      cookie('.example.com', 'pre-existing', '/one'),
+      cookie('.other.test', 'leftover', '/two')
+    ]
+    let snapshotCalls = 0
+    const removedNames: string[] = []
+    const session: CookieClearSession & { names: () => string[] } = {
+      cookies: {
+        get: async () => [...jar],
+        remove: async (_url, name) => {
+          removedNames.push(name)
+          jar = jar.filter((entry) => entry.name !== name)
+        }
+      },
+      clearData: async () => {
+        jar = [cookie('.other.test', 'leftover', '/two')]
+        throw new Error('storage busy')
+      },
+      snapshotClearIdentities: async (items) => {
+        snapshotCalls += 1
+        if (snapshotCalls > 1) {
+          throw new Error('could not snapshot leftover cookies')
+        }
+        return identitiesFromClearCookies(items)
+      },
+      restoreClearIdentities: async (identities) => {
+        for (const identity of identities) {
+          if (jar.some((entry) => entry.name === identity.name)) {
+            continue
+          }
+          jar.push(cookie(identity.domain ?? '', identity.name, identity.path, identity.secure))
+        }
+      },
+      names: () => jar.map((entry) => entry.name).sort()
+    }
+
+    await expect(removeTransplantableCookies(session)).rejects.toThrow(
+      /existing cookies were restored/
+    )
+    expect(removedNames).toEqual([])
+    expect(session.names()).toEqual(['leftover', 'pre-existing'])
+  })
+
+  it('does not remove cookies that arrive after the leftover set is fenced', async () => {
+    let jar = [cookie('.example.com', 'survived'), cookie('.other.test', 'tracker')]
+    const removedNames: string[] = []
+    const session: CookieClearSession & { names: () => string[] } = {
+      cookies: {
+        get: async () => [...jar],
+        remove: async (_url, name) => {
+          removedNames.push(name)
+          jar = jar.filter((entry) => entry.name !== name)
+          if (name === 'survived') {
+            jar.push(cookie('.late.test', 'late-arrival'))
+          }
+        }
+      },
+      clearData: async () => {
+        throw new Error('storage busy')
+      },
+      snapshotClearIdentities: async (items) => identitiesFromClearCookies(items),
+      restoreClearIdentities: async () => undefined,
+      names: () => jar.map((entry) => entry.name).sort()
+    }
+
+    await removeTransplantableCookies(session)
+
+    expect(removedNames).toHaveLength(2)
+    expect(removedNames).toEqual(expect.arrayContaining(['survived', 'tracker']))
+    expect(removedNames).not.toContain('late-arrival')
+    expect(session.names()).toEqual(['late-arrival'])
+  })
+
   it('serializes concurrent clears on the same session', async () => {
     const activeClears: number[] = []
     let inClear = 0
