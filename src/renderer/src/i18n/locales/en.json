@@ -773,6 +773,9 @@
       },
       "ephemeralVmWorktreeCreation": {
         "sparseCheckoutUnsupported": "Provisioned-root recipes do not support sparse checkout."
+      },
+      "worktreeCreationFlow": {
+        "backgroundStartupOwnerAmbiguous": "Workspace created, but automatic startup was skipped because its host is ambiguous."
       }
     },
     "hooks": {
