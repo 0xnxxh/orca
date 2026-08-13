@@ -211,6 +211,33 @@ function catalogTimestampFromAddedAt(addedAt: number): number {
   return Number.isFinite(addedAt) ? addedAt : 0
 }
 
+// Why: 0 / absent / NaN means "the repo predates timestamped catalog rows", not epoch. Keeping
+// it out of min()/max() stops one unknown sibling from wiping a real timestamp — and unlike the
+// old `|| now` fallback it stays order-independent, so both merge orders agree.
+function knownCatalogTimestamp(value: number): number | undefined {
+  return Number.isFinite(value) && value !== 0 ? value : undefined
+}
+
+/** Oldest of two catalog `createdAt` values, treating 0/NaN on either side as unknown. */
+export function mergeCatalogCreatedAt(left: number, right: number): number {
+  const known = knownCatalogTimestamp(left)
+  const other = knownCatalogTimestamp(right)
+  if (known === undefined || other === undefined) {
+    return known ?? other ?? 0
+  }
+  return Math.min(known, other)
+}
+
+/** Newest of two catalog `updatedAt` values, treating 0/NaN on either side as unknown. */
+export function mergeCatalogUpdatedAt(left: number, right: number): number {
+  const known = knownCatalogTimestamp(left)
+  const other = knownCatalogTimestamp(right)
+  if (known === undefined || other === undefined) {
+    return known ?? other ?? 0
+  }
+  return Math.max(known, other)
+}
+
 function createProjectFromRepo(repo: Repo): Project {
   const identity = getProjectProviderIdentity(repo)
   const gitRemoteIdentity = getProjectGitRemoteIdentity(repo)
@@ -233,13 +260,14 @@ function mergeProjectRepo(project: Project, repo: Repo): Project {
   const sourceRepoIds = project.sourceRepoIds.includes(repo.id)
     ? project.sourceRepoIds
     : [...project.sourceRepoIds, repo.id]
-  // Why: 0 / absent / NaN means "unknown", not epoch — min() would wipe a persisted createdAt.
-  const addedAt = Number.isFinite(repo.addedAt) && repo.addedAt !== 0 ? repo.addedAt : undefined
+  // Why unknown-aware on both sides: the accumulator itself carries 0 when the first repo of the
+  // project had no addedAt, so a plain min() would let repo order decide the project's createdAt.
+  const addedAt = catalogTimestampFromAddedAt(repo.addedAt)
   return {
     ...project,
     sourceRepoIds,
-    createdAt: Math.min(project.createdAt, addedAt ?? project.createdAt),
-    updatedAt: Math.max(project.updatedAt, addedAt ?? project.updatedAt)
+    createdAt: mergeCatalogCreatedAt(project.createdAt, addedAt),
+    updatedAt: mergeCatalogUpdatedAt(project.updatedAt, addedAt)
   }
 }
 
