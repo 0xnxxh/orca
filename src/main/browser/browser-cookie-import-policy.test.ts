@@ -229,18 +229,22 @@ describe('removeTransplantableCookies', () => {
     }
     const clearData = overrides.clearData ?? vi.fn().mockResolvedValue(undefined)
     const restoreClearIdentities = vi.fn().mockResolvedValue(undefined)
+    const snapshotClearIdentities = vi.fn(
+      async (items: Parameters<typeof identitiesFromClearCookies>[0]) =>
+        identitiesFromClearCookies(items)
+    )
     return {
       session: {
         cookies: store,
         clearData,
-        snapshotClearIdentities: async (items: Parameters<typeof identitiesFromClearCookies>[0]) =>
-          identitiesFromClearCookies(items),
+        snapshotClearIdentities,
         restoreClearIdentities
       },
       get: store.get,
       remove: store.remove,
       set: store.set,
       clearData,
+      snapshotClearIdentities,
       restoreClearIdentities
     }
   }
@@ -285,6 +289,19 @@ describe('removeTransplantableCookies', () => {
 
     await removeTransplantableCookies(session)
 
+    expect(clearData).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+  })
+
+  it('does not attach or clear when the jar contains only excluded cookies', async () => {
+    const { session, snapshotClearIdentities, clearData, remove } = clearSession([
+      cookie('.google.com', 'SID'),
+      cookie('accounts.google.com', 'ACCOUNT')
+    ])
+
+    await removeTransplantableCookies(session)
+
+    expect(snapshotClearIdentities).not.toHaveBeenCalled()
     expect(clearData).not.toHaveBeenCalled()
     expect(remove).not.toHaveBeenCalled()
   })

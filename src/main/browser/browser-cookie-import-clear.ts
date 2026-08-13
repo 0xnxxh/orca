@@ -161,6 +161,9 @@ export async function removeTransplantableCookies(
     }
 
     const initialRemovable = removableCookieEntries(initialCookies, true)
+    if (initialRemovable.length === 0) {
+      return
+    }
     const identities = await targetSession.snapshotClearIdentities(initialRemovable)
     assertClearIdentitiesCoverRemovable(initialRemovable, identities)
 
