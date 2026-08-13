@@ -2568,6 +2568,8 @@ export function registerPtyHandlers(
   const PTY_BATCH_DRAIN_CONTINUE_MS = 1
   const PTY_BATCH_FLUSH_CHUNK_CHARS = 16 * 1024
   const PTY_BATCH_FLUSH_MAX_WRITES = 2
+  // Bounds metadata under pathological visibility churn; overflow heals through the snapshot sentinel.
+  const PTY_PENDING_VIEW_AUTHORITY_BOUNDARY_MAX = 256
   const PTY_RENDERER_IN_FLIGHT_HIGH_WATER_CHARS = 512 * 1024
   const PTY_RENDERER_TOTAL_IN_FLIGHT_HIGH_WATER_CHARS = 8 * 1024 * 1024
   // Why: cap unbounded pendingData growth when the renderer can't receive (frozen/reloading); beyond it bytes drop and the pane heals from the main buffer snapshot via the droppedOutput sentinel (#7630).
@@ -3081,12 +3083,6 @@ export function registerPtyHandlers(
     payload: PtyDataPayload,
     projectionAdmissionIds?: readonly string[]
   ): { sent: boolean; projectionsTransferred: boolean } {
-    // Why the caller decides: ownership was captured at ingestion (same tick and
-    // module state as the runtime's reply decision), so a reveal that lands
-    // before the flush cannot hand these bytes to an xterm main already answered for.
-    if (payload.sidecarOnly === true && recordHiddenRendererPtyViewGap(id).shouldEmitRestoreMarker) {
-      sendModelRestoreNeededMarker(id, 'hidden-drop', runtime?.getPtyOutputSequence(id))
-    }
     const charCount = getPtyPayloadCharCount(payload)
     const accounting = rendererDeliveryAccountingByPty.get(id)
     const hadAccounting = accounting !== undefined
@@ -3238,20 +3234,22 @@ export function registerPtyHandlers(
     return (pending.droppedMode2031Data ?? '') + pendingSubscribe + state.tail
   }
 
-  function dropOversizedPendingPtyData(id: string, pending: PendingPtyData): PendingPtyData {
+  function dropPendingPtyData(
+    id: string,
+    pending: PendingPtyData,
+    reason: 'pending-cap' | 'view-authority-churn'
+  ): PendingPtyData {
     const capChars = pendingDataCapChars()
-    if (pending.droppedOutput === true || pending.data.length <= capChars) {
-      return pending
-    }
     if (!pendingDataDropWarnedPtys.has(id)) {
       pendingDataDropWarnedPtys.add(id)
       console.error(
-        `[pty] dropped ${pending.data.length} buffered chars for ${id}: renderer not receiving and per-PTY pending cap exceeded; pane will restore from the main-owned snapshot`
+        `[pty] dropped ${pending.data.length} buffered chars for ${id}: ${reason}; pane will restore from the main-owned snapshot`
       )
       // Why: field visibility for cap tuning (issue #2836 / #7017); no pty id since session ids can embed workspace paths.
       recordCrashBreadcrumb('terminal_pending_output_dropped', {
         droppedChars: pending.data.length,
-        capChars
+        capChars,
+        reason
       })
     }
     if (isHiddenPtyDeliveryGateEnabled(getSettings?.()) && !pendingOverflowMarkedPtys.has(id)) {
@@ -3266,10 +3264,20 @@ export function registerPtyHandlers(
     return {
       data: extractDroppedPtyQueryBytes(pending.data).slice(0, DROPPED_QUERY_SALVAGE_MAX_CHARS),
       droppedOutput: true,
-      ...(pending.viewSuppressed === true ? { viewSuppressed: true as const } : {}),
+      ...(pending.viewSuppressed === true ||
+      pending.viewSuppressionBoundaries?.some((boundary) => boundary.viewSuppressed)
+        ? { viewSuppressed: true as const }
+        : {}),
       droppedMode2031Data: mode2031.data,
       droppedMode2031ScanState: mode2031.state
     }
+  }
+
+  function dropOversizedPendingPtyData(id: string, pending: PendingPtyData): PendingPtyData {
+    if (pending.droppedOutput === true || pending.data.length <= pendingDataCapChars()) {
+      return pending
+    }
+    return dropPendingPtyData(id, pending, 'pending-cap')
   }
 
   function updatePendingProjectionAdmissions(
@@ -3315,7 +3323,8 @@ export function registerPtyHandlers(
     rawLength = data.length,
     transformed = false,
     projectionSemanticsId?: string,
-    viewSuppressed = false
+    viewSuppressed = false,
+    emitViewGapRestoreMarker = false
   ): PendingPtyData {
     // Why stay dropped at O(1): once over the cap the restore sentinel supersedes interim bytes; queries still get carved out (bounded) so replies survive the whole episode.
     if (existing?.droppedOutput === true) {
@@ -3334,6 +3343,8 @@ export function registerPtyHandlers(
       return {
         ...existing,
         data: existing.data + salvaged,
+        ...(viewSuppressed ? { viewSuppressed: true as const } : {}),
+        ...(emitViewGapRestoreMarker ? { emitViewGapRestoreMarker: true as const } : {}),
         droppedMode2031Data: mode2031.data || existing.droppedMode2031Data,
         droppedMode2031ScanState: mode2031.state
       }
@@ -3341,9 +3352,6 @@ export function registerPtyHandlers(
     const projectionState = compactPendingProjectionState(existing ?? {}, projectionSemanticsId)
     const nextContainsBackgroundOutput =
       existing?.containsBackgroundOutput === true || containsBackgroundOutput
-    // Why sticky: one byte main already answered for taints the whole coalesced
-    // entry — the view heals from the model snapshot, a double reply does not.
-    const nextViewSuppressed = existing?.viewSuppressed === true || viewSuppressed
     if (!existing) {
       const pending: PendingPtyData = {
         data,
@@ -3351,25 +3359,118 @@ export function registerPtyHandlers(
         ...(rawLength !== data.length ? { rawLength } : {}),
         ...(transformed ? { transformed: true } : {}),
         ...(nextContainsBackgroundOutput ? { containsBackgroundOutput: true } : {}),
-        ...(nextViewSuppressed ? { viewSuppressed: true as const } : {})
+        ...(viewSuppressed ? { viewSuppressed: true as const } : {}),
+        ...(emitViewGapRestoreMarker ? { emitViewGapRestoreMarker: true as const } : {})
       }
       updatePendingProjectionAdmissions(pending, projectionState)
       return dropOversizedPendingPtyData(id, pending)
     }
     const existingRawLength = existing.rawLength ?? existing.data.length
+    const boundaries = existing.viewSuppressionBoundaries
+      ? existing.viewSuppressionBoundaries.slice()
+      : []
+    const previousViewSuppressed =
+      boundaries.at(-1)?.viewSuppressed ?? existing.viewSuppressed === true
+    if (previousViewSuppressed !== viewSuppressed) {
+      boundaries.push({
+        dataOffset: existing.data.length,
+        rawOffset: existingRawLength,
+        viewSuppressed
+      })
+    }
     const next: PendingPtyData = {
       data: existing.data + data,
       ...(!preservesSeq || existing.transformed || transformed
         ? { rawLength: existingRawLength + rawLength, transformed: true as const }
         : {}),
       ...(nextContainsBackgroundOutput ? { containsBackgroundOutput: true } : {}),
-      ...(nextViewSuppressed ? { viewSuppressed: true as const } : {})
+      ...(existing.viewSuppressed === true ? { viewSuppressed: true as const } : {}),
+      ...(boundaries.length > 0 ? { viewSuppressionBoundaries: boundaries } : {}),
+      ...(existing.emitViewGapRestoreMarker === true || emitViewGapRestoreMarker
+        ? { emitViewGapRestoreMarker: true as const }
+        : {})
     }
     updatePendingProjectionAdmissions(next, projectionState)
     if (typeof existing.startSeq === 'number') {
       next.startSeq = existing.startSeq
     }
+    if (boundaries.length > PTY_PENDING_VIEW_AUTHORITY_BOUNDARY_MAX) {
+      return dropPendingPtyData(id, next, 'view-authority-churn')
+    }
     return dropOversizedPendingPtyData(id, next)
+  }
+
+  function takePendingPtyDeliverySlice(pending: PendingPtyData): {
+    data: string
+    rawLength: number
+    transformed: boolean
+    viewSuppressed: boolean
+    remainder: PendingPtyData | undefined
+  } {
+    const boundary = pending.viewSuppressionBoundaries?.[0]
+    const dataLimit = boundary?.dataOffset ?? pending.data.length
+    const dataLength = pending.transformed
+      ? dataLimit
+      : Math.min(dataLimit, PTY_BATCH_FLUSH_CHUNK_CHARS)
+    const rawLength =
+      boundary && dataLength === boundary.dataOffset
+        ? boundary.rawOffset
+        : pending.transformed
+          ? (pending.rawLength ?? pending.data.length)
+          : dataLength
+    const data = pending.data.slice(0, dataLength)
+    const remainingData = pending.data.slice(dataLength)
+    if (!remainingData) {
+      return {
+        data,
+        rawLength,
+        transformed: pending.transformed === true,
+        viewSuppressed: pending.viewSuppressed === true,
+        remainder: undefined
+      }
+    }
+    const remainingRawLength = (pending.rawLength ?? pending.data.length) - rawLength
+    const remainingBoundaries = pending.viewSuppressionBoundaries
+      ?.filter((entry) => entry.dataOffset > dataLength)
+      .map((entry) => ({
+        dataOffset: entry.dataOffset - dataLength,
+        rawOffset: entry.rawOffset - rawLength,
+        viewSuppressed: entry.viewSuppressed
+      }))
+    const nextViewSuppressed =
+      boundary && boundary.dataOffset === dataLength
+        ? boundary.viewSuppressed
+        : pending.viewSuppressed === true
+    const remainder: PendingPtyData = {
+      data: remainingData,
+      ...(typeof pending.startSeq === 'number' ? { startSeq: pending.startSeq + rawLength } : {}),
+      ...(remainingRawLength !== remainingData.length ? { rawLength: remainingRawLength } : {}),
+      ...(pending.transformed === true ? { transformed: true as const } : {}),
+      ...(pending.containsBackgroundOutput === true ? { containsBackgroundOutput: true } : {}),
+      ...(nextViewSuppressed ? { viewSuppressed: true as const } : {}),
+      ...(remainingBoundaries && remainingBoundaries.length > 0
+        ? { viewSuppressionBoundaries: remainingBoundaries }
+        : {})
+    }
+    if (pending.projectionAdmissionIds) {
+      remainder.projectionAdmissionIds = pending.projectionAdmissionIds
+    }
+    if (pending.projectionAdmissionsTransferred) {
+      remainder.projectionAdmissionsTransferred = true
+    }
+    return {
+      data,
+      rawLength,
+      transformed: pending.transformed === true,
+      viewSuppressed: pending.viewSuppressed === true,
+      remainder
+    }
+  }
+
+  function emitPendingViewGapRestoreMarker(id: string, pending: PendingPtyData): void {
+    if (pending.emitViewGapRestoreMarker === true && isHiddenRendererPty(id)) {
+      sendModelRestoreNeededMarker(id, 'hidden-drop', runtime?.getPtyOutputSequence(id))
+    }
   }
 
   function schedulePendingDataFlush(delayMs: number): void {
@@ -3448,6 +3549,7 @@ export function registerPtyHandlers(
           pendingData.remove(selection)
           pendingOverflowMarkedPtys.delete(id)
           updateProducerFlowControl(id)
+          emitPendingViewGapRestoreMarker(id, pending)
           const drop = recordHiddenRendererPtyDataDrop(id, pending.data.length)
           if (pending.projectionAdmissionIds) {
             sshOutputIntake?.transferProjections(pending.projectionAdmissionIds, 'hidden-drop')
@@ -3465,6 +3567,7 @@ export function registerPtyHandlers(
         if (pending.droppedOutput === true) {
           pendingData.remove(selection)
           updateProducerFlowControl(id)
+          emitPendingViewGapRestoreMarker(id, pending)
           // Why droppedOutput sentinel: pending-cap drop means the pane must repaint from the snapshot, not continue a gapped stream (data = carved query bytes only).
           if (
             !sendPtyDataToRenderer(
@@ -3484,44 +3587,26 @@ export function registerPtyHandlers(
           writes++
           continue
         }
-        const { data } = pending
-        const indivisible = pending.transformed === true
-        const chunk = indivisible ? data : data.slice(0, PTY_BATCH_FLUSH_CHUNK_CHARS)
-        const remaining = indivisible ? '' : data.slice(PTY_BATCH_FLUSH_CHUNK_CHARS)
-        let nextPending: PendingPtyData | undefined
-        if (remaining) {
-          nextPending = { data: remaining }
-          if (typeof pending.startSeq === 'number') {
-            nextPending.startSeq = pending.startSeq + chunk.length
-          }
-          if (pending.containsBackgroundOutput === true) {
-            nextPending.containsBackgroundOutput = true
-          }
-          if (pending.viewSuppressed === true) {
-            nextPending.viewSuppressed = true
-          }
-          if (pending.projectionAdmissionIds) {
-            nextPending.projectionAdmissionIds = pending.projectionAdmissionIds
-          }
-          if (pending.projectionAdmissionsTransferred) {
-            nextPending.projectionAdmissionsTransferred = true
-          }
+        const slice = takePendingPtyDeliverySlice(pending)
+        const nextPending = slice.remainder
+        if (nextPending) {
           pendingData.replaceWithRemainder(selection, nextPending)
         } else {
           pendingData.remove(selection)
           pendingOverflowMarkedPtys.delete(id)
         }
         updateProducerFlowControl(id)
+        emitPendingViewGapRestoreMarker(id, pending)
         const delivery = sendPtyDataToRenderer(
           id,
           makePtyDataPayload(
             id,
-            chunk,
+            slice.data,
             pending.startSeq,
             pending.containsBackgroundOutput,
-            pending.rawLength,
-            pending.transformed,
-            pending.viewSuppressed === true
+            slice.rawLength,
+            slice.transformed,
+            slice.viewSuppressed
           ),
           pending.projectionAdmissionIds
         )
@@ -3626,6 +3711,7 @@ export function registerPtyHandlers(
       const remaining = pendingData.delete(payload.id)
       clearFlushTimerIfIdle()
       if (remaining) {
+        emitPendingViewGapRestoreMarker(payload.id, remaining)
         if (remaining.droppedOutput === true) {
           // Sentinel entry: only salvaged query bytes remain; keep the flag so the renderer knows the span was dropped.
           sendPtyDataToRenderer(
@@ -3638,7 +3724,7 @@ export function registerPtyHandlers(
             },
             remaining.projectionAdmissionIds
           )
-        } else {
+        } else if (!remaining.viewSuppressionBoundaries?.length) {
           sendPtyDataToRenderer(
             payload.id,
             makePtyDataPayload(
@@ -3652,6 +3738,35 @@ export function registerPtyHandlers(
             ),
             remaining.projectionAdmissionIds
           )
+        } else {
+          let unsettled: PendingPtyData | undefined = remaining
+          while (unsettled) {
+            const slice = takePendingPtyDeliverySlice(unsettled)
+            const delivery = sendPtyDataToRenderer(
+              payload.id,
+              makePtyDataPayload(
+                payload.id,
+                slice.data,
+                unsettled.startSeq,
+                unsettled.containsBackgroundOutput,
+                slice.rawLength,
+                slice.transformed,
+                slice.viewSuppressed
+              ),
+              unsettled.projectionAdmissionIds
+            )
+            if (slice.remainder) {
+              updatePendingProjectionAdmissions(
+                slice.remainder,
+                propagatePendingProjectionRemainder(
+                  slice.remainder,
+                  delivery,
+                  pendingProjectionAdmissionOptions()
+                )
+              )
+            }
+            unsettled = slice.remainder
+          }
         }
       }
       return release
@@ -3780,6 +3895,12 @@ export function registerPtyHandlers(
     if (projection?.desktopSpan) {
       sourceCreditPendingPtys.add(payload.id)
     }
+    const viewSuppressed = shouldDeliverHiddenRendererPtyDataToSidecarsOnly(
+      payload.id,
+      getSettings?.()
+    )
+    const emitViewGapRestoreMarker =
+      viewSuppressed && recordHiddenRendererPtyViewGap(payload.id).shouldEmitRestoreMarker
     const pending = appendPendingPtyData(
       payload.id,
       pendingData.get(payload.id),
@@ -3790,7 +3911,8 @@ export function registerPtyHandlers(
       rawLength,
       payload.transformed === true,
       projectionId,
-      shouldDeliverHiddenRendererPtyDataToSidecarsOnly(payload.id, getSettings?.())
+      viewSuppressed,
+      emitViewGapRestoreMarker
     )
     const shouldEmitPendingCapRestoreMarker =
       pending.droppedOutput === true &&
@@ -3802,7 +3924,11 @@ export function registerPtyHandlers(
       nextData,
       performance.now()
     )
-    if (isInteractiveOutput && rendererPtyDispatcherReady) {
+    if (
+      isInteractiveOutput &&
+      rendererPtyDispatcherReady &&
+      !pending.viewSuppressionBoundaries?.length
+    ) {
       if (!canSendPtyDataToRenderer(payload.id, { interactive: true })) {
         setPendingPtyData(payload.id, pending)
         if (shouldEmitPendingCapRestoreMarker) {
@@ -3819,6 +3945,7 @@ export function registerPtyHandlers(
       }
       pendingOverflowMarkedPtys.delete(payload.id)
       try {
+        emitPendingViewGapRestoreMarker(payload.id, pending)
         sendPtyDataToRenderer(
           payload.id,
           {
@@ -4155,6 +4282,7 @@ export function registerPtyHandlers(
   const resetRendererPtyDeliveryGateState = (): void => {
     const gateDebug = getHiddenRendererPtyDeliveryDebug()
     resetRendererScopedHiddenPtyDeliveryState()
+    runtime?.resetLocalRendererTerminalViews?.()
     if (gateDebug.hiddenDeliveryGatedPtyCount > 0 || gateDebug.deliveryInterestPtyCount > 0) {
       invalidatePendingPtyDrainPolicy()
     }
@@ -7423,6 +7551,7 @@ export function registerPtyHandlers(
     } else {
       visibleRendererPtys.delete(args.id)
     }
+    runtime?.setLocalRendererTerminalViewVisible?.(args.id, args.visible)
     syncPtyBackgroundedDelivery(args.id, 'visibility-report')
   })
 

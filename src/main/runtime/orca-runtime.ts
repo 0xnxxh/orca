@@ -3039,6 +3039,8 @@ export class OrcaRuntimeService {
   // Preview windows consume the raw stream but deliberately leave terminal
   // query replies to main's headless emulator.
   private rawTerminalViewSubscriberCounts = new Map<string, number>()
+  // Positive presence distinguishes a visible desktop xterm from a headless host.
+  private localRendererTerminalViewPtys = new Set<string>()
   // Why a sticky promise per PTY: the daemon only emits data for sessions this
   // app has attached, so the first remote view subscriber of a never-attached
   // local daemon session triggers a main-side attach. The map dedupes
@@ -11035,6 +11037,18 @@ export class OrcaRuntimeService {
     return (this.mobileSubscribers.get(ptyId)?.size ?? 0) > 0
   }
 
+  setLocalRendererTerminalViewVisible(ptyId: string, visible: boolean): void {
+    if (visible) {
+      this.localRendererTerminalViewPtys.add(ptyId)
+    } else {
+      this.localRendererTerminalViewPtys.delete(ptyId)
+    }
+  }
+
+  resetLocalRendererTerminalViews(): void {
+    this.localRendererTerminalViewPtys.clear()
+  }
+
   isMobileTerminalQueryReplyAuthority(ptyId: string, clientId: string): boolean {
     // Why: a passive phone watching desktop-sized output must not race the
     // desktop xterm. Mobile becomes reply authority only with the mobile floor.
@@ -11438,7 +11452,9 @@ export class OrcaRuntimeService {
     return shouldModelAnswerHiddenPtyQueries({
       ptyId,
       settings: this.store?.getSettings(),
-      hasRemoteViewSubscriber: this.hasRemoteTerminalViewSubscriber(ptyId)
+      hasRemoteViewSubscriber: this.hasRemoteTerminalViewSubscriber(ptyId),
+      hasRawViewSubscriber: this.hasRawTerminalViewSubscriber(ptyId),
+      hasLocalRendererView: this.localRendererTerminalViewPtys.has(ptyId)
     })
   }
 
@@ -13637,6 +13653,7 @@ export class OrcaRuntimeService {
     this.mobileSubscribers.delete(ptyId)
     this.remoteTerminalViewSubscriberCounts.delete(ptyId)
     this.rawTerminalViewSubscriberCounts.delete(ptyId)
+    this.localRendererTerminalViewPtys.delete(ptyId)
     this.mobileDisplayModes.delete(ptyId)
     this.resizeListeners.delete(ptyId)
     this.lastRendererSizes.delete(ptyId)

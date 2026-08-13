@@ -140,8 +140,7 @@ type TerminalMultiplexStream = {
   supportsOutputPause: boolean
   supportsWriteUnavailable: boolean
   outputPaused: boolean
-  /** Releases whichever presence this stream currently holds — view (query
-   *  authority) while it receives output, raw-only while it is paused. */
+  /** Releases the stream's current view or raw-only presence. */
   releaseViewPresence: () => void
   /** null until this stream registers presence at all. */
   holdsViewAuthority: boolean | null
@@ -419,15 +418,7 @@ function assertTerminalSendExactPtyBinding(
   throw new Error('terminal_guard_not_writable')
 }
 
-/**
- * Query authority follows what the client can actually SEE. A paused stream
- * receives no bytes, so its remote xterm cannot answer DA1/DSR/OSC probes —
- * holding view presence there leaves nobody answering and fish blocks ~10s at
- * every prompt paint. Raw presence still pins the provider so unpausing
- * resumes the same PTY. Both flags flip synchronously in main, so the model
- * takes over exactly for the chunks the client never receives (no double
- * answer, no gap).
- */
+// Why: a paused client cannot answer terminal probes; raw presence retains its PTY without claiming view authority.
 function setRemoteStreamViewAuthority(
   runtime: OrcaRuntimeService,
   stream: TerminalMultiplexStream,
@@ -2217,14 +2208,18 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           if (typeof payload?.paused !== 'boolean' || stream.outputPaused === payload.paused) {
             return
           }
-          stream.outputPaused = payload.paused
-          if (stream.outputPaused) {
+          if (payload.paused) {
+            // Pre-pause bytes were ingested under view authority, so retire the
+            // batch before the pause guard and retain ACK-blocked bytes for resume.
             stream.outputBatcher.flush()
-            stream.ackPendingOutput = []
-            stream.ackPendingOutputBytes = 0
-            stream.ackPendingOutputOverflowed = false
+            flushAckPendingOutput(stream)
+            stream.outputPaused = true
+            setRemoteStreamViewAuthority(runtime, stream, false)
+          } else {
+            stream.outputPaused = false
+            setRemoteStreamViewAuthority(runtime, stream, true)
+            flushAckPendingOutput(stream)
           }
-          setRemoteStreamViewAuthority(runtime, stream, !stream.outputPaused)
           return
         }
         if (frame.opcode === TerminalStreamOpcode.Resize && stream.client) {

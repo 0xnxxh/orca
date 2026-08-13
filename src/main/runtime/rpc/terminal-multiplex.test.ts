@@ -4602,6 +4602,126 @@ describe('terminal multiplex RPC', () => {
     await harness.dispatchPromise
   })
 
+  it('settles the pre-pause batch and preserves ACK-pending bytes for resume', async () => {
+    let dataListener: ((data: string, meta?: RuntimeTerminalDataMeta) => void) | undefined
+    const releaseView = vi.fn()
+    const sendBinary = vi.fn(() => true)
+    const harness = startDesktopMultiplexSubscribe(
+      {
+        registerRemoteTerminalViewSubscriber: vi.fn(() => releaseView),
+        registerRawTerminalViewSubscriber: vi.fn(() => vi.fn()),
+        subscribeToTerminalData: vi.fn((_ptyId, listener) => {
+          dataListener = listener
+          return vi.fn()
+        })
+      },
+      undefined,
+      sendBinary
+    )
+    await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
+    sendDesktopMultiplexSubscribe(harness.handlers, { ackOutput: 1, outputPause: 1 })
+    await vi.waitFor(() => expect(dataListener).toBeDefined())
+    await vi.waitFor(() =>
+      expect(
+        harness.messages.some((message) => JSON.parse(message).result?.type === 'subscribed')
+      ).toBe(true)
+    )
+    harness.binaryFrames.splice(0)
+    sendBinary.mockClear()
+
+    dataListener?.('five-ms-batch', { seq: 13, rawLength: 13 })
+    harness.handlers.get(7)?.(
+      decodeTerminalStreamFrame(
+        encodeTerminalStreamFrame({
+          opcode: SET_OUTPUT_PAUSED_OPCODE,
+          streamId: 7,
+          seq: 2,
+          payload: encodeTerminalStreamJson({ paused: true })
+        })
+      )!
+    )
+    expect(
+      harness.binaryFrames
+        .map(decodeTerminalStreamFrame)
+        .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
+        .map((frame) => (frame ? decodeTerminalStreamText(frame.payload) : ''))
+        .join('')
+    ).toBe('five-ms-batch')
+    expect(sendBinary.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      releaseView.mock.invocationCallOrder[0]!
+    )
+
+    harness.handlers.get(7)?.(
+      decodeTerminalStreamFrame(
+        encodeTerminalStreamFrame({
+          opcode: SET_OUTPUT_PAUSED_OPCODE,
+          streamId: 7,
+          seq: 3,
+          payload: encodeTerminalStreamJson({ paused: false })
+        })
+      )!
+    )
+    harness.binaryFrames.splice(0)
+    dataListener?.('x'.repeat(TERMINAL_MULTIPLEX_ACK_STREAM_INITIAL_WINDOW_BYTES), {
+      seq: 13 + TERMINAL_MULTIPLEX_ACK_STREAM_INITIAL_WINDOW_BYTES,
+      rawLength: TERMINAL_MULTIPLEX_ACK_STREAM_INITIAL_WINDOW_BYTES
+    })
+    dataListener?.('ack-pending', {
+      seq: 24 + TERMINAL_MULTIPLEX_ACK_STREAM_INITIAL_WINDOW_BYTES,
+      rawLength: 11
+    })
+    harness.handlers.get(7)?.(
+      decodeTerminalStreamFrame(
+        encodeTerminalStreamFrame({
+          opcode: SET_OUTPUT_PAUSED_OPCODE,
+          streamId: 7,
+          seq: 4,
+          payload: encodeTerminalStreamJson({ paused: true })
+        })
+      )!
+    )
+    harness.handlers.get(7)?.(
+      decodeTerminalStreamFrame(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.Ack,
+          streamId: 7,
+          seq: 5,
+          payload: encodeTerminalStreamJson({
+            bytes: TERMINAL_MULTIPLEX_ACK_STREAM_INITIAL_WINDOW_BYTES
+          })
+        })
+      )!
+    )
+    expect(
+      harness.binaryFrames
+        .map(decodeTerminalStreamFrame)
+        .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
+        .map((frame) => (frame ? decodeTerminalStreamText(frame.payload) : ''))
+        .join('')
+    ).not.toContain('ack-pending')
+
+    harness.handlers.get(7)?.(
+      decodeTerminalStreamFrame(
+        encodeTerminalStreamFrame({
+          opcode: SET_OUTPUT_PAUSED_OPCODE,
+          streamId: 7,
+          seq: 6,
+          payload: encodeTerminalStreamJson({ paused: false })
+        })
+      )!
+    )
+    expect(
+      harness.binaryFrames
+        .map(decodeTerminalStreamFrame)
+        .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
+        .map((frame) => (frame ? decodeTerminalStreamText(frame.payload) : ''))
+        .join('')
+    ).toContain('ack-pending')
+
+    harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
+    await harness.dispatchPromise
+  })
+
   it('cancels a pending desktop PTY wait when its multiplex slot unsubscribes', async () => {
     let resolvePty: (ptyId: string) => void = () => {}
     let waitSignal: AbortSignal | undefined

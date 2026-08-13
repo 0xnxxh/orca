@@ -265,6 +265,21 @@ describe('reply ownership matrix', () => {
     expect(runtime.hasRawTerminalViewSubscriber('pty-preview')).toBe(false)
   })
 
+  it('gives a raw-only headless stream exactly one answerer', async () => {
+    const { runtime, replies } = createResponderRuntime()
+    const release = runtime.registerRawTerminalViewSubscriber('pty-headless')
+
+    runtime.onPtyData('pty-headless', DA1, Date.now())
+    await settle(runtime, 'pty-headless')
+    expect(replies).toEqual([{ ptyId: 'pty-headless', data: '\x1b[?1;2c' }])
+
+    runtime.setLocalRendererTerminalViewVisible('pty-headless', true)
+    runtime.onPtyData('pty-headless', DA1, Date.now())
+    await settle(runtime, 'pty-headless')
+    expect(replies).toHaveLength(1)
+    release()
+  })
+
   it('treats mobile subscriber records as remote view subscribers', async () => {
     const { runtime } = createResponderRuntime()
     await runtime.handleMobileSubscribe('pty-mob', 'client-1', { cols: 40, rows: 20 })

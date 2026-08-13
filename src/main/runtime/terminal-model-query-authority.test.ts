@@ -86,6 +86,27 @@ describe('shouldModelAnswerHiddenPtyQueries', () => {
     ).toBe(false)
   })
 
+  it('answers for a raw-only headless stream but yields to a visible local xterm', () => {
+    expect(
+      shouldModelAnswerHiddenPtyQueries({
+        ptyId: 'pty-headless',
+        settings: ALL_ON,
+        hasRemoteViewSubscriber: false,
+        hasRawViewSubscriber: true,
+        hasLocalRendererView: false
+      })
+    ).toBe(true)
+    expect(
+      shouldModelAnswerHiddenPtyQueries({
+        ptyId: 'pty-headless',
+        settings: ALL_ON,
+        hasRemoteViewSubscriber: false,
+        hasRawViewSubscriber: true,
+        hasLocalRendererView: true
+      })
+    ).toBe(false)
+  })
+
   it('stays silent under any kill switch', () => {
     markHiddenRendererPty('pty-1')
     expect(answer('pty-1', { terminalModelQueryAuthority: false })).toBe(false)

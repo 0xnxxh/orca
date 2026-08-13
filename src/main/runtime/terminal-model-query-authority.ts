@@ -40,11 +40,14 @@ export function shouldModelAnswerHiddenPtyQueries(opts: {
   ptyId: string
   settings: TerminalModelQueryAuthoritySettings | null | undefined
   hasRemoteViewSubscriber: boolean
+  hasRawViewSubscriber?: boolean
+  hasLocalRendererView?: boolean
 }): boolean {
   return (
     isTerminalModelQueryAuthorityEnabled(opts.settings) &&
     !opts.hasRemoteViewSubscriber &&
-    shouldSuppressHiddenRendererPtyView(opts.ptyId, opts.settings)
+    (shouldSuppressHiddenRendererPtyView(opts.ptyId, opts.settings) ||
+      (opts.hasRawViewSubscriber === true && opts.hasLocalRendererView !== true))
   )
 }
 
