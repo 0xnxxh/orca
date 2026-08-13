@@ -89,7 +89,9 @@ export function GitHistoryPanel({
 
   const loading = state.status === 'loading' || state.status === 'refreshing'
   // Why: no total ceiling — paging ends when git says there is nothing older, not at a fixed depth.
-  const canLoadMore = Boolean(onLoadMore && result?.hasMore)
+  // Why: gate on the cursor too. A host too old to page still reports hasMore, and offering a
+  // button that can only re-request page one reads as a hang.
+  const canLoadMore = Boolean(onLoadMore && result?.hasMore && result?.nextCursor)
   const count = result?.items.length ?? 0
   const [panelHeight, setPanelHeight] = useState(DEFAULT_GIT_HISTORY_PANEL_HEIGHT)
   // Why: state, not a ref — the virtualizer must re-run once the scroller element attaches.

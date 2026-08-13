@@ -1,17 +1,10 @@
 import type { GitHistoryResult } from '../../../../shared/git-history'
 
 /**
- * Commit id to resume paging from, or undefined when nothing is loaded yet.
- */
-export function gitHistoryCursor(result: GitHistoryResult | undefined): string | undefined {
-  return result?.items.at(-1)?.id
-}
-
-/**
  * Fold a newly fetched page onto the commits already on screen.
  *
- * Page metadata (refs, merge base, incoming/outgoing) describes the branch rather than the page,
- * so the newest page wins. Items append.
+ * Page metadata (refs, merge base, incoming/outgoing, the next cursor) describes the branch and the
+ * paging position rather than the page's contents, so the newest page wins. Items append.
  */
 export function appendGitHistoryPage(
   previous: GitHistoryResult | undefined,
@@ -21,11 +14,16 @@ export function appendGitHistoryPage(
     return page
   }
 
-  // Why: topo-order can interleave parallel branches differently when the walk starts at the
-  // cursor instead of HEAD, so a commit can repeat across a page boundary. Ids are immutable, so
-  // dropping repeats here keeps React keys unique and the graph honest.
+  // Why: ids are immutable, so dropping repeats keeps React keys unique if HEAD moved under the
+  // walk between pages and shifted the offset.
   const seen = new Set(previous.items.map((item) => item.id))
   const added = page.items.filter((item) => !seen.has(item.id))
+
+  if (added.length === 0) {
+    // Why: a page that adds nothing cannot page any further — a host that ignores the cursor hands
+    // back page one forever. Stop rather than leave a "Load more" button that never moves.
+    return { ...page, items: previous.items, hasMore: false, nextCursor: undefined }
+  }
 
   return { ...page, items: [...previous.items, ...added] }
 }

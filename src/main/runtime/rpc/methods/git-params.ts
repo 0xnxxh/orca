@@ -72,7 +72,10 @@ export const GitCommitCompare = WorktreeSelector.extend({
 
 export const GitHistory = WorktreeSelector.extend({
   limit: z.number().int().min(1).max(200).optional(),
-  baseRef: z.string().nullable().optional()
+  baseRef: z.string().nullable().optional(),
+  // Resume point for the next page. Unknown keys are stripped here, so an option missing from this
+  // schema never reaches git no matter what the client sent.
+  cursor: z.object({ anchor: FullGitObjectId, loaded: z.number().int().min(0) }).optional()
 })
 
 export const GitBranchDiff = GitFilePath.extend({

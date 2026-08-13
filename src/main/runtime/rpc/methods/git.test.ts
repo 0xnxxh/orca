@@ -215,6 +215,37 @@ describe('git RPC methods', () => {
     expect(response).toMatchObject({ ok: true, result: history })
   })
 
+  // Why: the params schema strips unknown keys, so an option missing from it never reaches git —
+  // that is how paging shipped inert over the runtime RPC. Keep the cursor pinned to the schema.
+  it('forwards a paging cursor to the runtime', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      getRuntimeGitHistory: vi.fn().mockResolvedValue({
+        items: [],
+        hasIncomingChanges: false,
+        hasOutgoingChanges: false,
+        hasMore: false,
+        limit: 50
+      })
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: GIT_METHODS })
+
+    const response = await dispatcher.dispatch(
+      makeRequest('git.history', {
+        worktree: 'id:wt-1',
+        limit: 50,
+        cursor: { anchor: 'a'.repeat(40), loaded: 100 }
+      })
+    )
+
+    expect(response).toMatchObject({ ok: true })
+    expect(runtime.getRuntimeGitHistory).toHaveBeenCalledWith('id:wt-1', {
+      limit: 50,
+      baseRef: null,
+      cursor: { anchor: 'a'.repeat(40), loaded: 100 }
+    })
+  })
+
   it('routes common mutations to the runtime', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',

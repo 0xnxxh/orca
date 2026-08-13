@@ -53,13 +53,27 @@ export type GitHistoryItem = {
   references?: GitHistoryItemRef[]
 }
 
+/**
+ * Resume point for the next page, produced by the read that served the previous one.
+ *
+ * `anchor` pins the walk to the commit the first page was taken from, so later pages stay a
+ * continuation of that same walk when HEAD moves mid-paging. `loaded` is how many commits of it
+ * are already on screen.
+ *
+ * An offset into a pinned walk is the only resume git supports on a DAG. A single commit id
+ * cannot serve as the cursor: restarting the walk at the oldest commit on screen reaches only
+ * that commit's ancestors, so every parallel line of history that `--topo-order` sorted after it
+ * is dropped and paging ends early with no sign anything is missing.
+ */
+export type GitHistoryCursor = {
+  anchor: string
+  loaded: number
+}
+
 export type GitHistoryOptions = {
   limit?: number
   baseRef?: string | null
-  // Commit id of the oldest item already loaded. The walk resumes from that commit's ancestors
-  // instead of HEAD, so each page costs one page of git output no matter how deep paging goes.
-  // Anchoring on a commit rather than an offset also keeps pages stitched when HEAD moves.
-  cursor?: string
+  cursor?: GitHistoryCursor
 }
 
 export type GitHistoryResult = {
@@ -72,6 +86,10 @@ export type GitHistoryResult = {
   hasOutgoingChanges: boolean
   hasMore: boolean
   limit: number
+  // Cursor to send for the next page, present only when one exists. Carrying it on the response
+  // keeps offset arithmetic out of the client, and a host too old to page simply omits it — the
+  // client then hides "Load more" instead of offering a button that re-requests page one forever.
+  nextCursor?: GitHistoryCursor
 }
 
 export type GitHistoryExecutor = (

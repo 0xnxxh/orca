@@ -14,6 +14,7 @@ import {
 } from './git-history-types'
 
 export type {
+  GitHistoryCursor,
   GitHistoryExecutor,
   GitHistoryGraphColorId,
   GitHistoryItem,
@@ -194,15 +195,15 @@ export async function loadGitHistoryFromExecutor(
 
   // Why: this panel is scoped to the active workspace. Upstream and base refs
   // stay as comparison metadata so old workspaces do not list newly fetched upstream/base commits.
-  // Why: resuming from the cursor walks only its ancestors, so page N costs one page of output
-  // rather than N pages, and the walk is unaffected by commits landing on HEAD mid-paging.
-  // Why: a cursor can go stale (rebase, amend, prune, branch switch). Resolving it first means a
-  // dead cursor degrades to a fresh first page instead of failing the whole panel on a bad revision.
-  const requestedCursor = options.cursor?.trim() || undefined
-  const cursor = requestedCursor
-    ? ((await resolveCommit(git, cwd, requestedCursor)) ?? undefined)
-    : undefined
-  const historyRevisions = [cursor ?? headOid]
+  // Why: page by offset into a walk pinned to the cursor's anchor, so page N costs one page of
+  // output rather than N pages and stays a continuation of page 1 even if HEAD moves mid-paging.
+  // Why: an anchor can go stale (rebase, amend, prune, branch switch). Resolving it first means a
+  // dead anchor degrades to a fresh first page instead of failing the whole panel on a bad revision.
+  const requestedAnchor = options.cursor?.anchor?.trim() || undefined
+  const anchor = requestedAnchor ? await resolveCommit(git, cwd, requestedAnchor) : null
+  const walkTip = anchor ?? headOid
+  // Why: an unresolved anchor restarts at page 1, so its offset must go with it.
+  const skip = anchor ? Math.max(0, Math.trunc(options.cursor?.loaded ?? 0)) : 0
 
   let mergeBase: string | undefined
   if (remoteRef?.revision && currentRef.revision && remoteRef.revision !== currentRef.revision) {
@@ -221,18 +222,18 @@ export async function loadGitHistoryFromExecutor(
       '-z',
       '--topo-order',
       '--decorate=full',
-      // Why: +1 detects a further page. With a cursor the walk re-emits the cursor commit
-      // itself, so one more is needed to still see a full page past it.
-      `-n${limit + (cursor ? 2 : 1)}`,
-      ...historyRevisions
+      // Why: +1 tells a full page apart from the last one without a second call.
+      `-n${limit + 1}`,
+      // Why: skipping into the walk keeps every page the same size however deep paging goes, and
+      // keeps the order identical to one uninterrupted walk, so no commit is repeated or dropped.
+      ...(skip > 0 ? [`--skip=${skip}`] : []),
+      walkTip
     ],
     cwd
   )
   const parsed = parseGitHistoryLog(stdout)
-  // Why: the cursor commit is already on screen. Drop it only when git actually led with it — a
-  // cursor that no longer resolves (rewritten, pruned) would otherwise silently eat a real commit.
-  const page = cursor && parsed[0]?.id === cursor ? parsed.slice(1) : parsed
-  const items = page.slice(0, limit)
+  const items = parsed.slice(0, limit)
+  const hasMore = parsed.length > limit
   const hasIncomingChanges =
     Boolean(remoteRef?.revision && mergeBase) && remoteRef?.revision !== mergeBase
   const hasOutgoingChanges =
@@ -247,7 +248,8 @@ export async function loadGitHistoryFromExecutor(
     mergeBase,
     hasIncomingChanges,
     hasOutgoingChanges,
-    hasMore: page.length > limit,
-    limit
+    hasMore,
+    limit,
+    nextCursor: hasMore ? { anchor: walkTip, loaded: skip + items.length } : undefined
   }
 }

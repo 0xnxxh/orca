@@ -195,8 +195,8 @@ import { getRuntimeRepoBaseRefDefault } from '@/runtime/runtime-repo-client'
 import { stripBaseRef, useCreatePullRequestDialogFields } from './useCreatePullRequestDialogFields'
 import { resolveCreateReviewDraftTitle } from './create-review-draft-title'
 import { GitHistoryPanel, type GitHistoryPanelState } from './GitHistoryPanel'
-import { GIT_HISTORY_DEFAULT_LIMIT } from '../../../../shared/git-history'
-import { appendGitHistoryPage, gitHistoryCursor } from './git-history-page-accumulator'
+import { GIT_HISTORY_DEFAULT_LIMIT, type GitHistoryCursor } from '../../../../shared/git-history'
+import { appendGitHistoryPage } from './git-history-page-accumulator'
 import { useGitHistoryCommitActions } from './useGitHistoryCommitActions'
 import { normalizeHostedReviewHeadRef } from '../../../../shared/hosted-review-refs'
 import {
@@ -4953,7 +4953,7 @@ function SourceControlInner(): React.JSX.Element {
   refreshBranchCompareRef.current = refreshBranchCompare
 
   const loadGitHistoryPage = useCallback(
-    async (cursor?: string): Promise<void> => {
+    async (cursor?: GitHistoryCursor): Promise<void> => {
       if (
         !activeWorktreeId ||
         !worktreePath ||
@@ -5037,9 +5037,10 @@ function SourceControlInner(): React.JSX.Element {
   }, [loadGitHistoryPage])
 
   const loadMoreGitHistory = useCallback(async (): Promise<void> => {
-    // Why: resume from the oldest commit on screen. Reading it off the landed result rather than a
-    // requested-page counter means a failed page retries the same page instead of skipping one.
-    const cursor = gitHistoryCursor(gitHistoryState.result)
+    // Why: the cursor comes off the landed result rather than a locally counted offset, so a failed
+    // page retries the same page instead of skipping one, and a host that cannot page (older
+    // remote, no cursor echoed) simply offers nothing to load.
+    const cursor = gitHistoryState.result?.nextCursor
     if (!cursor) {
       return
     }
