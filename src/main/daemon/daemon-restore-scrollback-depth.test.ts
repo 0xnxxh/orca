@@ -123,7 +123,7 @@ describe('STA-4091 previously recoverable restore depth', () => {
         scrollback: DAEMON_SESSION_SCROLLBACK_ROWS
       })
       try {
-        live.writeSync(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+        expect(live.writeSync(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))).toBe(true)
         const liveSnapshot = live.getSnapshot()
         expect(snapshotText(liveSnapshot)).not.toContain(PREVIOUSLY_RECOVERABLE_LINE)
 
