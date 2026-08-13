@@ -18,7 +18,6 @@ import type {
   AutomationRun,
   AutomationUpdateInput
 } from '../../../../shared/automations-types'
-import { getAutomationRunRepoId } from '../../../../shared/automation-run-identity'
 import {
   AUTOMATION_OWNER_CONFLICT_CODES,
   automationOwnerConflictMessage
@@ -30,7 +29,7 @@ import {
   parseExecutionHostId
 } from '../../../../shared/execution-host'
 import { getHostDisplayLabelOverrides } from '../../../../shared/host-setting-overrides'
-import type { OrcaHooks, Repo } from '../../../../shared/types'
+import type { OrcaHooks, Repo, Worktree } from '../../../../shared/types'
 import { getWorktreePathBasenameFromId } from '../../../../shared/worktree-id'
 import {
   buildAutomationRrule,
@@ -97,7 +96,12 @@ import {
 import { buildExternalAutomationListEntries } from './external-automation-list-entries'
 import type { ExternalAutomationScope } from './external-automation-scope-client'
 import { useAutomationListSearch } from './use-automation-list-search'
-import { unscopedAutomationListRows, type AutomationListRow } from './automation-list-row-identity'
+import {
+  automationRepoForRow,
+  automationWorktreeForRow,
+  unscopedAutomationListRows,
+  type AutomationListRow
+} from './automation-list-row-identity'
 import { AutomationDeleteDialog, ExternalAutomationDeleteDialog } from './AutomationDeleteDialogs'
 import { AutomationsListPanel } from './AutomationsListPanel'
 import { AutomationsDetailPane } from './AutomationsDetailPane'
@@ -191,6 +195,19 @@ export default function AutomationsPage(): React.JSX.Element {
   const setPendingAutomationRunNavigation = useAppStore((s) => s.setPendingAutomationRunNavigation)
   const repoMap = useRepoMap()
   const worktreeMap = useWorktreeMap()
+  const repoForRow = useCallback(
+    (row: AutomationListRow): Repo | undefined => automationRepoForRow(row, repos, repoMap),
+    [repoMap, repos]
+  )
+  const worktreeForRow = useCallback(
+    (
+      row: AutomationListRow,
+      repo: Repo | undefined,
+      workspaceId: string | null | undefined = row.automation.workspaceId
+    ): Worktree | undefined =>
+      automationWorktreeForRow(row, worktreesByRepo, repo, worktreeMap, workspaceId),
+    [worktreeMap, worktreesByRepo]
+  )
   const enabledAgents = filterEnabledTuiAgents(AGENTS, settings?.disabledTuiAgents)
   const defaultAgent =
     settings?.defaultTuiAgent &&
@@ -434,13 +451,15 @@ export default function AutomationsPage(): React.JSX.Element {
           return run
         }
         const displayName =
-          worktreeMap.get(run.workspaceId)?.displayName ??
+          (selectedRow
+            ? worktreeForRow(selectedRow, repoForRow(selectedRow), run.workspaceId)?.displayName
+            : worktreeMap.get(run.workspaceId)?.displayName) ??
           workspaceNameCacheRef.current.get(run.workspaceId) ??
           getWorktreePathBasenameFromId(run.workspaceId)
         const trimmedDisplayName = displayName?.trim()
         return trimmedDisplayName ? { ...run, workspaceDisplayName: trimmedDisplayName } : run
       }),
-    [selectedAutomationRuns.runs, worktreeMap]
+    [repoForRow, selectedAutomationRuns.runs, selectedRow, worktreeForRow, worktreeMap]
   )
   const getDraftSetupDecisionDefault = useCallback(
     (
@@ -535,6 +554,18 @@ export default function AutomationsPage(): React.JSX.Element {
   const selectedAutomationRunPage = selectedAutomationRunPageId
     ? (selectedRuns.find((run) => run.id === selectedAutomationRunPageId) ?? null)
     : null
+  const selectedRunWorktreeMap = useMemo(() => {
+    if (!selectedRow) {
+      return worktreeMap
+    }
+    const repo = repoForRow(selectedRow)
+    return new Map(
+      selectedRuns.flatMap((run) => {
+        const worktree = worktreeForRow(selectedRow, repo, run.workspaceId)
+        return worktree ? [[worktree.id, worktree] as const] : []
+      })
+    )
+  }, [repoForRow, selectedRow, selectedRuns, worktreeForRow, worktreeMap])
   const worktrees = useMemo(
     () => worktreesByRepo[draft.projectId] ?? [],
     [draft.projectId, worktreesByRepo]
@@ -763,7 +794,13 @@ export default function AutomationsPage(): React.JSX.Element {
     return ids
   }, [unifiedTabsByWorktree])
   const selectedAutomationRunPageWorktree = selectedAutomationRunPage?.workspaceId
-    ? (worktreeMap.get(selectedAutomationRunPage.workspaceId) ?? null)
+    ? selectedRow
+      ? (worktreeForRow(
+          selectedRow,
+          repoForRow(selectedRow),
+          selectedAutomationRunPage.workspaceId
+        ) ?? null)
+      : (worktreeMap.get(selectedAutomationRunPage.workspaceId) ?? null)
     : null
   const selectedAutomationRunPageWorkspaceDisplay = selectedAutomationRunPage
     ? getAutomationRunWorkspaceDisplay({
@@ -801,9 +838,11 @@ export default function AutomationsPage(): React.JSX.Element {
   const isSelectedAutomationRunPageRerunPending =
     selectedAutomationRunPage !== null && rerunRunIdsInFlight.has(selectedAutomationRunPage.id)
   const automationSourceHostAvailabilityByRowKey = useAutomationSourceHostAvailability(visibleRows)
-  const selectedRepo = selected ? (repoMap.get(getAutomationRunRepoId(selected)) ?? null) : null
+  const selectedRepo = selectedRow ? (repoForRow(selectedRow) ?? null) : null
   const selectedWorktree =
-    selected && selected.workspaceId ? (worktreeMap.get(selected.workspaceId) ?? null) : null
+    selectedRow && selected?.workspaceId
+      ? (worktreeForRow(selectedRow, selectedRepo ?? undefined) ?? null)
+      : null
   const selectedRunNowAvailability = selectedRow
     ? getAutomationTargetAvailability({
         automation: selectedRow.automation,
@@ -1497,7 +1536,13 @@ export default function AutomationsPage(): React.JSX.Element {
       })
       setDraft((current) => ({ ...current, name: '', prompt: '' }))
       await refresh()
-      selectAutomationId(automation.id)
+      if (editingAutomationId && editingRowKey) {
+        setSelectedAutomationRunPageId(null)
+        setSelectedRowKey(editingRowKey)
+        setSelectedId(automation.id)
+      } else {
+        selectAutomationId(automation.id)
+      }
       setCreateOpen(false)
       if (!editingAutomationId) {
         useAppStore.getState().recordFeatureInteraction('automation-created')
@@ -1615,9 +1660,9 @@ export default function AutomationsPage(): React.JSX.Element {
 
   const runNow = async (row: AutomationListRow): Promise<void> => {
     const automation = row.automation
-    const repo = repoMap.get(getAutomationRunRepoId(automation)) ?? null
+    const repo = repoForRow(row) ?? null
     const workspace = automation.workspaceId
-      ? (worktreeMap.get(automation.workspaceId) ?? null)
+      ? (worktreeForRow(row, repo ?? undefined) ?? null)
       : null
     const rowHostTarget = automationHostTargetFor(row)
     const availability = getAutomationTargetAvailability({
@@ -1818,7 +1863,10 @@ export default function AutomationsPage(): React.JSX.Element {
   }
 
   const openRunWorkspace = (run: AutomationRun): void => {
-    const runWorktree = run.workspaceId ? (worktreeMap.get(run.workspaceId) ?? null) : null
+    const runWorktree =
+      run.workspaceId && selectedRow
+        ? (worktreeForRow(selectedRow, repoForRow(selectedRow), run.workspaceId) ?? null)
+        : null
     const store = useAppStore.getState()
     const openTabId = getAutomationRunOpenTabId(run)
     const terminalTabExists = openTabId ? Boolean(store.getTab(openTabId)) : false
@@ -2077,7 +2125,7 @@ export default function AutomationsPage(): React.JSX.Element {
           selectedAutomationRunPageViewState={selectedAutomationRunPageViewState}
           canRerunSelectedAutomationRunPage={canRerunSelectedAutomationRunPage}
           isSelectedAutomationRunPageRerunPending={isSelectedAutomationRunPageRerunPending}
-          worktreeMap={worktreeMap}
+          worktreeMap={selectedRunWorktreeMap}
           fetchExternalAutomationRuns={fetchExternalAutomationRuns}
           onActivePaneTabChange={setActivePaneTab}
           onClearExternalRunPage={() => setSelectedExternalRunPage(null)}
@@ -2129,6 +2177,8 @@ export default function AutomationsPage(): React.JSX.Element {
           relativeNow={relativeNow}
           repoMap={repoMap}
           worktreeMap={worktreeMap}
+          repoForRow={repoForRow}
+          worktreeForRow={worktreeForRow}
           projectHostSetups={projectHostSetups}
           sshConnectionStates={sshConnectionStates}
           runtimeStatusByEnvironmentId={runtimeStatusByEnvironmentId}

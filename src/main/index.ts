@@ -2171,7 +2171,10 @@ void app.whenReady().then(async () => {
   )
 
   const activeOrcaProfile = ensureActiveOrcaProfile()
-  store = new Store({ dataFile: activeOrcaProfile.dataFile })
+  store = new Store({
+    dataFile: activeOrcaProfile.dataFile,
+    storageAuthority: isServeMode ? 'runtime' : 'desktop'
+  })
   // Why: must precede PTY handler registration and run in headless serve too, which returns before openMainWindow.
   neutralizeLegacyTerminalShimDir(app.getPath('userData'))
   const windowsShellPathHydration = createWindowsShellPathHydration()

@@ -178,6 +178,7 @@ import {
 } from '../shared/automation-execution-target'
 import {
   automationCapturedHostIssue,
+  automationSelectorMatchesScope,
   projectAutomationList,
   projectAutomationSelector,
   toAutomationChangeSelector,
@@ -2896,6 +2897,7 @@ function deleteRemovedTerminalScrollbackSnapshots(
 
 export type StoreOptions = {
   dataFile?: string
+  storageAuthority?: 'desktop' | 'runtime'
 }
 
 export type PtyBindingSourceExpectation = {
@@ -2909,6 +2911,7 @@ export type PtyBindingSourceExpectation = {
 export class Store {
   private state: PersistedState
   private readonly dataFile: string
+  private readonly storageAuthority: 'desktop' | 'runtime'
   private readonly activeViewPreference: ActiveViewPreference
   private readonly terminalScrollbackSnapshotStorage: TerminalScrollbackSnapshotStorage
   private writeTimer: ReturnType<typeof setTimeout> | null = null
@@ -2944,10 +2947,15 @@ export class Store {
     ) => void
   >()
   private uiChangeListeners = new Set<(ui: PersistedState['ui']) => void>()
+  private automationListProjectionCache: {
+    inputs: readonly unknown[]
+    result: AutomationListResult
+  } | null = null
 
   constructor(options: StoreOptions = {}) {
     // Why: profile switching yields multiple state paths; capture per Store so late async writes can't follow a global path.
     this.dataFile = options.dataFile ?? getDataFile()
+    this.storageAuthority = options.storageAuthority ?? 'desktop'
     this.staleTempCleanup = removeStaleDurableWriteTempFiles(this.dataFile, {
       minimumAgeMs: STALE_DURABLE_WRITE_TEMP_AGE_MS
     })
@@ -3967,6 +3975,7 @@ export class Store {
       projectGroups: result.projectGroups,
       removedSshTargetTombstones: result.removedSshTargetTombstones ?? [],
       sshTargetGenerationCounter: result.sshTargetGenerationCounter,
+      storageAuthority: this.storageAuthority,
       now: Date.now()
     })
     if (automationOwnerMigration.changed) {
@@ -4090,6 +4099,7 @@ export class Store {
   private static SAVE_MAX_WAIT_MS = 5_000
 
   private scheduleSave(): void {
+    this.automationListProjectionCache = null
     // Why: once the quit flush has snapshotted, a newly debounced write would fire during
     // teardown with nothing awaiting it, and the process can exit mid-rename. The quit
     // flush is the last write by construction.
@@ -5477,24 +5487,47 @@ export class Store {
       : { targetId, generation: this.sshTargetGenerationForConnection(targetId) }
   }
 
-  /** Generations come from one counter and are never reissued, so at most one target carries each. */
-  private sshTargetIdForGeneration(generation: number): string | undefined {
-    return (this.state.sshTargets ?? []).find((target) => target.generation === generation)?.id
-  }
-
   private automationProjectionContext(withUsage: boolean): AutomationProjectionContext {
     const usage = withUsage ? this.automationUsageSummaries() : null
+    const reposById = new Map(this.state.repos.map((repo) => [repo.id, repo]))
+    const targetIdByGeneration = new Map(
+      (this.state.sshTargets ?? []).flatMap((target) =>
+        target.generation === undefined ? [] : [[target.generation, target.id] as const]
+      )
+    )
     return {
+      storageAuthority: this.storageAuthority,
       sshTargetGeneration: (targetId) => this.sshTargetGenerationForConnection(targetId),
-      sshTargetIdForGeneration: (generation) => this.sshTargetIdForGeneration(generation),
+      sshTargetIdForGeneration: (generation) => targetIdByGeneration.get(generation),
       // Why: a missing repo is not evidence of Self, so absent and local must stay distinguishable.
       repoConnectionId: (repoId) => {
-        const repo = this.state.repos.find((entry) => entry.id === repoId)
+        const repo = reposById.get(repoId)
         return repo ? repo.connectionId?.trim() || null : undefined
       },
       workspaceHost: (automation) => this.automationWorkspaceHost(automation),
       ...(usage ? { usageSummary: (id: string) => usage.get(id) ?? null } : {})
     }
+  }
+
+  private completeAutomationListProjection(): AutomationListResult {
+    const inputs = [
+      this.state.automations,
+      this.state.automationRuns,
+      this.state.repos,
+      this.state.sshTargets,
+      this.state.folderWorkspaces,
+      this.state.projectGroups
+    ]
+    const cached = this.automationListProjectionCache
+    if (cached && inputs.every((input, index) => input === cached.inputs[index])) {
+      return cached.result
+    }
+    const result = projectAutomationList(
+      this.listAutomations(),
+      this.automationProjectionContext(true)
+    )
+    this.automationListProjectionCache = { inputs, result }
+    return result
   }
 
   /** Host-scoped list for this authority. An omitted selector returns everything it stores. */
@@ -5509,11 +5542,19 @@ export class Store {
         throw new AutomationOwnerConflictError(AUTOMATION_OWNER_CONFLICT_CODES.ownerChanged)
       }
     }
-    return projectAutomationList(
-      this.listAutomations(),
-      this.automationProjectionContext(true),
-      scope
+    const complete = this.completeAutomationListProjection()
+    if (!scope) {
+      return complete
+    }
+    const items = complete.items.filter((item) =>
+      automationSelectorMatchesScope(item.selector, scope)
     )
+    const ids = new Set(items.map((item) => item.automationId))
+    return {
+      automations: complete.automations.filter((automation) => ids.has(automation.id)),
+      items,
+      orphanCount: complete.orphanCount
+    }
   }
 
   /**
@@ -8377,6 +8418,7 @@ export class Store {
   // ── Flush (for shutdown) ───────────────────────────────────────────
 
   flush(): void {
+    this.automationListProjectionCache = null
     if (this.quitFlushStarted) {
       return
     }
