@@ -27,7 +27,7 @@ export function unhandledProviderFrameJournalItem(
   payload: unknown,
   limits: JournalPayloadLimits = DEFAULT_JOURNAL_PAYLOAD_LIMITS
 ): UnhandledProviderFrameJournalItem | null {
-  if (classifyProviderFrame(provider, kind) === 'debug-only') {
+  if (classifyProviderFrame(provider, kind, payload) === 'debug-only') {
     return null
   }
   const serialized = serializeProviderPayload(payload)

@@ -469,6 +469,39 @@ describe('codex journal translation', () => {
     expect(timeline).toEqual([])
   })
 
+  it('renders a system error carried by a suppressed status kind', () => {
+    const { translator, tap } = translatorWith()
+
+    translator.handle(
+      notification('thread/status/changed', {
+        threadId: THREAD_ID,
+        status: { type: 'systemError' }
+      })
+    )
+
+    const timeline = projectStructuredItemsToNativeChat(
+      tap.rows.map((row, index) => ({
+        itemId: row.key,
+        revision: 1,
+        sequence: index + 1,
+        observedAt: index + 1,
+        body: row.body
+      }))
+    )
+    expect(timeline).toEqual([
+      expect.objectContaining({
+        role: 'system',
+        blocks: [
+          expect.objectContaining({
+            providerFrame: expect.objectContaining({
+              kind: 'notification:thread/status/changed'
+            })
+          })
+        ]
+      })
+    ])
+  })
+
   it('writes nothing more after dispose', () => {
     const { translator, tap, window } = translatorWith()
 

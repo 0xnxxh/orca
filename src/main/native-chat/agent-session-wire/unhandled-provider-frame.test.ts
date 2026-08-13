@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { projectStructuredItemToNativeChat } from '../../../shared/structured-agent-session-projection'
 import { unhandledProviderFrameJournalItem } from './unhandled-provider-frame'
 
 describe('unhandled provider frame journal fallback', () => {
@@ -63,7 +64,72 @@ describe('unhandled provider frame journal fallback', () => {
       unhandledProviderFrameJournalItem('codex', 'notification:thread/goal/cleared', {})
     ).toBeNull()
     expect(unhandledProviderFrameJournalItem('claude', 'message:system:init', {})).toBeNull()
-    expect(unhandledProviderFrameJournalItem('claude', 'message:result', {})).toBeNull()
+    expect(
+      unhandledProviderFrameJournalItem('claude', 'message:result', {
+        subtype: 'success',
+        is_error: false
+      })
+    ).toBeNull()
+  })
+
+  it('renders codex systemError and Claude error result variants', () => {
+    const codex = unhandledProviderFrameJournalItem('codex', 'notification:thread/status/changed', {
+      threadId: 'thread-1',
+      status: { type: 'systemError' }
+    })
+    const claude = unhandledProviderFrameJournalItem('claude', 'message:result', {
+      subtype: 'error_during_execution',
+      is_error: true,
+      result: 'Provider request failed'
+    })
+
+    expect(codex?.body.providerFrame).toMatchObject({
+      provider: 'codex',
+      kind: 'notification:thread/status/changed'
+    })
+    expect(claude?.body.providerFrame).toMatchObject({
+      provider: 'claude',
+      kind: 'message:result'
+    })
+    expect(
+      claude
+        ? projectStructuredItemToNativeChat({
+            itemId: 'claude-error',
+            revision: 1,
+            sequence: 1,
+            observedAt: 1,
+            body: claude.body
+          })
+        : null
+    ).toMatchObject({
+      role: 'system',
+      blocks: [
+        expect.objectContaining({
+          providerFrame: expect.objectContaining({ kind: 'message:result' })
+        })
+      ]
+    })
+  })
+
+  it('keeps failed startup variants visible while suppressing startup progress', () => {
+    const kind = 'notification:mcpServer/startupStatus/updated'
+
+    expect(
+      unhandledProviderFrameJournalItem('codex', kind, {
+        name: 'filesystem',
+        status: 'starting',
+        error: null,
+        failureReason: null
+      })
+    ).toBeNull()
+    expect(
+      unhandledProviderFrameJournalItem('codex', kind, {
+        name: 'filesystem',
+        status: 'failed',
+        error: 'server exited',
+        failureReason: null
+      })
+    ).not.toBeNull()
   })
 
   it('keeps unknown substantive frames visible for both providers', () => {
