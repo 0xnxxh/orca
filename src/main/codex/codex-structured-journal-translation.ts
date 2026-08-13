@@ -5,6 +5,7 @@ import {
   type AgentSessionDeltaCoalescerDeps
 } from '../native-chat/agent-session-wire/agent-session-delta-coalescer'
 import type { StructuredAgentSessionEventSink } from '../native-chat/agent-session-wire/structured-agent-session-event-sink'
+import { unhandledProviderFrameJournalItem } from '../native-chat/agent-session-wire/unhandled-provider-frame'
 import type { CodexStructuredSessionEvent } from './codex-structured-session-adapter'
 import {
   codexItemIdentity,
@@ -66,6 +67,18 @@ export function createCodexJournalTranslator(
   const currentTurnIds = new Map<string, string>()
   const latestStreamText = new Map<string, string>()
   const checkpointLengths = new Map<string, number>()
+  let fallbackSequence = 0
+
+  const appendUnhandled = (kind: string, payload: unknown): void => {
+    fallbackSequence += 1
+    const translated = unhandledProviderFrameJournalItem('codex', kind, payload)
+    deps.sink.appendItem(
+      { provider: 'orca', clientMessageId: `provider-frame:codex:${fallbackSequence}` },
+      translated.body,
+      translated.blobs
+    )
+    deps.sink.publish()
+  }
 
   const publishTurnLifecycle = (
     sessionId: string,
@@ -149,11 +162,15 @@ export function createCodexJournalTranslator(
     return identity
   }
 
-  const handleItemEvent = (event: { threadId: string; method: string; params: unknown }): void => {
+  const handleItemEvent = (event: {
+    threadId: string
+    method: string
+    params: unknown
+  }): boolean => {
     const params = readRecord(event.params)
     const item = readCodexThreadItem(params.item)
     if (!item) {
-      return
+      return false
     }
     const turnId = readCodexTurnId(event.params) ?? currentTurnIds.get(event.threadId) ?? null
     const identity = identityFor(event.threadId, turnId, item)
@@ -169,10 +186,11 @@ export function createCodexJournalTranslator(
       checkpointLengths.delete(itemKey(event.threadId, item.id))
     }
     if (!translated.body) {
-      return
+      return true
     }
     deps.sink.appendItem(identity, translated.body, translated.blobs)
     deps.sink.publish()
+    return true
   }
 
   // The row is keyed by the prompt and the announced command is looked up by the
@@ -232,6 +250,8 @@ export function createCodexJournalTranslator(
         const delta = params.delta
         if (codexItemId && typeof delta === 'string') {
           coalescer.append(itemKey(event.threadId, codexItemId), delta)
+        } else {
+          appendUnhandled(`notification:${event.method}`, event.params)
         }
         return
       }
@@ -239,6 +259,14 @@ export function createCodexJournalTranslator(
       flushStreams()
       if (event.type === 'prompt') {
         handlePrompt(event)
+        return
+      }
+      if (event.type === 'server-request') {
+        appendUnhandled(`request:${event.method}`, event.params)
+        return
+      }
+      if (event.type === 'provider-frame') {
+        appendUnhandled(event.kind, event.payload)
         return
       }
       if (event.method === 'turn/started') {
@@ -260,8 +288,12 @@ export function createCodexJournalTranslator(
         return
       }
       if (event.method === 'item/started' || event.method === 'item/completed') {
-        handleItemEvent(event)
+        if (!handleItemEvent(event)) {
+          appendUnhandled(`notification:${event.method}`, event.params)
+        }
+        return
       }
+      appendUnhandled(`notification:${event.method}`, event.params)
     },
     flush: flushStreams,
     dispose: () => {

@@ -136,6 +136,13 @@ export type AgentJournalStatusItem = {
   /** Durable root-turn lifecycle used by clients to expose cancellation only
    *  while the provider can still accept it. */
   turnLifecycle?: { turnId: string; state: 'running' | 'completed' }
+  /** Additive fallback for provider traffic this host cannot model yet. Older
+   *  clients still render `text`; newer clients expose the bounded frame. */
+  providerFrame?: {
+    provider: string
+    kind: string
+    payload: AgentJournalBoundedPayload
+  }
 }
 
 export type AgentJournalItemBody =

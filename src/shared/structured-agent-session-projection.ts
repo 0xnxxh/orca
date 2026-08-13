@@ -67,7 +67,16 @@ function itemBlocks(item: AgentJournalRenderItem): {
   if (body.turnLifecycle) {
     return null
   }
-  return { role: 'system', blocks: [{ type: 'text', text: body.text }] }
+  return {
+    role: 'system',
+    blocks: [
+      {
+        type: 'text',
+        text: body.text,
+        ...(body.providerFrame ? { providerFrame: body.providerFrame } : {})
+      }
+    ]
+  }
 }
 
 export function projectStructuredItemsToNativeChat(

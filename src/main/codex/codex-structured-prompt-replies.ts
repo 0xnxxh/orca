@@ -1,7 +1,4 @@
-import type {
-  CodexAppServerConnection,
-  CodexAppServerServerRequest
-} from './codex-app-server-connection'
+import type { CodexAppServerConnection } from './codex-app-server-connection'
 
 // Codex asks for approvals and tool input by sending JSON-RPC REQUESTS back to
 // Orca, and the turn blocks until each one is answered. The journal answers them
@@ -188,21 +185,6 @@ export function applyCodexPromptAnswer(
     answers[id] = { answers: [prompt.answers.get(id) as string] }
   }
   return { answers }
-}
-
-/** Registers a live prompt, or refuses a request this build does not model —
- *  Codex blocks the turn until every request is answered, so refusing loudly
- *  beats leaving it waiting, and beats approving on the user's behalf. */
-export function receiveCodexPromptRequest(
-  registry: CodexPromptRegistry,
-  connection: Pick<CodexAppServerConnection, 'respondWithError'>,
-  request: CodexAppServerServerRequest
-): CodexPendingPrompt | null {
-  const prompt = registry.register(request)
-  if (!prompt) {
-    connection.respondWithError(request.id, -32601, `Orca does not handle ${request.method}`)
-  }
-  return prompt
 }
 
 /** Throws for a prompt Codex is no longer waiting on, which the wire reports as

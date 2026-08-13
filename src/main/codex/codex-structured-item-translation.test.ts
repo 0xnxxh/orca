@@ -67,7 +67,7 @@ describe('codex item identity', () => {
     expect(live.map((id) => (id.provider === 'codex' ? id.ordinal : null))).toEqual([0, 1, null, 2])
   })
 
-  it('survives an item type this build does not model, because both sides skip it alike', () => {
+  it('survives an item type this build does not model without consuming a message ordinal', () => {
     const withUnknown = [
       LIVE_TURN[0] as CodexThreadItem,
       { type: 'somethingCodexAddedLater', id: 'item-9' },
@@ -171,14 +171,18 @@ describe('codex item bodies', () => {
     ).toMatchObject({ state: 'failed' })
   })
 
-  it('renders reasoning as status and skips an item with nothing to show', () => {
+  it('renders reasoning as status and exposes an unknown item as a provider frame', () => {
     expect(codexItemBody({ type: 'reasoning', id: 'r', text: 'thinking' })).toEqual({
       kind: 'status',
       text: 'thinking'
     })
     expect(codexItemBody({ type: 'reasoning', id: 'r' })).toBeNull()
     expect(codexItemBody({ type: 'agentMessage', id: 'm', text: '' })).toBeNull()
-    expect(codexItemBody({ type: 'webSearch', id: 'w' })).toBeNull()
+    expect(codexItemBody({ type: 'webSearch', id: 'w' })).toMatchObject({
+      kind: 'status',
+      text: 'codex · item:webSearch',
+      providerFrame: { provider: 'codex', kind: 'item:webSearch' }
+    })
   })
 
   it('renders array-shaped reasoning content', () => {
