@@ -23,6 +23,15 @@ import {
 } from '../../../../shared/workspace-cleanup'
 import { mapWithConcurrency } from '../../../../shared/map-with-concurrency'
 import { hydrateWorkspaceCleanupScanFromCache } from './workspace-cleanup-cache-hydration'
+import {
+  getInFlightWorkspaceCleanupScan,
+  hasInFlightWorkspaceCleanupScan,
+  normalizeWorkspaceCleanupScanError,
+  registerInFlightWorkspaceCleanupScan,
+  releaseInFlightWorkspaceCleanupScan,
+  supersedeInFlightWorkspaceCleanupScans,
+  throwIfWorkspaceCleanupScanSuperseded
+} from './workspace-cleanup-broad-scan-registry'
 import { classifyTitleActivity, isExplicitAgentStatusFresh } from '@/lib/pane-agent-evidence'
 import { translate } from '@/i18n/i18n'
 import type { PreservedBranchCleanup } from '@/lib/preserved-branch-cleanup'
@@ -98,7 +107,6 @@ const WORKSPACE_CLEANUP_PREFLIGHT_CONCURRENCY = 4
 // unverifiable must still fail if real work becomes visible before removal.
 const WORKSPACE_CLEANUP_CONCRETE_RISK_BLOCKERS = ['dirty-files', 'unpushed-commits'] as const
 
-const inFlightWorkspaceCleanupScans = new Map<string, Promise<WorkspaceCleanupScanResult>>()
 let latestWorkspaceCleanupScanToken = 0
 let finalizedWorkspaceCleanupScanToken = 0
 let workspaceCleanupProgressQueue: {
@@ -177,17 +185,20 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
           ...(args?.skipGitWorktreeIds ?? []),
           ...getInitialWorkspaceCleanupGitDeferrals(get())
         ])
-      ]
+      ],
+      // Broad scan identity belongs to this store request; caller-provided IDs
+      // are reserved for focused scans and can collide across refresh variants.
+      scanId: crypto.randomUUID()
     }
     const scanKey = getWorkspaceCleanupScanKey(scanArgs)
 
-    const existingInFlight = inFlightWorkspaceCleanupScans.get(scanKey)
+    const existingInFlight = getInFlightWorkspaceCleanupScan(scanKey)
     if (existingInFlight) {
       set({ workspaceCleanupLoading: true, workspaceCleanupError: null })
       try {
         return await existingInFlight
       } finally {
-        if (!inFlightWorkspaceCleanupScans.has(scanKey)) {
+        if (!hasInFlightWorkspaceCleanupScan(scanKey)) {
           set({ workspaceCleanupLoading: false })
         }
       }
@@ -204,36 +215,42 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
     workspaceCleanupEnrichmentCache = { scanToken, entries: new Map() }
     workspaceCleanupProgressCandidateIndex = null
     const promise = (async () => {
-      const scan = await window.api.workspaceCleanup.scan(scanArgs, (progress) => {
-        enqueueWorkspaceCleanupProgress(progress, scanToken, get, set)
-      })
-      await drainWorkspaceCleanupProgressQueue(scanToken)
-      const enriched = await enrichWorkspaceCleanupCandidatesForScan(
-        scan.candidates,
-        get(),
-        scanToken
-      )
-      const result = { ...scan, candidates: enriched }
-      if (scanToken === latestWorkspaceCleanupScanToken) {
-        finalizedWorkspaceCleanupScanToken = scanToken
-        workspaceCleanupEnrichmentCache = null
-        workspaceCleanupProgressCandidateIndex = null
-        set({
-          workspaceCleanupScan: result,
-          workspaceCleanupProgress: {
-            scanId: get().workspaceCleanupProgress?.scanId ?? scanArgs.scanId ?? '',
-            scannedAt: result.scannedAt,
-            scannedWorktreeCount: result.candidates.length,
-            totalWorktreeCount: result.candidates.length,
-            candidates: result.candidates,
-            errors: result.errors
-          },
-          workspaceCleanupLoading: false
+      try {
+        const scan = await window.api.workspaceCleanup.scan(scanArgs, (progress) => {
+          enqueueWorkspaceCleanupProgress(progress, scanToken, get, set)
         })
+        throwIfWorkspaceCleanupScanSuperseded(scanArgs.scanId)
+        await drainWorkspaceCleanupProgressQueue(scanToken)
+        const enriched = await enrichWorkspaceCleanupCandidatesForScan(
+          scan.candidates,
+          get(),
+          scanToken
+        )
+        throwIfWorkspaceCleanupScanSuperseded(scanArgs.scanId)
+        const result = { ...scan, candidates: enriched }
+        if (scanToken === latestWorkspaceCleanupScanToken) {
+          finalizedWorkspaceCleanupScanToken = scanToken
+          workspaceCleanupEnrichmentCache = null
+          workspaceCleanupProgressCandidateIndex = null
+          set({
+            workspaceCleanupScan: result,
+            workspaceCleanupProgress: {
+              scanId: get().workspaceCleanupProgress?.scanId ?? scanArgs.scanId,
+              scannedAt: result.scannedAt,
+              scannedWorktreeCount: result.candidates.length,
+              totalWorktreeCount: result.candidates.length,
+              candidates: result.candidates,
+              errors: result.errors
+            },
+            workspaceCleanupLoading: false
+          })
+        }
+        return result
+      } catch (error) {
+        throw normalizeWorkspaceCleanupScanError(scanArgs.scanId, error)
       }
-      return result
     })()
-    inFlightWorkspaceCleanupScans.set(scanKey, promise)
+    registerInFlightWorkspaceCleanupScan(scanKey, scanArgs.scanId, promise)
 
     try {
       return await promise
@@ -244,9 +261,7 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
       }
       throw error
     } finally {
-      if (inFlightWorkspaceCleanupScans.get(scanKey) === promise) {
-        inFlightWorkspaceCleanupScans.delete(scanKey)
-      }
+      releaseInFlightWorkspaceCleanupScan(scanKey, scanArgs.scanId, promise)
     }
   },
 
@@ -416,7 +431,7 @@ function getWorkspaceCleanupScanKey(args: WorkspaceCleanupScanArgs): string {
 function invalidateWorkspaceCleanupScanProgress(): void {
   latestWorkspaceCleanupScanToken += 1
   finalizedWorkspaceCleanupScanToken = 0
-  inFlightWorkspaceCleanupScans.clear()
+  supersedeInFlightWorkspaceCleanupScans(window.api.workspaceCleanup.cancelScan)
   workspaceCleanupProgressQueue = null
   workspaceCleanupEnrichmentCache = null
   workspaceCleanupProgressCandidateIndex = null

@@ -4,6 +4,7 @@ import { useAppStore } from '@/store'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { translate } from '@/i18n/i18n'
 import { formatWorkspaceCleanupReadyToast } from './workspace-cleanup-scan-notice'
+import { isWorkspaceCleanupScanSupersededError } from '@/store/slices/workspace-cleanup-broad-scan-registry'
 
 export type WorkspaceCleanupScanLifecycle = {
   startWorkspaceCleanupScan: (options?: { notifyWhenReady?: boolean }) => void
@@ -79,7 +80,7 @@ export function useWorkspaceCleanupScanLifecycle({
           )
         })
         .catch((err: unknown) => {
-          if (mountedRef.current) {
+          if (mountedRef.current && !isWorkspaceCleanupScanSupersededError(err)) {
             toast.error(
               translate(
                 'auto.components.workspace.cleanup.WorkspaceCleanupDialog.662b8ec3f8',

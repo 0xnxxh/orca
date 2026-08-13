@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AppState } from '../types'
 import type {
+  WorkspaceCleanupScanArgs,
   WorkspaceCleanupScanProgress,
   WorkspaceCleanupScanResult
 } from '../../../../shared/workspace-cleanup'
@@ -12,6 +13,7 @@ import {
   installWorkspaceCleanupApi,
   makeCandidate
 } from './workspace-cleanup-slice-test-harness'
+import { WorkspaceCleanupScanSupersededError } from './workspace-cleanup-broad-scan-registry'
 
 describe('workspace cleanup scan progress', () => {
   it('joins duplicate broad cleanup scans', async () => {
@@ -481,7 +483,7 @@ describe('workspace cleanup scan progress', () => {
     const candidate = makeCandidate()
     const refreshedCandidate = makeCandidate({ worktreeId: 'repo1::/tmp/refreshed' })
     const broadScans = [firstBroadScan, secondBroadScan]
-    const scan = vi.fn((args?: { worktreeId?: string }) => {
+    const scan = vi.fn((args?: WorkspaceCleanupScanArgs) => {
       if (args?.worktreeId) {
         return Promise.resolve({ scannedAt: NOW, candidates: [candidate], errors: [] })
       }
@@ -492,6 +494,15 @@ describe('workspace cleanup scan progress', () => {
       return nextBroadScan.promise
     })
     installWorkspaceCleanupApi(scan)
+    const cancelScan = vi.fn(async () => {
+      firstBroadScan.reject(new Error('Workspace cleanup scan cancelled'))
+      return true
+    })
+    ;(
+      globalThis.window as unknown as {
+        api: { workspaceCleanup: { cancelScan: typeof cancelScan } }
+      }
+    ).api.workspaceCleanup.cancelScan = cancelScan
     const removeWorktree = vi.fn().mockResolvedValue({ ok: true })
     const store = createCleanupTestStore(removeWorktree)
     store.setState({
@@ -499,18 +510,19 @@ describe('workspace cleanup scan progress', () => {
     } as Partial<AppState>)
 
     const pendingRefresh = store.getState().scanWorkspaceCleanup()
+    const firstBroadScanId = scan.mock.calls[0]?.[0]?.scanId
     await store.getState().removeWorkspaceCleanupCandidates([candidate.worktreeId])
     const replacementRefresh = store.getState().scanWorkspaceCleanup()
 
     expect(scan).toHaveBeenCalledTimes(3)
+    expect(cancelScan).toHaveBeenCalledExactlyOnceWith(firstBroadScanId)
 
     secondBroadScan.resolve({ scannedAt: NOW, candidates: [refreshedCandidate], errors: [] })
     await expect(replacementRefresh).resolves.toMatchObject({
       candidates: [refreshedCandidate]
     })
 
-    firstBroadScan.resolve({ scannedAt: NOW - 1, candidates: [candidate], errors: [] })
-    await pendingRefresh
+    await expect(pendingRefresh).rejects.toBeInstanceOf(WorkspaceCleanupScanSupersededError)
 
     expect(store.getState().workspaceCleanupLoading).toBe(false)
     expect(store.getState().workspaceCleanupScan?.candidates).toEqual([refreshedCandidate])
