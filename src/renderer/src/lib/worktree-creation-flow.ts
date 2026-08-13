@@ -178,10 +178,10 @@ async function executeWorktreeCreation(
   if (worktree.path) {
     const trustState = useAppStore.getState()
     const repoConnectionId =
-      findRepoForHost(trustState.repos, worktree.repoId, {
-        hostId: worktree.hostId,
-        settings: trustState.settings
-      })?.connectionId ?? null
+      (worktree.hostId
+        ? findRepoForHost(trustState.repos, worktree.repoId, { hostId: worktree.hostId })
+        : trustState.repos.find((repo) => repo.id === worktree.repoId)
+      )?.connectionId ?? null
     await preflightWorktreeCreationAgentTrust(preparedRequest, worktree.path, repoConnectionId)
   }
 

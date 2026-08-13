@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => {
     toastError: vi.fn(),
     seedAgentTabState: vi.fn(),
     ensureAgentStartup: vi.fn(),
+    markTrusted: vi.fn(),
     resolveExplicitRoute: vi.fn<
       () =>
         | {
@@ -77,6 +78,7 @@ beforeEach(() => {
   mocks.store.activePendingCreationId = null
   mocks.store.activeView = 'terminal'
   mocks.store.pendingWorktreeCreations = {}
+  mocks.store.repos = []
   mocks.resolveExplicitRoute.mockReturnValue({
     kind: 'resolved',
     route: { executionHostId: 'ssh:requested', runtimeEnvironmentId: null }
@@ -84,6 +86,40 @@ beforeEach(() => {
   mocks.store.createWorktree.mockResolvedValue({
     worktree: { id: 'wt-shared', repoId: 'repo-1', hostId: 'ssh:requested' }
   })
+  globalThis.window = { api: { agentTrust: { markTrusted: mocks.markTrusted } } } as never
+})
+
+it('preflights agent trust on the requested host when repo ids collide', async () => {
+  mocks.store.repos = [
+    { id: 'repo-1', connectionId: 'sibling', executionHostId: 'ssh:sibling' },
+    { id: 'repo-1', connectionId: 'requested', executionHostId: 'ssh:requested' }
+  ] as never
+  mocks.store.createWorktree.mockResolvedValue({
+    worktree: {
+      id: 'wt-shared',
+      repoId: 'repo-1',
+      hostId: 'ssh:requested',
+      path: '/workspace'
+    }
+  })
+
+  runBackgroundWorktreeCreation({
+    repoId: 'repo-1',
+    name: 'remote-workspace',
+    setupDecision: 'inherit',
+    agent: 'codex',
+    pendingFirstAgentMessageRename: false,
+    note: '',
+    startupPlan: null,
+    quickPrompt: '',
+    quickTelemetry: null
+  })
+
+  await vi.waitFor(() =>
+    expect(mocks.markTrusted).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionId: 'requested' })
+    )
+  )
 })
 
 it('fails background startup closed when duplicate hosts make the bare id ambiguous', async () => {
