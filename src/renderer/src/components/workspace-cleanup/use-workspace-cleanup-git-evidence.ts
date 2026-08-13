@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useAppStore } from '@/store'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import type { WorkspaceCleanupCandidate } from '../../../../shared/workspace-cleanup'
-import {
-  selectWorkspaceCleanupGitEvidenceTargets,
-  WORKSPACE_CLEANUP_GIT_EVIDENCE_CONCURRENCY
-} from './workspace-cleanup-git-evidence'
+import { selectWorkspaceCleanupGitEvidenceTargets } from './workspace-cleanup-git-evidence'
 
 export type WorkspaceCleanupGitEvidenceState = {
   /** Focused re-scan results, keyed by worktree id. */
@@ -23,7 +19,7 @@ const EMPTY_EVIDENCE: WorkspaceCleanupGitEvidenceState = {
 }
 
 /**
- * Fills in git evidence the broad scan deferred, one focused re-scan per row.
+ * Fills in git evidence the broad scan deferred with one targeted batch scan.
  * Only runs while a git-dependent filter or sort is active — the initial list
  * render never waits on it, so an unfiltered browse stays instant.
  */
@@ -36,7 +32,6 @@ export function useWorkspaceCleanupGitEvidence({
   candidates: readonly WorkspaceCleanupCandidate[]
   scannedAt: number | null
 }): WorkspaceCleanupGitEvidenceState {
-  const scanWorkspaceCleanup = useAppStore((s) => s.scanWorkspaceCleanup)
   const mountedRef = useMountedRef()
   const [state, setState] = useState<WorkspaceCleanupGitEvidenceState>(EMPTY_EVIDENCE)
   const evidenceRef = useRef(new Map<string, WorkspaceCleanupCandidate>())
@@ -46,6 +41,7 @@ export function useWorkspaceCleanupGitEvidence({
   const inFlightRef = useRef(new Set<string>())
   // Why: restarted filters must share one physical RPC/subprocess cap.
   const activeRequestWorktreeIdsRef = useRef(new Set<string>())
+  const activeScanIdRef = useRef<string | null>(null)
   const totalRef = useRef(0)
   const enabledRef = useRef(enabled)
   const scannedAtRef = useRef(scannedAt)
@@ -66,49 +62,55 @@ export function useWorkspaceCleanupGitEvidence({
   }, [mountedRef])
 
   const pump = useCallback(() => {
+    if (activeRequestWorktreeIdsRef.current.size > 0 || queueRef.current.length === 0) {
+      publish()
+      return
+    }
     const generation = generationRef.current
-    while (
-      activeRequestWorktreeIdsRef.current.size < WORKSPACE_CLEANUP_GIT_EVIDENCE_CONCURRENCY &&
-      queueRef.current.length > 0
-    ) {
-      const queueIndex = queueRef.current.findIndex(
-        (worktreeId) => !activeRequestWorktreeIdsRef.current.has(worktreeId)
-      )
-      if (queueIndex === -1) {
-        break
-      }
-      const [worktreeId] = queueRef.current.splice(queueIndex, 1)
+    const worktreeIds = queueRef.current
+    queueRef.current = []
+    const scanId = crypto.randomUUID()
+    activeScanIdRef.current = scanId
+    for (const worktreeId of worktreeIds) {
       queuedRef.current.delete(worktreeId)
       inFlightRef.current.add(worktreeId)
       activeRequestWorktreeIdsRef.current.add(worktreeId)
       attemptedRef.current.add(worktreeId)
-      void scanWorkspaceCleanup({ worktreeId })
-        .then((result) => {
-          let refreshed: WorkspaceCleanupCandidate | undefined
-          for (const candidate of result.candidates) {
-            if (candidate.worktreeId === worktreeId) {
-              refreshed = candidate
-              break
-            }
-          }
-          if (refreshed && generation === generationRef.current) {
-            evidenceRef.current.set(worktreeId, refreshed)
-          }
-        })
-        .catch(() => {
-          // Why: a failed focused scan leaves the row honestly "Not checked";
-          // attemptedRef keeps it from retrying in a loop.
-        })
-        .finally(() => {
+    }
+    const acceptCandidates = (nextCandidates: readonly WorkspaceCleanupCandidate[]): void => {
+      if (generation !== generationRef.current) {
+        return
+      }
+      for (const candidate of nextCandidates) {
+        if (!activeRequestWorktreeIdsRef.current.has(candidate.worktreeId)) {
+          continue
+        }
+        evidenceRef.current.set(candidate.worktreeId, candidate)
+        inFlightRef.current.delete(candidate.worktreeId)
+      }
+      publish()
+    }
+    void window.api.workspaceCleanup
+      .scan({ worktreeIds, scanId }, (progress) => acceptCandidates(progress.candidates))
+      .then((result) => acceptCandidates(result.candidates))
+      .catch(() => {
+        // Why: a failed targeted scan leaves rows honestly "Not checked";
+        // attemptedRef keeps it from retrying in a loop.
+      })
+      .finally(() => {
+        if (activeScanIdRef.current === scanId) {
+          activeScanIdRef.current = null
+        }
+        for (const worktreeId of worktreeIds) {
           activeRequestWorktreeIdsRef.current.delete(worktreeId)
           if (generation === generationRef.current) {
             inFlightRef.current.delete(worktreeId)
           }
-          pump()
-        })
-    }
+        }
+        pump()
+      })
     publish()
-  }, [publish, scanWorkspaceCleanup])
+  }, [publish])
 
   useEffect(() => {
     const wasEnabled = enabledRef.current
@@ -118,6 +120,10 @@ export function useWorkspaceCleanupGitEvidence({
 
     if ((wasEnabled && !enabled) || (enabled && snapshotChanged)) {
       generationRef.current += 1
+      const activeScanId = activeScanIdRef.current
+      if (activeScanId) {
+        void window.api.workspaceCleanup.cancelScan?.(activeScanId)
+      }
       queueRef.current = []
       queuedRef.current.clear()
       inFlightRef.current.clear()
@@ -142,6 +148,16 @@ export function useWorkspaceCleanupGitEvidence({
     totalRef.current += targets.length
     pump()
   }, [candidates, enabled, pump, publish, scannedAt])
+
+  useEffect(
+    () => () => {
+      const activeScanId = activeScanIdRef.current
+      if (activeScanId) {
+        void window.api.workspaceCleanup.cancelScan?.(activeScanId)
+      }
+    },
+    []
+  )
 
   return state
 }

@@ -2,7 +2,10 @@ import type {
   WorkspaceCleanupBlocker,
   WorkspaceCleanupCandidate
 } from '../../../../shared/workspace-cleanup'
-import { applyWorkspaceCleanupPolicy } from '../../../../shared/workspace-cleanup'
+import {
+  applyWorkspaceCleanupPolicy,
+  WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT
+} from '../../../../shared/workspace-cleanup'
 import type {
   WorkspaceCleanupFilterState,
   WorkspaceCleanupSortField,
@@ -28,9 +31,8 @@ const GIT_DERIVED_BLOCKERS: ReadonlySet<WorkspaceCleanupBlocker> = new Set([
   'unknown-base'
 ])
 
-/** Bounds how many git processes one filter toggle can spawn across a huge fleet. */
-export const WORKSPACE_CLEANUP_GIT_EVIDENCE_MAX_TARGETS = 500
-export const WORKSPACE_CLEANUP_GIT_EVIDENCE_CONCURRENCY = 4
+/** Bounds how many worktrees one Git-evidence batch can inspect across a huge fleet. */
+export const WORKSPACE_CLEANUP_GIT_EVIDENCE_MAX_TARGETS = WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT
 
 export function needsWorkspaceCleanupGitEvidence(
   filters: WorkspaceCleanupFilterState,

@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { Store } from '../persistence'
 import type * as RepoWorktreesModule from '../repo-worktrees'
 import type { GitStatusResult, GitWorktreeInfo, Repo, WorktreeMeta } from '../../shared/types'
+import { WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT } from '../../shared/workspace-cleanup'
 
 const {
   lstatMock,
@@ -352,6 +353,42 @@ describe('workspace cleanup broad scan opt-in', () => {
       reasons: [],
       git: { clean: true, checkedAt: expect.any(Number) }
     })
+  })
+
+  it('lists a repo once for a targeted Git-evidence batch', async () => {
+    const targets = ['repo-1::/repo-recent', 'repo-1::/repo-old']
+
+    const result = await scanWorkspaceCleanup(makeStore(), { worktreeIds: targets })
+
+    expect(listRepoWorktreesMock).toHaveBeenCalledTimes(1)
+    expect(getStatusMock).toHaveBeenCalledTimes(2)
+    expect(lstatMock).not.toHaveBeenCalled()
+    expect(new Set(result.candidates.map((candidate) => candidate.worktreeId))).toEqual(
+      new Set(targets)
+    )
+  })
+
+  it('keeps the maximum targeted batch to one repo listing', async () => {
+    const worktrees = Array.from(
+      { length: WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT + 1 },
+      (_, index): GitWorktreeInfo => ({
+        path: `/repo-evidence-${index}`,
+        head: `head-${index}`,
+        branch: `refs/heads/evidence-${index}`,
+        isBare: false,
+        isMainWorktree: false
+      })
+    )
+    listRepoWorktreesMock.mockResolvedValue(worktrees)
+
+    const result = await scanWorkspaceCleanup(makeStore(), {
+      worktreeIds: worktrees.map((worktree) => `${REPO.id}::${worktree.path}`)
+    })
+
+    expect(result.candidates).toHaveLength(WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT)
+    expect(listRepoWorktreesMock).toHaveBeenCalledTimes(1)
+    expect(getStatusMock).toHaveBeenCalledTimes(WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT)
+    expect(lstatMock).not.toHaveBeenCalled()
   })
 
   it('lists disconnected SSH workspaces only on an opt-in scan', async () => {

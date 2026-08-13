@@ -159,7 +159,7 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
   workspaceCleanupViewedCandidates: {},
 
   scanWorkspaceCleanup: async (args) => {
-    if (args?.worktreeId !== undefined) {
+    if (args?.worktreeId !== undefined || args?.worktreeIds !== undefined) {
       const scan = await window.api.workspaceCleanup.scan(args)
       const enriched = await enrichWorkspaceCleanupCandidates(scan.candidates, get(), {
         applyDismissals: false

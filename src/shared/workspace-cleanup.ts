@@ -80,12 +80,16 @@ export type WorkspaceCleanupCandidate = {
 
 export type WorkspaceCleanupScanArgs = {
   worktreeId?: string
+  /** Non-destructive evidence refresh; bounded so one renderer cannot enqueue an unbounded scan. */
+  worktreeIds?: string[]
   skipGitWorktreeIds?: string[]
   scanId?: string
   // Why: optional so an older client still receives the legacy suggestion-only
   // broad scan; only a client that renders the full list asks for every row.
   includeAllWorkspaces?: boolean
 }
+
+export const WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT = 500
 
 export type WorkspaceCleanupLocalProcessArgs = {
   worktreeId: string

@@ -2,19 +2,18 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { WorkspaceCleanupScanResult } from '../../../../shared/workspace-cleanup'
+import type {
+  WorkspaceCleanupScanProgress,
+  WorkspaceCleanupScanResult
+} from '../../../../shared/workspace-cleanup'
 import { makeFacetCandidate } from './workspace-cleanup-facet.test.fixture'
 import { useWorkspaceCleanupGitEvidence } from './use-workspace-cleanup-git-evidence'
 
-const holders = vi.hoisted(() => ({ scan: vi.fn() }))
-
-vi.mock('@/store', () => ({
-  useAppStore: (selector: (state: { scanWorkspaceCleanup: typeof holders.scan }) => unknown) =>
-    selector({ scanWorkspaceCleanup: holders.scan })
-}))
+const holders = vi.hoisted(() => ({ cancelScan: vi.fn(), scan: vi.fn() }))
 
 type PendingScan = {
-  worktreeId: string
+  worktreeIds: string[]
+  onProgress?: (progress: WorkspaceCleanupScanProgress) => void
   resolve: (result: WorkspaceCleanupScanResult) => void
 }
 
@@ -31,11 +30,23 @@ describe('useWorkspaceCleanupGitEvidence', () => {
   beforeEach(() => {
     pending = []
     holders.scan.mockReset()
-    holders.scan.mockImplementation(({ worktreeId }: { worktreeId: string }) => {
-      return new Promise<WorkspaceCleanupScanResult>((resolve) => {
-        pending.push({ worktreeId, resolve })
-      })
-    })
+    holders.cancelScan.mockReset().mockResolvedValue(true)
+    holders.scan.mockImplementation(
+      (
+        { worktreeIds }: { worktreeIds: string[] },
+        onProgress?: (progress: WorkspaceCleanupScanProgress) => void
+      ) => {
+        return new Promise<WorkspaceCleanupScanResult>((resolve) => {
+          pending.push({ worktreeIds, onProgress, resolve })
+        })
+      }
+    )
+    ;(window as unknown as { api: unknown }).api = {
+      workspaceCleanup: {
+        cancelScan: holders.cancelScan,
+        scan: holders.scan
+      }
+    }
   })
 
   it('bounds restarted passes and isolates them from stale settlements', async () => {
@@ -48,31 +59,43 @@ describe('useWorkspaceCleanupGitEvidence', () => {
 
     await waitFor(() => expect(view.result.current.totalCount).toBe(6))
     expect(view.result.current.pendingWorktreeIds.size).toBe(6)
-    expect(holders.scan).toHaveBeenCalledTimes(4)
+    expect(holders.scan).toHaveBeenCalledTimes(1)
+    expect(holders.scan).toHaveBeenCalledWith(
+      {
+        worktreeIds: ['a', 'b', 'c', 'd', 'e', 'f'],
+        scanId: expect.any(String)
+      },
+      expect.any(Function)
+    )
 
     view.rerender({ enabled: false })
     await waitFor(() => expect(view.result.current.pendingWorktreeIds.size).toBe(0))
+    expect(holders.cancelScan).toHaveBeenCalledWith(expect.any(String))
     view.rerender({ enabled: true })
     await waitFor(() => expect(view.result.current.pendingWorktreeIds.size).toBe(6))
-    expect(holders.scan).toHaveBeenCalledTimes(4)
+    expect(holders.scan).toHaveBeenCalledTimes(1)
     expect(view.result.current.pendingWorktreeIds.size).toBe(6)
 
     await act(async () => {
       pending[0]?.resolve({
         scannedAt: 2,
-        candidates: [makeFacetCandidate({ worktreeId: pending[0].worktreeId })],
+        candidates: [makeFacetCandidate({ worktreeId: 'a' })],
         errors: []
       })
     })
-    await waitFor(() => expect(holders.scan).toHaveBeenCalledTimes(5))
+    await waitFor(() => expect(holders.scan).toHaveBeenCalledTimes(2))
     expect(view.result.current.pendingWorktreeIds.size).toBe(6)
     expect(view.result.current.evidenceByWorktreeId.size).toBe(0)
 
     await act(async () => {
-      pending[4]?.resolve({
+      pending[1]?.onProgress?.({
+        scanId: 'batch-2',
         scannedAt: 3,
-        candidates: [makeFacetCandidate({ worktreeId: pending[4].worktreeId })],
-        errors: []
+        scannedWorktreeCount: 1,
+        totalWorktreeCount: 6,
+        candidates: [makeFacetCandidate({ worktreeId: 'a' })],
+        errors: [],
+        candidateMode: 'append'
       })
     })
     await waitFor(() => expect(view.result.current.evidenceByWorktreeId.size).toBe(1))

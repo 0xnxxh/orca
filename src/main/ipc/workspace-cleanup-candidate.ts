@@ -24,8 +24,9 @@ export async function buildWorkspaceCleanupCandidate(args: {
   provider: IGitProvider | null
   skipGit: boolean
   forceGitCheck: boolean
+  signal?: AbortSignal
 }): Promise<WorkspaceCleanupCandidate> {
-  const { repo, worktree, scannedAt, provider, skipGit, forceGitCheck } = args
+  const { repo, worktree, scannedAt, provider, skipGit, forceGitCheck, signal } = args
   const blockers: WorkspaceCleanupBlocker[] = []
   const reasons = getWorkspaceCleanupInactivityReasonsForWorkspace(worktree, scannedAt)
   const repoIsFolder = isFolderRepo(repo)
@@ -51,7 +52,7 @@ export async function buildWorkspaceCleanupCandidate(args: {
 
   const gitEvidence = !shouldReadGit
     ? createEmptyWorkspaceCleanupGitEvidence()
-    : await readWorkspaceCleanupGitEvidence(worktree, repo, provider)
+    : await readWorkspaceCleanupGitEvidence(worktree, repo, provider, signal)
   appendWorkspaceCleanupItems(blockers, gitEvidence.blockers)
 
   const candidateWithoutFingerprint: WorkspaceCleanupCandidate = {

@@ -97,6 +97,19 @@ describe('workspace cleanup snapshot IPC', () => {
     expect(persistScanResultMock).not.toHaveBeenCalled()
   })
 
+  it('does not rewrite the fleet snapshot for a targeted evidence batch', async () => {
+    registerWorkspaceCleanupHandlers(makeEmptyStore())
+    const handler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'workspaceCleanup:scan')?.[1]
+
+    await handler?.({ sender: { send: vi.fn() } } as never, {
+      worktreeIds: ['repo-1::/repo-a', 'repo-1::/repo-b']
+    })
+
+    expect(persistScanResultMock).not.toHaveBeenCalled()
+  })
+
   it('stops streaming progress after the invoking renderer is destroyed', async () => {
     registerWorkspaceCleanupHandlers(makeEmptyStore())
     const handler = vi
@@ -110,6 +123,26 @@ describe('workspace cleanup snapshot IPC', () => {
       handler?.({ sender: { isDestroyed: () => true, send } } as never, { scanId: 'scan-1' })
     ).resolves.toEqual({ scannedAt: NOW, candidates: [], errors: [] })
     expect(send).not.toHaveBeenCalled()
+  })
+
+  it('cancels only the invoking renderer scan id', async () => {
+    scanWorkspaceCleanupMock.mockImplementation((_store, _args, options) => {
+      return new Promise((_resolve, reject) => {
+        options.signal?.addEventListener('abort', () => reject(new Error('cancelled')), {
+          once: true
+        })
+      })
+    })
+    registerWorkspaceCleanupHandlers(makeEmptyStore())
+    const handlers = Object.fromEntries(vi.mocked(ipcMain.handle).mock.calls)
+    const event = { sender: { id: 7, isDestroyed: () => false, send: vi.fn() } } as never
+
+    const scan = handlers['workspaceCleanup:scan']?.(event, { scanId: 'scan-1' })
+    expect(handlers['workspaceCleanup:cancelScan']?.(event, 'scan-1')).toBe(true)
+    await expect(scan).rejects.toThrow('cancelled')
+    expect(
+      handlers['workspaceCleanup:cancelScan']?.({ sender: { id: 8 } } as never, 'scan-1')
+    ).toBe(false)
   })
 
   it('serves the cached scan snapshot through getCachedScan', async () => {

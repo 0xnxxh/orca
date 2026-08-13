@@ -9,6 +9,7 @@ const WORKSPACE_CLEANUP_PROGRESS_EMIT_INTERVAL_MS = 100
 
 export type WorkspaceCleanupScanOptions = {
   onProgress?: (progress: WorkspaceCleanupScanProgress) => void
+  signal?: AbortSignal
 }
 
 export type WorkspaceCleanupProgressEmitter = {

@@ -1450,6 +1450,7 @@ export type PreloadApi = {
       args?: WorkspaceCleanupScanArgs,
       onProgress?: (progress: WorkspaceCleanupScanProgress) => void
     ) => Promise<WorkspaceCleanupScanResult>
+    cancelScan?: (scanId: string) => Promise<boolean>
     /** Last persisted broad-scan snapshot; null until one completes or when the cache is stale/corrupt. */
     getCachedScan: () => Promise<WorkspaceCleanupScanResult | null>
     dismiss: (args: WorkspaceCleanupDismissArgs) => Promise<void>

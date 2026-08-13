@@ -38,7 +38,9 @@ export function registerWorkspaceCleanupHandlers(
   deps: WorkspaceCleanupHandlerDeps = {}
 ): void {
   const snapshotDirectory = store.getProfileStorageDirectory()
+  const activeScans = new Map<string, AbortController>()
   ipcMain.removeHandler('workspaceCleanup:scan')
+  ipcMain.removeHandler('workspaceCleanup:cancelScan')
   ipcMain.removeHandler('workspaceCleanup:getCachedScan')
   ipcMain.removeHandler('workspaceCleanup:dismiss')
   ipcMain.removeHandler('workspaceCleanup:clearDismissals')
@@ -51,22 +53,44 @@ export function registerWorkspaceCleanupHandlers(
     'workspaceCleanup:scan',
     async (event, args?: WorkspaceCleanupScanArgs): Promise<WorkspaceCleanupScanResult> => {
       const scanArgs = args ?? {}
-      const result = await scanWorkspaceCleanup(store, scanArgs, {
-        onProgress: scanArgs.scanId
-          ? (progress) => {
-              if (!event.sender.isDestroyed()) {
-                event.sender.send('workspaceCleanup:scanProgress', progress)
-              }
-            }
-          : undefined
-      })
-      // Focused scans are live-only; persisting each rewrites and fsyncs the fleet snapshot.
-      if (!scanArgs.worktreeId) {
-        void persistWorkspaceCleanupScanResult(snapshotDirectory, scanArgs, result)
+      const scanKey = getWorkspaceCleanupScanKey(event.sender.id, scanArgs.scanId)
+      const controller = scanKey ? new AbortController() : undefined
+      if (scanKey && controller) {
+        activeScans.set(scanKey, controller)
       }
-      return result
+      try {
+        const result = await scanWorkspaceCleanup(store, scanArgs, {
+          signal: controller?.signal,
+          onProgress: scanArgs.scanId
+            ? (progress) => {
+                if (!event.sender.isDestroyed()) {
+                  event.sender.send('workspaceCleanup:scanProgress', progress)
+                }
+              }
+            : undefined
+        })
+        // Focused scans are live-only; persisting each rewrites and fsyncs the fleet snapshot.
+        if (!scanArgs.worktreeId && !scanArgs.worktreeIds?.length) {
+          void persistWorkspaceCleanupScanResult(snapshotDirectory, scanArgs, result)
+        }
+        return result
+      } finally {
+        if (scanKey && activeScans.get(scanKey) === controller) {
+          activeScans.delete(scanKey)
+        }
+      }
     }
   )
+
+  ipcMain.handle('workspaceCleanup:cancelScan', (event, scanId: string): boolean => {
+    const scanKey = getWorkspaceCleanupScanKey(event.sender.id, scanId)
+    const controller = scanKey ? activeScans.get(scanKey) : undefined
+    if (!controller || controller.signal.aborted) {
+      return false
+    }
+    controller.abort()
+    return true
+  })
 
   ipcMain.handle(
     'workspaceCleanup:getCachedScan',
@@ -139,6 +163,12 @@ export function registerWorkspaceCleanupHandlers(
 
 function isSnapshotPruneBatchId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 128
+}
+
+function getWorkspaceCleanupScanKey(senderId: number, scanId: unknown): string | null {
+  return typeof scanId === 'string' && scanId.length > 0 && scanId.length <= 128
+    ? `${senderId}\0${scanId}`
+    : null
 }
 
 async function hasKillableProcesses(

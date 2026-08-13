@@ -5,6 +5,7 @@ import type { GitStatusResult, Repo, Worktree } from '../../shared/types'
 import type { WorkspaceCleanupBlocker } from '../../shared/workspace-cleanup'
 import {
   WORKSPACE_CLEANUP_GIT_READ_TIMEOUT_MS,
+  WorkspaceCleanupScanCancelledError,
   withWorkspaceCleanupTimeout
 } from './workspace-cleanup-scan-primitives'
 import { getWorktreeSharedLinkPaths } from '../git/worktree-shared-directories'
@@ -30,7 +31,8 @@ export function createEmptyWorkspaceCleanupGitEvidence(): WorkspaceCleanupGitEvi
 export async function readWorkspaceCleanupGitEvidence(
   worktree: Worktree,
   repo: Repo,
-  provider: IGitProvider | null
+  provider: IGitProvider | null,
+  signal?: AbortSignal
 ): Promise<WorkspaceCleanupGitEvidence> {
   const blockers: WorkspaceCleanupBlocker[] = []
   let status: GitStatusResult
@@ -47,9 +49,13 @@ export async function readWorkspaceCleanupGitEvidence(
               ...(sharedLinkPaths.length > 0 ? { sharedLinkPaths } : {})
             }),
       WORKSPACE_CLEANUP_GIT_READ_TIMEOUT_MS,
-      'Timed out reading git status.'
+      'Timed out reading git status.',
+      signal
     )
-  } catch {
+  } catch (error) {
+    if (error instanceof WorkspaceCleanupScanCancelledError) {
+      throw error
+    }
     return {
       ...createEmptyWorkspaceCleanupGitEvidence(),
       blockers: ['git-status-error']
@@ -74,7 +80,7 @@ export async function readWorkspaceCleanupGitEvidence(
     blockers.push('unpushed-commits')
   }
   if (clean && upstreamAhead === null) {
-    const unpushedCommitCount = await readUnpushedCommitCount(worktree, repo, provider)
+    const unpushedCommitCount = await readUnpushedCommitCount(worktree, repo, provider, signal)
     if (unpushedCommitCount === null) {
       blockers.push('unknown-base')
     } else if (unpushedCommitCount > 0) {
@@ -94,7 +100,8 @@ export async function readWorkspaceCleanupGitEvidence(
 async function readUnpushedCommitCount(
   worktree: Worktree,
   repo: Repo,
-  provider: IGitProvider | null
+  provider: IGitProvider | null,
+  signal?: AbortSignal
 ): Promise<number | null> {
   try {
     const result = await withWorkspaceCleanupTimeout(
@@ -108,11 +115,15 @@ async function readUnpushedCommitCount(
               signal
             }),
       WORKSPACE_CLEANUP_GIT_READ_TIMEOUT_MS,
-      'Timed out checking unpushed commits.'
+      'Timed out checking unpushed commits.',
+      signal
     )
     const count = Number.parseInt(result.stdout.trim(), 10)
     return Number.isFinite(count) ? count : null
-  } catch {
+  } catch (error) {
+    if (error instanceof WorkspaceCleanupScanCancelledError) {
+      throw error
+    }
     return null
   }
 }
