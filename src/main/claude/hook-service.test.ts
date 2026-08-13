@@ -419,6 +419,9 @@ describe('ClaudeHookService.installRemote', () => {
       'UserPromptSubmit',
       'Stop',
       'StopFailure',
+      // Why: the backstop for sessions that exit without a Stop (STA-3149); remote panes
+      // need it most, since the OSC-133 exit fallback is disabled for SSH/WSL PTYs.
+      'SessionEnd',
       'SubagentStart',
       'SubagentStop',
       'TeammateIdle',

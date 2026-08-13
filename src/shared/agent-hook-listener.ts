@@ -2779,6 +2779,25 @@ function normalizeClaudeEvent(
       sessionBoundary: true
     })
   }
+  if (eventName === 'SessionEnd') {
+    // Why: the session exited, so no Stop is ever coming (STA-3149). Unlike SessionStart this
+    // accepts every reason — failing closed on an unknown one would forfeit the backstop the
+    // event exists to provide — but a child-attributed end must not retire the lead's turn.
+    if (eventAgentId !== undefined) {
+      return null
+    }
+    // Why: nothing survives the process; leaving children/tasks/crons behind would gate the
+    // pane back up to 'working' through resolveClaudePaneState and re-strand it.
+    state.claudeSubagentRosterByPaneKey.delete(paneKey)
+    state.claudeRunningNonAgentTaskPaneKeys.delete(paneKey)
+    state.claudeActiveSessionCronPaneKeys.delete(paneKey)
+    state.claudeLeadStateByPaneKey.set(paneKey, { state: 'done' })
+    return buildClaudeStatusPayload(state, eventName, promptText, paneKey, hookPayload, {
+      stateName: 'done',
+      updateToolSnapshot: true,
+      sessionBoundary: true
+    })
+  }
   const previousLead = state.claudeLeadStateByPaneKey.get(paneKey)
   // Why: only a turn boundary may declare an interrupt or carry a prior one forward; any other event starts a fresh turn and drops it.
   const isTurnBoundary = eventName === 'Stop' || eventName === 'StopFailure'

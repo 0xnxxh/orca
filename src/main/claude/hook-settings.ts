@@ -40,6 +40,10 @@ export const CLAUDE_EVENTS = [
   // Why: OpenClaude skips normal Stop hooks after API/model errors and emits
   // StopFailure instead; without this hook Orca leaves the turn spinning.
   { eventName: 'StopFailure', definition: { hooks: [{ type: 'command', command: '' }] } },
+  // Why: last line of defense for every missed Stop (STA-3149). A session that exits
+  // mid-turn — /exit, Ctrl+D, crash, interrupt — emits no Stop, so without this the pane
+  // keeps its non-done row indefinitely. Older Claude builds ignore it (StopFailure precedent).
+  { eventName: 'SessionEnd', definition: { hooks: [{ type: 'command', command: '' }] } },
   // Why: subagent/teammate lifecycle feeds the sidebar's child rows and keeps
   // a pane 'working' while background children outlive the lead's turn.
   // TeammateIdle parks turn-based teammates without trusting their permanently
