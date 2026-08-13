@@ -1,4 +1,6 @@
 import type { AgentJournalMessageItem, AgentJournalSubmission } from './agent-session-journal-types'
+import { agentSessionRefusalOperationState } from './agent-session-refusal-retry'
+import type { AgentSessionWireRefusalCode } from './agent-session-wire'
 import { structuredAgentSessionPayloadFingerprint } from './structured-agent-session-mutation'
 
 export type StructuredAgentSessionOutboxState = 'queued' | 'dispatching' | 'unconfirmed'
@@ -64,6 +66,22 @@ export function updateStructuredAgentSessionOutboxEntry(
     const next = update(entry)
     return next ? [next] : []
   })
+}
+
+export function requeueStructuredAgentSessionSendRefusal(
+  entry: StructuredAgentSessionOutboxEntry,
+  code: AgentSessionWireRefusalCode,
+  createOperationId: () => string
+): StructuredAgentSessionOutboxEntry {
+  if (agentSessionRefusalOperationState('agentSession.send', code) !== 'settled-rejected') {
+    return { ...entry, state: 'queued' }
+  }
+  return {
+    ...entry,
+    clientMessageId: createOperationId(),
+    state: 'queued',
+    retryAfterUnknownSubmittedAt: null
+  }
 }
 
 export function reconcileStructuredAgentSessionOutbox(

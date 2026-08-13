@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcSuccess } from '../transport/types'
 import type { AgentJournalSubmission } from '../../../src/shared/agent-session-journal-types'
-import type { AgentSessionOptionResult } from '../../../src/shared/agent-session-wire'
+import type {
+  AgentSessionOptionResult,
+  AgentSessionWireRefusalCode
+} from '../../../src/shared/agent-session-wire'
 import type * as MobileStructuredOutboxStore from './mobile-structured-outbox-store'
 import {
   loadMobileStructuredOutbox,
@@ -53,6 +56,15 @@ function accepted(id: string): RpcSuccess {
         }
       }
     }
+  }
+}
+
+function refused(code: AgentSessionWireRefusalCode): RpcSuccess {
+  return {
+    id: code,
+    ok: true,
+    _meta: { runtimeId: 'runtime-1' },
+    result: { ok: false, refusal: { code, message: code } }
   }
 }
 
@@ -130,6 +142,68 @@ describe('useMobileStructuredSessionWrites', () => {
     })
 
     expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['agent_session_operation_conflict', 'agent_session_operation_expired'] as const)(
+    'rotates a send operation after %s',
+    async (code) => {
+      sendRequest
+        .mockResolvedValueOnce(refused(code))
+        .mockImplementationOnce(async (_method, params) =>
+          accepted(
+            (params as { envelope: { clientOperationId: string } }).envelope.clientOperationId
+          )
+        )
+
+      await act(async () => {
+        await api!.send('hello')
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      const firstId = (sendRequest.mock.calls[0]![1] as { envelope: { clientOperationId: string } })
+        .envelope.clientOperationId
+      const retryId = api!.outbox[0]!.clientMessageId
+      expect(retryId).not.toBe(firstId)
+
+      await act(async () => {
+        await api!.retry(retryId)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(sendRequest).toHaveBeenCalledTimes(2)
+      expect(
+        (sendRequest.mock.calls[1]![1] as { envelope: { clientOperationId: string } }).envelope
+          .clientOperationId
+      ).toBe(retryId)
+    }
+  )
+
+  it('retains a send operation after a pending-admission refusal', async () => {
+    sendRequest
+      .mockResolvedValueOnce(refused('agent_session_checkpoint_stale'))
+      .mockImplementationOnce(async (_method, params) =>
+        accepted((params as { envelope: { clientOperationId: string } }).envelope.clientOperationId)
+      )
+
+    await act(async () => {
+      await api!.send('hello')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const firstId = (sendRequest.mock.calls[0]![1] as { envelope: { clientOperationId: string } })
+      .envelope.clientOperationId
+    expect(api!.outbox[0]?.clientMessageId).toBe(firstId)
+
+    await act(async () => {
+      await api!.retry(firstId)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+    expect(
+      (sendRequest.mock.calls[1]![1] as { envelope: { clientOperationId: string } }).envelope
+        .clientOperationId
+    ).toBe(firstId)
   })
 
   it('retries a durable unknown by the same id before dispatching later messages', async () => {

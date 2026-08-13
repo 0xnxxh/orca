@@ -2,6 +2,7 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AgentSessionWireRefusalCode } from '../../../../shared/agent-session-wire'
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn()
@@ -45,6 +46,10 @@ function acceptedResult(fence: number) {
   }
 }
 
+function refusedResult(code: AgentSessionWireRefusalCode) {
+  return { ok: false, refusal: { code, message: code } }
+}
+
 describe('useStructuredAgentSessionOutbox', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -83,5 +88,64 @@ describe('useStructuredAgentSessionOutbox', () => {
 
     await act(async () => second.resolve(acceptedResult(2)))
     await waitFor(() => expect(result.current.outbox).toHaveLength(0))
+  })
+
+  it.each(['agent_session_operation_conflict', 'agent_session_operation_expired'] as const)(
+    'rotates a send operation after %s',
+    async (code) => {
+      vi.mocked(globalThis.crypto.randomUUID)
+        .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+        .mockReturnValueOnce('22222222-2222-4222-8222-222222222222')
+      mocks.call.mockResolvedValueOnce(refusedResult(code)).mockResolvedValueOnce(acceptedResult(1))
+      const { result } = renderHook(() =>
+        useStructuredAgentSessionOutbox({
+          sessionId: 'session-1',
+          target: LOCAL_TARGET,
+          fence: 1,
+          submissions: []
+        })
+      )
+
+      act(() => expect(result.current.send('hello')).toBe(true))
+      await waitFor(() => expect(result.current.outbox[0]?.state).toBe('queued'))
+      const firstId = (mocks.call.mock.calls[0]![2] as { envelope: { clientOperationId: string } })
+        .envelope.clientOperationId
+      const retryId = result.current.outbox[0]!.clientMessageId
+      expect(retryId).not.toBe(firstId)
+
+      act(() => result.current.retry(retryId))
+      await waitFor(() => expect(mocks.call).toHaveBeenCalledTimes(2))
+      expect(
+        (mocks.call.mock.calls[1]![2] as { envelope: { clientOperationId: string } }).envelope
+          .clientOperationId
+      ).toBe(retryId)
+    }
+  )
+
+  it('retains a send operation after a pending-admission refusal', async () => {
+    mocks.call
+      .mockResolvedValueOnce(refusedResult('agent_session_checkpoint_stale'))
+      .mockResolvedValueOnce(acceptedResult(1))
+    const { result } = renderHook(() =>
+      useStructuredAgentSessionOutbox({
+        sessionId: 'session-1',
+        target: LOCAL_TARGET,
+        fence: 1,
+        submissions: []
+      })
+    )
+
+    act(() => expect(result.current.send('hello')).toBe(true))
+    await waitFor(() => expect(result.current.outbox[0]?.state).toBe('queued'))
+    const firstId = (mocks.call.mock.calls[0]![2] as { envelope: { clientOperationId: string } })
+      .envelope.clientOperationId
+    expect(result.current.outbox[0]?.clientMessageId).toBe(firstId)
+
+    act(() => result.current.retry(firstId))
+    await waitFor(() => expect(mocks.call).toHaveBeenCalledTimes(2))
+    expect(
+      (mocks.call.mock.calls[1]![2] as { envelope: { clientOperationId: string } }).envelope
+        .clientOperationId
+    ).toBe(firstId)
   })
 })
