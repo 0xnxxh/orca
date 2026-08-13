@@ -717,7 +717,8 @@
         "wakeEphemeralVmFailed": "Failed to wake ephemeral VM workspace"
       },
       "ephemeralVmWorkspaceTarget": {
-        "projectRootRegistrationFailed": "Failed to register the recipe-created project root on the runtime."
+        "projectRootRegistrationFailed": "Failed to register the recipe-created project root on the runtime.",
+        "provisionedRootRequiresSsh": "Provisioned-root recipes currently require a direct SSH connection."
       },
       "blocked": {
         "notification": {
@@ -789,6 +790,9 @@
             "additionalErrors": "{{count}} additional images could not be attached."
           }
         }
+      },
+      "ephemeralVmWorktreeCreation": {
+        "sparseCheckoutUnsupported": "Provisioned-root recipes do not support sparse checkout."
       }
     },
     "hooks": {
@@ -935,6 +939,12 @@
         "description": "Permission messages from macOS may appear when an agent or terminal tool running in Orca attempts to access protected files. Grant Full Disk Access in Settings to reduce these prompts.",
         "openSettings": "Open Settings",
         "dismiss": "Don't show again"
+      },
+      "useMacTccAttributionSeveredNotice": {
+        "title": "macOS permissions may not reach Orca terminals",
+        "description": "Running Orca terminals are hosted by a daemon started by a previous Orca installation. macOS may not apply Orca’s Accessibility, Automation, or protected-file permissions to them. Restart the daemon from Manage Sessions to restore access. This will close all running Orca terminals.",
+        "openManageSessions": "Open Manage Sessions",
+        "dismiss": "Dismiss"
       }
     },
     "components": {
@@ -3010,16 +3020,20 @@
             "removedBody": "The SSH host for this workspace was removed, so it can no longer connect. Remove the workspace to clear it — remote files are left untouched.",
             "removeWorkspaceButton": "Remove workspace"
           },
-          "TerminalRemoteRuntimeReconnectBanner": {
+          "TerminalQuickCommandsSubmenu": {
+            "3ccc7981bb": "Host unavailable",
+            "54f29b7c0d": "Loading host…"
+          },
+          "TerminalPaneDisconnectedBanner": {
+            "sshPaneTitle": "Terminal disconnected",
+            "sshPaneBody": "Orca cannot reach this terminal right now. The shell may still be running on the host, so starting a new one leaves it alone.",
+            "tryAgainButton": "Try again",
+            "startNewTerminalButton": "Start a new terminal",
             "retryingTitle": "Reconnecting to remote runtime",
             "disconnectedTitle": "Remote runtime disconnected",
             "retryingBody": "Orca will retry for up to one minute. This terminal will resume if the connection returns.",
             "disconnectedBody": "Automatic retries stopped. Reconnect to resume this terminal session.",
             "reconnectButton": "Reconnect"
-          },
-          "TerminalQuickCommandsSubmenu": {
-            "3ccc7981bb": "Host unavailable",
-            "54f29b7c0d": "Loading host…"
           }
         }
       },
@@ -10705,6 +10719,11 @@
           "saveFailed": "Could not save visibility defaults.",
           "updateServer": "Update this server to configure source defaults.",
           "updateServerDefaults": "Update this server to configure visibility defaults."
+        },
+        "DaemonDegradedNotice": {
+          "title": "New terminals aren’t being saved",
+          "body": "The terminal host stopped responding. Orca kept it rather than ending anything it might still be hosting, but it can’t reach those terminals until the host responds again — reopening a pane retries, and works once it does. New terminals open outside the host and close when you quit Orca. Restarting the host usually clears this, and ends every terminal — both the ones it is still holding and the ones running outside it.",
+          "action": "Restart host"
         }
       },
       "right": {
@@ -15383,7 +15402,6 @@
     },
     "map": {
       "host": {
-        "all": "All hosts",
         "local": "Local",
         "ssh": "SSH",
         "wsl": "WSL",
@@ -15391,13 +15409,31 @@
       },
       "filters": {
         "showStates": "Agent states",
-        "canvasSummary": "{{shown}} of {{total}} agents shown",
         "agentlessWorkspaces": "Workspaces without agents",
         "orchestrationLinks": "Orchestration links",
-        "workspaceVisibility": "Map content"
+        "orchestrationLinksHidden": "Orchestration links hidden",
+        "workspaceVisibility": "Map content",
+        "title": "Map controls",
+        "reset": "Reset",
+        "ofTotalAgents": "of {{total}} agents shown",
+        "quickViews": "Quick views",
+        "agents": "Agents",
+        "time": "Time",
+        "lifespan": "Session lifespan",
+        "sinceMessage": "Since last message",
+        "timeInState": "Time in current state",
+        "timeMinimum": "{{label}} minimum",
+        "timeMaximum": "{{label}} maximum",
+        "timeAny": "any",
+        "timeRangeCount": "{{count}} ranges",
+        "resetRanges": "Reset ranges",
+        "summaryAll": "All",
+        "summaryCount": "{{shown}} of {{total}}",
+        "summarySelected": "{{count}} selected",
+        "workspace": "Workspace",
+        "stateChip": "State: {{states}}"
       },
       "liveContainmentMap": "Live containment map",
-      "hostFilter": "Host filter",
       "empty": "No agents match the current filters.",
       "canvasLabel": "Nested project, workspace, and agent map",
       "zoomOut": "Zoom out",
@@ -15419,6 +15455,16 @@
       "noWorkspaceAgents": "No agents in this workspace.",
       "status": {
         "doneSeen": "Done, seen"
+      },
+      "quickView": {
+        "everything": "Everything",
+        "attention": "Needs me",
+        "stuck": "Stuck",
+        "unread": "Unread",
+        "recent": "Last 30 min",
+        "longRunning": "Long runners",
+        "stale": "Stale > 3d",
+        "orchestration": "Orchestration"
       }
     },
     "placeholder": {
@@ -15482,7 +15528,8 @@
       "project": "Project",
       "workspaceStatus": "Workspace status",
       "reviewStatus": "PR / MR status",
-      "clearAll": "Clear all filters"
+      "clearAll": "Clear all filters",
+      "removeChip": "Remove {{filter}}"
     },
     "search": {
       "placeholder": "Search worktree, project, or agent…",

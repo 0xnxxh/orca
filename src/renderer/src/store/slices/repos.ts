@@ -3471,10 +3471,13 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     } catch (err) {
       console.error('Failed to delete project host setup:', err)
       const message = err instanceof Error ? err.message : String(err)
-      toast.error(translate('auto.store.slices.repos.c6e022ddfc', 'Failed to add project'), {
-        description: message,
-        duration: ERROR_TOAST_DURATION
-      })
+      toast.error(
+        translate('auto.store.slices.repos.removeProjectFailed', 'Failed to remove project'),
+        {
+          description: message,
+          duration: ERROR_TOAST_DURATION
+        }
+      )
       return null
     }
   },
@@ -3669,7 +3672,9 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           killedTabIds.add(tab.id)
           for (const ptyId of get().ptyIdsByTabId[tab.id] ?? []) {
             if (!ptyId.startsWith('remote:')) {
-              window.api.pty.kill(ptyId)
+              // Why swallow: an unreachable terminal host rejects instead of reporting a
+              // close it did not perform; removal proceeds either way.
+              void Promise.resolve(window.api.pty.kill(ptyId)).catch(() => {})
             }
           }
         }
