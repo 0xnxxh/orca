@@ -24,13 +24,16 @@ function createJarSession(
     failOn?: string
     restoreError?: Error
     snapshot?: CookieClearSession['snapshotClearIdentities']
+    arrivalDuringClear?: Cookie
   } = {}
 ) {
   let jar = [...initial]
   const removedNames: string[] = []
+  const restoredNames: string[] = []
   const session: CookieClearSession & {
     names: () => string[]
     removedNames: () => string[]
+    restoredNames: () => string[]
   } = {
     cookies: {
       get: async () => [...jar],
@@ -43,11 +46,16 @@ function createJarSession(
       }
     },
     clearData: async () => {
+      // Why: a cookie the user creates mid-clear lands before the rejection surfaces.
+      if (options.arrivalDuringClear) {
+        jar.push(options.arrivalDuringClear)
+      }
       throw new Error('storage busy')
     },
     snapshotClearIdentities:
       options.snapshot ?? (async (items) => identitiesFromClearCookies(items)),
     restoreClearIdentities: async (identities) => {
+      restoredNames.push(...identities.map((identity) => identity.name))
       if (options.restoreError) {
         throw options.restoreError
       }
@@ -59,7 +67,8 @@ function createJarSession(
       }
     },
     names: () => jar.map((entry) => entry.name).sort(),
-    removedNames: () => [...removedNames]
+    removedNames: () => [...removedNames],
+    restoredNames: () => [...restoredNames].sort()
   }
   return session
 }
@@ -148,6 +157,24 @@ describe('STA-4090 failed full cookie clear', () => {
         expect.objectContaining({ name: 'stale' })
       ])
     )
+  })
+
+  // Why (STA-4170): the fallback used to re-read the jar, so a login completed mid-clear was
+  // deleted with no snapshot identity to restore it — permanent auth loss reported as a restore.
+  it('leaves a cookie that arrived during the clear in the jar', async () => {
+    const session = createJarSession(
+      [cookie('.example.com', 'removed-first', '/one'), cookie('.other.test', 'stale', '/two')],
+      { arrivalDuringClear: cookie('.arrived.test', 'fresh-login') }
+    )
+
+    await expect(removeTransplantableCookies(session)).rejects.toThrow(
+      /existing cookies were restored/
+    )
+
+    expect(session.removedNames()).toEqual(['removed-first'])
+    expect(session.names()).toEqual(['fresh-login', 'removed-first', 'stale'])
+    // The restore set is exactly the mutated set: the arrival never needed restoring.
+    expect(session.restoredNames()).toEqual(['removed-first', 'stale'])
   })
 
   it('serializes concurrent clears on the same session', async () => {
