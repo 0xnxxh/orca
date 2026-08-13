@@ -549,7 +549,9 @@ function TerminalPane(
     return leafIds.length === 1 ? leafIds[0] : null
   }, [getNativeChatLeafIds, tabWideAgentHintLeafId])
   const getTabWideAgentHintLeafIdRef = useRef(getTabWideAgentHintLeafId)
-  getTabWideAgentHintLeafIdRef.current = getTabWideAgentHintLeafId
+  useEffect(() => {
+    getTabWideAgentHintLeafIdRef.current = getTabWideAgentHintLeafId
+  }, [getTabWideAgentHintLeafId])
   useEffect(() => {
     if (tabWideAgentHintLeafId !== undefined) {
       return

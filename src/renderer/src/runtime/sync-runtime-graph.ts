@@ -1848,10 +1848,13 @@ function buildMobileLaunchDraftsByPaneKey(args: {
     NonNullable<AppState['nativeChatLaunchDraftByTabId']>[string]
   >
 }): MobileSessionWorktreeInputs['launchDraftByPaneKey'] {
-  const draftsByPaneKey = new Map<
+  if (args.launchDraftByTabId.size === 0) {
+    return EMPTY_NARROWED_BY_KEY
+  }
+  let draftsByPaneKey: Map<
     string,
     NonNullable<AppState['nativeChatLaunchDraftByTabId']>[string]
-  >()
+  > | null = null
   for (const terminal of args.terminalTabs) {
     const draft = args.launchDraftByTabId.get(terminal.id)
     if (!draft || draft.resolved) {
@@ -1870,9 +1873,10 @@ function buildMobileLaunchDraftsByPaneKey(args: {
     if (!launchAgent || launchAgent !== draft.agent || !ownerLeafId) {
       continue
     }
+    draftsByPaneKey ??= new Map()
     draftsByPaneKey.set(makePaneKey(terminal.id, ownerLeafId), draft)
   }
-  return draftsByPaneKey
+  return draftsByPaneKey ?? EMPTY_NARROWED_BY_KEY
 }
 
 function buildMobileTerminalSurfaceTabs(
@@ -1929,19 +1933,18 @@ function buildMobileTerminalSurfaceTabs(
         : legacyPaneId
           ? paneTitles[Number(legacyPaneId)]
           : undefined
+    const leafTitle = paneTitle?.trim() || sanitizedSavedLayout?.titlesByLeafId?.[leafId]?.trim()
     const paneKey = isTerminalLeafId(leafId) ? makePaneKey(terminal.id, leafId) : null
     const tabWideFallbackSafe =
       isNativeChatTabWideFallbackSafe(parentLayout) && launchAgentLeafId === leafId
-    const title =
-      paneTitle?.trim() ||
-      (tabWideFallbackSafe
-        ? resolveRuntimeTerminalTitle(
-            terminal,
-            generatedTitlesEnabled,
-            terminal.title ?? 'Terminal'
-          )
-        : 'Terminal')
-    const agentStatusTitle = paneTitle ?? (tabWideFallbackSafe ? terminal.title : '') ?? ''
+    const title = tabWideFallbackSafe
+      ? resolveRuntimeTerminalTitle(
+          terminal,
+          generatedTitlesEnabled,
+          leafTitle ?? terminal.title ?? 'Terminal'
+        )
+      : (leafTitle ?? 'Terminal')
+    const agentStatusTitle = leafTitle ?? (tabWideFallbackSafe ? terminal.title : '') ?? ''
     const agentStatus =
       paneKey && !isClaudeManagementTitle(agentStatusTitle)
         ? inputs.agentStatusByPaneKey.get(paneKey)

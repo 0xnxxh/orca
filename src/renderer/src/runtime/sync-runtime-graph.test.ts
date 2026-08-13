@@ -1038,7 +1038,8 @@ describe('buildMobileSessionTabSnapshots', () => {
             text: 'inspect mobile routing',
             createdAt: 2
           }
-        }
+        },
+        runtimePaneTitlesByTabId: { 'term-collapse': { 1: 'Codex live title' } }
       })
 
       expect(buildMobileSessionTabSnapshots(state)[0]?.tabs).toEqual([
