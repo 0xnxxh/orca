@@ -183,7 +183,7 @@ end`
 /**
  * Everything Orca must apply to a fish session *after* the user's own startup
  * files, delivered as one `--init-command` (fish evaluates -C after config.fish
- * and conf.d, and multi-`-C` support varies by version).
+ * and conf.d).
  *
  * The POSIX wrappers do this from their rc files; fish has no such hook, so
  * without this a fish pane silently loses both halves of the contract.
@@ -200,10 +200,11 @@ export function getFishInitCommand(escapedMarker: string): string {
   # of the user's session. Order matches the POSIX wrappers: attribution, then teams,
   # and the relay's own shim (ORCA_REMOTE_CLI_BIN_DIR) last so it ends up first.
   for __orca_shim_dir in $ORCA_ATTRIBUTION_SHIM_DIR $ORCA_AGENT_TEAMS_SHIM_DIR $ORCA_REMOTE_CLI_BIN_DIR
-    if test -n "$__orca_shim_dir"; and test "$PATH[1]" != "$__orca_shim_dir"
-      # Why drop existing copies instead of a plain prepend: this text can run twice in
-      # one session (a re-initialized pane), and a plain prepend grows PATH by one
-      # duplicate per shim per run. Filtered by string compare, not \`string match\`,
+    if test -n "$__orca_shim_dir"
+      # Why filter unconditionally instead of skipping when the shim is already $PATH[1]:
+      # the shim can be first *and* repeated later, and that skip would keep the copy.
+      # Filter-then-prepend also makes a re-run a no-op, where a plain prepend would grow
+      # PATH by one duplicate per shim. Compared as strings, not with \`string match\`,
       # because a shim path may contain glob characters.
       set -l __orca_kept_path
       for __orca_path_entry in $PATH

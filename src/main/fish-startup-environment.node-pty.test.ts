@@ -245,4 +245,42 @@ describe('fish startup environment', () => {
       rmSync(home, { recursive: true, force: true })
     }
   })
+
+  itWithFish('drops a repeated shim even when a copy is already first in PATH', () => {
+    // Why: guarding on `$PATH[1]` alone would take the shim's front position as proof
+    // there is nothing to do and leave the later copy in place.
+    const home = mkdtempSync(join(tmpdir(), 'orca fish dedupe '))
+    try {
+      const initPath = join(home, 'init.fish')
+      writeFileSync(initPath, getFishInitCommand(SHELL_READY_MARKER))
+      const result = spawnSync(
+        FISH.path as string,
+        [
+          '--no-config',
+          '-c',
+          [
+            `set -gx PATH ${fishQuote(SHIM_DIR)} /usr/bin /bin ${fishQuote(SHIM_DIR)}`,
+            `source ${fishQuote(initPath)}`,
+            'for __probe_entry in $PATH; echo "PATH=$__probe_entry"; end'
+          ].join('\n')
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            PATH: process.env.PATH ?? '/usr/bin:/bin',
+            HOME: home,
+            ORCA_ATTRIBUTION_SHIM_DIR: SHIM_DIR,
+            ORCA_SHELL_READY_MARKER: '0'
+          }
+        }
+      )
+
+      expect(result.stderr).toBe('')
+      expect(result.status).toBe(0)
+      const pathEntries = [...result.stdout.matchAll(/^PATH=(.*)$/gm)].map((match) => match[1])
+      expect(pathEntries).toEqual([SHIM_DIR, '/usr/bin', '/bin'])
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
 })
