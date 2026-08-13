@@ -8,6 +8,7 @@ import {
   waitForActiveTerminalManager,
   waitForTerminalOutput
 } from './helpers/terminal'
+import { splitMarkerEchoCommand } from './terminal-marker-echo-command'
 import { waitForPtyShellEcho } from './terminal-pty-readiness'
 
 async function createWorkspace(page: Page, name: string): Promise<void> {
@@ -42,6 +43,8 @@ test('creates a worktree, keeps its terminal isolated, and switches back @golden
       orcaPage.locator('[role="option"][aria-current="page"]').filter({ hasText: workspaceName })
     ).toBeVisible({ timeout: 30_000 })
     childWorktreeId = await waitForActiveWorktree(orcaPage)
+    // Why: the cleanup force-removes childWorktreeId, so it must never resolve to the original.
+    expect(childWorktreeId).not.toBe(originalWorktreeId)
     await expect(
       orcaPage.locator(`[role="option"][data-worktree-id="${childWorktreeId}"]`)
     ).toHaveAttribute('aria-current', 'page')
@@ -51,11 +54,7 @@ test('creates a worktree, keeps its terminal isolated, and switches back @golden
     const childPtyId = await waitForActivePanePtyId(orcaPage)
     expect(childPtyId).not.toBe(parentPtyId)
     await waitForPtyShellEcho(orcaPage, childPtyId, 15_000)
-    await execInTerminal(
-      orcaPage,
-      childPtyId,
-      process.platform === 'win32' ? 'Write-Output worktree-b' : 'echo worktree-b'
-    )
+    await execInTerminal(orcaPage, childPtyId, splitMarkerEchoCommand('worktree', '-b'))
     await waitForTerminalOutput(orcaPage, 'worktree-b')
 
     await orcaPage.locator(`[role="option"][data-worktree-id="${originalWorktreeId}"]`).click()

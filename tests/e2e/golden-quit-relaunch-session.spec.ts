@@ -4,7 +4,7 @@ import { expect, test } from './helpers/orca-app'
 import { openFileExplorer } from './helpers/file-explorer'
 import { attachRepoAndOpenTerminal, createRestartSession } from './helpers/orca-restart'
 import { ensureTerminalVisible, waitForSessionReady } from './helpers/store'
-import { createTerminalTabFromMenu } from './helpers/terminal-tab-menu'
+import { createTerminalTabFromMenu, SORTABLE_TAB } from './helpers/terminal-tab-menu'
 import {
   execInTerminal,
   focusActiveTerminalInput,
@@ -13,9 +13,8 @@ import {
   waitForTerminalOutput
 } from './helpers/terminal'
 import { TEST_REPO_PATH_FILE } from './global-setup'
+import { splitMarkerEchoCommand } from './terminal-marker-echo-command'
 import { PTY_SESSION_ID_SEPARATOR } from '../../src/shared/pty-session-id-format'
-
-const SORTABLE_TAB = '[data-testid="sortable-tab"]'
 
 function seededRepoPath(): string {
   const repoPath = existsSync(TEST_REPO_PATH_FILE)
@@ -46,8 +45,14 @@ test('restores the exact file and live extra terminal after quit and relaunch @g
     await waitForActiveTerminalManager(first.page, 30_000)
     const extraTerminalPtyId = await waitForActivePanePtyId(first.page, 30_000)
     expect(extraTerminalPtyId).toContain(PTY_SESSION_ID_SEPARATOR)
-    const preQuitMarker = `GOLDEN_RELAUNCH_PERSISTED_${Date.now()}`
-    await execInTerminal(first.page, extraTerminalPtyId, `echo ${preQuitMarker}`)
+    const preQuitMarkerPrefix = 'GOLDEN_RELAUNCH_PERSISTED'
+    const preQuitMarkerSuffix = `_${Date.now()}`
+    const preQuitMarker = `${preQuitMarkerPrefix}${preQuitMarkerSuffix}`
+    await execInTerminal(
+      first.page,
+      extraTerminalPtyId,
+      splitMarkerEchoCommand(preQuitMarkerPrefix, preQuitMarkerSuffix)
+    )
     await waitForTerminalOutput(first.page, preQuitMarker, 20_000)
 
     await openFileExplorer(first.page)

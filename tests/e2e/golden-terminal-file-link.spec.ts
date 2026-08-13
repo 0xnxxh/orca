@@ -14,7 +14,9 @@ import { nodeTerminalCommand } from './terminal-node-command'
 import { waitForPtyShellEcho } from './terminal-pty-readiness'
 
 type LinkProbe = { col: number; row: number; tabId: string }
-type LinkClickTarget = { x: number; y: number }
+type LinkClientPoint = { x: number; y: number }
+
+const LINK_SCAN_CHAR_LIMIT = 12_000
 
 async function locateLink(page: Page, needle: string): Promise<LinkProbe | null> {
   return page.evaluate((needle) => {
@@ -43,7 +45,7 @@ async function locateLink(page: Page, needle: string): Promise<LinkProbe | null>
   }, needle)
 }
 
-async function hoverLink(page: Page, probe: LinkProbe): Promise<string | null> {
+async function linkClientPoint(page: Page, probe: LinkProbe): Promise<LinkClientPoint> {
   return page.evaluate(({ col, row, tabId }) => {
     const manager = window.__paneManagers?.get(tabId)
     const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0] ?? null
@@ -56,38 +58,37 @@ async function hoverLink(page: Page, probe: LinkProbe): Promise<string | null> {
     if (!cell?.width || !cell.height) {
       throw new Error('terminal cell dimensions unavailable')
     }
-    screen.dispatchEvent(
-      new MouseEvent('mousemove', {
-        bubbles: true,
-        cancelable: true,
-        clientX: rect.left + (col + 0.5) * cell.width,
-        clientY: rect.top + (row + 0.5) * cell.height
-      })
-    )
-    const terminal = pane.terminal as unknown as {
-      _core?: { linkifier?: { currentLink?: { link?: { text?: string } } } }
+    return {
+      x: rect.left + (col + 0.5) * cell.width,
+      y: rect.top + (row + 0.5) * cell.height
     }
-    return terminal._core?.linkifier?.currentLink?.link?.text ?? null
   }, probe)
 }
 
+async function hoverLink(page: Page, probe: LinkProbe): Promise<string | null> {
+  const point = await linkClientPoint(page, probe)
+  return page.evaluate(
+    ({ tabId, x, y }) => {
+      const manager = window.__paneManagers?.get(tabId)
+      const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0] ?? null
+      const screen = pane?.terminal.element?.querySelector<HTMLElement>('.xterm-screen')
+      if (!pane || !screen) {
+        throw new Error('terminal link surface unavailable')
+      }
+      screen.dispatchEvent(
+        new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: x, clientY: y })
+      )
+      const terminal = pane.terminal as unknown as {
+        _core?: { linkifier?: { currentLink?: { link?: { text?: string } } } }
+      }
+      return terminal._core?.linkifier?.currentLink?.link?.text ?? null
+    },
+    { tabId: probe.tabId, ...point }
+  )
+}
+
 async function clickLink(page: Page, probe: LinkProbe): Promise<void> {
-  const target: LinkClickTarget = await page.evaluate(({ col, row, tabId }) => {
-    const manager = window.__paneManagers?.get(tabId)
-    const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0] ?? null
-    const screen = pane?.terminal.element?.querySelector<HTMLElement>('.xterm-screen')
-    if (!pane || !screen) {
-      throw new Error('terminal link surface unavailable')
-    }
-    const rect = screen.getBoundingClientRect()
-    const cell = pane.terminal.dimensions?.css.cell
-    if (!cell?.width || !cell.height) {
-      throw new Error('terminal cell dimensions unavailable')
-    }
-    const clientX = rect.left + (col + 0.5) * cell.width
-    const clientY = rect.top + (row + 0.5) * cell.height
-    return { x: clientX, y: clientY }
-  }, probe)
+  const target = await linkClientPoint(page, probe)
   await page.mouse.move(target.x, target.y)
   await page.mouse.click(target.x, target.y)
 }
@@ -127,7 +128,7 @@ test('opens a terminal file link and observes an external edit @golden', async (
       await sendToTerminal(orcaPage, ptyId, `${command}\r`)
     }
     await expect
-      .poll(() => getTerminalContent(orcaPage, 12_000), { timeout: 15_000 })
+      .poll(() => getTerminalContent(orcaPage, LINK_SCAN_CHAR_LIMIT), { timeout: 15_000 })
       .toContain(clickablePath)
 
     let probe: LinkProbe | null = null
@@ -147,7 +148,10 @@ test('opens a terminal file link and observes an external edit @golden', async (
 
     const actionPopover = orcaPage.locator('[data-terminal-link-action-popover]')
     await expect(actionPopover).toBeVisible()
-    await expect(actionPopover.locator('[data-terminal-link-destination]')).toContainText(filePath)
+    // Why: the popover echoes the link text verbatim, which on Windows is the forward-slash form.
+    await expect(actionPopover.locator('[data-terminal-link-destination]')).toContainText(
+      clickablePath
+    )
     await actionPopover.getByRole('button', { name: /Open file/i }).click()
 
     const editorHeader = orcaPage.locator('.editor-header-path').first()
