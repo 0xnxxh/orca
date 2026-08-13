@@ -166,7 +166,8 @@ import { clearFederationAckCheckpoints } from './orchestration/federation-ack-ch
 import { syncFederatedDispatch } from './orchestration/federation-sync'
 import {
   classifyFederationTerminalRecoveryFailure,
-  FEDERATION_TERMINAL_RECOVERY_BASE_DELAY_MS
+  FEDERATION_TERMINAL_RECOVERY_BASE_DELAY_MS,
+  FEDERATION_TERMINAL_RECOVERY_MAX_DELAY_MS
 } from './orchestration/federation-terminal-recovery-policy'
 import { formatMessagePointer } from './orchestration/formatter'
 import { selectExactWorkerProviderSession } from './orchestration/worker-provider-session'
@@ -4747,13 +4748,14 @@ export class OrcaRuntimeService {
         continue
       }
       const tick = () => {
-        if (!this.getOrchestrationDb().isFederatedDispatchRelayEligible(dispatch.dispatch_id)) {
+        if (!this.getOrchestrationDb().isFederatedDispatchActive(dispatch.dispatch_id)) {
           const activeTimer = this.orchestrationFederationTimers.get(dispatch.dispatch_id)
           if (activeTimer) {
             clearInterval(activeTimer)
           }
           this.orchestrationFederationTimers.delete(dispatch.dispatch_id)
           this.orchestrationFederationWarnings.delete(dispatch.dispatch_id)
+          this.ensureTerminalHistoryRecovery(true)
           return
         }
         void this.syncOrchestrationFederatedDispatch(dispatch.dispatch_id).catch(() => undefined)
@@ -4766,7 +4768,11 @@ export class OrcaRuntimeService {
     this.ensureTerminalHistoryRecovery()
   }
 
-  private ensureTerminalHistoryRecovery(): void {
+  private ensureTerminalHistoryRecovery(restartTimer = false): void {
+    if (restartTimer && this.orchestrationTerminalHistoryRecoveryTimer) {
+      clearTimeout(this.orchestrationTerminalHistoryRecoveryTimer)
+      this.orchestrationTerminalHistoryRecoveryTimer = null
+    }
     if (
       this.orchestrationTerminalHistoryRecoveryTimer ||
       this.orchestrationTerminalHistoryRecoveryInFlight
@@ -4788,6 +4794,7 @@ export class OrcaRuntimeService {
   private async recoverNextTerminalHistoryAcknowledgment(generation: number): Promise<void> {
     const db = this.getOrchestrationDb()
     const nowMs = Date.now()
+    db.capFederatedTerminalRecoveryDeadlines(nowMs + FEDERATION_TERMINAL_RECOVERY_MAX_DELAY_MS)
     let historical = db.findNextTerminalFederatedDispatchPendingAcknowledgment(
       this.orchestrationTerminalRecoveryRowId,
       nowMs
@@ -4799,11 +4806,15 @@ export class OrcaRuntimeService {
     if (!historical) {
       const nextAt = db.getNextTerminalFederatedDispatchRecoveryAt()
       if (nextAt !== undefined) {
-        this.scheduleTerminalHistoryRecovery(generation, Math.max(0, nextAt - nowMs))
+        this.scheduleTerminalHistoryRecovery(
+          generation,
+          Math.min(FEDERATION_TERMINAL_RECOVERY_MAX_DELAY_MS, Math.max(0, nextAt - nowMs))
+        )
       }
       return
     }
     this.orchestrationTerminalRecoveryRowId = historical.rowId
+    const before = db.getFederatedDispatch(historical.dispatchId)
     const result = await this.syncOrchestrationFederatedDispatch(historical.dispatchId).then(
       () => ({ ok: true as const }),
       (error: unknown) => ({ ok: false as const, error })
@@ -4811,7 +4822,26 @@ export class OrcaRuntimeService {
     if (generation !== this.orchestrationFederationRelayGeneration) {
       return
     }
-    if (result.ok) {
+    const recovered = db.getFederatedDispatch(historical.dispatchId)
+    const madeProgress = Boolean(
+      before &&
+      recovered &&
+      (recovered.to_home_imported_sequence > before.to_home_imported_sequence ||
+        recovered.to_home_acknowledged_sequence > before.to_home_acknowledged_sequence)
+    )
+    if (
+      result.ok &&
+      recovered &&
+      recovered.to_home_acknowledged_sequence < recovered.to_home_imported_sequence &&
+      !madeProgress
+    ) {
+      db.recordFederatedTerminalRecoveryFailure({
+        dispatchId: historical.dispatchId,
+        errorCode: 'operation_unknown',
+        terminal: false,
+        nowMs: Date.now()
+      })
+    } else if (result.ok) {
       db.recordFederatedTerminalRecoverySuccess(historical.dispatchId, Date.now())
     } else {
       db.recordFederatedTerminalRecoveryFailure({
@@ -4826,7 +4856,10 @@ export class OrcaRuntimeService {
     }
     this.scheduleTerminalHistoryRecovery(
       generation,
-      Math.max(FEDERATION_TERMINAL_RECOVERY_BASE_DELAY_MS, nextAt - Date.now())
+      Math.min(
+        FEDERATION_TERMINAL_RECOVERY_MAX_DELAY_MS,
+        Math.max(FEDERATION_TERMINAL_RECOVERY_BASE_DELAY_MS, nextAt - Date.now())
+      )
     )
   }
 

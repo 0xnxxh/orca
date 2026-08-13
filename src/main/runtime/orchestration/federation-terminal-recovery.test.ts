@@ -206,6 +206,34 @@ describe('terminal federation acknowledgment recovery', () => {
     expect(attempts).toEqual([1_000])
   })
 
+  it('bounds a persisted retry deadline after the wall clock moves backward', async () => {
+    vi.useFakeTimers({ now: 100_000 })
+    const { db, dbPath } = createDb(true)
+    const dispatchId = createHistoricalDispatch(db, 'clock-rollback')
+    db.recordFederatedTerminalRecoveryFailure({
+      dispatchId,
+      errorCode: null,
+      terminal: false,
+      nowMs: Date.now()
+    })
+    db.close()
+    databases.splice(databases.indexOf(db), 1)
+    vi.setSystemTime(0)
+
+    const restartedDb = new OrchestrationDb(dbPath!)
+    databases.push(restartedDb)
+    const attempts: number[] = []
+    createRuntime(restartedDb, async () => {
+      attempts.push(Date.now())
+      throw new Error('transport unavailable')
+    })
+
+    await vi.advanceTimersByTimeAsync(29_999)
+    expect(attempts).toEqual([])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(attempts).toEqual([30_000])
+  })
+
   it('keeps unknown failures retryable with capped backoff', async () => {
     vi.useFakeTimers({ now: 0 })
     const { db } = createDb()
@@ -229,6 +257,89 @@ describe('terminal federation acknowledgment recovery', () => {
       terminal_ack_recovery_attempts: 7,
       terminal_ack_recovery_next_at_ms: 91_000
     })
+  })
+
+  it('backs off a fulfilled sync that makes no durable acknowledgment progress', async () => {
+    vi.useFakeTimers({ now: 0 })
+    const { db } = createDb()
+    const dispatchId = createHistoricalDispatch(db, 'no-progress')
+    const attempts: number[] = []
+    const { runtime } = createRuntime(db, async () => {
+      attempts.push(Date.now())
+    })
+
+    runtime.ensureOrchestrationFederationRelay()
+    await vi.advanceTimersByTimeAsync(7_000)
+
+    expect(attempts).toEqual([0, 1_000, 3_000, 7_000])
+    expect(terminalRecoveryState(db, dispatchId)).toMatchObject({
+      terminal_ack_recovery_state: 'retryable',
+      terminal_ack_recovery_attempts: 4,
+      terminal_ack_recovery_next_at_ms: 15_000,
+      terminal_ack_recovery_error_code: 'operation_unknown'
+    })
+  })
+
+  it('continues at base cadence while a fulfilled sync makes durable progress', async () => {
+    vi.useFakeTimers({ now: 0 })
+    const { db } = createDb()
+    const dispatchId = createHistoricalDispatch(db, 'progress')
+    db.setFederatedHomeImportSequence(dispatchId, 4)
+    const attempts: number[] = []
+    const { runtime } = createRuntime(db, async () => {
+      attempts.push(Date.now())
+      db.recordFederatedHomeAcknowledgment({
+        dispatchId,
+        remoteRuntimeEpoch: 'worker_epoch',
+        sequence: attempts.length
+      })
+    })
+
+    runtime.ensureOrchestrationFederationRelay()
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(attempts).toEqual([0, 1_000, 2_000, 3_000])
+    expect(terminalRecoveryState(db, dispatchId)).toMatchObject({
+      to_home_acknowledged_sequence: 4,
+      terminal_ack_recovery_state: 'pending',
+      terminal_ack_recovery_attempts: 0
+    })
+  })
+
+  it('hands an active dispatch to durable recovery after it becomes terminal', async () => {
+    vi.useFakeTimers({ now: 0 })
+    const { db } = createDb()
+    const dispatchId = createHistoricalDispatch(db, 'active-handoff')
+    db.recordWorkerStage({ dispatchId, stage: 'running', state: 'ready' })
+    const attempts: number[] = []
+    let rejectActive!: () => void
+    let active = true
+    createRuntime(db, async () => {
+      attempts.push(Date.now())
+      if (active) {
+        active = false
+        return new Promise<void>((_resolve, reject) => {
+          rejectActive = () => {
+            db.recordWorkerStage({ dispatchId, stage: 'completed', state: 'succeeded' })
+            reject(new Error('transport unavailable'))
+          }
+        })
+      }
+      throw new Error('transport unavailable')
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toEqual([0])
+    rejectActive()
+    await vi.advanceTimersByTimeAsync(4_000)
+
+    expect(attempts).toEqual([0, 1_000, 2_000, 4_000])
+    expect(terminalRecoveryState(db, dispatchId)).toMatchObject({
+      terminal_ack_recovery_state: 'retryable',
+      terminal_ack_recovery_attempts: 3,
+      terminal_ack_recovery_next_at_ms: 8_000
+    })
+    expect(vi.getTimerCount()).toBe(1)
   })
 
   it('terminalizes a permanent oldest row without blocking a later recoverable row', async () => {
@@ -291,8 +402,13 @@ describe('terminal federation acknowledgment recovery', () => {
       .mockResolvedValue(undefined)
     runtime.setOrchestrationDb({
       listActiveFederatedDispatches: () => [],
+      capFederatedTerminalRecoveryDeadlines: () => {},
       findNextTerminalFederatedDispatchPendingAcknowledgment: (afterRowId: number) =>
         candidates.find((candidate) => candidate.rowId > afterRowId),
+      getFederatedDispatch: () => ({
+        to_home_acknowledged_sequence: 1,
+        to_home_imported_sequence: 1
+      }),
       recordFederatedTerminalRecoverySuccess: (dispatchId: string) => {
         candidates.splice(
           candidates.findIndex((candidate) => candidate.dispatchId === dispatchId),
@@ -326,8 +442,13 @@ describe('terminal federation acknowledgment recovery', () => {
     const sync = vi.spyOn(runtime, 'syncOrchestrationFederatedDispatch').mockReturnValue(blocked)
     runtime.setOrchestrationDb({
       listActiveFederatedDispatches: () => [],
+      capFederatedTerminalRecoveryDeadlines: () => {},
       findNextTerminalFederatedDispatchPendingAcknowledgment: (afterRowId: number) =>
-        candidates.find((candidate) => candidate.rowId > afterRowId)
+        candidates.find((candidate) => candidate.rowId > afterRowId),
+      getFederatedDispatch: () => ({
+        to_home_acknowledged_sequence: 0,
+        to_home_imported_sequence: 1
+      })
     } as never)
     expect(sync).toHaveBeenCalledTimes(1)
     expect(vi.getTimerCount()).toBe(0)

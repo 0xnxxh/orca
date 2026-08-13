@@ -4630,6 +4630,18 @@ export class OrchestrationDb {
     return row.nextAt ?? undefined
   }
 
+  capFederatedTerminalRecoveryDeadlines(latestNextAtMs: number): void {
+    this.db
+      .prepare(
+        `UPDATE federated_dispatches
+         SET terminal_ack_recovery_next_at_ms = ?
+         WHERE terminal_ack_recovery_state != 'terminal'
+           AND to_home_acknowledged_sequence < to_home_imported_sequence
+           AND terminal_ack_recovery_next_at_ms > ?`
+      )
+      .run(latestNextAtMs, latestNextAtMs)
+  }
+
   recordFederatedTerminalRecoveryFailure(params: {
     dispatchId: string
     errorCode: string | null
@@ -4675,7 +4687,7 @@ export class OrchestrationDb {
       .run(nowMs + getFederationTerminalRecoveryDelayMs(1), dispatchId)
   }
 
-  isFederatedDispatchRelayEligible(dispatchId: string): boolean {
+  isFederatedDispatchActive(dispatchId: string): boolean {
     return Boolean(
       this.db
         .prepare(
@@ -4683,13 +4695,7 @@ export class OrchestrationDb {
            FROM federated_dispatches fd
            INNER JOIN worker_dispatches wd ON wd.dispatch_id = fd.dispatch_id
            WHERE fd.dispatch_id = ?
-             AND (
-               wd.state IN ('starting', 'ready', 'stopping', 'start_unknown', 'stop_unknown')
-               OR (
-                 fd.to_home_acknowledged_sequence < fd.to_home_imported_sequence
-                 AND fd.terminal_ack_recovery_state != 'terminal'
-               )
-             )`
+             AND wd.state IN ('starting', 'ready', 'stopping', 'start_unknown', 'stop_unknown')`
         )
         .get(dispatchId)
     )
