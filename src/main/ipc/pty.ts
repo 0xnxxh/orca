@@ -113,6 +113,7 @@ import {
 import { ensureLinuxTerminalOrcaCliShimDir } from '../cli/linux-terminal-orca-cli-shim'
 import {
   isLegacyTerminalShimPathEntry,
+  LEGACY_TERMINAL_SHIM_REMOTE_ENV_KEYS,
   stripLegacyTerminalShimEnv
 } from '../pty/legacy-terminal-shim-dir'
 import { registerPty, unregisterPty } from '../memory/pty-registry'
@@ -3562,6 +3563,23 @@ export function registerPtyHandlers(
     syntheticKillExitPtyIds.set(id, cleanupTimer)
   }
 
+  // Why: a rejected split retires its PTY while kill's shutdown is still in flight; kill's late
+  // synthetic exit must not land afterwards, or an SSH pane's code -1 would re-preserve the
+  // surface the retirement just removed. Timed like the duplicate window so a reused id is free.
+  const retiredRejectedPtyIds = new Map<string, NodeJS.Timeout>()
+
+  function rememberRetiredRejectedPty(id: string): void {
+    const existing = retiredRejectedPtyIds.get(id)
+    if (existing) {
+      clearTimeout(existing)
+    }
+    const cleanupTimer = setTimeout(() => {
+      retiredRejectedPtyIds.delete(id)
+    }, SYNTHETIC_KILL_EXIT_DUPLICATE_WINDOW_MS)
+    cleanupTimer.unref?.()
+    retiredRejectedPtyIds.set(id, cleanupTimer)
+  }
+
   function consumeSyntheticKillExit(id: string): boolean {
     const cleanupTimer = syntheticKillExitPtyIds.get(id)
     if (!cleanupTimer) {
@@ -4715,6 +4733,8 @@ export function registerPtyHandlers(
       spawnOptions.envToDelete = mergePtyEnvDeletions(
         authEnvToDelete,
         args.envToDelete ?? [],
+        // Why: disable old hosts without removing ORCA_REAL_* while their Windows shim remains on PATH.
+        isDaemonHostSpawn || args.connectionId ? LEGACY_TERMINAL_SHIM_REMOTE_ENV_KEYS : [],
         isDaemonHostSpawn ? getInheritedAgentHookEnvKeysToDelete(env) : [],
         // Why: ungated, unlike the agent-hook keys — the local provider and the relay host also spread their own process.env into every spawn.
         getInheritedClaudeSessionStampEnvKeysToDelete(env)
@@ -5469,19 +5489,23 @@ export function registerPtyHandlers(
         // Why: controller is synchronous, but keep ownership until async shutdown proves whether the provider emitted an exit.
         void shutdownProviderAndDetectExit(provider, ptyId, { immediate: false })
           .then((providerExitObserved) => {
+            const retired = retiredRejectedPtyIds.has(ptyId)
             const incarnationId = finishPtyShutdown(ptyId, connectionId, store)
-            if (!providerExitObserved) {
+            if (!providerExitObserved && !retired) {
               runtime?.onPtyExit(ptyId, -1, incarnationId)
               rememberSyntheticKillExit(ptyId)
               sendPtyExitToRenderer({ id: ptyId, code: -1 })
             }
           })
           .catch((err) => {
+            const retired = retiredRejectedPtyIds.has(ptyId)
             if (isPtyAlreadyGoneError(err)) {
               const incarnationId = finishPtyShutdown(ptyId, connectionId, store)
-              runtime?.onPtyExit(ptyId, -1, incarnationId)
-              rememberSyntheticKillExit(ptyId)
-              sendPtyExitToRenderer({ id: ptyId, code: -1 })
+              if (!retired) {
+                runtime?.onPtyExit(ptyId, -1, incarnationId)
+                rememberSyntheticKillExit(ptyId)
+                sendPtyExitToRenderer({ id: ptyId, code: -1 })
+              }
               return
             }
             console.warn(
@@ -5489,7 +5513,9 @@ export function registerPtyHandlers(
             )
             // Why: close runtime tails without clearing provider ownership, so
             // a retry can still target a PTY that survived the failed shutdown.
-            runtime?.onPtyExit(ptyId, -1, ptyIncarnationById.get(ptyId))
+            if (!retired) {
+              runtime?.onPtyExit(ptyId, -1, ptyIncarnationById.get(ptyId))
+            }
           })
         return true
       }
@@ -5500,11 +5526,30 @@ export function registerPtyHandlers(
           console.warn(
             `[pty] Failed to stop PTY ${ptyId}: ${err instanceof Error ? err.message : String(err)}`
           )
-          runtime?.onPtyExit(ptyId, -1, ptyIncarnationById.get(ptyId))
+          if (!retiredRejectedPtyIds.has(ptyId)) {
+            runtime?.onPtyExit(ptyId, -1, ptyIncarnationById.get(ptyId))
+          }
         })
         return true
       }
       return killWithCurrentProvider()
+    },
+    retireRejectedPty: (ptyId) => {
+      rememberRetiredRejectedPty(ptyId)
+      // Why: a completed stop already cleared provider state, tombstoned the lease and told the
+      // renderer; repeating that double-fires the exit IPC. The runtime still needs code 0 so an
+      // SSH pane retires for good instead of staying preserved by the stop's negative exit.
+      if (!ptyOwnership.has(ptyId)) {
+        runtime?.onPtyExit(ptyId, 0, ptyIncarnationById.get(ptyId))
+        return
+      }
+      let connectionId: string | null | undefined = ptyOwnership.get(ptyId)
+      const parsedSshId = connectionId === undefined ? parseAppSshPtyId(ptyId) : null
+      connectionId ??= parsedSshId?.connectionId
+      const incarnationId = finishPtyShutdown(ptyId, connectionId, store)
+      runtime?.onPtyExit(ptyId, 0, incarnationId)
+      rememberSyntheticKillExit(ptyId)
+      sendPtyExitToRenderer({ id: ptyId, code: 0 })
     },
     markReversibleStops: (ptyIds) => {
       for (const ptyId of ptyIds) {
@@ -6354,6 +6399,8 @@ export function registerPtyHandlers(
           envToDelete,
           args.envToDelete ?? [],
           agentTeamsEnvToDelete ?? [],
+          // Why: disable old hosts without removing ORCA_REAL_* while their Windows shim remains on PATH.
+          isDaemonHostSpawn || args.connectionId ? LEGACY_TERMINAL_SHIM_REMOTE_ENV_KEYS : [],
           isDaemonHostSpawn ? getInheritedAgentHookEnvKeysToDelete(spawnEnv) : [],
           getInheritedClaudeSessionStampEnvKeysToDelete(spawnEnv),
           skipCodexHomeEnv ? CODEX_HOME_ENV_KEYS : [],

@@ -115,6 +115,13 @@
       "port": "Port",
       "pr": "PR"
     },
+    "linearIssue": {
+      "createLabel": "Create worktree from Linear issue {{value0}}: {{value1}}",
+      "pendingLabel": "Create worktree from Linear issue {{value0}}",
+      "loadingLabel": "Loading Linear issue {{value0}}",
+      "createHint": "Create worktree from Linear issue",
+      "loadingHint": "Loading Linear issue…"
+    },
     "renderCapOverflow": "{{value0}} more — scroll or keep typing to narrow",
     "filter": {
       "emptyTitle": "No results match the active filter",
@@ -141,6 +148,10 @@
       "clearProjects": "Clear projects",
       "back": "Back",
       "ariaActive": "Filter: {{value0}} active."
+    },
+    "taskUrl": {
+      "loadingHint": "Loading {{value0}}…",
+      "createHint": "Create worktree from {{value0}}"
     }
   },
   "auto": {
@@ -12382,7 +12393,8 @@
             "searchJira": "Search Jira issues or paste an issue URL",
             "jiraMode": "Jira",
             "jiraSelectBindFailed": "Couldn’t link this Jira issue. Pick the matching site or reconnect Jira, then try again.",
-            "emoji": "Emoji"
+            "emoji": "Emoji",
+            "loadingLinearIssue": "Loading Linear issue…"
           },
           "ProjectCombobox": {
             "empty": "No projects match your search.",
@@ -15444,7 +15456,13 @@
       "clear": "Clear search",
       "results": "{{shown}} of {{total}} shown"
     },
-    "settingsLabel": "Agent Dashboard settings"
+    "settingsLabel": "Agent Dashboard settings",
+    "host": {
+      "sshNamed": "SSH host · {{host}}",
+      "ssh": "SSH host",
+      "remoteNamed": "Remote Orca host · {{host}}",
+      "remote": "Remote Orca host"
+    }
   },
   "dashboard": {
     "sidebar": {

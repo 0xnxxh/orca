@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project, Repo } from '../../../../shared/types'
+import { getSetupScriptPromptDismissalKey } from '../../lib/setup-script-prompt'
+import { getRepoHostIdentityForParts } from './repo-host-identity'
 import { createTestStore } from './store-test-helpers'
 
 // Why: every field here is load-bearing. A scalar-only repo reconciles even when the structural
 // compare is broken, which is exactly how an earlier version of this work shipped green and inert.
-// addedAt must stay non-zero: project-host-setup-projection falls back to `repo.addedAt || now`,
-// so a zero timestamp stamps Date.now() into every projection and nothing ever reconciles.
+// addedAt is non-zero on this fixture so the default case still exercises a real timestamp;
+// dedicated tests below cover addedAt 0 / omitted without restamping Date.now().
 const repo: Repo = {
   id: 'repo-1',
   path: '/repo-1',
@@ -50,8 +52,13 @@ function clone<T>(value: T): T {
   return structuredClone(value)
 }
 
-function mockRepos(...rows: readonly Repo[]): void {
+function mockRepos(...rows: readonly (Repo | Omit<Repo, 'addedAt'>)[]): void {
   reposList.mockImplementation(async () => rows.map(clone))
+}
+
+function omitAddedAt(row: Repo): Omit<Repo, 'addedAt'> {
+  const { addedAt: _addedAt, ...rest } = row
+  return rest
 }
 
 beforeEach(() => {
@@ -234,6 +241,62 @@ describe('repo catalog refresh identity', () => {
     expect(store.getState().projects).toHaveLength(2)
     expect(store.getState().projectHostSetups).toHaveLength(2)
   })
+
+  it('keeps catalog identity when repo.addedAt is 0', async () => {
+    mockRepos({ ...repo, addedAt: 0 })
+    const store = createTestStore()
+    await store.getState().fetchRepos()
+    const projects = store.getState().projects
+    const setups = store.getState().projectHostSetups
+    expect(projects).toHaveLength(1)
+    expect(setups).toHaveLength(1)
+    expect(projects[0]?.createdAt).toBe(0)
+    expect(setups[0]?.createdAt).toBe(0)
+
+    await store.getState().fetchRepos()
+
+    expect(store.getState().projects).toBe(projects)
+    expect(store.getState().projects[0]).toBe(projects[0])
+    expect(store.getState().projectHostSetups).toBe(setups)
+    expect(store.getState().projectHostSetups[0]).toBe(setups[0])
+  })
+
+  it('keeps catalog identity when repo.addedAt is omitted', async () => {
+    mockRepos(omitAddedAt(repo))
+    const store = createTestStore()
+    await store.getState().fetchRepos()
+    const projects = store.getState().projects
+    const setups = store.getState().projectHostSetups
+    expect(projects).toHaveLength(1)
+    expect(setups).toHaveLength(1)
+    expect(projects[0]?.createdAt).toBe(0)
+    expect(setups[0]?.createdAt).toBe(0)
+
+    await store.getState().fetchRepos()
+
+    expect(store.getState().projects).toBe(projects)
+    expect(store.getState().projects[0]).toBe(projects[0])
+    expect(store.getState().projectHostSetups).toBe(setups)
+    expect(store.getState().projectHostSetups[0]).toBe(setups[0])
+  })
+
+  it('lets a nested hookSettings change through when repo.addedAt is 0', async () => {
+    mockRepos({ ...repo, addedAt: 0 })
+    const store = createTestStore()
+    await store.getState().fetchRepos()
+    const setups = store.getState().projectHostSetups
+
+    mockRepos({
+      ...repo,
+      addedAt: 0,
+      hookSettings: { mode: 'override', scripts: { setup: '', archive: '' } }
+    })
+    await store.getState().fetchRepos()
+
+    expect(store.getState().projectHostSetups).not.toBe(setups)
+    expect(store.getState().projectHostSetups[0]).not.toBe(setups[0])
+    expect(store.getState().projectHostSetups[0]?.hookSettings?.mode).toBe('override')
+  })
 })
 
 describe('repo filter identity across catalog refreshes', () => {
@@ -279,5 +342,98 @@ describe('repo filter identity across catalog refreshes', () => {
     await store.getState().fetchRepos()
 
     expect(store.getState().filterRepoIds).toBe(first)
+  })
+})
+describe('setup-script dismissal identity across catalog refreshes', () => {
+  it('keeps the dismissal array when a refetch prunes nothing', async () => {
+    const store = createTestStore()
+    store.setState({
+      setupScriptPromptDismissedRepoIds: [
+        getSetupScriptPromptDismissalKey(getRepoHostIdentityForParts(repo.id, 'local'))
+      ]
+    })
+    const first = store.getState().setupScriptPromptDismissedRepoIds
+
+    await store.getState().fetchRepos()
+
+    // Why: SetupScriptPromptCard Object.is-subscribes to this array. A no-op
+    // catalog refresh must not allocate just because the helper rebuilt next.
+    expect(store.getState().setupScriptPromptDismissedRepoIds).toBe(first)
+  })
+})
+
+describe('SSH readoption catalog identity', () => {
+  it('keeps projects and host setups across a no-op recordSshRepoReadoptions([])', async () => {
+    const store = createTestStore()
+    await store.getState().fetchRepos()
+    const before = store.getState()
+    const projects = before.projects
+    const setups = before.projectHostSetups
+    expect(projects).toHaveLength(1)
+    expect(setups).toHaveLength(1)
+
+    store.getState().recordSshRepoReadoptions([])
+
+    // Why: the empty-in/empty-pending call must hand the state object back untouched, or the
+    // freshly allocated pendingSshRepoReadoptions alone would wake every store subscriber.
+    expect(store.getState()).toBe(before)
+    expect(store.getState().pendingSshRepoReadoptions).toBe(before.pendingSshRepoReadoptions)
+    expect(store.getState().projects).toBe(projects)
+    expect(store.getState().projects[0]).toBe(projects[0])
+    expect(store.getState().projectHostSetups).toBe(setups)
+    expect(store.getState().projectHostSetups[0]).toBe(setups[0])
+  })
+
+  it('keeps catalog identity for a pending-only readoption while pending updates', async () => {
+    const store = createTestStore()
+    await store.getState().fetchRepos()
+    const projects = store.getState().projects
+    const setups = store.getState().projectHostSetups
+    const readoption = { oldTargetId: 'ssh-old', newTargetId: 'ssh-new', repoIds: [repo.id] }
+
+    store.getState().recordSshRepoReadoptions([readoption])
+
+    expect(store.getState().pendingSshRepoReadoptions).toEqual([readoption])
+    expect(store.getState().projects).toBe(projects)
+    expect(store.getState().projects[0]).toBe(projects[0])
+    expect(store.getState().projectHostSetups).toBe(setups)
+    expect(store.getState().projectHostSetups[0]).toBe(setups[0])
+  })
+
+  it('replaces the moved setup on a real prune/rehome', async () => {
+    const oldHostRepo: Repo = {
+      ...repo,
+      connectionId: 'ssh-old',
+      executionHostId: 'ssh:ssh-old'
+    }
+    const newHostRepo: Repo = {
+      ...repo,
+      connectionId: 'ssh-new',
+      executionHostId: 'ssh:ssh-new'
+    }
+    mockRepos(oldHostRepo, newHostRepo)
+    const store = createTestStore()
+    await store.getState().fetchRepos()
+    const setups = store.getState().projectHostSetups
+    expect(setups).toHaveLength(2)
+    const oldSetup = setups.find((setup) => setup.hostId === 'ssh:ssh-old')
+    const newSetup = setups.find((setup) => setup.hostId === 'ssh:ssh-new')
+    expect(oldSetup).toBeDefined()
+    expect(newSetup).toBeDefined()
+
+    store
+      .getState()
+      .recordSshRepoReadoptions([
+        { oldTargetId: 'ssh-old', newTargetId: 'ssh-new', repoIds: [repo.id] }
+      ])
+
+    const next = store.getState().projectHostSetups
+    expect(next).not.toBe(setups)
+    expect(next).toHaveLength(1)
+    expect(next[0]).not.toBe(oldSetup)
+    expect(next[0]?.hostId).toBe('ssh:ssh-new')
+    expect(store.getState().repos).toHaveLength(1)
+    expect(store.getState().repos[0]?.executionHostId).toBe('ssh:ssh-new')
+    expect(store.getState().pendingSshRepoReadoptions).toEqual([])
   })
 })
