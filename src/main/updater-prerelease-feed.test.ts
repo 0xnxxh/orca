@@ -281,7 +281,13 @@ describe('fetchNewerReleaseTag', () => {
   it('returns a bounded fallback candidate after the newest newer tag', async () => {
     respondWithAtom(['v1.3.51-rc.7', 'v1.3.51-rc.6', 'v1.3.51-rc.5'])
     const { fetchNewerReleaseTags } = await import('./updater-prerelease-feed')
-    expect(await fetchNewerReleaseTags('1.3.51-rc.6', 2)).toEqual(['v1.3.51-rc.7', 'v1.3.51-rc.6'])
+    expect(await fetchNewerReleaseTags('1.3.51-rc.5', 2)).toEqual(['v1.3.51-rc.7', 'v1.3.51-rc.6'])
+  })
+
+  it('never offers the installed version as a fallback candidate', async () => {
+    respondWithAtom(['v1.3.51-rc.7', 'v1.3.51-rc.6', 'v1.3.51-rc.5'])
+    const { fetchNewerReleaseTags } = await import('./updater-prerelease-feed')
+    expect(await fetchNewerReleaseTags('1.3.51-rc.6', 2)).toEqual(['v1.3.51-rc.7'])
   })
 
   it('reports not-ready with last-good when newer platform updater manifests are missing', async () => {
