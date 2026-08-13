@@ -1,7 +1,7 @@
 import {
   createShellReadyScanState,
   drainShellReadyHeldBytes,
-  scanForShellReady,
+  scanForShellReadyBoundary,
   type ShellReadyScanState
 } from './shell-ready-marker-scanner'
 import {
@@ -34,30 +34,30 @@ export function scanShellStartupOutput(
   state: ShellStartupOutputScanState,
   data: string
 ): ShellStartupOutputScanResult {
+  const readiness = scanForShellReadyBoundary(state.ready, data)
+  const postMarkerOutputIndex = readiness.postMarkerOutputIndex ?? readiness.output.length
+  const identityInput = readiness.output.slice(0, postMarkerOutputIndex)
   let shellPid: number | null = null
+  let output = identityInput
   if (state.identity) {
-    const identity = scanForShellStartupIdentity(state.identity, data)
-    data = identity.output
+    const identity = scanForShellStartupIdentity(state.identity, identityInput)
+    output = identity.output
     shellPid = identity.shellPid
     if (shellPid) {
       state.identity = null
     }
   }
 
-  const readiness = scanForShellReady(state.ready, data)
-  let output = readiness.output
-  let postMarkerBytesObserved = readiness.postMarkerBytesObserved
   if (readiness.matched && state.identity) {
-    const heldOutput = drainShellStartupIdentityHeldBytes(state.identity)
-    output += heldOutput
-    postMarkerBytesObserved ||= heldOutput.length > 0
+    output += drainShellStartupIdentityHeldBytes(state.identity)
     state.identity = null
   }
+  output += readiness.output.slice(postMarkerOutputIndex)
   return {
     output,
     shellPid,
     ready: readiness.matched,
-    postMarkerBytesObserved
+    postMarkerBytesObserved: readiness.postMarkerBytesObserved
   }
 }
 
@@ -65,7 +65,7 @@ export function drainShellStartupOutputScanState(state: ShellStartupOutputScanSt
   let output = state.identity ? drainShellStartupIdentityHeldBytes(state.identity) : ''
   state.identity = null
   if (output) {
-    output = scanForShellReady(state.ready, output).output
+    output = scanForShellReadyBoundary(state.ready, output).output
   }
   return output + drainShellReadyHeldBytes(state.ready)
 }
