@@ -39,13 +39,16 @@ export function registerWorkspaceCleanupHandlers(
   ipcMain.handle(
     'workspaceCleanup:scan',
     async (event, args?: WorkspaceCleanupScanArgs): Promise<WorkspaceCleanupScanResult> => {
-      const result = await scanWorkspaceCleanup(store, args ?? {}, {
-        onProgress: args?.scanId
+      const scanArgs = args ?? {}
+      const result = await scanWorkspaceCleanup(store, scanArgs, {
+        onProgress: scanArgs.scanId
           ? (progress) => event.sender.send('workspaceCleanup:scanProgress', progress)
           : undefined
       })
-      // Fire-and-forget: snapshot persistence must never delay or fail the scan reply.
-      void persistWorkspaceCleanupScanResult(snapshotDirectory, args ?? {}, result)
+      // Focused scans are live-only; persisting each rewrites and fsyncs the fleet snapshot.
+      if (!scanArgs.worktreeId) {
+        void persistWorkspaceCleanupScanResult(snapshotDirectory, scanArgs, result)
+      }
       return result
     }
   )

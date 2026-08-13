@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import path from 'node:path'
 import type { Store } from '../persistence'
 import type * as RepoWorktreesModule from '../repo-worktrees'
 import type { GitStatusResult, GitWorktreeInfo, Repo, WorktreeMeta } from '../../shared/types'
@@ -271,6 +272,31 @@ describe('workspace cleanup broad scan opt-in', () => {
     ).toMatchObject({ clean: true, checkedAt: expect.any(Number) })
   })
 
+  it('does not read activity files for rows already known to be recent', async () => {
+    const recentWorktrees = ['/repo-recent-a', '/repo-recent-b'].map(
+      (worktreePath, index): GitWorktreeInfo => ({
+        path: worktreePath,
+        head: `recent-${index}`,
+        branch: `refs/heads/recent-${index}`,
+        isBare: false,
+        isMainWorktree: false
+      })
+    )
+    listRepoWorktreesMock.mockResolvedValue(recentWorktrees)
+    const recentMeta = makeWorktreeMeta({ lastActivityAt: NOW - 2 * DAY_MS })
+    const store = {
+      ...makeStore(),
+      getWorktreeMeta: () => recentMeta
+    } as unknown as Store
+
+    const result = await scanWorkspaceCleanup(store, { includeAllWorkspaces: true })
+
+    expect(result.candidates).toHaveLength(recentWorktrees.length)
+    expect(readFileMock).not.toHaveBeenCalled()
+    expect(lstatMock).not.toHaveBeenCalled()
+    expect(getStatusMock).not.toHaveBeenCalled()
+  })
+
   it('batches fleet progress instead of emitting one IPC payload per row', async () => {
     const worktrees = [
       GIT_WORKTREES[0],
@@ -318,6 +344,8 @@ describe('workspace cleanup broad scan opt-in', () => {
     })
 
     expect(getStatusMock).toHaveBeenCalledTimes(1)
+    expect(lstatMock).toHaveBeenCalledWith('/repo-recent')
+    expect(lstatMock).toHaveBeenCalledWith(path.join('/repo-recent', '.git'))
     expect(result.candidates).toHaveLength(1)
     expect(result.candidates[0]).toMatchObject({
       worktreeId: 'repo-1::/repo-recent',

@@ -52,6 +52,17 @@ describe('workspace cleanup snapshot IPC', () => {
     expect(persistScanResultMock).toHaveBeenCalledWith('/profile-a', args, result)
   })
 
+  it('does not rewrite the fleet snapshot for a focused scan', async () => {
+    registerWorkspaceCleanupHandlers(makeEmptyStore())
+    const handler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'workspaceCleanup:scan')?.[1]
+
+    await handler?.({ sender: { send: vi.fn() } } as never, { worktreeId: 'repo-1::/repo-feature' })
+
+    expect(persistScanResultMock).not.toHaveBeenCalled()
+  })
+
   it('serves the cached scan snapshot through getCachedScan', async () => {
     const snapshot = { scannedAt: NOW, candidates: [], errors: [] }
     readScanSnapshotMock.mockResolvedValue(snapshot)

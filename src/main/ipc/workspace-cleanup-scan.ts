@@ -169,11 +169,17 @@ async function scanRepoWorkspaces(
     async (worktree) => {
       // Why: externally-created worktrees can miss Orca activity stamps; local
       // filesystem metadata is a conservative guard before suggesting deletion.
-      const worktreeWithActivity = activityStatsUnavailable
-        ? resolvePersistedWorkspaceCleanupActivityWorktree(worktree)
-        : await resolveCleanupActivityWithTimeout(repo, worktree, () => {
-            activityStatsUnavailable = true
-          })
+      const persistedActivityWorktree = resolvePersistedWorkspaceCleanupActivityWorktree(worktree)
+      const persistedActivityIsRecent = !isWorkspaceInactiveForCleanup(
+        persistedActivityWorktree,
+        scannedAt
+      )
+      const worktreeWithActivity =
+        activityStatsUnavailable || (!targetWorktreeId && persistedActivityIsRecent)
+          ? persistedActivityWorktree
+          : await resolveCleanupActivityWithTimeout(repo, worktree, () => {
+              activityStatsUnavailable = true
+            })
       const isInactive = isWorkspaceInactiveForCleanup(worktreeWithActivity, scannedAt)
       if (!targetWorktreeId && !includeAllWorkspaces && !isInactive) {
         return null
