@@ -84,7 +84,10 @@ export async function withCookieClearLock<T>(owner: object, run: () => Promise<T
   }
 }
 
-function removableCookieEntries(cookies: readonly Cookie[]): { cookie: Cookie; url: string }[] {
+function removableCookieEntries(
+  cookies: readonly Cookie[],
+  requireAddressable = false
+): { cookie: Cookie; url: string }[] {
   const removable: { cookie: Cookie; url: string }[] = []
   for (const cookie of cookies) {
     if (isNonTransplantableCookieDomain(cookie.domain ?? '')) {
@@ -93,6 +96,9 @@ function removableCookieEntries(cookies: readonly Cookie[]): { cookie: Cookie; u
     const domain = cookie.domain ? normalizeCookieDomain(cookie.domain) : null
     const url = domain ? cookieRemovalUrl(cookie, domain) : null
     if (!url) {
+      if (requireAddressable) {
+        throw new Error('Could not clear existing cookies; the session was left unchanged')
+      }
       continue
     }
     removable.push({ cookie, url })
@@ -154,7 +160,7 @@ export async function removeTransplantableCookies(
       return
     }
 
-    const initialRemovable = removableCookieEntries(initialCookies)
+    const initialRemovable = removableCookieEntries(initialCookies, true)
     const identities = await targetSession.snapshotClearIdentities(initialRemovable)
     assertClearIdentitiesCoverRemovable(initialRemovable, identities)
 

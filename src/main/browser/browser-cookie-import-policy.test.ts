@@ -289,14 +289,16 @@ describe('removeTransplantableCookies', () => {
     expect(remove).not.toHaveBeenCalled()
   })
 
-  it('bulk clears cookies the per-cookie path could never address', async () => {
-    const { session, clearData } = clearSession([
+  it('does not mutate when a transplantable cookie cannot be represented for rollback', async () => {
+    const { session, clearData, remove, restoreClearIdentities } = clearSession([
       { ...cookie('.example.com', 'session'), domain: '' }
     ])
 
-    await removeTransplantableCookies(session)
+    await expect(removeTransplantableCookies(session)).rejects.toThrow(/session was left unchanged/)
 
-    expect(clearData).toHaveBeenCalledOnce()
+    expect(clearData).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+    expect(restoreClearIdentities).not.toHaveBeenCalled()
   })
 
   it('falls back to per-cookie removal when the bulk clear rejects', async () => {
