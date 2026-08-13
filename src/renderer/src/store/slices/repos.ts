@@ -672,10 +672,13 @@ function getMergedSourceRepoIdsForHostRefresh(
   reposById: ReadonlyMap<string, readonly Repo[]>,
   hostId: string
 ): string[] {
+  // Why: current-first keeps the order independent of which host refreshed. Prefixing the
+  // cross-host remainder made it a function of hostId, so a cross-host project's ids oscillated
+  // between refreshes and the projects reconcile could never reuse the row.
   return [
     ...new Set([
-      ...getSourceRepoIdsOutsideHost(previous, reposById, hostId),
-      ...getCurrentSourceRepoIds(current, new Set(reposById.keys()))
+      ...getCurrentSourceRepoIds(current, new Set(reposById.keys())),
+      ...getSourceRepoIdsOutsideHost(previous, reposById, hostId)
     ])
   ]
 }
