@@ -8,6 +8,23 @@
  * the existing seq-guarded machinery. Any renderer party that still needs raw
  * bytes (dispatcher sidecars) registers delivery
  * interest, which suppresses the gate for that PTY.
+ *
+ * DEFAULTED OFF (STA-4042). Dropping renderer-bound bytes makes the renderer's
+ * xterm a second emulator fed a different stream than the model, and a gap
+ * strands whatever state it interrupted — a swallowed `ESC[22m` leaves bold on
+ * every later cell. The setting survives only as an emergency rollback and has
+ * no settings UI, so it is an internal escape hatch, not a user choice.
+ *
+ * REMOVAL CONDITION: delete this module and its call sites once
+ * `hiddenDeliveryDroppedChars` (already reported via
+ * getHiddenRendererPtyDeliveryDebug, surfaced in the freeze diagnostics) has
+ * stayed at zero across released versions — non-zero can only mean a profile
+ * re-enabled the switch, since the default no longer drops. Deleting it also
+ * has to unpick the query-authority coupling in
+ * terminal-model-query-authority.ts, which ANDs this switch. Do NOT delete the
+ * general restore pipeline with it: renderer backlog overflow and main's
+ * pending-delivery cap discard bytes independently of this gate and still need
+ * recovery.
  */
 import type { GlobalSettings } from '../../shared/types'
 
