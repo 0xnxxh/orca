@@ -267,7 +267,9 @@ export function activateAndRevealFolderWorkspace(
     !opts?.startup && workspaceHasSleepingAgentSessions(state, workspaceKey)
   if (shouldGateAutoResume) {
     void gateWorktreeAgentActivation(workspaceKey).then(() => {
-      ensureFolderWorkspaceInitialTerminal(folderWorkspace)
+      if (useAppStore.getState().activeWorktreeId === workspaceKey) {
+        ensureFolderWorkspaceInitialTerminal(folderWorkspace)
+      }
     })
   }
   const primaryTabId = shouldGateAutoResume
@@ -351,7 +353,10 @@ export function activateAndRevealWorktree(
     !hasActivationWork && workspaceHasSleepingAgentSessions(postActivationState, worktreeId)
   if (shouldGateAutoResume) {
     void gateWorktreeAgentActivation(worktreeId).then(() => {
-      ensureWorktreeHasInitialTerminal(useAppStore.getState(), worktreeId)
+      const currentState = useAppStore.getState()
+      if (currentState.activeWorktreeId === worktreeId) {
+        ensureWorktreeHasInitialTerminal(currentState, worktreeId)
+      }
     })
   }
 

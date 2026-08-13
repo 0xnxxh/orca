@@ -310,7 +310,7 @@ beforeEach(async () => {
         resolveWorkspacePath: async (workspaceId) => `/repos/${workspaceId}`,
         resolveCodexCommand: () => '/usr/local/bin/codex',
         resolveLaunchEnv: async () => ({
-          CODEX_LB_API_KEY: 'shell-exported',
+          EXAMPLE_GATEWAY_TOKEN: 'shell-exported',
           CODEX_HOME: '/shell/home'
         }),
         openCodexConnection: codex.openConnection
@@ -393,7 +393,7 @@ describe('a structured codex session over agentSession.*', () => {
     )
     expect(created.snapshot.items).toEqual([])
     expect(codex.live().launch.env).toMatchObject({
-      CODEX_LB_API_KEY: 'shell-exported',
+      EXAMPLE_GATEWAY_TOKEN: 'shell-exported',
       CODEX_HOME: '/home/dev/.codex'
     })
     const stream = await subscribe('sub-first-send')

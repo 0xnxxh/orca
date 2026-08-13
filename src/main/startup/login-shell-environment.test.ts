@@ -40,12 +40,12 @@ describe('resolveLoginShellEnvironment', () => {
   it('returns variables exported by the profile-loading shell', async () => {
     const spawner = vi.fn(async () => ({
       ...process.env,
-      CODEX_LB_API_KEY: 'shell-exported'
+      EXAMPLE_GATEWAY_TOKEN: 'shell-exported'
     }))
 
     await expect(
       resolveLoginShellEnvironment({ shellOverride: '/bin/zsh', spawner })
-    ).resolves.toMatchObject({ CODEX_LB_API_KEY: 'shell-exported' })
+    ).resolves.toMatchObject({ EXAMPLE_GATEWAY_TOKEN: 'shell-exported' })
   })
 
   it.runIf(process.platform !== 'win32')(

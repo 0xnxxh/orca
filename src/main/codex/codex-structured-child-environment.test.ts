@@ -12,12 +12,12 @@ describe('buildCodexStructuredChildEnvironment', () => {
           cwd: '/worktree',
           codexHome: '/pinned/home',
           resumeThreadId: null,
-          env: { CODEX_LB_API_KEY: 'shell-exported', CODEX_HOME: '/shell/home' }
+          env: { EXAMPLE_GATEWAY_TOKEN: 'shell-exported', CODEX_HOME: '/shell/home' }
         },
         'spawn-token'
       )
     ).toEqual({
-      CODEX_LB_API_KEY: 'shell-exported',
+      EXAMPLE_GATEWAY_TOKEN: 'shell-exported',
       CODEX_HOME: '/pinned/home',
       [CODEX_SPAWN_TOKEN_ENV]: 'spawn-token'
     })
