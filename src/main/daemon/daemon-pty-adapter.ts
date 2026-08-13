@@ -162,9 +162,6 @@ const MAX_CONCURRENT_CHECKPOINTS = 4
 // DAEMON_RESTORE_SCROLLBACK_ROWS through the headless emulator in well under a second, so this
 // only fires when the write path is genuinely wedged (STA-4173).
 const DURABLE_HISTORY_OVERLAY_DEADLINE_MS = 5_000
-// Why the background pass gets a longer one: blowing it only defers a still-dirty session to the
-// next tick, so the budget should sit above any slow-but-working disk rather than churn it.
-const PERIODIC_CHECKPOINT_DEADLINE_MS = 15_000
 
 // Why far below the client's 30s default: a wedged daemon holds its socket open, so an unbounded
 // probe stalls a pane mount for the full request timeout — and the owner fan-out waits on every
@@ -258,7 +255,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // Why per session: exclusivity protects one session directory's tmp-write/rename, so ordering
   // every session behind one tail let a single stalled checkpoint block all reattaches (STA-4173).
   private checkpointQueue = new CheckpointSessionQueue()
-  private overlayCheckpointAdmissions = 0
+  private nonFinalCheckpointAdmissions = 0
   private overlayDeadlineWarnedSessionIds = new Set<string>()
   private periodicDeadlineWarnedSessionIds = new Set<string>()
   private keepHistoryShutdowns = new Set<Promise<void>>()
@@ -277,6 +274,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // Why: a daemon surviving a socket drop can hold a pause whose resume died with the connection; owe a resume on reconnect (daemon's 5s failsafe covers the gap).
   private producerResumesOwedOnReconnect = new Set<string>()
   private static CHECKPOINT_INTERVAL_MS = 5_000
+  // Why the background pass gets a longer deadline: deferral keeps the session dirty, so this
+  // should sit above slow-but-working disk rather than churn it.
+  private static PERIODIC_CHECKPOINT_DEADLINE_MS = 15_000
   // Why: streaming sessions re-trigger full multi-MB checkpoints every tick; this cooldown caps cap/overflow snapshots per session (~9x less writes, bounded cold-crash staleness).
   private static FULL_CHECKPOINT_COOLDOWN_MS = 45_000
   private lastFullCheckpointAt = new Map<string, number>()
@@ -1335,10 +1335,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
     // Why reserve before enqueueing: pane mounts can arrive in one turn, before any compact starts.
     // Count abandoned waits until their writes settle so a relaunch cannot fan out unbounded work.
-    if (this.overlayCheckpointAdmissions >= MAX_CONCURRENT_CHECKPOINTS) {
+    if (!this.tryAdmitNonFinalCheckpoint()) {
       return liveSnapshot
     }
-    this.overlayCheckpointAdmissions++
     // Why per session with a deadline: a reattach is a user click, so it must wait
     // on this session's own compact and nothing else. A blown deadline does not
     // cancel that compact — it keeps running and still commits — so the fallback
@@ -1349,19 +1348,33 @@ export class DaemonPtyAdapter implements IPtyProvider {
         try {
           return await this.compactDurableRestoreSnapshot(sessionId, liveSnapshot, scrollbackRows)
         } finally {
-          this.overlayCheckpointAdmissions--
+          this.releaseNonFinalCheckpointAdmission()
           this.overlayDeadlineWarnedSessionIds.delete(sessionId)
         }
       },
       DURABLE_HISTORY_OVERLAY_DEADLINE_MS,
       liveSnapshot,
-      () => {
-        if (!this.overlayDeadlineWarnedSessionIds.has(sessionId)) {
-          this.overlayDeadlineWarnedSessionIds.add(sessionId)
-          console.warn('[history] durable snapshot overlay deadline exceeded:', sessionId)
+      {
+        onDeadline: () => {
+          if (!this.overlayDeadlineWarnedSessionIds.has(sessionId)) {
+            this.overlayDeadlineWarnedSessionIds.add(sessionId)
+            console.warn('[history] durable snapshot overlay deadline exceeded:', sessionId)
+          }
         }
       }
     )
+  }
+
+  private tryAdmitNonFinalCheckpoint(): boolean {
+    if (this.nonFinalCheckpointAdmissions >= MAX_CONCURRENT_CHECKPOINTS) {
+      return false
+    }
+    this.nonFinalCheckpointAdmissions++
+    return true
+  }
+
+  private releaseNonFinalCheckpointAdmission(): void {
+    this.nonFinalCheckpointAdmissions--
   }
 
   private async compactDurableRestoreSnapshot(
@@ -2187,32 +2200,40 @@ export class DaemonPtyAdapter implements IPtyProvider {
     sessionId: string,
     opts: { final: boolean; teardown: boolean }
   ): Promise<'done' | 'deferred'> {
+    // Why final waits without a deadline: sleep/disconnect needs the last snapshot on disk, and
+    // deferring there would silently drop what the user left on screen rather than delay it.
+    if (opts.final) {
+      return await this.checkpointQueue.run(sessionId, () =>
+        this.writeSessionCheckpoint(sessionId, opts)
+      )
+    }
+    // Why 'deferred' is safe: the session stays dirty, so the operation that beat us to the queue
+    // still commits and the next tick retries this one. Nothing on disk is discarded.
+    if (this.checkpointQueue.isSaturated(sessionId) || !this.tryAdmitNonFinalCheckpoint()) {
+      return 'deferred'
+    }
     const run = async (): Promise<'done' | 'deferred'> => {
       try {
         return await this.writeSessionCheckpoint(sessionId, opts)
       } finally {
+        this.releaseNonFinalCheckpointAdmission()
         this.periodicDeadlineWarnedSessionIds.delete(sessionId)
       }
-    }
-    // Why final waits without a deadline: sleep/disconnect needs the last snapshot on disk, and
-    // deferring there would silently drop what the user left on screen rather than delay it.
-    if (opts.final) {
-      return await this.checkpointQueue.run(sessionId, run)
-    }
-    // Why 'deferred' is safe: the session stays dirty, so the operation that beat us to the queue
-    // still commits and the next tick retries this one. Nothing on disk is discarded.
-    if (this.checkpointQueue.isSaturated(sessionId)) {
-      return 'deferred'
     }
     return await this.checkpointQueue.runWithDeadline(
       sessionId,
       run,
-      PERIODIC_CHECKPOINT_DEADLINE_MS,
+      DaemonPtyAdapter.PERIODIC_CHECKPOINT_DEADLINE_MS,
       'deferred',
-      () => {
-        if (!this.periodicDeadlineWarnedSessionIds.has(sessionId)) {
-          this.periodicDeadlineWarnedSessionIds.add(sessionId)
-          console.warn('[history] periodic checkpoint deadline exceeded:', sessionId)
+      {
+        onDeadline: () => {
+          if (!this.periodicDeadlineWarnedSessionIds.has(sessionId)) {
+            this.periodicDeadlineWarnedSessionIds.add(sessionId)
+            console.warn('[history] periodic checkpoint deadline exceeded:', sessionId)
+          }
+        },
+        onAbandonedRejection: (error) => {
+          console.warn('[history] checkpoint failed:', sessionId, error)
         }
       }
     )

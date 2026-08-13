@@ -4,12 +4,18 @@ import {
   CheckpointSessionQueue
 } from './daemon-checkpoint-session-queue'
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (error: unknown) => void
+} {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((res) => {
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
     resolve = res
+    reject = rej
   })
-  return { promise, resolve }
+  return { promise, reject, resolve }
 }
 
 describe('CheckpointSessionQueue', () => {
@@ -68,7 +74,7 @@ describe('CheckpointSessionQueue', () => {
       },
       5,
       'live',
-      onDeadlineFired
+      { onDeadline: onDeadlineFired }
     )
 
     expect(outcome).toBe('live')
@@ -92,10 +98,33 @@ describe('CheckpointSessionQueue', () => {
         },
         50,
         'timed-out',
-        onDeadlineFired
+        { onDeadline: onDeadlineFired }
       )
     ).rejects.toThrow('daemon unavailable')
     expect(onDeadlineFired).not.toHaveBeenCalled()
+  })
+
+  it('reports an operation rejection that arrives after the deadline', async () => {
+    const queue = new CheckpointSessionQueue()
+    const stalled = deferred<void>()
+    const onAbandonedRejection = vi.fn()
+
+    await expect(
+      queue.runWithDeadline<void | 'timed-out'>(
+        'failed-late',
+        async () => await stalled.promise,
+        5,
+        'timed-out',
+        { onAbandonedRejection }
+      )
+    ).resolves.toBe('timed-out')
+
+    stalled.reject(new Error('late failure'))
+    await vi.waitFor(() =>
+      expect(onAbandonedRejection).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'late failure' })
+      )
+    )
   })
 
   it('keeps a later waiter behind an abandoned operation', async () => {
