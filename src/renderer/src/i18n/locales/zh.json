@@ -5051,14 +5051,7 @@
         },
         "NewExternalWorktreesInboxLine": {
           "9f2d4c8b17": "永久隐藏 {{value0}} 的外部工作树",
-          "d9f7b2a14c": "折叠 {{value0}} 的外部创建的新工作树",
-          "e2c4a8d91f": "展开 {{value0}} 的外部创建的新工作树",
-          "7c4e9b2a81": "外部创建的新工作树",
           "5e1b8d3f62": "永久隐藏外部工作树",
-          "4d7a1c9e53": "这些工作树是在 Orca 外部创建的。",
-          "8b3f2e1d74": "导入",
-          "1c9e7a4b28": "保持隐藏",
-          "6f2d8c1e95": "全部导入",
           "c3e8a1f4b2": "不再显示"
         },
         "newExternalWorktreesInboxActions": {
