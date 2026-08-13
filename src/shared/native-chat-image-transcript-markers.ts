@@ -56,27 +56,29 @@ export function normalizedNativeChatUserMessageText(message: NativeChatMessage):
 function stripImagePromptMarkersFromTextBlocks(
   blocks: readonly NativeChatBlock[]
 ): NativeChatBlock[] {
-  let changed = false
   let sawText = false
-  const next: NativeChatBlock[] = []
-  for (const block of blocks) {
+  let next: NativeChatBlock[] | null = null
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index]!
     if (!isTextBlock(block)) {
-      next.push(block)
+      next?.push(block)
       continue
     }
     const isFirstText = !sawText
     sawText = true
     const text = stripImagePromptMarker(block.text)
     if (!text.trim() && (text !== block.text || isFirstText)) {
-      changed = true
-    } else if (text === block.text) {
-      next.push(block)
-    } else {
-      changed = true
-      next.push({ ...block, text })
+      next ??= blocks.slice(0, index)
+      continue
     }
+    if (text !== block.text) {
+      next ??= blocks.slice(0, index)
+      next.push({ ...block, text })
+      continue
+    }
+    next?.push(block)
   }
-  return changed ? next : (blocks as NativeChatBlock[])
+  return next ?? (blocks as NativeChatBlock[])
 }
 
 export function hasImagePromptMarker(message: NativeChatMessage): boolean {
