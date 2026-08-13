@@ -82,8 +82,19 @@ describe('worktree.ps catalog snapshots', () => {
       () => {},
       { clientCapabilities: [WORKTREE_VISIBILITY_SOURCE_DEFAULTS_RUNTIME_CAPABILITY] }
     )
+    await dispatcher.dispatchStreaming(
+      {
+        id: 'mobile',
+        authToken: 'token',
+        method: 'worktree.ps',
+        params: { limit: 10_000, supportsWorktreeVisibilitySourceDefaults: true }
+      },
+      () => {},
+      { clientCapabilities: [] }
+    )
 
     expect(runtime.getWorktreePs).toHaveBeenNthCalledWith(1, 10_000, false)
     expect(runtime.getWorktreePs).toHaveBeenNthCalledWith(2, 10_000, true)
+    expect(runtime.getWorktreePs).toHaveBeenNthCalledWith(3, 10_000, true)
   })
 })
