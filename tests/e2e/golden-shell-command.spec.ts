@@ -1,3 +1,4 @@
+import { stripAnsiEscapeSequences } from '../../src/shared/ansi-escape-sequences'
 import { test, expect } from './helpers/orca-app'
 import { ensureTerminalVisible } from './helpers/store'
 import {
@@ -63,9 +64,15 @@ test('seeded project terminal runs a typed shell command @golden', async ({ orca
     let expandedPath = ''
     await expect
       .poll(async () => {
-        const lines = (await getTerminalContent(orcaPage, 8_000)).split(/\r?\n/)
-        const beginLine = lines.findIndex((line) => line.includes(begin) && !line.includes(end))
-        expandedPath = beginLine !== -1 ? (lines[beginLine + 1]?.trim() ?? '') : ''
+        // Why: the echoed command can wrap or be clipped by the buffer tail, so only a
+        // line that is exactly the marker — bracketed by both markers — is real output.
+        const lines = stripAnsiEscapeSequences(await getTerminalContent(orcaPage, 8_000))
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+        const beginLine = lines.lastIndexOf(begin)
+        const endLine = beginLine === -1 ? -1 : lines.indexOf(end, beginLine + 1)
+        expandedPath =
+          endLine === -1 ? '' : (lines.slice(beginLine + 1, endLine).find(Boolean) ?? '')
         return expandedPath
       })
       .not.toBe('')
