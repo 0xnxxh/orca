@@ -5296,7 +5296,10 @@ describe('registerPtyHandlers', () => {
             paneKey?: string
             tabId?: string
           }) => ({
-            id: 'ssh-pty'
+            id: 'ssh-pty',
+            // The host attests the shell's identity at spawn; the lease has to carry it or the
+            // reconnect fence has nothing to compare and attaches by pty id alone.
+            incarnationId: 'inc-host-ssh-pty'
           })
         )
         const store = {
@@ -5383,6 +5386,9 @@ describe('registerPtyHandlers', () => {
             worktreeId: 'wt-1',
             tabId: 'tab-1',
             leafId,
+            // Without this the field exists, loads and is read — and is never written, so the
+            // reconnect fence silently permits everything while every other clause stays green.
+            incarnationId: 'inc-host-ssh-pty',
             state: 'attached'
           })
         )
@@ -5393,7 +5399,8 @@ describe('registerPtyHandlers', () => {
           worktreeId: 'wt-1',
           tabId: 'tab-1',
           leafId,
-          ptyId: 'ssh-pty'
+          ptyId: 'ssh-pty',
+          incarnationId: 'inc-host-ssh-pty'
         })
         expect(store.persistPtyBinding.mock.calls.at(-1)).toHaveLength(1)
 

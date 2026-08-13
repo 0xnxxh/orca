@@ -88,6 +88,7 @@ import {
   isSshPtyIdentityMismatchError,
   isSshPtyNotFoundError
 } from '../providers/ssh-pty-errors'
+import { isRelayAttestedPtyIncarnationId } from '../../shared/pty-incarnation'
 import { parseAppSshPtyId, toAppSshPtyId, toRelaySshPtyId } from '../providers/ssh-pty-id'
 import { createPtySpawnTiming } from './pty-spawn-timing'
 import {
@@ -5273,6 +5274,12 @@ export function registerPtyHandlers(
             ...(typeof args.leafId === 'string' && isTerminalLeafId(args.leafId)
               ? { leafId: args.leafId }
               : {}),
+            // The shell this lease names, as the host just attested it. Without it the record says
+            // only "pty-N", and a replaced relay reissues that from 1 — so reconnect would have
+            // nothing to compare and would attach whatever now answers to the id.
+            ...(isRelayAttestedPtyIncarnationId(result.incarnationId)
+              ? { incarnationId: result.incarnationId }
+              : {}),
             state: 'attached',
             lastAttachedAt: Date.now()
           })
@@ -6791,6 +6798,11 @@ export function registerPtyHandlers(
             ...(typeof args.worktreeId === 'string' ? { worktreeId: args.worktreeId } : {}),
             ...(typeof args.tabId === 'string' ? { tabId: args.tabId } : {}),
             ...(validatedLeafId ? { leafId: validatedLeafId } : {}),
+            // See the sibling writer: a lease that names only "pty-N" cannot survive a relay that
+            // reissues ids from 1.
+            ...(isRelayAttestedPtyIncarnationId(result.incarnationId)
+              ? { incarnationId: result.incarnationId }
+              : {}),
             state: 'attached',
             lastAttachedAt: Date.now()
           })
