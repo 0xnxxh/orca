@@ -1,7 +1,8 @@
 /* eslint-disable max-lines -- Why: OpenCode usage analytics need to normalize multiple local DB schema generations, attribute worktrees, and build persisted projections in one auditable pipeline. */
-import { readdir, realpath, stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join, posix, win32 } from 'node:path'
 import { yieldToEventLoop } from '../../shared/event-loop-yield'
+import { wslGatedReaddir, wslGatedStat } from '../native-chat/wsl-transcript-fs-access'
 import { areWorktreePathsEqual } from '../ipc/worktree-logic'
 import { resolveOpenCodeDataDirectory } from '../opencode/opencode-data-directory'
 import Database from '../sqlite/sync-database'
@@ -75,6 +76,9 @@ function getOpenCodeDatabaseOverride(dataDirectory: string): OpenCodeDatabaseOve
   }
 }
 
+// Why gated: the AI Vault's primary OpenCode source delegates here from inside
+// its discovery fan-out, so a UNC data dir or a UNC OPENCODE_DB on a stalled
+// distro would otherwise hang the whole scan on a raw syscall (STA-4049).
 export async function listOpenCodeDatabases(): Promise<string[]> {
   const dataDirectory = resolveOpenCodeDataDirectory()
   const databaseOverride = getOpenCodeDatabaseOverride(dataDirectory)
@@ -83,14 +87,16 @@ export async function listOpenCodeDatabases(): Promise<string[]> {
       return []
     }
     try {
-      return (await stat(databaseOverride.path)).isFile() ? [databaseOverride.path] : []
+      return (await wslGatedStat(databaseOverride.path, 'scan')).isFile()
+        ? [databaseOverride.path]
+        : []
     } catch {
       return []
     }
   }
 
   try {
-    const entries = await readdir(dataDirectory, { withFileTypes: true })
+    const entries = await wslGatedReaddir(dataDirectory, 'scan')
     return entries
       .filter((entry) => entry.isFile() && /^opencode(?:-[A-Za-z0-9_.-]+)?\.db$/.test(entry.name))
       .map((entry) => join(dataDirectory, entry.name))

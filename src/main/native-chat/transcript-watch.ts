@@ -33,7 +33,7 @@ async function attemptInstall(
   if (!filePath) {
     return null
   }
-  const installed = await installTranscriptWatcher(filePath, decode, args)
+  const installed = await installTranscriptWatcher(filePath, decode, args, signal)
   if (signal?.aborted) {
     installed?.unsubscribe()
     signal.throwIfAborted()

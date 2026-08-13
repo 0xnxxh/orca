@@ -6,9 +6,9 @@ export const WSL_TRANSCRIPT_FS_SCAN_TIMEOUT_MS = 60_000
 // Burst bounds keep polling fan-out from growing retained tasks or callers indefinitely.
 export const WSL_TRANSCRIPT_FS_MAX_PENDING_TASKS = 64
 export const WSL_TRANSCRIPT_FS_MAX_WAITERS_PER_TASK = 64
-const WSL_TRANSCRIPT_FS_SLOW_MESSAGE =
+export const WSL_TRANSCRIPT_FS_SLOW_MESSAGE =
   'WSL transcript files are temporarily unavailable because filesystem access is taking too long. Try again shortly or restart Orca if the issue continues.'
-const WSL_TRANSCRIPT_FS_CAPACITY_MESSAGE =
+export const WSL_TRANSCRIPT_FS_CAPACITY_MESSAGE =
   'WSL transcript discovery is temporarily unavailable because too many filesystem requests are already waiting. Try again shortly or restart Orca if the issue continues.'
 
 export type WslTranscriptFsFailureCode = 'timeout' | 'capacity' | 'unavailable'
@@ -47,6 +47,8 @@ type ScheduledTask<T> = {
   route: string
   priority: WslTranscriptFsTaskPriority
   operation: (signal: AbortSignal) => Promise<T>
+  /** Dispose a value no waiter is left to own (see settleTask). */
+  onAbandonedResult?: (value: T) => void
   controller: AbortController
   waiters: Set<TaskWaiter<T>>
   state: 'queued' | 'running' | 'settled'
@@ -208,6 +210,10 @@ function settleTask<T>(task: ScheduledTask<T>, result: { value: T } | { error: u
   activeTasks.delete(task as UnknownScheduledTask)
   clearTimeout(task.stuckTimer)
   clearTask(task as UnknownScheduledTask)
+  // Why: an unabortable syscall can still succeed after its last waiter timed
+  // out or cancelled. A resource-valued result (open's FileHandle) then has no
+  // owner left to close it, so ownership passes to the task's disposer.
+  const abandoned = task.waiters.size === 0
   for (const waiter of task.waiters) {
     removeWaiter(task, waiter)
     if ('value' in result) {
@@ -217,6 +223,15 @@ function settleTask<T>(task: ScheduledTask<T>, result: { value: T } | { error: u
     }
   }
   task.waiters.clear()
+  if (abandoned && 'value' in result) {
+    // Contained: a disposer that throws must not skip the pump below and wedge
+    // every queued task behind this one.
+    try {
+      task.onAbandonedResult?.(result.value)
+    } catch {
+      // Best-effort teardown; nothing left to report it to.
+    }
+  }
   pumpTasks()
 }
 
@@ -292,6 +307,8 @@ export function runWslTranscriptFsTask<T>(
     /** Opt out of coalescing when the result is not the whole answer (`open`,
      *  positional `read`): a joiner would share the handle or the buffer. */
     dedupe?: boolean
+    /** Release a late result no waiter is left to own (see settleTask). */
+    onAbandonedResult?: (value: T) => void
   },
   task: (signal: AbortSignal) => Promise<T>
 ): Promise<T> {
@@ -334,6 +351,7 @@ export function runWslTranscriptFsTask<T>(
     route,
     priority: options.priority,
     operation: task,
+    onAbandonedResult: options.onAbandonedResult,
     controller: new AbortController(),
     waiters: new Set(),
     state: 'queued',

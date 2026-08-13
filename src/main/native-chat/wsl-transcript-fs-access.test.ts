@@ -165,8 +165,88 @@ describe('transcript filesystem accessor on WSL UNC', () => {
   it('swallows close failures so teardown never rejects', async () => {
     const handle = fakeHandle()
     handle.close.mockRejectedValue(new Error('stalled close'))
-    expect(() => closeTranscriptHandle(handle as never)).not.toThrow()
+    await expect(closeTranscriptHandle(handle as never, UNC_PATH)).resolves.toBeUndefined()
     await new Promise((resolve) => setImmediate(resolve))
+  })
+
+  it.each([
+    ['stat', wslGatedStat, mocks.stat],
+    ['lstat', wslGatedLstat, mocks.lstat]
+  ])(
+    'detaches a cancelled %s waiter without waiting out the deadline',
+    async (_op, gated, mock) => {
+      let release: (() => void) | undefined
+      mock.mockReturnValue(
+        new Promise((resolve) => {
+          release = () => resolve({ size: 0 })
+        })
+      )
+      try {
+        const controller = new AbortController()
+        const reason = new Error('unsubscribed')
+        const pending = gated(UNC_PATH, 'exact', controller.signal)
+        const settled = pending.then(
+          () => 'resolved',
+          (error: unknown) => error
+        )
+        // Let the gate admit and start the syscall, so this covers the waiter on a
+        // RUNNING unabortable call rather than a still-queued one.
+        await new Promise((resolve) => setImmediate(resolve))
+        expect(mock).toHaveBeenCalledTimes(1)
+
+        controller.abort(reason)
+
+        // No timer advance: the waiter must be gone the moment the caller cancels,
+        // not 30s later when its deadline fires.
+        await expect(settled).resolves.toBe(reason)
+      } finally {
+        release?.()
+        await new Promise((resolve) => setImmediate(resolve))
+      }
+    }
+  )
+
+  it('closes an abandoned open whose syscall lands after the caller gave up', async () => {
+    vi.useFakeTimers()
+    let release: ((handle: unknown) => void) | undefined
+    mocks.open.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve
+      })
+    )
+    try {
+      const handle = fakeHandle()
+      const refused = wslGatedOpen(UNC_PATH, 'exact').catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(WSL_TRANSCRIPT_FS_EXACT_TIMEOUT_MS + 1)
+      await expect(refused).resolves.toBeInstanceOf(WslTranscriptFsError)
+
+      release?.(handle)
+      await vi.advanceTimersByTimeAsync(0)
+
+      // Nobody received the handle, so the gate owns closing it.
+      expect(handle.close).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('transcript handle close off WSL UNC', () => {
+  it('awaits teardown and surfaces the failure, as the raw close did', async () => {
+    const handle = fakeHandle()
+    let closed = false
+    handle.close.mockImplementation(async () => {
+      await new Promise((resolve) => setImmediate(resolve))
+      closed = true
+    })
+
+    await closeTranscriptHandle(handle as never, POSIX_PATH)
+    expect(closed).toBe(true)
+
+    handle.close.mockRejectedValue(new Error('EIO on close'))
+    await expect(closeTranscriptHandle(handle as never, WINDOWS_PATH)).rejects.toThrow(
+      'EIO on close'
+    )
   })
 })
 

@@ -27,7 +27,7 @@ async function readOneTitle(
     return cache?.get(request) ?? null
   }
   try {
-    const stats = await wslGatedLstat(transcriptPath, 'scan')
+    const stats = await wslGatedLstat(transcriptPath, 'scan', signal)
     if (!stats.isFile() || signal?.aborted) {
       return null
     }

@@ -20,18 +20,26 @@ import { runWslTranscriptFsTask, type WslTranscriptFsTaskPriority } from './wsl-
 // healthy-but-slow transcript is not false-failed by a whole-file timeout.
 const WSL_TRANSCRIPT_READ_CHUNK_BYTES = 1024 * 1024
 
-export function wslGatedStat(path: string, priority: WslTranscriptFsTaskPriority): Promise<Stats> {
+export function wslGatedStat(
+  path: string,
+  priority: WslTranscriptFsTaskPriority,
+  signal?: AbortSignal
+): Promise<Stats> {
   if (!isWslUncPath(path)) {
     return stat(path)
   }
-  return runWslTranscriptFsTask({ operation: 'stat', path, priority }, () => stat(path))
+  return runWslTranscriptFsTask({ operation: 'stat', path, priority, signal }, () => stat(path))
 }
 
-export function wslGatedLstat(path: string, priority: WslTranscriptFsTaskPriority): Promise<Stats> {
+export function wslGatedLstat(
+  path: string,
+  priority: WslTranscriptFsTaskPriority,
+  signal?: AbortSignal
+): Promise<Stats> {
   if (!isWslUncPath(path)) {
     return lstat(path)
   }
-  return runWslTranscriptFsTask({ operation: 'lstat', path, priority }, () => lstat(path))
+  return runWslTranscriptFsTask({ operation: 'lstat', path, priority, signal }, () => lstat(path))
 }
 
 export function wslGatedReaddir(
@@ -70,8 +78,18 @@ export function wslGatedOpen(
   if (!isWslUncPath(path)) {
     return open(path, 'r')
   }
-  return runWslTranscriptFsTask({ operation: 'open', path, priority, signal, dedupe: false }, () =>
-    open(path, 'r')
+  return runWslTranscriptFsTask(
+    {
+      operation: 'open',
+      path,
+      priority,
+      signal,
+      dedupe: false,
+      // An unabortable open can still succeed after its caller timed out or
+      // cancelled; without this the descriptor leaks for the process lifetime.
+      onAbandonedResult: (handle) => void closeTranscriptHandle(handle, path)
+    },
+    () => open(path, 'r')
   )
 }
 
@@ -100,12 +118,18 @@ export function wslGatedRead(
 }
 
 /**
- * Fire-and-forget, never gated: closing a handle on a stalled mount can itself
- * block, and a gated close would burn a permit and a waiter deadline purely for
- * teardown. One leaked fd until the OS unblocks beats a second blocked waiter.
+ * Never gated. Off UNC this is the prior contract verbatim — the caller awaits
+ * fd teardown and a close failure surfaces. On UNC it is fire-and-forget:
+ * closing a handle on a stalled mount can itself block, and a gated close would
+ * burn a permit and a waiter deadline purely for teardown. One leaked fd until
+ * the OS unblocks beats a second blocked waiter.
  */
-export function closeTranscriptHandle(handle: FileHandle): void {
+export function closeTranscriptHandle(handle: FileHandle, path: string): Promise<void> {
+  if (!isWslUncPath(path)) {
+    return handle.close()
+  }
   void handle.close().catch(() => {})
+  return Promise.resolve()
 }
 
 /**
@@ -126,7 +150,7 @@ export async function readTranscriptSlice(
     const read = await wslGatedRead(handle, path, buffer, 0, length, position, priority, signal)
     return buffer.subarray(0, read.bytesRead)
   } finally {
-    closeTranscriptHandle(handle)
+    await closeTranscriptHandle(handle, path)
   }
 }
 
@@ -175,7 +199,7 @@ async function* gatedChunks(
   } finally {
     // Runs on `.destroy()` too (Readable.from calls the generator's return()),
     // so an aborted head-read cannot leak the gated handle.
-    closeTranscriptHandle(handle)
+    await closeTranscriptHandle(handle, path)
   }
 }
 

@@ -1,4 +1,5 @@
 import { openTranscriptReadStream, wslGatedReadFile } from '../native-chat/wsl-transcript-fs-access'
+import { WslTranscriptFsError } from '../native-chat/wsl-transcript-fs-gate'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { AiVaultSession } from '../../shared/ai-vault-types'
@@ -114,8 +115,13 @@ async function consumeGrokChatHistory(
         seedFirstUserPrompt: false
       })
     }
-  } catch {
-    // Summary-only sessions still provide enough metadata for the Vault list.
+  } catch (error) {
+    // Summary-only sessions still provide enough metadata for the Vault list. A
+    // gate refusal is a different thing — the history exists but is unreachable,
+    // so a message-less session must not be cached under the summary's mtime.
+    if (error instanceof WslTranscriptFsError) {
+      throw error
+    }
   }
 }
 

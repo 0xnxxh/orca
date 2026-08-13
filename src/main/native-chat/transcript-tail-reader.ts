@@ -66,7 +66,7 @@ export async function readNativeChatTranscriptTailFile(
 }> {
   signal?.throwIfAborted()
   const end = Math.min(
-    (await wslGatedStat(filePath, 'exact')).size,
+    (await wslGatedStat(filePath, 'exact', signal)).size,
     endOffset ?? Number.MAX_SAFE_INTEGER
   )
   signal?.throwIfAborted()
@@ -144,7 +144,7 @@ export async function readNativeChatTranscriptTailFile(
       ...(oversizedRecordCount > 0 ? { oversizedRecordCount } : {})
     }
   } finally {
-    closeTranscriptHandle(handle)
+    await closeTranscriptHandle(handle, filePath)
   }
 
   function retainPart(part: Buffer): void {

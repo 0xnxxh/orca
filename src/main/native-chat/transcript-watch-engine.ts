@@ -46,10 +46,13 @@ async function boundaryFingerprint(filePath: string, offset: number): Promise<st
 export async function installTranscriptWatcher(
   filePath: string,
   decode: (line: string, fallbackId: string) => NativeChatMessage | null,
-  args: SubscribeNativeChatTranscriptArgs
+  args: SubscribeNativeChatTranscriptArgs,
+  /** Cancels the install probe so an unsubscribe during it detaches the gate
+   *  waiter immediately instead of at the 30s deadline. */
+  signal?: AbortSignal
 ): Promise<NativeChatTranscriptSubscription | null> {
   try {
-    await wslGatedStat(filePath, 'exact')
+    await wslGatedStat(filePath, 'exact', signal)
   } catch (error) {
     // Why: "not flushed yet" degrades to resolve-polling, but a stalled distro
     // must reach the caller so it can surface a retryable message instead of

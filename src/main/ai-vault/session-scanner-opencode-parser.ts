@@ -1,4 +1,5 @@
 import { wslGatedReaddir, wslGatedReadFile } from '../native-chat/wsl-transcript-fs-access'
+import { WslTranscriptFsError } from '../native-chat/wsl-transcript-fs-gate'
 import { join } from 'node:path'
 import type { AiVaultSession } from '../../shared/ai-vault-types'
 import type { FileWithMtime, SessionAccumulator } from './session-scanner-types'
@@ -48,7 +49,12 @@ async function readOpenCodeMessagesInOrder(messageDir: string): Promise<Record<s
   let entries
   try {
     entries = await wslGatedReaddir(messageDir, 'scan')
-  } catch {
+  } catch (error) {
+    // A session with no message dir yet is empty; a gate refusal is not — an
+    // empty transcript would otherwise be cached under the session's mtime.
+    if (error instanceof WslTranscriptFsError) {
+      throw error
+    }
     return []
   }
   const messages: { name: string; createdMs: number; message: Record<string, unknown> }[] = []
@@ -61,9 +67,13 @@ async function readOpenCodeMessagesInOrder(messageDir: string): Promise<Record<s
       message = asRecord(
         JSON.parse(await wslGatedReadFile(join(messageDir, entry.name), 'utf-8', 'scan')) as unknown
       )
-    } catch {
+    } catch (error) {
       // A live OpenCode process can leave a half-written file; skip it rather
-      // than discard the whole session.
+      // than discard the whole session. A refused read is not a bad file — the
+      // partial transcript it would produce must not become the cached answer.
+      if (error instanceof WslTranscriptFsError) {
+        throw error
+      }
       continue
     }
     if (!message) {
