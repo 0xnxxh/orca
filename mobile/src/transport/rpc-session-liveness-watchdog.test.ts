@@ -85,6 +85,9 @@ describe('RpcSessionLivenessWatchdog', () => {
     const terminate = vi.fn()
     const watchdog = new RpcSessionLivenessWatchdog({
       transport: 'relay',
+      idleProbeMs: null,
+      probeTimeoutMs: 4_000,
+      missedProbeLimit: 2,
       sendProbe: () => true,
       terminate,
       now: () => now,
@@ -97,9 +100,9 @@ describe('RpcSessionLivenessWatchdog', () => {
     const identity = {}
     watchdog.start(identity)
     watchdog.probeNow(identity)
-    now = LIVENESS_PROBE_TIMEOUT_MS * 2
+    now = 8_000
     callback?.()
-    now += LIVENESS_PROBE_TIMEOUT_MS
+    now += 4_000
     callback?.()
     expect(terminate).not.toHaveBeenCalled()
   })

@@ -8,6 +8,10 @@ type WatchdogOptions = {
   transport: 'direct' | 'relay'
   sendProbe: (identity: RpcSessionIdentity) => boolean
   terminate: (identity: RpcSessionIdentity) => void
+  idleProbeMs?: number | null
+  probeTimeoutMs?: number
+  missedProbeLimit?: number
+  voluntaryProbeMinIntervalMs?: number
   now?: () => number
   setTimer?: typeof setTimeout
   clearTimer?: typeof clearTimeout
@@ -19,11 +23,20 @@ export class RpcSessionLivenessWatchdog {
   private probing = false
   private missedProbes = 0
   private lastInboundAt = 0
+  private lastVoluntaryProbeAt: number | null = null
+  private readonly idleProbeMs: number | null
+  private readonly probeTimeoutMs: number
+  private readonly missedProbeLimit: number
+  private readonly voluntaryProbeMinIntervalMs: number
   private readonly now: () => number
   private readonly setTimer: typeof setTimeout
   private readonly clearTimer: typeof clearTimeout
 
   constructor(private readonly options: WatchdogOptions) {
+    this.idleProbeMs = options.idleProbeMs === undefined ? LIVENESS_IDLE_MS : options.idleProbeMs
+    this.probeTimeoutMs = options.probeTimeoutMs ?? LIVENESS_PROBE_TIMEOUT_MS
+    this.missedProbeLimit = options.missedProbeLimit ?? MISSED_PROBE_LIMIT
+    this.voluntaryProbeMinIntervalMs = options.voluntaryProbeMinIntervalMs ?? 0
     this.now = options.now ?? Date.now
     this.setTimer = options.setTimer ?? setTimeout
     this.clearTimer = options.clearTimer ?? clearTimeout
@@ -35,6 +48,7 @@ export class RpcSessionLivenessWatchdog {
     this.probing = false
     this.missedProbes = 0
     this.lastInboundAt = this.now()
+    this.lastVoluntaryProbeAt = null
     this.armIdle(identity)
   }
 
@@ -61,6 +75,21 @@ export class RpcSessionLivenessWatchdog {
     if (this.identity !== identity || this.probing) {
       return
     }
+    const now = this.now()
+    if (
+      this.lastVoluntaryProbeAt !== null &&
+      now - this.lastVoluntaryProbeAt < this.voluntaryProbeMinIntervalMs
+    ) {
+      return
+    }
+    this.lastVoluntaryProbeAt = now
+    this.startProbe(identity)
+  }
+
+  probeAfterSilence(identity: RpcSessionIdentity, silenceMs: number): void {
+    if (this.identity !== identity || this.probing || this.now() - this.lastInboundAt < silenceMs) {
+      return
+    }
     this.startProbe(identity)
   }
 
@@ -73,18 +102,22 @@ export class RpcSessionLivenessWatchdog {
     this.probing = false
     this.missedProbes = 0
     this.lastInboundAt = 0
+    this.lastVoluntaryProbeAt = null
   }
 
-  private armIdle(identity: RpcSessionIdentity, delayMs = LIVENESS_IDLE_MS): void {
+  private armIdle(identity: RpcSessionIdentity, delayMs = this.idleProbeMs): void {
     this.clearActiveTimer()
+    if (delayMs === null) {
+      return
+    }
     this.timer = this.setTimer(() => {
       this.timer = null
       if (this.identity !== identity) {
         return
       }
       const idleMs = this.now() - this.lastInboundAt
-      if (idleMs < LIVENESS_IDLE_MS) {
-        this.armIdle(identity, Math.max(1, LIVENESS_IDLE_MS - Math.max(0, idleMs)))
+      if (this.idleProbeMs !== null && idleMs < this.idleProbeMs) {
+        this.armIdle(identity, Math.max(1, this.idleProbeMs - Math.max(0, idleMs)))
       } else {
         this.startProbe(identity)
       }
@@ -108,10 +141,7 @@ export class RpcSessionLivenessWatchdog {
       this.terminateCurrent(identity)
       return
     }
-    this.timer = this.setTimer(
-      () => this.handleProbeTimeout(identity, sentAt),
-      LIVENESS_PROBE_TIMEOUT_MS
-    )
+    this.timer = this.setTimer(() => this.handleProbeTimeout(identity, sentAt), this.probeTimeoutMs)
   }
 
   private handleProbeTimeout(identity: RpcSessionIdentity, sentAt: number): void {
@@ -120,24 +150,24 @@ export class RpcSessionLivenessWatchdog {
       return
     }
     const elapsedMs = this.now() - sentAt
-    if (elapsedMs < 0 || elapsedMs > LIVENESS_PROBE_TIMEOUT_MS * 1.5) {
+    if (elapsedMs < 0 || elapsedMs > this.probeTimeoutMs * 1.5) {
       console.log('[net] activity-probe unfair window skipped', {
         transport: this.options.transport,
         elapsedMs,
-        timeoutMs: LIVENESS_PROBE_TIMEOUT_MS
+        timeoutMs: this.probeTimeoutMs
       })
       this.startProbe(identity)
       return
     }
     this.missedProbes += 1
-    if (this.missedProbes >= MISSED_PROBE_LIMIT) {
+    if (this.missedProbes >= this.missedProbeLimit) {
       this.terminateCurrent(identity)
       return
     }
     console.log('[net] activity-probe timeout tolerated', {
       transport: this.options.transport,
       missedProbes: this.missedProbes,
-      missedProbeLimit: MISSED_PROBE_LIMIT
+      missedProbeLimit: this.missedProbeLimit
     })
     this.startProbe(identity)
   }
@@ -152,7 +182,7 @@ export class RpcSessionLivenessWatchdog {
     console.log('[net] activity-probe TIMEOUT — forcing reconnect', {
       transport: this.options.transport,
       missedProbes: this.missedProbes,
-      missedProbeLimit: MISSED_PROBE_LIMIT
+      missedProbeLimit: this.missedProbeLimit
     })
     this.options.terminate(identity)
   }
