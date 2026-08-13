@@ -116,6 +116,7 @@ export function useMobileNativeChatTerminalStream(args: {
       (rearmAttemptsRef.current.get(handle) ?? 0) >= MAX_REARM_ATTEMPTS
     )
   }, [])
+  // oxlint-disable-next-line react-doctor/effect-needs-cleanup -- The route owns streams; the hook cancels its proof timer on unmount.
   useEffect(() => {
     const handle = args.activeHandle
     if (coveredHandleRef.current && coveredHandleRef.current !== handle) {
