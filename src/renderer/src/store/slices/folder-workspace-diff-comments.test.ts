@@ -451,6 +451,43 @@ describe('folder workspace diff comment rollback convergence', () => {
     expect(bodies(store, key)).toEqual(['hydrated'])
   })
 
+  it('keeps an out-of-band replacement when the in-flight write succeeds', async () => {
+    const store = createTestStore()
+    const folderWorkspace = seedLocalFolderWorkspace(store)
+    const key = folderWorkspaceKey(folderWorkspace.id)
+    let releaseFirst!: () => void
+    folderWorkspacesUpdate.mockImplementation(async ({ updates }) => {
+      if (folderWorkspacesUpdate.mock.calls.length === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve
+        })
+        return { ...folderWorkspace, ...updates }
+      }
+      throw new Error('disk full')
+    })
+
+    const addA = addNote(store, key, 'note A', 1)
+    await vi.waitFor(() => expect(folderWorkspacesUpdate).toHaveBeenCalledTimes(1))
+    const hydrated = [
+      {
+        id: 'h1',
+        worktreeId: key,
+        filePath: 'README.md',
+        lineNumber: 9,
+        body: 'hydrated',
+        createdAt: 1,
+        side: 'modified'
+      } as DiffComment
+    ]
+    store.setState({ folderWorkspaces: [{ ...folderWorkspace, diffComments: hydrated }] })
+    // Why: the chain break re-seeds the floor to `hydrated`; A's success must not restore its pre-replacement capture.
+    const addE = addNote(store, key, 'note E', 2)
+    releaseFirst()
+
+    await Promise.all([addA, addE])
+    expect(bodies(store, key)).toEqual(['hydrated'])
+  })
+
   it('rolls back when the write throws before reaching persist', async () => {
     const store = createTestStore()
     const folderWorkspace = seedLocalFolderWorkspace(store)
@@ -469,7 +506,7 @@ describe('folder workspace diff comment rollback convergence', () => {
     expect(errSpy).toHaveBeenCalled()
   })
 
-  it('does not roll back a successful write when recordFeatureInteraction throws', async () => {
+  it('reports success when recordFeatureInteraction throws after a successful write', async () => {
     const store = createTestStore()
     const folderWorkspace = seedLocalFolderWorkspace(store)
     const key = folderWorkspaceKey(folderWorkspace.id)
@@ -483,7 +520,9 @@ describe('folder workspace diff comment rollback convergence', () => {
       }
     } as never)
 
-    await expect(addNote(store, key, 'note A', 1)).resolves.toBeNull()
+    await expect(addNote(store, key, 'note A', 1)).resolves.toEqual(
+      expect.objectContaining({ body: 'note A' })
+    )
     expect(bodies(store, key)).toEqual(['note A'])
   })
 

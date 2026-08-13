@@ -162,6 +162,9 @@ const lastPersistedByQueue = new Map<string, DiffComment[] | undefined>()
 // Why: the floor is only valid across an unbroken mutation chain; this is how an out-of-band replacement mid-burst is detected.
 const lastMutationNextByQueue = new Map<string, DiffComment[]>()
 
+// Why: bumped on every re-seed, so an in-flight write can tell whether the floor it captured is still the current one.
+const floorSeedEpochByQueue = new Map<string, number>()
+
 type CommentMutation = {
   previous: DiffComment[] | undefined
   next: DiffComment[]
@@ -195,8 +198,10 @@ function enqueuePersist(
   const chainBroken = lastMutationNextByQueue.get(queueKey) !== mutation.previous
   if (!persistQueueByWorktree.has(queueKey) || chainBroken) {
     lastPersistedByQueue.set(queueKey, mutation.previous)
+    floorSeedEpochByQueue.set(queueKey, (floorSeedEpochByQueue.get(queueKey) ?? 0) + 1)
   }
   lastMutationNextByQueue.set(queueKey, mutation.next)
+  const seedEpoch = floorSeedEpochByQueue.get(queueKey)
   const run = async (): Promise<void> => {
     // Why: the state-side array, not the normalized copy sent to disk — restoring the same instance keeps
     //      `getDiffComments` identity stable instead of churning selectors.
@@ -239,7 +244,11 @@ function enqueuePersist(
       rollback(set, worktreeId, floor, mutation.next, folderExecutionHostId)
       throw err
     }
-    lastPersistedByQueue.set(queueKey, stateList)
+    // Why: a chain break re-seeded the floor to an out-of-band replacement while this write was awaiting, so the
+    //      list captured before the await predates it and must not be reinstated as the floor.
+    if (floorSeedEpochByQueue.get(queueKey) === seedEpoch) {
+      lastPersistedByQueue.set(queueKey, stateList)
+    }
   }
   const next = prior.then(run, run)
   persistQueueByWorktree.set(queueKey, next)
@@ -251,10 +260,20 @@ function enqueuePersist(
       // Why: tail-guarded only; a mid-burst delete would strand the remaining writes of the burst without a floor.
       lastPersistedByQueue.delete(queueKey)
       lastMutationNextByQueue.delete(queueKey)
+      floorSeedEpochByQueue.delete(queueKey)
     }
   }
   next.then(cleanup, cleanup)
   return next
+}
+
+// Why: best-effort telemetry runs only after the note is on disk, so a throw here must not report a failed save.
+function recordReviewNoteInteraction(get: () => AppState): void {
+  try {
+    get().recordFeatureInteraction?.('review-notes')
+  } catch (err) {
+    console.error('Failed to record review-notes interaction:', err)
+  }
 }
 
 // Why: derive the next list inside the `set` updater so concurrent writes can't clobber each other via a stale closure.
@@ -388,12 +407,12 @@ export const createDiffCommentsSlice: StateCreator<AppState, [], [], DiffComment
     try {
       // Why: serialize through the per-worktree queue so concurrent writes can't land on disk out of call order.
       await enqueuePersist(set, input.worktreeId, get, result)
-      get().recordFeatureInteraction?.('review-notes')
-      return comment
     } catch (err) {
       console.error('Failed to persist diff comments:', err)
       return null
     }
+    recordReviewNoteInteraction(get)
+    return comment
   },
 
   updateDiffComment: async (worktreeId, commentId, body) => {
@@ -457,12 +476,12 @@ export const createDiffCommentsSlice: StateCreator<AppState, [], [], DiffComment
     }
     try {
       await enqueuePersist(set, worktreeId, get, result)
-      get().recordFeatureInteraction?.('review-notes')
-      return true
     } catch (err) {
       console.error('Failed to persist diff comments:', err)
       return false
     }
+    recordReviewNoteInteraction(get)
+    return true
   },
 
   markDiffCommentsSent: async (worktreeId, commentIds, sentAt = Date.now()) => {
@@ -486,12 +505,12 @@ export const createDiffCommentsSlice: StateCreator<AppState, [], [], DiffComment
     }
     try {
       await enqueuePersist(set, worktreeId, get, result)
-      get().recordFeatureInteraction?.('review-notes')
-      return true
     } catch (err) {
       console.error('Failed to persist diff comments:', err)
       return false
     }
+    recordReviewNoteInteraction(get)
+    return true
   },
 
   deleteDiffComment: async (worktreeId, commentId) => {
