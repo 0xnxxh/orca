@@ -54,8 +54,7 @@ export async function hydrateOwnerWorktreeVisibilityDefaults(
     }
   }
   const hostId = toRuntimeExecutionHostId(target.environmentId)
-  const localDefaults =
-    defaultsByHost[LOCAL_EXECUTION_HOST_ID] ?? settings.worktreeVisibilityDefaults
+  const localDefaults = defaultsByHost[LOCAL_EXECUTION_HOST_ID]
   const ownerDefaultsByHost = localDefaults
     ? { ...defaultsByHost, [LOCAL_EXECUTION_HOST_ID]: localDefaults }
     : defaultsByHost

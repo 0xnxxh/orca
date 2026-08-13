@@ -4695,7 +4695,8 @@
           "noneFound": "未找到非 Orca 工作树",
           "tryDifferentSearch": "请尝试其他名称或路径。",
           "disableSource": "禁用来源后可单独管理其工作树。",
-          "appearWhenDetected": "Orca 检测到新工作树后，它们会显示在这里。"
+          "appearWhenDetected": "Orca 检测到新工作树后，它们会显示在这里。",
+          "openGlobalSettings": "在全局设置中管理"
         },
         "WorktreeVisibilitySourceList": {
           "claude": "Claude Code",

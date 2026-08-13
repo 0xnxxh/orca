@@ -137,7 +137,8 @@ async function persistSettingsUpdates(
   updates: Partial<GlobalSettings>,
   currentSettings: GlobalSettings | null,
   supportedRuntimeEnvironmentId: string | null,
-  sourceDefaultsSupportedRuntimeEnvironmentId: string | null
+  sourceDefaultsSupportedRuntimeEnvironmentId: string | null,
+  shouldPublish: () => boolean
 ): Promise<void> {
   const normalizedUpdates = normalizeSettingsUpdates(updates, currentSettings)
   await persistVisibilityAwareSettings({
@@ -145,6 +146,7 @@ async function persistSettingsUpdates(
     currentSettings,
     supportedRuntimeEnvironmentId,
     sourceDefaultsSupportedRuntimeEnvironmentId,
+    shouldPublish,
     set
   })
 }
@@ -192,14 +194,17 @@ export const createSettingsSlice: StateCreator<AppState, [], [], SettingsSlice> 
       if (generation !== ownerSettingsHydrationGeneration) {
         return
       }
-      set({
+      set((state) => ({
         settings: hydrated.settings,
-        worktreeVisibilityDefaultsByHost: hydrated.defaultsByHost,
+        worktreeVisibilityDefaultsByHost: {
+          ...state.worktreeVisibilityDefaultsByHost,
+          ...hydrated.defaultsByHost
+        },
         worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId:
           hydrated.supportedRuntimeEnvironmentId,
         worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId:
           hydrated.sourceDefaultsSupportedRuntimeEnvironmentId
-      })
+      }))
     } catch (err) {
       console.error('Failed to fetch settings:', err)
     }
@@ -218,14 +223,15 @@ export const createSettingsSlice: StateCreator<AppState, [], [], SettingsSlice> 
   },
 
   updateSettings: async (updates) => {
-    ++ownerSettingsHydrationGeneration
+    const generation = ++ownerSettingsHydrationGeneration
     try {
       await persistSettingsUpdates(
         set,
         updates,
         get().settings,
         get().worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId,
-        get().worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId
+        get().worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId,
+        () => generation === ownerSettingsHydrationGeneration
       )
       if ('worktreeVisibilityDefaults' in updates) {
         await get().fetchAllWorktrees()
@@ -236,13 +242,14 @@ export const createSettingsSlice: StateCreator<AppState, [], [], SettingsSlice> 
   },
 
   updateSettingsOrThrow: async (updates) => {
-    ++ownerSettingsHydrationGeneration
+    const generation = ++ownerSettingsHydrationGeneration
     await persistSettingsUpdates(
       set,
       updates,
       get().settings,
       get().worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId,
-      get().worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId
+      get().worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId,
+      () => generation === ownerSettingsHydrationGeneration
     )
     if ('worktreeVisibilityDefaults' in updates) {
       await get().fetchAllWorktrees()
@@ -278,14 +285,17 @@ export const createSettingsSlice: StateCreator<AppState, [], [], SettingsSlice> 
         if (generation !== ownerSettingsHydrationGeneration) {
           return true
         }
-        set({
+        set((state) => ({
           settings: hydrated.settings,
-          worktreeVisibilityDefaultsByHost: hydrated.defaultsByHost,
+          worktreeVisibilityDefaultsByHost: {
+            ...state.worktreeVisibilityDefaultsByHost,
+            ...hydrated.defaultsByHost
+          },
           worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId:
             hydrated.supportedRuntimeEnvironmentId,
           worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId:
             hydrated.sourceDefaultsSupportedRuntimeEnvironmentId
-        })
+        }))
       } else {
         set({ settings: null })
       }

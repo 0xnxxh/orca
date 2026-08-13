@@ -60,6 +60,14 @@ function getSwitch(label: string): HTMLButtonElement {
 }
 
 describe('GeneralWorkspaceSettingsSection external visibility', () => {
+  it('exposes a stable deep-link target for global defaults', () => {
+    renderSection(vi.fn())
+
+    expect(
+      container.querySelector('[data-settings-section="general-global-worktree-visibility"]')
+    ).not.toBeNull()
+  })
+
   it('writes the global Other locations default without touching repositories', async () => {
     const updateSettings = vi.fn()
     renderSection(updateSettings)

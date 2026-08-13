@@ -4702,7 +4702,8 @@
           "noneFound": "No se encontraron worktrees ajenos a Orca",
           "tryDifferentSearch": "Prueba con otro nombre o ruta.",
           "disableSource": "Desactiva una fuente para gestionar sus worktrees individualmente.",
-          "appearWhenDetected": "Los worktrees nuevos aparecerán aquí cuando Orca los detecte."
+          "appearWhenDetected": "Los worktrees nuevos aparecerán aquí cuando Orca los detecte.",
+          "openGlobalSettings": "Gestionar en Ajustes globales"
         },
         "WorktreeVisibilitySourceList": {
           "claude": "Claude Code",
@@ -6641,7 +6642,7 @@
           "projectRuntimeDescription": "Elige si este proyecto se ejecuta en Windows o WSL.",
           "hostStateDisconnected": "Disconnected",
           "hostStateUnknown": "Unknown",
-          "nestedHostLabel": "{{value0}} via {{value1}}",
+          "nestedHostLabel": "{{value0}} mediante {{value1}}",
           "externalWorktrees": "Worktrees externos",
           "externalWorktreesDescription": "Sobrescribe si los worktrees creados fuera de Orca aparecen en este proyecto.",
           "externalWorktreesInherited": "Usando el valor global: {{value0}}",

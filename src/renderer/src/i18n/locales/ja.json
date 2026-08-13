@@ -4683,7 +4683,8 @@
           "noneFound": "Orca 以外のワークツリーは見つかりませんでした",
           "tryDifferentSearch": "別の名前またはパスをお試しください。",
           "disableSource": "ソースを無効にするとワークツリーを個別に管理できます。",
-          "appearWhenDetected": "Orca が新しいワークツリーを検出すると、ここに表示されます。"
+          "appearWhenDetected": "Orca が新しいワークツリーを検出すると、ここに表示されます。",
+          "openGlobalSettings": "グローバル設定で管理"
         },
         "WorktreeVisibilitySourceList": {
           "claude": "Claude Code",

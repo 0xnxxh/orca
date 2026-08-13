@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
     activeModal: 'worktree-visibility' as string | null,
     modalData: { repoId: 'repo-1' } as Record<string, unknown>,
     closeModal: vi.fn(),
+    openSettingsTarget: vi.fn(),
+    openSettingsPage: vi.fn(),
     repos: [] as unknown[],
     updateRepo: vi.fn(),
     fetchWorktrees: vi.fn(),
@@ -218,6 +220,20 @@ async function setInputValue(input: HTMLInputElement, value: string): Promise<vo
 }
 
 describe('WorktreeVisibilityDialog', () => {
+  it('links directly to the global visibility defaults', async () => {
+    await renderDialog()
+
+    await click(buttonWithText('Manage in Global Settings'))
+
+    expect(mocks.state.closeModal).toHaveBeenCalledOnce()
+    expect(mocks.state.openSettingsTarget).toHaveBeenCalledWith({
+      pane: 'general',
+      repoId: null,
+      sectionId: 'general-global-worktree-visibility'
+    })
+    expect(mocks.state.openSettingsPage).toHaveBeenCalledOnce()
+  })
+
   it('lists a hidden agent worktree with a repo-relative path', async () => {
     await renderDialog()
 

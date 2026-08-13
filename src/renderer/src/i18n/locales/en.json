@@ -4920,7 +4920,8 @@
           "noneFound": "No non-Orca worktrees found",
           "tryDifferentSearch": "Try a different name or path.",
           "disableSource": "Disable a source to manage its worktrees individually.",
-          "appearWhenDetected": "New worktrees will appear here when Orca detects them."
+          "appearWhenDetected": "New worktrees will appear here when Orca detects them.",
+          "openGlobalSettings": "Manage in Global Settings"
         },
         "add": {
           "repo": {

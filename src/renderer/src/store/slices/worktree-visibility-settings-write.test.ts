@@ -117,3 +117,85 @@ it('rejects source-default writes before contacting an older runtime host', asyn
   ).rejects.toThrow('Update this server to configure source defaults.')
   expect(runtimeCall).not.toHaveBeenCalled()
 })
+
+it('does not publish a visibility write after a newer hydration starts', async () => {
+  markRuntimeEnvironmentCompatible('env-a')
+  const currentSettings = {
+    activeRuntimeEnvironmentId: 'env-a',
+    worktreeVisibilityDefaults: { external: 'hide' }
+  } as GlobalSettings
+  let state = {
+    settings: currentSettings,
+    worktreeVisibilityDefaultsByHost: {}
+  } as unknown as AppState
+  vi.stubGlobal('window', {
+    api: {
+      runtimeEnvironments: {
+        call: vi.fn().mockResolvedValue({
+          ok: true,
+          result: { settings: { worktreeVisibilityDefaults: { external: 'show' } } },
+          _meta: { runtimeId: 'runtime-a' }
+        })
+      }
+    }
+  })
+
+  await persistVisibilityAwareSettings({
+    normalizedUpdates: { worktreeVisibilityDefaults: { external: 'show' } },
+    currentSettings,
+    supportedRuntimeEnvironmentId: 'env-a',
+    shouldPublish: () => false,
+    set: (updater) => {
+      state = { ...state, ...updater(state) }
+    }
+  })
+
+  expect(state.settings?.worktreeVisibilityDefaults).toEqual({ external: 'hide' })
+  expect(state.worktreeVisibilityDefaultsByHost).toEqual({})
+})
+
+it('publishes successful local fields when the paired runtime write fails', async () => {
+  markRuntimeEnvironmentCompatible('env-a')
+  const currentSettings = {
+    activeRuntimeEnvironmentId: 'env-a',
+    pluginSystemEnabled: false,
+    worktreeVisibilityDefaults: { external: 'show' }
+  } as GlobalSettings
+  let state = {
+    settings: currentSettings,
+    worktreeVisibilityDefaultsByHost: { 'runtime:env-a': { external: 'show' } }
+  } as unknown as AppState
+  vi.stubGlobal('window', {
+    api: {
+      settings: {
+        set: vi.fn().mockResolvedValue({
+          activeRuntimeEnvironmentId: 'env-a',
+          pluginSystemEnabled: true,
+          worktreeVisibilityDefaults: { external: 'hide' }
+        })
+      },
+      runtimeEnvironments: {
+        call: vi.fn().mockRejectedValue(new Error('offline'))
+      }
+    }
+  })
+
+  await expect(
+    persistVisibilityAwareSettings({
+      normalizedUpdates: {
+        pluginSystemEnabled: true,
+        worktreeVisibilityDefaults: { external: 'hide' }
+      },
+      currentSettings,
+      supportedRuntimeEnvironmentId: 'env-a',
+      set: (updater) => {
+        state = { ...state, ...updater(state) }
+      }
+    })
+  ).rejects.toThrow('offline')
+
+  expect(state.settings).toMatchObject({
+    pluginSystemEnabled: true,
+    worktreeVisibilityDefaults: { external: 'show' }
+  })
+})

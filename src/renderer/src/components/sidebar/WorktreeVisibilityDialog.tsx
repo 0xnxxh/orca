@@ -7,7 +7,6 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
 import {
   effectiveExternalWorktreeVisibility,
@@ -55,6 +54,8 @@ import {
   getRepoCustomWorktreeVisibilitySourceIds,
   isDuplicateWorktreeVisibilitySource
 } from './worktree-visibility-repo-sources'
+import { WorktreeVisibilityGlobalSettingsLink } from './WorktreeVisibilityGlobalSettingsLink'
+import { WorktreeVisibilityScanStatus } from './WorktreeVisibilityScanStatus'
 
 export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const activeModal = useAppStore((s) => s.activeModal)
@@ -374,34 +375,13 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           onToggle={handleSourceToggle}
         />
 
-        {listState === 'checking' ? (
-          <p aria-live="polite" className="text-xs text-muted-foreground">
-            {translate('auto.components.sidebar.WorktreeVisibilityDialog.a3f19c07d2', 'Checking…')}
-          </p>
-        ) : null}
+        <WorktreeVisibilityGlobalSettingsLink />
 
-        {listState === 'failed' ? (
-          <div className="flex min-w-0 items-center gap-3" role="alert">
-            <p className="min-w-0 flex-1 text-xs text-destructive">
-              {translate(
-                'auto.components.sidebar.WorktreeVisibilityDialog.b8d24e61f5',
-                "Could not list this repo's worktrees."
-              )}
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={effectiveBusyPath !== null || effectivelyToggling}
-              onClick={handleRetryList}
-            >
-              {translate(
-                'auto.components.sidebar.WorktreeVisibilityDialog.c5e70a93b1',
-                'Try again'
-              )}
-            </Button>
-          </div>
-        ) : null}
+        <WorktreeVisibilityScanStatus
+          state={listState}
+          retryDisabled={effectiveBusyPath !== null || effectivelyToggling}
+          onRetry={handleRetryList}
+        />
 
         <HiddenWorktreeRecoveryList
           repo={repo}

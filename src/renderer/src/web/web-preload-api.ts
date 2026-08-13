@@ -733,7 +733,11 @@ function createWebPreloadApi(): Partial<PreloadApi> {
             )
           )
         }
-        const next = mergeSettings(getStoredSettings(), sanitizedUpdates, {
+        const localUpdates = { ...sanitizedUpdates }
+        if (runtimeEnvironment) {
+          delete localUpdates.worktreeVisibilityDefaults
+        }
+        const next = mergeSettings(getStoredSettings(), localUpdates, {
           preserveAutoRenameBranchFromWorkUpdate: 'autoRenameBranchFromWork' in sanitizedUpdates
         })
         writeStoredSettings(next)
@@ -3816,7 +3820,8 @@ function writeStoredSettings(
 
 async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> {
   const local = getStoredSettings()
-  if (!requireActiveEnvironmentOrNull()) {
+  const requestedEnvironment = requireActiveEnvironmentOrNull()
+  if (!requestedEnvironment) {
     return local
   }
   try {
@@ -3828,15 +3833,17 @@ async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> {
     const runtimeSettings: Partial<GlobalSettings> = {}
     worktreeVisibilityDefaultsRuntimeEnvironmentId = null
     worktreeVisibilityDefaultsRuntimeValue = null
+    const currentEnvironment = requireActiveEnvironmentOrNull()
     if (
-      result.settings.worktreeVisibilityDefaults?.external === 'hide' ||
-      result.settings.worktreeVisibilityDefaults?.external === 'show'
+      currentEnvironment?.id === requestedEnvironment.id &&
+      (result.settings.worktreeVisibilityDefaults?.external === 'hide' ||
+        result.settings.worktreeVisibilityDefaults?.external === 'show')
     ) {
       worktreeVisibilityDefaultsRuntimeValue = {
         ...result.settings.worktreeVisibilityDefaults,
         external: result.settings.worktreeVisibilityDefaults.external
       }
-      worktreeVisibilityDefaultsRuntimeEnvironmentId = requireActiveEnvironment().id
+      worktreeVisibilityDefaultsRuntimeEnvironmentId = requestedEnvironment.id
     }
     if (typeof result.settings.experimentalNewWorktreeCardStyle === 'boolean') {
       runtimeSettings.experimentalNewWorktreeCardStyle =
@@ -3889,7 +3896,8 @@ async function syncRuntimeBackedSettings(
   updates: Partial<GlobalSettings>,
   localNext: GlobalSettings
 ): Promise<GlobalSettings> {
-  if (!requireActiveEnvironmentOrNull()) {
+  const requestedEnvironment = requireActiveEnvironmentOrNull()
+  if (!requestedEnvironment) {
     return localNext
   }
   const runtimeUpdates: Partial<GlobalSettings> = {}
@@ -3930,8 +3938,11 @@ async function syncRuntimeBackedSettings(
     const runtimeSettings = { ...result.settings }
     delete runtimeSettings.activeRuntimeEnvironmentId
     const external = runtimeSettings.worktreeVisibilityDefaults?.external
-    if (external === 'hide' || external === 'show') {
-      worktreeVisibilityDefaultsRuntimeEnvironmentId = requireActiveEnvironment().id
+    if (
+      requireActiveEnvironmentOrNull()?.id === requestedEnvironment.id &&
+      (external === 'hide' || external === 'show')
+    ) {
+      worktreeVisibilityDefaultsRuntimeEnvironmentId = requestedEnvironment.id
       worktreeVisibilityDefaultsRuntimeValue = { external }
     }
     delete runtimeSettings.worktreeVisibilityDefaults

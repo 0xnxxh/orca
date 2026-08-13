@@ -4,6 +4,7 @@ import {
   markRuntimeEnvironmentCompatible
 } from '@/runtime/runtime-rpc-client'
 import type { GlobalSettings } from '../../../../shared/types'
+import { LOCAL_EXECUTION_HOST_ID } from '../../../../shared/execution-host'
 import {
   hydrateOwnerWorktreeVisibilityDefaults,
   readRuntimeWorktreeVisibilityDefaults
@@ -58,5 +59,24 @@ describe('runtime worktree visibility defaults', () => {
     expect(hydrated.settings.worktreeVisibilityDefaults).toEqual({ external: 'show' })
     expect(hydrated.supportedRuntimeEnvironmentId).toBe('env-1')
     expect(hydrated.sourceDefaultsSupportedRuntimeEnvironmentId).toBeNull()
+  })
+
+  it('does not record a focused runtime projection as the local default', async () => {
+    runtimeCall.mockResolvedValue({
+      ok: true,
+      result: { settings: { worktreeVisibilityDefaults: { external: 'show' } } },
+      _meta: { runtimeId: 'runtime-1' }
+    })
+
+    const hydrated = await hydrateOwnerWorktreeVisibilityDefaults(
+      {
+        activeRuntimeEnvironmentId: 'env-1',
+        worktreeVisibilityDefaults: { external: 'hide' }
+      } as GlobalSettings,
+      {}
+    )
+
+    expect(hydrated.defaultsByHost[LOCAL_EXECUTION_HOST_ID]).toBeUndefined()
+    expect(hydrated.defaultsByHost['runtime:env-1']).toEqual({ external: 'show' })
   })
 })
