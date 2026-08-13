@@ -53,7 +53,11 @@ export function registerWorkspaceCleanupHandlers(
       const scanArgs = args ?? {}
       const result = await scanWorkspaceCleanup(store, scanArgs, {
         onProgress: scanArgs.scanId
-          ? (progress) => event.sender.send('workspaceCleanup:scanProgress', progress)
+          ? (progress) => {
+              if (!event.sender.isDestroyed()) {
+                event.sender.send('workspaceCleanup:scanProgress', progress)
+              }
+            }
           : undefined
       })
       // Focused scans are live-only; persisting each rewrites and fsyncs the fleet snapshot.

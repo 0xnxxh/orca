@@ -2,10 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import type { Store } from '../persistence'
 
-const { persistScanResultMock, readScanSnapshotMock } = vi.hoisted(() => ({
-  persistScanResultMock: vi.fn(),
-  readScanSnapshotMock: vi.fn()
-}))
+const { persistScanResultMock, readScanSnapshotMock, scanWorkspaceCleanupMock } = vi.hoisted(
+  () => ({
+    persistScanResultMock: vi.fn(),
+    readScanSnapshotMock: vi.fn(),
+    scanWorkspaceCleanupMock: vi.fn()
+  })
+)
 
 const { beginPruneBatchMock, finishPruneBatchMock, recordPruneMock } = vi.hoisted(() => ({
   beginPruneBatchMock: vi.fn(),
@@ -23,6 +26,10 @@ vi.mock('electron', () => ({
 vi.mock('../workspace-cleanup-scan-snapshot', () => ({
   persistWorkspaceCleanupScanResult: persistScanResultMock,
   readWorkspaceCleanupScanSnapshot: readScanSnapshotMock
+}))
+
+vi.mock('./workspace-cleanup-scan', () => ({
+  scanWorkspaceCleanup: scanWorkspaceCleanupMock
 }))
 
 vi.mock('../workspace-cleanup-removal-snapshot-prune', () => ({
@@ -50,6 +57,18 @@ describe('workspace cleanup snapshot IPC', () => {
     vi.mocked(ipcMain.handle).mockClear()
     persistScanResultMock.mockReset().mockResolvedValue(undefined)
     readScanSnapshotMock.mockReset()
+    scanWorkspaceCleanupMock.mockReset().mockImplementation(async (_store, args, options) => {
+      const result = { scannedAt: NOW, candidates: [], errors: [] }
+      options.onProgress?.({
+        scanId: args.scanId,
+        scannedAt: NOW,
+        scannedWorktreeCount: 0,
+        totalWorktreeCount: 0,
+        candidates: [],
+        errors: []
+      })
+      return result
+    })
     beginPruneBatchMock.mockReset()
     finishPruneBatchMock.mockReset().mockResolvedValue(undefined)
     recordPruneMock.mockReset()
@@ -76,6 +95,21 @@ describe('workspace cleanup snapshot IPC', () => {
     await handler?.({ sender: { send: vi.fn() } } as never, { worktreeId: 'repo-1::/repo-feature' })
 
     expect(persistScanResultMock).not.toHaveBeenCalled()
+  })
+
+  it('stops streaming progress after the invoking renderer is destroyed', async () => {
+    registerWorkspaceCleanupHandlers(makeEmptyStore())
+    const handler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'workspaceCleanup:scan')?.[1]
+    const send = vi.fn(() => {
+      throw new Error('Object has been destroyed')
+    })
+
+    await expect(
+      handler?.({ sender: { isDestroyed: () => true, send } } as never, { scanId: 'scan-1' })
+    ).resolves.toEqual({ scannedAt: NOW, candidates: [], errors: [] })
+    expect(send).not.toHaveBeenCalled()
   })
 
   it('serves the cached scan snapshot through getCachedScan', async () => {
