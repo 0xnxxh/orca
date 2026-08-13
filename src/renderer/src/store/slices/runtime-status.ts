@@ -32,7 +32,7 @@ export type RuntimeEnvironmentStatus = {
 export type RuntimeStatusSlice = {
   /** Saved remote Orca servers. Host pickers use this to show user-chosen names
    * instead of opaque runtime ids. */
-  runtimeEnvironments: PublicKnownRuntimeEnvironment[]
+  runtimeEnvironments: readonly PublicKnownRuntimeEnvironment[]
   /** True only after the saved-runtime catalog has loaded successfully. Gates
    * fail-closed host routing, so a failed read must NOT flip it. */
   runtimeEnvironmentCatalogHydrated: boolean
@@ -52,7 +52,7 @@ export type RuntimeStatusSlice = {
   removedRuntimeEnvironmentIds: ReadonlySet<string>
   /** Replaces the saved-environment list, trims stale status entries, and
    * retires state owned by any environment that just left the saved list. */
-  setRuntimeEnvironments: (environments: PublicKnownRuntimeEnvironment[]) => void
+  setRuntimeEnvironments: (environments: readonly PublicKnownRuntimeEnvironment[]) => void
   /** Merges one environment's status. Replaces the prior entry for that id. */
   setRuntimeEnvironmentStatus: (
     environmentId: string,
@@ -170,7 +170,7 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
         return s
       }
       return {
-        runtimeEnvironments: catalogUnchanged ? s.runtimeEnvironments : reconciled.slice(),
+        runtimeEnvironments: catalogUnchanged ? s.runtimeEnvironments : reconciled,
         runtimeEnvironmentCatalogHydrated: true,
         runtimeEnvironmentCatalogSettled: true,
         ...(statusesChanged ? { runtimeStatusByEnvironmentId: nextStatuses } : {}),
