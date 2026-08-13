@@ -70,7 +70,10 @@ test.describe('startup exec readiness over live SSH', () => {
         .toBe('ready')
       await expectStartupCommandQueuedByCompatibilityFallback(orcaPage, created)
       expect(
-        execDockerSshRelayTargetControlCommand(target, `test ! -e '${ledgerPath}' && echo pending`)
+        execDockerSshRelayTargetControlCommand(
+          target,
+          `if test ! -e '${ledgerPath}'; then echo pending; else cat '${ledgerPath}'; fi`
+        )
       ).toBe('pending')
 
       await reconnectDockerSshRelayTarget(orcaPage, remote.targetId)
@@ -98,11 +101,8 @@ test.describe('startup exec readiness over live SSH', () => {
         /\/bash$/
       )
       expect(
-        execDockerSshRelayTargetControlCommand(
-          target,
-          `test "$(ps -o tpgid= -p '${pid}' | tr -d ' ')" = '${pid}' && echo foreground`
-        )
-      ).toBe('foreground')
+        execDockerSshRelayTargetControlCommand(target, `ps -o tpgid= -p '${pid}' | tr -d ' '`)
+      ).toBe(String(pid))
     } finally {
       await closeStartupExecTerminal(orcaPage, terminal)
       cleanupDockerSshRelayTarget(target)

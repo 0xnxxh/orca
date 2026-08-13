@@ -27,7 +27,14 @@ export type BashExecProfileBarrier = {
   startedPath: string
 }
 
-export function bashExecProfileContents(runId: string, barrier?: BashExecProfileBarrier): string {
+const BASH_EXEC_LINE = 'exec -a figterm-sta4067 /bin/bash --noprofile --norc -l -i'
+const ZSH_EXEC_LINE = 'exec -a figterm-sta4067 /bin/zsh -o noglobalrcs -l -i'
+
+function execProfileContents(
+  runId: string,
+  execLine: string,
+  barrier?: BashExecProfileBarrier
+): string {
   const guard = `ORCA_STA4067_EXEC_${runId.replaceAll(/[^A-Za-z0-9_]/g, '_')}`
   const barrierScript = barrier
     ? [
@@ -38,16 +45,17 @@ export function bashExecProfileContents(runId: string, barrier?: BashExecProfile
   return `if [[ -z "\${${guard}:-}" ]]; then
   export ${guard}=1
   ${barrierScript}
-  exec -a figterm-sta4067 /bin/bash --noprofile --norc -l -i
+  ${execLine}
 fi
 `
 }
 
+export function bashExecProfileContents(runId: string, barrier?: BashExecProfileBarrier): string {
+  return execProfileContents(runId, BASH_EXEC_LINE, barrier)
+}
+
 export function zshExecProfileContents(runId: string, barrier?: BashExecProfileBarrier): string {
-  return bashExecProfileContents(runId, barrier).replace(
-    'exec -a figterm-sta4067 /bin/bash --noprofile --norc -l -i',
-    'exec -a figterm-sta4067 /bin/zsh -o noglobalrcs -l -i'
-  )
+  return execProfileContents(runId, ZSH_EXEC_LINE, barrier)
 }
 
 function shellQuote(value: string): string {

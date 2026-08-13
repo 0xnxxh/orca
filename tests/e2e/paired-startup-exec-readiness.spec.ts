@@ -15,6 +15,8 @@ import {
   installZshExecProfile
 } from './helpers/startup-exec-readiness-oracle'
 
+test.skip(process.platform === 'win32', 'Paired startup-exec readiness uses POSIX shells.')
+
 async function waitForWorktree(page: Page, id: string): Promise<void> {
   await expect
     .poll(
@@ -123,14 +125,18 @@ test('recovers the same startup exec through an isolated headless orca serve', a
   test.setTimeout(120_000)
   const runId = `headless_${Date.now()}`
   const host = await launchHeadlessPairedRuntimeHost()
-  const homePath = await host.app.evaluate(({ app }) => app.getPath('home'))
-  const ledgerPath = path.join(homePath, `.sta4067-${runId}.ledger`)
-  const startedPath = path.join(homePath, `.sta4067-${runId}.started`)
-  const releasePath = path.join(homePath, `.sta4067-${runId}.release`)
-  const removeProfile = installZshExecProfile(homePath, runId, { releasePath, startedPath })
-  const client = await launchPairedWebClient(host.app, host.offer, { waitForWorkspace: false })
   let terminal: string | null = null
+  let removeProfile: (() => void) | undefined
+  let client: Awaited<ReturnType<typeof launchPairedWebClient>> | undefined
+  let startedPath = ''
+  let releasePath = ''
   try {
+    const homePath = await host.app.evaluate(({ app }) => app.getPath('home'))
+    const ledgerPath = path.join(homePath, `.sta4067-${runId}.ledger`)
+    startedPath = path.join(homePath, `.sta4067-${runId}.started`)
+    releasePath = path.join(homePath, `.sta4067-${runId}.release`)
+    removeProfile = installZshExecProfile(homePath, runId, { releasePath, startedPath })
+    client = await launchPairedWebClient(host.app, host.offer, { waitForWorkspace: false })
     await host.client.call('repo.add', { path: testRepoPath, kind: 'git' })
     await client.page.locator('[data-worktree-sidebar]').waitFor({
       state: 'visible',
@@ -162,10 +168,17 @@ test('recovers the same startup exec through an isolated headless orca serve', a
     await expectStartupExecRecovery(client.page, created, runId)
     expectLedger(ledgerPath)
   } finally {
-    await closeStartupExecTerminal(client.page, terminal)
-    await client.dispose()
-    removeProfile()
-    cleanupExecBarrier(startedPath, releasePath)
-    await host.dispose()
+    try {
+      if (client) {
+        await closeStartupExecTerminal(client.page, terminal)
+        await client.dispose()
+      }
+      removeProfile?.()
+      if (startedPath) {
+        cleanupExecBarrier(startedPath, releasePath)
+      }
+    } finally {
+      await host.dispose()
+    }
   }
 })
