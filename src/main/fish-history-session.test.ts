@@ -1,5 +1,4 @@
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -35,7 +34,7 @@ describe('fish history location attestation', () => {
     return join(dataRoot, 'fish', `${session}_history`)
   }
 
-  it('retains only bounded attested XDG locations when safe clearing is unavailable', () => {
+  it('retains only bounded v2 attested XDG locations', () => {
     const paths: string[] = []
     for (let index = 0; index < MAX_RETAINED_FISH_HISTORY_PATHS + 2; index += 1) {
       const path = historyPath(join(root, `data-${index}`))
@@ -44,12 +43,16 @@ describe('fish history location attestation', () => {
       paths.push(path)
     }
 
-    deleteFishHistoryFile(session, attestationPath)
-
-    expect(existsSync(paths[0])).toBe(true)
-    expect(existsSync(paths[1])).toBe(true)
-    expect(paths.slice(2).every((path) => readFileSync(path, 'utf8').startsWith('history-'))).toBe(
-      true
+    const record = JSON.parse(readFileSync(attestationPath, 'utf8')) as {
+      version: number
+      fishSession: string
+      locations: { path: string }[]
+    }
+    expect(record.version).toBe(2)
+    expect(record.fishSession).toBe(session)
+    expect(record.locations).toHaveLength(MAX_RETAINED_FISH_HISTORY_PATHS)
+    expect(record.locations.map(({ path }) => path)).toEqual(
+      paths.slice(-MAX_RETAINED_FISH_HISTORY_PATHS)
     )
   })
 
@@ -61,13 +64,16 @@ describe('fish history location attestation', () => {
     mkdirSync(join(root, 'unrelated-data', 'fish'), { recursive: true })
     writeFileSync(unrelated, 'unrelated')
     writeFileSync(
-      join(root, 'orca-history', 'meta.json'),
-      JSON.stringify({ fishSession: session, fishHistoryPath: unrelated })
+      attestationPath,
+      JSON.stringify({
+        version: 2,
+        fishSession: session,
+        locations: [{ path: unrelated }]
+      })
     )
 
     deleteFishHistoryFile(session, attestationPath)
 
-    expect(existsSync(owned)).toBe(true)
     expect(readFileSync(owned, 'utf8')).toBe('owned')
     expect(readFileSync(unrelated, 'utf8')).toBe('unrelated')
   })

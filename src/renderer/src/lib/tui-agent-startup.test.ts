@@ -348,7 +348,8 @@ describe('buildAgentDraftLaunchPlan', () => {
         agent: 'pi',
         draft: 'https://github.com/acme/repo/issues/42',
         cmdOverrides: {},
-        platform: 'darwin'
+        platform: 'darwin',
+        shell: 'posix'
       })
     ).toEqual({
       agent: 'pi',

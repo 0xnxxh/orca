@@ -122,6 +122,7 @@ describe('tui agent startup session options', () => {
       cmdOverrides: {},
       platform: 'linux',
       isRemote: true,
+      shell: 'posix',
       allowEmptyPromptLaunch: true,
       sessionOptions: { model: "team's-model", effort: 'high' }
     })

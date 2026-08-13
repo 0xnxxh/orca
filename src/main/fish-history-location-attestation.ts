@@ -24,6 +24,14 @@ type DirectoryIdentity = {
 type FileIdentity = { fileDevice: string; fileInode: string; fileBirthtimeNs: string }
 type Location = DirectoryIdentity & FileIdentity & { path: string }
 
+function reverseWithoutMutation<T>(items: readonly T[]): T[] {
+  const result: T[] = []
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    result.push(items[index] as T)
+  }
+  return result
+}
+
 const safeSession = (session: unknown): session is string =>
   typeof session === 'string' && /^orca_[0-9a-f]{1,64}$/.test(session)
 const canonicalPath = (session: string, path: unknown): path is string =>
@@ -154,7 +162,7 @@ function readLocations(path: string, session: string): Location[] {
     }
     const result: Location[] = []
     const seen = new Set<string>()
-    for (const candidate of record.locations.slice(-MAX_PATH_CANDIDATES).toReversed()) {
+    for (const candidate of reverseWithoutMutation(record.locations.slice(-MAX_PATH_CANDIDATES))) {
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
         continue
       }
@@ -179,7 +187,7 @@ function readLocations(path: string, session: string): Location[] {
         break
       }
     }
-    return result.toReversed()
+    return reverseWithoutMutation(result)
   } catch {
     return []
   }

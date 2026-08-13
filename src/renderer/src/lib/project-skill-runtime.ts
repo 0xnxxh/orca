@@ -51,9 +51,8 @@ export function getProjectAgentSkillTerminalShellOverride(
   }
   // Why: generated skill commands are PowerShell/cmd syntax, so a POSIX-family
   // Windows shell (wsl.exe, Git Bash) would mangle the wrapper we hand it.
-  return resolveWindowsShellStartupFamily(settings?.terminalWindowsShell) === 'posix'
-    ? 'powershell.exe'
-    : undefined
+  const shellFamily = resolveWindowsShellStartupFamily(settings?.terminalWindowsShell)
+  return shellFamily === 'posix' || shellFamily === 'unix' ? 'powershell.exe' : undefined
 }
 
 export function getProjectSkillInstallDisabledReason(
