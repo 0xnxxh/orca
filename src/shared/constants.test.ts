@@ -42,6 +42,11 @@ describe('getDefaultSettings', () => {
     expect(getDefaultSettings('/tmp').terminalCursorStyleDefaultedToBlock).toBe(true)
   })
 
+  it('keeps hidden PTY bytes flowing to the renderer by default', () => {
+    expect(getDefaultSettings('/tmp').terminalHiddenDeliveryGate).toBe(false)
+    expect(getDefaultSettings('/tmp').terminalHiddenDeliveryGateDefaultedOffForAllUsers).toBe(true)
+  })
+
   it('allows OSC 52 clipboard writes by default for new settings', () => {
     expect(getDefaultSettings('/tmp').terminalAllowOsc52Clipboard).toBe(true)
     expect(getDefaultSettings('/tmp').terminalAllowOsc52ClipboardDefaultedOnForAllUsers).toBe(true)

@@ -3009,6 +3009,8 @@ export type GlobalSettings = {
   terminalMainSideEffectAuthority?: boolean
   /** Kill switch for main's hidden-delivery gate (Phase 4): drops PTY bytes to hidden views after model ingestion; requires terminalMainSideEffectAuthority. */
   terminalHiddenDeliveryGate?: boolean
+  /** One-shot guard for defaulting the hidden-delivery gate off for existing profiles. */
+  terminalHiddenDeliveryGateDefaultedOffForAllUsers?: boolean
   /** Kill switch for main's model query responder (Phase 5); active only when both Phase-4 gates are also on. */
   terminalModelQueryAuthority?: boolean
   /** Which agent to pre-select in the new-workspace composer.

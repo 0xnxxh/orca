@@ -31,8 +31,7 @@ const droppedSinceHiddenPtys = new Set<string>()
 let droppedHiddenDeliveryChars = 0
 let droppedHiddenDeliveryChunks = 0
 
-/** Gate kill switches, both read main-side: the gate only operates under main
- *  side-effect authority AND the gate-specific setting (both default on). */
+/** The gate operates only when main side-effect authority and the gate setting are enabled. */
 export function isHiddenPtyDeliveryGateEnabled(
   settings: HiddenPtyDeliveryGateSettings | null | undefined
 ): boolean {
