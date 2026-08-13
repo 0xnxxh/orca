@@ -11,7 +11,9 @@ import type { AgentMapNodeStatus } from './agent-map-node-metadata'
  *  renderer, so the map's extra state gets its label here rather than widening
  *  `AgentDotState`. */
 export function agentMapStatusLabel(status: AgentMapNodeStatus): string {
-  return status === 'done-seen' ? 'Done, seen' : agentStateLabel(status)
+  return status === 'done-seen'
+    ? translate('dashboardPopout.map.status.doneSeen', 'Done, seen')
+    : agentStateLabel(status)
 }
 
 export function formatDuration(minutes: number): string {
