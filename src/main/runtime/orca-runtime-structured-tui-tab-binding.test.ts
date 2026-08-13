@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { StructuredAgentSessionHandoffTransport } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
 import { createEphemeralAgentSessionClaimSigner } from './agent-session-claim-identity'
+import { agentSessionPtyWriteGate } from './agent-session-pty-write-gate'
 import { OrcaRuntimeService } from './orca-runtime'
 
 const {
@@ -157,6 +158,8 @@ describe('structured TUI launch tab binding', () => {
     })
     expect(resolvePinnedCodexRolloutProof).toHaveBeenCalledWith(namespace.providerRoot, 'thread-1')
     expect(writeAgentSessionProof).not.toHaveBeenCalled()
+    expect(agentSessionPtyWriteGate.boundSessionId('pty-cold-owner')).toBe('session-1')
+    agentSessionPtyWriteGate.unbindPty('pty-cold-owner')
   })
 
   it('proves the published launch tab before returning its revealed renderer binding', async () => {

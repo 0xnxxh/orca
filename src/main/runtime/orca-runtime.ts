@@ -9310,6 +9310,7 @@ export class OrcaRuntimeService {
         if (!candidate?.tabId || !candidate.paneKey || !handle) {
           throw new Error('The owning agent terminal could not be recovered.')
         }
+        agentSessionPtyWriteGate.bindPty(candidate.ptyId, record.sessionId)
         const proof = durableOwner
           ? await this.resolveRecoveredStructuredTuiTranscript({
               handle,

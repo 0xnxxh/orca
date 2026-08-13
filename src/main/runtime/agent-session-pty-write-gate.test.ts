@@ -159,6 +159,26 @@ describe('admission through the store', () => {
     )
   })
 
+  it('admits proof input for the exact proven live owner during restore', () => {
+    publish(
+      agentSessionLeaseFixture({
+        ownerProcess: {
+          hostId: 'local',
+          pid: 4200,
+          processStartTimeMs: 10,
+          spawnToken: 'live-proof-token'
+        },
+        reservedSpawnToken: 'live-proof-token'
+      })
+    )
+    expect(gate.admitProof(PTY_ID, { sessionId: SESSION_ID, spawnToken: 'live-proof-token' })).toBe(
+      true
+    )
+    expect(gate.admitProof(PTY_ID, { sessionId: SESSION_ID, spawnToken: 'wrong-token' })).toBe(
+      false
+    )
+  })
+
   it('refuses when the record vanished from the store', () => {
     const admission = gate.admit(PTY_ID)
     expect(admission.admitted).toBe(false)

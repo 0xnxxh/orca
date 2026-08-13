@@ -11,9 +11,13 @@ import {
   admitStructuredHandoffRequest,
   refuseAdmittedStructuredHandoff,
   replayedStructuredHandoffRefusal,
-  structuredHandoffRetryIsAdmissible
+  structuredHandoffRetryIsAdmissible,
+  structuredHandoffRetryResumesStoppedOwner
 } from './structured-agent-session-handoff-admission'
-import { createStructuredHandoffFlowContext } from './structured-agent-session-handoff-flow-context'
+import {
+  createStructuredHandoffFlowContext,
+  requireStructuredHandoffRecord
+} from './structured-agent-session-handoff-flow-context'
 import { StructuredAgentSessionHandoffFlowRunner } from './structured-agent-session-handoff-flow-runner'
 import {
   beginStructuredManualRecovery,
@@ -58,10 +62,8 @@ export class StructuredAgentSessionHandoffCoordinator {
     })
   }
 
-  status(sessionId: string): AgentSessionHandoffStatus {
-    const current = this.statuses.get(sessionId)
-    return current ?? idleStructuredHandoffStatus(this.requireRecord(sessionId))
-  }
+  status = (sessionId: string): AgentSessionHandoffStatus =>
+    this.statuses.get(sessionId) ?? idleStructuredHandoffStatus(this.requireRecord(sessionId))
 
   drain = (): Promise<void> => this.flowRunner.drain()
 
@@ -171,8 +173,10 @@ export class StructuredAgentSessionHandoffCoordinator {
           'This handoff is no longer retryable.'
         )
       }
-      this.begin(callerKey, params, null, fingerprint)
-      return this.success(record.sessionId, false)
+      if (structuredHandoffRetryResumesStoppedOwner(record, params)) {
+        this.begin(callerKey, params, null, fingerprint)
+        return this.success(record.sessionId, false)
+      }
     }
     const expectedOwner = params.direction === 'to-tui' ? 'native' : 'tui'
     if (record.lease.runtimeKind !== expectedOwner || record.lease.claimStatus !== 'live') {
@@ -304,10 +308,6 @@ export class StructuredAgentSessionHandoffCoordinator {
   }
 
   private requireRecord(sessionId: string): AgentSessionRecord {
-    const record = this.deps.store.getRecord(sessionId)
-    if (!record) {
-      throw new Error('agent_session_identity_required')
-    }
-    return record
+    return requireStructuredHandoffRecord(this.deps, sessionId)
   }
 }
