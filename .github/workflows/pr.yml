@@ -378,6 +378,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Test Windows-specific boundaries
+        run: >-
+          pnpm exec vitest run --config config/vitest.config.ts
+          src/main/cli/wsl-cli-powershell-boundary.test.ts
+          src/main/orca-profiles/profile-index-store.test.ts
+          src/shared/secure-file-fsync-flags.test.ts
+
       - name: Build package inputs
         run: pnpm run build:release
 
