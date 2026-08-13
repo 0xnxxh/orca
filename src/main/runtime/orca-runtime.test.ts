@@ -14795,6 +14795,8 @@ describe('OrcaRuntimeService', () => {
     const splitSpawn = spawn.mock.calls[0]?.[0] as
       | { expectedSourceBinding?: { incarnationId?: string } }
       | undefined
+    // Why: persistence never recorded an incarnation for this pane, so sending the live-only id
+    // would make the store's fence reject every split from a restored session.
     expect(splitSpawn?.expectedSourceBinding).not.toHaveProperty('incarnationId')
 
     runtime.syncWindowGraph(1, {
