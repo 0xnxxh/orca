@@ -80,7 +80,7 @@ import {
   NON_TRANSPLANTABLE_HOST_KEY_SQL,
   normalizeCookieDomain,
   normalizeCookieImportDomain,
-  removeAllCookiesExcept,
+  removeTransplantableCookies,
   replaceCookiesForImportedDomains,
   restoreImportedDomainCookies,
   type CookieImportMode
@@ -1780,9 +1780,7 @@ export async function importCookiesFromBrowser(
     // Why: clear stale cookies first; mixing them with the imported set makes sites reject the
     // session. Non-transplantable families are exempt — nothing was imported for them, and their
     // live session is the only one that works.
-    await removeAllCookiesExcept(targetSession.cookies, (cookie) =>
-      isNonTransplantableCookieDomain(cookie.domain ?? '')
-    )
+    await removeTransplantableCookies(targetSession)
     diag(
       `  cleared existing session cookies before loading ${decryptedCookies.length} imported cookies`
     )

@@ -20,8 +20,10 @@ type CdpCookie = { name: string; value: string; partitionKey?: Record<string, un
 type FixtureResult = {
   beforePartitionKey: Record<string, unknown> | undefined
   clearError: string | null
+  bulkClearCalls: number
   remainingChips: CdpCookie[]
   remainingPlain: CdpCookie[]
+  remainingExcluded: CdpCookie[]
 }
 
 const EXPECTED_PARTITION_KEY = {
@@ -33,7 +35,7 @@ function buildFixtureMain(policyPath: string, resultPath: string): string {
   return `
 const { app, BrowserWindow, session } = require('electron')
 const { writeFileSync } = require('node:fs')
-const { removeAllCookiesExcept, isNonTransplantableCookieDomain } = require(${JSON.stringify(policyPath)})
+const { removeTransplantableCookies } = require(${JSON.stringify(policyPath)})
 const resultPath = ${JSON.stringify(resultPath)}
 let currentStep = 'starting'
 const mark = (step) => {
@@ -76,6 +78,9 @@ async function run() {
 
   await targetSession.cookies.set({ url: 'https://plain.example/', name: 'plain', value: 'stale', secure: true })
   await targetSession.cookies.set({ url: 'https://victim.example/', name: 'victim', value: 'stale', secure: true })
+  // Why: keep a live excluded cookie in the partial-failure fixture so the fallback proves it
+  // preserves that cookie while deleting the removable ones it can reach.
+  await targetSession.cookies.set({ url: 'https://accounts.google.com/', name: 'SID', value: 'live', secure: true })
   mark('removable cookies set')
 
   const store = {
@@ -88,9 +93,20 @@ async function run() {
     }
   }
 
+  // Why: the bulk clear is the ordinary path now, so rejecting it is what routes this fixture onto
+  // the per-cookie fallback where a partial failure — and the old rollback — could happen at all.
+  let bulkClearCalls = 0
+  const clearSession = {
+    cookies: store,
+    clearData: async () => {
+      bulkClearCalls++
+      throw new Error('forced bulk clear failure')
+    }
+  }
+
   let clearError = null
   try {
-    await removeAllCookiesExcept(store, (cookie) => isNonTransplantableCookieDomain(cookie.domain ?? ''))
+    await removeTransplantableCookies(clearSession)
   } catch (error) {
     clearError = String(error?.message || error)
   }
@@ -104,8 +120,10 @@ async function run() {
   writeFileSync(resultPath, JSON.stringify({
     beforePartitionKey: beforeChips.partitionKey,
     clearError,
+    bulkClearCalls,
     remainingChips: project('chips-auth'),
-    remainingPlain: project('plain')
+    remainingPlain: project('plain'),
+    remainingExcluded: project('SID')
   }))
   debug.detach()
   window.destroy()
@@ -164,6 +182,10 @@ describe('non-Google partitioned cookie under a failed Electron cookie clear', (
     const result = await runFixture()
 
     expect(result.beforePartitionKey).toEqual(EXPECTED_PARTITION_KEY)
+    // Why (STA-4065): the fallback is only reachable once the bulk clear has been tried and failed;
+    // if it ever succeeded here the partial-failure assertions below would be vacuous.
+    expect(result.bulkClearCalls).toBe(1)
+    expect(result.remainingExcluded.map(({ name }) => name)).toEqual(['SID'])
     expect(result.clearError).toContain('Could not clear existing cookies')
     // STA-4061: rollback rebuilt this cookie through cookies.set, which drops partitionKey.
     expect(
