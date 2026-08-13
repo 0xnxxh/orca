@@ -160,15 +160,15 @@ async function runFixture(): Promise<FixtureResult> {
 }
 
 describe('non-Google partitioned cookie under a failed Electron cookie clear', () => {
-  it('never resurrects a removed cookie without its partition key', async () => {
+  it('never resurrects a removed partitioned cookie', async () => {
     const result = await runFixture()
 
     expect(result.beforePartitionKey).toEqual(EXPECTED_PARTITION_KEY)
     expect(result.clearError).toContain('Could not clear existing cookies')
     // STA-4061: rollback rebuilt this cookie through cookies.set, which drops partitionKey.
     expect(
-      result.remainingChips.filter((cookie) => !cookie.partitionKey),
-      `chips-auth was downgraded to unpartitioned: ${JSON.stringify(result.remainingChips)}`
+      result.remainingChips,
+      `chips-auth survived: ${JSON.stringify(result.remainingChips)}`
     ).toEqual([])
     expect(result.remainingPlain).toEqual([])
   }, 90_000)
