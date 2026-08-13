@@ -137,7 +137,7 @@ export function ensureVirtualDisplayForHeadlessServe(options: { isServeMode: boo
   try {
     xvfbProcess = spawn(
       'Xvfb',
-      [VIRTUAL_DISPLAY, '-screen', '0', '1280x1024x24', '-nolisten', 'tcp'],
+      [VIRTUAL_DISPLAY, '-screen', '0', '1280x1024x24', '-nolisten', 'tcp', '-terminate'],
       {
         stdio: 'ignore',
         detached: false
@@ -162,9 +162,6 @@ export function ensureVirtualDisplayForHeadlessServe(options: { isServeMode: boo
   }
 
   process.env.DISPLAY = VIRTUAL_DISPLAY
-
-  // Why: Electron can cancel will-quit for async teardown and still needs X11 until its event loop stops.
-  process.once('exit', stopVirtualDisplay)
 
   return true
 }
