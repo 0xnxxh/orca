@@ -2681,9 +2681,16 @@ export class SshRelaySession {
     pending: PendingPtyReattach,
     error: unknown
   ): void {
-    // No attach failure proves the shell exited — not even a not-found, which the relay also
-    // returns when it merely cannot hand this id back. Only an exit the relay observed on a live
-    // stream may report one, so every failure leaves the pane detached and recoverable.
+    // An exit the relay watched is the one answer that settles it, so retire the record rather than
+    // re-attaching a shell known dead on every future reconnect. `markSshRemotePtyLease` normalizes
+    // the id itself, and terminated is not the state the recovery grant reads, so this retires the
+    // record without authorizing a replacement.
+
+    if (isSshPtyExitedError(error)) {
+      this.store.markSshRemotePtyLease(this.targetId, ptyId, 'terminated')
+    }
+    // Nothing else proves it — not even a not-found, which the relay also returns when it merely
+    // cannot hand this id back — so every other failure leaves the pane detached and recoverable.
     pending.restoreRequired = 'reattachAttemptsExhausted'
     this.wakeRecovery(pending)
     console.warn(

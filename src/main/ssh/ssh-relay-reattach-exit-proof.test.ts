@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { formatPtyExitedError } from '../../shared/ssh-pty-failure-tokens'
 import { SshRelaySession } from './ssh-relay-session'
 import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixtures'
 
@@ -214,6 +215,32 @@ describe('SshRelaySession reattach failures never fabricate an exit', () => {
       TARGET_ID,
       RELAY_PTY_ID,
       'expired'
+    )
+  })
+
+  // The counterpart. An exit the relay watched settles it, so the record is retired rather than
+  // re-attached on every future reconnect for the life of the install. `terminated`, not `expired`:
+  // expiry is the state the recovery grant reads, and retiring a record must not also authorise a
+  // replacement.
+  it('retires the lease on an exit the relay proved', async () => {
+    const { deps } = await reattachFailsWith(
+      formatPtyExitedError(RELAY_PTY_ID, 0, 'inc-proven-exit')
+    )
+
+    expect(deps.mockStore.markSshRemotePtyLease).toHaveBeenCalledWith(
+      TARGET_ID,
+      RELAY_PTY_ID,
+      'terminated'
+    )
+  })
+
+  it('does not retire the lease when the failure proves nothing', async () => {
+    const { deps } = await reattachFailsWith(UNPROVEN_NOT_FOUND)
+
+    expect(deps.mockStore.markSshRemotePtyLease).not.toHaveBeenCalledWith(
+      TARGET_ID,
+      RELAY_PTY_ID,
+      'terminated'
     )
   })
 
