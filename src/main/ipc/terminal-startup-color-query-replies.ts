@@ -3,6 +3,7 @@ import { isTuiAgent } from '../../shared/tui-agent-config'
 import { agentKindSchema } from '../../shared/telemetry-events'
 import type { SleepingAgentLaunchConfig } from '../../shared/agent-session-resume'
 import {
+  parseTerminalOscColorQueryReplyColors,
   terminalOscColorQueryReply,
   type TerminalOscColorQueryReplyColors
 } from '../../shared/terminal-osc-color-reply'
@@ -55,4 +56,10 @@ export function getStartupTerminalColorQueryReplyColors(args: {
     return null
   }
   return normalizeTerminalColorQueryReplyColors(args.terminalColorQueryReplies)
+}
+
+export function getLiveTerminalOscColorQueryReplyColors(args: {
+  terminalColorQueryReplies?: unknown
+}): TerminalOscColorQueryReplyColors | null {
+  return parseTerminalOscColorQueryReplyColors(args.terminalColorQueryReplies) ?? null
 }

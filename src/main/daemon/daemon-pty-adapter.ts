@@ -533,6 +533,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
         ...(this.supportsStartupIngress && !attachOnly && opts.startupIngress
           ? { startupIngress: opts.startupIngress }
           : {}),
+        ...(!attachOnly && opts.oscColorQueryReplies
+          ? { oscColorQueryReplies: opts.oscColorQueryReplies }
+          : {}),
         ...(!attachOnly && opts.agentSessionEnsure
           ? { agentSessionEnsure: opts.agentSessionEnsure }
           : {})

@@ -1,8 +1,12 @@
 import {
   parseTerminalOscColorQuery,
-  terminalOscColorQueryReplies,
+  type TerminalOscColorQueryReplyColors,
   type TerminalOscColorQuerySlot
 } from './terminal-osc-color-reply'
+import {
+  answerLiveOscColorQuery,
+  answerStartupOscColorQuery
+} from './pty-startup-ingress-color-answer'
 import type { PtyStartupIngressIntent } from './pty-startup-ingress-intent'
 import type { PtyOwnerBackend } from './pty-owner-backend'
 import { PtyStartupReplyDelivery } from './pty-startup-reply-delivery'
@@ -38,6 +42,7 @@ const ECHO_CONTINUATION_HOLD_MS = 500
  */
 export class PtyStartupIngress {
   private readonly intent: PtyStartupIngressIntent | undefined
+  private readonly liveOscColors: TerminalOscColorQueryReplyColors | undefined
   private readonly ownerBackend: PtyOwnerBackend
   private readonly delivery: PtyStartupReplyDelivery
   private readonly onEmission: (emission: PtyIngressEmission) => void
@@ -54,6 +59,7 @@ export class PtyStartupIngress {
 
   constructor(options: PtyStartupIngressOptions) {
     this.intent = options.intent
+    this.liveOscColors = options.liveOscColors
     this.ownerBackend = options.ownerBackend ?? 'posix-pty'
     this.delivery = new PtyStartupReplyDelivery(this.ownerBackend, options.write, options.echoProbe)
     this.onEmission = options.onEmission
@@ -242,7 +248,8 @@ export class PtyStartupIngress {
     const input = combinePtyIngressSourceSpans(this.queryPending, span)
     this.queryPending = null
     const suppressConptyQuery = this.ownerBackend === 'windows-conpty'
-    if ((!this.queryOpen || !this.intent) && !suppressConptyQuery) {
+    const canAnswerColorQuery = Boolean(this.liveOscColors || (this.queryOpen && this.intent))
+    if (!canAnswerColorQuery && !suppressConptyQuery) {
       this.emit(input, false)
       return
     }
@@ -277,7 +284,23 @@ export class PtyStartupIngress {
         this.emit(slicePtyIngressSourceSpan(input, emittedOffset, candidateIndex), false)
       }
       const querySpan = slicePtyIngressSourceSpan(input, candidateIndex, query.endIndex)
-      const answered = this.queryOpen && this.intent && this.answerQuery(query.slots)
+      const answered =
+        this.queryOpen && this.intent
+          ? answerStartupOscColorQuery({
+              slots: query.slots,
+              intent: this.intent,
+              answeredSlots: this.answeredSlots,
+              delivery: this.delivery,
+              onBothSlotsAnswered: () => {
+                this.queryOpen = false
+              }
+            })
+          : answerLiveOscColorQuery({
+              slots: query.slots,
+              colors: this.liveOscColors,
+              ownerBackend: this.ownerBackend,
+              delivery: this.delivery
+            })
       if (answered || suppressConptyQuery) {
         this.emit(querySpan, true, '')
       } else {
@@ -286,39 +309,6 @@ export class PtyStartupIngress {
       scanOffset = query.endIndex
       emittedOffset = query.endIndex
     }
-  }
-
-  private answerQuery(slots: readonly TerminalOscColorQuerySlot[]): boolean {
-    if (slots.some((slot) => this.answeredSlots.has(slot)) || !this.intent) {
-      return false
-    }
-    const replies = terminalOscColorQueryReplies(this.intent.colors, slots)
-    if (!replies) {
-      return false
-    }
-
-    let wroteAny = false
-    for (const [index, reply] of replies.entries()) {
-      const slot = slots[index]
-      if (slot === undefined) {
-        return wroteAny
-      }
-      this.answeredSlots.add(slot)
-      // Why per slot: the replies to one query are written independently, so a
-      // deferred write that fails after reporting success invalidates only its own
-      // claim. Dropping every claim would let a slot that did land be answered a
-      // second time, and a duplicate reply corrupts a parser already mid-read.
-      if (!this.delivery.answer(reply, () => this.answeredSlots.delete(slot))) {
-        this.answeredSlots.delete(slot)
-        return wroteAny
-      }
-      wroteAny = true
-    }
-
-    if (this.answeredSlots.has(10) && this.answeredSlots.has(11)) {
-      this.queryOpen = false
-    }
-    return wroteAny
   }
 
   private releaseQueryPending(): void {

@@ -226,7 +226,10 @@ import {
 } from '../../shared/setup-agent-sequencing'
 import { dropAgentResumeArgvFromCommand } from '../../shared/agent-resume-argv-drop'
 import { parseWorkspaceKey } from '../../shared/workspace-scope'
-import { getStartupTerminalColorQueryReplyColors } from './terminal-startup-color-query-replies'
+import {
+  getLiveTerminalOscColorQueryReplyColors,
+  getStartupTerminalColorQueryReplyColors
+} from './terminal-startup-color-query-replies'
 import {
   assertFolderWorkspacePathUsable,
   getFolderWorkspacePathStatus
@@ -4704,6 +4707,10 @@ export function registerPtyHandlers(
           deadlineMs: 5_000
         }
       }
+      const liveOscColorQueryReplyColors = getLiveTerminalOscColorQueryReplyColors(args)
+      if (liveOscColorQueryReplyColors) {
+        spawnOptions.oscColorQueryReplies = liveOscColorQueryReplyColors
+      }
       let ptySpawnCommitReported = false
       const reportPtySpawnCommitted = (): void => {
         if (ptySpawnCommitReported) {
@@ -6431,6 +6438,10 @@ export function registerPtyHandlers(
             colors: startupTerminalColorQueryReplyColors,
             deadlineMs: 5_000
           }
+        }
+        const liveOscColorQueryReplyColors = getLiveTerminalOscColorQueryReplyColors(args)
+        if (liveOscColorQueryReplyColors) {
+          spawnOptions.oscColorQueryReplies = liveOscColorQueryReplyColors
         }
         const resolvedPaneSpawnReservationKey = makePaneSpawnReservationKey(
           args.worktreeId,
