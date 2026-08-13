@@ -7353,10 +7353,16 @@ export class Store {
         lease.worktreeId === winner.worktreeId &&
         // Leaf only: a lease freezes its tabId, and a pane broken out to a new tab would otherwise
         // never compete with its own predecessor — which is the reported cardinality growth.
-        lease.leafId === winner.leafId &&
-        lease.state !== 'terminated' &&
-        lease.state !== 'expired'
+        lease.leafId === winner.leafId
       ) {
+        if (lease.state === 'expired') {
+          // A concurrent same-pane owner confirms this lease must outlive rollback as retired.
+          this.advanceSshRemotePtyLeaseMutationVersion(lease)
+          continue
+        }
+        if (lease.state === 'terminated') {
+          continue
+        }
         lease.state = 'expired'
         lease.updatedAt = now
         this.advanceSshRemotePtyLeaseMutationVersion(lease)
@@ -7678,6 +7684,10 @@ export class Store {
         continue
       }
       if (state === 'detached' && lease.state !== 'attached') {
+        if (lease.state === 'expired') {
+          // A later detach fences rollback from restoring attached ownership.
+          this.advanceSshRemotePtyLeaseMutationVersion(lease)
+        }
         continue
       }
       this.advanceSshRemotePtyLeaseMutationVersion(lease)

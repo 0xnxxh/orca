@@ -315,6 +315,63 @@ describe('STA-3077: existing duplicate leases are healed, not revived', () => {
     ).toBe('attached')
   })
 
+  it('does not revive a provisional loser after a concurrent same-pane upsert', async () => {
+    const store = await createStore({
+      sshRemotePtyLeases: [
+        { ...leaseFor('relay-pty-a', 1), createdAt: 1 },
+        { ...leaseFor('relay-pty-b', 2), createdAt: 2 }
+      ]
+    })
+    let rejectWrite: (error: Error) => void = () => {}
+    vi.spyOn(
+      store as unknown as { flushDurableStateOrThrowAsync: () => Promise<void> },
+      'flushDurableStateOrThrowAsync'
+    ).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectWrite = reject
+        })
+    )
+
+    const retirement = store.supersedeDuplicatePaneLeases(TARGET)
+    store.upsertSshRemotePtyLease({ ...leaseFor('relay-pty-c', 3), createdAt: 3 })
+    rejectWrite(new Error('disk full'))
+
+    expect(await retirement).toBe(0)
+    expect(liveLeasesForPane(store).map((lease) => lease.ptyId)).toEqual(['relay-pty-c'])
+  })
+
+  it('does not restore attached state over a concurrent detach', async () => {
+    const store = await createStore({
+      sshRemotePtyLeases: [
+        { ...leaseFor('relay-pty-a', 1), createdAt: 1 },
+        { ...leaseFor('relay-pty-b', 2), createdAt: 2 }
+      ]
+    })
+    let rejectWrite: (error: Error) => void = () => {}
+    vi.spyOn(
+      store as unknown as { flushDurableStateOrThrowAsync: () => Promise<void> },
+      'flushDurableStateOrThrowAsync'
+    ).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectWrite = reject
+        })
+    )
+
+    const retirement = store.supersedeDuplicatePaneLeases(TARGET)
+    store.markSshRemotePtyLeasesForShutdown(TARGET, 'detached')
+    rejectWrite(new Error('disk full'))
+
+    expect(await retirement).toBe(0)
+    expect(
+      store.getSshRemotePtyLeases(TARGET).find((lease) => lease.ptyId === 'relay-pty-a')?.state
+    ).toBe('expired')
+    expect(
+      store.getSshRemotePtyLeases(TARGET).find((lease) => lease.ptyId === 'relay-pty-b')?.state
+    ).toBe('detached')
+  })
+
   it('does not roll back concurrent session or lease changes after a failed write', async () => {
     const store = await createStore({
       sshRemotePtyLeases: [
