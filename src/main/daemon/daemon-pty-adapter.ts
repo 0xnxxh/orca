@@ -1957,7 +1957,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
   }
 
-  // Why final=true not teardown: clean disconnect needs the full-depth snapshot as the restore source, but the
+  // Why final=true not teardown: clean disconnect needs the full daemon-window snapshot as the restore source, but the
   // detached daemon's PTYs keep running for warm reattach, so shell-ready scanner state must stay intact.
   private async checkpointAllSessions(): Promise<void> {
     const completed = await this.checkpointSessions(this.activeSessionIds, { final: true })
