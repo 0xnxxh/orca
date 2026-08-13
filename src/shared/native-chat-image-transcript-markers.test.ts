@@ -43,12 +43,23 @@ describe('normalizeImageTranscriptMessages', () => {
 
   it.each([
     ['[Image #1] describe this', 'describe this'],
+    ['[Image #1]\t  describe this', 'describe this'],
     ['describe this [Image #1]', 'describe this'],
-    ['describe [Image #1] this', 'describe this'],
+    ['describe this  \t[Image #1]', 'describe this'],
+    ['describe [Image #1] this', 'describe  this'],
+    ['describe  [Image #1]\t this', 'describe  \t this'],
+    ['describe[Image #1]\t  this', 'describe\t  this'],
+    ['describe\n[Image #1]\nthis', 'describe\n\nthis'],
     ['com[Image #1]pare this', 'compare this'],
-    ['[Image #1] [Image #2]', '']
+    ['[Image #1] [Image #2]', ''],
+    ['literal [Image #x] text', 'literal [Image #x] text']
   ])('strips image prompt markers anywhere in text', (text, expected) => {
     expect(stripImagePromptMarker(text)).toBe(expected)
+  })
+
+  it('returns long marker-free whitespace without regex backtracking', () => {
+    const text = ' '.repeat(50_000)
+    expect(stripImagePromptMarker(text)).toBe(text)
   })
 
   it('converts a lone [Image: source] turn (no prompt) into an image-ref instead of raw text', () => {

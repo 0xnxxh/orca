@@ -2,7 +2,11 @@ import { isTextBlock, type NativeChatBlock, type NativeChatMessage } from './nat
 
 const IMAGE_SOURCE_MARKER = /^\[Image:\s*source:\s*(.+?)\]\s*$/
 const IMAGE_PROMPT_MARKER = /\[Image #\d+\]/
-const IMAGE_PROMPT_MARKER_RUN = /[^\S\r\n]*(?:\[Image #\d+\][^\S\r\n]*)+/g
+const IMAGE_PROMPT_MARKERS = /\[Image #\d+\]/g
+const IMAGE_PROMPT_MARKER_AT_START = /^\[Image #\d+\]/
+const IMAGE_PROMPT_MARKER_AT_END = /\[Image #\d+\]$/
+const HORIZONTAL_WHITESPACE_START = /^[^\S\r\n]+/
+const HORIZONTAL_WHITESPACE_END = /[^\S\r\n]+$/
 
 function soleText(message: NativeChatMessage): string | null {
   return message.blocks.length === 1 && isTextBlock(message.blocks[0])
@@ -15,12 +19,17 @@ export function imageSourcePathFromText(text: string): string | null {
 }
 
 export function stripImagePromptMarker(text: string): string {
-  return text.replace(IMAGE_PROMPT_MARKER_RUN, (run, offset: number, source: string) => {
-    const hasTextBefore = offset > 0
-    const hasTextAfter = offset + run.length < source.length
-    const hadSurroundingWhitespace = run.replace(/\[Image #\d+\]/g, '').length > 0
-    return hasTextBefore && hasTextAfter && hadSurroundingWhitespace ? ' ' : ''
-  })
+  const stripped = text.replace(IMAGE_PROMPT_MARKERS, '')
+  if (stripped === text) {
+    return text
+  }
+  let result = IMAGE_PROMPT_MARKER_AT_START.test(text)
+    ? stripped.replace(HORIZONTAL_WHITESPACE_START, '')
+    : stripped
+  if (IMAGE_PROMPT_MARKER_AT_END.test(text)) {
+    result = result.replace(HORIZONTAL_WHITESPACE_END, '')
+  }
+  return result
 }
 
 function stripImagePromptMarkersFromFirstText(
