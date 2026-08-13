@@ -1,4 +1,4 @@
-import { RadioTower, Server } from 'lucide-react'
+import { Server } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
@@ -56,7 +56,6 @@ export function DashboardHostBadge({
   if (!tooltipLabel) {
     return null
   }
-  const Icon = hostKind === 'ssh' ? Server : RadioTower
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -71,7 +70,7 @@ export function DashboardHostBadge({
           aria-label={tooltipLabel}
           tabIndex={keyboardFocusable ? 0 : undefined}
         >
-          <Icon className={cn('size-3', iconClassName)} aria-hidden />
+          <Server className={cn('size-3', iconClassName)} aria-hidden />
         </span>
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={4}>
