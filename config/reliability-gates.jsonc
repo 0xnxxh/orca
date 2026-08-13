@@ -120,7 +120,7 @@
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "The Fish chunk oracle patch SHA-256 fd49a4d3d91bd5f0d10c1b1f44f4cfbd92cef9155a5505b415c8680184cdc765 is byte-identical across runs. Scan target e4c278eb52, latest main bc2e30000b, and candidate b19ca10a4c with shared scanner integration disabled each failed only the ESC-introducer split in both local and daemon owners (2 failures, 161 passes). Candidate b19ca10a4c passed all 163 local/daemon cases plus the independent headless-xterm render oracle. The original exec-readiness oracle SHA-256 b13b08006a38b2adc2acb51ae9342909514e55ab4822fac4fbb76cd49b344cc6 remains 14/14 green."
+        "evidence": "The Fish chunk oracle patch SHA-256 fd49a4d3d91bd5f0d10c1b1f44f4cfbd92cef9155a5505b415c8680184cdc765 is byte-identical across runs. Scan target e4c278eb52, latest main 150cc6f50c, and candidate ae7f30318a with shared scanner integration disabled each failed only the ESC-introducer split in both local and daemon owners (2 failures, 161 passes). Candidate ae7f30318a passed all 163 local/daemon cases plus the independent headless-xterm render oracle. The original exec-readiness oracle SHA-256 b13b08006a38b2adc2acb51ae9342909514e55ab4822fac4fbb76cd49b344cc6 remains 14/14 green."
       },
       "performanceBudget": {
         "required": true,
