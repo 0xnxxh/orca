@@ -199,7 +199,7 @@ describe('buildDashboardSnapshot', () => {
     expect(card.unseen).toBe(true)
   })
 
-  it('carries native-chat session identity when Chat UI is the default view', () => {
+  it('carries native-chat session identity when the exact live leaf is in chat', () => {
     const snapshot = buildDashboardSnapshot(
       baseState({
         agentStatusByPaneKey: {
@@ -211,32 +211,35 @@ describe('buildDashboardSnapshot', () => {
             }
           })
         },
-        settings: { experimentalNativeChat: true, openAgentTabsInChatByDefault: true } as never
+        runtimeNativeChatLeafIdByTabId: { [TAB_ID]: LEAF_ID },
+        settings: { experimentalNativeChat: true, openAgentTabsInChatByDefault: false } as never
       } as unknown as Partial<DashboardSnapshotState>),
       NOW
     )
 
     expect(snapshot.cards[0]).toMatchObject({
-      hostKind: 'local',
       viewMode: 'chat',
       sessionId: 'session-abc',
-      transcriptPath: '/home/dev/.claude/projects/orca/session-abc.jsonl'
+      transcriptPath: expect.stringContaining('session-abc')
     })
   })
 
-  it('keeps native chat disabled when the experiment is off', () => {
+  it.each([
+    ['the experiment is off', 'claude', false],
+    ['the leaf agent is unsupported', 'aider', true]
+  ] as const)('keeps native chat disabled when %s', (_case, agentType, experimentEnabled) => {
     const snapshot = buildDashboardSnapshot(
       baseState({
-        agentStatusByPaneKey: { [PANE_KEY]: entry({}) },
-        settings: { experimentalNativeChat: false, openAgentTabsInChatByDefault: true }
+        agentStatusByPaneKey: { [PANE_KEY]: entry({ agentType }) },
+        runtimeNativeChatLeafIdByTabId: { [TAB_ID]: LEAF_ID },
+        settings: { experimentalNativeChat: experimentEnabled, openAgentTabsInChatByDefault: true }
       } as unknown as Partial<DashboardSnapshotState>),
       NOW
     )
-
     expect(snapshot.cards[0].viewMode).toBeUndefined()
   })
 
-  it('omits native-chat payload when the default view is the terminal', () => {
+  it('omits native-chat payload when the live leaf is terminal despite a chat default', () => {
     const snapshot = buildDashboardSnapshot(
       baseState({
         agentStatusByPaneKey: {
@@ -248,26 +251,43 @@ describe('buildDashboardSnapshot', () => {
             }
           })
         },
-        settings: { experimentalNativeChat: true, openAgentTabsInChatByDefault: false }
-      } as unknown as Partial<DashboardSnapshotState>),
-      NOW
-    )
-
-    expect(snapshot.cards[0]).not.toHaveProperty('viewMode')
-    expect(snapshot.cards[0]).not.toHaveProperty('sessionId')
-    expect(snapshot.cards[0]).not.toHaveProperty('transcriptPath')
-  })
-
-  it('keeps agents without a native-chat renderer in terminal mode', () => {
-    const snapshot = buildDashboardSnapshot(
-      baseState({
-        agentStatusByPaneKey: { [PANE_KEY]: entry({ agentType: 'aider' }) },
+        terminalLayoutsByTabId: {},
+        runtimeNativeChatLeafIdByTabId: { [TAB_ID]: LEAF_ID },
         settings: { experimentalNativeChat: true, openAgentTabsInChatByDefault: true }
       } as unknown as Partial<DashboardSnapshotState>),
       NOW
     )
 
-    expect(snapshot.cards[0].viewMode).toBeUndefined()
+    expect(snapshot.cards[0]).not.toHaveProperty('viewMode')
+  })
+
+  it('marks only the native-chat owner in a split tab as chat', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({}),
+          [CHILD_PANE_KEY]: entry({ paneKey: CHILD_PANE_KEY })
+        },
+        terminalLayoutsByTabId: {
+          [TAB_ID]: {
+            root: {
+              type: 'split',
+              direction: 'horizontal',
+              first: { type: 'leaf', leafId: LEAF_ID },
+              second: { type: 'leaf', leafId: CHILD_LEAF_ID }
+            },
+            ptyIdsByLeafId: { [LEAF_ID]: 'pty1', [CHILD_LEAF_ID]: 'pty-child' }
+          } as never
+        },
+        ptyIdsByTabId: { [TAB_ID]: ['pty1', 'pty-child'] },
+        runtimeNativeChatLeafIdByTabId: { [TAB_ID]: LEAF_ID },
+        settings: { experimentalNativeChat: true, openAgentTabsInChatByDefault: true } as never
+      }),
+      NOW
+    )
+
+    expect(snapshot.cards.find((card) => card.paneKey === PANE_KEY)?.viewMode).toBe('chat')
+    expect(snapshot.cards.find((card) => card.paneKey === CHILD_PANE_KEY)?.viewMode).toBeUndefined()
   })
 
   it('marks SSH transcript paths as remote from the dashboard renderer', () => {

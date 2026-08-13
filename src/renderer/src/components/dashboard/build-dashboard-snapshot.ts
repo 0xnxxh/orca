@@ -39,10 +39,7 @@ import {
   resolveDashboardCardContext,
   type DashboardCardContextState
 } from './dashboard-card-context'
-import {
-  dashboardCardNativeChatMetadata,
-  dashboardNativeChatByDefault
-} from './dashboard-card-native-chat'
+import { dashboardCardNativeChatMetadata } from './dashboard-card-native-chat'
 import {
   dashboardCardMapWorkspaceMetadata,
   collectActiveDashboardWorkspaces
@@ -79,7 +76,11 @@ export type DashboardSnapshotState = Pick<
   | 'settings'
 > &
   DashboardCardContextState &
-  Partial<DashboardCardTerminalInputState & DashboardLaunchDetectionState>
+  Partial<
+    DashboardCardTerminalInputState &
+      DashboardLaunchDetectionState &
+      Pick<AppState, 'runtimeNativeChatLeafIdByTabId'>
+  >
 
 /**
  * Derive the serializable dashboard snapshot from the live renderer store.
@@ -101,7 +102,6 @@ export function buildDashboardSnapshot(
   const includeCardDetails = options.includeCardDetails !== false
   const generatedTitlesEnabled = state.settings?.tabAutoGenerateTitle === true
   const showIdle = state.settings?.experimentalAgentDashboardShowIdle === true
-  const nativeChatByDefault = includeCardDetails && dashboardNativeChatByDefault(state.settings)
   const activeWorktrees = collectActiveDashboardWorkspaces(state, includeCardDetails)
   const filterOptions =
     options.includeFilterOptions === false
@@ -277,9 +277,13 @@ export function buildDashboardSnapshot(
                 terminalInput ?? undefined,
                 clientHost.platform
               ),
-              ...(nativeChatByDefault
-                ? dashboardCardNativeChatMetadata(row.agentType, row.entry.providerSession)
-                : {})
+              ...dashboardCardNativeChatMetadata(
+                row.agentType,
+                row.entry.providerSession,
+                state.settings?.experimentalNativeChat === true &&
+                  layoutPtyId !== null &&
+                  state.runtimeNativeChatLeafIdByTabId?.[tabId] === leafId
+              )
             }
           : {}),
         workspaceStatusId: context?.workspaceStatus.id,
