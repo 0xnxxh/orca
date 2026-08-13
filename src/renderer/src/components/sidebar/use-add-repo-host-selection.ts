@@ -54,7 +54,7 @@ export function useAddRepoHostSelection({
       hostOptions.filter((host) => {
         const parsed = parseExecutionHostId(host.id)
         return (
-          !(isWebClient && parsed?.kind === 'local') &&
+          !(isWebClient && (parsed?.kind === 'local' || parsed?.kind === 'ssh')) &&
           (parsed?.kind !== 'runtime' || !ephemeralRuntimeEnvironmentIds.has(parsed.environmentId))
         )
       }),

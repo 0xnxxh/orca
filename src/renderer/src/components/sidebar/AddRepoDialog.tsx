@@ -233,6 +233,7 @@ export default React.memo(function AddRepoDialog({
   ])
 
   const resetHostScopedState = useCallback(() => {
+    setStep('add')
     setIsAdding(false)
     setAddProjectBusyLabel(null)
     resetLocalFolderFlow()

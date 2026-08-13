@@ -152,7 +152,7 @@ describe('useAddRepoHostSelection', () => {
 
     const result = useAddRepoHostSelection({ isOpen: true, setStep: vi.fn() })
 
-    expect(result.hostOptions.map((host) => host.id)).toEqual(['ssh:ssh-1', 'runtime:env-1'])
+    expect(result.hostOptions.map((host) => host.id)).toEqual(['runtime:env-1'])
     expect(result.displayedHostId).toBe('runtime:env-1')
     expect(result.actionableHostId).toBe('runtime:env-1')
     expect(result.actionableParsedHost).toMatchObject({
@@ -211,7 +211,7 @@ describe('useAddRepoHostSelection', () => {
 
     const result = useAddRepoHostSelection({ isOpen: true, setStep: vi.fn() })
 
-    expect(result.hostOptions.map((host) => host.id)).toEqual(['ssh:ssh-1', 'runtime:env-1'])
+    expect(result.hostOptions.map((host) => host.id)).toEqual(['runtime:env-1'])
     expect(result.displayedHostId).toBe('runtime:env-1')
     expect(result.actionableHostId).toBeNull()
     expect(result.hostSelectionAvailable).toBe(false)
@@ -221,7 +221,7 @@ describe('useAddRepoHostSelection', () => {
     expect(mocks.sshConnect).not.toHaveBeenCalled()
   })
 
-  it('returns to the paired runtime identity when its transport fails after an SSH selection', async () => {
+  it('returns to the paired runtime identity when stale state names an SSH selection', async () => {
     mocks.isWebClient = true
     mocks.stateValues = ['ssh:ssh-1', false]
     mocks.storeState.runtimeEnvironments = [{ id: 'env-1', name: 'Server' }]
@@ -254,7 +254,7 @@ describe('useAddRepoHostSelection', () => {
     expect(result.actionableHostId).toBe('runtime:env-1')
   })
 
-  it('restores an explicit SSH selection after the paired runtime recovers', async () => {
+  it('does not expose a paired-host SSH target as web filesystem authority', async () => {
     mocks.isWebClient = true
     mocks.stateValues = ['ssh:ssh-1', false]
     mocks.storeState.runtimeEnvironments = [{ id: 'env-1', name: 'Server' }]
@@ -262,8 +262,13 @@ describe('useAddRepoHostSelection', () => {
 
     const result = useAddRepoHostSelection({ isOpen: true, setStep: vi.fn() })
 
-    expect(result.displayedHostId).toBe('ssh:ssh-1')
-    expect(result.actionableHostId).toBe('ssh:ssh-1')
+    expect(result.hostOptions.map((host) => host.id)).toEqual(['runtime:env-1'])
+    expect(result.displayedHostId).toBe('runtime:env-1')
+    expect(result.actionableHostId).toBe('runtime:env-1')
+    await result.handleSelectAddProjectHost('ssh:ssh-1')
+    await result.handleConnectAddProjectHost('ssh:ssh-1')
+    expect(mocks.stateSetters[0]).not.toHaveBeenCalledWith('ssh:ssh-1')
+    expect(mocks.sshConnect).not.toHaveBeenCalled()
   })
 
   it('makes the paired runtime actionable again after recovery', async () => {

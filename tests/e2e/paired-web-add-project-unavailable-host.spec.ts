@@ -220,6 +220,29 @@ async function recoverOnlyRuntimeHost(page: Page, environmentId: string): Promis
   }, environmentId)
 }
 
+async function seedPairedHostSshDecoy(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const store = window.__store
+    if (!store) {
+      throw new Error('Paired web client store unavailable')
+    }
+    store.getState().setSshTargetsMetadata([{ id: 'sta4182-ssh-decoy', label: 'SSH decoy' }])
+    store.getState().setSshConnectionState('sta4182-ssh-decoy', {
+      targetId: 'sta4182-ssh-decoy',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    })
+  })
+}
+
+async function assertNoPairedWebSshAuthority(page: Page): Promise<void> {
+  const dialog = page.getByRole('dialog', { name: /Add a project/i })
+  await dialog.getByRole('combobox').click()
+  await expect(page.locator('[cmdk-item][data-host-id="ssh:sta4182-ssh-decoy"]')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+}
+
 async function assertCreationActionsEnabled(page: Page, environmentId: string): Promise<void> {
   await page
     .getByRole('button', { name: /Add Project/i })
@@ -259,8 +282,12 @@ async function assertAuthorityLossClosesMutationSteps(
     await expect(dialog.getByRole('button', { name: /Clone from URL/i })).toBeDisabled()
     await expect(dialog.getByRole('button', { name: /Create new project/i })).toBeDisabled()
     expect((await readAuthoritySnapshot(page)).mutationCalls).toEqual([])
-    await dialog.getByRole('button', { name: 'Close' }).click()
     await recoverOnlyRuntimeHost(page, environmentId)
+    await expect(dialog.getByRole('button', { name: /Browse folder|Browse host/i })).toBeEnabled()
+    await expect(dialog.getByRole('button', { name: /Clone from URL/i })).toBeEnabled()
+    await expect(dialog.getByRole('button', { name: /Create new project/i })).toBeEnabled()
+    await expect(dialog.getByLabel('Host path')).toHaveCount(0)
+    await dialog.getByRole('button', { name: 'Close' }).click()
   }
 
   await page
@@ -282,8 +309,12 @@ async function assertAuthorityLossClosesMutationSteps(
   )
   await expect(dialog.getByRole('button', { name: /Browse folder|Browse host/i })).toBeDisabled()
   expect((await readAuthoritySnapshot(page)).mutationCalls).toEqual([])
-  await dialog.getByRole('button', { name: 'Close' }).click()
   await recoverOnlyRuntimeHost(page, environmentId)
+  await expect(dialog.getByRole('button', { name: /Browse folder|Browse host/i })).toBeEnabled()
+  await expect(
+    dialog.getByRole('heading', { name: /Import repositories from folder/i })
+  ).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Close' }).click()
 }
 
 async function assertCreationActionsDisabled(args: {
@@ -347,6 +378,7 @@ async function runUnavailableHostJourney(args: {
     client = await launchPairedWebClient(args.app, args.offer)
     await client.page.waitForFunction(() => Boolean(window.__store), null, { timeout: 30_000 })
     await installRepoMutationProbe(client.page)
+    await seedPairedHostSshDecoy(client.page)
     const initialAuthority = await readAuthoritySnapshot(client.page)
     const initialHostInventory = await args.readHostInventory()
     expect(initialAuthority.pathname).toBe('/web-index.html')
@@ -354,6 +386,15 @@ async function runUnavailableHostJourney(args: {
     expect(initialAuthority.environmentIds).toHaveLength(1)
     expect(initialAuthority.mutationCalls).toEqual([])
     const environmentId = initialAuthority.environmentIds[0]!
+    await client.page
+      .getByRole('button', { name: /Add Project/i })
+      .first()
+      .click()
+    await assertNoPairedWebSshAuthority(client.page)
+    await client.page
+      .getByRole('dialog', { name: /Add a project/i })
+      .getByRole('button', { name: 'Close' })
+      .click()
     await assertAuthorityLossClosesMutationSteps(client.page, environmentId, args.nestedFixturePath)
     await args.app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows().forEach((window) => window.show())
