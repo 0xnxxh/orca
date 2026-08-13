@@ -215,6 +215,11 @@ export function parseTerminalOscColorQuery(
     data.startsWith(prefix, offset)
   )
   if (!entry) {
+    // CSI and other ESC sequences are not OSC 10/11. Avoid slicing the rest
+    // of a TUI chunk just to prove that.
+    if (offset + 1 < data.length && data[offset + 1] !== ']') {
+      return { kind: 'none' }
+    }
     const fragment = data.slice(offset)
     return TERMINAL_OSC_COLOR_QUERY_PREFIXES.some(({ prefix }) => prefix.startsWith(fragment))
       ? { kind: 'partial' }

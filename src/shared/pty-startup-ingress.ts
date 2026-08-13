@@ -7,6 +7,10 @@ import {
   answerLiveOscColorQuery,
   answerStartupOscColorQuery
 } from './pty-startup-ingress-color-answer'
+import {
+  applyPtyStartupIngressOperation,
+  type PtyStartupIngressOperationHost
+} from './pty-startup-ingress-operations'
 import type { PtyStartupIngressIntent } from './pty-startup-ingress-intent'
 import type { PtyOwnerBackend } from './pty-owner-backend'
 import { PtyStartupReplyDelivery } from './pty-startup-reply-delivery'
@@ -56,6 +60,7 @@ export class PtyStartupIngress {
   private echoPending: PtyIngressSourceSpan | null = null
   private echoHoldTimer: ReturnType<typeof setTimeout> | null = null
   private deadlineTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly operationHost: PtyStartupIngressOperationHost
 
   constructor(options: PtyStartupIngressOptions) {
     this.intent = options.intent
@@ -63,6 +68,23 @@ export class PtyStartupIngress {
     this.ownerBackend = options.ownerBackend ?? 'posix-pty'
     this.delivery = new PtyStartupReplyDelivery(this.ownerBackend, options.write, options.echoProbe)
     this.onEmission = options.onEmission
+    this.operationHost = {
+      ownerBackend: this.ownerBackend,
+      keepLiveQueryHold: Boolean(this.liveOscColors),
+      processEchoSpan: (span) => this.processEchoSpan(span),
+      endQueryAuthority: () => {
+        this.queryOpen = false
+      },
+      releaseQueryPending: () => this.releaseQueryPending(),
+      releaseEchoPendingOnly: () => this.releaseEchoPendingOnly(),
+      releasePendingInSourceOrder: (include) => this.releasePendingInSourceOrder(include),
+      resetDelivery: () => this.delivery.reset(),
+      closeDelivery: () => this.delivery.close(),
+      clearDeadline: () => this.clearDeadline(),
+      markClosed: () => {
+        this.closed = true
+      }
+    }
     this.queryOpen = options.intent !== undefined
     if (options.intent) {
       this.deadlineTimer = setTimeout(
@@ -131,38 +153,7 @@ export class PtyStartupIngress {
   }
 
   private applyOperation(operation: PtyStartupIngressOperation): void {
-    switch (operation.kind) {
-      case 'data':
-        this.processEchoSpan(operation.chunk)
-        return
-      case 'close-query':
-        if (this.ownerBackend !== 'windows-conpty') {
-          this.queryOpen = false
-          // Why the echo hold deliberately survives this, unlike `snapshot`: the
-          // handoff ends query *authority*, but a reply already on the wire is still
-          // Orca's to swallow. Releasing here would show the first half of an echo
-          // split across the boundary and orphan the second.
-          this.releaseQueryPending()
-        }
-        // Why: ConPTY cannot safely transfer color-query authority to a downstream view.
-        return
-      case 'expire':
-        this.queryOpen = false
-        this.releasePendingInSourceOrder(false)
-        this.delivery.reset()
-        this.clearDeadline()
-        return
-      case 'snapshot':
-      case 'release-echo':
-        this.releasePendingInSourceOrder(false)
-        return
-      case 'teardown':
-        this.queryOpen = false
-        this.releasePendingInSourceOrder(true)
-        this.delivery.close()
-        this.clearDeadline()
-        this.closed = true
-    }
+    applyPtyStartupIngressOperation(this.operationHost, operation)
   }
 
   /**
@@ -284,8 +275,11 @@ export class PtyStartupIngress {
         this.emit(slicePtyIngressSourceSpan(input, emittedOffset, candidateIndex), false)
       }
       const querySpan = slicePtyIngressSourceSpan(input, candidateIndex, query.endIndex)
+      // Startup is once-per-slot. A later genuine query of the same slot
+      // must still be host-answered, or the renderer sees it and can send a
+      // late `\x1b]` reply into a survey reader.
       const answered =
-        this.queryOpen && this.intent
+        (this.queryOpen && this.intent
           ? answerStartupOscColorQuery({
               slots: query.slots,
               intent: this.intent,
@@ -295,12 +289,13 @@ export class PtyStartupIngress {
                 this.queryOpen = false
               }
             })
-          : answerLiveOscColorQuery({
-              slots: query.slots,
-              colors: this.liveOscColors,
-              ownerBackend: this.ownerBackend,
-              delivery: this.delivery
-            })
+          : false) ||
+        answerLiveOscColorQuery({
+          slots: query.slots,
+          colors: this.liveOscColors,
+          ownerBackend: this.ownerBackend,
+          delivery: this.delivery
+        })
       if (answered || suppressConptyQuery) {
         this.emit(querySpan, true, '')
       } else {
@@ -308,6 +303,13 @@ export class PtyStartupIngress {
       }
       scanOffset = query.endIndex
       emittedOffset = query.endIndex
+    }
+  }
+
+  private releaseEchoPendingOnly(): void {
+    const pending = this.takeEchoPending()
+    if (pending) {
+      this.emit(pending, false)
     }
   }
 

@@ -196,6 +196,15 @@ export class PtyStartupReplyDelivery {
    * write later throws. Scoped per reply because the replies to one query are
    * written independently — one failing says nothing about the ones that landed.
    */
+  /**
+   * Write now. Live OSC 10/11 answers cannot wait for the cooked-echo probe:
+   * gh auth starts its survey reader in the next syscall, and a deferred
+   * `\x1b]` is the same late stdin the renderer used to send.
+   */
+  answerImmediately(reply: string, onFailed?: () => void): boolean {
+    return this.writeReply(reply, onFailed)
+  }
+
   answer(reply: string, onFailed?: () => void): boolean {
     if (this.closed) {
       return false

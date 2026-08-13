@@ -8,6 +8,7 @@ import type { PtyStartupIngressIntent } from './pty-startup-ingress-intent'
 
 type ColorReplyDelivery = {
   answer: (reply: string, onFailed?: () => void) => boolean
+  answerImmediately: (reply: string, onFailed?: () => void) => boolean
 }
 
 export function answerLiveOscColorQuery(args: {
@@ -24,7 +25,7 @@ export function answerLiveOscColorQuery(args: {
     return false
   }
   for (const reply of replies) {
-    args.delivery.answer(reply)
+    args.delivery.answerImmediately(reply)
   }
   return true
 }

@@ -55,6 +55,18 @@ describe('parseTerminalOscColorQuery', () => {
     ).toEqual({ foreground: '#2e3434', background: '#ffffff' })
     expect(parseTerminalOscColorQueryReplyColors({ foreground: '#2e3434' })).toBeUndefined()
     expect(parseTerminalOscColorQueryReplyColors(null)).toBeUndefined()
+    expect(
+      parseTerminalOscColorQueryReplyColors({
+        foreground: 'not-a-color',
+        background: '#ffffff'
+      })
+    ).toBeUndefined()
+    expect(
+      parseTerminalOscColorQueryReplyColors({
+        foreground: 42,
+        background: '#ffffff'
+      })
+    ).toBeUndefined()
   })
 
   it('rejects unsupported query-shaped bodies without waiting for a terminator', () => {
