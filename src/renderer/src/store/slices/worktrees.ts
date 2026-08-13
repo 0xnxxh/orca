@@ -133,6 +133,7 @@ import type {
 import type { DirectSshAuthority } from '../../../../shared/ssh-types'
 import { findIndexedWorktreeOwnerForHost } from '@/lib/worktree-runtime-owner-index'
 import { catalogRowsEqual, reuseEqualCatalogRows } from './worktree-catalog-reconciliation'
+import { reuseEqualRecordMap } from './repo-identity-reconcile'
 export type { WorktreeSlice, WorktreeDeleteState } from './worktree-helpers'
 
 // Why: old runtime servers only have `worktree.list`; preserve the large-list UI hydration parity used before `worktree.detectedList` existed.
@@ -1570,21 +1571,38 @@ function applyWorktreeLineageUpdate(
   })
 }
 
+function applyHostLineageRefresh(
+  set: Parameters<StateCreator<AppState>>[0],
+  hostId: ExecutionHostId,
+  lineage: {
+    worktreeLineageById: Record<string, WorktreeLineage>
+    workspaceLineageByChildKey: Record<string, WorkspaceLineage>
+  }
+): void {
+  set((s) => {
+    const worktreeLineageById = mergeLineageForHost(s, hostId, lineage.worktreeLineageById)
+    const workspaceLineageByChildKey = mergeWorkspaceLineageForHost(
+      s,
+      hostId,
+      lineage.workspaceLineageByChildKey
+    )
+    if (
+      worktreeLineageById === s.worktreeLineageById &&
+      workspaceLineageByChildKey === s.workspaceLineageByChildKey
+    ) {
+      return s
+    }
+    return { worktreeLineageById, workspaceLineageByChildKey }
+  })
+}
+
 async function refreshWorktreeLineageForSettings(
   settings: AppState['settings'],
   set: Parameters<StateCreator<AppState>>[0],
   options: BackgroundRuntimeRefreshOptions = {}
 ): Promise<void> {
   const lineage = await listWorktreeLineageForRuntime(settings, options)
-  const hostId = getSettingsFocusedExecutionHostId(settings)
-  set((s) => ({
-    worktreeLineageById: mergeLineageForHost(s, hostId, lineage.worktreeLineageById),
-    workspaceLineageByChildKey: mergeWorkspaceLineageForHost(
-      s,
-      hostId,
-      lineage.workspaceLineageByChildKey
-    )
-  }))
+  applyHostLineageRefresh(set, getSettingsFocusedExecutionHostId(settings), lineage)
 }
 
 async function refreshRemoteWorktreeLineageBestEffort(
@@ -1598,15 +1616,7 @@ async function refreshRemoteWorktreeLineageBestEffort(
     const lineage = await listWorktreeLineageForRuntime(settings, {
       reuseRecentCompatibilityFailure: true
     })
-    const hostId = getSettingsFocusedExecutionHostId(settings)
-    set((s) => ({
-      worktreeLineageById: mergeLineageForHost(s, hostId, lineage.worktreeLineageById),
-      workspaceLineageByChildKey: mergeWorkspaceLineageForHost(
-        s,
-        hostId,
-        lineage.workspaceLineageByChildKey
-      )
-    }))
+    applyHostLineageRefresh(set, getSettingsFocusedExecutionHostId(settings), lineage)
   } catch (err) {
     // Why: lineage is supplemental, so a remote timeout here must not discard a successful worktree refresh.
     console.error('Failed to fetch worktree lineage:', err)
@@ -1646,7 +1656,10 @@ function mergeLineageForHost(
       next[worktreeId] = existing
     }
   }
-  return { ...next, ...lineage }
+  for (const [worktreeId, incoming] of Object.entries(lineage)) {
+    next[worktreeId] = incoming
+  }
+  return reuseEqualRecordMap(state.worktreeLineageById, next)
 }
 
 function mergeWorkspaceLineageForHost(
@@ -1671,7 +1684,10 @@ function mergeWorkspaceLineageForHost(
       next[childKey] = existing
     }
   }
-  return { ...next, ...lineage }
+  for (const [childKey, incoming] of Object.entries(lineage)) {
+    next[childKey] = incoming
+  }
+  return reuseEqualRecordMap(state.workspaceLineageByChildKey, next)
 }
 
 async function persistWorktreeMeta(

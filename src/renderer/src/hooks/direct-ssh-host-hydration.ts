@@ -5,6 +5,7 @@ import type { HostRepoCatalogSnapshot } from '../../../shared/host-repo-catalog-
 import type { DirectSshAuthority } from '../../../shared/ssh-types'
 import { isWorkspaceKey } from '../../../shared/workspace-scope'
 import type { AppState } from '../store/types'
+import { reuseEqualRecordMap } from '../store/slices/repo-identity-reconcile'
 import type {
   DirectSshLineageOutcome,
   DirectSshPreparationInput,
@@ -78,37 +79,43 @@ function mergeExactHostLineage(
   catalogRevision: number
 ): AppState {
   const scope = directSshHostHydrationScope(state, authority, catalogRevision)
-  const worktreeLineageById = Object.fromEntries(
-    Object.entries(state.worktreeLineageById).filter(
-      ([worktreeId]) => !scope.gitWorktreeIds.has(worktreeId)
-    )
+  const nextWorktreeLineageById: AppState['worktreeLineageById'] = {}
+  for (const [worktreeId, existing] of Object.entries(state.worktreeLineageById)) {
+    if (!scope.gitWorktreeIds.has(worktreeId)) {
+      nextWorktreeLineageById[worktreeId] = existing
+    }
+  }
+  for (const [worktreeId, incoming] of Object.entries(snapshot.worktreeLineageById)) {
+    if (scope.gitWorktreeIds.has(worktreeId)) {
+      nextWorktreeLineageById[worktreeId] = incoming
+    }
+  }
+  const nextWorkspaceLineageByChildKey: AppState['workspaceLineageByChildKey'] = {}
+  for (const [childKey, existing] of Object.entries(state.workspaceLineageByChildKey)) {
+    if (!isWorkspaceKey(childKey) || !scope.lineageWorkspaceKeys.has(childKey)) {
+      nextWorkspaceLineageByChildKey[childKey] = existing
+    }
+  }
+  for (const [workspaceKey, incoming] of Object.entries(snapshot.workspaceLineageByChildKey)) {
+    if (isWorkspaceKey(workspaceKey) && scope.lineageWorkspaceKeys.has(workspaceKey)) {
+      nextWorkspaceLineageByChildKey[workspaceKey] = incoming
+    }
+  }
+  const worktreeLineageById = reuseEqualRecordMap(state.worktreeLineageById, nextWorktreeLineageById)
+  const workspaceLineageByChildKey = reuseEqualRecordMap(
+    state.workspaceLineageByChildKey,
+    nextWorkspaceLineageByChildKey
   )
-  const workspaceLineageByChildKey = Object.fromEntries(
-    Object.entries(state.workspaceLineageByChildKey).filter(
-      ([childKey]) => !isWorkspaceKey(childKey) || !scope.lineageWorkspaceKeys.has(childKey)
-    )
-  )
-  const incomingWorktreeLineage = Object.fromEntries(
-    Object.entries(snapshot.worktreeLineageById).filter(([worktreeId]) =>
-      scope.gitWorktreeIds.has(worktreeId)
-    )
-  )
-  const incomingWorkspaceLineage = Object.fromEntries(
-    Object.entries(snapshot.workspaceLineageByChildKey).filter(
-      ([workspaceKey]) =>
-        isWorkspaceKey(workspaceKey) && scope.lineageWorkspaceKeys.has(workspaceKey)
-    )
-  )
+  if (
+    worktreeLineageById === state.worktreeLineageById &&
+    workspaceLineageByChildKey === state.workspaceLineageByChildKey
+  ) {
+    return state
+  }
   return {
     ...state,
-    worktreeLineageById: {
-      ...worktreeLineageById,
-      ...incomingWorktreeLineage
-    },
-    workspaceLineageByChildKey: {
-      ...workspaceLineageByChildKey,
-      ...incomingWorkspaceLineage
-    }
+    worktreeLineageById,
+    workspaceLineageByChildKey
   }
 }
 

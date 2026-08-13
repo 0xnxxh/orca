@@ -79,3 +79,35 @@ export function reconcileFetchedRepos(
 ): readonly Repo[] {
   return reconcileCatalogRows(previous, next, getRepoHostIdentity)
 }
+
+/**
+ * Reuses equal record values from `previous` — and the whole map when nothing
+ * changed — so a cloned no-op refresh leaves Object.is subscribers untouched.
+ */
+export function reuseEqualRecordMap<T>(
+  previous: Record<string, T>,
+  next: Record<string, T>
+): Record<string, T> {
+  const nextKeys = Object.keys(next)
+  const previousKeys = Object.keys(previous)
+  let identical = nextKeys.length === previousKeys.length
+  const reconciled: Record<string, T> = {}
+  for (const key of nextKeys) {
+    const existing = Object.hasOwn(previous, key) ? previous[key] : undefined
+    if (existing !== undefined && areValuesEqual(existing, next[key])) {
+      reconciled[key] = existing
+      continue
+    }
+    identical = false
+    reconciled[key] = next[key]
+  }
+  if (identical) {
+    for (const key of previousKeys) {
+      if (!Object.hasOwn(next, key)) {
+        identical = false
+        break
+      }
+    }
+  }
+  return identical ? previous : reconciled
+}
