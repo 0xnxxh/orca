@@ -163,6 +163,10 @@ export function ensureVirtualDisplayForHeadlessServe(options: { isServeMode: boo
 
   process.env.DISPLAY = VIRTUAL_DISPLAY
 
+  // Why: -terminate only takes effect after Xvfb accepts its first client.
+  process.once('exit', stopVirtualDisplay)
+  app.once('ready', () => process.removeListener('exit', stopVirtualDisplay))
+
   return true
 }
 

@@ -34,7 +34,6 @@ export HOME="$state_dir/home"
 export XDG_CONFIG_HOME="$state_dir/config"
 export XDG_CACHE_HOME="$state_dir/cache"
 export XDG_RUNTIME_DIR="$state_dir/runtime"
-export APPDIR="$app_root"
 export LIBGL_ALWAYS_SOFTWARE=1
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
 chmod 700 "$XDG_RUNTIME_DIR"
@@ -53,24 +52,17 @@ env -u DISPLAY "${entrypoint[@]}" serve --port 0 --pairing-address 127.0.0.1 --j
 app_pid=$!
 app_start_ticks=$(awk '{print $22}' "/proc/$app_pid/stat")
 
-deadline=$((SECONDS + startup_timeout_seconds))
-ready_line=
-while [[ -z "$ready_line" ]]; do
-  ready_line=$(jq -c 'select(.type == "orca_server_ready" and .schemaVersion == 1)' \
-    "$stdout_log" 2>/dev/null | head -n 1 || true)
-  if ! kill -0 "$app_pid" 2>/dev/null; then
-    wait "$app_pid" || true
-    cat "$stdout_log" "$stderr_log" >&2
-    echo "FAIL: AppRun exited before orca_server_ready" >&2
-    exit 1
-  fi
-  if ((SECONDS >= deadline)); then
-    cat "$stdout_log" "$stderr_log" >&2
-    echo "FAIL: timed out waiting for orca_server_ready" >&2
-    exit 1
-  fi
-  [[ -n "$ready_line" ]] || sleep 0.05
-done
+# The inner shell expands its positional parameters.
+# shellcheck disable=SC2016
+ready_line=$(timeout "$startup_timeout_seconds" bash -c '
+  tail --pid="$1" -n +1 -F "$2" 2>/dev/null \
+    | jq --unbuffered -nc '\''first(inputs | select(.type == "orca_server_ready" and .schemaVersion == 1))'\''
+' bash "$app_pid" "$stdout_log" || true)
+if [[ -z "$ready_line" ]]; then
+  cat "$stdout_log" "$stderr_log" >&2
+  echo "FAIL: AppRun exited or timed out before orca_server_ready" >&2
+  exit 1
+fi
 
 bound_endpoint=$(jq -r '.boundEndpoint' <<<"$ready_line")
 bound_port=${bound_endpoint##*:}
@@ -81,13 +73,18 @@ if [[ -z "$listener_before" ]]; then
 fi
 
 tree_pids=()
+declare -A tree_start_ticks
+tree_start_ticks["$app_pid"]=$app_start_ticks
 frontier=("$app_pid")
 while ((${#frontier[@]})); do
   parent=${frontier[0]}
   frontier=("${frontier[@]:1}")
   while read -r child; do
     [[ -n "$child" ]] || continue
+    child_start_ticks=$(awk '{print $22}' "/proc/$child/stat" 2>/dev/null || true)
+    [[ -n "$child_start_ticks" ]] || continue
     tree_pids+=("$child")
+    tree_start_ticks["$child"]=$child_start_ticks
     frontier+=("$child")
   done < <(ps -o pid= --ppid "$parent" | tr -d ' ')
 done
@@ -113,32 +110,33 @@ elif [[ "$signal_target_kind" != app ]]; then
   exit 64
 fi
 
-if [[ $(awk '{print $22}' "/proc/$app_pid/stat") != "$app_start_ticks" ]]; then
-  echo "FAIL: AppRun identity changed before signal delivery" >&2
+signal_target_start_ticks=${tree_start_ticks[$signal_target_pid]:-}
+if [[ -z "$signal_target_start_ticks" ]] \
+  || [[ $(awk '{print $22}' "/proc/$signal_target_pid/stat") != "$signal_target_start_ticks" ]]; then
+  echo "FAIL: signal target identity changed before delivery" >&2
   exit 1
 fi
 kill -s "$signal_name" "$signal_target_pid"
 
-shutdown_deadline=$((SECONDS + 30))
-while kill -0 "$app_pid" 2>/dev/null; do
-  app_state=$(ps -o stat= -p "$app_pid" 2>/dev/null || true)
-  [[ "$app_state" == Z* ]] && break
-  if ((SECONDS >= shutdown_deadline)); then
-    echo "FAIL: foreground AppRun did not exit after $signal_name" >&2
-    exit 1
-  fi
-  sleep 0.05
-done
-
+sleep 30 &
+watchdog_pid=$!
 set +e
-wait "$app_pid"
+wait -n -p completed_pid "$app_pid" "$watchdog_pid"
 wait_status=$?
 set -e
+if [[ "$completed_pid" == "$watchdog_pid" ]]; then
+  echo "FAIL: foreground AppRun did not exit after $signal_name" >&2
+  exit 1
+fi
+kill "$watchdog_pid" 2>/dev/null || true
+wait "$watchdog_pid" 2>/dev/null || true
 
 listener_after=$(ss -H -ltnp "sport = :$bound_port" || true)
 survivors=()
 for pid in "${tree_pids[@]}"; do
-  if ps -o stat= -p "$pid" 2>/dev/null | grep -qv '^Z'; then
+  if [[ -r "/proc/$pid/stat" ]] \
+    && [[ $(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null || true) == "${tree_start_ticks[$pid]}" ]] \
+    && ps -o stat= -p "$pid" 2>/dev/null | grep -qv '^Z'; then
     survivors+=("$pid")
   fi
 done
