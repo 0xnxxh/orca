@@ -150,6 +150,94 @@ describe('folder workspace diff comments', () => {
     })
   })
 
+  it('rolls back to the persisted list when two queued writes fail', async () => {
+    const store = createTestStore()
+    const folderWorkspace = seedLocalFolderWorkspace(store)
+    const workspaceKey = folderWorkspaceKey(folderWorkspace.id)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let releaseFirstWrite: (() => void) | undefined
+    const firstWrite = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve
+    })
+    folderWorkspacesUpdate.mockImplementation(async () => {
+      if (folderWorkspacesUpdate.mock.calls.length === 1) {
+        await firstWrite
+      }
+      throw new Error('disk full')
+    })
+
+    const addFirst = store.getState().addDiffComment({
+      worktreeId: workspaceKey,
+      filePath: 'README.md',
+      source: 'markdown',
+      lineNumber: 1,
+      body: 'first note',
+      side: 'modified'
+    })
+    await vi.waitFor(() => expect(folderWorkspacesUpdate).toHaveBeenCalledTimes(1))
+    const addSecond = store.getState().addDiffComment({
+      worktreeId: workspaceKey,
+      filePath: 'README.md',
+      source: 'markdown',
+      lineNumber: 2,
+      body: 'second note',
+      side: 'modified'
+    })
+    releaseFirstWrite?.()
+
+    await expect(Promise.all([addFirst, addSecond])).resolves.toEqual([null, null])
+    // Why: neither write reached disk, so the pre-mutation list is the only durable state.
+    expect(store.getState().getDiffComments(workspaceKey)).toEqual([])
+    consoleError.mockRestore()
+  })
+
+  it('rolls back to the last persisted list when a later queued write fails', async () => {
+    const store = createTestStore()
+    const folderWorkspace = seedLocalFolderWorkspace(store)
+    const workspaceKey = folderWorkspaceKey(folderWorkspace.id)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let releaseFirstWrite: (() => void) | undefined
+    const firstWrite = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve
+    })
+    folderWorkspacesUpdate.mockImplementation(async ({ updates }) => {
+      if (folderWorkspacesUpdate.mock.calls.length === 1) {
+        await firstWrite
+        return { ...folderWorkspace, ...updates }
+      }
+      throw new Error('disk full')
+    })
+
+    const addFirst = store.getState().addDiffComment({
+      worktreeId: workspaceKey,
+      filePath: 'README.md',
+      source: 'markdown',
+      lineNumber: 1,
+      body: 'first note',
+      side: 'modified'
+    })
+    await vi.waitFor(() => expect(folderWorkspacesUpdate).toHaveBeenCalledTimes(1))
+    const addSecond = store.getState().addDiffComment({
+      worktreeId: workspaceKey,
+      filePath: 'README.md',
+      source: 'markdown',
+      lineNumber: 2,
+      body: 'second note',
+      side: 'modified'
+    })
+    releaseFirstWrite?.()
+
+    await expect(Promise.all([addFirst, addSecond])).resolves.toEqual([
+      expect.objectContaining({ body: 'first note' }),
+      null
+    ])
+    // Why: the first write persisted the first note, so rollback keeps it instead of reverting to the empty list.
+    expect(store.getState().getDiffComments(workspaceKey)).toEqual([
+      expect.objectContaining({ body: 'first note' })
+    ])
+    consoleError.mockRestore()
+  })
+
   it('keeps same-id writes scoped to their original hosts', async () => {
     const store = createTestStore()
     const workspaceId = 'shared-folder-id'
