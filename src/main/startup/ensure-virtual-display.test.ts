@@ -42,7 +42,11 @@ describe('ensureVirtualDisplayForHeadlessServe', () => {
     delete process.env.DISPLAY
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { stopVirtualDisplay } = await import('./ensure-virtual-display')
+    process.removeListener('exit', stopVirtualDisplay)
+    stopVirtualDisplay()
+    vi.restoreAllMocks()
     setPlatform(ORIGINAL_PLATFORM)
     if (ORIGINAL_DISPLAY === undefined) {
       delete process.env.DISPLAY
@@ -97,7 +101,9 @@ describe('ensureVirtualDisplayForHeadlessServe', () => {
     // First existsSync (stale-socket check) false; later (socket-ready poll) true.
     existsSyncMock.mockReturnValueOnce(false).mockReturnValue(true)
     spawnMock.mockReturnValue({ once: vi.fn(), kill: vi.fn(), killed: false })
-    const { ensureVirtualDisplayForHeadlessServe } = await import('./ensure-virtual-display')
+    const processOnceSpy = vi.spyOn(process, 'once')
+    const { ensureVirtualDisplayForHeadlessServe, stopVirtualDisplay } =
+      await import('./ensure-virtual-display')
 
     expect(ensureVirtualDisplayForHeadlessServe({ isServeMode: true })).toBe(true)
     expect(spawnMock).toHaveBeenCalledWith(
@@ -109,6 +115,8 @@ describe('ensureVirtualDisplayForHeadlessServe', () => {
     expect(appMock.disableHardwareAcceleration).toHaveBeenCalled()
     expect(appMock.commandLine.appendSwitch).toHaveBeenCalledWith('disable-dev-shm-usage')
     expect(appMock.commandLine.appendSwitch).toHaveBeenCalledWith('disable-gpu')
+    expect(processOnceSpy).toHaveBeenCalledWith('exit', stopVirtualDisplay)
+    expect(appMock.once).not.toHaveBeenCalledWith('will-quit', stopVirtualDisplay)
   })
 
   it('reuses an existing virtual display only when its X server is alive', async () => {

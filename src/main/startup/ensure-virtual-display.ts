@@ -163,8 +163,8 @@ export function ensureVirtualDisplayForHeadlessServe(options: { isServeMode: boo
 
   process.env.DISPLAY = VIRTUAL_DISPLAY
 
-  // Why: don't leave a stray Xvfb process behind when serve exits.
-  app.once('will-quit', stopVirtualDisplay)
+  // Why: Electron can cancel will-quit for async teardown and still needs X11 until its event loop stops.
+  process.once('exit', stopVirtualDisplay)
 
   return true
 }
