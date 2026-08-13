@@ -7067,7 +7067,12 @@ export function connectPanePty(
         // backpressure must not outlive it — it would re-open recovery and banner a second time.
         clearHiddenOutputRestoreFloodRepaintTimer()
         writeRestoreUnavailableWarning()
-      } else if (!rearmedRemoteRestore) {
+      }
+      // Why not an else: the unavailable warning is plain text and carries no SGR
+      // of its own, so folding the reset into the other branch skipped it on the
+      // primary abandon path — the one that declares the bytes unrecoverable.
+      // Guarded only against the remote re-arm, which writes its own reset.
+      if (!rearmedRemoteRestore) {
         writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
       }
       if (hadPendingOverflow) {
