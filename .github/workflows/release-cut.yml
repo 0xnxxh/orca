@@ -783,7 +783,7 @@ jobs:
           {
             echo "## Release E2E Signal"
             echo ""
-            echo "- Platform golden E2E is release-blocking: terminal rendering and restrictive-umask profile writes on Linux/macOS, plus fresh startup on Windows."
+            echo "- Platform golden E2E is release-blocking: terminal rendering, restrictive-umask profile writes, and agent TUI launch on Linux/macOS, plus fresh startup on Windows."
             echo "- Full E2E runs separately after publication and cannot change the release result."
             echo "- Terminal rendering release evidence is diagnostic/non-blocking."
             echo ""
@@ -884,6 +884,14 @@ jobs:
         run: |
           env SKIP_BUILD=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm run test:e2e:terminal-rendering-golden
           env SKIP_BUILD=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm run --if-present test:e2e:posix-profile-index-golden
+
+      - name: Run agent TUI golden on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum env SKIP_BUILD=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm run --if-present test:e2e:agent-tui-golden
+
+      - name: Run agent TUI golden on macOS
+        if: runner.os == 'macOS'
+        run: env SKIP_BUILD=1 ORCA_E2E_FORWARD_APP_LOGS=1 pnpm run --if-present test:e2e:agent-tui-golden
 
       - name: Run fresh-startup golden on Windows
         if: runner.os == 'Windows'

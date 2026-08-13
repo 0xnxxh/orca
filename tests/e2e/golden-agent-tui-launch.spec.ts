@@ -9,7 +9,7 @@ import { focusActiveTerminalInput, getTerminalContent } from './helpers/terminal
 
 test.use({ launchEnv: getGoldenStubAgentLaunchEnv() })
 
-test('@golden launches an agent TUI with a live multiline composer', async ({ orcaPage }) => {
+test('launches an agent TUI with a live multiline composer', async ({ orcaPage }) => {
   await waitForSessionReady(orcaPage)
   await waitForActiveWorktree(orcaPage)
   await ensureTerminalVisible(orcaPage)
@@ -18,7 +18,6 @@ test('@golden launches an agent TUI with a live multiline composer', async ({ or
 
   const activeTab = orcaPage.locator('[data-testid="sortable-tab"][data-active="true"]')
   await expect(activeTab).toHaveAttribute('data-tab-title', /Codex|Golden Stub Agent/i)
-  await expect(activeTab).not.toHaveAttribute('data-tab-title', /^Terminal \d+$/)
 
   await focusActiveTerminalInput(orcaPage)
   await orcaPage.keyboard.type('hello from e2e')
