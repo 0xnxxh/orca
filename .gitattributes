@@ -12,6 +12,3 @@
 /src/cli/bundled-skill-guides.ts text eol=lf
 # Bundled plugin trees are byte-hashed; CRLF checkout would break the pinned hash.
 /resources/plugins/** text eol=lf
-# LF-only batch files hit the Windows parser's 512-byte boundary bug; -text keeps
-# the stored bytes CRLF so no checkout or blob reader can see them as LF-only.
-/tests/e2e/fixtures/golden-stub-agent/*.cmd -text whitespace=cr-at-eol
