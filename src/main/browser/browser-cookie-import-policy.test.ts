@@ -6,7 +6,7 @@ import {
   isNonTransplantableCookieDomain,
   NON_TRANSPLANTABLE_HOST_KEY_SQL,
   normalizeCookieDomain,
-  removeAllCookiesExcept,
+  removeTransplantableCookies,
   replaceCookiesForImportedDomains
 } from './browser-cookie-import-policy'
 
@@ -214,7 +214,9 @@ type CookieClearMocks = {
   clearData: Mock
 }
 
-describe('removeAllCookiesExcept', () => {
+describe('removeTransplantableCookies', () => {
+  const rejectingBulkClear = () => vi.fn().mockRejectedValue(new Error('storage busy'))
+
   function clearSession(cookies: Cookie[], overrides: Partial<CookieClearMocks> = {}) {
     const store = {
       get: vi.fn().mockResolvedValue(cookies),
@@ -232,10 +234,9 @@ describe('removeAllCookiesExcept', () => {
     }
   }
 
-  const excludesNonTransplantable = (existingCookie: Cookie): boolean =>
-    isNonTransplantableCookieDomain(existingCookie.domain ?? '')
-
-  it('never removes or reconstructs excluded Google cookies', async () => {
+  // Why (STA-4065): the bulk call is the ordinary path even when the jar holds cookies to keep —
+  // excludeOrigins preserves the whole google.com family, verified against real Electron.
+  it('clears a jar holding Google cookies in one call that excludes them', async () => {
     const { session, remove, set, clearData } = clearSession([
       cookie('.google.com', 'SID'),
       cookie('accounts.google.com', 'ACCOUNT'),
@@ -243,13 +244,12 @@ describe('removeAllCookiesExcept', () => {
       cookie('other.test', 'tracker', '/scoped')
     ])
 
-    await removeAllCookiesExcept(session, excludesNonTransplantable)
+    await removeTransplantableCookies(session)
 
-    expect(clearData).not.toHaveBeenCalled()
-    expect(remove.mock.calls).toEqual([
-      ['https://example.com/', 'session'],
-      ['https://other.test/scoped', 'tracker']
+    expect(clearData.mock.calls).toEqual([
+      [{ dataTypes: ['cookies'], excludeOrigins: ['https://google.com'] }]
     ])
+    expect(remove).not.toHaveBeenCalled()
     expect(set).not.toHaveBeenCalled()
   })
 
@@ -260,7 +260,7 @@ describe('removeAllCookiesExcept', () => {
       cookie('notgoogle.com', 'lookalike')
     ])
 
-    await removeAllCookiesExcept(session, excludesNonTransplantable)
+    await removeTransplantableCookies(session)
 
     expect(clearData.mock.calls).toEqual([
       [{ dataTypes: ['cookies'], excludeOrigins: ['https://google.com'] }]
@@ -272,7 +272,7 @@ describe('removeAllCookiesExcept', () => {
   it('touches nothing when the jar is already empty', async () => {
     const { session, remove, clearData } = clearSession([])
 
-    await removeAllCookiesExcept(session, excludesNonTransplantable)
+    await removeTransplantableCookies(session)
 
     expect(clearData).not.toHaveBeenCalled()
     expect(remove).not.toHaveBeenCalled()
@@ -283,7 +283,7 @@ describe('removeAllCookiesExcept', () => {
       { ...cookie('.example.com', 'session'), domain: '' }
     ])
 
-    await removeAllCookiesExcept(session, excludesNonTransplantable)
+    await removeTransplantableCookies(session)
 
     expect(clearData).toHaveBeenCalledOnce()
   })
@@ -291,16 +291,34 @@ describe('removeAllCookiesExcept', () => {
   it('falls back to per-cookie removal when the bulk clear rejects', async () => {
     const { session, remove, clearData } = clearSession(
       [cookie('.example.com', 'session'), cookie('other.test', 'tracker')],
-      { clearData: vi.fn().mockRejectedValue(new Error('storage busy')) }
+      { clearData: rejectingBulkClear() }
     )
 
-    await removeAllCookiesExcept(session, excludesNonTransplantable)
+    await removeTransplantableCookies(session)
 
     expect(clearData).toHaveBeenCalledOnce()
     expect(remove.mock.calls).toEqual([
       ['https://example.com/', 'session'],
       ['https://other.test/', 'tracker']
     ])
+  })
+
+  // Why: the fallback carries the same exclusion as the bulk call, so a rejected clearData must
+  // not become the path that finally deletes a live Google session.
+  it('still preserves Google cookies on the per-cookie fallback', async () => {
+    const { session, remove, set } = clearSession(
+      [
+        cookie('.google.com', 'SID'),
+        cookie('accounts.google.com', 'ACCOUNT'),
+        cookie('.example.com', 'session')
+      ],
+      { clearData: rejectingBulkClear() }
+    )
+
+    await removeTransplantableCookies(session)
+
+    expect(remove.mock.calls).toEqual([['https://example.com/', 'session']])
+    expect(set).not.toHaveBeenCalled()
   })
 
   // Why (STA-4061): reconstructing a removed cookie loses its partition key, and the snapshot
@@ -314,6 +332,7 @@ describe('removeAllCookiesExcept', () => {
         cookie('.example.com', 'third', '/three')
       ],
       {
+        clearData: rejectingBulkClear(),
         remove: vi.fn().mockImplementation(async (_url: string, name: string) => {
           if (name === 'second') {
             throw new Error('store unavailable')
@@ -322,7 +341,7 @@ describe('removeAllCookiesExcept', () => {
       }
     )
 
-    await expect(removeAllCookiesExcept(session, excludesNonTransplantable)).rejects.toThrow(
+    await expect(removeTransplantableCookies(session)).rejects.toThrow(
       'the session was left partially cleared'
     )
     expect(remove).toHaveBeenCalledTimes(3)
@@ -342,6 +361,7 @@ describe('removeAllCookiesExcept', () => {
         ...Array.from({ length: 12 }, (_, index) => cookie('.example.com', `${index}`))
       ],
       {
+        clearData: rejectingBulkClear(),
         remove: vi.fn().mockImplementation(async () => {
           active++
           maxActive = Math.max(maxActive, active)
@@ -351,7 +371,7 @@ describe('removeAllCookiesExcept', () => {
       }
     )
 
-    const clearing = removeAllCookiesExcept(session, excludesNonTransplantable)
+    const clearing = removeTransplantableCookies(session)
     await vi.waitFor(() => expect(remove).toHaveBeenCalledTimes(8))
     expect(maxActive).toBe(8)
     releaseRemovals?.()
@@ -373,6 +393,7 @@ describe('removeAllCookiesExcept', () => {
         { ...cookie('example.com', 'session'), hostOnly: true }
       ],
       {
+        clearData: rejectingBulkClear(),
         remove: vi
           .fn()
           .mockImplementationOnce(() => firstReleased)
@@ -380,7 +401,7 @@ describe('removeAllCookiesExcept', () => {
       }
     )
 
-    const clearing = removeAllCookiesExcept(session, excludesNonTransplantable)
+    const clearing = removeTransplantableCookies(session)
     await vi.waitFor(() => expect(remove).toHaveBeenCalledOnce())
     releaseFirst?.()
     await clearing

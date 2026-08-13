@@ -35,7 +35,7 @@ function buildFixtureMain(policyPath: string, resultPath: string): string {
   return `
 const { app, BrowserWindow, session } = require('electron')
 const { writeFileSync } = require('node:fs')
-const { removeAllCookiesExcept, isNonTransplantableCookieDomain } = require(${JSON.stringify(policyPath)})
+const { removeTransplantableCookies } = require(${JSON.stringify(policyPath)})
 const resultPath = ${JSON.stringify(resultPath)}
 let currentStep = 'starting'
 const mark = (step) => {
@@ -93,18 +93,20 @@ async function run() {
     }
   }
 
+  // Why: the bulk clear is the ordinary path now, so rejecting it is what routes this fixture onto
+  // the per-cookie fallback where a partial failure — and the old rollback — could happen at all.
   let bulkClearCalls = 0
   const clearSession = {
     cookies: store,
-    clearData: async (options) => {
+    clearData: async () => {
       bulkClearCalls++
-      return targetSession.clearData(options)
+      throw new Error('forced bulk clear failure')
     }
   }
 
   let clearError = null
   try {
-    await removeAllCookiesExcept(clearSession, (cookie) => isNonTransplantableCookieDomain(cookie.domain ?? ''))
+    await removeTransplantableCookies(clearSession)
   } catch (error) {
     clearError = String(error?.message || error)
   }
@@ -180,8 +182,9 @@ describe('non-Google partitioned cookie under a failed Electron cookie clear', (
     const result = await runFixture()
 
     expect(result.beforePartitionKey).toEqual(EXPECTED_PARTITION_KEY)
-    // Why (STA-4065): a bulk clear here would make every assertion below vacuous.
-    expect(result.bulkClearCalls).toBe(0)
+    // Why (STA-4065): the fallback is only reachable once the bulk clear has been tried and failed;
+    // if it ever succeeded here the partial-failure assertions below would be vacuous.
+    expect(result.bulkClearCalls).toBe(1)
     expect(result.remainingExcluded.map(({ name }) => name)).toEqual(['SID'])
     expect(result.clearError).toContain('Could not clear existing cookies')
     // STA-4061: rollback rebuilt this cookie through cookies.set, which drops partitionKey.

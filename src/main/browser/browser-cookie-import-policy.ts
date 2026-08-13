@@ -211,32 +211,36 @@ export type CookieClearSession = {
 // can downgrade a partitioned (CHIPS) cookie into an unpartitioned one — and nothing in the
 // snapshot says which cookies are at risk. A partially cleared jar is a retryable import failure;
 // a downgraded cookie is unrecoverable auth-state corruption that survives restart.
-export async function removeAllCookiesExcept(
-  targetSession: CookieClearSession,
-  isExcluded: (cookie: Cookie) => boolean
+// Why (STA-4065): the exclusion is module state rather than a parameter so the predicate and the
+// origins the bulk clear preserves cannot drift apart — a caller-supplied predicate that disagreed
+// with NON_TRANSPLANTABLE_DOMAINS would silently delete a cookie the bulk call is meant to keep.
+export async function removeTransplantableCookies(
+  targetSession: CookieClearSession
 ): Promise<void> {
   const store = targetSession.cookies
   const existingCookies = await store.get({})
+  if (existingCookies.length === 0) {
+    return
+  }
 
-  // Why: an unfiltered get() is the whole jar, so no exclusion in it means nothing to preserve and
-  // one bulk clear can replace a remove() per cookie. An empty jar needs neither.
-  if (existingCookies.length > 0 && !existingCookies.some(isExcluded)) {
-    try {
-      // Why: exclusions protect a non-transplantable cookie arriving between snapshot and clear.
-      await targetSession.clearData({
-        dataTypes: ['cookies'],
-        excludeOrigins: NON_TRANSPLANTABLE_CLEAR_EXCLUDED_ORIGINS
-      })
-      return
-    } catch {
-      // Why: a rejected bulk clear can still have emptied part of the jar, so fall through to the
-      // per-cookie path and let it re-remove whatever survived.
-    }
+  // Why (STA-4065): measured on Electron 43, excludeOrigins preserves the whole registrable
+  // family — host, leading-dot, subdomain, and partitioned Google cookies — so one call replaces a
+  // remove() per cookie even when the jar holds cookies to keep. That is the ordinary case here:
+  // this import exists for Google, so a Google cookie is usually present.
+  try {
+    await targetSession.clearData({
+      dataTypes: ['cookies'],
+      excludeOrigins: NON_TRANSPLANTABLE_CLEAR_EXCLUDED_ORIGINS
+    })
+    return
+  } catch {
+    // Why: a rejected bulk clear can still have emptied part of the jar, so fall through to the
+    // per-cookie path and let it re-remove whatever survived.
   }
 
   const removableGroups = new Map<string, { cookie: Cookie; url: string }[]>()
   for (const cookie of existingCookies) {
-    if (isExcluded(cookie)) {
+    if (isNonTransplantableCookieDomain(cookie.domain ?? '')) {
       continue
     }
     const domain = cookie.domain ? normalizeCookieDomain(cookie.domain) : null
