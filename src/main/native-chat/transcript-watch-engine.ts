@@ -1,4 +1,5 @@
 import type { NativeChatMessage, NativeChatTurnLifecycle } from '../../shared/native-chat-types'
+import { boundaryFingerprint } from './transcript-boundary-fingerprint'
 import {
   readTranscriptFileVersion,
   transcriptFileVersionChanged,
@@ -17,7 +18,7 @@ import type {
   SubscribeNativeChatTranscriptArgs
 } from './transcript-watch-contract'
 import { createTranscriptWatchScheduler } from './transcript-watch-scheduler'
-import { readTranscriptSlice, wslGatedStat } from './wsl-transcript-fs-access'
+import { wslGatedStat } from './wsl-transcript-fs-access'
 import { WslTranscriptFsError } from './wsl-transcript-fs-gate'
 
 const ROTATION_RETRY_MS = 25
@@ -26,15 +27,6 @@ let activeWatcherCount = 0
 
 export function getActiveNativeChatWatcherCount(): number {
   return activeWatcherCount
-}
-
-async function boundaryFingerprint(filePath: string, offset: number): Promise<string> {
-  if (offset <= 0) {
-    return ''
-  }
-  const start = Math.max(0, offset - 64)
-  const slice = await readTranscriptSlice(filePath, start, offset - start, 'exact')
-  return slice.toString('base64')
 }
 
 /**
@@ -79,6 +71,11 @@ export async function installTranscriptWatcher(
   // a persistently-failing retry loop can't spam the subscriber with error frames.
   let initialErrorEmitted = false
   let closed = false
+  // Why: every gated call on the drain path must detach the moment we
+  // unsubscribe, instead of holding a waiter until its 30s deadline, and an
+  // aborted signal also makes the gate refuse admission for anything the
+  // in-flight drain would start after teardown.
+  const gateAbort = new AbortController()
   let reading = false
   let pendingReadRequested = false
   let rotationRetryCount = 0
@@ -110,7 +107,8 @@ export async function installTranscriptWatcher(
       decodeLifecycle ?? undefined,
       (nextLifecycle) => {
         lifecycle = nextLifecycle
-      }
+      },
+      gateAbort.signal
     )
     if (!closed && (remaining.length > 0 || lifecycle)) {
       onAppend(remaining, lifecycle)
@@ -118,8 +116,8 @@ export async function installTranscriptWatcher(
   }
 
   async function finishSuccessfulDrain(startVersion: TranscriptFileVersion): Promise<void> {
-    watchedBoundary = await boundaryFingerprint(filePath, state.offset)
-    const completedVersion = await readTranscriptFileVersion(filePath)
+    watchedBoundary = await boundaryFingerprint(filePath, state.offset, gateAbort.signal)
+    const completedVersion = await readTranscriptFileVersion(filePath, gateAbort.signal)
     if (transcriptFileVersionChanged(completedVersion, startVersion)) {
       // Why: a write racing this drain needs another pass even when the reader
       // happened to reach its new EOF; timestamp-only rewrites may need replace.
@@ -139,8 +137,8 @@ export async function installTranscriptWatcher(
   }
 
   async function drainOnce(): Promise<void> {
-    const current = await readTranscriptFileVersion(filePath)
-    const currentBoundary = await boundaryFingerprint(filePath, state.offset)
+    const current = await readTranscriptFileVersion(filePath, gateAbort.signal)
+    const currentBoundary = await boundaryFingerprint(filePath, state.offset, gateAbort.signal)
     if (closed) {
       return
     }
@@ -172,7 +170,8 @@ export async function installTranscriptWatcher(
             decode,
             false,
             undefined,
-            decodeLifecycle
+            decodeLifecycle,
+            gateAbort.signal
           )
         : null
     if (closed) {
@@ -200,7 +199,8 @@ export async function installTranscriptWatcher(
             decode,
             false,
             undefined,
-            decodeLifecycle
+            decodeLifecycle,
+            gateAbort.signal
           )
         : null
     if (closed) {
@@ -229,7 +229,8 @@ export async function installTranscriptWatcher(
           decodeLifecycle ?? undefined,
           (nextLifecycle) => {
             lifecycle = nextLifecycle
-          }
+          },
+          gateAbort.signal
         )
         if (closed) {
           return
@@ -286,7 +287,7 @@ export async function installTranscriptWatcher(
       return
     }
     try {
-      const current = await readTranscriptFileVersion(filePath)
+      const current = await readTranscriptFileVersion(filePath, gateAbort.signal)
       if (closed) {
         return
       }
@@ -326,6 +327,7 @@ export async function installTranscriptWatcher(
         return
       }
       closed = true
+      gateAbort.abort(new Error('Native Chat transcript watcher unsubscribed'))
       scheduler.dispose()
       nativeWatcher.dispose()
       activeWatcherCount--

@@ -3,6 +3,7 @@ import { realpath, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join, posix, win32 } from 'node:path'
 import { yieldToEventLoop } from '../../shared/event-loop-yield'
 import { wslGatedReaddir, wslGatedStat } from '../native-chat/wsl-transcript-fs-access'
+import { WslTranscriptFsError } from '../native-chat/wsl-transcript-fs-gate'
 import { areWorktreePathsEqual } from '../ipc/worktree-logic'
 import { resolveOpenCodeDataDirectory } from '../opencode/opencode-data-directory'
 import Database from '../sqlite/sync-database'
@@ -79,7 +80,11 @@ function getOpenCodeDatabaseOverride(dataDirectory: string): OpenCodeDatabaseOve
 // Why gated: the AI Vault's primary OpenCode source delegates here from inside
 // its discovery fan-out, so a UNC data dir or a UNC OPENCODE_DB on a stalled
 // distro would otherwise hang the whole scan on a raw syscall (STA-4049).
-export async function listOpenCodeDatabases(): Promise<string[]> {
+export async function listOpenCodeDatabases(
+  /** Lets a caller report the refusal; an empty list otherwise reads as
+   *  "OpenCode not used" rather than "we could not look". */
+  onRefusal?: (path: string, error: WslTranscriptFsError) => void
+): Promise<string[]> {
   const dataDirectory = resolveOpenCodeDataDirectory()
   const databaseOverride = getOpenCodeDatabaseOverride(dataDirectory)
   if (databaseOverride.isConfigured) {
@@ -90,7 +95,8 @@ export async function listOpenCodeDatabases(): Promise<string[]> {
       return (await wslGatedStat(databaseOverride.path, 'scan')).isFile()
         ? [databaseOverride.path]
         : []
-    } catch {
+    } catch (error) {
+      reportRefusal(databaseOverride.path, error, onRefusal)
       return []
     }
   }
@@ -101,8 +107,19 @@ export async function listOpenCodeDatabases(): Promise<string[]> {
       .filter((entry) => entry.isFile() && /^opencode(?:-[A-Za-z0-9_.-]+)?\.db$/.test(entry.name))
       .map((entry) => join(dataDirectory, entry.name))
       .sort()
-  } catch {
+  } catch (error) {
+    reportRefusal(dataDirectory, error, onRefusal)
     return []
+  }
+}
+
+function reportRefusal(
+  path: string,
+  error: unknown,
+  onRefusal?: (path: string, error: WslTranscriptFsError) => void
+): void {
+  if (error instanceof WslTranscriptFsError) {
+    onRefusal?.(path, error)
   }
 }
 

@@ -24,6 +24,14 @@ import { WSL_TRANSCRIPT_FS_SCAN_TIMEOUT_MS } from '../native-chat/wsl-transcript
 
 let releaseStall: (() => void) | undefined
 
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key]
+  } else {
+    process.env[key] = value
+  }
+}
+
 function stalls(): Promise<never> {
   return new Promise<never>((resolve) => {
     releaseStall = () => resolve(undefined as never)
@@ -69,5 +77,30 @@ describe('OpenCode source discovery with a stalled WSL data directory', () => {
     expect(resolved.every((discovery) => discovery.files.length === 0)).toBe(true)
     expect(issues.some((issue) => issue.path === WSL_DATA_DIR)).toBe(true)
     expect(issues.every((issue) => issue.agent === 'opencode')).toBe(true)
+  })
+
+  it('reports a refused primary data directory instead of scanning clean', async () => {
+    const previousXdg = process.env.XDG_DATA_HOME
+    const previousDb = process.env.OPENCODE_DB
+    process.env.XDG_DATA_HOME = WSL_HOME
+    delete process.env.OPENCODE_DB
+    try {
+      mocks.readdir.mockImplementation(stalls)
+      const issues: AiVaultScanIssue[] = []
+      const discoveries = Promise.all(opencodeDiscoveries({}, [], 10, issues))
+      await vi.advanceTimersByTimeAsync(WSL_TRANSCRIPT_FS_SCAN_TIMEOUT_MS * 2 + 2)
+
+      // The primary source is the one per-root containment cannot reach, so a
+      // silent [] here reads as "no OpenCode sessions" on a clean scan.
+      await expect(discoveries).resolves.toHaveLength(1)
+      expect(
+        issues.some(
+          (issue) => issue.agent === 'opencode' && issue.path === `${WSL_HOME}/opencode`
+        )
+      ).toBe(true)
+    } finally {
+      restoreEnv('XDG_DATA_HOME', previousXdg)
+      restoreEnv('OPENCODE_DB', previousDb)
+    }
   })
 })

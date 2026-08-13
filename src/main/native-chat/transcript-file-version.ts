@@ -7,8 +7,11 @@ export type TranscriptFileVersion = {
   ctimeMs: number
 }
 
-export async function readTranscriptFileVersion(filePath: string): Promise<TranscriptFileVersion> {
-  const value = await wslGatedStat(filePath, 'exact')
+export async function readTranscriptFileVersion(
+  filePath: string,
+  signal?: AbortSignal
+): Promise<TranscriptFileVersion> {
+  const value = await wslGatedStat(filePath, 'exact', signal)
   return {
     identity: `${value.dev}:${value.ino}`,
     size: value.size,

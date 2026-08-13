@@ -30,14 +30,20 @@ export async function readIncrementalTranscriptMessages(
   decode: NativeChatLineDecoder,
   onBatch?: (messages: NativeChatMessage[]) => void,
   decodeLifecycle?: (line: string, fallbackId: string) => NativeChatTurnLifecycle | null,
-  onLifecycle?: (lifecycle: NativeChatTurnLifecycle) => void
+  onLifecycle?: (lifecycle: NativeChatTurnLifecycle) => void,
+  signal?: AbortSignal
 ): Promise<NativeChatMessage[]> {
-  const end = (await wslGatedStat(filePath, 'exact')).size
+  const end = (await wslGatedStat(filePath, 'exact', signal)).size
   if (end <= state.offset) {
     return []
   }
   const messages: NativeChatMessage[] = []
-  const stream = openTranscriptReadStream(filePath, { start: state.offset, end: end - 1 }, 'exact')
+  const stream = openTranscriptReadStream(
+    filePath,
+    { start: state.offset, end: end - 1 },
+    'exact',
+    signal
+  )
   try {
     let absoluteOffset = state.offset
     for await (const rawChunk of stream) {

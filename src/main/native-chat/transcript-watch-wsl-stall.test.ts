@@ -127,6 +127,38 @@ describe('native chat transcript subscription with a stalled install stat', () =
     subscription.unsubscribe()
   })
 
+  it('detaches drain waiters on unsubscribe and starts no further gated work', async () => {
+    mocks.resolve.mockResolvedValue(UNC_PATH)
+    mocks.stat.mockResolvedValue({ ...EMPTY_STATS, size: 64 })
+    let releaseOpen: ((handle: unknown) => void) | undefined
+    mocks.open.mockReturnValue(
+      new Promise((resolve) => {
+        releaseOpen = resolve
+      })
+    )
+    const handle = {
+      read: vi.fn(async () => ({ bytesRead: 0, buffer: Buffer.alloc(0) })),
+      close: vi.fn(async () => {})
+    }
+
+    const subscription = await subscribeCollecting([])
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mocks.open).toHaveBeenCalledTimes(1)
+    const statCallsAtTeardown = mocks.stat.mock.calls.length
+
+    subscription.unsubscribe()
+    // No timer advance: the waiter must detach on unsubscribe, not 30s later.
+    releaseOpen?.(handle)
+    await vi.advanceTimersByTimeAsync(0)
+
+    // The drain that was in flight must not admit anything more.
+    expect(handle.read).not.toHaveBeenCalled()
+    expect(mocks.stat.mock.calls.length).toBe(statCallsAtTeardown)
+    // Nobody is left to own the late handle, so the gate closes it.
+    expect(handle.close).toHaveBeenCalledTimes(1)
+    expect(unhandled).toEqual([])
+  })
+
   it('tears down cleanly while an admission is still stalled', async () => {
     mocks.resolve.mockResolvedValue(UNC_PATH)
     mocks.stat.mockImplementation(stalls)

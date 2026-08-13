@@ -1,6 +1,7 @@
 import { createReadStream, type Dirent, type Stats } from 'node:fs'
 import { lstat, open, readdir, readFile, stat, type FileHandle } from 'node:fs/promises'
 import { Readable } from 'node:stream'
+import { StringDecoder } from 'node:string_decoder'
 import { isWslUncPath } from '../../shared/wsl-paths'
 import { runWslTranscriptFsTask, type WslTranscriptFsTaskPriority } from './wsl-transcript-fs-gate'
 
@@ -158,7 +159,9 @@ export type TranscriptReadStreamOptions = {
   start?: number
   /** Inclusive, matching `createReadStream`. */
   end?: number
-  /** Honoured off UNC only; the UNC branch always yields `Buffer` chunks. */
+  /** Set it to get decoded string chunks on both branches; leave it unset and
+   *  the UNC branch yields `Buffer`s the consumer must decode incrementally
+   *  itself, since a chunk boundary can split a multibyte codepoint. */
   encoding?: BufferEncoding
 }
 
@@ -167,8 +170,13 @@ async function* gatedChunks(
   options: TranscriptReadStreamOptions,
   priority: WslTranscriptFsTaskPriority,
   signal?: AbortSignal
-): AsyncGenerator<Buffer> {
+): AsyncGenerator<Buffer | string> {
   const handle = await wslGatedOpen(path, priority, signal)
+  // Why: chunk boundaries fall mid-codepoint, so decoding each slice
+  // independently would emit U+FFFD on both sides of any straddling character.
+  // The decoder carries the partial sequence across chunks, as the
+  // `createReadStream` branch's own decoder does.
+  const decoder = options.encoding ? new StringDecoder(options.encoding) : null
   try {
     let position = options.start ?? 0
     for (;;) {
@@ -177,7 +185,7 @@ async function* gatedChunks(
           ? WSL_TRANSCRIPT_READ_CHUNK_BYTES
           : Math.min(WSL_TRANSCRIPT_READ_CHUNK_BYTES, options.end - position + 1)
       if (length <= 0) {
-        return
+        break
       }
       const buffer = Buffer.allocUnsafe(length)
       const { bytesRead } = await wslGatedRead(
@@ -191,10 +199,23 @@ async function* gatedChunks(
         signal
       )
       if (bytesRead <= 0) {
-        return
+        break
       }
       position += bytesRead
-      yield buffer.subarray(0, bytesRead)
+      const chunk = buffer.subarray(0, bytesRead)
+      if (!decoder) {
+        yield chunk
+        continue
+      }
+      const decoded = decoder.write(chunk)
+      if (decoded) {
+        yield decoded
+      }
+    }
+    // Trailing bytes of an incomplete sequence at EOF, replacement-char'd once.
+    const trailing = decoder?.end()
+    if (trailing) {
+      yield trailing
     }
   } finally {
     // Runs on `.destroy()` too (Readable.from calls the generator's return()),

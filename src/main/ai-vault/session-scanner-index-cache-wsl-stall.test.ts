@@ -26,7 +26,10 @@ import {
   readKimiWorkDirBySessionId
 } from './session-scanner-kimi-paths'
 import { readJsonObjectIfExists } from './session-scanner-values'
-import { WSL_TRANSCRIPT_FS_SCAN_TIMEOUT_MS } from '../native-chat/wsl-transcript-fs-gate'
+import {
+  WSL_TRANSCRIPT_FS_SCAN_TIMEOUT_MS,
+  WslTranscriptFsError
+} from '../native-chat/wsl-transcript-fs-gate'
 
 // Identity must not change between the refused and the recovered read, or the
 // cache would miss for that reason instead of because the entry was evicted.
@@ -112,13 +115,22 @@ describe('memoized WSL session indexes under a stalled mount', () => {
     )
   })
 
-  it('leaves optional JSON enrichment absent rather than failing the session', async () => {
+  it('surfaces a refused optional JSON enrichment instead of caching it as absent', async () => {
     mocks.readFile.mockImplementation(stalls)
-    const pending = readJsonObjectIfExists(`${CODEX_HOME}\\history.json`)
+    const pending = readJsonObjectIfExists(`${CODEX_HOME}\\history.json`).catch(
+      (error: unknown) => error
+    )
     await vi.advanceTimersByTimeAsync(WSL_TRANSCRIPT_FS_SCAN_TIMEOUT_MS + 1)
 
-    // `null`, not a throw: `parseSessionCandidate` would otherwise drop the
-    // whole session instead of listing it un-enriched.
-    expect(await pending).toBeNull()
+    // A throw, not `null`: `parseSessionCandidate` turns it into a scan issue,
+    // where `null` would cache an un-enriched session that never re-reads.
+    expect(await pending).toBeInstanceOf(WslTranscriptFsError)
+  })
+
+  it('still degrades a missing optional JSON file to null', async () => {
+    mocks.readFile.mockRejectedValue(
+      Object.assign(new Error('ENOENT'), { code: 'ENOENT' as const })
+    )
+    await expect(readJsonObjectIfExists(`${CODEX_HOME}\\missing.json`)).resolves.toBeNull()
   })
 })

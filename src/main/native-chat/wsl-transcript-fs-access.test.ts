@@ -290,6 +290,37 @@ describe('per-chunk admission', () => {
     }
   })
 
+  it('carries a codepoint straddling the 1 MiB chunk boundary across chunks', async () => {
+    const chunkBytes = 1024 * 1024
+    const emoji = Buffer.from('😀', 'utf8')
+    // Two of the emoji's four bytes land in chunk 1, two in chunk 2.
+    const body = Buffer.concat([
+      Buffer.alloc(chunkBytes - 2, 0x61),
+      emoji,
+      Buffer.from('tail\n', 'utf8')
+    ])
+    const handle = fakeHandle()
+    handle.read.mockImplementation(
+      async (buffer: Buffer, offset: number, length: number, position: number) => {
+        const slice = body.subarray(position, Math.min(position + length, body.length))
+        slice.copy(buffer, offset)
+        return { bytesRead: slice.length, buffer }
+      }
+    )
+    mocks.open.mockResolvedValue(handle)
+
+    const stream = openTranscriptReadStream(UNC_PATH, { encoding: 'utf-8' }, 'exact')
+    let decoded = ''
+    for await (const chunk of stream) {
+      expect(typeof chunk).toBe('string')
+      decoded += chunk as string
+    }
+
+    expect(decoded).not.toContain('�')
+    expect(decoded).toBe(body.toString('utf8'))
+    expect(handle.read.mock.calls.length).toBeGreaterThan(1)
+  })
+
   it('surfaces a gate refusal mid-stream as an error event', async () => {
     vi.useFakeTimers()
     try {
