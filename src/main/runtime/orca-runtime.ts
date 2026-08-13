@@ -9281,7 +9281,6 @@ export class OrcaRuntimeService {
                 Boolean(pty.incarnationId) &&
                 runtimeWorktreeIdsEqual(pty.worktreeId, workspace.id) &&
                 runtimeWorktreeIdsEqual(owner.surface.worktreeId, workspace.id) &&
-                owner.surface.terminalHandle === this.handleByPtyId.get(pty.ptyId) &&
                 scopedAgentSessionClaimsEqual(owner.claim, claim)
             )
           const processProof = recovered
@@ -9300,7 +9299,8 @@ export class OrcaRuntimeService {
             recovered.owner.surface.tabId,
             recovered.owner.surface.leafId
           )
-          handle = this.issueRecoveredStructuredTuiPtyHandle(candidate, recovered.owner.surface)
+          // Runtime handles rotate on packaged relaunch; claim, incarnation, and process proof are durable.
+          handle = this.issuePtyHandle(candidate)
           const recoveredIncarnationId = candidate.incarnationId
           if (handle && recoveredIncarnationId) {
             durableOwner = {
@@ -9411,32 +9411,6 @@ export class OrcaRuntimeService {
       ptyGeneration: 0
     })
     this.handleByPtyId.set(pty.ptyId, handle)
-    return handle
-  }
-
-  private issueRecoveredStructuredTuiPtyHandle(
-    pty: RuntimePtyWorktreeRecord,
-    surface: AgentSessionSurfaceBinding
-  ): string | null {
-    const handle = this.handleByPtyId.get(pty.ptyId)
-    if (handle !== surface.terminalHandle) {
-      return null
-    }
-    const existing = this.handles.get(handle)
-    if (existing) {
-      return existing.runtimeId === this.runtimeId && existing.ptyId === pty.ptyId ? handle : null
-    }
-    const syntheticId = `pty:${pty.ptyId}`
-    this.handles.set(handle, {
-      handle,
-      runtimeId: this.runtimeId,
-      rendererGraphEpoch: this.rendererGraphEpoch,
-      worktreeId: pty.worktreeId,
-      tabId: syntheticId,
-      leafId: syntheticId,
-      ptyId: pty.ptyId,
-      ptyGeneration: 0
-    })
     return handle
   }
 
