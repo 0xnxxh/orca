@@ -866,6 +866,8 @@ type StablePaneSpawnContext = {
   connectionId?: string | null
   resolveOwner?: () => StablePaneOwner | null
   onFreshSpawn?: (result: PtySpawnResult) => void
+  /** Create a shell for this pane instead of attaching the one it records; see the caller. */
+  refuseAdoption?: boolean
 }
 
 function stablePanePersistenceFence(
@@ -975,7 +977,11 @@ async function attachStablePaneOwner(
 async function spawnForStablePane(
   args: StablePaneSpawnContext
 ): Promise<{ result: PtySpawnResult; owner: StablePaneOwner | null }> {
-  if (args.owner) {
+  // The one place an owner becomes `sessionId` for the provider, which is what makes an attach an
+  // attach. Refusing adoption has to be honoured HERE: gating only where the owner is resolved
+  // leaves every other resolution free to reach this line, which is exactly how the unreachable
+  // pane's "start a new terminal" kept attaching the shell it could not reach.
+  if (args.owner && !args.refuseAdoption) {
     const attached = await attachStablePaneOwner({ ...args, owner: args.owner })
     if (attached) {
       return attached
@@ -6611,6 +6617,7 @@ export function registerPtyHandlers(
                 provider,
                 spawnOptions,
                 owner: stablePaneOwnerCandidate,
+                refuseAdoption: args.createFreshShellForUnreachablePane === true,
                 worktreeId: args.worktreeId,
                 connectionId: args.connectionId,
                 resolveOwner: () =>
