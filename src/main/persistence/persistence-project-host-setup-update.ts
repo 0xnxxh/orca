@@ -1,3 +1,4 @@
+import type { StoreOwnedPersistedState } from './persistence-store-owned-state'
 import type {
   PersistedState,
   ProjectHostSetup,
@@ -7,7 +8,7 @@ import type {
 import type { RepoUpdatePersistenceOperations } from './persistence-repo-update-operations'
 
 export type ProjectHostSetupUpdateOperations = {
-  state: PersistedState
+  state: StoreOwnedPersistedState
   updateRepo: RepoUpdatePersistenceOperations['updateRepo']
   scheduleSave: () => void
 }

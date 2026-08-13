@@ -1,4 +1,5 @@
 import type { PersistedState } from '../../shared/types'
+import type { StoreOwnedPersistedState } from './persistence-store-owned-state'
 import {
   compareFeatureInteractionUsageBuckets,
   getFeatureInteractionCategory,
@@ -11,7 +12,7 @@ import { track } from '../telemetry/client'
 import { getCohortAtEmit } from '../telemetry/cohort-classifier'
 
 export type FeatureInteractionOperations = {
-  state: PersistedState
+  state: StoreOwnedPersistedState
   scheduleSave: () => void
   notifyUIChanged: () => void
   getUI: () => PersistedState['ui']

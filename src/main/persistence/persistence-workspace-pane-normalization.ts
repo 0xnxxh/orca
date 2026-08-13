@@ -1,10 +1,10 @@
 import type {
+  LegacyPaneKeyAliasEntry,
   PersistedState,
   TerminalLayoutSnapshot,
   WorkspaceSessionState
 } from '../../shared/types'
 import type { MigrationUnsupportedPtyEntry } from '../../shared/agent-status-types'
-import type { LegacyPaneKeyAliasEntry } from '../../shared/types'
 import type { SshRemotePtyLease } from '../../shared/ssh-types'
 import { isTerminalLeafId, makePaneKey, parsePaneKey } from '../../shared/stable-pane-id'
 import { collectMigrationUnsupportedPtyEntries } from './persistence-pane-identity-migration'

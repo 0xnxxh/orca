@@ -7,6 +7,7 @@ import type {
 import type { PersistedState } from '../../shared/types'
 import { normalizeAutomationPrecheck } from '../../shared/automation-precheck'
 import { nextAutomationOccurrenceAfter } from '../../shared/automation-schedules'
+import type { StoreOwnedPersistedState } from './persistence-store-owned-state'
 import {
   getAutomationContextsForRepo,
   getAutomationSchedulerOwner,
@@ -15,7 +16,7 @@ import {
 } from './persistence-automation-context-migration'
 
 export type AutomationDefinitionOperations = {
-  state: PersistedState
+  state: StoreOwnedPersistedState
   flush: () => void
   recordCreated: () => void
 }

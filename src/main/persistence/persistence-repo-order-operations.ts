@@ -1,8 +1,9 @@
 import type { PersistedState, Repo } from '../../shared/types'
 import { getRepoExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
+import type { StoreOwnedPersistedState } from './persistence-store-owned-state'
 
 export type RepoOrderMutationOperations = {
-  state: PersistedState
+  state: StoreOwnedPersistedState
   syncProjectHostSetupCompatibilityState: () => void
   scheduleSave: () => void
 }

@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
-import type { PersistedState } from '../../shared/types'
 import { getRepoExecutionHostId, LOCAL_EXECUTION_HOST_ID } from '../../shared/execution-host'
 import { FOLDER_WORKSPACE_INSTANCE_SEPARATOR } from '../../shared/worktree-id'
 import { isWindowsAbsolutePathLike } from '../../shared/cross-platform-path'
@@ -15,13 +14,14 @@ import {
   normalizeWorkspaceLinkedItem
 } from '../../shared/workspace-linked-item'
 import { isWorkspaceLinkedItemSourceContextMatch } from '../../shared/workspace-linked-item-source-context'
+import type { StoreOwnedPersistedState } from './persistence-store-owned-state'
 
 // Why: worktrees deleted outside Orca orphan their worktreeMeta, so the map grew monotonically (63% dead on a heavy install).
 // GC stays narrow: local-host entries only (a local existsSync would falsely condemn SSH/WSL remote paths) and only after a 30-day idle grace.
 export const WORKTREE_META_GC_GRACE_MS = 30 * 24 * 60 * 60 * 1000
 export const STALE_DURABLE_WRITE_TEMP_AGE_MS = 24 * 60 * 60 * 1000
 
-export function gcStaleWorktreeMeta(state: PersistedState): number {
+export function gcStaleWorktreeMeta(state: StoreOwnedPersistedState): number {
   // Why: a hand-corrupted "worktreeMeta": null overrides the defaults merge; normalize here instead of throwing.
   state.worktreeMeta ??= {}
   const repoById = new Map(state.repos.map((repo) => [repo.id, repo]))
@@ -77,7 +77,7 @@ export function gcStaleWorktreeMeta(state: PersistedState): number {
   return removed
 }
 
-export function normalizeWorktreeLinkedItemMetadata(state: PersistedState): boolean {
+export function normalizeWorktreeLinkedItemMetadata(state: StoreOwnedPersistedState): boolean {
   let changed = false
   const rawWorktreeMeta = state.worktreeMeta as unknown
   if (

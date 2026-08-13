@@ -1,9 +1,10 @@
-import type { PersistedState, WorkspaceSessionState } from '../../shared/types'
+import type { WorkspaceSessionState } from '../../shared/types'
 import type { SshRemotePtyLease } from '../../shared/ssh-types'
 import { toSshExecutionHostId } from '../../shared/execution-host'
+import type { StoreOwnedPersistedState } from './persistence-store-owned-state'
 
 export type SshPtyBindingCleanupOperations = {
-  state: PersistedState
+  state: StoreOwnedPersistedState
   toComparablePtyId: (targetId: string, ptyId: string) => string
   scheduleSave: () => void
 }

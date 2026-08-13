@@ -6,10 +6,11 @@ import { normalizeStoredTaskSourceContext } from '../../shared/task-source-conte
 import { normalizeWorkspaceLinkedItem } from '../../shared/workspace-linked-item'
 import { isWorkspaceLinkedItemSourceContextMatch } from '../../shared/workspace-linked-item-source-context'
 import { folderWorkspaceKey } from '../../shared/workspace-scope'
+import type { StoreOwnedPersistedState } from './persistence-store-owned-state'
 import { removeWorkspaceSessionOwner } from './persistence-session-owner-removal'
 
 export type FolderWorkspaceMutationOperations = {
-  state: PersistedState
+  state: StoreOwnedPersistedState
   scheduleSave: () => void
   removeWorkspaceLineageForFolderParent: (folderWorkspaceId: string) => void
   pruneMobileClientTabSelections: (matchesWorktreeId: (worktreeId: string) => boolean) => void

@@ -1,5 +1,6 @@
-import type { PersistedState, ProjectHostSetup } from '../../shared/types'
+import type { ProjectHostSetup } from '../../shared/types'
 import { toSshExecutionHostId } from '../../shared/execution-host'
+import type { StoreOwnedPersistedState } from './persistence-store-owned-state'
 import {
   migrateUiHostScopeSshTargetId,
   migrateWorkspaceSessionSshTargetId
@@ -8,7 +9,7 @@ import type { ProtectedSecretPersistence } from '../protected-secret-persistence
 import { sshPtyOwnerLeaseSecretSlot } from '../protected-secret-persistence'
 
 export type SshTargetReassignmentOperations = {
-  state: PersistedState
+  state: StoreOwnedPersistedState
   protectedSecrets: Pick<ProtectedSecretPersistence, 'removeRetainedBlob'>
   syncProjectHostSetupCompatibilityState: () => void
   scheduleSave: () => void

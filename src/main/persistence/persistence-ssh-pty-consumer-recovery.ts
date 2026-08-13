@@ -1,13 +1,22 @@
-import type { PersistedState } from '../../shared/types'
 import type { SshPtyConsumerRecovery } from '../../shared/ssh-types'
+import type { StoreOwnedPersistedState } from './persistence-store-owned-state'
 import type { ProtectedSecretPersistence } from '../protected-secret-persistence'
 import { sshPtyOwnerLeaseSecretSlot } from '../protected-secret-persistence'
 import { normalizeSshPtyConsumerRecovery } from './persistence-ssh-normalization'
 
 export type SshPtyConsumerRecoveryOperations = {
-  state: PersistedState
+  state: StoreOwnedPersistedState
   protectedSecrets: Pick<ProtectedSecretPersistence, 'isSealed' | 'removeRetainedBlob'>
   flushDurableStateOrThrowAsync: () => Promise<void>
+}
+
+async function flushSshPtyConsumerRecovery(
+  operations: SshPtyConsumerRecoveryOperations
+): Promise<void> {
+  // Why: ownership must be durable before relay setup continues, but this runs on the live
+  // establish/reconnect path — a sync flush would park the main thread on a stalled profile mount.
+  // Why not caught here: the failure must reach the awaiting caller.
+  await operations.flushDurableStateOrThrowAsync()
 }
 
 export function getSshPtyConsumerRecovery(
@@ -42,10 +51,7 @@ export async function upsertSshPtyConsumerRecovery(
     ...recoveries.filter((candidate) => candidate.targetId !== normalized.targetId),
     normalized
   ]
-  // Why: ownership must be durable before relay setup continues, but this runs on the live
-  // establish/reconnect path — a sync flush would park the main thread on a stalled profile mount.
-  // Why not caught here: the failure must reach the awaiting caller.
-  await operations.flushDurableStateOrThrowAsync()
+  await flushSshPtyConsumerRecovery(operations)
 }
 
 export async function removeSshPtyConsumerRecovery(
@@ -59,8 +65,5 @@ export async function removeSshPtyConsumerRecovery(
   }
   operations.state.sshPtyConsumerRecoveries = next
   operations.protectedSecrets.removeRetainedBlob(sshPtyOwnerLeaseSecretSlot(targetId))
-  // Why: ownership must be durable before relay setup continues, but this runs on the live
-  // establish/reconnect path — a sync flush would park the main thread on a stalled profile mount.
-  // Why not caught here: the failure must reach the awaiting caller.
-  await operations.flushDurableStateOrThrowAsync()
+  await flushSshPtyConsumerRecovery(operations)
 }

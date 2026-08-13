@@ -7,6 +7,7 @@ import type {
 } from '../../shared/automations-types'
 import type { PersistedState } from '../../shared/types'
 import { nextAutomationRunNumber, pruneAutomationRuns } from '../../shared/automation-run-retention'
+import type { StoreOwnedPersistedState } from './persistence-store-owned-state'
 import {
   normalizeAutomationPrecheckResult,
   normalizeAutomationRunOutputSnapshot,
@@ -16,7 +17,7 @@ import {
 } from './persistence-automation-context-migration'
 
 export type AutomationRunOperations = {
-  state: PersistedState
+  state: StoreOwnedPersistedState
   flush: () => void
   recordManualRun: () => void
   getWorkspaceDisplayName: (workspaceId: string | null | undefined) => string | null

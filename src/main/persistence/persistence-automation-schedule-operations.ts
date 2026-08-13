@@ -1,12 +1,12 @@
 import type { Automation } from '../../shared/automations-types'
-import type { PersistedState } from '../../shared/types'
+import type { StoreOwnedPersistedState } from './persistence-store-owned-state'
 import {
   latestAutomationOccurrenceAtOrBefore,
   nextAutomationOccurrenceAfter
 } from '../../shared/automation-schedules'
 
 export function advanceAutomationNextRun(
-  state: PersistedState,
+  state: StoreOwnedPersistedState,
   flush: () => void,
   id: string,
   now = Date.now()
