@@ -1,7 +1,10 @@
 import { translate } from '@/i18n/i18n'
-import { Button } from '@/components/ui/button'
-import React from 'react'
-import type { Repo, WorktreeVisibilityDefaults } from '../../../../shared/types'
+import type {
+  ExternalWorktreeVisibility,
+  Repo,
+  WorktreeVisibilityDefaults
+} from '../../../../shared/types'
+import { effectiveExternalWorktreeVisibility } from '../../../../shared/external-worktree-visibility'
 import {
   effectiveDefaultBuiltInWorktreeSourceVisibility,
   effectiveDefaultCustomWorktreeSourceVisibility,
@@ -10,15 +13,56 @@ import {
 } from '../../../../shared/worktree-visibility-sources'
 import type { WorktreeVisibilitySourceRow } from './WorktreeVisibilitySourceList'
 
-type SourceProvenance = {
+export type WorktreeVisibilitySourceProvenance = {
   kind: 'global' | 'project-override' | 'project-source'
-  globalEnabled?: boolean
+  globalVisibility: ExternalWorktreeVisibility
 }
 
-export function hasGloballyShownWorktreeVisibilitySource(
+/** What this source resolves to for a project that has no opinion of its own. */
+export function globalWorktreeVisibilitySourceValue(
+  source: WorktreeVisibilitySourceRow,
+  visibilityDefaults: WorktreeVisibilityDefaults | undefined
+): ExternalWorktreeVisibility {
+  if (source.kind === 'built-in') {
+    return effectiveDefaultBuiltInWorktreeSourceVisibility(visibilityDefaults, source.id)
+  }
+  if (source.kind === 'custom') {
+    return effectiveDefaultCustomWorktreeSourceVisibility(visibilityDefaults, source.source.id)
+  }
+  return effectiveExternalWorktreeVisibility({}, false, visibilityDefaults)
+}
+
+export function getWorktreeVisibilitySourceProvenance(
+  repo: Repo | undefined,
+  source: WorktreeVisibilitySourceRow,
+  visibilityDefaults: WorktreeVisibilityDefaults,
+  repoCustomSourceIds: ReadonlySet<string>
+): WorktreeVisibilitySourceProvenance | null {
+  if (!repo) {
+    return null
+  }
+  const globalVisibility = globalWorktreeVisibilitySourceValue(source, visibilityDefaults)
+  if (source.kind === 'custom' && repoCustomSourceIds.has(source.source.id)) {
+    return { kind: 'project-source', globalVisibility }
+  }
+  const preferences = normalizeWorktreeVisibilitySourcePreferences(
+    repo.worktreeVisibilitySourcePreferences
+  )
+  const overridden =
+    source.kind === 'built-in'
+      ? preferences?.builtIn?.[source.id] !== undefined ||
+        repo.agentWorktreeVisibility !== undefined
+      : source.kind === 'custom'
+        ? preferences?.custom?.[source.source.id] !== undefined
+        : repo.externalWorktreeVisibility !== undefined
+  return { kind: overridden ? 'project-override' : 'global', globalVisibility }
+}
+
+/** Sources whose value this project inherits from Global Settings, with what each is set to. */
+export function listInheritedWorktreeVisibilitySources(
   repo: Repo,
   visibilityDefaults: WorktreeVisibilityDefaults | undefined
-): boolean {
+): { source: WorktreeVisibilitySourceRow; globalVisibility: ExternalWorktreeVisibility }[] {
   const defaults = visibilityDefaults ?? {}
   const repoCustomSourceIds = new Set(
     normalizeCustomWorktreeVisibilitySources(repo.customWorktreeVisibilitySources)?.map(
@@ -35,98 +79,51 @@ export function hasGloballyShownWorktreeVisibilitySource(
     { kind: 'other' }
   ]
 
-  return sources.some((source) => {
+  return sources.flatMap((source) => {
     const provenance = getWorktreeVisibilitySourceProvenance(
       repo,
       source,
       defaults,
       repoCustomSourceIds
     )
-    return provenance?.kind === 'global' && provenance.globalEnabled === true
+    // Why: a source the project added itself has no global setting behind it to override.
+    return !provenance || provenance.kind === 'project-source'
+      ? []
+      : [{ source, globalVisibility: provenance.globalVisibility }]
   })
 }
 
-export function getWorktreeVisibilitySourceProvenance(
-  repo: Repo | undefined,
-  source: WorktreeVisibilitySourceRow,
-  visibilityDefaults: WorktreeVisibilityDefaults,
-  repoCustomSourceIds: ReadonlySet<string>
-): SourceProvenance | null {
-  if (!repo) {
+export function worktreeVisibilityValueLabel(visibility: ExternalWorktreeVisibility): string {
+  return visibility === 'show'
+    ? translate('auto.components.sidebar.WorktreeVisibilitySourceList.show', 'Show')
+    : translate('auto.components.sidebar.WorktreeVisibilitySourceList.hide', 'Hide')
+}
+
+/**
+ * Names the global value a project is ignoring — only where the two genuinely disagree,
+ * so an override that happens to match Global Settings stays quiet.
+ */
+export function getWorktreeVisibilityOverrideNotice(
+  provenance: WorktreeVisibilitySourceProvenance | null,
+  visibility: ExternalWorktreeVisibility
+): string | null {
+  if (provenance?.kind !== 'project-override' || provenance.globalVisibility === visibility) {
     return null
   }
-  if (source.kind === 'custom' && repoCustomSourceIds.has(source.source.id)) {
-    return { kind: 'project-source' }
-  }
-  const preferences = normalizeWorktreeVisibilitySourcePreferences(
-    repo.worktreeVisibilitySourcePreferences
+  return translate(
+    'auto.components.sidebar.WorktreeVisibilitySourceList.overridingGlobal',
+    'Overriding global setting: {{value0}}',
+    { value0: worktreeVisibilityValueLabel(provenance.globalVisibility) }
   )
-  const overridden =
-    source.kind === 'built-in'
-      ? preferences?.builtIn?.[source.id] !== undefined ||
-        repo.agentWorktreeVisibility !== undefined
-      : source.kind === 'custom'
-        ? preferences?.custom?.[source.source.id] !== undefined
-        : repo.externalWorktreeVisibility !== undefined
-  const globalEnabled =
-    source.kind === 'built-in'
-      ? effectiveDefaultBuiltInWorktreeSourceVisibility(visibilityDefaults, source.id) === 'show'
-      : source.kind === 'custom'
-        ? effectiveDefaultCustomWorktreeSourceVisibility(visibilityDefaults, source.source.id) ===
-          'show'
-        : visibilityDefaults.external === 'show'
-  return { kind: overridden ? 'project-override' : 'global', globalEnabled }
 }
 
-export function getWorktreeVisibilitySourceProvenanceLabel(provenance: SourceProvenance): string {
-  if (provenance.kind === 'project-source') {
-    return translate(
-      'auto.components.sidebar.WorktreeVisibilitySourceList.projectSource',
-      'Project source'
-    )
-  }
-  const globalValue = provenance.globalEnabled
-    ? translate('auto.components.sidebar.WorktreeVisibilitySourceList.shown', 'Shown')
-    : translate('auto.components.sidebar.WorktreeVisibilitySourceList.hidden', 'Hidden')
-  return provenance.kind === 'project-override'
+export function getWorktreeVisibilitySourceNote(
+  provenance: WorktreeVisibilitySourceProvenance | null
+): string | null {
+  return provenance?.kind === 'project-source'
     ? translate(
-        'auto.components.sidebar.WorktreeVisibilitySourceList.projectOverride',
-        'Project override · Global: {{value0}}',
-        { value0: globalValue }
+        'auto.components.sidebar.WorktreeVisibilitySourceList.projectOnly',
+        'Added in this project only.'
       )
-    : translate(
-        'auto.components.sidebar.WorktreeVisibilitySourceList.usingGlobal',
-        'Using global: {{value0}}',
-        { value0: globalValue }
-      )
-}
-
-export function WorktreeVisibilityUseGlobalButton({
-  source,
-  accessibleLabel,
-  disabled,
-  onUseDefault
-}: {
-  source: WorktreeVisibilitySourceRow
-  accessibleLabel: string
-  disabled: boolean
-  onUseDefault: (source: WorktreeVisibilitySourceRow) => Promise<void>
-}): React.JSX.Element {
-  return React.createElement(
-    Button,
-    {
-      type: 'button',
-      variant: 'link',
-      size: 'xs',
-      className: 'h-auto px-1',
-      disabled,
-      'aria-label': translate(
-        'auto.components.sidebar.WorktreeVisibilitySourceList.useGlobalFor',
-        'Use global for {{value0}}',
-        { value0: accessibleLabel }
-      ),
-      onClick: () => void onUseDefault(source)
-    },
-    translate('auto.components.sidebar.WorktreeVisibilitySourceList.useGlobal', 'Use global')
-  )
+    : null
 }

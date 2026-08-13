@@ -4703,7 +4703,8 @@
           "tryDifferentSearch": "Prueba con otro nombre o ruta.",
           "disableSource": "Desactiva una fuente para gestionar sus worktrees individualmente.",
           "appearWhenDetected": "Los worktrees nuevos aparecerán aquí cuando Orca los detecte.",
-          "openGlobalSettings": "Gestionar en Ajustes globales"
+          "openGlobalSettings": "Gestionar en Ajustes globales",
+          "globalSettingsSources": "Estas fuentes tienen una configuración global que puedes anular aquí:"
         },
         "WorktreeVisibilitySourceList": {
           "claude": "Claude Code",
@@ -4715,22 +4716,19 @@
           "duplicatePath": "Esta ubicación ya está en la lista.",
           "limit": "Elimina una ubicación personalizada antes de añadir otra.",
           "sources": "Fuentes",
-          "sourcesDescription": "Las fuentes activadas incluyen los worktrees actuales y futuros en la barra lateral.",
+          "sourcesDescription": "Las fuentes mostradas incluyen los worktrees actuales y futuros en la barra lateral.",
           "found": "Encontrados: {{value0}}",
           "remove": "Eliminar {{value0}}",
           "removeLocation": "Eliminar ubicación personalizada",
-          "toggle": "Mostrar los worktrees actuales y futuros de {{value0}}",
           "addLocation": "Añadir ubicación",
           "worktreeRoot": "Raíz de worktrees",
           "add": "Añadir",
           "rootHelp": "Orca reconocerá los worktrees dentro de esta carpeta.",
-          "projectSource": "Fuente del proyecto",
-          "shown": "Visible",
-          "hidden": "Oculto",
-          "projectOverride": "Anulación del proyecto · Global: {{value0}}",
-          "usingGlobal": "Usando la configuración global: {{value0}}",
-          "useGlobalFor": "Usar la configuración global para {{value0}}",
-          "useGlobal": "Usar global"
+          "visibility": "Visibilidad de {{value0}}",
+          "show": "Mostrar",
+          "hide": "Ocultar",
+          "overridingGlobal": "Anulando la configuración global: {{value0}}",
+          "projectOnly": "Añadida solo en este proyecto."
         },
         "add": {
           "repo": {

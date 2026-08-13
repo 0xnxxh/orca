@@ -1,4 +1,8 @@
-import type { Repo, WorktreeVisibilityDefaults } from '../../../../shared/types'
+import type {
+  ExternalWorktreeVisibility,
+  Repo,
+  WorktreeVisibilityDefaults
+} from '../../../../shared/types'
 import {
   effectiveExternalWorktreeVisibility,
   isLegacyRepoForExternalWorktreeVisibility
@@ -12,19 +16,41 @@ import {
   removeBuiltInWorktreeSourcePreference,
   removeCustomWorktreeSourcePreference
 } from '../../../../shared/worktree-visibility-source-preferences'
-import type { RepoUpdate } from '@/store/slices/repos'
 import type { WorktreeVisibilitySourceRow } from './WorktreeVisibilitySourceList'
+import type { WorktreeVisibilitySourceMutation } from './worktree-visibility-source-mutation'
+import {
+  getWorktreeVisibilitySourceProvenance,
+  globalWorktreeVisibilitySourceValue
+} from './worktree-visibility-source-provenance'
 
-type UseGlobalMutation = {
-  updates: RepoUpdate
-  isAccepted: (latestRepo: Repo) => boolean
+/**
+ * Why: picking the value Global Settings already holds drops the project's override rather than
+ * pinning a duplicate of it, so the same control both overrides and reverts (#14276).
+ */
+export function shouldUseGlobalWorktreeVisibility(
+  repo: Repo,
+  source: WorktreeVisibilitySourceRow,
+  visibility: ExternalWorktreeVisibility,
+  visibilityDefaults: WorktreeVisibilityDefaults | undefined,
+  repoCustomSourceIds: ReadonlySet<string>
+): boolean {
+  const provenance = getWorktreeVisibilitySourceProvenance(
+    repo,
+    source,
+    visibilityDefaults ?? {},
+    repoCustomSourceIds
+  )
+  return (
+    provenance?.kind === 'project-override' &&
+    globalWorktreeVisibilitySourceValue(source, visibilityDefaults) === visibility
+  )
 }
 
 export function createWorktreeVisibilityUseGlobalMutation(
   repo: Repo,
   source: WorktreeVisibilitySourceRow,
   visibilityDefaults: WorktreeVisibilityDefaults | undefined
-): UseGlobalMutation {
+): WorktreeVisibilitySourceMutation {
   if (source.kind === 'other') {
     return {
       updates: { externalWorktreeVisibility: null },

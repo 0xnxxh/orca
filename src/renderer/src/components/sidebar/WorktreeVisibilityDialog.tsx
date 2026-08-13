@@ -8,10 +8,6 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
-import {
-  effectiveExternalWorktreeVisibility,
-  isLegacyRepoForExternalWorktreeVisibility
-} from '../../../../shared/external-worktree-visibility'
 import { translate } from '@/i18n/i18n'
 import {
   importNewExternalWorktreeInboxPaths,
@@ -37,7 +33,6 @@ import WorktreeVisibilitySourceList, {
 import type { CustomWorktreeVisibilitySource, Repo } from '../../../../shared/types'
 import {
   MAX_CUSTOM_WORKTREE_VISIBILITY_SOURCES,
-  effectiveBuiltInWorktreeSourceVisibility,
   effectiveCustomWorktreeSourceVisibility,
   normalizeCustomWorktreeVisibilitySources,
   normalizeWorktreeVisibilitySourcePreferences
@@ -56,8 +51,11 @@ import {
 } from './worktree-visibility-repo-sources'
 import { WorktreeVisibilityGlobalSettingsLink } from './WorktreeVisibilityGlobalSettingsLink'
 import { WorktreeVisibilityScanStatus } from './WorktreeVisibilityScanStatus'
-import { createWorktreeVisibilityUseGlobalMutation } from './worktree-visibility-use-global'
-import { hasGloballyShownWorktreeVisibilitySource } from './worktree-visibility-source-provenance'
+import {
+  createWorktreeVisibilityUseGlobalMutation,
+  shouldUseGlobalWorktreeVisibility
+} from './worktree-visibility-use-global'
+import { createWorktreeVisibilitySourceMutation } from './worktree-visibility-source-mutation'
 
 export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const activeModal = useAppStore((s) => s.activeModal)
@@ -92,10 +90,6 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const effectivelyToggling = isToggling || activeMutation?.kind === 'toggle'
   const visibilityDefaults = useRepoOwnerVisibilityDefaults(repo)
   const removableSourceIds = useMemo(() => getRepoCustomWorktreeVisibilitySourceIds(repo), [repo])
-  const hasGloballyShownSource = useMemo(
-    () => (repo ? hasGloballyShownWorktreeVisibilitySource(repo, visibilityDefaults) : false),
-    [repo, visibilityDefaults]
-  )
 
   useLayoutEffect(() => {
     currentMutationScopeRef.current = mutationScope
@@ -232,54 +226,44 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
     [mutationScope, refreshTargetRepo, repoId, updateTargetRepo]
   )
 
+  const handleUseDefault = useCallback(
+    async (source: WorktreeVisibilitySourceRow) => {
+      if (!repo) {
+        return
+      }
+      const mutation = createWorktreeVisibilityUseGlobalMutation(repo, source, visibilityDefaults)
+      await commitSourceUpdate(mutation.updates, mutation.isAccepted)
+    },
+    [commitSourceUpdate, repo, visibilityDefaults]
+  )
+
   const handleSourceToggle = useCallback(
     async (source: WorktreeVisibilitySourceRow, checked: boolean) => {
       if (!repo) {
         return
       }
       const visibility = checked ? 'show' : 'hide'
-      if (source.kind === 'other') {
-        await commitSourceUpdate(
-          {
-            externalWorktreeVisibility: visibility,
-            ...(checked ? { externalWorktreeDiscoverySuppressedAt: null } : {})
-          },
-          (latestRepo) =>
-            effectiveExternalWorktreeVisibility(
-              latestRepo,
-              isLegacyRepoForExternalWorktreeVisibility(latestRepo),
-              visibilityDefaults
-            ) === visibility
+      if (
+        shouldUseGlobalWorktreeVisibility(
+          repo,
+          source,
+          visibility,
+          visibilityDefaults,
+          removableSourceIds
         )
+      ) {
+        await handleUseDefault(source)
         return
       }
-      const match =
-        source.kind === 'built-in'
-          ? ({ kind: 'built-in', id: source.id } as const)
-          : ({ kind: 'custom', id: source.source.id } as const)
-      await commitSourceUpdate(
-        {
-          worktreeVisibilitySourcePreferences: buildWorktreeSourcePreferenceUpdate(
-            repo,
-            match,
-            visibility
-          )
-        },
-        (latestRepo) =>
-          source.kind === 'built-in'
-            ? effectiveBuiltInWorktreeSourceVisibility(
-                latestRepo,
-                source.id,
-                visibilityDefaults
-              ) === visibility
-            : effectiveCustomWorktreeSourceVisibility(
-                latestRepo,
-                source.source.id,
-                visibilityDefaults
-              ) === visibility
+      const mutation = createWorktreeVisibilitySourceMutation(
+        repo,
+        source,
+        visibility,
+        visibilityDefaults
       )
+      await commitSourceUpdate(mutation.updates, mutation.isAccepted)
     },
-    [commitSourceUpdate, repo, visibilityDefaults]
+    [commitSourceUpdate, handleUseDefault, removableSourceIds, repo, visibilityDefaults]
   )
 
   const handleAddSource = useCallback(
@@ -321,17 +305,6 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           effectiveCustomWorktreeSourceVisibility(latestRepo, id, visibilityDefaults) === 'hide'
       )
       return saved ? 'added' : 'save-failed'
-    },
-    [commitSourceUpdate, repo, visibilityDefaults]
-  )
-
-  const handleUseDefault = useCallback(
-    async (source: WorktreeVisibilitySourceRow) => {
-      if (!repo) {
-        return
-      }
-      const mutation = createWorktreeVisibilityUseGlobalMutation(repo, source, visibilityDefaults)
-      await commitSourceUpdate(mutation.updates, mutation.isAccepted)
     },
     [commitSourceUpdate, repo, visibilityDefaults]
   )
@@ -390,10 +363,9 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           onAdd={handleAddSource}
           onRemove={handleRemoveSource}
           onToggle={handleSourceToggle}
-          onUseDefault={handleUseDefault}
         />
 
-        <WorktreeVisibilityGlobalSettingsLink hasGloballyShownSource={hasGloballyShownSource} />
+        <WorktreeVisibilityGlobalSettingsLink repo={repo} visibilityDefaults={visibilityDefaults} />
 
         <WorktreeVisibilityScanStatus
           state={listState}

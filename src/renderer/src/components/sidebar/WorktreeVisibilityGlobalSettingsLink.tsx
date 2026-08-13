@@ -4,6 +4,15 @@ import { Button } from '@/components/ui/button'
 import { translate } from '@/i18n/i18n'
 import { GLOBAL_WORKTREE_VISIBILITY_SETTINGS_TARGET_ID } from '@/lib/settings-navigation-types'
 import { useAppStore } from '@/store'
+import type { Repo, WorktreeVisibilityDefaults } from '../../../../shared/types'
+import {
+  listInheritedWorktreeVisibilitySources,
+  worktreeVisibilityValueLabel
+} from './worktree-visibility-source-provenance'
+import {
+  getWorktreeVisibilitySourceLabel,
+  worktreeVisibilitySourceRowKey
+} from './WorktreeVisibilitySourceList'
 
 function openGlobalWorktreeVisibilitySettings(): void {
   const store = useAppStore.getState()
@@ -35,22 +44,37 @@ function GlobalSettingsButton(): React.JSX.Element {
 }
 
 export function WorktreeVisibilityGlobalSettingsLink({
-  hasGloballyShownSource
+  repo,
+  visibilityDefaults
 }: {
-  hasGloballyShownSource: boolean
+  repo: Repo
+  visibilityDefaults?: WorktreeVisibilityDefaults
 }): React.JSX.Element {
-  if (!hasGloballyShownSource) {
+  const inherited = listInheritedWorktreeVisibilitySources(repo, visibilityDefaults)
+  if (inherited.length === 0) {
     return <GlobalSettingsButton />
   }
 
   return (
-    <div className="grid gap-1 rounded-lg border border-border bg-muted/30 px-2.5 py-2">
+    <div className="grid gap-1.5 rounded-lg border border-border bg-muted/30 px-2.5 py-2">
       <p className="text-xs text-muted-foreground">
         {translate(
-          'auto.components.sidebar.WorktreeVisibilityDialog.globalSettingsApply',
-          'Sources enabled in Global Settings also apply to this project.'
+          'auto.components.sidebar.WorktreeVisibilityDialog.globalSettingsSources',
+          'These sources have a global setting you can override here:'
         )}
       </p>
+      <ul className="grid grid-cols-[max-content_max-content] gap-x-3.5 gap-y-0.5">
+        {inherited.map(({ source, globalVisibility }) => (
+          <li key={worktreeVisibilitySourceRowKey(source)} className="contents">
+            <span className="truncate font-mono text-[11px] text-foreground/85">
+              {getWorktreeVisibilitySourceLabel(source)}
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              {worktreeVisibilityValueLabel(globalVisibility)}
+            </span>
+          </li>
+        ))}
+      </ul>
       <GlobalSettingsButton />
     </div>
   )

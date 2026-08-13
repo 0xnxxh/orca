@@ -4684,7 +4684,8 @@
           "tryDifferentSearch": "別の名前またはパスをお試しください。",
           "disableSource": "ソースを無効にするとワークツリーを個別に管理できます。",
           "appearWhenDetected": "Orca が新しいワークツリーを検出すると、ここに表示されます。",
-          "openGlobalSettings": "グローバル設定で管理"
+          "openGlobalSettings": "グローバル設定で管理",
+          "globalSettingsSources": "これらのソースにはグローバル設定があり、ここで上書きできます:"
         },
         "WorktreeVisibilitySourceList": {
           "claude": "Claude Code",
@@ -4696,22 +4697,19 @@
           "duplicatePath": "この場所は既に一覧にあります。",
           "limit": "別の場所を追加する前にカスタムの場所を削除してください。",
           "sources": "ソース",
-          "sourcesDescription": "有効なソースの現在および今後のワークツリーがサイドバーに表示されます。",
+          "sourcesDescription": "表示に設定したソースの現在および今後のワークツリーがサイドバーに表示されます。",
           "found": "{{value0}} 件検出",
           "remove": "{{value0}} を削除",
           "removeLocation": "カスタムの場所を削除",
-          "toggle": "{{value0}} の現在および今後のワークツリーを表示",
           "addLocation": "場所を追加",
           "worktreeRoot": "ワークツリールート",
           "add": "追加",
           "rootHelp": "Orca はこのフォルダー配下のワークツリーを認識します。",
-          "projectSource": "プロジェクトのソース",
-          "shown": "表示",
-          "hidden": "非表示",
-          "projectOverride": "プロジェクトの上書き · グローバル: {{value0}}",
-          "usingGlobal": "グローバル設定を使用: {{value0}}",
-          "useGlobalFor": "{{value0}} にグローバル設定を使用",
-          "useGlobal": "グローバルを使用"
+          "visibility": "{{value0}} の表示設定",
+          "show": "表示",
+          "hide": "非表示",
+          "overridingGlobal": "グローバル設定を上書き中: {{value0}}",
+          "projectOnly": "このプロジェクトにのみ追加されています。"
         },
         "add": {
           "repo": {

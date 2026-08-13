@@ -4919,7 +4919,8 @@
           "tryDifferentSearch": "Try a different name or path.",
           "disableSource": "Disable a source to manage its worktrees individually.",
           "appearWhenDetected": "New worktrees will appear here when Orca detects them.",
-          "openGlobalSettings": "Manage in Global Settings"
+          "openGlobalSettings": "Manage in Global Settings",
+          "globalSettingsSources": "These sources have a global setting you can override here:"
         },
         "add": {
           "repo": {
@@ -5425,22 +5426,19 @@
           "duplicatePath": "This location is already listed.",
           "limit": "Remove a custom location before adding another.",
           "sources": "Sources",
-          "sourcesDescription": "Enabled sources include current and future worktrees in the sidebar.",
+          "sourcesDescription": "Shown sources include current and future worktrees in the sidebar.",
           "found": "{{value0}} found",
           "remove": "Remove {{value0}}",
           "removeLocation": "Remove custom location",
-          "toggle": "Show current and future worktrees from {{value0}}",
           "addLocation": "Add location",
           "worktreeRoot": "Worktree root",
           "add": "Add",
           "rootHelp": "Orca will recognize worktrees beneath this folder.",
-          "projectSource": "Project source",
-          "shown": "Shown",
-          "hidden": "Hidden",
-          "projectOverride": "Project override · Global: {{value0}}",
-          "usingGlobal": "Using global: {{value0}}",
-          "useGlobalFor": "Use global for {{value0}}",
-          "useGlobal": "Use global"
+          "visibility": "Visibility for {{value0}}",
+          "show": "Show",
+          "hide": "Hide",
+          "overridingGlobal": "Overriding global setting: {{value0}}",
+          "projectOnly": "Added in this project only."
         }
       },
       "shared": {

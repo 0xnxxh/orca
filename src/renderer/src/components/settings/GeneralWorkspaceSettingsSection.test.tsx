@@ -51,12 +51,12 @@ function renderSection(
   })
 }
 
-function getSwitch(label: string): HTMLButtonElement {
+function getSegment(label: string, visibility: 'show' | 'hide' = 'show'): HTMLButtonElement {
   const control = container.querySelector<HTMLButtonElement>(
-    `[role="switch"][aria-label="${label}"]`
+    `[aria-label="Visibility for ${label}"] [data-visibility="${visibility}"]`
   )
   if (!control) {
-    throw new Error(`switch not found: ${label}`)
+    throw new Error(`${visibility} segment not found: ${label}`)
   }
   return control
 }
@@ -75,7 +75,7 @@ describe('GeneralWorkspaceSettingsSection external visibility', () => {
     renderSection(updateSettings)
 
     await act(async () => {
-      getSwitch('Show current and future worktrees from Other locations').click()
+      getSegment('Other locations').click()
     })
 
     expect(updateSettings).toHaveBeenCalledWith({
@@ -86,9 +86,9 @@ describe('GeneralWorkspaceSettingsSection external visibility', () => {
   it('keeps Other locations available while source defaults require a newer host', () => {
     renderSection(vi.fn(), { defaultsSupported: true, sourceDefaultsSupported: false })
 
-    expect(getSwitch('Show current and future worktrees from Claude Code').disabled).toBe(true)
-    expect(getSwitch('Show current and future worktrees from GSD').disabled).toBe(true)
-    expect(getSwitch('Show current and future worktrees from Other locations').disabled).toBe(false)
+    expect(getSegment('Claude Code').disabled).toBe(true)
+    expect(getSegment('GSD').disabled).toBe(true)
+    expect(getSegment('Other locations').disabled).toBe(false)
     expect(container.querySelector<HTMLInputElement>('#custom-worktree-root')?.disabled).toBe(true)
     expect(container.textContent).toContain('Update this server to configure source defaults.')
   })
@@ -96,9 +96,9 @@ describe('GeneralWorkspaceSettingsSection external visibility', () => {
   it('disables all visibility defaults when the paired host lacks base support', () => {
     renderSection(vi.fn(), { defaultsSupported: false, sourceDefaultsSupported: false })
 
-    expect(getSwitch('Show current and future worktrees from Claude Code').disabled).toBe(true)
-    expect(getSwitch('Show current and future worktrees from GSD').disabled).toBe(true)
-    expect(getSwitch('Show current and future worktrees from Other locations').disabled).toBe(true)
+    expect(getSegment('Claude Code').disabled).toBe(true)
+    expect(getSegment('GSD').disabled).toBe(true)
+    expect(getSegment('Other locations').disabled).toBe(true)
     expect(container.querySelector<HTMLInputElement>('#custom-worktree-root')?.disabled).toBe(true)
     expect(container.textContent).toContain('Update this server to configure visibility defaults.')
   })
@@ -115,7 +115,7 @@ describe('GeneralWorkspaceSettingsSection external visibility', () => {
     })
 
     await act(async () => {
-      getSwitch('Show current and future worktrees from Other locations').click()
+      getSegment('Other locations').click()
     })
 
     expect(updateSettings).toHaveBeenCalledWith({

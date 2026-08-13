@@ -4684,7 +4684,8 @@
           "tryDifferentSearch": "다른 이름이나 경로를 시도하세요.",
           "disableSource": "소스를 비활성화하면 워크트리를 개별적으로 관리할 수 있습니다.",
           "appearWhenDetected": "Orca가 새 워크트리를 발견하면 여기에 표시됩니다.",
-          "openGlobalSettings": "전역 설정에서 관리"
+          "openGlobalSettings": "전역 설정에서 관리",
+          "globalSettingsSources": "다음 소스에는 여기에서 재정의할 수 있는 전역 설정이 있습니다:"
         },
         "WorktreeVisibilitySourceList": {
           "claude": "Claude Code",
@@ -4696,22 +4697,19 @@
           "duplicatePath": "이 위치는 이미 목록에 있습니다.",
           "limit": "다른 위치를 추가하기 전에 사용자 지정 위치를 제거하세요.",
           "sources": "소스",
-          "sourcesDescription": "활성화된 소스의 현재와 앞으로 생성되는 워크트리가 사이드바에 표시됩니다.",
+          "sourcesDescription": "표시로 설정한 소스의 현재와 앞으로 생성되는 워크트리가 사이드바에 표시됩니다.",
           "found": "{{value0}}개 발견",
           "remove": "{{value0}} 제거",
           "removeLocation": "사용자 지정 위치 제거",
-          "toggle": "{{value0}}의 현재와 앞으로 생성되는 워크트리 표시",
           "addLocation": "위치 추가",
           "worktreeRoot": "워크트리 루트",
           "add": "추가",
           "rootHelp": "Orca는 이 폴더 아래의 워크트리를 인식합니다.",
-          "projectSource": "프로젝트 소스",
-          "shown": "표시",
-          "hidden": "숨김",
-          "projectOverride": "프로젝트 재정의 · 전역: {{value0}}",
-          "usingGlobal": "전역 설정 사용: {{value0}}",
-          "useGlobalFor": "{{value0}}에 전역 설정 사용",
-          "useGlobal": "전역 사용"
+          "visibility": "{{value0}} 표시 설정",
+          "show": "표시",
+          "hide": "숨김",
+          "overridingGlobal": "전역 설정 재정의 중: {{value0}}",
+          "projectOnly": "이 프로젝트에만 추가되었습니다."
         },
         "add": {
           "repo": {

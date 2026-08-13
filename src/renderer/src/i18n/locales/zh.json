@@ -4696,7 +4696,8 @@
           "tryDifferentSearch": "请尝试其他名称或路径。",
           "disableSource": "禁用来源后可单独管理其工作树。",
           "appearWhenDetected": "Orca 检测到新工作树后，它们会显示在这里。",
-          "openGlobalSettings": "在全局设置中管理"
+          "openGlobalSettings": "在全局设置中管理",
+          "globalSettingsSources": "以下来源有全局设置，可在此处覆盖："
         },
         "WorktreeVisibilitySourceList": {
           "claude": "Claude Code",
@@ -4708,22 +4709,19 @@
           "duplicatePath": "此位置已在列表中。",
           "limit": "请先移除一个自定义位置再添加新位置。",
           "sources": "来源",
-          "sourcesDescription": "已启用来源的当前及未来工作树会显示在侧边栏中。",
+          "sourcesDescription": "设为显示的来源，其当前及未来工作树会显示在侧边栏中。",
           "found": "找到 {{value0}} 个",
           "remove": "移除 {{value0}}",
           "removeLocation": "移除自定义位置",
-          "toggle": "显示 {{value0}} 的当前及未来工作树",
           "addLocation": "添加位置",
           "worktreeRoot": "工作树根目录",
           "add": "添加",
           "rootHelp": "Orca 会识别此文件夹下的工作树。",
-          "projectSource": "项目来源",
-          "shown": "显示",
-          "hidden": "隐藏",
-          "projectOverride": "项目覆盖 · 全局：{{value0}}",
-          "usingGlobal": "使用全局设置：{{value0}}",
-          "useGlobalFor": "为 {{value0}} 使用全局设置",
-          "useGlobal": "使用全局设置"
+          "visibility": "{{value0}} 的可见性",
+          "show": "显示",
+          "hide": "隐藏",
+          "overridingGlobal": "正在覆盖全局设置：{{value0}}",
+          "projectOnly": "仅在此项目中添加。"
         },
         "add": {
           "repo": {
