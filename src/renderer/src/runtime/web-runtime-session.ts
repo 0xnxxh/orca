@@ -8,6 +8,7 @@ import type {
   RuntimeMobileSessionTabMoveResult,
   RuntimeMobileSessionTabsResult,
   RuntimeSessionTabCloseReason,
+  RuntimeStatus,
   RuntimeTerminalCreate,
   RuntimeTerminalClose,
   RuntimeTerminalSplit
@@ -18,7 +19,10 @@ import type {
   SleepingAgentLaunchConfig,
   AgentProviderSessionMetadata
 } from '../../../shared/agent-session-resume'
-import { AGENT_SESSION_OMP_RESUME_PATH_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
+import {
+  AGENT_SESSION_OMP_RESUME_PATH_RUNTIME_CAPABILITY,
+  TERMINAL_ATTRIBUTION_REMOVED_RUNTIME_CAPABILITY
+} from '../../../shared/protocol-version'
 import type {
   AgentLaunchPreferences,
   AgentPromptDelivery,
@@ -81,6 +85,15 @@ import {
   throwIfE2eWebRuntimeBrowserCapabilityUnavailable,
   throwIfE2eWebRuntimeBrowserReconciliationFails
 } from './web-runtime-browser-creation-e2e-fault'
+import {
+  addLegacyTerminalAttributionDisableRequest,
+  hostSupportsSessionTabTerminalCreateAttributionDisable,
+  hostSupportsTerminalSplitAttributionDisable,
+  SESSION_TAB_TERMINAL_CREATE_ATTRIBUTION_UPDATE_REQUIRED_MESSAGE,
+  TERMINAL_SPLIT_ATTRIBUTION_UPDATE_REQUIRED_MESSAGE,
+  withLegacyTerminalAttributionDisabledEnv
+} from '../../../shared/legacy-terminal-attribution-env'
+import { toast } from 'sonner'
 
 export {
   HOST_TERMINAL_SURFACE_SEPARATOR,
@@ -130,6 +143,7 @@ function captureRuntimeEnvironmentCall(
   method: string
   params?: unknown
   timeoutMs?: number
+  expectedRuntimeId?: string
 }) => Promise<RuntimeRpcResponse<unknown>> {
   return (args) =>
     window.api.runtimeEnvironments.call({
@@ -264,6 +278,14 @@ async function createWebRuntimeSessionTerminalResult(
   }
   const intentOwner = captureWebSessionIntentOwner(environmentId)
   const callEnvironment = captureRuntimeEnvironmentCall(environmentId, intentOwner.pairingRevision)
+  const assertSessionTabCreateAttributionDisableSupported = async (): Promise<RuntimeStatus> => {
+    const response = await callEnvironment({ method: 'status.get', timeoutMs: 15_000 })
+    const status = unwrapRuntimeRpcResult(response as RuntimeRpcResponse<RuntimeStatus>)
+    if (!hostSupportsSessionTabTerminalCreateAttributionDisable(status)) {
+      throw new Error(SESSION_TAB_TERMINAL_CREATE_ATTRIBUTION_UPDATE_REQUIRED_MESSAGE)
+    }
+    return status
+  }
 
   if (args.selectWorktree !== false) {
     selectWebRuntimeSessionWorktree(args.worktreeId, environmentId)
@@ -272,6 +294,8 @@ async function createWebRuntimeSessionTerminalResult(
   let createdTabId: string | undefined
   let createdLeafId: string | undefined
   try {
+    const env = withLegacyTerminalAttributionDisabledEnv(args.env)
+    const envToDelete = addLegacyTerminalAttributionDisableRequest(args.envToDelete)
     const agent = args.launchAgent ?? args.agent
     const agentArgsOverride =
       args.agentArgs !== undefined ? args.agentArgs : args.launchConfig?.agentArgs
@@ -283,7 +307,7 @@ async function createWebRuntimeSessionTerminalResult(
         ? undefined
         : args.agentSessionKind === 'resume'
           ? args.providerSession
-            ? async () =>
+            ? async (authority: { runtimeId: string }) =>
                 unwrapRuntimeRpcResult(
                   (await callEnvironment({
                     method: 'terminal.ensureAgentSession',
@@ -301,11 +325,12 @@ async function createWebRuntimeSessionTerminalResult(
                         : {}),
                       presentation: 'background'
                     },
-                    timeoutMs: 15_000
+                    timeoutMs: 15_000,
+                    expectedRuntimeId: authority.runtimeId
                   })) as RuntimeRpcResponse<RuntimeEnsureAgentSessionResult>
                 )
             : undefined
-          : async () =>
+          : async (authority: { runtimeId: string }) =>
               await createAgentSessionCreateOperation().run(async (clientOperationId) =>
                 unwrapRuntimeRpcResult(
                   (await callEnvironment({
@@ -328,7 +353,8 @@ async function createWebRuntimeSessionTerminalResult(
                       },
                       clientOperationId
                     ),
-                    timeoutMs: 15_000
+                    timeoutMs: 15_000,
+                    expectedRuntimeId: authority.runtimeId
                   })) as RuntimeRpcResponse<RuntimeCreateAgentSessionResult>
                 )
               )
@@ -336,11 +362,15 @@ async function createWebRuntimeSessionTerminalResult(
         terminal: CreatedAgentTerminalIdentity
       }>({
         environmentId,
+        expectedEnvironmentPairingRevision: intentOwner.pairingRevision,
         ...(hostAuthority ? { hostAuthority } : {}),
-        ...(args.agentSessionKind === 'resume' && agent === 'omp'
-          ? { hostAuthorityCapability: AGENT_SESSION_OMP_RESUME_PATH_RUNTIME_CAPABILITY }
-          : {}),
-        legacy: async () => {
+        requiredHostAuthorityCapabilities: [
+          TERMINAL_ATTRIBUTION_REMOVED_RUNTIME_CAPABILITY,
+          ...(args.agentSessionKind === 'resume' && agent === 'omp'
+            ? [AGENT_SESSION_OMP_RESUME_PATH_RUNTIME_CAPABILITY]
+            : [])
+        ],
+        legacy: async ({ authority }) => {
           const response = await callEnvironment({
             method: 'session.tabs.createTerminal',
             params: {
@@ -349,8 +379,8 @@ async function createWebRuntimeSessionTerminalResult(
               targetGroupId: args.targetGroupId,
               command: args.command,
               cwd: args.cwd,
-              ...(args.env ? { env: args.env } : {}),
-              ...(args.envToDelete ? { envToDelete: args.envToDelete } : {}),
+              env,
+              ...(envToDelete ? { envToDelete } : {}),
               startupCommandDelivery: args.startupCommandDelivery,
               ...(args.launchConfig ? { launchConfig: args.launchConfig } : {}),
               ...(args.launchToken ? { launchToken: args.launchToken } : {}),
@@ -362,7 +392,8 @@ async function createWebRuntimeSessionTerminalResult(
               select: args.activate !== false,
               navigation: 'caller'
             },
-            timeoutMs: 15_000
+            timeoutMs: 15_000,
+            expectedRuntimeId: authority.runtimeId
           })
           const legacyCreated = unwrapRuntimeRpcResult(
             response as RuntimeRpcResponse<RuntimeMobileSessionCreateTerminalResult>
@@ -394,6 +425,7 @@ async function createWebRuntimeSessionTerminalResult(
         })
       }
     } else {
+      const status = await assertSessionTabCreateAttributionDisableSupported()
       const response = await callEnvironment({
         method: 'session.tabs.createTerminal',
         params: {
@@ -402,8 +434,8 @@ async function createWebRuntimeSessionTerminalResult(
           targetGroupId: args.targetGroupId,
           command: args.command,
           cwd: args.cwd,
-          ...(args.env ? { env: args.env } : {}),
-          ...(args.envToDelete ? { envToDelete: args.envToDelete } : {}),
+          env,
+          ...(envToDelete ? { envToDelete } : {}),
           startupCommandDelivery: args.startupCommandDelivery,
           ...(args.launchConfig ? { launchConfig: args.launchConfig } : {}),
           ...(args.launchToken ? { launchToken: args.launchToken } : {}),
@@ -413,7 +445,8 @@ async function createWebRuntimeSessionTerminalResult(
           select: args.activate !== false,
           navigation: 'caller'
         },
-        timeoutMs: 15_000
+        timeoutMs: 15_000,
+        expectedRuntimeId: status.runtimeId
       })
       const created = unwrapRuntimeRpcResult(
         response as RuntimeRpcResponse<RuntimeMobileSessionCreateTerminalResult>
@@ -1185,26 +1218,37 @@ export function splitWebRuntimeTerminal(
     direction,
     pendingMirrorSuppressionId
   )
-  void window.api.runtimeEnvironments
-    .call({
-      selector: environmentId,
-      method: 'terminal.split',
-      params: {
-        terminal: remote.handle,
-        direction,
-        telemetrySource
-      },
-      timeoutMs: 15_000
+  const callEnvironment = captureRuntimeEnvironmentCall(environmentId)
+  void callEnvironment({
+    method: 'status.get',
+    timeoutMs: 15_000
+  })
+    .then((response) => {
+      const status = unwrapRuntimeRpcResult(response as RuntimeRpcResponse<RuntimeStatus>)
+      if (!hostSupportsTerminalSplitAttributionDisable(status)) {
+        throw new Error(TERMINAL_SPLIT_ATTRIBUTION_UPDATE_REQUIRED_MESSAGE)
+      }
+      return callEnvironment({
+        method: 'terminal.split',
+        params: {
+          terminal: remote.handle,
+          direction,
+          env: withLegacyTerminalAttributionDisabledEnv(undefined),
+          envToDelete: addLegacyTerminalAttributionDisableRequest(undefined),
+          telemetrySource
+        },
+        timeoutMs: 15_000,
+        expectedRuntimeId: status.runtimeId
+      })
     })
     .then((response) => {
       unwrapRuntimeRpcResult(response as RuntimeRpcResponse<{ split: RuntimeTerminalSplit }>)
     })
     .catch((error) => {
       releasePendingMirrorSuppression()
-      console.warn(
-        '[web-runtime-session] failed to split terminal:',
-        error instanceof Error ? error.message : String(error)
-      )
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error(message)
+      console.warn('[web-runtime-session] failed to split terminal:', message)
     })
   return true
 }
