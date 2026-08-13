@@ -258,6 +258,10 @@ import { normalizeBrowserPageZoomLevel } from '../shared/browser-page-zoom'
 import { persistedUIValuesEqual } from '../shared/persisted-ui-equality'
 import { ActiveViewPreference } from './active-view-preference'
 import {
+  collectFolderWorkspaceDiffComments,
+  normalizeFolderWorkspaceDiffComments
+} from './folder-workspace-diff-comments'
+import {
   normalizeFolderWorkspaceName,
   normalizeFolderWorkspaces
 } from '../shared/folder-workspaces'
@@ -652,6 +656,11 @@ type LegacyTerminalScrollbackSettings = {
   terminalScrollbackBytes?: unknown
 }
 
+type RetiredGlobalSettings = {
+  terminalScrollbackBytes?: unknown
+  enableGitHubAttribution?: unknown
+}
+
 const LEGACY_TERMINAL_TUI_SCROLL_SENSITIVITY_DEFAULT = 3
 
 function readLegacyTerminalScrollbackSettings(settings: unknown): LegacyTerminalScrollbackSettings {
@@ -660,12 +669,16 @@ function readLegacyTerminalScrollbackSettings(settings: unknown): LegacyTerminal
     : {}
 }
 
-function stripLegacyTerminalScrollbackBytes(
+function stripRetiredGlobalSettings(
   settings: Partial<GlobalSettings> | undefined
 ): Partial<GlobalSettings> {
-  const { terminalScrollbackBytes: _legacyScrollbackBytes, ...rest } = (settings ??
-    {}) as Partial<GlobalSettings> & { terminalScrollbackBytes?: unknown }
+  const {
+    terminalScrollbackBytes: _legacyScrollbackBytes,
+    enableGitHubAttribution: _legacyGitHubAttribution,
+    ...rest
+  } = (settings ?? {}) as Partial<GlobalSettings> & RetiredGlobalSettings
   void _legacyScrollbackBytes
+  void _legacyGitHubAttribution
   return rest
 }
 
@@ -674,11 +687,8 @@ function migrateTerminalScrollbackRows(settings: unknown): {
   needsSave: boolean
 } {
   const legacySettings = readLegacyTerminalScrollbackSettings(settings)
-  const hasRows = Object.prototype.hasOwnProperty.call(legacySettings, 'terminalScrollbackRows')
-  const hasLegacyBytes = Object.prototype.hasOwnProperty.call(
-    legacySettings,
-    'terminalScrollbackBytes'
-  )
+  const hasRows = Object.hasOwn(legacySettings, 'terminalScrollbackRows')
+  const hasLegacyBytes = Object.hasOwn(legacySettings, 'terminalScrollbackBytes')
   const rows = hasRows
     ? normalizeDesktopTerminalScrollbackRows(legacySettings.terminalScrollbackRows)
     : legacyTerminalScrollbackBytesToRows(legacySettings.terminalScrollbackBytes)
@@ -1686,7 +1696,7 @@ type LayoutLeafNormalization = {
 
 function collectLayoutLeafCounts(
   node: TerminalPaneLayoutNode,
-  counts: Map<string, number> = new Map()
+  counts = new Map<string, number>()
 ): Map<string, number> {
   if (node.type === 'leaf') {
     counts.set(node.leafId, (counts.get(node.leafId) ?? 0) + 1)
@@ -2784,6 +2794,14 @@ export type StoreOptions = {
   dataFile?: string
 }
 
+export type PtyBindingSourceExpectation = {
+  worktreeId?: string
+  tabId: string
+  leafId: string
+  ptyId: string
+  incarnationId?: string
+}
+
 export class Store {
   private state: PersistedState
   private readonly dataFile: string
@@ -2845,6 +2863,7 @@ export class Store {
     // profile avoids serializing the multi-MB recovery store on navigation.
     this.activeViewPreference = new ActiveViewPreference(this.dataFile, this.state.ui?.activeView)
     const adaptedProjectGroups = this.adaptFlatFolderScanProjectGroups()
+    this.hydrateFolderWorkspaceDiffComments()
     for (const entry of normalized.migrationUnsupportedEntries) {
       setMigrationUnsupportedPty(entry)
     }
@@ -2863,6 +2882,33 @@ export class Store {
       // Why: rewrite legacy pane:1 leaves so older renderer writes can't revive them; other migrations also set loadNeedsSave.
       this.scheduleSave()
     }
+  }
+
+  // Why: notes live top-level on disk so an older build's field-by-field
+  // normalizeFolderWorkspaces can't drop them; re-attach them to the in-memory records here.
+  private hydrateFolderWorkspaceDiffComments(): void {
+    const stored = this.state.folderWorkspaceDiffComments
+    let relocatedInline = false
+    for (const workspace of this.state.folderWorkspaces ?? []) {
+      if (Array.isArray(workspace.diffComments) && workspace.diffComments.length > 0) {
+        // Inline wins: an intervening rollback to a #14112 build writes notes inline and leaves the
+        // older map untouched, so inline is the last notes-aware write. Also makes the relocation
+        // durable even if the user never edits anything this session.
+        relocatedInline = true
+        continue
+      }
+      const comments = stored?.[workspace.id]
+      // Not `??`: a degenerate `{ id: [] }` entry must not delete an intact inline value.
+      if (Array.isArray(comments) && comments.length > 0) {
+        workspace.diffComments = comments
+      }
+    }
+    if (relocatedInline) {
+      this.loadNeedsSave = true
+    }
+    // Write-only projection: buildStateToSave() is the only producer, so leaving the loaded map in
+    // state would make it a stale second source of truth that getDurableState() spreads back out.
+    delete this.state.folderWorkspaceDiffComments
   }
 
   private adaptFlatFolderScanProjectGroups(): boolean {
@@ -3145,6 +3191,13 @@ export class Store {
         if (migratedTerminalScrollback.needsSave) {
           this.loadNeedsSave = true
         }
+        if (
+          parsed.settings &&
+          typeof parsed.settings === 'object' &&
+          Object.hasOwn(parsed.settings, 'enableGitHubAttribution')
+        ) {
+          this.loadNeedsSave = true
+        }
         const migratedTerminalTuiScrollSensitivity = migrateTerminalTuiScrollSensitivityDefault(
           parsed.settings
         )
@@ -3407,6 +3460,9 @@ export class Store {
             parsed.folderWorkspaces,
             normalizedProjectGroups
           ),
+          folderWorkspaceDiffComments: normalizeFolderWorkspaceDiffComments(
+            parsed.folderWorkspaceDiffComments
+          ),
           worktreeLineageById: parsed.worktreeLineageById ?? {},
           mobileClientTabSelectionsByDeviceId: normalizePersistedMobileClientTabSelections(
             parsed.mobileClientTabSelectionsByDeviceId
@@ -3417,7 +3473,7 @@ export class Store {
           settings: {
             ...defaults.settings,
             // Why (#7977): keep persisted experimentalNewWorktreeCardStyle:true — v1.4.130's onboarding auto-wrote it as a plain boolean, so it's indistinguishable from a real opt-in; only the default changed.
-            ...stripLegacyTerminalScrollbackBytes(parsed.settings),
+            ...stripRetiredGlobalSettings(parsed.settings),
             prBotAuthorOverrides: normalizePRBotAuthorOverrides(
               parsed.settings?.prBotAuthorOverrides
             ),
@@ -4001,6 +4057,13 @@ export class Store {
     // Why: clone before encrypting secrets so in-memory this.state stays plaintext.
     const stateToSave = {
       ...this.getDurableState(),
+      // Why both keys unconditionally: the explicit keys always win over the spread, and
+      // JSON.stringify drops the `undefined` value so a note-free profile gains no key on disk.
+      // The strip builds a new array here only; this.state records keep their notes in memory.
+      folderWorkspaces: (this.state.folderWorkspaces ?? []).map(
+        ({ diffComments: _relocated, ...rest }) => rest
+      ),
+      folderWorkspaceDiffComments: collectFolderWorkspaceDiffComments(this.state.folderWorkspaces),
       sshPtyConsumerRecoveries: (this.state.sshPtyConsumerRecoveries ?? []).map((record) => ({
         ...record,
         ownerLease: encryptToSentinel(
@@ -4009,7 +4072,7 @@ export class Store {
         )
       })),
       settings: {
-        ...this.state.settings,
+        ...stripRetiredGlobalSettings(this.state.settings),
         opencodeSessionCookie: encryptToSentinel(
           PROTECTED_SECRET_SLOT.opencodeSessionCookie,
           this.state.settings.opencodeSessionCookie
@@ -4551,6 +4614,7 @@ export class Store {
         | 'pendingFirstAgentMessageRename'
         | 'firstAgentMessageRenameError'
         | 'lastActivityAt'
+        | 'diffComments'
       >
     >
   ): FolderWorkspace | null {
@@ -4623,6 +4687,9 @@ export class Store {
     }
     if (updates.lastActivityAt !== undefined && Number.isFinite(updates.lastActivityAt)) {
       workspace.lastActivityAt = updates.lastActivityAt
+    }
+    if (updates.diffComments !== undefined) {
+      workspace.diffComments = updates.diffComments
     }
     workspace.updatedAt = Date.now()
     this.scheduleSave()
@@ -4915,6 +4982,7 @@ export class Store {
         | 'externalWorktreeVisibilityPromptDismissedAt'
         | 'externalWorktreeInboxBaselinePaths'
         | 'importedExternalWorktreePaths'
+        | 'agentWorktreeVisibility'
         | 'projectGroupId'
         | 'projectGroupOrder'
         | 'projectHostSetupMethod'
@@ -5814,7 +5882,7 @@ export class Store {
     updates: Partial<GlobalSettings>,
     options: { notifyListeners?: boolean; originWebContentsId?: number } = {}
   ): GlobalSettings {
-    const sanitizedUpdates = stripLegacyTerminalScrollbackBytes(updates)
+    const sanitizedUpdates = stripRetiredGlobalSettings(updates)
     if ('opencodeSessionCookie' in updates && !updates.opencodeSessionCookie) {
       this.protectedSecrets.removeRetainedBlob(PROTECTED_SECRET_SLOT.opencodeSessionCookie)
     }
@@ -6782,15 +6850,37 @@ export class Store {
       incarnationId?: string
       startupCwd?: string
       expectedBinding?: { ptyId: string; incarnationId?: string }
+      expectedSourceBinding?: PtyBindingSourceExpectation
     },
     hostId?: string | null
   ): boolean {
     const resolvedHostId = this.resolveHostId(hostId)
     const session = this.getWorkspaceSession(resolvedHostId)
     const paneKey = `${args.tabId}:${args.leafId}`
+    const bindingWorktreeId = args.expectedSourceBinding?.worktreeId ?? args.worktreeId
+    if (args.expectedSourceBinding) {
+      const expected = args.expectedSourceBinding
+      if (expected.tabId !== args.tabId) {
+        return false
+      }
+      const sourceTab = session.tabsByWorktree?.[bindingWorktreeId]?.find(
+        (candidate) => candidate.id === expected.tabId && candidate.worktreeId === bindingWorktreeId
+      )
+      const sourceLayout = session.terminalLayoutsByTabId?.[expected.tabId]
+      const sourcePaneKey = `${expected.tabId}:${expected.leafId}`
+      if (
+        !sourceTab ||
+        sourceLayout?.ptyIdsByLeafId?.[expected.leafId] !== expected.ptyId ||
+        !layoutContainsLeafId(sourceLayout.root, expected.leafId) ||
+        (expected.incarnationId !== undefined &&
+          session.terminalPtyIncarnationsByPaneKey?.[sourcePaneKey] !== expected.incarnationId)
+      ) {
+        return false
+      }
+    }
     if (args.expectedBinding) {
-      const tab = session.tabsByWorktree?.[args.worktreeId]?.find(
-        (candidate) => candidate.id === args.tabId && candidate.worktreeId === args.worktreeId
+      const tab = session.tabsByWorktree?.[bindingWorktreeId]?.find(
+        (candidate) => candidate.id === args.tabId && candidate.worktreeId === bindingWorktreeId
       )
       const boundPtyId = session.terminalLayoutsByTabId?.[args.tabId]?.ptyIdsByLeafId?.[args.leafId]
       if (
@@ -6813,9 +6903,13 @@ export class Store {
       args.incarnationId !== args.expectedBinding.incarnationId
     let terminalMembershipChanged = false
     const advanceTopologyFence = (): void => {
-      const repoId = getRepoIdFromWorktreeId(args.worktreeId)
+      const repoId = getRepoIdFromWorktreeId(bindingWorktreeId)
       const currentRevision = session.terminalTopologyRevisionByRepoId?.[repoId] ?? 0
-      if (!reconciledIncarnation && (!terminalMembershipChanged || currentRevision <= 0)) {
+      const establishesSplitAuthority = args.expectedSourceBinding !== undefined
+      if (
+        !reconciledIncarnation &&
+        (!terminalMembershipChanged || (currentRevision <= 0 && !establishesSplitAuthority))
+      ) {
         return
       }
       // Why: host-admitted membership or incarnation changes must outrank a stale renderer replay.
@@ -6846,7 +6940,7 @@ export class Store {
         delete session.terminalSurfaceTombstonesByPaneKey[paneKey]
       }
     }
-    const tabs = session.tabsByWorktree?.[args.worktreeId]
+    const tabs = session.tabsByWorktree?.[bindingWorktreeId]
     const tab = tabs?.find((t) => t.id === args.tabId)
     if (tab) {
       tab.ptyId = args.ptyId
@@ -6857,18 +6951,19 @@ export class Store {
         ...(tabs ?? []),
         createMinimalPersistedTerminalTab({
           ...args,
+          worktreeId: bindingWorktreeId,
           existingTabCount: tabs?.length ?? 0
         })
       ]
       session.tabsByWorktree = {
         ...session.tabsByWorktree,
-        [args.worktreeId]: nextTabs
+        [bindingWorktreeId]: nextTabs
       }
-      session.activeWorktreeId ??= args.worktreeId
+      session.activeWorktreeId ??= bindingWorktreeId
       session.activeTabId ??= args.tabId
       session.activeTabIdByWorktree = {
         ...session.activeTabIdByWorktree,
-        [args.worktreeId]: session.activeTabIdByWorktree?.[args.worktreeId] ?? args.tabId
+        [bindingWorktreeId]: session.activeTabIdByWorktree?.[bindingWorktreeId] ?? args.tabId
       }
     }
     if (!isTerminalLeafId(args.leafId)) {
@@ -7235,14 +7330,14 @@ export class Store {
       (entry) =>
         entry.targetId === normalizedLease.targetId && entry.ptyId === normalizedLease.ptyId
     )
-    const existing = existingIndex >= 0 ? this.state.sshRemotePtyLeases[existingIndex] : undefined
+    const existing = existingIndex !== -1 ? this.state.sshRemotePtyLeases[existingIndex] : undefined
     const next: SshRemotePtyLease = {
       ...existing,
       ...normalizedLease,
       createdAt: existing?.createdAt ?? normalizedLease.createdAt ?? now,
       updatedAt: normalizedLease.updatedAt ?? now
     }
-    if (existingIndex >= 0) {
+    if (existingIndex !== -1) {
       this.state.sshRemotePtyLeases[existingIndex] = next
     } else {
       this.state.sshRemotePtyLeases.push(next)

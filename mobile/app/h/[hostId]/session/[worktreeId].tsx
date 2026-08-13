@@ -127,6 +127,15 @@ import type { TerminalLiveInputSender } from '../../../../src/terminal/terminal-
 import { isTerminalSendRpcAccepted } from '../../../../src/terminal/terminal-send-rpc-response'
 import { sendMobileTerminalQueryReply } from '../../../../src/terminal/mobile-terminal-query-reply'
 import { TERMINAL_QUERY_REPLY_INPUT_RUNTIME_CAPABILITY } from '../../../../../src/shared/protocol-version'
+import {
+  addLegacyTerminalAttributionDisableRequest,
+  MOBILE_TERMINAL_CREATE_ATTRIBUTION_UPDATE_REQUIRED_MESSAGE,
+  withLegacyTerminalAttributionDisabledEnv
+} from '../../../../../src/shared/legacy-terminal-attribution-env'
+import {
+  assertMobileTerminalAttributionDisableSupported,
+  MOBILE_TERMINAL_CREATE_RPC_OPTIONS
+} from '../../../../src/session/mobile-terminal-attribution-compat'
 import { useTerminalLiveInputCommit } from '../../../../src/terminal/use-terminal-live-input-commit'
 import { resolveMobileTerminalInputGate } from '../../../../src/terminal/terminal-input-connection-gate'
 import {
@@ -917,6 +926,9 @@ export default function SessionScreen() {
   } | null>(null)
   const terminalUnsubsRef = useRef<Map<string, () => void>>(new Map())
   const subscribingHandlesRef = useRef<Set<string>>(new Set())
+  // Why: a lease-only subscribe never renders, so the reconciler needs to tell it apart
+  // from a stream that does — an uncovered handle holding one is a blank terminal.
+  const leaseOnlyHandlesRef = useRef<Set<string>>(new Set())
   const initializedHandlesRef = useRef<Set<string>>(new Set())
   const terminalDiagnosticsRef = useRef(new MobileTerminalDiagnostics())
   // Why: bounds the scrollback→resubscribe fit loop per handle (STA-3337).
@@ -1233,6 +1245,7 @@ export default function SessionScreen() {
       terminalUnsubsRef.current.get(handle)?.()
       terminalUnsubsRef.current.delete(handle)
       subscribingHandlesRef.current.delete(handle)
+      leaseOnlyHandlesRef.current.delete(handle)
       terminalDiagnosticsRef.current.terminalUnsubscribed(handle)
       subscribeSeqRef.current.set(handle, (subscribeSeqRef.current.get(handle) ?? 0) + 1)
       // Why: reset the high-water mark so a fresh subscription's first scrollback isn't dropped as stale.
@@ -1265,6 +1278,7 @@ export default function SessionScreen() {
     clearNativeChatInputLease()
     terminalUnsubsRef.current.clear()
     subscribingHandlesRef.current.clear()
+    leaseOnlyHandlesRef.current.clear()
     initializedHandlesRef.current.clear()
     terminalDiagnosticsRef.current.clearTerminalCache()
     viewportResubscribeBudgetRef.current.clear()
@@ -1331,6 +1345,11 @@ export default function SessionScreen() {
       }
 
       subscribingHandlesRef.current.add(handle)
+      if (covered) {
+        leaseOnlyHandlesRef.current.add(handle)
+      } else {
+        leaseOnlyHandlesRef.current.delete(handle)
+      }
       const seq = (subscribeSeqRef.current.get(handle) ?? 0) + 1
       subscribeSeqRef.current.set(handle, seq)
       diagnostics.streamArmed(handle, seq, viewportRef.current)
@@ -1519,6 +1538,7 @@ export default function SessionScreen() {
     streamRevision: coveredStreamRevision,
     subscriptionsRef: terminalUnsubsRef,
     subscribingRef: subscribingHandlesRef,
+    leaseOnlyRef: leaseOnlyHandlesRef,
     webReadyRef: webReadyHandlesRef,
     initializedRef: initializedHandlesRef,
     subscribe: subscribeToTerminal,
@@ -3085,6 +3105,10 @@ export default function SessionScreen() {
     hostId,
     worktreeId,
     worktreeName: routeWorktreeName,
+    nativeChatSessionId:
+      activeSessionTab?.type === 'terminal'
+        ? (activeSessionTab.agentStatus?.providerSession?.id ?? null)
+        : null,
     activeHandleRef,
     terminalCwdRef,
     openBrowser: (url) => void handleCreateBrowserRef.current?.(url),
@@ -3650,20 +3674,27 @@ export default function SessionScreen() {
       .slice(2, 10)}`
 
     try {
-      const response = await client.sendRequest('session.tabs.createTerminal', {
-        worktree: `id:${worktreeId}`,
-        afterTabId: activeSessionTabId ?? undefined,
-        clientMutationId,
-        ...(options?.startupCommand ? { command: options.startupCommand } : {}),
-        ...(options?.startupCommandDelivery
-          ? { startupCommandDelivery: options.startupCommandDelivery }
-          : {}),
-        ...(options?.agentPrompt ? { agentPrompt: options.agentPrompt } : {}),
-        ...(agent ? { agent } : {}),
-        activate: false,
-        select: true,
-        navigation: 'caller'
-      })
+      const authority = await assertMobileTerminalAttributionDisableSupported(client)
+      const response = await client.sendRequest(
+        'session.tabs.createTerminal',
+        {
+          worktree: `id:${worktreeId}`,
+          afterTabId: activeSessionTabId ?? undefined,
+          clientMutationId,
+          ...(options?.startupCommand ? { command: options.startupCommand } : {}),
+          ...(options?.startupCommandDelivery
+            ? { startupCommandDelivery: options.startupCommandDelivery }
+            : {}),
+          env: withLegacyTerminalAttributionDisabledEnv(undefined),
+          envToDelete: addLegacyTerminalAttributionDisableRequest(undefined),
+          ...(options?.agentPrompt ? { agentPrompt: options.agentPrompt } : {}),
+          ...(agent ? { agent } : {}),
+          activate: false,
+          select: true,
+          navigation: 'caller'
+        },
+        { ...MOBILE_TERMINAL_CREATE_RPC_OPTIONS, expectedRuntimeId: authority.runtimeId }
+      )
       if (response.ok) {
         const result = (response as RpcSuccess).result as TerminalCreateResult
         const created = result.tab
@@ -3763,10 +3794,17 @@ export default function SessionScreen() {
           showToast(message, 1800)
         }
       }
-    } catch {
-      const message = options?.errorToast ?? 'Failed to create terminal'
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : null
+      const message =
+        errorMessage === MOBILE_TERMINAL_CREATE_ATTRIBUTION_UPDATE_REQUIRED_MESSAGE
+          ? errorMessage
+          : (options?.errorToast ?? errorMessage ?? 'Failed to create terminal')
       setCreateError(message)
-      if (options?.errorToast) {
+      if (
+        options?.errorToast ||
+        errorMessage === MOBILE_TERMINAL_CREATE_ATTRIBUTION_UPDATE_REQUIRED_MESSAGE
+      ) {
         triggerError()
         showToast(message, 1800)
       }

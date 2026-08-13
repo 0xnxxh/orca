@@ -1416,7 +1416,9 @@ function App(): React.JSX.Element {
         hideWorkspacesFromOtherDevices,
         alwaysShowDefaultBranchWorkspace,
         showDotfilesByWorktree,
-        filterRepoIds,
+        // Why: the store keeps this readonly for identity stability, but PersistedUI crosses to
+        // main, which owns a mutable array — copy at the boundary rather than widening the wire type.
+        filterRepoIds: [...filterRepoIds],
         // Why (#9002): activeView is deliberately NOT included here. It used to
         // ride this same 150ms writer (#8265), which meant every top-level view
         // switch scheduled a full durable-state save. The narrow preference
@@ -1476,18 +1478,17 @@ function App(): React.JSX.Element {
     } else if (settings.theme === 'light') {
       applyDocumentTheme('light')
       return undefined
-    } else {
-      // system
-      const mq = window.matchMedia('(prefers-color-scheme: dark)')
-      applyDocumentTheme('system')
-      const handler = (): void => {
-        applyDocumentTheme('system')
-        // System theme changes don't mutate the store, so mobile terminal colors need an explicit graph republish.
-        scheduleRuntimeGraphSync()
-      }
-      mq.addEventListener('change', handler)
-      return () => mq.removeEventListener('change', handler)
     }
+    // system
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    applyDocumentTheme('system')
+    const handler = (): void => {
+      applyDocumentTheme('system')
+      // System theme changes don't mutate the store, so mobile terminal colors need an explicit graph republish.
+      scheduleRuntimeGraphSync()
+    }
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
   }, [settings])
 
   useEffect(() => {
