@@ -1819,11 +1819,14 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         }
         sendAckGatedOutput(stream, chunk)
       }
-      const sendAckRecoverySnapshot = async (stream: TerminalMultiplexStream): Promise<void> => {
+      const sendAckRecoverySnapshot = async (
+        stream: TerminalMultiplexStream,
+        allowWhilePaused = false
+      ): Promise<void> => {
         if (
           closed ||
           streams.get(stream.streamId) !== stream ||
-          stream.outputPaused ||
+          (stream.outputPaused && !allowWhilePaused) ||
           stream.ackRecoverySnapshotInFlight
         ) {
           return
@@ -1832,7 +1835,11 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         let replacement: RemoteTerminalSourceRangeReplacementReservation | null = null
         try {
           const serialized = await serializeBudgetedRequestedSnapshot(runtime, stream.ptyId, 0)
-          if (closed || streams.get(stream.streamId) !== stream || stream.outputPaused) {
+          if (
+            closed ||
+            streams.get(stream.streamId) !== stream ||
+            (stream.outputPaused && !allowWhilePaused)
+          ) {
             return
           }
           if (!serialized) {
@@ -1941,19 +1948,20 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         } finally {
           if (streams.get(stream.streamId) === stream) {
             stream.ackRecoverySnapshotInFlight = false
-            flushAllAckPendingOutput()
+            flushAllAckPendingOutput(allowWhilePaused)
           }
         }
       }
       const flushAckPendingOutput = (
         stream: TerminalMultiplexStream,
-        maxChunks = Number.POSITIVE_INFINITY
+        maxChunks = Number.POSITIVE_INFINITY,
+        allowWhilePaused = false
       ): number => {
-        if (stream.outputPaused) {
+        if (stream.outputPaused && !allowWhilePaused) {
           return 0
         }
         if (stream.ackPendingOutputOverflowed) {
-          void sendAckRecoverySnapshot(stream)
+          void sendAckRecoverySnapshot(stream, allowWhilePaused)
           return 0
         }
         let flushed = 0
@@ -1976,7 +1984,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         }
         return flushed
       }
-      const flushAllAckPendingOutput = (): void => {
+      const flushAllAckPendingOutput = (allowWhilePaused = false): void => {
         const ordered = Array.from(streams.values())
         ackFlushCursorStreamId = drainTerminalMultiplexRoundRobin({
           streams: ordered,
@@ -1986,7 +1994,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             if (streams.get(stream.streamId) !== stream) {
               return false
             }
-            if (flushAckPendingOutput(stream, 1) > 0) {
+            if (flushAckPendingOutput(stream, 1, allowWhilePaused) > 0) {
               return true
             }
             return false
@@ -2008,7 +2016,8 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         )
         stream.ackInFlightBytes -= acknowledged
         ackTotalInFlightBytes = Math.max(0, ackTotalInFlightBytes - acknowledged)
-        flushAllAckPendingOutput()
+        // Why allowed while paused: queued pre-pause bytes retain remote reply authority.
+        flushAllAckPendingOutput(true)
       }
       const acknowledgeSourceRanges = (
         stream: TerminalMultiplexStream,
@@ -2209,8 +2218,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             return
           }
           if (payload.paused) {
-            // Pre-pause bytes were ingested under view authority, so retire the
-            // batch before the pause guard and retain ACK-blocked bytes for resume.
+            // Why flush first: pre-pause bytes retain remote reply authority through the ACK queue.
             stream.outputBatcher.flush()
             flushAckPendingOutput(stream)
             stream.outputPaused = true

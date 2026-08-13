@@ -24,7 +24,14 @@ import type {
   PtyRendererDeliveryHealthReply,
   PtyRendererDeliveryStateReport
 } from '../../shared/pty-renderer-delivery-health'
-import { extractHiddenStartupRendererQueryData } from '../../shared/terminal-reply-query-extraction'
+import {
+  EMPTY_TERMINAL_REPLY_QUERY_SCAN_STATE,
+  scanTerminalReplyQuerySequences
+} from '../../shared/terminal-reply-query-scan'
+import {
+  isStatefulRendererReplyCsiQuery,
+  isStatelessRendererReplyCsiQuery
+} from '../../shared/terminal-reply-query-extraction'
 import {
   INITIAL_MODE_2031_REPLY_SCAN_STATE,
   scanMode2031ReplyDecision,
@@ -3202,13 +3209,88 @@ export function registerPtyHandlers(
   // Why capped: keeps O(1) memory per PTY; salvaged query bytes are tiny, so past the cap a pathological stream can degrade to the plain sentinel.
   const DROPPED_QUERY_SALVAGE_MAX_CHARS = 4096
 
-  // Why carve out queries: a bulk drop must not swallow reply-eliciting probes (DSR/CPR, DA1/DA2, DECRQM, OSC 10/11) the program blocks on; snapshot heals content so replies can't double-fire.
-  function extractDroppedPtyQueryBytes(data: string): string {
+  function isDroppedPtyRendererQuery(data: string): boolean {
+    return (
+      data.startsWith('\x1b]') ||
+      isStatelessRendererReplyCsiQuery(data) ||
+      isStatefulRendererReplyCsiQuery(data)
+    )
+  }
+
+  function scanDroppedPtyRendererQueries(data: string) {
     if (!data.includes('\x1b')) {
-      return ''
+      return []
     }
-    const extracted = extractHiddenStartupRendererQueryData(data, '')
-    return extracted.statelessQueryData + extracted.statefulQueryData + extracted.oscColorQueryData
+    return scanTerminalReplyQuerySequences(
+      data,
+      0,
+      EMPTY_TERMINAL_REPLY_QUERY_SCAN_STATE
+    ).queries.filter(({ data: query }) => isDroppedPtyRendererQuery(query))
+  }
+
+  function appendDroppedPtyQueryBytes(
+    pending: PendingPtyData,
+    queryData: string,
+    viewSuppressed: boolean
+  ): void {
+    if (!queryData) {
+      return
+    }
+    const remainingCapacity = DROPPED_QUERY_SALVAGE_MAX_CHARS - pending.data.length
+    if (queryData.length > remainingCapacity) {
+      return
+    }
+    const boundaries = pending.viewSuppressionBoundaries ?? []
+    const previousViewSuppressed =
+      boundaries.at(-1)?.viewSuppressed ?? pending.viewSuppressed === true
+    if (pending.data.length > 0 && previousViewSuppressed !== viewSuppressed) {
+      boundaries.push({
+        dataOffset: pending.data.length,
+        rawOffset: pending.data.length,
+        viewSuppressed
+      })
+      pending.viewSuppressionBoundaries = boundaries
+    } else if (pending.data.length === 0 && viewSuppressed) {
+      pending.viewSuppressed = true
+    }
+    pending.data += queryData
+  }
+
+  // Why carve out queries: a bulk drop must not swallow reply-eliciting probes (DSR/CPR, DA1/DA2, DECRQM, OSC 10/11) the program blocks on; snapshot heals content so replies can't double-fire.
+  function appendDroppedPtyQueries(
+    pending: PendingPtyData,
+    data: string,
+    viewSuppressed: boolean
+  ): void {
+    for (const query of scanDroppedPtyRendererQueries(data)) {
+      appendDroppedPtyQueryBytes(pending, query.data, viewSuppressed)
+    }
+  }
+
+  function salvageDroppedPtyQueries(pending: PendingPtyData): PendingPtyData {
+    const salvaged: PendingPtyData = { data: '', droppedOutput: true }
+    const queries = scanDroppedPtyRendererQueries(pending.data)
+    const boundaries = pending.viewSuppressionBoundaries ?? []
+    let boundaryIndex = 0
+    let viewSuppressed = pending.viewSuppressed === true
+    for (const query of queries) {
+      while (
+        boundaryIndex < boundaries.length &&
+        boundaries[boundaryIndex]!.dataOffset < query.endSeq
+      ) {
+        viewSuppressed = boundaries[boundaryIndex]!.viewSuppressed
+        boundaryIndex += 1
+      }
+      appendDroppedPtyQueryBytes(salvaged, query.data, viewSuppressed)
+    }
+    if (
+      salvaged.data.length === 0 &&
+      (pending.viewSuppressed === true ||
+        pending.viewSuppressionBoundaries?.some((boundary) => boundary.viewSuppressed))
+    ) {
+      salvaged.viewSuppressed = true
+    }
+    return salvaged
   }
 
   function scanDroppedMode2031Data(
@@ -3262,12 +3344,7 @@ export function registerPtyHandlers(
     const mode2031 = scanDroppedMode2031Data(pending.data, INITIAL_MODE_2031_REPLY_SCAN_STATE)
     // Why no trimmed content tail: a mid-stream gap would corrupt the pane; the droppedOutput sentinel repaints from the snapshot and realigns by sequence (only query bytes ride along).
     return {
-      data: extractDroppedPtyQueryBytes(pending.data).slice(0, DROPPED_QUERY_SALVAGE_MAX_CHARS),
-      droppedOutput: true,
-      ...(pending.viewSuppressed === true ||
-      pending.viewSuppressionBoundaries?.some((boundary) => boundary.viewSuppressed)
-        ? { viewSuppressed: true as const }
-        : {}),
+      ...salvageDroppedPtyQueries(pending),
       droppedMode2031Data: mode2031.data,
       droppedMode2031ScanState: mode2031.state
     }
@@ -3335,19 +3412,14 @@ export function registerPtyHandlers(
         data,
         existing.droppedMode2031ScanState ?? INITIAL_MODE_2031_REPLY_SCAN_STATE
       )
-      const remainingQueryCapacity = Math.max(
-        0,
-        DROPPED_QUERY_SALVAGE_MAX_CHARS - existing.data.length
-      )
-      const salvaged = extractDroppedPtyQueryBytes(data).slice(0, remainingQueryCapacity)
-      return {
+      const next = {
         ...existing,
-        data: existing.data + salvaged,
-        ...(viewSuppressed ? { viewSuppressed: true as const } : {}),
         ...(emitViewGapRestoreMarker ? { emitViewGapRestoreMarker: true as const } : {}),
         droppedMode2031Data: mode2031.data || existing.droppedMode2031Data,
         droppedMode2031ScanState: mode2031.state
       }
+      appendDroppedPtyQueries(next, data, viewSuppressed)
+      return next
     }
     const projectionState = compactPendingProjectionState(existing ?? {}, projectionSemanticsId)
     const nextContainsBackgroundOutput =
@@ -3467,6 +3539,37 @@ export function registerPtyHandlers(
     }
   }
 
+  function sendDroppedPendingPtyData(
+    id: string,
+    pending: PendingPtyData
+  ): {
+    sent: boolean
+    writes: number
+  } {
+    const mode2031Data = getDroppedMode2031RendererData(pending)
+    let unsettled: PendingPtyData | undefined = {
+      ...pending,
+      data: pending.data + mode2031Data
+    }
+    let writes = 0
+    while (unsettled) {
+      const slice = takePendingPtyDeliverySlice(unsettled)
+      if (
+        !sendPtyDataToRenderer(id, {
+          id,
+          data: slice.data,
+          droppedOutput: true,
+          ...(slice.viewSuppressed ? { sidecarOnly: true } : {})
+        }).sent
+      ) {
+        return { sent: false, writes }
+      }
+      writes += 1
+      unsettled = slice.remainder
+    }
+    return { sent: true, writes }
+  }
+
   function emitPendingViewGapRestoreMarker(id: string, pending: PendingPtyData): void {
     if (pending.emitViewGapRestoreMarker === true && isHiddenRendererPty(id)) {
       sendModelRestoreNeededMarker(id, 'hidden-drop', runtime?.getPtyOutputSequence(id))
@@ -3569,22 +3672,12 @@ export function registerPtyHandlers(
           updateProducerFlowControl(id)
           emitPendingViewGapRestoreMarker(id, pending)
           // Why droppedOutput sentinel: pending-cap drop means the pane must repaint from the snapshot, not continue a gapped stream (data = carved query bytes only).
-          if (
-            !sendPtyDataToRenderer(
-              id,
-              {
-                id,
-                data: pending.data + getDroppedMode2031RendererData(pending),
-                droppedOutput: true,
-                ...(pending.viewSuppressed === true ? { sidecarOnly: true } : {})
-              },
-              pending.projectionAdmissionIds
-            ).sent
-          ) {
+          const delivery = sendDroppedPendingPtyData(id, pending)
+          if (!delivery.sent) {
             sendFailed = true
             break
           }
-          writes++
+          writes += delivery.writes
           continue
         }
         const slice = takePendingPtyDeliverySlice(pending)
@@ -3714,16 +3807,7 @@ export function registerPtyHandlers(
         emitPendingViewGapRestoreMarker(payload.id, remaining)
         if (remaining.droppedOutput === true) {
           // Sentinel entry: only salvaged query bytes remain; keep the flag so the renderer knows the span was dropped.
-          sendPtyDataToRenderer(
-            payload.id,
-            {
-              id: payload.id,
-              data: remaining.data,
-              droppedOutput: true,
-              ...(remaining.viewSuppressed === true ? { sidecarOnly: true } : {})
-            },
-            remaining.projectionAdmissionIds
-          )
+          sendDroppedPendingPtyData(payload.id, remaining)
         } else if (!remaining.viewSuppressionBoundaries?.length) {
           sendPtyDataToRenderer(
             payload.id,

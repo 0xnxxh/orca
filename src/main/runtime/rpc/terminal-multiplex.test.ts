@@ -4602,14 +4602,15 @@ describe('terminal multiplex RPC', () => {
     await harness.dispatchPromise
   })
 
-  it('settles the pre-pause batch and preserves ACK-pending bytes for resume', async () => {
+  it('settles ACK-pending pre-pause bytes when credit arrives while paused', async () => {
     let dataListener: ((data: string, meta?: RuntimeTerminalDataMeta) => void) | undefined
     const releaseView = vi.fn()
+    const registerRaw = vi.fn(() => vi.fn())
     const sendBinary = vi.fn(() => true)
     const harness = startDesktopMultiplexSubscribe(
       {
         registerRemoteTerminalViewSubscriber: vi.fn(() => releaseView),
-        registerRawTerminalViewSubscriber: vi.fn(() => vi.fn()),
+        registerRawTerminalViewSubscriber: registerRaw,
         subscribeToTerminalData: vi.fn((_ptyId, listener) => {
           dataListener = listener
           return vi.fn()
@@ -4680,6 +4681,12 @@ describe('terminal multiplex RPC', () => {
         })
       )!
     )
+    expect(releaseView).toHaveBeenCalledTimes(2)
+    expect(registerRaw).toHaveBeenCalledTimes(2)
+    dataListener?.('post-pause-query\x1b[6n', {
+      seq: 42 + TERMINAL_MULTIPLEX_ACK_STREAM_INITIAL_WINDOW_BYTES,
+      rawLength: 'post-pause-query\x1b[6n'.length
+    })
     harness.handlers.get(7)?.(
       decodeTerminalStreamFrame(
         encodeTerminalStreamFrame({
@@ -4698,7 +4705,21 @@ describe('terminal multiplex RPC', () => {
         .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
         .map((frame) => (frame ? decodeTerminalStreamText(frame.payload) : ''))
         .join('')
-    ).not.toContain('ack-pending')
+    ).toContain('ack-pending')
+    expect(
+      harness.binaryFrames
+        .map(decodeTerminalStreamFrame)
+        .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
+        .map((frame) => (frame ? decodeTerminalStreamText(frame.payload) : ''))
+        .join('')
+    ).not.toContain('post-pause-query')
+
+    const sentPendingCountBeforeResume = harness.binaryFrames
+      .map(decodeTerminalStreamFrame)
+      .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
+      .map((frame) => (frame ? decodeTerminalStreamText(frame.payload) : ''))
+      .filter((data) => data === 'ack-pending').length
+    expect(sentPendingCountBeforeResume).toBe(1)
 
     harness.handlers.get(7)?.(
       decodeTerminalStreamFrame(
@@ -4715,8 +4736,8 @@ describe('terminal multiplex RPC', () => {
         .map(decodeTerminalStreamFrame)
         .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
         .map((frame) => (frame ? decodeTerminalStreamText(frame.payload) : ''))
-        .join('')
-    ).toContain('ack-pending')
+        .filter((data) => data === 'ack-pending')
+    ).toHaveLength(1)
 
     harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
     await harness.dispatchPromise

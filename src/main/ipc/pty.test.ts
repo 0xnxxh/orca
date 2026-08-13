@@ -14755,7 +14755,7 @@ describe('registerPtyHandlers', () => {
     }
   })
 
-  it('keeps a visible dropped sentinel out of xterm after hidden authority takes over', async () => {
+  it('preserves visible-to-hidden query authority across a pending-cap drop', async () => {
     vi.useFakeTimers()
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const mockProc = createMockProc()
@@ -14778,16 +14778,62 @@ describe('registerPtyHandlers', () => {
       setInterest(null, { id: spawn.id, interested: true })
       setHidden(null, { id: spawn.id, hidden: true })
       mockProc.emitData('\x1b[0c')
+      setHidden(null, { id: spawn.id, hidden: false })
+      mockProc.emitData('\x1b[5n')
+      setHidden(null, { id: spawn.id, hidden: true })
+      mockProc.emitData('\x1b[>q')
 
       mainWindow.webContents.send.mockClear()
       ackData(null, { id: spawn.id, charCount: 512 * 1024 })
       vi.advanceTimersByTime(2)
-      expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:data', {
-        id: spawn.id,
-        data: '\x1b[6n\x1b[0c',
-        droppedOutput: true,
-        sidecarOnly: true
-      })
+      expect(
+        mainWindow.webContents.send.mock.calls.filter((call: unknown[]) => call[0] === 'pty:data')
+      ).toEqual([
+        ['pty:data', { id: spawn.id, data: '\x1b[6n', droppedOutput: true }],
+        ['pty:data', { id: spawn.id, data: '\x1b[0c', droppedOutput: true, sidecarOnly: true }],
+        ['pty:data', { id: spawn.id, data: '\x1b[5n', droppedOutput: true }],
+        ['pty:data', { id: spawn.id, data: '\x1b[>q', droppedOutput: true, sidecarOnly: true }]
+      ])
+    } finally {
+      errorSpy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves hidden-to-visible query authority across a pending-cap drop', async () => {
+    vi.useFakeTimers()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+
+    try {
+      registerPtyHandlers(mainWindow as never)
+      const spawn = (await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        cwd: '/tmp'
+      })) as { id: string }
+      const ackData = getPtyAckDataListener()
+      const setHidden = getPtySetHiddenRendererPtyListener()
+      const setInterest = getPtySetDeliveryInterestListener()
+
+      mockProc.emitData('x'.repeat(600 * 1024))
+      vi.advanceTimersByTime(34)
+      setInterest(null, { id: spawn.id, interested: true })
+      setHidden(null, { id: spawn.id, hidden: true })
+      mockProc.emitData(`${'y'.repeat(3 * 1024 * 1024)}\x1b[6n`)
+      setHidden(null, { id: spawn.id, hidden: false })
+      mockProc.emitData('\x1b[0c')
+
+      mainWindow.webContents.send.mockClear()
+      ackData(null, { id: spawn.id, charCount: 512 * 1024 })
+      vi.advanceTimersByTime(2)
+      expect(
+        mainWindow.webContents.send.mock.calls.filter((call: unknown[]) => call[0] === 'pty:data')
+      ).toEqual([
+        ['pty:data', { id: spawn.id, data: '\x1b[6n', droppedOutput: true, sidecarOnly: true }],
+        ['pty:data', { id: spawn.id, data: '\x1b[0c', droppedOutput: true }]
+      ])
     } finally {
       errorSpy.mockRestore()
       vi.useRealTimers()
