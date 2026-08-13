@@ -2,7 +2,15 @@ import type * as DashboardSnapshotTypes from '../../../../shared/dashboard-snaps
 import { placeAgentMapAgents } from './agent-map-agent-placement'
 import { layoutAgentMapLineage } from './agent-map-lineage-layout'
 import { refreshAgentMapMetadata } from './agent-map-layout-metadata'
-import { agentMapDurationMinutes, agentMapNodeStatus } from './agent-map-node-metadata'
+import {
+  agentMapDurationMinutes,
+  agentMapNodeStatus,
+  agentMapQuietCount,
+  emptyAgentMapStatusCounts,
+  isAgentMapRecentFinish,
+  type AgentMapNodeStatus,
+  type AgentMapStatusCounts
+} from './agent-map-node-metadata'
 import { placeAgentMapProjects } from './agent-map-project-placement'
 import { selectAgentMapSpawnParentContainer } from './agent-map-spawn-clustering'
 import {
@@ -15,7 +23,6 @@ import {
 import { layoutAgentMapWorktreeLineage } from './agent-map-worktree-lineage-layout'
 
 type DashboardCard = DashboardSnapshotTypes.DashboardCard
-type DashboardCardDotState = DashboardSnapshotTypes.DashboardCardDotState
 type DashboardWorkspace = DashboardSnapshotTypes.DashboardWorkspace
 
 export { AGENT_MAP_WORKTREE_GAP } from './agent-map-worktree-packing'
@@ -39,15 +46,15 @@ const PROJECT_PADDING = 12
 const WORLD_MARGIN = 32
 const RING_CONTENT_OFFSET = AGENT_MAP_RING_HEADER_HEIGHT / 2
 
-export type AgentMapStatusCounts = Record<DashboardCardDotState, number>
-
 export type AgentMapAgentNode = {
   card: DashboardCard
   x: number
   y: number
   radius: number
   durationMinutes: number
-  status: DashboardCardDotState
+  status: AgentMapNodeStatus
+  /** True only inside the flare window after a finish; drives the one-shot emphasis. */
+  finishedRecently: boolean
   motionState?: AgentMapMotionState
 }
 
@@ -130,10 +137,6 @@ export function shouldAggregateAgentMapWorktree(
   )
 }
 
-function emptyStatusCounts(): AgentMapStatusCounts {
-  return { working: 0, blocked: 0, waiting: 0, done: 0, idle: 0 }
-}
-
 function worktreeRadius(agentCount: number): number {
   return Math.max(
     52,
@@ -150,7 +153,7 @@ function buildLocalWorktree(
   const lineageLayout = layoutAgentMapLineage(cards, AGENT_MAP_AGENT_RADIUS)
   const contentRadius = lineageLayout?.radius ?? worktreeRadius(cards.length)
   const radius = contentRadius + RING_CONTENT_OFFSET
-  const statusCounts = emptyStatusCounts()
+  const statusCounts = emptyAgentMapStatusCounts()
   for (const card of cards) {
     statusCounts[agentMapNodeStatus(card)] += 1
   }
@@ -175,7 +178,8 @@ function buildLocalWorktree(
         y,
         radius: AGENT_MAP_AGENT_RADIUS,
         durationMinutes: agentMapDurationMinutes(card, now),
-        status: agentMapNodeStatus(card)
+        status: agentMapNodeStatus(card),
+        finishedRecently: isAgentMapRecentFinish(card)
       })) ??
       placeAgentMapAgents({
         worktreeId: id,
@@ -186,7 +190,7 @@ function buildLocalWorktree(
       })
     ).map((agent) => ({ ...agent, y: agent.y + RING_CONTENT_OFFSET })),
     statusCounts,
-    quiet: statusCounts.idle === cards.length
+    quiet: agentMapQuietCount(statusCounts) === cards.length
   }
 }
 

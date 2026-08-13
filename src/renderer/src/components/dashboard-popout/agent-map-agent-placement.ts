@@ -1,5 +1,10 @@
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
-import { agentMapDurationMinutes, agentMapNodeStatus } from './agent-map-node-metadata'
+import {
+  agentMapDurationMinutes,
+  agentMapNodeStatus,
+  isAgentMapRecentFinish,
+  type AgentMapNodeStatus
+} from './agent-map-node-metadata'
 
 const GOLDEN_ANGLE = 2.399963229728653
 
@@ -30,7 +35,8 @@ export function placeAgentMapAgents({
   y: number
   radius: number
   durationMinutes: number
-  status: DashboardCard['dotState']
+  status: AgentMapNodeStatus
+  finishedRecently: boolean
 }[] {
   const availableRadius = Math.max(0, radius - agentRadius - 6)
   const sorted = [...cards].sort((a, b) =>
@@ -48,7 +54,8 @@ export function placeAgentMapAgents({
       y: Math.sin(angle) * orbit,
       radius: agentRadius,
       durationMinutes: agentMapDurationMinutes(card, now),
-      status: agentMapNodeStatus(card)
+      status: agentMapNodeStatus(card),
+      finishedRecently: isAgentMapRecentFinish(card)
     }
   })
 }

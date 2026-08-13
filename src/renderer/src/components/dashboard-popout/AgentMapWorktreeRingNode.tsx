@@ -1,6 +1,6 @@
 import { memo, useState, type MutableRefObject } from 'react'
 import { Plus } from 'lucide-react'
-import { AgentStateDot, agentStateLabel } from '@/components/AgentStateDot'
+import { AgentStateDot } from '@/components/AgentStateDot'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { translate } from '@/i18n/i18n'
@@ -14,7 +14,13 @@ import type {
   AgentMapWorktreeRing
 } from './agent-map-layout'
 import { AGENT_MAP_LINEAGE_RELATION, shouldAggregateAgentMapWorktree } from './agent-map-layout'
-import { agentMapDirectLineageChevronPath } from './agent-map-lineage-chevron-path'
+import {
+  agentMapAttentionMarkerScale,
+  agentMapStatusLabel,
+  agentName,
+  formatDuration,
+  lineagePath
+} from './agent-map-node-presentation'
 import { agentMapWorktreeActiveStatus } from './agent-map-worktree-active-status'
 
 type AgentMapWorktreeRingNodeProps = {
@@ -38,33 +44,6 @@ type AgentMapWorktreeRingNodeProps = {
   onLabelHoverChange: (worktreeId: string, active: boolean) => void
   onLabelFocusChange: (worktreeId: string, active: boolean) => void
   onAgentKeyDown: (event: React.KeyboardEvent<SVGGElement>, agent: AgentMapAgentNode) => void
-}
-
-function formatDuration(minutes: number): string {
-  if (minutes < 1) {
-    return translate('dashboardPopout.card.time.justNow', 'just now')
-  }
-  if (minutes < 60) {
-    return translate('dashboardPopout.card.time.minutes', '{{count}}m', {
-      count: Math.floor(minutes)
-    })
-  }
-  return translate('dashboardPopout.card.time.hours', '{{count}}h', {
-    count: Math.floor(minutes / 60)
-  })
-}
-
-function lineagePath(parent: AgentMapAgentNode, child: AgentMapAgentNode): string {
-  return agentMapDirectLineageChevronPath(parent, child)
-}
-
-function agentName(card: DashboardCard): string {
-  return card.conversationName ?? (card.task.trim() || card.agentType)
-}
-
-export function agentMapAttentionMarkerScale(mapScale: number): number {
-  const inverseScale = 1 / Math.max(mapScale, 0.001)
-  return Math.max(1, inverseScale ** 0.72, inverseScale * 0.5)
 }
 
 function WorktreeDetails({
@@ -128,10 +107,13 @@ function WorktreeDetails({
                     {agentName(agent.card)}
                   </span>
                   <span className="block truncate text-[11px] text-muted-foreground">
-                    {agentStateLabel(agent.status)} · {formatDuration(agent.durationMinutes)}
+                    {agentMapStatusLabel(agent.status)} · {formatDuration(agent.durationMinutes)}
                   </span>
                 </span>
-                <AgentStateDot state={agent.status} size="md" />
+                <AgentStateDot
+                  state={agent.status === 'done-seen' ? 'done' : agent.status}
+                  size="md"
+                />
               </button>
             ))
           )}
@@ -310,10 +292,13 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
             {worktree.agents.map((agent) => {
               const iconSize = Math.max(12, Math.min(22, agent.radius * 1.05))
               const agentExiting = exiting || agent.motionState === 'exiting'
+              // `done` here is the unread finish only — `done-seen` demotes to a bare
+              // emerald ring so the halo keeps meaning "this one is still unread".
               const hasStatusGlow =
                 agent.status === 'working' ||
                 agent.status === 'waiting' ||
-                agent.status === 'blocked'
+                agent.status === 'blocked' ||
+                agent.status === 'done'
               return (
                 <g
                   key={agent.card.paneKey}
@@ -330,7 +315,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                   tabIndex={agentExiting ? -1 : 0}
                   aria-hidden={agentExiting || undefined}
                   aria-pressed={selectedPaneKey === agent.card.paneKey}
-                  aria-label={`${agentName(agent.card)}, ${agentStateLabel(agent.status)}${agent.card.unseen ? ', unread' : ''}, ${formatDuration(agent.durationMinutes)}, ${worktree.name}, ${project.name}`}
+                  aria-label={`${agentName(agent.card)}, ${agentMapStatusLabel(agent.status)}${agent.card.unseen ? ', unread' : ''}, ${formatDuration(agent.durationMinutes)}, ${worktree.name}, ${project.name}`}
                   className={`agent-map-agent-node fleet-status-${agent.status}${selectedPaneKey === agent.card.paneKey ? ' is-selected' : ''}${agent.motionState ? ` is-${agent.motionState}` : ''}`}
                   transform={`translate(${agent.x} ${agent.y})`}
                   onClick={(event) => {
@@ -352,6 +337,16 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                         className={`agent-map-agent-status-glow fleet-status-${agent.status}`}
                         data-agent-map-agent-status-glow=""
                         data-agent-active-status={agent.status}
+                        r={agent.radius + 1}
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                    {/* One-shot ripple at the moment of finishing. Mounted only inside the
+                        flare window so animated paint stays off the resting fleet. */}
+                    {agent.finishedRecently && !agentExiting ? (
+                      <circle
+                        className="agent-map-agent-finish-flare"
+                        data-agent-map-agent-finish-flare=""
                         r={agent.radius + 1}
                         aria-hidden="true"
                       />
