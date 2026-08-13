@@ -3,6 +3,14 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const SOURCE_CONTROL_SOURCE = readFileSync(join(__dirname, 'SourceControl.tsx'), 'utf8')
+const STATUS_REFRESH_SOURCE = readFileSync(
+  join(__dirname, 'use-source-control-status-refresh.ts'),
+  'utf8'
+)
+const BASE_REF_DEFAULT_SOURCE = readFileSync(
+  join(__dirname, 'use-source-control-base-ref-default.ts'),
+  'utf8'
+)
 
 function sourceBetween(source: string, startPattern: string, endPattern: string): string {
   const start = source.indexOf(startPattern)
@@ -30,9 +38,9 @@ describe('SourceControl host-context boundaries', () => {
     expect(cancelSection).toContain('settings: record.context.runtimeTargetSettings')
 
     const refreshSection = sourceBetween(
-      SOURCE_CONTROL_SOURCE,
+      STATUS_REFRESH_SOURCE,
       'const refreshGitStatusAfterPullRequestGeneration = useCallback(',
-      'useEffect(() => {'
+      '  return {'
     )
     expect(refreshSection).toContain('settings: context.runtimeTargetSettings')
     expect(refreshSection).not.toContain('settings: activeRepoSettings')
@@ -64,9 +72,9 @@ describe('SourceControl host-context boundaries', () => {
     )
 
     const baseRefSection = sourceBetween(
-      SOURCE_CONTROL_SOURCE,
+      BASE_REF_DEFAULT_SOURCE,
       '// Why: reset to null so that effectiveBaseRef becomes falsy until the IPC',
-      'const normalizedWorktreeBaseRef ='
+      '  return defaultBaseRef'
     )
     expect(baseRefSection).toContain(
       'getRuntimeRepoBaseRefDefault(\n      { activeRuntimeEnvironmentId: activeRepoRuntimeEnvironmentId },\n      activeRepoId'
