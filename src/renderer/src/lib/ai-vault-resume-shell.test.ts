@@ -104,7 +104,7 @@ describe('copied real-home Codex resume command', () => {
     codexHome: null
   }
 
-  it('clears inherited Codex homes with fish syntax under a fish login shell', () => {
+  it('masks inherited Codex homes only for the resumed Fish command', () => {
     expect(
       withLoginShell('/opt/homebrew/bin/fish', () =>
         buildAiVaultResumeCopyCommandForWorktree({
@@ -113,8 +113,25 @@ describe('copied real-home Codex resume command', () => {
           session
         })
       )
+    ).toBe("cd '/home/alice/repo' && CODEX_HOME= ORCA_CODEX_HOME= codex 'resume' 'session one'")
+  })
+
+  it('preserves a fish command override and quotes the cwd and resume id for fish', () => {
+    expect(
+      withLoginShell('/opt/homebrew/bin/fish', () =>
+        buildAiVaultResumeCopyCommandForWorktree({
+          state: makeState(),
+          worktreeId: 'repo-1::worktree-1',
+          commandOverride: String.raw`my\ codex --profile 'a\\b'`,
+          session: {
+            ...session,
+            sessionId: String.raw`session\one`,
+            cwd: String.raw`/home/alice/repo\one`
+          }
+        })
+      )
     ).toBe(
-      "set -e CODEX_HOME; set -e ORCA_CODEX_HOME; cd '/home/alice/repo' && codex 'resume' 'session one'"
+      String.raw`cd '/home/alice/repo\\one' && CODEX_HOME= ORCA_CODEX_HOME= my\ codex --profile 'a\\b' 'resume' 'session\\one'`
     )
   })
 

@@ -16,7 +16,11 @@ import {
 } from '../../../shared/tui-agent-launch-defaults'
 import { parseWslUncPath } from '../../../shared/wsl-paths'
 import type { AgentStartupShell } from '../../../shared/tui-agent-startup-shell'
-import { clearEnvCommand, commandSeparator } from '../../../shared/tui-agent-startup-shell'
+import {
+  clearEnvCommand,
+  commandSeparator,
+  quoteStartupArg
+} from '../../../shared/tui-agent-startup-shell'
 import type { AppState } from '@/store/types'
 import type { AiVaultSessionDragPayload } from '@/lib/ai-vault-session-drag'
 import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
@@ -64,11 +68,17 @@ type AiVaultResumeWorktreeArgs = {
 }
 
 export function buildAiVaultResumeCopyCommandForWorktree(args: AiVaultResumeWorktreeArgs): string {
-  const command = buildAiVaultResumeForWorktree(args, true).command
   if (args.session.agent !== 'codex' || args.session.codexHome !== null) {
-    return command
+    return buildAiVaultResumeForWorktree(args, true).command
   }
   const shell = resolveAiVaultResumeShell(args)
+  if (shell === 'fish') {
+    const startup = buildAiVaultResumeForWorktree(args, false, shell)
+    // Why: Codex treats empty CODEX_HOME as ~/.codex; Fish assignments preserve function lookup.
+    const command = `CODEX_HOME= ORCA_CODEX_HOME= ${startup.command}`
+    return startup.cwd ? `cd ${quoteStartupArg(startup.cwd, shell)} && ${command}` : command
+  }
+  const command = buildAiVaultResumeForWorktree(args, true).command
   const separator = commandSeparator(shell)
   const clearHomes = ['CODEX_HOME', 'ORCA_CODEX_HOME']
     .map((name) => clearEnvCommand(name, shell))
@@ -121,7 +131,8 @@ export function buildAiVaultDropRepinStartup(args: {
 
 function buildAiVaultResumeForWorktree(
   args: AiVaultResumeWorktreeArgs,
-  embedCwd: boolean
+  embedCwd: boolean,
+  shellOverride?: AgentStartupShell
 ): AiVaultResumeStartup {
   const providerSession = getAiVaultAgentProviderSession(args.session)
   if (
@@ -151,11 +162,12 @@ function buildAiVaultResumeForWorktree(
   // Why: local shell settings do not describe a remote Windows host, whose
   // queued resume command uses the remote default PowerShell syntax.
   const liveShell: AgentStartupShell | undefined =
-    platform === 'win32'
+    shellOverride ??
+    (platform === 'win32'
       ? isLocalSession
         ? resolveAiVaultResumeShell(args)
         : 'powershell'
-      : undefined
+      : undefined)
   const cwd = embedCwd ? args.session.cwd : null
   const startupCwd = !embedCwd && args.session.cwd ? { cwd: args.session.cwd } : {}
   if (providerSession && isResumableTuiAgent(args.session.agent)) {
