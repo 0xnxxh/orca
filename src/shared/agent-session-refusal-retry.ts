@@ -3,8 +3,18 @@ import type { AgentSessionWireRefusalCode } from './agent-session-wire'
 export type AgentSessionRefusalOperationState = 'settled-rejected' | 'pending-admission' | 'unknown'
 
 export function agentSessionRefusalOperationState(
+  method: string,
   code: AgentSessionWireRefusalCode
 ): AgentSessionRefusalOperationState {
+  if (method === 'agentSession.requestHandoff') {
+    switch (code) {
+      case 'structured_agent_session_unsupported':
+      case 'agent_session_checkpoint_stale':
+      case 'agent_session_conflict':
+      case 'agent_session_operation_conflict':
+        return 'settled-rejected'
+    }
+  }
   switch (code) {
     case 'agent_session_operation_invalid':
     case 'agent_session_item_revision_stale':

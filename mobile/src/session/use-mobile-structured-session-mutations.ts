@@ -104,7 +104,10 @@ export function useMobileStructuredSessionMutations(args: {
       }
       const result = response.result as AgentSessionMutationResult<TValue>
       if (!result.ok) {
-        if (agentSessionRefusalOperationState(result.refusal.code) === 'settled-rejected') {
+        if (
+          agentSessionRefusalOperationState(fingerprintMethod, result.refusal.code) ===
+          'settled-rejected'
+        ) {
           operationIdsRef.current.delete(mutationKey)
         }
         if (matchesActiveContext(activeContextRef.current, client, sessionId, fence)) {
