@@ -1,10 +1,9 @@
 import type {
-  DetectedWorktree,
   DetectedWorktreeListResult,
+  GlobalSettings,
   Repo,
   Worktree,
-  WorktreeVisibilityDefaults,
-  GlobalSettings
+  WorktreeVisibilityDefaults
 } from '../../../../shared/types'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import { getRepoOwnerWorktreeVisibilityDefaults } from '../../store/worktree-visibility-defaults-by-host'
@@ -49,20 +48,4 @@ export function buildNewExternalWorktreesInboxCandidates(args: {
     }
   }
   return candidates
-}
-
-export type NewExternalWorktreeInboxPreview = Pick<
-  DetectedWorktree,
-  'id' | 'displayName' | 'path' | 'branch'
->
-
-export function toNewExternalWorktreeInboxPreview(
-  worktree: DetectedWorktree
-): NewExternalWorktreeInboxPreview {
-  return {
-    id: worktree.id,
-    displayName: worktree.displayName,
-    path: worktree.path,
-    branch: worktree.branch
-  }
 }
