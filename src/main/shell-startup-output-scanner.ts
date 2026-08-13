@@ -62,10 +62,7 @@ export function scanShellStartupOutput(
 }
 
 export function drainShellStartupOutputScanState(state: ShellStartupOutputScanState): string {
-  let output = state.identity ? drainShellStartupIdentityHeldBytes(state.identity) : ''
+  const output = state.identity ? drainShellStartupIdentityHeldBytes(state.identity) : ''
   state.identity = null
-  if (output) {
-    output = scanForShellReadyBoundary(state.ready, output).output
-  }
   return output + drainShellReadyHeldBytes(state.ready)
 }

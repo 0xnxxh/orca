@@ -108,4 +108,14 @@ describe('shell startup output scanner', () => {
 
     expect(drainShellStartupOutputScanState(state)).toBe('\x1b]777;orca-shell-st')
   })
+
+  it('drains simultaneous identity and readiness prefixes in input order', () => {
+    const state = createShellStartupOutputScanState()
+    expect(scanShellStartupOutput(state, '\x1b]777;orca-shell-st').output).toBe('')
+    expect(scanShellStartupOutput(state, '\x1b]777;orca-shell-rea').output).toBe('')
+
+    expect(drainShellStartupOutputScanState(state)).toBe(
+      '\x1b]777;orca-shell-st\x1b]777;orca-shell-rea'
+    )
+  })
 })
