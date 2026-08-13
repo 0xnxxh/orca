@@ -2042,7 +2042,8 @@ function RemoteBrowserPagePane({
                         void openWorkspaceBrowserTab({
                           workspaceId: worktreeId,
                           url: linkUrl,
-                          intent: { kind: 'url' }
+                          intent: { kind: 'url' },
+                          expectedRuntimeEnvironmentId: runtimeEnvironmentId
                         }).catch((error) => {
                           setPaneNotice({
                             kind: 'direct',
