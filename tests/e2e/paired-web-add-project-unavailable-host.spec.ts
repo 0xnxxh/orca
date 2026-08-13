@@ -349,6 +349,7 @@ async function assertCreationActionsDisabled(args: {
   ]) {
     await button.evaluate((element) => (element as HTMLButtonElement).click())
   }
+  expect((await readAuthoritySnapshot(args.page)).mutationCalls).toEqual([])
 
   await hostPicker.click()
   await expect(args.page.locator('[cmdk-item][data-host-id="local"]')).toHaveCount(0)

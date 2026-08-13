@@ -237,7 +237,7 @@ describe('useAddRepoHostSelection', () => {
     expect(result.actionableHostId).toBeNull()
   })
 
-  it('ignores a stale runtime selection after paired-web re-pairing', async () => {
+  it('does not expose or accept a stale runtime after paired-web re-pairing', async () => {
     mocks.isWebClient = true
     mocks.stateValues = ['runtime:env-old', false]
     mocks.storeState.runtimeEnvironments = [{ id: 'env-1', name: 'Server' }]
@@ -246,12 +246,17 @@ describe('useAddRepoHostSelection', () => {
       id: 'runtime:env-old',
       label: 'Old server'
     })
+    const setStep = vi.fn()
     const { useAddRepoHostSelection } = await import('./use-add-repo-host-selection')
 
-    const result = useAddRepoHostSelection({ isOpen: true, setStep: vi.fn() })
+    const result = useAddRepoHostSelection({ isOpen: true, setStep })
 
+    expect(result.hostOptions.map((host) => host.id)).toEqual(['runtime:env-1'])
     expect(result.displayedHostId).toBe('runtime:env-1')
     expect(result.actionableHostId).toBe('runtime:env-1')
+    await result.handleSelectAddProjectHost('runtime:env-old')
+    expect(mocks.stateSetters[0]).not.toHaveBeenCalledWith('runtime:env-old')
+    expect(setStep).not.toHaveBeenCalled()
   })
 
   it('does not expose a paired-host SSH target as web filesystem authority', async () => {

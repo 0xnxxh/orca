@@ -3993,6 +3993,7 @@
         "src/renderer/src/components/sidebar/AddRepoDialog.default-checkout.test.ts",
         "src/renderer/src/components/sidebar/AddRepoDialogStepContent.test.tsx",
         "src/renderer/src/components/sidebar/AddRepoStartSteps.test.tsx",
+        "src/renderer/src/runtime/runtime-server-directory-browser.test.ts",
         "src/renderer/src/components/sidebar/AddRepoSteps.default-checkout.test.ts",
         "src/renderer/src/components/sidebar/project-added-default-checkout.test.ts",
         "src/renderer/src/components/sidebar/useAddRepoLocalFolderFlow.test.ts",
@@ -4021,7 +4022,7 @@
             "uses the paired runtime as the only local filesystem authority in web clients",
             "has no paired-web fallback when the only host is error, blocked, connecting, or disconnected",
             "does not expose a paired-host SSH target as web filesystem authority",
-            "ignores a stale runtime selection after paired-web re-pairing"
+            "does not expose or accept a stale runtime after paired-web re-pairing"
           ]
         },
         {
@@ -4173,6 +4174,15 @@
         }
       ],
       "evidenceRuns": [
+        {
+          "date": "2026-08-13",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/sidebar/use-add-repo-host-selection.test.ts src/renderer/src/components/sidebar/AddRepoHostSelector.test.tsx src/renderer/src/components/sidebar/add-repo-browse-authority.test.ts src/renderer/src/components/sidebar/AddRepoDialogStepContent.test.tsx src/renderer/src/components/sidebar/AddRepoStartSteps.test.tsx src/renderer/src/components/sidebar/useAddRepoServerPathFlow.test.ts src/renderer/src/runtime/runtime-server-directory-browser.test.ts src/renderer/src/store/slices/repos-paired-runtime-add.test.ts --maxWorkers=1",
+          "result": "passed",
+          "durationSeconds": 4.35,
+          "summary": "Eight files and 60 tests passed, including paired-web rejection of a stale runtime leaf after re-pairing, exact displayed/actionable authority, disabled mutations, runtime browsing, and paired-runtime repo routing."
+        },
         {
           "date": "2026-08-13",
           "runner": "local",

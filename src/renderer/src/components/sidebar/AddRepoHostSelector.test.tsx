@@ -179,8 +179,8 @@ describe('AddRepoHostSelector', () => {
       />
     )
 
-    expect(html).toContain('data-host-id="ssh:ssh-1"')
-    expect(html).toContain('data-host-actionable="false"')
+    expect(html).toMatch(/data-host-id="ssh:ssh-1"[^>]*data-host-actionable="false"/)
+    expect(html).toMatch(/data-host-id="runtime:server"[^>]*data-host-actionable="false"/)
     expect(html.match(/aria-disabled="true"/g)).toHaveLength(2)
   })
 })

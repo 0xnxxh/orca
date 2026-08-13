@@ -40,6 +40,10 @@ export function useAddRepoHostSelection({
   const runtimeEnvironments = useAppStore((s) => s.runtimeEnvironments)
   const { hostOptions } = useSidebarHostScopeOptions()
   const isWebClient = isWebClientLocation()
+  const pairedWebRuntimeHostId =
+    isWebClient && runtimeEnvironments.length === 1
+      ? toRuntimeExecutionHostId(runtimeEnvironments[0]!.id)
+      : null
   const ephemeralRuntimeEnvironmentIds = useMemo(
     () =>
       new Set(
@@ -54,20 +58,16 @@ export function useAddRepoHostSelection({
       hostOptions.filter((host) => {
         const parsed = parseExecutionHostId(host.id)
         return (
-          !(isWebClient && (parsed?.kind === 'local' || parsed?.kind === 'ssh')) &&
+          (!isWebClient || host.id === pairedWebRuntimeHostId) &&
           (parsed?.kind !== 'runtime' || !ephemeralRuntimeEnvironmentIds.has(parsed.environmentId))
         )
       }),
-    [ephemeralRuntimeEnvironmentIds, hostOptions, isWebClient]
+    [ephemeralRuntimeEnvironmentIds, hostOptions, isWebClient, pairedWebRuntimeHostId]
   )
   const [selectedAddProjectHostId, setSelectedAddProjectHostId] =
     useState<ExecutionHostId>(LOCAL_EXECUTION_HOST_ID)
   const [hostSelectorOpen, setHostSelectorOpen] = useState(false)
   const previousOpenRef = useRef(false)
-  const pairedWebRuntimeHostId =
-    isWebClient && runtimeEnvironments.length === 1
-      ? toRuntimeExecutionHostId(runtimeEnvironments[0]!.id)
-      : null
   const pairedWebRuntimeHost = pairedWebRuntimeHostId
     ? selectableHostOptions.find((host) => host.id === pairedWebRuntimeHostId)
     : undefined
