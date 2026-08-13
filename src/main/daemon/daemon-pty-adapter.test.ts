@@ -2610,6 +2610,10 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       try {
         expect(internals.tryAdmitNonFinalCheckpoint('stalled')).toBe(true)
         expect(internals.tryAdmitNonFinalCheckpoint('stalled')).toBe(false)
+        expect(warn).toHaveBeenCalledWith(
+          '[history] non-final checkpoint already in flight:',
+          'stalled'
+        )
         expect(internals.tryAdmitNonFinalCheckpoint('healthy-a')).toBe(true)
         expect(internals.tryAdmitNonFinalCheckpoint('healthy-b')).toBe(true)
         expect(internals.tryAdmitNonFinalCheckpoint('healthy-c')).toBe(true)
@@ -2619,7 +2623,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
           new Set(['stalled', 'healthy-a', 'healthy-b', 'healthy-c'])
         )
         expect(warn).toHaveBeenCalledWith(
-          '[history] non-final checkpoint admission limit reached:',
+          '[history] non-final checkpoint global admission limit reached:',
           'overflow'
         )
 

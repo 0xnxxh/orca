@@ -1368,13 +1368,17 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   private tryAdmitNonFinalCheckpoint(sessionId: string): boolean {
-    if (
-      this.nonFinalCheckpointAdmissionSessionIds.has(sessionId) ||
-      this.nonFinalCheckpointAdmissionSessionIds.size >= MAX_CONCURRENT_CHECKPOINTS
-    ) {
+    if (this.nonFinalCheckpointAdmissionSessionIds.has(sessionId)) {
       if (!this.nonFinalAdmissionDeniedSessionIds.has(sessionId)) {
         this.nonFinalAdmissionDeniedSessionIds.add(sessionId)
-        console.warn('[history] non-final checkpoint admission limit reached:', sessionId)
+        console.warn('[history] non-final checkpoint already in flight:', sessionId)
+      }
+      return false
+    }
+    if (this.nonFinalCheckpointAdmissionSessionIds.size >= MAX_CONCURRENT_CHECKPOINTS) {
+      if (!this.nonFinalAdmissionDeniedSessionIds.has(sessionId)) {
+        this.nonFinalAdmissionDeniedSessionIds.add(sessionId)
+        console.warn('[history] non-final checkpoint global admission limit reached:', sessionId)
       }
       return false
     }
