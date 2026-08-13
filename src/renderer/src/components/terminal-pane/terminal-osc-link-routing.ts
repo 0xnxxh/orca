@@ -17,7 +17,7 @@ import {
   type TerminalLinkActionContext
 } from './terminal-link-action-request'
 import { handleTerminalFileLink } from './terminal-file-link-actions'
-import { isTerminalPairingLink, openTerminalPairingLink } from './terminal-pairing-link-actions'
+import { copyTerminalPairingLink, isTerminalPairingLink } from './terminal-pairing-link-actions'
 import { translate } from '@/i18n/i18n'
 
 type TerminalLinkEvent = Pick<MouseEvent, 'metaKey' | 'ctrlKey'> &
@@ -60,7 +60,7 @@ export function handleOscLink(
       requestOpenLinksInAppPreference?: TerminalLinkRoutingPreferenceRequester
       linkActionContext?: TerminalLinkActionContext | null
       actionDestinations?: TerminalHttpLinkActionDestinations
-      openPairingLink?: (accessLink: string) => boolean
+      copyPairingLink?: (accessLink: string) => boolean
     }
 ): boolean {
   if (!isDesktopOscLinkActivation(event)) {
@@ -131,14 +131,14 @@ export function handleOscLink(
   }
 
   if (parsed.protocol === 'orca:' && isTerminalPairingLink(rawText)) {
-    const openPairingLink = (): boolean => {
-      return (deps.openPairingLink ?? openTerminalPairingLink)(rawText)
+    const copyPairingLink = (): boolean => {
+      return (deps.copyPairingLink ?? copyTerminalPairingLink)(rawText)
     }
     const runPairingLink = (): void => {
-      openPairingLink()
+      copyPairingLink()
     }
     if (isTerminalLinkDirectActivation(event)) {
-      return finish(openPairingLink())
+      return finish(copyPairingLink())
     }
     return finish(
       requestTerminalLinkAction(event as MouseEvent, deps.linkActionContext, {
@@ -146,8 +146,8 @@ export function handleOscLink(
         kind: 'url',
         primary: {
           label: translate(
-            'auto.components.terminal.pane.TerminalLinkActionPopover.addHost',
-            'Add host'
+            'auto.components.terminal.pane.TerminalLinkActionPopover.copyAccessLink',
+            'Copy access link'
           ),
           run: runPairingLink
         }

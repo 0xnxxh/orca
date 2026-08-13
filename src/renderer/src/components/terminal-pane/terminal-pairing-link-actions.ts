@@ -1,18 +1,29 @@
 import { parseHostAccessLink } from '../../../../shared/remote-pairing-address'
-import { useAppStore } from '@/store'
+import { translate } from '@/i18n/i18n'
+import { toast } from 'sonner'
 
-export function openTerminalPairingLink(accessLink: string): boolean {
+export function copyTerminalPairingLink(accessLink: string): boolean {
   if (!isTerminalPairingLink(accessLink)) {
     return false
   }
-  const { openSettingsPage, openSettingsTarget } = useAppStore.getState()
-  openSettingsTarget({
-    pane: 'servers',
-    repoId: null,
-    intent: 'add-remote-orca-server',
-    accessLink
-  })
-  openSettingsPage()
+  void window.api.ui
+    .writeClipboardText(accessLink)
+    .then(() => {
+      toast.success(
+        translate(
+          'auto.components.terminal.pane.TerminalLinkActionPopover.accessLinkCopied',
+          'Access link copied'
+        )
+      )
+    })
+    .catch(() => {
+      toast.error(
+        translate(
+          'auto.components.terminal.pane.TerminalLinkActionPopover.copyAccessLinkFailed',
+          'Failed to copy access link'
+        )
+      )
+    })
   return true
 }
 

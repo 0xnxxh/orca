@@ -381,10 +381,7 @@ function Settings(): React.JSX.Element {
   )
   const [quickCommandAddIntentSignal, setQuickCommandAddIntentSignal] = useState(0)
   const [sshHostAddIntentSignal, setSshHostAddIntentSignal] = useState(0)
-  const [remoteServerAddIntent, setRemoteServerAddIntent] = useState<{
-    signal: number
-    accessLink?: string
-  }>({ signal: 0 })
+  const [remoteServerAddIntentSignal, setRemoteServerAddIntentSignal] = useState(0)
   const [hasUnsavedCommitPromptChanges, setHasUnsavedCommitPromptChanges] = useState(false)
   const [hasUnsavedBranchPromptChanges, setHasUnsavedBranchPromptChanges] = useState(false)
   const [sourceControlAiPromptDiscardSignal, setSourceControlAiPromptDiscardSignal] = useState(0)
@@ -699,12 +696,7 @@ function Settings(): React.JSX.Element {
     } else if (settingsNavigationTarget.intent === 'add-ssh-host') {
       setSshHostAddIntentSignal((signal) => signal + 1)
     } else if (settingsNavigationTarget.intent === 'add-remote-orca-server') {
-      setRemoteServerAddIntent((current) => ({
-        signal: current.signal + 1,
-        ...(settingsNavigationTarget.accessLink
-          ? { accessLink: settingsNavigationTarget.accessLink }
-          : {})
-      }))
+      setRemoteServerAddIntentSignal((signal) => signal + 1)
     }
     setMountedSectionIds((previous) => {
       if (previous.has(paneSectionId)) {
@@ -1736,7 +1728,7 @@ function Settings(): React.JSX.Element {
                       setActiveRuntimeEnvironmentPreference={setActiveRuntimeEnvironmentPreference}
                       canGeneratePairingUrl={!isWebClient}
                       allowLocalRuntime={!isWebClient}
-                      addServerIntent={remoteServerAddIntent}
+                      addServerIntentSignal={remoteServerAddIntentSignal}
                     />
                   ) : null}
                 </SettingsSection>

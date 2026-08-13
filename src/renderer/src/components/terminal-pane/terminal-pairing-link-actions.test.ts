@@ -1,24 +1,32 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodePairingOffer } from '../../../../shared/pairing'
-import { openTerminalPairingLink } from './terminal-pairing-link-actions'
+import { copyTerminalPairingLink } from './terminal-pairing-link-actions'
 
 const mocks = vi.hoisted(() => ({
-  openSettingsPage: vi.fn(),
-  openSettingsTarget: vi.fn()
+  writeClipboardText: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastError: vi.fn()
 }))
 
-vi.mock('@/store', () => ({
-  useAppStore: {
-    getState: () => mocks
+vi.mock('sonner', () => ({
+  toast: {
+    success: mocks.toastSuccess,
+    error: mocks.toastError
   }
 }))
 
-describe('openTerminalPairingLink', () => {
+describe('copyTerminalPairingLink', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.writeClipboardText.mockResolvedValue(undefined)
+    vi.stubGlobal('window', { api: { ui: { writeClipboardText: mocks.writeClipboardText } } })
   })
 
-  it('opens the remote server form with the access link prefilled', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('copies the access link and confirms success', async () => {
     const accessLink = encodePairingOffer({
       v: 2,
       endpoint: 'ws://192.168.1.10:6768',
@@ -26,14 +34,24 @@ describe('openTerminalPairingLink', () => {
       publicKeyB64: 'public-key'
     })
 
-    expect(openTerminalPairingLink(accessLink)).toBe(true)
-    expect(mocks.openSettingsTarget).toHaveBeenCalledWith({
-      pane: 'servers',
-      repoId: null,
-      intent: 'add-remote-orca-server',
-      accessLink
+    expect(copyTerminalPairingLink(accessLink)).toBe(true)
+    expect(mocks.writeClipboardText).toHaveBeenCalledExactlyOnceWith(accessLink)
+    await vi.waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith('Access link copied'))
+  })
+
+  it('reports clipboard failures', async () => {
+    const accessLink = encodePairingOffer({
+      v: 2,
+      endpoint: 'ws://192.168.1.10:6768',
+      deviceToken: 'device-token',
+      publicKeyB64: 'public-key'
     })
-    expect(mocks.openSettingsPage).toHaveBeenCalledOnce()
+    mocks.writeClipboardText.mockRejectedValueOnce(new Error('clipboard unavailable'))
+
+    expect(copyTerminalPairingLink(accessLink)).toBe(true)
+    await vi.waitFor(() =>
+      expect(mocks.toastError).toHaveBeenCalledWith('Failed to copy access link')
+    )
   })
 
   it('does not route malformed or mobile-only pairing links', () => {
@@ -45,9 +63,10 @@ describe('openTerminalPairingLink', () => {
       scope: 'mobile'
     })
 
-    expect(openTerminalPairingLink('orca://unknown?code=secret')).toBe(false)
-    expect(openTerminalPairingLink(mobileLink)).toBe(false)
-    expect(mocks.openSettingsTarget).not.toHaveBeenCalled()
-    expect(mocks.openSettingsPage).not.toHaveBeenCalled()
+    expect(copyTerminalPairingLink('orca://unknown?code=secret')).toBe(false)
+    expect(copyTerminalPairingLink(mobileLink)).toBe(false)
+    expect(mocks.writeClipboardText).not.toHaveBeenCalled()
+    expect(mocks.toastSuccess).not.toHaveBeenCalled()
+    expect(mocks.toastError).not.toHaveBeenCalled()
   })
 })

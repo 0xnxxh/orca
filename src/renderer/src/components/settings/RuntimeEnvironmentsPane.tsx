@@ -71,7 +71,7 @@ type RuntimeEnvironmentsPaneProps = {
   setActiveRuntimeEnvironmentPreference: (environmentId: string | null) => Promise<boolean>
   canGeneratePairingUrl?: boolean
   allowLocalRuntime?: boolean
-  addServerIntent?: { signal: number; accessLink?: string }
+  addServerIntentSignal?: number
 }
 
 export type RuntimeHostDetails = {
@@ -263,7 +263,7 @@ export function RuntimeEnvironmentsPane({
   setActiveRuntimeEnvironmentPreference,
   canGeneratePairingUrl = true,
   allowLocalRuntime = true,
-  addServerIntent
+  addServerIntentSignal
 }: RuntimeEnvironmentsPaneProps): React.JSX.Element {
   const [environments, setEnvironments] = useState<PublicKnownRuntimeEnvironment[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -294,13 +294,6 @@ export function RuntimeEnvironmentsPane({
     (state) => state.setRemoteServerUpdateDialogOpen
   )
   const consumedAddServerIntentSignalRef = useRef(0)
-  if (addServerIntent && consumedAddServerIntentSignalRef.current !== addServerIntent.signal) {
-    // Why: consume Settings deep links before paint so the pairing form never flashes empty.
-    consumedAddServerIntentSignalRef.current = addServerIntent.signal
-    setPairingCode(addServerIntent.accessLink ?? '')
-    setAddServerFailure(null)
-    setAddServerFormOpen(true)
-  }
   const mountedRef = useMountedRef()
   const updateCheckHint = getUpdateCheckHint()
   const activeValue =
@@ -437,6 +430,19 @@ export function RuntimeEnvironmentsPane({
   useEffect(() => {
     void refreshRemoteServerUpdates()
   }, [environmentIdsKey, refreshRemoteServerUpdates])
+  useEffect(() => {
+    if (
+      !addServerIntentSignal ||
+      consumedAddServerIntentSignalRef.current === addServerIntentSignal
+    ) {
+      return
+    }
+    consumedAddServerIntentSignalRef.current = addServerIntentSignal
+    // Why: composer deep-links should land on the existing pairing form, not just
+    // the server list.
+    setAddServerFormOpen(true)
+  }, [addServerIntentSignal])
+
   const closeAddServerForm = (): void => {
     if (isSaving) {
       return

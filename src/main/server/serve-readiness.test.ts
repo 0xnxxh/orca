@@ -68,7 +68,7 @@ describe('ServeReadinessPublisher', () => {
       '\u001B]8;;https://orca.example.test/runtime/web-index.html#pairing=secret\u001B\\Open web client\u001B]8;;\u001B\\'
     )
     expect(output).toContain(
-      '\u001B]8;;orca://pair?code=secret\u001B\\Add this host\u001B]8;;\u001B\\'
+      '\u001B]8;;orca://pair?code=secret\u001B\\Copy access link\u001B]8;;\u001B\\'
     )
     expect(output).not.toContain('Web client URL:')
     expect(output).not.toContain('Pairing URL:')

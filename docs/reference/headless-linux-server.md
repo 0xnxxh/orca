@@ -156,7 +156,7 @@ Orca server is ready
 
 Connect  (click for options, or Cmd/Ctrl-click)
   Web browser   Open web client
-  Desktop app  Add this host
+  Desktop app  Copy access link
 
 Server details
   Listening on  ws://0.0.0.0:6768
@@ -164,8 +164,7 @@ Server details
 ```
 
 Redirected output prints the full web client and pairing URLs. In Orca terminals, the desktop
-action opens the Remote Orca Servers form with the access link prefilled; its action menu also
-provides a copy fallback.
+action copies the access link for use in whichever Orca client should connect.
 
 For supervisors, request the versioned single-line JSON contract:
 

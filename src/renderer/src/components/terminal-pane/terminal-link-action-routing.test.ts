@@ -256,9 +256,9 @@ describe('terminal link action routing', () => {
     ['macOS', 'Macintosh', { metaKey: true, ctrlKey: false }],
     ['Windows', 'Windows', { metaKey: false, ctrlKey: true }],
     ['Linux', 'Linux', { metaKey: false, ctrlKey: true }]
-  ])('opens a valid pairing link with the platform modifier on %s', (_name, userAgent, keys) => {
+  ])('copies a valid pairing link with the platform modifier on %s', (_name, userAgent, keys) => {
     vi.stubGlobal('navigator', { userAgent })
-    const openPairingLink = vi.fn(() => true)
+    const copyPairingLink = vi.fn(() => true)
     const accessLink = encodePairingOffer({
       v: 2,
       endpoint: 'ws://192.168.1.10:6768',
@@ -273,16 +273,16 @@ describe('terminal link action routing', () => {
         {
           worktreeId: 'wt-1',
           worktreePath: '/repo',
-          openPairingLink
+          copyPairingLink
         }
       )
     ).toBe(true)
-    expect(openPairingLink).toHaveBeenCalledExactlyOnceWith(accessLink)
+    expect(copyPairingLink).toHaveBeenCalledExactlyOnceWith(accessLink)
   })
 
-  it('offers add and copy actions for a plain pairing-link click', () => {
+  it('offers a copy action for a plain pairing-link click', () => {
     const request = vi.fn()
-    const openPairingLink = vi.fn(() => true)
+    const copyPairingLink = vi.fn(() => true)
     const accessLink = encodePairingOffer({
       v: 2,
       endpoint: 'wss://server.example.test/runtime',
@@ -295,22 +295,22 @@ describe('terminal link action routing', () => {
         worktreeId: 'wt-1',
         worktreePath: '/repo',
         linkActionContext: actionContext(request),
-        openPairingLink
+        copyPairingLink
       })
     ).toBe(true)
     expect(request).toHaveBeenCalledWith(
       expect.objectContaining({
         destination: accessLink,
         kind: 'url',
-        primary: expect.objectContaining({ label: 'Add host' })
+        primary: expect.objectContaining({ label: 'Copy access link' })
       })
     )
     request.mock.calls[0][0].primary.run()
-    expect(openPairingLink).toHaveBeenCalledExactlyOnceWith(accessLink)
+    expect(copyPairingLink).toHaveBeenCalledExactlyOnceWith(accessLink)
   })
 
   it('rejects unrelated custom-protocol OSC links', () => {
-    const openPairingLink = vi.fn(() => true)
+    const copyPairingLink = vi.fn(() => true)
 
     expect(
       handleOscLink(
@@ -319,10 +319,10 @@ describe('terminal link action routing', () => {
         {
           worktreeId: 'wt-1',
           worktreePath: '/repo',
-          openPairingLink
+          copyPairingLink
         }
       )
     ).toBe(false)
-    expect(openPairingLink).not.toHaveBeenCalled()
+    expect(copyPairingLink).not.toHaveBeenCalled()
   })
 })

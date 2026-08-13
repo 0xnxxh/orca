@@ -119,7 +119,7 @@ function renderHumanReadiness(
     if (readiness.pairing.scope === 'mobile' && readiness.pairing.qr) {
       lines.push('', `Mobile pairing QR:\n${readiness.pairing.qr}`)
     }
-    lines.push(`  Desktop app  ${terminalHyperlink('Add this host', readiness.pairing.url)}`)
+    lines.push(`  Desktop app  ${terminalHyperlink('Copy access link', readiness.pairing.url)}`)
     lines.push('', '  These links contain access credentials. Keep them private.')
   } else {
     lines.push(
