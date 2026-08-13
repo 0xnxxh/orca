@@ -11666,6 +11666,122 @@
       "demotionRule": "Demote if any exit duration can evade the spawn budget, concurrent children or timers appear, cleanup retains resources, or a transient failure cannot recover within the budget."
     },
     {
+      "id": "runtime.headless-serve-graceful-signal-exit",
+      "title": "Packaged headless Linux serve exits cleanly after foreground signals",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "runtime-platform",
+      "layer": "electron-headless-quit-lifecycle",
+      "surfaces": ["packaged Linux AppImage", "headless orca serve", "owned Xvfb lifecycle"],
+      "platforms": ["linux"],
+      "providers": ["local-daemon"],
+      "coveredPlatforms": ["linux"],
+      "coveredProviders": ["local-daemon"],
+      "coverageNotes": "An Ubuntu 26.04 amd64 container extracts the packaged AppImage into disposable HOME and XDG directories, leaves APPDIR unset to preserve extracted-AppRun direct serve mode, waits for structured serve readiness, then exercises terminal-style foreground-process-group SIGINT and the documented systemd KillMode=mixed main-PID SIGTERM in separate containers. Local evidence runs under Rosetta on an arm64 Docker host; native amd64 PR CI repeats the same foreground AppRun identity contract.",
+      "motivatingLinks": [
+        "https://github.com/stablyai/orca/issues/14109",
+        "https://linear.app/stably/issue/STA-4051"
+      ],
+      "invariant": "After packaged foreground headless serve publishes structured readiness, one SIGINT or SIGTERM exits successfully without an Electron fatal trap or core evidence, releases the exact listener and owned Xvfb/process tree, and leaves an unrelated process identity untouched.",
+      "oracle": "For each signal, start a fresh unprivileged Ubuntu 26.04 container with disposable profile and runtime directories, a random loopback port, DISPLAY unset, software GL, and the extracted AppImage in a fresh session. Wait for orca_server_ready schema version 1, record the listener owner, process tree, owned Xvfb, and unrelated canary identities, deliver SIGINT to the foreground process group or the documented KillMode=mixed graceful SIGTERM to the AppRun PID, then require wait status zero, no Failed to shutdown, SIGTRAP, core, listener, recorded descendant, profile/AppImage/Xvfb residue, or changed canary identity. The 30-second bounds are failure deadlines, never success conditions.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/startup/ensure-virtual-display.test.ts config/scripts/headless-serve-shutdown-workflow.test.mjs --reporter=dot",
+        "shellcheck config/docker/headless-serve-shutdown/run-signal-case.sh",
+        "node config/scripts/run-headless-serve-shutdown-docker.mjs --appimage dist/orca-linux.AppImage",
+        "node config/scripts/run-headless-serve-shutdown-docker.mjs --appimage dist/orca-linux.AppImage --platform linux/amd64"
+      ],
+      "testFiles": [
+        "src/main/startup/ensure-virtual-display.test.ts",
+        "config/scripts/headless-serve-shutdown-workflow.test.mjs",
+        "config/scripts/run-headless-serve-shutdown-docker.mjs",
+        "config/docker/headless-serve-shutdown/run-signal-case.sh"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/main/startup/ensure-virtual-display.test.ts",
+          "assertions": [
+            "owned Xvfb starts with terminate-after-last-client semantics",
+            "owned Xvfb uses an independent process group so terminal Ctrl-C cannot preempt Electron teardown",
+            "owned Xvfb retains an early-process-exit guard until Electron is ready",
+            "owned Xvfb is not stopped from Electron's cancelable will-quit event",
+            "external displays and non-Linux startup remain untouched"
+          ]
+        },
+        {
+          "file": "config/scripts/headless-serve-shutdown-workflow.test.mjs",
+          "assertions": [
+            "PR CI builds an x64 AppImage before invoking the packaged shutdown oracle",
+            "the documented systemd unit uses KillMode=mixed so graceful TERM targets Orca before its owned Xvfb"
+          ]
+        },
+        {
+          "file": "config/scripts/run-headless-serve-shutdown-docker.mjs",
+          "assertions": [
+            "SIGINT and SIGTERM run in separate disposable containers",
+            "both signal failures are reported before the oracle exits",
+            "the exact AppImage SHA-256, entrypoint, and signal target are published",
+            "the launcher exec overlay isolates the related STA-4017 signal boundary"
+          ]
+        },
+        {
+          "file": "config/docker/headless-serve-shutdown/run-signal-case.sh",
+          "assertions": [
+            "SIGINT reaches the isolated foreground process group while owned Xvfb stays in its own group",
+            "SIGTERM reaches the exact AppRun PID under the documented systemd KillMode=mixed policy",
+            "target and descendant identities are fenced by PID start ticks before signaling and residue checks"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-13",
+          "runner": "local",
+          "platform": "linux",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/startup/ensure-virtual-display.test.ts config/scripts/headless-serve-shutdown-workflow.test.mjs --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 1,
+          "summary": "The focused startup and workflow contracts passed with owned-display termination semantics and native amd64 CI wiring."
+        },
+        {
+          "date": "2026-08-13",
+          "runner": "local",
+          "platform": "linux",
+          "command": "node config/scripts/run-headless-serve-shutdown-docker.mjs --appimage dist/orca-linux.AppImage --platform linux/amd64",
+          "result": "passed",
+          "durationSeconds": 48,
+          "summary": "The extracted candidate AppRun passed process-group SIGINT and systemd-mixed main-PID SIGTERM under Ubuntu 26.04 amd64 emulation with status zero, no fatal evidence, full listener/Xvfb/tree cleanup, and an unchanged canary identity."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 240,
+        "scope": "two fresh Ubuntu 26.04 containers, one per foreground signal"
+      },
+      "flakeHistory": {
+        "status": "not-started",
+        "evidence": "The event- and identity-driven harness is new; soak history is not yet available."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "The byte-identical Docker oracle failed process-group SIGINT and main-PID SIGTERM on v1.4.180 AppImage af3b6e6a67fc, launch-day main AppImage 017ff5abc35a, and candidate-with-fix-disabled AppImage f409f58dd9c3 with wait status 133 plus Electron Failed to shutdown and SIGTRAP. The prior candidate 5b94b86a9879 passed PID signals but failed process-group SIGINT with status 133, proving Xvfb also needed an independent process group. Final candidate AppImage 5c82936043e4 passed process-group SIGINT and the documented systemd KillMode=mixed main-PID SIGTERM with status zero and complete cleanup. A control-group TERM that also targets Xvfb remains red, proving KillMode=mixed is required for the documented owned-Xvfb unit. Applying PR #14071's launcher exec semantics with PID delivery left v1.4.180 red and the candidate green, proving the launcher and Electron/Xvfb fixes are independent and composable."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "The product change adds one standard Xvfb startup flag, isolates the existing Xvfb child from foreground process-group signals, replaces one Electron lifecycle listener with a process listener that is removed at ready, and adds no polling, timer, subprocess, IPC, provider fanout, renderer work, retained payload, native dependency, or recurring hot-path work. After ready, Xvfb exits from its existing client-disconnect path."
+      },
+      "promotionCriteria": [
+        "Collect 100 consecutive native amd64 CI or soak passes or 14 days without an unexplained flake.",
+        "Collect one native Ubuntu 26.04 AppRun signal run with foreground wait status zero for both signals.",
+        "Keep exact listener, Xvfb, descendant, fatal-evidence, and canary identity assertions green."
+      ],
+      "knownGaps": [
+        "The local arm64 Docker host uses Rosetta for amd64 containers; native amd64 PR CI supplies the non-emulated repeat of the same extracted-AppRun PID contract.",
+        "Ubuntu 20.04 is covered by the packaged native-binary glibc floor gate; this lifecycle journey runs on the reported Ubuntu 26.04 topology.",
+        "Systemd units that override or omit the documented KillMode=mixed policy can still terminate owned Xvfb before Electron disconnects.",
+        "The harness exercises foreground headless Linux shutdown and does not replace desktop, updater, SSH, or detached PTY lifecycle coverage."
+      ],
+      "demotionRule": "Keep experimental or demote if either signal traps, returns nonzero, retains its listener/Xvfb/run-owned process identity, touches the unrelated canary, or the focused gate flakes without an identified product or harness defect."
+    },
+    {
       "id": "ssh-managed-hooks.node18-runtime-compatibility",
       "title": "SSH managed-hook companions load and install hooks on Node 18",
       "maturity": "experimental",
