@@ -28,7 +28,6 @@ type StreamManagerOptions = {
   nextId: () => string
   sendFrame: (request: { id: string; method: string; params?: unknown }) => boolean
   waitForConnected: () => Promise<void>
-  noteRequestSent?: () => void
 }
 
 export class MobileRelayRpcStreams {
@@ -61,8 +60,6 @@ export class MobileRelayRpcStreams {
         if (!stream.cancelled) {
           if (!this.options.sendFrame({ id, method, params: stream.params })) {
             this.fail(id, stream, 'Connection interrupted')
-          } else {
-            this.options.noteRequestSent?.()
           }
         }
       })

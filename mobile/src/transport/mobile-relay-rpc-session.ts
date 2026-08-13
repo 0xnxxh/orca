@@ -13,7 +13,6 @@ import { RpcSessionLivenessWatchdog } from './rpc-session-liveness-watchdog'
 import type { RpcClient } from './rpc-client'
 import type { ConnectionState, RpcResponse } from './types'
 
-const RELAY_DEMAND_SILENCE_MS = 20_000
 const RELAY_PROBE_TIMEOUT_MS = 4_000
 const RELAY_MISSED_PROBE_LIMIT = 2
 const RELAY_FOREGROUND_PROBE_MIN_INTERVAL_MS = 10_000
@@ -58,8 +57,7 @@ export function connectMobileRelayRpcSession(args: {
   const streams = new MobileRelayRpcStreams({
     nextId,
     sendFrame,
-    waitForConnected: () => waitForConnected(),
-    noteRequestSent: probeAfterSilentDemand
+    waitForConnected: () => waitForConnected()
   })
 
   const link = new MobileRelayE2eeLink({
@@ -97,13 +95,7 @@ export function connectMobileRelayRpcSession(args: {
     async sendRequest(method, params, options) {
       const budget = openRpcRequestBudget(options)
       await waitForConnected(budget.timeoutMs)
-      const request = sendRpc(
-        method,
-        params,
-        resolvePostConnectRequestTimeout(budget, requestTimeoutMs)
-      )
-      probeAfterSilentDemand()
-      return request
+      return sendRpc(method, params, resolvePostConnectRequestTimeout(budget, requestTimeoutMs))
     },
 
     subscribe(method, params, listener, options) {
@@ -208,10 +200,6 @@ export function connectMobileRelayRpcSession(args: {
 
   function sendFrame(request: { id: string; method: string; params?: unknown }): boolean {
     return link.sendText(JSON.stringify({ ...request, deviceToken: args.deviceToken }))
-  }
-
-  function probeAfterSilentDemand(): void {
-    livenessWatchdog.probeAfterSilence(livenessIdentity, RELAY_DEMAND_SILENCE_MS)
   }
 
   function handleText(plaintext: string): void {

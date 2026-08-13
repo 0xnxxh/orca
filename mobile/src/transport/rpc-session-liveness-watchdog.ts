@@ -86,13 +86,6 @@ export class RpcSessionLivenessWatchdog {
     this.startProbe(identity)
   }
 
-  probeAfterSilence(identity: RpcSessionIdentity, silenceMs: number): void {
-    if (this.identity !== identity || this.probing || this.now() - this.lastInboundAt < silenceMs) {
-      return
-    }
-    this.startProbe(identity)
-  }
-
   stop(identity: RpcSessionIdentity): void {
     if (this.identity !== identity) {
       return
