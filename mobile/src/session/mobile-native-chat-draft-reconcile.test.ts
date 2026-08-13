@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import {
   findLandedImagePreviewEchoes,
+  findLandedUnconfirmedSends,
   migrateImagePreviewMessageIds,
-  type PendingImagePreviewEcho
+  type PendingImagePreviewEcho,
+  type UnconfirmedSend
 } from './mobile-native-chat-draft-reconcile'
 
 function userText(id: string, text: string): NativeChatMessage {
@@ -21,6 +23,30 @@ function pending(id: string, images: string[], expectedOccurrence = 1): PendingI
 }
 
 describe('mobile native chat image preview reconciliation', () => {
+  it('reconciles a trailing-marker echo and hands its preview to that echo', () => {
+    const messages = [
+      userText('source', '[Image: source: /tmp/a.png]'),
+      userText('prompt', 'look at this[Image #1]')
+    ]
+    const preview = {
+      ...pending('pending', ['file:///a.jpg']),
+      text: 'look at this'
+    }
+    const unconfirmed: UnconfirmedSend = {
+      draftKey: 'draft',
+      pendingKey: 'pending-key',
+      text: 'look at this',
+      normalizedText: 'look at this',
+      baselineTailMessageId: null,
+      deadline: null
+    }
+
+    expect(findLandedUnconfirmedSends(messages, [unconfirmed])).toEqual([unconfirmed])
+    expect(findLandedImagePreviewEchoes(messages, [preview])).toEqual([
+      { pendingId: 'pending', messageId: 'prompt', images: ['file:///a.jpg'] }
+    ])
+  })
+
   it('keeps separate adjacent image-only sends independently reconcilable', () => {
     const landed = findLandedImagePreviewEchoes(
       [
@@ -63,6 +89,19 @@ describe('mobile native chat image preview reconciliation', () => {
     const messages = [
       userText('source', '[Image: source: /tmp/a.png]'),
       userText('prompt', '[Image #1]')
+    ]
+
+    expect(migrateImagePreviewMessageIds(previous, sessionKey, messages)).toEqual({
+      [sessionKey]: { prompt: ['file:///a.jpg'] }
+    })
+  })
+
+  it('moves an early standalone preview to a trailing-marker prompt id', () => {
+    const sessionKey = 'host\0worktree\0tab\0session'
+    const previous = { [sessionKey]: { source: ['file:///a.jpg'] } }
+    const messages = [
+      userText('source', '[Image: source: /tmp/a.png]'),
+      userText('prompt', 'look[Image #1]')
     ]
 
     expect(migrateImagePreviewMessageIds(previous, sessionKey, messages)).toEqual({

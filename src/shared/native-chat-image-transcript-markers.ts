@@ -1,7 +1,8 @@
 import { isTextBlock, type NativeChatBlock, type NativeChatMessage } from './native-chat-types'
 
 const IMAGE_SOURCE_MARKER = /^\[Image:\s*source:\s*(.+?)\]\s*$/
-const IMAGE_PROMPT_MARKERS = /^(?:\[Image #\d+\]\s*)+/
+const IMAGE_PROMPT_MARKER = /\[Image #\d+\]/
+const IMAGE_PROMPT_MARKER_RUN = /[^\S\r\n]*(?:\[Image #\d+\][^\S\r\n]*)+/g
 
 function soleText(message: NativeChatMessage): string | null {
   return message.blocks.length === 1 && isTextBlock(message.blocks[0])
@@ -14,7 +15,12 @@ export function imageSourcePathFromText(text: string): string | null {
 }
 
 export function stripImagePromptMarker(text: string): string {
-  return text.replace(IMAGE_PROMPT_MARKERS, '')
+  return text.replace(IMAGE_PROMPT_MARKER_RUN, (run, offset: number, source: string) => {
+    const hasTextBefore = offset > 0
+    const hasTextAfter = offset + run.length < source.length
+    const hadSurroundingWhitespace = run.replace(/\[Image #\d+\]/g, '').length > 0
+    return hasTextBefore && hasTextAfter && hadSurroundingWhitespace ? ' ' : ''
+  })
 }
 
 function stripImagePromptMarkersFromFirstText(
@@ -40,13 +46,13 @@ function stripImagePromptMarkersFromFirstText(
   return next
 }
 
-function imagePromptMarkerStartsMessage(message: NativeChatMessage): boolean {
+function imagePromptMarkerAppearsInMessage(message: NativeChatMessage): boolean {
   const firstText = message.blocks.find(isTextBlock)
-  return firstText ? IMAGE_PROMPT_MARKERS.test(firstText.text) : false
+  return firstText ? IMAGE_PROMPT_MARKER.test(firstText.text) : false
 }
 
-/** Claude records image paths as source turns followed by one marker-prefixed
- *  prompt. Merge the whole run back into one native user turn. */
+/** Claude records image paths as source turns followed by a prompt carrying
+ *  image markers. Merge the whole run back into one native user turn. */
 export function normalizeImageTranscriptMessages(
   messages: readonly NativeChatMessage[]
 ): NativeChatMessage[] {
@@ -75,7 +81,7 @@ export function normalizeImageTranscriptMessages(
       if (
         prompt?.role === 'user' &&
         prompt.source === message.source &&
-        imagePromptMarkerStartsMessage(prompt)
+        imagePromptMarkerAppearsInMessage(prompt)
       ) {
         normalized.push({
           ...prompt,

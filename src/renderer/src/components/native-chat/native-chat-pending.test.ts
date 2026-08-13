@@ -95,6 +95,17 @@ describe('prunePendingSends', () => {
     expect(next).toEqual([])
   })
 
+  it('drops an attachment pending send once a trailing-marker prompt advances', () => {
+    const pending = [
+      { ...pendingOf('p1', 'what do you see'), imagePaths: ['/Users/me/Downloads/3d.png'] }
+    ]
+    const next = prunePendingSends(pending, [
+      userMessage('m1', 'what do you see[Image #1]'),
+      assistantMessage('m2', 'an image')
+    ])
+    expect(next).toEqual([])
+  })
+
   it('drops an attachment-only pending send once its image turn advances', () => {
     const pending = [{ ...pendingOf('p1', ''), imagePaths: ['/tmp/first.png', '/tmp/second.png'] }]
     const transcript = [

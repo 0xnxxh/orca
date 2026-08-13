@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { NativeChatMessage } from './native-chat-types'
-import { normalizeImageTranscriptMessages } from './native-chat-image-transcript-markers'
+import {
+  normalizeImageTranscriptMessages,
+  stripImagePromptMarker
+} from './native-chat-image-transcript-markers'
 
 function userText(id: string, text: string): NativeChatMessage {
   return {
@@ -23,6 +26,29 @@ describe('normalizeImageTranscriptMessages', () => {
       { type: 'image-ref', path: '/tmp/orca-paste-1-2.png' },
       { type: 'text', text: 'describe this' }
     ])
+  })
+
+  it('merges a source turn into a prompt with a trailing image marker', () => {
+    const out = normalizeImageTranscriptMessages([
+      userText('a', '[Image: source: /tmp/orca-paste-1-2.png]'),
+      userText('b', 'describe this[Image #1]')
+    ])
+
+    expect(out).toHaveLength(1)
+    expect(out[0]!.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/orca-paste-1-2.png' },
+      { type: 'text', text: 'describe this' }
+    ])
+  })
+
+  it.each([
+    ['[Image #1] describe this', 'describe this'],
+    ['describe this [Image #1]', 'describe this'],
+    ['describe [Image #1] this', 'describe this'],
+    ['com[Image #1]pare this', 'compare this'],
+    ['[Image #1] [Image #2]', '']
+  ])('strips image prompt markers anywhere in text', (text, expected) => {
+    expect(stripImagePromptMarker(text)).toBe(expected)
   })
 
   it('converts a lone [Image: source] turn (no prompt) into an image-ref instead of raw text', () => {

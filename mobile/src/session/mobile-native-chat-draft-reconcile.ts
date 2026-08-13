@@ -24,8 +24,8 @@ export function normalizedUserText(message: NativeChatMessage): string | null {
     .filter((block) => block.type === 'text')
     .map((block) => (block.type === 'text' ? block.text : ''))
     .join('')
-  // Claude echoes a captioned image send as `[Image #1] caption` — the sent
-  // text must still match its echo, so strip the marker before comparing.
+  // Claude can place `[Image #N]` anywhere in a caption echo, so strip it
+  // before comparing against the sent text.
   const stripped = stripImagePromptMarker(text).trim()
   return stripped || null
 }
@@ -127,7 +127,7 @@ function imagePreviewReplacementMessageId(
 }
 
 /** Moves previews forward when a progressive source-only transcript frame later
- *  folds into the marker-prefixed prompt with a different authoritative id. */
+ *  folds into the marker-bearing prompt with a different authoritative id. */
 export function migrateImagePreviewMessageIds(
   previous: Record<string, Record<string, string[]>>,
   sessionKey: string,

@@ -1,6 +1,6 @@
 // Single-sources the marker logic (pure functions over shared types):
 // Claude records an attached image as `[Image: source: /path]` (+ `[Image #N]`
-// prefix on the caption turn), and both render and echo reconciliation must
+// on the caption turn), and both render and echo reconciliation must
 // agree with desktop on how those marker turns are interpreted.
 export {
   imageSourcePathFromText,
