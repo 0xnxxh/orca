@@ -219,7 +219,7 @@ function isAgentSessionOptions(value: unknown): value is Record<string, string> 
   )
 }
 
-function isAgentSessionLaunchEnv(value: unknown): value is AgentSessionLaunchEnv {
+export function isAgentSessionLaunchEnv(value: unknown): value is AgentSessionLaunchEnv {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false
   }
