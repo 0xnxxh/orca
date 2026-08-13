@@ -1,4 +1,4 @@
-import { parseWslUncPath } from '../../shared/wsl-paths'
+import { wslTranscriptFsRouteKey } from './wsl-transcript-fs-route'
 
 const MAX_CONCURRENT_WSL_TRANSCRIPT_FS_TASKS = 2
 export const WSL_TRANSCRIPT_FS_EXACT_TIMEOUT_MS = 30_000
@@ -69,18 +69,6 @@ const activeTasks = new Set<UnknownScheduledTask>()
 
 function abortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new Error('WSL transcript filesystem task aborted')
-}
-
-// wsl$ and wsl.localhost spellings of one distro stay distinct routes on
-// purpose (provider spelling can change behavior), so a stuck spelling never
-// fast-fails its twin — the twin is bounded by its own waiter deadlines.
-function routeKey(path: string): string {
-  const normalized = path.replace(/\\/g, '/')
-  const match = normalized.match(/^\/\/(wsl\.localhost|wsl\$)\/([^/]+)/i)
-  if (match) {
-    return `${match[1].toLowerCase()}/${match[2].trim().toLowerCase()}`
-  }
-  return parseWslUncPath(path)?.distro.trim().toLowerCase() ?? path
 }
 
 function removeQueuedTask(task: UnknownScheduledTask): void {
@@ -295,6 +283,27 @@ function pumpTasks(): void {
   }
 }
 
+/**
+ * Test-only: drop every task and counter so a case that leaves a task stalled
+ * (holding a permit, marking its route stuck) cannot fast-fail the next one.
+ * Tasks are marked settled first, so a late resolution from the unabortable
+ * syscall they are still blocked on cannot decrement counters this just zeroed.
+ */
+export function resetWslTranscriptFsGateForTests(): void {
+  for (const task of [...activeTasks, ...queuedTasks]) {
+    task.state = 'settled'
+    clearTimeout(task.stuckTimer)
+    for (const waiter of task.waiters) {
+      removeWaiter(task, waiter)
+    }
+  }
+  activeTasks.clear()
+  queuedTasks.length = 0
+  inFlightTasks.clear()
+  activeLaneKeys.clear()
+  activeScanCount = 0
+}
+
 /** Bound 9P work without letting scans delay exact transcript probes. */
 export function runWslTranscriptFsTask<T>(
   options: {
@@ -336,7 +345,7 @@ export function runWslTranscriptFsTask<T>(
     }
     return attachWaiter(existing, options.signal)
   }
-  const route = routeKey(options.path)
+  const route = wslTranscriptFsRouteKey(options.path)
   // Fail fast when the permit, route, or scan slot this task needs is held by
   // stuck I/O — queueing would only burn the caller's full deadline.
   if (stuckBlocker(route, options.priority)) {

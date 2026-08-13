@@ -4,12 +4,13 @@ import { Readable } from 'node:stream'
 import { StringDecoder } from 'node:string_decoder'
 import { isWslUncPath } from '../../shared/wsl-paths'
 import { runWslTranscriptFsTask, type WslTranscriptFsTaskPriority } from './wsl-transcript-fs-gate'
+import { wslTranscriptFsRouteKey } from './wsl-transcript-fs-route'
 
 /** Never nest a gated call inside another — that deadlocks the scan slot. */
 
 // Why: one deadline per chunk instead of one for the whole file, so a large
 // healthy-but-slow transcript is not false-failed by a whole-file timeout.
-const WSL_TRANSCRIPT_READ_CHUNK_BYTES = 1024 * 1024
+export const WSL_TRANSCRIPT_READ_CHUNK_BYTES = 1024 * 1024
 type Operation = Parameters<typeof runWslTranscriptFsTask>[0]['operation']
 
 function runPathOperation<T>(
@@ -106,23 +107,33 @@ export function wslGatedRead(
 // gate's two permits are sized against, re-creating the process-wide stall the
 // gate exists to prevent; serializing them costs at most one extra busy thread.
 // The queue cannot grow without bound: opens on a stuck route already fast-fail.
-const MAX_CONCURRENT_UNC_CLOSES = 1
-const queuedCloses: FileHandle[] = []
-let activeCloses = 0
+// Keyed by route like the gate's own admission, because a close that blocks on a
+// stalled distro never settles — a shared queue would strand every later close,
+// including handles on healthy distros, for the process lifetime.
+const MAX_CONCURRENT_UNC_CLOSES_PER_ROUTE = 1
+type RouteCloseQueue = { queued: FileHandle[]; active: number }
+const closeQueuesByRoute = new Map<string, RouteCloseQueue>()
 
-function drainQueuedCloses(): void {
-  while (activeCloses < MAX_CONCURRENT_UNC_CLOSES) {
-    const handle = queuedCloses.shift()
+function drainQueuedCloses(route: string): void {
+  const lane = closeQueuesByRoute.get(route)
+  if (!lane) {
+    return
+  }
+  while (lane.active < MAX_CONCURRENT_UNC_CLOSES_PER_ROUTE) {
+    const handle = lane.queued.shift()
     if (!handle) {
+      if (lane.active === 0) {
+        closeQueuesByRoute.delete(route)
+      }
       return
     }
-    activeCloses += 1
+    lane.active += 1
     void handle
       .close()
       .catch(() => {})
       .finally(() => {
-        activeCloses -= 1
-        drainQueuedCloses()
+        lane.active -= 1
+        drainQueuedCloses(route)
       })
   }
 }
@@ -138,8 +149,11 @@ export function closeTranscriptHandle(handle: FileHandle, path: string): Promise
   if (!isWslUncPath(path)) {
     return handle.close()
   }
-  queuedCloses.push(handle)
-  drainQueuedCloses()
+  const route = wslTranscriptFsRouteKey(path)
+  const lane = closeQueuesByRoute.get(route) ?? { queued: [], active: 0 }
+  closeQueuesByRoute.set(route, lane)
+  lane.queued.push(handle)
+  drainQueuedCloses(route)
   return Promise.resolve()
 }
 
@@ -254,7 +268,9 @@ export function openTranscriptReadStream(
   signal?: AbortSignal
 ): Readable {
   if (!isWslUncPath(path)) {
-    return createReadStream(path, options)
+    // Node destroys the stream with an AbortError on abort, matching how the
+    // gated branch surfaces cancellation to the same consumers.
+    return createReadStream(path, { ...options, signal })
   }
   return Readable.from(gatedChunks(path, options, priority, signal))
 }
