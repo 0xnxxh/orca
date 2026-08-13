@@ -7,12 +7,33 @@ import type {
   WorkspaceCleanupScanResult
 } from '../shared/workspace-cleanup'
 
-const { userDataDirHolder } = vi.hoisted(() => ({ userDataDirHolder: { dir: '' } }))
+const { snapshotWriteSpy, userDataDirHolder } = vi.hoisted(() => ({
+  snapshotWriteSpy: vi.fn(),
+  userDataDirHolder: { dir: '' }
+}))
+
+vi.mock('./sidecar-snapshot-file', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  const writeSidecarSnapshot = actual.writeSidecarSnapshot as (
+    file: string,
+    payload: unknown
+  ) => Promise<void>
+  return {
+    ...actual,
+    writeSidecarSnapshot: async (file: string, payload: unknown) => {
+      snapshotWriteSpy(file, payload)
+      await writeSidecarSnapshot(file, payload)
+    }
+  }
+})
 
 import {
+  finalizeWorkspaceCleanupScanSnapshotPrunes,
   persistWorkspaceCleanupScanResult,
   pruneWorkspaceCleanupScanSnapshot,
+  pruneWorkspaceCleanupScanSnapshots,
   readWorkspaceCleanupScanSnapshot,
+  registerWorkspaceCleanupScanSnapshotPruneTombstones,
   workspaceCleanupScanSnapshotFingerprint
 } from './workspace-cleanup-scan-snapshot'
 
@@ -56,6 +77,7 @@ function makeBroadResult(candidates: WorkspaceCleanupCandidate[]): WorkspaceClea
 
 describe('workspace cleanup scan snapshot', () => {
   beforeEach(async () => {
+    snapshotWriteSpy.mockClear()
     userDataDirHolder.dir = await mkdtemp(join(tmpdir(), 'orca-cleanup-snapshot-'))
   })
 
@@ -242,14 +264,67 @@ describe('workspace cleanup scan snapshot', () => {
       makeBroadResult([makeCandidate(), kept])
     )
 
+    snapshotWriteSpy.mockClear()
     await pruneWorkspaceCleanupScanSnapshot(userDataDirHolder.dir, 'repo-1::/repo-feature', 'local')
 
     const snapshot = await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir)
     expect(snapshot?.candidates).toEqual([kept])
+    expect(snapshotWriteSpy).toHaveBeenCalledTimes(1)
 
     // Unknown ids are a no-op.
+    snapshotWriteSpy.mockClear()
     await pruneWorkspaceCleanupScanSnapshot(userDataDirHolder.dir, 'repo-1::/never-existed')
     await expect(readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir)).resolves.toEqual(snapshot)
+    expect(snapshotWriteSpy).not.toHaveBeenCalled()
+  })
+
+  it('coalesces host-scoped local and remote prunes into one write', async () => {
+    const localCollision = makeCandidate()
+    const remoteCollision = makeCandidate({
+      connectionId: 'ssh-1',
+      executionHostId: 'ssh:ssh-1'
+    })
+    const localRemoved = makeCandidate({
+      worktreeId: 'repo-1::/local-removed',
+      path: '/local-removed'
+    })
+    const remoteRemoved = makeCandidate({
+      worktreeId: 'repo-1::/remote-removed',
+      connectionId: 'ssh-1',
+      executionHostId: 'ssh:ssh-1',
+      path: '/remote-removed'
+    })
+    const kept = makeCandidate({ worktreeId: 'repo-1::/kept', path: '/kept' })
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      makeBroadResult([localCollision, remoteCollision, localRemoved, remoteRemoved, kept])
+    )
+
+    snapshotWriteSpy.mockClear()
+    await pruneWorkspaceCleanupScanSnapshots(userDataDirHolder.dir, [
+      { worktreeId: localCollision.worktreeId, executionHostId: 'local' },
+      { worktreeId: localRemoved.worktreeId, executionHostId: 'local' },
+      { worktreeId: remoteRemoved.worktreeId, executionHostId: 'ssh:ssh-1' }
+    ])
+
+    expect(snapshotWriteSpy).toHaveBeenCalledTimes(1)
+    expect(snapshotWriteSpy).toHaveBeenCalledWith(
+      join(userDataDirHolder.dir, SNAPSHOT_FILE),
+      expect.objectContaining({
+        result: expect.objectContaining({ candidates: [remoteCollision, kept] })
+      })
+    )
+    await expect(readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir)).resolves.toMatchObject({
+      candidates: [remoteCollision, kept]
+    })
+
+    snapshotWriteSpy.mockClear()
+    await pruneWorkspaceCleanupScanSnapshots(userDataDirHolder.dir, [
+      { worktreeId: 'repo-1::/missing-local', executionHostId: 'local' },
+      { worktreeId: 'repo-1::/missing-remote', executionHostId: 'ssh:ssh-1' }
+    ])
+    expect(snapshotWriteSpy).not.toHaveBeenCalled()
   })
 
   it('keeps profile snapshots isolated', async () => {
@@ -267,12 +342,22 @@ describe('workspace cleanup scan snapshot', () => {
     }
   })
 
-  it('does not let a scan started before removal restore the pruned row', async () => {
+  it('does not let a scan started before a bulk removal restore pruned rows', async () => {
+    const local = makeCandidate()
+    const remote = makeCandidate({
+      worktreeId: 'repo-1::/remote-feature',
+      connectionId: 'ssh-1',
+      executionHostId: 'ssh:ssh-1',
+      path: '/remote-feature'
+    })
     const staleResult = {
-      ...makeBroadResult([makeCandidate()]),
+      ...makeBroadResult([local, remote]),
       scannedAt: Date.now() - 1
     }
-    await pruneWorkspaceCleanupScanSnapshot(userDataDirHolder.dir, 'repo-1::/repo-feature', 'local')
+    await pruneWorkspaceCleanupScanSnapshots(userDataDirHolder.dir, [
+      { worktreeId: local.worktreeId, executionHostId: 'local' },
+      { worktreeId: remote.worktreeId, executionHostId: 'ssh:ssh-1' }
+    ])
 
     await persistWorkspaceCleanupScanResult(
       userDataDirHolder.dir,
@@ -288,8 +373,45 @@ describe('workspace cleanup scan snapshot', () => {
       recreated
     )
     expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([
-      makeCandidate()
+      local,
+      remote
     ])
+  })
+
+  it('registers a tombstone immediately without rewriting the sidecar', async () => {
+    const staleResult = { ...makeBroadResult([makeCandidate()]), scannedAt: Date.now() - 1 }
+
+    registerWorkspaceCleanupScanSnapshotPruneTombstones(userDataDirHolder.dir, [
+      { worktreeId: 'repo-1::/repo-feature', executionHostId: 'local' }
+    ])
+
+    expect(snapshotWriteSpy).not.toHaveBeenCalled()
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      staleResult
+    )
+    expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([])
+  })
+
+  it('keeps the original tombstone time when a removal batch flushes', async () => {
+    const candidate = makeCandidate()
+    const target = { worktreeId: candidate.worktreeId, executionHostId: 'local' as const }
+    const now = vi.spyOn(Date, 'now').mockReturnValue(100)
+    registerWorkspaceCleanupScanSnapshotPruneTombstones(userDataDirHolder.dir, [target])
+    now.mockReturnValue(200)
+
+    await finalizeWorkspaceCleanupScanSnapshotPrunes(userDataDirHolder.dir, [target])
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      { ...makeBroadResult([candidate]), scannedAt: 150 }
+    )
+
+    expect((await readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir))?.candidates).toEqual([
+      candidate
+    ])
+    now.mockRestore()
   })
 
   it('patches and prunes host-colliding workspace ids independently', async () => {

@@ -10,13 +10,21 @@ import {
   type WorkspaceCleanupLocalProcessArgs,
   type WorkspaceCleanupLocalProcessResult,
   type WorkspaceCleanupScanArgs,
-  type WorkspaceCleanupScanResult
+  type WorkspaceCleanupScanResult,
+  type WorkspaceCleanupSnapshotPruneBatchArgs,
+  type WorkspaceCleanupSnapshotPruneRecordArgs
 } from '../../shared/workspace-cleanup'
+import { parseExecutionHostId } from '../../shared/execution-host'
 import { scanWorkspaceCleanup } from './workspace-cleanup-scan'
 import {
   persistWorkspaceCleanupScanResult,
   readWorkspaceCleanupScanSnapshot
 } from '../workspace-cleanup-scan-snapshot'
+import {
+  beginWorkspaceCleanupRemovalSnapshotPruneBatch,
+  finishWorkspaceCleanupRemovalSnapshotPruneBatch,
+  recordWorkspaceCleanupRemovalSnapshotPrune
+} from '../workspace-cleanup-removal-snapshot-prune'
 
 export { scanWorkspaceCleanup }
 
@@ -35,6 +43,9 @@ export function registerWorkspaceCleanupHandlers(
   ipcMain.removeHandler('workspaceCleanup:dismiss')
   ipcMain.removeHandler('workspaceCleanup:clearDismissals')
   ipcMain.removeHandler('workspaceCleanup:hasKillableLocalProcesses')
+  ipcMain.removeHandler('workspaceCleanup:beginRemovalSnapshotPruneBatch')
+  ipcMain.removeHandler('workspaceCleanup:recordRemovalSnapshotPrune')
+  ipcMain.removeHandler('workspaceCleanup:finishRemovalSnapshotPruneBatch')
 
   ipcMain.handle(
     'workspaceCleanup:scan',
@@ -87,6 +98,43 @@ export function registerWorkspaceCleanupHandlers(
       hasKillableProcesses: await hasKillableProcesses(args, deps)
     })
   )
+
+  ipcMain.handle(
+    'workspaceCleanup:beginRemovalSnapshotPruneBatch',
+    (_event, args: WorkspaceCleanupSnapshotPruneBatchArgs) => {
+      if (isSnapshotPruneBatchId(args?.batchId)) {
+        beginWorkspaceCleanupRemovalSnapshotPruneBatch(snapshotDirectory, args)
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'workspaceCleanup:recordRemovalSnapshotPrune',
+    (_event, args: WorkspaceCleanupSnapshotPruneRecordArgs) => {
+      if (
+        isSnapshotPruneBatchId(args?.batchId) &&
+        typeof args?.worktreeId === 'string' &&
+        args.worktreeId.length > 0 &&
+        (args.executionHostId === undefined || parseExecutionHostId(args.executionHostId))
+      ) {
+        recordWorkspaceCleanupRemovalSnapshotPrune(snapshotDirectory, args)
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'workspaceCleanup:finishRemovalSnapshotPruneBatch',
+    (_event, args: WorkspaceCleanupSnapshotPruneBatchArgs) => {
+      if (isSnapshotPruneBatchId(args?.batchId)) {
+        return finishWorkspaceCleanupRemovalSnapshotPruneBatch(snapshotDirectory, args)
+      }
+      return undefined
+    }
+  )
+}
+
+function isSnapshotPruneBatchId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128
 }
 
 async function hasKillableProcesses(

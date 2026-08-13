@@ -93,6 +93,15 @@ export type WorkspaceCleanupLocalProcessArgs = {
   worktreePath?: string
 }
 
+export type WorkspaceCleanupSnapshotPruneBatchArgs = {
+  batchId: string
+}
+
+export type WorkspaceCleanupSnapshotPruneRecordArgs = WorkspaceCleanupSnapshotPruneBatchArgs & {
+  worktreeId: string
+  executionHostId?: ExecutionHostId
+}
+
 export type WorkspaceCleanupScanError = {
   repoId: string
   repoName: string

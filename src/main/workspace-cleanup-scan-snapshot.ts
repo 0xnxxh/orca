@@ -11,17 +11,21 @@ import {
   writeSidecarSnapshot
 } from './sidecar-snapshot-file'
 import type { ExecutionHostId } from '../shared/execution-host'
+import {
+  activeWorkspaceSnapshotPruneKeys,
+  registerWorkspaceSnapshotPrunesForFile,
+  workspaceSnapshotPruneKey,
+  workspaceSnapshotPruneTargetKeys,
+  type WorkspaceSnapshotPruneTarget,
+  type WorkspaceSnapshotPruneTombstone
+} from './workspace-snapshot-prune-index'
 
 const SNAPSHOT_FILE_NAME = 'orca-workspace-cleanup-scan.json'
 const SNAPSHOT_VERSION = 2
 
-type PrunedWorkspace = {
-  worktreeId: string
-  executionHostId?: ExecutionHostId
-  prunedAt: number
-}
+export type WorkspaceCleanupScanSnapshotPruneTarget = WorkspaceSnapshotPruneTarget
 
-const prunedWorkspacesByFile = new Map<string, Map<string, PrunedWorkspace>>()
+const prunedWorkspacesByFile = new Map<string, Map<string, WorkspaceSnapshotPruneTombstone>>()
 
 type PersistedWorkspaceCleanupScanSnapshot = {
   version: number
@@ -123,17 +127,18 @@ function candidateSnapshotKey(
   return `${candidate.executionHostId ?? 'local'}\0${candidate.worktreeId}`
 }
 
-function prunedWorkspaceKey(worktreeId: string, executionHostId?: ExecutionHostId): string {
-  return `${executionHostId ?? '*'}\0${worktreeId}`
-}
-
-function matchesPrunedWorkspace(
-  candidate: WorkspaceCleanupCandidate,
-  pruned: PrunedWorkspace
-): boolean {
-  return (
-    candidate.worktreeId === pruned.worktreeId &&
-    (!pruned.executionHostId || candidate.executionHostId === pruned.executionHostId)
+/** Register anti-resurrection tombstones without scheduling a sidecar rewrite. */
+export function registerWorkspaceCleanupScanSnapshotPruneTombstones(
+  snapshotDirectory: string,
+  targets: readonly WorkspaceCleanupScanSnapshotPruneTarget[]
+): void {
+  if (targets.length === 0) {
+    return
+  }
+  registerWorkspaceSnapshotPrunesForFile(
+    prunedWorkspacesByFile,
+    sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME),
+    targets
   )
 }
 
@@ -141,15 +146,17 @@ function excludeRowsPrunedDuringScan(
   file: string,
   result: WorkspaceCleanupScanResult
 ): WorkspaceCleanupScanResult {
-  const pruned = [...(prunedWorkspacesByFile.get(file)?.values() ?? [])]
-  if (pruned.length === 0) {
+  const prunedKeys = activeWorkspaceSnapshotPruneKeys(
+    prunedWorkspacesByFile.get(file),
+    result.scannedAt
+  )
+  if (prunedKeys.size === 0) {
     return result
   }
   const candidates = result.candidates.filter(
     (candidate) =>
-      !pruned.some(
-        (entry) => entry.prunedAt >= result.scannedAt && matchesPrunedWorkspace(candidate, entry)
-      )
+      !prunedKeys.has(workspaceSnapshotPruneKey(candidate.worktreeId, candidate.executionHostId)) &&
+      !prunedKeys.has(workspaceSnapshotPruneKey(candidate.worktreeId))
   )
   return candidates.length === result.candidates.length ? result : { ...result, candidates }
 }
@@ -163,11 +170,16 @@ function clearSupersededPrunes(
   if (!pruned) {
     return
   }
+  const candidateKeys = broad
+    ? undefined
+    : new Set(
+        result.candidates.flatMap((candidate) => [
+          workspaceSnapshotPruneKey(candidate.worktreeId, candidate.executionHostId),
+          workspaceSnapshotPruneKey(candidate.worktreeId)
+        ])
+      )
   for (const [key, entry] of pruned) {
-    if (
-      entry.prunedAt < result.scannedAt &&
-      (broad || result.candidates.some((candidate) => matchesPrunedWorkspace(candidate, entry)))
-    ) {
+    if (entry.prunedAt < result.scannedAt && (broad || candidateKeys?.has(key))) {
       pruned.delete(key)
     }
   }
@@ -215,30 +227,37 @@ export async function persistWorkspaceCleanupScanResult(
   }
 }
 
-/** Drop a removed workspace so it never resurrects from cache. Never throws. */
-export async function pruneWorkspaceCleanupScanSnapshot(
+async function pruneWorkspaceCleanupScanSnapshotsWithRegisteredTombstones(
   snapshotDirectory: string,
-  worktreeId: string,
-  executionHostId?: ExecutionHostId
+  targets: readonly WorkspaceCleanupScanSnapshotPruneTarget[],
+  registerTombstones: boolean
 ): Promise<void> {
+  if (targets.length === 0) {
+    return
+  }
   const file = sidecarSnapshotFile(snapshotDirectory, SNAPSHOT_FILE_NAME)
-  const pruned = prunedWorkspacesByFile.get(file) ?? new Map<string, PrunedWorkspace>()
-  pruned.set(prunedWorkspaceKey(worktreeId, executionHostId), {
-    worktreeId,
-    ...(executionHostId ? { executionHostId } : {}),
-    prunedAt: Date.now()
-  })
-  prunedWorkspacesByFile.set(file, pruned)
+  const targetKeys = workspaceSnapshotPruneTargetKeys(targets)
+  if (registerTombstones) {
+    registerWorkspaceSnapshotPrunesForFile(prunedWorkspacesByFile, file, targets)
+  }
   try {
     await withSidecarSnapshotQueue(file, async () => {
+      const registered = prunedWorkspacesByFile.get(file)
+      const coalescedTargetKeys = registerTombstones
+        ? targetKeys
+        : new Set([...targetKeys].filter((key) => registered?.has(key)))
+      if (coalescedTargetKeys.size === 0) {
+        return
+      }
       const existing = await readWorkspaceCleanupScanSnapshot(snapshotDirectory)
       if (!existing) {
         return
       }
       const candidates = existing.candidates.filter(
         (candidate) =>
-          candidate.worktreeId !== worktreeId ||
-          (executionHostId !== undefined && candidate.executionHostId !== executionHostId)
+          !coalescedTargetKeys.has(
+            workspaceSnapshotPruneKey(candidate.worktreeId, candidate.executionHostId)
+          ) && !coalescedTargetKeys.has(workspaceSnapshotPruneKey(candidate.worktreeId))
       )
       if (candidates.length === existing.candidates.length) {
         return
@@ -248,4 +267,33 @@ export async function pruneWorkspaceCleanupScanSnapshot(
   } catch (error) {
     console.warn('[workspace-cleanup] failed to prune scan snapshot:', error)
   }
+}
+
+/** Drop removed workspaces in one sidecar transaction. Never throws. */
+export async function pruneWorkspaceCleanupScanSnapshots(
+  snapshotDirectory: string,
+  targets: readonly WorkspaceCleanupScanSnapshotPruneTarget[]
+): Promise<void> {
+  await pruneWorkspaceCleanupScanSnapshotsWithRegisteredTombstones(snapshotDirectory, targets, true)
+}
+
+/** Flush only tombstones still active for this batch, preserving their original prune time. */
+export async function finalizeWorkspaceCleanupScanSnapshotPrunes(
+  snapshotDirectory: string,
+  targets: readonly WorkspaceCleanupScanSnapshotPruneTarget[]
+): Promise<void> {
+  await pruneWorkspaceCleanupScanSnapshotsWithRegisteredTombstones(
+    snapshotDirectory,
+    targets,
+    false
+  )
+}
+
+/** Drop a removed workspace so it never resurrects from cache. Never throws. */
+export async function pruneWorkspaceCleanupScanSnapshot(
+  snapshotDirectory: string,
+  worktreeId: string,
+  executionHostId?: ExecutionHostId
+): Promise<void> {
+  await pruneWorkspaceCleanupScanSnapshots(snapshotDirectory, [{ worktreeId, executionHostId }])
 }

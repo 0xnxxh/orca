@@ -4254,9 +4254,16 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             : { activeRuntimeEnvironmentId: null }
       )
       let removalResult: RemoveWorktreeResult
+      let snapshotPruneHandledByLocalMain = forgetLocalOnly || target.kind === 'local'
       try {
         removalResult = await (forgetLocalOnly
-          ? window.api.worktrees.forgetLocal({ worktreeId, hostId })
+          ? window.api.worktrees.forgetLocal({
+              worktreeId,
+              hostId,
+              ...(options?.snapshotPruneBatchId
+                ? { snapshotPruneBatchId: options.snapshotPruneBatchId }
+                : {})
+            })
           : target.kind === 'local'
             ? (removalGenerationGuard?.assertCurrent(),
               window.api.worktrees.remove({
@@ -4264,7 +4271,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
                 hostId,
                 force,
                 allowUnverifiedPtyStop: options?.allowUnverifiedPtyStop === true,
-                skipArchive
+                skipArchive,
+                ...(options?.snapshotPruneBatchId
+                  ? { snapshotPruneBatchId: options.snapshotPruneBatchId }
+                  : {})
               }))
             : (removalGenerationGuard?.assertCurrent(),
               callRuntimeRpc<RemoveWorktreeResult>(
@@ -4294,7 +4304,14 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             removalGenerationGuard?.assertCurrent()
           }
           try {
-            removalResult = await window.api.worktrees.forgetLocal({ worktreeId, hostId })
+            removalResult = await window.api.worktrees.forgetLocal({
+              worktreeId,
+              hostId,
+              ...(options?.snapshotPruneBatchId
+                ? { snapshotPruneBatchId: options.snapshotPruneBatchId }
+                : {})
+            })
+            snapshotPruneHandledByLocalMain = true
           } catch (fallbackError) {
             // Preserve the remote verdict as fallback failure context.
             throw new Error(
@@ -4304,6 +4321,18 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           }
         } else {
           throw error
+        }
+      }
+
+      if (options?.snapshotPruneBatchId && !snapshotPruneHandledByLocalMain) {
+        try {
+          await window.api.workspaceCleanup?.recordRemovalSnapshotPrune?.({
+            batchId: options.snapshotPruneBatchId,
+            worktreeId,
+            ...(hostId ? { executionHostId: hostId } : {})
+          })
+        } catch (error) {
+          console.warn('Failed to record workspace cleanup snapshot prune:', error)
         }
       }
 

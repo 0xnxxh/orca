@@ -26,6 +26,12 @@ vi.mock('../workspace-cleanup-scan-snapshot', () => ({
   readWorkspaceCleanupScanSnapshot: vi.fn(async () => null)
 }))
 
+vi.mock('../workspace-cleanup-removal-snapshot-prune', () => ({
+  beginWorkspaceCleanupRemovalSnapshotPruneBatch: vi.fn(),
+  finishWorkspaceCleanupRemovalSnapshotPruneBatch: vi.fn(async () => undefined),
+  recordWorkspaceCleanupRemovalSnapshotPrune: vi.fn()
+}))
+
 import { registerWorkspaceCleanupHandlers } from './workspace-cleanup'
 
 function makeEmptyStore(): Store {

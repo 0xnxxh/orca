@@ -146,9 +146,26 @@ export function useWorkspaceCleanupRemoval({
       removalInFlightRef.current = false
     }
     try {
+      const beginSnapshotPruneBatch = window.api.workspaceCleanup.beginRemovalSnapshotPruneBatch
+      const recordSnapshotPrune = window.api.workspaceCleanup.recordRemovalSnapshotPrune
+      const finishSnapshotPruneBatch = window.api.workspaceCleanup.finishRemovalSnapshotPruneBatch
+      const snapshotPruneBatch =
+        typeof beginSnapshotPruneBatch === 'function' &&
+        typeof recordSnapshotPrune === 'function' &&
+        typeof finishSnapshotPruneBatch === 'function'
+          ? (() => {
+              const batchId = crypto.randomUUID()
+              return {
+                batchId,
+                begin: () => beginSnapshotPruneBatch({ batchId }),
+                finish: () => finishSnapshotPruneBatch({ batchId })
+              }
+            })()
+          : undefined
       startWorkspaceCleanupBackgroundRemoval({
         candidates: removableCandidates,
         removeCandidates,
+        snapshotPruneBatch,
         onProgress: (progress) => {
           if (mountedRef.current) {
             setRemovalProgress(progress)

@@ -536,7 +536,9 @@ import type {
   WorkspaceCleanupLocalProcessResult,
   WorkspaceCleanupScanArgs,
   WorkspaceCleanupScanProgress,
-  WorkspaceCleanupScanResult
+  WorkspaceCleanupScanResult,
+  WorkspaceCleanupSnapshotPruneBatchArgs,
+  WorkspaceCleanupSnapshotPruneRecordArgs
 } from '../shared/workspace-cleanup'
 import type { KeybindingActionId, KeybindingFileSnapshot } from '../shared/keybindings'
 
@@ -1404,11 +1406,13 @@ export type PreloadApi = {
       // may waive the proof that every PTY stopped.
       allowUnverifiedPtyStop?: boolean
       skipArchive?: boolean
+      snapshotPruneBatchId?: string
     }) => Promise<RemoveWorktreeResult>
     // Forget a workspace from Orca only (no remote Git/FS work) — for workspaces pinned to a removed/disconnected SSH host.
     forgetLocal: (args: {
       worktreeId: string
       hostId?: ExecutionHostId
+      snapshotPruneBatchId?: string
     }) => Promise<RemoveWorktreeResult>
     forceDeletePreservedBranch: (args: {
       worktreeId: string
@@ -1453,6 +1457,11 @@ export type PreloadApi = {
     hasKillableLocalProcesses: (
       args: WorkspaceCleanupLocalProcessArgs
     ) => Promise<WorkspaceCleanupLocalProcessResult>
+    beginRemovalSnapshotPruneBatch?: (args: WorkspaceCleanupSnapshotPruneBatchArgs) => Promise<void>
+    recordRemovalSnapshotPrune?: (args: WorkspaceCleanupSnapshotPruneRecordArgs) => Promise<void>
+    finishRemovalSnapshotPruneBatch?: (
+      args: WorkspaceCleanupSnapshotPruneBatchArgs
+    ) => Promise<void>
   }
   workspaceSpace: {
     analyze: () => Promise<WorkspaceSpaceAnalyzeResult>

@@ -7,6 +7,12 @@ const { persistScanResultMock, readScanSnapshotMock } = vi.hoisted(() => ({
   readScanSnapshotMock: vi.fn()
 }))
 
+const { beginPruneBatchMock, finishPruneBatchMock, recordPruneMock } = vi.hoisted(() => ({
+  beginPruneBatchMock: vi.fn(),
+  finishPruneBatchMock: vi.fn().mockResolvedValue(undefined),
+  recordPruneMock: vi.fn()
+}))
+
 vi.mock('electron', () => ({
   ipcMain: {
     handle: vi.fn(),
@@ -17,6 +23,12 @@ vi.mock('electron', () => ({
 vi.mock('../workspace-cleanup-scan-snapshot', () => ({
   persistWorkspaceCleanupScanResult: persistScanResultMock,
   readWorkspaceCleanupScanSnapshot: readScanSnapshotMock
+}))
+
+vi.mock('../workspace-cleanup-removal-snapshot-prune', () => ({
+  beginWorkspaceCleanupRemovalSnapshotPruneBatch: beginPruneBatchMock,
+  finishWorkspaceCleanupRemovalSnapshotPruneBatch: finishPruneBatchMock,
+  recordWorkspaceCleanupRemovalSnapshotPrune: recordPruneMock
 }))
 
 import { registerWorkspaceCleanupHandlers } from './workspace-cleanup'
@@ -38,6 +50,9 @@ describe('workspace cleanup snapshot IPC', () => {
     vi.mocked(ipcMain.handle).mockClear()
     persistScanResultMock.mockReset().mockResolvedValue(undefined)
     readScanSnapshotMock.mockReset()
+    beginPruneBatchMock.mockReset()
+    finishPruneBatchMock.mockReset().mockResolvedValue(undefined)
+    recordPruneMock.mockReset()
   })
 
   it('persists the completed scan result after replying', async () => {
@@ -74,5 +89,24 @@ describe('workspace cleanup snapshot IPC', () => {
     await expect(handler?.({} as never)).resolves.toBe(snapshot)
     expect(readScanSnapshotMock).toHaveBeenCalledWith('/profile-a')
     expect(vi.mocked(ipcMain.removeHandler)).toHaveBeenCalledWith('workspaceCleanup:getCachedScan')
+  })
+
+  it('routes a validated removal snapshot prune batch through its explicit boundary', async () => {
+    registerWorkspaceCleanupHandlers(makeEmptyStore())
+    const handlers = Object.fromEntries(vi.mocked(ipcMain.handle).mock.calls)
+    const batch = { batchId: 'batch-1' }
+    const target = {
+      ...batch,
+      worktreeId: 'repo-ssh::/remote/feature',
+      executionHostId: 'ssh:ssh-1'
+    }
+
+    await handlers['workspaceCleanup:beginRemovalSnapshotPruneBatch']?.({} as never, batch)
+    await handlers['workspaceCleanup:recordRemovalSnapshotPrune']?.({} as never, target)
+    await handlers['workspaceCleanup:finishRemovalSnapshotPruneBatch']?.({} as never, batch)
+
+    expect(beginPruneBatchMock).toHaveBeenCalledExactlyOnceWith('/profile-a', batch)
+    expect(recordPruneMock).toHaveBeenCalledExactlyOnceWith('/profile-a', target)
+    expect(finishPruneBatchMock).toHaveBeenCalledExactlyOnceWith('/profile-a', batch)
   })
 })

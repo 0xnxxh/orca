@@ -43,6 +43,7 @@ export type WorkspaceCleanupRemoveOptions = {
   // Why: rows are removed long after the confirm click; the confirm-time
   // candidate records how much git risk the user actually approved.
   approvedCandidates?: readonly WorkspaceCleanupCandidate[]
+  snapshotPruneBatchId?: string
 }
 
 type WorkspaceCleanupViewedCandidate = {
@@ -82,8 +83,15 @@ type WorkspaceCleanupEnrichmentCacheEntry = {
   candidate: WorkspaceCleanupCandidate
 }
 
+type WorkspaceCleanupEnrichmentProjection = {
+  openFilesByWorktreeId: Map<string, AppState['openFiles']>
+  retainedDoneAgentPaneKeysByWorktreeId: Map<string, string[]>
+  agentStatusesByTabId: Map<string, AgentStatusEntry[]>
+}
+
 const RECENT_VISIBLE_CONTEXT_MS = 24 * 60 * 60 * 1000
 const VIEWED_FROM_CLEANUP_MS = 2 * 60 * 60 * 1000
+export const WORKSPACE_CLEANUP_ENRICHMENT_CONCURRENCY = 8
 const WORKSPACE_CLEANUP_PREFLIGHT_CONCURRENCY = 4
 // Why: dirty-files/unpushed-commits are concrete known work at risk; unknown-base
 // and git-status-error only mean "couldn't verify". A row approved while
@@ -348,7 +356,12 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
         shouldForceWorkspaceCleanupRemoval(candidate),
         // Why: cleanup reports outcomes in its own summary toasts; per-row
         // preserved-branch warnings would stack one toast per removed row.
-        { suppressPreservedBranchToast: true }
+        {
+          suppressPreservedBranchToast: true,
+          ...(options?.snapshotPruneBatchId
+            ? { snapshotPruneBatchId: options.snapshotPruneBatchId }
+            : {})
+        }
       )
       if (result.ok) {
         removedIds.push(candidate.worktreeId)
@@ -597,12 +610,16 @@ function getInitialWorkspaceCleanupGitDeferrals(state: AppState): string[] {
   }
 
   const openEditorWorktreeIds = new Set(state.openFiles.map((file) => file.worktreeId))
+  const agentStatusesByTabId = buildWorkspaceCleanupAgentStatusIndex(state)
   for (const [worktreeId, tabs] of Object.entries(state.tabsByWorktree)) {
     const tabIds = new Set(tabs.map((tab) => tab.id))
     if (tabs.some((tab) => (state.ptyIdsByTabId[tab.id]?.length ?? 0) > 0)) {
       ids.add(worktreeId)
     }
-    if (hasFreshLiveAgent(state, tabIds) || hasWorkingTitleAgent(state, tabs)) {
+    if (
+      hasFreshIndexedLiveAgent(agentStatusesByTabId, tabIds) ||
+      hasWorkingTitleAgent(state, tabs)
+    ) {
       ids.add(worktreeId)
     }
   }
@@ -634,8 +651,9 @@ export async function enrichWorkspaceCleanupCandidates(
   state: AppState,
   options: EnrichOptions = {}
 ): Promise<WorkspaceCleanupCandidate[]> {
-  return Promise.all(
-    candidates.map((candidate) => enrichWorkspaceCleanupCandidate(candidate, state, options))
+  const projection = buildWorkspaceCleanupEnrichmentProjection(candidates, state)
+  return mapWithConcurrency(candidates, WORKSPACE_CLEANUP_ENRICHMENT_CONCURRENCY, (candidate) =>
+    enrichWorkspaceCleanupCandidate(candidate, state, projection, options)
   )
 }
 
@@ -645,12 +663,16 @@ async function enrichWorkspaceCleanupCandidatesWithCache(
   cache: Map<string, WorkspaceCleanupEnrichmentCacheEntry>,
   options: EnrichOptions = {}
 ): Promise<WorkspaceCleanupCandidate[]> {
-  return Promise.all(
-    candidates.map(async (candidate) => {
+  const projection = buildWorkspaceCleanupEnrichmentProjection(candidates, state)
+  return mapWithConcurrency(
+    candidates,
+    WORKSPACE_CLEANUP_ENRICHMENT_CONCURRENCY,
+    async (candidate) => {
       const inputSignature = getWorkspaceCleanupCandidateInputSignature(candidate)
       const localSignature = getWorkspaceCleanupLocalStateSignature(
         candidate.worktreeId,
         state,
+        projection,
         options
       )
       const cached = cache.get(candidate.worktreeId)
@@ -658,15 +680,56 @@ async function enrichWorkspaceCleanupCandidatesWithCache(
         return cached.candidate
       }
 
-      const enriched = await enrichWorkspaceCleanupCandidate(candidate, state, options)
+      const enriched = await enrichWorkspaceCleanupCandidate(candidate, state, projection, options)
       cache.set(candidate.worktreeId, {
         inputSignature,
         localSignature,
         candidate: enriched
       })
       return enriched
-    })
+    }
   )
+}
+
+function buildWorkspaceCleanupEnrichmentProjection(
+  candidates: readonly WorkspaceCleanupCandidate[],
+  state: AppState
+): WorkspaceCleanupEnrichmentProjection {
+  const worktreeIds = new Set(candidates.map((candidate) => candidate.worktreeId))
+  const tabIds = new Set<string>()
+  for (const worktreeId of worktreeIds) {
+    for (const tab of state.tabsByWorktree[worktreeId] ?? []) {
+      tabIds.add(tab.id)
+    }
+  }
+
+  const openFilesByWorktreeId = new Map<string, AppState['openFiles']>()
+  for (const file of state.openFiles) {
+    if (!worktreeIds.has(file.worktreeId)) {
+      continue
+    }
+    const files = openFilesByWorktreeId.get(file.worktreeId) ?? []
+    files.push(file)
+    openFilesByWorktreeId.set(file.worktreeId, files)
+  }
+
+  const retainedDoneAgentPaneKeysByWorktreeId = new Map<string, string[]>()
+  for (const [paneKey, retained] of Object.entries(state.retainedAgentsByPaneKey)) {
+    if (!worktreeIds.has(retained.worktreeId) || retained.entry.state !== 'done') {
+      continue
+    }
+    const paneKeys = retainedDoneAgentPaneKeysByWorktreeId.get(retained.worktreeId) ?? []
+    paneKeys.push(paneKey)
+    retainedDoneAgentPaneKeysByWorktreeId.set(retained.worktreeId, paneKeys)
+  }
+
+  const agentStatusesByTabId = buildWorkspaceCleanupAgentStatusIndex(state, tabIds)
+
+  return {
+    openFilesByWorktreeId,
+    retainedDoneAgentPaneKeysByWorktreeId,
+    agentStatusesByTabId
+  }
 }
 
 function getWorkspaceCleanupCandidateInputSignature(candidate: WorkspaceCleanupCandidate): string {
@@ -685,24 +748,22 @@ function getWorkspaceCleanupCandidateInputSignature(candidate: WorkspaceCleanupC
 function getWorkspaceCleanupLocalStateSignature(
   worktreeId: string,
   state: AppState,
+  projection: WorkspaceCleanupEnrichmentProjection,
   options: EnrichOptions
 ): string {
   const tabs = state.tabsByWorktree[worktreeId] ?? []
   const tabIds = tabs.map((tab) => tab.id)
   const tabIdSet = new Set(tabIds)
-  const openFiles = state.openFiles
-    .filter((file) => file.worktreeId === worktreeId)
-    .map((file) => ({
-      id: file.id,
-      isDirty: file.isDirty,
-      hasDraft: state.editorDrafts[file.id] !== undefined
-    }))
-  const retainedDoneAgentPaneKeys = Object.entries(state.retainedAgentsByPaneKey)
-    .filter(([, entry]) => entry.worktreeId === worktreeId && entry.entry.state === 'done')
-    .map(([paneKey]) => paneKey)
-    .sort()
-  const agentStatuses = Object.values(state.agentStatusByPaneKey)
-    .filter((entry) => tabIdSet.has(getPaneKeyTabId(entry.paneKey)))
+  const openFiles = (projection.openFilesByWorktreeId.get(worktreeId) ?? []).map((file) => ({
+    id: file.id,
+    isDirty: file.isDirty,
+    hasDraft: state.editorDrafts[file.id] !== undefined
+  }))
+  const retainedDoneAgentPaneKeys = [
+    ...(projection.retainedDoneAgentPaneKeysByWorktreeId.get(worktreeId) ?? [])
+  ].sort()
+  const agentStatuses = [...tabIdSet]
+    .flatMap((tabId) => projection.agentStatusesByTabId.get(tabId) ?? [])
     .map((entry) => ({
       paneKey: entry.paneKey,
       state: entry.state,
@@ -742,19 +803,19 @@ function getWorkspaceCleanupLocalStateSignature(
 async function enrichWorkspaceCleanupCandidate(
   candidate: WorkspaceCleanupCandidate,
   state: AppState,
+  projection: WorkspaceCleanupEnrichmentProjection,
   options: EnrichOptions
 ): Promise<WorkspaceCleanupCandidate> {
   const tabs = state.tabsByWorktree[candidate.worktreeId] ?? []
   const tabIds = new Set(tabs.map((tab) => tab.id))
-  const openFiles = state.openFiles.filter((file) => file.worktreeId === candidate.worktreeId)
+  const openFiles = projection.openFilesByWorktreeId.get(candidate.worktreeId) ?? []
   const dirtyEditorBuffers = openFiles.filter(
     (file) => file.isDirty || state.editorDrafts[file.id] !== undefined
   )
   const cleanEditorTabCount = openFiles.length - dirtyEditorBuffers.length
   const browserTabCount = (state.browserTabsByWorktree[candidate.worktreeId] ?? []).length
-  const retainedDoneAgentCount = Object.values(state.retainedAgentsByPaneKey).filter(
-    (entry) => entry.worktreeId === candidate.worktreeId && entry.entry.state === 'done'
-  ).length
+  const retainedDoneAgentCount =
+    projection.retainedDoneAgentPaneKeysByWorktreeId.get(candidate.worktreeId)?.length ?? 0
   const blockers = candidate.blockers.filter((blocker) => blocker !== 'dismissed')
   const preserveCleanupInspection = shouldPreserveCleanupInspection(candidate, state)
 
@@ -764,7 +825,7 @@ async function enrichWorkspaceCleanupCandidate(
   if (dirtyEditorBuffers.length > 0) {
     blockers.push('dirty-editor-buffer')
   }
-  if (hasFreshLiveAgent(state, tabIds)) {
+  if (hasFreshIndexedLiveAgent(projection.agentStatusesByTabId, tabIds)) {
     blockers.push('live-agent')
   }
   if (hasWorkingTitleAgent(state, tabs)) {
@@ -841,7 +902,8 @@ async function preflightWorkspaceCleanupCandidate(
   | { ok: false; failure: WorkspaceCleanupFailure }
 > {
   const scan = await window.api.workspaceCleanup.scan({ worktreeId })
-  const [candidate] = await enrichWorkspaceCleanupCandidates(scan.candidates, getState(), {
+  const currentState = getState()
+  const [candidate] = await enrichWorkspaceCleanupCandidates(scan.candidates, currentState, {
     applyDismissals: false
   })
   if (!candidate) {
@@ -899,14 +961,39 @@ async function preflightWorkspaceCleanupCandidate(
   return { ok: true, candidate }
 }
 
-function hasFreshLiveAgent(state: AppState, tabIds: Set<string>): boolean {
+function buildWorkspaceCleanupAgentStatusIndex(
+  state: AppState,
+  includedTabIds?: ReadonlySet<string>
+): Map<string, AgentStatusEntry[]> {
+  const agentStatusesByTabId = new Map<string, AgentStatusEntry[]>()
+  for (const entry of Object.values(state.agentStatusByPaneKey)) {
+    const tabId = getPaneKeyTabId(entry.paneKey)
+    if (includedTabIds && !includedTabIds.has(tabId)) {
+      continue
+    }
+    const entries = agentStatusesByTabId.get(tabId) ?? []
+    entries.push(entry)
+    agentStatusesByTabId.set(tabId, entries)
+  }
+  return agentStatusesByTabId
+}
+
+function hasFreshIndexedLiveAgent(
+  agentStatusesByTabId: ReadonlyMap<string, readonly AgentStatusEntry[]>,
+  tabIds: Set<string>
+): boolean {
   const now = Date.now()
-  return Object.values(state.agentStatusByPaneKey).some(
-    (entry) =>
-      tabIds.has(getPaneKeyTabId(entry.paneKey)) &&
-      isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS) &&
-      (entry.state === 'working' || entry.state === 'blocked' || entry.state === 'waiting')
-  )
+  for (const tabId of tabIds) {
+    for (const entry of agentStatusesByTabId.get(tabId) ?? []) {
+      if (
+        isExplicitAgentStatusFresh(entry, now, AGENT_STATUS_STALE_AFTER_MS) &&
+        (entry.state === 'working' || entry.state === 'blocked' || entry.state === 'waiting')
+      ) {
+        return true
+      }
+    }
+  }
+  return false
 }
 
 function hasWorkingTitleAgent(state: AppState, tabs: { id: string; title: string }[]): boolean {
