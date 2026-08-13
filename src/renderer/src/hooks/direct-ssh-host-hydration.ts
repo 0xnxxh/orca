@@ -3,6 +3,7 @@ import { getRepoExecutionHostId, toSshExecutionHostId } from '../../../shared/ex
 import type { HostLineageSnapshot } from '../../../shared/host-lineage-contract'
 import type { HostRepoCatalogSnapshot } from '../../../shared/host-repo-catalog-contract'
 import type { DirectSshAuthority } from '../../../shared/ssh-types'
+import type { WorktreeLineage, WorkspaceLineage } from '../../../shared/types'
 import { isWorkspaceKey } from '../../../shared/workspace-scope'
 import type { AppState } from '../store/types'
 import { reuseEqualRecordMap } from '../store/slices/repo-identity-reconcile'
@@ -79,7 +80,7 @@ function mergeExactHostLineage(
   catalogRevision: number
 ): AppState {
   const scope = directSshHostHydrationScope(state, authority, catalogRevision)
-  const nextWorktreeLineageById: AppState['worktreeLineageById'] = {}
+  const nextWorktreeLineageById: Record<string, WorktreeLineage> = {}
   for (const [worktreeId, existing] of Object.entries(state.worktreeLineageById)) {
     if (!scope.gitWorktreeIds.has(worktreeId)) {
       nextWorktreeLineageById[worktreeId] = existing
@@ -90,7 +91,7 @@ function mergeExactHostLineage(
       nextWorktreeLineageById[worktreeId] = incoming
     }
   }
-  const nextWorkspaceLineageByChildKey: AppState['workspaceLineageByChildKey'] = {}
+  const nextWorkspaceLineageByChildKey: Record<string, WorkspaceLineage> = {}
   for (const [childKey, existing] of Object.entries(state.workspaceLineageByChildKey)) {
     if (!isWorkspaceKey(childKey) || !scope.lineageWorkspaceKeys.has(childKey)) {
       nextWorkspaceLineageByChildKey[childKey] = existing
