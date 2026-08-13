@@ -4922,6 +4922,7 @@
           "2f80cd4b97": "Showing…",
           "e64b81d3a9": "Show",
           "d40d436fc2": "Could not update worktree visibility. Try again.",
+          "unsupportedHost": "This host doesn't support source-specific worktree visibility. Update Orca on the host to change this setting.",
           "search": "Search hidden worktrees",
           "searchPlaceholder": "Search {{value0}} worktrees…",
           "noMatches": "No matching worktrees",

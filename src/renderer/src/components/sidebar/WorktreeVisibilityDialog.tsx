@@ -44,6 +44,7 @@ import {
   removeCustomWorktreeSourcePreference
 } from '../../../../shared/worktree-visibility-sources'
 import HiddenWorktreeRecoveryList from './HiddenWorktreeRecoveryList'
+import { worktreeVisibilityUpdateError } from './worktree-visibility-update-error'
 
 function getLatestRepoForScope(scope: string): Repo | null {
   return (
@@ -195,9 +196,10 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           if (currentMutationScopeRef.current === mutationScope) {
             setActionState({
               pending: false,
-              error: translate(
-                'auto.components.sidebar.WorktreeVisibilityDialog.d40d436fc2',
-                'Could not update worktree visibility. Try again.'
+              error: worktreeVisibilityUpdateError(
+                updated,
+                latestRepo?.worktreeVisibilitySourcePreferences,
+                updates.worktreeVisibilitySourcePreferences
               )
             })
           }

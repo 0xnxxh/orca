@@ -4719,6 +4719,7 @@
           "2f80cd4b97": "Mostrando…",
           "e64b81d3a9": "Mostrar",
           "d40d436fc2": "No se pudo actualizar la visibilidad de los worktrees. Inténtalo de nuevo.",
+          "unsupportedHost": "Este host no admite la visibilidad de worktrees específica de cada fuente. Actualiza Orca en el host para cambiar esta opción.",
           "search": "Buscar worktrees ocultos",
           "searchPlaceholder": "Buscar en {{value0}} worktrees…",
           "noMatches": "No hay worktrees coincidentes",

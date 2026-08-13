@@ -517,8 +517,9 @@ describe('WorktreeVisibilityDialog', () => {
     await click(sourceSwitch())
 
     expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-      'Could not update worktree visibility. Try again.'
+      "This host doesn't support source-specific worktree visibility. Update Orca on the host to change this setting."
     )
+    expect(document.querySelector('[role="alert"]')?.textContent).not.toContain('Try again')
     expect(mocks.state.fetchWorktrees).not.toHaveBeenCalled()
   })
 
