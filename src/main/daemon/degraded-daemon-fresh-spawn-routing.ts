@@ -78,16 +78,21 @@ export class DegradedDaemonFreshSpawnRouter {
       // for the rest of the session. Sending the next one to the fallback costs a terminal
       // without daemon persistence instead, and the next probe can promote it back.
       if (target === this.current) {
+        // Two independent things, and conflating them cost a fix each way. Pinning protects
+        // THIS id: the spawn may already have created it on the daemon and lost the reply, so
+        // letting a retry reach the fallback would answer with a local shell under the same id
+        // while the original keeps running. Demoting protects the NEXT terminal, which is a
+        // different session entirely and cannot be shadowed by this one.
         if (opts.sessionId) {
-          // Why pin instead of demote: a spawn that names a session may already have created it
-          // on the daemon — the reply can time out after the daemon has acted. Demoting would
-          // send the retry to the fallback, which would answer with a fresh local shell under
-          // the same id while the original keeps running, and the pane would bind to the shell.
-          // `!mapped` cannot tell that apart from a genuinely new session, because the mapping
-          // is only recorded after a reply arrives. So the identity sticks to the provider that
-          // may own it, and only anonymous spawns move the shared route.
           this.sessionProviders.set(opts.sessionId, target)
-        } else {
+        }
+        // Why not `!opts.sessionId`: every production fresh spawn mints an id before it gets
+        // here (ipc/pty.ts assigns spawnOptions.sessionId), so keying the demotion off its
+        // absence made the demotion unreachable outside tests — and left every later terminal
+        // paying a hello timeout plus a full re-classification against a daemon already known
+        // to be failing. `attachOnly` is the real discriminator: an attach that names a session
+        // never reaches this router at all.
+        if (opts.attachOnly !== true) {
           this.target = this.fallback
           this.retryAfterMs = Date.now() + DEGRADED_DAEMON_RECOVERY_RETRY_MS
           console.warn(

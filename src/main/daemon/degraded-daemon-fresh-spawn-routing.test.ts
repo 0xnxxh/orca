@@ -114,7 +114,59 @@ describe('DegradedDaemonFreshSpawnRouter', () => {
 
     // The identity sticks to the provider that may already own it...
     expect(sessionProviders.get('wt-1@@pane-1')).toBe(current)
-    // ...and the shared route is untouched, so this failure cannot silently divert other spawns.
+    // ...and keeps routing there even though the shared route has since demoted, which is the
+    // property that actually prevents the shadow: the pin outranks the route.
+    expect(r.routesToFallback).toBe(true)
+    await expect(r.spawn({ cwd: '/tmp', sessionId: 'wt-1@@pane-1' } as never)).rejects.toThrow(
+      'Request listSessions timed out after 30000ms'
+    )
+    expect(lostReply).toHaveBeenCalledTimes(2)
+  })
+
+  it('demotes for a production-shaped fresh spawn, which always carries an id', async () => {
+    // The regression this pins: gating demotion on the ABSENCE of a sessionId made it
+    // unreachable outside tests, because every production fresh spawn mints an id before
+    // reaching the provider (ipc/pty.ts sets spawnOptions.sessionId). A recovered-then-wedged
+    // daemon would keep every later terminal pointed at itself, each paying a hello timeout
+    // plus a full launcher re-classification, and each failing anyway.
+    const wedged = vi.fn(async () => {
+      throw new Error('Hello response timed out')
+    })
+    const {
+      router: r,
+      current,
+      sessionProviders
+    } = router({
+      probe: async () => true,
+      currentSpawn: wedged
+    })
+
+    await r.recover()
+    expect(r.routesToFallback).toBeUndefined()
+
+    // Exactly what ipc/pty.ts sends for a new terminal: a minted id, and no attachOnly.
+    await expect(r.spawn({ cwd: '/tmp', sessionId: 'wt-1@@pane-9' } as never)).rejects.toThrow(
+      'Hello response timed out'
+    )
+
+    expect(r.routesToFallback).toBe(true)
+    // ...without giving up the pin that stops this id being answered locally.
+    expect(sessionProviders.get('wt-1@@pane-9')).toBe(current)
+  })
+
+  it('does not demote for an attach that names a session', async () => {
+    // An attachOnly spawn is not a fresh terminal; its failure says nothing about whether the
+    // next new terminal should go local, and attaches with an id are routed elsewhere anyway.
+    const wedged = vi.fn(async () => {
+      throw new Error('Hello response timed out')
+    })
+    const { router: r } = router({ probe: async () => true, currentSpawn: wedged })
+
+    await r.recover()
+    await expect(
+      r.spawn({ cwd: '/tmp', sessionId: 'wt-1@@pane-9', attachOnly: true } as never)
+    ).rejects.toThrow()
+
     expect(r.routesToFallback).toBeUndefined()
   })
 
@@ -131,9 +183,11 @@ describe('DegradedDaemonFreshSpawnRouter', () => {
     expect(r.routesToFallback).toBe(true)
   })
 
-  it('leaves an explicitly mapped session routed where it is', async () => {
-    // A mapped id names the provider that actually owns that pty. Rerouting on its failure would
-    // send a daemon-owned session to a provider that does not have it.
+  it('keeps a mapped session on its owner while sparing the next terminal', async () => {
+    // A mapped id names the provider that actually owns that pty, so it must keep routing there
+    // however the shared route moves. But its failure is still evidence the daemon is failing,
+    // and the next *fresh* terminal is a different session that cannot be shadowed by this one —
+    // so it should not have to discover the same timeout for itself.
     const wedged = vi.fn(async () => {
       throw new Error('Hello response timed out')
     })
@@ -151,6 +205,7 @@ describe('DegradedDaemonFreshSpawnRouter', () => {
     expect(r.routesToFallback).toBeUndefined()
 
     await expect(r.spawn({ cwd: '/tmp', sessionId: 'session-1' } as never)).rejects.toThrow()
-    expect(r.routesToFallback).toBeUndefined()
+    expect(sessionProviders.get('session-1')).toBe(current)
+    expect(r.routesToFallback).toBe(true)
   })
 })
