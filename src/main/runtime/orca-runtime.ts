@@ -35668,11 +35668,11 @@ const WORKTREE_SCAN_CACHE_TTL_MS = 30_000
 // fan-out was measured at ~128 git execs/min on real installs, mostly against
 // these (crash-cluster diagnostics, 2026-07).
 const WORKTREE_SCAN_AGENT_SCRATCH_TTL_MS = 5 * 60_000
-// Why: the Git-admin fingerprint cannot observe sparse-checkout pattern edits or a HEAD rewrite that
-// lands in the same filesystem timestamp tick with an equal-length ref, so a real scan still runs on
-// this interval even while the probe reports "unchanged".
+// Why: the Git-admin fingerprint reads HEAD and its ref tip exactly, but sparse-checkout pattern
+// edits are invisible to it and a tip living in packed-refs or reftable only gets an mtime + size
+// stamp, so a real scan still runs on this interval even while the probe reports "unchanged".
 export const WORKTREE_SCAN_ADMIN_RECONCILE_INTERVAL_MS = 5 * 60_000
-/** Stand-in for hosts the local admin probe cannot describe (SSH, WSL); never matches a real read. */
+/** Stand-in for a repo the local admin probe cannot or need not describe; never matches a real read. */
 const UNFINGERPRINTED_WORKTREE_SCAN: Promise<string | null> = Promise.resolve(null)
 const RESOLVED_WORKTREE_REPO_TIMEOUT_MS = 5000
 
