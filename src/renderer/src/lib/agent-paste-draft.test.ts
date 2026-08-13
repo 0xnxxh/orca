@@ -67,6 +67,7 @@ vi.mock('@/runtime/runtime-terminal-stream', () => ({
 const DECSET_BRACKETED_PASTE = '\x1b[?2004h'
 const SHOW_CURSOR = '\x1b[?25h'
 const CODEX_COMPOSER_PROMPT_RENDER = '\x1b[1m›\x1b[0m Ask Codex to do anything'
+const CODEX_DYNAMIC_COMPOSER_PROMPT_RENDER = '\x1b[?1049h\x1b[1m›\x1b[0m Implement {feature}'
 const ISSUE_URL = 'https://github.com/stablyai/orca/issues/123'
 const PASTED_ISSUE_URL = `\x1b[200~${ISSUE_URL}\x1b[201~`
 
@@ -111,7 +112,7 @@ describe('pasteDraftWhenAgentReady', () => {
     vi.useRealTimers()
   })
 
-  it('pastes into Codex once its composer and bracketed paste are both ready', async () => {
+  it('pastes into Codex as soon as its composer prompt renders after bracketed paste is enabled', async () => {
     const promise = pasteDraftWhenAgentReady({
       tabId: 'tab-1',
       content: ISSUE_URL,
@@ -124,6 +125,10 @@ describe('pasteDraftWhenAgentReady', () => {
     expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
 
     testState.ptyObserver?.(DECSET_BRACKETED_PASTE)
+    await flushMicrotasks()
+    expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
+
+    testState.ptyObserver?.(CODEX_COMPOSER_PROMPT_RENDER)
 
     await expect(promise).resolves.toBe(true)
     expect(testState.sendRuntimePtyInputVerified).toHaveBeenCalledWith(
@@ -138,7 +143,7 @@ describe('pasteDraftWhenAgentReady', () => {
     testState.appState.ptyIdsByTabId = {}
     testState.replayPreHandlerPtyData.mockImplementation(
       (_ptyId: string, observer: (data: string) => void) => {
-        observer(CODEX_COMPOSER_PROMPT_RENDER)
+        observer(CODEX_DYNAMIC_COMPOSER_PROMPT_RENDER)
         observer(DECSET_BRACKETED_PASTE)
       }
     )
