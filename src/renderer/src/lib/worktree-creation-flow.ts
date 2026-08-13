@@ -156,7 +156,9 @@ async function executeWorktreeCreation(
     if (!useAppStore.getState().pendingWorktreeCreations[creationId]) {
       return
     }
-    await cleanupEphemeralVmRuntimeForFailedCreate(preparedRequest)
+    if (preparedRequest.ephemeralVmRuntimeId) {
+      await cleanupEphemeralVmRuntimeForFailedCreate(preparedRequest)
+    }
     const message = getWorkspaceCreateErrorToastMessage(formatWorkspaceCreateError(error))
     // Why: an error must stay on the same creation surface that owns the faux
     // tab strip, rather than falling back to stale previous-workspace tabs.
@@ -176,7 +178,9 @@ async function executeWorktreeCreation(
   const worktree = result.worktree
   // Why: cancellation can race a successful backend adoption; clean up again after it settles so an adopted workspace cannot outlive its destroyed VM.
   if (!useAppStore.getState().pendingWorktreeCreations[creationId]) {
-    await cleanupEphemeralVmRuntimeForFailedCreate(preparedRequest)
+    if (preparedRequest.ephemeralVmRuntimeId) {
+      await cleanupEphemeralVmRuntimeForFailedCreate(preparedRequest)
+    }
     return
   }
   await attachEphemeralVmRuntimeToWorkspace(preparedRequest, worktree.id)
