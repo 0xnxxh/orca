@@ -4672,9 +4672,9 @@ describe('registerWorktreeHandlers', () => {
           isMainWorktree: true
         },
         {
-          path: '/remote/repo-nautilus',
+          path: '/remote/repo-nautilus-2',
           head: 'abc123',
-          branch: 'refs/heads/nautilus',
+          branch: 'refs/heads/nautilus-2',
           isBare: false,
           isMainWorktree: false
         }
@@ -4689,6 +4689,9 @@ describe('registerWorktreeHandlers', () => {
     store.getRepo.mockReturnValue(repo)
     getSshGitProviderMock.mockReturnValue(provider)
     getActiveMultiplexerMock.mockReturnValue(mux)
+    store.getRetiredWorktreeNames.mockImplementation((repoId) =>
+      repoId === 'repo-ssh' ? ['nautilus'] : []
+    )
     store.setWorktreeMeta.mockImplementation((_worktreeId, meta) => meta)
 
     const result = await handlers['worktrees:create'](null, {
@@ -4711,9 +4714,9 @@ describe('registerWorktreeHandlers', () => {
     )
     expect(provider.listWorktrees).toHaveBeenCalledTimes(1)
     expect(provider.worktreeIsClean).not.toHaveBeenCalled()
-    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith('repo-ssh', 'nautilus')
+    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith('repo-ssh', 'nautilus-2')
     expect(store.setWorktreeMeta).toHaveBeenCalledWith(
-      'repo-ssh::/remote/repo-nautilus',
+      'repo-ssh::/remote/repo-nautilus-2',
       expect.objectContaining({
         linkedIssue: 123,
         linkedPR: 456,

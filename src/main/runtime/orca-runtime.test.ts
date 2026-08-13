@@ -4052,12 +4052,16 @@ describe('OrcaRuntimeService', () => {
 
   it('does not reuse stale in-flight worktree scans after creating a worktree', async () => {
     const addRetiredWorktreeName = vi.fn()
-    const runtime = new OrcaRuntimeService({ ...store, addRetiredWorktreeName })
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      addRetiredWorktreeName,
+      getRetiredWorktreeNames: () => ['nautilus']
+    })
     const staleScan = deferred<typeof MOCK_GIT_WORKTREES>()
     const createdWorktree = {
-      path: '/tmp/workspaces/repo-nautilus',
+      path: '/tmp/workspaces/repo-nautilus-2',
       head: 'def',
-      branch: 'nautilus',
+      branch: 'nautilus-2',
       isBare: false,
       isMainWorktree: false
     }
@@ -4087,7 +4091,7 @@ describe('OrcaRuntimeService', () => {
         worktrees: expect.arrayContaining([expect.objectContaining({ path: createdWorktree.path })])
       }
     )
-    expect(addRetiredWorktreeName).toHaveBeenCalledWith(TEST_REPO_ID, 'nautilus')
+    expect(addRetiredWorktreeName).toHaveBeenCalledWith(TEST_REPO_ID, 'nautilus-2')
   })
 
   it('creates additional workspace metadata for folder-mode repos through runtime create', async () => {

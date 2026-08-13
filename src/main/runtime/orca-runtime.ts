@@ -935,7 +935,8 @@ import {
 } from '../worktree-create-candidates'
 import {
   ensureRetiredWorktreeNamesBackfilled,
-  getRetiredWorktreeNamesByRepo
+  getRetiredWorktreeNamesByRepo,
+  getRetiredWorktreeNamesForRepo
 } from '../worktree-name-retirement'
 import { normalizeSparseDirectories } from '../ipc/sparse-checkout-directories'
 import type { PtyBindingSourceExpectation, Store } from '../persistence'
@@ -22297,6 +22298,9 @@ export class OrcaRuntimeService {
     let branchConflictKind: 'local' | 'remote' | null = null
     let worktreePath = ''
     let worktreePathResolved = false
+    const retiredNames = new Set(
+      getRetiredWorktreeNamesForRepo(this.store, repo, this.store.getRepos(), settings)
+    )
     // Why: runtime/mobile create-from-review callers should get a new workspace
     // even when the PR branch or review branch name is already in use.
     for (let suffix = 1; suffix <= WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS; suffix += 1) {
@@ -22304,6 +22308,9 @@ export class OrcaRuntimeService {
       effectiveRequestedName = args.name.trim()
         ? getWorktreeCreateCandidate(args.name, suffix)
         : effectiveSanitizedName
+      if (retiredNames.has(effectiveSanitizedName)) {
+        continue
+      }
       branchName = await resolveCreateBranchName(
         repo.path,
         selectedExistingLocalBranchName ??

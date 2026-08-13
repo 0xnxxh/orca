@@ -135,6 +135,7 @@ import {
   getWorktreeCreateCandidate,
   WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS
 } from '../worktree-create-candidates'
+import { getRetiredWorktreeNamesForRepo } from '../worktree-name-retirement'
 
 const SSH_WORKTREE_CREATE_FETCH_FRESHNESS_MS = 30_000
 const SSH_WORKTREE_CREATE_FETCH_CACHE_MAX = 512
@@ -1550,12 +1551,18 @@ export async function createRemoteWorktree(
   let selectedExistingLocalBranchName: string | null = null
   let lastBranchConflictKind: 'local' | 'remote' | null = null
   let remotePathResolved = false
+  const retiredNames = new Set(
+    getRetiredWorktreeNamesForRepo(store, repo, store.getRepos(), settings)
+  )
   // Why: duplicate PR/MR checkouts still need a workspace; suffix branch/path while preserving review metadata and push target.
   for (let suffix = 1; suffix <= WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS; suffix += 1) {
     effectiveSanitizedName = getWorktreeCreateCandidate(sanitizedName, suffix)
     effectiveRequestedName = args.name.trim()
       ? getWorktreeCreateCandidate(args.name, suffix)
       : effectiveSanitizedName
+    if (retiredNames.has(effectiveSanitizedName)) {
+      continue
+    }
     branchName = await resolveCreateBranchNameSsh(
       provider,
       repo.path,
@@ -2091,12 +2098,18 @@ export async function createLocalWorktree(
   let lastBranchConflictKind: 'local' | 'remote' | null = null
   let lastExistingPR: Awaited<ReturnType<typeof getPRForBranch>> | null = null
   let lastExistingReviewNumber: number | null = null
+  const retiredNames = new Set(
+    getRetiredWorktreeNamesForRepo(store, repo, store.getRepos(), settings)
+  )
   // Why: a create-from-review branch override may already exist locally; suffix both branch and path instead of blocking the user.
   for (let suffix = 1; suffix <= WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS; suffix += 1) {
     effectiveSanitizedName = getWorktreeCreateCandidate(sanitizedName, suffix)
     effectiveRequestedName = requestedName.trim()
       ? getWorktreeCreateCandidate(requestedName, suffix)
       : effectiveSanitizedName
+    if (retiredNames.has(effectiveSanitizedName)) {
+      continue
+    }
     lastExistingReviewNumber = null
 
     branchName = await resolveCreateBranchName(
