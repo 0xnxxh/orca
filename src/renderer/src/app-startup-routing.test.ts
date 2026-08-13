@@ -468,7 +468,7 @@ describe('renderer startup runtime routing', () => {
   it('checkpoints activeView and all session snapshots through one beforeunload handler (#9002)', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
     const checkpointStart = source.indexOf(
-      'const shutdownCheckpoint = createShutdownCheckpointGuard(() => {'
+      'const shutdownCheckpoint = createShutdownCheckpointGuard('
     )
     const checkpointEnd = source.indexOf(
       'const persistBeforeUnload = createShutdownCheckpointBeforeUnloadHandler(shutdownCheckpoint)',
@@ -485,6 +485,9 @@ describe('renderer startup runtime routing', () => {
     expect(checkpointBlock).toContain('window.api.app.stageBeforeUnloadSync({')
     expect(checkpointBlock).toContain('sessions: sessionSnapshots')
     expect(checkpointBlock).toContain('ui: buildActiveViewUnloadPatch(freshState)')
+    expect(checkpointBlock).toContain('!isIntentionalAppRestartInProgress()')
+    expect(checkpointBlock).toContain('state.openFiles.some((file) => file.isDirty)')
+    expect(checkpointBlock).toContain('sessions: []')
     expect(source).toContain(
       'window.addEventListener(ORCA_APP_RESTART_ABORTED_EVENT, shutdownCheckpoint.reset)'
     )

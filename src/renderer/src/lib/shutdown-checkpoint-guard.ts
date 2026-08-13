@@ -1,11 +1,17 @@
-import { ORCA_RENDERER_UNLOAD_PREVENTED_EVENT } from '../../../shared/renderer-shutdown-events'
+import {
+  ORCA_RENDERER_SHUTDOWN_CHECKPOINT_FAILED_EVENT,
+  ORCA_RENDERER_UNLOAD_PREVENTED_EVENT
+} from '../../../shared/renderer-shutdown-events'
 
 export type ShutdownCheckpointGuard = {
   persistOnce: () => boolean
   reset: () => void
 }
 
-export function createShutdownCheckpointGuard(persist: () => void): ShutdownCheckpointGuard {
+export function createShutdownCheckpointGuard(
+  persist: () => void,
+  recover?: (error: unknown) => void
+): ShutdownCheckpointGuard {
   let persisted = false
   return {
     persistOnce(): boolean {
@@ -14,10 +20,17 @@ export function createShutdownCheckpointGuard(persist: () => void): ShutdownChec
       }
       try {
         persist()
-      } catch {
-        // Why: browser event targets swallow listener exceptions. Returning a
-        // failure lets the caller cancel unload and keep this attempt retryable.
-        return false
+      } catch (error) {
+        // Why: browser event targets swallow listener exceptions. The recovery
+        // path can preserve a smaller checkpoint before the caller cancels.
+        if (!recover) {
+          return false
+        }
+        try {
+          recover(error)
+        } catch {
+          return false
+        }
       }
       persisted = true
       return true
@@ -33,6 +46,7 @@ export function createShutdownCheckpointBeforeUnloadHandler(
 ): (event: Event) => void {
   return (event): void => {
     if (!guard.persistOnce()) {
+      event.currentTarget?.dispatchEvent(new Event(ORCA_RENDERER_SHUTDOWN_CHECKPOINT_FAILED_EVENT))
       event.preventDefault()
     }
   }
