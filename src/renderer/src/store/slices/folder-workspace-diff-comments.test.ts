@@ -238,6 +238,56 @@ describe('folder workspace diff comments', () => {
     consoleError.mockRestore()
   })
 
+  it('reports success when an earlier queued write already persisted the mutation', async () => {
+    const store = createTestStore()
+    const folderWorkspace = seedLocalFolderWorkspace(store)
+    const workspaceKey = folderWorkspaceKey(folderWorkspace.id)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    folderWorkspacesUpdate.mockImplementation(async ({ updates }) => {
+      if (folderWorkspacesUpdate.mock.calls.length === 1) {
+        return { ...folderWorkspace, ...updates }
+      }
+      throw new Error('disk full')
+    })
+
+    // Why: no await between the two adds, so both notes are in state before the first write snapshots it.
+    const addFirst = store.getState().addDiffComment({
+      worktreeId: workspaceKey,
+      filePath: 'README.md',
+      source: 'markdown',
+      lineNumber: 1,
+      body: 'first note',
+      side: 'modified'
+    })
+    const addSecond = store.getState().addDiffComment({
+      worktreeId: workspaceKey,
+      filePath: 'README.md',
+      source: 'markdown',
+      lineNumber: 2,
+      body: 'second note',
+      side: 'modified'
+    })
+
+    await expect(Promise.all([addFirst, addSecond])).resolves.toEqual([
+      expect.objectContaining({ body: 'first note' }),
+      expect.objectContaining({ body: 'second note' })
+    ])
+    expect(folderWorkspacesUpdate).toHaveBeenNthCalledWith(1, {
+      folderWorkspaceId: folderWorkspace.id,
+      updates: {
+        diffComments: [
+          expect.objectContaining({ body: 'first note' }),
+          expect.objectContaining({ body: 'second note' })
+        ]
+      }
+    })
+    expect(store.getState().getDiffComments(workspaceKey)).toEqual([
+      expect.objectContaining({ body: 'first note' }),
+      expect.objectContaining({ body: 'second note' })
+    ])
+    consoleError.mockRestore()
+  })
+
   it('keeps same-id writes scoped to their original hosts', async () => {
     const store = createTestStore()
     const workspaceId = 'shared-folder-id'

@@ -156,17 +156,23 @@ function settingsForWorktreeOwner(state: AppState, worktreeId: string): AppState
 // Why: IPC writes aren't ordered, so serialize per worktree to stop an older snapshot from overwriting a newer one on disk.
 const persistQueueByWorktree = new Map<string, Promise<PersistOutcome>>()
 
-// Why: the list storage actually holds, so a failed write rolls back to disk rather than to an earlier optimistic list
-// that a preceding queued write may also have failed to persist. Cleared once the queue drains and state matches disk again.
-const durableCommentsByQueue = new Map<string, DiffComment[] | undefined>()
+type QueueDurability = {
+  // Why: what storage actually holds, so a failed write rolls back to disk rather than to a still-optimistic list.
+  comments: DiffComment[] | undefined
+  // Why: a write snapshots state at dequeue time, so it can carry mutations queued behind it all the way to disk.
+  persistedSeq: number
+  enqueuedSeq: number
+}
+
+// Why: dropped once the queue drains and state matches disk again.
+const durabilityByQueue = new Map<string, QueueDurability>()
 
 type PersistOutcome =
   | { ok: true }
   | { ok: false; error: unknown; durable: DiffComment[] | undefined }
 
-// Why: chain each write onto the prior promise so writes land in call order; the chain resolves outcomes instead of
-// rejecting so a failure can carry the durable list back to its own caller without breaking the chain.
-// Why: queued work reads the latest list at dequeue time, and the returned promise settles for THIS write so callers can roll back.
+// Why: chain each write onto the prior one so writes land in call order; outcomes resolve rather than reject so a
+// failure carries the durable list back to its own caller without breaking the chain.
 function enqueuePersist(
   worktreeId: string,
   get: () => AppState,
@@ -174,15 +180,21 @@ function enqueuePersist(
 ): Promise<PersistOutcome> {
   const folderExecutionHostId = mutation.folderExecutionHostId
   const queueKey = folderExecutionHostId ? `${folderExecutionHostId}\0${worktreeId}` : worktreeId
-  // Why: an empty queue means nothing is in flight, so the pre-mutation list is what storage holds.
-  if (!durableCommentsByQueue.has(queueKey)) {
-    durableCommentsByQueue.set(queueKey, mutation.previous)
+  let existing = durabilityByQueue.get(queueKey)
+  if (!existing) {
+    // Why: an empty queue means nothing is in flight, so the pre-mutation list is what storage holds.
+    existing = { comments: mutation.previous, persistedSeq: 0, enqueuedSeq: 0 }
+    durabilityByQueue.set(queueKey, existing)
   }
+  const durability = existing
+  const seq = ++durability.enqueuedSeq
   const prior =
     persistQueueByWorktree.get(queueKey) ?? Promise.resolve<PersistOutcome>({ ok: true })
   const run = async (): Promise<PersistOutcome> => {
     const scope = parseWorkspaceKey(worktreeId)
     const state = get()
+    // Why: enqueue follows the state mutation synchronously, so this snapshot already covers every enqueued mutation.
+    const covered = durability.enqueuedSeq
     const latest =
       scope?.type === 'folder'
         ? (
@@ -199,9 +211,14 @@ function enqueuePersist(
         ? persist(state, state.settings, worktreeId, latest, folderExecutionHostId)
         : persist(state, settingsForWorktreeOwner(state, worktreeId), worktreeId, latest))
     } catch (error) {
-      return { ok: false, error, durable: durableCommentsByQueue.get(queueKey) }
+      // Why: an earlier queued write may have snapshotted this mutation and landed it, so it isn't lost after all.
+      if (durability.persistedSeq >= seq) {
+        return { ok: true }
+      }
+      return { ok: false, error, durable: durability.comments }
     }
-    durableCommentsByQueue.set(queueKey, latest)
+    durability.comments = latest
+    durability.persistedSeq = covered
     return { ok: true }
   }
   const next = prior.then(run, run)
@@ -211,7 +228,7 @@ function enqueuePersist(
   const cleanup = (): void => {
     if (persistQueueByWorktree.get(queueKey) === next) {
       persistQueueByWorktree.delete(queueKey)
-      durableCommentsByQueue.delete(queueKey)
+      durabilityByQueue.delete(queueKey)
     }
   }
   next.then(cleanup, cleanup)
