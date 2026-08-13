@@ -31,11 +31,11 @@ const EXPECTED_PARTITION_KEY = {
   hasCrossSiteAncestor: true
 }
 
-function buildFixtureMain(policyPath: string, resultPath: string): string {
+function buildFixtureMain(clearPath: string, resultPath: string): string {
   return `
 const { app, BrowserWindow, session } = require('electron')
 const { writeFileSync } = require('node:fs')
-const { removeTransplantableCookies } = require(${JSON.stringify(policyPath)})
+const { removeTransplantableCookies } = require(${JSON.stringify(clearPath)})
 const resultPath = ${JSON.stringify(resultPath)}
 let currentStep = 'starting'
 const mark = (step) => {
@@ -83,24 +83,54 @@ async function run() {
   await targetSession.cookies.set({ url: 'https://accounts.google.com/', name: 'SID', value: 'live', secure: true })
   mark('removable cookies set')
 
-  const store = {
-    get: (filter) => targetSession.cookies.get(filter),
-    set: (details) => targetSession.cookies.set(details),
-    // Why: one rejecting removal is what drove the old rollback; the rest still succeed.
-    remove: async (url, name) => {
-      if (name === 'victim') throw new Error('forced victim removal failure')
-      return targetSession.cookies.remove(url, name)
-    }
-  }
-
-  // Why: the bulk clear is the ordinary path now, so rejecting it is what routes this fixture onto
-  // the per-cookie fallback where a partial failure — and the old rollback — could happen at all.
+  // Why: the bulk clear is the ordinary path now, so rejecting it routes this fixture onto
+  // the per-cookie fallback where a later removal can fail after earlier ones succeeded.
   let bulkClearCalls = 0
   const clearSession = {
-    cookies: store,
+    cookies: {
+      get: (filter) => targetSession.cookies.get(filter),
+      remove: async (url, name) => {
+        if (name === 'victim') throw new Error('forced victim removal failure')
+        return targetSession.cookies.remove(url, name)
+      }
+    },
     clearData: async () => {
       bulkClearCalls++
       throw new Error('forced bulk clear failure')
+    },
+    snapshotClearIdentities: async (cookies) => {
+      const { cookies: cdpCookies } = await debug.sendCommand('Network.getAllCookies')
+      return cookies.flatMap((item) => {
+        const matches = cdpCookies.filter((cdpCookie) => cdpCookie.name === item.cookie.name)
+        if (matches.length === 0) throw new Error('Could not snapshot cookie identity for an atomic clear')
+        return matches.map((cdpCookie) => ({
+          url: item.url,
+          name: cdpCookie.name,
+          value: cdpCookie.value,
+          domain: cdpCookie.domain,
+          path: cdpCookie.path,
+          secure: cdpCookie.secure,
+          httpOnly: cdpCookie.httpOnly,
+          sameSite: cdpCookie.sameSite === 'None' ? 'no_restriction' : 'lax',
+          partitionKey: cdpCookie.partitionKey
+        }))
+      })
+    },
+    restoreClearIdentities: async (identities) => {
+      for (const identity of identities) {
+        const result = await debug.sendCommand('Network.setCookie', {
+          url: identity.url,
+          name: identity.name,
+          value: identity.value,
+          domain: identity.domain,
+          path: identity.path,
+          secure: identity.secure,
+          httpOnly: identity.httpOnly,
+          sameSite: identity.sameSite === 'no_restriction' ? 'None' : 'Lax',
+          partitionKey: identity.partitionKey
+        })
+        if (result && result.success === false) throw new Error('CDP restore rejected ' + identity.name)
+      }
     }
   }
 
@@ -140,7 +170,7 @@ run().catch((error) => {
 async function runFixture(): Promise<FixtureResult> {
   const root = mkdtempSync(join(tmpdir(), 'orca-partition-rollback-'))
   fixtureRoots.push(root)
-  const policyPath = join(root, 'browser-cookie-import-policy.cjs')
+  const clearPath = join(root, 'browser-cookie-import-clear.cjs')
   const resultPath = join(root, 'result.json')
   const fixturePath = join(root, 'main.cjs')
   await buildVite({
@@ -149,16 +179,16 @@ async function runFixture(): Promise<FixtureResult> {
     build: {
       emptyOutDir: false,
       lib: {
-        entry: join(process.cwd(), 'src/main/browser/browser-cookie-import-policy.ts'),
+        entry: join(process.cwd(), 'src/main/browser/browser-cookie-import-clear.ts'),
         formats: ['cjs'],
-        fileName: () => 'browser-cookie-import-policy.cjs'
+        fileName: () => 'browser-cookie-import-clear.cjs'
       },
       outDir: root,
       target: 'node20',
       rollupOptions: { external: ['electron', /^node:/] }
     }
   })
-  writeFileSync(fixturePath, buildFixtureMain(policyPath, resultPath))
+  writeFileSync(fixturePath, buildFixtureMain(clearPath, resultPath))
   const { ELECTRON_RUN_AS_NODE: _electronRunAsNode, ...env } = process.env
   const electronArgs = [fixturePath, `--user-data-dir=${join(root, 'profile')}`]
   const executable = process.platform === 'linux' ? 'xvfb-run' : electronBinary
@@ -178,20 +208,18 @@ async function runFixture(): Promise<FixtureResult> {
 }
 
 describe('non-Google partitioned cookie under a failed Electron cookie clear', () => {
-  it('never resurrects a removed partitioned cookie', async () => {
+  // Why (STA-4090): a later fallback rejection must not permanently drop cookies already
+  // removed in the same clear — including CHIPS cookies cookies.set() cannot round-trip.
+  it('keeps already-removed CHIPS and ordinary cookies after a later removal rejects', async () => {
     const result = await runFixture()
 
     expect(result.beforePartitionKey).toEqual(EXPECTED_PARTITION_KEY)
-    // Why (STA-4065): the fallback is only reachable once the bulk clear has been tried and failed;
-    // if it ever succeeded here the partial-failure assertions below would be vacuous.
     expect(result.bulkClearCalls).toBe(1)
     expect(result.remainingExcluded.map(({ name }) => name)).toEqual(['SID'])
     expect(result.clearError).toContain('Could not clear existing cookies')
-    // STA-4061: rollback rebuilt this cookie through cookies.set, which drops partitionKey.
-    expect(
-      result.remainingChips,
-      `chips-auth survived: ${JSON.stringify(result.remainingChips)}`
-    ).toEqual([])
-    expect(result.remainingPlain).toEqual([])
+    expect(result.remainingChips).toEqual([
+      { name: 'chips-auth', value: 'keep-me', partitionKey: EXPECTED_PARTITION_KEY }
+    ])
+    expect(result.remainingPlain).toEqual([{ name: 'plain', value: 'stale' }])
   }, 90_000)
 })

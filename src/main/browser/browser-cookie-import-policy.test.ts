@@ -2,11 +2,14 @@ import { describe, expect, it, vi, type Mock } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import type { Cookie } from 'electron'
 import {
+  identitiesFromClearCookies,
+  removeTransplantableCookies
+} from './browser-cookie-import-clear'
+import {
   isGoogleSourceBoundCookie,
   isNonTransplantableCookieDomain,
   NON_TRANSPLANTABLE_HOST_KEY_SQL,
   normalizeCookieDomain,
-  removeTransplantableCookies,
   replaceCookiesForImportedDomains
 } from './browser-cookie-import-policy'
 
@@ -225,12 +228,20 @@ describe('removeTransplantableCookies', () => {
       ...overrides
     }
     const clearData = overrides.clearData ?? vi.fn().mockResolvedValue(undefined)
+    const restoreClearIdentities = vi.fn().mockResolvedValue(undefined)
     return {
-      session: { cookies: store, clearData },
+      session: {
+        cookies: store,
+        clearData,
+        snapshotClearIdentities: async (items: Parameters<typeof identitiesFromClearCookies>[0]) =>
+          identitiesFromClearCookies(items),
+        restoreClearIdentities
+      },
       get: store.get,
       remove: store.remove,
       set: store.set,
-      clearData
+      clearData,
+      restoreClearIdentities
     }
   }
 
@@ -343,10 +354,9 @@ describe('removeTransplantableCookies', () => {
     expect(set).not.toHaveBeenCalled()
   })
 
-  // Why (STA-4061): reconstructing a removed cookie loses its partition key, and the snapshot
-  // cannot say which cookies had one, so a failed clear must stay failed.
-  it('never reconstructs removed cookies when another removal fails', async () => {
-    const { session, remove, set } = clearSession(
+  // Why (STA-4090): a failed fallback must restore through captured identities, never cookies.set.
+  it('restores removed cookies through captured identities when another removal fails', async () => {
+    const { session, remove, set, restoreClearIdentities } = clearSession(
       [
         cookie('.google.com', 'SID'),
         cookie('.example.com', 'first', '/one'),
@@ -364,10 +374,14 @@ describe('removeTransplantableCookies', () => {
     )
 
     await expect(removeTransplantableCookies(session)).rejects.toThrow(
-      'the session was left partially cleared'
+      'existing cookies were restored'
     )
     expect(remove).toHaveBeenCalledTimes(3)
     expect(set).not.toHaveBeenCalled()
+    expect(restoreClearIdentities).toHaveBeenCalledOnce()
+    expect(
+      restoreClearIdentities.mock.calls[0][0].map((identity: { name: string }) => identity.name)
+    ).toEqual(expect.arrayContaining(['first', 'second', 'third']))
   })
 
   it('bounds parallel removals so large cookie jars do not clear serially or fan out', async () => {
