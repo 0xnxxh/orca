@@ -138,7 +138,8 @@ describe('a runtime can scan an SSH host that it owns', () => {
     expect(scanAiVaultSessionsInWorker).not.toHaveBeenCalled()
     expect(scanSshAiVaultSessions).toHaveBeenCalledWith(
       'hub-owned-host',
-      expect.objectContaining({ limit: 500 })
+      expect.objectContaining({ limit: 500 }),
+      { timeoutMs: 20_000 }
     )
     expect(scoped.result.sessions.map((session) => session.executionHostId)).toEqual([
       'ssh:hub-owned-host'
@@ -195,7 +196,8 @@ describe('a runtime can scan an SSH host that it owns', () => {
     expect(scanAiVaultSessionsInWorker).toHaveBeenCalledTimes(1)
     expect(scanSshAiVaultSessions).toHaveBeenCalledWith(
       'hub-owned-host',
-      expect.objectContaining({ limit: 500 })
+      expect.objectContaining({ limit: 500 }),
+      { timeoutMs: 20_000 }
     )
     expect(optedIn.result.sessions.map((session) => session.executionHostId).sort()).toEqual([
       'runtime:hub-runtime',

@@ -95,6 +95,52 @@ describe('runtime-owned SSH AI Vault routing', () => {
     ])
   })
 
+  it('scans runtime-owned SSH hosts as their own all-hosts legs', async () => {
+    const listRuntimeOwnedSshAiVaultTargets = vi.fn().mockResolvedValue([
+      {
+        environmentId: 'hub-runtime',
+        targetId: 'hub-owned-host',
+        executionHostId: 'ssh:hub-owned-host',
+        connected: true
+      },
+      {
+        environmentId: 'hub-runtime',
+        targetId: 'offline-host',
+        executionHostId: 'ssh:offline-host',
+        connected: false
+      }
+    ])
+    const scanRuntimeOwnedSshAiVaultSessions = vi
+      .fn()
+      .mockResolvedValue(result([session('ssh:hub-owned-host', 'hub-ssh-session')]))
+    registerAiVaultHandlers({
+      getActiveRuntimeAiVaultHostInfos: () => [
+        { environmentId: 'hub-runtime', executionHostId: 'runtime:hub-runtime' }
+      ],
+      listRuntimeOwnedSshAiVaultTargets,
+      scanRuntimeOwnedSshAiVaultSessions
+    })
+
+    const scanned = await _internals.listAiVaultSessions({ executionHostScope: 'all' })
+
+    expect(listRuntimeOwnedSshAiVaultTargets).toHaveBeenCalledWith('hub-runtime')
+    expect(scanRuntimeOwnedSshAiVaultSessions).toHaveBeenCalledTimes(1)
+    expect(scanRuntimeOwnedSshAiVaultSessions).toHaveBeenCalledWith(
+      'hub-runtime',
+      'hub-owned-host',
+      { executionHostScope: 'all' },
+      { timeoutMs: 20_000 }
+    )
+    expect(scanned.sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          executionHostId: 'ssh:hub-owned-host',
+          sessionId: 'hub-ssh-session'
+        })
+      ])
+    )
+  })
+
   it('does not send recipe-VM SSH targets through a paired runtime', async () => {
     const findRuntimeOwningSshAiVaultHost = vi.fn()
     registerAiVaultHandlers({ findRuntimeOwningSshAiVaultHost })

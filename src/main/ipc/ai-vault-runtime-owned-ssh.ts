@@ -25,12 +25,20 @@ export async function scanSshAiVaultSessionsByOwner(args: {
     args.findOwner &&
     args.scanOwned
   ) {
-    const owner = await args.findOwner(args.targetId)
-    if (owner) {
-      return args.scanOwned(owner.environmentId, owner.targetId, args.listArgs ?? {}, {
-        timeoutMs: args.timeoutMs
-      })
+    try {
+      const owner = await args.findOwner(args.targetId)
+      if (owner) {
+        return await args.scanOwned(owner.environmentId, owner.targetId, args.listArgs ?? {}, {
+          timeoutMs: args.timeoutMs
+        })
+      }
+    } catch {
+      // Fall through to the local SSH issue path so one dead pairing cannot
+      // discard sibling all-hosts legs.
     }
   }
-  return scanSshAiVaultSessions(args.targetId, args.listArgs, { signal: args.signal })
+  return scanSshAiVaultSessions(args.targetId, args.listArgs, {
+    signal: args.signal,
+    timeoutMs: args.timeoutMs
+  })
 }

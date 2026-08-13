@@ -20,6 +20,9 @@ import { LOCAL_EXECUTION_HOST_ID, parseExecutionHostId } from '../../../../share
 // traversal); the count/length caps mirror the worktree-schemas bounding style.
 const AI_VAULT_SCOPE_PATH_MAX_LENGTH = 4096
 const AI_VAULT_LIMIT_MAX = 2000
+// Keep in lockstep with desktop all-hosts SSH legs so a stuck relay cannot hang
+// web/mobile includeOwnedSshHosts scans or a named ssh: hop.
+const OWNED_SSH_SCAN_TIMEOUT_MS = 20_000
 
 const executionHostIdSchema = z
   .string()
@@ -120,23 +123,30 @@ export const AI_VAULT_METHODS: RpcMethod[] = [
         scopePaths: params.scopePaths
       }
       if (parsed?.kind === 'ssh') {
-        return scanSshAiVaultSessions(parsed.targetId, listArgs)
+        return scanSshAiVaultSessions(parsed.targetId, listArgs, {
+          timeoutMs: OWNED_SSH_SCAN_TIMEOUT_MS
+        })
       }
+      const sshHosts = params.includeOwnedSshHosts === true ? getActiveSshAiVaultHostInfos() : []
+      const sshPromise =
+        sshHosts.length > 0
+          ? Promise.all(
+              sshHosts.map((host) =>
+                scanSshAiVaultSessions(host.targetId, listArgs, {
+                  timeoutMs: OWNED_SSH_SCAN_TIMEOUT_MS
+                })
+              )
+            )
+          : Promise.resolve([])
       const result = await runtime.listAiVaultSessions(listArgs)
       // Why: web clients consume this response directly (no parent-side retag),
       // so host-local sessions must come back stamped as the runtime they addressed.
       const stamped =
         parsed?.kind === 'runtime' ? restampAiVaultListResult(result, parsed.id) : result
-      if (params.includeOwnedSshHosts !== true) {
+      const sshResults = await sshPromise
+      if (sshResults.length === 0) {
         return stamped
       }
-      const sshHosts = getActiveSshAiVaultHostInfos()
-      if (sshHosts.length === 0) {
-        return stamped
-      }
-      const sshResults = await Promise.all(
-        sshHosts.map((host) => scanSshAiVaultSessions(host.targetId, listArgs))
-      )
       return mergeAiVaultListResults([stamped, ...sshResults], listArgs.limit, listArgs.unlimited)
     }
   }),

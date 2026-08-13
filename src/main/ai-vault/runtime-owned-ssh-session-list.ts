@@ -22,6 +22,7 @@ export type RuntimeOwnedSshAiVaultHost = {
   environmentId: string
   targetId: string
   executionHostId: `ssh:${string}`
+  connected?: boolean
 }
 
 export type RuntimeOwnedSshAiVaultScanOptions = {
@@ -35,13 +36,18 @@ export async function listRuntimeOwnedSshAiVaultTargets(
   environmentId: string,
   options: RuntimeOwnedSshAiVaultScanOptions = {}
 ): Promise<readonly RuntimeOwnedSshAiVaultHost[]> {
-  const response = await callRuntimeEnvironment(
-    userDataPath,
-    environmentId,
-    'ssh.listTargetSummaries',
-    undefined,
-    options.timeoutMs
-  )
+  let response: Awaited<ReturnType<typeof callRuntimeEnvironment>>
+  try {
+    response = await callRuntimeEnvironment(
+      userDataPath,
+      environmentId,
+      'ssh.listTargetSummaries',
+      undefined,
+      options.timeoutMs
+    )
+  } catch {
+    return []
+  }
   if (response.ok !== true || !isTargetSummaryList(response.result)) {
     return []
   }
@@ -56,7 +62,8 @@ export async function listRuntimeOwnedSshAiVaultTargets(
       {
         environmentId,
         targetId: target.id,
-        executionHostId: toSshExecutionHostId(target.id)
+        executionHostId: toSshExecutionHostId(target.id),
+        ...(typeof target.connected === 'boolean' ? { connected: target.connected } : {})
       }
     ]
   })
@@ -70,8 +77,13 @@ export async function findRuntimeOwningSshAiVaultHost(
   if (isRuntimeOwnedSshTargetId(targetId)) {
     return null
   }
-  for (const environment of listEnvironments(userDataPath)) {
-    const hosts = await listRuntimeOwnedSshAiVaultTargets(userDataPath, environment.id, options)
+  const environments = listEnvironments(userDataPath)
+  const inventories = await Promise.all(
+    environments.map((environment) =>
+      listRuntimeOwnedSshAiVaultTargets(userDataPath, environment.id, options)
+    )
+  )
+  for (const hosts of inventories) {
     const match = hosts.find((host) => host.targetId === targetId)
     if (match) {
       return match
@@ -88,19 +100,28 @@ export async function scanRuntimeOwnedSshAiVaultSessions(
   options: RuntimeOwnedSshAiVaultScanOptions = {}
 ): Promise<AiVaultListResult> {
   const executionHostId = toSshExecutionHostId(targetId)
-  const response = await callRuntimeEnvironment(
-    userDataPath,
-    environmentId,
-    'aiVault.listSessions',
-    {
-      limit: args.limit,
-      unlimited: args.unlimited,
-      force: args.force,
-      scopePaths: args.scopePaths?.slice(0, AI_VAULT_SCOPE_PATHS_MAX_COUNT),
-      executionHostId
-    },
-    options.timeoutMs
-  )
+  let response: Awaited<ReturnType<typeof callRuntimeEnvironment>>
+  try {
+    response = await callRuntimeEnvironment(
+      userDataPath,
+      environmentId,
+      'aiVault.listSessions',
+      {
+        limit: args.limit,
+        unlimited: args.unlimited,
+        force: args.force,
+        scopePaths: args.scopePaths?.slice(0, AI_VAULT_SCOPE_PATHS_MAX_COUNT),
+        executionHostId
+      },
+      options.timeoutMs
+    )
+  } catch (error) {
+    return aiVaultScanIssueResult({
+      executionHostId,
+      path: targetId,
+      message: error instanceof Error ? error.message : 'Remote Orca server is unavailable.'
+    })
+  }
   if (response.ok !== true) {
     return aiVaultScanIssueResult({
       executionHostId,
@@ -128,12 +149,17 @@ export async function resolveRuntimeOwnedSshAiVaultSessionTitles(
   args: AiVaultSessionTitlesArgs
 ): Promise<AiVaultSessionTitlesResult> {
   const executionHostId: ExecutionHostId = toSshExecutionHostId(targetId)
-  const response = await callRuntimeEnvironment(
-    userDataPath,
-    environmentId,
-    'aiVault.resolveSessionTitles',
-    { requests: args.requests, executionHostId }
-  )
+  let response: Awaited<ReturnType<typeof callRuntimeEnvironment>>
+  try {
+    response = await callRuntimeEnvironment(
+      userDataPath,
+      environmentId,
+      'aiVault.resolveSessionTitles',
+      { requests: args.requests, executionHostId }
+    )
+  } catch {
+    return { titles: [] }
+  }
   if (response.ok !== true) {
     return { titles: [] }
   }
@@ -151,7 +177,9 @@ function unsupportedSshHostMessage(message: string): string {
   return message
 }
 
-function isTargetSummaryList(value: unknown): value is { targets: { id?: unknown }[] } {
+function isTargetSummaryList(
+  value: unknown
+): value is { targets: { id?: unknown; connected?: unknown }[] } {
   return (
     typeof value === 'object' &&
     value !== null &&

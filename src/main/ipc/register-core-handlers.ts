@@ -25,6 +25,7 @@ import { registerRuntimeHandlers } from './runtime'
 import { registerRuntimeEnvironmentHandlers } from './runtime-environments'
 import { registerEphemeralVmHandlers } from './ephemeral-vm'
 import { registerAiVaultHandlers } from './ai-vault'
+import { AI_VAULT_ALL_HOST_RUNTIME_TIMEOUT_MS } from './ai-vault-host-scope-scan'
 import { registerNativeChatHandlers } from './native-chat'
 import { registerNotificationHandlers } from './notifications'
 import { registerNotebookHandlers } from './notebook'
@@ -93,6 +94,7 @@ import {
 } from '../ai-vault/runtime-session-scanner'
 import {
   findRuntimeOwningSshAiVaultHost,
+  listRuntimeOwnedSshAiVaultTargets,
   resolveRuntimeOwnedSshAiVaultSessionTitles,
   scanRuntimeOwnedSshAiVaultSessions
 } from '../ai-vault/runtime-owned-ssh-session-list'
@@ -229,8 +231,14 @@ export function registerCoreHandlers(
       scanRuntimeAiVaultSessions(app.getPath('userData'), environmentId, args, options),
     resolveRuntimeAiVaultSessionTitles: async (environmentId, args) =>
       resolveRuntimeAiVaultSessionTitles(app.getPath('userData'), environmentId, args),
+    listRuntimeOwnedSshAiVaultTargets: async (environmentId) =>
+      listRuntimeOwnedSshAiVaultTargets(app.getPath('userData'), environmentId, {
+        timeoutMs: AI_VAULT_ALL_HOST_RUNTIME_TIMEOUT_MS
+      }),
     findRuntimeOwningSshAiVaultHost: async (targetId) =>
-      findRuntimeOwningSshAiVaultHost(app.getPath('userData'), targetId),
+      findRuntimeOwningSshAiVaultHost(app.getPath('userData'), targetId, {
+        timeoutMs: AI_VAULT_ALL_HOST_RUNTIME_TIMEOUT_MS
+      }),
     scanRuntimeOwnedSshAiVaultSessions: async (environmentId, targetId, args, options) =>
       scanRuntimeOwnedSshAiVaultSessions(
         app.getPath('userData'),

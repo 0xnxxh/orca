@@ -48,6 +48,9 @@ type AiVaultHandlerOptions = AiVaultSessionSources &
     getActiveRuntimeAiVaultHostInfos?: () => readonly RuntimeAiVaultHostInfo[]
     scanRuntimeAiVaultSessions?: RuntimeAiVaultScanner
     resolveRuntimeAiVaultSessionTitles?: RuntimeAiVaultSessionTitleResolver
+    listRuntimeOwnedSshAiVaultTargets?: (
+      environmentId: string
+    ) => Promise<readonly RuntimeOwnedSshAiVaultHost[]>
     findRuntimeOwningSshAiVaultHost?: (
       targetId: string
     ) => Promise<RuntimeOwnedSshAiVaultHost | null>
@@ -103,6 +106,7 @@ async function listAiVaultSessions(
         scanAiVaultSessionsByHostScope(args, executionHostScope, scanSignal, key, {
           getActiveRuntimeAiVaultHostInfos: handlerOptions.getActiveRuntimeAiVaultHostInfos,
           scanRuntimeAiVaultSessions: handlerOptions.scanRuntimeAiVaultSessions,
+          listRuntimeOwnedSshAiVaultTargets: handlerOptions.listRuntimeOwnedSshAiVaultTargets,
           findRuntimeOwningSshAiVaultHost: handlerOptions.findRuntimeOwningSshAiVaultHost,
           scanRuntimeOwnedSshAiVaultSessions: handlerOptions.scanRuntimeOwnedSshAiVaultSessions,
           scanLocal: scanLocalAiVaultSessions

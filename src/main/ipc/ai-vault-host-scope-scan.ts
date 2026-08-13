@@ -1,4 +1,5 @@
 import { scanSshAiVaultSessions } from '../ai-vault/ssh-session-list'
+import { abandonRemoteSessionScanOnCancel } from '../ai-vault/ai-vault-scan-cancellation'
 import { aiVaultScanIssueResult, mergeAiVaultListResults } from '../ai-vault/session-list-results'
 import { requestedAiVaultSessionDepth } from '../../shared/ai-vault-session-depth'
 import {
@@ -34,6 +35,9 @@ export const AI_VAULT_ALL_HOST_SSH_TIMEOUT_MS = 20_000
 export type AiVaultHostScopeScanOptions = {
   getActiveRuntimeAiVaultHostInfos?: () => readonly RuntimeAiVaultHostInfo[]
   scanRuntimeAiVaultSessions?: RuntimeAiVaultScanner
+  listRuntimeOwnedSshAiVaultTargets?: (
+    environmentId: string
+  ) => Promise<readonly RuntimeOwnedSshAiVaultHost[]>
   findRuntimeOwningSshAiVaultHost?: (targetId: string) => Promise<RuntimeOwnedSshAiVaultHost | null>
   scanRuntimeOwnedSshAiVaultSessions?: RuntimeOwnedSshAiVaultScanner
   scanLocal: (
@@ -104,50 +108,120 @@ async function scanAllAiVaultHosts(
     path: 'SSH hosts',
     fallbackMessage: 'SSH hosts are unavailable.'
   })
-  const scannedResults = await Promise.all([
-    scanLocalAiVaultSessionsAsIssue(options.scanLocal, args, signal),
-    ...sshHosts.hostInfos.map((hostInfo) =>
-      scanHostLegWithCache({
-        cacheKey: `${cacheKey}|${toSshExecutionHostId(hostInfo.targetId)}`,
-        depth,
-        scopePaths,
-        force: args?.force === true,
-        scan: () =>
-          scanSshAiVaultSessions(hostInfo.targetId, args, {
-            signal,
-            timeoutMs: AI_VAULT_ALL_HOST_SSH_TIMEOUT_MS,
-            relayTimeoutMs: AI_VAULT_ALL_HOST_SSH_RELAY_TIMEOUT_MS
-          })
-      })
-    ),
-    ...runtimeHosts.hostInfos.map((hostInfo) =>
-      scanHostLegWithCache({
-        cacheKey: `${cacheKey}|${hostInfo.executionHostId}`,
-        depth,
-        scopePaths,
-        force: args?.force === true,
-        scan: () =>
-          scanRuntimeAiVaultSessions({
-            hostInfo,
-            scanner: options.scanRuntimeAiVaultSessions,
-            listArgs: args,
-            options: {
+  // Why: keep runtime host-local legs on the 3s budget. Folding that runtime's
+  // SSH inventory into the same RPC made one slow SSH host fail the runtime row.
+  const localSshTargetIds = new Set(sshHosts.hostInfos.map((hostInfo) => hostInfo.targetId))
+  const [scannedResults, runtimeOwnedSshResults] = await Promise.all([
+    Promise.all([
+      scanLocalAiVaultSessionsAsIssue(options.scanLocal, args, signal),
+      ...sshHosts.hostInfos.map((hostInfo) =>
+        scanHostLegWithCache({
+          cacheKey: `${cacheKey}|${toSshExecutionHostId(hostInfo.targetId)}`,
+          depth,
+          scopePaths,
+          force: args?.force === true,
+          scan: () =>
+            scanSshAiVaultSessions(hostInfo.targetId, args, {
               signal,
-              timeoutMs: AI_VAULT_ALL_HOST_RUNTIME_TIMEOUT_MS,
-              includeOwnedSshHosts: true
-            }
-          })
-      })
+              timeoutMs: AI_VAULT_ALL_HOST_SSH_TIMEOUT_MS,
+              relayTimeoutMs: AI_VAULT_ALL_HOST_SSH_RELAY_TIMEOUT_MS
+            })
+        })
+      ),
+      ...runtimeHosts.hostInfos.map((hostInfo) =>
+        scanHostLegWithCache({
+          cacheKey: `${cacheKey}|${hostInfo.executionHostId}`,
+          depth,
+          scopePaths,
+          force: args?.force === true,
+          scan: () =>
+            scanRuntimeAiVaultSessions({
+              hostInfo,
+              scanner: options.scanRuntimeAiVaultSessions,
+              listArgs: args,
+              options: {
+                signal,
+                timeoutMs: AI_VAULT_ALL_HOST_RUNTIME_TIMEOUT_MS
+              }
+            })
+        })
+      )
+    ]),
+    scanRuntimeOwnedSshHosts(
+      args,
+      signal,
+      cacheKey,
+      depth,
+      scopePaths,
+      localSshTargetIds,
+      runtimeHosts.hostInfos,
+      options
     )
   ])
   return mergeAiVaultListResults(
     [
       ...scannedResults,
+      ...runtimeOwnedSshResults,
       ...(runtimeHosts.issue ? [runtimeHosts.issue] : []),
       ...(sshHosts.issue ? [sshHosts.issue] : [])
     ],
     args?.limit,
     args?.unlimited
+  )
+}
+
+async function scanRuntimeOwnedSshHosts(
+  args: AiVaultListArgs | undefined,
+  signal: AbortSignal | undefined,
+  cacheKey: string,
+  depth: ReturnType<typeof requestedAiVaultSessionDepth>,
+  scopePaths: readonly string[],
+  localSshTargetIds: ReadonlySet<string>,
+  runtimeHosts: readonly RuntimeAiVaultHostInfo[],
+  options: AiVaultHostScopeScanOptions
+): Promise<AiVaultListResult[]> {
+  const listTargets = options.listRuntimeOwnedSshAiVaultTargets
+  const scanOwned = options.scanRuntimeOwnedSshAiVaultSessions
+  if (!listTargets || !scanOwned || runtimeHosts.length === 0) {
+    return []
+  }
+  const inventories = await Promise.all(
+    runtimeHosts.map(async (hostInfo) => {
+      try {
+        return await listTargets(hostInfo.environmentId)
+      } catch {
+        return []
+      }
+    })
+  )
+  const seen = new Set(localSshTargetIds)
+  const ownedHosts = inventories.flat().filter((host) => {
+    // Old hosts omit `connected`; those cannot scan ssh: ids anyway.
+    if (host.connected !== true) {
+      return false
+    }
+    if (seen.has(host.targetId)) {
+      return false
+    }
+    seen.add(host.targetId)
+    return true
+  })
+  return Promise.all(
+    ownedHosts.map((host) =>
+      scanHostLegWithCache({
+        cacheKey: `${cacheKey}|${host.executionHostId}`,
+        depth,
+        scopePaths,
+        force: args?.force === true,
+        scan: () =>
+          abandonRemoteSessionScanOnCancel(
+            scanOwned(host.environmentId, host.targetId, args ?? {}, {
+              timeoutMs: AI_VAULT_ALL_HOST_SSH_TIMEOUT_MS
+            }),
+            signal
+          )
+      })
+    )
   )
 }
 

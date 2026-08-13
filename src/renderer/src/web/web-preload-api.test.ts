@@ -1954,6 +1954,43 @@ describe('web AI Vault preload API', () => {
       }
     ])
   })
+
+  it('turns an old-runtime SSH host-id rejection into a host issue', async () => {
+    vi.doMock('./web-runtime-client', () => ({
+      WebRuntimeClient: class {
+        call(): Promise<RuntimeRpcResponse<unknown>> {
+          return Promise.resolve({
+            id: 'call-1',
+            ok: false,
+            error: { code: 'invalid_params', message: 'Invalid runtime execution host id' },
+            _meta: { runtimeId: 'runtime-1' }
+          })
+        }
+
+        close(): void {}
+      }
+    }))
+
+    const globals = installBrowserGlobals('Linux')
+    writeStoredRuntimeEnvironment(globals.storage)
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+
+    await expect(
+      globals.window.api.aiVault.listSessions({
+        executionHostScope: 'ssh:hub-owned-host'
+      })
+    ).resolves.toEqual({
+      sessions: [],
+      issues: [
+        expect.objectContaining({
+          executionHostId: 'ssh:hub-owned-host',
+          message: expect.stringContaining('cannot scan Agent Session History on its SSH hosts')
+        })
+      ],
+      scannedAt: expect.any(String)
+    })
+  })
 })
 
 describe('web UI preload API', () => {

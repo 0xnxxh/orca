@@ -1611,6 +1611,12 @@ function createAiVaultApi(): NonNullable<Partial<PreloadApi>['aiVault']> {
           force: args?.force,
           scopePaths: args?.scopePaths,
           executionHostId: parsedScope.id
+        }).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : ''
+          if (/invalid (runtime )?execution host id/i.test(message)) {
+            return webAiVaultUnsupportedSshHostResult(parsedScope.id)
+          }
+          throw error
         })
       }
       if (requestedScope !== 'all' && requestedScope !== executionHostId) {
@@ -1680,6 +1686,24 @@ function webAiVaultUnavailableResult(executionHostId: ExecutionHostId): AiVaultL
         message: translate(
           'auto.web.webPreloadApi.aiVaultUnavailableForHost',
           'Agent Session History is not available for this execution host.'
+        )
+      }
+    ],
+    scannedAt: new Date().toISOString()
+  }
+}
+
+function webAiVaultUnsupportedSshHostResult(executionHostId: ExecutionHostId): AiVaultListResult {
+  return {
+    sessions: [],
+    issues: [
+      {
+        executionHostId,
+        agent: 'codex',
+        path: executionHostId,
+        message: translate(
+          'auto.web.webPreloadApi.aiVaultUnsupportedSshHost',
+          'This Orca server cannot scan Agent Session History on its SSH hosts. Update the server and try again.'
         )
       }
     ],

@@ -324,7 +324,7 @@ describe('listAiVaultSessions host routing', () => {
       {
         executionHostScope: 'runtime:remote-server'
       },
-      expect.objectContaining({ timeoutMs: expect.any(Number), includeOwnedSshHosts: true })
+      expect.objectContaining({ timeoutMs: expect.any(Number) })
     )
     expect(result.sessions.map((entry) => entry.executionHostId)).toEqual([
       'runtime:remote-server',

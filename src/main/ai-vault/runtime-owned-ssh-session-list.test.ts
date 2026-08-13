@@ -35,8 +35,9 @@ describe('runtime-owned SSH AI Vault inventory', () => {
       ok: true,
       result: {
         targets: [
-          { id: 'hub-owned-host', label: 'Hub host' },
-          { id: 'runtime-ssh-recipe', label: 'Recipe VM' }
+          { id: 'hub-owned-host', label: 'Hub host', connected: true },
+          { id: 'offline-host', label: 'Offline', connected: false },
+          { id: 'runtime-ssh-recipe', label: 'Recipe VM', connected: true }
         ]
       }
     })
@@ -45,7 +46,14 @@ describe('runtime-owned SSH AI Vault inventory', () => {
       {
         environmentId: 'hub-runtime',
         targetId: 'hub-owned-host',
-        executionHostId: 'ssh:hub-owned-host'
+        executionHostId: 'ssh:hub-owned-host',
+        connected: true
+      },
+      {
+        environmentId: 'hub-runtime',
+        targetId: 'offline-host',
+        executionHostId: 'ssh:offline-host',
+        connected: false
       }
     ])
   })
@@ -100,6 +108,25 @@ describe('runtime-owned SSH AI Vault inventory', () => {
       expect.objectContaining({
         executionHostId: 'ssh:hub-owned-host',
         sessionId: 'ssh-session'
+      })
+    ])
+  })
+
+  it('turns a runtime transport throw into an SSH-host issue', async () => {
+    mocks.callRuntimeEnvironment.mockRejectedValueOnce(new Error('runtime connect timed out'))
+
+    const scanned = await scanRuntimeOwnedSshAiVaultSessions(
+      '/user-data',
+      'hub-runtime',
+      'hub-owned-host',
+      {}
+    )
+
+    expect(scanned.sessions).toEqual([])
+    expect(scanned.issues).toEqual([
+      expect.objectContaining({
+        executionHostId: 'ssh:hub-owned-host',
+        message: 'runtime connect timed out'
       })
     ])
   })
