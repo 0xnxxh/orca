@@ -179,6 +179,37 @@ describe('mobile-file-preview-request', () => {
     })
   })
 
+  it('refreshes a native-chat artifact grant with the same transcript provenance', async () => {
+    const client = clientWithResponses([
+      fail('terminal_file_grant_expired'),
+      ok({
+        exists: true,
+        isDirectory: false,
+        openTarget: {
+          kind: 'absolute-file',
+          absolutePath: '/Users/ada/orca-plans/result.html',
+          grantId: 'grant-2'
+        }
+      }),
+      ok({ content: '<h1>Result</h1>', truncated: false, byteLength: 15 })
+    ])
+
+    await loadMobileFilePreview(client, {
+      source: 'terminalArtifact',
+      worktreeId: 'wt-1',
+      absolutePath: '/Users/ada/orca-plans/result.html',
+      grantId: 'grant-1',
+      pathText: '~/orca-plans/result.html',
+      nativeChatContext: { tabId: 'tab-1', sessionId: 'session-1' }
+    })
+
+    expect(client.sendRequest).toHaveBeenNthCalledWith(2, 'files.resolveTerminalPath', {
+      worktree: 'id:wt-1',
+      pathText: '~/orca-plans/result.html',
+      nativeChatContext: { tabId: 'tab-1', sessionId: 'session-1' }
+    })
+  })
+
   it.each([
     ['terminal_file_grant_expired'],
     ['terminal_file_grant_mismatch'],

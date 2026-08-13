@@ -410,6 +410,11 @@ export type RuntimeTerminalPathOpenTarget =
       reason: string
     }
 
+export type RuntimeNativeChatFileContext = {
+  tabId: string
+  sessionId: string
+}
+
 /** Result of resolving a file path tapped in the mobile terminal against the
  *  selected or sibling workspace root (+ optional cwd). relativePath is null
  *  when no workspace on the same execution host owns the path. */

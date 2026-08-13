@@ -45,6 +45,7 @@ import type {
   RuntimeFileReadChunkResult,
   RuntimeFilePreviewResult,
   RuntimeFileReadResult,
+  RuntimeNativeChatFileContext,
   RuntimeTerminalPathResolution
 } from '../../shared/runtime-types'
 import {
@@ -524,6 +525,12 @@ export type RuntimeFileCommandHost = {
     pathText: string,
     absolutePath: string
   ): boolean | Promise<boolean>
+  hasRecentNativeChatOutputPath?(
+    worktreeId: string,
+    context: RuntimeNativeChatFileContext,
+    pathText: string,
+    absolutePath: string
+  ): boolean | Promise<boolean>
   resolveRuntimeGitTarget(
     selector: string
   ): Promise<{ worktree: ResolvedRuntimeFileWorktree; connectionId?: string }>
@@ -726,7 +733,8 @@ export class RuntimeFileCommands {
     cwd?: string | null,
     clientId?: string,
     terminalHandle?: string | null,
-    crossWorkspace?: boolean
+    crossWorkspace?: boolean,
+    nativeChatContext?: RuntimeNativeChatFileContext | null
   ): Promise<RuntimeTerminalPathResolution> {
     const store = this.host.requireStore()
     const target = await this.host.resolveRuntimeFileTarget(worktreeSelector)
@@ -802,6 +810,24 @@ export class RuntimeFileCommands {
         }
       }
 
+      if (
+        nativeChatContext &&
+        (await this.host.hasRecentNativeChatOutputPath?.(
+          worktree.id,
+          nativeChatContext,
+          pathText,
+          absolutePath
+        ))
+      ) {
+        const artifactPath = await this.resolveNativeChatArtifactPath(absolutePath, connectionId)
+        return await this.resolveAbsoluteFileGrant({
+          worktreeId: worktree.id,
+          artifactPath,
+          connectionId,
+          clientId
+        })
+      }
+
       // Why: mobile taps may hit agent artifacts outside the worktree; grant the exact path, not arbitrary absolute paths.
       if (!normalizedTerminalHandle || !terminalCwd) {
         return { ...empty, relativePath, absolutePath }
@@ -831,38 +857,13 @@ export class RuntimeFileCommands {
       ) {
         return { ...empty, relativePath, absolutePath }
       }
-      const stats = connectionId
-        ? await this.statRemoteTerminalPath(artifactPath, connectionId)
-        : await this.statLocalTerminalPath(artifactPath)
-      const isDirectory = stats.isDirectory()
-      if (!isDirectory && isTerminalArtifactHardLinked(stats)) {
-        return { ...empty, relativePath, absolutePath }
-      }
-      const grant = isDirectory
-        ? null
-        : this.createTerminalFileGrant({
-            worktreeId: worktree.id,
-            absolutePath: artifactPath,
-            provider: connectionId ? 'ssh' : 'local',
-            connectionId,
-            clientId,
-            stats
-          })
-      return {
-        worktree: worktree.id,
-        relativePath: null,
-        absolutePath: artifactPath,
-        exists: true,
-        isDirectory,
-        openTarget: grant
-          ? {
-              kind: 'absolute-file',
-              provider: grant.provider,
-              absolutePath: artifactPath,
-              grantId: grant.id
-            }
-          : undefined
-      }
+      return await this.resolveAbsoluteFileGrant({
+        worktreeId: worktree.id,
+        artifactPath,
+        rejectedAbsolutePath: absolutePath,
+        connectionId,
+        clientId
+      })
     } catch (error) {
       // Report genuine not-found as missing; let transport/permission errors surface so remote taps aren't all reported missing.
       if (
@@ -907,6 +908,67 @@ export class RuntimeFileCommands {
       return this.resolveAllowedRemoteTerminalArtifactPath(args.absolutePath, args.connectionId)
     }
     return resolveAllowedLocalTerminalArtifactPath(args.absolutePath, args.worktreePath)
+  }
+
+  private async resolveNativeChatArtifactPath(
+    absolutePath: string,
+    connectionId?: string
+  ): Promise<string> {
+    if (!connectionId) {
+      return canonicalPathForArtifactComparison(absolutePath)
+    }
+    const provider = getSshFilesystemProvider(connectionId)
+    if (!provider) {
+      throw new Error(SSH_FILESYSTEM_PROVIDER_UNAVAILABLE_MESSAGE)
+    }
+    return provider.realpath(absolutePath)
+  }
+
+  private async resolveAbsoluteFileGrant(args: {
+    worktreeId: string
+    artifactPath: string
+    rejectedAbsolutePath?: string
+    connectionId?: string
+    clientId?: string
+  }): Promise<RuntimeTerminalPathResolution> {
+    const stats = args.connectionId
+      ? await this.statRemoteTerminalPath(args.artifactPath, args.connectionId)
+      : await this.statLocalTerminalPath(args.artifactPath)
+    const isDirectory = stats.isDirectory()
+    if (!isDirectory && isTerminalArtifactHardLinked(stats)) {
+      return {
+        worktree: args.worktreeId,
+        relativePath: null,
+        absolutePath: args.rejectedAbsolutePath ?? args.artifactPath,
+        exists: false,
+        isDirectory: false
+      }
+    }
+    const grant = isDirectory
+      ? null
+      : this.createTerminalFileGrant({
+          worktreeId: args.worktreeId,
+          absolutePath: args.artifactPath,
+          provider: args.connectionId ? 'ssh' : 'local',
+          connectionId: args.connectionId,
+          clientId: args.clientId,
+          stats
+        })
+    return {
+      worktree: args.worktreeId,
+      relativePath: null,
+      absolutePath: args.artifactPath,
+      exists: true,
+      isDirectory,
+      openTarget: grant
+        ? {
+            kind: 'absolute-file',
+            provider: grant.provider,
+            absolutePath: args.artifactPath,
+            grantId: grant.id
+          }
+        : undefined
+    }
   }
 
   private async resolveAllowedRemoteTerminalArtifactPath(
