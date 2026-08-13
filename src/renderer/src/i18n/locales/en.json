@@ -15031,6 +15031,7 @@
       "sshConnectVerb": {
         "reconnect": "Reconnect",
         "retry": "Retry",
+        "retryProof": "Retry proof",
         "connect": "Connect",
         "connecting": "Connecting…"
       }
