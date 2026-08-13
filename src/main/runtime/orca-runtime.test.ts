@@ -2876,9 +2876,7 @@ describe('OrcaRuntimeService', () => {
     )
   })
 
-  // Inverted for STA-3077 S8: the replacement grant this pinned was unreachable in production
-  // (relay-native lease ptyId vs app-form runtime ptyId) and has been deleted.
-  it('refuses to replace a disconnected SSH pane, even inside the lease grace window', async () => {
+  it('recovers a disconnected pane through one HUB-owned replacement', async () => {
     const tabId = 'tab-recover'
     const runtime = createRuntimeWithSshLease('pty-expired', tabId)
     const paneKey = makePaneKey(tabId, HEADLESS_LEAF_ID)
@@ -2900,8 +2898,18 @@ describe('OrcaRuntimeService', () => {
 
     await expect(
       runtime.recoverTerminalPane(paneKey, TEST_WORKTREE_ID, expiredHandle)
-    ).rejects.toThrow('terminal_not_recoverable')
-    expect(createTerminal).not.toHaveBeenCalled()
+    ).resolves.toMatchObject({
+      handle: 'term-replacement',
+      tabId,
+      leafId: HEADLESS_LEAF_ID,
+      worktreeId: TEST_WORKTREE_ID
+    })
+    expect(createTerminal).toHaveBeenCalledWith(`id:${TEST_WORKTREE_ID}`, {
+      tabId,
+      leafId: HEADLESS_LEAF_ID,
+      focus: false,
+      persistHostSessionBinding: true
+    })
   })
 
   it('rejects missing host panes without authoritative expired binding evidence', async () => {
@@ -2967,9 +2975,7 @@ describe('OrcaRuntimeService', () => {
     expect(createTerminal).not.toHaveBeenCalled()
   })
 
-  // Inverted for STA-3077 S8: this was the only consumer of the recovery-dedup map, which existed
-  // solely to de-duplicate the (unreachable, now deleted) replacement grant. Scenario kept.
-  it('concurrent recovery requests for one disconnected pane both refuse and create nothing', async () => {
+  it('deduplicates concurrent pane recovery across stale viewer handles', async () => {
     const tabId = 'tab-concurrent'
     const runtime = createRuntimeWithSshLease('pty-expired', tabId)
     const paneKey = makePaneKey(tabId, HEADLESS_LEAF_ID)
@@ -2979,23 +2985,30 @@ describe('OrcaRuntimeService', () => {
     })
     const expiredHandle = runtime.resolveTerminalPane(paneKey, TEST_WORKTREE_ID).handle
     runtime.onPtyExit('pty-expired', 0)
-    // Never settles: a resurrected grant would hang the assertion rather than quietly pass.
-    const createTerminal = vi
-      .spyOn(runtime, 'createTerminal')
-      .mockReturnValue(new Promise<RuntimeTerminalCreate>(() => {}))
+    let finishCreate!: (result: RuntimeTerminalCreate) => void
+    const pendingCreate = new Promise<RuntimeTerminalCreate>((resolve) => {
+      finishCreate = resolve
+    })
+    const createTerminal = vi.spyOn(runtime, 'createTerminal').mockReturnValue(pendingCreate)
 
     const first = runtime.recoverTerminalPane(paneKey, TEST_WORKTREE_ID, expiredHandle)
     const second = runtime.recoverTerminalPane(paneKey, TEST_WORKTREE_ID, 'term-other-viewer')
+    finishCreate({
+      handle: 'term-replacement',
+      tabId,
+      paneKey,
+      ptyId: 'pty-replacement',
+      worktreeId: TEST_WORKTREE_ID,
+      title: null,
+      surface: 'background'
+    })
 
-    await expect(first).rejects.toThrow('terminal_not_recoverable')
-    // The second viewer's handle never mapped to this pane, so it still fails the identity guard.
+    await expect(first).resolves.toEqual(expect.objectContaining({ handle: 'term-replacement' }))
     await expect(second).rejects.toThrow('terminal_not_found')
-    expect(createTerminal).not.toHaveBeenCalled()
+    expect(createTerminal).toHaveBeenCalledOnce()
   })
 
-  // Inverted for STA-3077 S8: it pinned retry-after-a-failed-grant, and the grant (unreachable at
-  // the pty-id shapes production mints) is deleted, so there is nothing left to retry into.
-  it('a repeated recovery request never accumulates a grant', async () => {
+  it('clears a failed pane recovery so a later reconnect can retry', async () => {
     const tabId = 'tab-retry'
     const runtime = createRuntimeWithSshLease('pty-expired', tabId)
     const paneKey = makePaneKey(tabId, HEADLESS_LEAF_ID)
@@ -3005,7 +3018,6 @@ describe('OrcaRuntimeService', () => {
     })
     const expiredHandle = runtime.resolveTerminalPane(paneKey, TEST_WORKTREE_ID).handle
     runtime.onPtyExit('pty-expired', 0)
-    // A fully working createTerminal stays armed across both calls to prove neither one reaches it.
     const createTerminal = vi
       .spyOn(runtime, 'createTerminal')
       .mockRejectedValueOnce(new Error('relay_reconnecting'))
@@ -3021,16 +3033,13 @@ describe('OrcaRuntimeService', () => {
 
     await expect(
       runtime.recoverTerminalPane(paneKey, TEST_WORKTREE_ID, expiredHandle)
-    ).rejects.toThrow('terminal_not_recoverable')
+    ).rejects.toThrow('relay_reconnecting')
     await expect(
       runtime.recoverTerminalPane(paneKey, TEST_WORKTREE_ID, expiredHandle)
-    ).rejects.toThrow('terminal_not_recoverable')
-    expect(createTerminal).toHaveBeenCalledTimes(0)
+    ).resolves.toMatchObject({ handle: 'term-retry' })
+    expect(createTerminal).toHaveBeenCalledTimes(2)
   })
 
-  // STA-3077 S8: no longer discriminating — since the grant was deleted, an 'expired' lease refuses
-  // identically (see the grace-window case above), so 'terminated' no longer selects the outcome.
-  // Retained only as a regression guard: if a replacement path ever returns, this must stay a refusal.
   it('does not recover a pane whose authoritative SSH lease was terminated', async () => {
     const tabId = 'tab-terminated'
     const runtime = createRuntimeWithSshLease('pty-terminated', tabId, 'terminated')
@@ -16402,6 +16411,145 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
+  it('waits for Claude output to settle after its first render marker before one submit', async () => {
+    vi.useFakeTimers()
+    try {
+      const writes: string[] = []
+      let composerReady = false
+      let prematureEnters = 0
+      let submissions = 0
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: (_ptyId, data) => {
+          writes.push(data)
+          if (data.includes(AGENT_PROMPT_BRACKETED_PASTE_END)) {
+            setTimeout(() => {
+              runtime.onPtyData('pty-bg', 'partial redraw without cursor', Date.now())
+            }, 650)
+            setTimeout(() => {
+              runtime.onPtyData('pty-bg', '\x1b[?2', Date.now())
+            }, 750)
+            setTimeout(() => {
+              runtime.onPtyData('pty-bg', '5h intermediate frame', Date.now())
+            }, 751)
+            setTimeout(() => {
+              runtime.onPtyData('pty-bg', 'continued composer render', Date.now())
+            }, 900)
+            setTimeout(() => {
+              composerReady = true
+              runtime.onPtyData('pty-bg', 'final composer frame', Date.now())
+            }, 1_000)
+          }
+          if (data === '\r') {
+            if (composerReady) {
+              submissions += 1
+            } else {
+              prematureEnters += 1
+            }
+          }
+          return true
+        },
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+        launchAgent: 'claude'
+      })
+      const assertAuthority = vi.fn()
+
+      const sendPromise = runtime.sendTerminalAgentPrompt(handle, 'review this change', {
+        beforeWrite: assertAuthority
+      })
+      await vi.advanceTimersByTimeAsync(500)
+
+      expect(writes).not.toContain('\r')
+      await vi.advanceTimersByTimeAsync(150)
+      expect(writes).not.toContain('\r')
+      await vi.advanceTimersByTimeAsync(101)
+      expect(writes).not.toContain('\r')
+      await vi.advanceTimersByTimeAsync(1_748)
+      expect(writes).not.toContain('\r')
+      await vi.advanceTimersByTimeAsync(1)
+      await sendPromise
+      expect(prematureEnters).toBe(0)
+      expect(submissions).toBe(1)
+      expect(writes.filter((data) => data === '\r')).toHaveLength(1)
+      expect(assertAuthority).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('submits a silent Claude composer once after the bounded render fallback', async () => {
+    vi.useFakeTimers()
+    try {
+      const writes: string[] = []
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: (_ptyId, data) => {
+          writes.push(data)
+          return true
+        },
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+        launchAgent: 'claude'
+      })
+
+      const sendPromise = runtime.sendTerminalAgentPrompt(handle, 'review this change')
+      await vi.advanceTimersByTimeAsync(7_999)
+      expect(writes).not.toContain('\r')
+
+      await vi.advanceTimersByTimeAsync(1)
+      await sendPromise
+      expect(writes.filter((data) => data === '\r')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('bounds a Claude render that never settles to one fallback submit', async () => {
+    vi.useFakeTimers()
+    try {
+      const writes: string[] = []
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: (_ptyId, data) => {
+          writes.push(data)
+          if (data.includes(AGENT_PROMPT_BRACKETED_PASTE_END)) {
+            setTimeout(() => runtime.onPtyData('pty-bg', '\x1b[?25h', Date.now()), 100)
+            for (const delay of [1_000, 2_000, 3_000, 4_000, 5_000, 6_000, 7_000]) {
+              setTimeout(
+                () => runtime.onPtyData('pty-bg', `render frame ${delay}`, Date.now()),
+                delay
+              )
+            }
+          }
+          return true
+        },
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+        launchAgent: 'claude'
+      })
+
+      const sendPromise = runtime.sendTerminalAgentPrompt(handle, 'review this change')
+      await vi.advanceTimersByTimeAsync(7_999)
+      expect(writes).not.toContain('\r')
+
+      await vi.advanceTimersByTimeAsync(1)
+      await sendPromise
+      expect(writes.filter((data) => data === '\r')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('chunks large agent prompt paste frames before delayed submit', async () => {
     vi.useFakeTimers()
     try {
@@ -16416,7 +16564,9 @@ describe('OrcaRuntimeService', () => {
         kill: () => true,
         getForegroundProcess: async () => null
       })
-      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+        launchAgent: 'claude'
+      })
       const prompt = `${'x'.repeat(TERMINAL_INPUT_CHUNK_MAX_BYTES)}\ntail`
 
       const sendPromise = runtime.sendTerminalAgentPrompt(handle, prompt)
@@ -16453,7 +16603,9 @@ describe('OrcaRuntimeService', () => {
         kill: () => true,
         getForegroundProcess: async () => null
       })
-      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+        launchAgent: 'claude'
+      })
       const prompt = 'x'.repeat(TERMINAL_INPUT_CHUNK_MAX_BYTES + 1)
 
       const sendPromise = runtime.sendTerminalAgentPrompt(handle, prompt)

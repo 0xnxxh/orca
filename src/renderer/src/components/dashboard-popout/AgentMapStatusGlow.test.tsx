@@ -30,7 +30,7 @@ describe('AgentMap status glow', () => {
     }
   )
 
-  it('caps a 200-completion burst at four flares without dropping static emphasis', () => {
+  it('caps a 200-status burst at four flares without dropping static emphasis', () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(NOW)
     const { container } = renderMap(
       Array.from({ length: 200 }, (_, index) =>
@@ -47,10 +47,21 @@ describe('AgentMap status glow', () => {
     )
     clock.mockRestore()
 
-    expect(container.querySelectorAll('[data-agent-map-agent-finish-flare]')).toHaveLength(4)
+    expect(container.querySelectorAll('[data-agent-map-agent-status-flare]')).toHaveLength(4)
     expect(container.querySelectorAll('[data-agent-map-agent-status-glow]')).toHaveLength(200)
     expect(container.querySelectorAll('.fleet-status-done .agent-map-agent-mark')).toHaveLength(200)
     expect(container.querySelectorAll('[data-agent-unread-marker]')).toHaveLength(200)
+  })
+
+  it.each([
+    { bucket: 'attention', dotState: 'waiting', className: 'fleet-status-waiting' },
+    { bucket: 'done', dotState: 'done', className: 'fleet-status-done' }
+  ] as const)('flares a fresh $dotState state', ({ bucket, dotState, className }) => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(NOW)
+    const { container } = renderMap([card({ bucket, dotState, unseen: true, stateChangedAt: NOW })])
+    clock.mockRestore()
+
+    expect(container.querySelector('[data-agent-map-agent-status-flare]')).toHaveClass(className)
   })
 
   it.each([
