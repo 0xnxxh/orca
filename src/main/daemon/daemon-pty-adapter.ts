@@ -255,7 +255,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // Why per session: exclusivity protects one session directory's tmp-write/rename, so ordering
   // every session behind one tail let a single stalled checkpoint block all reattaches (STA-4173).
   private checkpointQueue = new CheckpointSessionQueue()
-  private nonFinalCheckpointAdmissions = 0
+  private nonFinalCheckpointAdmissionSessionIds = new Set<string>()
+  private nonFinalAdmissionDeniedSessionIds = new Set<string>()
   private overlayDeadlineWarnedSessionIds = new Set<string>()
   private periodicDeadlineWarnedSessionIds = new Set<string>()
   private keepHistoryShutdowns = new Set<Promise<void>>()
@@ -1178,6 +1179,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.sessionsNeedingContinuityCheckpoint.delete(id)
     this.overlayDeadlineWarnedSessionIds.delete(id)
     this.periodicDeadlineWarnedSessionIds.delete(id)
+    this.nonFinalAdmissionDeniedSessionIds.delete(id)
     this.lastFullCheckpointAt.delete(id)
     this.stopCheckpointTimerIfIdle()
     this.initialCwds.delete(id)
@@ -1335,7 +1337,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
     // Why reserve before enqueueing: pane mounts can arrive in one turn, before any compact starts.
     // Count abandoned waits until their writes settle so a relaunch cannot fan out unbounded work.
-    if (!this.tryAdmitNonFinalCheckpoint()) {
+    if (!this.tryAdmitNonFinalCheckpoint(sessionId)) {
       return liveSnapshot
     }
     // Why per session with a deadline: a reattach is a user click, so it must wait
@@ -1348,7 +1350,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         try {
           return await this.compactDurableRestoreSnapshot(sessionId, liveSnapshot, scrollbackRows)
         } finally {
-          this.releaseNonFinalCheckpointAdmission()
+          this.releaseNonFinalCheckpointAdmission(sessionId)
           this.overlayDeadlineWarnedSessionIds.delete(sessionId)
         }
       },
@@ -1365,16 +1367,24 @@ export class DaemonPtyAdapter implements IPtyProvider {
     )
   }
 
-  private tryAdmitNonFinalCheckpoint(): boolean {
-    if (this.nonFinalCheckpointAdmissions >= MAX_CONCURRENT_CHECKPOINTS) {
+  private tryAdmitNonFinalCheckpoint(sessionId: string): boolean {
+    if (
+      this.nonFinalCheckpointAdmissionSessionIds.has(sessionId) ||
+      this.nonFinalCheckpointAdmissionSessionIds.size >= MAX_CONCURRENT_CHECKPOINTS
+    ) {
+      if (!this.nonFinalAdmissionDeniedSessionIds.has(sessionId)) {
+        this.nonFinalAdmissionDeniedSessionIds.add(sessionId)
+        console.warn('[history] non-final checkpoint admission limit reached:', sessionId)
+      }
       return false
     }
-    this.nonFinalCheckpointAdmissions++
+    this.nonFinalAdmissionDeniedSessionIds.delete(sessionId)
+    this.nonFinalCheckpointAdmissionSessionIds.add(sessionId)
     return true
   }
 
-  private releaseNonFinalCheckpointAdmission(): void {
-    this.nonFinalCheckpointAdmissions--
+  private releaseNonFinalCheckpointAdmission(sessionId: string): void {
+    this.nonFinalCheckpointAdmissionSessionIds.delete(sessionId)
   }
 
   private async compactDurableRestoreSnapshot(
@@ -1711,6 +1721,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.sessionsNeedingContinuityCheckpoint.clear()
     this.overlayDeadlineWarnedSessionIds.clear()
     this.periodicDeadlineWarnedSessionIds.clear()
+    this.nonFinalAdmissionDeniedSessionIds.clear()
     this.pausedProducerSessionIds.clear()
     this.producerResumesOwedOnReconnect.clear()
     this.stopCheckpointTimer()
@@ -1823,6 +1834,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.sessionsNeedingContinuityCheckpoint.clear()
     this.overlayDeadlineWarnedSessionIds.clear()
     this.periodicDeadlineWarnedSessionIds.clear()
+    this.nonFinalAdmissionDeniedSessionIds.clear()
     this.coldRestoreCache.clear()
     this.wslDistrosBySessionId.clear()
     this.pausedProducerSessionIds.clear()
@@ -2209,14 +2221,17 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
     // Why 'deferred' is safe: the session stays dirty, so the operation that beat us to the queue
     // still commits and the next tick retries this one. Nothing on disk is discarded.
-    if (this.checkpointQueue.isSaturated(sessionId) || !this.tryAdmitNonFinalCheckpoint()) {
+    if (
+      this.checkpointQueue.isSaturated(sessionId) ||
+      !this.tryAdmitNonFinalCheckpoint(sessionId)
+    ) {
       return 'deferred'
     }
     const run = async (): Promise<'done' | 'deferred'> => {
       try {
         return await this.writeSessionCheckpoint(sessionId, opts)
       } finally {
-        this.releaseNonFinalCheckpointAdmission()
+        this.releaseNonFinalCheckpointAdmission(sessionId)
         this.periodicDeadlineWarnedSessionIds.delete(sessionId)
       }
     }
@@ -2755,6 +2770,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         this.sessionsNeedingContinuityCheckpoint.delete(event.sessionId)
         this.overlayDeadlineWarnedSessionIds.delete(event.sessionId)
         this.periodicDeadlineWarnedSessionIds.delete(event.sessionId)
+        this.nonFinalAdmissionDeniedSessionIds.delete(event.sessionId)
         // Why: a reused sessionId (renderer respawns a persisted ptyId) must not inherit the dead session's snapshot cooldown.
         this.lastFullCheckpointAt.delete(event.sessionId)
         this.stopCheckpointTimerIfIdle()
