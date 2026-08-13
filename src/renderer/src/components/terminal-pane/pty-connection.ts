@@ -5228,10 +5228,9 @@ export function connectPanePty(
                 return
               }
               if (freshPtyId === sessionId) {
-                // Nothing was replaced: the pane's durable binding still named this shell, and it
-                // answered again between the failed reattach and this click, so the spawn adopted
-                // it instead of creating one. Clearing below would unbind a shell that is live and
-                // now attached here — the pane would run with no durable record of what it owns.
+                // Same id, different shell: adoption is refused now, so this is a NEW shell that a
+                // reset relay happened to reissue the old id to. Main has already bound the pane to
+                // it, and clearing by that id below would unbind the very shell just created.
                 return
               }
               deps.clearExitedPanePtyLayoutBinding(pane.id, sessionId)
