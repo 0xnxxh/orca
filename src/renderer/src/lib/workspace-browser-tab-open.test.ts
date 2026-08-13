@@ -6,6 +6,7 @@ import {
 } from '../../../shared/execution-host'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
 import { BROWSER_SCREENCAST_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
+import * as clientCreationActionPolicy from './client-creation-action-policy'
 import {
   canOpenWorkspaceBrowserTabOnRuntime,
   openWorkspaceBrowserTab
@@ -129,6 +130,43 @@ describe('openWorkspaceBrowserTab', () => {
       failureLogMode: 'operation-only'
     })
     expect(createBrowserTab).not.toHaveBeenCalled()
+  })
+
+  it('keeps an asserted paired-runtime link on the runtime when client policy selects local', async () => {
+    const createBrowserTab = vi.fn()
+    mocks.state = {
+      ...ownerState(toRuntimeExecutionHostId('hub-a')),
+      ...browserCapableRuntime('hub-a'),
+      createBrowserTab,
+      defaultBrowserSessionProfileId: 'client-profile',
+      defaultBrowserSessionProfileIdByHostId: {}
+    }
+    const policySpy = vi
+      .spyOn(clientCreationActionPolicy, 'getClientCreationActionPolicy')
+      .mockReturnValue({
+        'managed-browser': { state: 'enabled', provider: 'local-client' },
+        'mobile-emulator': { state: 'enabled', provider: 'local-client' }
+      })
+
+    try {
+      await openWorkspaceBrowserTab({
+        workspaceId: WORKSPACE_ID,
+        url: 'https://example.com/pinned',
+        intent: { kind: 'url' },
+        expectedRuntimeEnvironmentId: 'hub-a'
+      })
+
+      expect(mocks.createRemote).toHaveBeenCalledWith(
+        expect.objectContaining({
+          environmentId: 'hub-a',
+          waitForRegistration: true,
+          worktreeId: WORKSPACE_ID
+        })
+      )
+      expect(createBrowserTab).not.toHaveBeenCalled()
+    } finally {
+      policySpy.mockRestore()
+    }
   })
 
   it('fails closed when the workspace route swaps away from the pane runtime before opening', async () => {

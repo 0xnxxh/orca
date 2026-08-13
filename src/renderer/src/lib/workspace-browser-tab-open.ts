@@ -212,7 +212,9 @@ export async function openWorkspaceBrowserTab(
       `host ${route.executionHostId} does not own runtime ${environmentId}`
     )
   }
-  if (availability.provider === 'local-client') {
+  // A terminal link is pinned to its source runtime after the assertion above;
+  // provider policy may describe the client surface rather than that owner.
+  if (expectedEnvironmentId === null && availability.provider === 'local-client') {
     const localHostId = host && host.kind !== 'runtime' ? host.id : LOCAL_EXECUTION_HOST_ID
     createClientBrowserTab(state, request, localHostId, presentation)
     return
@@ -224,6 +226,8 @@ export async function openWorkspaceBrowserTab(
       environmentId,
       url: request.url,
       targetGroupId: request.targetGroupId,
+      // Pinned terminal links must wait for the host tab to publish before reconciling the client.
+      ...(expectedEnvironmentId !== null ? { waitForRegistration: true } : {}),
       // Why: the tab is opened from this workspace's tab bar, so surface that
       // workspace — otherwise a background worktree looks like nothing happened.
       selectWorktree: true,

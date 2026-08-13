@@ -463,6 +463,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
   clientTargetGroupId?: string
   clientTargetGroupCreated?: boolean
   focusOnCreate?: boolean
+  waitForRegistration?: boolean
   selectWorktree?: boolean
   stagedTitle?: string
   stagedFocusAddressBar?: boolean
@@ -549,7 +550,7 @@ export async function createWebRuntimeSessionBrowserTab(args: {
           // Why: place the new browser in the clicked split group so the host snapshot is authoritative for it (no left-snap).
           ...(args.targetGroupId ? { targetGroupId: args.targetGroupId } : {}),
           // Why: web clients need the local tab now; waiting for host webview registration makes the workspace appear to close.
-          waitForRegistration: false
+          waitForRegistration: args.waitForRegistration ?? false
         },
         timeoutMs: 15_000
       })) as RuntimeRpcResponse<BrowserTabCreateResult>
