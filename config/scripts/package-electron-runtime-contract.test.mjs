@@ -568,16 +568,18 @@ describe('Electron runtime package contract', () => {
       'pnpm run test:e2e:terminal-rendering-golden'
     )
     expect(goldenRunSteps.get('linux')?.run).toContain(
-      'pnpm run test:e2e:posix-profile-index-golden'
+      'pnpm run --if-present test:e2e:posix-profile-index-golden'
     )
     expect(goldenRunSteps.get('mac')?.run).toContain('pnpm run test:e2e:terminal-rendering-golden')
-    expect(goldenRunSteps.get('mac')?.run).toContain('pnpm run test:e2e:posix-profile-index-golden')
+    expect(goldenRunSteps.get('mac')?.run).toContain(
+      'pnpm run --if-present test:e2e:posix-profile-index-golden'
+    )
     expect(goldenRunSteps.get('windows')).toMatchObject({
       if: "runner.os == 'Windows'",
       shell: 'pwsh'
     })
     expect(goldenRunSteps.get('windows').run).toContain(
-      'pnpm run test:e2e:windows-fresh-startup-golden'
+      'pnpm run --if-present test:e2e:windows-fresh-startup-golden'
     )
     expect(goldenWorkflow.on.pull_request).toBeUndefined()
     expect(goldenWorkflow.on.workflow_dispatch).toBeDefined()
@@ -592,12 +594,16 @@ describe('Electron runtime package contract', () => {
       (step) => step.name === 'Run terminal rendering golden on Linux'
     )
     expect(releaseLinuxRunStep.run).toContain('pnpm run test:e2e:terminal-rendering-golden')
-    expect(releaseLinuxRunStep.run).toContain('pnpm run test:e2e:posix-profile-index-golden')
+    expect(releaseLinuxRunStep.run).toContain(
+      'pnpm run --if-present test:e2e:posix-profile-index-golden'
+    )
     const releaseMacRunStep = releaseGoldenJob.steps.find(
       (step) => step.name === 'Run terminal rendering golden on macOS'
     )
     expect(releaseMacRunStep.run).toContain('pnpm run test:e2e:terminal-rendering-golden')
-    expect(releaseMacRunStep.run).toContain('pnpm run test:e2e:posix-profile-index-golden')
+    expect(releaseMacRunStep.run).toContain(
+      'pnpm run --if-present test:e2e:posix-profile-index-golden'
+    )
     const releaseWindowsRunStep = releaseGoldenJob.steps.find(
       (step) => step.name === 'Run fresh-startup golden on Windows'
     )
@@ -605,7 +611,9 @@ describe('Electron runtime package contract', () => {
       if: "runner.os == 'Windows'",
       shell: 'pwsh'
     })
-    expect(releaseWindowsRunStep.run).toContain('pnpm run test:e2e:windows-fresh-startup-golden')
+    expect(releaseWindowsRunStep.run).toContain(
+      'pnpm run --if-present test:e2e:windows-fresh-startup-golden'
+    )
     expect(releaseEvidenceJob['continue-on-error']).toBe(true)
     expect(
       releaseEvidenceJob.strategy.matrix.include.map(({ platform }) => platform).sort()
