@@ -8,8 +8,10 @@ import {
   structuredAgentSessionOptionSnapshot
 } from '../../../src/shared/structured-agent-session-options'
 import type { SessionOptionValue } from '../../../src/shared/native-chat-session-options'
-import type { AgentSessionOptionsResult } from '../../../src/shared/agent-session-wire'
-import type { AgentSessionOptionResult } from '../../../src/shared/agent-session-wire'
+import type {
+  AgentSessionOptionResult,
+  AgentSessionOptionsResult
+} from '../../../src/shared/agent-session-wire'
 import type { RpcClient } from '../transport/rpc-client'
 import type { MobileNativeChatSessionOptionsController } from './use-mobile-native-chat-session-options'
 

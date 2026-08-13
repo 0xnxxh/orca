@@ -144,6 +144,44 @@ describe('useMobileStructuredSessionWrites', () => {
     expect(sendRequest).toHaveBeenCalledTimes(2)
   })
 
+  it('dispatches the first send after a fresh session finishes outbox hydration', async () => {
+    act(() => renderer?.unmount())
+    renderer = null
+    api = null
+    const hydration = deferred<MobileStructuredOutboxStore.MobileStructuredOutboxEntry[]>()
+    vi.mocked(loadMobileStructuredOutbox).mockReset().mockReturnValue(hydration.promise)
+    sendRequest.mockImplementation(async (_method, params) =>
+      accepted((params as { envelope: { clientOperationId: string } }).envelope.clientOperationId)
+    )
+    await act(async () => {
+      renderer = create(createElement(Probe))
+      await Promise.resolve()
+    })
+
+    let sending!: Promise<boolean>
+    act(() => {
+      sending = api!.send('first message')
+    })
+    expect(sendRequest).not.toHaveBeenCalled()
+    expect(saveMobileStructuredOutbox).not.toHaveBeenCalled()
+
+    await act(async () => {
+      hydration.resolve([])
+      await expect(sending).resolves.toBe(true)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(sendRequest).toHaveBeenCalledWith(
+      'agentSession.send',
+      expect.objectContaining({
+        envelope: expect.objectContaining({ sessionId: 'mobile_1', expectedRuntimeFence: 3 })
+      })
+    )
+    expect(api!.outbox).toEqual([])
+  })
+
   it.each(['agent_session_operation_conflict', 'agent_session_operation_expired'] as const)(
     'rotates a send operation after %s',
     async (code) => {

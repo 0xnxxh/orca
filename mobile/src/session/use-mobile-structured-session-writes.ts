@@ -12,15 +12,17 @@ import {
 import type { RpcClient } from '../transport/rpc-client'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
 import {
+  startMobileStructuredOutboxHydration,
+  waitForMobileStructuredOutboxHydration,
+  type MobileStructuredOutboxHydration
+} from './mobile-structured-outbox-hydration'
+import {
   createQueuedMobileStructuredOutboxEntry,
   isMobileStructuredDeliveryUnknown,
   requeueMobileStructuredSendRefusal
 } from './mobile-structured-outbox-entry'
-import {
-  loadMobileStructuredOutbox,
-  saveMobileStructuredOutbox,
-  type MobileStructuredOutboxEntry
-} from './mobile-structured-outbox-store'
+import type { MobileStructuredOutboxEntry } from './mobile-structured-outbox-store'
+import { useMobileStructuredOutboxPersistence } from './use-mobile-structured-outbox-persistence'
 import { useMobileStructuredSessionMutations } from './use-mobile-structured-session-mutations'
 import type { MobileStructuredSessionWrites } from './mobile-structured-session-write-types'
 
@@ -40,12 +42,13 @@ export function useMobileStructuredSessionWrites(args: {
   const [error, setError] = useState<string | null>(null)
   const [dispatchVersion, setDispatchVersion] = useState(0)
   const outboxRef = useRef<MobileStructuredOutboxEntry[]>([])
-  const persistTailRef = useRef<Promise<void>>(Promise.resolve())
+  const hydrationRef = useRef<MobileStructuredOutboxHydration | null>(null)
   const dispatchingRef = useRef(false)
   const dispatchGenerationRef = useRef(0)
   const blockedIdRef = useRef<string | null>(null)
   const activeSessionRef = useRef(sessionId)
   const activeFenceRef = useRef(fence)
+  const persist = useMobileStructuredOutboxPersistence()
   const mutations = useMobileStructuredSessionMutations({
     client,
     sessionId,
@@ -53,14 +56,6 @@ export function useMobileStructuredSessionWrites(args: {
     handoffOperationId: args.handoffOperationId,
     onRefusal: setError
   })
-
-  const persist = useCallback((targetSessionId: string, entries: MobileStructuredOutboxEntry[]) => {
-    const write = persistTailRef.current.then(() =>
-      saveMobileStructuredOutbox(targetSessionId, entries)
-    )
-    persistTailRef.current = write.catch(() => {})
-    return write
-  }, [])
 
   useEffect(() => {
     activeSessionRef.current = sessionId
@@ -71,20 +66,17 @@ export function useMobileStructuredSessionWrites(args: {
     setHydrated(false)
     setError(null)
     blockedIdRef.current = null
+    hydrationRef.current = null
     if (!sessionId) {
       return
     }
-    let stale = false
-    void loadMobileStructuredOutbox(sessionId).then((entries) => {
-      if (!stale) {
-        outboxRef.current = entries
-        setOutbox(entries)
-        setHydrated(true)
-      }
+    const hydration = startMobileStructuredOutboxHydration(sessionId, (entries) => {
+      outboxRef.current = entries
+      setOutbox(entries)
+      setHydrated(true)
     })
-    return () => {
-      stale = true
-    }
+    hydrationRef.current = hydration
+    return hydration.cancel
   }, [sessionId])
 
   useEffect(() => {
@@ -244,6 +236,14 @@ export function useMobileStructuredSessionWrites(args: {
   const send = useCallback(
     async (text: string, attachments: readonly PendingNativeChatImage[] = []): Promise<boolean> => {
       if (!sessionId || (!text.trim() && attachments.length === 0)) {
+        return false
+      }
+      const hydration = hydrationRef.current
+      if (!(await waitForMobileStructuredOutboxHydration(hydration, sessionId))) {
+        setError('Chat session is still loading')
+        return false
+      }
+      if (activeSessionRef.current !== sessionId || hydrationRef.current !== hydration) {
         return false
       }
       const entry = createQueuedMobileStructuredOutboxEntry({ sessionId, text, attachments })

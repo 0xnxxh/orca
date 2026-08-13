@@ -380,6 +380,45 @@ describe('a structured codex session over agentSession.*', () => {
     })
   })
 
+  it('dispatches and streams a plain first send from a fresh session', async () => {
+    const created = await ok<{ fence: number; snapshot: { items: unknown[] } }>(
+      'agentSession.create',
+      createIntentParams()
+    )
+    expect(created.snapshot.items).toEqual([])
+    const stream = await subscribe('sub-first-send')
+    const body = { kind: 'message', role: 'user', blocks: [{ type: 'text', text: 'hi' }] }
+
+    const sent = await ok<{
+      clientMessageId: string
+      submission: { dispatchState: string; providerItemId: string | null }
+    }>('agentSession.send', {
+      envelope: envelope('agentSession.send', { body }, created.fence),
+      body
+    })
+    expect(sent.submission).toMatchObject({
+      dispatchState: 'accepted',
+      providerItemId: `codex:${THREAD}:${TURN}:0`
+    })
+    expect(codex.live().calls.at(-1)).toMatchObject({
+      method: 'turn/start',
+      params: { threadId: THREAD, clientUserMessageId: sent.clientMessageId }
+    })
+
+    codex.notify('turn/started', { turn: { id: TURN } })
+    codex.notify('item/completed', {
+      item: { type: 'userMessage', id: 'item-0', content: [{ type: 'text', text: 'hi' }] }
+    })
+    codex.notify('item/started', { item: { type: 'agentMessage', id: 'item-1', text: '' } })
+    codex.notify('item/agentMessage/delta', { itemId: 'item-1', delta: 'Hello.' })
+    codex.notify('item/completed', {
+      item: { type: 'agentMessage', id: 'item-1', text: 'Hello.' }
+    })
+    await drainStreamedEvents()
+
+    expect(itemsOf(stream).map(textOf).filter(Boolean)).toEqual(['hi', 'Hello.'])
+  })
+
   it('runs create → send → stream → approval → cancel → reconnect → page history', async () => {
     // ── create ──────────────────────────────────────────────────────────────
     // No host exists yet; `create` is the call that builds one.
