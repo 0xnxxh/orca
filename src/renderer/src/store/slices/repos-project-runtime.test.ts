@@ -281,12 +281,15 @@ describe('repo slice project runtime updates', () => {
       ...project,
       sourceRepoIds: ['local-repo'],
       createdAt: 100,
-      updatedAt: 100
+      updatedAt: 100,
+      localWindowsRuntimePreference: { kind: 'windows-host' }
     })
     const store = createTestStore()
     store.setState({ projects: [project] })
 
-    await store.getState().updateProject(project.id, { displayName: 'Orca' })
+    await store.getState().updateProject(project.id, {
+      localWindowsRuntimePreference: { kind: 'windows-host' }
+    })
 
     expect(store.getState().projects[0]?.createdAt).toBe(100)
     expect(store.getState().projects[0]?.updatedAt).toBe(100)
