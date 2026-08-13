@@ -270,7 +270,8 @@ const UNREACHABLE = new Set<Pair>([
 ])
 
 describe('agentSessionRefusalOperationState host oracle', () => {
-  it('agrees with every refusal the real host path can produce', async () => {
+  // 26 real host round trips; the default 5s budget sits at the edge on CI.
+  it('agrees with every refusal the real host path can produce', { timeout: 30_000 }, async () => {
     const produced = new Set<Pair>()
     const record = (pair: Pair) => produced.add(pair)
 
