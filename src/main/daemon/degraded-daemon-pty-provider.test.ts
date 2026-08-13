@@ -472,6 +472,22 @@ describe('DegradedDaemonPtyProvider', () => {
     })
   })
 
+  // Why: while degraded, a provider that cannot answer must not let inspection
+  // manufacture terminal_gone — that verdict retires a pane that may still be live.
+  it('answers unknown, and refuses terminal_gone, when no provider can answer', async () => {
+    const current = createDaemonAdapter('daemon')
+    const fallback = createProvider('fallback')
+    current.hasPty = vi.fn(() => null)
+    fallback.hasPty = vi.fn(() => null)
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+
+    expect(provider.hasPty('unmapped-session')).toBe(null)
+    await expect(provider.inspectProcess('unmapped-session')).resolves.toEqual({
+      foregroundProcess: null,
+      hasChildProcesses: false
+    })
+  })
+
   it('caches a provider discovered by hasPty before routing later operations', () => {
     const current = createDaemonAdapter('daemon', ['daemon-session'])
     const fallback = createProvider('fallback')
@@ -685,6 +701,37 @@ describe('DegradedDaemonPtyProvider', () => {
   })
 })
 
+describe('DegradedDaemonPtyProvider owner gate against an unanswerable fallback', () => {
+  // STA-3077 made hasPty three-valued: null now means "this provider cannot answer", where
+  // before the only answers were yes and no. The owner gate asks the fallback to *prove* it owns
+  // a session before letting it act, and it must read that new null as "not proven" — otherwise
+  // the in-process fallback answers for a daemon-owned session, the pane closes, and the agent
+  // keeps running as an orphan. Nothing else exercises null at this boundary: every other double
+  // answers false, which makes `!== true` and `=== false` indistinguishable.
+  it('refuses a mutating operation when the fallback cannot answer for the session', async () => {
+    const current = createDaemonAdapter('daemon')
+    const fallback = createProvider('fallback')
+    fallback.hasPty = vi.fn(() => null)
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+
+    await expect(provider.shutdown('wt-1@@unanswerable', {})).rejects.toBeInstanceOf(
+      TerminalSessionOwnerUnverifiedError
+    )
+    expect(fallback.shutdown).not.toHaveBeenCalled()
+    expect(current.shutdown).not.toHaveBeenCalled()
+  })
+
+  it('still lets the fallback act on a session it positively claims', async () => {
+    const current = createDaemonAdapter('daemon')
+    const fallback = createProvider('fallback')
+    fallback.hasPty = vi.fn(() => true)
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+
+    await provider.shutdown('wt-1@@local', {})
+    expect(fallback.shutdown).toHaveBeenCalledWith('wt-1@@local', {})
+  })
+})
+
 describe('DegradedDaemonPtyProvider with a held daemon', () => {
   const HELD_SESSION = 'wt-1@@held-daemon-session'
 
@@ -782,4 +829,23 @@ describe('DegradedDaemonPtyProvider with a held daemon', () => {
     expect(current.write).not.toHaveBeenCalled()
     expect(current.shutdown).not.toHaveBeenCalled()
   })
+})
+
+// A memoized route outlives the session it was established for: listProcesses
+// drops ids missing from an authoritative inventory without an exit fanout. So a
+// mapped owner that cannot answer must stay unknown — coercing it to a liveness
+// proof is worse than the absence it replaced, because callers skip the real probe.
+it('keeps a mapped owner that cannot answer unknown, and still probes', async () => {
+  const current = createDaemonAdapter('current', ['s1'])
+  const fallback = createProvider('fallback')
+  const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+
+  expect(provider.hasPty('s1')).toBe(true)
+
+  current.hasPty = vi.fn(() => null)
+  expect(provider.hasPty('s1')).toBeNull()
+
+  current.probePtyLiveness = vi.fn(async () => null)
+  await provider.probePtyLiveness('s1')
+  expect(current.probePtyLiveness).toHaveBeenCalled()
 })

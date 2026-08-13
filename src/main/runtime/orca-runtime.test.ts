@@ -1525,6 +1525,7 @@ function makeRuntimeStoreWithWorkspaceSession(
             }
           }
         }
+        return true
       }
     )
   }
@@ -2847,7 +2848,9 @@ describe('OrcaRuntimeService', () => {
     )
   })
 
-  it('recovers a disconnected pane through one HUB-owned replacement', async () => {
+  // Inverted for STA-3077 S8: the replacement grant this pinned was unreachable in production
+  // (relay-native lease ptyId vs app-form runtime ptyId) and has been deleted.
+  it('refuses to replace a disconnected SSH pane, even inside the lease grace window', async () => {
     const tabId = 'tab-recover'
     const runtime = createRuntimeWithSshLease('pty-expired', tabId)
     const paneKey = makePaneKey(tabId, HEADLESS_LEAF_ID)
@@ -2869,18 +2872,8 @@ describe('OrcaRuntimeService', () => {
 
     await expect(
       runtime.recoverTerminalPane(paneKey, TEST_WORKTREE_ID, expiredHandle)
-    ).resolves.toMatchObject({
-      handle: 'term-replacement',
-      tabId,
-      leafId: HEADLESS_LEAF_ID,
-      worktreeId: TEST_WORKTREE_ID
-    })
-    expect(createTerminal).toHaveBeenCalledWith(`id:${TEST_WORKTREE_ID}`, {
-      tabId,
-      leafId: HEADLESS_LEAF_ID,
-      focus: false,
-      persistHostSessionBinding: true
-    })
+    ).rejects.toThrow('terminal_not_recoverable')
+    expect(createTerminal).not.toHaveBeenCalled()
   })
 
   it('rejects missing host panes without authoritative expired binding evidence', async () => {
@@ -2946,7 +2939,9 @@ describe('OrcaRuntimeService', () => {
     expect(createTerminal).not.toHaveBeenCalled()
   })
 
-  it('deduplicates concurrent pane recovery across stale viewer handles', async () => {
+  // Inverted for STA-3077 S8: this was the only consumer of the recovery-dedup map, which existed
+  // solely to de-duplicate the (unreachable, now deleted) replacement grant. Scenario kept.
+  it('concurrent recovery requests for one disconnected pane both refuse and create nothing', async () => {
     const tabId = 'tab-concurrent'
     const runtime = createRuntimeWithSshLease('pty-expired', tabId)
     const paneKey = makePaneKey(tabId, HEADLESS_LEAF_ID)
@@ -2956,30 +2951,23 @@ describe('OrcaRuntimeService', () => {
     })
     const expiredHandle = runtime.resolveTerminalPane(paneKey, TEST_WORKTREE_ID).handle
     runtime.onPtyExit('pty-expired', 0)
-    let finishCreate!: (result: RuntimeTerminalCreate) => void
-    const pendingCreate = new Promise<RuntimeTerminalCreate>((resolve) => {
-      finishCreate = resolve
-    })
-    const createTerminal = vi.spyOn(runtime, 'createTerminal').mockReturnValue(pendingCreate)
+    // Never settles: a resurrected grant would hang the assertion rather than quietly pass.
+    const createTerminal = vi
+      .spyOn(runtime, 'createTerminal')
+      .mockReturnValue(new Promise<RuntimeTerminalCreate>(() => {}))
 
     const first = runtime.recoverTerminalPane(paneKey, TEST_WORKTREE_ID, expiredHandle)
     const second = runtime.recoverTerminalPane(paneKey, TEST_WORKTREE_ID, 'term-other-viewer')
-    finishCreate({
-      handle: 'term-replacement',
-      tabId,
-      paneKey,
-      ptyId: 'pty-replacement',
-      worktreeId: TEST_WORKTREE_ID,
-      title: null,
-      surface: 'background'
-    })
 
-    await expect(first).resolves.toEqual(expect.objectContaining({ handle: 'term-replacement' }))
+    await expect(first).rejects.toThrow('terminal_not_recoverable')
+    // The second viewer's handle never mapped to this pane, so it still fails the identity guard.
     await expect(second).rejects.toThrow('terminal_not_found')
-    expect(createTerminal).toHaveBeenCalledOnce()
+    expect(createTerminal).not.toHaveBeenCalled()
   })
 
-  it('clears a failed pane recovery so a later reconnect can retry', async () => {
+  // Inverted for STA-3077 S8: it pinned retry-after-a-failed-grant, and the grant (unreachable at
+  // the pty-id shapes production mints) is deleted, so there is nothing left to retry into.
+  it('a repeated recovery request never accumulates a grant', async () => {
     const tabId = 'tab-retry'
     const runtime = createRuntimeWithSshLease('pty-expired', tabId)
     const paneKey = makePaneKey(tabId, HEADLESS_LEAF_ID)
@@ -2989,6 +2977,7 @@ describe('OrcaRuntimeService', () => {
     })
     const expiredHandle = runtime.resolveTerminalPane(paneKey, TEST_WORKTREE_ID).handle
     runtime.onPtyExit('pty-expired', 0)
+    // A fully working createTerminal stays armed across both calls to prove neither one reaches it.
     const createTerminal = vi
       .spyOn(runtime, 'createTerminal')
       .mockRejectedValueOnce(new Error('relay_reconnecting'))
@@ -3004,13 +2993,16 @@ describe('OrcaRuntimeService', () => {
 
     await expect(
       runtime.recoverTerminalPane(paneKey, TEST_WORKTREE_ID, expiredHandle)
-    ).rejects.toThrow('relay_reconnecting')
+    ).rejects.toThrow('terminal_not_recoverable')
     await expect(
       runtime.recoverTerminalPane(paneKey, TEST_WORKTREE_ID, expiredHandle)
-    ).resolves.toMatchObject({ handle: 'term-retry' })
-    expect(createTerminal).toHaveBeenCalledTimes(2)
+    ).rejects.toThrow('terminal_not_recoverable')
+    expect(createTerminal).toHaveBeenCalledTimes(0)
   })
 
+  // STA-3077 S8: no longer discriminating — since the grant was deleted, an 'expired' lease refuses
+  // identically (see the grace-window case above), so 'terminated' no longer selects the outcome.
+  // Retained only as a regression guard: if a replacement path ever returns, this must stay a refusal.
   it('does not recover a pane whose authoritative SSH lease was terminated', async () => {
     const tabId = 'tab-terminated'
     const runtime = createRuntimeWithSshLease('pty-terminated', tabId, 'terminated')
@@ -3322,6 +3314,37 @@ describe('OrcaRuntimeService', () => {
     })
     const split = internals.getMobileSessionTabsForWorktree(TEST_WORKTREE_ID)
     expect(split.tabs.filter((tab) => tab.type === 'terminal')).toHaveLength(2)
+  })
+
+  it('resolves projected split authority from the parent layout PTY binding', () => {
+    const runtime = createRuntime()
+    const tabId = 'projected-parent-tab'
+    const leafId = 'projected-leaf'
+    const ptyId = 'projected-pty'
+    const internals = runtime as unknown as {
+      mobileSessionTabsByWorktree: Map<string, unknown>
+      resolveTerminalSplitSourceAuthority: (
+        worktreeId: string,
+        tabId: string,
+        leafId: string,
+        ptyId: string
+      ) => { persisted: boolean; rendererMounted: boolean } | null
+    }
+    internals.mobileSessionTabsByWorktree.set(TEST_WORKTREE_ID, {
+      tabs: [
+        {
+          type: 'terminal',
+          parentTabId: tabId,
+          leafId,
+          ptyId: null,
+          parentLayout: { ptyIdsByLeafId: { [leafId]: ptyId } }
+        }
+      ]
+    })
+
+    expect(
+      internals.resolveTerminalSplitSourceAuthority(TEST_WORKTREE_ID, tabId, leafId, ptyId)
+    ).toMatchObject({ persisted: false, rendererMounted: false })
   })
 
   it('keeps targeted terminal lists from adopting controller PTYs for other worktrees', async () => {
@@ -11400,6 +11423,57 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it('keeps blocked prompt text authoritative over an OpenCode marker', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      spawn: vi.fn().mockResolvedValue({ id: 'pty-1' }),
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => 'opencode'
+    })
+    const leafId = '11111111-1111-4111-8111-111111111111'
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [
+        {
+          tabId: 'tab-1',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'OC | Native session',
+          activeLeafId: leafId,
+          layout: null
+        }
+      ],
+      leaves: [
+        {
+          tabId: 'tab-1',
+          worktreeId: TEST_WORKTREE_ID,
+          leafId,
+          paneRuntimeId: 1,
+          ptyId: 'pty-1',
+          paneTitle: 'OC | Native session'
+        }
+      ]
+    })
+    runtime.onPtyData(
+      'pty-1',
+      'Permission required\nThis command requires permission\nAllow once\nAllow always\nReject\n',
+      123
+    )
+    const [terminal] = (await runtime.listTerminals()).terminals
+
+    await expect(runtime.getTerminalAgentStatus(terminal.handle)).resolves.toEqual({
+      handle: terminal.handle,
+      isRunningAgent: true,
+      status: 'permission'
+    })
+    await expect(
+      runtime.waitForTerminal(terminal.handle, { condition: 'tui-idle', timeoutMs: 1_000 })
+    ).resolves.toMatchObject({
+      satisfied: false,
+      blockedReason: 'codex-interactive-prompt'
+    })
+  })
+
   it('reports permission from blocked wait text over title-only working state', async () => {
     const runtime = new OrcaRuntimeService(store)
     runtime.setPtyController({
@@ -14757,6 +14831,207 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
+  it('keeps a persisted split when mounted renderer adoption rejects', async () => {
+    const tabId = 'persisted-mounted-tab'
+    const ptyId = 'persisted-mounted-pty'
+    const splitPtyId = 'persisted-mounted-split-pty'
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        tabsByWorktree: {
+          [TEST_WORKTREE_ID]: [
+            {
+              id: tabId,
+              ptyId,
+              worktreeId: TEST_WORKTREE_ID,
+              title: 'Persisted terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          [tabId]: makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: ptyId })
+        }
+      })
+    )
+    const revealTerminalSession = vi.fn().mockRejectedValue(new Error('renderer rejected'))
+    const kill = vi.fn(() => true)
+    let resolveSpawn!: (result: { id: string }) => void
+    const spawn = vi.fn(
+      (_args: unknown) =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSpawn = resolve
+        })
+    )
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill,
+      getForegroundProcess: async () => null
+    })
+    runtime.setNotifier({ revealTerminalSession } as never)
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+    runtime.registerPty(ptyId, TEST_WORKTREE_ID, null, {
+      tabId,
+      leafId: HEADLESS_LEAF_ID,
+      incarnationId: 'live-source-incarnation'
+    })
+    const internals = runtime as unknown as {
+      issuePtyHandle: (pty: unknown) => string
+      ptysById: Map<string, unknown>
+    }
+    const handle = internals.issuePtyHandle(internals.ptysById.get(ptyId))
+    const split = runtime.splitTerminal(handle, { direction: 'horizontal' })
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    const splitSpawn = spawn.mock.calls[0]?.[0] as
+      | { expectedSourceBinding?: { incarnationId?: string } }
+      | undefined
+    // Why: persistence never recorded an incarnation for this pane, so sending the live-only id
+    // would make the store's fence reject every split from a restored session.
+    expect(splitSpawn?.expectedSourceBinding).not.toHaveProperty('incarnationId')
+
+    runtime.syncWindowGraph(1, {
+      tabs: [
+        {
+          tabId,
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Persisted terminal',
+          activeLeafId: HEADLESS_LEAF_ID,
+          layout: { type: 'leaf', leafId: HEADLESS_LEAF_ID }
+        }
+      ],
+      leaves: [
+        {
+          tabId,
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: HEADLESS_LEAF_ID,
+          paneRuntimeId: 1,
+          ptyId
+        }
+      ]
+    })
+    resolveSpawn({ id: splitPtyId })
+
+    await expect(split).resolves.toMatchObject({
+      tabId,
+      handle: expect.stringMatching(/^term_/)
+    })
+
+    expect(revealTerminalSession).toHaveBeenCalledOnce()
+    expect(kill).not.toHaveBeenCalled()
+    expect(getSession().terminalLayoutsByTabId[tabId]?.root).toMatchObject({
+      type: 'split',
+      direction: 'horizontal'
+    })
+  })
+
+  it('rejects a persisted split closed during spawn without recreating its tab', async () => {
+    const tabId = 'closing-persisted-tab'
+    const ptyId = 'closing-persisted-pty'
+    const { runtimeStore, getSession, setSession } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        tabsByWorktree: {
+          [TEST_WORKTREE_ID]: [
+            {
+              id: tabId,
+              ptyId,
+              worktreeId: TEST_WORKTREE_ID,
+              title: 'Closing terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          [tabId]: makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: ptyId })
+        }
+      })
+    )
+    let resolveSpawn!: (result: { id: string }) => void
+    const spawn = vi.fn(
+      (_args: unknown) =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSpawn = resolve
+        })
+    )
+    const kill = vi.fn(() => false)
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill,
+      getForegroundProcess: async () => null
+    })
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+    runtime.registerPty(ptyId, TEST_WORKTREE_ID, null, {
+      tabId,
+      leafId: HEADLESS_LEAF_ID
+    })
+    const internals = runtime as unknown as {
+      issuePtyHandle: (pty: unknown) => string
+      ptysById: Map<string, unknown>
+    }
+    const handle = internals.issuePtyHandle(internals.ptysById.get(ptyId))
+    const split = runtime.splitTerminal(handle, { direction: 'vertical' })
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+
+    setSession(getDefaultWorkspaceSession())
+    runtimeStore.persistPtyBinding.mockReturnValue(false)
+    resolveSpawn({ id: 'rejected-split-pty' })
+
+    await expect(split).rejects.toThrow('terminal_split_source_not_found')
+    expect(spawn.mock.calls[0]?.[0]).toMatchObject({
+      persistHostSessionBinding: true,
+      expectedSourceBinding: {
+        worktreeId: TEST_WORKTREE_ID,
+        tabId,
+        leafId: HEADLESS_LEAF_ID,
+        ptyId
+      }
+    })
+    expect(kill).toHaveBeenCalledWith('rejected-split-pty')
+    expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toBeUndefined()
+    expect(getSession().terminalLayoutsByTabId[tabId]).toBeUndefined()
+  })
+
+  it('rejects a projected split retired during spawn before publishing the new pane', async () => {
+    let resolveSplitSpawn!: (result: { id: string }) => void
+    const spawn = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'projected-source-pty' })
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ id: string }>((resolve) => {
+            resolveSplitSpawn = resolve
+          })
+      )
+    const kill = vi.fn(() => true)
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill,
+      getForegroundProcess: async () => null
+    })
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+
+    const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+    const split = runtime.splitTerminal(handle, { direction: 'vertical' })
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2))
+
+    runtime['mobileSessionTabsByWorktree'].delete(TEST_WORKTREE_ID)
+    resolveSplitSpawn({ id: 'retired-projected-split-pty' })
+
+    await expect(split).rejects.toThrow('terminal_split_source_not_found')
+    expect(kill).toHaveBeenCalledWith('retired-projected-split-pty')
+    expect(runtime['mobileSessionTabsByWorktree'].has(TEST_WORKTREE_ID)).toBe(false)
+  })
+
   it('splits folder workspace pty-backed terminal sessions with folder cwd and env', async () => {
     const folderPath = await mkdtemp(join(tmpdir(), 'orca-runtime-folder-split-'))
     const spawn = vi
@@ -14832,6 +15107,80 @@ describe('OrcaRuntimeService', () => {
       leafId: splitLeafId,
       splitFromLeafId: sourceLeafId,
       splitDirection: 'vertical'
+    })
+  })
+
+  it('atomically admits persisted SSH splits in the SSH host partition', async () => {
+    const tabId = 'ssh-split-tab'
+    const sourcePtyId = 'ssh:ssh-1@@source-pty'
+    const splitPtyId = 'ssh:ssh-1@@split-pty'
+    const remoteRepo = { ...store.getRepo(TEST_REPO_ID)!, connectionId: 'ssh-1' }
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        tabsByWorktree: {
+          [TEST_WORKTREE_ID]: [
+            {
+              id: tabId,
+              ptyId: sourcePtyId,
+              worktreeId: TEST_WORKTREE_ID,
+              title: 'SSH terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          [tabId]: makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: sourcePtyId })
+        }
+      }),
+      'ssh:ssh-1'
+    )
+    const spawn = vi.fn().mockResolvedValue({ id: splitPtyId })
+    const runtime = new OrcaRuntimeService({
+      ...runtimeStore,
+      getRepos: () => [remoteRepo],
+      getRepo: (id: string) => (id === TEST_REPO_ID ? remoteRepo : undefined)
+    } as never)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+    runtime.registerPty(sourcePtyId, TEST_WORKTREE_ID, 'ssh-1', {
+      tabId,
+      leafId: HEADLESS_LEAF_ID
+    })
+    const internals = runtime as unknown as {
+      issuePtyHandle: (pty: unknown) => string
+      ptysById: Map<string, unknown>
+    }
+    const handle = internals.issuePtyHandle(internals.ptysById.get(sourcePtyId))
+
+    await expect(runtime.splitTerminal(handle, { direction: 'vertical' })).resolves.toMatchObject({
+      tabId,
+      handle: expect.stringMatching(/^term_/)
+    })
+
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionId: 'ssh-1',
+        worktreeId: TEST_WORKTREE_ID,
+        persistHostSessionBinding: true,
+        expectedSourceBinding: expect.objectContaining({
+          worktreeId: TEST_WORKTREE_ID,
+          tabId,
+          leafId: HEADLESS_LEAF_ID,
+          ptyId: sourcePtyId
+        })
+      })
+    )
+    expect(getSession().terminalLayoutsByTabId[tabId]?.root).toMatchObject({
+      type: 'split',
+      direction: 'vertical'
     })
   })
 
@@ -15304,6 +15653,28 @@ describe('OrcaRuntimeService', () => {
       runtime.waitForTerminal(handle, { condition: 'tui-idle', timeoutMs: 1_000 })
     ).resolves.toMatchObject({
       handle,
+      condition: 'tui-idle',
+      status: 'running'
+    })
+  })
+
+  it('resolves live-leaf tui-idle from an OpenCode native title', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+    syncSinglePty(runtime, 'remote:pty-1', {
+      tabTitle: 'repo terminal',
+      paneTitle: 'ssh build-host | OC | Native session'
+    })
+    const [terminal] = (await runtime.listTerminals()).terminals
+
+    await expect(
+      runtime.waitForTerminal(terminal.handle, { condition: 'tui-idle', timeoutMs: 1_000 })
+    ).resolves.toMatchObject({
+      handle: terminal.handle,
       condition: 'tui-idle',
       status: 'running'
     })
@@ -22489,6 +22860,65 @@ describe('OrcaRuntimeService', () => {
     await expect(runtime.isTerminalRunningAgent(terminal.handle)).resolves.toBe(false)
     await expect(runtime.getTerminalAgentStatus(terminal.handle)).resolves.toEqual({
       handle: terminal.handle,
+      isRunningAgent: false,
+      status: null
+    })
+  })
+
+  it('does not authorize an OpenCode marker left on a shell pane', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => 'zsh'
+    })
+    syncSinglePty(runtime, 'pty-1', { paneTitle: 'OC | zsh' })
+    const [terminal] = (await runtime.listTerminals()).terminals
+
+    await expect(runtime.isTerminalRunningAgent(terminal.handle)).resolves.toBe(false)
+    await expect(runtime.getTerminalAgentStatus(terminal.handle)).resolves.toEqual({
+      handle: terminal.handle,
+      isRunningAgent: false,
+      status: null
+    })
+  })
+
+  it('authorizes a hookless OpenCode marker with an OpenCode foreground process', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => 'opencode'
+    })
+    syncSinglePty(runtime, 'pty-1', { paneTitle: 'OC | Native session' })
+    const [terminal] = (await runtime.listTerminals()).terminals
+
+    await expect(runtime.isTerminalRunningAgent(terminal.handle)).resolves.toBe(true)
+    await expect(runtime.getTerminalAgentStatus(terminal.handle)).resolves.toEqual({
+      handle: terminal.handle,
+      isRunningAgent: true,
+      status: 'idle'
+    })
+  })
+
+  it('does not authorize an OpenCode marker left on a runtime PTY shell', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => 'zsh'
+    })
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+    const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`, {
+      command: 'bash',
+      title: 'OC | zsh'
+    })
+
+    await expect(runtime.isTerminalRunningAgent(handle)).resolves.toBe(false)
+    await expect(runtime.getTerminalAgentStatus(handle)).resolves.toEqual({
+      handle,
       isRunningAgent: false,
       status: null
     })

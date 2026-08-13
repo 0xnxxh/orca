@@ -41,6 +41,21 @@ export type PtyBufferSnapshot = {
    *  before post-snapshot live chunks — so the continuation completes it
    *  exactly as live instead of rendering literal (Bug E / #7329). */
   pendingEscapeTailAnsi?: string
+  /** Effective kitty flags the owner of this image proved at `seq`. Absent
+   *  means unknown; never rewrite that silence into a known `0`. */
+  kittyKeyboardFlags?: number
+}
+
+/** Metadata for one authoritative replay payload. */
+export type PtyReplayDataMeta = {
+  clearBeforeReplay?: boolean
+  pendingEscapeTailAnsi?: string
+  /** Kitty flags the snapshot's owner PROVED at `snapshotSeq`. Absent means
+   *  unknown; the pane tracker must stay unproven rather than assume zero. */
+  kittyKeyboardFlags?: number
+  /** The boundary `kittyKeyboardFlags` describes, recorded as the renderer's
+   *  ordered high-water so a quiet pane can still publish a coherent snapshot. */
+  snapshotSeq?: number
 }
 
 export type LocalPtySessionMetadata = {
@@ -67,6 +82,11 @@ export type PtyConnectResult = {
   snapshotFrameAnsi?: string
   /** Live state to append when omitting `snapshotFrameAnsi`. */
   snapshotFrameRestoreAnsi?: string
+  /** Kitty keyboard flags the daemon snapshot proved, paired with the renderer-
+   *  domain `snapshotSeq` main reconciled for the same attach boundary. Absent
+   *  means unknown, never a proven inactive protocol. */
+  snapshotKittyKeyboardFlags?: number
+  snapshotSeq?: number
   isAlternateScreen?: boolean
   sessionExpired?: boolean
   coldRestore?: { scrollback: string; cwd: string; cols?: number; rows?: number }
@@ -84,12 +104,12 @@ type PtyCallbacks = {
   /** Called before an adopted PTY can publish buffered/live bytes. */
   onReattachDetermined?: () => void
   onConnect?: () => void
+  /** A stream re-established after loss carries only new bytes, so the pane must
+   *  re-pull the host's retained buffer or an idle/exited pane paints nothing. */
+  onStreamRecovered?: () => void
   onDisconnect?: () => void
   onData?: (data: string, meta?: PtyDataMeta) => void
-  onReplayData?: (
-    data: string,
-    meta?: { clearBeforeReplay?: boolean; pendingEscapeTailAnsi?: string }
-  ) => void
+  onReplayData?: (data: string, meta?: PtyReplayDataMeta) => void
   onStatus?: (shell: string) => void
   onError?: (message: string, errors?: string[]) => void
   onExit?: (code: number) => void
@@ -110,6 +130,8 @@ export type PtyTransportRecoveryState = {
     | 'disposed'
   epoch: number
   attempt: number
+  /** Set only for a pane whose shell we cannot reach; drives the two-action disconnected banner. */
+  unreachablePane?: { onRetry: () => void; onStartNewTerminal: () => void }
 }
 
 export type PtyTransport = {
@@ -124,10 +146,18 @@ export type PtyTransport = {
      *  Ignored by remote-runtime transports (not gate-markable). */
     initiallyHidden?: boolean
     command?: string
+    commandDelivery?: 'renderer' | 'provider'
     env?: Record<string, string>
     envToDelete?: string[]
     launchConfig?: SleepingAgentLaunchConfig
     resumeProviderSession?: AgentProviderSessionMetadata
+    /** Start a genuinely new shell: ignore the startup this transport was constructed with.
+     *  Omitting the fields is not enough — connect falls back to its constructor values, so a
+     *  "fresh" spawn would silently resume the saved agent session. */
+    suppressSavedStartup?: boolean
+    /** Refuse adoption: this pane's recorded shell cannot be reached, so attaching it would fail
+     *  and create nothing. The old shell is left alive and unbound. */
+    createFreshShellForUnreachablePane?: boolean
     launchToken?: string
     launchAgent?: TuiAgent
     startupCommandDelivery?: StartupCommandDelivery
@@ -204,6 +234,7 @@ export type IpcPtyTransportOptions = {
   env?: Record<string, string>
   envToDelete?: string[]
   command?: string
+  commandDelivery?: 'renderer' | 'provider'
   launchConfig?: SleepingAgentLaunchConfig
   resumeProviderSession?: AgentProviderSessionMetadata
   agentPrompt?: string
