@@ -475,10 +475,11 @@ function PaletteOpenTabWorktreeRailLabel({
   slot?: string
 }): React.JSX.Element | null {
   const [truncated, setTruncated] = useState(false)
-  const resizeObserverRef = useRef<ResizeObserver | null>(null)
-  const handleRef = useCallback((node: HTMLSpanElement | null) => {
-    resizeObserverRef.current?.disconnect()
-    resizeObserverRef.current = null
+  const labelRef = useRef<HTMLSpanElement | null>(null)
+  // Why: observe in an effect so unmount disconnects the ResizeObserver instead of
+  // leaking the callback-ref subscription (react-doctor effect-needs-cleanup).
+  useLayoutEffect(() => {
+    const node = labelRef.current
     if (!node) {
       setTruncated(false)
       return
@@ -493,8 +494,8 @@ function PaletteOpenTabWorktreeRailLabel({
     }
     const observer = new ResizeObserver(updateTruncated)
     observer.observe(node)
-    resizeObserverRef.current = observer
-  }, [])
+    return () => observer.disconnect()
+  }, [name])
 
   if (name.trim().length === 0) {
     return null
@@ -506,14 +507,7 @@ function PaletteOpenTabWorktreeRailLabel({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span
-          // Why: ResizeObserver misses text-only changes; remount so a new slug remeasures.
-          key={name}
-          ref={handleRef}
-          data-slot={slot}
-          tabIndex={-1}
-          className={className}
-        >
+        <span ref={labelRef} data-slot={slot} tabIndex={-1} className={className}>
           <HighlightedText text={name} matchRange={matchRange} />
         </span>
       </TooltipTrigger>
