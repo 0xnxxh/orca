@@ -253,13 +253,21 @@ export function useInstalledAgentSkillNames(
     const refreshFromCompletedScan = (): void => {
       void refresh(false, false)
     }
+    // Why: focus fires on every app and window switch, and a forced refresh
+    // bypasses every cache down to the host's disk walk — that is what turned an
+    // alt-tab into a multi-root filesystem scan per window and per client. Focus
+    // is only a backstop for installs done outside Orca, so it reads through the
+    // cache's freshness window; explicit install events below still force.
+    const refreshFromFocus = (): void => {
+      void refresh(false, false)
+    }
     // Why: skill install commands run outside React state, often in a terminal.
     // Refresh on focus and explicit install events so completion is detected.
-    window.addEventListener('focus', refreshFromExternalChange)
+    window.addEventListener('focus', refreshFromFocus)
     window.addEventListener(INSTALLED_AGENT_SKILLS_CHANGED_EVENT, refreshFromExternalChange)
     window.addEventListener(INSTALLED_AGENT_SKILLS_REFRESHED_EVENT, refreshFromCompletedScan)
     return () => {
-      window.removeEventListener('focus', refreshFromExternalChange)
+      window.removeEventListener('focus', refreshFromFocus)
       window.removeEventListener(INSTALLED_AGENT_SKILLS_CHANGED_EVENT, refreshFromExternalChange)
       window.removeEventListener(INSTALLED_AGENT_SKILLS_REFRESHED_EVENT, refreshFromCompletedScan)
     }
