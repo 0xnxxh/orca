@@ -178,6 +178,26 @@ the TTL alone would have refreshed.
 The two regressions are bounded by the reconciliation interval and are both
 changes Orca does not make itself.
 
+### Main-thread cost
+
+Both the scan and the probe are asynchronous, so neither "runs on the main
+thread" in the naive sense — but they are not equally free there. Measured on
+macOS with a 1 ms interval sampling event-loop lag while each ran 30 times
+against a repo with 20 linked worktrees:
+
+| | wall per call | main-thread stall per call | worst single stall |
+| --- | --- | --- | --- |
+| `git worktree list` | 18.66 ms | 2.69 ms | 3.02 ms |
+| fingerprint probe | 1.66 ms | 0.01 ms | 0.04 ms |
+
+`fs/promises` dispatches to libuv's threadpool, so ~99 % of the probe's latency
+is off-thread. Spawning Git does not: `uv_spawn`, fd and pipe setup, and stdout
+collection and decoding are real synchronous main-process work. Ten repos
+refreshing together therefore cost ≈27 ms of event-loop stall per sweep before
+this change and ≈0.1 ms after — this reduces main-thread pressure rather than
+adding to it, which is why moving either side onto a worker thread would not
+help.
+
 ### Residual risk
 
 A repo registered at a UNC path (`\\wsl$\...`) but executed by the local Windows
