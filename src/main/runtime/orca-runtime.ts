@@ -164,6 +164,10 @@ import type {
 } from './orchestration/environment-transport'
 import { clearFederationAckCheckpoints } from './orchestration/federation-ack-checkpoints'
 import { syncFederatedDispatch } from './orchestration/federation-sync'
+import {
+  classifyFederationTerminalRecoveryFailure,
+  FEDERATION_TERMINAL_RECOVERY_BASE_DELAY_MS
+} from './orchestration/federation-terminal-recovery-policy'
 import { formatMessagePointer } from './orchestration/formatter'
 import { selectExactWorkerProviderSession } from './orchestration/worker-provider-session'
 import type {
@@ -4783,25 +4787,57 @@ export class OrcaRuntimeService {
 
   private async recoverNextTerminalHistoryAcknowledgment(generation: number): Promise<void> {
     const db = this.getOrchestrationDb()
+    const nowMs = Date.now()
     let historical = db.findNextTerminalFederatedDispatchPendingAcknowledgment(
-      this.orchestrationTerminalRecoveryRowId
+      this.orchestrationTerminalRecoveryRowId,
+      nowMs
     )
     if (!historical && this.orchestrationTerminalRecoveryRowId > 0) {
       this.orchestrationTerminalRecoveryRowId = 0
-      historical = db.findNextTerminalFederatedDispatchPendingAcknowledgment(0)
+      historical = db.findNextTerminalFederatedDispatchPendingAcknowledgment(0, nowMs)
     }
     if (!historical) {
+      const nextAt = db.getNextTerminalFederatedDispatchRecoveryAt()
+      if (nextAt !== undefined) {
+        this.scheduleTerminalHistoryRecovery(generation, Math.max(0, nextAt - nowMs))
+      }
       return
     }
     this.orchestrationTerminalRecoveryRowId = historical.rowId
-    await this.syncOrchestrationFederatedDispatch(historical.dispatchId).catch(() => undefined)
+    const result = await this.syncOrchestrationFederatedDispatch(historical.dispatchId).then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error })
+    )
+    if (generation !== this.orchestrationFederationRelayGeneration) {
+      return
+    }
+    if (result.ok) {
+      db.recordFederatedTerminalRecoverySuccess(historical.dispatchId, Date.now())
+    } else {
+      db.recordFederatedTerminalRecoveryFailure({
+        dispatchId: historical.dispatchId,
+        ...classifyFederationTerminalRecoveryFailure(result.error),
+        nowMs: Date.now()
+      })
+    }
+    const nextAt = db.getNextTerminalFederatedDispatchRecoveryAt()
+    if (nextAt === undefined) {
+      return
+    }
+    this.scheduleTerminalHistoryRecovery(
+      generation,
+      Math.max(FEDERATION_TERMINAL_RECOVERY_BASE_DELAY_MS, nextAt - Date.now())
+    )
+  }
+
+  private scheduleTerminalHistoryRecovery(generation: number, delayMs: number): void {
     if (generation !== this.orchestrationFederationRelayGeneration) {
       return
     }
     this.orchestrationTerminalHistoryRecoveryTimer = setTimeout(() => {
       this.orchestrationTerminalHistoryRecoveryTimer = null
       this.ensureTerminalHistoryRecovery()
-    }, 1_000)
+    }, delayMs)
     this.orchestrationTerminalHistoryRecoveryTimer.unref?.()
   }
 
