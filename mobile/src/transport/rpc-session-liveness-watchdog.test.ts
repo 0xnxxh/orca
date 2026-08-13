@@ -105,7 +105,7 @@ describe('RpcSessionLivenessWatchdog', () => {
   })
 
   it('invalidates late callbacks after identity replacement', () => {
-    const callbacks: Array<() => void> = []
+    const callbacks: (() => void)[] = []
     const terminate = vi.fn()
     const watchdog = new RpcSessionLivenessWatchdog({
       transport: 'direct',
