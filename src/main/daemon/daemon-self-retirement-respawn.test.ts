@@ -213,11 +213,6 @@ describe('daemon self-retirement respawn', () => {
     expect(respawn).not.toHaveBeenCalled()
   })
 
-  // Why these two replace "does not treat an initial missing token as respawn authority": that guard
-  // was added alongside the token unlink, to stop an absent token from authorizing a respawn. The
-  // token read no longer preempts the connect, so authority comes from whether anything is accepting
-  // on the endpoint — a strictly stronger signal. The hazard the old guard covered is the first test
-  // here: a daemon that has bound its socket but not yet written its token must not be replaced.
   it('does not respawn a listening daemon whose token is absent', async () => {
     await startServer()
     rmSync(tokenPath)
@@ -226,6 +221,30 @@ describe('daemon self-retirement respawn', () => {
 
     await expect(
       adapter.spawn({ sessionId: 'startup-window', cols: 80, rows: 24 })
+    ).rejects.toThrow(/Invalid token/i)
+
+    expect(respawn).not.toHaveBeenCalled()
+    adapter.dispose()
+  })
+
+  it('does not let stale disconnect evidence authorize respawning a listening daemon', async () => {
+    const original = await startServer()
+    const respawn = vi.fn(async () => {})
+    const adapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
+    await adapter.listProcesses()
+    const client = (
+      adapter as unknown as {
+        client: { hasObservedAuthenticatedDisconnect(): boolean }
+      }
+    ).client
+
+    await original.shutdown()
+    await waitFor(() => client.hasObservedAuthenticatedDisconnect())
+    await startServer()
+    rmSync(tokenPath)
+
+    await expect(
+      adapter.spawn({ sessionId: 'replacement-startup-window', cols: 80, rows: 24 })
     ).rejects.toThrow(/Invalid token/i)
 
     expect(respawn).not.toHaveBeenCalled()

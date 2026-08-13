@@ -114,14 +114,7 @@ export class DaemonClient {
     }
   }
 
-  /**
-   * Why absence is a value, not a throw: the daemon unlinks its token on exit but leaves its socket,
-   * so throwing here preempts the connect — and the connect is what proves the endpoint gone
-   * (ENOENT/ECONNREFUSED with syscall 'connect'), which every recovery predicate keys on. Reading
-   * totally lets a dead daemon fail as a connect, and a live one reject the empty token as
-   * 'Invalid token' rather than being declared dead by a missing file. checkDaemonHealth has always
-   * read it this way; this client was the outlier.
-   */
+  // Why: a missing token must not preempt the connect that proves whether the endpoint is gone.
   private readToken(): string {
     try {
       return readFileSync(this.tokenPath, 'utf-8').trim()

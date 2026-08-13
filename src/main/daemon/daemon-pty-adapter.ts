@@ -2119,13 +2119,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     return 'unavailable'
   }
 
-  // Why: on daemon-death errors, respawn a fresh daemon and retry once rather than leaving terminals broken until app restart.
-  /**
-   * Why a file check and not an errno shape: the client reads the token totally now, so a retired
-   * endpoint fails at the connect rather than the open. The fact worth auditing is unchanged — the
-   * token is gone after we were authenticated — and the filesystem answers it directly. An absent
-   * token before any authenticated session still proves nothing; a daemon may be mid-startup.
-   */
+  // Why: the token read no longer throws, so audit its absence directly after an authenticated drop.
   private isRetiredEndpointTokenMissing(): boolean {
     return this.client.hasObservedAuthenticatedDisconnect() && !existsSync(this.tokenPath)
   }
@@ -2142,11 +2136,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
           ['token_file']
         )
       }
-      if (
-        this.respawnAdoptionClosed ||
-        !this.respawnFn ||
-        (!isDaemonGoneError(err) && !missingRetiredEndpointToken)
-      ) {
+      if (this.respawnAdoptionClosed || !this.respawnFn || !isDaemonGoneError(err)) {
         throw err
       }
       if (!this.respawnPromise) {
