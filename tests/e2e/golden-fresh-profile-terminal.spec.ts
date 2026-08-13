@@ -93,9 +93,17 @@ test('fresh profile opens a live project terminal @golden', async ({
   await focusActiveTerminalInput(orcaPage)
   await orcaPage.keyboard.type('git rev-parse --show-toplevel')
   await orcaPage.keyboard.press('Enter')
+  // Why: Windows realpathSync can return an 8.3 short path (RUNNER~1) while git
+  // prints the long form (runneradmin). Compare against git's own toplevel.
+  const gitToplevel = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    cwd: repoPath,
+    encoding: 'utf8'
+  })
+    .trim()
+    .replaceAll('\\', '/')
   await expect
     .poll(async () => (await getTerminalContent(orcaPage)).replaceAll('\\', '/'), {
       message: 'fresh project terminal should start in the selected repository'
     })
-    .toContain(repoPath.replaceAll('\\', '/'))
+    .toContain(gitToplevel)
 })
