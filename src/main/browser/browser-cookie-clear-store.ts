@@ -40,14 +40,14 @@ function findPartitionWebContents(targetSession: Session) {
     .find((contents) => !contents.isDestroyed() && contents.session === targetSession)
 }
 
-function cdpSameSite(sameSite: Cookie['sameSite']): 'Strict' | 'Lax' | 'None' {
+function cdpSameSite(sameSite: Cookie['sameSite']): 'Strict' | 'Lax' | 'None' | undefined {
   if (sameSite === 'strict') {
     return 'Strict'
   }
   if (sameSite === 'no_restriction') {
     return 'None'
   }
-  return 'Lax'
+  return sameSite === 'lax' ? 'Lax' : undefined
 }
 
 function electronSameSite(sameSite: string | undefined): Cookie['sameSite'] {
@@ -73,29 +73,42 @@ function partitionKeyFromCdp(
   }
 }
 
-function sameCookieScope(cookie: Cookie, cdpCookie: CdpCookie): boolean {
-  const cookieDomain = cookie.domain ? normalizeCookieDomain(cookie.domain) : null
-  const cdpDomain = cdpCookie.domain ? normalizeCookieDomain(cdpCookie.domain) : null
-  return (
-    cookie.name === cdpCookie.name &&
-    cookieDomain !== null &&
-    cookieDomain === cdpDomain &&
-    (cookie.path || '/') === (cdpCookie.path || '/')
-  )
+function cookieScopeKey(
+  name: string,
+  domain: string | undefined,
+  path: string | undefined,
+  hostOnly: boolean
+): string | null {
+  const normalizedDomain = domain ? normalizeCookieDomain(domain) : null
+  return normalizedDomain ? JSON.stringify([name, normalizedDomain, path || '/', hostOnly]) : null
 }
 
-function identityFromCdpCookie(
-  url: string,
-  cookie: Cookie,
-  cdpCookie: CdpCookie
-): CookieClearIdentity {
+function cdpCookieScopeKey(cookie: CdpCookie): string | null {
+  return cookieScopeKey(cookie.name, cookie.domain, cookie.path, !cookie.domain?.startsWith('.'))
+}
+
+function indexCdpCookies(cookies: readonly CdpCookie[]): Map<string, CdpCookie[]> {
+  const index = new Map<string, CdpCookie[]>()
+  for (const cookie of cookies) {
+    const key = cdpCookieScopeKey(cookie)
+    if (!key) {
+      continue
+    }
+    const matches = index.get(key) ?? []
+    matches.push(cookie)
+    index.set(key, matches)
+  }
+  return index
+}
+
+function identityFromCdpCookie(url: string, cdpCookie: CdpCookie): CookieClearIdentity {
   const partitionKey = partitionKeyFromCdp(cdpCookie.partitionKey)
   return {
     url,
     name: cdpCookie.name,
     value: cdpCookie.value,
     domain: cdpCookie.domain,
-    hostOnly: cookie.hostOnly,
+    hostOnly: !cdpCookie.domain?.startsWith('.'),
     path: cdpCookie.path,
     secure: cdpCookie.secure,
     httpOnly: cdpCookie.httpOnly,
@@ -129,12 +142,6 @@ async function attachCookieClearSession(targetSession: Session): Promise<CookieC
       throw new Error('Could not attach to the cookie session for an atomic clear')
     }
     const lease = acquireElectronDebugger(contents)
-    try {
-      await contents.debugger.sendCommand('Network.enable')
-    } catch (error) {
-      lease.release()
-      throw error
-    }
     return {
       debugger: contents.debugger,
       dispose: () => {
@@ -154,8 +161,15 @@ export function cookieClearIdentitiesFromCdp(
 ): CookieClearIdentity[] {
   const identities: CookieClearIdentity[] = []
   const seen = new Set<string>()
+  const cdpCookieIndex = indexCdpCookies(cdpCookies)
   for (const item of cookies) {
-    const matches = cdpCookies.filter((cdpCookie) => sameCookieScope(item.cookie, cdpCookie))
+    const key = cookieScopeKey(
+      item.cookie.name,
+      item.cookie.domain,
+      item.cookie.path,
+      item.cookie.hostOnly ?? !item.cookie.domain?.startsWith('.')
+    )
+    const matches = key ? (cdpCookieIndex.get(key) ?? []) : []
     if (matches.length === 0) {
       throw new Error('Could not snapshot cookie identity for an atomic clear')
     }
@@ -171,7 +185,7 @@ export function cookieClearIdentitiesFromCdp(
         continue
       }
       seen.add(key)
-      identities.push(identityFromCdpCookie(item.url, item.cookie, match))
+      identities.push(identityFromCdpCookie(item.url, match))
     }
   }
   return identities
@@ -180,6 +194,7 @@ export function cookieClearIdentitiesFromCdp(
 export function cdpRestoreParamsFromIdentity(
   identity: CookieClearIdentity
 ): Record<string, unknown> {
+  const sameSite = cdpSameSite(identity.sameSite)
   return {
     url: identity.url,
     name: identity.name,
@@ -188,7 +203,7 @@ export function cdpRestoreParamsFromIdentity(
     ...(identity.path ? { path: identity.path } : {}),
     secure: identity.secure,
     httpOnly: identity.httpOnly,
-    sameSite: cdpSameSite(identity.sameSite),
+    ...(sameSite ? { sameSite } : {}),
     ...(identity.expirationDate ? { expires: identity.expirationDate } : {}),
     ...(identity.partitionKey ? { partitionKey: identity.partitionKey } : {})
   }
@@ -236,9 +251,34 @@ export function openCookieClearStore(
   targetSession: Session
 ): CookieClearStore & { dispose: () => void } {
   let attached: CookieClearSession | null = null
+  let pendingAttach: Promise<CookieClearSession> | null = null
+  let disposed = false
   const attach = async () => {
-    attached ??= await attachCookieClearSession(targetSession)
-    return attached
+    if (disposed) {
+      throw new Error('Cookie clear store was disposed')
+    }
+    if (attached) {
+      return attached
+    }
+    if (pendingAttach) {
+      return pendingAttach
+    }
+    const pending = attachCookieClearSession(targetSession).then((session) => {
+      if (disposed) {
+        session.dispose()
+        throw new Error('Cookie clear store was disposed during debugger attachment')
+      }
+      attached = session
+      return session
+    })
+    pendingAttach = pending
+    try {
+      return await pending
+    } finally {
+      if (pendingAttach === pending) {
+        pendingAttach = null
+      }
+    }
   }
   return {
     get: (filter) => targetSession.cookies.get(filter),
@@ -248,6 +288,8 @@ export function openCookieClearStore(
     restoreClearIdentities: async (identities) =>
       restoreClearIdentitiesWithCdp((await attach()).debugger, identities),
     dispose: () => {
+      disposed = true
+      pendingAttach = null
       attached?.dispose()
       attached = null
     }

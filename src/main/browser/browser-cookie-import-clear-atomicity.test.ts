@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { Cookie } from 'electron'
 import {
   identitiesFromClearCookies,
@@ -108,8 +108,7 @@ describe('STA-4090 failed full cookie clear', () => {
     expect(session.names()).toEqual(['stale'])
   })
 
-  it('never restores through cookies.set for a partitioned identity', async () => {
-    const set = vi.fn()
+  it('restores a partitioned identity through the captured restore channel', async () => {
     const identities: CookieClearIdentity[] = []
     const session: CookieClearSession = {
       cookies: {
@@ -140,7 +139,6 @@ describe('STA-4090 failed full cookie clear', () => {
     await expect(removeTransplantableCookies(session)).rejects.toThrow(
       /existing cookies were restored/
     )
-    expect(set).not.toHaveBeenCalled()
     expect(identities).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

@@ -31,11 +31,11 @@ const EXPECTED_PARTITION_KEY = {
   hasCrossSiteAncestor: true
 }
 
-function buildFixtureMain(clearPath: string, resultPath: string): string {
+function buildFixtureMain(bundlePath: string, resultPath: string): string {
   return `
 const { app, BrowserWindow, session } = require('electron')
 const { writeFileSync } = require('node:fs')
-const { removeTransplantableCookies } = require(${JSON.stringify(clearPath)})
+const { openCookieClearStore, removeTransplantableCookies } = require(${JSON.stringify(bundlePath)})
 const resultPath = ${JSON.stringify(resultPath)}
 let currentStep = 'starting'
 const mark = (step) => {
@@ -59,8 +59,6 @@ async function run() {
   const debug = window.webContents.debugger
   debug.attach('1.3')
   mark('debugger attached')
-  await debug.sendCommand('Network.enable')
-  mark('network enabled')
 
   // Only CDP can create a partitioned cookie; Electron's cookies API has no partitionKey.
   await debug.sendCommand('Network.setCookie', {
@@ -86,6 +84,7 @@ async function run() {
   // Why: the bulk clear is the ordinary path now, so rejecting it routes this fixture onto
   // the per-cookie fallback where a later removal can fail after earlier ones succeeded.
   let bulkClearCalls = 0
+  const cookieClearStore = openCookieClearStore(targetSession)
   const clearSession = {
     cookies: {
       get: (filter) => targetSession.cookies.get(filter),
@@ -98,40 +97,8 @@ async function run() {
       bulkClearCalls++
       throw new Error('forced bulk clear failure')
     },
-    snapshotClearIdentities: async (cookies) => {
-      const { cookies: cdpCookies } = await debug.sendCommand('Network.getAllCookies')
-      return cookies.flatMap((item) => {
-        const matches = cdpCookies.filter((cdpCookie) => cdpCookie.name === item.cookie.name)
-        if (matches.length === 0) throw new Error('Could not snapshot cookie identity for an atomic clear')
-        return matches.map((cdpCookie) => ({
-          url: item.url,
-          name: cdpCookie.name,
-          value: cdpCookie.value,
-          domain: cdpCookie.domain,
-          path: cdpCookie.path,
-          secure: cdpCookie.secure,
-          httpOnly: cdpCookie.httpOnly,
-          sameSite: cdpCookie.sameSite === 'None' ? 'no_restriction' : 'lax',
-          partitionKey: cdpCookie.partitionKey
-        }))
-      })
-    },
-    restoreClearIdentities: async (identities) => {
-      for (const identity of identities) {
-        const result = await debug.sendCommand('Network.setCookie', {
-          url: identity.url,
-          name: identity.name,
-          value: identity.value,
-          domain: identity.domain,
-          path: identity.path,
-          secure: identity.secure,
-          httpOnly: identity.httpOnly,
-          sameSite: identity.sameSite === 'no_restriction' ? 'None' : 'Lax',
-          partitionKey: identity.partitionKey
-        })
-        if (result && result.success === false) throw new Error('CDP restore rejected ' + identity.name)
-      }
-    }
+    snapshotClearIdentities: (cookies) => cookieClearStore.snapshotClearIdentities(cookies),
+    restoreClearIdentities: (identities) => cookieClearStore.restoreClearIdentities(identities)
   }
 
   let clearError = null
@@ -139,6 +106,8 @@ async function run() {
     await removeTransplantableCookies(clearSession)
   } catch (error) {
     clearError = String(error?.message || error)
+  } finally {
+    cookieClearStore.dispose()
   }
   mark('clear finished')
 
@@ -170,25 +139,33 @@ run().catch((error) => {
 async function runFixture(): Promise<FixtureResult> {
   const root = mkdtempSync(join(tmpdir(), 'orca-partition-rollback-'))
   fixtureRoots.push(root)
-  const clearPath = join(root, 'browser-cookie-import-clear.cjs')
+  const bundlePath = join(root, 'cookie-clear-rollback.cjs')
+  const bundleEntryPath = join(root, 'cookie-clear-rollback.ts')
   const resultPath = join(root, 'result.json')
   const fixturePath = join(root, 'main.cjs')
+  writeFileSync(
+    bundleEntryPath,
+    [
+      `export { openCookieClearStore } from ${JSON.stringify(join(process.cwd(), 'src/main/browser/browser-cookie-clear-store.ts'))}`,
+      `export { removeTransplantableCookies } from ${JSON.stringify(join(process.cwd(), 'src/main/browser/browser-cookie-import-clear.ts'))}`
+    ].join('\n')
+  )
   await buildVite({
     configFile: false,
     logLevel: 'silent',
     build: {
       emptyOutDir: false,
       lib: {
-        entry: join(process.cwd(), 'src/main/browser/browser-cookie-import-clear.ts'),
+        entry: bundleEntryPath,
         formats: ['cjs'],
-        fileName: () => 'browser-cookie-import-clear.cjs'
+        fileName: () => 'cookie-clear-rollback.cjs'
       },
       outDir: root,
       target: 'node20',
       rollupOptions: { external: ['electron', /^node:/] }
     }
   })
-  writeFileSync(fixturePath, buildFixtureMain(clearPath, resultPath))
+  writeFileSync(fixturePath, buildFixtureMain(bundlePath, resultPath))
   const { ELECTRON_RUN_AS_NODE: _electronRunAsNode, ...env } = process.env
   const electronArgs = [fixturePath, `--user-data-dir=${join(root, 'profile')}`]
   const executable = process.platform === 'linux' ? 'xvfb-run' : electronBinary
