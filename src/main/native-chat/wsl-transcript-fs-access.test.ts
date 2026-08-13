@@ -4,6 +4,7 @@ import type * as NodeFsPromisesModule from 'node:fs/promises'
 import type * as GateModule from './wsl-transcript-fs-gate'
 
 const UNC_PATH = '\\\\wsl.localhost\\Ubuntu\\home\\ada\\.codex\\sessions\\a.jsonl'
+const OTHER_DISTRO_UNC_PATH = '\\\\wsl.localhost\\Debian\\home\\ada\\.codex\\sessions\\a.jsonl'
 const LEGACY_UNC_PATH = '\\\\wsl$\\Ubuntu\\home\\ada\\.codex\\sessions\\a.jsonl'
 const WINDOWS_PATH = 'C:\\Users\\ada\\.codex\\sessions\\a.jsonl'
 const POSIX_PATH = '/home/ada/.codex/sessions/a.jsonl'
@@ -47,15 +48,24 @@ import {
   wslGatedRead,
   wslGatedReaddir,
   wslGatedReadFile,
-  wslGatedStat
+  wslGatedStat,
+  WSL_TRANSCRIPT_READ_CHUNK_BYTES
 } from './wsl-transcript-fs-access'
-import { WSL_TRANSCRIPT_FS_EXACT_TIMEOUT_MS, WslTranscriptFsError } from './wsl-transcript-fs-gate'
+import {
+  resetWslTranscriptFsGateForTests,
+  WSL_TRANSCRIPT_FS_EXACT_TIMEOUT_MS,
+  WslTranscriptFsError
+} from './wsl-transcript-fs-gate'
 
 function fakeHandle() {
   return { read: vi.fn(), close: vi.fn(async () => {}) }
 }
 
 beforeEach(() => {
+  // The gate mock delegates to the real implementation, so its module state
+  // survives between cases — a case that leaves a task stalled would otherwise
+  // mark that route stuck and fast-fail every later case on it.
+  resetWslTranscriptFsGateForTests()
   // runTask keeps the real gate implementation installed by the mock factory;
   // only its call log is cleared.
   mocks.runTask.mockClear()
@@ -96,7 +106,20 @@ describe('transcript filesystem accessor off WSL UNC', () => {
     // Off UNC the raw stream is handed back verbatim, encoding included.
     expect(stream).toBe('raw-stream')
     expect(mocks.createReadStream).toHaveBeenCalledWith(path, {
-      encoding: 'utf-8'
+      encoding: 'utf-8',
+      signal: undefined
+    })
+  })
+
+  it('forwards the caller signal so the local stream honours cancellation', () => {
+    mocks.createReadStream.mockReturnValue('raw-stream')
+    const controller = new AbortController()
+
+    openTranscriptReadStream(POSIX_PATH, { start: 4 }, 'exact', controller.signal)
+
+    expect(mocks.createReadStream).toHaveBeenCalledWith(POSIX_PATH, {
+      start: 4,
+      signal: controller.signal
     })
   })
 })
@@ -204,6 +227,31 @@ describe('transcript filesystem accessor on WSL UNC', () => {
     expect(second.close).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps a blocked close on one distro from stranding teardown on another', async () => {
+    let releaseStuck: (() => void) | undefined
+    const stuck = fakeHandle()
+    stuck.close.mockReturnValue(
+      new Promise<void>((resolve) => {
+        releaseStuck = resolve
+      })
+    )
+    const healthy = fakeHandle()
+
+    try {
+      await closeTranscriptHandle(stuck as never, UNC_PATH)
+      await closeTranscriptHandle(healthy as never, OTHER_DISTRO_UNC_PATH)
+      await new Promise((resolve) => setImmediate(resolve))
+
+      // A close that never settles on a stalled mount would hold a shared lane
+      // for the process lifetime, leaking every later descriptor with it.
+      expect(stuck.close).toHaveBeenCalledTimes(1)
+      expect(healthy.close).toHaveBeenCalledTimes(1)
+    } finally {
+      releaseStuck?.()
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+  })
+
   it.each([
     ['stat', wslGatedStat, mocks.stat],
     ['lstat', wslGatedLstat, mocks.lstat]
@@ -287,11 +335,11 @@ describe('transcript handle close off WSL UNC', () => {
 
 describe('per-chunk admission', () => {
   it('carries a codepoint straddling the 1 MiB chunk boundary across chunks', async () => {
-    const chunkBytes = 1024 * 1024
     const emoji = Buffer.from('😀', 'utf8')
-    // Two of the emoji's four bytes land in chunk 1, two in chunk 2.
+    // Two of the emoji's four bytes land in chunk 1, two in chunk 2 — derived
+    // from the production constant so the fixture cannot drift off the boundary.
     const body = Buffer.concat([
-      Buffer.alloc(chunkBytes - 2, 0x61),
+      Buffer.alloc(WSL_TRANSCRIPT_READ_CHUNK_BYTES - 2, 0x61),
       emoji,
       Buffer.from('tail\n', 'utf8')
     ])

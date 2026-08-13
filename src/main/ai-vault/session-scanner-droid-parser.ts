@@ -34,11 +34,16 @@ export async function parseDroidSessionFile(
   file: FileWithMtime,
   platform: NodeJS.Platform = process.platform
 ): Promise<AiVaultSession | null> {
-  const lines = createInterface({
-    input: openTranscriptReadStream(file.path, { encoding: 'utf-8' }, 'scan'),
-    crlfDelay: Infinity
-  })
-  return parseDroidSessionLines({ file, lines, platform })
+  const input = openTranscriptReadStream(file.path, { encoding: 'utf-8' }, 'scan')
+  const lines = createInterface({ input, crlfDelay: Infinity })
+  try {
+    return await parseDroidSessionLines({ file, lines, platform })
+  } finally {
+    // readline.close() leaves the underlying stream open; destroy it so a
+    // mid-parse throw cannot leak the gated transcript handle.
+    lines.close()
+    input.destroy()
+  }
 }
 
 export async function parseDroidSessionContent(

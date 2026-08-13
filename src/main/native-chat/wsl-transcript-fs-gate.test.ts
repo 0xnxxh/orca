@@ -659,11 +659,7 @@ describe('WSL transcript filesystem task scheduling', () => {
 describe('WSL transcript filesystem task coalescing opt-out', () => {
   const READ_PATH = '\\\\wsl.localhost\\Alpine\\home\\ada\\transcript.jsonl'
 
-  function gatedRead(
-    buffer: Buffer,
-    task: (signal: AbortSignal) => Promise<Buffer>
-  ): Promise<Buffer> {
-    void buffer
+  function gatedRead(task: (signal: AbortSignal) => Promise<Buffer>): Promise<Buffer> {
     return runWslTranscriptFsTask(
       { operation: 'read', path: READ_PATH, priority: 'exact', dedupe: false },
       task
@@ -676,11 +672,11 @@ describe('WSL transcript filesystem task coalescing opt-out', () => {
     const bodies = [Buffer.from('AAAA'), Buffer.from('BBBB')]
 
     const reads = Promise.all([
-      gatedRead(first, async () => {
+      gatedRead(async () => {
         bodies.shift()!.copy(first)
         return first
       }),
-      gatedRead(second, async () => {
+      gatedRead(async () => {
         bodies.shift()!.copy(second)
         return second
       })

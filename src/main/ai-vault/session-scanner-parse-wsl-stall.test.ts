@@ -5,11 +5,14 @@ import type { SessionFileCandidate } from './session-scanner-types'
 const STALLED_PATH = '\\\\wsl.localhost\\Ubuntu\\home\\ada\\.claude\\projects\\p\\a.jsonl'
 const SIBLING_PATH = '\\\\wsl.localhost\\Debian\\home\\ada\\.claude\\projects\\p\\b.jsonl'
 
-const mocks = vi.hoisted(() => ({ open: vi.fn() }))
+const mocks = vi.hoisted(() => ({ open: vi.fn(), readdir: vi.fn() }))
 
+// readdir too: every claude parse counts sibling subagent transcripts, and an
+// unmocked one would reach the host UNC path and stall under fake timers.
 vi.mock('node:fs/promises', async (importOriginal) => ({
   ...(await importOriginal<typeof NodeFsPromisesModule>()),
-  open: mocks.open
+  open: mocks.open,
+  readdir: mocks.readdir
 }))
 
 import {
@@ -83,6 +86,8 @@ async function releaseAndSettle(): Promise<void> {
 beforeEach(() => {
   resetSessionParseCacheForTests()
   mocks.open.mockReset()
+  mocks.readdir.mockReset()
+  mocks.readdir.mockResolvedValue([])
   releaseStall = undefined
   vi.useFakeTimers()
 })
