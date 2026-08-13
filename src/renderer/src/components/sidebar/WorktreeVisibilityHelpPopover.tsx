@@ -49,13 +49,13 @@ export default function WorktreeVisibilityHelpPopover(): React.JSX.Element {
             </li>
             <li>
               {translate(
-                'auto.components.sidebar.WorktreeVisibilityHelpPopover.54a7c2f183',
+                'auto.components.sidebar.WorktreeVisibilityHelpPopover.ec1e6a10fb',
                 'Other worktrees start hidden to avoid unexpected sidebar clutter.'
               )}
             </li>
             <li>
               {translate(
-                'auto.components.sidebar.WorktreeVisibilityHelpPopover.b9e0d43675',
+                'auto.components.sidebar.WorktreeVisibilityHelpPopover.1c68c9cf77',
                 'Enable a source for all current and future worktrees, or show individual worktrees below.'
               )}
             </li>

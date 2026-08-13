@@ -4903,8 +4903,12 @@
         "WorktreeVisibilityHelpPopover": {
           "c41f2d7e90": "Which worktrees are hidden by default?",
           "8db4e19a26": "This setting never hides worktrees created through Orca.",
-          "54a7c2f183": "Other worktrees start hidden to avoid unexpected sidebar clutter.",
-          "b9e0d43675": "Enable a source for all current and future worktrees, or show individual worktrees below."
+          "ec1e6a10fb": "Other worktrees start hidden to avoid unexpected sidebar clutter.",
+          "1c68c9cf77": "Enable a source for all current and future worktrees, or show individual worktrees below."
+        },
+        "HiddenWorktreeRecoveryList": {
+          "64e6f53f05": "Show one without enabling its source.",
+          "showWorktree": "Show {{value0}} at {{value1}}"
         },
         "WorktreeVisibilityDialog": {
           "83a5ba8dd1": "Non-Orca worktrees",
@@ -4918,7 +4922,6 @@
           "b8d24e61f5": "Could not list this repo's worktrees.",
           "c5e70a93b1": "Try again",
           "7d21c5e848": "Hidden worktrees ({{value0}})",
-          "9b53f7a160": "Show one without enabling its source.",
           "2f80cd4b97": "Showing…",
           "e64b81d3a9": "Show",
           "d40d436fc2": "Could not update worktree visibility. Try again.",
@@ -5435,7 +5438,9 @@
           "other": "Other locations",
           "custom": "Custom location",
           "otherPath": "Outside listed sources",
-          "invalidPath": "Enter a unique absolute path for this host.",
+          "invalidPath": "Enter an absolute path for this host.",
+          "duplicatePath": "This location is already listed.",
+          "limit": "Remove a custom location before adding another.",
           "sources": "Sources",
           "sourcesDescription": "Enabled sources include current and future worktrees in the sidebar.",
           "found": "{{value0}} found",

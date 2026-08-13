@@ -41,6 +41,7 @@ function normalizeSourceRootPath(value: string): string | null {
     !trimmed ||
     trimmed.length > MAX_SOURCE_PATH_LENGTH ||
     trimmed.includes('\0') ||
+    (trimmed.startsWith('\\') && !trimmed.startsWith('\\\\')) ||
     !isRuntimePathAbsolute(trimmed)
   ) {
     return null
@@ -57,7 +58,10 @@ export function normalizeCustomWorktreeVisibilitySources(
   const ids = new Set<string>()
   const roots = new Set<string>()
   const normalized: CustomWorktreeVisibilitySource[] = []
-  for (const candidate of value.slice(0, MAX_CUSTOM_WORKTREE_VISIBILITY_SOURCES)) {
+  for (const candidate of value) {
+    if (normalized.length >= MAX_CUSTOM_WORKTREE_VISIBILITY_SOURCES) {
+      break
+    }
     if (!candidate || typeof candidate !== 'object') {
       continue
     }
@@ -116,39 +120,42 @@ export function normalizeWorktreeVisibilitySourcePreferences(
   }
 }
 
-function createDescendantMatcher(rootPath: string): (candidatePath: string) => boolean {
+function createDescendantMatcher(rootPath: string): (normalizedCandidate: string) => boolean {
   const matchesInsideOrEqual = createNormalizedPathInsideOrEqualMatcher(rootPath)
   const normalizedRoot = normalizeRuntimePathForComparison(rootPath)
-  return (candidatePath) => {
-    const normalizedCandidate = normalizeRuntimePathForComparison(candidatePath)
-    return normalizedCandidate !== normalizedRoot && matchesInsideOrEqual(normalizedCandidate)
-  }
+  return (normalizedCandidate) =>
+    normalizedCandidate !== normalizedRoot && matchesInsideOrEqual(normalizedCandidate)
 }
 
 export function createWorktreeVisibilitySourceMatcher(
   checkoutPaths: readonly string[],
   customSources: readonly CustomWorktreeVisibilitySource[] = []
 ): WorktreeVisibilitySourceMatcher {
-  const builtInMatchers = checkoutPaths.flatMap((checkoutPath) =>
-    BUILT_IN_WORKTREE_VISIBILITY_SOURCES.map(({ id, relativeRootSegments }) => ({
-      id,
-      matches: createDescendantMatcher(
-        `${checkoutPath.replace(/[\\/]+$/, '')}/${relativeRootSegments.join('/')}`
-      )
-    }))
-  )
+  const checkoutPathKeys = new Set(checkoutPaths.map(normalizeRuntimePathForComparison))
   const customMatchers = customSources.map(({ id, rootPath }) => ({
     id,
     matches: createDescendantMatcher(rootPath)
   }))
   return (worktreePath) => {
-    for (const source of builtInMatchers) {
-      if (source.matches(worktreePath)) {
-        return { kind: 'built-in', id: source.id }
+    const normalizedCandidate = normalizeRuntimePathForComparison(worktreePath)
+    const segments = normalizedCandidate.split('/')
+    for (const source of BUILT_IN_WORKTREE_VISIBILITY_SOURCES) {
+      const prefix = source.relativeRootSegments
+      for (let index = 0; index + prefix.length < segments.length; index += 1) {
+        if (!prefix.every((segment, offset) => segments[index + offset] === segment)) {
+          continue
+        }
+        const checkoutPath = segments.slice(0, index).join('/')
+        const checkoutPathKey = /^[a-z]:$/i.test(checkoutPath)
+          ? `${checkoutPath}/`
+          : checkoutPath || '/'
+        if (checkoutPathKeys.has(checkoutPathKey)) {
+          return { kind: 'built-in', id: source.id }
+        }
       }
     }
     for (const source of customMatchers) {
-      if (source.matches(worktreePath)) {
+      if (source.matches(normalizedCandidate)) {
         return { kind: 'custom', id: source.id }
       }
     }

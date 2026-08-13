@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Repo } from './types'
 import {
   buildWorktreeSourcePreferenceUpdate,
@@ -65,6 +65,22 @@ describe('worktree visibility sources', () => {
     })
   })
 
+  it('normalizes each candidate once regardless of checkout count', () => {
+    const classify = createWorktreeVisibilitySourceMatcher(
+      Array.from({ length: 200 }, (_, index) => `/repo/worktree-${index}`),
+      Array.from({ length: 32 }, (_, index) => ({
+        id: `custom-${index}`,
+        rootPath: `/custom/${index}`
+      }))
+    )
+    const normalize = vi.spyOn(String.prototype, 'normalize')
+
+    classify('/unmatched/worktree')
+
+    expect(normalize).toHaveBeenCalledTimes(1)
+    normalize.mockRestore()
+  })
+
   it('migrates the optional legacy agent policy lazily for both built-ins', () => {
     const legacy = repo({ agentWorktreeVisibility: 'show' })
     expect(effectiveBuiltInWorktreeSourceVisibility(legacy, 'claude')).toBe('show')
@@ -89,5 +105,25 @@ describe('worktree visibility sources', () => {
         custom: { team: 'hide', nope: 'invalid' }
       })
     ).toEqual({ builtIn: { claude: 'show' }, custom: { team: 'hide' } })
+  })
+
+  it('rejects drive-relative Windows roots and caps after validation', () => {
+    const invalid = Array.from({ length: 32 }, (_, index) => ({
+      id: `bad-${index}`,
+      rootPath: 'relative'
+    }))
+    expect(
+      normalizeCustomWorktreeVisibilitySources([...invalid, { id: 'team', rootPath: '/srv/team' }])
+    ).toEqual([{ id: 'team', rootPath: '/srv/team' }])
+    expect(
+      normalizeCustomWorktreeVisibilitySources([
+        { id: 'drive-relative', rootPath: '\\Users\\dev\\team' },
+        { id: 'drive', rootPath: 'C:\\Users\\dev\\team' },
+        { id: 'unc', rootPath: '\\\\server\\share\\team' }
+      ])
+    ).toEqual([
+      { id: 'drive', rootPath: 'C:\\Users\\dev\\team' },
+      { id: 'unc', rootPath: '\\\\server\\share\\team' }
+    ])
   })
 })

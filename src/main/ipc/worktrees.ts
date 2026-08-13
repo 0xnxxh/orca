@@ -1004,14 +1004,20 @@ function listFolderWorkspaces(store: Store, repo: Repo): Worktree[] {
 
 function buildFolderDetectedWorktrees(store: Store, repo: Repo): DetectedWorktree[] {
   const settings = store.getSettings()
-  return listFolderWorkspaces(store, repo).map((worktree) =>
+  const worktrees = listFolderWorkspaces(store, repo)
+  const worktreeVisibilitySourceMatcher = createWorktreeVisibilitySourceMatcher(
+    [repo.path, ...worktrees.map((worktree) => worktree.path)],
+    normalizeCustomWorktreeVisibilitySources(repo.customWorktreeVisibilitySources) ?? []
+  )
+  return worktrees.map((worktree) =>
     toDetectedWorktree({
       repo,
       worktree,
       meta: store.getWorktreeMeta(worktree.id),
       settings,
       knownOrcaLayouts: [],
-      isLegacyRepoForVisibility: true
+      isLegacyRepoForVisibility: true,
+      worktreeVisibilitySourceMatcher
     })
   )
 }

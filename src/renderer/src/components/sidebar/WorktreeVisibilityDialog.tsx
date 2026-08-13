@@ -32,6 +32,7 @@ import {
   useVisibilityMutationFence
 } from './worktree-visibility-mutation-fence'
 import WorktreeVisibilitySourceList, {
+  type WorktreeVisibilitySourceAddResult,
   type WorktreeVisibilitySourceRow
 } from './WorktreeVisibilitySourceList'
 import type { CustomWorktreeVisibilitySource, Repo } from '../../../../shared/types'
@@ -41,6 +42,7 @@ import {
   effectiveBuiltInWorktreeSourceVisibility,
   effectiveCustomWorktreeSourceVisibility,
   normalizeCustomWorktreeVisibilitySources,
+  normalizeWorktreeVisibilitySourcePreferences,
   removeCustomWorktreeSourcePreference
 } from '../../../../shared/worktree-visibility-sources'
 import HiddenWorktreeRecoveryList from './HiddenWorktreeRecoveryList'
@@ -262,22 +264,26 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   )
 
   const handleAddSource = useCallback(
-    async (rootPath: string): Promise<boolean> => {
+    async (rootPath: string): Promise<WorktreeVisibilitySourceAddResult> => {
       if (!repo) {
-        return false
+        return 'save-failed'
       }
       const existing = normalizeCustomWorktreeVisibilitySources(
         repo.customWorktreeVisibilitySources
       )
       if ((existing?.length ?? 0) >= MAX_CUSTOM_WORKTREE_VISIBILITY_SOURCES) {
-        return false
+        return 'limit'
       }
       const id = crypto.randomUUID().replaceAll('-', '')
-      const next = normalizeCustomWorktreeVisibilitySources([...(existing ?? []), { id, rootPath }])
-      if (!next || next.length !== (existing?.length ?? 0) + 1) {
-        return false
+      const candidate = normalizeCustomWorktreeVisibilitySources([{ id, rootPath }])?.[0]
+      if (!candidate) {
+        return 'invalid-path'
       }
-      return commitSourceUpdate(
+      const next = normalizeCustomWorktreeVisibilitySources([...(existing ?? []), candidate])
+      if (!next || next.length !== (existing?.length ?? 0) + 1) {
+        return 'duplicate-path'
+      }
+      const saved = await commitSourceUpdate(
         {
           customWorktreeVisibilitySources: next,
           worktreeVisibilitySourcePreferences: buildWorktreeSourcePreferenceUpdate(
@@ -292,6 +298,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           )?.some((source) => source.id === id) === true &&
           effectiveCustomWorktreeSourceVisibility(latestRepo, id) === 'hide'
       )
+      return saved ? 'added' : 'save-failed'
     },
     [commitSourceUpdate, repo]
   )
@@ -312,7 +319,10 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
         (latestRepo) =>
           !normalizeCustomWorktreeVisibilitySources(
             latestRepo.customWorktreeVisibilitySources
-          )?.some((candidate) => candidate.id === source.id)
+          )?.some((candidate) => candidate.id === source.id) &&
+          normalizeWorktreeVisibilitySourcePreferences(
+            latestRepo.worktreeVisibilitySourcePreferences
+          )?.custom?.[source.id] === undefined
       )
     },
     [commitSourceUpdate, repo]

@@ -67,7 +67,7 @@ export default function HiddenWorktreeRecoveryList({
           </h3>
           <p className="text-xs text-muted-foreground">
             {translate(
-              'auto.components.sidebar.WorktreeVisibilityDialog.9b53f7a160',
+              'auto.components.sidebar.HiddenWorktreeRecoveryList.64e6f53f05',
               'Show one without enabling its source.'
             )}
           </p>
@@ -131,6 +131,11 @@ export default function HiddenWorktreeRecoveryList({
                       variant="outline"
                       size="sm"
                       disabled={busyPath !== null || toggling || listState === 'checking'}
+                      aria-label={translate(
+                        'auto.components.sidebar.HiddenWorktreeRecoveryList.showWorktree',
+                        'Show {{value0}} at {{value1}}',
+                        { value0: worktree.displayName, value1: displayPath }
+                      )}
                       onClick={() => void onShow(worktree.path)}
                     >
                       {busyPath === worktree.path
