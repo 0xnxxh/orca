@@ -8,10 +8,7 @@ export type ShutdownCheckpointGuard = {
   reset: () => void
 }
 
-export function createShutdownCheckpointGuard(
-  persist: () => void,
-  recover?: (error: unknown) => void
-): ShutdownCheckpointGuard {
+export function createShutdownCheckpointGuard(persist: () => void): ShutdownCheckpointGuard {
   let persisted = false
   return {
     persistOnce(): boolean {
@@ -20,17 +17,10 @@ export function createShutdownCheckpointGuard(
       }
       try {
         persist()
-      } catch (error) {
-        // Why: browser event targets swallow listener exceptions. The recovery
-        // path can preserve a smaller checkpoint before the caller cancels.
-        if (!recover) {
-          return false
-        }
-        try {
-          recover(error)
-        } catch {
-          return false
-        }
+      } catch {
+        // Why: browser event targets swallow listener exceptions. Returning a
+        // failure lets the caller cancel unload and keep this attempt retryable.
+        return false
       }
       persisted = true
       return true

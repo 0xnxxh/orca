@@ -45,20 +45,6 @@ describe('createShutdownCheckpointGuard', () => {
     expect(persist).toHaveBeenCalledTimes(2)
   })
 
-  it('uses the recovery checkpoint after an intentional full snapshot failure', () => {
-    const persist = vi.fn(() => {
-      throw new Error('invalid session')
-    })
-    const recover = vi.fn()
-    const guard = createShutdownCheckpointGuard(persist, recover)
-
-    expect(guard.persistOnce()).toBe(true)
-    expect(guard.persistOnce()).toBe(true)
-
-    expect(persist).toHaveBeenCalledTimes(1)
-    expect(recover).toHaveBeenCalledWith(expect.objectContaining({ message: 'invalid session' }))
-  })
-
   it('reports checkpoint failure separately from the unload verdict', () => {
     const eventTarget = new EventTarget()
     const failed = vi.fn()
@@ -70,19 +56,6 @@ describe('createShutdownCheckpointGuard', () => {
 
     expect(eventTarget.dispatchEvent(new Event('beforeunload', { cancelable: true }))).toBe(false)
     expect(failed).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps a failed recovery checkpoint retryable', () => {
-    const persist = vi.fn(() => {
-      throw new Error('invalid session')
-    })
-    const guard = createShutdownCheckpointGuard(persist, () => {
-      throw new Error('disk full')
-    })
-
-    expect(guard.persistOnce()).toBe(false)
-    expect(guard.persistOnce()).toBe(false)
-    expect(persist).toHaveBeenCalledTimes(2)
   })
 
   it('retries after a prevented reload resets the completed checkpoint', () => {

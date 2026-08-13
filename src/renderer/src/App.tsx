@@ -1329,51 +1329,51 @@ function App(): React.JSX.Element {
     // two firings, PTY exit events can arrive and unmount TerminalPanes,
     // emptying shutdownBufferCaptures. The guard prevents the second call
     // from overwriting the good session data with an empty snapshot.
-    const shutdownCheckpoint = createShutdownCheckpointGuard(
-      () => {
-        const shouldCaptureSession = shouldPersistWorkspaceSession(useAppStore.getState())
-        if (shouldCaptureSession) {
-          for (const capture of shutdownBufferCaptures.values()) {
-            try {
-              capture({ includeLocalBuffers: false })
-            } catch {
-              // Don't let one pane's failure block the rest.
-            }
+    const shutdownCheckpoint = createShutdownCheckpointGuard(() => {
+      const shouldCaptureSession = shouldPersistWorkspaceSession(useAppStore.getState())
+      if (shouldCaptureSession) {
+        for (const capture of shutdownBufferCaptures.values()) {
+          try {
+            capture({ includeLocalBuffers: false })
+          } catch {
+            // Don't let one pane's failure block the rest.
           }
-          // Why: agent provider session ids live only in agentStatusByPaneKey,
-          // which is in-memory. Capture them into the persisted sleeping-session
-          // map so a daemon/session death while the app is closed can still
-          // cold-restore via the agent's resume command (#5232).
-          useAppStore.getState().captureAllSleepingAgentSessions('quit')
         }
-        // Why: re-read state after capture() calls populated scrollback buffers
-        // into the store via Zustand setters. The earlier read is only for the
-        // gating flags and would miss those updates.
-        const freshState = useAppStore.getState()
-        const sessionSnapshots = shouldCaptureSession
+        // Why: agent provider session ids live only in agentStatusByPaneKey,
+        // which is in-memory. Capture them into the persisted sleeping-session
+        // map so a daemon/session death while the app is closed can still
+        // cold-restore via the agent's resume command (#5232).
+        useAppStore.getState().captureAllSleepingAgentSessions('quit')
+      }
+      // Why: re-read state after capture() calls populated scrollback buffers
+      // into the store via Zustand setters. The earlier read is only for the
+      // gating flags and would miss those updates.
+      const freshState = useAppStore.getState()
+      let sessionSnapshots: ReturnType<typeof buildWorkspaceSessionHostSnapshots> = []
+      try {
+        sessionSnapshots = shouldCaptureSession
           ? buildWorkspaceSessionHostSnapshots(buildWorkspaceSessionPayload(freshState), freshState)
           : []
-        window.api.app.stageBeforeUnloadSync({
-          sessions: sessionSnapshots,
-          ui: buildActiveViewUnloadPatch(freshState)
-        })
-      },
-      (error) => {
-        const state = useAppStore.getState()
+      } catch (error) {
         // Why: dirty drafts exist only in the full session snapshot.
-        if (!isIntentionalAppRestartInProgress() || state.openFiles.some((file) => file.isDirty)) {
+        if (
+          !isIntentionalAppRestartInProgress() ||
+          freshState.openFiles.some((file) => file.isDirty)
+        ) {
           throw error
         }
-        console.error(
-          '[app] Full renderer shutdown checkpoint failed; using durable session',
-          error
-        )
+        console.error('[app] Full renderer session snapshot failed; using durable session', error)
         window.api.app.stageBeforeUnloadSync({
           sessions: [],
-          ui: buildActiveViewUnloadPatch(state)
+          ui: buildActiveViewUnloadPatch(freshState)
         })
+        return
       }
-    )
+      window.api.app.stageBeforeUnloadSync({
+        sessions: sessionSnapshots,
+        ui: buildActiveViewUnloadPatch(freshState)
+      })
+    })
     const persistBeforeUnload = createShutdownCheckpointBeforeUnloadHandler(shutdownCheckpoint)
     window.addEventListener('beforeunload', persistBeforeUnload)
     window.addEventListener(ORCA_APP_RESTART_ABORTED_EVENT, shutdownCheckpoint.reset)

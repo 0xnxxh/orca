@@ -9,7 +9,7 @@ test('recovers update install from a corrupt clean session but preserves dirty d
 }) => {
   const fallbackLogs: string[] = []
   orcaPage.on('console', (message) => {
-    if (message.text().includes('using durable session')) {
+    if (message.text().includes('Full renderer session snapshot failed; using durable session')) {
       fallbackLogs.push(message.text())
     }
   })
