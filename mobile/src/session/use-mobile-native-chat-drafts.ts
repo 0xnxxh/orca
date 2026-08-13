@@ -28,8 +28,7 @@ export type { MobileNativeChatPendingMessage, MobileNativeChatSendOrigin }
 const NO_PENDING_MESSAGES: MobileNativeChatPendingMessage[] = []
 const NO_IMAGE_PREVIEWS: Record<string, string[]> = {}
 
-// How long an ack-lost send waits for its transcript echo before the UI surfaces
-// that delivery remains unconfirmed.
+// Ack-lost sends wait for a transcript echo before surfacing as unconfirmed.
 const UNCONFIRMED_SEND_DEADLINE_MS = 20_000
 
 export function useMobileNativeChatDrafts(args: {
@@ -299,11 +298,7 @@ export function useMobileNativeChatDrafts(args: {
           landedCounts.set(text, (landedCounts.get(text) ?? 0) + 1)
         }
       }
-      // Counts captured before send keep historical equal turns from clearing a new echo.
-      // Image-only echoes reconcile by ORDINAL against new `[Image: source: …]`
-      // turns after the baseline tail — text echoes are excluded so an unrelated outstanding
-      // text send cannot clear it. Ordinal-vs-count stays stable when the effect
-      // re-runs on the shrunken list, and ignores paginated-in history.
+      // Image-only source-turn counts stay stable across reruns and ignore paginated history.
       const next = current.filter((item) => {
         if (landedImagePendingIds.has(item.id)) {
           return false

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { NativeChatMessage } from './native-chat-types'
 import {
+  isImageSourceUserTurn,
   normalizeImageTranscriptMessages,
+  normalizeNativeChatUserText,
+  normalizedNativeChatUserMessageText,
   stripImagePromptMarker
 } from './native-chat-image-transcript-markers'
 
@@ -41,6 +44,29 @@ describe('normalizeImageTranscriptMessages', () => {
     ])
   })
 
+  it('folds and strips markers in later text blocks', () => {
+    const prompt: NativeChatMessage = {
+      ...userText('prompt', 'unused'),
+      blocks: [
+        { type: 'text', text: 'describe' },
+        { type: 'image-ref', path: '/tmp/existing.png' },
+        { type: 'text', text: '[Image #1] this' }
+      ]
+    }
+    const out = normalizeImageTranscriptMessages([
+      userText('source', '[Image: source: /tmp/a.png]'),
+      prompt
+    ])
+
+    expect(out).toHaveLength(1)
+    expect(out[0]?.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'text', text: 'describe' },
+      { type: 'image-ref', path: '/tmp/existing.png' },
+      { type: 'text', text: 'this' }
+    ])
+  })
+
   it.each([
     ['[Image #1] describe this', 'describe this'],
     ['[Image #1]\t  describe this', 'describe this'],
@@ -62,6 +88,32 @@ describe('normalizeImageTranscriptMessages', () => {
   it('returns long marker-free whitespace without regex backtracking', () => {
     const text = ' '.repeat(50_000)
     expect(stripImagePromptMarker(text)).toBe(text)
+  })
+
+  it('shares marker-aware text matching across multiple text blocks', () => {
+    const message: NativeChatMessage = {
+      ...userText('prompt', 'unused'),
+      blocks: [
+        { type: 'text', text: 'look' },
+        { type: 'image-ref', path: '/tmp/a.png' },
+        { type: 'text', text: '[Image #1]   here' }
+      ]
+    }
+
+    expect(normalizeNativeChatUserText(' look [Image #1]   here ')).toBe('look here')
+    expect(normalizedNativeChatUserMessageText(message)).toBe('look here')
+  })
+
+  it('recognizes only sole-text image-source user turns', () => {
+    const source = userText('source', '[Image: source: /tmp/a.png]')
+    expect(isImageSourceUserTurn(source)).toBe(true)
+    expect(isImageSourceUserTurn({ ...source, role: 'assistant' })).toBe(false)
+    expect(
+      isImageSourceUserTurn({
+        ...source,
+        blocks: [...source.blocks, { type: 'text', text: 'caption' }]
+      })
+    ).toBe(false)
   })
 
   it('converts a lone [Image: source] turn (no prompt) into an image-ref instead of raw text', () => {

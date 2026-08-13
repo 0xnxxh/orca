@@ -68,6 +68,22 @@ describe('mobile native chat image preview reconciliation', () => {
     ])
   })
 
+  it('reconciles multiple transcript text blocks with desktop separators', () => {
+    const prompt: NativeChatMessage = {
+      ...userText('prompt', 'unused'),
+      blocks: [
+        { type: 'text', text: 'look' },
+        { type: 'image-ref', path: '/tmp/a.png' },
+        { type: 'text', text: '[Image #1] here' }
+      ]
+    }
+    const preview = { ...pending('pending', ['file:///a.jpg']), text: 'look here' }
+
+    expect(findLandedImagePreviewEchoes([prompt], [preview])).toEqual([
+      { pendingId: 'pending', messageId: 'prompt', images: ['file:///a.jpg'] }
+    ])
+  })
+
   it('keeps separate adjacent image-only sends independently reconcilable', () => {
     const landed = findLandedImagePreviewEchoes(
       [
@@ -128,5 +144,24 @@ describe('mobile native chat image preview reconciliation', () => {
     expect(migrateImagePreviewMessageIds(previous, sessionKey, messages)).toEqual({
       [sessionKey]: { prompt: ['file:///a.jpg'] }
     })
+  })
+
+  it('moves a preview when the prompt marker is in a later text block', () => {
+    const sessionKey = 'host\0worktree\0tab\0session'
+    const previous = { [sessionKey]: { source: ['file:///a.jpg'] } }
+    const prompt: NativeChatMessage = {
+      ...userText('prompt', 'unused'),
+      blocks: [
+        { type: 'text', text: 'look' },
+        { type: 'text', text: '[Image #1] here' }
+      ]
+    }
+
+    expect(
+      migrateImagePreviewMessageIds(previous, sessionKey, [
+        userText('source', '[Image: source: /tmp/a.png]'),
+        prompt
+      ])
+    ).toEqual({ [sessionKey]: { prompt: ['file:///a.jpg'] } })
   })
 })

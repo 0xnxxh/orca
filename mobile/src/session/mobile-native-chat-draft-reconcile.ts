@@ -1,9 +1,12 @@
 import { isImageRefBlock, type NativeChatMessage } from '../../../src/shared/native-chat-types'
 import {
+  hasImagePromptMarker,
   isImageSourceUserTurn,
   normalizeImageTranscriptMessages,
-  stripImagePromptMarker
+  normalizeNativeChatUserText,
+  normalizedNativeChatUserMessageText
 } from './mobile-native-chat-image-transcript-markers'
+export { normalizeNativeChatUserText as normalizeReconcileText } from './mobile-native-chat-image-transcript-markers'
 
 /** An ack-lost ('unknown' outcome) send held until its transcript echo lands or
  *  the deadline surfaces the uncertainty. */
@@ -16,22 +19,8 @@ export type UnconfirmedSend = {
   deadline: ReturnType<typeof setTimeout> | null
 }
 
-export function normalizeReconcileText(text: string): string {
-  return text.trim().replace(/\s+/g, ' ')
-}
-
 export function normalizedUserText(message: NativeChatMessage): string | null {
-  if (message.role !== 'user') {
-    return null
-  }
-  const text = message.blocks
-    .filter((block) => block.type === 'text')
-    .map((block) => (block.type === 'text' ? block.text : ''))
-    .join('')
-  // Claude can place `[Image #N]` anywhere in a caption echo, so strip it
-  // before comparing against the sent text.
-  const stripped = normalizeReconcileText(stripImagePromptMarker(text))
-  return stripped || null
+  return normalizedNativeChatUserMessageText(message)
 }
 
 export function countUserTextOccurrences(
@@ -121,11 +110,7 @@ function imagePreviewReplacementMessageId(
     nextIndex++
   }
   const prompt = messages[nextIndex]
-  const firstText = prompt?.blocks.find((block) => block.type === 'text')
-  return prompt?.role === 'user' &&
-    prompt.source === source.source &&
-    firstText?.type === 'text' &&
-    stripImagePromptMarker(firstText.text) !== firstText.text
+  return prompt?.role === 'user' && prompt.source === source.source && hasImagePromptMarker(prompt)
     ? prompt.id
     : null
 }
@@ -175,7 +160,7 @@ export function findLandedImagePreviewEchoes(
     if (!entry.images?.length) {
       continue
     }
-    const targetText = normalizeReconcileText(entry.text)
+    const targetText = normalizeNativeChatUserText(entry.text)
     const candidates = normalized.filter((message) => {
       if (message.role !== 'user') {
         return false
