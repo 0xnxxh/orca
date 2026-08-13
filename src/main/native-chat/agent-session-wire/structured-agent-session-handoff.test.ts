@@ -774,27 +774,24 @@ describe('structured session ownership handoff', () => {
       link: link(fence + 1, 'bad-proof')
     }))
     stopFailedTuiLaunch.mockRejectedValueOnce(new Error('exit unproved'))
-    const failedOperation = operationId()
-    expect(await submit(request('to-tui', 'now', { operationId: failedOperation }))).toMatchObject({
-      ok: true
-    })
+    expect(await submit(request('to-tui', 'now'))).toMatchObject({ ok: true })
     await waitForPhase('failed')
 
     expect(coordinator.status(SESSION)).toMatchObject({
-      owner: 'none',
       stage: 'manual-recovery',
-      error: { recoverableOwner: 'none' }
+      error: { recoverableOwner: 'none', canRetryProof: true }
+    })
+    expect(await submit(request('to-tui', 'now', { action: 'recover' }))).toMatchObject({
+      ok: true
+    })
+    await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('tui'))
+    expect(store.getRecord(SESSION)?.lease).toMatchObject({
+      runtimeKind: 'tui',
+      claimStatus: 'live',
+      handoffStage: null,
+      handoffOperationId: null
     })
     expect(acquireNativeCalls).toBe(0)
-    expect(store.getRecord(SESSION)?.lease.handoffStage).toBe('manual-recovery')
-    await coordinator.restore(SESSION)
-    expect(coordinator.status(SESSION)).toMatchObject({
-      owner: 'none',
-      stage: 'manual-recovery'
-    })
-    expect(
-      await submit(request('to-tui', 'now', { action: 'retry', operationId: failedOperation }))
-    ).toMatchObject({ ok: false, refusal: { code: 'agent_session_operation_conflict' } })
   })
 
   it('retains the stopped TUI session for retry when native resume fails', async () => {

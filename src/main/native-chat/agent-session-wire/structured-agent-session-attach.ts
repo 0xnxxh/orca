@@ -15,6 +15,7 @@ import type { AgentSessionHandleProvider } from '../../../shared/agent-session-p
 import type {
   AgentSessionAccountHome,
   AgentSessionExecutionLocation,
+  AgentSessionLaunchEnv,
   AgentSessionOwnerRuntimeKind,
   AgentSessionRecord
 } from '../../../shared/agent-session-record'
@@ -61,6 +62,7 @@ export type AgentSessionAttachAuthority = {
   claimKeyId: string
   handoffOperationId: string | null
   probe: AgentSessionOwnerProbe
+  launchEnv?: AgentSessionLaunchEnv
 }
 
 /** The fields that define WHICH session this call would attach to. Deliberately
@@ -177,6 +179,7 @@ export function reserveRequestFor(input: {
     location: params.location,
     provider: params.provider,
     accountHome: params.accountHome,
+    ...(authority.launchEnv ? { launchEnv: authority.launchEnv } : {}),
     runtimeKind: params.runtimeKind,
     expectedFence: params.envelope.expectedRuntimeFence,
     spawnToken: authority.spawnToken,

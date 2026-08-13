@@ -24,6 +24,11 @@ export class StructuredAgentSessionHandoffFlowRunner {
     await Promise.allSettled(this.active)
   }
 
+  track(task: Promise<void>): void {
+    this.active.add(task)
+    void task.finally(() => this.active.delete(task))
+  }
+
   begin(input: {
     callerKey: string
     params: AgentSessionHandoffRequest
@@ -55,8 +60,7 @@ export class StructuredAgentSessionHandoffFlowRunner {
         this.input.fail(params, error)
       })
       .finally(() => this.input.operationGuard.finish(sessionId, params.envelope.clientOperationId))
-    this.active.add(flow)
-    void flow.finally(() => this.active.delete(flow))
+    this.track(flow)
   }
 
   private run(

@@ -13,7 +13,7 @@ type Props = {
   onRequest: (
     direction: AgentSessionHandoffDirection,
     mode: AgentSessionHandoffMode,
-    action?: 'start' | 'cancel-queued' | 'retry'
+    action?: 'start' | 'cancel-queued' | 'retry' | 'recover'
   ) => void
 }
 
@@ -191,7 +191,16 @@ export function StructuredAgentSessionHandoffChrome({
         >
           <div className="flex items-center justify-between gap-3">
             <span>{status.error.message}</span>
-            {status.direction && status.error.recoverableOwner !== 'none' ? (
+            {status.direction && status.error.canRetryProof ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={() => onRequest(status.direction!, 'now', 'recover')}
+              >
+                {translate('components.native-chat.handoff.retryProof', 'Retry proof')}
+              </Button>
+            ) : status.direction && status.error.recoverableOwner !== 'none' ? (
               <Button
                 type="button"
                 variant="ghost"

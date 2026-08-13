@@ -18,6 +18,7 @@ import {
   agentSessionExecutionLocationsEqual,
   type AgentSessionAccountHome,
   type AgentSessionExecutionLocation,
+  type AgentSessionLaunchEnv,
   type AgentSessionRecord
 } from '../../shared/agent-session-record'
 import type { AgentSessionHandleProvider } from '../../shared/agent-session-provider-handle'
@@ -32,6 +33,7 @@ export type AgentSessionReserveRequest = {
   location: AgentSessionExecutionLocation
   provider: AgentSessionHandleProvider
   accountHome: AgentSessionAccountHome
+  launchEnv?: AgentSessionLaunchEnv
   runtimeKind: AgentSessionReservation['runtimeKind']
   /** Null when the session does not exist yet; otherwise the fence the caller last observed. */
   expectedFence: number | null
@@ -142,6 +144,7 @@ function createAgentSessionRecord(
     provider: request.provider,
     providerHandleChain: [],
     accountHome: request.accountHome,
+    ...(request.launchEnv ? { launchEnv: { ...request.launchEnv } } : {}),
     createdAt: request.now,
     updatedAt: request.now,
     lease: {

@@ -25,15 +25,21 @@ export function idleStructuredHandoffStatus(record: AgentSessionRecord): AgentSe
     return persistedFailedStructuredHandoffStatus(record)
   }
   if (record.lease.handoffStage === 'manual-recovery') {
+    const canRetryProof =
+      record.lease.runtimeKind === 'tui' &&
+      record.lease.ownerProcess !== null &&
+      ((record.lease.claimStatus === 'reserved' && record.lease.handoffOperationId !== null) ||
+        (record.lease.claimStatus === 'live' && record.lease.handoffOperationId === null))
     return {
       owner: 'none',
-      direction: null,
+      direction: record.lease.runtimeKind === 'tui' ? 'to-tui' : 'to-native',
       phase: 'failed',
       stage: 'manual-recovery',
       operationId: record.lease.handoffOperationId,
       error: {
         message: "Couldn't verify which runtime owns this session — manual recovery is required",
-        recoverableOwner: 'none'
+        recoverableOwner: 'none',
+        ...(canRetryProof ? { canRetryProof: true } : {})
       }
     }
   }
@@ -128,6 +134,12 @@ export function failedStructuredHandoffStatus(
           : params.direction === 'to-tui' && record.lease.runtimeKind === 'native'
             ? 'native'
             : 'none'
+  const canRetryProof =
+    record.lease.handoffStage === 'manual-recovery' &&
+    record.lease.runtimeKind === 'tui' &&
+    record.lease.ownerProcess !== null &&
+    ((record.lease.claimStatus === 'reserved' && record.lease.handoffOperationId !== null) ||
+      (record.lease.claimStatus === 'live' && record.lease.handoffOperationId === null))
   return {
     owner: recoverableOwner,
     direction: params.direction,
@@ -143,7 +155,8 @@ export function failedStructuredHandoffStatus(
             ? "Couldn't open the agent terminal — chat still owns this session"
             : "Couldn't resume chat — the agent terminal still owns this session",
       details: error instanceof Error ? error.message : String(error),
-      recoverableOwner
+      recoverableOwner,
+      ...(canRetryProof ? { canRetryProof: true } : {})
     }
   }
 }

@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import { resetMobileNativeChatStaleInputForTests } from './mobile-native-chat-stale-input'
 import { resetMobileNativeChatTerminalWritesForTests } from './mobile-native-chat-terminal-write-lock'
-import { sendMobileStructuredTuiMessage } from './mobile-structured-tui-send'
+import {
+  sendMobileStructuredTuiComposerMessage,
+  sendMobileStructuredTuiMessage
+} from './mobile-structured-tui-send'
 
 function acceptingClient(): RpcClient {
   return {
@@ -29,6 +32,7 @@ describe('sendMobileStructuredTuiMessage', () => {
       sendMobileStructuredTuiMessage({
         client,
         terminal: 'term-tui',
+        agent: 'codex',
         deviceToken: 'mobile-1',
         text: 'hello',
         attachments: []
@@ -54,6 +58,7 @@ describe('sendMobileStructuredTuiMessage', () => {
     const sending = sendMobileStructuredTuiMessage({
       client,
       terminal: 'term-tui',
+      agent: 'codex',
       deviceToken: null,
       text: '/model',
       attachments: []
@@ -74,5 +79,53 @@ describe('sendMobileStructuredTuiMessage', () => {
             method === 'terminal.send' && (params as { enter: boolean }).enter === false
         )
     ).toBe(true)
+  })
+
+  it('types Claude-only slash commands through the provider command path', async () => {
+    vi.useFakeTimers()
+    const client = acceptingClient()
+
+    const sending = sendMobileStructuredTuiMessage({
+      client,
+      terminal: 'term-claude',
+      agent: 'claude',
+      deviceToken: null,
+      text: '/clear',
+      attachments: []
+    })
+    await vi.runAllTimersAsync()
+    await expect(sending).resolves.toBe('accepted')
+
+    expect(
+      vi
+        .mocked(client.sendRequest)
+        .mock.calls.map(([, params]) => (params as { text: string }).text)
+    ).toEqual(['\x15', '/', 'c', 'l', 'e', 'a', 'r', '\r'])
+  })
+
+  it('settles the composer only after its proven TUI owner accepts the send', async () => {
+    const onAccepted = vi.fn()
+
+    await expect(
+      sendMobileStructuredTuiComposerMessage({
+        client: acceptingClient(),
+        connected: true,
+        agent: 'claude',
+        handoff: {
+          owner: 'tui',
+          direction: null,
+          phase: 'idle',
+          stage: null,
+          operationId: null,
+          terminal: { handle: 'term-claude', tabId: 'tab-claude', paneKey: 'pane-claude' }
+        },
+        deviceToken: null,
+        text: 'hello',
+        attachments: [],
+        onAccepted,
+        onToast: vi.fn()
+      })
+    ).resolves.toBe(true)
+    expect(onAccepted).toHaveBeenCalledOnce()
   })
 })

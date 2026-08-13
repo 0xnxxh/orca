@@ -37,6 +37,9 @@ export type AgentSessionAccountHome = {
   path: string
 }
 
+/** Provider launch environment captured by the host when the session is created. */
+export type AgentSessionLaunchEnv = Record<string, string>
+
 export type AgentSessionOwnerRuntimeKind = 'native' | 'tui'
 
 export type AgentSessionHandoffStage =
@@ -108,6 +111,7 @@ export type AgentSessionRecord = {
   accountHome: AgentSessionAccountHome
   /** Provider options acknowledged for the next turn, restored across owner replacement. */
   options?: Record<string, string>
+  launchEnv?: AgentSessionLaunchEnv
   lease: AgentSessionLease
   createdAt: number
   updatedAt: number
@@ -122,6 +126,8 @@ export type AgentSessionOptionsReplacement = {
 
 const MAX_ID_LENGTH = 512
 const MAX_PATH_LENGTH = 4096
+const MAX_LAUNCH_ENV_ENTRIES = 256
+const MAX_LAUNCH_ENV_VALUE_LENGTH = 65_536
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/
 
 function isBoundedString(value: unknown, max: number): value is string {
@@ -213,6 +219,22 @@ function isAgentSessionOptions(value: unknown): value is Record<string, string> 
   )
 }
 
+function isAgentSessionLaunchEnv(value: unknown): value is AgentSessionLaunchEnv {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false
+  }
+  const entries = Object.entries(value)
+  return (
+    entries.length <= MAX_LAUNCH_ENV_ENTRIES &&
+    entries.every(
+      ([key, entry]) =>
+        isBoundedString(key, MAX_ID_LENGTH) &&
+        typeof entry === 'string' &&
+        entry.length <= MAX_LAUNCH_ENV_VALUE_LENGTH
+    )
+  )
+}
+
 function isAgentSessionJournalCheckpoint(value: unknown): value is AgentSessionJournalCheckpoint {
   if (typeof value !== 'object' || value === null) {
     return false
@@ -293,6 +315,7 @@ export function isAgentSessionRecord(value: unknown): value is AgentSessionRecor
     isAgentSessionProviderHandleChain(record.providerHandleChain) &&
     isAgentSessionAccountHome(record.accountHome) &&
     (record.options === undefined || isAgentSessionOptions(record.options)) &&
+    (record.launchEnv === undefined || isAgentSessionLaunchEnv(record.launchEnv)) &&
     isAgentSessionLease(record.lease) &&
     record.lease.sessionId === record.sessionId &&
     Number.isSafeInteger(record.createdAt) &&

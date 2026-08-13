@@ -32,7 +32,7 @@ export type MobileStructuredSessionMutations = {
   requestHandoff: (
     direction: AgentSessionHandoffDirection,
     mode: AgentSessionHandoffMode,
-    action?: 'start' | 'cancel-queued' | 'retry'
+    action?: 'start' | 'cancel-queued' | 'retry' | 'recover'
   ) => Promise<boolean>
 }
 
@@ -146,7 +146,7 @@ export function useMobileStructuredSessionMutations(args: {
       requestHandoff: async (
         direction: AgentSessionHandoffDirection,
         mode: AgentSessionHandoffMode,
-        action: 'start' | 'cancel-queued' | 'retry' = 'start'
+        action: 'start' | 'cancel-queued' | 'retry' | 'recover' = 'start'
       ) =>
         Boolean(
           await mutate(

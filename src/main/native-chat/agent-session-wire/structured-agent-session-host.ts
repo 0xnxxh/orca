@@ -3,11 +3,7 @@
 
 import { randomUUID } from 'node:crypto'
 import type { AgentJournalMessageItem } from '../../../shared/agent-session-journal-types'
-import type { AgentSessionOwnerProbe } from '../../../shared/agent-session-lease-adjudication'
-import type {
-  AgentSessionExecutionLocation,
-  AgentSessionRecord
-} from '../../../shared/agent-session-record'
+import type { AgentSessionExecutionLocation } from '../../../shared/agent-session-record'
 import type {
   AgentSessionAttachResult,
   AgentSessionCancelResult,
@@ -24,9 +20,7 @@ import type {
   AgentSessionSendResult,
   AgentSessionWireRefusal
 } from '../../../shared/agent-session-wire'
-import type { AgentSessionRecordStore } from '../../runtime/agent-session-record-store'
 import { readAgentSessionHistory } from './agent-session-history-page'
-import type { StructuredAgentSessionAdapter } from './structured-agent-session-adapter'
 import type { AgentSessionAttachParams } from './structured-agent-session-attach'
 import { performAttach } from './structured-agent-session-attach-flow'
 import {
@@ -47,7 +41,6 @@ import {
   type AgentSessionSubscribeInput
 } from './structured-agent-session-subscribers'
 import { StructuredAgentSessionTaskQueue } from './structured-agent-session-task-queue'
-import type { StructuredAgentSessionHandoffTransport } from './structured-agent-session-handoff-types'
 import {
   createStructuredAgentSessionHostHandoff,
   refreshRecoverableStructuredHandoffStatus,
@@ -58,20 +51,10 @@ import { listStructuredAgentSessionTabs } from './structured-agent-session-host-
 import { StructuredAgentSessionReadableRestorer } from './structured-agent-session-readable-restorer'
 import type {
   StructuredAgentSessionCaller,
+  StructuredAgentSessionHostDeps,
   StructuredAgentSessionHostSession
 } from './structured-agent-session-host-types'
-
-export type StructuredAgentSessionHostDeps = {
-  store: AgentSessionRecordStore
-  adapter: StructuredAgentSessionAdapter
-  journalRoot: string
-  claimKeyId: string
-  probeOwner?: (record: AgentSessionRecord) => Promise<AgentSessionOwnerProbe>
-  mintSpawnToken?: () => string
-  now?: () => number
-  onEventSinkError?: (input: { sessionId: string; error: unknown }) => void
-  handoffTransport?: StructuredAgentSessionHandoffTransport
-}
+export type { StructuredAgentSessionHostDeps } from './structured-agent-session-host-types'
 
 export class StructuredAgentSessionHost {
   private readonly sessions = new Map<string, StructuredAgentSessionHostSession>()
@@ -169,7 +152,10 @@ export class StructuredAgentSessionHost {
           spawnToken: this.deps.mintSpawnToken?.() ?? randomUUID(),
           claimKeyId: this.deps.claimKeyId,
           handoffOperationId: params.envelope.clientOperationId,
-          probe: await this.runtimeState.probeOwner(sessionId)
+          probe: await this.runtimeState.probeOwner(sessionId),
+          ...(this.deps.resolveLaunchEnv
+            ? { launchEnv: this.deps.resolveLaunchEnv(params.provider) }
+            : {})
         },
         callerKey: caller.callerKey,
         params,

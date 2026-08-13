@@ -249,7 +249,7 @@ export function useStructuredAgentSession(args: {
     requestHandoff: (
       direction: AgentSessionHandoffDirection,
       mode: AgentSessionHandoffMode,
-      action: 'start' | 'cancel-queued' | 'retry' = 'start'
+      action: 'start' | 'cancel-queued' | 'retry' | 'recover' = 'start'
     ) =>
       mutate<AgentSessionHandoffResult>(
         'agentSession.requestHandoff',

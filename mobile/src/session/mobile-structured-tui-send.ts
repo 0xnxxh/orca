@@ -1,4 +1,5 @@
 import { isSlashCommandDraft } from '../../../src/shared/native-chat-slash-commands'
+import type { AgentSessionHandoffStatus } from '../../../src/shared/agent-session-wire'
 import type { RpcClient } from '../transport/rpc-client'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
 import {
@@ -25,6 +26,7 @@ import {
 type MobileStructuredTuiSendArgs = {
   client: RpcClient
   terminal: string
+  agent: 'claude' | 'codex'
   deviceToken: string | null
   text: string
   attachments: readonly PendingNativeChatImage[]
@@ -35,6 +37,14 @@ const wait = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+
+export function getMobileStructuredTuiTerminal(
+  handoff: AgentSessionHandoffStatus | null
+): string | null {
+  return handoff?.owner === 'tui' && handoff.phase === 'idle'
+    ? (handoff.terminal?.handle ?? null)
+    : null
+}
 
 /** Sends the structured transcript composer through its proven TUI owner. */
 export async function sendMobileStructuredTuiMessage(
@@ -75,7 +85,7 @@ export async function sendMobileStructuredTuiMessage(
     }
     const textDeadline =
       args.attachments.length > 0 ? deadline + MOBILE_NATIVE_CHAT_IMAGE_SETTLE_MS : deadline
-    const classification = classifyMobileNativeChatSend('codex', args.text)
+    const classification = classifyMobileNativeChatSend(args.agent, args.text)
     const outcome =
       classification !== 'chat' && isSlashCommandDraft(args.text) && args.attachments.length === 0
         ? await typeMobileNativeChatCommandWithOutcome({
@@ -105,4 +115,39 @@ export async function sendMobileStructuredTuiMessage(
   } finally {
     releaseMobileNativeChatTerminalWrite(args.terminal)
   }
+}
+
+export async function sendMobileStructuredTuiComposerMessage(args: {
+  client: RpcClient | null
+  connected: boolean
+  agent: 'claude' | 'codex'
+  handoff: AgentSessionHandoffStatus | null
+  deviceToken: string | null
+  text: string
+  attachments: readonly PendingNativeChatImage[]
+  onAccepted: () => void
+  onToast: (message: string, durationMs: number) => void
+}): Promise<boolean> {
+  const terminal = getMobileStructuredTuiTerminal(args.handoff)
+  if (!args.client || !args.connected || !terminal) {
+    args.onToast('Message not sent (disconnected)', 1800)
+    return false
+  }
+  const outcome = await sendMobileStructuredTuiMessage({
+    client: args.client,
+    terminal,
+    agent: args.agent,
+    deviceToken: args.deviceToken,
+    text: args.text,
+    attachments: args.attachments
+  })
+  if (outcome === 'rejected') {
+    args.onToast('Message not sent', 1800)
+    return false
+  }
+  args.onAccepted()
+  if (outcome === 'unknown') {
+    args.onToast('Delivery unconfirmed — check chat before retrying', 2400)
+  }
+  return true
 }
