@@ -43,7 +43,7 @@ describe('WorkspaceCleanupSizeScanBanner', () => {
     expect(
       screen.getByText('Scan disk usage to compare, sort, and filter workspaces by size.')
     ).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Scan sizes' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Scan' })).toBeTruthy()
   })
 
   it('shows determinate progress and disables duplicate runs', () => {

@@ -15256,7 +15256,7 @@
         "browse": {
           "noSizes": "No workspace sizes measured yet.",
           "noSizesDescription": "Sizes appear after disk usage has been measured.",
-          "measureSizes": "Scan sizes",
+          "measureSizes": "Scan",
           "measureSizesTitle": "Scan workspace sizes",
           "measureSizesDescription": "Scan disk usage to compare, sort, and filter workspaces by size.",
           "sizeOnDisk": "Size on disk: {{value0}}",

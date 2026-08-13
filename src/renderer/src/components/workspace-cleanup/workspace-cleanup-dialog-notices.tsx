@@ -59,7 +59,7 @@ export function WorkspaceCleanupSizeScanBanner({
           { value0: scannedCount, value1: totalCount }
         )
       : translate('components.workspace.cleanup.browse.measuringSizes', 'Scanning sizes')
-    : translate('components.workspace.cleanup.browse.measureSizes', 'Scan sizes')
+    : translate('components.workspace.cleanup.browse.measureSizes', 'Scan')
 
   return (
     <div className="flex items-center justify-between gap-4 border-b border-border bg-muted/25 px-5 py-3">
