@@ -149,4 +149,25 @@ describe('buildDashboardSnapshot folder workspaces', () => {
     expect(snapshot.cards[0].executionHostId).toBe('runtime:environment-1')
     expect(snapshot.cards[0].hostLabel).toBe('Build Mac')
   })
+
+  it('uses the user-facing host label override', () => {
+    const runtimeState = state()
+    runtimeState.folderWorkspaces = [
+      { ...folderWorkspace(), connectionId: null, executionHostId: 'runtime:environment-1' }
+    ]
+    runtimeState.projectGroups = [{ ...projectGroup(), connectionId: null }]
+    runtimeState.runtimeEnvironments = [
+      { id: 'environment-1', name: 'Build Mac' }
+    ] as DashboardSnapshotState['runtimeEnvironments']
+    runtimeState.settings = {
+      hostSettingOverrides: {
+        'runtime:environment-1': { displayLabel: 'CI Builder' }
+      }
+    } as unknown as DashboardSnapshotState['settings']
+
+    const snapshot = buildDashboardSnapshot(runtimeState, NOW)
+
+    expect(snapshot.cards[0].hostLabel).toBe('CI Builder')
+    expect(snapshot.workspaces?.[0].hostLabel).toBe('CI Builder')
+  })
 })

@@ -39,8 +39,10 @@ import {
   resolveDashboardCardContext,
   type DashboardCardContextState
 } from './dashboard-card-context'
-import { collectActiveDashboardWorkspaces } from './dashboard-snapshot-workspaces'
-import { resolveDashboardCardHostMetadata } from './dashboard-card-host-metadata'
+import {
+  collectActiveDashboardWorkspaces,
+  dashboardCardMapWorkspaceMetadata
+} from './dashboard-snapshot-workspaces'
 import {
   boundedLabel,
   boundedLabelOrUndefined,
@@ -187,8 +189,7 @@ export function buildDashboardSnapshot(
       ? resolveDashboardCardContext(state, repo, worktree)
       : undefined
     if (workspaces && workspaces.length < DASHBOARD_MAX_MAP_WORKSPACES) {
-      const hostMetadata = resolveDashboardCardHostMetadata(
-        state,
+      const hostMetadata = dashboardCardMapWorkspaceMetadata(
         workspace,
         null,
         undefined,
@@ -256,8 +257,7 @@ export function buildDashboardSnapshot(
           : null
       const finishedAt = lastEnteredDoneAt(row)
       const hostMetadata = includeCardDetails
-        ? resolveDashboardCardHostMetadata(
-            state,
+        ? dashboardCardMapWorkspaceMetadata(
             workspace,
             ptyId,
             terminalInput ?? undefined,

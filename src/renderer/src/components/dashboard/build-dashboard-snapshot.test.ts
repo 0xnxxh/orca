@@ -9,23 +9,23 @@ import { DASHBOARD_MAX_LABEL_LENGTH } from '../../../../shared/dashboard-snapsho
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import type { TerminalTab, Worktree } from '../../../../shared/types'
 import { selectRuntimeAgentOrchestrationBatch } from '../sidebar/worktree-agent-orchestration-batch'
+import type * as DashboardSnapshotWorkspacesModule from './dashboard-snapshot-workspaces'
 import type * as AgentRowLineageModule from './agent-row-lineage'
-import type * as DashboardCardHostMetadataModule from './dashboard-card-host-metadata'
 
 const mapMetadataCalls = vi.hoisted(() => ({
   hostKind: vi.fn(),
   parentPaneKey: vi.fn()
 }))
 
-vi.mock('./dashboard-card-host-metadata', async (importOriginal) => {
-  const actual = await importOriginal<typeof DashboardCardHostMetadataModule>()
+vi.mock('./dashboard-snapshot-workspaces', async (importOriginal) => {
+  const actual = await importOriginal<typeof DashboardSnapshotWorkspacesModule>()
   return {
     ...actual,
-    resolveDashboardCardHostMetadata: (
-      ...args: Parameters<typeof actual.resolveDashboardCardHostMetadata>
+    dashboardCardMapWorkspaceMetadata: (
+      ...args: Parameters<typeof actual.dashboardCardMapWorkspaceMetadata>
     ) => {
       mapMetadataCalls.hostKind()
-      return actual.resolveDashboardCardHostMetadata(...args)
+      return actual.dashboardCardMapWorkspaceMetadata(...args)
     }
   }
 })
@@ -601,6 +601,50 @@ describe('buildDashboardSnapshot', () => {
     expect(hostIdentityReads).toBe(0)
     expect(mapMetadataCalls.hostKind).not.toHaveBeenCalled()
     expect(mapMetadataCalls.parentPaneKey).not.toHaveBeenCalled()
+  })
+
+  it('indexes runtime host labels once per detailed snapshot', () => {
+    let environmentIdReads = 0
+    const environmentCount = 24
+    const runtimeEnvironments = Array.from({ length: environmentCount }, (_, index) => {
+      const environment = { id: `environment-${index}`, name: `Builder ${index}` }
+      Object.defineProperty(environment, 'id', {
+        enumerable: true,
+        get: () => {
+          environmentIdReads += 1
+          return `environment-${index}`
+        }
+      })
+      return environment
+    }) as DashboardSnapshotState['runtimeEnvironments']
+    const executionHostId = `runtime:environment-${environmentCount - 1}` as const
+
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        repos: [
+          {
+            id: 'r1',
+            path: '/r1',
+            displayName: 'Repo One',
+            badgeColor: '#000',
+            addedAt: 0,
+            executionHostId
+          }
+        ],
+        worktreesByRepo: {
+          r1: [
+            { ...worktree(), hostId: executionHostId },
+            { ...worktree('w2', 'wt-two'), hostId: executionHostId }
+          ]
+        },
+        runtimeEnvironments,
+        agentStatusByPaneKey: { [PANE_KEY]: entry({}) }
+      }),
+      NOW
+    )
+
+    expect(snapshot.cards[0].hostLabel).toBe(`Builder ${environmentCount - 1}`)
+    expect(environmentIdReads).toBe(environmentCount)
   })
 
   it("resolves a live pty's host-input profile for card snapshots", () => {
