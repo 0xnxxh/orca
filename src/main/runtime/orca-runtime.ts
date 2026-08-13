@@ -1166,6 +1166,7 @@ type RuntimeStore = {
     localBaseRefSuggestionDismissed?: boolean
     branchPrefix: string
     branchPrefixCustom: string
+    worktreeVisibilityDefaults?: GlobalSettings['worktreeVisibilityDefaults']
     defaultTuiAgent?: GlobalSettings['defaultTuiAgent']
     disabledTuiAgents?: GlobalSettings['disabledTuiAgents']
     agentCmdOverrides?: GlobalSettings['agentCmdOverrides']
@@ -3487,6 +3488,7 @@ export class OrcaRuntimeService {
 
   getClientSettings(): Pick<
     GlobalSettings,
+    | 'worktreeVisibilityDefaults'
     | 'defaultTuiAgent'
     | 'disabledTuiAgents'
     | 'agentCmdOverrides'
@@ -3513,6 +3515,7 @@ export class OrcaRuntimeService {
     }
     const settings = this.store.getSettings()
     return {
+      worktreeVisibilityDefaults: settings.worktreeVisibilityDefaults ?? { external: 'hide' },
       defaultTuiAgent: settings.defaultTuiAgent ?? null,
       disabledTuiAgents: settings.disabledTuiAgents ?? [],
       agentCmdOverrides: settings.agentCmdOverrides ?? {},
@@ -3564,6 +3567,7 @@ export class OrcaRuntimeService {
   async updateClientSettings(
     updates: Pick<
       Partial<GlobalSettings>,
+      | 'worktreeVisibilityDefaults'
       | 'agentStatusHooksEnabled'
       | 'defaultTuiAgent'
       | 'disabledTuiAgents'
@@ -3584,6 +3588,7 @@ export class OrcaRuntimeService {
   ): Promise<
     Pick<
       GlobalSettings,
+      | 'worktreeVisibilityDefaults'
       | 'defaultTuiAgent'
       | 'disabledTuiAgents'
       | 'agentCmdOverrides'
@@ -3610,6 +3615,13 @@ export class OrcaRuntimeService {
     const before = beforeSettings.agentStatusHooksEnabled !== false
     this.store.updateSettings(updates, { notifyListeners: true })
     const settings = this.store.getSettings()
+    if (
+      updates.worktreeVisibilityDefaults !== undefined &&
+      beforeSettings.worktreeVisibilityDefaults?.external !==
+        settings.worktreeVisibilityDefaults?.external
+    ) {
+      this.notifyReposChanged()
+    }
     if (
       (typeof updates.agentStatusHooksEnabled === 'boolean' &&
         before !== updates.agentStatusHooksEnabled) ||
@@ -18725,7 +18737,6 @@ export class OrcaRuntimeService {
           badgeColor: DEFAULT_REPO_BADGE_COLOR,
           addedAt: Date.now(),
           kind: 'git',
-          externalWorktreeVisibility: 'hide',
           externalWorktreeVisibilityLegacy: false,
           ...(group
             ? {
@@ -18862,12 +18873,7 @@ export class OrcaRuntimeService {
       ...detected,
       addedAt: Date.now(),
       kind,
-      ...(kind === 'git'
-        ? {
-            externalWorktreeVisibility: 'hide' as const,
-            externalWorktreeVisibilityLegacy: false
-          }
-        : {})
+      ...(kind === 'git' ? { externalWorktreeVisibilityLegacy: false } : {})
     }
     this.store.addRepo(repo)
     await prepareLocalWorktreeRootForRepo(this.store, repo)
@@ -18983,12 +18989,7 @@ export class OrcaRuntimeService {
       ...detected,
       addedAt: Date.now(),
       kind: repoKind,
-      ...(repoKind === 'git'
-        ? {
-            externalWorktreeVisibility: 'hide' as const,
-            externalWorktreeVisibilityLegacy: false
-          }
-        : {})
+      ...(repoKind === 'git' ? { externalWorktreeVisibilityLegacy: false } : {})
     }
     this.store.addRepo(repo)
     await prepareLocalWorktreeRootForRepo(this.store, repo)
@@ -19157,7 +19158,6 @@ export class OrcaRuntimeService {
       ...detected,
       addedAt: Date.now(),
       kind: 'git',
-      externalWorktreeVisibility: 'hide',
       externalWorktreeVisibilityLegacy: false
     }
     this.store.addRepo(repo)
@@ -19205,7 +19205,6 @@ export class OrcaRuntimeService {
         | 'kind'
         | 'symlinkPaths'
         | 'issueSourcePreference'
-        | 'externalWorktreeVisibility'
         | 'externalWorktreeVisibilityPromptDismissedAt'
         | 'externalWorktreeInboxBaselinePaths'
         | 'importedExternalWorktreePaths'
@@ -19216,6 +19215,7 @@ export class OrcaRuntimeService {
         | 'projectGroupOrder'
       >
     > & {
+      externalWorktreeVisibility?: Repo['externalWorktreeVisibility'] | null
       sourceControlAi?: Repo['sourceControlAi'] | null
       externalWorktreeDiscoverySuppressedAt?: Repo['externalWorktreeDiscoverySuppressedAt'] | null
     }
@@ -19227,6 +19227,9 @@ export class OrcaRuntimeService {
     const sanitizedUpdates = omitUndefinedProperties(updates)
     if ('worktreeBasePath' in updates && updates.worktreeBasePath === undefined) {
       sanitizedUpdates.worktreeBasePath = undefined
+    }
+    if ('externalWorktreeVisibility' in updates && updates.externalWorktreeVisibility === null) {
+      sanitizedUpdates.externalWorktreeVisibility = undefined
     }
     if (
       'externalWorktreeDiscoverySuppressedAt' in updates &&

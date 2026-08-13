@@ -138,6 +138,10 @@ const GitHubProjectSettings = z
 
 export const SettingsUpdate = z
   .object({
+    worktreeVisibilityDefaults: z
+      .object({ external: z.enum(['hide', 'show']).optional() })
+      .strict()
+      .optional(),
     defaultTuiAgent: z
       .unknown()
       .transform((value) =>

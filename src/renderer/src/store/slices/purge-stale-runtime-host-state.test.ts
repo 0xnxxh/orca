@@ -486,4 +486,22 @@ describe('purgeStaleRuntimeHostState', () => {
     expect(s.activeRepoId).toBeNull()
     expect(s.filterRepoIds).toEqual(['repo1'])
   })
+
+  it('purges visibility state even when the removed host has no catalog rows', () => {
+    const store = createTestStore()
+    seedStore(store, {
+      worktreeVisibilityDefaultsByHost: {
+        local: { external: 'hide' },
+        [RUNTIME_A]: { external: 'show' }
+      },
+      worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: 'env-a'
+    })
+
+    store.getState().purgeStaleRuntimeHostState(['env-a'])
+
+    expect(store.getState().worktreeVisibilityDefaultsByHost).toEqual({
+      local: { external: 'hide' }
+    })
+    expect(store.getState().worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId).toBeNull()
+  })
 })

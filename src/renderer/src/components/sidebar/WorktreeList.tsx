@@ -67,9 +67,11 @@ import type {
   WorktreeMeta,
   WorkspaceLineage,
   WorkspaceStatus,
-  WorkspaceStatusDefinition
+  WorkspaceStatusDefinition,
+  GlobalSettings
 } from '../../../../shared/types'
 import { DEFAULT_SHOW_SLEEPING_WORKSPACES } from '../../../../shared/constants'
+import { getRepoOwnerWorktreeVisibilityDefaults } from '../../store/worktree-visibility-defaults-by-host'
 import { buildWorktreeComparator, compareWorktreeSortLabel } from './smart-sort'
 import {
   buildAttentionByWorktree,
@@ -644,10 +646,14 @@ function getSidebarRowRevealAncestorKeys(args: {
   return [...keys]
 }
 
-function getWorktreeVisibilityMenuLabel(repo: Repo): string {
+function getWorktreeVisibilityMenuLabel(
+  repo: Repo,
+  visibilityDefaults?: GlobalSettings['worktreeVisibilityDefaults']
+): string {
   const visibility = effectiveExternalWorktreeVisibility(
     repo,
-    isLegacyRepoForExternalWorktreeVisibility(repo)
+    isLegacyRepoForExternalWorktreeVisibility(repo),
+    visibilityDefaults
   )
   return visibility === 'show' ? 'Hide non-Orca worktrees' : 'Show hidden worktrees'
 }
@@ -1484,6 +1490,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   const sshConnectedGeneration = useAppStore((s) => s.sshConnectedGeneration)
   const prVisibleRefreshGeneration = useAppStore((s) => s.prVisibleRefreshGeneration)
   const settings = useAppStore((s) => s.settings)
+  const worktreeVisibilityDefaultsByHost = useAppStore((s) => s.worktreeVisibilityDefaultsByHost)
   const newCardStyle = settings?.experimentalNewWorktreeCardStyle === true
   const reorderRepos = useAppStore((s) => s.reorderRepos)
   const folderBackedProjectGroupIds = useMemo(
@@ -4638,7 +4645,14 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                                 }}
                               >
                                 <Eye className="size-3.5" />
-                                {getWorktreeVisibilityMenuLabel(row.repo)}
+                                {getWorktreeVisibilityMenuLabel(
+                                  row.repo,
+                                  getRepoOwnerWorktreeVisibilityDefaults(
+                                    row.repo,
+                                    settings,
+                                    worktreeVisibilityDefaultsByHost
+                                  )
+                                )}
                               </DropdownMenuItem>
                             ) : null}
                             <DropdownMenuItem
@@ -5356,6 +5370,7 @@ const WorktreeList = React.memo(function WorktreeList({
     useShallow((s) => selectWorktreeListReviewCacheInputs(s, groupBy, cardProps))
   )
   const settings = useAppStore((s) => s.settings)
+  const worktreeVisibilityDefaultsByHost = useAppStore((s) => s.worktreeVisibilityDefaultsByHost)
   const pinnedDisplayPolicy = getPinnedWorktreeDisplayPolicy(settings)
   const sshTargetLabels = useAppStore((s) => s.sshTargetLabels)
   const sshConnectionStates = useAppStore((s) => s.sshConnectionStates)
@@ -5736,17 +5751,34 @@ const WorktreeList = React.memo(function WorktreeList({
       repos: visibleReposForRows,
       detectedWorktreesByRepo,
       filterRepoIds,
-      forceVisibleRepoIds
+      forceVisibleRepoIds,
+      settings,
+      visibilityDefaultsByHost: worktreeVisibilityDefaultsByHost
     })
-  }, [detectedWorktreesByRepo, filterRepoIds, importedWorktreeCardActionState, visibleReposForRows])
+  }, [
+    detectedWorktreesByRepo,
+    filterRepoIds,
+    importedWorktreeCardActionState,
+    settings,
+    worktreeVisibilityDefaultsByHost,
+    visibleReposForRows
+  ])
   const newExternalWorktreesInboxByRepo = useMemo(
     () =>
       buildNewExternalWorktreesInboxCandidates({
         repos: visibleReposForRows,
         detectedWorktreesByRepo,
-        filterRepoIds
+        filterRepoIds,
+        settings,
+        visibilityDefaultsByHost: worktreeVisibilityDefaultsByHost
       }),
-    [detectedWorktreesByRepo, filterRepoIds, visibleReposForRows]
+    [
+      detectedWorktreesByRepo,
+      filterRepoIds,
+      settings,
+      worktreeVisibilityDefaultsByHost,
+      visibleReposForRows
+    ]
   )
   const placeholderRepoIds = useMemo(() => {
     return getEmptyProjectPlaceholderRepoIds({

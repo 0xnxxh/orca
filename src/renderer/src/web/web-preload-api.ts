@@ -38,6 +38,7 @@ import type {
   StatsSummary,
   Worktree,
   WorktreeLineage,
+  WorktreeVisibilityDefaults,
   WorkspaceLineage,
   WorkspaceSessionPatch,
   WorkspaceSessionState
@@ -179,6 +180,8 @@ export const CLIPBOARD_IMAGE_SINGLE_FRAME_FALLBACK_BASE64_CHARS = 256 * 1024
 const CLIPBOARD_IMAGE_SAVE_TIMEOUT_MS = 30_000
 
 let activeEnvironment: StoredWebRuntimeEnvironment | null = readStoredWebRuntimeEnvironment()
+let worktreeVisibilityDefaultsRuntimeEnvironmentId: string | null = null
+let worktreeVisibilityDefaultsRuntimeValue: WorktreeVisibilityDefaults | null = null
 let activeClient: WebRuntimeClient | null = null
 let activeClientEnvironmentId: string | null = null
 const manuallyDisconnectedEnvironmentIds = new Set<string>()
@@ -682,10 +685,24 @@ function createWebPreloadApi(): Partial<PreloadApi> {
     settings: {
       get: async () => getRuntimeBackedStoredSettings(),
       // Why: localStorage-backed settings are synchronous, so the pre-hydration kill-switch read works the same as desktop.
-      getSync: () => getStoredSettings(),
+      getSync: () => settingsForActiveVisibilityOwner(getStoredSettings()),
       set: async (updates) => {
         const sanitizedUpdates = { ...updates }
+        const runtimeEnvironment = requireActiveEnvironmentOrNull()
         delete sanitizedUpdates.activeRuntimeEnvironmentId
+        if (
+          'worktreeVisibilityDefaults' in sanitizedUpdates &&
+          runtimeEnvironment &&
+          runtimeEnvironment.id !== worktreeVisibilityDefaultsRuntimeEnvironmentId
+        ) {
+          delete sanitizedUpdates.worktreeVisibilityDefaults
+        }
+        if ('worktreeVisibilityDefaults' in sanitizedUpdates) {
+          sanitizedUpdates.worktreeVisibilityDefaults = {
+            ...getStoredSettings().worktreeVisibilityDefaults,
+            ...sanitizedUpdates.worktreeVisibilityDefaults
+          }
+        }
         if ('computerAwakeMode' in sanitizedUpdates) {
           Object.assign(
             sanitizedUpdates,
@@ -720,7 +737,9 @@ function createWebPreloadApi(): Partial<PreloadApi> {
           preserveAutoRenameBranchFromWorkUpdate: 'autoRenameBranchFromWork' in sanitizedUpdates
         })
         writeStoredSettings(next)
-        return syncRuntimeBackedSettings(sanitizedUpdates, next)
+        return settingsForActiveVisibilityOwner(
+          await syncRuntimeBackedSettings(sanitizedUpdates, next)
+        )
       },
       setActiveRuntimeEnvironmentPreference: async ({ environmentId }) => {
         const requestedEnvironmentId = environmentId?.trim() || null
@@ -3807,6 +3826,18 @@ async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> {
       15_000
     )
     const runtimeSettings: Partial<GlobalSettings> = {}
+    worktreeVisibilityDefaultsRuntimeEnvironmentId = null
+    worktreeVisibilityDefaultsRuntimeValue = null
+    if (
+      result.settings.worktreeVisibilityDefaults?.external === 'hide' ||
+      result.settings.worktreeVisibilityDefaults?.external === 'show'
+    ) {
+      worktreeVisibilityDefaultsRuntimeValue = {
+        ...result.settings.worktreeVisibilityDefaults,
+        external: result.settings.worktreeVisibilityDefaults.external
+      }
+      worktreeVisibilityDefaultsRuntimeEnvironmentId = requireActiveEnvironment().id
+    }
     if (typeof result.settings.experimentalNewWorktreeCardStyle === 'boolean') {
       runtimeSettings.experimentalNewWorktreeCardStyle =
         result.settings.experimentalNewWorktreeCardStyle
@@ -3832,11 +3863,26 @@ async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> {
     }
     const next = mergeSettings(local, runtimeSettings)
     writeStoredSettings(next)
-    return next
+    return settingsForActiveVisibilityOwner(next)
   } catch {
     // Why: unpaired/offline web clients keep a local settings fallback.
-    return local
+    return settingsForActiveVisibilityOwner(local)
   }
+}
+
+function settingsForActiveVisibilityOwner(settings: GlobalSettings): GlobalSettings {
+  const environment = requireActiveEnvironmentOrNull()
+  if (!environment) {
+    return settings
+  }
+  if (
+    environment.id === worktreeVisibilityDefaultsRuntimeEnvironmentId &&
+    worktreeVisibilityDefaultsRuntimeValue
+  ) {
+    return { ...settings, worktreeVisibilityDefaults: worktreeVisibilityDefaultsRuntimeValue }
+  }
+  const { worktreeVisibilityDefaults: _unsupported, ...supportedSettings } = settings
+  return supportedSettings as GlobalSettings
 }
 
 async function syncRuntimeBackedSettings(
@@ -3847,6 +3893,14 @@ async function syncRuntimeBackedSettings(
     return localNext
   }
   const runtimeUpdates: Partial<GlobalSettings> = {}
+  if (
+    updates.worktreeVisibilityDefaults?.external === 'hide' ||
+    updates.worktreeVisibilityDefaults?.external === 'show'
+  ) {
+    runtimeUpdates.worktreeVisibilityDefaults = {
+      external: updates.worktreeVisibilityDefaults.external
+    }
+  }
   if (typeof updates.experimentalNewWorktreeCardStyle === 'boolean') {
     runtimeUpdates.experimentalNewWorktreeCardStyle = updates.experimentalNewWorktreeCardStyle
   }
@@ -3875,6 +3929,12 @@ async function syncRuntimeBackedSettings(
     )
     const runtimeSettings = { ...result.settings }
     delete runtimeSettings.activeRuntimeEnvironmentId
+    const external = runtimeSettings.worktreeVisibilityDefaults?.external
+    if (external === 'hide' || external === 'show') {
+      worktreeVisibilityDefaultsRuntimeEnvironmentId = requireActiveEnvironment().id
+      worktreeVisibilityDefaultsRuntimeValue = { external }
+    }
+    delete runtimeSettings.worktreeVisibilityDefaults
     const next = mergeSettings(localNext, runtimeSettings)
     writeStoredSettings(next)
     return next

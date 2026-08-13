@@ -1,4 +1,12 @@
-import type { DetectedWorktreeListResult, Repo, Worktree } from '../../../../shared/types'
+import type {
+  DetectedWorktreeListResult,
+  Repo,
+  Worktree,
+  WorktreeVisibilityDefaults,
+  GlobalSettings
+} from '../../../../shared/types'
+import type { ExecutionHostId } from '../../../../shared/execution-host'
+import { getRepoOwnerWorktreeVisibilityDefaults } from '../../store/worktree-visibility-defaults-by-host'
 import { getHiddenExternalWorktrees } from '../../../../shared/external-worktree-inbox'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
 import {
@@ -19,6 +27,8 @@ export function buildImportedWorktreesCardCandidates(args: {
   detectedWorktreesByRepo: Readonly<Record<string, DetectedWorktreeListResult | undefined>>
   filterRepoIds?: readonly string[]
   forceVisibleRepoIds?: ReadonlySet<string>
+  settings?: Pick<GlobalSettings, 'worktreeVisibilityDefaults'> | null
+  visibilityDefaultsByHost?: Partial<Record<ExecutionHostId, WorktreeVisibilityDefaults | null>>
 }): Map<string, ImportedWorktreesCardCandidate> {
   const visibleRepoIds = args.visibleWorktrees
     ? new Set(args.visibleWorktrees.map((worktree) => worktree.repoId))
@@ -40,7 +50,12 @@ export function buildImportedWorktreesCardCandidates(args: {
     }
     const visibility = effectiveExternalWorktreeVisibility(
       repo,
-      isLegacyRepoForExternalWorktreeVisibility(repo)
+      isLegacyRepoForExternalWorktreeVisibility(repo),
+      getRepoOwnerWorktreeVisibilityDefaults(
+        repo,
+        args.settings,
+        args.visibilityDefaultsByHost ?? {}
+      )
     )
     if (visibility !== 'hide' && !args.forceVisibleRepoIds?.has(repo.id)) {
       continue

@@ -1,0 +1,82 @@
+import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
+import {
+  LOCAL_EXECUTION_HOST_ID,
+  toRuntimeExecutionHostId
+} from '../../../../shared/execution-host'
+import type { GlobalSettings } from '../../../../shared/types'
+import type { AppState } from '../types'
+
+export async function persistVisibilityAwareSettings(args: {
+  normalizedUpdates: Partial<GlobalSettings>
+  currentSettings: GlobalSettings | null
+  supportedRuntimeEnvironmentId: string | null
+  set: (updater: (state: AppState) => Partial<AppState>) => void
+}): Promise<void> {
+  const { normalizedUpdates, currentSettings, supportedRuntimeEnvironmentId, set } = args
+  const target = getActiveRuntimeTarget(currentSettings)
+  if ('worktreeVisibilityDefaults' in normalizedUpdates && target.kind === 'environment') {
+    const { worktreeVisibilityDefaults, ...localUpdates } = normalizedUpdates
+    const localSettings =
+      Object.keys(localUpdates).length > 0
+        ? ((await window.api.settings.set(localUpdates)) as GlobalSettings)
+        : currentSettings
+    let nextSettings = localSettings
+    if (target.environmentId === supportedRuntimeEnvironmentId) {
+      const result = await callRuntimeRpc<{ settings: Partial<GlobalSettings> }>(
+        target,
+        'settings.update',
+        { worktreeVisibilityDefaults },
+        { timeoutMs: 15_000 }
+      )
+      nextSettings = {
+        ...localSettings,
+        worktreeVisibilityDefaults: result.settings.worktreeVisibilityDefaults
+      } as GlobalSettings
+    }
+    set((state) => {
+      const currentTarget = getActiveRuntimeTarget(state.settings)
+      const stillFocused =
+        currentTarget.kind === 'environment' && currentTarget.environmentId === target.environmentId
+      return {
+        settings: stillFocused ? nextSettings : state.settings,
+        worktreeVisibilityDefaultsByHost:
+          target.environmentId === supportedRuntimeEnvironmentId &&
+          nextSettings?.worktreeVisibilityDefaults
+            ? {
+                ...state.worktreeVisibilityDefaultsByHost,
+                [toRuntimeExecutionHostId(target.environmentId)]:
+                  nextSettings.worktreeVisibilityDefaults
+              }
+            : state.worktreeVisibilityDefaultsByHost
+      }
+    })
+    return
+  }
+  const nextSettings = await window.api.settings.set(normalizedUpdates)
+  set((state) => ({
+    settings: (() => {
+      const persisted = (nextSettings as GlobalSettings | undefined) ?? state.settings
+      if (!persisted || target.kind !== 'environment') {
+        return persisted
+      }
+      const defaults =
+        state.worktreeVisibilityDefaultsByHost[toRuntimeExecutionHostId(target.environmentId)] ??
+        currentSettings?.worktreeVisibilityDefaults
+      if (target.environmentId === supportedRuntimeEnvironmentId && defaults) {
+        return { ...persisted, worktreeVisibilityDefaults: defaults }
+      }
+      const { worktreeVisibilityDefaults: _unsupported, ...settingsWithoutDefaults } = persisted
+      return settingsWithoutDefaults as GlobalSettings
+    })(),
+    ...('worktreeVisibilityDefaults' in normalizedUpdates
+      ? {
+          worktreeVisibilityDefaultsByHost: {
+            ...state.worktreeVisibilityDefaultsByHost,
+            [LOCAL_EXECUTION_HOST_ID]: (nextSettings as GlobalSettings | undefined)
+              ?.worktreeVisibilityDefaults ??
+              normalizedUpdates.worktreeVisibilityDefaults ?? { external: 'hide' }
+          }
+        }
+      : {})
+  }))
+}

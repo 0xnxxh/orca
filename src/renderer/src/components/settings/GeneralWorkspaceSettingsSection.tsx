@@ -2,7 +2,12 @@ import type React from 'react'
 import type { GlobalSettings } from '../../../../shared/types'
 import { OpenInMenuSetting } from './OpenInMenuSetting'
 import { SearchableSetting } from './SearchableSetting'
-import { SettingsSubsectionHeader, SettingsSwitchRow } from './SettingsFormControls'
+import {
+  SettingsRow,
+  SettingsSegmentedControl,
+  SettingsSubsectionHeader,
+  SettingsSwitchRow
+} from './SettingsFormControls'
 import { WorkspaceDirectorySetting } from './WorkspaceDirectorySetting'
 import { translate } from '@/i18n/i18n'
 
@@ -15,6 +20,7 @@ export function GeneralWorkspaceSettingsSection({
   settings,
   updateSettings
 }: GeneralWorkspaceSettingsSectionProps): React.JSX.Element {
+  const visibilityDefaultsSupported = settings.worktreeVisibilityDefaults !== undefined
   return (
     <section key="workspace" className="space-y-4">
       <SettingsSubsectionHeader
@@ -29,6 +35,58 @@ export function GeneralWorkspaceSettingsSection({
       />
 
       <WorkspaceDirectorySetting settings={settings} updateSettings={updateSettings} />
+
+      <SearchableSetting
+        title={translate(
+          'auto.components.settings.GeneralWorkspaceSettingsSection.externalWorktrees',
+          'External worktrees'
+        )}
+        description={translate(
+          'auto.components.settings.GeneralWorkspaceSettingsSection.externalWorktreesDescription',
+          'Choose whether worktrees created outside Orca appear by default.'
+        )}
+        keywords={['external', 'non-Orca', 'worktree', 'visibility', 'sidebar', 'show', 'hide']}
+      >
+        <SettingsRow
+          label={translate(
+            'auto.components.settings.GeneralWorkspaceSettingsSection.externalWorktrees',
+            'External worktrees'
+          )}
+          description={translate(
+            'auto.components.settings.GeneralWorkspaceSettingsSection.externalWorktreesDescription',
+            'Choose whether worktrees created outside Orca appear by default.'
+          )}
+          control={
+            <SettingsSegmentedControl
+              size="sm"
+              value={settings.worktreeVisibilityDefaults?.external ?? 'hide'}
+              ariaLabel={translate(
+                'auto.components.settings.GeneralWorkspaceSettingsSection.externalWorktrees',
+                'External worktrees'
+              )}
+              onChange={(external) => updateSettings({ worktreeVisibilityDefaults: { external } })}
+              options={[
+                {
+                  value: 'show',
+                  disabled: !visibilityDefaultsSupported,
+                  label: translate(
+                    'auto.components.settings.GeneralWorkspaceSettingsSection.show',
+                    'Show'
+                  )
+                },
+                {
+                  value: 'hide',
+                  disabled: !visibilityDefaultsSupported,
+                  label: translate(
+                    'auto.components.settings.GeneralWorkspaceSettingsSection.hide',
+                    'Hide'
+                  )
+                }
+              ]}
+            />
+          }
+        />
+      </SearchableSetting>
 
       <SearchableSetting
         title={translate(

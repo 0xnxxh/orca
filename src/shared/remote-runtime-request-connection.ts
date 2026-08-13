@@ -32,7 +32,8 @@ import {
 import { openRemoteRuntimeWebSocket } from './remote-runtime-request-websocket'
 import {
   AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
-  SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY
+  SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
+  WORKTREE_VISIBILITY_DEFAULTS_RUNTIME_CAPABILITY
 } from './protocol-version'
 
 type ConnectionState = 'closed' | 'awaiting_ready' | 'awaiting_authenticated' | 'ready'
@@ -212,7 +213,8 @@ export class RemoteRuntimeRequestConnection {
           deviceToken: this.pairing.deviceToken,
           clientCapabilities: [
             SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
-            AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY
+            AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
+            WORKTREE_VISIBILITY_DEFAULTS_RUNTIME_CAPABILITY
           ]
         }),
         sharedKey

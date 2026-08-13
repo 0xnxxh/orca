@@ -5959,7 +5959,11 @@
           "5567191a6e": "ブラウズ",
           "0e9fc0eadc": "ワークスペースディレクトリ",
           "e2955d9ccb": "新規ワークスペースを作成する場所を構成します。",
-          "7511097c5d": "ワークスペース"
+          "7511097c5d": "ワークスペース",
+          "externalWorktrees": "外部ワークツリー",
+          "externalWorktreesDescription": "Orca 外で作成されたワークツリーをデフォルトで表示するかどうかを選択します。",
+          "show": "表示",
+          "hide": "非表示"
         },
         "GhosttyImportModal": {
           "9d3e56ca36": "変更を適用する",
@@ -6659,7 +6663,14 @@
           "projectRuntimeDescription": "このプロジェクトを Windows と WSL のどちらで実行するかを選択します。",
           "hostStateDisconnected": "切断済み",
           "hostStateUnknown": "不明",
-          "nestedHostLabel": "{{value1}} 経由の {{value0}}"
+          "nestedHostLabel": "{{value1}} 経由の {{value0}}",
+          "externalWorktrees": "外部ワークツリー",
+          "externalWorktreesDescription": "このプロジェクトで Orca 外のワークツリーを表示するかどうかを上書きします。",
+          "externalWorktreesInherited": "グローバル設定を使用中: {{value0}}",
+          "show": "表示",
+          "hide": "非表示",
+          "externalWorktreesGlobal": "グローバルデフォルト: {{value0}}",
+          "useGlobal": "グローバル設定を使用"
         },
         "RepositorySourceControlAiActionRows": {
           "548a6e1281": "コマンドテンプレート",
@@ -8280,7 +8291,9 @@
             "e61157e926": "エディターのワードラップ",
             "005be5c699": "水平スクロールを使わずに、ファイルエディターで長い行を折り返します。",
             "editorFontFamily": "エディターフォント",
-            "editorFontFamilyDesc": "ファイルエディターと差分ビューで使用されるフォント。空の場合はターミナルフォントに従います。"
+            "editorFontFamilyDesc": "ファイルエディターと差分ビューで使用されるフォント。空の場合はターミナルフォントに従います。",
+            "externalWorktrees": "外部ワークツリー",
+            "externalWorktreesDescription": "Orca 外で作成されたワークツリーをデフォルトで表示するかどうかを選択します。"
           }
         },
         "git": {
@@ -8764,6 +8777,8 @@
             "keepForkUpToDateDescription": "このフォークを upstream から安全に fast-forward します。",
             "projectRuntime": "プロジェクトのランタイム",
             "projectRuntimeDescription": "このプロジェクトを Windows と WSL のどちらで実行するかを選択します。",
+            "externalWorktrees": "外部ワークツリー",
+            "externalWorktreesDescription": "このプロジェクトで Orca 外のワークツリーを表示するかどうかを上書きします。",
             "copy": "コピー",
             "clone": "clone",
             "apfs": "apfs"

@@ -10,7 +10,8 @@ import type {
   BuiltInWorktreeVisibilitySourceId,
   CustomWorktreeVisibilitySource,
   DetectedWorktree,
-  Repo
+  Repo,
+  WorktreeVisibilityDefaults
 } from '../../../../shared/types'
 import {
   createWorktreeVisibilitySourceMatcher,
@@ -33,6 +34,7 @@ export type WorktreeVisibilitySourceRow =
 type Props = {
   repo: Repo
   worktrees: readonly DetectedWorktree[]
+  visibilityDefaults?: WorktreeVisibilityDefaults
   disabled: boolean
   onAdd: (rootPath: string) => Promise<WorktreeVisibilitySourceAddResult>
   onRemove: (source: CustomWorktreeVisibilitySource) => Promise<void>
@@ -77,7 +79,11 @@ function getSourcePath(source: WorktreeVisibilitySourceRow): string {
   return `${source.source.rootPath.replace(/[\\/]+$/, '')}/*`
 }
 
-function isSourceEnabled(repo: Repo, source: WorktreeVisibilitySourceRow): boolean {
+function isSourceEnabled(
+  repo: Repo,
+  source: WorktreeVisibilitySourceRow,
+  visibilityDefaults?: WorktreeVisibilityDefaults
+): boolean {
   if (source.kind === 'built-in') {
     return effectiveBuiltInWorktreeSourceVisibility(repo, source.id) === 'show'
   }
@@ -85,8 +91,11 @@ function isSourceEnabled(repo: Repo, source: WorktreeVisibilitySourceRow): boole
     return effectiveCustomWorktreeSourceVisibility(repo, source.source.id) === 'show'
   }
   return (
-    effectiveExternalWorktreeVisibility(repo, isLegacyRepoForExternalWorktreeVisibility(repo)) ===
-    'show'
+    effectiveExternalWorktreeVisibility(
+      repo,
+      isLegacyRepoForExternalWorktreeVisibility(repo),
+      visibilityDefaults
+    ) === 'show'
   )
 }
 
@@ -109,6 +118,7 @@ function getAccessibleSourceLabel(source: WorktreeVisibilitySourceRow, label: st
 export default function WorktreeVisibilitySourceList({
   repo,
   worktrees,
+  visibilityDefaults,
   disabled,
   onAdd,
   onRemove,
@@ -257,7 +267,7 @@ export default function WorktreeVisibilitySourceList({
                   </Tooltip>
                 ) : null}
                 <Switch
-                  checked={isSourceEnabled(repo, source)}
+                  checked={isSourceEnabled(repo, source, visibilityDefaults)}
                   disabled={disabled}
                   aria-label={translate(
                     'auto.components.sidebar.WorktreeVisibilitySourceList.toggle',

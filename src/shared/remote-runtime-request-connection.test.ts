@@ -13,7 +13,8 @@ import {
 import { RemoteRuntimeRequestConnection } from './remote-runtime-request-connection'
 import {
   AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
-  SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY
+  SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
+  WORKTREE_VISIBILITY_DEFAULTS_RUNTIME_CAPABILITY
 } from './protocol-version'
 
 type TestServer = {
@@ -63,7 +64,8 @@ describe('RemoteRuntimeRequestConnection', () => {
       expect.objectContaining({
         clientCapabilities: [
           SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
-          AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY
+          AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
+          WORKTREE_VISIBILITY_DEFAULTS_RUNTIME_CAPABILITY
         ]
       })
     )
@@ -114,7 +116,8 @@ async function createServer(): Promise<TestServer> {
           deviceToken: 'device-token',
           clientCapabilities: [
             SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY,
-            AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY
+            AGENT_SESSION_BOUNDARY_RUNTIME_CAPABILITY,
+            WORKTREE_VISIBILITY_DEFAULTS_RUNTIME_CAPABILITY
           ]
         })
         authenticated = true

@@ -54,6 +54,7 @@ function getLatestRepoForScope(scope: string): Repo | null {
     null
   )
 }
+import { useRepoOwnerVisibilityDefaults } from './use-repo-owner-visibility-defaults'
 
 export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const activeModal = useAppStore((s) => s.activeModal)
@@ -86,6 +87,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const effectiveBusyPath =
     busyPath ?? (activeMutation?.kind === 'row' ? activeMutation.path : null)
   const effectivelyToggling = isToggling || activeMutation?.kind === 'toggle'
+  const visibilityDefaults = useRepoOwnerVisibilityDefaults(repo)
 
   useLayoutEffect(() => {
     currentMutationScopeRef.current = mutationScope
@@ -351,6 +353,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
         <WorktreeVisibilitySourceList
           repo={repo}
           worktrees={detected?.authoritative ? detected.worktrees : []}
+          visibilityDefaults={visibilityDefaults}
           disabled={effectiveBusyPath !== null || effectivelyToggling || listState === 'checking'}
           onAdd={handleAddSource}
           onRemove={handleRemoveSource}

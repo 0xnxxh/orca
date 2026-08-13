@@ -123,6 +123,11 @@ export type WorktreeVisibilitySourcePreferences = {
   custom?: Record<string, ExternalWorktreeVisibility>
 }
 
+export type WorktreeVisibilityDefaults = {
+  /** Default for worktrees Orca did not create. Future source-specific defaults extend this shape. */
+  external?: ExternalWorktreeVisibility
+}
+
 export type ProjectProviderIdentity = {
   provider: 'github'
   owner: string
@@ -2801,6 +2806,8 @@ export type AgentDashboardMode = 'in-window' | 'popout'
 
 export type GlobalSettings = {
   workspaceDir: string
+  /** Host-owned defaults used when a repository has no explicit visibility override. */
+  worktreeVisibilityDefaults?: WorktreeVisibilityDefaults
   /** Per-host overrides keyed by ExecutionHostId. Effective value for a
    *  host-varying setting is `host override ?? client default`. */
   hostSettingOverrides?: Partial<Record<ExecutionHostId, HostSettingOverrides>>

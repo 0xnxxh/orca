@@ -83,6 +83,7 @@ import {
   getSettingsFocusedExecutionHostId,
   LOCAL_EXECUTION_HOST_ID,
   parseExecutionHostId,
+  toRuntimeExecutionHostId,
   toSshExecutionHostId,
   type ExecutionHostId
 } from '../../../../shared/execution-host'
@@ -6222,12 +6223,29 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
       const restoredSessionOwnersChanged =
         survivingRestoredSessionOwners !== s.restoredRuntimeHostIdByWorkspaceSessionKey
+      let survivingVisibilityDefaults = s.worktreeVisibilityDefaultsByHost
+      for (const environmentId of removed) {
+        const hostId = toRuntimeExecutionHostId(environmentId)
+        if (hostId in survivingVisibilityDefaults) {
+          if (survivingVisibilityDefaults === s.worktreeVisibilityDefaultsByHost) {
+            survivingVisibilityDefaults = { ...survivingVisibilityDefaults }
+          }
+          delete survivingVisibilityDefaults[hostId]
+        }
+      }
+      const visibilityDefaultsChanged =
+        survivingVisibilityDefaults !== s.worktreeVisibilityDefaultsByHost
+      const visibilitySupportChanged = removed.has(
+        s.worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId ?? ''
+      )
       if (
         !reposChanged &&
         !setupsChanged &&
         !worktreesChanged &&
         !detectedChanged &&
         !restoredSessionOwnersChanged &&
+        !visibilityDefaultsChanged &&
+        !visibilitySupportChanged &&
         removedWorktreeIds.size === 0
       ) {
         return s
@@ -6251,6 +6269,12 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         ...(detectedChanged ? { detectedWorktreesByRepo } : {}),
         ...(restoredSessionOwnersChanged
           ? { restoredRuntimeHostIdByWorkspaceSessionKey: survivingRestoredSessionOwners }
+          : {}),
+        ...(visibilityDefaultsChanged
+          ? { worktreeVisibilityDefaultsByHost: survivingVisibilityDefaults }
+          : {}),
+        ...(visibilitySupportChanged
+          ? { worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: null }
           : {}),
         ...(rowsChanged ? { sortEpoch: s.sortEpoch + 1 } : {}),
         // Why: mirror validateRepoScopedUi so a filtered/active sidebar can't reference a purged repo id.

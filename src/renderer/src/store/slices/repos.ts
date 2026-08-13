@@ -55,6 +55,7 @@ import {
   reconcileFetchedRepos
 } from './repo-identity-reconcile'
 import { retainValidFilterRepoIds } from './repo-filter-selection'
+import { readRuntimeWorktreeVisibilityDefaults } from './worktree-visibility-owner-settings'
 import {
   mergeSshRepoReadoptions,
   reconcileReadoptedSshRepoRows,
@@ -139,7 +140,6 @@ export type RepoUpdate = Partial<
     | 'symlinkPaths'
     | 'issueSourcePreference'
     | 'forkSyncMode'
-    | 'externalWorktreeVisibility'
     | 'externalWorktreeVisibilityPromptDismissedAt'
     | 'externalWorktreeInboxBaselinePaths'
     | 'importedExternalWorktreePaths'
@@ -150,6 +150,7 @@ export type RepoUpdate = Partial<
     | 'projectGroupOrder'
   >
 > & {
+  externalWorktreeVisibility?: Repo['externalWorktreeVisibility'] | null
   sourceControlAi?: Repo['sourceControlAi'] | null
   externalWorktreeDiscoverySuppressedAt?: Repo['externalWorktreeDiscoverySuppressedAt'] | null
 }
@@ -2169,7 +2170,10 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     const targetHostId = getRuntimeTargetHostId(target)
     claimRepoCatalogGeneration(get, targetHostId, catalogGeneration)
     try {
-      const catalog = await fetchRepoCatalogForTarget(target)
+      const [catalog, visibilityDefaults] = await Promise.all([
+        fetchRepoCatalogForTarget(target),
+        readRuntimeWorktreeVisibilityDefaults(environmentId)
+      ])
       if (
         runtimeRepoFetchGenerationByEnvironment.get(environmentId) !== requestGeneration ||
         !isLatestRepoCatalogGeneration(get, targetHostId, catalogGeneration) ||
@@ -2219,6 +2223,35 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         )
         return {
           repos: finalizedRepos,
+          ...(visibilityDefaults === undefined
+            ? {}
+            : {
+                worktreeVisibilityDefaultsByHost: {
+                  ...s.worktreeVisibilityDefaultsByHost,
+                  [targetHostId]: visibilityDefaults
+                }
+              }),
+          ...(visibilityDefaults !== undefined && s.settings
+            ? getActiveRuntimeTarget(s.settings).kind === 'environment' &&
+              s.settings.activeRuntimeEnvironmentId === environmentId
+              ? visibilityDefaults
+                ? {
+                    settings: {
+                      ...s.settings,
+                      worktreeVisibilityDefaults: visibilityDefaults
+                    },
+                    worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: environmentId
+                  }
+                : {
+                    settings: Object.fromEntries(
+                      Object.entries(s.settings).filter(
+                        ([key]) => key !== 'worktreeVisibilityDefaults'
+                      )
+                    ) as GlobalSettings,
+                    worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: null
+                  }
+              : {}
+            : {}),
           pendingSshRepoReadoptions: reconciliation.pendingReadoptions,
           ...reconcileReadoptedSshWorktreeState(s, s.pendingSshRepoReadoptions),
           ...mergedProjectCompatibility,
@@ -2344,11 +2377,38 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           environmentId: environment.id
         }
         claimRepoCatalogGeneration(get, getRuntimeTargetHostId(target), generation)
-        try {
-          applyCatalog(await fetchRepoCatalogForTarget(target))
-        } catch (err) {
+        const [catalogResult, visibilityDefaults] = await Promise.all([
+          fetchRepoCatalogForTarget(target).then(
+            (catalog) => ({ ok: true as const, catalog }),
+            (error: unknown) => ({ ok: false as const, error })
+          ),
+          readRuntimeWorktreeVisibilityDefaults(environment.id)
+        ])
+        const hostId = getRuntimeTargetHostId(target)
+        if (
+          visibilityDefaults !== undefined &&
+          latestAllHostRepoCatalogGenerationByStore.get(get) === generation &&
+          isLatestRepoCatalogGeneration(get, hostId, generation)
+        ) {
+          set((state) =>
+            isRemovedRuntimeHostId(hostId, state.removedRuntimeEnvironmentIds)
+              ? state
+              : {
+                  worktreeVisibilityDefaultsByHost: {
+                    ...state.worktreeVisibilityDefaultsByHost,
+                    [hostId]: visibilityDefaults
+                  }
+                }
+          )
+        }
+        if (catalogResult.ok) {
+          applyCatalog(catalogResult.catalog)
+        } else {
           failed = true
-          console.warn(`Skipped repos for runtime environment ${environment.id}:`, err)
+          console.warn(
+            `Skipped repos for runtime environment ${environment.id}:`,
+            catalogResult.error
+          )
         }
       })
     )
@@ -3818,6 +3878,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
             const {
               sourceControlAi,
               externalWorktreeDiscoverySuppressedAt,
+              externalWorktreeVisibility,
               ...updatesWithoutClearSentinels
             } = sanitizedUpdates
             mergedRepo = { ...mergedRepo, ...updatesWithoutClearSentinels }
@@ -3827,6 +3888,13 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
               mergedRepo = repoWithoutSourceControlAi
             } else if (sourceControlAi !== undefined) {
               mergedRepo = { ...mergedRepo, sourceControlAi }
+            }
+            if (externalWorktreeVisibility === null) {
+              const { externalWorktreeVisibility: _visibility, ...repoWithoutVisibility } =
+                mergedRepo
+              mergedRepo = { ...repoWithoutVisibility, externalWorktreeVisibilityLegacy: false }
+            } else if (externalWorktreeVisibility !== undefined) {
+              mergedRepo = { ...mergedRepo, externalWorktreeVisibility }
             }
             if (externalWorktreeDiscoverySuppressedAt === null) {
               const {

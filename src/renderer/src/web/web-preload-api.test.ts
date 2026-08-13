@@ -1124,6 +1124,93 @@ describe('web settings preload API', () => {
     expect(runtimeCalls).toEqual([{ method: 'settings.get', params: undefined }])
   }, 15_000)
 
+  it('hydrates and updates external-worktree defaults owned by a paired runtime', async () => {
+    const runtimeCalls: { method: string; params: unknown }[] = []
+    vi.doMock('./web-runtime-client', () => ({
+      WebRuntimeClient: class {
+        call(method: string, params?: unknown): Promise<RuntimeRpcResponse<unknown>> {
+          runtimeCalls.push({ method, params })
+          return Promise.resolve({
+            id: `call-${runtimeCalls.length}`,
+            ok: true,
+            result: {
+              settings: {
+                worktreeVisibilityDefaults: {
+                  external: method === 'settings.update' ? 'show' : 'hide'
+                }
+              }
+            },
+            _meta: { runtimeId: 'runtime-1' }
+          })
+        }
+
+        close(): void {}
+      }
+    }))
+
+    const globals = installBrowserGlobals('Linux')
+    writeStoredRuntimeEnvironment(globals.storage)
+    globals.storage.setItem(
+      'orca.web.settings.v1',
+      JSON.stringify({ worktreeVisibilityDefaults: { external: 'show' } })
+    )
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+
+    expect((await globals.window.api.settings.get()).worktreeVisibilityDefaults).toEqual({
+      external: 'hide'
+    })
+    expect(
+      JSON.parse(globals.storage.getItem('orca.web.settings.v1') ?? '{}').worktreeVisibilityDefaults
+    ).toEqual({ external: 'show' })
+    expect(
+      (
+        await globals.window.api.settings.set({
+          worktreeVisibilityDefaults: { external: 'show' }
+        })
+      ).worktreeVisibilityDefaults
+    ).toEqual({ external: 'show' })
+    expect(runtimeCalls).toEqual([
+      { method: 'settings.get', params: undefined },
+      {
+        method: 'settings.update',
+        params: { worktreeVisibilityDefaults: { external: 'show' } }
+      }
+    ])
+  })
+
+  it('does not send the additive visibility field to an older paired runtime', async () => {
+    const runtimeCalls: { method: string; params: unknown }[] = []
+    vi.doMock('./web-runtime-client', () => ({
+      WebRuntimeClient: class {
+        call(method: string, params?: unknown): Promise<RuntimeRpcResponse<unknown>> {
+          runtimeCalls.push({ method, params })
+          return Promise.resolve({
+            id: `call-${runtimeCalls.length}`,
+            ok: true,
+            result: { settings: {} },
+            _meta: { runtimeId: 'runtime-1' }
+          })
+        }
+
+        close(): void {}
+      }
+    }))
+
+    const globals = installBrowserGlobals('Linux')
+    writeStoredRuntimeEnvironment(globals.storage)
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+
+    expect((await globals.window.api.settings.get()).worktreeVisibilityDefaults).toBeUndefined()
+    const settings = await globals.window.api.settings.set({
+      worktreeVisibilityDefaults: { external: 'show' }
+    })
+
+    expect(settings.worktreeVisibilityDefaults).toBeUndefined()
+    expect(runtimeCalls).toEqual([{ method: 'settings.get', params: undefined }])
+  })
+
   it('hydrates new worktree card style from a paired runtime', async () => {
     const runtimeCalls: { method: string; params: unknown }[] = []
     vi.doMock('./web-runtime-client', () => ({
