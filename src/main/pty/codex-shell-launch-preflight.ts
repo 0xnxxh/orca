@@ -12,7 +12,7 @@ export function resolveCodexShellLaunchPreflightCommand(options: {
 
 export function getPosixCodexShellLaunchPreflight(): string {
   return `# Why: a typed alias expands inside the shell, after pane launch prep.
-__orca_codex_binary="$(command -v codex 2>/dev/null)"
+__orca_codex_binary="$(command -v codex 2>/dev/null || :)"
 if [[ -n "\${ORCA_CODEX_LAUNCH_PREFLIGHT:-}" && -n "\${__orca_codex_binary:-}" && -x "\${__orca_codex_binary}" ]]; then
   codex() {
     "\${ORCA_CODEX_LAUNCH_PREFLIGHT}" agent hooks prepare-codex >/dev/null 2>&1 || :

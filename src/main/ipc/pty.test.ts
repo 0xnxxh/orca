@@ -1868,6 +1868,7 @@ describe('registerPtyHandlers', () => {
     ) => string | null,
     getSettings?: () => {
       agentStatusHooksEnabled?: boolean
+      disabledTuiAgents?: TuiAgent[]
       httpProxyUrl?: string
       httpProxyBypassRules?: string
     },
@@ -2137,6 +2138,18 @@ describe('registerPtyHandlers', () => {
       expect(env.CODEX_HOME).toBe(TEST_CODEX_HOME)
       expect(env.ORCA_CODEX_HOME).toBe(TEST_CODEX_HOME)
       expect(env.ORCA_CODEX_LAUNCH_PREFLIGHT).toBe('orca')
+    })
+
+    it('does not install the Codex launch preflight when Codex hooks are disabled', async () => {
+      const env = await spawnAndGetEnv(
+        undefined,
+        undefined,
+        () => TEST_CODEX_HOME,
+        () => ({ agentStatusHooksEnabled: true, disabledTuiAgents: ['codex'] })
+      )
+
+      expect(env.CODEX_HOME).toBe(TEST_CODEX_HOME)
+      expect(env.ORCA_CODEX_LAUNCH_PREFLIGHT).toBeUndefined()
     })
 
     it('resumes an automatic Codex session from its prepared originating home', async () => {

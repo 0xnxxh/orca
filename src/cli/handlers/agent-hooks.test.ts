@@ -138,4 +138,66 @@ describe('agent hooks CLI handler', () => {
       hooksEnabled: false
     })
   })
+
+  it('honors Codex-specific disablement when the runtime is unavailable', async () => {
+    const state = getDefaultPersistedState(userDataPath)
+    state.settings.disabledTuiAgents = ['codex']
+    writeDataFile(userDataPath, state)
+    getDefaultUserDataPathMock.mockReturnValue(userDataPath)
+
+    await main(['agent', 'hooks', 'prepare-codex'], userDataPath)
+
+    expect(prepareManagedCodexHomeBeforeShellLaunchMock).toHaveBeenCalledWith({
+      userDataPath,
+      hooksEnabled: false
+    })
+  })
+
+  it('uses the active profile settings instead of stale legacy settings', async () => {
+    const profileId = 'work-profile'
+    const legacy = getDefaultPersistedState(userDataPath)
+    legacy.settings.agentStatusHooksEnabled = true
+    writeDataFile(userDataPath, legacy)
+    const profile = getDefaultPersistedState(userDataPath)
+    profile.settings.agentStatusHooksEnabled = false
+    writeDataFile(join(userDataPath, 'profiles', profileId), profile)
+    writeFileSync(
+      join(userDataPath, 'orca-profile-index.json'),
+      JSON.stringify({
+        activeProfileId: profileId,
+        profiles: [{ id: profileId }]
+      }),
+      'utf-8'
+    )
+    getDefaultUserDataPathMock.mockReturnValue(userDataPath)
+
+    await main(['agent', 'hooks', 'prepare-codex'], userDataPath)
+
+    expect(prepareManagedCodexHomeBeforeShellLaunchMock).toHaveBeenCalledWith({
+      userDataPath,
+      hooksEnabled: false
+    })
+  })
+
+  it('honors live hook and Codex-specific disablement before persistence settles', async () => {
+    const state = getDefaultPersistedState(userDataPath)
+    state.settings.agentStatusHooksEnabled = true
+    writeDataFile(userDataPath, state)
+    getDefaultUserDataPathMock.mockReturnValue(userDataPath)
+    callMock.mockResolvedValue({
+      result: {
+        settings: { agentStatusHooksEnabled: true, disabledTuiAgents: ['codex'] }
+      }
+    })
+
+    await main(['agent', 'hooks', 'prepare-codex'], userDataPath)
+
+    expect(prepareManagedCodexHomeBeforeShellLaunchMock).toHaveBeenCalledWith({
+      userDataPath,
+      hooksEnabled: false
+    })
+    expect(callMock).toHaveBeenCalledExactlyOnceWith('settings.get', undefined, {
+      timeoutMs: 1_000
+    })
+  })
 })

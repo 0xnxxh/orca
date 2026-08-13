@@ -101,6 +101,32 @@ describe.skipIf(process.platform === 'win32')('Codex shell launch preflight', ()
     )
   })
 
+  it.each([
+    ['/bin/bash', 'set -e'],
+    ['/bin/zsh', 'setopt ERR_EXIT']
+  ])('keeps %s startup alive under strict error handling when Codex is absent', (shell, strict) => {
+    if (!existsSync(shell)) {
+      return
+    }
+    const root = mkdtempSync(join(tmpdir(), 'orca-codex-strict-startup-'))
+    roots.push(root)
+
+    const output = execFileSync(
+      shell,
+      [
+        shell.endsWith('/zsh') ? '-f' : '--noprofile',
+        '-c',
+        `${strict}\n${getPosixCodexShellLaunchPreflight()}\nprintf alive`
+      ],
+      {
+        encoding: 'utf-8',
+        env: { ...process.env, PATH: root, ORCA_CODEX_LAUNCH_PREFLIGHT: 'orca-test' }
+      }
+    )
+
+    expect(output).toBe('alive')
+  })
+
   it.skipIf(!fishAvailable)('preserves a user-defined fish function', () => {
     const output = execFileSync(
       'fish',
