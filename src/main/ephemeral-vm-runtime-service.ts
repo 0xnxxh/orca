@@ -15,6 +15,8 @@ import {
   type EphemeralVmRecipeStartFailure,
   type EphemeralVmRecipeStartSuccess
 } from './ephemeral-vm-recipe-runner'
+import { cleanupFailedEphemeralVmStart } from './ephemeral-vm-failed-start-cleanup'
+import { provisionedRootChangedDuringResume } from './ephemeral-vm-resume-integrity'
 
 export type ProvisionEphemeralVmRuntimeArgs = {
   userDataPath: string
@@ -114,6 +116,12 @@ export async function provisionEphemeralVmRuntime(
     onStderr: args.onStderr
   })
   if (!start.ok) {
+    if (start.recipeResult) {
+      await cleanupFailedEphemeralVmStart(args, {
+        context: start.context,
+        recipeResult: start.recipeResult
+      })
+    }
     return { ok: false, start }
   }
 
@@ -272,6 +280,15 @@ export async function resumeEphemeralVmRuntime(
       updatedAt: Date.now()
     })
     return { ok: false, runtime: failed, error: resume.error }
+  }
+
+  if (!resume.skipped && provisionedRootChangedDuringResume(existing.recipeResult, resume.result)) {
+    const error = 'The provisioned workspace root changed while the runtime was suspended.'
+    const failed = updateEphemeralVmRuntimeStatus(args.userDataPath, existing.id, {
+      status: 'resume_failed',
+      updatedAt: Date.now()
+    })
+    return { ok: false, runtime: failed, error }
   }
 
   const runtime = updateEphemeralVmRuntimeStatus(args.userDataPath, existing.id, {
