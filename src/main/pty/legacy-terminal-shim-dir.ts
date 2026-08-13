@@ -4,11 +4,11 @@ import {
   LEGACY_TERMINAL_ATTRIBUTION_BYPASS_ENV_KEY,
   LEGACY_TERMINAL_ATTRIBUTION_ENABLE_ENV_KEY
 } from '../../shared/legacy-terminal-attribution-env'
+import { renderLegacyTerminalPosixTombstone } from './legacy-terminal-posix-tombstone'
 
 const LEGACY_SHIM_ROOT_DIR = 'orca-terminal-attribution'
 const LEGACY_SHIM_VERSION = '7'
 const NEUTRALIZATION_RETRY_DELAYS_MS = [1_000, 5_000, 15_000, 30_000]
-const SHELL_DOLLAR = '$'
 export const LEGACY_TERMINAL_SHIM_ENV_KEYS = [
   'ORCA_ENABLE_GIT_ATTRIBUTION',
   'ORCA_GIT_COMMIT_TRAILER',
@@ -22,43 +22,6 @@ export const LEGACY_TERMINAL_SHIM_ENV_KEYS = [
 export const LEGACY_TERMINAL_SHIM_REMOTE_ENV_KEYS = [
   LEGACY_TERMINAL_ATTRIBUTION_ENABLE_ENV_KEY
 ] as const
-
-const POSIX_PASSTHROUGH_WRAPPER = String.raw`#!/usr/bin/env bash
-set -u
-
-command_name="__ORCA_COMMAND__"
-wrapper_dir="$(cd -- "$(dirname -- "${SHELL_DOLLAR}{BASH_SOURCE[0]}")" && pwd)"
-legacy_wrapper_dir="${SHELL_DOLLAR}{ORCA_ATTRIBUTION_SHIM_DIR:-}"
-cleaned_path="${SHELL_DOLLAR}{PATH:-}"
-
-remove_path_entry() {
-  local entry="$1"
-  [[ -n "$entry" ]] || return
-  while [[ "$cleaned_path" == "$entry" || "$cleaned_path" == "$entry":* || "$cleaned_path" == *:"$entry" || "$cleaned_path" == *:"$entry":* ]]; do
-    if [[ "$cleaned_path" == "$entry" ]]; then
-      cleaned_path=""
-    elif [[ "$cleaned_path" == "$entry":* ]]; then
-      cleaned_path="${SHELL_DOLLAR}{cleaned_path#"$entry":}"
-    elif [[ "$cleaned_path" == *:"$entry" ]]; then
-      cleaned_path="${SHELL_DOLLAR}{cleaned_path%:"$entry"}"
-    else
-      cleaned_path="${SHELL_DOLLAR}{cleaned_path//:"$entry":/:}"
-    fi
-  done
-}
-
-remove_path_entry "$legacy_wrapper_dir"
-remove_path_entry "$wrapper_dir"
-unset ORCA_ENABLE_GIT_ATTRIBUTION ORCA_GIT_COMMIT_TRAILER ORCA_GH_PR_FOOTER
-unset ORCA_GH_ISSUE_FOOTER ORCA_ATTRIBUTION_SHIM_DIR ORCA_REAL_GIT ORCA_REAL_GH ORCA_ATTRIBUTION_BYPASS
-
-real_command="$(PATH="$cleaned_path" type -P "$command_name" || true)"
-if [[ -z "$real_command" ]]; then
-  printf 'Orca compatibility wrapper could not locate %s on PATH.\n' "$command_name" >&2
-  exit 127
-fi
-PATH="$cleaned_path" exec "$real_command" "$@"
-`
 
 const WIN32_PASSTHROUGH_WRAPPER = String.raw`@echo off
 setlocal
@@ -179,13 +142,9 @@ function writeNeutralWrappers(rootDir: string): void {
   const win32Dir = join(rootDir, 'win32')
   mkdirSync(posixDir, { recursive: true })
   mkdirSync(win32Dir, { recursive: true })
-  for (const command of ['git', 'gh']) {
+  for (const command of ['git', 'gh'] as const) {
     const upperCommand = command.toUpperCase()
-    writeFileAtomically(
-      join(posixDir, command),
-      POSIX_PASSTHROUGH_WRAPPER.replaceAll('__ORCA_COMMAND__', command),
-      0o755
-    )
+    writeFileAtomically(join(posixDir, command), renderLegacyTerminalPosixTombstone(command), 0o755)
     writeFileAtomically(
       join(win32Dir, `${command}.cmd`),
       renderWindowsWrapper(WIN32_PASSTHROUGH_WRAPPER, command, upperCommand),

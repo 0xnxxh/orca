@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync
 } from 'node:fs'
@@ -22,16 +23,27 @@ const itOnPosix = process.platform === 'win32' ? it.skip : it
 const itOnPosixNonRoot = process.platform === 'win32' || process.getuid?.() === 0 ? it.skip : it
 
 describe('legacy terminal shim neutralization', () => {
+  const tempRoots: string[] = []
+
+  const makeUserDataDir = (): string => {
+    const userData = mkdtempSync(join(tmpdir(), 'orca-legacy-shim-'))
+    tempRoots.push(userData)
+    return userData
+  }
+
   beforeEach(() => {
     __resetLegacyTerminalShimNeutralizationForTests()
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    for (const tempRoot of tempRoots.splice(0)) {
+      rmSync(tempRoot, { recursive: true, force: true })
+    }
   })
 
   it('atomically replaces the legacy command paths with executable tombstones', () => {
-    const userData = mkdtempSync(join(tmpdir(), 'orca-legacy-shim-'))
+    const userData = makeUserDataDir()
     const legacyRoot = join(userData, 'orca-terminal-attribution')
     const posixDir = join(legacyRoot, 'posix')
     const win32Dir = join(legacyRoot, 'win32')
@@ -58,7 +70,7 @@ describe('legacy terminal shim neutralization', () => {
   })
 
   it('rejects stale Windows real-command paths inside the wrapper directory', () => {
-    const userData = mkdtempSync(join(tmpdir(), 'orca-legacy-shim-'))
+    const userData = makeUserDataDir()
     const win32Dir = join(userData, 'orca-terminal-attribution', 'win32')
 
     neutralizeLegacyTerminalShimDir(userData)
@@ -76,7 +88,7 @@ describe('legacy terminal shim neutralization', () => {
   })
 
   it('removes every Windows PATH occurrence of both captured wrapper directories', () => {
-    const userData = mkdtempSync(join(tmpdir(), 'orca-legacy-shim-'))
+    const userData = makeUserDataDir()
     const win32Dir = join(userData, 'orca-terminal-attribution', 'win32')
 
     neutralizeLegacyTerminalShimDir(userData)
@@ -100,7 +112,7 @@ describe('legacy terminal shim neutralization', () => {
   })
 
   it('does not throw when the legacy directory is absent', () => {
-    const userData = mkdtempSync(join(tmpdir(), 'orca-legacy-shim-'))
+    const userData = makeUserDataDir()
 
     expect(() => neutralizeLegacyTerminalShimDir(userData)).not.toThrow()
     expect(existsSync(join(userData, 'orca-terminal-attribution', 'posix', 'git'))).toBe(true)
@@ -108,7 +120,7 @@ describe('legacy terminal shim neutralization', () => {
 
   itOnPosixNonRoot('retries a startup failure in-process and latches after success', async () => {
     vi.useFakeTimers()
-    const userData = mkdtempSync(join(tmpdir(), 'orca-legacy-shim-'))
+    const userData = makeUserDataDir()
     const posixDir = join(userData, 'orca-terminal-attribution', 'posix')
     const gitWrapper = join(posixDir, 'git')
     mkdirSync(posixDir, { recursive: true })
@@ -133,8 +145,8 @@ describe('legacy terminal shim neutralization', () => {
     }
   })
 
-  itOnPosix('keeps a real Bash command hash working as an inert pass-through', async () => {
-    const userData = mkdtempSync(join(tmpdir(), 'orca-legacy-shim-'))
+  itOnPosix('keeps a real Bash command hash working with trailing PATH separators', async () => {
+    const userData = makeUserDataDir()
     const shimDir = join(userData, 'orca-terminal-attribution', 'posix')
     const shimGit = join(shimDir, 'git')
     const realBin = join(userData, 'real-bin')
@@ -148,12 +160,13 @@ describe('legacy terminal shim neutralization', () => {
       { mode: 0o755 }
     )
     const child = spawn('bash', ['--noprofile', '--norc'], {
+      cwd: shimDir,
       env: {
         ...process.env,
-        PATH: `${shimDir}:${realBin}:${process.env.PATH ?? ''}`,
+        PATH: `${shimDir}//::${realBin}:${process.env.PATH ?? ''}`,
         ORCA_ENABLE_GIT_ATTRIBUTION: '1',
         ORCA_GIT_COMMIT_TRAILER: 'Co-authored-by: Orca <help@stably.ai>',
-        ORCA_ATTRIBUTION_SHIM_DIR: shimDir
+        ORCA_ATTRIBUTION_SHIM_DIR: ''
       },
       stdio: ['pipe', 'pipe', 'pipe']
     })
@@ -168,14 +181,23 @@ describe('legacy terminal shim neutralization', () => {
       stderr += chunk
     })
     const ready = waitForOutput(child.stdout, '__ORCA_HASH_READY__\n')
-    const closed = new Promise<number | null>((resolve) => child.once('close', resolve))
     child.stdin.write(`hash -p ${quoteBash(shimGit)} git\nprintf '__ORCA_HASH_READY__\\n'\n`)
 
-    await ready
+    try {
+      await ready
+    } catch (error) {
+      child.kill('SIGKILL')
+      throw error
+    }
     neutralizeLegacyTerminalShimDir(userData)
+    const closed = waitForChildClose(child, 2_000)
     child.stdin.end("printf 'stdin payload\\n' | git commit -m 'subject with spaces'; exit $?\n")
 
-    expect(await closed).toBe(23)
+    try {
+      expect(await closed).toBe(23)
+    } finally {
+      child.kill('SIGKILL')
+    }
     expect(stdout).toContain('arg=<commit>\narg=<-m>\narg=<subject with spaces>\nstdin payload\n')
     expect(stdout).not.toContain('Co-authored-by: Orca')
     expect(stderr).toBe('fixture stderr\n')
@@ -301,5 +323,21 @@ function waitForOutput(stream: NodeJS.ReadableStream, marker: string): Promise<v
     }
     stream.on('data', onData)
     stream.on('end', onEnd)
+  })
+}
+
+function waitForChildClose(
+  child: ReturnType<typeof spawn>,
+  timeoutMs: number
+): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL')
+      reject(new Error(`Bash did not exit within ${timeoutMs}ms`))
+    }, timeoutMs)
+    child.once('close', (exitCode) => {
+      clearTimeout(timeout)
+      resolve(exitCode)
+    })
   })
 }
