@@ -946,9 +946,11 @@ const api = {
       rows: number
       cwd?: string
       cwdFallback?: 'worktree'
+      createFreshShellForUnreachablePane?: boolean
       env?: Record<string, string>
       envToDelete?: string[]
       command?: string
+      commandDelivery?: 'renderer' | 'provider'
       launchConfig?: SleepingAgentLaunchConfig
       resumeProviderSession?: AgentProviderSessionMetadata
       launchToken?: string
@@ -976,6 +978,8 @@ const api = {
       snapshotPrefixAnsi?: string
       snapshotFrameAnsi?: string
       snapshotFrameRestoreAnsi?: string
+      snapshotKittyKeyboardFlags?: number
+      snapshotSeq?: number
       isReattach?: boolean
       isAlternateScreen?: boolean
       replay?: string
@@ -1096,6 +1100,7 @@ const api = {
       alternateScreen?: boolean
       scrollbackAnsi?: string
       pendingEscapeTailAnsi?: string
+      kittyKeyboardFlags?: number
     } | null> => ipcRenderer.invoke('pty:getMainBufferSnapshot', { id, opts }),
 
     getRendererDeliveryDebugSnapshot: (): Promise<{
@@ -1258,6 +1263,7 @@ const api = {
         rows: number
         seq?: number
         lastTitle?: string
+        kittyKeyboardFlags?: number
       } | null
     ): void => {
       ipcRenderer.send('pty:serializeBuffer:response', { requestId, snapshot })
@@ -1464,7 +1470,7 @@ const api = {
       checkName?: string
       url?: string | null
       prRepo?: GitHubOwnerRepo | null
-    }): Promise<unknown | null> => ipcRenderer.invoke('gh:prCheckDetails', args),
+    }): Promise<unknown> => ipcRenderer.invoke('gh:prCheckDetails', args),
 
     rerunPRChecks: (args: {
       repoPath: string
@@ -1718,11 +1724,28 @@ const api = {
       ipcRenderer.invoke('hostedReview:forBranch', args),
     getCreationEligibility: (args: unknown): Promise<unknown> =>
       ipcRenderer.invoke('hostedReview:getCreationEligibility', args),
-    create: (args: unknown): Promise<unknown> => ipcRenderer.invoke('hostedReview:create', args)
+    create: (args: unknown): Promise<unknown> => ipcRenderer.invoke('hostedReview:create', args),
+    createStacked: (args: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('hostedReview:createStacked', args)
   },
 
   // Why: GitLab bindings live in `./gitlab` so `gl.*` changes don't conflict on every upstream sync of this central file.
   gl: glApi,
+
+  bitbucket: {
+    connect: (args: {
+      authMode: 'token' | 'basic'
+      accessToken?: string | null
+      email?: string | null
+      apiToken?: string | null
+      baseUrl?: string | null
+    }): Promise<{ ok: true; account: string | null } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('bitbucket:connect', args),
+
+    disconnect: (): Promise<void> => ipcRenderer.invoke('bitbucket:disconnect'),
+
+    status: (): Promise<unknown> => ipcRenderer.invoke('bitbucket:status')
+  },
 
   linear: {
     connect: (args: {
@@ -4919,8 +4942,7 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-ignore (define in dts)
   window.electron = electronAPI
-  // @ts-ignore (define in dts)
+  // @ts-expect-error (define in dts)
   window.api = api
 }

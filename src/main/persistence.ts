@@ -37,6 +37,7 @@ import {
   nextAutomationOccurrenceAfter
 } from '../shared/automation-schedules'
 import { getAutomationLegacyRepoId } from '../shared/automation-run-identity'
+import { isRelayAttestedPtyIncarnationId } from '../shared/pty-incarnation'
 import { normalizeAutomationPrecheck } from '../shared/automation-precheck'
 import { normalizeProxyUrl } from '../shared/network-proxy'
 import { normalizeKagiSessionLink } from '../shared/browser-url'
@@ -96,6 +97,7 @@ import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
 import { MOBILE_PAIRING_USERDATA_FILES } from './runtime/mobile-pairing-files'
 import { normalizePersistedMobileClientTabSelections } from './runtime/client-session-tab-selection-persistence'
 import { sanitizeWorkspaceSessionTerminalRetirements } from './runtime/mobile-session-terminal-persistence-retirement'
+import { findTerminalTabIdForLeaf } from './runtime/workspace-session-terminal-membership-authority'
 import {
   removeRepoFromHostWorkspaceSessions,
   removeRepoFromWorkspaceSession
@@ -137,6 +139,10 @@ import {
 import { parseWorkspaceSessionSalvaging } from '../shared/workspace-session-salvage'
 import { normalizeUsagePercentageDisplay } from '../shared/usage-percentage-display'
 import { normalizeStatusBarUsageMode } from '../shared/status-bar-usage-mode'
+import {
+  normalizeCustomWorktreeVisibilitySources,
+  normalizeWorktreeVisibilitySourcePreferences
+} from '../shared/worktree-visibility-sources'
 import { isExistingPersistedProfile } from '../shared/project-order-manual-default-notice'
 import { resolveUsagePercentageDisplayChangeNoticeDismissed } from '../shared/usage-percentage-display-change-notice'
 import { normalizePRBotAuthorOverrides } from '../shared/pr-bot-author-overrides'
@@ -256,6 +262,10 @@ import { normalizeUiLanguage } from '../shared/ui-language'
 import { normalizeBrowserPageZoomLevel } from '../shared/browser-page-zoom'
 import { persistedUIValuesEqual } from '../shared/persisted-ui-equality'
 import { ActiveViewPreference } from './active-view-preference'
+import {
+  collectFolderWorkspaceDiffComments,
+  normalizeFolderWorkspaceDiffComments
+} from './folder-workspace-diff-comments'
 import {
   normalizeFolderWorkspaceName,
   normalizeFolderWorkspaces
@@ -651,6 +661,11 @@ type LegacyTerminalScrollbackSettings = {
   terminalScrollbackBytes?: unknown
 }
 
+type RetiredGlobalSettings = {
+  terminalScrollbackBytes?: unknown
+  enableGitHubAttribution?: unknown
+}
+
 const LEGACY_TERMINAL_TUI_SCROLL_SENSITIVITY_DEFAULT = 3
 
 function readLegacyTerminalScrollbackSettings(settings: unknown): LegacyTerminalScrollbackSettings {
@@ -659,12 +674,16 @@ function readLegacyTerminalScrollbackSettings(settings: unknown): LegacyTerminal
     : {}
 }
 
-function stripLegacyTerminalScrollbackBytes(
+function stripRetiredGlobalSettings(
   settings: Partial<GlobalSettings> | undefined
 ): Partial<GlobalSettings> {
-  const { terminalScrollbackBytes: _legacyScrollbackBytes, ...rest } = (settings ??
-    {}) as Partial<GlobalSettings> & { terminalScrollbackBytes?: unknown }
+  const {
+    terminalScrollbackBytes: _legacyScrollbackBytes,
+    enableGitHubAttribution: _legacyGitHubAttribution,
+    ...rest
+  } = (settings ?? {}) as Partial<GlobalSettings> & RetiredGlobalSettings
   void _legacyScrollbackBytes
+  void _legacyGitHubAttribution
   return rest
 }
 
@@ -673,11 +692,8 @@ function migrateTerminalScrollbackRows(settings: unknown): {
   needsSave: boolean
 } {
   const legacySettings = readLegacyTerminalScrollbackSettings(settings)
-  const hasRows = Object.prototype.hasOwnProperty.call(legacySettings, 'terminalScrollbackRows')
-  const hasLegacyBytes = Object.prototype.hasOwnProperty.call(
-    legacySettings,
-    'terminalScrollbackBytes'
-  )
+  const hasRows = Object.hasOwn(legacySettings, 'terminalScrollbackRows')
+  const hasLegacyBytes = Object.hasOwn(legacySettings, 'terminalScrollbackBytes')
   const rows = hasRows
     ? normalizeDesktopTerminalScrollbackRows(legacySettings.terminalScrollbackRows)
     : legacyTerminalScrollbackBytesToRows(legacySettings.terminalScrollbackBytes)
@@ -1466,6 +1482,8 @@ function sanitizeRepoUpdatesForPersistence<
       | 'worktreeBasePath'
       | 'projectHostSetupMethod'
       | 'forkSyncMode'
+      | 'customWorktreeVisibilitySources'
+      | 'worktreeVisibilitySourcePreferences'
     >
   >
 >(updates: T): T {
@@ -1524,6 +1542,26 @@ function sanitizeRepoUpdatesForPersistence<
       delete sanitized.forkSyncMode
     } else {
       sanitized.forkSyncMode = forkSyncMode
+    }
+  }
+  if ('customWorktreeVisibilitySources' in sanitized) {
+    const sources = normalizeCustomWorktreeVisibilitySources(
+      sanitized.customWorktreeVisibilitySources
+    )
+    if (!sources) {
+      delete sanitized.customWorktreeVisibilitySources
+    } else {
+      sanitized.customWorktreeVisibilitySources = sources
+    }
+  }
+  if ('worktreeVisibilitySourcePreferences' in sanitized) {
+    const preferences = normalizeWorktreeVisibilitySourcePreferences(
+      sanitized.worktreeVisibilitySourcePreferences
+    )
+    if (!preferences) {
+      delete sanitized.worktreeVisibilitySourcePreferences
+    } else {
+      sanitized.worktreeVisibilitySourcePreferences = preferences
     }
   }
   return sanitized
@@ -1622,7 +1660,13 @@ function normalizeSshRemotePtyLease(value: unknown): SshRemotePtyLease | null {
     createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : now,
     ...(typeof raw.lastAttachedAt === 'number' ? { lastAttachedAt: raw.lastAttachedAt } : {}),
-    ...(typeof raw.lastDetachedAt === 'number' ? { lastDetachedAt: raw.lastDetachedAt } : {})
+    ...(typeof raw.lastDetachedAt === 'number' ? { lastDetachedAt: raw.lastDetachedAt } : {}),
+    // Rebuilt field by field, so a lease is only as durable as this list — adding the field to the
+    // type without adding it here drops it on every load. Synthesized values are refused rather
+    // than carried: one written by an older build would later read as a different shell.
+    ...(isRelayAttestedPtyIncarnationId(raw.incarnationId)
+      ? { incarnationId: raw.incarnationId }
+      : {})
   }
 }
 
@@ -1685,7 +1729,7 @@ type LayoutLeafNormalization = {
 
 function collectLayoutLeafCounts(
   node: TerminalPaneLayoutNode,
-  counts: Map<string, number> = new Map()
+  counts = new Map<string, number>()
 ): Map<string, number> {
   if (node.type === 'leaf') {
     counts.set(node.leafId, (counts.get(node.leafId) ?? 0) + 1)
@@ -1721,6 +1765,20 @@ function layoutContainsLeafId(node: TerminalPaneLayoutNode | null, leafId: strin
     return node.leafId === leafId
   }
   return layoutContainsLeafId(node.first, leafId) || layoutContainsLeafId(node.second, leafId)
+}
+
+/** Total order so two leases for one pane resolve the same way on every host. */
+function isNewerSshRemotePtyLease(
+  candidate: SshRemotePtyLease,
+  incumbent: SshRemotePtyLease
+): boolean {
+  if (candidate.updatedAt !== incumbent.updatedAt) {
+    return candidate.updatedAt > incumbent.updatedAt
+  }
+  if (candidate.createdAt !== incumbent.createdAt) {
+    return candidate.createdAt > incumbent.createdAt
+  }
+  return candidate.ptyId > incumbent.ptyId
 }
 
 function cloneLayoutNode(node: TerminalPaneLayoutNode): TerminalPaneLayoutNode {
@@ -2783,6 +2841,14 @@ export type StoreOptions = {
   dataFile?: string
 }
 
+export type PtyBindingSourceExpectation = {
+  worktreeId?: string
+  tabId: string
+  leafId: string
+  ptyId: string
+  incarnationId?: string
+}
+
 export class Store {
   private state: PersistedState
   private readonly dataFile: string
@@ -2810,6 +2876,7 @@ export class Store {
   private pendingGithubCacheWrite: Promise<void> | null = null
   private readonly staleGithubCacheTempCleanup: Promise<void>
   private gitUsernameCache = new Map<string, string>()
+  private readonly sshRemotePtyLeaseMutationVersions = new WeakMap<SshRemotePtyLease, number>()
   private readonly protectedSecrets = new ProtectedSecretPersistence()
   private loadNeedsSave = false
   private settingsChangeListeners = new Set<
@@ -2844,6 +2911,7 @@ export class Store {
     // profile avoids serializing the multi-MB recovery store on navigation.
     this.activeViewPreference = new ActiveViewPreference(this.dataFile, this.state.ui?.activeView)
     const adaptedProjectGroups = this.adaptFlatFolderScanProjectGroups()
+    this.hydrateFolderWorkspaceDiffComments()
     for (const entry of normalized.migrationUnsupportedEntries) {
       setMigrationUnsupportedPty(entry)
     }
@@ -2862,6 +2930,33 @@ export class Store {
       // Why: rewrite legacy pane:1 leaves so older renderer writes can't revive them; other migrations also set loadNeedsSave.
       this.scheduleSave()
     }
+  }
+
+  // Why: notes live top-level on disk so an older build's field-by-field
+  // normalizeFolderWorkspaces can't drop them; re-attach them to the in-memory records here.
+  private hydrateFolderWorkspaceDiffComments(): void {
+    const stored = this.state.folderWorkspaceDiffComments
+    let relocatedInline = false
+    for (const workspace of this.state.folderWorkspaces ?? []) {
+      if (Array.isArray(workspace.diffComments) && workspace.diffComments.length > 0) {
+        // Inline wins: an intervening rollback to a #14112 build writes notes inline and leaves the
+        // older map untouched, so inline is the last notes-aware write. Also makes the relocation
+        // durable even if the user never edits anything this session.
+        relocatedInline = true
+        continue
+      }
+      const comments = stored?.[workspace.id]
+      // Not `??`: a degenerate `{ id: [] }` entry must not delete an intact inline value.
+      if (Array.isArray(comments) && comments.length > 0) {
+        workspace.diffComments = comments
+      }
+    }
+    if (relocatedInline) {
+      this.loadNeedsSave = true
+    }
+    // Write-only projection: buildStateToSave() is the only producer, so leaving the loaded map in
+    // state would make it a stale second source of truth that getDurableState() spreads back out.
+    delete this.state.folderWorkspaceDiffComments
   }
 
   private adaptFlatFolderScanProjectGroups(): boolean {
@@ -3144,6 +3239,13 @@ export class Store {
         if (migratedTerminalScrollback.needsSave) {
           this.loadNeedsSave = true
         }
+        if (
+          parsed.settings &&
+          typeof parsed.settings === 'object' &&
+          Object.hasOwn(parsed.settings, 'enableGitHubAttribution')
+        ) {
+          this.loadNeedsSave = true
+        }
         const migratedTerminalTuiScrollSensitivity = migrateTerminalTuiScrollSensitivityDefault(
           parsed.settings
         )
@@ -3406,6 +3508,9 @@ export class Store {
             parsed.folderWorkspaces,
             normalizedProjectGroups
           ),
+          folderWorkspaceDiffComments: normalizeFolderWorkspaceDiffComments(
+            parsed.folderWorkspaceDiffComments
+          ),
           worktreeLineageById: parsed.worktreeLineageById ?? {},
           mobileClientTabSelectionsByDeviceId: normalizePersistedMobileClientTabSelections(
             parsed.mobileClientTabSelectionsByDeviceId
@@ -3416,7 +3521,7 @@ export class Store {
           settings: {
             ...defaults.settings,
             // Why (#7977): keep persisted experimentalNewWorktreeCardStyle:true — v1.4.130's onboarding auto-wrote it as a plain boolean, so it's indistinguishable from a real opt-in; only the default changed.
-            ...stripLegacyTerminalScrollbackBytes(parsed.settings),
+            ...stripRetiredGlobalSettings(parsed.settings),
             prBotAuthorOverrides: normalizePRBotAuthorOverrides(
               parsed.settings?.prBotAuthorOverrides
             ),
@@ -4000,6 +4105,13 @@ export class Store {
     // Why: clone before encrypting secrets so in-memory this.state stays plaintext.
     const stateToSave = {
       ...this.getDurableState(),
+      // Why both keys unconditionally: the explicit keys always win over the spread, and
+      // JSON.stringify drops the `undefined` value so a note-free profile gains no key on disk.
+      // The strip builds a new array here only; this.state records keep their notes in memory.
+      folderWorkspaces: (this.state.folderWorkspaces ?? []).map(
+        ({ diffComments: _relocated, ...rest }) => rest
+      ),
+      folderWorkspaceDiffComments: collectFolderWorkspaceDiffComments(this.state.folderWorkspaces),
       sshPtyConsumerRecoveries: (this.state.sshPtyConsumerRecoveries ?? []).map((record) => ({
         ...record,
         ownerLease: encryptToSentinel(
@@ -4008,7 +4120,7 @@ export class Store {
         )
       })),
       settings: {
-        ...this.state.settings,
+        ...stripRetiredGlobalSettings(this.state.settings),
         opencodeSessionCookie: encryptToSentinel(
           PROTECTED_SECRET_SLOT.opencodeSessionCookie,
           this.state.settings.opencodeSessionCookie
@@ -4546,6 +4658,7 @@ export class Store {
         | 'pendingFirstAgentMessageRename'
         | 'firstAgentMessageRenameError'
         | 'lastActivityAt'
+        | 'diffComments'
       >
     >
   ): FolderWorkspace | null {
@@ -4618,6 +4731,9 @@ export class Store {
     }
     if (updates.lastActivityAt !== undefined && Number.isFinite(updates.lastActivityAt)) {
       workspace.lastActivityAt = updates.lastActivityAt
+    }
+    if (updates.diffComments !== undefined) {
+      workspace.diffComments = updates.diffComments
     }
     workspace.updatedAt = Date.now()
     this.scheduleSave()
@@ -4910,6 +5026,9 @@ export class Store {
         | 'externalWorktreeVisibilityPromptDismissedAt'
         | 'externalWorktreeInboxBaselinePaths'
         | 'importedExternalWorktreePaths'
+        | 'agentWorktreeVisibility'
+        | 'customWorktreeVisibilitySources'
+        | 'worktreeVisibilitySourcePreferences'
         | 'projectGroupId'
         | 'projectGroupOrder'
         | 'projectHostSetupMethod'
@@ -4928,6 +5047,20 @@ export class Store {
       return null
     }
     const sanitizedUpdates = sanitizeRepoUpdatesForPersistence(updates)
+    if (
+      'agentWorktreeVisibility' in sanitizedUpdates &&
+      !('worktreeVisibilitySourcePreferences' in sanitizedUpdates) &&
+      (sanitizedUpdates.agentWorktreeVisibility === 'hide' ||
+        sanitizedUpdates.agentWorktreeVisibility === 'show')
+    ) {
+      sanitizedUpdates.worktreeVisibilitySourcePreferences = {
+        ...repo.worktreeVisibilitySourcePreferences,
+        builtIn: {
+          claude: sanitizedUpdates.agentWorktreeVisibility,
+          gsd: sanitizedUpdates.agentWorktreeVisibility
+        }
+      }
+    }
     if ('projectGroupId' in sanitizedUpdates) {
       const nextGroupId = sanitizedUpdates.projectGroupId
       if (
@@ -5093,6 +5226,8 @@ export class Store {
       sourceControlAi: rawSourceControlAi,
       projectHostSetupMethod: rawProjectHostSetupMethod,
       forkSyncMode: rawForkSyncMode,
+      customWorktreeVisibilitySources: rawCustomWorktreeVisibilitySources,
+      worktreeVisibilitySourcePreferences: rawWorktreeVisibilitySourcePreferences,
       ...repoWithoutIcon
     } = repo
     const repoIcon = sanitizeRepoIcon(rawRepoIcon)
@@ -5101,6 +5236,12 @@ export class Store {
     const sourceControlAi = normalizeRepoSourceControlAiOverrides(rawSourceControlAi)
     const projectHostSetupMethod = sanitizeRepoProjectHostSetupMethod(rawProjectHostSetupMethod)
     const forkSyncMode = sanitizeForkSyncMode(rawForkSyncMode)
+    const customWorktreeVisibilitySources = normalizeCustomWorktreeVisibilitySources(
+      rawCustomWorktreeVisibilitySources
+    )
+    const worktreeVisibilitySourcePreferences = normalizeWorktreeVisibilitySourcePreferences(
+      rawWorktreeVisibilitySourcePreferences
+    )
     // Why: never spawn git/gh username resolution in hydration — a stuck probe froze Windows startup for minutes (issue #7225); read only cache/persisted value.
     const gitUsername = isFolderRepo(repo)
       ? ''
@@ -5114,6 +5255,10 @@ export class Store {
       ...(sourceControlAi !== undefined ? { sourceControlAi } : {}),
       ...(projectHostSetupMethod !== undefined ? { projectHostSetupMethod } : {}),
       ...(forkSyncMode !== undefined ? { forkSyncMode } : {}),
+      ...(customWorktreeVisibilitySources !== undefined ? { customWorktreeVisibilitySources } : {}),
+      ...(worktreeVisibilitySourcePreferences !== undefined
+        ? { worktreeVisibilitySourcePreferences }
+        : {}),
       kind: isFolderRepo(repo) ? 'folder' : 'git',
       gitUsername,
       hookSettings: {
@@ -5809,7 +5954,7 @@ export class Store {
     updates: Partial<GlobalSettings>,
     options: { notifyListeners?: boolean; originWebContentsId?: number } = {}
   ): GlobalSettings {
-    const sanitizedUpdates = stripLegacyTerminalScrollbackBytes(updates)
+    const sanitizedUpdates = stripRetiredGlobalSettings(updates)
     if ('opencodeSessionCookie' in updates && !updates.opencodeSessionCookie) {
       this.protectedSecrets.removeRetainedBlob(PROTECTED_SECRET_SLOT.opencodeSessionCookie)
     }
@@ -6773,15 +6918,41 @@ export class Store {
       incarnationId?: string
       startupCwd?: string
       expectedBinding?: { ptyId: string; incarnationId?: string }
+      /** Reattach passes false: an absent durable pane never authorizes creating UI.
+       *  Defaults true so the spawn path keeps its force-quit-race branches. */
+      mayCreate?: boolean
+      expectedSourceBinding?: PtyBindingSourceExpectation
     },
     hostId?: string | null
   ): boolean {
+    const mayCreate = args.mayCreate ?? true
     const resolvedHostId = this.resolveHostId(hostId)
     const session = this.getWorkspaceSession(resolvedHostId)
     const paneKey = `${args.tabId}:${args.leafId}`
+    const bindingWorktreeId = args.expectedSourceBinding?.worktreeId ?? args.worktreeId
+    if (args.expectedSourceBinding) {
+      const expected = args.expectedSourceBinding
+      if (expected.tabId !== args.tabId) {
+        return false
+      }
+      const sourceTab = session.tabsByWorktree?.[bindingWorktreeId]?.find(
+        (candidate) => candidate.id === expected.tabId && candidate.worktreeId === bindingWorktreeId
+      )
+      const sourceLayout = session.terminalLayoutsByTabId?.[expected.tabId]
+      const sourcePaneKey = `${expected.tabId}:${expected.leafId}`
+      if (
+        !sourceTab ||
+        sourceLayout?.ptyIdsByLeafId?.[expected.leafId] !== expected.ptyId ||
+        !layoutContainsLeafId(sourceLayout.root, expected.leafId) ||
+        (expected.incarnationId !== undefined &&
+          session.terminalPtyIncarnationsByPaneKey?.[sourcePaneKey] !== expected.incarnationId)
+      ) {
+        return false
+      }
+    }
     if (args.expectedBinding) {
-      const tab = session.tabsByWorktree?.[args.worktreeId]?.find(
-        (candidate) => candidate.id === args.tabId && candidate.worktreeId === args.worktreeId
+      const tab = session.tabsByWorktree?.[bindingWorktreeId]?.find(
+        (candidate) => candidate.id === args.tabId && candidate.worktreeId === bindingWorktreeId
       )
       const boundPtyId = session.terminalLayoutsByTabId?.[args.tabId]?.ptyIdsByLeafId?.[args.leafId]
       if (
@@ -6804,9 +6975,13 @@ export class Store {
       args.incarnationId !== args.expectedBinding.incarnationId
     let terminalMembershipChanged = false
     const advanceTopologyFence = (): void => {
-      const repoId = getRepoIdFromWorktreeId(args.worktreeId)
+      const repoId = getRepoIdFromWorktreeId(bindingWorktreeId)
       const currentRevision = session.terminalTopologyRevisionByRepoId?.[repoId] ?? 0
-      if (!reconciledIncarnation && (!terminalMembershipChanged || currentRevision <= 0)) {
+      const establishesSplitAuthority = args.expectedSourceBinding !== undefined
+      if (
+        !reconciledIncarnation &&
+        (!terminalMembershipChanged || (currentRevision <= 0 && !establishesSplitAuthority))
+      ) {
         return
       }
       // Why: host-admitted membership or incarnation changes must outrank a stale renderer replay.
@@ -6837,7 +7012,7 @@ export class Store {
         delete session.terminalSurfaceTombstonesByPaneKey[paneKey]
       }
     }
-    const tabs = session.tabsByWorktree?.[args.worktreeId]
+    const tabs = session.tabsByWorktree?.[bindingWorktreeId]
     const tab = tabs?.find((t) => t.id === args.tabId)
     if (tab) {
       tab.ptyId = args.ptyId
@@ -6848,19 +7023,24 @@ export class Store {
         ...(tabs ?? []),
         createMinimalPersistedTerminalTab({
           ...args,
+          worktreeId: bindingWorktreeId,
           existingTabCount: tabs?.length ?? 0
         })
       ]
       session.tabsByWorktree = {
         ...session.tabsByWorktree,
-        [args.worktreeId]: nextTabs
+        [bindingWorktreeId]: nextTabs
       }
-      session.activeWorktreeId ??= args.worktreeId
+      session.activeWorktreeId ??= bindingWorktreeId
       session.activeTabId ??= args.tabId
       session.activeTabIdByWorktree = {
         ...session.activeTabIdByWorktree,
-        [args.worktreeId]: session.activeTabIdByWorktree?.[args.worktreeId] ?? args.tabId
+        [bindingWorktreeId]: session.activeTabIdByWorktree?.[bindingWorktreeId] ?? args.tabId
       }
+    }
+    if (!mayCreate && terminalMembershipChanged) {
+      restoreSession()
+      return false
     }
     if (!isTerminalLeafId(args.leafId)) {
       // Why: keep legacy renderer-local pane ids out of durable leaf-keyed layout state after the UUID migration.
@@ -6911,6 +7091,10 @@ export class Store {
           ptyIdsByLeafId: { [args.leafId]: args.ptyId }
         }
       }
+    }
+    if (!mayCreate && terminalMembershipChanged) {
+      restoreSession()
+      return false
     }
     advanceTopologyFence()
     try {
@@ -7207,6 +7391,12 @@ export class Store {
     return leases.filter((lease) => targetId === undefined || lease.targetId === targetId)
   }
 
+  private advanceSshRemotePtyLeaseMutationVersion(lease: SshRemotePtyLease): number {
+    const version = (this.sshRemotePtyLeaseMutationVersions.get(lease) ?? 0) + 1
+    this.sshRemotePtyLeaseMutationVersions.set(lease, version)
+    return version
+  }
+
   upsertSshRemotePtyLease(
     lease: Omit<SshRemotePtyLease, 'createdAt' | 'updatedAt'> &
       Partial<Pick<SshRemotePtyLease, 'createdAt' | 'updatedAt'>>
@@ -7226,19 +7416,311 @@ export class Store {
       (entry) =>
         entry.targetId === normalizedLease.targetId && entry.ptyId === normalizedLease.ptyId
     )
-    const existing = existingIndex >= 0 ? this.state.sshRemotePtyLeases[existingIndex] : undefined
+    const existing = existingIndex !== -1 ? this.state.sshRemotePtyLeases[existingIndex] : undefined
     const next: SshRemotePtyLease = {
       ...existing,
       ...normalizedLease,
       createdAt: existing?.createdAt ?? normalizedLease.createdAt ?? now,
       updatedAt: normalizedLease.updatedAt ?? now
     }
-    if (existingIndex >= 0) {
+    if (existingIndex !== -1) {
       this.state.sshRemotePtyLeases[existingIndex] = next
     } else {
       this.state.sshRemotePtyLeases.push(next)
     }
+    this.supersedeSiblingLeasesForPane(next, now)
     this.flush()
+  }
+
+  /**
+   * One pane owns at most one live remote PTY. Without this, lease identity is
+   * `(targetId, ptyId)` alone, so a pane that re-leases under a new relay id
+   * leaves its predecessor live forever — reattach then fans out over both and
+   * grafts a pane the user never opened (STA-3077: 2 -> 19 -> 20 across three
+   * reconnects).
+   *
+   * Superseded leases are marked `expired`, not terminated: the remote shell is
+   * deliberately left running, because losing a lease is not proof the shell died.
+   */
+  private supersedeSiblingLeasesForPane(winner: SshRemotePtyLease, now: number): void {
+    if (!winner.worktreeId || !winner.tabId || !winner.leafId) {
+      return
+    }
+    if (winner.state === 'terminated' || winner.state === 'expired') {
+      return
+    }
+    // Why consult the binding here: at upsert time the caller's lease may not be
+    // the one the pane is bound to yet. Expiring the bound predecessor would
+    // detach a live pane, so leave both live and let reattach arbitrate with the
+    // binding in hand.
+    const boundPtyId = this.durablyBoundPtyIdForPane(winner.targetId, winner.tabId, winner.leafId)
+    if (boundPtyId && boundPtyId !== winner.ptyId) {
+      return
+    }
+    const superseded: SshRemotePtyLease[] = []
+    for (const lease of this.state.sshRemotePtyLeases ?? []) {
+      if (
+        lease.ptyId !== winner.ptyId &&
+        lease.targetId === winner.targetId &&
+        lease.worktreeId === winner.worktreeId &&
+        // Leaf only: a lease freezes its tabId, and a pane broken out to a new tab would otherwise
+        // never compete with its own predecessor — which is the reported cardinality growth.
+        lease.leafId === winner.leafId
+      ) {
+        if (lease.state === 'expired') {
+          // A concurrent same-pane owner confirms this lease must outlive rollback as retired.
+          this.advanceSshRemotePtyLeaseMutationVersion(lease)
+          continue
+        }
+        if (lease.state === 'terminated') {
+          continue
+        }
+        lease.state = 'expired'
+        lease.updatedAt = now
+        this.advanceSshRemotePtyLeaseMutationVersion(lease)
+        superseded.push(lease)
+      }
+    }
+    // Why: matching on lease ptyId first means this scrubs only the predecessor's
+    // stale binding — the winner's own binding cannot match and is left intact.
+    this.clearSshRemotePtyBindingsForLeases(winner.targetId, superseded, 'local')
+  }
+
+  /** The PTY a pane is durably bound to. The desktop plane's home is `local` — the renderer is its
+   *  only publisher of pane membership. Hedging into `ssh:<target>` let the headless plane's copy
+   *  outvote the live binding and silently no-op supersession (STA-3077).
+   *
+   *  Keyed on the leaf, falling back across tabs: a lease freezes its tabId at write time, and
+   *  `detachTerminalPaneToTab` moves a live pane, so the named tab can be the one the pane left.
+   *  Missing the binding there makes it lose to recency and retires the pane's own shell. */
+  private durablyBoundPtyIdForPane(
+    targetId: string,
+    tabId: string,
+    leafId: string
+  ): string | undefined {
+    // Deliberately does NOT require the tab to still exist, unlike findTerminalTabIdForLeaf, which
+    // must — binding a live shell to a deleted tab registers a ghost pane. Here the consequence
+    // runs the other way: a binding under a departed tab only ever keeps a lease alive, and not
+    // retiring is the safe direction when nothing has proved the shell dead.
+    const findLeafBinding = (session: WorkspaceSessionState | undefined): string | undefined => {
+      const layouts = session?.terminalLayoutsByTabId
+      return (
+        layouts?.[tabId]?.ptyIdsByLeafId?.[leafId] ??
+        Object.values(layouts ?? {}).find((layout) => layout?.ptyIdsByLeafId?.[leafId])
+          ?.ptyIdsByLeafId?.[leafId]
+      )
+    }
+    // Local FIRST, and only then the headless plane. Local-first is what STA-3077 needed: the old
+    // code preferred `ssh:<target>`, so a copy no live writer maintained outvoted the real binding
+    // and supersession no-opped. The fallback is not that hedge — it only speaks for a pane local
+    // says nothing about, so a headless-owned pane still gets a vote before its lease is retired.
+    const boundPtyId =
+      findLeafBinding(this.state.workspaceSession) ??
+      findLeafBinding(this.state.workspaceSessionsByHostId?.[toSshExecutionHostId(targetId)])
+    return boundPtyId ? this.getRelayPtyIdForSshLeaseComparison(targetId, boundPtyId) : undefined
+  }
+
+  /**
+   * The durable pane binding outranks recency. Picking the newest lease alone
+   * would retire the one the pane is actually bound to whenever a newer unbound
+   * lease exists, which detaches a live pane instead of healing it.
+   */
+  private outranksForPane(
+    candidate: SshRemotePtyLease,
+    incumbent: SshRemotePtyLease,
+    targetId: string
+  ): boolean {
+    const boundPtyId = this.durablyBoundPtyIdForPane(
+      targetId,
+      candidate.tabId ?? '',
+      candidate.leafId ?? ''
+    )
+    if (boundPtyId) {
+      if (incumbent.ptyId === boundPtyId) {
+        return false
+      }
+      if (candidate.ptyId === boundPtyId) {
+        return true
+      }
+    }
+    return isNewerSshRemotePtyLease(candidate, incumbent)
+  }
+
+  /**
+   * Heals lease state that predates pane-keyed supersession. Existing installs
+   * carry the duplicates STA-3077 accumulated — one report reached 20 live
+   * leases for a handful of panes — and supersession alone only prevents new
+   * ones. Reattach calls this first so a stale predecessor cannot be revived.
+   *
+   * Returns the number of leases retired, for logging.
+   */
+  async supersedeDuplicatePaneLeases(targetId: string): Promise<number> {
+    const live = (this.state.sshRemotePtyLeases ?? []).filter(
+      (lease) =>
+        lease.targetId === targetId && lease.state !== 'terminated' && lease.state !== 'expired'
+    )
+    const winnerByPane = new Map<string, SshRemotePtyLease>()
+    for (const lease of live) {
+      if (!lease.worktreeId || !lease.tabId || !lease.leafId) {
+        continue
+      }
+      // Keyed on the leaf, not the frozen tabId: the same pane moved between tabs must land in one
+      // bucket, or its duplicates never arbitrate against each other.
+      const paneKey = [lease.worktreeId, lease.leafId].join('\0')
+      const incumbent = winnerByPane.get(paneKey)
+      if (!incumbent || this.outranksForPane(lease, incumbent, targetId)) {
+        winnerByPane.set(paneKey, lease)
+      }
+    }
+    if (winnerByPane.size === 0) {
+      return 0
+    }
+    const winners = new Set(winnerByPane.values())
+    const now = Date.now()
+    const superseded: SshRemotePtyLease[] = []
+    const restore: (() => void)[] = []
+    for (const lease of live) {
+      if (!lease.worktreeId || !lease.tabId || !lease.leafId || winners.has(lease)) {
+        continue
+      }
+      const { state, updatedAt } = lease
+      lease.state = 'expired'
+      lease.updatedAt = now
+      const rollbackVersion = this.advanceSshRemotePtyLeaseMutationVersion(lease)
+      restore.push(() => {
+        if (
+          this.state.sshRemotePtyLeases?.includes(lease) &&
+          this.sshRemotePtyLeaseMutationVersions.get(lease) === rollbackVersion &&
+          lease.state === 'expired' &&
+          lease.updatedAt === now
+        ) {
+          lease.state = state
+          lease.updatedAt = updatedAt
+          this.advanceSshRemotePtyLeaseMutationVersion(lease)
+        }
+      })
+      superseded.push(lease)
+    }
+    if (superseded.length === 0) {
+      return 0
+    }
+    const bindingsBefore = this.snapshotSshLeaseBindings(targetId, superseded)
+    this.clearSshRemotePtyBindingsForLeases(targetId, superseded, 'local')
+    this.scheduleSave()
+    try {
+      // Why the ASYNC twin: the sync flush fsyncs a multi-MB file from the Electron main thread,
+      // and this runs on every reconnect. On a stalled network profile mount that syscall is
+      // uninterruptible and nothing can bound it — see flushAsync. Why "OrThrow" and not plain
+      // flush(): flush() swallows write errors, which would leave these leases retired in memory
+      // but attached on disk for the rest of the session.
+      await this.flushDurableStateOrThrowAsync(false)
+    } catch (err) {
+      for (const undo of restore) {
+        undo()
+      }
+      this.restoreSshLeaseBindings(targetId, superseded, bindingsBefore)
+      this.scheduleSave()
+      console.error('[persistence] Failed to retire duplicate pane leases:', err)
+      return 0
+    }
+    return superseded.length
+  }
+
+  private snapshotSshLeaseBindings(
+    targetId: string,
+    leases: SshRemotePtyLease[]
+  ): {
+    tabs: { leafId: string; ptyId: string }[]
+    leaves: { leafId: string; ptyId: string }[]
+  } {
+    const tabSnapshots: { leafId: string; ptyId: string }[] = []
+    const leaves: { leafId: string; ptyId: string }[] = []
+    const session = this.state.workspaceSession
+    for (const [worktreeId, tabs] of Object.entries(session?.tabsByWorktree ?? {})) {
+      for (const tab of tabs) {
+        if (tab.ptyId) {
+          const lease = leases.find((candidate) =>
+            this.sshRemotePtyLeaseMayReferenceBinding(candidate, {
+              ptyId: tab.ptyId!,
+              worktreeId,
+              targetId,
+              tabId: tab.id
+            })
+          )
+          if (lease?.leafId) {
+            tabSnapshots.push({ leafId: lease.leafId, ptyId: tab.ptyId })
+          }
+        }
+      }
+    }
+    for (const [tabId, layout] of Object.entries(session?.terminalLayoutsByTabId ?? {})) {
+      const worktreeId = Object.entries(session?.tabsByWorktree ?? {}).find(([, tabs]) =>
+        tabs.some((tab) => tab.id === tabId)
+      )?.[0]
+      for (const [leafId, ptyId] of Object.entries(layout.ptyIdsByLeafId ?? {})) {
+        if (
+          leases.some(
+            (lease) =>
+              lease.leafId === leafId &&
+              this.sshRemotePtyLeaseMayReferenceBinding(lease, {
+                ptyId,
+                targetId,
+                ...(worktreeId ? { worktreeId } : {}),
+                tabId,
+                leafId
+              })
+          )
+        ) {
+          leaves.push({ leafId, ptyId })
+        }
+      }
+    }
+    return { tabs: tabSnapshots, leaves }
+  }
+
+  private restoreSshLeaseBindings(
+    targetId: string,
+    leases: SshRemotePtyLease[],
+    snapshots: {
+      tabs: { leafId: string; ptyId: string }[]
+      leaves: { leafId: string; ptyId: string }[]
+    }
+  ): void {
+    const currentLeases = new Set(this.state.sshRemotePtyLeases ?? [])
+    const session = this.state.workspaceSession
+    const hasLiveLease = (snapshot: { leafId: string; ptyId: string }): boolean =>
+      leases.some(
+        (lease) =>
+          currentLeases.has(lease) &&
+          lease.state !== 'terminated' &&
+          lease.state !== 'expired' &&
+          lease.targetId === targetId &&
+          lease.leafId === snapshot.leafId &&
+          lease.ptyId === this.getRelayPtyIdForSshLeaseComparison(targetId, snapshot.ptyId)
+      )
+    for (const snapshot of snapshots.tabs) {
+      const tabId = findTerminalTabIdForLeaf(session, snapshot.leafId)
+      const tab = Object.values(session?.tabsByWorktree ?? {})
+        .flat()
+        .find((candidate) => candidate.id === tabId)
+      if (hasLiveLease(snapshot) && tab?.ptyId === null) {
+        tab.ptyId = snapshot.ptyId
+      }
+    }
+    for (const snapshot of snapshots.leaves) {
+      const tabId = findTerminalTabIdForLeaf(session, snapshot.leafId)
+      const layout = tabId ? session?.terminalLayoutsByTabId?.[tabId] : undefined
+      if (
+        hasLiveLease(snapshot) &&
+        layout &&
+        layout.ptyIdsByLeafId?.[snapshot.leafId] === undefined
+      ) {
+        layout.ptyIdsByLeafId = {
+          ...layout.ptyIdsByLeafId,
+          [snapshot.leafId]: snapshot.ptyId
+        }
+      }
+    }
   }
 
   markSshRemotePtyLeases(targetId: string, state: SshRemotePtyLease['state']): void {
@@ -7259,6 +7741,7 @@ export class Store {
     state: SshRemotePtyLease['state']
   ): Promise<void> {
     if (this.updateSshRemotePtyLeaseStates(targetId, state)) {
+      this.scheduleSave()
       await this.flushDurableStateOrThrowAsync()
     }
   }
@@ -7271,7 +7754,27 @@ export class Store {
       ptyIds.map((ptyId) => this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId))
     )
     if (this.updateSshRemotePtyLeaseStates(targetId, 'attached', relayPtyIds)) {
+      this.scheduleSave()
       await this.flushDurableStateOrThrowAsync()
+    }
+  }
+
+  async markSshRemotePtyLeasesTerminatedAsync(
+    targetId: string,
+    ptyIds: readonly string[]
+  ): Promise<void> {
+    const relayPtyIds = new Set(
+      ptyIds.map((ptyId) => this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId))
+    )
+    if (this.updateSshRemotePtyLeaseStates(targetId, 'terminated', relayPtyIds)) {
+      this.scheduleSave()
+      try {
+        await this.flushDurableStateOrThrowAsync(false)
+      } catch (error) {
+        // Keep the proven exit retryable after a transient persistence failure.
+        this.scheduleSave()
+        throw error
+      }
     }
   }
 
@@ -7293,8 +7796,13 @@ export class Store {
         continue
       }
       if (state === 'detached' && lease.state !== 'attached') {
+        if (lease.state === 'expired') {
+          // A later detach fences rollback from restoring attached ownership.
+          this.advanceSshRemotePtyLeaseMutationVersion(lease)
+        }
         continue
       }
+      this.advanceSshRemotePtyLeaseMutationVersion(lease)
       if (lease.state !== state) {
         lease.state = state
         lease.updatedAt = now
@@ -7323,6 +7831,7 @@ export class Store {
     if (!lease) {
       return
     }
+    this.advanceSshRemotePtyLeaseMutationVersion(lease)
     const shouldClearBindings = state === 'terminated' || state === 'expired'
     if (lease.state === state) {
       if (shouldClearBindings && this.clearSshRemotePtyBindingsForLeases(targetId, [lease])) {
@@ -7376,19 +7885,27 @@ export class Store {
     this.clearSshRemotePtyBindingsForLeases(targetId, leases ?? [])
   }
 
+  /** `arbitratedFrom` names the plane a supersession DECISION was made from. A decision reached by
+   *  reading one plane may only mutate that plane: the other plane's binding never got a vote, and
+   *  deleting it strands a shell its owner can still be using. An explicit expiry or termination is
+   *  plane-agnostic — the pty is gone for everyone — so those callers pass nothing. */
   private clearSshRemotePtyBindingsForLeases(
     targetId: string,
-    leases: SshRemotePtyLease[]
+    leases: SshRemotePtyLease[],
+    arbitratedFrom?: 'local'
   ): boolean {
     if (!leases?.length) {
       return false
     }
     let changed = false
     const sessions = new Set(
-      [
-        this.state.workspaceSession,
-        this.state.workspaceSessionsByHostId?.[toSshExecutionHostId(targetId)]
-      ].filter((session): session is WorkspaceSessionState => Boolean(session))
+      (arbitratedFrom === 'local'
+        ? [this.state.workspaceSession]
+        : [
+            this.state.workspaceSession,
+            this.state.workspaceSessionsByHostId?.[toSshExecutionHostId(targetId)]
+          ]
+      ).filter((session): session is WorkspaceSessionState => Boolean(session))
     )
     for (const session of sessions) {
       for (const [worktreeId, tabs] of Object.entries(session.tabsByWorktree ?? {})) {
@@ -7497,10 +8014,11 @@ export class Store {
 
   // Async twin of flushOrThrow: durable state only. Active-view and GitHub sidecars are
   // quit/startup work and must not be snapshotted on the live SSH establish/reconnect path.
-  private async flushDurableStateOrThrowAsync(): Promise<void> {
+  private async flushDurableStateOrThrowAsync(drainToStableGeneration = true): Promise<void> {
     if (this.writesFrozen || this.quitFlushStarted) {
       throw new Error('Cannot flush while persistence is finalized')
     }
+    const requiredDurableGeneration = this.writeGeneration
     for (;;) {
       if (this.writeTimer) {
         clearTimeout(this.writeTimer)
@@ -7509,6 +8027,12 @@ export class Store {
       this.firstPendingSaveAt = null
       const generation = this.writeGeneration
       await this.enqueueWrite()
+      if (
+        !drainToStableGeneration &&
+        this.lastDurableWriteGeneration >= requiredDurableGeneration
+      ) {
+        break
+      }
       if (generation === this.writeGeneration) {
         break
       }
