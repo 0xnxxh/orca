@@ -2067,19 +2067,17 @@ describe('PtyHandler', () => {
     expect(spawnOptions.env.ORCA_PANE_KEY).toBeUndefined()
     expect(spawnOptions.env.ORCA_TAB_ID).toBeUndefined()
 
-    // INVERTED: this used to require a differing pane identity to be REFUSED. That refusal is the
-    // defect — the paneKey and tabId are frozen at spawn, so it also refused a pane that had merely
-    // moved tabs, and it refused as "not found", which read as death and resumed the agent twice.
-    // The metadata is still recorded and still kept out of the shell env (asserted above); it just
-    // no longer gates an attach. A recycled id is rejected on the incarnation instead, which is
-    // pinned separately.
+    // A caller that names no incarnation is an older client, and pane identity is the only fence
+    // it can be given — so it still applies, and still refuses. A caller that CAN name the shell is
+    // fenced on that instead and attaches regardless of which tab it now lives in; that is pinned
+    // by "attaches a pane that has moved to another tab".
     await expect(
       attachPty({
         id: 'pty-1',
         expectedPaneKey: 'tab-b:leaf-b',
         expectedTabId: 'tab-b'
       })
-    ).resolves.toEqual({ incarnationId: spawn.incarnationId })
+    ).rejects.toThrow(/identity mismatch/i)
 
     await expect(
       attachPty({
@@ -3313,17 +3311,15 @@ describe('PtyHandler', () => {
     expect(callArgs.env.ORCA_PANE_KEY).toBeUndefined()
     expect(callArgs.env.ORCA_TAB_ID).toBeUndefined()
 
-    // INVERTED, same reason as the spawn-side clause: the revived PTY still carries the pane
-    // identity it was serialized with, and that identity no longer gates an attach. What the
-    // clause still proves is that revive PRESERVES the metadata and keeps it out of the shell env
-    // (asserted above) — it just may not refuse a pane for living somewhere else now.
+    // Revive preserves the serialized pane identity, and for a caller that names no incarnation
+    // that identity is still the fence.
     await expect(
       dispatcher.callRequest('pty.attach', {
         id: 'pty-1',
         expectedPaneKey: 'tab-other:leaf',
         expectedTabId: 'tab-other'
       })
-    ).resolves.toMatchObject({ incarnationId: expect.any(String) })
+    ).rejects.toThrow(/identity mismatch/i)
   })
 
   it('invokes the exit listener with the spawn-time paneKey', async () => {

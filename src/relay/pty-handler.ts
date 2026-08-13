@@ -336,10 +336,16 @@ export type PtyExitListener = (event: { id: string; paneKey?: string }) => void
 
 type PtyIdentity = { paneKey?: string; tabId?: string }
 
-/* No attach-time pane-identity comparison any more: it froze paneKey/tabId at spawn, so a moved
- * pane was refused its own live shell — as "not found", which read as death. Recycled ids, its real
- * purpose, are caught by the incarnation comparison in `attach` instead. `attachIdentity` is still
- * recorded and round-trips through serialize/revive; it no longer gates an attach. */
+/** Fallback fence for a client too old to name a shell by incarnation. It froze paneKey/tabId at
+ *  spawn, so it refuses a pane that merely moved tabs — which is why a client that CAN name the
+ *  shell is fenced on that instead. Not deleted, because the relay is shared: an upgraded host
+ *  would otherwise leave every not-yet-updated client attaching a recycled id unchecked. */
+function attachIdentityMismatches(expected: PtyIdentity, managed: PtyIdentity): boolean {
+  return Boolean(
+    (expected.paneKey && managed.paneKey && expected.paneKey !== managed.paneKey) ||
+    (expected.tabId && managed.tabId && expected.tabId !== managed.tabId)
+  )
+}
 /** Returns env to merge into the PTY's spawn env. Receives spawn context so augmenters can derive per-PTY identity from paneKey.
  *  `command` is the renderer-chosen agent launch command (`pi`, `omp`, …); undefined for CLI-launched bare shells. */
 export type PtyEnvAugmenter = (ctx: {
@@ -1674,12 +1680,21 @@ export class PtyHandler {
       )
     }
 
-    // Why: a reset relay restarts its ids at pty-1, so an id alone can name somebody else's shell.
-    // The incarnation is the shell's OWN identity, so it discriminates a recycled id without
-    // caring where the pane lives. The pane identity this replaced froze the TAB at spawn, so a
-    // pane moved to another tab was refused — and refused as "not found", which read as death and
-    // resumed the agent a second time. Absent expectation stays permissive: an older client sends
-    // none, and refusing there would strand every pane it owns.
+    // A reset relay restarts ids at pty-1, so an id alone can name somebody else's shell. The
+    // incarnation is the shell's own identity, so it catches that without caring where the pane
+    // lives — unlike the pane identity below, which froze the tab at spawn and refused moved panes.
+    if (
+      !expectedIncarnationId &&
+      attachIdentityMismatches(
+        {
+          paneKey: typeof params.expectedPaneKey === 'string' ? params.expectedPaneKey : undefined,
+          tabId: typeof params.expectedTabId === 'string' ? params.expectedTabId : undefined
+        },
+        managed.attachIdentity ?? { paneKey: managed.paneKey, tabId: managed.tabId }
+      )
+    ) {
+      throw new Error(`PTY "${id}" identity mismatch`)
+    }
     if (expectedIncarnationId && expectedIncarnationId !== managed.incarnationId) {
       // Deliberately NOT worded "not found": that phrasing is what the client maps to an expired
       // session, and expiry authorizes a respawn onto a shell this branch just proved is alive.
