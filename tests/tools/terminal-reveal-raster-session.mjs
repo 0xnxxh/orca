@@ -412,12 +412,6 @@ export async function installRevealRasterProbe(page) {
       pinPty(ptyId) {
         preferredPtyId = ptyId ?? null
       },
-      // Orca stops feeding the pty while a pane is hidden, so a fixture that
-      // holds DEC 2026 cannot get its BSU across the reveal boundary — measured:
-      // synchronizedOutput is false for the first ~200 ms of every reveal. Set
-      // the mode directly on the hidden terminal to reproduce the state an agent
-      // TUI is actually in when the reveal fit runs; the fixture's next ESU
-      // releases it exactly as a real TUI frame flush would.
       // Fault injection, not a reproduction: replays the reverted commit's
       // timing-free blank shape (bitmap cleared, repaint swallowed, xterm's
       // recovery zeroed) so the blank-pane measurement, thresholds and plumbing
@@ -459,6 +453,12 @@ export async function installRevealRasterProbe(page) {
       blankFaultFiredAt() {
         return blankFaultFiredAt
       },
+      // Orca stops feeding the pty while a pane is hidden, so a fixture that
+      // holds DEC 2026 cannot get its BSU across the reveal boundary — measured:
+      // synchronizedOutput is false for the first ~200 ms of every reveal. Set
+      // the mode directly on the hidden terminal to reproduce the state an agent
+      // TUI is actually in when the reveal fit runs; the fixture's next ESU
+      // releases it exactly as a real TUI frame flush would.
       holdSync(tabId) {
         const terminal = pickPane(window.__paneManagers?.get(tabId))?.terminal
         const modes = terminal?._core?.coreService?.decPrivateModes
@@ -501,13 +501,15 @@ export async function captureCompositorTransition(page, tabId, captureMs, action
   const frames = []
   const cdp = await page.context().newCDPSession(page)
   cdp.on('Page.screencastFrame', (params) => {
-    const receiptAt = Date.now()
-    frames.push({
-      buffer: Buffer.from(params.data, 'base64'),
-      receiptAt,
-      capturedAt: frameTimestamp(params, receiptAt),
-      metadata: params.metadata
-    })
+    // Capped in the handler so a long capture cannot hold hundreds of PNGs.
+    if (frames.length < 400) {
+      const receiptAt = Date.now()
+      frames.push({
+        buffer: Buffer.from(params.data, 'base64'),
+        receiptAt,
+        capturedAt: frameTimestamp(params, receiptAt)
+      })
+    }
     void cdp.send('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {})
   })
   await page.evaluate((id) => window.__terminalRevealRasterProbe.start(id), tabId)
@@ -520,30 +522,31 @@ export async function captureCompositorTransition(page, tabId, captureMs, action
     maxHeight: Math.ceil(viewport.height * viewport.dpr)
   })
   await page.waitForTimeout(50)
-  let actionAt = Date.now()
+  const actionAt = Date.now()
+  let states = []
   try {
-    // Arms that spend time off-screen re-stamp the action once the reveal
-    // itself starts, so the hidden gap is not scored as reveal latency.
-    await action({
-      mark: () => {
-        actionAt = Date.now()
-      }
-    })
+    await action()
     await page.waitForTimeout(captureMs)
   } finally {
+    // A throwing action must still stop the screencast, the probe's rAF
+    // sampler (and its pump element), and the CDP session.
     await cdp.send('Page.stopScreencast').catch(() => {})
+    states = await page.evaluate(() => window.__terminalRevealRasterProbe.stop()).catch(() => [])
+    await cdp.detach().catch(() => {})
   }
-  const states = await page.evaluate(() => window.__terminalRevealRasterProbe.stop())
-  await cdp.detach().catch(() => {})
   return {
     actionAt,
-    captureViewport: viewport,
-    frames: frames.slice(0, 400),
+    frames,
     states
   }
 }
 
-export async function captureStableReference(page, tabId, samples = 3) {
+export async function captureStableReference(
+  page,
+  tabId,
+  samples = 3,
+  { screenshots = true } = {}
+) {
   const captures = []
   for (let index = 0; index < samples; index += 1) {
     // Late repairs (DPR, deferred fits) can still move geometry a few frames
@@ -551,12 +554,14 @@ export async function captureStableReference(page, tabId, samples = 3) {
     await page.waitForTimeout(200)
     await settleFrames(page, 3)
     const state = await readTargetState(page, tabId)
-    const buffer = await page.screenshot()
-    const viewport = await page.evaluate(() => ({
-      width: innerWidth,
-      height: innerHeight
-    }))
-    captures.push({ state, buffer, viewport })
+    // Skipping screenshots lets settle-only callers avoid full-page captures;
+    // viewport comes from the same probe sample instead of a second evaluate.
+    const buffer = screenshots ? await page.screenshot() : null
+    captures.push({
+      state,
+      buffer,
+      viewport: { width: state?.innerWidth ?? 0, height: state?.innerHeight ?? 0 }
+    })
   }
   return captures
 }

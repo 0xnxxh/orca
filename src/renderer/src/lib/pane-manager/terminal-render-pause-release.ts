@@ -20,6 +20,7 @@
 type MaybePausableRenderService = {
   _isPaused?: boolean
   _needsFullRefresh?: boolean
+  _pausedResizeTask?: { flush?: () => void }
   refreshRows?: (start: number, end: number, sync?: boolean) => void
 }
 
@@ -61,7 +62,17 @@ export function releaseRenderPauseLatch(terminal: unknown): boolean {
   if (!service || service._isPaused !== true) {
     return false
   }
-  service._isPaused = false
+  try {
+    // Why flush first: a resize parked while paused would otherwise replay on
+    // its own idle callback after the fit and trim the DOM renderer's row
+    // elements to stale args (paused-path `set()` used to overwrite it; the
+    // inline path no longer does). Replayed now, the fit's resize wins.
+    service._pausedResizeTask?.flush?.()
+    service._isPaused = false
+  } catch {
+    // Never throw into a render frame; a disposed renderer stays latched.
+    return false
+  }
   return true
 }
 
@@ -83,10 +94,13 @@ export function forceRepaintThroughRenderPause(terminal: unknown): boolean {
     return false
   }
 
-  // Why: leave the latch as if the pending full refresh was serviced — we are
-  // about to service it — so the observer's next callback doesn't queue a
-  // redundant second full repaint.
-  service._isPaused = false
+  // Why: releaseRenderPauseLatch also flushes the parked renderer resize; then
+  // leave the latch as if the pending full refresh was serviced — we are about
+  // to service it — so the observer's next callback doesn't queue a redundant
+  // second full repaint.
+  if (!releaseRenderPauseLatch(terminal)) {
+    return false
+  }
   service._needsFullRefresh = false
   try {
     service.refreshRows(0, rows - 1, true)

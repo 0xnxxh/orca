@@ -64,13 +64,10 @@ function fixtureOutput(mode) {
 const SYNC_TUI_REDRAW_MS = 350
 
 // One BSU/ESU pair per frame, the way an agent TUI actually draws: sync is held
-// only for the write, never between frames. An earlier revision re-asserted BSU
-// on a 40 ms heartbeat to guarantee the mode spanned a reveal; that made the
-// hold effectively permanent, and a terminal that never paints while DEC 2026 is
-// held is spec-correct, not broken — it produced durable "blank" panes on a clean
-// tree and would have been reported as a product defect. The reveal-time overlap
-// is forced deliberately instead, by the probe's holdSync, which this cadence
-// then releases within one frame.
+// only for the write, never between frames. Do not re-assert BSU on a heartbeat
+// to span reveals — a permanent hold is spec-correct "never paint" and reads as
+// a durable blank-pane product defect on a clean tree. Reveal-time overlap is
+// forced by the probe's holdSync instead, which this cadence releases in one frame.
 function syncTuiScript() {
   const lines = Array.from({ length: 3 }, () => READABLE_LINES).flat()
   return [

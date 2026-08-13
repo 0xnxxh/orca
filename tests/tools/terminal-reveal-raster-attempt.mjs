@@ -200,12 +200,18 @@ function measureRevealSettle(capture, stableState) {
 }
 
 function prepareReference(stableCaptures) {
-  const prepared = stableCaptures.map((entry) => ({
-    ...entry,
-    crop: entry.state?.screenClip
-      ? cropTerminalRaster(entry.buffer, entry.state.screenClip, entry.viewport)
-      : null
-  }))
+  const prepared = stableCaptures.map((entry) => {
+    let crop = null
+    if (entry.state?.screenClip) {
+      try {
+        crop = cropTerminalRaster(entry.buffer, entry.state.screenClip, entry.viewport)
+      } catch {
+        // Recorded below as crop-failed: one bad capture scores invalid-run,
+        // it must not abort the whole campaign.
+      }
+    }
+    return { ...entry, crop }
+  })
   const reference = prepared.at(-1)
   const stableState = reference?.state
   const noise = []
@@ -246,7 +252,10 @@ function prepareReference(stableCaptures) {
 
 function writeAttemptEvidence(directory, result, capture, prepared) {
   mkdirSync(directory, { recursive: true })
-  writeFileSync(path.join(directory, 'stable.png'), prepared.at(-1).crop)
+  const referenceCrop = prepared.at(-1)?.crop
+  if (referenceCrop) {
+    writeFileSync(path.join(directory, 'stable.png'), referenceCrop)
+  }
   writeFileSync(
     path.join(directory, 'state.jsonl'),
     `${capture.states.map((state) => JSON.stringify(state)).join('\n')}\n`

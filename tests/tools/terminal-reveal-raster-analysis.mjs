@@ -106,8 +106,26 @@ export function compareScaledRevealRaster(baselineBuffer, candidateBuffer) {
   }
 }
 
+const baselineAnalysisCache = new WeakMap()
+
+// The reference crop is compared against every captured frame; decode it and
+// derive its frame-invariant metrics once per buffer instead of once per frame.
+function baselineAnalysis(baselineBuffer) {
+  let cached = baselineAnalysisCache.get(baselineBuffer)
+  if (!cached) {
+    const image = PNG.sync.read(baselineBuffer)
+    cached = { image, background: dominantBackground(image), edgeEnergy: edgeEnergy(image) }
+    baselineAnalysisCache.set(baselineBuffer, cached)
+  }
+  return cached
+}
+
 export function compareRevealRaster(baselineBuffer, candidateBuffer) {
-  const baseline = PNG.sync.read(baselineBuffer)
+  const {
+    image: baseline,
+    background,
+    edgeEnergy: baselineEdgeEnergy
+  } = baselineAnalysis(baselineBuffer)
   const candidate = PNG.sync.read(candidateBuffer)
   if (baseline.width !== candidate.width || baseline.height !== candidate.height) {
     return {
@@ -119,7 +137,6 @@ export function compareRevealRaster(baselineBuffer, candidateBuffer) {
     }
   }
 
-  const background = dominantBackground(baseline)
   let diffPixels = 0
   let baselineInkPixels = 0
   let candidateInkPixels = 0
@@ -158,7 +175,6 @@ export function compareRevealRaster(baselineBuffer, candidateBuffer) {
     }
   }
   const pixelCount = baseline.width * baseline.height
-  const baselineEdgeEnergy = edgeEnergy(baseline)
   const candidateEdgeEnergy = edgeEnergy(candidate)
   return {
     comparable: true,
@@ -236,11 +252,12 @@ export function measureRasterInk(buffer) {
     }
   }
   const pixels = image.width * image.height
+  const energy = edgeEnergy(image)
   return {
     inkPixels,
     inkRatio: pixels ? inkPixels / pixels : 0,
-    edgeEnergy: edgeEnergy(image),
-    edgePerPixel: pixels ? edgeEnergy(image) / pixels : 0,
+    edgeEnergy: energy,
+    edgePerPixel: pixels ? energy / pixels : 0,
     pixels
   }
 }

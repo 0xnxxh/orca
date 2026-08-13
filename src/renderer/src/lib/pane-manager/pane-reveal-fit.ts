@@ -39,11 +39,11 @@ function proposedGridMatchesTerminal(pane: ManagedPane): boolean {
   }
 }
 
-function releaseMeasurableFitContinuations(pane: ManagedPane): void {
+function releaseMeasurableFitContinuations(pane: ManagedPane, measurable: boolean): void {
   // Why: no reflow needed, but a pane that mounted hidden can have replay/reattach
   // continuations parked on a measurable fit — release them (and any parked scroll
   // restore, mirroring safeFit's equal-dims path) now it is visible.
-  if (!canMeasurePaneForFit(pane)) {
+  if (!measurable) {
     return
   }
   resumePendingFitScrollRestoreAfterFit(pane.terminal)
@@ -63,10 +63,12 @@ function releaseMeasurableFitContinuations(pane: ManagedPane): void {
 //    mismatch refits but a transient metric wobble does not reflow;
 //  - grid already correct → leave it alone.
 export function fitRevealedPane(pane: ManagedPane): void {
+  // Hoisted: the measurability probe forces style+layout, so read it once per reveal.
+  const measurable = canMeasurePaneForFit(pane)
   // Why before the fit, not after: while the render service is latched, every
   // resize below parks the renderer half and composites the pre-hide backing
   // store into the new box. Measurable only — a hidden pane must stay paused.
-  if (canMeasurePaneForFit(pane)) {
+  if (measurable) {
     releaseRenderPauseLatch(pane.terminal)
   }
   // Why first: the checks below can both say "nothing to do" and return without
@@ -83,5 +85,5 @@ export function fitRevealedPane(pane: ManagedPane): void {
     requestStablePaneFit(pane)
     return
   }
-  releaseMeasurableFitContinuations(pane)
+  releaseMeasurableFitContinuations(pane, measurable)
 }

@@ -35,7 +35,8 @@ async function ensureTargetVisible(page, context) {
 
 async function prepareAttempt(page, context) {
   await ensureTargetVisible(page, context)
-  const stable = await captureStableReference(page, context.targetTabId, 2)
+  // Only the settled state is consumed here; skip the full-page screenshots.
+  const stable = await captureStableReference(page, context.targetTabId, 2, { screenshots: false })
   return stable.at(-1).state
 }
 

@@ -35,6 +35,13 @@ const PARK_DELAY_MS = 1_500
 const DEFAULT_ARMS = ['control', 'tab', 'warm', 'cold']
 const FIXTURE_MODES = ['static', 'atlas', 'sync-tui']
 
+// `Number(value) || fallback` would silently turn an explicit 0 (and typos)
+// into the fallback; clamp real numbers, reject the rest.
+function numericFlag(value, minimum, fallback) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(minimum, parsed) : fallback
+}
+
 function parseArgs() {
   const args = {
     arms: DEFAULT_ARMS,
@@ -66,27 +73,35 @@ function parseArgs() {
       args.noHoldSync = true
       continue
     }
-    const [name, value] = arg.split('=', 2)
+    // split-once: `split('=', 2)` would truncate values containing '='.
+    const separator = arg.indexOf('=')
+    const name = separator === -1 ? arg : arg.slice(0, separator)
+    const value = separator === -1 ? undefined : arg.slice(separator + 1)
     if (name === '--arms') {
-      args.arms = (value ?? '')
+      const requested = (value ?? '')
         .split(',')
         .map((item) => item.trim())
-        .filter((item) => ARM_NAMES.includes(item))
+        .filter(Boolean)
+      const unknown = requested.filter((item) => !ARM_NAMES.includes(item))
+      if (unknown.length > 0) {
+        throw new Error(`Unknown arms ${unknown.join(', ')}; expected ${ARM_NAMES.join(', ')}`)
+      }
+      args.arms = requested
     } else if (name === '--cycles') {
-      args.cycles = Math.max(1, Number(value) || 3)
+      args.cycles = numericFlag(value, 1, 3)
     } else if (name === '--pressure-tabs') {
-      args.pressureTabs = Math.max(1, Number(value) || 18)
+      args.pressureTabs = numericFlag(value, 1, 18)
     } else if (name === '--pressure-splits') {
-      args.pressureSplits = Math.max(0, Number(value) || 0)
+      args.pressureSplits = numericFlag(value, 0, 0)
     } else if (name === '--capture-ms') {
-      args.captureMs = Math.max(750, Number(value) || 2_200)
+      args.captureMs = numericFlag(value, 750, 2_200)
     } else if (name === '--fixture') {
       if (!FIXTURE_MODES.includes(value)) {
         throw new Error(`Unknown fixture ${value}; expected one of ${FIXTURE_MODES.join(', ')}`)
       }
       args.fixture = value
     } else if (name === '--inject-blank-ms') {
-      args.injectBlankMs = Math.max(0, Number(value) || 0)
+      args.injectBlankMs = numericFlag(value, 0, 0)
     } else if (name === '--output') {
       args.output = value || null
     }
