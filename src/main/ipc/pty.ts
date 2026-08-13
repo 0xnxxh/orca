@@ -7667,9 +7667,6 @@ export function registerPtyHandlers(
     if (isSupersededPtyId(args.id)) {
       return
     }
-    // Routing refuses a session whose host is unreachable, but sendSignal is async everywhere,
-    // so that refusal arrives as a rejection rather than a throw — and optional chaining
-    // short-circuits the whole chain when there is no provider at all.
     tryGetProviderForPty(args.id)
       ?.sendSignal(args.id, args.signal)
       .catch(() => {})

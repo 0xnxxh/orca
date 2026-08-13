@@ -58,7 +58,10 @@ export function readRemotePaneLaunchTranscript(target: DockerSshRelayTarget): st
 }
 
 /** The pids the host launched a shell for under one pane key. */
-export function readRemotePaneLaunchPids(target: DockerSshRelayTarget, paneKey: string): number[] {
+export function readRemotePaneLaunchPids(
+  target: DockerSshRelayTarget,
+  paneKey: string
+): number[] {
   return readRemotePaneLaunchTranscript(target)
     .filter((line) => line.split('\t')[0] === paneKey)
     .map((line) => Number(line.split('\t')[1]))

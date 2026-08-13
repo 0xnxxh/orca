@@ -14,7 +14,6 @@ import type {
 import {
   adoptOwningProvider,
   attachDaemonOwnedSession,
-  ownerForDaemonOwnedOperation,
   findDaemonAdapter,
   listProviderSessionIds
 } from './degraded-daemon-session-routing'
@@ -90,11 +89,6 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   attach = (id: string): ReturnType<IPtyProvider['attach']> =>
     attachDaemonOwnedSession(this.providerFor(id), this.fallback, id)
 
-  /** Routing for anything that changes or feeds a session; see ownerForDaemonOwnedOperation. */
-  private ownerFor(id: string): IPtyProvider {
-    return ownerForDaemonOwnedOperation(this.providerFor(id), this.fallback, id)
-  }
-
   hasPty(id: string): boolean | null {
     const mapped = this.sessionProviders.get(id)
     if (mapped) {
@@ -126,11 +120,11 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     )?.providesAgentSessionOwnerListings?.(ptyId) === true
 
   write(id: string, data: string): void {
-    this.ownerFor(id).write(id, data)
+    this.providerFor(id).write(id, data)
   }
 
   resize(id: string, cols: number, rows: number): void {
-    this.ownerFor(id).resize(id, cols, rows)
+    this.providerFor(id).resize(id, cols, rows)
   }
 
   pauseProducer(id: string): void {
@@ -149,14 +143,14 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     id: string,
     opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
   ): Promise<void> {
-    await this.ownerFor(id).shutdown(id, opts)
+    await this.providerFor(id).shutdown(id, opts)
     if (!opts.keepHistory) {
       this.sessionProviders.delete(id)
     }
   }
 
   async sendSignal(id: string, signal: string): Promise<void> {
-    await this.ownerFor(id).sendSignal(id, signal)
+    await this.providerFor(id).sendSignal(id, signal)
   }
 
   async getCwd(id: string): Promise<string> {

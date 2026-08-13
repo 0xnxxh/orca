@@ -1078,9 +1078,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       inputWriteQueue.clear()
       if (ptyId) {
         const id = ptyId
-        // Why swallow: an unreachable terminal host rejects rather than pretending the
-        // session closed, and teardown must still run — but nothing here can act on it.
-        void Promise.resolve(window.api.pty.kill(id)).catch(() => {})
+        window.api.pty.kill(id)
         connected = false
         ptyId = null
         unregisterPtyHandlers(id)
