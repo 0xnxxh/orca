@@ -248,7 +248,10 @@ jobs:
   ssh-docker-watcher-isolation:
     name: ssh docker watcher isolation
     needs: build
-    if: inputs.test_files == ''
+    if: >-
+      inputs.test_files == '' ||
+      contains(inputs.test_files, 'tests/e2e/ssh-startup-exec-readiness.spec.ts') ||
+      contains(inputs.test_files, 'tests/e2e/paired-startup-exec-readiness.spec.ts')
     runs-on: ubuntu-latest
     # Why 35: the parking, retention, startup-exec, and paired parity specs run
     # serially on isolated Electron/SSH fixtures after watcher isolation.

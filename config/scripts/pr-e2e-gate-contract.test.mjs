@@ -68,7 +68,6 @@ describe('PR E2E gate contract', () => {
     expect(e2eWorkflow.jobs.e2e.if).toBe("inputs.test_files == ''")
     expect(e2eWorkflow.jobs['changed-e2e'].if).toBe("inputs.test_files != ''")
     expect(e2eWorkflow.jobs['changed-e2e'].strategy).toBeUndefined()
-    expect(e2eWorkflow.jobs['ssh-docker-watcher-isolation'].if).toBe("inputs.test_files == ''")
     const changedRun = e2eWorkflow.jobs['changed-e2e'].steps.find(
       (step) => step.name === 'Run changed E2E specs'
     )
@@ -77,6 +76,10 @@ describe('PR E2E gate contract', () => {
   })
 
   it('keeps startup-exec live parity in the isolated SSH lane', () => {
+    const sshLaneCondition = e2eWorkflow.jobs['ssh-docker-watcher-isolation'].if
+    expect(sshLaneCondition).toContain("inputs.test_files == ''")
+    expect(sshLaneCondition).toContain('tests/e2e/ssh-startup-exec-readiness.spec.ts')
+    expect(sshLaneCondition).toContain('tests/e2e/paired-startup-exec-readiness.spec.ts')
     expect(sshDockerRunner).toContain('tests/e2e/ssh-startup-exec-readiness.spec.ts')
     expect(sshDockerRunner).toContain('tests/e2e/paired-startup-exec-readiness.spec.ts')
     expect(sshDockerRunner).toContain("'electron-headless'")
