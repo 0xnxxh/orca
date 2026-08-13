@@ -1725,6 +1725,7 @@ type RuntimePtyController = {
    *  False on doubt (absent session, SSH-scoped id, non-daemon provider). */
   attach?(ptyId: string): Promise<boolean>
   kill(ptyId: string): boolean
+  retireRejectedPty?(ptyId: string): void
   stopAndWait?(
     ptyId: string,
     opts?: { keepHistory?: boolean; deadlineMs?: number }
@@ -1828,6 +1829,9 @@ const BRACKETED_PASTE_END = '\x1b[201~'
 const BRACKETED_PASTE_QUIET_MS = 1500
 const DRAFT_PASTE_READY_TIMEOUT_MS = 8000
 const MOBILE_TERMINAL_SURFACE_TIMEOUT_MS = 10_000
+// Why: the split already failed; the caller waits on this teardown only to learn whether the
+// fallback kill is needed, so keep it short — an unreachable host must not stall the rejection.
+const REJECTED_SPLIT_PTY_STOP_TIMEOUT_MS = 2_000
 const MOBILE_TERMINAL_READY_FALLBACK_MS = 1000
 const SSH_PANE_RECOVERY_GRACE_MS = 30_000
 // Why: long enough that a keystroke burst to a proven-dead leaf probes once,
@@ -27376,6 +27380,8 @@ export class OrcaRuntimeService {
     if (!sourceAuthority) {
       throw new Error('terminal_split_source_not_found')
     }
+    const sourceIncarnationId =
+      sourceAuthority.liveIncarnationId ?? sourceAuthority.persistedIncarnationId
     const leafId = randomUUID()
     const preAllocatedHandle = this.createPreAllocatedTerminalHandle()
     const paneKey = makePaneKey(parentTabId, leafId)
@@ -27402,6 +27408,9 @@ export class OrcaRuntimeService {
               tabId: parentTabId,
               leafId: parsedPaneKey.leafId,
               ptyId: pty.ptyId,
+              // Why: the store can only match its own persisted map, so a live-only id it never
+              // recorded would reject every split from a session restored without incarnations.
+              // The live id is fenced by revalidateSourceAuthority below instead.
               ...(sourceAuthority.persistedIncarnationId
                 ? { incarnationId: sourceAuthority.persistedIncarnationId }
                 : {})
@@ -27440,17 +27449,29 @@ export class OrcaRuntimeService {
     }
 
     try {
-      const revalidatedAuthority = this.resolveTerminalSplitSourceAuthority(
-        workspace.id,
-        parentTabId,
-        parsedPaneKey.leafId,
-        pty.ptyId
-      )
-      if (!revalidatedAuthority || (sourceAuthority.persisted && !revalidatedAuthority.persisted)) {
-        throw new Error('terminal_split_source_not_found')
+      const revalidateSourceAuthority = (): void => {
+        const current = this.resolveTerminalSplitSourceAuthority(
+          workspace.id,
+          parentTabId,
+          parsedPaneKey.leafId,
+          pty.ptyId
+        )
+        if (
+          !current ||
+          (sourceAuthority.persisted && !current.persisted) ||
+          (sourceIncarnationId !== null &&
+            (current.liveIncarnationId ?? current.persistedIncarnationId) !== sourceIncarnationId)
+        ) {
+          throw new Error('terminal_split_source_not_found')
+        }
       }
+      revalidateSourceAuthority()
       if (!sourceAuthority.persisted) {
         await revealSplit()
+        // Why: rejecting here unmounts the pane the reveal just added only because the retire
+        // below always emits its exit and the tab still holds the source sibling — the renderer's
+        // exit handler closes non-final panes. Never close it by tabId: that drops the whole tab.
+        revalidateSourceAuthority()
       }
       if (createdPty) {
         const persisted = this.persistHeadlessTerminalSplit({
@@ -27474,7 +27495,19 @@ export class OrcaRuntimeService {
       }
     } catch (error) {
       this.setPairedRendererSessionOwnership(result.id, false)
-      this.ptyController.kill?.(result.id)
+      let stopped = false
+      try {
+        stopped =
+          (await this.ptyController.stopAndWait?.(result.id, {
+            deadlineMs: Date.now() + REJECTED_SPLIT_PTY_STOP_TIMEOUT_MS
+          })) ?? false
+      } catch {
+        // Best-effort fallback below preserves the original split authority error.
+      }
+      if (!stopped) {
+        this.ptyController.kill(result.id)
+      }
+      this.ptyController.retireRejectedPty?.(result.id)
       throw error
     }
     const committedSourceAuthority = sourceAuthority.persisted
@@ -27503,6 +27536,7 @@ export class OrcaRuntimeService {
     rendererMounted: boolean
     persistedWorktreeId: string | null
     persistedIncarnationId: string | null
+    liveIncarnationId: string | null
   } | null {
     const session = this.getWorkspaceSessionForWorktree(worktreeId)
     const sessionWorktreeId = session ? resolveTerminalSessionWorktreeId(session, worktreeId) : null
@@ -27541,7 +27575,8 @@ export class OrcaRuntimeService {
         persisted: true,
         rendererMounted,
         persistedWorktreeId: sessionWorktreeId,
-        persistedIncarnationId
+        persistedIncarnationId,
+        liveIncarnationId
       }
     }
     // Why: renderer adoption can precede graph sync; this path still requires reveal success before commit.
@@ -27563,7 +27598,8 @@ export class OrcaRuntimeService {
       persisted: false,
       rendererMounted,
       persistedWorktreeId: null,
-      persistedIncarnationId: null
+      persistedIncarnationId: null,
+      liveIncarnationId
     }
   }
 

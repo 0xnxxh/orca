@@ -9765,6 +9765,99 @@ describe('Store', () => {
     })
   })
 
+  it('requires an expected split source incarnation in the owning host partition', async () => {
+    for (const hostId of [undefined, 'ssh:ssh-1']) {
+      const store = await createStore()
+      const sourceSession: WorkspaceSessionState = {
+        ...getDefaultWorkspaceSession(),
+        tabsByWorktree: {
+          wt1: [makeTerminalTab({ id: 'tab1', worktreeId: 'wt1', ptyId: 'pty-source' })]
+        },
+        terminalLayoutsByTabId: {
+          tab1: {
+            root: { type: 'leaf', leafId: TEST_LEAF_1 },
+            activeLeafId: TEST_LEAF_1,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [TEST_LEAF_1]: 'pty-source' }
+          }
+        }
+      }
+      if (hostId) {
+        store.setWorkspaceSession(
+          {
+            ...sourceSession,
+            terminalPtyIncarnationsByPaneKey: {
+              [`tab1:${TEST_LEAF_1}`]: 'live-incarnation'
+            }
+          },
+          undefined
+        )
+      }
+      store.setWorkspaceSession(sourceSession, hostId)
+
+      expect(
+        store.persistPtyBinding(
+          {
+            worktreeId: 'wt1',
+            tabId: 'tab1',
+            leafId: TEST_LEAF_2,
+            ptyId: 'pty-split',
+            expectedSourceBinding: {
+              worktreeId: 'wt1',
+              tabId: 'tab1',
+              leafId: TEST_LEAF_1,
+              ptyId: 'pty-source',
+              incarnationId: 'live-incarnation'
+            }
+          },
+          hostId
+        )
+      ).toBe(false)
+      expect(store.getWorkspaceSession(hostId).terminalLayoutsByTabId.tab1.root).toEqual({
+        type: 'leaf',
+        leafId: TEST_LEAF_1
+      })
+    }
+  })
+
+  // Why: a session restored without an incarnation map still owns a valid source binding, so the
+  // split path must be able to fence on the pane alone instead of an id persistence never recorded.
+  it('admits a split whose source pane has no persisted incarnation', async () => {
+    const store = await createStore()
+    store.setWorkspaceSession(
+      {
+        ...getDefaultWorkspaceSession(),
+        tabsByWorktree: {
+          wt1: [makeTerminalTab({ id: 'tab1', worktreeId: 'wt1', ptyId: 'pty-source' })]
+        },
+        terminalLayoutsByTabId: {
+          tab1: {
+            root: { type: 'leaf', leafId: TEST_LEAF_1 },
+            activeLeafId: TEST_LEAF_1,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [TEST_LEAF_1]: 'pty-source' }
+          }
+        }
+      },
+      undefined
+    )
+
+    expect(
+      store.persistPtyBinding({
+        worktreeId: 'wt1',
+        tabId: 'tab1',
+        leafId: TEST_LEAF_2,
+        ptyId: 'pty-split',
+        expectedSourceBinding: {
+          worktreeId: 'wt1',
+          tabId: 'tab1',
+          leafId: TEST_LEAF_1,
+          ptyId: 'pty-source'
+        }
+      })
+    ).toBe(true)
+  })
+
   it('rejects competing PTY and incarnation changes during reconciliation', async () => {
     const store = await createStore()
     const paneKey = `tab1:${TEST_LEAF_1}`
