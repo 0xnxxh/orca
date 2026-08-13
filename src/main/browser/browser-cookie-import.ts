@@ -1780,7 +1780,7 @@ export async function importCookiesFromBrowser(
     // Why: clear stale cookies first; mixing them with the imported set makes sites reject the
     // session. Non-transplantable families are exempt — nothing was imported for them, and their
     // live session is the only one that works.
-    await removeAllCookiesExcept(targetSession.cookies, (cookie) =>
+    await removeAllCookiesExcept(targetSession, (cookie) =>
       isNonTransplantableCookieDomain(cookie.domain ?? '')
     )
     diag(

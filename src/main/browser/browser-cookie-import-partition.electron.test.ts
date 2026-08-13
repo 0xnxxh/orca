@@ -20,6 +20,7 @@ type FixtureResult = {
   before: Record<string, unknown>
   after: Record<string, unknown>
   electronCookieKeys: string[]
+  unfilteredNames: string[]
   importResult: Record<string, unknown>
   remainingNames: string[]
 }
@@ -80,6 +81,7 @@ async function run() {
   const before = beforeCookies.find((cookie) => cookie.name === 'partitioned-google')
   const electronCookie = (await targetSession.cookies.get({ name: 'partitioned-google' }))[0]
   if (!before || !electronCookie) throw new Error('Partitioned fixture cookie was not created')
+  const unfilteredNames = (await targetSession.cookies.get({})).map((cookie) => cookie.name).sort()
   mark('cookies read')
 
   const importResult = await importCookiesFromBrowser({
@@ -100,6 +102,7 @@ async function run() {
     before,
     after,
     electronCookieKeys: Object.keys(electronCookie).sort(),
+    unfilteredNames,
     importResult,
     remainingNames: afterCookies.map((cookie) => cookie.name).sort()
   }))
@@ -184,6 +187,9 @@ describe('native Chromium excluded partition cookie under Electron', () => {
       hasCrossSiteAncestor: true
     })
     expect(result.electronCookieKeys).not.toContain('partitionKey')
+    // Why: the bulk-clear fast path is gated on an unfiltered get() seeing every excluded cookie,
+    // so a partitioned one going missing here would silently arm a jar-wide wipe.
+    expect(result.unfilteredNames).toEqual(['partitioned-google', 'stale'])
     expect(result.after).toEqual(result.before)
     expect(result.importResult).toMatchObject({
       ok: true,

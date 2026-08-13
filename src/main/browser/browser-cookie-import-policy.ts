@@ -1,4 +1,4 @@
-import type { Cookie, Cookies } from 'electron'
+import type { Cookie, Cookies, Session } from 'electron'
 import { parse as parseDomain } from 'psl'
 import { mapSettledWithConcurrency } from '../../shared/map-with-concurrency'
 
@@ -196,6 +196,12 @@ export async function restoreImportedDomainCookies(
   }
 }
 
+// Why (STA-4061): 'set' stays out so the lossy partition-dropping reconstruction cannot return.
+export type CookieClearSession = {
+  cookies: Pick<Cookies, 'get' | 'remove'>
+  clearStorageData: Session['clearStorageData']
+}
+
 // Why: Electron cannot round-trip partition identity, so excluded cookies must never be removed.
 // Why (STA-4061): the same gap forbids rolling a partial clear back. cookies.get() omits
 // partitionKey and cookies.set() silently drops it, so every reconstruction is a coin flip that
@@ -203,10 +209,24 @@ export async function restoreImportedDomainCookies(
 // snapshot says which cookies are at risk. A partially cleared jar is a retryable import failure;
 // a downgraded cookie is unrecoverable auth-state corruption that survives restart.
 export async function removeAllCookiesExcept(
-  store: Pick<Cookies, 'get' | 'remove'>,
+  targetSession: CookieClearSession,
   isExcluded: (cookie: Cookie) => boolean
 ): Promise<void> {
+  const store = targetSession.cookies
   const existingCookies = await store.get({})
+
+  // Why: an unfiltered get() is the whole jar, so no exclusion in it means nothing to preserve and
+  // one bulk clear can replace a remove() per cookie. An empty jar needs neither.
+  if (existingCookies.length > 0 && !existingCookies.some(isExcluded)) {
+    try {
+      await targetSession.clearStorageData({ storages: ['cookies'] })
+      return
+    } catch {
+      // Why: a rejected bulk clear can still have emptied part of the jar, so fall through to the
+      // per-cookie path, which re-removes whatever survived and keeps its rollback.
+    }
+  }
+
   const removableGroups = new Map<string, { cookie: Cookie; url: string }[]>()
   for (const cookie of existingCookies) {
     if (isExcluded(cookie)) {
