@@ -9,6 +9,7 @@ const appImageArg = valueAfter('--appimage')
 const platform = valueAfter('--platform') ?? 'linux/amd64'
 const signalTarget = valueAfter('--signal-target') ?? 'app'
 const entrypoint = valueAfter('--entrypoint') ?? 'app'
+const intDelivery = valueAfter('--int-delivery') ?? 'foreground-process-group'
 const launcherExecOverlay = args.includes('--launcher-exec-overlay')
 if (!appImageArg) {
   fail('Usage: run-headless-serve-shutdown-docker.mjs --appimage /path/to/orca.AppImage')
@@ -18,6 +19,12 @@ if (!['app', 'serving-electron'].includes(signalTarget)) {
 }
 if (!['app', 'launcher'].includes(entrypoint)) {
   fail(`Unsupported --entrypoint: ${entrypoint}`)
+}
+if (!['pid', 'foreground-process-group'].includes(intDelivery)) {
+  fail(`Unsupported --int-delivery: ${intDelivery}`)
+}
+if (intDelivery === 'foreground-process-group' && signalTarget !== 'app') {
+  fail('--int-delivery foreground-process-group requires --signal-target app')
 }
 if (launcherExecOverlay && entrypoint !== 'launcher') {
   fail('--launcher-exec-overlay requires --entrypoint launcher')
@@ -75,6 +82,7 @@ try {
       platform,
       signalTarget,
       entrypoint,
+      intDelivery,
       launcherExecOverlay
     })
   )
@@ -95,6 +103,8 @@ try {
         `ORCA_SIGNAL_TARGET=${signalTarget}`,
         '-e',
         `ORCA_TEST_ENTRYPOINT=${entrypoint}`,
+        '-e',
+        `ORCA_INT_DELIVERY=${intDelivery}`,
         '-v',
         `${artifactVolume}:/artifacts:ro`,
         image,

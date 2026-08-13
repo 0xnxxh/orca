@@ -140,7 +140,8 @@ export function ensureVirtualDisplayForHeadlessServe(options: { isServeMode: boo
       [VIRTUAL_DISPLAY, '-screen', '0', '1280x1024x24', '-nolisten', 'tcp', '-terminate'],
       {
         stdio: 'ignore',
-        detached: false
+        // Why: foreground Ctrl-C must not kill Xvfb before Electron disconnects.
+        detached: true
       }
     )
     xvfbProcess.once('error', (error) => {

@@ -5,6 +5,7 @@ signal_name=${1:?signal name is required}
 app_root=${ORCA_TEST_APP_ROOT:-/artifacts/root}
 signal_target_kind=${ORCA_SIGNAL_TARGET:-app}
 entrypoint_kind=${ORCA_TEST_ENTRYPOINT:-app}
+int_delivery=${ORCA_INT_DELIVERY:-foreground-process-group}
 startup_timeout_seconds=${ORCA_STARTUP_TIMEOUT_SECONDS:-90}
 
 if ((EUID == 0)); then
@@ -47,7 +48,7 @@ case "$entrypoint_kind" in
   *) echo "unsupported entrypoint: $entrypoint_kind" >&2; exit 64 ;;
 esac
 
-env -u DISPLAY "${entrypoint[@]}" serve --port 0 --pairing-address 127.0.0.1 --json \
+setsid env -u DISPLAY "${entrypoint[@]}" serve --port 0 --pairing-address 127.0.0.1 --json \
   >"$stdout_log" 2>"$stderr_log" &
 app_pid=$!
 app_start_ticks=$(awk '{print $22}' "/proc/$app_pid/stat")
@@ -116,7 +117,13 @@ if [[ -z "$signal_target_start_ticks" ]] \
   echo "FAIL: signal target identity changed before delivery" >&2
   exit 1
 fi
-kill -s "$signal_name" "$signal_target_pid"
+signal_delivery=pid
+if [[ "$signal_name" == INT && "$int_delivery" == foreground-process-group ]]; then
+  signal_delivery=$int_delivery
+  kill -s "$signal_name" -- "-$signal_target_pid"
+else
+  kill -s "$signal_name" "$signal_target_pid"
+fi
 
 sleep 30 &
 watchdog_pid=$!
@@ -156,6 +163,7 @@ fi
 
 jq -nc \
   --arg signal "$signal_name" \
+  --arg signalDelivery "$signal_delivery" \
   --arg entrypointKind "$entrypoint_kind" \
   --arg signalTargetKind "$signal_target_kind" \
   --argjson appPid "$app_pid" \
@@ -171,7 +179,7 @@ jq -nc \
   --arg survivors "${survivors[*]:-}" \
   --arg residue "$owned_residue" \
   --arg corePattern "$(cat /proc/sys/kernel/core_pattern)" \
-  '{signal:$signal,entrypointKind:$entrypointKind,signalTargetKind:$signalTargetKind,appPid:$appPid,signalTargetPid:$signalTargetPid,boundEndpoint:$endpoint,listenerBefore:$listenerBefore,listenerAfter:$listenerAfter,xvfbPids:$xvfbPids,treeBefore:$treeBefore,waitStatus:$waitStatus,fatalEvidence:$fatalEvidence,canaryAlive:$canaryAlive,survivingTreePids:$survivors,ownedResidue:$residue,corePattern:$corePattern}'
+  '{signal:$signal,signalDelivery:$signalDelivery,entrypointKind:$entrypointKind,signalTargetKind:$signalTargetKind,appPid:$appPid,signalTargetPid:$signalTargetPid,boundEndpoint:$endpoint,listenerBefore:$listenerBefore,listenerAfter:$listenerAfter,xvfbPids:$xvfbPids,treeBefore:$treeBefore,waitStatus:$waitStatus,fatalEvidence:$fatalEvidence,canaryAlive:$canaryAlive,survivingTreePids:$survivors,ownedResidue:$residue,corePattern:$corePattern}'
 
 if ((wait_status != 0)) || [[ -n "$listener_after" ]] || [[ "$fatal_evidence" != false ]] \
   || [[ "$canary_alive" != true ]] || ((${#survivors[@]})) || [[ -n "$owned_residue" ]]; then
