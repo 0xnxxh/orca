@@ -135,6 +135,19 @@ cached entry exists, same generation + runtimeKey, TTL expired
 failed (`ok: false`) is never extended, so a transient Git failure still retries
 on the 30 s TTL.
 
+### Git version compatibility
+
+Every path the probe reads is part of Git's on-disk layout well before the 2.25
+baseline in [`git-compatibility.md`](./git-compatibility.md): `.git` as a
+directory or `gitdir:` file, `commondir`, `worktrees/<name>/{HEAD,gitdir,locked}`,
+`packed-refs`, and loose `refs/`. `reftable` arrived in 2.45; on older Git it
+simply stats as missing, which is a stable value and therefore harmless. No new
+Git command is introduced — this change only skips one.
+
+Agent-scratch repos already carry a 5-minute scan TTL
+(`WORKTREE_SCAN_AGENT_SCRATCH_TTL_MS`), which equals the reconciliation
+interval, so the gate never fires for them and their behaviour is unchanged.
+
 ### Ordering
 
 The fingerprint stored with a scan result is captured **before** the scan runs.
