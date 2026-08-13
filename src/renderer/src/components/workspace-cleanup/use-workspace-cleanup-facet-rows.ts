@@ -109,7 +109,15 @@ export function useWorkspaceCleanupFacetRows({
       }
     }
     return infos
-  }, [candidateIdCounts, candidates, hostedReviewCache, reviewLookup, settings])
+  }, [
+    candidateIdCounts,
+    candidates,
+    hostedReviewCache,
+    repos,
+    reviewLookup,
+    settings,
+    worktreesByRepo
+  ])
 
   const completedSizeByWorktreeId = useMemo(
     () => buildWorkspaceCleanupSizeIndex(sources.spaceWorktrees, candidates),
