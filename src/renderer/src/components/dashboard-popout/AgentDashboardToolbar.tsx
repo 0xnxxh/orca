@@ -14,23 +14,14 @@ import { Input } from '@/components/ui/input'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
 import { getWorkspaceStatusVisualMeta } from '../sidebar/workspace-status'
-import type {
-  DashboardCard,
-  DashboardCardHostKind,
-  DashboardFilterOptions
-} from '../../../../shared/dashboard-snapshot'
+import type { DashboardCard, DashboardFilterOptions } from '../../../../shared/dashboard-snapshot'
 import {
   activeDashboardFilterCount,
   type DashboardFilters,
   type DashboardReviewFilter,
   toggleDashboardFilter
 } from './agent-board-filtering'
-import {
-  ALL_AGENT_MAP_HOSTS,
-  countAgentMapCards,
-  type AgentMapHostCounts,
-  type AgentMapState
-} from './agent-map-filter'
+import { countAgentMapCards, type AgentMapState } from './agent-map-filter'
 import {
   AGENT_STATE_ROWS,
   agentStateLabel,
@@ -42,7 +33,6 @@ import {
 } from './agent-dashboard-filter-options'
 import { AgentDashboardFilterChips } from './AgentDashboardFilterChips'
 import { AgentMapContentFilterItems } from './AgentMapContentFilterItems'
-import { AgentMapHostFilterItems } from './AgentMapHostFilterItems'
 import { FilterOptionCount } from './FilterOptionCount'
 import { ShortcutKeyCombo } from '@/components/ShortcutKeyCombo'
 
@@ -58,11 +48,6 @@ type AgentDashboardToolbarProps = {
   agentStates?: ReadonlySet<AgentMapState>
   onAgentStateToggle?: (state: AgentMapState) => void
   onAgentStatesReset?: () => void
-  /** Map-only: the board has no host dimension to slice. */
-  enabledHosts?: ReadonlySet<DashboardCardHostKind>
-  hostCounts?: AgentMapHostCounts
-  onHostToggle?: (host: DashboardCardHostKind) => void
-  onHostsReset?: () => void
   showAgentlessWorkspaces?: boolean
   agentlessWorkspaceCount?: number
   onShowAgentlessWorkspacesChange?: (show: boolean) => void
@@ -70,6 +55,9 @@ type AgentDashboardToolbarProps = {
   showOrchestrationLinks?: boolean
   onShowOrchestrationLinksChange?: (show: boolean) => void
   searchInputRef: React.RefObject<HTMLInputElement | null>
+  /** Replaces the built-in dropdown. The map needs a popover: its panel holds
+   *  range sliders, and a Radix menu swallows the arrow keys those need. */
+  filterControl?: React.ReactNode
 }
 
 export function AgentDashboardToolbar({
@@ -83,16 +71,13 @@ export function AgentDashboardToolbar({
   agentStates,
   onAgentStateToggle,
   onAgentStatesReset,
-  enabledHosts,
-  hostCounts,
-  onHostToggle,
-  onHostsReset,
   showAgentlessWorkspaces,
   agentlessWorkspaceCount = 0,
   onShowAgentlessWorkspacesChange,
   showOrchestrationLinks,
   onShowOrchestrationLinksChange,
-  searchInputRef
+  searchInputRef,
+  filterControl
 }: AgentDashboardToolbarProps): React.JSX.Element {
   const isMac = navigator.userAgent.includes('Mac')
   const projects = projectOptions(cards, filterOptions?.projects)
@@ -101,15 +86,9 @@ export function AgentDashboardToolbar({
   const agentStateCounts = agentStates ? countAgentMapCards(cards) : null
   // A muted state is an active filter, so the badge counts them like the rest.
   const mutedStateCount = agentStates ? AGENT_STATE_ROWS.length - agentStates.size : 0
-  // Hosts the fleet does not use are never offered, so they cannot read as muted.
-  const mutedHostCount =
-    enabledHosts && hostCounts
-      ? ALL_AGENT_MAP_HOSTS.filter((host) => hostCounts[host] > 0 && !enabledHosts.has(host)).length
-      : 0
   const activeCount =
     activeDashboardFilterCount(filters) +
     mutedStateCount +
-    mutedHostCount +
     (showAgentlessWorkspaces === true ? 1 : 0) +
     // Links show by default, so only hiding them is a deviation worth badging.
     (showOrchestrationLinks === false ? 1 : 0)
@@ -128,7 +107,6 @@ export function AgentDashboardToolbar({
   const clearFilters = (): void => {
     onFiltersChange({ projects: [], workspaceStatuses: [], reviewStates: [] })
     onAgentStatesReset?.()
-    onHostsReset?.()
     onShowAgentlessWorkspacesChange?.(false)
     onShowOrchestrationLinksChange?.(true)
   }
@@ -172,7 +150,7 @@ export function AgentDashboardToolbar({
             />
           )}
         </div>
-        {query || activeCount > 0 ? (
+        {!filterControl && (query || activeCount > 0) ? (
           <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
             {translate('dashboardPopout.search.results', '{{shown}} of {{total}} shown', {
               shown: filteredCount,
@@ -180,127 +158,125 @@ export function AgentDashboardToolbar({
             })}
           </span>
         ) : null}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              size="xs"
-              className={cn('h-7 gap-1.5 px-2 text-xs', activeCount > 0 && 'border-foreground/25')}
-            >
-              <Filter className="size-3" />
-              {translate('dashboardPopout.filters.label', 'Filter')}
-              {activeCount > 0 ? (
-                <span className="rounded-full bg-foreground px-1.5 py-px text-[10px] leading-none text-background">
-                  {activeCount}
-                </span>
-              ) : null}
-              <ChevronDown className="size-3" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64" sideOffset={6}>
-            {showAgentlessWorkspaces !== undefined &&
-            onShowAgentlessWorkspacesChange &&
-            onShowOrchestrationLinksChange ? (
-              <AgentMapContentFilterItems
-                showAgentlessWorkspaces={showAgentlessWorkspaces}
-                agentlessWorkspaceCount={agentlessWorkspaceCount}
-                onShowAgentlessWorkspacesChange={onShowAgentlessWorkspacesChange}
-                showOrchestrationLinks={showOrchestrationLinks !== false}
-                onShowOrchestrationLinksChange={onShowOrchestrationLinksChange}
-              />
-            ) : null}
-            {agentStates && agentStateCounts ? (
-              <>
-                <DropdownMenuLabel>
-                  {translate('dashboardPopout.map.filters.showStates', 'Agent states')}
-                </DropdownMenuLabel>
-                {AGENT_STATE_ROWS.map(({ state, dotState }) => (
-                  <DropdownMenuCheckboxItem
-                    key={state}
-                    checked={agentStates.has(state)}
-                    onCheckedChange={() => onAgentStateToggle?.(state)}
-                    onSelect={(event) => event.preventDefault()}
-                  >
-                    <AgentStateDot state={dotState} size="md" />
-                    <span className="truncate">{agentStateLabel(state)}</span>
-                    <FilterOptionCount count={agentStateCounts[state]} />
-                  </DropdownMenuCheckboxItem>
-                ))}
-                <DropdownMenuSeparator />
-              </>
-            ) : null}
-            {enabledHosts && hostCounts && onHostToggle ? (
-              <AgentMapHostFilterItems
-                enabledHosts={enabledHosts}
-                hostCounts={hostCounts}
-                onHostToggle={onHostToggle}
-              />
-            ) : null}
-            <DropdownMenuLabel>
-              {translate('dashboardPopout.filters.project', 'Project')}
-            </DropdownMenuLabel>
-            {projects.map((option) => (
-              <DropdownMenuCheckboxItem
-                key={option.id}
-                checked={filters.projects.includes(option.id)}
-                onCheckedChange={() => toggleProject(option.id)}
-                onSelect={(event) => event.preventDefault()}
+        {filterControl ?? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="xs"
+                className={cn(
+                  'h-7 gap-1.5 px-2 text-xs',
+                  activeCount > 0 && 'border-foreground/25'
+                )}
               >
-                <span className="truncate">{option.label}</span>
-                <FilterOptionCount count={option.count} />
-              </DropdownMenuCheckboxItem>
-            ))}
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>
-              {translate('dashboardPopout.filters.workspaceStatus', 'Workspace status')}
-            </DropdownMenuLabel>
-            {statuses.map((option) => {
-              const meta = getWorkspaceStatusVisualMeta({
-                id: option.id,
-                label: option.label,
-                color: option.color
-              })
-              return (
+                <Filter className="size-3" />
+                {translate('dashboardPopout.filters.label', 'Filter')}
+                {activeCount > 0 ? (
+                  <span className="rounded-full bg-foreground px-1.5 py-px text-[10px] leading-none text-background">
+                    {activeCount}
+                  </span>
+                ) : null}
+                <ChevronDown className="size-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64" sideOffset={6}>
+              {showAgentlessWorkspaces !== undefined &&
+              onShowAgentlessWorkspacesChange &&
+              onShowOrchestrationLinksChange ? (
+                <AgentMapContentFilterItems
+                  showAgentlessWorkspaces={showAgentlessWorkspaces}
+                  agentlessWorkspaceCount={agentlessWorkspaceCount}
+                  onShowAgentlessWorkspacesChange={onShowAgentlessWorkspacesChange}
+                  showOrchestrationLinks={showOrchestrationLinks !== false}
+                  onShowOrchestrationLinksChange={onShowOrchestrationLinksChange}
+                />
+              ) : null}
+              {agentStates && agentStateCounts ? (
+                <>
+                  <DropdownMenuLabel>
+                    {translate('dashboardPopout.map.filters.showStates', 'Agent states')}
+                  </DropdownMenuLabel>
+                  {AGENT_STATE_ROWS.map(({ state, dotState }) => (
+                    <DropdownMenuCheckboxItem
+                      key={state}
+                      checked={agentStates.has(state)}
+                      onCheckedChange={() => onAgentStateToggle?.(state)}
+                      onSelect={(event) => event.preventDefault()}
+                    >
+                      <AgentStateDot state={dotState} size="md" />
+                      <span className="truncate">{agentStateLabel(state)}</span>
+                      <FilterOptionCount count={agentStateCounts[state]} />
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
+              <DropdownMenuLabel>
+                {translate('dashboardPopout.filters.project', 'Project')}
+              </DropdownMenuLabel>
+              {projects.map((option) => (
                 <DropdownMenuCheckboxItem
                   key={option.id}
-                  checked={filters.workspaceStatuses.includes(option.id)}
-                  onCheckedChange={() => toggleStatus(option.id)}
+                  checked={filters.projects.includes(option.id)}
+                  onCheckedChange={() => toggleProject(option.id)}
                   onSelect={(event) => event.preventDefault()}
                 >
-                  <span className={cn('size-2 rounded-full', meta.swatch)} />
                   <span className="truncate">{option.label}</span>
                   <FilterOptionCount count={option.count} />
                 </DropdownMenuCheckboxItem>
-              )
-            })}
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>
-              {translate('dashboardPopout.filters.reviewStatus', 'PR / MR status')}
-            </DropdownMenuLabel>
-            {REVIEW_OPTIONS.map((option) => (
-              <DropdownMenuCheckboxItem
-                key={option}
-                checked={filters.reviewStates.includes(option)}
-                onCheckedChange={() => toggleReview(option)}
-                onSelect={(event) => event.preventDefault()}
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>
+                {translate('dashboardPopout.filters.workspaceStatus', 'Workspace status')}
+              </DropdownMenuLabel>
+              {statuses.map((option) => {
+                const meta = getWorkspaceStatusVisualMeta({
+                  id: option.id,
+                  label: option.label,
+                  color: option.color
+                })
+                return (
+                  <DropdownMenuCheckboxItem
+                    key={option.id}
+                    checked={filters.workspaceStatuses.includes(option.id)}
+                    onCheckedChange={() => toggleStatus(option.id)}
+                    onSelect={(event) => event.preventDefault()}
+                  >
+                    <span className={cn('size-2 rounded-full', meta.swatch)} />
+                    <span className="truncate">{option.label}</span>
+                    <FilterOptionCount count={option.count} />
+                  </DropdownMenuCheckboxItem>
+                )
+              })}
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>
+                {translate('dashboardPopout.filters.reviewStatus', 'PR / MR status')}
+              </DropdownMenuLabel>
+              {REVIEW_OPTIONS.map((option) => (
+                <DropdownMenuCheckboxItem
+                  key={option}
+                  checked={filters.reviewStates.includes(option)}
+                  onCheckedChange={() => toggleReview(option)}
+                  onSelect={(event) => event.preventDefault()}
+                >
+                  <span>{reviewStateLabel(option)}</span>
+                  <FilterOptionCount count={reviewCounts.get(option) ?? 0} />
+                </DropdownMenuCheckboxItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                disabled={activeCount === 0}
+                onSelect={clearFilters}
+                className="text-muted-foreground"
               >
-                <span>{reviewStateLabel(option)}</span>
-                <FilterOptionCount count={reviewCounts.get(option) ?? 0} />
-              </DropdownMenuCheckboxItem>
-            ))}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              disabled={activeCount === 0}
-              onSelect={clearFilters}
-              className="text-muted-foreground"
-            >
-              <X className="size-3.5" />
-              {translate('dashboardPopout.filters.clearAll', 'Clear all filters')}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+                <X className="size-3.5" />
+                {translate('dashboardPopout.filters.clearAll', 'Clear all filters')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
-      {activeCount > 0 ? (
+      {!filterControl && activeCount > 0 ? (
         <AgentDashboardFilterChips
           filters={filters}
           projects={projects}

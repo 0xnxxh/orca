@@ -429,8 +429,6 @@ describe('AgentMap', () => {
   })
 
   it('narrows the map to the enabled hosts', () => {
-    // Rendered directly: a mixed-host map draws host badges, which need a
-    // tooltip provider the shared harness deliberately does not mount.
     render(
       <TooltipProvider>
         <AgentMap
@@ -450,7 +448,6 @@ describe('AgentMap', () => {
       </TooltipProvider>
     )
 
-    expect(screen.getByText('1 of 2 agents shown')).toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: 'Open Agent map worktree details' })
     ).not.toBeInTheDocument()

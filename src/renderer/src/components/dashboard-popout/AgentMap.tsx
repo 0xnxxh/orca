@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
 import type {
   DashboardCard,
@@ -23,10 +22,9 @@ type AgentMapProps = {
   now: number
   className?: string
   selectedPaneKey?: string | null
-  /** Owned by the board so the shared toolbar filter can drive it. Defaults to
-   *  every state, i.e. the map shows whatever it is handed. */
+  /** Pass-throughs in production — the board pre-filters so its panel can report
+   *  a shown-count that matches the canvas. Kept so tests can empty the map. */
   enabledStates?: ReadonlySet<AgentMapState>
-  /** Owned by the board's filter menu, same reason. Defaults to every host. */
   enabledHosts?: ReadonlySet<DashboardCardHostKind>
   /** Owned by the board's filter menu. Defaults to shown. */
   showOrchestrationLinks?: boolean
@@ -95,18 +93,6 @@ export function AgentMap({
   return (
     <section className={cn('flex min-h-0 flex-1', className)}>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex min-h-12 shrink-0 items-center gap-3 border-b border-border px-3 py-2">
-          <strong className="min-w-0 truncate text-xs">
-            {translate(
-              'dashboardPopout.map.filters.canvasSummary',
-              '{{shown}} of {{total}} agents shown',
-              {
-                shown: visibleCards.length,
-                total: cards.length
-              }
-            )}
-          </strong>
-        </header>
         <AgentMapCanvas
           ref={canvasRef}
           layout={layout}

@@ -164,7 +164,7 @@ describe('AgentKanbanBoard', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
     expect(
-      await screen.findByText('0 of 0 agents shown', undefined, MAP_LOAD_TIMEOUT)
+      await screen.findByRole('button', { name: /^Filter/ }, MAP_LOAD_TIMEOUT)
     ).toBeInTheDocument()
     expect(screen.queryByText('Live containment map')).not.toBeInTheDocument()
     // The map has no rail of its own; its filters live in the shared toolbar.
@@ -189,17 +189,17 @@ describe('AgentKanbanBoard', () => {
       })
     ])
     fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
-    expect(
-      await screen.findByText('2 of 2 agents shown', undefined, MAP_LOAD_TIMEOUT)
-    ).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: /^Filter/ }, MAP_LOAD_TIMEOUT))
+    // The count lives in the panel header now, beside the sections it explains.
+    const shown = await screen.findByText('of 2 agents shown')
+    expect(shown.parentElement).toHaveTextContent('2 of 2 agents shown')
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: /^Filter/ }))
-    fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: /Working/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Agent states/ }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Working/ }))
 
-    expect(await screen.findByText('1 of 2 agents shown')).toBeInTheDocument()
-    // A muted state counts toward the Filter badge like any other filter. The
-    // open menu hides the trigger from the a11y tree, so read it by its label.
-    expect(screen.getByRole('menu')).toHaveAccessibleName('Filter 1')
+    expect(shown.parentElement).toHaveTextContent('1 of 2 agents shown')
+    // A muted state counts toward the Filter badge like any other filter.
+    expect(screen.getByRole('button', { name: /^Filter/ })).toHaveAccessibleName(/1/)
   })
 
   it('offers agent states only on the map, where no column separates them', async () => {
@@ -211,7 +211,7 @@ describe('AgentKanbanBoard', () => {
 
     fireEvent.keyDown(document.body, { key: 'Escape' })
     fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
-    fireEvent.pointerDown(screen.getByRole('button', { name: /^Filter/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Filter/ }, MAP_LOAD_TIMEOUT))
 
     expect(await screen.findByText('Agent states')).toBeInTheDocument()
   })
@@ -225,8 +225,9 @@ describe('AgentKanbanBoard', () => {
     expect(
       screen.queryByRole('button', { name: 'Open Empty child worktree details' })
     ).not.toBeInTheDocument()
-    fireEvent.pointerDown(screen.getByRole('button', { name: /^Filter/ }))
-    const workspaceToggle = await screen.findByRole('menuitemcheckbox', {
+    fireEvent.click(screen.getByRole('button', { name: /^Filter/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Workspace/ }))
+    const workspaceToggle = await screen.findByRole('checkbox', {
       name: /Workspaces without agents/
     })
     fireEvent.click(workspaceToggle)
