@@ -64,6 +64,9 @@ export function normalizeCookieImportDomain(domain: string): string | null {
 // its cookies via the accounts.youtube.com relay, so excluding it would silently drop imports
 // users actually asked for.
 const NON_TRANSPLANTABLE_DOMAINS = ['google.com'] as const
+const NON_TRANSPLANTABLE_CLEAR_EXCLUDED_ORIGINS = NON_TRANSPLANTABLE_DOMAINS.map(
+  (root) => `https://${root}`
+)
 const COOKIE_CLEAR_CONCURRENCY = 8
 
 export function isNonTransplantableCookieDomain(domain: string): boolean {
@@ -199,7 +202,7 @@ export async function restoreImportedDomainCookies(
 // Why (STA-4061): 'set' stays out so the lossy partition-dropping reconstruction cannot return.
 export type CookieClearSession = {
   cookies: Pick<Cookies, 'get' | 'remove'>
-  clearStorageData: Session['clearStorageData']
+  clearData: Session['clearData']
 }
 
 // Why: Electron cannot round-trip partition identity, so excluded cookies must never be removed.
@@ -219,7 +222,11 @@ export async function removeAllCookiesExcept(
   // one bulk clear can replace a remove() per cookie. An empty jar needs neither.
   if (existingCookies.length > 0 && !existingCookies.some(isExcluded)) {
     try {
-      await targetSession.clearStorageData({ storages: ['cookies'] })
+      // Why: exclusions protect a non-transplantable cookie arriving between snapshot and clear.
+      await targetSession.clearData({
+        dataTypes: ['cookies'],
+        excludeOrigins: NON_TRANSPLANTABLE_CLEAR_EXCLUDED_ORIGINS
+      })
       return
     } catch {
       // Why: a rejected bulk clear can still have emptied part of the jar, so fall through to the

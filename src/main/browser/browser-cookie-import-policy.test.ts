@@ -211,7 +211,7 @@ type CookieClearMocks = {
   get: Mock
   remove: Mock
   set: Mock
-  clearStorageData: Mock
+  clearData: Mock
 }
 
 describe('removeAllCookiesExcept', () => {
@@ -222,13 +222,13 @@ describe('removeAllCookiesExcept', () => {
       set: vi.fn().mockResolvedValue(undefined),
       ...overrides
     }
-    const clearStorageData = overrides.clearStorageData ?? vi.fn().mockResolvedValue(undefined)
+    const clearData = overrides.clearData ?? vi.fn().mockResolvedValue(undefined)
     return {
-      session: { cookies: store, clearStorageData },
+      session: { cookies: store, clearData },
       get: store.get,
       remove: store.remove,
       set: store.set,
-      clearStorageData
+      clearData
     }
   }
 
@@ -236,7 +236,7 @@ describe('removeAllCookiesExcept', () => {
     isNonTransplantableCookieDomain(existingCookie.domain ?? '')
 
   it('never removes or reconstructs excluded Google cookies', async () => {
-    const { session, remove, set, clearStorageData } = clearSession([
+    const { session, remove, set, clearData } = clearSession([
       cookie('.google.com', 'SID'),
       cookie('accounts.google.com', 'ACCOUNT'),
       cookie('.example.com', 'session'),
@@ -245,7 +245,7 @@ describe('removeAllCookiesExcept', () => {
 
     await removeAllCookiesExcept(session, excludesNonTransplantable)
 
-    expect(clearStorageData).not.toHaveBeenCalled()
+    expect(clearData).not.toHaveBeenCalled()
     expect(remove.mock.calls).toEqual([
       ['https://example.com/', 'session'],
       ['https://other.test/scoped', 'tracker']
@@ -254,7 +254,7 @@ describe('removeAllCookiesExcept', () => {
   })
 
   it('bulk clears in one call when the jar holds nothing to preserve', async () => {
-    const { session, remove, set, clearStorageData } = clearSession([
+    const { session, remove, set, clearData } = clearSession([
       cookie('.example.com', 'session'),
       cookie('other.test', 'tracker', '/scoped'),
       cookie('notgoogle.com', 'lookalike')
@@ -262,39 +262,41 @@ describe('removeAllCookiesExcept', () => {
 
     await removeAllCookiesExcept(session, excludesNonTransplantable)
 
-    expect(clearStorageData.mock.calls).toEqual([[{ storages: ['cookies'] }]])
+    expect(clearData.mock.calls).toEqual([
+      [{ dataTypes: ['cookies'], excludeOrigins: ['https://google.com'] }]
+    ])
     expect(remove).not.toHaveBeenCalled()
     expect(set).not.toHaveBeenCalled()
   })
 
   it('touches nothing when the jar is already empty', async () => {
-    const { session, remove, clearStorageData } = clearSession([])
+    const { session, remove, clearData } = clearSession([])
 
     await removeAllCookiesExcept(session, excludesNonTransplantable)
 
-    expect(clearStorageData).not.toHaveBeenCalled()
+    expect(clearData).not.toHaveBeenCalled()
     expect(remove).not.toHaveBeenCalled()
   })
 
   it('bulk clears cookies the per-cookie path could never address', async () => {
-    const { session, clearStorageData } = clearSession([
+    const { session, clearData } = clearSession([
       { ...cookie('.example.com', 'session'), domain: '' }
     ])
 
     await removeAllCookiesExcept(session, excludesNonTransplantable)
 
-    expect(clearStorageData).toHaveBeenCalledOnce()
+    expect(clearData).toHaveBeenCalledOnce()
   })
 
   it('falls back to per-cookie removal when the bulk clear rejects', async () => {
-    const { session, remove, clearStorageData } = clearSession(
+    const { session, remove, clearData } = clearSession(
       [cookie('.example.com', 'session'), cookie('other.test', 'tracker')],
-      { clearStorageData: vi.fn().mockRejectedValue(new Error('storage busy')) }
+      { clearData: vi.fn().mockRejectedValue(new Error('storage busy')) }
     )
 
     await removeAllCookiesExcept(session, excludesNonTransplantable)
 
-    expect(clearStorageData).toHaveBeenCalledOnce()
+    expect(clearData).toHaveBeenCalledOnce()
     expect(remove.mock.calls).toEqual([
       ['https://example.com/', 'session'],
       ['https://other.test/', 'tracker']
