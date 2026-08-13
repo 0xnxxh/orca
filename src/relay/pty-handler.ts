@@ -336,13 +336,10 @@ export type PtyExitListener = (event: { id: string; paneKey?: string }) => void
 
 type PtyIdentity = { paneKey?: string; tabId?: string }
 
-/* Why there is no attach-time pane-identity comparison here any more: it keyed on the paneKey and
- * tabId frozen at spawn, so moving a pane to another tab made the relay refuse its own live shell,
- * and refuse by saying "not found" — which the client read as death and answered by resuming the
- * agent a second time. Cross-generation id collisions, the thing it was actually for, are rejected
- * by the incarnation comparison in `attach` instead: that is the shell's own identity, so it
- * follows the pane wherever it moves. `attachIdentity` is still recorded and still round-trips
- * through serialize/revive; it just no longer gates an attach. */
+/* No attach-time pane-identity comparison any more: it froze paneKey/tabId at spawn, so a moved
+ * pane was refused its own live shell — as "not found", which read as death. Recycled ids, its real
+ * purpose, are caught by the incarnation comparison in `attach` instead. `attachIdentity` is still
+ * recorded and round-trips through serialize/revive; it no longer gates an attach. */
 /** Returns env to merge into the PTY's spawn env. Receives spawn context so augmenters can derive per-PTY identity from paneKey.
  *  `command` is the renderer-chosen agent launch command (`pi`, `omp`, …); undefined for CLI-launched bare shells. */
 export type PtyEnvAugmenter = (ctx: {
@@ -367,13 +364,9 @@ export class PtyHandler {
   private outputFlushTimer: ReturnType<typeof setTimeout> | null = null
   private pendingOutputByPty = new Map<string, PendingPtyOutput[]>()
   private pendingExitByPty = new Map<string, { id: string; code: number; incarnationId: string }>()
-  /**
-   * Shells this process WATCHED exit, kept after the exit is published. Attach can then answer
-   * "it exited" instead of "not found", and only that first-hand answer is proof: a relay that
-   * merely never knew the id may be a replacement whose predecessor's shells are still running.
-   * Bounded and oldest-evicted — losing one costs a respawn the user has to ask for, never a wrong
-   * one. A crash loses them all, which correctly reads as no knowledge.
-   */
+  /** Exits this process WATCHED, kept past publication so attach can prove death rather than report
+   *  an unknown id. Bounded and oldest-evicted; losing one costs a user-asked respawn, never a
+   *  wrong one, and a crash losing all of them correctly reads as no knowledge. */
   private exitedPtys = new Map<string, { code: number; incarnationId: string }>()
   private pausedOutputPtys = new Set<string>()
   private consumerPausedOutputPtys = new Set<string>()
@@ -752,6 +745,16 @@ export class PtyHandler {
       // Why: release the ptmx fd on natural exit, else the master fd leaks until GC (docs/fix-pty-fd-leak.md).
       disposeManagedPty(managed)
     })
+  }
+
+  /** Proof must name the caller's own shell: present and matching. Both gone-paths ask this, so a
+   *  change to the rule cannot reach one and miss the other. */
+  private exitProofAnswersCaller(
+    expectedIncarnationId: string | undefined,
+    exitedIncarnationId: string,
+    clientUnderstandsExitProof: boolean
+  ): boolean {
+    return clientUnderstandsExitProof && expectedIncarnationId === exitedIncarnationId
   }
 
   /** Oldest-evicted: a Map iterates in insertion order, so the first key is the oldest. */
@@ -1619,30 +1622,23 @@ export class PtyHandler {
     const id = params.id as string
     const expectedIncarnationId =
       typeof params.expectedIncarnationId === 'string' ? params.expectedIncarnationId : undefined
-    // Why gated: what the host answers reaches clients that predate this reply, and one of those
-    // reads an unrecognized attach error as neither death nor recovery — it strands the pane. A
-    // client that understands the proof says so; everyone else keeps the wording they already act
-    // on. Nothing is lost by staying quiet, because an older client could not have used it.
+    // Gated because the host's answer reaches clients predating it, which read an unrecognized
+    // attach error as neither death nor recovery and strand the pane.
     const clientUnderstandsExitProof = params.exitProofSupported === true
     const managed = this.ptys.get(id)
     // Why: after dispose, pty.kill is a POSIX no-op; treat disposed as not-found so failures aren't silent.
     if (!managed || managed.disposed) {
-      // `disposed` is a teardown flag, not an observed exit, so only a genuinely absent pty may be
+      // `disposed` is teardown, not an observed exit, so only a genuinely absent pty may be
       // answered from what this process watched exit.
       if (!managed) {
         const exited = this.exitedPtys.get(id)
-        // A remembered exit for a DIFFERENT shell says nothing about the caller's: answer the
-        // ordinary unknown instead, or a recycled id would report somebody else's death as ours.
-        // The expectation must be PRESENT and match. A caller that names no shell is not asking
-        // about this one, and answering it anyway is how a remembered exit becomes a claim about
-        // somebody else's shell: relay A is killed leaving pty-1 alive and orphaned, relay B mints
-        // its own pty-1 and that one exits, and a pane with no recorded identity would be told its
-        // shell is gone — then replace a process that is still running. A pane with nothing to
-        // compare gets the disconnected card instead, which is the safe direction.
         if (
-          clientUnderstandsExitProof &&
           exited &&
-          expectedIncarnationId === exited.incarnationId
+          this.exitProofAnswersCaller(
+            expectedIncarnationId,
+            exited.incarnationId,
+            clientUnderstandsExitProof
+          )
         ) {
           throw new Error(formatPtyExitedError(id, exited.code, exited.incarnationId))
         }
@@ -1660,19 +1656,19 @@ export class PtyHandler {
       disposeManagedPty(managed)
       this.removePty(id)
       this.clearPtyFlowState(id)
-      // First-hand proof: this process held the shell and its pid is gone. Saying "not found"
-      // here throws away the one observation that distinguishes a dead shell from an unknown one.
-      // The reap above happens either way — a dead shell should be cleared no matter who asked —
-      // but the ANSWER still depends on whose shell it was. Under this id a replacement relay may
-      // hold a different shell entirely, and its death says nothing about the caller's, which may
-      // be running orphaned under the relay this one replaced. Same rule as the remembered exit:
-      // proof needs a present, matching expectation.
+      // The reap runs whoever asked, but the ANSWER depends on whose shell died: under this id a
+      // replacement relay may hold a different one entirely, and the caller's may be orphaned and
+      // alive under the relay this one replaced.
       this.rememberPtyExit(id, PTY_EXIT_CODE_OBSERVED_GONE, managed.incarnationId)
       if (expectedIncarnationId && expectedIncarnationId !== managed.incarnationId) {
         throw new Error(`PTY "${id}" identity mismatch`)
       }
       throw new Error(
-        clientUnderstandsExitProof && expectedIncarnationId === managed.incarnationId
+        this.exitProofAnswersCaller(
+          expectedIncarnationId,
+          managed.incarnationId,
+          clientUnderstandsExitProof
+        )
           ? formatPtyExitedError(id, PTY_EXIT_CODE_OBSERVED_GONE, managed.incarnationId)
           : `PTY "${id}" not found`
       )

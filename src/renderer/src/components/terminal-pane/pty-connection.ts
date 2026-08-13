@@ -13,6 +13,7 @@ import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { useAppStore } from '@/store'
 import { getWorktreeMapFromState } from '@/store/selectors'
 import { parseWorkspaceKey } from '../../../../shared/workspace-scope'
+import { SSH_SESSION_EXPIRED_ERROR } from '../../../../shared/ssh-pty-failure-tokens'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import { isEphemeralSetupTerminalWorktreeId } from '../../../../shared/ephemeral-setup-terminal-worktree-id'
 import { TERMINAL_PAIRED_PARKING_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
@@ -341,7 +342,7 @@ import { directSshAuthoritiesEqual } from '@/store/slices/direct-ssh-terminal-au
 import { isProvenSshSessionGoneError } from './reattach-failure-classification'
 
 const pendingSpawnByPaneKey = new Map<string, Promise<string | null>>()
-const SSH_SESSION_EXPIRED_ERROR = 'SSH_SESSION_EXPIRED'
+
 // Why: relay requests expire at 30s; leave one second for their fallback before re-arming locally.
 const DIRECT_SSH_PANE_RETRY_SETTLEMENT_TIMEOUT_MS = 31_000
 const REMOTE_PTY_ID_PREFIX = 'remote:'

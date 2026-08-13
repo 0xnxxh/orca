@@ -13,6 +13,7 @@ import {
   iterateTerminalInputChunks
 } from '../../../../shared/terminal-input'
 import { isRuntimeOwnedSshTargetId } from '../../../../shared/execution-host'
+import { SSH_SESSION_EXPIRED_ERROR } from '../../../../shared/ssh-pty-failure-tokens'
 import {
   ptyDataHandlers,
   ptyReplayHandlers,
@@ -71,7 +72,6 @@ export type {
 } from './pty-transport-types'
 export { extractLastOscTitle } from '../../../../shared/agent-detection'
 
-const SSH_SESSION_EXPIRED_ERROR = 'SSH_SESSION_EXPIRED'
 // Why: main rejects a session reattached under a different SSH connection with this phrase; treat as stale (spawn fresh), not a crash.
 const SSH_PTY_CONNECTION_MISMATCH_MARKER = 'belongs to SSH connection'
 const STALE_TITLE_TIMEOUT = 3000 // ms before stale working title is cleared

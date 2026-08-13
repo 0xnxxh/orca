@@ -187,12 +187,9 @@ export class SshPtyProvider implements IPtyProvider {
     expectedIncarnationId?: string
   ): Promise<SshPtyAttachResult> {
     // Why: reconnect owns replay delivery so stale/duplicate attach results can
-    // be filtered before they reach the renderer. Pane identity is deliberately
-    // not sent — see reattachSshPtySession; the relay's copy is frozen at spawn,
-    // so it rejected panes that had merely moved tabs.
-    // The shell's own identity IS sent when the caller knows it. This is the path that reconnects
-    // every known pty after a relay comes back, which is exactly when ids have been recycled, so
-    // leaving it unfenced would leave the main reconnect open to attaching somebody else's shell.
+    // be filtered before they reach the renderer. Pane identity stays unsent (the relay froze it at
+    // spawn, so it rejected moved panes); the shell's own identity is sent instead. This path
+    // reattaches every pty after a relay returns — exactly when ids have been recycled.
     const params = {
       id: this.toRelayPtyId(id),
       suppressReplayNotification: true,
