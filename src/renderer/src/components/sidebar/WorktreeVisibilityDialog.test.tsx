@@ -18,7 +18,9 @@ const mocks = vi.hoisted(() => ({
     repos: [] as unknown[],
     updateRepo: vi.fn(),
     fetchWorktrees: vi.fn(),
-    detectedWorktreesByRepo: {} as Record<string, unknown>
+    detectedWorktreesByRepo: {} as Record<string, unknown>,
+    settings: {} as Record<string, unknown>,
+    worktreeVisibilityDefaultsByHost: {} as Record<string, unknown>
   }
 }))
 
@@ -130,6 +132,8 @@ beforeEach(() => {
   mocks.state.modalData = { repoId: 'repo-1' }
   mocks.state.repos = [makeRepo()]
   mocks.state.detectedWorktreesByRepo = { 'repo-1': makeDetected() }
+  mocks.state.settings = {}
+  mocks.state.worktreeVisibilityDefaultsByHost = {}
   mocks.state.updateRepo.mockImplementation(
     async (repoId: string, updates: Record<string, unknown>) => {
       const repo = (mocks.state.repos as Repo[]).find((candidate) => candidate.id === repoId)
@@ -573,7 +577,7 @@ describe('WorktreeVisibilityDialog', () => {
 
     expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
       worktreeVisibilitySourcePreferences: {
-        builtIn: { claude: 'show', gsd: 'hide' }
+        builtIn: { claude: 'show' }
       }
     })
     expect(mocks.state.closeModal).not.toHaveBeenCalled()
@@ -782,5 +786,24 @@ describe('WorktreeVisibilityDialog', () => {
     expect(sourceSwitch('/srv/beta/team')).not.toBeNull()
     expect(document.querySelector('button[aria-label="Remove /srv/alpha/team"]')).not.toBeNull()
     expect(document.querySelector('button[aria-label="Remove /srv/beta/team"]')).not.toBeNull()
+  })
+
+  it('shows inherited global locations without repository removal controls', async () => {
+    mocks.state.settings = {
+      worktreeVisibilityDefaults: {
+        external: 'hide',
+        customSources: [{ id: 'global-team', rootPath: '/srv/global-team' }],
+        sourcePreferences: { custom: { 'global-team': 'show' } }
+      }
+    }
+
+    await renderDialog()
+
+    expect(sourceSwitch('/srv/global-team').getAttribute('aria-checked')).toBe('true')
+    expect(document.querySelector('button[aria-label="Remove /srv/global-team"]')).toBeNull()
+    await click(sourceSwitch('/srv/global-team'))
+    expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
+      worktreeVisibilitySourcePreferences: { custom: { 'global-team': 'hide' } }
+    })
   })
 })

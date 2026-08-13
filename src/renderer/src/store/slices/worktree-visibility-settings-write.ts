@@ -10,12 +10,27 @@ export async function persistVisibilityAwareSettings(args: {
   normalizedUpdates: Partial<GlobalSettings>
   currentSettings: GlobalSettings | null
   supportedRuntimeEnvironmentId: string | null
+  sourceDefaultsSupportedRuntimeEnvironmentId?: string | null
   set: (updater: (state: AppState) => Partial<AppState>) => void
 }): Promise<void> {
-  const { normalizedUpdates, currentSettings, supportedRuntimeEnvironmentId, set } = args
+  const {
+    normalizedUpdates,
+    currentSettings,
+    supportedRuntimeEnvironmentId,
+    sourceDefaultsSupportedRuntimeEnvironmentId = null,
+    set
+  } = args
   const target = getActiveRuntimeTarget(currentSettings)
   if ('worktreeVisibilityDefaults' in normalizedUpdates && target.kind === 'environment') {
     const { worktreeVisibilityDefaults, ...localUpdates } = normalizedUpdates
+    if (
+      worktreeVisibilityDefaults &&
+      target.environmentId !== sourceDefaultsSupportedRuntimeEnvironmentId &&
+      ('customSources' in worktreeVisibilityDefaults ||
+        'sourcePreferences' in worktreeVisibilityDefaults)
+    ) {
+      throw new Error('Update this server to configure source defaults.')
+    }
     const localSettings =
       Object.keys(localUpdates).length > 0
         ? ((await window.api.settings.set(localUpdates)) as GlobalSettings)

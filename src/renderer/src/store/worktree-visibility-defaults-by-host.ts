@@ -5,11 +5,11 @@ import type { GlobalSettings, Repo, WorktreeVisibilityDefaults } from '../../../
 export function getRepoOwnerWorktreeVisibilityDefaults(
   repo: Pick<Repo, 'connectionId' | 'executionHostId'>,
   settings: Pick<GlobalSettings, 'worktreeVisibilityDefaults'> | null | undefined,
-  defaultsByHost: Partial<Record<ExecutionHostId, WorktreeVisibilityDefaults | null>>
+  defaultsByHost: Partial<Record<ExecutionHostId, WorktreeVisibilityDefaults | null>> | undefined
 ): WorktreeVisibilityDefaults | undefined {
   const hostId = getRepoExecutionHostId(repo)
   if (parseExecutionHostId(hostId)?.kind === 'runtime') {
-    return defaultsByHost[hostId] ?? undefined
+    return defaultsByHost?.[hostId] ?? undefined
   }
-  return defaultsByHost.local ?? settings?.worktreeVisibilityDefaults
+  return defaultsByHost?.local ?? settings?.worktreeVisibilityDefaults
 }

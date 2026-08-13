@@ -4794,6 +4794,38 @@ describe('Store', () => {
     })
   })
 
+  it('normalizes and persists global worktree source defaults', async () => {
+    const store = await createStore()
+
+    store.updateSettings({
+      worktreeVisibilityDefaults: {
+        external: 'show',
+        customSources: [
+          { id: 'team', rootPath: ' /srv/team-worktrees ' },
+          { id: 'invalid', rootPath: '../relative' }
+        ],
+        sourcePreferences: {
+          builtIn: { claude: 'show', gsd: 'hide' },
+          custom: { team: 'show' }
+        }
+      }
+    })
+
+    expect(store.getSettings().worktreeVisibilityDefaults).toEqual({
+      external: 'show',
+      customSources: [{ id: 'team', rootPath: '/srv/team-worktrees' }],
+      sourcePreferences: {
+        builtIn: { claude: 'show', gsd: 'hide' },
+        custom: { team: 'show' }
+      }
+    })
+    store.flush()
+    const reloaded = await createStore()
+    expect(reloaded.getSettings().worktreeVisibilityDefaults).toEqual(
+      store.getSettings().worktreeVisibilityDefaults
+    )
+  })
+
   it('persists agent worktree visibility independently from external visibility', async () => {
     const store = await createStore()
     store.addRepo(makeRepo({ externalWorktreeVisibility: 'hide' }))

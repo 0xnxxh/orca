@@ -6238,6 +6238,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       const visibilitySupportChanged = removed.has(
         s.worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId ?? ''
       )
+      const visibilitySourceSupportChanged = removed.has(
+        s.worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId ?? ''
+      )
       if (
         !reposChanged &&
         !setupsChanged &&
@@ -6246,6 +6249,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         !restoredSessionOwnersChanged &&
         !visibilityDefaultsChanged &&
         !visibilitySupportChanged &&
+        !visibilitySourceSupportChanged &&
         removedWorktreeIds.size === 0
       ) {
         return s
@@ -6275,6 +6279,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           : {}),
         ...(visibilitySupportChanged
           ? { worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: null }
+          : {}),
+        ...(visibilitySourceSupportChanged
+          ? { worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId: null }
           : {}),
         ...(rowsChanged ? { sortEpoch: s.sortEpoch + 1 } : {}),
         // Why: mirror validateRepoScopedUi so a filtered/active sidebar can't reference a purged repo id.

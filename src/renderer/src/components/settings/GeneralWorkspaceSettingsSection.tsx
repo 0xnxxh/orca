@@ -2,25 +2,24 @@ import type React from 'react'
 import type { GlobalSettings } from '../../../../shared/types'
 import { OpenInMenuSetting } from './OpenInMenuSetting'
 import { SearchableSetting } from './SearchableSetting'
-import {
-  SettingsRow,
-  SettingsSegmentedControl,
-  SettingsSubsectionHeader,
-  SettingsSwitchRow
-} from './SettingsFormControls'
+import { SettingsSubsectionHeader, SettingsSwitchRow } from './SettingsFormControls'
 import { WorkspaceDirectorySetting } from './WorkspaceDirectorySetting'
 import { translate } from '@/i18n/i18n'
+import { GlobalWorktreeVisibilitySourcesSetting } from './GlobalWorktreeVisibilitySourcesSetting'
 
 type GeneralWorkspaceSettingsSectionProps = {
   settings: GlobalSettings
   updateSettings: (updates: Partial<GlobalSettings>) => void
+  updateSettingsOrThrow?: (updates: Partial<GlobalSettings>) => void | Promise<void>
+  sourceDefaultsSupported?: boolean
 }
 
 export function GeneralWorkspaceSettingsSection({
   settings,
-  updateSettings
+  updateSettings,
+  updateSettingsOrThrow = updateSettings,
+  sourceDefaultsSupported = true
 }: GeneralWorkspaceSettingsSectionProps): React.JSX.Element {
-  const visibilityDefaultsSupported = settings.worktreeVisibilityDefaults !== undefined
   return (
     <section key="workspace" className="space-y-4">
       <SettingsSubsectionHeader
@@ -43,48 +42,27 @@ export function GeneralWorkspaceSettingsSection({
         )}
         description={translate(
           'auto.components.settings.GeneralWorkspaceSettingsSection.externalWorktreesDescription',
-          'Choose whether worktrees created outside Orca appear by default.'
+          'Choose which worktrees created outside Orca appear by default on this host.'
         )}
-        keywords={['external', 'non-Orca', 'worktree', 'visibility', 'sidebar', 'show', 'hide']}
+        keywords={[
+          'external',
+          'non-Orca',
+          'worktree',
+          'visibility',
+          'sidebar',
+          'show',
+          'hide',
+          'source',
+          'location',
+          'root',
+          'Claude',
+          'GSD'
+        ]}
       >
-        <SettingsRow
-          label={translate(
-            'auto.components.settings.GeneralWorkspaceSettingsSection.externalWorktrees',
-            'External worktrees'
-          )}
-          description={translate(
-            'auto.components.settings.GeneralWorkspaceSettingsSection.externalWorktreesDescription',
-            'Choose whether worktrees created outside Orca appear by default.'
-          )}
-          control={
-            <SettingsSegmentedControl
-              size="sm"
-              value={settings.worktreeVisibilityDefaults?.external ?? 'hide'}
-              ariaLabel={translate(
-                'auto.components.settings.GeneralWorkspaceSettingsSection.externalWorktrees',
-                'External worktrees'
-              )}
-              onChange={(external) => updateSettings({ worktreeVisibilityDefaults: { external } })}
-              options={[
-                {
-                  value: 'show',
-                  disabled: !visibilityDefaultsSupported,
-                  label: translate(
-                    'auto.components.settings.GeneralWorkspaceSettingsSection.show',
-                    'Show'
-                  )
-                },
-                {
-                  value: 'hide',
-                  disabled: !visibilityDefaultsSupported,
-                  label: translate(
-                    'auto.components.settings.GeneralWorkspaceSettingsSection.hide',
-                    'Hide'
-                  )
-                }
-              ]}
-            />
-          }
+        <GlobalWorktreeVisibilitySourcesSetting
+          settings={settings}
+          sourceDefaultsSupported={sourceDefaultsSupported}
+          updateSettings={updateSettingsOrThrow}
         />
       </SearchableSetting>
 

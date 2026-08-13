@@ -1,4 +1,8 @@
 import { normalizeRuntimePathSeparators } from './cross-platform-path'
+import {
+  normalizeCustomWorktreeVisibilitySources,
+  normalizeWorktreeVisibilitySourcePreferences
+} from './worktree-visibility-sources'
 import type { ExternalWorktreeVisibility, Repo, WorktreeVisibilityDefaults } from './types'
 
 export const EXTERNAL_WORKTREE_VISIBILITY_ROLLOUT_AT = Date.UTC(2026, 4, 23)
@@ -78,10 +82,23 @@ export function normalizeWorktreeVisibilityDefaults(
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return undefined
   }
-  const external = (value as { external?: unknown }).external
-  return external === 'show' || external === 'hide'
-    ? { ...(value as WorktreeVisibilityDefaults), external }
-    : undefined
+  const {
+    external,
+    customSources: rawCustomSources,
+    sourcePreferences: rawSourcePreferences,
+    ...futureDefaults
+  } = value as WorktreeVisibilityDefaults & Record<string, unknown>
+  if (external !== 'show' && external !== 'hide') {
+    return undefined
+  }
+  const customSources = normalizeCustomWorktreeVisibilitySources(rawCustomSources)
+  const sourcePreferences = normalizeWorktreeVisibilitySourcePreferences(rawSourcePreferences)
+  return {
+    ...futureDefaults,
+    external,
+    ...(customSources !== undefined ? { customSources } : {}),
+    ...(sourcePreferences !== undefined ? { sourcePreferences } : {})
+  }
 }
 
 export function migrateExternalWorktreeVisibilityDefaults(

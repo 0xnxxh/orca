@@ -22,6 +22,7 @@ import type { TaskProvider } from '../../../../shared/types'
 import { ClientUiWorkspaceFilterFields } from './client-ui-workspace-filter-fields'
 import { TaskResumeState } from './task-resume-state-schema'
 import { omitUndefinedValues, tolerateUnknownValues } from './ui-update-value-tolerance'
+import { WorktreeVisibilityDefaultsUpdate } from './worktree-visibility-defaults-schema'
 
 const NullableString = z.string().nullable()
 const StringArray = z.array(z.string())
@@ -138,10 +139,7 @@ const GitHubProjectSettings = z
 
 export const SettingsUpdate = z
   .object({
-    worktreeVisibilityDefaults: z
-      .object({ external: z.enum(['hide', 'show']).optional() })
-      .strict()
-      .optional(),
+    worktreeVisibilityDefaults: WorktreeVisibilityDefaultsUpdate.optional(),
     defaultTuiAgent: z
       .unknown()
       .transform((value) =>

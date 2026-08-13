@@ -15,9 +15,12 @@ import type {
 } from '../../../../shared/types'
 import {
   createWorktreeVisibilitySourceMatcher,
+  effectiveDefaultBuiltInWorktreeSourceVisibility,
+  effectiveDefaultCustomWorktreeSourceVisibility,
   effectiveBuiltInWorktreeSourceVisibility,
-  effectiveCustomWorktreeSourceVisibility,
   normalizeCustomWorktreeVisibilitySources,
+  normalizeWorktreeVisibilitySourcePreferences,
+  resolveCustomWorktreeVisibilitySources,
   type WorktreeVisibilitySourceMatch
 } from '../../../../shared/worktree-visibility-sources'
 import {
@@ -32,10 +35,14 @@ export type WorktreeVisibilitySourceRow =
   | { kind: 'other' }
 
 type Props = {
-  repo: Repo
-  worktrees: readonly DetectedWorktree[]
+  repo?: Repo
+  worktrees?: readonly DetectedWorktree[]
   visibilityDefaults?: WorktreeVisibilityDefaults
+  customSources?: readonly CustomWorktreeVisibilitySource[]
+  removableSourceIds?: ReadonlySet<string>
+  showCounts?: boolean
   disabled: boolean
+  sourceDefaultsDisabled?: boolean
   onAdd: (rootPath: string) => Promise<WorktreeVisibilitySourceAddResult>
   onRemove: (source: CustomWorktreeVisibilitySource) => Promise<void>
   onToggle: (source: WorktreeVisibilitySourceRow, enabled: boolean) => Promise<void>
@@ -47,6 +54,9 @@ export type WorktreeVisibilitySourceAddResult =
   | 'duplicate-path'
   | 'limit'
   | 'save-failed'
+
+const EMPTY_VISIBILITY_DEFAULTS: WorktreeVisibilityDefaults = {}
+const EMPTY_WORKTREES: readonly DetectedWorktree[] = []
 
 function getSourceLabel(source: WorktreeVisibilitySourceRow): string {
   if (source.kind === 'built-in') {
@@ -80,20 +90,35 @@ function getSourcePath(source: WorktreeVisibilitySourceRow): string {
 }
 
 function isSourceEnabled(
-  repo: Repo,
+  repo: Repo | undefined,
   source: WorktreeVisibilitySourceRow,
-  visibilityDefaults?: WorktreeVisibilityDefaults
+  visibilityDefaults: WorktreeVisibilityDefaults,
+  repoCustomSourceIds: ReadonlySet<string>
 ): boolean {
   if (source.kind === 'built-in') {
-    return effectiveBuiltInWorktreeSourceVisibility(repo, source.id) === 'show'
+    return repo
+      ? effectiveBuiltInWorktreeSourceVisibility(repo, source.id, visibilityDefaults) === 'show'
+      : effectiveDefaultBuiltInWorktreeSourceVisibility(visibilityDefaults, source.id) === 'show'
   }
   if (source.kind === 'custom') {
-    return effectiveCustomWorktreeSourceVisibility(repo, source.source.id) === 'show'
+    const explicit = repo
+      ? normalizeWorktreeVisibilitySourcePreferences(repo.worktreeVisibilitySourcePreferences)
+          ?.custom?.[source.source.id]
+      : undefined
+    return (
+      (explicit ??
+        (repoCustomSourceIds.has(source.source.id)
+          ? 'hide'
+          : effectiveDefaultCustomWorktreeSourceVisibility(
+              visibilityDefaults,
+              source.source.id
+            ))) === 'show'
+    )
   }
   return (
     effectiveExternalWorktreeVisibility(
-      repo,
-      isLegacyRepoForExternalWorktreeVisibility(repo),
+      repo ?? {},
+      repo ? isLegacyRepoForExternalWorktreeVisibility(repo) : false,
       visibilityDefaults
     ) === 'show'
   )
@@ -117,9 +142,13 @@ function getAccessibleSourceLabel(source: WorktreeVisibilitySourceRow, label: st
 
 export default function WorktreeVisibilitySourceList({
   repo,
-  worktrees,
-  visibilityDefaults,
+  worktrees = EMPTY_WORKTREES,
+  visibilityDefaults = EMPTY_VISIBILITY_DEFAULTS,
+  customSources: providedCustomSources,
+  removableSourceIds,
+  showCounts = true,
   disabled,
+  sourceDefaultsDisabled = false,
   onAdd,
   onRemove,
   onToggle
@@ -127,8 +156,23 @@ export default function WorktreeVisibilitySourceList({
   const [rootPath, setRootPath] = useState('')
   const [inputError, setInputError] = useState<string | null>(null)
   const customSources = useMemo(
-    () => normalizeCustomWorktreeVisibilitySources(repo.customWorktreeVisibilitySources) ?? [],
-    [repo.customWorktreeVisibilitySources]
+    () =>
+      normalizeCustomWorktreeVisibilitySources(
+        providedCustomSources ??
+          (repo
+            ? resolveCustomWorktreeVisibilitySources(repo, visibilityDefaults)
+            : visibilityDefaults.customSources)
+      ) ?? [],
+    [providedCustomSources, repo, visibilityDefaults]
+  )
+  const repoCustomSourceIds = useMemo(
+    () =>
+      new Set(
+        normalizeCustomWorktreeVisibilitySources(repo?.customWorktreeVisibilitySources)?.map(
+          (source) => source.id
+        ) ?? []
+      ),
+    [repo?.customWorktreeVisibilitySources]
   )
   const sources = useMemo<WorktreeVisibilitySourceRow[]>(
     () => [
@@ -142,10 +186,10 @@ export default function WorktreeVisibilitySourceList({
   const classify = useMemo(
     () =>
       createWorktreeVisibilitySourceMatcher(
-        [repo.path, ...worktrees.map((worktree) => worktree.path)],
+        [...(repo ? [repo.path] : []), ...worktrees.map((worktree) => worktree.path)],
         customSources
       ),
-    [customSources, repo.path, worktrees]
+    [customSources, repo, worktrees]
   )
   const sourceCounts = useMemo(() => {
     const counts = new Map<string, number>()
@@ -207,6 +251,7 @@ export default function WorktreeVisibilitySourceList({
           const key = sourceRowKey(source)
           const count = sourceCounts.get(key) ?? 0
           const accessibleLabel = getAccessibleSourceLabel(source, label)
+          const sourceDisabled = disabled || (source.kind !== 'other' && sourceDefaultsDisabled)
           return (
             <div
               key={key}
@@ -226,20 +271,23 @@ export default function WorktreeVisibilitySourceList({
               <span className="min-w-0">
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="truncate text-[13px] font-medium">{label}</span>
-                  <span className="shrink-0 text-[11px] text-muted-foreground">
-                    {translate(
-                      'auto.components.sidebar.WorktreeVisibilitySourceList.found',
-                      '{{value0}} found',
-                      { value0: count }
-                    )}
-                  </span>
+                  {showCounts ? (
+                    <span className="shrink-0 text-[11px] text-muted-foreground">
+                      {translate(
+                        'auto.components.sidebar.WorktreeVisibilitySourceList.found',
+                        '{{value0}} found',
+                        { value0: count }
+                      )}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="block truncate font-mono text-[11px] text-muted-foreground">
                   {getSourcePath(source)}
                 </span>
               </span>
               <span className="flex items-center gap-1">
-                {source.kind === 'custom' ? (
+                {source.kind === 'custom' &&
+                (!removableSourceIds || removableSourceIds.has(source.source.id)) ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -247,7 +295,7 @@ export default function WorktreeVisibilitySourceList({
                         variant="ghost"
                         size="icon-xs"
                         className="text-muted-foreground hover:text-destructive"
-                        disabled={disabled}
+                        disabled={sourceDisabled}
                         aria-label={translate(
                           'auto.components.sidebar.WorktreeVisibilitySourceList.remove',
                           'Remove {{value0}}',
@@ -267,8 +315,8 @@ export default function WorktreeVisibilitySourceList({
                   </Tooltip>
                 ) : null}
                 <Switch
-                  checked={isSourceEnabled(repo, source, visibilityDefaults)}
-                  disabled={disabled}
+                  checked={isSourceEnabled(repo, source, visibilityDefaults, repoCustomSourceIds)}
+                  disabled={sourceDisabled}
                   aria-label={translate(
                     'auto.components.sidebar.WorktreeVisibilitySourceList.toggle',
                     'Show current and future worktrees from {{value0}}',
@@ -288,7 +336,7 @@ export default function WorktreeVisibilitySourceList({
           )}
           onSubmit={(event) => void handleAdd(event)}
         >
-          <Label htmlFor="custom-worktree-root">
+          <Label htmlFor="custom-worktree-root" className="text-[13px]">
             {translate(
               'auto.components.sidebar.WorktreeVisibilitySourceList.worktreeRoot',
               'Worktree root'
@@ -301,6 +349,7 @@ export default function WorktreeVisibilitySourceList({
               value={rootPath}
               autoComplete="off"
               spellCheck={false}
+              disabled={disabled || sourceDefaultsDisabled}
               aria-invalid={inputError ? true : undefined}
               aria-describedby="custom-worktree-root-help"
               onChange={(event) => {
@@ -308,7 +357,11 @@ export default function WorktreeVisibilitySourceList({
                 setInputError(null)
               }}
             />
-            <Button type="submit" size="sm" disabled={disabled || !rootPath.trim()}>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={disabled || sourceDefaultsDisabled || !rootPath.trim()}
+            >
               {translate('auto.components.sidebar.WorktreeVisibilitySourceList.add', 'Add')}
             </Button>
           </div>

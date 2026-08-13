@@ -10133,6 +10133,10 @@
           "setupRecipe": "Configura una receta de entorno para tu proveedor de nube.",
           "createWorkspace": "Crea un espacio de trabajo y selecciona esa receta en Ejecutar en.",
           "openSetup": "Configurar recetas de entorno"
+        },
+        "GlobalWorktreeVisibilitySourcesSetting": {
+          "saveFailed": "No se pudieron guardar los valores predeterminados de visibilidad.",
+          "updateServer": "Actualiza este servidor para configurar los valores predeterminados de las fuentes."
         }
       },
       "right": {

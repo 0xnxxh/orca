@@ -494,7 +494,8 @@ describe('purgeStaleRuntimeHostState', () => {
         local: { external: 'hide' },
         [RUNTIME_A]: { external: 'show' }
       },
-      worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: 'env-a'
+      worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: 'env-a',
+      worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId: 'env-a'
     })
 
     store.getState().purgeStaleRuntimeHostState(['env-a'])
@@ -503,5 +504,8 @@ describe('purgeStaleRuntimeHostState', () => {
       local: { external: 'hide' }
     })
     expect(store.getState().worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId).toBeNull()
+    expect(
+      store.getState().worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId
+    ).toBeNull()
   })
 })

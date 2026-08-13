@@ -489,7 +489,7 @@ import {
 import { isAgentScratchRepoRootPath } from '../../shared/agent-scratch-worktrees'
 import {
   createWorktreeVisibilitySourceMatcher,
-  normalizeCustomWorktreeVisibilitySources,
+  resolveCustomWorktreeVisibilitySources,
   type WorktreeVisibilitySourceMatcher
 } from '../../shared/worktree-visibility-sources'
 import {
@@ -3615,11 +3615,7 @@ export class OrcaRuntimeService {
     const before = beforeSettings.agentStatusHooksEnabled !== false
     this.store.updateSettings(updates, { notifyListeners: true })
     const settings = this.store.getSettings()
-    if (
-      updates.worktreeVisibilityDefaults !== undefined &&
-      beforeSettings.worktreeVisibilityDefaults?.external !==
-        settings.worktreeVisibilityDefaults?.external
-    ) {
+    if (updates.worktreeVisibilityDefaults !== undefined) {
       this.notifyReposChanged()
     }
     if (
@@ -21015,15 +21011,19 @@ export class OrcaRuntimeService {
     }
     const resolved = await this.listResolvedWorktrees()
     const repoId = repoSelector ? (await this.resolveRepoSelector(repoSelector)).id : null
-    const visibilitySourceMatchersByRepoId =
-      this.buildRuntimeVisibilitySourceMatchersByRepoId(resolved)
+    const settings = this.store?.getSettings()
+    const visibilitySourceMatchersByRepoId = this.buildRuntimeVisibilitySourceMatchersByRepoId(
+      resolved,
+      settings?.worktreeVisibilityDefaults
+    )
     const worktrees = resolved.filter((worktree) => {
       if (repoId && worktree.repoId !== repoId) {
         return false
       }
       return this.isRuntimeWorktreeVisible(
         worktree,
-        visibilitySourceMatchersByRepoId.get(worktree.repoId)
+        visibilitySourceMatchersByRepoId.get(worktree.repoId),
+        settings
       )
     })
     return {
@@ -21046,14 +21046,16 @@ export class OrcaRuntimeService {
     repo: Repo
   ): Promise<DetectedWorktreeListResult> {
     const store = this.requireStore()
+    const settings = store.getSettings()
+    const visibilityDefaults = settings.worktreeVisibilityDefaults
     if (isFolderRepo(repo)) {
       const worktrees = listRuntimeFolderWorkspaces(store, repo)
       const matcher = createWorktreeVisibilitySourceMatcher(
         [repo.path, ...worktrees.map((worktree) => worktree.path)],
-        normalizeCustomWorktreeVisibilitySources(repo.customWorktreeVisibilitySources) ?? []
+        resolveCustomWorktreeVisibilitySources(repo, visibilityDefaults)
       )
       const detected = worktrees.map((worktree) =>
-        this.toRuntimeDetectedWorktree(repo, worktree, matcher)
+        this.toRuntimeDetectedWorktree(repo, worktree, matcher, settings)
       )
       return {
         repoId: repo.id,
@@ -21073,7 +21075,7 @@ export class OrcaRuntimeService {
     }
     const worktreeVisibilitySourceMatcher = createWorktreeVisibilitySourceMatcher(
       [repo.path, ...scan.worktrees.map((worktree) => worktree.path)],
-      normalizeCustomWorktreeVisibilitySources(repo.customWorktreeVisibilitySources) ?? []
+      resolveCustomWorktreeVisibilitySources(repo, visibilityDefaults)
     )
     const detected = scan.worktrees.map((gitWorktree) => {
       const worktreeId = `${repo.id}::${gitWorktree.path}`
@@ -21085,7 +21087,8 @@ export class OrcaRuntimeService {
       const detectedWorktree = this.toRuntimeDetectedWorktree(
         repo,
         worktree,
-        worktreeVisibilitySourceMatcher
+        worktreeVisibilitySourceMatcher,
+        settings
       )
       if (scan.ok) {
         return detectedWorktree
@@ -21152,17 +21155,20 @@ export class OrcaRuntimeService {
 
   private isRuntimeWorktreeVisible(
     worktree: Worktree,
-    worktreeVisibilitySourceMatcher?: WorktreeVisibilitySourceMatcher
+    worktreeVisibilitySourceMatcher?: WorktreeVisibilitySourceMatcher,
+    settings?: ReturnType<RuntimeStore['getSettings']>
   ): boolean {
     const repo = this.store?.getRepo(worktree.repoId)
     if (!repo || !this.store) {
       return true
     }
-    return this.toRuntimeDetectedWorktree(repo, worktree, worktreeVisibilitySourceMatcher).visible
+    return this.toRuntimeDetectedWorktree(repo, worktree, worktreeVisibilitySourceMatcher, settings)
+      .visible
   }
 
   private buildRuntimeVisibilitySourceMatchersByRepoId(
-    worktrees: readonly Worktree[]
+    worktrees: readonly Worktree[],
+    visibilityDefaults?: GlobalSettings['worktreeVisibilityDefaults']
   ): Map<string, WorktreeVisibilitySourceMatcher> {
     const checkoutPathsByRepoId = new Map<string, string[]>()
     for (const worktree of worktrees) {
@@ -21177,7 +21183,7 @@ export class OrcaRuntimeService {
           repo.id,
           createWorktreeVisibilitySourceMatcher(
             [repo.path, ...(checkoutPathsByRepoId.get(repo.id) ?? [])],
-            normalizeCustomWorktreeVisibilitySources(repo.customWorktreeVisibilitySources) ?? []
+            resolveCustomWorktreeVisibilitySources(repo, visibilityDefaults)
           )
         ])
     )
@@ -21186,9 +21192,10 @@ export class OrcaRuntimeService {
   private toRuntimeDetectedWorktree(
     repo: Repo,
     worktree: Worktree,
-    worktreeVisibilitySourceMatcher?: WorktreeVisibilitySourceMatcher
+    worktreeVisibilitySourceMatcher?: WorktreeVisibilitySourceMatcher,
+    providedSettings?: ReturnType<RuntimeStore['getSettings']>
   ): DetectedWorktree {
-    const settings = this.store?.getSettings()
+    const settings = providedSettings ?? this.store?.getSettings()
     if (!settings) {
       return {
         ...worktree,

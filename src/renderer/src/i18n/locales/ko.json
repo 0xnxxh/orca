@@ -10133,6 +10133,10 @@
           "setupRecipe": "클라우드 공급자를 위한 환경 레시피를 설정하세요.",
           "createWorkspace": "워크스페이스를 만들고 실행 위치에서 해당 레시피를 선택하세요.",
           "openSetup": "환경 레시피 설정"
+        },
+        "GlobalWorktreeVisibilitySourcesSetting": {
+          "saveFailed": "가시성 기본값을 저장할 수 없습니다.",
+          "updateServer": "소스 기본값을 구성하려면 이 서버를 업데이트하세요."
         }
       },
       "right": {

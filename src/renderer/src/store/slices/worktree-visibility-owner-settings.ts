@@ -1,10 +1,16 @@
-import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
+import {
+  callRuntimeRpc,
+  getActiveRuntimeTarget,
+  runtimeEnvironmentSupportsCapability
+} from '@/runtime/runtime-rpc-client'
 import {
   LOCAL_EXECUTION_HOST_ID,
   toRuntimeExecutionHostId,
   type ExecutionHostId
 } from '../../../../shared/execution-host'
 import type { GlobalSettings, WorktreeVisibilityDefaults } from '../../../../shared/types'
+import { normalizeWorktreeVisibilityDefaults } from '../../../../shared/external-worktree-visibility'
+import { WORKTREE_VISIBILITY_SOURCE_DEFAULTS_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
 
 export type WorktreeVisibilityDefaultsByHost = Partial<
   Record<ExecutionHostId, WorktreeVisibilityDefaults | null>
@@ -20,8 +26,7 @@ export async function readRuntimeWorktreeVisibilityDefaults(
       undefined,
       { timeoutMs: 15_000, reuseRecentCompatibilityFailure: true }
     )
-    const external = result.settings.worktreeVisibilityDefaults?.external
-    return external === 'hide' || external === 'show' ? { external } : null
+    return normalizeWorktreeVisibilityDefaults(result.settings.worktreeVisibilityDefaults) ?? null
   } catch {
     return undefined
   }
@@ -34,12 +39,14 @@ export async function hydrateOwnerWorktreeVisibilityDefaults(
   settings: GlobalSettings
   defaultsByHost: WorktreeVisibilityDefaultsByHost
   supportedRuntimeEnvironmentId: string | null
+  sourceDefaultsSupportedRuntimeEnvironmentId: string | null
 }> {
   const target = getActiveRuntimeTarget(settings)
   if (target.kind !== 'environment') {
     return {
       settings,
       supportedRuntimeEnvironmentId: null,
+      sourceDefaultsSupportedRuntimeEnvironmentId: null,
       defaultsByHost: {
         ...defaultsByHost,
         [LOCAL_EXECUTION_HOST_ID]: settings.worktreeVisibilityDefaults ?? { external: 'hide' }
@@ -53,11 +60,21 @@ export async function hydrateOwnerWorktreeVisibilityDefaults(
     ? { ...defaultsByHost, [LOCAL_EXECUTION_HOST_ID]: localDefaults }
     : defaultsByHost
   const defaults = await readRuntimeWorktreeVisibilityDefaults(target.environmentId)
+  const sourceDefaultsSupported =
+    defaults !== undefined &&
+    (await runtimeEnvironmentSupportsCapability(
+      target.environmentId,
+      WORKTREE_VISIBILITY_SOURCE_DEFAULTS_RUNTIME_CAPABILITY,
+      15_000
+    ).catch(() => false))
   if (defaults) {
     return {
       settings: { ...settings, worktreeVisibilityDefaults: defaults },
       defaultsByHost: { ...ownerDefaultsByHost, [hostId]: defaults },
-      supportedRuntimeEnvironmentId: target.environmentId
+      supportedRuntimeEnvironmentId: target.environmentId,
+      sourceDefaultsSupportedRuntimeEnvironmentId: sourceDefaultsSupported
+        ? target.environmentId
+        : null
     }
   }
   if (defaults === undefined) {
@@ -66,20 +83,25 @@ export async function hydrateOwnerWorktreeVisibilityDefaults(
       return {
         settings: { ...settings, worktreeVisibilityDefaults: cached },
         defaultsByHost: ownerDefaultsByHost,
-        supportedRuntimeEnvironmentId: target.environmentId
+        supportedRuntimeEnvironmentId: target.environmentId,
+        sourceDefaultsSupportedRuntimeEnvironmentId: sourceDefaultsSupported
+          ? target.environmentId
+          : null
       }
     }
     const { worktreeVisibilityDefaults: _unavailable, ...settingsWithoutDefaults } = settings
     return {
       settings: settingsWithoutDefaults as GlobalSettings,
       defaultsByHost: ownerDefaultsByHost,
-      supportedRuntimeEnvironmentId: null
+      supportedRuntimeEnvironmentId: null,
+      sourceDefaultsSupportedRuntimeEnvironmentId: null
     }
   }
   const { worktreeVisibilityDefaults: _unsupported, ...settingsWithoutDefaults } = settings
   return {
     settings: settingsWithoutDefaults as GlobalSettings,
     defaultsByHost: { ...ownerDefaultsByHost, [hostId]: null },
-    supportedRuntimeEnvironmentId: null
+    supportedRuntimeEnvironmentId: null,
+    sourceDefaultsSupportedRuntimeEnvironmentId: null
   }
 }

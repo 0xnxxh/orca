@@ -57,5 +57,6 @@ describe('runtime worktree visibility defaults', () => {
 
     expect(hydrated.settings.worktreeVisibilityDefaults).toEqual({ external: 'show' })
     expect(hydrated.supportedRuntimeEnvironmentId).toBe('env-1')
+    expect(hydrated.sourceDefaultsSupportedRuntimeEnvironmentId).toBeNull()
   })
 })

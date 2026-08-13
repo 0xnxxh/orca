@@ -92,3 +92,28 @@ it('does not restore a stale owner after its visibility write resolves', async (
   expect(state.settings?.activeRuntimeEnvironmentId).toBe('env-b')
   expect(state.worktreeVisibilityDefaultsByHost['runtime:env-a']).toEqual({ external: 'show' })
 })
+
+it('rejects source-default writes before contacting an older runtime host', async () => {
+  const runtimeCall = vi.fn()
+  vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+  const currentSettings = {
+    activeRuntimeEnvironmentId: 'env-a',
+    worktreeVisibilityDefaults: { external: 'hide' }
+  } as GlobalSettings
+
+  await expect(
+    persistVisibilityAwareSettings({
+      normalizedUpdates: {
+        worktreeVisibilityDefaults: {
+          external: 'hide',
+          customSources: [{ id: 'team', rootPath: '/srv/team' }]
+        }
+      },
+      currentSettings,
+      supportedRuntimeEnvironmentId: 'env-a',
+      sourceDefaultsSupportedRuntimeEnvironmentId: null,
+      set: vi.fn()
+    })
+  ).rejects.toThrow('Update this server to configure source defaults.')
+  expect(runtimeCall).not.toHaveBeenCalled()
+})
