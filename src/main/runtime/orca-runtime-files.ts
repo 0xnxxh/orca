@@ -184,6 +184,7 @@ type TerminalFileGrant = {
   clientId?: string
   expiresAt: number
   statIdentity: string | null
+  readOnly: boolean
   expiryTimer?: ReturnType<typeof setTimeout>
 }
 
@@ -758,9 +759,9 @@ export class RuntimeFileCommands {
       isDirectory: false
     }
 
-    // Why: remote home is unknown (only local os.homedir), so a tapped ~/… on a remote worktree is not-openable, not guessed.
+    // Why: SSH/WSL homes are unknown here; native-chat grants must not expand their ~/… paths against the local host home.
     const isTilde = pathText.startsWith('~/') || pathText.startsWith('~\\')
-    if (isTilde && connectionId) {
+    if (isTilde && (connectionId || (nativeChatContext && parseWslPath(worktree.path)))) {
       return empty
     }
     const expanded = isTilde ? resolveRuntimePath(homedir(), pathText.slice(2)) : pathText
@@ -824,7 +825,8 @@ export class RuntimeFileCommands {
           worktreeId: worktree.id,
           artifactPath,
           connectionId,
-          clientId
+          clientId,
+          readOnly: true
         })
       }
 
@@ -930,6 +932,7 @@ export class RuntimeFileCommands {
     rejectedAbsolutePath?: string
     connectionId?: string
     clientId?: string
+    readOnly?: boolean
   }): Promise<RuntimeTerminalPathResolution> {
     const stats = args.connectionId
       ? await this.statRemoteTerminalPath(args.artifactPath, args.connectionId)
@@ -952,6 +955,7 @@ export class RuntimeFileCommands {
           provider: args.connectionId ? 'ssh' : 'local',
           connectionId: args.connectionId,
           clientId: args.clientId,
+          readOnly: args.readOnly === true,
           stats
         })
     return {
@@ -965,7 +969,8 @@ export class RuntimeFileCommands {
             kind: 'absolute-file',
             provider: grant.provider,
             absolutePath: args.artifactPath,
-            grantId: grant.id
+            grantId: grant.id,
+            ...(grant.readOnly ? { readOnly: true } : {})
           }
         : undefined
     }
@@ -1015,6 +1020,7 @@ export class RuntimeFileCommands {
     provider: 'local' | 'ssh'
     connectionId?: string
     clientId?: string
+    readOnly?: boolean
     stats: RuntimeFileStatLike
   }): TerminalFileGrant {
     assertTerminalArtifactNotHardLinked(args.stats)
@@ -1026,7 +1032,8 @@ export class RuntimeFileCommands {
       ...(args.connectionId ? { connectionId: args.connectionId } : {}),
       ...(args.clientId ? { clientId: args.clientId } : {}),
       expiresAt: Date.now() + TERMINAL_FILE_GRANT_TTL_MS,
-      statIdentity: terminalFileStatIdentity(args.stats)
+      statIdentity: terminalFileStatIdentity(args.stats),
+      readOnly: args.readOnly === true
     }
     this.terminalFileGrants.set(grant.id, grant)
     this.scheduleTerminalFileGrantExpiry(grant)
@@ -1191,6 +1198,9 @@ export class RuntimeFileCommands {
       absolutePath,
       clientId
     )
+    if (grant.readOnly) {
+      throw new Error('terminal_file_grant_read_only')
+    }
     if (isMobileBinaryPath(grant.absolutePath)) {
       throw new Error('binary_file')
     }

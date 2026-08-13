@@ -25,4 +25,22 @@ describe('mobile-file-preview-source', () => {
       sourceKeyForPreview({ source: 'worktree', worktreeId: 'wt:1', relativePath: 'a:b.ts' })
     ).toBe(JSON.stringify(['worktree', 'wt:1', 'a:b.ts']))
   })
+
+  it('separates read-only chat grants from writable terminal grants', () => {
+    const writable = sourceKeyForPreview({
+      source: 'terminalArtifact',
+      worktreeId: 'wt-1',
+      absolutePath: '/tmp/result.html',
+      grantId: 'grant-1'
+    })
+    const readOnly = sourceKeyForPreview({
+      source: 'terminalArtifact',
+      worktreeId: 'wt-1',
+      absolutePath: '/tmp/result.html',
+      grantId: 'grant-2',
+      readOnly: true
+    })
+
+    expect(readOnly).not.toBe(writable)
+  })
 })

@@ -14,6 +14,7 @@ export type MobileTerminalArtifactPreviewSource = {
   pathText?: string
   cwd?: string
   nativeChatContext?: RuntimeNativeChatFileContext
+  readOnly?: true
 }
 
 export type TerminalArtifactRetryOptions = {
@@ -55,7 +56,8 @@ export async function refreshTerminalArtifactSourceAfterGrantFailure(
     ...(source.terminalHandle ? { terminalHandle: source.terminalHandle } : {}),
     ...(source.pathText ? { pathText: source.pathText } : {}),
     ...(source.cwd ? { cwd: source.cwd } : {}),
-    ...(source.nativeChatContext ? { nativeChatContext: source.nativeChatContext } : {})
+    ...(source.nativeChatContext ? { nativeChatContext: source.nativeChatContext } : {}),
+    ...(source.readOnly || result.openTarget.readOnly === true ? { readOnly: true as const } : {})
   }
 }
 
@@ -72,7 +74,7 @@ function isTerminalArtifactGrantFailure(
 function isTerminalArtifactResolution(result: unknown): result is {
   exists: true
   isDirectory: false
-  openTarget: { kind: 'absolute-file'; absolutePath: string; grantId: string }
+  openTarget: { kind: 'absolute-file'; absolutePath: string; grantId: string; readOnly?: true }
 } {
   if (!result || typeof result !== 'object') {
     return false

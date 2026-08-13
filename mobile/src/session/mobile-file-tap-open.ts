@@ -125,6 +125,7 @@ async function openMobileFileTapAsync<T extends FileTapSessionTab>(
               nativeChatSession: options.nativeChatContext.sessionId
             }
           : {}),
+        ...(resolved.openTarget.readOnly ? { readOnly: 'true' } : {}),
         name: displayNameFromPath(resolved.openTarget.absolutePath),
         ...(options.line !== null ? { line: String(options.line) } : {}),
         ...(options.column !== null ? { column: String(options.column) } : {}),

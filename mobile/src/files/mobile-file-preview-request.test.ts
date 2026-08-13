@@ -188,26 +188,36 @@ describe('mobile-file-preview-request', () => {
         openTarget: {
           kind: 'absolute-file',
           absolutePath: '/Users/ada/orca-plans/result.html',
-          grantId: 'grant-2'
+          grantId: 'grant-2',
+          readOnly: true
         }
       }),
       ok({ content: '<h1>Result</h1>', truncated: false, byteLength: 15 })
     ])
 
-    await loadMobileFilePreview(client, {
-      source: 'terminalArtifact',
-      worktreeId: 'wt-1',
-      absolutePath: '/Users/ada/orca-plans/result.html',
-      grantId: 'grant-1',
-      pathText: '~/orca-plans/result.html',
-      nativeChatContext: { tabId: 'tab-1', sessionId: 'session-1' }
-    })
+    const onTerminalArtifactSourceRefreshed = vi.fn()
+    await loadMobileFilePreview(
+      client,
+      {
+        source: 'terminalArtifact',
+        worktreeId: 'wt-1',
+        absolutePath: '/Users/ada/orca-plans/result.html',
+        grantId: 'grant-1',
+        pathText: '~/orca-plans/result.html',
+        nativeChatContext: { tabId: 'tab-1', sessionId: 'session-1' }
+      },
+      undefined,
+      { onTerminalArtifactSourceRefreshed }
+    )
 
     expect(client.sendRequest).toHaveBeenNthCalledWith(2, 'files.resolveTerminalPath', {
       worktree: 'id:wt-1',
       pathText: '~/orca-plans/result.html',
       nativeChatContext: { tabId: 'tab-1', sessionId: 'session-1' }
     })
+    expect(onTerminalArtifactSourceRefreshed).toHaveBeenCalledWith(
+      expect.objectContaining({ grantId: 'grant-2', readOnly: true })
+    )
   })
 
   it.each([
@@ -271,6 +281,25 @@ describe('mobile-file-preview-request', () => {
       grantId: 'grant-1',
       content: '{"ok":false}'
     })
+  })
+
+  it('does not send writes for read-only native-chat artifacts', async () => {
+    const client = clientWith(ok({ ok: true }))
+
+    await expect(
+      saveMobileTerminalArtifactPreview(
+        client,
+        {
+          source: 'terminalArtifact',
+          worktreeId: 'wt-1',
+          absolutePath: '/Users/ada/orca-plans/result.html',
+          grantId: 'grant-1',
+          readOnly: true
+        },
+        '<h1>Changed</h1>'
+      )
+    ).resolves.toMatchObject({ status: 'error' })
+    expect(client.sendRequest).not.toHaveBeenCalled()
   })
 
   it('does not refresh and retry a failed terminal artifact save without a base content check', async () => {

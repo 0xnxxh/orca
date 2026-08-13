@@ -15,6 +15,7 @@ export default function MobileFilePreviewRoute() {
     cwd?: string | string[]
     nativeChatTab?: string | string[]
     nativeChatSession?: string | string[]
+    readOnly?: string | string[]
     line?: string | string[]
     column?: string | string[]
     name?: string | string[]
