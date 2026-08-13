@@ -16,7 +16,7 @@ function openGlobalWorktreeVisibilitySettings(): void {
   store.openSettingsPage()
 }
 
-export function WorktreeVisibilityGlobalSettingsLink(): React.JSX.Element {
+function GlobalSettingsButton(): React.JSX.Element {
   return (
     <Button
       type="button"
@@ -31,5 +31,27 @@ export function WorktreeVisibilityGlobalSettingsLink(): React.JSX.Element {
         'Manage in Global Settings'
       )}
     </Button>
+  )
+}
+
+export function WorktreeVisibilityGlobalSettingsLink({
+  hasGloballyShownSource
+}: {
+  hasGloballyShownSource: boolean
+}): React.JSX.Element {
+  if (!hasGloballyShownSource) {
+    return <GlobalSettingsButton />
+  }
+
+  return (
+    <div className="grid gap-1 rounded-lg border border-border bg-muted/30 px-2.5 py-2">
+      <p className="text-xs text-muted-foreground">
+        {translate(
+          'auto.components.sidebar.WorktreeVisibilityDialog.globalSettingsApply',
+          'Sources enabled in Global Settings also apply to this project.'
+        )}
+      </p>
+      <GlobalSettingsButton />
+    </div>
   )
 }

@@ -57,6 +57,7 @@ import {
 import { WorktreeVisibilityGlobalSettingsLink } from './WorktreeVisibilityGlobalSettingsLink'
 import { WorktreeVisibilityScanStatus } from './WorktreeVisibilityScanStatus'
 import { createWorktreeVisibilityUseGlobalMutation } from './worktree-visibility-use-global'
+import { hasGloballyShownWorktreeVisibilitySource } from './worktree-visibility-source-provenance'
 
 export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const activeModal = useAppStore((s) => s.activeModal)
@@ -91,6 +92,10 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const effectivelyToggling = isToggling || activeMutation?.kind === 'toggle'
   const visibilityDefaults = useRepoOwnerVisibilityDefaults(repo)
   const removableSourceIds = useMemo(() => getRepoCustomWorktreeVisibilitySourceIds(repo), [repo])
+  const hasGloballyShownSource = useMemo(
+    () => (repo ? hasGloballyShownWorktreeVisibilitySource(repo, visibilityDefaults) : false),
+    [repo, visibilityDefaults]
+  )
 
   useLayoutEffect(() => {
     currentMutationScopeRef.current = mutationScope
@@ -388,7 +393,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           onUseDefault={handleUseDefault}
         />
 
-        <WorktreeVisibilityGlobalSettingsLink />
+        <WorktreeVisibilityGlobalSettingsLink hasGloballyShownSource={hasGloballyShownSource} />
 
         <WorktreeVisibilityScanStatus
           state={listState}

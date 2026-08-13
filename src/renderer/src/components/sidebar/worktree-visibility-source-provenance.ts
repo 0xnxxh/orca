@@ -5,6 +5,7 @@ import type { Repo, WorktreeVisibilityDefaults } from '../../../../shared/types'
 import {
   effectiveDefaultBuiltInWorktreeSourceVisibility,
   effectiveDefaultCustomWorktreeSourceVisibility,
+  normalizeCustomWorktreeVisibilitySources,
   normalizeWorktreeVisibilitySourcePreferences
 } from '../../../../shared/worktree-visibility-sources'
 import type { WorktreeVisibilitySourceRow } from './WorktreeVisibilitySourceList'
@@ -12,6 +13,37 @@ import type { WorktreeVisibilitySourceRow } from './WorktreeVisibilitySourceList
 type SourceProvenance = {
   kind: 'global' | 'project-override' | 'project-source'
   globalEnabled?: boolean
+}
+
+export function hasGloballyShownWorktreeVisibilitySource(
+  repo: Repo,
+  visibilityDefaults: WorktreeVisibilityDefaults | undefined
+): boolean {
+  const defaults = visibilityDefaults ?? {}
+  const repoCustomSourceIds = new Set(
+    normalizeCustomWorktreeVisibilitySources(repo.customWorktreeVisibilitySources)?.map(
+      (source) => source.id
+    ) ?? []
+  )
+  const sources: WorktreeVisibilitySourceRow[] = [
+    { kind: 'built-in', id: 'claude' },
+    { kind: 'built-in', id: 'gsd' },
+    ...(normalizeCustomWorktreeVisibilitySources(defaults.customSources) ?? []).map((source) => ({
+      kind: 'custom' as const,
+      source
+    })),
+    { kind: 'other' }
+  ]
+
+  return sources.some((source) => {
+    const provenance = getWorktreeVisibilitySourceProvenance(
+      repo,
+      source,
+      defaults,
+      repoCustomSourceIds
+    )
+    return provenance?.kind === 'global' && provenance.globalEnabled === true
+  })
 }
 
 export function getWorktreeVisibilitySourceProvenance(

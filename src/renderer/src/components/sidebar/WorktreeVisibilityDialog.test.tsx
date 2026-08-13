@@ -634,6 +634,21 @@ describe('WorktreeVisibilityDialog', () => {
     expect(sourceRow('GSD').textContent).toContain('Using global: Hidden')
     expect(sourceRow('Other locations').textContent).toContain('Using global: Hidden')
     expect(document.querySelector('button[aria-label^="Use global for"]')).toBeNull()
+    expect(document.body.textContent).toContain(
+      'Sources enabled in Global Settings also apply to this project.'
+    )
+  })
+
+  it('does not show the global impact notice when inherited sources are hidden', async () => {
+    mocks.state.repos = [makeRepo({ externalWorktreeVisibility: undefined })]
+    mocks.state.settings = { worktreeVisibilityDefaults: { external: 'hide' } }
+
+    await renderDialog()
+
+    expect(document.body.textContent).not.toContain(
+      'Sources enabled in Global Settings also apply to this project.'
+    )
+    expect(buttonWithText('Manage in Global Settings')).not.toBeNull()
   })
 
   it('labels project overrides and resets a built-in source to global inheritance', async () => {
