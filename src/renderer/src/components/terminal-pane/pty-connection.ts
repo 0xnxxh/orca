@@ -5804,6 +5804,11 @@ export function connectPanePty(
               reportRemoteRendererSerializerReady()
             }
           },
+          onStreamRecovered: (): void => {
+            if (isCurrent()) {
+              markHiddenOutputRestoreNeeded()
+            }
+          },
           onData: (data: string, meta?: PtyDataMeta): void => {
             if (isCurrent()) {
               dataCallback(data, meta, generation)
