@@ -286,6 +286,11 @@ describe('parseEphemeralVmRecipeResult', () => {
       '{"pairingCode":"[redacted]","token":"[redacted]","identityFile":"[redacted]","proxyCommand":"[redacted]","ok":true}'
     )
     expect(
+      redactEphemeralVmRecipeDiagnosticText(
+        'clone https://recipe-user:recipe-token@git.example.com/team/repo.git'
+      )
+    ).toBe('clone https://git.example.com/team/repo.git')
+    expect(
       redactEphemeralVmRecipeResultForDiagnostics({
         schemaVersion: 1,
         pairingCode,
