@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project, Repo } from '../../../../shared/types'
+import { getSetupScriptPromptDismissalKey } from '../../lib/setup-script-prompt'
+import { getRepoHostIdentityForParts } from './repo-host-identity'
 import { createTestStore } from './store-test-helpers'
 
 // Why: every field here is load-bearing. A scalar-only repo reconciles even when the structural
@@ -279,5 +281,23 @@ describe('repo filter identity across catalog refreshes', () => {
     await store.getState().fetchRepos()
 
     expect(store.getState().filterRepoIds).toBe(first)
+  })
+})
+
+describe('setup-script dismissal identity across catalog refreshes', () => {
+  it('keeps the dismissal array when a refetch prunes nothing', async () => {
+    const store = createTestStore()
+    store.setState({
+      setupScriptPromptDismissedRepoIds: [
+        getSetupScriptPromptDismissalKey(getRepoHostIdentityForParts(repo.id, 'local'))
+      ]
+    })
+    const first = store.getState().setupScriptPromptDismissedRepoIds
+
+    await store.getState().fetchRepos()
+
+    // Why: SetupScriptPromptCard Object.is-subscribes to this array. A no-op
+    // catalog refresh must not allocate just because the helper rebuilt next.
+    expect(store.getState().setupScriptPromptDismissedRepoIds).toBe(first)
   })
 })
