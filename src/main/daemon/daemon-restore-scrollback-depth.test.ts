@@ -335,6 +335,34 @@ describe('STA-4091 previously recoverable restore depth', () => {
       expect(reattach.snapshot).toContain(OLDEST_WRITTEN_LINE)
     })
 
+    it('preserves durable depth across an adapter reconnect', async () => {
+      const { id } = await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'adapter-reconnect-depth',
+        cwd: '/tmp'
+      })
+      lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+
+      await adapter.disconnectOnly()
+      adapter = new DaemonPtyAdapter({
+        socketPath: getDaemonSocketPath(dir),
+        tokenPath: join(dir, 'test.token'),
+        historyPath: historyDir
+      })
+
+      const reattach = await adapter.spawn({ cols: 80, rows: 24, sessionId: id, cwd: '/tmp' })
+      expect(reattach.isReattach).toBe(true)
+      expect(reattach.snapshot).toContain(NEWEST_WRITTEN_LINE)
+      expect(reattach.snapshot).toContain(PREVIOUSLY_RECOVERABLE_LINE)
+      expect(reattach.snapshot).toContain(OLDEST_WRITTEN_LINE)
+
+      const restore = await new HistoryReader(historyDir).detectColdRestore(id, {
+        ignoreCleanEnd: true
+      })
+      expect(snapshotText(restore ?? {})).toContain(OLDEST_WRITTEN_LINE)
+    })
+
     it('falls back to the live window when durable history cannot be read', async () => {
       const { id } = await adapter.spawn({
         cols: 80,
@@ -377,56 +405,129 @@ describe('STA-4091 previously recoverable restore depth', () => {
       expect(snapshotText(restore ?? {})).toContain(FRESH_AFTER_CHECKPOINT)
     })
 
-    it.each(['retryable', 'unavailable'] as const)(
-      'returns the current live snapshot when a durable checkpoint is %s',
-      async (checkpointResult) => {
-        const { id } = await adapter.spawn({
-          cols: 80,
-          rows: 24,
-          sessionId: `checkpoint-${checkpointResult}`,
-          cwd: '/tmp'
-        })
-        lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
-        await adapter.getBufferSnapshot(id)
-        lastSubprocess.emitData(`${FRESH_AFTER_CHECKPOINT}\r\n`)
+    it('reanchors after a retryable durable checkpoint', async () => {
+      const { id } = await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'checkpoint-retryable',
+        cwd: '/tmp'
+      })
+      lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+      await adapter.getBufferSnapshot(id)
+      lastSubprocess.emitData(`${FRESH_AFTER_CHECKPOINT}\r\n`)
 
-        const internals = adapter as unknown as {
-          historyManager: HistoryManager
-          sessionsNeedingLiveCheckpoint: Set<string>
-        }
-        const checkpoint = vi
-          .spyOn(internals.historyManager, 'checkpoint')
-          .mockResolvedValueOnce(checkpointResult)
-
-        const snapshot = await adapter.getBufferSnapshot(id)
-        const text = `${snapshot?.scrollbackAnsi ?? ''}${snapshot?.data ?? ''}`
-        expect(text).toContain(FRESH_AFTER_CHECKPOINT)
-        expect(internals.sessionsNeedingLiveCheckpoint.has(id)).toBe(true)
-
-        const recovered = await adapter.getBufferSnapshot(id)
-        expect(`${recovered?.scrollbackAnsi ?? ''}${recovered?.data ?? ''}`).toContain(
-          FRESH_AFTER_CHECKPOINT
-        )
-        const restore = await new HistoryReader(historyDir).detectColdRestore(id, {
-          ignoreCleanEnd: true
-        })
-        expect(snapshotText(restore ?? {})).toContain(FRESH_AFTER_CHECKPOINT)
-        expect(checkpoint.mock.calls.at(-1)?.[1].scrollbackLines).toBe(
-          DAEMON_SESSION_SCROLLBACK_ROWS
-        )
-        expect(internals.sessionsNeedingLiveCheckpoint.has(id)).toBe(false)
-
-        checkpoint.mockResolvedValueOnce(checkpointResult)
-        const reattach = await adapter.spawn({
-          cols: 80,
-          rows: 24,
-          sessionId: id,
-          cwd: '/tmp'
-        })
-        expect(reattach.isReattach).toBe(true)
-        expect(reattach.snapshot).toContain(FRESH_AFTER_CHECKPOINT)
+      const internals = adapter as unknown as {
+        historyManager: HistoryManager
+        sessionsNeedingLiveCheckpoint: Set<string>
       }
-    )
+      const checkpoint = vi
+        .spyOn(internals.historyManager, 'checkpoint')
+        .mockResolvedValueOnce('retryable')
+
+      const snapshot = await adapter.getBufferSnapshot(id)
+      const text = `${snapshot?.scrollbackAnsi ?? ''}${snapshot?.data ?? ''}`
+      expect(text).toContain(FRESH_AFTER_CHECKPOINT)
+      expect(internals.sessionsNeedingLiveCheckpoint.has(id)).toBe(true)
+
+      const recovered = await adapter.getBufferSnapshot(id)
+      expect(`${recovered?.scrollbackAnsi ?? ''}${recovered?.data ?? ''}`).toContain(
+        FRESH_AFTER_CHECKPOINT
+      )
+      const restore = await new HistoryReader(historyDir).detectColdRestore(id, {
+        ignoreCleanEnd: true
+      })
+      expect(snapshotText(restore ?? {})).toContain(FRESH_AFTER_CHECKPOINT)
+      expect(checkpoint.mock.calls.at(-1)?.[1].scrollbackLines).toBe(DAEMON_SESSION_SCROLLBACK_ROWS)
+      expect(internals.sessionsNeedingLiveCheckpoint.has(id)).toBe(false)
+
+      checkpoint.mockResolvedValueOnce('retryable')
+      const reattach = await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: id,
+        cwd: '/tmp'
+      })
+      expect(reattach.isReattach).toBe(true)
+      expect(reattach.snapshot).toContain(FRESH_AFTER_CHECKPOINT)
+    })
+
+    it('stops retrying when durable history is unavailable', async () => {
+      const { id } = await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'checkpoint-unavailable',
+        cwd: '/tmp'
+      })
+      lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+      await adapter.getBufferSnapshot(id)
+      lastSubprocess.emitData(`${FRESH_AFTER_CHECKPOINT}\r\n`)
+
+      const internals = adapter as unknown as {
+        client: { request: (method: string, params?: unknown) => Promise<unknown> }
+        historyManager: HistoryManager
+        sessionsNeedingFullCheckpoint: Set<string>
+        sessionsNeedingLiveCheckpoint: Set<string>
+        checkpointDirtySessions: () => Promise<void>
+      }
+      const requests = vi.spyOn(internals.client, 'request')
+      const checkpoint = vi
+        .spyOn(internals.historyManager, 'checkpoint')
+        .mockResolvedValue('unavailable')
+
+      const snapshot = await adapter.getBufferSnapshot(id)
+      expect(`${snapshot?.scrollbackAnsi ?? ''}${snapshot?.data ?? ''}`).toContain(
+        FRESH_AFTER_CHECKPOINT
+      )
+      expect(internals.sessionsNeedingFullCheckpoint.has(id)).toBe(false)
+      expect(internals.sessionsNeedingLiveCheckpoint.has(id)).toBe(false)
+
+      await internals.checkpointDirtySessions()
+      await internals.checkpointDirtySessions()
+      const snapshotTakes = requests.mock.calls.filter(
+        ([method, params]) =>
+          method === 'takePendingOutput' &&
+          (params as { includeSnapshot?: boolean } | undefined)?.includeSnapshot === true
+      )
+      expect(snapshotTakes).toHaveLength(1)
+      expect(checkpoint).toHaveBeenCalledTimes(1)
+    })
+
+    it('uses the live window when an older daemon omits drained records', async () => {
+      const { id } = await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'missing-drained-records',
+        cwd: '/tmp'
+      })
+      lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+      await adapter.getBufferSnapshot(id)
+      lastSubprocess.emitData(`${FRESH_AFTER_CHECKPOINT}\r\n`)
+
+      const internals = adapter as unknown as {
+        client: { request: (method: string, params?: unknown) => Promise<unknown> }
+        historyManager: HistoryManager
+      }
+      const request = internals.client.request.bind(internals.client)
+      vi.spyOn(internals.client, 'request').mockImplementation(async (method, params) => {
+        const result = await request(method, params)
+        if (
+          method === 'takePendingOutput' &&
+          (params as { includeSnapshot?: boolean } | undefined)?.includeSnapshot &&
+          result &&
+          typeof result === 'object'
+        ) {
+          delete (result as { drainedRecords?: PendingOutputRecord[] }).drainedRecords
+        }
+        return result
+      })
+      const checkpoint = vi.spyOn(internals.historyManager, 'checkpoint')
+
+      const snapshot = await adapter.getBufferSnapshot(id)
+      expect(`${snapshot?.scrollbackAnsi ?? ''}${snapshot?.data ?? ''}`).toContain(
+        FRESH_AFTER_CHECKPOINT
+      )
+      expect(checkpoint.mock.calls.at(-1)?.[1].scrollbackLines).toBe(DAEMON_SESSION_SCROLLBACK_ROWS)
+    })
 
     it('uses the post-drain sequence for output produced during an overlay', async () => {
       const { id } = await adapter.spawn({
@@ -461,6 +562,39 @@ describe('STA-4091 previously recoverable restore depth', () => {
         FRESH_AFTER_CHECKPOINT
       )
       expect(overlaid?.seq).toBe(current?.seq)
+    })
+
+    it('uses the post-drain sequence for output produced during warm reattach', async () => {
+      const { id } = await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'reattach-overlay-sequence',
+        cwd: '/tmp'
+      })
+      lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+      await adapter.getBufferSnapshot(id)
+
+      const internals = adapter as unknown as {
+        client: { request: (method: string, params?: unknown) => Promise<unknown> }
+      }
+      const request = internals.client.request.bind(internals.client)
+      let injected = false
+      vi.spyOn(internals.client, 'request').mockImplementation(async (method, params) => {
+        if (
+          method === 'takePendingOutput' &&
+          (params as { includeSnapshot?: boolean } | undefined)?.includeSnapshot &&
+          !injected
+        ) {
+          injected = true
+          lastSubprocess.emitData(`${FRESH_AFTER_CHECKPOINT}\r\n`)
+        }
+        return request(method, params)
+      })
+
+      const reattach = await adapter.spawn({ cols: 80, rows: 24, sessionId: id, cwd: '/tmp' })
+      const current = await adapter.getBufferSnapshot(id, { scrollbackRows: 24 })
+      expect(reattach.snapshot).toContain(FRESH_AFTER_CHECKPOINT)
+      expect(reattach.providerSequence?.value).toBe(current?.seq)
     })
   })
 })

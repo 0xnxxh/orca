@@ -11,6 +11,7 @@ export type ColdRestoreInfo = {
   cols: number
   rows: number
   scrollbackLines?: number
+  pendingOutputSeq?: number
   modes: TerminalModes
   pendingEscapeTailAnsi?: string
   lastTitle?: string
@@ -24,6 +25,7 @@ type RestoredSnapshot = {
   cols: number
   rows: number
   scrollbackLines?: number
+  pendingOutputSeq?: number
   modes: TerminalModes
   pendingEscapeTailAnsi?: string
   lastTitle?: string
@@ -46,6 +48,7 @@ export function coldRestoreInfoFromSnapshot(
     cols: snapshot.cols,
     rows: snapshot.rows,
     scrollbackLines: snapshot.scrollbackLines,
+    pendingOutputSeq: snapshot.pendingOutputSeq,
     modes: snapshot.modes,
     ...(snapshot.pendingEscapeTailAnsi
       ? { pendingEscapeTailAnsi: snapshot.pendingEscapeTailAnsi }

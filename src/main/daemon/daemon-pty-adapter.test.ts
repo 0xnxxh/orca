@@ -2717,7 +2717,8 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
         expect(checkpointSpy).toHaveBeenCalledWith(
           id,
-          expect.objectContaining({ snapshotAnsi: expect.stringContaining('latest before sleep') })
+          expect.objectContaining({ snapshotAnsi: expect.stringContaining('latest before sleep') }),
+          { pendingOutputSeq: expect.any(Number) }
         )
         expect(existsSync(join(historyDir, getHistorySessionDirName(id)))).toBe(true)
 
@@ -2850,7 +2851,8 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
       expect(checkpointSpy).toHaveBeenCalledWith(
         id,
-        expect.objectContaining({ snapshotAnsi: expect.stringContaining('fresh output') })
+        expect.objectContaining({ snapshotAnsi: expect.stringContaining('fresh output') }),
+        { pendingOutputSeq: expect.any(Number) }
       )
       expect(existsSync(join(historyDir, getHistorySessionDirName(id)))).toBe(true)
     })
@@ -2875,7 +2877,8 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         id,
         expect.objectContaining({
           pendingEscapeTailAnsi: expect.stringContaining('\x1b]777;orca-shell-ready')
-        })
+        }),
+        { pendingOutputSeq: expect.any(Number) }
       )
     })
 
@@ -3264,7 +3267,8 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         expect(appendSpy).not.toHaveBeenCalled()
         expect(checkpointSpy).toHaveBeenCalledWith(
           sessionId,
-          expect.objectContaining({ snapshotAnsi: expect.stringContaining('revived session') })
+          expect.objectContaining({ snapshotAnsi: expect.stringContaining('revived session') }),
+          { pendingOutputSeq: expect.any(Number) }
         )
 
         // Subsequent ticks return to incremental appends.
