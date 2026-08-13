@@ -17,6 +17,7 @@ export function createClaudeSessionPublication(input: {
   process: AgentSessionAcquisition['process']
   linkId?: string
   observedAt: number
+  options?: ReadonlyMap<string, string>
 }): { acquisition: AgentSessionAcquisition; session: ClaudeSession } {
   const model = readClaudeFrameString(input.init.message, 'model')
   const effort = readClaudeFrameString(input.init.message, 'effortLevel')
@@ -39,7 +40,7 @@ export function createClaudeSessionPublication(input: {
       fence: input.fence,
       prompts: input.prompts,
       dispatchWaiters: [],
-      options: new Map(),
+      options: new Map(input.options),
       reportedOptions: {
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {})

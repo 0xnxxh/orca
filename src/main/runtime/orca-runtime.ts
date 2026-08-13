@@ -53,6 +53,7 @@ import type { AgentHookAuthorityAttestation } from '../agent-hooks/server'
 import type {
   AgentSessionClaimedSpawnResult,
   AgentSessionExecutionClaim,
+  AgentSessionOwnerBinding,
   AgentSessionSurfaceBinding,
   AgentLaunchPreferences,
   RuntimeAgentSessionRpcCaller,
@@ -81,6 +82,11 @@ import {
 } from '../native-chat/agent-session-wire/structured-agent-session-handoff-types'
 import type { AgentSessionRecord } from '../../shared/agent-session-record'
 import { agentSessionProviderHandlesEqual } from '../../shared/agent-session-provider-handle'
+import {
+  agentSessionOwnerBindingsEqual,
+  cloneAgentSessionOwnerBinding,
+  scopedAgentSessionClaimsEqual
+} from '../../shared/claimed-agent-pty-owner-snapshot'
 import { completeClaudeTuiExit } from '../claude/claude-tui-exit'
 import {
   createClaudeTuiResumeLaunchBuilder,
@@ -92,7 +98,10 @@ import {
 } from '../claude/claude-tui-resume-proof'
 import { claudeProviderHandleLink } from '../claude/claude-structured-owner-identity'
 import { codexProviderHandleLink } from '../codex/codex-structured-owner-identity'
-import { proveCodexTuiRollout } from '../codex/codex-tui-rollout-proof'
+import {
+  proveCodexTuiRollout,
+  resolvePinnedCodexRolloutProof
+} from '../codex/codex-tui-rollout-proof'
 import { resolveSessionFilePath } from '../native-chat/session-file-resolver'
 import { agentHookServer } from '../agent-hooks/server'
 import { probeAgentSessionProcessIdentity } from './agent-session-process-identity-probe'
@@ -1345,6 +1354,7 @@ type RuntimePtyWorktreeRecord = {
   launchConfig: SleepingAgentLaunchConfig | null
   launchToken: string | null
   launchAgent: TuiAgent | null
+  agentSessionOwners: AgentSessionOwnerBinding[]
   foregroundAgent: TuiAgent | null
   connected: boolean
   disconnectedAt: number | null
@@ -2837,6 +2847,7 @@ export class OrcaRuntimeService {
   private readonly terminalFocusNavigationCoalescer =
     new TerminalFocusNavigationCoalescer<RuntimeTerminalFocus>()
   private pendingMobileSessionPtyInventoryRefresh: Promise<Set<string> | null> | null = null
+  private structuredAgentSessionTabRestorePromise: Promise<void> | null = null
   private leaves = new Map<string, RuntimeLeafRecord>()
   // Why: PTY output is a per-keystroke hot path. Looking up affected leaves by
   // ptyId keeps active TUI redraws independent of the total open terminal count.
@@ -9332,7 +9343,7 @@ export class OrcaRuntimeService {
         if (!identity || !head) {
           throw new Error('agent_session_identity_required')
         }
-        const candidate = [...this.ptysById.values()].find(
+        let candidate = [...this.ptysById.values()].find(
           (pty) =>
             pty.connected &&
             pty.launchToken === identity.spawnToken &&
@@ -9340,23 +9351,92 @@ export class OrcaRuntimeService {
             pty.tabId &&
             pty.paneKey
         )
-        const handle = candidate ? this.issueStructuredTuiPtyHandle(candidate) : null
+        let handle = candidate ? this.issueStructuredTuiPtyHandle(candidate) : null
+        let durableOwner: { binding: AgentSessionOwnerBinding; incarnationId: string } | undefined
+        if (!candidate) {
+          if (head.handle.provider !== 'codex') {
+            throw new Error('The owning agent terminal could not be recovered.')
+          }
+          const workspace = await this.resolveTerminalWorkspaceLaunchScope(
+            `id:${record.location.workspaceId}`
+          )
+          const baseNamespace = this.getAgentSessionExecutionNamespace(workspace, 'codex')
+          if (
+            !baseNamespace ||
+            !runtimeWorktreeIdsEqual(workspace.id, record.location.workspaceId)
+          ) {
+            throw new Error('agent_session_identity_required')
+          }
+          const claim = this.agentSessionClaimSigner.createClaim({
+            namespace: { ...baseNamespace, providerRoot: record.accountHome.path },
+            identity: canonicalizeAgentSessionIdentity('codex', {
+              key: 'session_id',
+              id: head.handle.threadId
+            }),
+            canonicalWorktreeId: workspace.id
+          })
+          const recovered = [...this.ptysById.values()]
+            .flatMap((pty) => pty.agentSessionOwners.map((owner) => ({ pty, owner })))
+            .find(
+              ({ pty, owner }) =>
+                pty.connected &&
+                Boolean(pty.incarnationId) &&
+                runtimeWorktreeIdsEqual(pty.worktreeId, workspace.id) &&
+                runtimeWorktreeIdsEqual(owner.surface.worktreeId, workspace.id) &&
+                owner.surface.terminalHandle === this.handleByPtyId.get(pty.ptyId) &&
+                scopedAgentSessionClaimsEqual(owner.claim, claim)
+            )
+          const processProof = recovered
+            ? await probeAgentSessionProcessIdentity({ identity })
+            : null
+          if (
+            !recovered ||
+            processProof?.outcome !== 'identity-matched' ||
+            processProof.matchedOn.length === 0
+          ) {
+            throw new Error('The owning agent terminal could not be recovered.')
+          }
+          candidate = recovered.pty
+          candidate.tabId = recovered.owner.surface.tabId
+          candidate.paneKey = makePaneKey(
+            recovered.owner.surface.tabId,
+            recovered.owner.surface.leafId
+          )
+          handle = this.issueRecoveredStructuredTuiPtyHandle(candidate, recovered.owner.surface)
+          const recoveredIncarnationId = candidate.incarnationId
+          if (handle && recoveredIncarnationId) {
+            durableOwner = {
+              binding: cloneAgentSessionOwnerBinding(recovered.owner),
+              incarnationId: recoveredIncarnationId
+            }
+          }
+        }
         if (!candidate?.tabId || !candidate.paneKey || !handle) {
           throw new Error('The owning agent terminal could not be recovered.')
         }
         agentSessionPtyWriteGate.bindPty(candidate.ptyId, record.sessionId)
         const transcriptPath =
           head.handle.provider === 'codex'
-            ? (
-                await this.waitForStructuredTuiProof({
-                  handle,
-                  paneKey: candidate.paneKey,
-                  threadId: head.handle.threadId,
-                  spawnToken: identity.spawnToken,
-                  codexHome: record.accountHome.path,
-                  sessionId: record.sessionId
-                })
-              ).transcriptPath
+            ? durableOwner
+              ? (
+                  await this.resolveRecoveredStructuredTuiTranscript({
+                    handle,
+                    paneKey: candidate.paneKey,
+                    threadId: head.handle.threadId,
+                    codexHome: record.accountHome.path,
+                    durableOwner
+                  })
+                ).transcriptPath
+              : (
+                  await this.waitForStructuredTuiProof({
+                    handle,
+                    paneKey: candidate.paneKey,
+                    threadId: head.handle.threadId,
+                    spawnToken: identity.spawnToken,
+                    codexHome: record.accountHome.path,
+                    sessionId: record.sessionId
+                  })
+                ).transcriptPath
             : this.recoverClaudeStructuredTuiProof({
                 candidate,
                 sessionId: head.handle.sessionId,
@@ -9475,6 +9555,32 @@ export class OrcaRuntimeService {
       ptyGeneration: 0
     })
     this.handleByPtyId.set(pty.ptyId, handle)
+    return handle
+  }
+
+  private issueRecoveredStructuredTuiPtyHandle(
+    pty: RuntimePtyWorktreeRecord,
+    surface: AgentSessionSurfaceBinding
+  ): string | null {
+    const handle = this.handleByPtyId.get(pty.ptyId)
+    if (handle !== surface.terminalHandle) {
+      return null
+    }
+    const existing = this.handles.get(handle)
+    if (existing) {
+      return existing.runtimeId === this.runtimeId && existing.ptyId === pty.ptyId ? handle : null
+    }
+    const syntheticId = `pty:${pty.ptyId}`
+    this.handles.set(handle, {
+      handle,
+      runtimeId: this.runtimeId,
+      rendererGraphEpoch: this.rendererGraphEpoch,
+      worktreeId: pty.worktreeId,
+      tabId: syntheticId,
+      leafId: syntheticId,
+      ptyId: pty.ptyId,
+      ptyGeneration: 0
+    })
     return handle
   }
 
@@ -9633,6 +9739,35 @@ export class OrcaRuntimeService {
     })
   }
 
+  private async resolveRecoveredStructuredTuiTranscript(input: {
+    handle: string
+    paneKey: string
+    threadId: string
+    codexHome: string
+    durableOwner: { binding: AgentSessionOwnerBinding; incarnationId: string }
+  }): Promise<{ transcriptPath: string }> {
+    const assertDurableOwner = (): void => {
+      const pty = this.getLivePtyForHandle(input.handle)?.pty
+      if (
+        !pty?.connected ||
+        pty.paneKey !== input.paneKey ||
+        pty.incarnationId !== input.durableOwner.incarnationId ||
+        !pty.agentSessionOwners.some((owner) =>
+          agentSessionOwnerBindingsEqual(owner, input.durableOwner.binding)
+        )
+      ) {
+        throw new Error('The resumed terminal lost its durable owner identity.')
+      }
+    }
+    assertDurableOwner()
+    const transcriptPath = await resolvePinnedCodexRolloutProof(input.codexHome, input.threadId)
+    assertDurableOwner()
+    if (!transcriptPath) {
+      throw new Error('The agent terminal did not prove the expected Codex rollout.')
+    }
+    return { transcriptPath }
+  }
+
   async getStructuredAgentSessionCreateSupport(
     worktreeSelector: string,
     agent: 'claude' | 'codex'
@@ -9720,7 +9855,24 @@ export class OrcaRuntimeService {
     }
   }
 
-  async restoreStructuredAgentSessionTabs(): Promise<void> {
+  restoreStructuredAgentSessionTabs(): Promise<void> {
+    this.structuredAgentSessionTabRestorePromise ??=
+      this.restoreStructuredAgentSessionTabsOnce().catch((error) => {
+        this.structuredAgentSessionTabRestorePromise = null
+        throw error
+      })
+    return this.structuredAgentSessionTabRestorePromise
+  }
+
+  private async restoreStructuredAgentSessionTabsOnce(): Promise<void> {
+    for (const worktreeId of this.getKnownWorkspaceSessionWorktreeIds()) {
+      this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId, {
+        allowAttachedWindow: true,
+        onlyRuntimeOwnedTerminals: true
+      })
+    }
+    this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession()
+    await this.refreshMobileSessionPtyRecords()
     await this.ensureStructuredAgentSessionHost()
     const host = getStructuredAgentSessionHost()
     await host?.restoreReadableSessions()
@@ -29998,6 +30150,7 @@ export class OrcaRuntimeService {
         | 'isWsl'
         | 'wslDistro'
         | 'incarnationId'
+        | 'agentSessionOwners'
       >
     > = {}
   ): RuntimePtyWorktreeRecord {
@@ -30027,6 +30180,7 @@ export class OrcaRuntimeService {
         launchConfig: null,
         launchToken: null,
         launchAgent: null,
+        agentSessionOwners: (state.agentSessionOwners ?? []).map(cloneAgentSessionOwnerBinding),
         foregroundAgent: null,
         connected: state.connected ?? true,
         disconnectedAt: state.connected === false ? Date.now() : null,
@@ -30071,8 +30225,18 @@ export class OrcaRuntimeService {
     }
 
     pty.worktreeId = worktreeId
+    if (
+      state.incarnationId !== undefined &&
+      pty.incarnationId !== null &&
+      state.incarnationId !== pty.incarnationId
+    ) {
+      pty.agentSessionOwners = []
+    }
     if (state.incarnationId !== undefined) {
       pty.incarnationId = state.incarnationId
+    }
+    if (state.agentSessionOwners !== undefined) {
+      pty.agentSessionOwners = state.agentSessionOwners.map(cloneAgentSessionOwnerBinding)
     }
     if (state.connectionId !== undefined) {
       pty.connectionId = state.connectionId
@@ -30326,6 +30490,7 @@ export class OrcaRuntimeService {
         const pty = this.recordPtyWorktree(session.id, worktreeId, {
           connected: true,
           ...(session.incarnationId ? { incarnationId: session.incarnationId } : {}),
+          agentSessionOwners: session.incarnationId ? (session.agentSessionOwners ?? []) : [],
           ...(session.wslDistro !== undefined
             ? { isWsl: Boolean(session.wslDistro), wslDistro: session.wslDistro }
             : {}),
@@ -30379,6 +30544,7 @@ export class OrcaRuntimeService {
         }
         pty.connected = false
         pty.disconnectedAt ??= Date.now()
+        pty.agentSessionOwners = []
       }
     }
     this.pruneDisconnectedPtyRecords()

@@ -8,7 +8,9 @@ import type { DeferredStructuredAgentSessionEventSink } from './structured-agent
 import type { StructuredAgentSessionHostDeps } from './structured-agent-session-host'
 import type { StructuredAgentSessionHostSession } from './structured-agent-session-host-types'
 import { StructuredAgentSessionHandoffCoordinator } from './structured-agent-session-handoff'
+import { readNativeHandoffSessionOptions } from './structured-agent-session-handoff-options'
 import type { AgentSessionSubscribers } from './structured-agent-session-subscribers'
+import { StructuredTuiTranscriptCatchup } from './structured-tui-transcript-catchup'
 
 type HostHandoffAccess = {
   session: (sessionId: string) => StructuredAgentSessionHostSession
@@ -19,7 +21,9 @@ type HostHandoffAccess = {
   now: () => number
 }
 
-export type StructuredAgentSessionHostHandoff = StructuredAgentSessionHandoffCoordinator
+export type StructuredAgentSessionHostHandoff = StructuredAgentSessionHandoffCoordinator & {
+  stopTuiHistoryCatchup: () => void
+}
 
 export async function refreshRecoverableStructuredHandoffStatus(
   handoff: StructuredAgentSessionHostHandoff,
@@ -37,7 +41,21 @@ export function createStructuredAgentSessionHostHandoff(
   deps: StructuredAgentSessionHostDeps,
   host: HostHandoffAccess
 ): StructuredAgentSessionHostHandoff {
-  return new StructuredAgentSessionHandoffCoordinator({
+  const tuiHistoryCatchup = new StructuredTuiTranscriptCatchup({
+    store: deps.store,
+    session: host.session,
+    schedule: host.serialize,
+    publish: (sessionId) => {
+      const session = host.session(sessionId)
+      host.subscribers.publish(sessionId, session.journal)
+    },
+    reset: (sessionId, fence) => {
+      const session = host.session(sessionId)
+      host.subscribers.reset(sessionId, session.journal, 'epoch_changed', fence)
+    },
+    ...(deps.onEventSinkError ? { onError: deps.onEventSinkError } : {})
+  })
+  const coordinator = new StructuredAgentSessionHandoffCoordinator({
     store: deps.store,
     claimKeyId: deps.claimKeyId,
     ...(deps.handoffTransport ? { transport: deps.handoffTransport } : {}),
@@ -51,6 +69,10 @@ export function createStructuredAgentSessionHostHandoff(
     acquireNativeStop: async (sessionId, turnId, fence) =>
       (await deps.adapter.cancelTurn({ sessionId, turnId, fence })).cancelled,
     importTuiHistory: (input) => importTuiHistory(deps, host, input),
+    prepareTuiHistoryCatchup: (sessionId, fence) => tuiHistoryCatchup.prepare(sessionId, fence),
+    recoverTuiHistoryCatchup: (sessionId, fence) => tuiHistoryCatchup.recover(sessionId, fence),
+    activateTuiHistoryCatchup: (sessionId) => tuiHistoryCatchup.activate(sessionId),
+    stopTuiHistoryCatchup: (sessionId) => tuiHistoryCatchup.stop(sessionId),
     publish: (sessionId, status) => {
       const session = host.session(sessionId)
       const fence = deps.store.getRecord(sessionId)?.lease.runtimeFence ?? session.fence
@@ -59,6 +81,7 @@ export function createStructuredAgentSessionHostHandoff(
     schedule: host.serialize,
     now: host.now
   })
+  return Object.assign(coordinator, { stopTuiHistoryCatchup: () => tuiHistoryCatchup.stopAll() })
 }
 
 async function importTuiHistory(
@@ -117,10 +140,17 @@ async function acquireNativeHandoffOwner(
     identity: journalIdentityFor(record, session.params),
     fence: input.fence,
     spawnToken: input.spawnToken,
+    ...(record.options ? { options: record.options } : {}),
     events: eventSink.sink
   })
   let proved: AgentSessionRecord
   try {
+    const options = await readNativeHandoffSessionOptions({
+      adapter: deps.adapter,
+      sessionId: input.sessionId,
+      fence: input.fence,
+      ...(record.options ? { priorOptions: record.options } : {})
+    })
     await deps.store.commitProcessIdentity({
       sessionId: input.sessionId,
       fence: input.fence,
@@ -131,7 +161,8 @@ async function acquireNativeHandoffOwner(
       sessionId: input.sessionId,
       fence: input.fence,
       link: acquired.link,
-      now: host.now()
+      now: host.now(),
+      ...(options ? { options } : {})
     })
   } catch (error) {
     await deps.adapter.releaseAcquisition?.({ sessionId: input.sessionId })

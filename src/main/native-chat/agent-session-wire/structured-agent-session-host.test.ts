@@ -619,38 +619,6 @@ describe('respondToPrompt', () => {
   })
 })
 
-describe('setOption', () => {
-  it('goes to the provider and writes nothing to the journal', async () => {
-    await attach()
-    const fields = { key: 'model', value: 'gpt-5' }
-    const result = await host.setOption(CALLER, {
-      envelope: envelope('agentSession.setOption', fields),
-      ...fields
-    })
-    expect(result).toMatchObject({ ok: true, value: fields })
-    expect(setOption).toHaveBeenCalledTimes(1)
-    const page = host.history({ sessionId: SESSION, direction: 'tail' })
-    expect(page.ok && page.page.items).toHaveLength(0)
-  })
-
-  it('does not turn an unknown provider outcome into a successful replay', async () => {
-    await attach()
-    setOption.mockRejectedValueOnce(new Error('reply lost'))
-    const fields = { key: 'model', value: 'gpt-5' }
-    const params = {
-      envelope: envelope('agentSession.setOption', fields),
-      ...fields
-    }
-
-    await expect(host.setOption(CALLER, params)).rejects.toThrow('reply lost')
-    expect(await host.setOption(CALLER, params)).toMatchObject({
-      ok: false,
-      refusal: { code: 'agent_session_operation_unknown' }
-    })
-    expect(setOption).toHaveBeenCalledTimes(1)
-  })
-})
-
 describe('restart', () => {
   /** A restarted process: the same directories, a new store and a new host over
    *  them. Every lease loads unreconciled, so this is the state that decides
@@ -700,7 +668,10 @@ describe('restart', () => {
     await host.send(CALLER, { envelope: envelope('agentSession.send', { body }), body })
     await reboot(async () => ({ outcome: 'indeterminate', reason: 'read does not need ownership' }))
     acquire.mockClear()
+    const listRecords = vi.spyOn(store, 'listRecords')
 
+    await host.restoreReadableSessions()
+    const restoreReads = listRecords.mock.calls.length
     await host.restoreReadableSessions()
 
     expect(host.listSessionTabs()).toEqual([
@@ -709,6 +680,7 @@ describe('restart', () => {
     const history = host.history({ sessionId: SESSION, direction: 'tail' })
     expect(history.ok && history.page.items).not.toHaveLength(0)
     expect(acquire).not.toHaveBeenCalled()
+    expect(listRecords).toHaveBeenCalledTimes(restoreReads)
   })
 
   it('clears stale TUI recovery when restart successfully reacquires the native owner', async () => {

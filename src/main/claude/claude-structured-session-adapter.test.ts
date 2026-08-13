@@ -226,6 +226,26 @@ describe('ClaudeStructuredSessionAdapter.acquire', () => {
     expect(events[0]).toMatchObject({ type: 'message', message: { subtype: 'init' } })
   })
 
+  it('restores persisted model and effort before publishing a reacquired session', async () => {
+    const claude = fakeClaude()
+    const adapter = adapterFor(claude, { resumed: true })
+
+    await adapter.acquire({
+      identity: identityFor(),
+      fence: 7,
+      spawnToken: 'spawn-9',
+      options: { model: 'opus', effort: 'high' }
+    })
+
+    expect(claude.connections[0].calls.slice(-2)).toEqual([
+      { subtype: 'set_model', params: { model: 'opus' } },
+      { subtype: 'apply_flag_settings', params: { settings: { effortLevel: 'high' } } }
+    ])
+    await expect(adapter.readOptions({ sessionId: 'session-1', fence: 7 })).resolves.toMatchObject({
+      current: { model: 'opus', effort: 'high' }
+    })
+  })
+
   it('forwards configured launch environment while keeping ownership pins authoritative', async () => {
     const claude = fakeClaude()
     const adapter = adapterFor(claude, {
@@ -411,7 +431,9 @@ describe('ClaudeStructuredSessionAdapter turns and controls', () => {
     await expect(
       adapter.cancelTurn({ sessionId: 'session-1', turnId: 'turn-1', fence: 7 })
     ).resolves.toEqual({ cancelled: true })
-    await adapter.setOption({ sessionId: 'session-1', key: 'model', value: 'sonnet', fence: 7 })
+    await expect(
+      adapter.setOption({ sessionId: 'session-1', key: 'model', value: 'sonnet', fence: 7 })
+    ).resolves.toEqual({ model: 'sonnet' })
     expect(claude.connections[0].calls.slice(-2)).toEqual([
       { subtype: 'interrupt', params: {} },
       { subtype: 'set_model', params: { model: 'sonnet' } }
@@ -429,6 +451,27 @@ describe('ClaudeStructuredSessionAdapter turns and controls', () => {
     }
     await expect(
       adapter.cancelTurn({ sessionId: 'session-1', turnId: 'turn-3', fence: 7 })
+    ).rejects.toThrow('timed out')
+  })
+
+  it('classifies provider-declined options without treating timeouts as settled', async () => {
+    const claude = fakeClaude({
+      routes: {
+        set_model: () => {
+          throw new ClaudeControlRequestError('set_model', 'model unavailable')
+        }
+      }
+    })
+    const adapter = await acquired(claude)
+
+    await expect(
+      adapter.setOption({ sessionId: 'session-1', key: 'model', value: 'fable', fence: 7 })
+    ).rejects.toMatchObject({ name: 'AgentSessionOptionRejectedError' })
+    claude.routes.set_model = () => {
+      throw new Error('claude set_model request timed out')
+    }
+    await expect(
+      adapter.setOption({ sessionId: 'session-1', key: 'model', value: 'opus', fence: 7 })
     ).rejects.toThrow('timed out')
   })
 

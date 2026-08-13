@@ -55,6 +55,7 @@ export async function handoffStructuredSessionToTui(
   let owner: StructuredTuiOwner | null = null
   let processIdentityCommitted = false
   try {
+    await deps.prepareTuiHistoryCatchup?.(sessionId, record.lease.runtimeFence)
     owner = await deps.transport!.launchTui({
       record,
       fence: record.lease.runtimeFence,
@@ -85,6 +86,7 @@ export async function handoffStructuredSessionToTui(
       now: deps.now()
     })
   } catch (error) {
+    deps.stopTuiHistoryCatchup?.(sessionId)
     if (!owner && error instanceof StructuredTuiLaunchCleanupError) {
       await markManualRecovery(context, sessionId, operationId)
       throw error
@@ -110,6 +112,7 @@ export async function handoffStructuredSessionToTui(
     throw error
   }
   context.retainOwner(sessionId, owner)
+  await deps.activateTuiHistoryCatchup?.(sessionId)
   context.setStatus(sessionId, {
     owner: 'tui',
     direction: null,

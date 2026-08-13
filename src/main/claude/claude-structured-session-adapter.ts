@@ -1,6 +1,6 @@
-import type { AgentSessionJournalIdentity } from '../../shared/agent-session-journal-types'
 import type {
   AgentSessionAcquisition,
+  StructuredAgentSessionAcquireInput,
   StructuredAgentSessionAdapter
 } from '../native-chat/agent-session-wire/structured-agent-session-adapter'
 import type { StructuredAgentSessionEventSink } from '../native-chat/agent-session-wire/structured-agent-session-event-sink'
@@ -23,7 +23,11 @@ import {
 } from './claude-structured-init-deadline'
 import { supportsClaudeStructuredLocation } from './claude-structured-location-support'
 import { CLAUDE_SPAWN_TOKEN_ENV, claudeProcessIdentity } from './claude-structured-owner-identity'
-import { setClaudeStructuredOption } from './claude-structured-options'
+import {
+  restoreClaudeStructuredSessionOptions,
+  restoredClaudeStructuredSessionOptions,
+  setClaudeStructuredOption
+} from './claude-structured-options'
 import { ClaudePromptRegistry } from './claude-structured-prompt-replies'
 import { readClaudeStructuredSessionOptions } from './claude-structured-session-options'
 import { createClaudeSessionPublication } from './claude-structured-session-publication'
@@ -59,12 +63,7 @@ export class ClaudeStructuredSessionAdapter implements StructuredAgentSessionAda
 
   supportsLocation = supportsClaudeStructuredLocation
 
-  async acquire(input: {
-    identity: AgentSessionJournalIdentity
-    fence: number
-    spawnToken: string
-    events?: StructuredAgentSessionEventSink
-  }): Promise<AgentSessionAcquisition> {
+  async acquire(input: StructuredAgentSessionAcquireInput): Promise<AgentSessionAcquisition> {
     const sessionId = input.identity.sessionId
     const prompts = new ClaudePromptRegistry()
     const translator = createClaudeSessionJournalTranslator(input.events, prompts)
@@ -188,11 +187,13 @@ export class ClaudeStructuredSessionAdapter implements StructuredAgentSessionAda
         translator,
         events: input.events,
         process,
+        options: restoredClaudeStructuredSessionOptions(input.options),
         ...(this.deps.mintLinkId ? { linkId: this.deps.mintLinkId() } : {}),
         observedAt: this.deps.now?.() ?? Date.now()
       })
       const acquired: AgentSessionAcquisition = publication.acquisition
       liveSession = publication.session
+      await restoreClaudeStructuredSessionOptions(liveSession, this.deps.requestTimeoutMs)
       this.acquisitions.assertCurrent(sessionId, attempt)
       this.acquisitions.deleteIfCurrent(sessionId, attempt)
       this.sessions.set(sessionId, liveSession)

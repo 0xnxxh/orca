@@ -9,8 +9,10 @@ import type {
   AgentSessionHandoffDirection,
   AgentSessionHandoffMode,
   AgentSessionMutationResult,
+  AgentSessionOptionResult,
   AgentSessionPromptResult
 } from '../../../src/shared/agent-session-wire'
+import { agentSessionRefusalOperationState } from '../../../src/shared/agent-session-refusal-retry'
 import {
   createStructuredAgentSessionOperationId,
   structuredAgentSessionPayloadFingerprint
@@ -25,7 +27,7 @@ export type MobileStructuredPromptItem = AgentJournalRenderItem & {
 
 export type MobileStructuredSessionMutations = {
   respondToPrompt: (item: MobileStructuredPromptItem, optionId: string) => Promise<boolean>
-  setOption: (key: string, value: string) => Promise<boolean>
+  setOption: (key: string, value: string) => Promise<AgentSessionOptionResult | null>
   cancel: (turnId: string) => Promise<boolean>
   requestHandoff: (
     direction: AgentSessionHandoffDirection,
@@ -102,6 +104,12 @@ export function useMobileStructuredSessionMutations(args: {
       }
       const result = response.result as AgentSessionMutationResult<TValue>
       if (!result.ok) {
+        if (
+          agentSessionRefusalOperationState(fingerprintMethod, result.refusal.code) ===
+          'settled-rejected'
+        ) {
+          operationIdsRef.current.delete(mutationKey)
+        }
         if (matchesActiveContext(activeContextRef.current, client, sessionId, fence)) {
           onRefusal(result.refusal.message)
         }
@@ -128,8 +136,11 @@ export function useMobileStructuredSessionMutations(args: {
             { itemId: item.itemId, expectedRevision: item.revision, optionId }
           )
         ),
-      setOption: async (key: string, value: string) =>
-        Boolean(await mutate('agentSession.setOption', 'agentSession.setOption', { key, value })),
+      setOption: (key: string, value: string) =>
+        mutate<AgentSessionOptionResult>('agentSession.setOption', 'agentSession.setOption', {
+          key,
+          value
+        }),
       cancel: async (turnId: string) =>
         Boolean(await mutate('agentSession.cancel', 'agentSession.cancel', { turnId })),
       requestHandoff: async (

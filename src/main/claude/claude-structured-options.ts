@@ -1,10 +1,25 @@
+import { ClaudeControlRequestError } from './claude-stream-json-connection'
+import { AgentSessionOptionRejectedError } from '../native-chat/agent-session-wire/structured-agent-session-option-error'
 import type { ClaudeSession } from './claude-structured-session-state'
+
+const OPTION_ORDER = ['model', 'effort', 'permissionMode'] as const
+
+export function restoredClaudeStructuredSessionOptions(
+  options: Readonly<Record<string, string>> | undefined
+): Map<string, string> {
+  return new Map(
+    OPTION_ORDER.flatMap((key) => {
+      const value = options?.[key]
+      return value ? [[key, value] as const] : []
+    })
+  )
+}
 
 export async function setClaudeStructuredOption(
   session: ClaudeSession,
   input: { key: string; value: string },
   timeoutMs: number | undefined
-): Promise<void> {
+): Promise<Readonly<Record<string, string>>> {
   const request =
     input.key === 'model'
       ? { subtype: 'set_model', params: { model: input.value } }
@@ -14,8 +29,29 @@ export async function setClaudeStructuredOption(
           ? { subtype: 'apply_flag_settings', params: { settings: { effortLevel: input.value } } }
           : null
   if (!request) {
-    throw new Error(`claude stream-json has no session option named ${input.key}`)
+    throw new AgentSessionOptionRejectedError(
+      `claude stream-json has no session option named ${input.key}`
+    )
   }
-  await session.connection.request(request.subtype, request.params, { timeoutMs })
+  try {
+    await session.connection.request(request.subtype, request.params, { timeoutMs })
+  } catch (error) {
+    if (error instanceof ClaudeControlRequestError) {
+      throw new AgentSessionOptionRejectedError(error)
+    }
+    throw error
+  }
   session.options.set(input.key, input.value)
+  return Object.fromEntries(session.options)
+}
+
+export async function restoreClaudeStructuredSessionOptions(
+  session: ClaudeSession,
+  timeoutMs: number | undefined
+): Promise<void> {
+  const options = [...session.options.entries()]
+  session.options.clear()
+  for (const [key, value] of options) {
+    await setClaudeStructuredOption(session, { key, value }, timeoutMs)
+  }
 }

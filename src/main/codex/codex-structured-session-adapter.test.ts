@@ -526,7 +526,24 @@ describe('CodexStructuredSessionAdapter.dispatch', () => {
   })
 
   it('applies an option change to the next turn only', async () => {
-    const codex = fakeCodex({ 'turn/start': () => ({ turn: { id: 'turn-1' } }) })
+    const codex = fakeCodex({
+      'model/list': () => ({
+        data: [
+          {
+            model: 'gpt-live',
+            supportedReasoningEfforts: [{ reasoningEffort: 'medium' }],
+            defaultReasoningEffort: 'medium'
+          },
+          {
+            model: 'gpt-5',
+            supportedReasoningEfforts: [{ reasoningEffort: 'high' }],
+            defaultReasoningEffort: 'high'
+          }
+        ],
+        nextCursor: null
+      }),
+      'turn/start': () => ({ turn: { id: 'turn-1' } })
+    })
     const adapter = await acquired(codex)
 
     await adapter.setOption({ sessionId: 'session-1', key: 'model', value: 'gpt-5', fence: 7 })
@@ -541,8 +558,9 @@ describe('CodexStructuredSessionAdapter.dispatch', () => {
       fence: 7
     })
 
-    expect(codex.connections[0].calls[1].params).toMatchObject({ model: 'gpt-5', effort: 'high' })
-    expect(codex.connections[0].calls[1].params).not.toHaveProperty('sandboxEscape')
+    const turnStart = codex.connections[0].calls.findLast((call) => call.method === 'turn/start')
+    expect(turnStart?.params).toMatchObject({ model: 'gpt-5', effort: 'high' })
+    expect(turnStart?.params).not.toHaveProperty('sandboxEscape')
   })
 })
 

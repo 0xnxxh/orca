@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcSuccess } from '../transport/types'
 import type { AgentJournalSubmission } from '../../../src/shared/agent-session-journal-types'
+import type {
+  AgentSessionOptionResult,
+  AgentSessionWireRefusalCode
+} from '../../../src/shared/agent-session-wire'
 import type * as MobileStructuredOutboxStore from './mobile-structured-outbox-store'
 import {
   loadMobileStructuredOutbox,
@@ -52,6 +56,15 @@ function accepted(id: string): RpcSuccess {
         }
       }
     }
+  }
+}
+
+function refused(code: AgentSessionWireRefusalCode): RpcSuccess {
+  return {
+    id: code,
+    ok: true,
+    _meta: { runtimeId: 'runtime-1' },
+    result: { ok: false, refusal: { code, message: code } }
   }
 }
 
@@ -129,6 +142,68 @@ describe('useMobileStructuredSessionWrites', () => {
     })
 
     expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['agent_session_operation_conflict', 'agent_session_operation_expired'] as const)(
+    'rotates a send operation after %s',
+    async (code) => {
+      sendRequest
+        .mockResolvedValueOnce(refused(code))
+        .mockImplementationOnce(async (_method, params) =>
+          accepted(
+            (params as { envelope: { clientOperationId: string } }).envelope.clientOperationId
+          )
+        )
+
+      await act(async () => {
+        await api!.send('hello')
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      const firstId = (sendRequest.mock.calls[0]![1] as { envelope: { clientOperationId: string } })
+        .envelope.clientOperationId
+      const retryId = api!.outbox[0]!.clientMessageId
+      expect(retryId).not.toBe(firstId)
+
+      await act(async () => {
+        await api!.retry(retryId)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(sendRequest).toHaveBeenCalledTimes(2)
+      expect(
+        (sendRequest.mock.calls[1]![1] as { envelope: { clientOperationId: string } }).envelope
+          .clientOperationId
+      ).toBe(retryId)
+    }
+  )
+
+  it('retains a send operation after a pending-admission refusal', async () => {
+    sendRequest
+      .mockResolvedValueOnce(refused('agent_session_checkpoint_stale'))
+      .mockImplementationOnce(async (_method, params) =>
+        accepted((params as { envelope: { clientOperationId: string } }).envelope.clientOperationId)
+      )
+
+    await act(async () => {
+      await api!.send('hello')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const firstId = (sendRequest.mock.calls[0]![1] as { envelope: { clientOperationId: string } })
+      .envelope.clientOperationId
+    expect(api!.outbox[0]?.clientMessageId).toBe(firstId)
+
+    await act(async () => {
+      await api!.retry(firstId)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+    expect(
+      (sendRequest.mock.calls[1]![1] as { envelope: { clientOperationId: string } }).envelope
+        .clientOperationId
+    ).toBe(firstId)
   })
 
   it('retries a durable unknown by the same id before dispatching later messages', async () => {
@@ -367,20 +442,179 @@ describe('useMobileStructuredSessionWrites', () => {
       error: { code: 'forbidden', message: 'not allowed' }
     })
 
-    let applied!: boolean
+    let applied!: AgentSessionOptionResult | null
     await act(async () => {
       applied = await api!.setOption('model', 'gpt-5.6-sol')
     })
 
-    expect(applied).toBe(false)
+    expect(applied).toBeNull()
     expect(api!.error).toBe('not allowed')
+  })
+
+  it('mints a fresh operation when the same option is retried after a typed refusal', async () => {
+    sendRequest
+      .mockResolvedValueOnce({
+        id: 'set-option-rejected',
+        ok: true,
+        _meta: { runtimeId: 'runtime-1' },
+        result: {
+          ok: false,
+          refusal: {
+            code: 'agent_session_operation_invalid',
+            message: 'model list unavailable'
+          }
+        }
+      })
+      .mockResolvedValueOnce({
+        id: 'set-option-applied',
+        ok: true,
+        _meta: { runtimeId: 'runtime-1' },
+        result: {
+          ok: true,
+          replayed: false,
+          fence: 3,
+          cursor: { epoch: 'epoch-1', sequence: 2 },
+          value: {
+            key: 'model',
+            value: 'gpt-5.6-sol',
+            options: { model: 'gpt-5.6-sol' }
+          }
+        }
+      })
+
+    await act(async () => {
+      expect(await api!.setOption('model', 'gpt-5.6-sol')).toBeNull()
+      expect(await api!.setOption('model', 'gpt-5.6-sol')).toMatchObject({
+        options: { model: 'gpt-5.6-sol' }
+      })
+    })
+
+    const operationIds = sendRequest.mock.calls.map(
+      ([, params]) =>
+        (params as { envelope: { clientOperationId: string } }).envelope.clientOperationId
+    )
+    expect(operationIds[0]).toMatch(/-00000000000040008000000000000001$/)
+    expect(operationIds[1]).toMatch(/-00000000000040008000000000000002$/)
+    expect(operationIds[1]).not.toBe(operationIds[0])
+  })
+
+  it('reuses an option operation after a pending admission refusal', async () => {
+    sendRequest
+      .mockResolvedValueOnce({
+        id: 'set-option-stale',
+        ok: true,
+        _meta: { runtimeId: 'runtime-1' },
+        result: {
+          ok: false,
+          refusal: {
+            code: 'agent_session_checkpoint_stale',
+            message: 'runtime fence advanced',
+            currentFence: 4
+          }
+        }
+      })
+      .mockResolvedValueOnce({
+        id: 'set-option-replayed',
+        ok: true,
+        _meta: { runtimeId: 'runtime-1' },
+        result: {
+          ok: true,
+          replayed: false,
+          fence: 4,
+          cursor: { epoch: 'epoch-1', sequence: 2 },
+          value: {
+            key: 'model',
+            value: 'gpt-5.6-sol',
+            options: { model: 'gpt-5.6-sol' }
+          }
+        }
+      })
+
+    await act(async () => {
+      expect(await api!.setOption('model', 'gpt-5.6-sol')).toBeNull()
+    })
+    fence = 4
+    await act(async () => {
+      renderer!.update(createElement(Probe))
+      await Promise.resolve()
+    })
+    await act(async () => {
+      expect(await api!.setOption('model', 'gpt-5.6-sol')).toMatchObject({
+        options: { model: 'gpt-5.6-sol' }
+      })
+    })
+
+    const operationIds = sendRequest.mock.calls.map(
+      ([, params]) =>
+        (params as { envelope: { clientOperationId: string } }).envelope.clientOperationId
+    )
+    expect(operationIds[0]).toBe(operationIds[1])
+    expect(operationIds[0]).toMatch(/-00000000000040008000000000000001$/)
+    expect(
+      sendRequest.mock.calls.map(
+        ([, params]) =>
+          (params as { envelope: { expectedRuntimeFence: number } }).envelope.expectedRuntimeFence
+      )
+    ).toEqual([3, 4])
+    const crypto = await import('expo-crypto')
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(1)
+  })
+
+  it('mints a fresh handoff operation after a settled refusal', async () => {
+    sendRequest
+      .mockResolvedValueOnce({
+        id: 'handoff-stale',
+        ok: true,
+        _meta: { runtimeId: 'runtime-1' },
+        result: {
+          ok: false,
+          refusal: {
+            code: 'agent_session_checkpoint_stale',
+            message: 'runtime fence advanced',
+            currentFence: 4
+          }
+        }
+      })
+      .mockResolvedValueOnce({
+        id: 'handoff-started',
+        ok: true,
+        _meta: { runtimeId: 'runtime-1' },
+        result: {
+          ok: true,
+          replayed: false,
+          fence: 3,
+          cursor: { epoch: 'epoch-1', sequence: 2 },
+          value: {
+            status: {
+              owner: 'native',
+              direction: 'to-tui',
+              phase: 'switching',
+              stage: 'preparing',
+              operationId: 'second-operation'
+            }
+          }
+        }
+      })
+
+    await act(async () => {
+      expect(await api!.requestHandoff('to-tui', 'now')).toBe(false)
+      expect(await api!.requestHandoff('to-tui', 'now')).toBe(true)
+    })
+
+    const operationIds = sendRequest.mock.calls.map(
+      ([, params]) =>
+        (params as { envelope: { clientOperationId: string } }).envelope.clientOperationId
+    )
+    expect(operationIds[0]).toMatch(/-00000000000040008000000000000001$/)
+    expect(operationIds[1]).toMatch(/-00000000000040008000000000000002$/)
+    expect(operationIds[1]).not.toBe(operationIds[0])
   })
 
   it('isolates mutation ids and late errors across session changes', async () => {
     const first = deferred<RpcSuccess>()
     sendRequest.mockImplementationOnce(() => first.promise).mockResolvedValueOnce(accepted('b'))
 
-    let mutationA!: Promise<boolean>
+    let mutationA!: Promise<AgentSessionOptionResult | null>
     act(() => {
       mutationA = api!.setOption('model', 'gpt-5.6-sol')
     })

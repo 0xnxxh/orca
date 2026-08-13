@@ -60,6 +60,7 @@ export function useMobileStructuredSessionEntry(args: {
     connected,
     sessionId,
     agent: sessionAgent,
+    fence: session.fence,
     setOption: writes.setOption
   })
   const attachments = useMobileStructuredAttachments({

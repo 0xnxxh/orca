@@ -10,6 +10,7 @@ import {
   createStructuredAgentSessionOutboxEntry,
   parseStructuredAgentSessionOutboxEntry,
   reconcileStructuredAgentSessionOutbox,
+  requeueStructuredAgentSessionSendRefusal,
   structuredAgentSessionSendRequest,
   type StructuredAgentSessionOutboxEntry
 } from '../../../../shared/structured-agent-session-outbox'
@@ -146,7 +147,21 @@ export function useStructuredAgentSessionOutbox(args: {
           return
         }
         if (!result.ok) {
-          throw new Error(result.refusal.message)
+          setError(result.refusal.message)
+          const updated = outboxRef.current.map((entry) =>
+            entry.clientMessageId === next.clientMessageId
+              ? requeueStructuredAgentSessionSendRefusal(
+                  entry,
+                  result.refusal.code,
+                  structuredSessionOperationId
+                )
+              : entry
+          )
+          blockedIdRef.current = updated[0]?.clientMessageId ?? null
+          outboxRef.current = updated
+          setOutbox(updated)
+          writeOutbox(sessionId, updated)
+          return
         }
         const submission = result.value.submission
         if (submission.dispatchState === 'rejected') {

@@ -58,6 +58,22 @@ export type AgentSessionDispatchOutcome =
   /** The call did not settle. Never re-send on the user's behalf. */
   | { state: 'unknown'; reason: string }
 
+export type StructuredAgentSessionAcquireInput = {
+  identity: AgentSessionJournalIdentity
+  fence: number
+  spawnToken: string
+  options?: Readonly<Record<string, string>>
+  /** Provider events may begin before acquisition returns. */
+  events?: StructuredAgentSessionEventSink
+}
+
+export type StructuredAgentSessionSetOptionInput = {
+  sessionId: string
+  key: string
+  value: string
+  fence: number
+}
+
 export type StructuredAgentSessionAdapter = {
   /** Provider-aware capability check for hosts that route more than one adapter. */
   supportsCreate?(location: AgentSessionExecutionLocation, agent: string): boolean
@@ -66,16 +82,7 @@ export type StructuredAgentSessionAdapter = {
   /** Makes the reservation real. Called once per reservation, with the spawn
    *  token the lease was reserved under and the fence the handle must be minted
    *  at — the store rejects a link minted at any other fence. */
-  acquire(input: {
-    identity: AgentSessionJournalIdentity
-    fence: number
-    spawnToken: string
-    /** Where to write everything the provider streams. Handed over here, not
-     *  returned, because a provider starts streaming inside this call — before
-     *  the journal exists. The sink buffers until it does. Optional so an
-     *  adapter that only answers calls needs no journal at all. */
-    events?: StructuredAgentSessionEventSink
-  }): Promise<AgentSessionAcquisition>
+  acquire(input: StructuredAgentSessionAcquireInput): Promise<AgentSessionAcquisition>
   /** Reaps an acquired provider when the host cannot commit or prove its lease. */
   releaseAcquisition?(input: { sessionId: string }): Promise<void>
   dispatch(input: {
@@ -100,7 +107,9 @@ export type StructuredAgentSessionAdapter = {
     optionId: string
     fence: number
   }): Promise<void>
-  setOption(input: { sessionId: string; key: string; value: string; fence: number }): Promise<void>
+  setOption(
+    input: StructuredAgentSessionSetOptionInput
+  ): Promise<void | Readonly<Record<string, string>>>
   readOptions?(input: { sessionId: string; fence: number }): Promise<AgentSessionOptionsResult>
   /** Transcript path for journal recovery. Omit to let the existing session-file
    *  resolver discover it from the provider session id. */

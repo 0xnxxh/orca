@@ -82,6 +82,7 @@ export async function handoffStructuredSessionToNative(
   ) {
     throw new Error('agent_session_operation_conflict')
   }
+  deps.stopTuiHistoryCatchup?.(sessionId)
   await deps.importTuiHistory({
     sessionId,
     fence: record.lease.runtimeFence,

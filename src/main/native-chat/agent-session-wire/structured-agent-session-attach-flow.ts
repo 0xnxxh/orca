@@ -30,6 +30,7 @@ import {
 } from './structured-agent-session-adapter'
 import type { StructuredAgentSessionEventSink } from './structured-agent-session-event-sink'
 import { resolveAgentSessionReplayOutcome } from './structured-agent-session-replay-outcome'
+import { readNativeHandoffSessionOptions } from './structured-agent-session-handoff-options'
 
 export type AttachFlowInput = {
   store: AgentSessionRecordStore
@@ -175,9 +176,16 @@ async function acquireOwner(
     fence,
     // Retries must recover the original reservation, not mint a second child.
     spawnToken,
+    ...(record.options ? { options: record.options } : {}),
     ...(input.eventSink ? { events: input.eventSink } : {})
   })
   try {
+    const options = await readNativeHandoffSessionOptions({
+      adapter: input.adapter,
+      sessionId: record.sessionId,
+      fence,
+      ...(record.options ? { priorOptions: record.options } : {})
+    })
     if (record.lease.ownerProcess === null) {
       await input.store.commitProcessIdentity({
         sessionId: record.sessionId,
@@ -192,7 +200,8 @@ async function acquireOwner(
       sessionId: record.sessionId,
       fence,
       link: acquired.link,
-      now: input.now()
+      now: input.now(),
+      ...(options ? { options } : {})
     })
   } catch (error) {
     try {

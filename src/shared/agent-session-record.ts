@@ -110,9 +110,18 @@ export type AgentSessionRecord = {
   providerHandleChain: AgentSessionProviderHandleLink[]
   accountHome: AgentSessionAccountHome
   launchEnv?: AgentSessionLaunchEnv
+  /** Provider options acknowledged for the next turn, restored across owner replacement. */
+  options?: Record<string, string>
   lease: AgentSessionLease
   createdAt: number
   updatedAt: number
+}
+
+export type AgentSessionOptionsReplacement = {
+  sessionId: string
+  fence: number
+  options: Readonly<Record<string, string>>
+  now: number
 }
 
 const MAX_ID_LENGTH = 512
@@ -212,6 +221,20 @@ export function isAgentSessionLaunchEnv(value: unknown): value is AgentSessionLa
   )
 }
 
+function isAgentSessionOptions(value: unknown): value is Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false
+  }
+  const entries = Object.entries(value)
+  return (
+    entries.length <= 32 &&
+    entries.every(
+      ([key, option]) =>
+        isBoundedString(key, MAX_ID_LENGTH) && isBoundedString(option, MAX_ID_LENGTH)
+    )
+  )
+}
+
 function isAgentSessionJournalCheckpoint(value: unknown): value is AgentSessionJournalCheckpoint {
   if (typeof value !== 'object' || value === null) {
     return false
@@ -292,6 +315,7 @@ export function isAgentSessionRecord(value: unknown): value is AgentSessionRecor
     isAgentSessionProviderHandleChain(record.providerHandleChain) &&
     isAgentSessionAccountHome(record.accountHome) &&
     (record.launchEnv === undefined || isAgentSessionLaunchEnv(record.launchEnv)) &&
+    (record.options === undefined || isAgentSessionOptions(record.options)) &&
     isAgentSessionLease(record.lease) &&
     record.lease.sessionId === record.sessionId &&
     Number.isSafeInteger(record.createdAt) &&

@@ -1,4 +1,3 @@
-import * as ExpoCrypto from 'expo-crypto'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentJournalSubmission } from '../../../src/shared/agent-session-journal-types'
 import type {
@@ -6,15 +5,17 @@ import type {
   AgentSessionSendResult
 } from '../../../src/shared/agent-session-wire'
 import {
-  createStructuredAgentSessionOutboxEntry,
   reconcileStructuredAgentSessionOutbox,
   structuredAgentSessionSendRequest,
   updateStructuredAgentSessionOutboxEntry
 } from '../../../src/shared/structured-agent-session-outbox'
-import { createStructuredAgentSessionOperationId } from '../../../src/shared/structured-agent-session-mutation'
 import type { RpcClient } from '../transport/rpc-client'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
-import { isMobileStructuredDeliveryUnknown } from './mobile-structured-outbox-entry'
+import {
+  createQueuedMobileStructuredOutboxEntry,
+  isMobileStructuredDeliveryUnknown,
+  requeueMobileStructuredSendRefusal
+} from './mobile-structured-outbox-entry'
 import {
   loadMobileStructuredOutbox,
   saveMobileStructuredOutbox,
@@ -185,9 +186,12 @@ export function useMobileStructuredSessionWrites(args: {
         }
         const result = response.result as AgentSessionMutationResult<AgentSessionSendResult>
         if (!result.ok) {
-          blockedIdRef.current = next.clientMessageId
           setError(result.refusal.message)
-          await replaceEntry(next.clientMessageId, (entry) => ({ ...entry, state: 'queued' }))
+          await replaceEntry(next.clientMessageId, (entry) => {
+            const requeued = requeueMobileStructuredSendRefusal(entry, result.refusal.code)
+            blockedIdRef.current = requeued.clientMessageId
+            return requeued
+          })
           return
         }
         if (result.value.submission.dispatchState === 'unknown') {
@@ -242,13 +246,7 @@ export function useMobileStructuredSessionWrites(args: {
       if (!sessionId || (!text.trim() && attachments.length === 0)) {
         return false
       }
-      const entry = createStructuredAgentSessionOutboxEntry({
-        clientMessageId: createStructuredAgentSessionOperationId(() => ExpoCrypto.randomUUID()),
-        sessionId,
-        text,
-        attachments,
-        queuedAt: Date.now()
-      })
+      const entry = createQueuedMobileStructuredOutboxEntry({ sessionId, text, attachments })
       const next = [...outboxRef.current, entry]
       try {
         await persist(sessionId, next)

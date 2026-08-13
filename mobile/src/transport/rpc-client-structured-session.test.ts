@@ -28,6 +28,7 @@ import {
   sentRequest
 } from './rpc-client-test-websocket'
 
+vi.mock('expo-crypto', () => ({ randomUUID: vi.fn() }))
 vi.mock('./e2ee', () => ({
   generateKeyPair: () => ({
     publicKey: new Uint8Array(32),
