@@ -7933,43 +7933,6 @@ describe('Store', () => {
     expect(store.getSettings().experimentalActivity).toBe(true)
   })
 
-  it('disables the generated hidden PTY delivery gate for existing profiles', async () => {
-    writeDataFile({
-      schemaVersion: 1,
-      repos: [],
-      worktreeMeta: {},
-      settings: { terminalHiddenDeliveryGate: true },
-      ui: {},
-      githubCache: { pr: {}, issue: {} },
-      workspaceSession: {}
-    })
-
-    const store = await createStore()
-
-    expect(store.getSettings().terminalHiddenDeliveryGate).toBe(false)
-    expect(store.getSettings().terminalHiddenDeliveryGateDefaultedOffForAllUsers).toBe(true)
-  })
-
-  it('preserves hidden PTY delivery gate opt-ins after the default-off migration', async () => {
-    writeDataFile({
-      schemaVersion: 1,
-      repos: [],
-      worktreeMeta: {},
-      settings: {
-        terminalHiddenDeliveryGate: true,
-        terminalHiddenDeliveryGateDefaultedOffForAllUsers: true
-      },
-      ui: {},
-      githubCache: { pr: {}, issue: {} },
-      workspaceSession: {}
-    })
-
-    const store = await createStore()
-
-    expect(store.getSettings().terminalHiddenDeliveryGate).toBe(true)
-    expect(store.getSettings().terminalHiddenDeliveryGateDefaultedOffForAllUsers).toBe(true)
-  })
-
   // ── worktree-card property migration ───────────────────────────────
 
   it('adds split-out default card properties for legacy detailed profiles', async () => {

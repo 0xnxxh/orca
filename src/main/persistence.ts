@@ -3290,15 +3290,6 @@ export class Store {
         const migratedExperimentalActivity = experimentalActivityDefaultedOffForAllUsers
           ? (parsed.settings?.experimentalActivity ?? false)
           : false
-        const terminalHiddenDeliveryGateDefaultedOffForAllUsers =
-          parsed.settings?.terminalHiddenDeliveryGateDefaultedOffForAllUsers === true
-        // Why: the old generated true is indistinguishable from an opt-in, so reset it once before preserving later overrides.
-        const migratedTerminalHiddenDeliveryGate = terminalHiddenDeliveryGateDefaultedOffForAllUsers
-          ? (parsed.settings?.terminalHiddenDeliveryGate ?? false)
-          : false
-        if (!terminalHiddenDeliveryGateDefaultedOffForAllUsers) {
-          this.loadNeedsSave = true
-        }
         const autoRenameBranchFromWorkDefaultedOn =
           parsed.settings?.autoRenameBranchFromWorkDefaultedOn === true
         // Why: default-on rollout activates old profiles once, but a later Settings opt-out survives reloads.
@@ -3512,8 +3503,6 @@ export class Store {
             ...migratedTerminalTuiScrollSensitivity.settings,
             experimentalActivity: migratedExperimentalActivity,
             experimentalActivityDefaultedOffForAllUsers: true,
-            terminalHiddenDeliveryGate: migratedTerminalHiddenDeliveryGate,
-            terminalHiddenDeliveryGateDefaultedOffForAllUsers: true,
             // Why: compact worktree cards graduated from Experimental; preserve the old opt-in for rollout-era profiles.
             compactWorktreeCards: loadedCompactWorktreeCards,
             experimentalCompactWorktreeCards: undefined,
