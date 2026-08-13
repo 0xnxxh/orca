@@ -32,6 +32,14 @@ export const POST_REPLAY_LIVE_AGENT_SNAPSHOT_RESET = RESET_TERMINAL_CURSOR_STYLE
 /** Dead-TUI bytes feed a fresh shell; clear mouse modes here and renderer-owned modes later. */
 export const COLD_RESTORE_SEED_MODE_RESET = RESET_MOUSE_REPORTING
 
+// Why separate from every profile above: those clear DEC *mode* bits and none of
+// them touches SGR. A recovery path that declares bytes unrecoverable has by
+// definition lost whatever turned the pen on, so the pen must be cleared too —
+// otherwise a dropped `ESC[22m` leaves bold applied to everything written after
+// (STA-4042: hidden-delivery gate drops the reset, the abandoned restore then
+// drains queued foreground chunks under the stale pen).
+export const RESET_GRAPHIC_RENDITION = '\x1b[0m'
+
 // Why: DECTCEM applies in emission order, so the payload's last ?25l/?25h is the cursor state the TUI left.
 export function replayPayloadEndsWithCursorHidden(payload: string): boolean {
   const hideIndex = payload.lastIndexOf('\x1b[?25l')

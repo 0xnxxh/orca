@@ -124,6 +124,7 @@ import {
   POST_REPLAY_MODE_RESET,
   POST_REPLAY_REATTACH_RESET,
   POST_REPLAY_REATTACH_RESET_KEEP_MOUSE,
+  RESET_GRAPHIC_RENDITION,
   RESET_KITTY_KEYBOARD_PROTOCOL,
   RESET_TERMINAL_CURSOR_STYLE
 } from '../../../../shared/terminal-mode-reset-profiles'
@@ -7058,6 +7059,14 @@ export function connectPanePty(
         clearHiddenOutputRestoreFloodRepaintTimer()
         writeRestoreUnavailableWarning()
       }
+      // Why before both exits: the gate dropped renderer-bound bytes, so the pen
+      // that was live when it started dropping is unknown — if the dropped span
+      // held the `ESC[22m`/`ESC[0m` closing a run, xterm still has bold (or any
+      // other attribute) latched. Abandoning means no snapshot will rebuild the
+      // buffer, so nothing else ever clears it and every later cell inherits it
+      // (STA-4042). Cheap and idempotent; a live TUI re-arms its own attributes
+      // on the next write.
+      writePtyOutputToXterm(RESET_GRAPHIC_RENDITION, true)
       if (hadPendingOverflow) {
         return
       }
