@@ -78,6 +78,7 @@ import { normalizeGitHubPRForBranchOutcome } from '../../../../shared/github-pr-
 import { restoreReactionOnSubject, setReactionOnSubject } from '@/lib/pr-comment-reactions'
 import { withGitHubCheckDetailsTimeout } from '@/runtime/github-check-details-timeout'
 import { getGitHubRepoLookupIndex } from './github-repo-lookup-index'
+import { areValuesEqual, reconcileCatalogRows } from './repo-identity-reconcile'
 
 // ─── ProjectV2 cache types ────────────────────────────────────────────
 // Why: separate from CacheEntry<T> — project-view has a single GraphQL source (no issue/PR fallback) and a distinct error union.
@@ -2739,15 +2740,57 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
         if (get().workItemsInvalidationNonce !== requestInvalidationNonce) {
           return items
         }
-        set((s) => ({
-          workItemsCache: withBoundedCacheEntry(s.workItemsCache, key, {
-            data: items,
-            fetchedAt: Date.now(),
-            sources: envelope.sources,
-            ...(errorForCache ? { error: errorForCache } : {}),
-            ...(envelope.issueSourceFellBack ? { issueSourceFellBack: true } : {})
-          })
-        }))
+        // Why: TaskPage useShallow-selects cache entry refs. A new { ...entry, fetchedAt }
+        // still remaps every visible row. IPC structuredClone rebuilds nested records, so
+        // data === previous.data never holds — reconcile structurally, then either mutate
+        // fetchedAt in place or write one entry that keeps unchanged row/meta refs.
+        set((s) => {
+          const previousEntry = s.workItemsCache[key]
+          const previousData = previousEntry?.data ?? []
+          const reconciled = reconcileCatalogRows(
+            previousData,
+            items,
+            (row) => `${row.repoId}\0${row.id}`
+          )
+          const nextFellBack = envelope.issueSourceFellBack ? true : undefined
+          const sourcesUnchanged = areValuesEqual(previousEntry?.sources, envelope.sources)
+          const errorUnchanged = areValuesEqual(previousEntry?.error, errorForCache)
+          const fellBackUnchanged = previousEntry?.issueSourceFellBack === nextFellBack
+          if (
+            previousEntry &&
+            reconciled === previousData &&
+            sourcesUnchanged &&
+            errorUnchanged &&
+            fellBackUnchanged
+          ) {
+            previousEntry.fetchedAt = Date.now()
+            return {}
+          }
+          const previousSources = previousEntry?.sources
+          const previousError = previousEntry?.error
+          return {
+            workItemsCache: withBoundedCacheEntry(s.workItemsCache, key, {
+              data:
+                previousEntry?.data != null && reconciled === previousEntry.data
+                  ? previousEntry.data
+                  : reconciled.slice(),
+              fetchedAt: Date.now(),
+              sources:
+                sourcesUnchanged && previousSources !== undefined
+                  ? previousSources
+                  : envelope.sources,
+              ...(errorForCache
+                ? {
+                    error:
+                      errorUnchanged && previousError !== undefined
+                        ? previousError
+                        : errorForCache
+                  }
+                : {}),
+              ...(nextFellBack ? { issueSourceFellBack: true } : {})
+            })
+          }
+        })
         return items
       } catch (err) {
         // Why: rethrow but keep the stale cache entry so the UI still renders while the user retries.
