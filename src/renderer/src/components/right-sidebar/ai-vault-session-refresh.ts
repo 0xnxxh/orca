@@ -8,6 +8,7 @@ import type { ExecutionHostScope } from '../../../../shared/execution-host'
 import { useAppStore } from '@/store'
 import type { AiVaultSessionLimit } from './ai-vault-session-limit'
 import { AiVaultSessionPublicationGate } from './ai-vault-session-publication-gate'
+import { applyPublishedAiVaultList, EMPTY_AI_VAULT_SESSIONS } from './ai-vault-session-identity'
 import {
   aiVaultSessionResultCacheKey,
   cacheAiVaultSessionResult,
@@ -42,8 +43,8 @@ export function useAiVaultSessionRefresh(
   scanResult: AiVaultListResult | null
   sessions: AiVaultSession[]
 } {
-  const [sessions, setSessions] = useState<AiVaultSession[]>([])
   const [scanResult, setScanResult] = useState<AiVaultListResult | null>(null)
+  const sessions = scanResult?.sessions ?? EMPTY_AI_VAULT_SESSIONS
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const requestTokenRef = useRef(crypto.randomUUID())
@@ -92,8 +93,7 @@ export function useAiVaultSessionRefresh(
         lastAppliedScanRef.current = { scopeKey: scanKey, scannedAt: cachedResult.scannedAt }
         setError(null)
         publicationGateRef.current.publish(cachedResult, (published) => {
-          setScanResult(published)
-          setSessions(published.sessions)
+          applyPublishedAiVaultList(published, setScanResult)
         })
         setLoading(false)
         return
@@ -161,8 +161,7 @@ export function useAiVaultSessionRefresh(
         })
         publicationGateRef.current.publish(result, (published) => {
           if (mountedRef.current && scanKey === currentScanScopeKey()) {
-            setScanResult(published)
-            setSessions(published.sessions)
+            applyPublishedAiVaultList(published, setScanResult)
           }
         })
       } catch (err) {
