@@ -37,6 +37,17 @@ describe('shell startup output scanner', () => {
     })
   })
 
+  it('counts an identity-held byte as post-marker output', () => {
+    const state = createShellStartupOutputScanState()
+
+    expect(scanShellStartupOutput(state, `${READY_MARKER}\x1b`)).toEqual({
+      output: '\x1b',
+      shellPid: null,
+      ready: true,
+      postMarkerBytesObserved: true
+    })
+  })
+
   it('drains every incomplete scanner prefix in byte order', () => {
     const state = createShellStartupOutputScanState()
     expect(scanShellStartupOutput(state, '\x1b]777;orca-shell-st').output).toBe('')

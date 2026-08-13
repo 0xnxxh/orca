@@ -46,15 +46,18 @@ export function scanShellStartupOutput(
 
   const readiness = scanForShellReady(state.ready, data)
   let output = readiness.output
+  let postMarkerBytesObserved = readiness.postMarkerBytesObserved
   if (readiness.matched && state.identity) {
-    output += drainShellStartupIdentityHeldBytes(state.identity)
+    const heldOutput = drainShellStartupIdentityHeldBytes(state.identity)
+    output += heldOutput
+    postMarkerBytesObserved ||= heldOutput.length > 0
     state.identity = null
   }
   return {
     output,
     shellPid,
     ready: readiness.matched,
-    postMarkerBytesObserved: readiness.postMarkerBytesObserved
+    postMarkerBytesObserved
   }
 }
 
