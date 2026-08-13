@@ -2913,16 +2913,17 @@ export class Store {
     const stored = this.state.folderWorkspaceDiffComments
     let relocatedInline = false
     for (const workspace of this.state.folderWorkspaces ?? []) {
+      if (Array.isArray(workspace.diffComments) && workspace.diffComments.length > 0) {
+        // Inline wins: an intervening rollback to a #14112 build writes notes inline and leaves the
+        // older map untouched, so inline is the last notes-aware write. Also makes the relocation
+        // durable even if the user never edits anything this session.
+        relocatedInline = true
+        continue
+      }
       const comments = stored?.[workspace.id]
       // Not `??`: a degenerate `{ id: [] }` entry must not delete an intact inline value.
       if (Array.isArray(comments) && comments.length > 0) {
         workspace.diffComments = comments
-        continue
-      }
-      if (Array.isArray(workspace.diffComments) && workspace.diffComments.length > 0) {
-        // Legacy inline notes from an unreleased #14112 profile; make the relocation durable
-        // even if the user never edits anything this session.
-        relocatedInline = true
       }
     }
     if (relocatedInline) {

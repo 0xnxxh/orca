@@ -5611,15 +5611,36 @@ describe('Store', () => {
     expect(restored.getFolderWorkspace('fw-1')?.diffComments).toEqual([note])
   })
 
-  it('prefers a non-empty map entry and never lets an empty one delete inline notes', async () => {
-    const inline = makeFolderNote('note-inline', 'Inline note')
-    const mapped = makeFolderNote('note-mapped', 'Mapped note')
+  it('keeps notes authored inline on a rolled-back #14112 build over a staler map entry', async () => {
+    const mapped = makeFolderNote('note-mapped', 'Note from the fixed build')
+    const authored = makeFolderNote('note-inline', 'Note authored while rolled back')
 
     writeFolderWorkspaceProfile({
-      workspaces: [folderWorkspaceRecord({ diffComments: [inline] })],
+      workspaces: [folderWorkspaceRecord()],
       diffCommentsMap: { 'fw-1': [mapped] }
     })
-    expect((await createStore()).getFolderWorkspace('fw-1')?.diffComments).toEqual([mapped])
+    // #14112 persists notes inline and never learned about the top-level map, so a note authored
+    // there lands inline while the untouched map entry goes stale. Inline is the newer write.
+    const rolledBack = readDataFile() as PersistedState
+    writeDataFile({
+      ...rolledBack,
+      folderWorkspaces: rolledBack.folderWorkspaces.map((workspace) => ({
+        ...workspace,
+        diffComments: [authored]
+      }))
+    })
+
+    const store = await createStore()
+    expect(store.getFolderWorkspace('fw-1')?.diffComments).toEqual([authored])
+    store.flush()
+    expect((readDataFile() as PersistedState).folderWorkspaceDiffComments).toEqual({
+      'fw-1': [authored]
+    })
+  })
+
+  it('never lets an empty or unrelated map entry delete inline notes', async () => {
+    const inline = makeFolderNote('note-inline', 'Inline note')
+    const mapped = makeFolderNote('note-mapped', 'Mapped note')
 
     writeFolderWorkspaceProfile({
       workspaces: [folderWorkspaceRecord({ diffComments: [inline] })],
