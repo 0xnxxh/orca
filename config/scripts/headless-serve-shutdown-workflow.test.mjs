@@ -12,7 +12,9 @@ function readSystemdUnitBlocks(doc, unitName) {
     (match) => {
       const start = match.index + match[0].length
       const end = doc.indexOf('```', start)
-      if (end === -1) {
+      const nextUnitHeaderOffset = doc.slice(start).search(/^# \/etc\/systemd\/system\/.+$/m)
+      const nextUnitHeader = nextUnitHeaderOffset === -1 ? -1 : start + nextUnitHeaderOffset
+      if (end === -1 || (nextUnitHeader !== -1 && end > nextUnitHeader)) {
         throw new Error(`Missing closing code fence for ${unitName}`)
       }
       return doc.slice(start, end)
@@ -27,6 +29,14 @@ describe('headless serve shutdown PR gate', () => {
     ).toEqual([])
     expect(() =>
       readSystemdUnitBlocks('# /etc/systemd/system/orca-serve.service\n', 'orca-serve.service')
+    ).toThrow('Missing closing code fence for orca-serve.service')
+    expect(() =>
+      readSystemdUnitBlocks(
+        '# /etc/systemd/system/orca-serve.service\n' +
+          'KillMode=mixed\n' +
+          '# /etc/systemd/system/other.service\n```',
+        'orca-serve.service'
+      )
     ).toThrow('Missing closing code fence for orca-serve.service')
   })
 
