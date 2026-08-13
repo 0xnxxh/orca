@@ -3693,6 +3693,14 @@ export type PersistedState = {
   projectHostSetups: ProjectHostSetup[]
   projectGroups: ProjectGroup[]
   folderWorkspaces: FolderWorkspace[]
+  /** Folder-workspace review notes, keyed by FolderWorkspace.id. Top-level, NOT nested in
+   *  folderWorkspaces[]: normalizeFolderWorkspaces rebuilds each record field-by-field, so an
+   *  older build drops nested fields, while unknown top-level keys round-trip untouched.
+   *
+   *  WRITE-ONLY PROJECTION. FolderWorkspace.diffComments is the single in-memory home; load()
+   *  hydrates from this key and then deletes it from Store state, and buildStateToSave() is the
+   *  only producer of it. Never read Store.state.folderWorkspaceDiffComments outside load(). */
+  folderWorkspaceDiffComments?: Record<string, DiffComment[]>
   /** Sparse-checkout presets keyed by repoId. */
   sparsePresetsByRepo: Record<string, SparsePreset[]>
   /** Per paired device last tab selection by worktree; keeps mobile navigation across host restarts. */
