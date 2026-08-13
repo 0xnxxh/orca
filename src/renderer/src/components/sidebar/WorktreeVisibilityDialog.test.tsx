@@ -38,6 +38,12 @@ vi.mock('@/components/ui/dialog', () => ({
   DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>
 }))
 
+vi.mock('@/components/ui/tooltip', () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: ReactNode }) => <span>{children}</span>
+}))
+
 vi.mock('@/i18n/i18n', () => ({
   translate: (_key: string, fallback: string, values?: Record<string, unknown>) =>
     values
@@ -124,7 +130,22 @@ beforeEach(() => {
   mocks.state.modalData = { repoId: 'repo-1' }
   mocks.state.repos = [makeRepo()]
   mocks.state.detectedWorktreesByRepo = { 'repo-1': makeDetected() }
-  mocks.state.updateRepo.mockResolvedValue(true)
+  mocks.state.updateRepo.mockImplementation(
+    async (repoId: string, updates: Record<string, unknown>) => {
+      const repo = (mocks.state.repos as Repo[]).find((candidate) => candidate.id === repoId)
+      if (!repo) {
+        return false
+      }
+      for (const [key, value] of Object.entries(updates)) {
+        if (value === null) {
+          delete (repo as unknown as Record<string, unknown>)[key]
+        } else {
+          ;(repo as unknown as Record<string, unknown>)[key] = value
+        }
+      }
+      return true
+    }
+  )
   mocks.state.fetchWorktrees.mockResolvedValue(true)
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -168,10 +189,12 @@ function buttonWithText(text: string): HTMLButtonElement {
   return button as HTMLButtonElement
 }
 
-function alwaysShowSwitch(): HTMLButtonElement {
-  const control = document.querySelector('[role="switch"]')
+function sourceSwitch(label = 'Claude Code'): HTMLButtonElement {
+  const control = document.querySelector(
+    `[role="switch"][aria-label="Show current and future worktrees from ${label}"]`
+  )
   if (!control) {
-    throw new Error('No Always show switch')
+    throw new Error(`No ${label} source switch`)
   }
   return control as HTMLButtonElement
 }
@@ -187,9 +210,7 @@ describe('WorktreeVisibilityDialog', () => {
     await renderDialog()
 
     expect(document.body.textContent).toContain('Hidden worktrees (1)')
-    expect(document.body.textContent).toContain(
-      'Choose which hidden worktrees to show individually.'
-    )
+    expect(document.body.textContent).toContain('Show one without enabling its source.')
     expect(document.body.textContent).toContain('scratch-1')
     expect(document.body.textContent).toContain('.claude/worktrees/scratch-1')
     expect(document.body.textContent).not.toContain('/repo/.claude')
@@ -212,6 +233,20 @@ describe('WorktreeVisibilityDialog', () => {
 
     expect(document.body.textContent).toContain('Hidden worktrees (500)')
     expect(document.querySelectorAll('ul > li').length).toBeLessThan(20)
+    const search = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Search hidden worktrees"]'
+    )
+    expect(search).not.toBeNull()
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        search,
+        'scratch-499'
+      )
+      search!.dispatchEvent(new Event('input', { bubbles: true }))
+      search!.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    expect(document.body.textContent).toContain('scratch-499')
+    expect(document.body.textContent).not.toContain('scratch-0')
   })
 
   it('recovers a hidden worktree per path through the existing import exception', async () => {
@@ -234,7 +269,8 @@ describe('WorktreeVisibilityDialog', () => {
     mocks.state.detectedWorktreesByRepo = { 'repo-1': makeDetected([]) }
     await renderDialog()
 
-    expect(document.body.textContent).not.toContain('Hidden worktrees')
+    expect(document.body.textContent).toContain('Hidden worktrees (0)')
+    expect(document.body.textContent).toContain('No non-Orca worktrees found')
   })
 
   it('says it is checking instead of claiming nothing is hidden on a fallback snapshot', async () => {
@@ -289,7 +325,7 @@ describe('WorktreeVisibilityDialog', () => {
     mocks.state.fetchWorktrees.mockImplementation(() => new Promise(() => {}))
     await renderDialog()
 
-    expect(alwaysShowSwitch().disabled).toBe(true)
+    expect(sourceSwitch().disabled).toBe(true)
   })
 
   it('reports a failed refresh even while an older trusted snapshot is on screen', async () => {
@@ -323,7 +359,7 @@ describe('WorktreeVisibilityDialog', () => {
 
     await click(buttonWithText('Show'))
 
-    expect(alwaysShowSwitch().disabled).toBe(true)
+    expect(sourceSwitch().disabled).toBe(true)
   })
 
   it('locks row actions and retry while the repo-wide toggle is in flight', async () => {
@@ -331,7 +367,7 @@ describe('WorktreeVisibilityDialog', () => {
     mocks.state.updateRepo.mockImplementation(() => new Promise(() => {}))
     await renderDialog()
 
-    await click(alwaysShowSwitch())
+    await click(sourceSwitch())
 
     expect(buttonWithText('Show').disabled).toBe(true)
     expect(buttonWithText('Try again').disabled).toBe(true)
@@ -392,12 +428,12 @@ describe('WorktreeVisibilityDialog', () => {
     mocks.state.updateRepo.mockReturnValueOnce(update.promise)
     await renderDialog()
     mocks.state.fetchWorktrees.mockClear()
-    await click(alwaysShowSwitch())
+    await click(sourceSwitch())
 
     await act(async () => root.render(null))
     await renderDialog()
 
-    expect(alwaysShowSwitch().disabled).toBe(true)
+    expect(sourceSwitch().disabled).toBe(true)
     expect(buttonWithText('Show').disabled).toBe(true)
     expect(mocks.state.fetchWorktrees).not.toHaveBeenCalled()
 
@@ -406,7 +442,7 @@ describe('WorktreeVisibilityDialog', () => {
       await update.promise
       await Promise.resolve()
     })
-    expect(alwaysShowSwitch().disabled).toBe(false)
+    expect(sourceSwitch().disabled).toBe(false)
   })
 
   it('does not carry a mutation fence across same-id repos on different hosts', async () => {
@@ -465,7 +501,20 @@ describe('WorktreeVisibilityDialog', () => {
     await renderDialog()
     mocks.state.fetchWorktrees.mockClear()
 
-    await click(alwaysShowSwitch())
+    await click(sourceSwitch())
+
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not update worktree visibility. Try again.'
+    )
+    expect(mocks.state.fetchWorktrees).not.toHaveBeenCalled()
+  })
+
+  it('does not report success when an older host strips additive source settings (STA-4092)', async () => {
+    mocks.state.updateRepo.mockResolvedValue(true)
+    await renderDialog()
+    mocks.state.fetchWorktrees.mockClear()
+
+    await click(sourceSwitch())
 
     expect(document.querySelector('[role="alert"]')?.textContent).toContain(
       'Could not update worktree visibility. Try again.'
@@ -477,7 +526,7 @@ describe('WorktreeVisibilityDialog', () => {
     await renderDialog()
     mocks.state.fetchWorktrees.mockResolvedValue(false)
 
-    await click(alwaysShowSwitch())
+    await click(sourceSwitch())
 
     expect(mocks.state.fetchWorktrees).toHaveBeenLastCalledWith('repo-1', {
       requireAuthoritative: true
@@ -487,54 +536,107 @@ describe('WorktreeVisibilityDialog', () => {
     )
   })
 
-  it('enables the persistent policy for regular and agent worktrees', async () => {
+  it('toggles built-in sources independently', async () => {
     await renderDialog()
 
-    expect(document.body.textContent).toContain('Always show')
-    expect(document.body.textContent).toContain('1 worktree currently hidden')
-    expect(alwaysShowSwitch().getAttribute('aria-checked')).toBe('false')
+    expect(sourceSwitch('Claude Code').getAttribute('aria-checked')).toBe('false')
+    expect(sourceSwitch('GSD').getAttribute('aria-checked')).toBe('false')
 
-    await click(alwaysShowSwitch())
+    await click(sourceSwitch('Claude Code'))
 
     expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
-      externalWorktreeVisibility: 'show',
-      agentWorktreeVisibility: 'show',
-      externalWorktreeDiscoverySuppressedAt: null
+      worktreeVisibilitySourcePreferences: {
+        builtIn: { claude: 'show', gsd: 'hide' }
+      }
     })
     expect(mocks.state.closeModal).not.toHaveBeenCalled()
   })
 
-  it('keeps the combined switch off until the agent policy is explicitly enabled', async () => {
-    mocks.state.repos = [makeRepo({ externalWorktreeVisibility: 'show' })]
+  it('migrates legacy Always show to both built-in source rows', async () => {
+    mocks.state.repos = [makeRepo({ agentWorktreeVisibility: 'show' })]
     await renderDialog()
 
-    expect(alwaysShowSwitch().getAttribute('aria-checked')).toBe('false')
-    expect(document.body.textContent).toContain('scratch-1')
+    expect(sourceSwitch('Claude Code').getAttribute('aria-checked')).toBe('true')
+    expect(sourceSwitch('GSD').getAttribute('aria-checked')).toBe('true')
 
-    await click(alwaysShowSwitch())
+    await click(sourceSwitch('Claude Code'))
 
     expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
-      externalWorktreeVisibility: 'show',
-      agentWorktreeVisibility: 'show',
-      externalWorktreeDiscoverySuppressedAt: null
+      worktreeVisibilitySourcePreferences: {
+        builtIn: { claude: 'hide', gsd: 'show' }
+      }
     })
   })
 
-  it('turns the persistent policy off without closing the dialog', async () => {
+  it('keeps ordinary non-Orca visibility on its own source row', async () => {
+    mocks.state.repos = [makeRepo({ externalWorktreeVisibility: 'show' })]
+    await renderDialog()
+
+    expect(sourceSwitch('Other locations').getAttribute('aria-checked')).toBe('true')
+    await click(sourceSwitch('Other locations'))
+
+    expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
+      externalWorktreeVisibility: 'hide'
+    })
+  })
+
+  it('adds custom locations disabled by default', async () => {
+    await renderDialog()
+    await click(buttonWithText('Add location'))
+    const input = document.querySelector<HTMLInputElement>('#custom-worktree-root')
+    expect(input).not.toBeNull()
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        input,
+        '/srv/team-worktrees'
+      )
+      input!.dispatchEvent(new Event('input', { bubbles: true }))
+      input!.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await click(buttonWithText('Add'))
+
+    expect(mocks.state.updateRepo).toHaveBeenCalledWith(
+      'repo-1',
+      expect.objectContaining({
+        customWorktreeVisibilitySources: [
+          expect.objectContaining({ rootPath: '/srv/team-worktrees' })
+        ],
+        worktreeVisibilitySourcePreferences: expect.objectContaining({
+          custom: expect.objectContaining({})
+        })
+      })
+    )
+    const update = mocks.state.updateRepo.mock.calls.at(-1)?.[1] as {
+      customWorktreeVisibilitySources: { id: string }[]
+      worktreeVisibilitySourcePreferences: { custom: Record<string, string> }
+    }
+    expect(
+      update.worktreeVisibilitySourcePreferences.custom[
+        update.customWorktreeVisibilitySources[0]!.id
+      ]
+    ).toBe('hide')
+  })
+
+  it('removes custom locations without changing other source preferences', async () => {
     mocks.state.repos = [
-      makeRepo({ externalWorktreeVisibility: 'show', agentWorktreeVisibility: 'show' })
+      makeRepo({
+        customWorktreeVisibilitySources: [{ id: 'team', rootPath: '/srv/team-worktrees' }],
+        worktreeVisibilitySourcePreferences: { custom: { team: 'hide' } }
+      })
     ]
     await renderDialog()
 
-    expect(document.body.textContent).toContain('0 worktrees currently shown')
-    expect(alwaysShowSwitch().getAttribute('aria-checked')).toBe('true')
+    expect(sourceSwitch('team-worktrees').getAttribute('aria-checked')).toBe('false')
+    const remove = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove team-worktrees"]'
+    )
+    expect(remove).not.toBeNull()
+    await click(remove!)
 
-    await click(alwaysShowSwitch())
-
-    expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
-      externalWorktreeVisibility: 'hide',
-      agentWorktreeVisibility: 'hide'
-    })
+    expect(mocks.state.updateRepo).toHaveBeenCalledWith(
+      'repo-1',
+      expect.objectContaining({ customWorktreeVisibilitySources: [] })
+    )
     expect(mocks.state.closeModal).not.toHaveBeenCalled()
   })
 })

@@ -66,7 +66,10 @@ import {
   isLegacyRepoForExternalWorktreeVisibility,
   toDetectedWorktree
 } from '../../shared/worktree-ownership'
-import { createAgentScratchWorktreePathMatcher } from '../../shared/agent-scratch-worktrees'
+import {
+  createWorktreeVisibilitySourceMatcher,
+  normalizeCustomWorktreeVisibilitySources
+} from '../../shared/worktree-visibility-sources'
 import {
   assertWorktreeCleanForRemoval,
   forceDeleteLocalBranch,
@@ -850,10 +853,10 @@ function buildDetectedGitWorktrees(
   const liveWorktrees = dedupeWorktreesByPath(
     gitWorktrees.filter((gitWorktree) => !gitWorktree.prunable)
   )
-  const agentScratchWorktreePathMatcher = createAgentScratchWorktreePathMatcher([
-    repo.path,
-    ...liveWorktrees.map((worktree) => worktree.path)
-  ])
+  const worktreeVisibilitySourceMatcher = createWorktreeVisibilitySourceMatcher(
+    [repo.path, ...liveWorktrees.map((worktree) => worktree.path)],
+    normalizeCustomWorktreeVisibilitySources(repo.customWorktreeVisibilitySources) ?? []
+  )
   const detected = liveWorktrees.map((gitWorktree) => {
     const worktreeId = `${repo.id}::${gitWorktree.path}`
     let meta = store.getWorktreeMeta(worktreeId)
@@ -865,7 +868,7 @@ function buildDetectedGitWorktrees(
       settings,
       knownOrcaLayouts,
       isLegacyRepoForVisibility,
-      agentScratchWorktreePathMatcher
+      worktreeVisibilitySourceMatcher
     })
     if (!detected.visible) {
       return detected
@@ -879,7 +882,7 @@ function buildDetectedGitWorktrees(
       settings,
       knownOrcaLayouts,
       isLegacyRepoForVisibility,
-      agentScratchWorktreePathMatcher
+      worktreeVisibilitySourceMatcher
     })
   })
   return projectResolvedWorktreeLineage(detected, store.getAllWorktreeLineage?.() ?? {})
@@ -1081,10 +1084,10 @@ function buildDisconnectedDetectedWorktrees(
   worktrees: Worktree[]
 ): DetectedWorktree[] {
   const settings = store.getSettings()
-  const agentScratchWorktreePathMatcher = createAgentScratchWorktreePathMatcher([
-    repo.path,
-    ...worktrees.map((worktree) => worktree.path)
-  ])
+  const worktreeVisibilitySourceMatcher = createWorktreeVisibilitySourceMatcher(
+    [repo.path, ...worktrees.map((worktree) => worktree.path)],
+    normalizeCustomWorktreeVisibilitySources(repo.customWorktreeVisibilitySources) ?? []
+  )
   const detected = worktrees.map((worktree) => {
     const meta = store.getWorktreeMeta(worktree.id)
     const detected = toDetectedWorktree({
@@ -1094,7 +1097,7 @@ function buildDisconnectedDetectedWorktrees(
       settings,
       knownOrcaLayouts: [],
       isLegacyRepoForVisibility: true,
-      agentScratchWorktreePathMatcher
+      worktreeVisibilitySourceMatcher
     })
     return applyMetadataFallbackVisibility(detected)
   })
