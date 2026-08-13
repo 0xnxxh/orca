@@ -1,9 +1,8 @@
 import React, { useMemo, useState } from 'react'
-import { Folder, Grid2X2, Plus, SquareTerminal, Trash2 } from 'lucide-react'
+import { Folder, Grid2X2, SquareTerminal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { translate } from '@/i18n/i18n'
@@ -105,7 +104,6 @@ export default function WorktreeVisibilitySourceList({
   onRemove,
   onToggle
 }: Props): React.JSX.Element {
-  const [addOpen, setAddOpen] = useState(false)
   const [rootPath, setRootPath] = useState('')
   const [inputError, setInputError] = useState<string | null>(null)
   const customSources = normalizeCustomWorktreeVisibilitySources(
@@ -132,7 +130,6 @@ export default function WorktreeVisibilitySourceList({
     const added = await onAdd(rootPath)
     if (added) {
       setRootPath('')
-      setAddOpen(false)
       return
     }
     setInputError(
@@ -242,61 +239,51 @@ export default function WorktreeVisibilitySourceList({
             </div>
           )
         })}
-      </div>
-      <Popover open={addOpen} onOpenChange={setAddOpen}>
-        <PopoverTrigger asChild>
-          <Button type="button" variant="outline" size="sm" className="w-fit" disabled={disabled}>
-            <Plus />
-            {translate(
-              'auto.components.sidebar.WorktreeVisibilitySourceList.addLocation',
-              'Add location'
-            )}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          side="bottom"
-          className="w-[390px] max-w-[calc(100vw-6rem)] p-3"
+        <form
+          className="grid gap-2 border-t border-border bg-background/50 px-2.5 py-2.5"
+          aria-label={translate(
+            'auto.components.sidebar.WorktreeVisibilitySourceList.addLocation',
+            'Add location'
+          )}
+          onSubmit={(event) => void handleAdd(event)}
         >
-          <form className="grid gap-2" onSubmit={(event) => void handleAdd(event)}>
-            <Label htmlFor="custom-worktree-root">
-              {translate(
-                'auto.components.sidebar.WorktreeVisibilitySourceList.worktreeRoot',
-                'Worktree root'
+          <Label htmlFor="custom-worktree-root">
+            {translate(
+              'auto.components.sidebar.WorktreeVisibilitySourceList.worktreeRoot',
+              'Worktree root'
+            )}
+          </Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="custom-worktree-root"
+              className="font-mono text-xs"
+              value={rootPath}
+              autoComplete="off"
+              spellCheck={false}
+              aria-invalid={inputError ? true : undefined}
+              aria-describedby="custom-worktree-root-help"
+              onChange={(event) => {
+                setRootPath(event.target.value)
+                setInputError(null)
+              }}
+            />
+            <Button type="submit" size="sm" disabled={disabled || !rootPath.trim()}>
+              {translate('auto.components.sidebar.WorktreeVisibilitySourceList.add', 'Add')}
+            </Button>
+          </div>
+          <p
+            id="custom-worktree-root-help"
+            className={`text-[11px] ${inputError ? 'text-destructive' : 'text-muted-foreground'}`}
+            role={inputError ? 'alert' : undefined}
+          >
+            {inputError ??
+              translate(
+                'auto.components.sidebar.WorktreeVisibilitySourceList.rootHelp',
+                'Orca will recognize worktrees beneath this folder.'
               )}
-            </Label>
-            <div className="flex items-center gap-2">
-              <Input
-                id="custom-worktree-root"
-                className="font-mono text-xs"
-                value={rootPath}
-                autoComplete="off"
-                spellCheck={false}
-                aria-invalid={inputError ? true : undefined}
-                aria-describedby="custom-worktree-root-help"
-                onChange={(event) => {
-                  setRootPath(event.target.value)
-                  setInputError(null)
-                }}
-              />
-              <Button type="submit" size="sm" disabled={disabled || !rootPath.trim()}>
-                {translate('auto.components.sidebar.WorktreeVisibilitySourceList.add', 'Add')}
-              </Button>
-            </div>
-            <p
-              id="custom-worktree-root-help"
-              className={`text-[11px] ${inputError ? 'text-destructive' : 'text-muted-foreground'}`}
-              role={inputError ? 'alert' : undefined}
-            >
-              {inputError ??
-                translate(
-                  'auto.components.sidebar.WorktreeVisibilitySourceList.rootHelp',
-                  'Orca will recognize worktrees beneath this folder.'
-                )}
-            </p>
-          </form>
-        </PopoverContent>
-      </Popover>
+          </p>
+        </form>
+      </div>
     </section>
   )
 }

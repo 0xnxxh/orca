@@ -583,9 +583,13 @@ describe('WorktreeVisibilityDialog', () => {
 
   it('adds custom locations disabled by default', async () => {
     await renderDialog()
-    await click(buttonWithText('Add location'))
     const input = document.querySelector<HTMLInputElement>('#custom-worktree-root')
     expect(input).not.toBeNull()
+    expect(
+      document.querySelector('section[aria-labelledby="worktree-sources-heading"]')?.contains(input)
+    ).toBe(true)
+    expect(input?.closest('form')?.getAttribute('aria-label')).toBe('Add location')
+    expect(input?.closest('form')?.textContent).not.toContain('Add location')
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
         input,
