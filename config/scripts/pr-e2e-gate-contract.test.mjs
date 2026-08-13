@@ -72,6 +72,9 @@ describe('PR E2E gate contract', () => {
       (step) => step.name === 'Run changed E2E specs'
     )
     expect(changedRun.env.TEST_FILES_JSON).toBe('${{ inputs.test_files }}')
+    expect(changedRun.run).toContain('. != "tests/e2e/ssh-startup-exec-readiness.spec.ts"')
+    expect(changedRun.run).toContain('. != "tests/e2e/paired-startup-exec-readiness.spec.ts"')
+    expect(changedRun.run).toContain('if [ "${#TEST_FILES[@]}" -eq 0 ]')
     expect(changedRun.run).toContain('pnpm run test:e2e "${TEST_FILES[@]}" --workers=1')
   })
 
