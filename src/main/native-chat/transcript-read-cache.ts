@@ -115,15 +115,22 @@ export async function readNativeChatTranscriptCached(
   }
 
   const key = cacheKey(agent, filePath)
+  const cached = cache.get(key)
   let mtimeMs: number
   let bytes: number
   try {
     ;({ mtimeMs, bytes } = await fileStat(filePath))
   } catch (err) {
-    // Nothing cached and no `notFound`: the next call re-stats a woken distro.
+    // Why: the refusal says the distro stalled, not that this parse went stale —
+    // a complete cached transcript beats a retry banner. With nothing cached the
+    // error stands, and no `notFound`, so the next call re-stats a woken distro.
+    if (cached) {
+      // Bump recency so a session read through a stall survives eviction.
+      setCached(key, cached)
+      return cached.result
+    }
     return { error: wslTranscriptFsRefusal(err).message }
   }
-  const cached = cache.get(key)
   if (cached && Number.isFinite(mtimeMs) && cached.mtimeMs === mtimeMs) {
     // Bump recency so a frequently-read session survives eviction.
     setCached(key, cached)

@@ -175,6 +175,18 @@ describe('Kimi session parse against a stalled WSL transcript', () => {
 
     expect(recovered?.messageCount).toBe(1)
   })
+
+  // Pins the narrowness of the parser's `instanceof WslTranscriptFsError`
+  // rethrow: widening it to every error turns this into a hard scan issue.
+  it('still returns a metadata-only session when the wire file is simply missing', async () => {
+    const state = uncPath('KimiMissing', ...KIMI_HOME, 'state.json')
+    mocks.readFile.mockResolvedValue(KIMI_STATE)
+    mocks.open.mockRejectedValue(missing())
+
+    const session = await parseAgentSessionFileCached(candidate('kimi', state), 'linux')
+
+    expect(session).toMatchObject({ agent: 'kimi', title: 'Kimi session', messageCount: 0 })
+  })
 })
 
 describe('Grok session parse against a stalled WSL transcript', () => {
@@ -237,5 +249,19 @@ describe('OpenCode session parse against a stalled WSL transcript', () => {
     const recovered = await parseAgentSessionFileCached(candidate('opencode', file), 'linux')
 
     expect(recovered?.messageCount).toBe(1)
+  })
+
+  // Same guard as Kimi's: a live process mid-write must stay a parseable
+  // session, not a refusal.
+  it('still returns the session when a live process left a half-written message', async () => {
+    const file = sessionPath('OpenCodeHalfWritten')
+    mocks.readdir.mockResolvedValue([dirent('msg-1.json')])
+    mocks.readFile.mockImplementation((path: string) =>
+      Promise.resolve(path === file ? OPENCODE_SESSION : '{"role":"user",')
+    )
+
+    const session = await parseAgentSessionFileCached(candidate('opencode', file), 'linux')
+
+    expect(session).toMatchObject({ agent: 'opencode', title: 'OpenCode session', messageCount: 0 })
   })
 })

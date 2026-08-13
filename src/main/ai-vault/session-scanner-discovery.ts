@@ -3,6 +3,7 @@ import { extname, join } from 'node:path'
 import type { AiVaultAgent, AiVaultScanIssue } from '../../shared/ai-vault-types'
 import { wslGatedReaddir, wslGatedStat } from '../native-chat/wsl-transcript-fs-access'
 import { WslTranscriptFsError } from '../native-chat/wsl-transcript-fs-gate'
+import { recordSessionScanIssue } from './session-scan-issues'
 import type { FileWithMtime, SessionFileDiscovery } from './session-scanner-types'
 import { errorMessage } from './session-scanner-values'
 
@@ -29,7 +30,11 @@ export async function discoverFiles(args: {
     if (!(err instanceof WslTranscriptFsError)) {
       throw err
     }
-    args.issues.push({ agent: args.agent, path: args.rootDir, message: err.message })
+    recordSessionScanIssue(args.issues, {
+      agent: args.agent,
+      path: args.rootDir,
+      message: err.message
+    })
     return { agent: args.agent, rootDir: args.rootDir, files: [] }
   }
   const files: FileWithMtime[] = []
@@ -46,7 +51,11 @@ export async function discoverFiles(args: {
         nlink: fileStat.nlink
       })
     } catch (err) {
-      args.issues.push({ agent: args.agent, path, message: errorMessage(err) })
+      recordSessionScanIssue(args.issues, {
+        agent: args.agent,
+        path,
+        message: errorMessage(err)
+      })
     }
   }
   return {

@@ -87,8 +87,7 @@ export async function readKimiWorkDirBySessionId(indexPath: string): Promise<Map
     return new Map()
   }
 
-  let refused = false
-  const workDirs = await workDirCacheByIndexPath.get(
+  return workDirCacheByIndexPath.get(
     indexPath,
     {
       changeTimeMs: identity.ctimeMs,
@@ -97,17 +96,17 @@ export async function readKimiWorkDirBySessionId(indexPath: string): Promise<Map
     },
     generation,
     () =>
-      parseKimiSessionIndex(indexPath).then((parsed) => {
-        refused = parsed.refused
-        return parsed.map
+      parseKimiSessionIndex(indexPath).then(({ map, refused }) => {
+        // Why: a gate refusal is a stalled distro, not a cwd-less index — evict
+        // so the partial map is not served until the index's identity changes.
+        // Inside the loader, not at the call site: only the caller that missed
+        // runs this, so a concurrent hit would otherwise serve and keep it.
+        if (refused) {
+          workDirCacheByIndexPath.delete(indexPath, generation)
+        }
+        return map
       })
   )
-  // Why: a gate refusal is a stalled distro, not a cwd-less index — evicting it
-  // stops the partial map being served until the index's identity changes.
-  if (refused) {
-    workDirCacheByIndexPath.delete(indexPath, generation)
-  }
-  return workDirs
 }
 
 async function parseKimiSessionIndex(

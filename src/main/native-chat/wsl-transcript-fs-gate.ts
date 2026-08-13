@@ -162,11 +162,9 @@ function stuckBlocker(
 
 // Caller-abort pre-checks live in runWslTranscriptFsTask; nothing here yields
 // before the waiter is attached, so no aborted-signal recheck is needed.
-function attachWaiter<T>(
-  task: ScheduledTask<T>,
-  priority: WslTranscriptFsTaskPriority,
-  signal?: AbortSignal
-): Promise<T> {
+// The task's own priority is every waiter's deadline: the dedupe key carries
+// priority, so a joiner can only ever join a task scheduled at its own.
+function attachWaiter<T>(task: ScheduledTask<T>, signal?: AbortSignal): Promise<T> {
   if (task.waiters.size >= WSL_TRANSCRIPT_FS_MAX_WAITERS_PER_TASK) {
     return Promise.reject(capacityError())
   }
@@ -193,7 +191,7 @@ function attachWaiter<T>(
       }
       reject(error)
       abandonTaskIfUnused(task as UnknownScheduledTask, error)
-    }, timeoutMs(priority))
+    }, timeoutMs(task.priority))
     waiter.timeout.unref?.()
   })
 }
@@ -316,12 +314,15 @@ export function runWslTranscriptFsTask<T>(
     return Promise.reject(abortReason(options.signal))
   }
   // Why: route spelling and Linux path case can change provider behavior, so
-  // only byte-identical filesystem requests are safe to share. A counter key
-  // never collides, so an un-deduped task simply never finds a join target.
+  // only byte-identical filesystem requests are safe to share. Priority is part
+  // of the key because it selects the task's lane, scan slot and deadline: an
+  // exact probe that joined a queued scan task would inherit scan scheduling and
+  // starve behind the very traffic the two priorities exist to bypass. A counter
+  // key never collides, so an un-deduped task simply never finds a join target.
   const key =
     options.dedupe === false
       ? `undeduped:${++undedupedTaskId}`
-      : JSON.stringify([options.operation, options.path])
+      : JSON.stringify([options.operation, options.path, options.priority])
   const existing = inFlightTasks.get(key) as ScheduledTask<T> | undefined
   if (existing) {
     // A stuck target — or a queued target that stuck I/O keeps from ever
@@ -333,7 +334,7 @@ export function runWslTranscriptFsTask<T>(
     ) {
       return Promise.reject(unavailableError())
     }
-    return attachWaiter(existing, options.priority, options.signal)
+    return attachWaiter(existing, options.signal)
   }
   const route = routeKey(options.path)
   // Fail fast when the permit, route, or scan slot this task needs is held by
@@ -358,7 +359,7 @@ export function runWslTranscriptFsTask<T>(
     stuck: false
   }
   inFlightTasks.set(key, scheduled as UnknownScheduledTask)
-  const result = attachWaiter(scheduled, options.priority, options.signal)
+  const result = attachWaiter(scheduled, options.signal)
   queuedTasks.push(scheduled as UnknownScheduledTask)
   queueMicrotask(pumpTasks)
   return result

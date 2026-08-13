@@ -180,6 +180,30 @@ describe('transcript filesystem accessor on WSL UNC', () => {
     await new Promise((resolve) => setImmediate(resolve))
   })
 
+  it('drains handle closes one at a time so teardown cannot flood the thread pool', async () => {
+    let releaseFirst: (() => void) | undefined
+    const first = fakeHandle()
+    first.close.mockReturnValue(
+      new Promise<void>((resolve) => {
+        releaseFirst = resolve
+      })
+    )
+    const second = fakeHandle()
+
+    await closeTranscriptHandle(first as never, UNC_PATH)
+    await closeTranscriptHandle(second as never, UNC_PATH)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // A blocked uv_fs_close holds a libuv thread the gate cannot see, so the
+    // second one must wait rather than occupy a thread of its own.
+    expect(first.close).toHaveBeenCalledTimes(1)
+    expect(second.close).not.toHaveBeenCalled()
+
+    releaseFirst?.()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(second.close).toHaveBeenCalledTimes(1)
+  })
+
   it.each([
     ['stat', wslGatedStat, mocks.stat],
     ['lstat', wslGatedLstat, mocks.lstat]

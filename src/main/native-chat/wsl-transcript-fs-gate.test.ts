@@ -139,6 +139,29 @@ describe('WSL transcript filesystem task scheduling', () => {
     expect(duplicateTask).not.toHaveBeenCalled()
   })
 
+  it('never joins an exact probe onto the same file queued as scan work', async () => {
+    const transcript = '\\\\wsl.localhost\\Ubuntu\\home\\ada\\live.jsonl'
+    const statTask = (priority: 'exact' | 'scan', task: () => Promise<string>): Promise<string> =>
+      runWslTranscriptFsTask({ operation: 'stat', path: transcript, priority }, task)
+    // Hold the single scan slot on another distro so the same-file scan stat
+    // cannot run — a joiner would inherit exactly that queued position.
+    const blocked = deferred<string>()
+    const holderTask = vi.fn(() => blocked.promise)
+    const holder = run('\\\\wsl.localhost\\Debian\\tree', 'scan', holderTask)
+    await vi.waitFor(() => expect(holderTask).toHaveBeenCalledOnce())
+
+    const scanTask = vi.fn(async () => 'scan')
+    const scanned = statTask('scan', scanTask)
+    const exactTask = vi.fn(async () => 'exact')
+
+    await expect(statTask('exact', exactTask)).resolves.toBe('exact')
+    expect(exactTask).toHaveBeenCalledOnce()
+    expect(scanTask).not.toHaveBeenCalled()
+
+    blocked.resolve('holder')
+    await expect(Promise.all([holder, scanned])).resolves.toEqual(['holder', 'scan'])
+  })
+
   it('keeps shared work needed by a remaining waiter', async () => {
     const pending = deferred<string>()
     const task = vi.fn(() => pending.promise)

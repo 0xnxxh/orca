@@ -5,6 +5,10 @@ import { StringDecoder } from 'node:string_decoder'
 import { isWslUncPath } from '../../shared/wsl-paths'
 import { runWslTranscriptFsTask, type WslTranscriptFsTaskPriority } from './wsl-transcript-fs-gate'
 
+/** Never nest a gated call inside another — that deadlocks the scan slot. */
+
+// Why: one deadline per chunk instead of one for the whole file, so a large
+// healthy-but-slow transcript is not false-failed by a whole-file timeout.
 const WSL_TRANSCRIPT_READ_CHUNK_BYTES = 1024 * 1024
 type Operation = Parameters<typeof runWslTranscriptFsTask>[0]['operation']
 
@@ -56,6 +60,7 @@ export function wslGatedReadFile(
   return runPathOperation('readfile', path, priority, signal, () => readFile(path, encoding))
 }
 
+// dedupe:false — two joiners would share one FileHandle and both close it.
 export function wslGatedOpen(
   path: string,
   priority: WslTranscriptFsTaskPriority,
@@ -63,10 +68,18 @@ export function wslGatedOpen(
 ): Promise<FileHandle> {
   return runPathOperation('open', path, priority, signal, () => open(path, 'r'), {
     dedupe: false,
+    // An unabortable open can still succeed after its caller timed out or
+    // cancelled; without this the descriptor leaks for the process lifetime.
     onAbandonedResult: (handle) => void closeTranscriptHandle(handle, path)
   })
 }
 
+/**
+ * `path` is only the gate's route key and UNC guard — the handle carries no
+ * path and is never re-opened. dedupe:false because `read` fills the CALLER's
+ * buffer: a joiner would receive the first caller's buffer while its own
+ * (often `Buffer.allocUnsafe`) stays uninitialized.
+ */
 export function wslGatedRead(
   handle: FileHandle,
   path: string,
@@ -87,14 +100,54 @@ export function wslGatedRead(
   )
 }
 
+// A blocked `uv_fs_close` holds a libuv threadpool thread just like a blocked
+// read does, but it is invisible to the gate — so UNC teardown drains one handle
+// at a time. Unbounded fire-and-forget closes are what would exhaust the pool the
+// gate's two permits are sized against, re-creating the process-wide stall the
+// gate exists to prevent; serializing them costs at most one extra busy thread.
+// The queue cannot grow without bound: opens on a stuck route already fast-fail.
+const MAX_CONCURRENT_UNC_CLOSES = 1
+const queuedCloses: FileHandle[] = []
+let activeCloses = 0
+
+function drainQueuedCloses(): void {
+  while (activeCloses < MAX_CONCURRENT_UNC_CLOSES) {
+    const handle = queuedCloses.shift()
+    if (!handle) {
+      return
+    }
+    activeCloses += 1
+    void handle
+      .close()
+      .catch(() => {})
+      .finally(() => {
+        activeCloses -= 1
+        drainQueuedCloses()
+      })
+  }
+}
+
+/**
+ * Never gated. Off UNC this is the prior contract verbatim — the caller awaits
+ * fd teardown and a close failure surfaces. On UNC it is fire-and-forget:
+ * closing a handle on a stalled mount can itself block, and a gated close would
+ * burn a permit and a waiter deadline purely for teardown. One leaked fd until
+ * the OS unblocks beats a second blocked waiter.
+ */
 export function closeTranscriptHandle(handle: FileHandle, path: string): Promise<void> {
   if (!isWslUncPath(path)) {
     return handle.close()
   }
-  void handle.close().catch(() => {})
+  queuedCloses.push(handle)
+  drainQueuedCloses()
   return Promise.resolve()
 }
 
+/**
+ * Open, read one slice, close — for callers that want bytes at an offset and
+ * never touch the handle. Each of the two syscalls is admitted separately, so a
+ * stalled mount fails at whichever one it blocks on.
+ */
 export async function readTranscriptSlice(
   path: string,
   position: number,
@@ -123,7 +176,11 @@ export async function readTranscriptSlice(
 
 export type TranscriptReadStreamOptions = {
   start?: number
+  /** Inclusive, matching `createReadStream`. */
   end?: number
+  /** Set it to get decoded string chunks on both branches; leave it unset and
+   *  the UNC branch yields `Buffer`s the consumer must decode incrementally
+   *  itself, since a chunk boundary can split a multibyte codepoint. */
   encoding?: BufferEncoding
 }
 
@@ -134,6 +191,8 @@ async function* gatedChunks(
   signal?: AbortSignal
 ): AsyncGenerator<Buffer | string> {
   const handle = await wslGatedOpen(path, priority, signal)
+  // Why: chunk boundaries fall mid-codepoint, so decoding each slice
+  // independently would emit U+FFFD on both sides of any straddling character.
   const decoder = options.encoding ? new StringDecoder(options.encoding) : null
   try {
     let position = options.start ?? 0
@@ -170,15 +229,24 @@ async function* gatedChunks(
         yield decoded
       }
     }
+    // Trailing bytes of an incomplete sequence at EOF, replacement-char'd once.
     const trailing = decoder?.end()
     if (trailing) {
       yield trailing
     }
   } finally {
+    // Runs on `.destroy()` too (Readable.from calls the generator's return()),
+    // so an aborted head-read cannot leak the gated handle.
     await closeTranscriptHandle(handle, path)
   }
 }
 
+/**
+ * A read stream whose UNC branch admits and deadlines each 1 MiB chunk
+ * separately. A gate refusal mid-stream surfaces as an `'error'` event carrying
+ * the `WslTranscriptFsError`, which every existing consumer funnels into its
+ * `catch`.
+ */
 export function openTranscriptReadStream(
   path: string,
   options: TranscriptReadStreamOptions,

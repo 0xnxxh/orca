@@ -12,6 +12,7 @@ import {
 } from '../../shared/cross-platform-path'
 import type { AiVaultScanIssue } from '../../shared/ai-vault-types'
 import { parseWslUncPath } from '../../shared/wsl-paths'
+import { recordSessionScanIssue } from './session-scan-issues'
 import type { FileWithMtime } from './session-scanner-types'
 import { errorMessage, extractString, parseJsonObject } from './session-scanner-values'
 
@@ -34,7 +35,7 @@ export function resetProjectDirCwdCacheForTests(): void {
 // degrade-to-empty containment but make the gap visible in the scan issues.
 function recordRefusal(issues: AiVaultScanIssue[], path: string, error: unknown): void {
   if (error instanceof WslTranscriptFsError) {
-    issues.push({ agent: 'claude', path, message: error.message })
+    recordSessionScanIssue(issues, { agent: 'claude', path, message: error.message })
   }
 }
 
@@ -282,7 +283,7 @@ async function collectClaudeFiles(args: {
         sizeBytes: fileStat.size
       })
     } catch (err) {
-      args.issues.push({ agent: 'claude', path, message: errorMessage(err) })
+      recordSessionScanIssue(args.issues, { agent: 'claude', path, message: errorMessage(err) })
     }
   }
 }
