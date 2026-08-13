@@ -102,12 +102,6 @@ async function install(deps: StructuredAgentSessionRuntimeDeps): Promise<Install
       adapter,
       journalRoot: deps.stateDirectory,
       claimKeyId: deps.claimKeyId,
-      ...(deps.resolveClaudeLaunchEnv
-        ? {
-            resolveLaunchEnv: (provider) =>
-              provider === 'claude' ? deps.resolveClaudeLaunchEnv?.() : undefined
-          }
-        : {}),
       probeOwner: createStructuredAgentSessionOwnerProbe(deps.hostId),
       onEventSinkError: ({ sessionId, error }) =>
         deps.onError?.({ scope: `structured-agent-session-journal:${sessionId}`, error }),

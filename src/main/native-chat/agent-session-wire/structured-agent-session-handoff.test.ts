@@ -72,7 +72,7 @@ function operationId(): string {
 function request(
   direction: AgentSessionHandoffDirection,
   mode: AgentSessionHandoffMode,
-  options: { action?: 'start' | 'cancel-queued' | 'retry'; operationId?: string } = {}
+  options: { action?: 'start' | 'cancel-queued' | 'retry' | 'recover'; operationId?: string } = {}
 ): AgentSessionHandoffRequest {
   const action = options.action ?? 'start'
   const fields = { direction, mode, action }

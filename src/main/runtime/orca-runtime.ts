@@ -9362,40 +9362,6 @@ export class OrcaRuntimeService {
     }
   }
 
-  private recoverClaudeStructuredTuiProof(input: {
-    candidate: RuntimePtyWorktreeRecord
-    sessionId: string
-    spawnToken: string
-  }): { transcriptPath: string } {
-    const paneKey = input.candidate.paneKey
-    if (!paneKey) {
-      throw new Error('The owning Claude terminal did not retain its pane identity.')
-    }
-    if (this.restoredOrchestrationAuthorityByPtyId.has(input.candidate.ptyId)) {
-      const attestation = this.attestAgentHookCompatibilityAuthorityFn?.({
-        paneKey,
-        launchTokenHash: createHash('sha256').update(input.spawnToken).digest('hex'),
-        connectionId: input.candidate.connectionId,
-        terminalProvenance: 'restored'
-      })
-      if (attestation?.paneKey !== paneKey) {
-        throw new Error('The owning Claude terminal did not retain launch-token authority.')
-      }
-    }
-    const matches = (this.getAgentProviderSessionRowsForPaneFn?.(paneKey) ?? []).filter(
-      (row) =>
-        row.paneKey === paneKey &&
-        row.connectionId === input.candidate.connectionId &&
-        row.providerSession?.key === 'session_id' &&
-        row.providerSession.id === input.sessionId &&
-        Boolean(row.providerSession.transcriptPath)
-    )
-    if (matches.length !== 1) {
-      throw new Error('The owning Claude terminal did not retain a unique resume proof.')
-    }
-    return { transcriptPath: matches[0]!.providerSession!.transcriptPath! }
-  }
-
   private refreshStructuredTuiOwnerBinding(owner: StructuredTuiOwner): StructuredTuiOwner {
     const pty = this.ptysById.get(owner.terminal.ptyId)
     if (!pty?.connected) {
