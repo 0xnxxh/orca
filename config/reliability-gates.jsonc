@@ -4034,7 +4034,7 @@
         {
           "file": "src/renderer/src/components/sidebar/add-repo-browse-authority.test.ts",
           "assertions": [
-            "paired runtime browsing opens the host browser without invoking native pickFolders while desktop local and SSH routes remain intact"
+            "host-scoped callbacks no-op without actionable authority, while paired runtime browsing avoids native pickFolders and desktop local and SSH routes remain intact"
           ]
         },
         {
@@ -4180,8 +4180,8 @@
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/sidebar/use-add-repo-host-selection.test.ts src/renderer/src/components/sidebar/AddRepoHostSelector.test.tsx src/renderer/src/components/sidebar/add-repo-browse-authority.test.ts src/renderer/src/components/sidebar/AddRepoDialogStepContent.test.tsx src/renderer/src/components/sidebar/AddRepoStartSteps.test.tsx src/renderer/src/components/sidebar/useAddRepoServerPathFlow.test.ts src/renderer/src/runtime/runtime-server-directory-browser.test.ts src/renderer/src/store/slices/repos-paired-runtime-add.test.ts --maxWorkers=1",
           "result": "passed",
-          "durationSeconds": 4.35,
-          "summary": "Eight files and 60 tests passed, including paired-web rejection of a stale runtime leaf after re-pairing, exact displayed/actionable authority, disabled mutations, runtime browsing, and paired-runtime repo routing."
+          "durationSeconds": 4.57,
+          "summary": "Eight files and 62 tests passed, including paired-web rejection of a stale runtime leaf after re-pairing, callback-level no-authority guards, exact displayed/actionable authority, runtime browsing, and paired-runtime repo routing."
         },
         {
           "date": "2026-08-13",

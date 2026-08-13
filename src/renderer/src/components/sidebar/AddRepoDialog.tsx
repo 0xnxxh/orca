@@ -18,7 +18,7 @@ import {
   useAddRepoHostedController,
   type AddRepoDialogHostedController
 } from './use-add-repo-hosted-controller'
-import { routeAddRepoBrowse } from './add-repo-browse-authority'
+import { routeAddRepoBrowse, runAddRepoHostAction } from './add-repo-browse-authority'
 
 export default React.memo(function AddRepoDialog({
   hosted
@@ -282,7 +282,7 @@ export default React.memo(function AddRepoDialog({
     [closeModal, isAdding, resetState, step, trackNestedBackAction]
   )
   const runAddRepoMutation = useCallback(
-    (mutation: () => void): void => (hostSelection.actionableHostId ? mutation() : undefined),
+    (mutation: () => void): void => runAddRepoHostAction(hostSelection.actionableHostId, mutation),
     [hostSelection.actionableHostId]
   )
 
@@ -341,26 +341,26 @@ export default React.memo(function AddRepoDialog({
         createParentDefaultPending={createParentDefaultPending}
         manualCreateParentEntry={isRuntimeEnvironmentActive || selectedHostKind === 'ssh'}
         onBrowse={() =>
-          routeAddRepoBrowse(hostSelection.actionableParsedHost, {
-            browseLocal: () => void handleBrowse(),
-            browseRuntime: () => setStep('server-path'),
-            browseSsh: (targetId) => void handleOpenRemoteStep(targetId)
+          runAddRepoMutation(() =>
+            routeAddRepoBrowse(hostSelection.actionableParsedHost, {
+              browseLocal: () => void handleBrowse(),
+              browseRuntime: () => setStep('server-path'),
+              browseSsh: (targetId) => void handleOpenRemoteStep(targetId)
+            })
+          )
+        }
+        onOpenCloneStep={() =>
+          runAddRepoMutation(() => {
+            setCloneError(null)
+            setStep('clone')
           })
         }
-        onOpenCloneStep={() => {
-          if (!hostSelection.actionableHostId) {
-            return
-          }
-          setCloneError(null)
-          setStep('clone')
-        }}
-        onOpenCreateStep={() => {
-          if (!hostSelection.actionableHostId) {
-            return
-          }
-          setCreateError(null)
-          setStep('create')
-        }}
+        onOpenCreateStep={() =>
+          runAddRepoMutation(() => {
+            setCreateError(null)
+            setStep('create')
+          })
+        }
         onOpenRemoteStep={handleOpenRemoteStep}
         onStopNestedScan={handleStopNestedScan}
         onServerPathChange={setServerPath}
