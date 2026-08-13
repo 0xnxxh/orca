@@ -8,6 +8,7 @@ import {
   type ExecutionHostId
 } from '../../../shared/execution-host'
 import { SEARCH_ENGINE_LABELS, type SearchEngine } from '../../../shared/browser-url'
+import { BROWSER_SCREENCAST_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
 import {
   getClientCreationActionPolicy,
   type ClientCreationActionAvailability
@@ -25,15 +26,21 @@ export type OpenWorkspaceBrowserTabRequest = {
 }
 
 function isExpectedRuntimeBrowserRoute(
-  availability: ClientCreationActionAvailability,
+  state: AppState,
   route: ReturnType<typeof resolveWorktreeOperationRoute>,
   expectedRuntimeEnvironmentId: string
 ): boolean {
-  if (availability.state !== 'enabled' || availability.provider !== 'paired-runtime' || !route) {
+  if (!route) {
     return false
   }
+  const expectedEnvironmentId = expectedRuntimeEnvironmentId.trim()
   const environmentId = route.runtimeEnvironmentId?.trim() || null
-  if (environmentId !== expectedRuntimeEnvironmentId.trim()) {
+  const capabilities =
+    state.runtimeStatusByEnvironmentId?.get(expectedEnvironmentId)?.status?.capabilities
+  if (
+    environmentId !== expectedEnvironmentId ||
+    !capabilities?.includes(BROWSER_SCREENCAST_RUNTIME_CAPABILITY)
+  ) {
     return false
   }
   const host = parseExecutionHostId(route.executionHostId)
@@ -48,9 +55,8 @@ export function canOpenWorkspaceBrowserTabOnRuntime(
   workspaceId: string,
   expectedRuntimeEnvironmentId: string
 ): boolean {
-  const availability = getClientCreationActionPolicy(state, workspaceId)['managed-browser']
   const route = resolveWorktreeOperationRoute(state, workspaceId)
-  return isExpectedRuntimeBrowserRoute(availability, route, expectedRuntimeEnvironmentId)
+  return isExpectedRuntimeBrowserRoute(state, route, expectedRuntimeEnvironmentId)
 }
 
 // Why: concurrent URL tabs are indistinguishable under a shared "Open URL"
@@ -166,7 +172,7 @@ export async function openWorkspaceBrowserTab(
   const expectedEnvironmentId = request.expectedRuntimeEnvironmentId?.trim() || null
   if (
     expectedEnvironmentId &&
-    !isExpectedRuntimeBrowserRoute(availability, route, expectedEnvironmentId)
+    !isExpectedRuntimeBrowserRoute(state, route, expectedEnvironmentId)
   ) {
     throw openFailure(presentation.error, 'asserted runtime cannot provide this managed browser')
   }

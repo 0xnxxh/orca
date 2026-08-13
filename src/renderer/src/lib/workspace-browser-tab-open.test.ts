@@ -4,6 +4,7 @@ import {
   toRuntimeExecutionHostId,
   toSshExecutionHostId
 } from '../../../shared/execution-host'
+import { BROWSER_SCREENCAST_RUNTIME_CAPABILITY } from '../../../shared/protocol-version'
 import {
   canOpenWorkspaceBrowserTabOnRuntime,
   openWorkspaceBrowserTab
@@ -43,7 +44,10 @@ function ownerState(hostId?: string, runtimeOwnerEnvironmentId?: string): Record
 function browserCapableRuntime(environmentId: string): Record<string, unknown> {
   return {
     runtimeStatusByEnvironmentId: new Map([
-      [environmentId, { status: { capabilities: ['browser.screencast.v1'] }, checkedAt: 1 }]
+      [
+        environmentId,
+        { status: { capabilities: [BROWSER_SCREENCAST_RUNTIME_CAPABILITY] }, checkedAt: 1 }
+      ]
     ])
   }
 }
@@ -161,6 +165,27 @@ describe('openWorkspaceBrowserTab', () => {
       })
     ).rejects.toThrow('Unable to open URL.')
     expect(mocks.createRemote).not.toHaveBeenCalled()
+    expect(mocks.state.createBrowserTab).not.toHaveBeenCalled()
+  })
+
+  it('does not fall back to a client browser when asserted runtime creation fails', async () => {
+    mocks.state = {
+      ...ownerState(toRuntimeExecutionHostId('hub-a')),
+      ...browserCapableRuntime('hub-a'),
+      createBrowserTab: vi.fn(),
+      defaultBrowserSessionProfileId: 'client-profile',
+      defaultBrowserSessionProfileIdByHostId: {}
+    }
+    mocks.createRemote.mockResolvedValue(false)
+
+    await expect(
+      openWorkspaceBrowserTab({
+        workspaceId: WORKSPACE_ID,
+        url: 'https://example.com/',
+        intent: { kind: 'url' },
+        expectedRuntimeEnvironmentId: 'hub-a'
+      })
+    ).rejects.toThrow('Unable to open URL.')
     expect(mocks.state.createBrowserTab).not.toHaveBeenCalled()
   })
 
