@@ -234,8 +234,7 @@ function mergeProjectRepo(project: Project, repo: Repo): Project {
     ? project.sourceRepoIds
     : [...project.sourceRepoIds, repo.id]
   // Why: 0 / absent / NaN means "unknown", not epoch — min() would wipe a persisted createdAt.
-  const addedAt =
-    Number.isFinite(repo.addedAt) && repo.addedAt !== 0 ? repo.addedAt : undefined
+  const addedAt = Number.isFinite(repo.addedAt) && repo.addedAt !== 0 ? repo.addedAt : undefined
   return {
     ...project,
     sourceRepoIds,

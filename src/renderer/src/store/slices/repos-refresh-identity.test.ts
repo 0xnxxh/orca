@@ -6,8 +6,8 @@ import { createTestStore } from './store-test-helpers'
 
 // Why: every field here is load-bearing. A scalar-only repo reconciles even when the structural
 // compare is broken, which is exactly how an earlier version of this work shipped green and inert.
-// addedAt must stay non-zero: project-host-setup-projection falls back to `repo.addedAt || now`,
-// so a zero timestamp stamps Date.now() into every projection and nothing ever reconciles.
+// addedAt is non-zero on this fixture so the default case still exercises a real timestamp;
+// dedicated tests below cover addedAt 0 / omitted without restamping Date.now().
 const repo: Repo = {
   id: 'repo-1',
   path: '/repo-1',

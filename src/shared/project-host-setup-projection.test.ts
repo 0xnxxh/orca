@@ -20,7 +20,12 @@ function repo(overrides: Partial<Repo> & Pick<Repo, 'id' | 'path' | 'displayName
 
 describe('project host setup projection', () => {
   it('keeps timestamps stable when addedAt is 0 across different now values', () => {
-    const target = repo({ id: 'repo-1', path: '/Users/alice/orca', displayName: 'orca', addedAt: 0 })
+    const target = repo({
+      id: 'repo-1',
+      path: '/Users/alice/orca',
+      displayName: 'orca',
+      addedAt: 0
+    })
     const first = projectHostSetupProjectionFromRepos([target], 1_000)
     const second = projectHostSetupProjectionFromRepos([target], 9_999)
 
