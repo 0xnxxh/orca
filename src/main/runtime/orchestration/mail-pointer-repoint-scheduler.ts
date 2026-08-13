@@ -3,7 +3,7 @@ const MAIL_POINTER_REPOINT_DELAY_MS = 2_000
 export class MailPointerRepointScheduler {
   private readonly timersByHandle = new Map<string, ReturnType<typeof setTimeout>>()
 
-  constructor(private readonly repoint: (handle: string) => boolean) {}
+  constructor(private readonly repoint: (handle: string) => void) {}
 
   schedule(handle: string): void {
     if (this.timersByHandle.has(handle)) {
@@ -14,9 +14,7 @@ export class MailPointerRepointScheduler {
         return
       }
       this.timersByHandle.delete(handle)
-      if (this.repoint(handle)) {
-        this.schedule(handle)
-      }
+      this.repoint(handle)
     }, MAIL_POINTER_REPOINT_DELAY_MS)
     timer.unref?.()
     this.timersByHandle.set(handle, timer)

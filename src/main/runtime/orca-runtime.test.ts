@@ -34351,6 +34351,78 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
+  it('leaves later delivery to the idle edge instead of polling a working mailbox', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      const db = new InMemoryOrchestrationMessages()
+      const pendingReads = vi.spyOn(db, 'getUndeliveredUnreadMessages')
+      const write = vi.fn().mockReturnValue(true)
+      setInMemoryOrchestrationMessages(runtime, db)
+      runtime.setPtyController({
+        write,
+        kill: vi.fn(),
+        getForegroundProcess: async () => null
+      })
+      syncSinglePty(runtime)
+
+      const [terminal] = (await runtime.listTerminals()).terminals
+      runtime.onPtyData('pty-1', '\x1b]0;Codex working\x07', 100)
+      db.insertMessage({ from: 'term_worker', to: terminal.handle, subject: 'wait for idle' })
+      runtime.notifyMessageArrived(terminal.handle, 'status')
+      await Promise.resolve()
+
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(pendingReads).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+
+      runtime.onPtyData('pty-1', '\x1b]0;Codex done\x07', 101)
+      expect(pendingReads).toHaveBeenCalledTimes(1)
+      expect(write).toHaveBeenCalledWith(
+        'pty-1',
+        expect.stringContaining('You have 1 orchestration message')
+      )
+      db.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('points restored mail when a live-idle PTY remounts after the repair edge', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      const db = new InMemoryOrchestrationMessages()
+      const write = vi.fn().mockReturnValue(true)
+      runtime.setPtyController({
+        write,
+        kill: vi.fn(),
+        getForegroundProcess: async () => null
+      })
+      syncSinglePty(runtime)
+
+      const [terminal] = (await runtime.listTerminals()).terminals
+      runtime.registerPreAllocatedHandleForPty('pty-1', terminal.handle)
+      runtime.onPtyData('pty-1', '\x1b]0;Codex working\x07', 100)
+      runtime.onPtyData('pty-1', '\x1b]0;Codex done\x07', 101)
+      runtime.markRendererReloading(1)
+      db.insertMessage({ from: 'term_worker', to: terminal.handle, subject: 'restored' })
+      setInMemoryOrchestrationMessages(runtime, db)
+
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(write).not.toHaveBeenCalled()
+
+      syncSinglePty(runtime)
+      expect(write).toHaveBeenCalledWith(
+        'pty-1',
+        expect.stringContaining('You have 1 orchestration message')
+      )
+      db.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not keep retrying when every pending row was already pointed', async () => {
     vi.useFakeTimers()
     try {

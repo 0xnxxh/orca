@@ -5573,6 +5573,7 @@ export class OrcaRuntimeService {
       throw new Error('Runtime graph publisher does not match the authoritative window')
     }
 
+    const graphWasReady = this.graphStatus === 'ready'
     const previousTabs = this.tabs
     const previousLeaves = this.leaves
     this.tabs = new Map(graph.tabs.map((tab) => [tab.tabId, tab]))
@@ -5743,6 +5744,20 @@ export class OrcaRuntimeService {
     this.refreshWritableFlags()
     for (const leaf of this.leaves.values()) {
       this.adoptPreAllocatedHandle(leaf)
+      const previousLeaf = previousLeaves.get(this.getLeafKey(leaf.tabId, leaf.leafId))
+      if (
+        this._orchestrationDb &&
+        leaf.lastAgentStatus === 'idle' &&
+        leaf.lastAgentStatusObservedLive &&
+        leaf.writable &&
+        (!graphWasReady ||
+          previousLeaf?.ptyId !== leaf.ptyId ||
+          !previousLeaf.writable ||
+          previousLeaf.lastAgentStatus !== 'idle' ||
+          !previousLeaf.lastAgentStatusObservedLive)
+      ) {
+        this.deliverPendingMessagesForLeaf(leaf)
+      }
     }
 
     // Why: createTerminal waits for the renderer's graph sync to populate the
@@ -31923,33 +31938,12 @@ export class OrcaRuntimeService {
     }
   }
 
-  private repointPendingMessagesForHandle(handle: string): boolean {
-    const db = this._orchestrationDb
-    if (!db || typeof db.getUndeliveredUnreadMessages !== 'function') {
-      return false
-    }
-    let pending: ReturnType<OrchestrationDb['getUndeliveredUnreadMessages']>
+  private repointPendingMessagesForHandle(handle: string): void {
     try {
-      pending = db.getUndeliveredUnreadMessages(handle)
+      this.deliverPendingMessagesForHandle(handle)
     } catch {
-      // The unref'd retry can outlive a test/runtime-owned database during shutdown.
-      return false
+      // The unref'd repair can outlive a test/runtime-owned database during shutdown.
     }
-    if (pending.length === 0) {
-      this.pointedMessageIdsByHandle.delete(handle)
-      return false
-    }
-    const waiters = this.messageWaitersByHandle.get(handle)
-    const pointable = pending.filter((message) => !messageTypeHasLiveWaiter(waiters, message.type))
-    if (pointable.length === 0) {
-      return true
-    }
-    this.deliverPendingMessagesForHandle(handle)
-    const watermark = this.lastPointedMessageSequenceByHandle.get(handle) ?? -1
-    const pointedIds = this.pointedMessageIdsByHandle.get(handle)
-    return pointable.some(
-      (message) => message.sequence > watermark || pointedIds?.has(message.id) !== true
-    )
   }
 
   private deliverPendingMessagesForLeaf(leaf: RuntimeLeafRecord): void {
