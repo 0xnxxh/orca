@@ -74,7 +74,7 @@ export function useWorkspaceCleanupGitEvidence({
       const queueIndex = queueRef.current.findIndex(
         (worktreeId) => !activeRequestWorktreeIdsRef.current.has(worktreeId)
       )
-      if (queueIndex < 0) {
+      if (queueIndex === -1) {
         break
       }
       const [worktreeId] = queueRef.current.splice(queueIndex, 1)
