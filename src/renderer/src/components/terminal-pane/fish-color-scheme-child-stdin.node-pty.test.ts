@@ -39,6 +39,14 @@ const COLOR_SCHEME_REPORT_PREFIX = '\x1b[?997'
 const ARM_2031 = '\x1b[?2031h'
 const WITHDRAW_2031 = '\x1b[?2031l'
 const LEAF_1 = '11111111-1111-4111-8111-111111111111'
+const TERMINAL_QUERY_REPLIES: readonly (readonly [string, string])[] = [
+  ['\x1b[0c', '\x1b[?62;4;6;22c'],
+  ['\x1b[c', '\x1b[?62;4;6;22c'],
+  ['\x1b[6n', '\x1b[1;1R'],
+  ['\x1b]10;?', '\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\'],
+  ['\x1b]11;?', '\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\']
+]
+const QUERY_CARRY_LENGTH = Math.max(...TERMINAL_QUERY_REPLIES.map(([query]) => query.length))
 
 type MutableState = Record<string, unknown>
 let mockStoreState: MutableState = {}
@@ -216,6 +224,22 @@ async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<b
   return false
 }
 
+function createTerminalQueryResponder(write: (reply: string) => void): (chunk: string) => void {
+  let carry = ''
+  return (chunk) => {
+    const carriedLength = carry.length
+    const scan = carry + chunk
+    carry = scan.slice(-QUERY_CARRY_LENGTH)
+    for (const [query, reply] of TERMINAL_QUERY_REPLIES) {
+      for (let at = scan.indexOf(query); at !== -1; at = scan.indexOf(query, at + query.length)) {
+        if (at + query.length > carriedLength) {
+          write(reply)
+        }
+      }
+    }
+  }
+}
+
 describe('fish never receives a color-scheme report it did not query (#9993)', () => {
   let configHome: string | null = null
 
@@ -375,7 +399,8 @@ describe('fish never receives a color-scheme report it did not query (#9993)', (
           "  if (!buffered.includes('\\n')) return\n" +
           "  process.stdout.write('CHILD-READ:' + JSON.stringify(buffered) + '\\n')\n" +
           '  process.exit(0)\n' +
-          '})\n'
+          '})\n' +
+          "process.stdout.write('CHILD-READY\\n')\n"
       )
 
       const term = nodePty.spawn(FISH_BIN as string, ['-l', '-i'], {
@@ -398,20 +423,16 @@ describe('fish never receives a color-scheme report it did not query (#9993)', (
 
       let rendered = ''
       const { transport, sent, emit } = createPtyBackedTransport((data) => term.write(data))
+      const answerTerminalQueries = createTerminalQueryResponder((reply) => term.write(reply))
       transportFactoryQueue.push(transport)
 
       // Why answered here: no real xterm is attached, and fish blocks its first prompt ~10s
       // on DA1 and re-probes every prompt. These are harness bytes, never renderer output.
       term.onData((chunk) => {
         rendered += chunk
-        if (chunk.includes('\x1b[0c') || chunk.includes('\x1b[c')) {
-          term.write('\x1b[?62;4;6;22c')
-        }
-        if (chunk.includes('\x1b[6n')) {
-          term.write('\x1b[1;1R')
-        }
-        if (chunk.includes('\x1b]10;?') || chunk.includes('\x1b]11;?')) {
-          term.write('\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\')
+        // Maximal fragmentation keeps query handling independent of node-pty chunk boundaries.
+        for (const fragment of chunk) {
+          answerTerminalQueries(fragment)
         }
         emit(chunk)
       })
@@ -444,8 +465,10 @@ describe('fish never receives a color-scheme report it did not query (#9993)', (
         // Withdrawal #1: `sleep` owns the tty now, so the next line is typed ahead.
         expect(await waitUntil(() => countOf(rendered, WITHDRAW_2031) >= 1, 5_000)).toBe(true)
         term.write('"$ORCA_NODE_BIN" "$ORCA_CHILD_SCRIPT"\r')
-        // Withdrawal #2: fish re-armed for the prompt and handed the tty to the child.
+        // Withdrawal #2: fish re-armed for the prompt and accepted the child command.
         expect(await waitUntil(() => countOf(rendered, WITHDRAW_2031) >= 2, 5_000)).toBe(true)
+        // DECSET withdrawal precedes fish's child spawn; the child's marker is the ownership signal.
+        expect(await waitUntil(() => rendered.includes('CHILD-READY'), 5_000)).toBe(true)
 
         const renderedBeforeChildInput = rendered.length
         // Canonical mode buffers this in the tty, so it queues behind anything already
