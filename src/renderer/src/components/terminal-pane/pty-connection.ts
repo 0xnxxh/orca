@@ -7323,10 +7323,15 @@ export function connectPanePty(
               snapshot.alternateScreen === true &&
               snapshot.frameRestoreAnsi !== undefined &&
               shouldSkipAltFrameForWidthMismatch(snapshot.cols, readProposedTerminalCols(pane))
-            for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot, {
-              skipAltFrame: skippedAltFrame
-            })) {
-              writeReplayData(replayChunk)
+            // Why: an imageless success is not proof the pane is empty; normal replay clears screen and scrollback.
+            const snapshotCarriesNoImage =
+              snapshot.alternateScreen !== true && snapshot.data === '' && !snapshot.scrollbackAnsi
+            if (!snapshotCarriesNoImage) {
+              for (const replayChunk of buildMainModelSnapshotReplayWrites(snapshot, {
+                skipAltFrame: skippedAltFrame
+              })) {
+                writeReplayData(replayChunk)
+              }
             }
             // Why: live agents own ?25l/?1004h; a forced ?1004l here would silence focus events until restart (agents enable focus reporting only at startup).
             writeReplayData(
