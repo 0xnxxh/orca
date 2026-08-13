@@ -32,7 +32,9 @@ let droppedHiddenDeliveryChars = 0
 let droppedHiddenDeliveryChunks = 0
 
 /** Gate kill switches, both read main-side: the gate only operates under main
- *  side-effect authority AND the gate-specific setting (both default on). */
+ *  side-effect authority AND the gate-specific setting. The gate-specific one
+ *  now defaults OFF — dropping renderer-bound bytes desynchronizes the
+ *  renderer's emulator from the model (STA-4042). */
 export function isHiddenPtyDeliveryGateEnabled(
   settings: HiddenPtyDeliveryGateSettings | null | undefined
 ): boolean {
