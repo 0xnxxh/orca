@@ -1,5 +1,4 @@
 /* eslint-disable max-lines -- Why: persistence keeps schema defaults, migration, and load/save/flush in one file so the storage contract reviews as a unit. */
-import { app } from 'electron'
 import {
   readFileSync,
   writeFileSync,
@@ -8,8 +7,7 @@ import {
   renameSync,
   unlinkSync,
   copyFileSync,
-  statSync,
-  realpathSync
+  statSync
 } from 'node:fs'
 import { rename, mkdir, rm, copyFile, open, stat, access, writeFile } from 'node:fs/promises'
 import {
@@ -18,38 +16,23 @@ import {
   renameDurable,
   writeFileDurableSync
 } from './durable-file-write'
-import { join, dirname, isAbsolute, resolve, sep } from 'node:path'
+import { dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { createHash, randomUUID } from 'node:crypto'
 import type {
   Automation,
   AutomationCreateInput,
   AutomationDispatchResult,
-  AutomationPrecheckResult,
-  AutomationRunOutputSnapshot,
   AutomationRun,
-  AutomationSchedulerOwner,
   AutomationRunTrigger,
   AutomationUpdateInput
 } from '../shared/automations-types'
-import {
-  latestAutomationOccurrenceAtOrBefore,
-  nextAutomationOccurrenceAfter
-} from '../shared/automation-schedules'
-import { getAutomationLegacyRepoId } from '../shared/automation-run-identity'
-import { normalizeAutomationPrecheck } from '../shared/automation-precheck'
 import { normalizeProxyUrl } from '../shared/network-proxy'
 import { normalizeKagiSessionLink } from '../shared/browser-url'
 import type { FolderWorkspace, WorkspaceKey } from '../shared/folder-workspace-types'
-import type { GlobalSettings, OrcaWorkspaceLayout } from '../shared/global-settings-types'
-import type { NotificationSettings } from '../shared/notification-settings-types'
+import type { GlobalSettings } from '../shared/global-settings-types'
+import type { OnboardingChecklistState } from '../shared/onboarding-state-types'
 import type {
-  OnboardingChecklistState,
-  OnboardingOutcome,
-  OnboardingState
-} from '../shared/onboarding-state-types'
-import type {
-  LegacyPaneKeyAliasEntry,
   PersistedMobileClientTabSelections,
   PersistedState
 } from '../shared/persisted-state-types'
@@ -63,15 +46,10 @@ import type {
   ProjectHostSetupDeleteResult,
   ProjectHostSetupUpdateArgs,
   ProjectHostSetupUpdateResult,
-  ProjectUpdateArgs,
-  RepoProjectHostSetupMethod
+  ProjectUpdateArgs
 } from '../shared/project-types'
 import type { Repo } from '../shared/repo-types'
-import type {
-  TerminalLayoutSnapshot,
-  TerminalPaneLayoutNode,
-  TerminalTab
-} from '../shared/terminal-tab-types'
+import type { TerminalPaneLayoutNode } from '../shared/terminal-tab-types'
 import type {
   WorkspaceSessionPatch,
   WorkspaceSessionState
@@ -79,89 +57,45 @@ import type {
 import type { SparsePreset } from '../shared/worktree/create-types'
 import type { WorkspaceLineage, WorktreeLineage } from '../shared/worktree/lineage-types'
 import type { WorktreeMeta } from '../shared/worktree/meta-types'
-import {
-  deriveGlobalWindowsRuntimeDefaultFromLegacySettings,
-  normalizeProjectRuntimePreference
-} from '../shared/project-execution-runtime'
-import { projectHostSetupProjectionFromRepos } from '../shared/project-host-setup-projection'
-import { carryProjectStateThroughIdentityChange } from '../shared/project-identity-succession'
-import { isPluginPanelTabKey } from '../shared/plugins/plugin-manifest'
-import type { GitRemoteIdentity } from '../shared/git-remote-identity'
-import {
-  areTaskSourceContextsEqual,
-  buildTaskSourceContextFromRepo,
-  buildWorkspaceRunContext,
-  normalizeStoredTaskSourceContext
-} from '../shared/task-source-context'
-import {
-  areWorkspaceLinkedItemsEqual,
-  normalizeWorkspaceLinkedItem
-} from '../shared/workspace-linked-item'
+import { deriveGlobalWindowsRuntimeDefaultFromLegacySettings } from '../shared/project-execution-runtime'
+import { normalizeStoredTaskSourceContext } from '../shared/task-source-context'
+import { normalizeWorkspaceLinkedItem } from '../shared/workspace-linked-item'
 import { isWorkspaceLinkedItemSourceContextMatch } from '../shared/workspace-linked-item-source-context'
-import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
-import { MOBILE_PAIRING_USERDATA_FILES } from './runtime/mobile-pairing-files'
 import { normalizePersistedMobileClientTabSelections } from './runtime/client-session-tab-selection-persistence'
 import { sanitizeWorkspaceSessionTerminalRetirements } from './runtime/mobile-session-terminal-persistence-retirement'
 import {
   removeRepoFromHostWorkspaceSessions,
   removeRepoFromWorkspaceSession
 } from './orca-profiles/profile-project-session-state'
-import { hardenExistingSecureFile } from '../shared/secure-file'
-import {
-  LEGACY_DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS,
-  type RemovedSshTargetTombstone,
-  type SshPtyConsumerRecovery,
-  type SshRemotePtyLease,
-  type SshTarget
+import type {
+  RemovedSshTargetTombstone,
+  SshPtyConsumerRecovery,
+  SshRemotePtyLease,
+  SshTarget
 } from '../shared/ssh-types'
 import { isFolderRepo } from '../shared/repo-kind'
 import {
   getRepoExecutionHostId,
   parseExecutionHostId,
   LOCAL_EXECUTION_HOST_ID,
-  normalizeExecutionHostOrder,
   normalizeExecutionHostId,
-  normalizeVisibleExecutionHostIds,
-  toSshExecutionHostId,
   type ExecutionHostId
 } from '../shared/execution-host'
 import {
   getDefaultPersistedState,
-  getDefaultNotificationSettings,
   getDefaultOnboardingState,
   getDefaultVoiceSettings,
-  getDefaultUIState,
-  getDefaultRepoHookSettings,
   getDefaultWorkspaceSession,
   getWorktreeCardModeProperties,
   isDefaultedCompactWorktreeCardProperties,
-  normalizeAgentActivityDisplayMode,
-  normalizeWorktreeCardProperties,
-  ONBOARDING_FLOW_VERSION,
-  ONBOARDING_FINAL_STEP
+  normalizeWorktreeCardProperties
 } from '../shared/constants'
 import { parseWorkspaceSessionSalvaging } from '../shared/workspace-session-salvage'
-import { normalizeUsagePercentageDisplay } from '../shared/usage-percentage-display'
-import { normalizeStatusBarUsageMode } from '../shared/status-bar-usage-mode'
-import {
-  normalizeCustomWorktreeVisibilitySources,
-  normalizeWorktreeVisibilitySourcePreferences
-} from '../shared/worktree/visibility-sources'
 import { isExistingPersistedProfile } from '../shared/project-order-manual-default-notice'
 import { resolveUsagePercentageDisplayChangeNoticeDismissed } from '../shared/usage-percentage-display-change-notice'
 import { normalizePRBotAuthorOverrides } from '../shared/pr-bot-author-overrides'
 import { toRelaySshPtyId } from './providers/ssh-pty-id'
-import {
-  migrateUiHostScopeSshTargetId,
-  migrateWorkspaceSessionSshTargetId
-} from './ssh/ssh-target-id-migration'
-import { isWslUncPath } from '../shared/wsl-paths'
-import {
-  isTerminalLeafId,
-  makePaneKey,
-  parseLegacyNumericPaneKey,
-  parsePaneKey
-} from '../shared/stable-pane-id'
+import { isTerminalLeafId } from '../shared/stable-pane-id'
 import {
   setMigrationUnsupportedPty,
   setMigrationUnsupportedPtyPersistenceListener
@@ -170,7 +104,6 @@ import { agentHookServer } from './agent-hooks/server'
 import { pruneLocalTerminalScrollbackBuffers } from '../shared/workspace-session-terminal-buffers'
 import {
   backfillAutomationRunNumbers,
-  nextAutomationRunNumber,
   pruneAutomationRuns
 } from '../shared/automation-run-retention'
 import { pruneWorkspaceSessionBrowserHistory } from '../shared/workspace-session-browser-history'
@@ -183,19 +116,10 @@ import {
   isEmptyRetiredNameRegistry,
   type RetiredNameRegistry
 } from '../shared/worktree/retired-name-registry'
-import {
-  FOLDER_WORKSPACE_INSTANCE_SEPARATOR,
-  getRepoIdFromWorktreeId,
-  getWorktreePathBasenameFromId
-} from '../shared/worktree/id'
-import {
-  isPathInsideOrEqual,
-  isWindowsAbsolutePathLike,
-  normalizeRuntimePathForComparison
-} from '../shared/cross-platform-path'
+import { getRepoIdFromWorktreeId, getWorktreePathBasenameFromId } from '../shared/worktree/id'
+import { isPathInsideOrEqual } from '../shared/cross-platform-path'
 import { normalizeTerminalQuickCommands } from '../shared/terminal-quick-commands'
 import { normalizeTaskProviderSettings } from '../shared/task-providers'
-import { mergeWorkspaceCleanupUIState } from '../shared/workspace-cleanup-ui-state'
 import { normalizeAutoRenameBranchFromWorkDefaultOn } from '../shared/auto-rename-branch-from-work-settings'
 import {
   addMobilePairingCustomAddress,
@@ -208,68 +132,31 @@ import { normalizeSourceControlGroupOrder } from '../shared/source-control-group
 import { normalizeAppIconId } from '../shared/app-icon'
 import { normalizeTerminalCustomThemes } from '../shared/terminal-custom-themes'
 import {
-  legacyTerminalScrollbackBytesToRows,
-  normalizeDesktopTerminalScrollbackRows
-} from '../shared/terminal-scrollback-policy'
-import {
-  compareFeatureInteractionUsageBuckets,
-  getFeatureInteractionCategory,
-  getFeatureInteractionUsageBucket,
-  normalizeFeatureInteractions,
   normalizeFeatureInteractionTelemetryBuckets,
   type FeatureInteractionId
 } from '../shared/feature-interactions'
-import { normalizeContextualTourIds } from '../shared/contextual-tours'
-import { normalizeFeatureTipIds } from '../shared/feature-tips'
 import {
   parseCodexResetCreditAttemptLedger,
   type CodexResetCreditAttemptLedger
 } from '../shared/codex-reset-credit-attempt-ledger'
-import { normalizeManualRepoOrder } from '../shared/manual-repo-order'
 import {
   DEFAULT_WORKSPACE_STATUS_ID,
-  clampWorkspaceBoardColumnWidth,
-  clampWorkspaceBoardOpacity,
-  normalizePersistedWorkspaceStatuses,
-  normalizeWorkspaceStatuses
+  normalizePersistedWorkspaceStatuses
 } from '../shared/workspace-statuses'
-import { clampMarkdownTocPanelWidth } from '../shared/markdown-toc-panel-width'
-import { clampCombinedDiffFileTreeWidth } from '../shared/combined-diff-file-tree-width'
-import { isLegacyRepoForExternalWorktreeVisibility } from '../shared/worktree/ownership'
-import {
-  migrateExternalWorktreeVisibilityDefaults,
-  normalizeWorktreeVisibilityDefaults
-} from '../shared/external-worktree-visibility'
-import { sanitizeRepoIcon } from '../shared/repo-icon'
-import { normalizeRepoBadgeColor } from '../shared/repo-badge-color'
+import { migrateExternalWorktreeVisibilityDefaults } from '../shared/external-worktree-visibility'
 import {
   clearMissingProjectGroupMemberships,
   createProjectGroup,
-  getNextProjectGroupOrder,
-  getProjectGroupSubtreeIds,
-  normalizeProjectGroupName,
   normalizeProjectGroups
 } from '../shared/project-groups'
 import { createNestedProjectGroupResolver } from './project-groups/nested-repo-import'
 import {
   mergeLegacyCommitMessageAiIntoSourceControlAi,
-  normalizeRepoSourceControlAiOverrides,
-  normalizeSourceControlAiSettings,
   projectSourceControlAiToLegacyCommitMessageAi,
   sourceControlAiSettingsFromLegacy
 } from '../shared/source-control-ai'
-import {
-  DEFAULT_SOURCE_CONTROL_ACTION_COMMAND_TEMPLATES,
-  SOURCE_CONTROL_TEXT_ACTION_IDS
-} from '../shared/source-control-ai-actions'
 import { normalizeDisabledTuiAgents } from '../shared/tui-agent-selection'
-import {
-  DEFAULT_TUI_AGENT_ARGS,
-  DEFAULT_TUI_AGENT_ENV,
-  hasUnsupportedTuiAgentArgs,
-  normalizeTuiAgentArgsRecord,
-  normalizeTuiAgentEnvRecord
-} from '../shared/tui-agent-launch-defaults'
+import { hasUnsupportedTuiAgentArgs } from '../shared/tui-agent-launch-defaults'
 import { normalizeTerminalCursorStyleDefault } from '../shared/terminal-cursor-style-settings'
 import {
   normalizeOsc52ClipboardDefaultOn,
@@ -277,23 +164,13 @@ import {
 } from '../shared/osc52-clipboard-settings'
 import { normalizeTerminalLineHeight } from '../shared/terminal-line-height-settings'
 import { normalizeUiLanguage } from '../shared/ui-language'
-import { normalizeBrowserPageZoomLevel } from '../shared/browser-page-zoom'
-import { persistedUIValuesEqual } from '../shared/persisted-ui-equality'
 import { ActiveViewPreference } from './active-view-preference'
 import {
   collectFolderWorkspaceDiffComments,
   normalizeFolderWorkspaceDiffComments
 } from './folder-workspace-diff-comments'
-import {
-  normalizeFolderWorkspaceName,
-  normalizeFolderWorkspaces
-} from '../shared/folder-workspaces'
-import {
-  folderWorkspaceKey,
-  isWorkspaceKey,
-  parseWorkspaceKey,
-  worktreeWorkspaceKey
-} from '../shared/workspace-scope'
+import { normalizeFolderWorkspaces } from '../shared/folder-workspaces'
+import { folderWorkspaceKey, worktreeWorkspaceKey } from '../shared/workspace-scope'
 import {
   collectTerminalScrollbackSnapshotRefs,
   deleteTerminalScrollbackSnapshotSync,
@@ -306,8 +183,6 @@ import {
   deleteRemovedTerminalScrollbackSnapshotsAsync,
   migrateWorkspaceSessionTerminalScrollbackSnapshotsAsync
 } from './terminal-scrollback-snapshot-async-migration'
-import { track } from './telemetry/client'
-import { getCohortAtEmit } from './telemetry/cohort-classifier'
 import { isStartupDiagnosticsEnabled, logStartupDiagnostic } from './startup/startup-diagnostics'
 import {
   PROTECTED_SECRET_SLOT,
@@ -315,250 +190,180 @@ import {
   sshPtyOwnerLeaseSecretSlot,
   type ProtectedSecretRetentionUpdate
 } from './protected-secret-persistence'
-
-function isLegacyOpenCodeSessionCookie(value: string): boolean {
-  const trimmed = value.trim()
-  return (
-    trimmed.startsWith('Fe26.2**') ||
-    trimmed.split(';').some((pair) => /^(?:auth|__Host-auth)=\S+$/i.test(pair.trim()))
-  )
-}
-
-function isLegacySshPtyOwnerLease(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
-}
-
-function retireLegacyInstructionsForClearedTextActionRecipes(
-  sourceControlAi: GlobalSettings['sourceControlAi'],
-  previousSettings: GlobalSettings
-): GlobalSettings['sourceControlAi'] {
-  if (!sourceControlAi?.actions) {
-    return sourceControlAi
-  }
-
-  const previousSourceControlAi = normalizeSourceControlAiSettings(
-    previousSettings.sourceControlAi,
-    previousSettings.commitMessageAi
-  )
-  let instructionsByOperation = sourceControlAi.instructionsByOperation
-  let changed = false
-  for (const actionId of SOURCE_CONTROL_TEXT_ACTION_IDS) {
-    if (
-      sourceControlAi.actions[actionId]?.commandInputTemplate !==
-      DEFAULT_SOURCE_CONTROL_ACTION_COMMAND_TEMPLATES[actionId]
-    ) {
-      continue
-    }
-    if (
-      previousSourceControlAi.actions?.[actionId]?.commandInputTemplate ===
-        DEFAULT_SOURCE_CONTROL_ACTION_COMMAND_TEMPLATES[actionId] ||
-      instructionsByOperation?.[actionId] !==
-        previousSourceControlAi.instructionsByOperation[actionId]
-    ) {
-      continue
-    }
-    if (instructionsByOperation?.[actionId] === '') {
-      continue
-    }
-    // Why: {basePrompt} is the explicit clear state; an empty instruction shadows rollback commitMessageAi.customPrompt on normalize/project.
-    instructionsByOperation = { ...instructionsByOperation, [actionId]: '' }
-    changed = true
-  }
-
-  return changed ? { ...sourceControlAi, instructionsByOperation } : sourceControlAi
-}
-
-// Why capture once (not a module const, not per-call): a const resolves before configureDevUserDataPath() redirects userData (dev/prod collide);
-// per-call resolves after app.setName('Orca') flips path case and loses data on case-sensitive FS. index.ts calls initDataPath() at the right moment.
-let _dataFile: string | null = null
-let _userDataDir: string | null = null
-
-export function initDataPath(): void {
-  const userDataDir = app.getPath('userData')
-  _userDataDir = userDataDir
-  _dataFile = join(userDataDir, 'orca-data.json')
-}
-
-function getDataFile(): string {
-  if (!_dataFile) {
-    // Safety fallback — should not be hit in normal startup.
-    const userDataDir = app.getPath('userData')
-    _userDataDir = userDataDir
-    _dataFile = join(userDataDir, 'orca-data.json')
-  }
-  return _dataFile
-}
-
-// Why a sidecar: githubCache refreshes every poll and would rewrite the whole multi-MB orca-data.json each cycle.
-// Snapshotted best-effort at quit for instant badges next launch; safe to lose.
-function getGithubCacheFile(dataFile = getDataFile()): string {
-  return join(dirname(dataFile), 'orca-github-cache.json')
-}
-
-// Why: worktrees deleted outside Orca orphan their worktreeMeta, so the map grew monotonically (63% dead on a heavy install).
-// GC stays narrow: local-host entries only (a local existsSync would falsely condemn SSH/WSL remote paths) and only after a 30-day idle grace.
-const WORKTREE_META_GC_GRACE_MS = 30 * 24 * 60 * 60 * 1000
-const STALE_DURABLE_WRITE_TEMP_AGE_MS = 24 * 60 * 60 * 1000
-
-function gcStaleWorktreeMeta(state: PersistedState): number {
-  // Why: a hand-corrupted "worktreeMeta": null overrides the defaults merge; normalize here instead of throwing.
-  state.worktreeMeta ??= {}
-  const repoById = new Map(state.repos.map((repo) => [repo.id, repo]))
-  const projectIds = new Set((state.projects ?? []).map((project) => project.id))
-  const now = Date.now()
-  let removed = 0
-  for (const key of Object.keys(state.worktreeMeta)) {
-    // Why: folder-project workspace instances (keyed repoId::path::workspace:<uuid>) ARE the workspace record, not a checkout row; skip them.
-    if (key.includes(FOLDER_WORKSPACE_INSTANCE_SEPARATOR)) {
-      continue
-    }
-    const separator = key.indexOf('::')
-    if (separator === -1) {
-      continue
-    }
-    const ownerId = key.slice(0, separator)
-    const worktreePath = key.slice(separator + 2)
-    const meta = state.worktreeMeta[key]
-    const repo = repoById.get(ownerId)
-    if (repo) {
-      if (repo.connectionId || getRepoExecutionHostId(repo) !== LOCAL_EXECUTION_HOST_ID) {
-        continue
-      }
-    } else if (projectIds.has(ownerId)) {
-      // Project-owned metas keep their own project/host lifecycle; leave them alone.
-      continue
-    }
-    // Unowned entries (repo removed before metas were pruned) fall through to the same missing-path + idle-grace gate.
-    if (meta?.hostId && meta.hostId !== LOCAL_EXECUTION_HOST_ID) {
-      continue
-    }
-    if (!isAbsolute(worktreePath) || isWslUncPath(worktreePath)) {
-      continue
-    }
-    // Why: WSL worktrees on Windows carry Linux-style paths that Windows existsSync can't probe and would falsely condemn.
-    if (process.platform === 'win32' && !isWindowsAbsolutePathLike(worktreePath)) {
-      continue
-    }
-    // Why keep timestamp-less entries: without timestamps we can't prove the 30-day grace elapsed (measured dead entries all had them).
-    // Grace is checked before existsSync so active entries skip the stat fan-out (and its slow-NFS tail).
-    const newestTouch = Math.max(meta?.lastActivityAt ?? 0, meta?.createdAt ?? 0)
-    if (newestTouch === 0 || now - newestTouch < WORKTREE_META_GC_GRACE_MS) {
-      continue
-    }
-    if (existsSync(worktreePath)) {
-      continue
-    }
-    delete state.worktreeMeta[key]
-    delete state.worktreeLineageById[key]
-    delete state.workspaceLineageByChildKey[worktreeWorkspaceKey(key)]
-    removed++
-  }
-  return removed
-}
-
-function normalizeWorktreeLinkedItemMetadata(state: PersistedState): boolean {
-  let changed = false
-  const rawWorktreeMeta = state.worktreeMeta as unknown
-  if (
-    typeof rawWorktreeMeta !== 'object' ||
-    rawWorktreeMeta === null ||
-    Array.isArray(rawWorktreeMeta)
-  ) {
-    state.worktreeMeta = {}
-    changed = rawWorktreeMeta !== undefined
-  }
-  for (const [key, meta] of Object.entries(state.worktreeMeta)) {
-    // Why: hand-corrupted non-object entries are a real input class; drop them here because gcStaleWorktreeMeta
-    // keeps timestamp-less keys forever and every downstream consumer trusts the Record<string, WorktreeMeta> type.
-    if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) {
-      delete state.worktreeMeta[key]
-      // Companions go with it, matching gcStaleWorktreeMeta/removeWorktreeMeta; a stranded lineage row would
-      // otherwise re-attach to a worktree recreated at the same repoId::path.
-      delete state.worktreeLineageById[key]
-      delete state.workspaceLineageByChildKey[worktreeWorkspaceKey(key)]
-      changed = true
-      continue
-    }
-    const linkedWorkItem = normalizeWorkspaceLinkedItem(meta.linkedWorkItem)
-    const sourceContext = normalizeStoredTaskSourceContext(meta.linkedTaskSourceContext)
-    const linkedTaskSourceContext = isWorkspaceLinkedItemSourceContextMatch(
-      linkedWorkItem,
-      sourceContext
-    )
-      ? sourceContext
-      : null
-    if (!areWorkspaceLinkedItemsEqual(meta.linkedWorkItem, linkedWorkItem)) {
-      meta.linkedWorkItem = linkedWorkItem
-      changed = true
-    }
-    if (!areTaskSourceContextsEqual(meta.linkedTaskSourceContext, linkedTaskSourceContext)) {
-      meta.linkedTaskSourceContext = linkedTaskSourceContext
-      changed = true
-    }
-  }
-  return changed
-}
-
-function readGithubCacheSnapshot(dataFile: string): PersistedState['githubCache'] | null {
-  try {
-    const parsed = JSON.parse(readFileSync(getGithubCacheFile(dataFile), 'utf-8')) as unknown
-    const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
-      typeof value === 'object' && value !== null && !Array.isArray(value)
-    if (
-      isPlainRecord(parsed) &&
-      isPlainRecord((parsed as { pr?: unknown }).pr) &&
-      isPlainRecord((parsed as { issue?: unknown }).issue)
-    ) {
-      return parsed as PersistedState['githubCache']
-    }
-  } catch {
-    // Missing or corrupt snapshot: start with an empty cache and refetch.
-  }
-  return null
-}
-
-/**
- * Return the userData directory captured at initDataPath() time, before app.setName() can change how app.getPath('userData') resolves.
- *
- * Subsystems sharing storage with orca-data.json read this instead of resolving late, which on case-sensitive FS can lose paired devices.
- */
-export function getCanonicalUserDataPath(): string {
-  if (!_userDataDir) {
-    // Safety fallback — should not be hit in normal startup.
-    _userDataDir = app.getPath('userData')
-  }
-  return _userDataDir
-}
-
-/**
- * Copy legacy mobile pairing credentials into the canonical userData directory.
- *
- * Copies the registry and E2EE keypair forward as a pair so an update doesn't force a re-pair or mix devices with the wrong key.
- */
-export function migrateMobilePairingDataToCanonicalUserDataPath(sourceUserDataDir: string): void {
-  const targetUserDataDir = getCanonicalUserDataPath()
-  if (resolve(sourceUserDataDir) === resolve(targetUserDataDir)) {
-    return
-  }
-
-  const migrations = MOBILE_PAIRING_USERDATA_FILES.map((fileName) => ({
-    sourcePath: join(sourceUserDataDir, fileName),
-    targetPath: join(targetUserDataDir, fileName)
-  }))
-  if (migrations.some(({ sourcePath }) => !existsSync(sourcePath))) {
-    return
-  }
-  if (migrations.some(({ targetPath }) => existsSync(targetPath))) {
-    return
-  }
-
-  mkdirSync(targetUserDataDir, { recursive: true })
-  for (const { sourcePath, targetPath } of migrations) {
-    copyFileSync(sourcePath, targetPath)
-    // Why: copyFileSync drops Windows ACLs, so re-assert current-user-only on these credential copies (device tokens, E2EE key).
-    hardenExistingSecureFile(targetPath)
-  }
-}
+import {
+  isLegacyOpenCodeSessionCookie,
+  isLegacySshPtyOwnerLease
+} from './persistence/persistence-secret-validation'
+import {
+  getDataFile,
+  getGithubCacheFile,
+  readGithubCacheSnapshot
+} from './persistence/persistence-user-data-path'
+export {
+  getCanonicalUserDataPath,
+  initDataPath,
+  migrateMobilePairingDataToCanonicalUserDataPath
+} from './persistence/persistence-user-data-path'
+import {
+  STALE_DURABLE_WRITE_TEMP_AGE_MS,
+  gcStaleWorktreeMeta,
+  normalizeWorktreeLinkedItemMetadata
+} from './persistence/persistence-worktree-metadata-normalization'
+import {
+  migrateAgentYoloDefaults,
+  migrateTerminalScrollbackRows,
+  migrateTerminalTuiScrollSensitivityDefault,
+  stripRetiredGlobalSettings
+} from './persistence/persistence-terminal-settings-migrations'
+import {
+  normalizeRightSidebarTab,
+  normalizeShowDotfilesByWorktree,
+  normalizeSortBy
+} from './persistence/persistence-ui-selection-normalization'
+export { normalizeRightSidebarTab } from './persistence/persistence-ui-selection-normalization'
+import {
+  normalizeWorkspaceLineageByChildKey,
+  stripMainOwnedTelemetryMarkerFromUI
+} from './persistence/persistence-ui-interaction-merge'
+import {
+  backfillLegacyAutomationContexts,
+  normalizeAutomationRunWorkspaceDisplayName
+} from './persistence/persistence-automation-context-migration'
+import {
+  normalizeLoadedOnboardingState,
+  normalizeNotificationSettings,
+  readDeprecatedExperimentFlag,
+  readLegacySidekickFlag,
+  resolveSetupGuideSidebarDismissedOnLoad
+} from './persistence/persistence-onboarding-normalization'
+export { sanitizeOnboardingUpdate } from './persistence/persistence-onboarding-normalization'
+import {
+  canonicalizePersistedFloatingWorkspaceDirectory,
+  normalizeFloatingWorkspaceTrustedCwds
+} from './persistence/persistence-floating-workspace-normalization'
+import {
+  ENCRYPTED_SSH_PTY_OWNER_LEASE_MAX_LENGTH,
+  normalizeSshPtyConsumerRecovery,
+  normalizeSshRemotePtyLease,
+  normalizeSshTarget
+} from './persistence/persistence-ssh-normalization'
+import {
+  type SshTargetStateOperations,
+  addClaudeLivePtySessionId as addClaudeLivePtySessionIdOperation,
+  addDeletedSshConfigAlias as addDeletedSshConfigAliasOperation,
+  addRemovedSshTargetTombstone as addRemovedSshTargetTombstoneOperation,
+  addSshTarget as addSshTargetOperation,
+  clearDeletedSshConfigAliases as clearDeletedSshConfigAliasesOperation,
+  getClaudeLivePtySessionIds as getClaudeLivePtySessionIdsOperation,
+  getDeletedSshConfigAliases as getDeletedSshConfigAliasesOperation,
+  getRemovedSshTargetTombstones as getRemovedSshTargetTombstonesOperation,
+  getSshTarget as getSshTargetOperation,
+  getSshTargets as getSshTargetsOperation,
+  removeClaudeLivePtySessionId as removeClaudeLivePtySessionIdOperation,
+  removeDeletedSshConfigAlias as removeDeletedSshConfigAliasOperation,
+  removeRemovedSshTargetTombstone as removeRemovedSshTargetTombstoneOperation,
+  removeSshTarget as removeSshTargetOperation,
+  updateSshTarget as updateSshTargetOperation
+} from './persistence/persistence-ssh-target-state'
+import {
+  reassignSshTargetId as reassignSshTargetIdOperation,
+  type SshTargetReassignmentOperations
+} from './persistence/persistence-ssh-target-reassignment'
+import {
+  getSshRemotePtyLeases as getSshRemotePtyLeasesOperation,
+  markSshRemotePtyLease as markSshRemotePtyLeaseOperation,
+  markSshRemotePtyLeases as markSshRemotePtyLeasesOperation,
+  markSshRemotePtyLeasesAsync as markSshRemotePtyLeasesAsyncOperation,
+  markSshRemotePtyLeasesAttachedAsync as markSshRemotePtyLeasesAttachedAsyncOperation,
+  markSshRemotePtyLeasesForShutdown as markSshRemotePtyLeasesForShutdownOperation,
+  removeSshRemotePtyLease as removeSshRemotePtyLeaseOperation,
+  removeSshRemotePtyLeases as removeSshRemotePtyLeasesOperation,
+  type SshPtyLeaseOperations,
+  upsertSshRemotePtyLease as upsertSshRemotePtyLeaseOperation
+} from './persistence/persistence-ssh-pty-lease-operations'
+import {
+  getSshPtyConsumerRecovery as getSshPtyConsumerRecoveryOperation,
+  removeSshPtyConsumerRecovery as removeSshPtyConsumerRecoveryOperation,
+  type SshPtyConsumerRecoveryOperations,
+  upsertSshPtyConsumerRecovery as upsertSshPtyConsumerRecoveryOperation
+} from './persistence/persistence-ssh-pty-consumer-recovery'
+import {
+  clearSshRemotePtyBindingsForLeases as clearSshRemotePtyBindingsForLeasesOperation,
+  clearSshRemotePtyBindingsForTarget as clearSshRemotePtyBindingsForTargetOperation,
+  type SshPtyBindingCleanupOperations
+} from './persistence/persistence-ssh-pty-binding-cleanup'
+import {
+  cloneLayoutNode,
+  layoutContainsLeafId,
+  preserveMissingLeafRecordEntries
+} from './persistence/persistence-terminal-layout-normalization'
+import { findWorktreeIdForTab } from './persistence/persistence-pane-identity-migration'
+import {
+  normalizeClaudeLivePtySessionIds,
+  normalizeLegacyPaneKeyAliasEntries,
+  normalizeMigrationUnsupportedPtyEntries,
+  registerPersistedPaneKeyAlias
+} from './persistence/persistence-pane-alias-normalization'
+import {
+  normalizePersistedPaneIdentityState,
+  normalizeWorkspaceSessionPaneIdentities,
+  remapAcknowledgedAgentPaneKeys,
+  remapSshRemotePtyLeaseLeafIds
+} from './persistence/persistence-workspace-pane-normalization'
+import {
+  mergeProjectHostSetupCompatibilityState,
+  projectHostSetupCompatibilityStateEqual
+} from './persistence/persistence-project-host-compatibility'
+import {
+  cloneWorkspaceSessionState,
+  createMinimalPersistedTerminalTab
+} from './persistence/persistence-session-owner-fields'
+import {
+  removeWorkspaceSessionOwner,
+  workspaceSessionOwnerPartitionForHost,
+  workspaceSessionPartitionIdsForHost
+} from './persistence/persistence-session-owner-removal'
+import { backfillFolderScopeConnectionIds } from './persistence/persistence-folder-scope-migration'
+import {
+  createAutomation as createAutomationOperation,
+  deleteAutomation as deleteAutomationOperation,
+  listAutomations as listAutomationsOperation,
+  updateAutomation as updateAutomationOperation,
+  type AutomationDefinitionOperations
+} from './persistence/persistence-automation-definition-operations'
+import {
+  createAutomationRun as createAutomationRunOperation,
+  listAutomationRuns as listAutomationRunsOperation,
+  snapshotAutomationRunWorkspaceDisplayName as snapshotAutomationRunWorkspaceDisplayNameOperation,
+  updateAutomationRun as updateAutomationRunOperation,
+  type AutomationRunOperations
+} from './persistence/persistence-automation-run-operations'
+import {
+  advanceAutomationNextRun as advanceAutomationNextRunOperation,
+  getLatestAutomationOccurrence as getLatestAutomationOccurrenceOperation
+} from './persistence/persistence-automation-schedule-operations'
+import { migrateWorktreeIdentity as migrateWorktreeIdentityOperation } from './persistence/persistence-worktree-identity-migration'
+import {
+  updateSettings as updateSettingsOperation,
+  type SettingsMutationOperations
+} from './persistence/persistence-settings-update'
+import { getPersistedUI } from './persistence/persistence-ui-state-read'
+import {
+  updatePersistedUI,
+  type UIUpdateOperations
+} from './persistence/persistence-ui-state-update'
+import { ProjectGroupPersistenceOperations } from './persistence/persistence-project-group-operations'
+import { FolderWorkspacePersistenceOperations } from './persistence/persistence-folder-workspace-operations'
+import { RepoOrderPersistenceOperations } from './persistence/persistence-repo-order-operations'
+import { pruneWorktreeStateForRepo as pruneWorktreeStateForRepoOperation } from './persistence/persistence-repo-worktree-pruning'
+import { ProjectHostPersistenceOperations } from './persistence/persistence-project-host-operations'
+import {
+  recordFeatureInteraction as recordFeatureInteractionOperation,
+  type FeatureInteractionOperations
+} from './persistence/persistence-feature-interaction-recording'
+import { hydrateRepo as hydrateRepoOperation } from './persistence/persistence-repo-hydration'
+import { RepoUpdatePersistenceOperations } from './persistence/persistence-repo-update-operations'
+import { ProjectHostSetupPersistenceOperations } from './persistence/persistence-project-host-setup-update'
 
 // Why (issue #1158): keep 5 rolling backups at >=1h spacing so a corrupt/empty write leaves an earlier copy recoverable.
 const BACKUP_COUNT = 5
@@ -644,1698 +449,6 @@ async function exists(path: string): Promise<boolean> {
   )
 }
 
-function buildWorkspaceDirHistoryForUpdate(
-  current: GlobalSettings,
-  updates: Partial<GlobalSettings>
-): OrcaWorkspaceLayout[] | null {
-  if (!('workspaceDir' in updates) && !('nestWorkspaces' in updates)) {
-    return null
-  }
-  const nextPath = updates.workspaceDir ?? current.workspaceDir
-  const nextNestWorkspaces = updates.nestWorkspaces ?? current.nestWorkspaces
-  if (
-    normalizeRuntimePathForComparison(nextPath) ===
-      normalizeRuntimePathForComparison(current.workspaceDir) &&
-    nextNestWorkspaces === current.nestWorkspaces
-  ) {
-    return null
-  }
-
-  const previousLayout = {
-    path: current.workspaceDir,
-    nestWorkspaces: current.nestWorkspaces
-  }
-  const existing = current.workspaceDirHistory ?? []
-  const next = [...existing]
-  const previousKey = getWorkspaceLayoutHistoryKey(previousLayout)
-  if (!next.some((layout) => getWorkspaceLayoutHistoryKey(layout) === previousKey)) {
-    next.push(previousLayout)
-  }
-  return next
-}
-
-type LegacyTerminalScrollbackSettings = {
-  terminalScrollbackRows?: unknown
-  terminalScrollbackBytes?: unknown
-}
-
-type RetiredGlobalSettings = {
-  terminalScrollbackBytes?: unknown
-  enableGitHubAttribution?: unknown
-}
-
-const LEGACY_TERMINAL_TUI_SCROLL_SENSITIVITY_DEFAULT = 3
-
-function readLegacyTerminalScrollbackSettings(settings: unknown): LegacyTerminalScrollbackSettings {
-  return settings && typeof settings === 'object'
-    ? (settings as LegacyTerminalScrollbackSettings)
-    : {}
-}
-
-function stripRetiredGlobalSettings(
-  settings: Partial<GlobalSettings> | undefined
-): Partial<GlobalSettings> {
-  const {
-    terminalScrollbackBytes: _legacyScrollbackBytes,
-    enableGitHubAttribution: _legacyGitHubAttribution,
-    ...rest
-  } = (settings ?? {}) as Partial<GlobalSettings> & RetiredGlobalSettings
-  void _legacyScrollbackBytes
-  void _legacyGitHubAttribution
-  return rest
-}
-
-function migrateTerminalScrollbackRows(settings: unknown): {
-  rows: number
-  needsSave: boolean
-} {
-  const legacySettings = readLegacyTerminalScrollbackSettings(settings)
-  const hasRows = Object.hasOwn(legacySettings, 'terminalScrollbackRows')
-  const hasLegacyBytes = Object.hasOwn(legacySettings, 'terminalScrollbackBytes')
-  const rows = hasRows
-    ? normalizeDesktopTerminalScrollbackRows(legacySettings.terminalScrollbackRows)
-    : legacyTerminalScrollbackBytesToRows(legacySettings.terminalScrollbackBytes)
-
-  return {
-    rows,
-    needsSave: !hasRows || hasLegacyBytes || legacySettings.terminalScrollbackRows !== rows
-  }
-}
-
-function migrateTerminalTuiScrollSensitivityDefault(settings: GlobalSettings | undefined): {
-  settings: Pick<
-    GlobalSettings,
-    'terminalTuiScrollSensitivity' | 'terminalTuiScrollSensitivityDefaultedToOne'
-  >
-  needsSave: boolean
-} {
-  const alreadyDefaultedToOne = settings?.terminalTuiScrollSensitivityDefaultedToOne === true
-  const current = settings?.terminalTuiScrollSensitivity
-  const shouldMoveInheritedDefault =
-    !alreadyDefaultedToOne &&
-    (current === undefined || current === LEGACY_TERMINAL_TUI_SCROLL_SENSITIVITY_DEFAULT)
-  const terminalTuiScrollSensitivity = shouldMoveInheritedDefault ? 1 : (current ?? 1)
-
-  return {
-    settings: {
-      terminalTuiScrollSensitivity,
-      terminalTuiScrollSensitivityDefaultedToOne: true
-    },
-    needsSave: !alreadyDefaultedToOne || current === undefined
-  }
-}
-
-function getWorkspaceLayoutHistoryKey(layout: OrcaWorkspaceLayout): string {
-  return `${normalizeRuntimePathForComparison(layout.path)}:${layout.nestWorkspaces}`
-}
-
-function migrateAgentYoloDefaults(
-  settings: GlobalSettings | undefined
-): Pick<GlobalSettings, 'agentDefaultArgs' | 'agentDefaultEnv' | 'agentYoloDefaultsMigrated'> {
-  const existingArgs = normalizeTuiAgentArgsRecord(settings?.agentDefaultArgs)
-  const existingEnv = normalizeTuiAgentEnvRecord(settings?.agentDefaultEnv)
-  if (settings?.agentYoloDefaultsMigrated === true) {
-    return {
-      agentDefaultArgs: existingArgs,
-      agentDefaultEnv: existingEnv,
-      agentYoloDefaultsMigrated: true
-    }
-  }
-
-  const commandOverrides = settings?.agentCmdOverrides ?? {}
-  const migratedArgs = { ...existingArgs }
-  for (const [agent, args] of Object.entries(DEFAULT_TUI_AGENT_ARGS)) {
-    if (agent in migratedArgs) {
-      continue
-    }
-    if (agent in commandOverrides) {
-      migratedArgs[agent as keyof typeof DEFAULT_TUI_AGENT_ARGS] = ''
-      continue
-    }
-    migratedArgs[agent as keyof typeof DEFAULT_TUI_AGENT_ARGS] = args
-  }
-
-  const migratedEnv = { ...existingEnv }
-  for (const [agent, env] of Object.entries(DEFAULT_TUI_AGENT_ENV)) {
-    if (agent in migratedEnv) {
-      continue
-    }
-    if (agent in commandOverrides) {
-      migratedEnv[agent as keyof typeof DEFAULT_TUI_AGENT_ENV] = {}
-      continue
-    }
-    migratedEnv[agent as keyof typeof DEFAULT_TUI_AGENT_ENV] = { ...env }
-  }
-
-  return {
-    // Why: legacy users could only customize launch defaults via command overrides, so those agents count as already user-owned.
-    agentDefaultArgs: migratedArgs,
-    agentDefaultEnv: migratedEnv,
-    agentYoloDefaultsMigrated: true
-  }
-}
-
-function normalizeGroupBy(groupBy: unknown): PersistedState['ui']['groupBy'] {
-  if (
-    groupBy === 'none' ||
-    groupBy === 'workspace-status' ||
-    groupBy === 'repo' ||
-    groupBy === 'pr-status'
-  ) {
-    return groupBy
-  }
-  if (groupBy === 'flat') {
-    return 'none'
-  }
-  return getDefaultUIState().groupBy
-}
-
-function normalizeShowDotfilesByWorktree(value: unknown): Record<string, boolean> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return {}
-  }
-  const out: Record<string, boolean> = {}
-  for (const [worktreeId, showDotfiles] of Object.entries(value as Record<string, unknown>)) {
-    if (
-      !worktreeId ||
-      worktreeId === '__proto__' ||
-      worktreeId === 'constructor' ||
-      worktreeId === 'prototype' ||
-      typeof showDotfiles !== 'boolean'
-    ) {
-      continue
-    }
-    out[worktreeId] = showDotfiles
-  }
-  return out
-}
-
-function mergeFeatureInteractions(
-  current: PersistedState['ui']['featureInteractions'],
-  incoming: PersistedState['ui']['featureInteractions']
-): PersistedState['ui']['featureInteractions'] {
-  const currentNormalized = normalizeFeatureInteractions(current)
-  const incomingNormalized = normalizeFeatureInteractions(incoming)
-  const merged = { ...currentNormalized }
-  for (const [id, incomingRecord] of Object.entries(incomingNormalized)) {
-    const currentRecord = currentNormalized[id as keyof typeof currentNormalized]
-    merged[id as keyof typeof merged] = currentRecord
-      ? {
-          firstInteractedAt: Math.min(
-            currentRecord.firstInteractedAt,
-            incomingRecord.firstInteractedAt
-          ),
-          interactionCount: Math.max(
-            currentRecord.interactionCount,
-            incomingRecord.interactionCount
-          )
-        }
-      : incomingRecord
-  }
-  return merged
-}
-
-function mergeContextualTourSeenIds(
-  current: PersistedState['ui']['contextualToursSeenIds'],
-  incoming: PersistedState['ui']['contextualToursSeenIds']
-): PersistedState['ui']['contextualToursSeenIds'] {
-  const merged = new Set(normalizeContextualTourIds(current))
-  for (const id of normalizeContextualTourIds(incoming)) {
-    merged.add(id)
-  }
-  return [...merged]
-}
-
-function stripMainOwnedTelemetryMarkerFromUI(
-  value: Partial<PersistedState['ui']> | undefined
-): Partial<PersistedState['ui']> {
-  if (!value || typeof value !== 'object') {
-    return {}
-  }
-  const { featureInteractionTelemetryBuckets: _reserved, ...ui } = value as Partial<
-    PersistedState['ui']
-  > & {
-    featureInteractionTelemetryBuckets?: unknown
-  }
-  void _reserved
-  return ui
-}
-
-function normalizeSortBy(sortBy: unknown): PersistedState['ui']['sortBy'] {
-  if (
-    sortBy === 'smart' ||
-    sortBy === 'recent' ||
-    sortBy === 'repo' ||
-    sortBy === 'name' ||
-    sortBy === 'manual'
-  ) {
-    return sortBy
-  }
-  return getDefaultUIState().sortBy
-}
-
-function normalizeProjectOrderBy(projectOrderBy: unknown): PersistedState['ui']['projectOrderBy'] {
-  if (projectOrderBy === 'manual' || projectOrderBy === 'recent') {
-    return projectOrderBy
-  }
-  return getDefaultUIState().projectOrderBy
-}
-
-export function normalizeRightSidebarTab(tab: unknown): PersistedState['ui']['rightSidebarTab'] {
-  if (
-    tab === 'explorer' ||
-    tab === 'search' ||
-    tab === 'vault' ||
-    tab === 'workspaces' ||
-    tab === 'pr-checks' ||
-    tab === 'source-control' ||
-    tab === 'checks' ||
-    tab === 'ports'
-  ) {
-    return tab
-  }
-  // Why: plugin tabs are open-ended `plugin:<publisher>.<id>/<panel>` keys; validate the
-  // shape so a persisted plugin tab doesn't reset to Explorer on restart.
-  if (typeof tab === 'string' && isPluginPanelTabKey(tab)) {
-    return tab
-  }
-  return getDefaultUIState().rightSidebarTab
-}
-
-function normalizeWorkspaceLineageByChildKey(
-  value: unknown
-): Record<WorkspaceKey, WorkspaceLineage> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {}
-  }
-  const normalized: Record<WorkspaceKey, WorkspaceLineage> = {}
-  for (const [key, entry] of Object.entries(value)) {
-    if (!isWorkspaceKey(key) || !entry || typeof entry !== 'object') {
-      continue
-    }
-    const lineage = entry as Partial<WorkspaceLineage>
-    const childWorkspaceKey =
-      typeof lineage.childWorkspaceKey === 'string' && isWorkspaceKey(lineage.childWorkspaceKey)
-        ? lineage.childWorkspaceKey
-        : key
-    const parentWorkspaceKey = lineage.parentWorkspaceKey
-    if (
-      !isWorkspaceKey(childWorkspaceKey) ||
-      typeof parentWorkspaceKey !== 'string' ||
-      !isWorkspaceKey(parentWorkspaceKey) ||
-      childWorkspaceKey !== key ||
-      childWorkspaceKey === parentWorkspaceKey
-    ) {
-      continue
-    }
-    normalized[childWorkspaceKey] = {
-      childWorkspaceKey,
-      childInstanceId: lineage.childInstanceId ?? null,
-      parentWorkspaceKey,
-      parentInstanceId: lineage.parentInstanceId ?? null,
-      origin: lineage.origin ?? 'cli',
-      capture: lineage.capture ?? { source: 'manual-action', confidence: 'inferred' },
-      ...(lineage.taskId ? { taskId: lineage.taskId } : {}),
-      ...(lineage.orchestrationRunId ? { orchestrationRunId: lineage.orchestrationRunId } : {}),
-      ...(lineage.coordinatorHandle ? { coordinatorHandle: lineage.coordinatorHandle } : {}),
-      ...(lineage.createdByTerminalHandle
-        ? { createdByTerminalHandle: lineage.createdByTerminalHandle }
-        : {}),
-      createdAt: Number.isFinite(lineage.createdAt) ? Number(lineage.createdAt) : Date.now()
-    }
-  }
-  return normalized
-}
-
-function normalizeRightSidebarExplorerView(
-  view: unknown,
-  tab?: unknown
-): PersistedState['ui']['rightSidebarExplorerView'] {
-  // Why: older builds persisted Search as a standalone activity tab.
-  if (tab === 'search') {
-    return 'search'
-  }
-  if (view === 'files' || view === 'search') {
-    return view
-  }
-  return getDefaultUIState().rightSidebarExplorerView
-}
-
-function normalizeNotificationSettings(value: unknown): NotificationSettings {
-  const defaults = getDefaultNotificationSettings()
-  const candidate =
-    value && typeof value === 'object' ? (value as Partial<NotificationSettings>) : {}
-  const rawSoundId = (candidate as { customSoundId?: unknown }).customSoundId
-  const customSoundId =
-    rawSoundId === 'system' ||
-    rawSoundId === 'two-tone' ||
-    rawSoundId === 'bong' ||
-    rawSoundId === 'thump' ||
-    rawSoundId === 'blip' ||
-    rawSoundId === 'sonar' ||
-    rawSoundId === 'blop' ||
-    rawSoundId === 'ding' ||
-    rawSoundId === 'clack' ||
-    rawSoundId === 'beep' ||
-    rawSoundId === 'custom'
-      ? rawSoundId
-      : rawSoundId === 'orca' || rawSoundId === 'chime'
-        ? 'two-tone'
-        : rawSoundId === 'pop'
-          ? 'blop'
-          : typeof candidate.customSoundPath === 'string'
-            ? 'custom'
-            : defaults.customSoundId
-  const rawVolume = candidate.customSoundVolume
-  const customSoundVolume =
-    typeof rawVolume === 'number' && Number.isFinite(rawVolume)
-      ? Math.min(100, Math.max(0, rawVolume))
-      : defaults.customSoundVolume
-  return {
-    ...defaults,
-    ...candidate,
-    customSoundId,
-    customSoundVolume
-  }
-}
-
-function normalizeAutomationRunWorkspaceDisplayName(value: string | null): string | null {
-  const trimmed = value?.trim()
-  return trimmed ? trimmed : null
-}
-
-function normalizeAutomationRunTerminalPaneKey(value: string | null | undefined): string | null {
-  const trimmed = typeof value === 'string' ? value.trim() : ''
-  return trimmed && parsePaneKey(trimmed) ? trimmed : null
-}
-
-function normalizeAutomationRunTerminalPtyId(value: string | null | undefined): string | null {
-  const trimmed = typeof value === 'string' ? value.trim() : ''
-  return trimmed || null
-}
-
-function normalizeAutomationRunOutputSnapshot(
-  value: AutomationRunOutputSnapshot | null | undefined
-): AutomationRunOutputSnapshot | null {
-  if (!value || value.format !== 'plain_text') {
-    return null
-  }
-  const content = typeof value.content === 'string' ? value.content : ''
-  if (!content.trim()) {
-    return null
-  }
-  return {
-    format: 'plain_text',
-    content,
-    capturedAt:
-      typeof value.capturedAt === 'number' && Number.isFinite(value.capturedAt)
-        ? value.capturedAt
-        : Date.now(),
-    truncated: value.truncated === true
-  }
-}
-
-function normalizeAutomationPrecheckResult(
-  value: AutomationPrecheckResult | null | undefined
-): AutomationPrecheckResult | null {
-  if (!value || typeof value.command !== 'string' || !value.command.trim()) {
-    return null
-  }
-  const startedAt =
-    typeof value.startedAt === 'number' && Number.isFinite(value.startedAt)
-      ? value.startedAt
-      : Date.now()
-  const completedAt =
-    typeof value.completedAt === 'number' && Number.isFinite(value.completedAt)
-      ? value.completedAt
-      : startedAt
-  return {
-    command: value.command.trim(),
-    exitCode:
-      typeof value.exitCode === 'number' && Number.isFinite(value.exitCode) ? value.exitCode : null,
-    timedOut: value.timedOut === true,
-    durationMs:
-      typeof value.durationMs === 'number' && Number.isFinite(value.durationMs)
-        ? Math.max(0, value.durationMs)
-        : Math.max(0, completedAt - startedAt),
-    stdout: typeof value.stdout === 'string' ? value.stdout : '',
-    stderr: typeof value.stderr === 'string' ? value.stderr : '',
-    stdoutTruncated: value.stdoutTruncated === true,
-    stderrTruncated: value.stderrTruncated === true,
-    error: typeof value.error === 'string' && value.error.trim() ? value.error : null,
-    startedAt,
-    completedAt
-  }
-}
-
-function normalizeAutomationSessionReuse(automation: Automation): Automation {
-  const setupDecision = normalizeAutomationSetupDecisionForWorkspaceMode(
-    automation.workspaceMode,
-    automation.setupDecision
-  )
-  return {
-    ...automation,
-    precheck: normalizeAutomationPrecheck(automation.precheck),
-    setupDecision,
-    reuseSession: automation.workspaceMode === 'existing' && automation.reuseSession === true
-  }
-}
-
-function normalizeAutomationSetupDecisionForWorkspaceMode(
-  workspaceMode: Automation['workspaceMode'],
-  setupDecision: unknown
-): Automation['setupDecision'] {
-  return workspaceMode === 'new_per_run' && (setupDecision === 'run' || setupDecision === 'skip')
-    ? setupDecision
-    : undefined
-}
-
-function getAutomationContextsForRepo(
-  repo: Repo | undefined,
-  projectHostSetups: readonly ProjectHostSetup[]
-): Pick<Automation, 'runContext' | 'sourceContext'> {
-  if (!repo) {
-    return {
-      runContext: null,
-      sourceContext: null
-    }
-  }
-  const projection = projectHostSetupProjectionFromRepos([repo])
-  const projectedProject = projection.projects[0]
-  const projectedSetup = projection.setups[0]
-  const setup =
-    projectHostSetups.find((candidate) => candidate.repoId === repo.id) ?? projectedSetup
-  const runContext = setup
-    ? buildWorkspaceRunContext({
-        projectId: setup.projectId,
-        hostId: setup.hostId,
-        projectHostSetupId: setup.id,
-        repoId: repo.id,
-        path: setup.path
-      })
-    : null
-  const providerIdentity = projectedProject?.providerIdentity
-  const sourceContext = providerIdentity
-    ? buildTaskSourceContextFromRepo({
-        provider: providerIdentity.provider,
-        projectId: providerIdentity.provider === 'github' ? (setup?.projectId ?? repo.id) : repo.id,
-        repo,
-        projectHostSetupId: setup?.id,
-        providerIdentity
-      })
-    : null
-  return {
-    runContext,
-    sourceContext
-  }
-}
-
-function getAutomationSchedulerOwner(repo: Repo | undefined): AutomationSchedulerOwner {
-  if (!repo) {
-    return 'local_host_service'
-  }
-  const host = parseExecutionHostId(getRepoExecutionHostId(repo))
-  if (host?.kind === 'ssh') {
-    return 'ssh_bridge'
-  }
-  if (host?.kind === 'runtime') {
-    return 'remote_host_service'
-  }
-  return 'local_host_service'
-}
-
-function backfillLegacyAutomationContexts(
-  state: Pick<PersistedState, 'automations' | 'automationRuns' | 'repos' | 'projectHostSetups'>
-): {
-  state: Pick<PersistedState, 'automations' | 'automationRuns' | 'repos' | 'projectHostSetups'>
-  changed: boolean
-} {
-  let changed = false
-  const contextsByAutomationId = new Map<string, Pick<Automation, 'runContext' | 'sourceContext'>>()
-  const automations = (state.automations ?? []).map((automation) => {
-    const contexts = getAutomationContextsForRepo(
-      state.repos.find((repo) => repo.id === getAutomationLegacyRepoId(automation)),
-      state.projectHostSetups ?? []
-    )
-    const next: Automation = { ...automation }
-    if (!Object.hasOwn(next, 'runContext')) {
-      // Why: pre-host-context automations only stored a repo id; backfill the run target once so dispatch/precheck stop inferring it.
-      next.runContext = contexts.runContext
-      changed = true
-    }
-    if (!Object.hasOwn(next, 'sourceContext')) {
-      next.sourceContext = contexts.sourceContext
-      changed = true
-    }
-    contextsByAutomationId.set(next.id, {
-      runContext: next.runContext ?? null,
-      sourceContext: next.sourceContext ?? null
-    })
-    return next
-  })
-  const automationRuns = (state.automationRuns ?? []).map((run) => {
-    const automationContexts = contextsByAutomationId.get(run.automationId)
-    const next: AutomationRun = { ...run }
-    if (!Object.hasOwn(next, 'runContext')) {
-      next.runContext = automationContexts?.runContext ?? null
-      changed = true
-    }
-    if (!Object.hasOwn(next, 'sourceContext')) {
-      next.sourceContext = automationContexts?.sourceContext ?? null
-      changed = true
-    }
-    if (!Object.hasOwn(next, 'terminalPaneKey')) {
-      next.terminalPaneKey = null
-      changed = true
-    }
-    if (!Object.hasOwn(next, 'terminalPtyId')) {
-      next.terminalPtyId = null
-      changed = true
-    }
-    return next
-  })
-  if (!changed) {
-    return { state, changed: false }
-  }
-  return {
-    state: {
-      ...state,
-      automations,
-      automationRuns
-    },
-    changed: true
-  }
-}
-
-type LegacySshTarget = SshTarget & {
-  remoteWorkspaceSyncEnabled?: unknown
-  remoteWorkspaceSyncGracePeriodSeconds?: unknown
-  experimentalPtySourceCreditV1?: unknown
-}
-
-// Why: old targets predate configHost; default to label-based lookup so imported SSH aliases still resolve via ssh -G.
-function normalizeSshTarget(t: SshTarget): SshTarget {
-  const target = { ...(t as LegacySshTarget) }
-  const legacySyncEnabled = target.remoteWorkspaceSyncEnabled
-  const currentGracePeriodSeconds = target.relayGracePeriodSeconds
-  const legacyGracePeriodSeconds = target.remoteWorkspaceSyncGracePeriodSeconds
-  const systemSshConnectionReuse = target.systemSshConnectionReuse
-  // Why: remote sync now follows the SSH relay lifecycle, so retired per-target sync/grace fields are dropped at disk load.
-  delete target.remoteWorkspaceSyncEnabled
-  delete target.remoteWorkspaceSyncGracePeriodSeconds
-  delete target.relayGracePeriodSeconds
-  delete target.systemSshConnectionReuse
-  delete target.experimentalPtySourceCreditV1
-  // Why: prefer the synced grace over stale relayGracePeriodSeconds so a user's "unlimited" (0) survives migration.
-  const relayGracePeriodSeconds =
-    legacySyncEnabled === true && typeof legacyGracePeriodSeconds === 'number'
-      ? legacyGracePeriodSeconds
-      : currentGracePeriodSeconds
-  const normalized: SshTarget = {
-    ...target,
-    configHost: target.configHost ?? target.label ?? target.host
-  }
-  // Why: old SSH form persisted 10800 even without a user choice; treat that legacy default as the new implicit default.
-  if (
-    relayGracePeriodSeconds !== undefined &&
-    relayGracePeriodSeconds !== LEGACY_DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS
-  ) {
-    normalized.relayGracePeriodSeconds = relayGracePeriodSeconds
-  }
-  if (systemSshConnectionReuse === false) {
-    normalized.systemSshConnectionReuse = false
-  }
-  return normalized
-}
-
-// Why: strict whitelist rejects unknown/bad-typed keys; returns Partial so partial updates don't clobber valid persisted state.
-type SanitizeOnboardingUpdateOptions = {
-  migrateLegacyProgress?: boolean
-}
-
-function remapLegacyOnboardingLastCompletedStep(
-  lastCompletedStep: number,
-  raw: Record<string, unknown>
-): number {
-  if (raw.outcome === 'completed' && lastCompletedStep >= 4) {
-    return ONBOARDING_FINAL_STEP
-  }
-  // Why: v3 (pre-Windows-terminal-page) step 4 already meant notifications, so resume there, not the inserted Windows step.
-  if (raw.flowVersion === 3) {
-    return Math.min(4, lastCompletedStep)
-  }
-  // Why: v2's five-step flow had step 4 = removed agent setup, not completed integrations.
-  if (raw.flowVersion === 2) {
-    if (lastCompletedStep === 3) {
-      return 2
-    }
-    if (lastCompletedStep >= 4) {
-      return 3
-    }
-    return lastCompletedStep
-  }
-  if (lastCompletedStep === 3) {
-    return 2
-  }
-  if (lastCompletedStep === 4) {
-    return 2
-  }
-  if (lastCompletedStep >= 5) {
-    return 3
-  }
-  return lastCompletedStep
-}
-
-export function sanitizeOnboardingUpdate(
-  input: unknown,
-  options: SanitizeOnboardingUpdateOptions = {}
-): Partial<Omit<OnboardingState, 'checklist'>> & { checklist?: Partial<OnboardingChecklistState> } {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    return {}
-  }
-  const raw = input as Record<string, unknown>
-  const out: Partial<Omit<OnboardingState, 'checklist'>> & {
-    checklist?: Partial<OnboardingChecklistState>
-  } = {}
-
-  if ('closedAt' in raw) {
-    // Why: NaN/Infinity serialize to null on save, reverting closedAt and reopening the wizard; require a finite timestamp.
-    if (typeof raw.closedAt === 'number' && Number.isFinite(raw.closedAt) && raw.closedAt >= 0) {
-      out.closedAt = raw.closedAt
-    } else if (raw.closedAt === null) {
-      out.closedAt = null
-    }
-    // else: omit — preserve existing persisted value on merge.
-  }
-  if ('outcome' in raw) {
-    const v = raw.outcome
-    if (v === 'completed' || v === 'dismissed') {
-      out.outcome = v as OnboardingOutcome
-    } else if (v === null) {
-      out.outcome = null
-    }
-    // else: omit.
-  }
-  if ('flowVersion' in raw) {
-    const v = raw.flowVersion
-    if (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= ONBOARDING_FLOW_VERSION) {
-      out.flowVersion = v
-    }
-    // else: omit.
-  }
-  if ('lastCompletedStep' in raw) {
-    const v = raw.lastCompletedStep
-    if (typeof v === 'number' && Number.isInteger(v) && v >= -1) {
-      const isLegacyFlow =
-        options.migrateLegacyProgress && raw.flowVersion !== ONBOARDING_FLOW_VERSION
-      // Why: removing two wizard pages changed step numbering; migrate legacy values before the final-step bound drops them.
-      const normalized = isLegacyFlow ? remapLegacyOnboardingLastCompletedStep(v, raw) : v
-      if (normalized <= ONBOARDING_FINAL_STEP) {
-        out.lastCompletedStep = normalized
-      }
-    }
-    // else: omit.
-  }
-  if ('checklist' in raw) {
-    const rawChecklist = raw.checklist
-    if (rawChecklist && typeof rawChecklist === 'object' && !Array.isArray(rawChecklist)) {
-      // Why: copy ONLY caller-sent boolean keys so partial updates don't reset other checklist items to false.
-      const defaults = getDefaultOnboardingState().checklist
-      const rc = rawChecklist as Record<string, unknown>
-      const checklist: Partial<OnboardingChecklistState> = {}
-      for (const key of Object.keys(defaults) as (keyof OnboardingChecklistState)[]) {
-        if (key in rc && typeof rc[key] === 'boolean') {
-          checklist[key] = rc[key] as boolean
-        }
-      }
-      out.checklist = checklist
-    }
-  }
-  if (options.migrateLegacyProgress) {
-    out.flowVersion = ONBOARDING_FLOW_VERSION
-  }
-  return out
-}
-
-function normalizeLoadedOnboardingState(
-  input: unknown,
-  defaults: OnboardingState
-): OnboardingState {
-  // Why: an existing file with no onboarding block is an upgrade user; backfill as completed so they skip the wizard.
-  if (!input) {
-    return {
-      ...defaults,
-      closedAt: Date.now(),
-      outcome: 'completed',
-      lastCompletedStep: ONBOARDING_FINAL_STEP
-    }
-  }
-  // Why: sanitize persisted onboarding keys so a type-flipped field on disk can't poison in-memory state.
-  const sanitized = sanitizeOnboardingUpdate(input, {
-    migrateLegacyProgress: true
-  })
-  // Why: a completed/dismissed outcome means the user left; recover a bad closedAt instead of reopening the checklist.
-  const recoveredClosedAt =
-    typeof sanitized.closedAt === 'number'
-      ? sanitized.closedAt
-      : sanitized.outcome !== null && sanitized.outcome !== undefined
-        ? Date.now()
-        : sanitized.closedAt
-  return {
-    ...defaults,
-    ...sanitized,
-    closedAt: recoveredClosedAt ?? defaults.closedAt,
-    checklist: {
-      ...defaults.checklist,
-      ...sanitized.checklist
-    }
-  }
-}
-
-function resolveSetupGuideSidebarDismissedOnLoad(
-  persistedDismissed: unknown,
-  onboarding: OnboardingState
-): boolean {
-  // Why: once onboarding is closed, persisted false is just the old default, not a user opt-in to the sidebar checklist.
-  return onboarding.closedAt !== null || persistedDismissed === true
-}
-
-// Why: read a settings field removed from GlobalSettings but still on disk; one-shot for the inline-agents migration.
-function readDeprecatedExperimentFlag(parsed: PersistedState | undefined): boolean {
-  return (
-    (parsed?.settings as { experimentalAgentDashboard?: boolean } | undefined)
-      ?.experimentalAgentDashboard === true
-  )
-}
-
-function readLegacySidekickFlag(parsed: PersistedState | undefined): boolean | undefined {
-  return (parsed?.settings as { experimentalSidekick?: boolean } | undefined)?.experimentalSidekick
-}
-
-function sanitizeRepoUpstream(value: unknown): Repo['upstream'] | undefined {
-  if (value === undefined) {
-    return undefined
-  }
-  if (value === null) {
-    return null
-  }
-  if (!value || typeof value !== 'object') {
-    return undefined
-  }
-  const candidate = value as { owner?: unknown; repo?: unknown; host?: unknown }
-  const owner = typeof candidate.owner === 'string' ? candidate.owner.trim() : ''
-  const repo = typeof candidate.repo === 'string' ? candidate.repo.trim() : ''
-  if (!owner || !repo) {
-    return undefined
-  }
-  // Why: an `upstream` remote may live on a different server than `origin`, so
-  // dropping the host forced consumers to re-infer it from origin and could bind
-  // a GHES parent to a same-named github.com repo. Absent host stays absent so
-  // records written before this survive unchanged.
-  const host = typeof candidate.host === 'string' ? candidate.host.trim() : ''
-  return host ? { owner, repo, host } : { owner, repo }
-}
-
-function sanitizeGitRemoteIdentity(value: unknown): GitRemoteIdentity | null | undefined {
-  // Why: `null` is a resolved "no usable remote" marker; dropping it would make
-  // a settled repo indistinguishable from one whose identity probe is pending.
-  if (value === null) {
-    return null
-  }
-  if (!value || typeof value !== 'object') {
-    return undefined
-  }
-  const candidate = value as {
-    canonicalKey?: unknown
-    remoteName?: unknown
-    remoteUrl?: unknown
-  }
-  const canonicalKey =
-    typeof candidate.canonicalKey === 'string' ? candidate.canonicalKey.trim() : ''
-  const remoteName = typeof candidate.remoteName === 'string' ? candidate.remoteName.trim() : ''
-  const remoteUrl = typeof candidate.remoteUrl === 'string' ? candidate.remoteUrl.trim() : ''
-  return canonicalKey && remoteName && remoteUrl
-    ? { canonicalKey, remoteName, remoteUrl }
-    : undefined
-}
-
-function sanitizeRepoProjectHostSetupMethod(
-  value: unknown
-): RepoProjectHostSetupMethod | undefined {
-  return value === 'imported-existing-folder' || value === 'cloned' ? value : undefined
-}
-
-function sanitizeForkSyncMode(value: unknown): Repo['forkSyncMode'] | undefined {
-  return value === 'ask' || value === 'safe-auto' || value === 'off' ? value : undefined
-}
-
-function sanitizeRepoUpdatesForPersistence<
-  T extends Partial<
-    Pick<
-      Repo,
-      | 'badgeColor'
-      | 'repoIcon'
-      | 'upstream'
-      | 'gitRemoteIdentity'
-      | 'worktreeBasePath'
-      | 'projectHostSetupMethod'
-      | 'forkSyncMode'
-      | 'customWorktreeVisibilitySources'
-      | 'worktreeVisibilitySourcePreferences'
-    >
-  >
->(updates: T): T {
-  const sanitized = { ...updates }
-  if ('badgeColor' in sanitized) {
-    const badgeColor = normalizeRepoBadgeColor(sanitized.badgeColor)
-    if (!badgeColor) {
-      delete sanitized.badgeColor
-    } else {
-      sanitized.badgeColor = badgeColor
-    }
-  }
-  if ('repoIcon' in sanitized) {
-    const repoIcon = sanitizeRepoIcon(sanitized.repoIcon)
-    if (repoIcon === undefined) {
-      delete sanitized.repoIcon
-    } else {
-      sanitized.repoIcon = repoIcon
-    }
-  }
-  // Why: `null` is a valid "not a fork" / "no usable remote" marker; only drop malformed shapes.
-  if ('upstream' in sanitized) {
-    const upstream = sanitizeRepoUpstream(sanitized.upstream)
-    if (upstream === undefined) {
-      delete sanitized.upstream
-    } else {
-      sanitized.upstream = upstream
-    }
-  }
-  if ('gitRemoteIdentity' in sanitized) {
-    const gitRemoteIdentity = sanitizeGitRemoteIdentity(sanitized.gitRemoteIdentity)
-    if (gitRemoteIdentity === undefined) {
-      delete sanitized.gitRemoteIdentity
-    } else {
-      sanitized.gitRemoteIdentity = gitRemoteIdentity
-    }
-  }
-  if ('worktreeBasePath' in sanitized && sanitized.worktreeBasePath !== undefined) {
-    if (typeof sanitized.worktreeBasePath === 'string') {
-      sanitized.worktreeBasePath = sanitized.worktreeBasePath.trim() || undefined
-    } else {
-      delete sanitized.worktreeBasePath
-    }
-  }
-  if ('projectHostSetupMethod' in sanitized) {
-    const setupMethod = sanitizeRepoProjectHostSetupMethod(sanitized.projectHostSetupMethod)
-    if (setupMethod === undefined) {
-      delete sanitized.projectHostSetupMethod
-    } else {
-      sanitized.projectHostSetupMethod = setupMethod
-    }
-  }
-  if ('forkSyncMode' in sanitized) {
-    const forkSyncMode = sanitizeForkSyncMode(sanitized.forkSyncMode)
-    if (forkSyncMode === undefined) {
-      delete sanitized.forkSyncMode
-    } else {
-      sanitized.forkSyncMode = forkSyncMode
-    }
-  }
-  if ('customWorktreeVisibilitySources' in sanitized) {
-    const sources = normalizeCustomWorktreeVisibilitySources(
-      sanitized.customWorktreeVisibilitySources
-    )
-    if (!sources) {
-      delete sanitized.customWorktreeVisibilitySources
-    } else {
-      sanitized.customWorktreeVisibilitySources = sources
-    }
-  }
-  if ('worktreeVisibilitySourcePreferences' in sanitized) {
-    const preferences = normalizeWorktreeVisibilitySourcePreferences(
-      sanitized.worktreeVisibilitySourcePreferences
-    )
-    if (!preferences) {
-      delete sanitized.worktreeVisibilitySourcePreferences
-    } else {
-      sanitized.worktreeVisibilitySourcePreferences = preferences
-    }
-  }
-  return sanitized
-}
-
-function expandFloatingWorkspaceHomePath(input: string, home: string): string {
-  if (input === '~') {
-    return home
-  }
-  if (input.startsWith(`~${sep}`) || (process.platform === 'win32' && input.startsWith('~/'))) {
-    return join(home, input.slice(2))
-  }
-  return input
-}
-
-function resolveFloatingWorkspacePath(input: string, home: string): string {
-  const expanded = expandFloatingWorkspaceHomePath(input, home)
-  return isAbsolute(expanded) ? resolve(expanded) : resolve(home, expanded)
-}
-
-function canonicalizePersistedFloatingWorkspaceDirectory(
-  input: string,
-  home: string
-): string | null {
-  const trimmed = input.trim()
-  if (!trimmed) {
-    return null
-  }
-  try {
-    const canonicalPath = resolve(realpathSync(resolveFloatingWorkspacePath(trimmed, home)))
-    return statSync(canonicalPath).isDirectory() ? canonicalPath : null
-  } catch {
-    return null
-  }
-}
-
-function normalizeFloatingWorkspaceTrustedCwds(
-  input: unknown,
-  home: string
-): { trustedCwds: string[]; changed: boolean } {
-  const rawTrustedCwds = Array.isArray(input) ? input : []
-  const trustedCwds: string[] = []
-  const seen = new Set<string>()
-  let changed = input !== undefined && !Array.isArray(input)
-
-  for (const rawTrustedCwd of rawTrustedCwds) {
-    if (typeof rawTrustedCwd !== 'string') {
-      changed = true
-      continue
-    }
-    const trimmedTrustedCwd = rawTrustedCwd.trim()
-    if (!trimmedTrustedCwd) {
-      changed = true
-      continue
-    }
-    const canonicalPath = canonicalizePersistedFloatingWorkspaceDirectory(trimmedTrustedCwd, home)
-    const normalizedPath = canonicalPath ?? resolveFloatingWorkspacePath(trimmedTrustedCwd, home)
-    if (!normalizedPath) {
-      changed = true
-      continue
-    }
-    if (seen.has(normalizedPath)) {
-      changed = true
-      continue
-    }
-    seen.add(normalizedPath)
-    trustedCwds.push(normalizedPath)
-    if (rawTrustedCwd !== normalizedPath) {
-      changed = true
-    }
-  }
-
-  return { trustedCwds, changed }
-}
-
-function normalizeSshRemotePtyLease(value: unknown): SshRemotePtyLease | null {
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-  const raw = value as Partial<SshRemotePtyLease>
-  if (typeof raw.targetId !== 'string' || typeof raw.ptyId !== 'string') {
-    return null
-  }
-  const state = raw.state ?? 'detached'
-  if (!['attached', 'detached', 'terminated', 'expired'].includes(state)) {
-    return null
-  }
-  const now = Date.now()
-  return {
-    targetId: raw.targetId,
-    ptyId: raw.ptyId,
-    ...(typeof raw.worktreeId === 'string' ? { worktreeId: raw.worktreeId } : {}),
-    ...(typeof raw.tabId === 'string' ? { tabId: raw.tabId } : {}),
-    ...(typeof raw.leafId === 'string' && raw.leafId.length <= 256 ? { leafId: raw.leafId } : {}),
-    state,
-    createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : now,
-    updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : now,
-    ...(typeof raw.lastAttachedAt === 'number' ? { lastAttachedAt: raw.lastAttachedAt } : {}),
-    ...(typeof raw.lastDetachedAt === 'number' ? { lastDetachedAt: raw.lastDetachedAt } : {})
-  }
-}
-
-const SSH_PTY_OWNER_LEASE_MAX_LENGTH = 512
-const ENCRYPTED_SSH_PTY_OWNER_LEASE_MAX_LENGTH = 4096
-
-function normalizeSshPtyConsumerRecovery(
-  value: unknown,
-  ownerLeaseMaxLength = SSH_PTY_OWNER_LEASE_MAX_LENGTH
-): SshPtyConsumerRecovery | null {
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-  const raw = value as Partial<SshPtyConsumerRecovery>
-  const clientGeneration = raw.clientGeneration
-  const ownerGeneration = raw.ownerGeneration
-  if (
-    typeof raw.targetId !== 'string' ||
-    raw.targetId.length === 0 ||
-    raw.targetId.length > 512 ||
-    typeof raw.clientInstanceId !== 'string' ||
-    raw.clientInstanceId.length === 0 ||
-    raw.clientInstanceId.length > 512 ||
-    typeof raw.serverBuildId !== 'string' ||
-    raw.serverBuildId.length === 0 ||
-    raw.serverBuildId.length > 512 ||
-    typeof clientGeneration !== 'number' ||
-    !Number.isSafeInteger(clientGeneration) ||
-    clientGeneration <= 0 ||
-    typeof ownerGeneration !== 'number' ||
-    !Number.isSafeInteger(ownerGeneration) ||
-    ownerGeneration <= 0 ||
-    typeof raw.ownerLease !== 'string' ||
-    raw.ownerLease.length === 0 ||
-    raw.ownerLease.length > ownerLeaseMaxLength
-  ) {
-    return null
-  }
-  const flow = raw.outputFlowControl
-  const outputFlowControl =
-    flow?.version === 1 && Number.isSafeInteger(flow.windowSu) && flow.windowSu > 0
-      ? { version: 1 as const, windowSu: flow.windowSu }
-      : undefined
-  return {
-    targetId: raw.targetId,
-    clientInstanceId: raw.clientInstanceId,
-    serverBuildId: raw.serverBuildId,
-    clientGeneration,
-    ownerGeneration,
-    ownerLease: raw.ownerLease,
-    ...(outputFlowControl ? { outputFlowControl } : {})
-  }
-}
-
-type LayoutLeafNormalization = {
-  snapshot: TerminalLayoutSnapshot
-  changed: boolean
-  leafIdByInputLeafId: Map<string, string>
-}
-
-function collectLayoutLeafCounts(
-  node: TerminalPaneLayoutNode,
-  counts = new Map<string, number>()
-): Map<string, number> {
-  if (node.type === 'leaf') {
-    counts.set(node.leafId, (counts.get(node.leafId) ?? 0) + 1)
-    return counts
-  }
-  collectLayoutLeafCounts(node.first, counts)
-  collectLayoutLeafCounts(node.second, counts)
-  return counts
-}
-
-function collectLayoutLeafIdsInOrder(node: TerminalPaneLayoutNode | null | undefined): string[] {
-  if (!node) {
-    return []
-  }
-  if (node.type === 'leaf') {
-    return [node.leafId]
-  }
-  return [...collectLayoutLeafIdsInOrder(node.first), ...collectLayoutLeafIdsInOrder(node.second)]
-}
-
-function firstLayoutLeafId(node: TerminalPaneLayoutNode | null): string | null {
-  if (!node) {
-    return null
-  }
-  return node.type === 'leaf' ? node.leafId : firstLayoutLeafId(node.first)
-}
-
-function layoutContainsLeafId(node: TerminalPaneLayoutNode | null, leafId: string): boolean {
-  if (!node) {
-    return false
-  }
-  if (node.type === 'leaf') {
-    return node.leafId === leafId
-  }
-  return layoutContainsLeafId(node.first, leafId) || layoutContainsLeafId(node.second, leafId)
-}
-
-function cloneLayoutNode(node: TerminalPaneLayoutNode): TerminalPaneLayoutNode {
-  if (node.type === 'leaf') {
-    return { type: 'leaf', leafId: node.leafId }
-  }
-  return {
-    ...node,
-    first: cloneLayoutNode(node.first),
-    second: cloneLayoutNode(node.second)
-  }
-}
-
-function cloneLayoutWithLeafIds(
-  node: TerminalPaneLayoutNode,
-  leafIdByInputLeafId: Map<string, string>,
-  duplicatedInputLeafIds: Set<string>
-): TerminalPaneLayoutNode {
-  if (node.type === 'leaf') {
-    return {
-      type: 'leaf',
-      leafId: duplicatedInputLeafIds.has(node.leafId)
-        ? randomUUID()
-        : (leafIdByInputLeafId.get(node.leafId) ?? randomUUID())
-    }
-  }
-  return {
-    ...node,
-    first: cloneLayoutWithLeafIds(node.first, leafIdByInputLeafId, duplicatedInputLeafIds),
-    second: cloneLayoutWithLeafIds(node.second, leafIdByInputLeafId, duplicatedInputLeafIds)
-  }
-}
-
-function remapLeafRecordForPersistence(
-  source: Record<string, string> | undefined,
-  leafIdByInputLeafId: Map<string, string>,
-  duplicatedInputLeafIds: Set<string>
-): Record<string, string> | undefined {
-  if (!source) {
-    return undefined
-  }
-  const next: Record<string, string> = {}
-  for (const [leafId, value] of Object.entries(source)) {
-    if (duplicatedInputLeafIds.has(leafId)) {
-      continue
-    }
-    const nextLeafId = leafIdByInputLeafId.get(leafId)
-    if (nextLeafId) {
-      next[nextLeafId] = value
-    }
-  }
-  return Object.keys(next).length > 0 ? next : undefined
-}
-
-function leafRecordEquivalent(
-  left: Record<string, string> | undefined,
-  right: Record<string, string> | undefined
-): boolean {
-  const leftEntries = Object.entries(left ?? {})
-  const rightRecord = right ?? {}
-  if (leftEntries.length !== Object.keys(rightRecord).length) {
-    return false
-  }
-  return leftEntries.every(([key, value]) => rightRecord[key] === value)
-}
-
-function preserveMissingLeafRecordEntries(
-  priorRecord: Record<string, string> | undefined,
-  incomingRecord: Record<string, string> | undefined,
-  liveLeafIds: Set<string>
-): Record<string, string> | undefined {
-  const preserved = Object.fromEntries(
-    Object.entries(priorRecord ?? {}).filter(
-      ([leafId]) => liveLeafIds.has(leafId) && incomingRecord?.[leafId] === undefined
-    )
-  )
-  const next = { ...preserved, ...incomingRecord }
-  return Object.keys(next).length > 0 ? next : undefined
-}
-
-function findWorktreeIdForTab(session: WorkspaceSessionState, tabId: string): string | undefined {
-  for (const [worktreeId, tabs] of Object.entries(session.tabsByWorktree ?? {})) {
-    if (tabs.some((tab) => tab.id === tabId)) {
-      return worktreeId
-    }
-  }
-  return undefined
-}
-
-type PaneIdentityMigrationEntries = {
-  migrationUnsupportedEntries: MigrationUnsupportedPtyEntry[]
-  legacyPaneKeyAliasEntries: LegacyPaneKeyAliasEntry[]
-}
-
-function collectMigrationUnsupportedPtyEntries(args: {
-  session: WorkspaceSessionState
-  tabId: string
-  inputLayout: TerminalLayoutSnapshot
-  normalizedLayout: TerminalLayoutSnapshot
-  leafIdByInputLeafId: Map<string, string>
-}): PaneIdentityMigrationEntries {
-  const worktreeId = findWorktreeIdForTab(args.session, args.tabId)
-  const tab = worktreeId
-    ? args.session.tabsByWorktree?.[worktreeId]?.find((entry) => entry.id === args.tabId)
-    : undefined
-  const legacyPaneKeyAliasEntries: LegacyPaneKeyAliasEntry[] = []
-  const registeredLegacyPaneKeys = new Set<string>()
-  const hasLeafPtyBindings = Object.keys(args.inputLayout.ptyIdsByLeafId ?? {}).length > 0
-  const fallbackPtyId =
-    !hasLeafPtyBindings && typeof tab?.ptyId === 'string' ? tab.ptyId : undefined
-  const registerLegacyAlias = (inputLeafId: string, leafId: string, ptyId?: string): boolean => {
-    if (!isTerminalLeafId(leafId)) {
-      return false
-    }
-    let paneKey: string
-    try {
-      paneKey = makePaneKey(args.tabId, leafId)
-    } catch {
-      return false
-    }
-    const numeric = /^(?:pane:)?(\d+)$/.exec(inputLeafId)?.[1]
-    if (!numeric) {
-      return false
-    }
-    // Why: PaneManager ids are 1-based; a zero-based alias in split layouts makes tab:1 ambiguous and misroutes panes.
-    const legacyPaneKey = `${args.tabId}:${numeric}`
-    agentHookServer.registerPaneKeyAlias(legacyPaneKey, paneKey, ptyId)
-    registeredLegacyPaneKeys.add(legacyPaneKey)
-    if (ptyId) {
-      legacyPaneKeyAliasEntries.push({
-        ptyId,
-        legacyPaneKey,
-        stablePaneKey: paneKey,
-        updatedAt: Date.now()
-      })
-      return true
-    }
-    return false
-  }
-  const inputLeafIds = new Set([
-    ...collectLayoutLeafIdsInOrder(args.inputLayout.root),
-    ...Object.keys(args.inputLayout.ptyIdsByLeafId ?? {})
-  ])
-  for (const inputLeafId of inputLeafIds) {
-    if (isTerminalLeafId(inputLeafId)) {
-      continue
-    }
-    const leafId = args.leafIdByInputLeafId.get(inputLeafId)
-    if (leafId) {
-      registerLegacyAlias(
-        inputLeafId,
-        leafId,
-        args.inputLayout.ptyIdsByLeafId?.[inputLeafId] ?? fallbackPtyId
-      )
-    }
-  }
-  if (tab?.ptyId && !hasLeafPtyBindings) {
-    const fallbackLeafId =
-      args.normalizedLayout.activeLeafId ?? firstLayoutLeafId(args.normalizedLayout.root)
-    if (fallbackLeafId && isTerminalLeafId(fallbackLeafId)) {
-      const paneKey = makePaneKey(args.tabId, fallbackLeafId)
-      for (const legacyPaneKey of [`${args.tabId}:0`, `${args.tabId}:1`]) {
-        if (registeredLegacyPaneKeys.has(legacyPaneKey)) {
-          continue
-        }
-        agentHookServer.registerPaneKeyAlias(legacyPaneKey, paneKey, tab.ptyId)
-        legacyPaneKeyAliasEntries.push({
-          ptyId: tab.ptyId,
-          legacyPaneKey,
-          stablePaneKey: paneKey,
-          updatedAt: Date.now()
-        })
-      }
-    }
-  }
-  // Why: legacy numeric pane keys are now bridged by aliases, not persisted as restart-required rows.
-  return { migrationUnsupportedEntries: [], legacyPaneKeyAliasEntries }
-}
-
-function legacyMigrationUnsupportedRowsToAliasEntries(
-  entries: MigrationUnsupportedPtyEntry[]
-): LegacyPaneKeyAliasEntry[] {
-  const normalizedEntries = normalizeMigrationUnsupportedPtyEntries(entries).filter(
-    (entry) => entry.tabId && entry.paneKey && parsePaneKey(entry.paneKey)
-  )
-  const entriesByTabId = new Map<string, MigrationUnsupportedPtyEntry[]>()
-  for (const entry of normalizedEntries) {
-    const tabId = entry.tabId
-    if (!tabId) {
-      continue
-    }
-    entriesByTabId.set(tabId, [...(entriesByTabId.get(tabId) ?? []), entry])
-  }
-  const aliasEntries: LegacyPaneKeyAliasEntry[] = []
-  for (const [tabId, tabEntries] of entriesByTabId) {
-    if (tabEntries.length !== 1) {
-      continue
-    }
-    const [entry] = tabEntries
-    if (!entry.paneKey) {
-      continue
-    }
-    // Why: pre-stable rows lack the old numeric key; only synthesize single-pane aliases when the row is unambiguous.
-    for (const legacyPaneKey of [`${tabId}:0`, `${tabId}:1`]) {
-      aliasEntries.push({
-        ptyId: entry.ptyId,
-        legacyPaneKey,
-        stablePaneKey: entry.paneKey,
-        updatedAt: entry.updatedAt
-      })
-    }
-  }
-  return aliasEntries
-}
-
-function normalizeTerminalLayoutSnapshotForPersistence(
-  snapshot: TerminalLayoutSnapshot,
-  preferredLayout?: TerminalLayoutSnapshot
-): LayoutLeafNormalization {
-  let inputSnapshot = snapshot
-  let changed = false
-  if (!inputSnapshot.root) {
-    if (!preferredLayout?.root) {
-      return { snapshot, changed: false, leafIdByInputLeafId: new Map() }
-    }
-    const root = cloneLayoutNode(preferredLayout.root)
-    const rootLeafIds = new Set(collectLayoutLeafIdsInOrder(root))
-    const activeLeafId =
-      (inputSnapshot.activeLeafId && rootLeafIds.has(inputSnapshot.activeLeafId)
-        ? inputSnapshot.activeLeafId
-        : null) ??
-      (preferredLayout.activeLeafId && rootLeafIds.has(preferredLayout.activeLeafId)
-        ? preferredLayout.activeLeafId
-        : null) ??
-      firstLayoutLeafId(root)
-    const expandedLeafId =
-      (inputSnapshot.expandedLeafId && rootLeafIds.has(inputSnapshot.expandedLeafId)
-        ? inputSnapshot.expandedLeafId
-        : null) ??
-      (preferredLayout.expandedLeafId && rootLeafIds.has(preferredLayout.expandedLeafId)
-        ? preferredLayout.expandedLeafId
-        : null)
-    inputSnapshot = { ...inputSnapshot, root, activeLeafId, expandedLeafId }
-    // Why: a debounced renderer writer can still hold the createTab-era empty layout after the UUID root was sync-flushed.
-    changed = true
-  }
-  const inputRoot = inputSnapshot.root
-  if (!inputRoot) {
-    return { snapshot, changed: false, leafIdByInputLeafId: new Map() }
-  }
-  const counts = collectLayoutLeafCounts(inputRoot)
-  const duplicatedInputLeafIds = new Set(
-    Array.from(counts.entries())
-      .filter(([, count]) => count > 1)
-      .map(([leafId]) => leafId)
-  )
-  const inputLeafIdsInOrder = collectLayoutLeafIdsInOrder(inputRoot)
-  const preferredLeafIdsInOrder = collectLayoutLeafIdsInOrder(preferredLayout?.root)
-  const usePreferredLeafIds = preferredLeafIdsInOrder.length === inputLeafIdsInOrder.length
-  const leafIdByInputLeafId = new Map<string, string>()
-  for (const [index, leafId] of inputLeafIdsInOrder.entries()) {
-    const count = counts.get(leafId) ?? 0
-    if (count !== 1 || leafIdByInputLeafId.has(leafId)) {
-      changed = true
-      continue
-    }
-    if (isTerminalLeafId(leafId)) {
-      leafIdByInputLeafId.set(leafId, leafId)
-      continue
-    }
-    changed = true
-    const preferredLeafId = usePreferredLeafIds ? preferredLeafIdsInOrder[index] : undefined
-    leafIdByInputLeafId.set(
-      leafId,
-      preferredLeafId && isTerminalLeafId(preferredLeafId) ? preferredLeafId : randomUUID()
-    )
-  }
-  const root = changed
-    ? cloneLayoutWithLeafIds(inputRoot, leafIdByInputLeafId, duplicatedInputLeafIds)
-    : inputRoot
-  const activeLeafId =
-    inputSnapshot.activeLeafId && !duplicatedInputLeafIds.has(inputSnapshot.activeLeafId)
-      ? (leafIdByInputLeafId.get(inputSnapshot.activeLeafId) ?? firstLayoutLeafId(root))
-      : inputSnapshot.activeLeafId === null
-        ? null
-        : firstLayoutLeafId(root)
-  const expandedLeafId =
-    inputSnapshot.expandedLeafId && !duplicatedInputLeafIds.has(inputSnapshot.expandedLeafId)
-      ? (leafIdByInputLeafId.get(inputSnapshot.expandedLeafId) ?? null)
-      : null
-  const ptyIdsByLeafId = remapLeafRecordForPersistence(
-    inputSnapshot.ptyIdsByLeafId,
-    leafIdByInputLeafId,
-    duplicatedInputLeafIds
-  )
-  const buffersByLeafId = remapLeafRecordForPersistence(
-    inputSnapshot.buffersByLeafId,
-    leafIdByInputLeafId,
-    duplicatedInputLeafIds
-  )
-  const scrollbackRefsByLeafId = remapLeafRecordForPersistence(
-    inputSnapshot.scrollbackRefsByLeafId,
-    leafIdByInputLeafId,
-    duplicatedInputLeafIds
-  )
-  const titlesByLeafId = remapLeafRecordForPersistence(
-    inputSnapshot.titlesByLeafId,
-    leafIdByInputLeafId,
-    duplicatedInputLeafIds
-  )
-  const recordsChanged =
-    !leafRecordEquivalent(inputSnapshot.ptyIdsByLeafId, ptyIdsByLeafId) ||
-    !leafRecordEquivalent(inputSnapshot.buffersByLeafId, buffersByLeafId) ||
-    !leafRecordEquivalent(inputSnapshot.scrollbackRefsByLeafId, scrollbackRefsByLeafId) ||
-    !leafRecordEquivalent(inputSnapshot.titlesByLeafId, titlesByLeafId)
-  const metadataChanged =
-    activeLeafId !== inputSnapshot.activeLeafId || expandedLeafId !== inputSnapshot.expandedLeafId
-  if (!changed && !recordsChanged && !metadataChanged) {
-    return { snapshot, changed: false, leafIdByInputLeafId }
-  }
-  const {
-    ptyIdsByLeafId: _oldPtyIdsByLeafId,
-    buffersByLeafId: _oldBuffersByLeafId,
-    scrollbackRefsByLeafId: _oldScrollbackRefsByLeafId,
-    titlesByLeafId: _oldTitlesByLeafId,
-    ...snapshotWithoutLeafRecords
-  } = inputSnapshot
-  return {
-    snapshot: {
-      ...snapshotWithoutLeafRecords,
-      root,
-      activeLeafId,
-      expandedLeafId,
-      ...(ptyIdsByLeafId ? { ptyIdsByLeafId } : {}),
-      ...(buffersByLeafId ? { buffersByLeafId } : {}),
-      ...(scrollbackRefsByLeafId ? { scrollbackRefsByLeafId } : {}),
-      ...(titlesByLeafId ? { titlesByLeafId } : {})
-    },
-    changed: true,
-    leafIdByInputLeafId
-  }
-}
-
-function normalizeWorkspaceSessionPaneIdentities(
-  session: WorkspaceSessionState,
-  priorLayoutsByTabId: Record<string, TerminalLayoutSnapshot> = {}
-): {
-  session: WorkspaceSessionState
-  changed: boolean
-  leafIdByInputLeafIdByTabId: Map<string, Map<string, string>>
-  leafIdByPtyIdByTabId: Map<string, Map<string, string>>
-  migrationUnsupportedEntries: MigrationUnsupportedPtyEntry[]
-  legacyPaneKeyAliasEntries: LegacyPaneKeyAliasEntry[]
-} {
-  let changed = false
-  const leafIdByInputLeafIdByTabId = new Map<string, Map<string, string>>()
-  const leafIdByPtyIdByTabId = new Map<string, Map<string, string>>()
-  const migrationUnsupportedEntries: MigrationUnsupportedPtyEntry[] = []
-  const legacyPaneKeyAliasEntries: LegacyPaneKeyAliasEntry[] = []
-  const terminalLayoutsByTabId: Record<string, TerminalLayoutSnapshot> = {}
-  for (const [tabId, layout] of Object.entries(session.terminalLayoutsByTabId ?? {})) {
-    const normalized = normalizeTerminalLayoutSnapshotForPersistence(
-      layout,
-      priorLayoutsByTabId[tabId]
-    )
-    terminalLayoutsByTabId[tabId] = normalized.snapshot
-    leafIdByInputLeafIdByTabId.set(tabId, normalized.leafIdByInputLeafId)
-    const migrationEntries = collectMigrationUnsupportedPtyEntries({
-      session,
-      tabId,
-      inputLayout: layout,
-      normalizedLayout: normalized.snapshot,
-      leafIdByInputLeafId: normalized.leafIdByInputLeafId
-    })
-    // Why: old split layouts can generate enough alias rows to exceed V8's argument limit if spread into push().
-    for (const entry of migrationEntries.migrationUnsupportedEntries) {
-      migrationUnsupportedEntries.push(entry)
-    }
-    for (const entry of migrationEntries.legacyPaneKeyAliasEntries) {
-      legacyPaneKeyAliasEntries.push(entry)
-    }
-    const leafIdByPtyId = new Map<string, string>()
-    const duplicatePtyIds = new Set<string>()
-    for (const [leafId, ptyId] of Object.entries(normalized.snapshot.ptyIdsByLeafId ?? {})) {
-      if (duplicatePtyIds.has(ptyId)) {
-        continue
-      }
-      if (leafIdByPtyId.has(ptyId)) {
-        leafIdByPtyId.delete(ptyId)
-        duplicatePtyIds.add(ptyId)
-        continue
-      }
-      leafIdByPtyId.set(ptyId, leafId)
-    }
-    leafIdByPtyIdByTabId.set(tabId, leafIdByPtyId)
-    changed ||= normalized.changed
-  }
-  return {
-    session: changed ? { ...session, terminalLayoutsByTabId } : session,
-    changed,
-    leafIdByInputLeafIdByTabId,
-    leafIdByPtyIdByTabId,
-    migrationUnsupportedEntries,
-    legacyPaneKeyAliasEntries
-  }
-}
-
-function remapSshRemotePtyLeaseLeafIds(
-  leases: SshRemotePtyLease[],
-  leafIdByInputLeafIdByTabId: Map<string, Map<string, string>>,
-  leafIdByPtyIdByTabId: Map<string, Map<string, string>>
-): { leases: SshRemotePtyLease[]; changed: boolean } {
-  let changed = false
-  const nextLeases = leases.map((lease) => {
-    if (lease.leafId === undefined || isTerminalLeafId(lease.leafId)) {
-      return lease
-    }
-    const remappedLeafId = lease.tabId
-      ? leafIdByInputLeafIdByTabId.get(lease.tabId)?.get(lease.leafId)
-      : undefined
-    const leafIdForPty = lease.tabId
-      ? leafIdByPtyIdByTabId.get(lease.tabId)?.get(lease.ptyId)
-      : undefined
-    changed = true
-    const nextLeafId = remappedLeafId ?? leafIdForPty
-    if (nextLeafId) {
-      return { ...lease, leafId: nextLeafId }
-    }
-    const next = { ...lease }
-    // Why: unmatched legacy leaf ids are ambiguous after migration; don't re-persist them as durable pane identity.
-    delete next.leafId
-    return next
-  })
-  return { leases: nextLeases, changed }
-}
-
-function normalizePersistedPaneIdentityState(state: PersistedState): {
-  state: PersistedState
-  changed: boolean
-  migrationUnsupportedEntries: MigrationUnsupportedPtyEntry[]
-  legacyPaneKeyAliasEntries: LegacyPaneKeyAliasEntry[]
-} {
-  const normalizedSession = normalizeWorkspaceSessionPaneIdentities(state.workspaceSession, {})
-  const remappedLeases = remapSshRemotePtyLeaseLeafIds(
-    state.sshRemotePtyLeases ?? [],
-    normalizedSession.leafIdByInputLeafIdByTabId,
-    normalizedSession.leafIdByPtyIdByTabId
-  )
-  const mergedMigrationUnsupportedEntries: MigrationUnsupportedPtyEntry[] = []
-  const mergedLegacyPaneKeyAliasEntries = mergeLegacyPaneKeyAliasEntries([
-    ...normalizeLegacyPaneKeyAliasEntries(state.legacyPaneKeyAliasEntries),
-    ...legacyMigrationUnsupportedRowsToAliasEntries(state.migrationUnsupportedPtyEntries ?? []),
-    ...normalizedSession.legacyPaneKeyAliasEntries
-  ])
-  const remappedAcknowledgements = remapAcknowledgedAgentPaneKeys(
-    state.ui?.acknowledgedAgentsByPaneKey,
-    normalizedSession.leafIdByInputLeafIdByTabId
-  )
-  const migrationUnsupportedChanged = !migrationUnsupportedEntriesEqual(
-    state.migrationUnsupportedPtyEntries ?? [],
-    mergedMigrationUnsupportedEntries
-  )
-  const legacyAliasesChanged = !legacyPaneKeyAliasEntriesEqual(
-    state.legacyPaneKeyAliasEntries ?? [],
-    mergedLegacyPaneKeyAliasEntries
-  )
-  if (
-    !normalizedSession.changed &&
-    !remappedLeases.changed &&
-    !migrationUnsupportedChanged &&
-    !legacyAliasesChanged &&
-    !remappedAcknowledgements.changed
-  ) {
-    return {
-      state,
-      changed: false,
-      migrationUnsupportedEntries: mergedMigrationUnsupportedEntries,
-      legacyPaneKeyAliasEntries: mergedLegacyPaneKeyAliasEntries
-    }
-  }
-  return {
-    state: {
-      ...state,
-      workspaceSession: normalizedSession.session,
-      sshRemotePtyLeases: remappedLeases.leases,
-      migrationUnsupportedPtyEntries: mergedMigrationUnsupportedEntries,
-      legacyPaneKeyAliasEntries: mergedLegacyPaneKeyAliasEntries,
-      ...(remappedAcknowledgements.changed
-        ? {
-            ui: {
-              ...state.ui,
-              acknowledgedAgentsByPaneKey: remappedAcknowledgements.acknowledgements
-            }
-          }
-        : {})
-    },
-    changed: true,
-    migrationUnsupportedEntries: mergedMigrationUnsupportedEntries,
-    legacyPaneKeyAliasEntries: mergedLegacyPaneKeyAliasEntries
-  }
-}
-
-function remapAcknowledgedAgentPaneKeys(
-  acknowledgements: PersistedState['ui']['acknowledgedAgentsByPaneKey'],
-  leafIdByInputLeafIdByTabId: Map<string, Map<string, string>>
-): { acknowledgements: PersistedState['ui']['acknowledgedAgentsByPaneKey']; changed: boolean } {
-  if (!acknowledgements || Object.keys(acknowledgements).length === 0) {
-    return { acknowledgements, changed: false }
-  }
-
-  let changed = false
-  const next: NonNullable<PersistedState['ui']['acknowledgedAgentsByPaneKey']> = {}
-  const setAcknowledgement = (paneKey: string, acknowledgedAt: number): void => {
-    const existing = next[paneKey]
-    next[paneKey] = existing === undefined ? acknowledgedAt : Math.max(existing, acknowledgedAt)
-  }
-  for (const [paneKey, acknowledgedAt] of Object.entries(acknowledgements)) {
-    const parsed = parsePaneKey(paneKey)
-    if (parsed) {
-      setAcknowledgement(paneKey, acknowledgedAt)
-      continue
-    }
-
-    const delimiter = paneKey.indexOf(':')
-    if (delimiter <= 0 || delimiter === paneKey.length - 1) {
-      setAcknowledgement(paneKey, acknowledgedAt)
-      continue
-    }
-
-    const tabId = paneKey.slice(0, delimiter)
-    const legacyLeafId = paneKey.slice(delimiter + 1)
-    const remappedLeafId = leafIdByInputLeafIdByTabId.get(tabId)?.get(legacyLeafId)
-    if (!remappedLeafId || !isTerminalLeafId(remappedLeafId)) {
-      setAcknowledgement(paneKey, acknowledgedAt)
-      continue
-    }
-
-    try {
-      // Why: when a legacy leaf is promoted to a UUID, carry the read marker over so seen rows don't come back unread.
-      setAcknowledgement(makePaneKey(tabId, remappedLeafId), acknowledgedAt)
-      changed = true
-    } catch {
-      setAcknowledgement(paneKey, acknowledgedAt)
-    }
-  }
-
-  return { acknowledgements: next, changed }
-}
-
-// Why: bounds a corrupt/bloated persisted list — the gate only needs the few Claude sessions a daemon can keep alive.
-const MAX_CLAUDE_LIVE_PTY_SESSION_IDS = 200
-
-// Why: bound removed-SSH-target history so remove/re-add churn can't grow the file unbounded.
-const MAX_REMOVED_SSH_TARGET_TOMBSTONES = 50
-
-/** Why: retirement never evicts — dropping an entry hands back a name whose agent conversation is
- *  still on disk — so the row is bounded by compaction instead, and a persisted row is a watermark
- *  plus whatever sits above it. Accepts the pre-compaction plain-array row too: the feature is
- *  unreleased, but a developer profile or a fixture can still hold one. */
 function normalizeRetiredNameRegistry(row: unknown): RetiredNameRegistry {
   const isPlainArray = Array.isArray(row)
   const rawRow = row as { exhaustedTiers?: unknown; names?: unknown } | null | undefined
@@ -2356,8 +469,6 @@ function normalizeRetiredNameRegistry(row: unknown): RetiredNameRegistry {
   })
 }
 
-/** Why: a corrupt or hand-edited map must degrade to "nothing retired" rather than throw during
- *  load — over-retiring costs one name from a 552-entry pool, but a load failure costs the app. */
 function normalizeRetiredNameRegistryMap(value: unknown): Record<string, RetiredNameRegistry> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {}
@@ -2373,490 +484,6 @@ function normalizeRetiredNameRegistryMap(value: unknown): Record<string, Retired
     }
   }
   return byRepo
-}
-
-function normalizeClaudeLivePtySessionIds(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return []
-  }
-  // Why: scan newest-first so the cap keeps the most recent ids, matching addClaudeLivePtySessionId's eviction policy.
-  const ids: string[] = []
-  for (let index = value.length - 1; index >= 0; index -= 1) {
-    const entry = value[index]
-    if (typeof entry !== 'string' || entry.length === 0 || entry.length > 512) {
-      continue
-    }
-    if (!ids.includes(entry)) {
-      ids.push(entry)
-    }
-    if (ids.length >= MAX_CLAUDE_LIVE_PTY_SESSION_IDS) {
-      break
-    }
-  }
-  return ids.toReversed()
-}
-
-function normalizeMigrationUnsupportedPtyEntries(value: unknown): MigrationUnsupportedPtyEntry[] {
-  if (!Array.isArray(value)) {
-    return []
-  }
-  return value.filter((entry): entry is MigrationUnsupportedPtyEntry => {
-    if (!entry || typeof entry !== 'object') {
-      return false
-    }
-    const candidate = entry as Partial<MigrationUnsupportedPtyEntry>
-    return (
-      typeof candidate.ptyId === 'string' &&
-      candidate.ptyId.length > 0 &&
-      (candidate.worktreeId === undefined || typeof candidate.worktreeId === 'string') &&
-      (candidate.tabId === undefined || typeof candidate.tabId === 'string') &&
-      (candidate.leafId === undefined || isTerminalLeafId(candidate.leafId)) &&
-      (candidate.paneKey === undefined || typeof candidate.paneKey === 'string') &&
-      candidate.reason === 'legacy-numeric-pane-key' &&
-      (candidate.source === 'local' || candidate.source === 'ssh') &&
-      Number.isFinite(candidate.updatedAt)
-    )
-  })
-}
-
-function normalizeLegacyPaneKeyAliasEntries(value: unknown): LegacyPaneKeyAliasEntry[] {
-  if (!Array.isArray(value)) {
-    return []
-  }
-  return value.filter((entry): entry is LegacyPaneKeyAliasEntry => {
-    if (!entry || typeof entry !== 'object') {
-      return false
-    }
-    const candidate = entry as Partial<LegacyPaneKeyAliasEntry>
-    if (
-      typeof candidate.ptyId !== 'string' ||
-      candidate.ptyId.trim().length === 0 ||
-      typeof candidate.legacyPaneKey !== 'string' ||
-      typeof candidate.stablePaneKey !== 'string' ||
-      !Number.isFinite(candidate.updatedAt)
-    ) {
-      return false
-    }
-    const legacy = parseLegacyNumericPaneKey(candidate.legacyPaneKey)
-    const relocatedSource = parsePaneKey(candidate.legacyPaneKey)
-    const stable = parsePaneKey(candidate.stablePaneKey)
-    return Boolean(stable && ((legacy && legacy.tabId === stable.tabId) || relocatedSource))
-  })
-}
-
-function registerPersistedPaneKeyAlias(entry: LegacyPaneKeyAliasEntry): void {
-  if (parseLegacyNumericPaneKey(entry.legacyPaneKey)) {
-    agentHookServer.registerPaneKeyAlias(
-      entry.legacyPaneKey,
-      entry.stablePaneKey,
-      entry.ptyId,
-      entry.updatedAt,
-      { overwriteExisting: false }
-    )
-    return
-  }
-  // Why: detached agents keep their UUID pane key across restarts; restore the physical-to-owner mapping before hook replay.
-  agentHookServer.transferPaneAuthority(
-    entry.legacyPaneKey,
-    entry.stablePaneKey,
-    entry.ptyId,
-    entry.updatedAt,
-    { authorityVerified: false }
-  )
-}
-
-function mergeLegacyPaneKeyAliasEntries(
-  entries: LegacyPaneKeyAliasEntry[]
-): LegacyPaneKeyAliasEntry[] {
-  const byLegacyPaneKey = new Map<string, LegacyPaneKeyAliasEntry>()
-  for (const entry of normalizeLegacyPaneKeyAliasEntries(entries)) {
-    const existing = byLegacyPaneKey.get(entry.legacyPaneKey)
-    if (!existing || existing.updatedAt <= entry.updatedAt) {
-      byLegacyPaneKey.set(entry.legacyPaneKey, entry)
-    }
-  }
-  return [...byLegacyPaneKey.values()]
-}
-
-function legacyPaneKeyAliasEntriesEqual(
-  left: LegacyPaneKeyAliasEntry[],
-  right: LegacyPaneKeyAliasEntry[]
-): boolean {
-  if (left.length !== right.length) {
-    return false
-  }
-  const rightByLegacyPaneKey = new Map(right.map((entry) => [entry.legacyPaneKey, entry]))
-  return left.every((entry) => {
-    const other = rightByLegacyPaneKey.get(entry.legacyPaneKey)
-    return other ? JSON.stringify(entry) === JSON.stringify(other) : false
-  })
-}
-
-function migrationUnsupportedEntriesEqual(
-  left: MigrationUnsupportedPtyEntry[],
-  right: MigrationUnsupportedPtyEntry[]
-): boolean {
-  if (left.length !== right.length) {
-    return false
-  }
-  const rightByPtyId = new Map(right.map((entry) => [entry.ptyId, entry]))
-  return left.every((entry) => {
-    const other = rightByPtyId.get(entry.ptyId)
-    return other ? JSON.stringify(entry) === JSON.stringify(other) : false
-  })
-}
-
-function projectHostSetupCompatibilityStateEqual(
-  state: Pick<PersistedState, 'projects' | 'projectHostSetups'>,
-  nextState: Pick<PersistedState, 'projects' | 'projectHostSetups'>
-): boolean {
-  return (
-    JSON.stringify(state.projects ?? []) === JSON.stringify(nextState.projects) &&
-    JSON.stringify(state.projectHostSetups ?? []) === JSON.stringify(nextState.projectHostSetups)
-  )
-}
-
-function isRepoBackedProjectHostSetup(
-  setup: ProjectHostSetup,
-  currentRepoIds: ReadonlySet<string>
-): boolean {
-  const repoId = typeof setup.repoId === 'string' ? setup.repoId : ''
-  return repoId.length > 0 && (currentRepoIds.has(repoId) || setup.id === repoId)
-}
-
-function mergeProjectHostSetupCompatibilityState(
-  state: Pick<PersistedState, 'projects' | 'projectHostSetups'>,
-  repos: readonly Repo[]
-): Pick<PersistedState, 'projects' | 'projectHostSetups'> {
-  const projection = projectHostSetupProjectionFromRepos(repos)
-  const succession = carryProjectStateThroughIdentityChange(
-    projection.projects,
-    state.projects ?? []
-  )
-  const currentRepoIds = new Set(repos.map((repo) => repo.id))
-  const projectedProjectIds = new Set(projection.projects.map((project) => project.id))
-  const projectedSetupIds = new Set(projection.setups.map((setup) => setup.id))
-  // Why: legacy/repo-backed setup rows reuse the repo id; keep only independent rows so repo deletion leaves no ghosts.
-  const independentSetups = (state.projectHostSetups ?? [])
-    .filter((setup) => {
-      if (projectedSetupIds.has(setup.id)) {
-        return false
-      }
-      return !isRepoBackedProjectHostSetup(setup, currentRepoIds)
-    })
-    // Why: follow the repo's project through a derived-id change so no ghost project row survives.
-    .map((setup) => {
-      const remappedProjectId = succession.remappedProjectIds.get(setup.projectId)
-      return remappedProjectId ? { ...setup, projectId: remappedProjectId } : setup
-    })
-  const independentProjectIds = new Set(independentSetups.map((setup) => setup.projectId))
-  const independentProjects = (state.projects ?? [])
-    .filter(
-      (project) => independentProjectIds.has(project.id) && !projectedProjectIds.has(project.id)
-    )
-    .map((project) => ({
-      ...project,
-      sourceRepoIds: project.sourceRepoIds.filter((repoId) => currentRepoIds.has(repoId))
-    }))
-  return {
-    projects: [...succession.projects, ...independentProjects],
-    projectHostSetups: [...projection.setups, ...independentSetups]
-  }
-}
-
-function makeProjectHostSetupId(
-  projectId: string,
-  hostId: ExecutionHostId,
-  existingIds: ReadonlySet<string>,
-  requestedId?: string
-): string {
-  const baseId = requestedId?.trim() || `${projectId}::${hostId}`
-  if (!existingIds.has(baseId)) {
-    return baseId
-  }
-  let suffix = 2
-  let candidate = `${baseId}::${suffix}`
-  while (existingIds.has(candidate)) {
-    suffix++
-    candidate = `${baseId}::${suffix}`
-  }
-  return candidate
-}
-
-function createMinimalPersistedTerminalTab(args: {
-  worktreeId: string
-  tabId: string
-  ptyId: string
-  existingTabCount: number
-  startupCwd?: string
-}): TerminalTab {
-  const ordinal = args.existingTabCount + 1
-  const defaultTitle = `Terminal ${ordinal}`
-  return {
-    id: args.tabId,
-    ptyId: args.ptyId,
-    worktreeId: args.worktreeId,
-    title: defaultTitle,
-    defaultTitle,
-    customTitle: null,
-    color: null,
-    sortOrder: args.existingTabCount,
-    createdAt: Date.now(),
-    ...(args.startupCwd ? { startupCwd: args.startupCwd } : {}),
-    pendingActivationSpawn: true
-  }
-}
-
-function cloneWorkspaceSessionState(session: WorkspaceSessionState): WorkspaceSessionState {
-  return structuredClone(session)
-}
-
-// Deletes the O(1) owner-keyed fields for `ownerKey` from an already-cloned
-// session in place, recording removed tab ids into `removedTabIds`. The
-// pane-key-scanned maps (pty incarnations, surface tombstones, sleeping agents)
-// and the shutdown list are handled by deleteScannedSessionFieldsForOwners so a
-// batch prune scans each collection once instead of once per owner.
-function deleteOwnerKeyedSessionFields(
-  next: WorkspaceSessionState,
-  ownerKey: string,
-  removedTabIds: Set<string>,
-  options: { advanceTerminalTopologyRevision?: boolean } = {}
-): void {
-  const removedTerminalTabs = next.tabsByWorktree?.[ownerKey] ?? []
-  if (next.tabsByWorktree) {
-    delete next.tabsByWorktree[ownerKey]
-  }
-  for (const tab of removedTerminalTabs) {
-    removedTabIds.add(tab.id)
-    delete next.terminalLayoutsByTabId[tab.id]
-    if (next.activeTabId === tab.id) {
-      next.activeTabId = null
-    }
-  }
-  if (options.advanceTerminalTopologyRevision) {
-    const repoId = getRepoIdFromWorktreeId(ownerKey)
-    const previousTopologyRevision = next.terminalTopologyRevisionByRepoId?.[repoId] ?? 0
-    next.terminalTopologyRevisionByRepoId = {
-      ...next.terminalTopologyRevisionByRepoId,
-      [repoId]: previousTopologyRevision + 1
-    }
-  }
-  if (next.openFilesByWorktree) {
-    delete next.openFilesByWorktree[ownerKey]
-  }
-  if (next.activeFileIdByWorktree) {
-    delete next.activeFileIdByWorktree[ownerKey]
-  }
-  const browserWorkspaces = next.browserTabsByWorktree?.[ownerKey] ?? []
-  if (next.browserTabsByWorktree) {
-    delete next.browserTabsByWorktree[ownerKey]
-  }
-  if (next.browserPagesByWorkspace) {
-    for (const workspace of browserWorkspaces) {
-      delete next.browserPagesByWorkspace[workspace.id]
-    }
-  }
-  if (next.activeBrowserTabIdByWorktree) {
-    delete next.activeBrowserTabIdByWorktree[ownerKey]
-  }
-  if (next.activeTabTypeByWorktree) {
-    delete next.activeTabTypeByWorktree[ownerKey]
-  }
-  if (next.activeTabIdByWorktree) {
-    delete next.activeTabIdByWorktree[ownerKey]
-  }
-  if (next.unifiedTabs) {
-    delete next.unifiedTabs[ownerKey]
-  }
-  if (next.tabGroups) {
-    delete next.tabGroups[ownerKey]
-  }
-  if (next.tabGroupLayouts) {
-    delete next.tabGroupLayouts[ownerKey]
-  }
-  if (next.activeGroupIdByWorktree) {
-    delete next.activeGroupIdByWorktree[ownerKey]
-  }
-  if (next.lastVisitedAtByWorktreeId) {
-    delete next.lastVisitedAtByWorktreeId[ownerKey]
-  }
-  if (next.defaultTerminalTabsAppliedByWorktreeId) {
-    delete next.defaultTerminalTabsAppliedByWorktreeId[ownerKey]
-  }
-  if (next.activeWorkspaceKey === ownerKey) {
-    next.activeWorkspaceKey = null
-  }
-  if (next.activeWorktreeId === ownerKey) {
-    next.activeWorktreeId = null
-  }
-}
-
-// Scans the pane-key-keyed maps and the shutdown list once, removing every entry
-// owned by a key matched by `isRemovedOwner` (or, for pty incarnations, whose tab
-// was removed). Kept separate from the O(1) deletes so a batch prune scans each
-// collection a single time regardless of how many owners are being removed.
-function deleteScannedSessionFieldsForOwners(
-  next: WorkspaceSessionState,
-  removedTabIds: ReadonlySet<string>,
-  isRemovedOwner: (worktreeId: string) => boolean
-): void {
-  if (next.terminalPtyIncarnationsByPaneKey) {
-    next.terminalPtyIncarnationsByPaneKey = Object.fromEntries(
-      Object.entries(next.terminalPtyIncarnationsByPaneKey).filter(([paneKey]) => {
-        const separator = paneKey.lastIndexOf(':')
-        return separator < 1 || !removedTabIds.has(paneKey.slice(0, separator))
-      })
-    )
-  }
-  if (next.terminalSurfaceTombstonesByPaneKey) {
-    next.terminalSurfaceTombstonesByPaneKey = Object.fromEntries(
-      Object.entries(next.terminalSurfaceTombstonesByPaneKey).filter(
-        ([, tombstone]) => !isRemovedOwner(tombstone.worktreeId)
-      )
-    )
-  }
-  if (next.sleepingAgentSessionsByPaneKey) {
-    for (const [paneKey, record] of Object.entries(next.sleepingAgentSessionsByPaneKey)) {
-      if (isRemovedOwner(record.worktreeId)) {
-        delete next.sleepingAgentSessionsByPaneKey[paneKey]
-      }
-    }
-  }
-  next.activeWorktreeIdsOnShutdown = next.activeWorktreeIdsOnShutdown?.filter(
-    (worktreeId) => !isRemovedOwner(worktreeId)
-  )
-}
-
-// Remote (ssh:/runtime:) workspace state can exist in both the renderer's local blob and main's host
-// partition, because the renderer falls back to 'local' whenever worktree ownership is unresolved.
-function workspaceSessionPartitionIdsForHost(hostId: string | null | undefined): ExecutionHostId[] {
-  const parsed = parseExecutionHostId(hostId)
-  return parsed && parsed.id !== LOCAL_EXECUTION_HOST_ID
-    ? [LOCAL_EXECUTION_HOST_ID, parsed.id]
-    : [LOCAL_EXECUTION_HOST_ID]
-}
-
-/** The partition the host actually owns; the others are only spill surfaces for it. */
-function workspaceSessionOwnerPartitionForHost(hostId: string | null | undefined): ExecutionHostId {
-  return parseExecutionHostId(hostId)?.id ?? LOCAL_EXECUTION_HOST_ID
-}
-
-function removeWorkspaceSessionOwner(
-  session: WorkspaceSessionState | undefined,
-  ownerKey: string,
-  options: { advanceTerminalTopologyRevision?: boolean } = {}
-): WorkspaceSessionState | undefined {
-  if (!session) {
-    return session
-  }
-  const next = cloneWorkspaceSessionState(session)
-  const removedTabIds = new Set<string>()
-  deleteOwnerKeyedSessionFields(next, ownerKey, removedTabIds, options)
-  deleteScannedSessionFieldsForOwners(next, removedTabIds, (worktreeId) => worktreeId === ownerKey)
-  return next
-}
-
-// Batch variant of removeWorkspaceSessionOwner: prunes every owner in `ownerKeys`
-// with a single structuredClone and a single scan of each collection, instead of
-// one clone+scan per owner. Project removal can touch many worktrees across many
-// host partitions, so the per-owner clones added up to O(worktrees × hosts).
-function removeWorkspaceSessionOwners(
-  session: WorkspaceSessionState | undefined,
-  ownerKeys: ReadonlySet<string>
-): WorkspaceSessionState | undefined {
-  if (!session || ownerKeys.size === 0) {
-    return session
-  }
-  const next = cloneWorkspaceSessionState(session)
-  const removedTabIds = new Set<string>()
-  for (const ownerKey of ownerKeys) {
-    deleteOwnerKeyedSessionFields(next, ownerKey, removedTabIds)
-  }
-  deleteScannedSessionFieldsForOwners(next, removedTabIds, (worktreeId) =>
-    ownerKeys.has(worktreeId)
-  )
-  return next
-}
-
-function inferFolderScopeConnectionIdForMigration(args: {
-  folderPath: string
-  projectGroupId: string
-  projectGroups: readonly ProjectGroup[]
-  repos: readonly Repo[]
-}): string | null {
-  const groupIds = getProjectGroupSubtreeIds(args.projectGroups, args.projectGroupId)
-  const groupRepos = args.repos.filter(
-    (repo) => typeof repo.projectGroupId === 'string' && groupIds.has(repo.projectGroupId)
-  )
-  const candidateRepos =
-    groupRepos.length > 0
-      ? groupRepos
-      : args.repos.filter((repo) => isPathInsideOrEqual(args.folderPath, repo.path))
-  if (candidateRepos.length === 0) {
-    return null
-  }
-  let hasLocalRepo = false
-  const connectionIds = new Set<string>()
-  for (const repo of candidateRepos) {
-    if (repo.connectionId) {
-      connectionIds.add(repo.connectionId)
-    } else {
-      hasLocalRepo = true
-    }
-  }
-  if (hasLocalRepo || connectionIds.size !== 1) {
-    return null
-  }
-  return [...connectionIds][0]
-}
-
-function backfillFolderScopeConnectionIds(state: PersistedState): {
-  state: PersistedState
-  changed: boolean
-} {
-  const groups = state.projectGroups ?? []
-  const repos = state.repos ?? []
-  let changed = false
-  const projectGroups = groups.map((group) => {
-    if (group.connectionId || !group.parentPath) {
-      return group
-    }
-    const connectionId = inferFolderScopeConnectionIdForMigration({
-      folderPath: group.parentPath,
-      projectGroupId: group.id,
-      projectGroups: groups,
-      repos
-    })
-    if (!connectionId) {
-      return group
-    }
-    changed = true
-    return { ...group, connectionId }
-  })
-  const groupsById = new Map(projectGroups.map((group) => [group.id, group]))
-  const folderWorkspaces = (state.folderWorkspaces ?? []).map((workspace) => {
-    if (workspace.connectionId) {
-      return workspace
-    }
-    const groupConnectionId = groupsById.get(workspace.projectGroupId)?.connectionId ?? null
-    const connectionId =
-      groupConnectionId ??
-      inferFolderScopeConnectionIdForMigration({
-        folderPath: workspace.folderPath,
-        projectGroupId: workspace.projectGroupId,
-        projectGroups,
-        repos
-      })
-    if (!connectionId) {
-      return workspace
-    }
-    changed = true
-    return { ...workspace, connectionId }
-  })
-  return {
-    changed,
-    state: changed ? { ...state, projectGroups, folderWorkspaces } : state
-  }
 }
 
 function deleteRemovedTerminalScrollbackSnapshots(
@@ -4389,515 +2016,151 @@ export class Store {
     return dirname(this.dataFile)
   }
 
+  private getProjectHostOperations(): ProjectHostPersistenceOperations {
+    return new ProjectHostPersistenceOperations({
+      state: this.state,
+      gitUsernameCache: this.gitUsernameCache,
+      hydrateRepo: (repo) => this.hydrateRepo(repo),
+      updateRepoBackedProjectHostSetup: (setup, repo, updates) =>
+        this.updateRepoBackedProjectHostSetup(setup, repo, updates),
+      updateIndependentProjectHostSetup: (setup, updates) =>
+        this.updateIndependentProjectHostSetup(setup, updates),
+      removeProjectForHost: (id, hostId) => this.removeProjectForHost(id, hostId),
+      scheduleSave: () => this.scheduleSave()
+    })
+  }
+
   getRepos(): Repo[] {
-    return this.state.repos.map((repo) => this.hydrateRepo(repo))
+    return this.getProjectHostOperations().getRepos()
   }
 
   getProjects(): Project[] {
-    return [...this.state.projects]
+    return this.getProjectHostOperations().getProjects()
   }
 
   updateProject(id: string, updates: ProjectUpdateArgs['updates']): Project | null {
-    const project = this.state.projects.find((entry) => entry.id === id)
-    if (!project) {
-      return null
-    }
-    if ('localWindowsRuntimePreference' in updates) {
-      if (updates.localWindowsRuntimePreference === undefined) {
-        delete project.localWindowsRuntimePreference
-      } else {
-        project.localWindowsRuntimePreference = normalizeProjectRuntimePreference(
-          updates.localWindowsRuntimePreference
-        )
-      }
-    }
-    project.updatedAt = Date.now()
-    this.scheduleSave()
-    return { ...project }
+    return this.getProjectHostOperations().updateProject(id, updates)
   }
 
   getProjectHostSetups(): ProjectHostSetup[] {
-    return [...this.state.projectHostSetups]
+    return this.getProjectHostOperations().getProjectHostSetups()
   }
 
   createProjectHostSetup(args: ProjectHostSetupCreateArgs): ProjectHostSetupCreateResult | null {
-    const project = this.state.projects.find((entry) => entry.id === args.projectId)
-    if (!project) {
-      return null
-    }
-    const hostId = normalizeExecutionHostId(args.hostId)
-    if (!hostId) {
-      throw new Error(`Invalid host ID: ${args.hostId}`)
-    }
-    const duplicateSetup = this.state.projectHostSetups.find(
-      (entry) => entry.projectId === project.id && entry.hostId === hostId
-    )
-    if (duplicateSetup) {
-      throw new Error(`Project host setup already exists: ${duplicateSetup.id}`)
-    }
-    const now = Date.now()
-    const existingIds = new Set(this.state.projectHostSetups.map((entry) => entry.id))
-    const setup: ProjectHostSetup = {
-      id: makeProjectHostSetupId(project.id, hostId, existingIds, args.setupId),
-      projectId: project.id,
-      hostId,
-      repoId: '',
-      path: args.path?.trim() ?? '',
-      displayName: args.displayName?.trim() || project.displayName,
-      ...(args.kind ? { kind: args.kind } : {}),
-      ...(args.worktreeBasePath?.trim() ? { worktreeBasePath: args.worktreeBasePath.trim() } : {}),
-      ...(args.gitUsername?.trim() ? { gitUsername: args.gitUsername.trim() } : {}),
-      setupState: args.setupState ?? 'not-set-up',
-      setupMethod: args.setupMethod ?? 'provisioned',
-      createdAt: now,
-      updatedAt: now
-    }
-    // Why: persist independently so future repo projection sync doesn't erase this non-repo-backed setup.
-    this.state.projectHostSetups.push(setup)
-    this.scheduleSave()
-    return { project, setup }
+    return this.getProjectHostOperations().createProjectHostSetup(args)
   }
 
   updateProjectHostSetup(args: ProjectHostSetupUpdateArgs): ProjectHostSetupUpdateResult | null {
-    const setup = this.state.projectHostSetups.find((entry) => entry.id === args.setupId)
-    if (!setup) {
-      return null
-    }
-    const project = this.state.projects.find((entry) => entry.id === setup.projectId)
-    if (!project) {
-      return null
-    }
-    const repo = setup.repoId
-      ? this.state.repos.find((entry) => entry.id === setup.repoId)
-      : undefined
-    if (repo) {
-      const updated = this.updateRepoBackedProjectHostSetup(setup, repo, args.updates)
-      const updatedProject = updated
-        ? this.state.projects.find((entry) => entry.id === updated.setup.projectId)
-        : undefined
-      return updated && updatedProject
-        ? { project: updatedProject, setup: updated.setup, repo: updated.repo }
-        : null
-    }
-    const updatedSetup = this.updateIndependentProjectHostSetup(setup, args.updates)
-    return { project, setup: updatedSetup }
+    return this.getProjectHostOperations().updateProjectHostSetup(args)
   }
 
   deleteProjectHostSetup(args: ProjectHostSetupDeleteArgs): ProjectHostSetupDeleteResult | null {
-    const setup = this.state.projectHostSetups.find((entry) => entry.id === args.setupId)
-    if (!setup) {
-      return null
-    }
-    const project = this.state.projects.find((entry) => entry.id === setup.projectId)
-    if (!project) {
-      return null
-    }
-    // Why: the same repo id can exist on multiple execution hosts, so match this setup's own host
-    // row and never fall back to a sibling host's row — a stale repoId/hostId would delete that host's
-    // registration. With no exact match the setup is stale, and the path below drops just the setup.
-    const repo = setup.repoId
-      ? this.state.repos.find(
-          (entry) => entry.id === setup.repoId && getRepoExecutionHostId(entry) === setup.hostId
-        )
-      : undefined
-    if (repo) {
-      this.removeProjectForHost(repo.id, setup.hostId)
-      return { project, setup, repo: this.hydrateRepo(repo) }
-    }
-    this.state.projectHostSetups = this.state.projectHostSetups.filter(
-      (entry) => entry.id !== setup.id
-    )
-    this.scheduleSave()
-    return { project, setup }
+    return this.getProjectHostOperations().deleteProjectHostSetup(args)
   }
 
-  /** O(1) repo count; unlike `getRepos()` this skips per-repo hydration. */
   getRepoCount(): number {
-    return this.state.repos.length
+    return this.getProjectHostOperations().getRepoCount()
   }
 
   getRepo(id: string): Repo | undefined {
-    const repo = this.state.repos.find((r) => r.id === id)
-    return repo ? this.hydrateRepo(repo) : undefined
+    return this.getProjectHostOperations().getRepo(id)
   }
 
-  /**
-   * Record a background-resolved git username; kept out of updateRepo's whitelist so the renderer can't write it directly.
-   * @returns true when the hydrated value changed.
-   */
   setResolvedRepoGitUsername(id: string, username: string): boolean {
-    const repo = this.state.repos.find((r) => r.id === id)
-    if (!repo) {
-      return false
-    }
-    const previous = this.gitUsernameCache.get(repo.path) ?? repo.gitUsername ?? ''
-    this.gitUsernameCache.set(repo.path, username)
-    if (previous === username) {
-      return false
-    }
-    if (username) {
-      // Why: persist so the next launch hydrates repos with the right branch prefix before enrichment re-runs.
-      repo.gitUsername = username
-    } else {
-      delete repo.gitUsername
-    }
-    this.scheduleSave()
-    return true
+    return this.getProjectHostOperations().setResolvedRepoGitUsername(id, username)
+  }
+
+  private getProjectGroupOperations(): ProjectGroupPersistenceOperations {
+    return new ProjectGroupPersistenceOperations({
+      state: this.state,
+      scheduleSave: () => this.scheduleSave(),
+      removeWorkspaceLineageForFolderParent: (folderWorkspaceId) =>
+        this.removeWorkspaceLineageForFolderParent(folderWorkspaceId),
+      pruneMobileClientTabSelections: (matchesWorktreeId) =>
+        this.pruneMobileClientTabSelections(matchesWorktreeId)
+    })
   }
 
   getProjectGroups(): ProjectGroup[] {
-    return [...(this.state.projectGroups ?? [])].sort(
-      (left, right) => left.tabOrder - right.tabOrder || left.name.localeCompare(right.name)
-    )
+    return this.getProjectGroupOperations().getProjectGroups()
   }
 
-  createProjectGroup(input: {
-    name: string
-    parentPath?: string | null
-    connectionId?: string | null
-    parentGroupId?: string | null
-    createdFrom: ProjectGroup['createdFrom']
-  }): ProjectGroup {
-    let maxOrder = -1
-    // Why: persisted group lists can be large enough to exceed spread limits.
-    for (const existingGroup of this.state.projectGroups ?? []) {
-      maxOrder = Math.max(maxOrder, existingGroup.tabOrder)
-    }
-    const group = createProjectGroup({
-      ...input,
-      tabOrder: maxOrder + 1
-    })
-    this.state.projectGroups = [...(this.state.projectGroups ?? []), group]
-    this.scheduleSave()
-    return group
+  createProjectGroup(
+    input: Parameters<ProjectGroupPersistenceOperations['createProjectGroup']>[0]
+  ): ProjectGroup {
+    return this.getProjectGroupOperations().createProjectGroup(input)
   }
 
   updateProjectGroup(
     groupId: string,
-    updates: Partial<Pick<ProjectGroup, 'name' | 'isCollapsed' | 'tabOrder' | 'color'>>
+    updates: Parameters<ProjectGroupPersistenceOperations['updateProjectGroup']>[1]
   ): ProjectGroup | null {
-    const group = (this.state.projectGroups ?? []).find((entry) => entry.id === groupId)
-    if (!group) {
-      return null
-    }
-    if (updates.name !== undefined) {
-      group.name = normalizeProjectGroupName(updates.name, group.name)
-    }
-    if (updates.isCollapsed !== undefined) {
-      group.isCollapsed = updates.isCollapsed
-    }
-    if (updates.tabOrder !== undefined && Number.isFinite(updates.tabOrder)) {
-      group.tabOrder = updates.tabOrder
-    }
-    if (updates.color !== undefined) {
-      group.color = typeof updates.color === 'string' ? updates.color : null
-    }
-    group.updatedAt = Date.now()
-    this.scheduleSave()
-    return group
+    return this.getProjectGroupOperations().updateProjectGroup(groupId, updates)
   }
 
   deleteProjectGroup(groupId: string): boolean {
-    const before = this.state.projectGroups?.length ?? 0
-    const deletedGroupIds = getProjectGroupSubtreeIds(this.state.projectGroups ?? [], groupId)
-    this.state.projectGroups = (this.state.projectGroups ?? []).filter(
-      (group) => !deletedGroupIds.has(group.id)
-    )
-    if ((this.state.projectGroups?.length ?? 0) === before) {
-      return false
-    }
-    // Why: groups are sidebar organization only, so deleting one ungroups its repos rather than deleting them.
-    this.state.repos = this.state.repos.map((repo) =>
-      repo.projectGroupId && deletedGroupIds.has(repo.projectGroupId)
-        ? { ...repo, projectGroupId: null }
-        : repo
-    )
-    const removedFolderWorkspaceKeys = new Set<string>()
-    for (const workspace of this.state.folderWorkspaces ?? []) {
-      if (deletedGroupIds.has(workspace.projectGroupId)) {
-        removedFolderWorkspaceKeys.add(folderWorkspaceKey(workspace.id))
-        this.state.workspaceSession = removeWorkspaceSessionOwner(
-          this.state.workspaceSession,
-          folderWorkspaceKey(workspace.id)
-        )!
-        this.removeWorkspaceLineageForFolderParent(workspace.id)
-      }
-    }
-    this.state.folderWorkspaces = (this.state.folderWorkspaces ?? []).filter(
-      (workspace) => !deletedGroupIds.has(workspace.projectGroupId)
-    )
-    this.pruneMobileClientTabSelections((worktreeId) => removedFolderWorkspaceKeys.has(worktreeId))
-    this.scheduleSave()
-    return true
+    return this.getProjectGroupOperations().deleteProjectGroup(groupId)
+  }
+
+  private getFolderWorkspaceOperations(): FolderWorkspacePersistenceOperations {
+    return new FolderWorkspacePersistenceOperations({
+      state: this.state,
+      scheduleSave: () => this.scheduleSave(),
+      removeWorkspaceLineageForFolderParent: (folderWorkspaceId) =>
+        this.removeWorkspaceLineageForFolderParent(folderWorkspaceId),
+      pruneMobileClientTabSelections: (matchesWorktreeId) =>
+        this.pruneMobileClientTabSelections(matchesWorktreeId),
+      hydrateRepo: (repo) => this.hydrateRepo(repo)
+    })
   }
 
   getFolderWorkspaces(): FolderWorkspace[] {
-    return [...(this.state.folderWorkspaces ?? [])].sort(
-      (left, right) => right.sortOrder - left.sortOrder || left.name.localeCompare(right.name)
-    )
+    return this.getFolderWorkspaceOperations().getFolderWorkspaces()
   }
 
   getFolderWorkspace(id: string): FolderWorkspace | undefined {
-    return (this.state.folderWorkspaces ?? []).find((workspace) => workspace.id === id)
+    return this.getFolderWorkspaceOperations().getFolderWorkspace(id)
   }
 
-  createFolderWorkspace(input: {
-    projectGroupId: string
-    name?: string
-    folderPath?: string | null
-    linkedTask?: FolderWorkspace['linkedTask']
-    linkedTaskSourceContext?: FolderWorkspace['linkedTaskSourceContext']
-    connectionId?: string | null
-    creatorProvenance?: FolderWorkspace['creatorProvenance']
-    createdWithAgent?: FolderWorkspace['createdWithAgent']
-    pendingFirstAgentMessageRename?: boolean
-  }): FolderWorkspace {
-    const group = (this.state.projectGroups ?? []).find(
-      (entry) => entry.id === input.projectGroupId
-    )
-    const folderPath =
-      typeof input.folderPath === 'string' && input.folderPath.trim().length > 0
-        ? input.folderPath
-        : group?.parentPath
-    if (!group || !folderPath) {
-      throw new Error('Folder-backed project group not found.')
-    }
-    const now = Date.now()
-    const linkedTask = normalizeWorkspaceLinkedItem(input.linkedTask)
-    const sourceContext = normalizeStoredTaskSourceContext(input.linkedTaskSourceContext)
-    const workspace: FolderWorkspace = {
-      id: randomUUID(),
-      projectGroupId: group.id,
-      name: normalizeFolderWorkspaceName(input.name, `${group.name} workspace`),
-      folderPath,
-      connectionId: input.connectionId ?? group.connectionId ?? null,
-      ...(input.creatorProvenance ? { creatorProvenance: input.creatorProvenance } : {}),
-      linkedTask,
-      linkedTaskSourceContext: isWorkspaceLinkedItemSourceContextMatch(linkedTask, sourceContext)
-        ? sourceContext
-        : null,
-      comment: '',
-      isArchived: false,
-      isUnread: false,
-      isPinned: false,
-      sortOrder: now,
-      ...(input.createdWithAgent ? { createdWithAgent: input.createdWithAgent } : {}),
-      ...(input.pendingFirstAgentMessageRename === true && input.createdWithAgent
-        ? { pendingFirstAgentMessageRename: true }
-        : {}),
-      lastActivityAt: 0,
-      createdAt: now,
-      updatedAt: now
-    }
-    this.state.folderWorkspaces = [workspace, ...(this.state.folderWorkspaces ?? [])]
-    this.scheduleSave()
-    return workspace
+  createFolderWorkspace(
+    input: Parameters<FolderWorkspacePersistenceOperations['createFolderWorkspace']>[0]
+  ): FolderWorkspace {
+    return this.getFolderWorkspaceOperations().createFolderWorkspace(input)
   }
 
   updateFolderWorkspace(
     id: string,
-    updates: Partial<
-      Pick<
-        FolderWorkspace,
-        | 'name'
-        | 'folderPath'
-        | 'linkedTask'
-        | 'linkedTaskSourceContext'
-        | 'comment'
-        | 'isArchived'
-        | 'isUnread'
-        | 'isPinned'
-        | 'sortOrder'
-        | 'manualOrder'
-        | 'workspaceStatus'
-        | 'createdWithAgent'
-        | 'pendingFirstAgentMessageRename'
-        | 'firstAgentMessageRenameError'
-        | 'lastActivityAt'
-        | 'diffComments'
-      >
-    >
+    updates: Parameters<FolderWorkspacePersistenceOperations['updateFolderWorkspace']>[1]
   ): FolderWorkspace | null {
-    const workspace = this.getFolderWorkspace(id)
-    if (!workspace) {
-      return null
-    }
-    if (updates.name !== undefined) {
-      workspace.name = normalizeFolderWorkspaceName(updates.name, workspace.name)
-    }
-    if (typeof updates.folderPath === 'string' && updates.folderPath.trim().length > 0) {
-      workspace.folderPath = updates.folderPath
-    }
-    if (updates.linkedTask !== undefined) {
-      workspace.linkedTask = normalizeWorkspaceLinkedItem(updates.linkedTask)
-      if (
-        workspace.linkedTaskSourceContext &&
-        !isWorkspaceLinkedItemSourceContextMatch(
-          workspace.linkedTask,
-          workspace.linkedTaskSourceContext
-        )
-      ) {
-        workspace.linkedTaskSourceContext = null
-      }
-    }
-    if (updates.linkedTaskSourceContext !== undefined) {
-      const linkedTaskSourceContext = normalizeStoredTaskSourceContext(
-        updates.linkedTaskSourceContext
-      )
-      workspace.linkedTaskSourceContext = isWorkspaceLinkedItemSourceContextMatch(
-        workspace.linkedTask,
-        linkedTaskSourceContext
-      )
-        ? linkedTaskSourceContext
-        : null
-    }
-    if (updates.comment !== undefined) {
-      workspace.comment = updates.comment
-    }
-    if (updates.isArchived !== undefined) {
-      workspace.isArchived = updates.isArchived
-    }
-    if (updates.isUnread !== undefined) {
-      workspace.isUnread = updates.isUnread
-    }
-    if (updates.isPinned !== undefined) {
-      workspace.isPinned = updates.isPinned
-    }
-    if (updates.sortOrder !== undefined && Number.isFinite(updates.sortOrder)) {
-      workspace.sortOrder = updates.sortOrder
-    }
-    if (updates.manualOrder !== undefined) {
-      if (Number.isFinite(updates.manualOrder)) {
-        workspace.manualOrder = updates.manualOrder
-      } else {
-        delete workspace.manualOrder
-      }
-    }
-    if (updates.workspaceStatus !== undefined) {
-      workspace.workspaceStatus = updates.workspaceStatus
-    }
-    if (updates.createdWithAgent !== undefined) {
-      workspace.createdWithAgent = updates.createdWithAgent
-    }
-    if (updates.pendingFirstAgentMessageRename !== undefined) {
-      workspace.pendingFirstAgentMessageRename = updates.pendingFirstAgentMessageRename
-    }
-    if (updates.firstAgentMessageRenameError !== undefined) {
-      workspace.firstAgentMessageRenameError = updates.firstAgentMessageRenameError
-    }
-    if (updates.lastActivityAt !== undefined && Number.isFinite(updates.lastActivityAt)) {
-      workspace.lastActivityAt = updates.lastActivityAt
-    }
-    if (updates.diffComments !== undefined) {
-      workspace.diffComments = updates.diffComments
-    }
-    workspace.updatedAt = Date.now()
-    this.scheduleSave()
-    return workspace
+    return this.getFolderWorkspaceOperations().updateFolderWorkspace(id, updates)
   }
 
   removeFolderWorkspace(id: string): boolean {
-    const before = this.state.folderWorkspaces?.length ?? 0
-    this.state.folderWorkspaces = (this.state.folderWorkspaces ?? []).filter(
-      (workspace) => workspace.id !== id
-    )
-    if ((this.state.folderWorkspaces?.length ?? 0) === before) {
-      return false
-    }
-    this.state.workspaceSession = removeWorkspaceSessionOwner(
-      this.state.workspaceSession,
-      folderWorkspaceKey(id)
-    )!
-    this.removeWorkspaceLineageForFolderParent(id)
-    this.pruneMobileClientTabSelections((worktreeId) => worktreeId === folderWorkspaceKey(id))
-    this.scheduleSave()
-    return true
+    return this.getFolderWorkspaceOperations().removeFolderWorkspace(id)
   }
 
   moveProjectToGroup(repoId: string, groupId: string | null, order?: number): Repo | null {
-    const repo = this.state.repos.find((entry) => entry.id === repoId)
-    if (!repo) {
-      return null
-    }
-    const normalizedGroupId =
-      groupId && (this.state.projectGroups ?? []).some((group) => group.id === groupId)
-        ? groupId
-        : null
-    const siblingRepos = this.state.repos.filter((entry) => entry.id !== repoId)
-    repo.projectGroupId = normalizedGroupId
-    repo.projectGroupOrder =
-      typeof order === 'number' && Number.isFinite(order)
-        ? order
-        : getNextProjectGroupOrder(siblingRepos, normalizedGroupId)
-    this.scheduleSave()
-    return this.hydrateRepo(repo)
+    return this.getFolderWorkspaceOperations().moveProjectToGroup(repoId, groupId, order)
+  }
+
+  private getRepoOrderOperations(): RepoOrderPersistenceOperations {
+    return new RepoOrderPersistenceOperations({
+      state: this.state,
+      syncProjectHostSetupCompatibilityState: () => this.syncProjectHostSetupCompatibilityState(),
+      scheduleSave: () => this.scheduleSave()
+    })
   }
 
   addRepo(repo: Repo): void {
-    this.state.repos.push(repo)
-    this.syncProjectHostSetupCompatibilityState()
-    this.scheduleSave()
+    this.getRepoOrderOperations().addRepo(repo)
   }
 
-  // Why: return false on a stale permutation (concurrent add/remove) so the caller resyncs instead of persisting an order that drops/duplicates ids.
   reorderRepos(orderedIds: string[]): boolean {
-    const current = this.state.repos
-    if (orderedIds.length !== current.length) {
-      return false
-    }
-    const seen = new Set<string>()
-    for (const id of orderedIds) {
-      if (typeof id !== 'string' || seen.has(id)) {
-        return false
-      }
-      seen.add(id)
-    }
-    const byId = new Map<string, Repo>()
-    for (const r of current) {
-      byId.set(r.id, r)
-    }
-    const next: Repo[] = []
-    for (const id of orderedIds) {
-      const repo = byId.get(id)
-      if (!repo) {
-        return false
-      }
-      next.push(repo)
-    }
-    this.state.repos = next
-    this.syncProjectHostSetupCompatibilityState()
-    this.scheduleSave()
-    return true
+    return this.getRepoOrderOperations().reorderRepos(orderedIds)
   }
 
-  // Why: repo ids are unique only within an execution host; drags persist one permutation per host when local and SSH repos coexist.
   reorderReposForHost(orderedIds: string[], hostId: ExecutionHostId): boolean {
-    const current = this.state.repos
-    const hostRepos = current.filter((repo) => getRepoExecutionHostId(repo) === hostId)
-    if (orderedIds.length !== hostRepos.length) {
-      return false
-    }
-    const byId = new Map(hostRepos.map((repo) => [repo.id, repo]))
-    if (byId.size !== hostRepos.length) {
-      return false
-    }
-    const seen = new Set<string>()
-    const reorderedHostRepos: Repo[] = []
-    for (const id of orderedIds) {
-      const repo = typeof id === 'string' && !seen.has(id) ? byId.get(id) : undefined
-      if (!repo) {
-        return false
-      }
-      seen.add(id)
-      reorderedHostRepos.push(repo)
-    }
-    let nextHostIndex = 0
-    this.state.repos = current.map((repo) =>
-      getRepoExecutionHostId(repo) === hostId ? reorderedHostRepos[nextHostIndex++] : repo
-    )
-    this.syncProjectHostSetupCompatibilityState()
-    this.scheduleSave()
-    return true
+    return this.getRepoOrderOperations().reorderReposForHost(orderedIds, hostId)
   }
 
   removeProject(id: string): void {
@@ -4905,7 +2168,6 @@ export class Store {
     this.syncProjectHostSetupCompatibilityState()
     // Why: presets are repo-scoped and unreachable once the repo is gone, so drop them with it.
     delete this.state.sparsePresetsByRepo[id]
-    // Same convention: retirements are repo-id-keyed, so they would otherwise orphan forever.
     delete this.state.retiredWorktreeNamesByRepo?.[id]
     this.pruneWorktreeStateForRepo(id, null)
     this.state.workspaceSession = removeRepoFromWorkspaceSession(this.state.workspaceSession, id)
@@ -4922,8 +2184,7 @@ export class Store {
       (r) => !(r.id === id && getRepoExecutionHostId(r) === hostId)
     )
     const idStillPresent = this.state.repos.some((r) => r.id === id)
-    // Why: presets and retirements are repo-id-scoped (not host-scoped); drop them only when the
-    // last host's copy is gone.
+    // Why: presets and retirements are repo-id-scoped (not host-scoped); drop them only when the last host's copy is gone.
     if (!idStillPresent) {
       delete this.state.sparsePresetsByRepo[id]
       delete this.state.retiredWorktreeNamesByRepo?.[id]
@@ -4951,102 +2212,9 @@ export class Store {
 
   // Prune worktree meta/lineage for a repo id; hostId null prunes all entries, else only that host's (missing meta.hostId = local).
   private pruneWorktreeStateForRepo(id: string, hostId: ExecutionHostId | null): void {
-    const prefix = `${id}::`
-    // Why snapshot up front: the first loop deletes metas, so reading meta.hostId live later would misclassify an SSH worktree as local.
-    const hostMembership = new Map<string, boolean>()
-    const belongsToHost = (key: string): boolean => {
-      if (!key.startsWith(prefix)) {
-        return false
-      }
-      if (hostId === null) {
-        return true
-      }
-      const cached = hostMembership.get(key)
-      if (cached !== undefined) {
-        return cached
-      }
-      // Why default to local: metas without hostId predate host stamping, so a host-scoped prune skips them rather than risk deleting another host's live meta.
-      const metaHostId = this.state.worktreeMeta[key]?.hostId ?? LOCAL_EXECUTION_HOST_ID
-      const result = metaHostId === hostId
-      hostMembership.set(key, result)
-      return result
-    }
-    // Why: session state (legacy blob + per-host partitions) references worktrees
-    // by the same `${repoId}::${path}` owner key; if it is not pruned here, a
-    // deleted project's worktrees stay in lastVisitedAtByWorktreeId /
-    // sleepingAgentSessionsByPaneKey and get re-materialized into worktreeMeta on
-    // the next launch, surfacing as an orphaned "unknown" workspace.
-    // worktreeMeta is host-classified via belongsToHost, but session partitions
-    // are keyed by host directly. A session owner key carries no host, and the
-    // same key can exist in multiple partitions (shared repo id/path across
-    // hosts). So for session cleanup we collect every prefix-matching owner key
-    // regardless of belongsToHost, and let the per-partition host gating below
-    // decide which partition to touch. (belongsToHost still governs
-    // worktreeMeta/lineage deletion. Collect before deleting worktreeMeta.)
-    const ownerKeysToPrune = new Set<string>()
-    const collectPrefixedKeys = (keys: Iterable<string>): void => {
-      for (const key of keys) {
-        if (key.startsWith(prefix)) {
-          ownerKeysToPrune.add(key)
-        }
-      }
-    }
-    collectPrefixedKeys(Object.keys(this.state.worktreeMeta))
-    collectPrefixedKeys(Object.keys(this.state.workspaceSession?.lastVisitedAtByWorktreeId ?? {}))
-    for (const session of Object.values(this.state.workspaceSessionsByHostId ?? {})) {
-      collectPrefixedKeys(Object.keys(session?.lastVisitedAtByWorktreeId ?? {}))
-    }
-
-    for (const key of Object.keys(this.state.worktreeMeta)) {
-      if (belongsToHost(key)) {
-        delete this.state.worktreeMeta[key]
-      }
-    }
-    // Why: owner keys are `${repoId}::${path}` and do not carry a host, so a
-    // host-scoped prune (hostId != null) must only touch that host's session:
-    // the legacy blob is the local host's session, and each
-    // workspaceSessionsByHostId partition is one non-local host. Pruning every
-    // partition here would wipe a surviving host's tabs, sleeping-agent state,
-    // and active-worktree pointer for a shared repo id/path. A full removal
-    // (hostId === null) still clears every host.
-    const pruneLegacyLocalSession = hostId === null || hostId === LOCAL_EXECUTION_HOST_ID
-    const pruneAllHostPartitions = hostId === null
-    if (pruneLegacyLocalSession) {
-      this.state.workspaceSession = removeWorkspaceSessionOwners(
-        this.state.workspaceSession,
-        ownerKeysToPrune
-      )!
-    }
-    if (this.state.workspaceSessionsByHostId) {
-      for (const [partitionHostId, session] of Object.entries(
-        this.state.workspaceSessionsByHostId
-      )) {
-        if (!pruneAllHostPartitions && partitionHostId !== hostId) {
-          continue
-        }
-        const pruned = removeWorkspaceSessionOwners(session, ownerKeysToPrune)
-        if (pruned) {
-          this.state.workspaceSessionsByHostId[partitionHostId] = pruned
-        }
-      }
-    }
-    for (const [childId, lineage] of Object.entries(this.state.worktreeLineageById)) {
-      if (belongsToHost(childId) || belongsToHost(lineage.parentWorktreeId)) {
-        delete this.state.worktreeLineageById[childId]
-      }
-    }
-    for (const [childKey, lineage] of Object.entries(this.state.workspaceLineageByChildKey)) {
-      const childScope = parseWorkspaceKey(childKey)
-      const parentScope = parseWorkspaceKey(lineage.parentWorkspaceKey)
-      if (childScope?.type === 'worktree' && belongsToHost(childScope.worktreeId)) {
-        delete this.state.workspaceLineageByChildKey[childKey as WorkspaceKey]
-        continue
-      }
-      if (parentScope?.type === 'worktree' && belongsToHost(parentScope.worktreeId)) {
-        delete this.state.workspaceLineageByChildKey[childKey as WorkspaceKey]
-      }
-    }
-    this.pruneMobileClientTabSelections(belongsToHost)
+    pruneWorktreeStateForRepoOperation(this.state, id, hostId, (matchesWorktreeId) =>
+      this.pruneMobileClientTabSelections(matchesWorktreeId)
+    )
   }
 
   private pruneMobileClientTabSelections(matchesWorktreeId: (worktreeId: string) => boolean): void {
@@ -5062,6 +2230,15 @@ export class Store {
         delete this.state.mobileClientTabSelectionsByDeviceId?.[clientNavigationId]
       }
     }
+  }
+
+  private getRepoUpdateOperations(): RepoUpdatePersistenceOperations {
+    return new RepoUpdatePersistenceOperations({
+      state: this.state,
+      syncProjectHostSetupCompatibilityState: () => this.syncProjectHostSetupCompatibilityState(),
+      scheduleSave: () => this.scheduleSave(),
+      hydrateRepo: (repo) => this.hydrateRepo(repo)
+    })
   }
 
   updateRepo(
@@ -5082,9 +2259,11 @@ export class Store {
         | 'symlinkPaths'
         | 'issueSourcePreference'
         | 'forkSyncMode'
+        | 'externalWorktreeVisibility'
         | 'externalWorktreeVisibilityPromptDismissedAt'
         | 'externalWorktreeInboxBaselinePaths'
         | 'importedExternalWorktreePaths'
+        | 'agentWorktreeVisibility'
         | 'customWorktreeVisibilitySources'
         | 'worktreeVisibilitySourcePreferences'
         | 'projectGroupId'
@@ -5092,120 +2271,12 @@ export class Store {
         | 'projectHostSetupMethod'
       >
     > & {
-      externalWorktreeVisibility?: Repo['externalWorktreeVisibility'] | null
-      agentWorktreeVisibility?: Repo['agentWorktreeVisibility'] | null
       sourceControlAi?: Repo['sourceControlAi'] | null
       externalWorktreeDiscoverySuppressedAt?: Repo['externalWorktreeDiscoverySuppressedAt'] | null
     },
     hostId?: ExecutionHostId
   ): Repo | null {
-    const repo = this.state.repos.find(
-      (candidate) =>
-        candidate.id === id && (!hostId || getRepoExecutionHostId(candidate) === hostId)
-    )
-    if (!repo) {
-      return null
-    }
-    const sanitizedUpdates = sanitizeRepoUpdatesForPersistence(updates)
-    if (
-      'agentWorktreeVisibility' in sanitizedUpdates &&
-      !('worktreeVisibilitySourcePreferences' in sanitizedUpdates) &&
-      (sanitizedUpdates.agentWorktreeVisibility === 'hide' ||
-        sanitizedUpdates.agentWorktreeVisibility === 'show')
-    ) {
-      sanitizedUpdates.worktreeVisibilitySourcePreferences = {
-        ...repo.worktreeVisibilitySourcePreferences,
-        builtIn: {
-          claude: sanitizedUpdates.agentWorktreeVisibility,
-          gsd: sanitizedUpdates.agentWorktreeVisibility
-        }
-      }
-    }
-    if ('projectGroupId' in sanitizedUpdates) {
-      const nextGroupId = sanitizedUpdates.projectGroupId
-      if (
-        typeof nextGroupId !== 'string' ||
-        nextGroupId.trim().length === 0 ||
-        !this.state.projectGroups.some((group) => group.id === nextGroupId)
-      ) {
-        sanitizedUpdates.projectGroupId = null
-      }
-    }
-    if (
-      'projectGroupOrder' in sanitizedUpdates &&
-      (typeof sanitizedUpdates.projectGroupOrder !== 'number' ||
-        !Number.isFinite(sanitizedUpdates.projectGroupOrder))
-    ) {
-      delete sanitizedUpdates.projectGroupOrder
-    }
-    const externalWorktreeVisibilityLegacy =
-      'externalWorktreeVisibility' in sanitizedUpdates &&
-      repo.externalWorktreeVisibilityLegacy === undefined
-        ? isLegacyRepoForExternalWorktreeVisibility(repo)
-        : undefined
-    // Why: selected repo fields use `undefined` as an explicit clear signal, so delete them before assigning the patch.
-    if (
-      'issueSourcePreference' in sanitizedUpdates &&
-      sanitizedUpdates.issueSourcePreference === undefined
-    ) {
-      delete repo.issueSourcePreference
-      delete sanitizedUpdates.issueSourcePreference
-    }
-    if ('worktreeBasePath' in sanitizedUpdates && sanitizedUpdates.worktreeBasePath === undefined) {
-      delete repo.worktreeBasePath
-      delete sanitizedUpdates.worktreeBasePath
-    }
-    if (
-      'externalWorktreeVisibility' in sanitizedUpdates &&
-      (sanitizedUpdates.externalWorktreeVisibility === undefined ||
-        sanitizedUpdates.externalWorktreeVisibility === null)
-    ) {
-      delete repo.externalWorktreeVisibility
-      repo.externalWorktreeVisibilityLegacy = false
-      delete sanitizedUpdates.externalWorktreeVisibility
-    }
-    if (
-      'agentWorktreeVisibility' in sanitizedUpdates &&
-      sanitizedUpdates.agentWorktreeVisibility === null
-    ) {
-      delete repo.agentWorktreeVisibility
-      delete sanitizedUpdates.agentWorktreeVisibility
-    }
-    if (
-      'externalWorktreeVisibility' in sanitizedUpdates &&
-      repo.externalWorktreeVisibilityLegacy === undefined
-    ) {
-      // Why: old persisted repos have no marker; stamp it on first visibility change so later hide/show keeps legacy safety.
-      repo.externalWorktreeVisibilityLegacy = externalWorktreeVisibilityLegacy
-    }
-    if (
-      'externalWorktreeDiscoverySuppressedAt' in sanitizedUpdates &&
-      (sanitizedUpdates.externalWorktreeDiscoverySuppressedAt === undefined ||
-        sanitizedUpdates.externalWorktreeDiscoverySuppressedAt === null)
-    ) {
-      delete repo.externalWorktreeDiscoverySuppressedAt
-      delete sanitizedUpdates.externalWorktreeDiscoverySuppressedAt
-    }
-    if (
-      'sourceControlAi' in sanitizedUpdates &&
-      (sanitizedUpdates.sourceControlAi === undefined || sanitizedUpdates.sourceControlAi === null)
-    ) {
-      delete repo.sourceControlAi
-      delete sanitizedUpdates.sourceControlAi
-    } else if ('sourceControlAi' in sanitizedUpdates) {
-      const normalizedSourceControlAi = normalizeRepoSourceControlAiOverrides(
-        sanitizedUpdates.sourceControlAi
-      )
-      if (normalizedSourceControlAi === undefined) {
-        delete sanitizedUpdates.sourceControlAi
-      } else {
-        sanitizedUpdates.sourceControlAi = normalizedSourceControlAi
-      }
-    }
-    Object.assign(repo, sanitizedUpdates)
-    this.syncProjectHostSetupCompatibilityState()
-    this.scheduleSave()
-    return this.hydrateRepo(repo)
+    return this.getRepoUpdateOperations().updateRepo(id, updates, hostId)
   }
 
   private syncProjectHostSetupCompatibilityState(): void {
@@ -5214,138 +2285,35 @@ export class Store {
     this.state.projectHostSetups = compatibilityState.projectHostSetups
   }
 
+  private getProjectHostSetupOperations(): ProjectHostSetupPersistenceOperations {
+    return new ProjectHostSetupPersistenceOperations({
+      state: this.state,
+      updateRepo: (id, updates, hostId) => this.updateRepo(id, updates, hostId),
+      scheduleSave: () => this.scheduleSave()
+    })
+  }
+
   private updateRepoBackedProjectHostSetup(
     setup: ProjectHostSetup,
     repo: Repo,
     updates: ProjectHostSetupUpdateArgs['updates']
   ): { setup: ProjectHostSetup; repo: Repo } | null {
-    if (updates.path !== undefined && updates.path !== repo.path) {
-      throw new Error(
-        'Repo-backed project host setup paths must be changed by re-importing the project.'
-      )
-    }
-    if (updates.setupState !== undefined && updates.setupState !== 'ready') {
-      throw new Error('Repo-backed project host setups cannot be marked unavailable.')
-    }
-    const repoUpdates: Parameters<Store['updateRepo']>[1] = {}
-    if (updates.displayName !== undefined) {
-      repoUpdates.displayName = updates.displayName
-    }
-    if (updates.worktreeBasePath !== undefined) {
-      repoUpdates.worktreeBasePath = updates.worktreeBasePath
-    }
-    if (updates.kind !== undefined) {
-      repoUpdates.kind = updates.kind
-    }
-    if (updates.setupMethod === 'provisioned') {
-      throw new Error('Repo-backed project host setups cannot be marked provisioned.')
-    }
-    if (updates.setupMethod !== undefined && updates.setupMethod !== 'legacy-repo') {
-      repoUpdates.projectHostSetupMethod = updates.setupMethod
-    }
-    const updatedRepo =
-      Object.keys(repoUpdates).length > 0 ? this.updateRepo(repo.id, repoUpdates) : repo
-    if (!updatedRepo) {
-      return null
-    }
-    return {
-      setup: this.state.projectHostSetups.find((entry) => entry.id === setup.id) ?? setup,
-      repo: updatedRepo
-    }
+    return this.getProjectHostSetupOperations().updateRepoBackedProjectHostSetup(
+      setup,
+      repo,
+      updates
+    )
   }
 
   private updateIndependentProjectHostSetup(
     setup: ProjectHostSetup,
     updates: ProjectHostSetupUpdateArgs['updates']
   ): ProjectHostSetup {
-    if (updates.displayName !== undefined) {
-      setup.displayName = updates.displayName.trim() || setup.displayName
-    }
-    if (updates.path !== undefined) {
-      setup.path = updates.path.trim() || setup.path
-    }
-    if (updates.worktreeBasePath !== undefined) {
-      const worktreeBasePath = updates.worktreeBasePath.trim()
-      if (worktreeBasePath) {
-        setup.worktreeBasePath = worktreeBasePath
-      } else {
-        delete setup.worktreeBasePath
-      }
-    }
-    if (updates.kind !== undefined) {
-      setup.kind = updates.kind
-    }
-    if (updates.gitUsername !== undefined) {
-      const gitUsername = updates.gitUsername.trim()
-      if (gitUsername) {
-        setup.gitUsername = gitUsername
-      } else {
-        delete setup.gitUsername
-      }
-    }
-    if (updates.setupState !== undefined) {
-      setup.setupState = updates.setupState
-    }
-    if (updates.setupMethod !== undefined) {
-      setup.setupMethod = updates.setupMethod
-    }
-    setup.updatedAt = Date.now()
-    this.scheduleSave()
-    return setup
+    return this.getProjectHostSetupOperations().updateIndependentProjectHostSetup(setup, updates)
   }
 
   private hydrateRepo(repo: Repo): Repo {
-    const {
-      repoIcon: rawRepoIcon,
-      upstream: rawUpstream,
-      gitRemoteIdentity: rawGitRemoteIdentity,
-      sourceControlAi: rawSourceControlAi,
-      projectHostSetupMethod: rawProjectHostSetupMethod,
-      forkSyncMode: rawForkSyncMode,
-      customWorktreeVisibilitySources: rawCustomWorktreeVisibilitySources,
-      worktreeVisibilitySourcePreferences: rawWorktreeVisibilitySourcePreferences,
-      ...repoWithoutIcon
-    } = repo
-    const repoIcon = sanitizeRepoIcon(rawRepoIcon)
-    const upstream = sanitizeRepoUpstream(rawUpstream)
-    const gitRemoteIdentity = sanitizeGitRemoteIdentity(rawGitRemoteIdentity)
-    const sourceControlAi = normalizeRepoSourceControlAiOverrides(rawSourceControlAi)
-    const projectHostSetupMethod = sanitizeRepoProjectHostSetupMethod(rawProjectHostSetupMethod)
-    const forkSyncMode = sanitizeForkSyncMode(rawForkSyncMode)
-    const customWorktreeVisibilitySources = normalizeCustomWorktreeVisibilitySources(
-      rawCustomWorktreeVisibilitySources
-    )
-    const worktreeVisibilitySourcePreferences = normalizeWorktreeVisibilitySourcePreferences(
-      rawWorktreeVisibilitySourcePreferences
-    )
-    // Why: never spawn git/gh username resolution in hydration — a stuck probe froze Windows startup for minutes (issue #7225); read only cache/persisted value.
-    const gitUsername = isFolderRepo(repo)
-      ? ''
-      : (this.gitUsernameCache.get(repo.path) ?? repo.gitUsername ?? '')
-
-    return {
-      ...repoWithoutIcon,
-      ...(repoIcon !== undefined ? { repoIcon } : {}),
-      ...(upstream !== undefined ? { upstream } : {}),
-      ...(gitRemoteIdentity !== undefined ? { gitRemoteIdentity } : {}),
-      ...(sourceControlAi !== undefined ? { sourceControlAi } : {}),
-      ...(projectHostSetupMethod !== undefined ? { projectHostSetupMethod } : {}),
-      ...(forkSyncMode !== undefined ? { forkSyncMode } : {}),
-      ...(customWorktreeVisibilitySources !== undefined ? { customWorktreeVisibilitySources } : {}),
-      ...(worktreeVisibilitySourcePreferences !== undefined
-        ? { worktreeVisibilitySourcePreferences }
-        : {}),
-      kind: isFolderRepo(repo) ? 'folder' : 'git',
-      gitUsername,
-      hookSettings: {
-        ...getDefaultRepoHookSettings(),
-        ...repo.hookSettings,
-        scripts: {
-          ...getDefaultRepoHookSettings().scripts,
-          ...repo.hookSettings?.scripts
-        }
-      }
-    }
+    return hydrateRepoOperation(repo, this.gitUsernameCache)
   }
 
   // ── Sparse Presets ─────────────────────────────────────────────────
@@ -5386,142 +2354,42 @@ export class Store {
 
   // ── Automations ───────────────────────────────────────────────────
 
+  private getAutomationDefinitionOperations(): AutomationDefinitionOperations {
+    return {
+      state: this.state,
+      flush: () => this.flush(),
+      recordCreated: () => this.recordFeatureInteraction('automation-created')
+    }
+  }
+
+  private getAutomationRunOperations(): AutomationRunOperations {
+    return {
+      state: this.state,
+      flush: () => this.flush(),
+      recordManualRun: () => this.recordFeatureInteraction('automation-run'),
+      getWorkspaceDisplayName: (workspaceId) =>
+        this.getAutomationRunWorkspaceDisplayName(workspaceId)
+    }
+  }
+
   listAutomations(): Automation[] {
-    return (this.state.automations ?? [])
-      .map((automation) => normalizeAutomationSessionReuse(automation))
-      .sort((left, right) => left.name.localeCompare(right.name))
+    return listAutomationsOperation(this.state)
   }
 
   listAutomationRuns(automationId?: string): AutomationRun[] {
-    const runs = this.state.automationRuns ?? []
-    return [...(automationId ? runs.filter((run) => run.automationId === automationId) : runs)]
-      .map((run) => ({
-        ...run,
-        precheckResult: normalizeAutomationPrecheckResult(run.precheckResult)
-      }))
-      .sort((left, right) => right.createdAt - left.createdAt)
+    return listAutomationRunsOperation(this.state, automationId)
   }
 
   createAutomation(input: AutomationCreateInput): Automation {
-    const repo = this.state.repos.find((entry) => entry.id === input.projectId)
-    const now = Date.now()
-    const executionTargetType = repo?.connectionId ? 'ssh' : 'local'
-    const schedulerOwner = getAutomationSchedulerOwner(repo)
-    const contexts = getAutomationContextsForRepo(repo, this.state.projectHostSetups ?? [])
-    const automation: Automation = {
-      id: randomUUID(),
-      name: input.name.trim() || 'Untitled automation',
-      prompt: input.prompt,
-      precheck: normalizeAutomationPrecheck(input.precheck),
-      agentId: input.agentId,
-      runContext: input.runContext ?? contexts.runContext,
-      sourceContext: input.sourceContext ?? contexts.sourceContext,
-      projectId: input.projectId,
-      executionTargetType,
-      executionTargetId: executionTargetType === 'ssh' ? (repo?.connectionId ?? '') : 'local',
-      schedulerOwner,
-      workspaceMode: input.workspaceMode,
-      workspaceId: input.workspaceMode === 'existing' ? (input.workspaceId ?? null) : null,
-      baseBranch: input.workspaceMode === 'new_per_run' ? (input.baseBranch ?? null) : null,
-      setupDecision: normalizeAutomationSetupDecisionForWorkspaceMode(
-        input.workspaceMode,
-        input.setupDecision
-      ),
-      reuseSession: input.workspaceMode === 'existing' ? (input.reuseSession ?? false) : false,
-      timezone: input.timezone,
-      rrule: input.rrule,
-      dtstart: input.dtstart,
-      enabled: input.enabled ?? true,
-      nextRunAt: nextAutomationOccurrenceAfter(input.rrule, input.dtstart, now),
-      missedRunPolicy: 'run_once_within_grace',
-      missedRunGraceMinutes: input.missedRunGraceMinutes ?? 720,
-      createdAt: now,
-      updatedAt: now
-    }
-    this.state.automations = [...(this.state.automations ?? []), automation]
-    this.recordFeatureInteraction('automation-created')
-    this.flush()
-    return automation
+    return createAutomationOperation(this.getAutomationDefinitionOperations(), input)
   }
 
   updateAutomation(id: string, updates: AutomationUpdateInput): Automation {
-    const index = (this.state.automations ?? []).findIndex((entry) => entry.id === id)
-    if (index === -1) {
-      throw new Error('Automation not found.')
-    }
-    const current = this.state.automations[index]
-    const repoId = updates.projectId ?? current.projectId
-    const repo = this.state.repos.find((entry) => entry.id === repoId)
-    const executionTargetType = repo?.connectionId ? 'ssh' : 'local'
-    const schedulerOwner = getAutomationSchedulerOwner(repo)
-    const contexts = getAutomationContextsForRepo(repo, this.state.projectHostSetups ?? [])
-    const rrule = updates.rrule ?? current.rrule
-    const dtstart = updates.dtstart ?? current.dtstart
-    const scheduleChanged = updates.rrule !== undefined || updates.dtstart !== undefined
-    const workspaceMode = updates.workspaceMode ?? current.workspaceMode
-    const updated: Automation = {
-      ...current,
-      ...updates,
-      name:
-        updates.name !== undefined ? updates.name.trim() || 'Untitled automation' : current.name,
-      precheck: Object.hasOwn(updates, 'precheck')
-        ? normalizeAutomationPrecheck(updates.precheck)
-        : normalizeAutomationPrecheck(current.precheck),
-      projectId: repoId,
-      runContext: Object.hasOwn(updates, 'runContext')
-        ? (updates.runContext ?? null)
-        : updates.projectId !== undefined
-          ? contexts.runContext
-          : (current.runContext ?? contexts.runContext),
-      sourceContext: Object.hasOwn(updates, 'sourceContext')
-        ? (updates.sourceContext ?? null)
-        : updates.projectId !== undefined
-          ? contexts.sourceContext
-          : (current.sourceContext ?? contexts.sourceContext),
-      executionTargetType,
-      executionTargetId: executionTargetType === 'ssh' ? (repo?.connectionId ?? '') : 'local',
-      schedulerOwner,
-      workspaceMode,
-      workspaceId:
-        workspaceMode === 'existing'
-          ? Object.hasOwn(updates, 'workspaceId')
-            ? (updates.workspaceId ?? null)
-            : current.workspaceId
-          : null,
-      baseBranch:
-        workspaceMode === 'new_per_run'
-          ? Object.hasOwn(updates, 'baseBranch')
-            ? (updates.baseBranch ?? null)
-            : (current.baseBranch ?? null)
-          : null,
-      setupDecision:
-        workspaceMode === 'new_per_run'
-          ? Object.hasOwn(updates, 'setupDecision')
-            ? normalizeAutomationSetupDecisionForWorkspaceMode(workspaceMode, updates.setupDecision)
-            : normalizeAutomationSetupDecisionForWorkspaceMode(workspaceMode, current.setupDecision)
-          : undefined,
-      reuseSession:
-        workspaceMode === 'existing'
-          ? (updates.reuseSession ?? current.reuseSession ?? false)
-          : false,
-      rrule,
-      dtstart,
-      nextRunAt: scheduleChanged
-        ? nextAutomationOccurrenceAfter(rrule, dtstart, Date.now())
-        : current.nextRunAt,
-      updatedAt: Date.now()
-    }
-    this.state.automations[index] = updated
-    this.flush()
-    return updated
+    return updateAutomationOperation(this.getAutomationDefinitionOperations(), id, updates)
   }
 
   deleteAutomation(id: string): void {
-    this.state.automations = (this.state.automations ?? []).filter((entry) => entry.id !== id)
-    this.state.automationRuns = (this.state.automationRuns ?? []).filter(
-      (entry) => entry.automationId !== id
-    )
-    this.flush()
+    deleteAutomationOperation(this.getAutomationDefinitionOperations(), id)
   }
 
   createAutomationRun(
@@ -5529,116 +2397,24 @@ export class Store {
     scheduledFor: number,
     trigger: AutomationRunTrigger = 'scheduled'
   ): AutomationRun {
-    const existing = (this.state.automationRuns ?? []).find(
-      (run) => run.automationId === automation.id && run.scheduledFor === scheduledFor
-    )
-    if (existing) {
-      return existing
-    }
-    const now = Date.now()
-    // Why: retention prunes old runs, so the retained count isn't the ordinal — carry the number forward from the newest survivor.
-    const runNumber = nextAutomationRunNumber(
-      (this.state.automationRuns ?? []).filter((run) => run.automationId === automation.id)
-    )
-    const run: AutomationRun = {
-      id: randomUUID(),
-      automationId: automation.id,
-      runNumber,
-      runContext: automation.runContext ?? null,
-      sourceContext: automation.sourceContext ?? null,
-      title: `${automation.name} run ${runNumber}`,
+    return createAutomationRunOperation(
+      this.getAutomationRunOperations(),
+      automation,
       scheduledFor,
-      status: 'pending',
-      trigger,
-      workspaceId: automation.workspaceId,
-      workspaceDisplayName: this.getAutomationRunWorkspaceDisplayName(automation.workspaceId),
-      sessionKind: 'terminal',
-      chatSessionId: null,
-      terminalSessionId: null,
-      terminalPaneKey: null,
-      terminalPtyId: null,
-      outputSnapshot: null,
-      precheckResult: null,
-      usage: null,
-      error: null,
-      startedAt: null,
-      dispatchedAt: null,
-      createdAt: now
-    }
-    this.state.automationRuns = pruneAutomationRuns([...(this.state.automationRuns ?? []), run])
-    if (trigger === 'manual') {
-      this.recordFeatureInteraction('automation-run')
-    }
-    this.flush()
-    return run
+      trigger
+    )
   }
 
   updateAutomationRun(result: AutomationDispatchResult): AutomationRun {
-    const index = (this.state.automationRuns ?? []).findIndex((entry) => entry.id === result.runId)
-    if (index === -1) {
-      throw new Error('Automation run not found.')
-    }
-    const now = Date.now()
-    const current = this.state.automationRuns[index]
-    const workspaceId = result.workspaceId ?? current.workspaceId
-    const workspaceDisplayName = Object.hasOwn(result, 'workspaceDisplayName')
-      ? normalizeAutomationRunWorkspaceDisplayName(result.workspaceDisplayName ?? null)
-      : null
-    const updated: AutomationRun = {
-      ...current,
-      status: result.status,
-      workspaceId,
-      workspaceDisplayName:
-        workspaceDisplayName ??
-        normalizeAutomationRunWorkspaceDisplayName(current.workspaceDisplayName ?? null) ??
-        this.getAutomationRunWorkspaceDisplayName(workspaceId),
-      terminalSessionId: Object.hasOwn(result, 'terminalSessionId')
-        ? (result.terminalSessionId ?? null)
-        : current.terminalSessionId,
-      terminalPaneKey: Object.hasOwn(result, 'terminalPaneKey')
-        ? normalizeAutomationRunTerminalPaneKey(result.terminalPaneKey)
-        : normalizeAutomationRunTerminalPaneKey(current.terminalPaneKey),
-      terminalPtyId: Object.hasOwn(result, 'terminalPtyId')
-        ? normalizeAutomationRunTerminalPtyId(result.terminalPtyId)
-        : normalizeAutomationRunTerminalPtyId(current.terminalPtyId),
-      outputSnapshot: Object.hasOwn(result, 'outputSnapshot')
-        ? normalizeAutomationRunOutputSnapshot(result.outputSnapshot)
-        : normalizeAutomationRunOutputSnapshot(current.outputSnapshot),
-      precheckResult: Object.hasOwn(result, 'precheckResult')
-        ? normalizeAutomationPrecheckResult(result.precheckResult)
-        : normalizeAutomationPrecheckResult(current.precheckResult),
-      usage: Object.hasOwn(result, 'usage') ? (result.usage ?? null) : (current.usage ?? null),
-      error: result.error ?? null,
-      startedAt: current.startedAt ?? now,
-      dispatchedAt: result.status === 'dispatched' ? now : current.dispatchedAt
-    }
-    this.state.automationRuns[index] = updated
-    const automation = this.state.automations.find((entry) => entry.id === updated.automationId)
-    if (automation) {
-      automation.lastRunAt = now
-      automation.updatedAt = now
-    }
-    this.flush()
-    return updated
+    return updateAutomationRunOperation(this.getAutomationRunOperations(), result)
   }
 
   snapshotAutomationRunWorkspaceDisplayName(workspaceId: string, displayName: string): number {
-    const normalizedDisplayName = normalizeAutomationRunWorkspaceDisplayName(displayName)
-    if (!normalizedDisplayName) {
-      return 0
-    }
-    let updatedCount = 0
-    this.state.automationRuns = (this.state.automationRuns ?? []).map((run) => {
-      if (run.workspaceId !== workspaceId || run.workspaceDisplayName === normalizedDisplayName) {
-        return run
-      }
-      updatedCount += 1
-      return { ...run, workspaceDisplayName: normalizedDisplayName }
-    })
-    if (updatedCount > 0) {
-      this.flush()
-    }
-    return updatedCount
+    return snapshotAutomationRunWorkspaceDisplayNameOperation(
+      this.getAutomationRunOperations(),
+      workspaceId,
+      displayName
+    )
   }
 
   private getAutomationRunWorkspaceDisplayName(
@@ -5654,20 +2430,11 @@ export class Store {
   }
 
   advanceAutomationNextRun(id: string, now = Date.now()): Automation {
-    const index = (this.state.automations ?? []).findIndex((entry) => entry.id === id)
-    if (index === -1) {
-      throw new Error('Automation not found.')
-    }
-    const current = this.state.automations[index]
-    const nextRunAt = nextAutomationOccurrenceAfter(current.rrule, current.dtstart, now)
-    const updated = { ...current, nextRunAt, updatedAt: Date.now() }
-    this.state.automations[index] = updated
-    this.flush()
-    return updated
+    return advanceAutomationNextRunOperation(this.state, () => this.flush(), id, now)
   }
 
   getLatestAutomationOccurrence(automation: Automation, now = Date.now()): number | null {
-    return latestAutomationOccurrenceAtOrBefore(automation.rrule, automation.dtstart, now)
+    return getLatestAutomationOccurrenceOperation(automation, now)
   }
 
   // ── Worktree Meta ──────────────────────────────────────────────────
@@ -5758,196 +2525,7 @@ export class Store {
    * Renderer counterpart: `buildWorktreeRenameState` in store/slices/worktrees.ts.
    */
   migrateWorktreeIdentity(oldWorktreeId: string, newWorktreeId: string): void {
-    if (oldWorktreeId === newWorktreeId) {
-      return
-    }
-    const oldWorkspaceKey = worktreeWorkspaceKey(oldWorktreeId)
-    const newWorkspaceKey = worktreeWorkspaceKey(newWorktreeId)
-    const moveKey = <T>(
-      record: Record<string, T>,
-      mapValue: (value: T) => T = (value) => value
-    ): boolean => {
-      if (!(oldWorktreeId in record)) {
-        return false
-      }
-      record[newWorktreeId] = mapValue(record[oldWorktreeId])
-      delete record[oldWorktreeId]
-      return true
-    }
-    const withNewWorktreeId = <T extends { worktreeId: string }>(value: T): T =>
-      value.worktreeId === oldWorktreeId ? { ...value, worktreeId: newWorktreeId } : value
-    const migrateSession = (session: WorkspaceSessionState | undefined): boolean => {
-      if (!session) {
-        return false
-      }
-      let sessionChanged = false
-      const moveSessionKey = <T>(
-        record: Record<string, T> | undefined,
-        mapValue: (value: T) => T = (value) => value
-      ): boolean => {
-        if (!record) {
-          return false
-        }
-        let moved = false
-        const pairs: [string, string][] = [
-          [oldWorktreeId, newWorktreeId],
-          [oldWorkspaceKey, newWorkspaceKey]
-        ]
-        for (const [oldKey, newKey] of pairs) {
-          if (!(oldKey in record)) {
-            continue
-          }
-          record[newKey] = mapValue(record[oldKey])
-          delete record[oldKey]
-          moved = true
-        }
-        return moved
-      }
-
-      sessionChanged =
-        moveSessionKey(session.tabsByWorktree, (tabs) => tabs.map(withNewWorktreeId)) ||
-        sessionChanged
-      sessionChanged =
-        moveSessionKey(session.openFilesByWorktree, (files) => files.map(withNewWorktreeId)) ||
-        sessionChanged
-      sessionChanged = moveSessionKey(session.activeFileIdByWorktree) || sessionChanged
-      sessionChanged =
-        moveSessionKey(session.browserTabsByWorktree, (workspaces) =>
-          workspaces.map(withNewWorktreeId)
-        ) || sessionChanged
-      if (session.browserPagesByWorkspace) {
-        let pagesChanged = false
-        const nextPagesByWorkspace = { ...session.browserPagesByWorkspace }
-        for (const [workspaceId, pages] of Object.entries(nextPagesByWorkspace)) {
-          if (!pages.some((page) => page.worktreeId === oldWorktreeId)) {
-            continue
-          }
-          nextPagesByWorkspace[workspaceId] = pages.map(withNewWorktreeId)
-          pagesChanged = true
-        }
-        if (pagesChanged) {
-          session.browserPagesByWorkspace = nextPagesByWorkspace
-          sessionChanged = true
-        }
-      }
-      sessionChanged = moveSessionKey(session.activeBrowserTabIdByWorktree) || sessionChanged
-      sessionChanged = moveSessionKey(session.activeTabTypeByWorktree) || sessionChanged
-      sessionChanged = moveSessionKey(session.activeTabIdByWorktree) || sessionChanged
-      sessionChanged =
-        moveSessionKey(session.unifiedTabs, (tabs) => tabs.map(withNewWorktreeId)) || sessionChanged
-      sessionChanged =
-        moveSessionKey(session.tabGroups, (groups) => groups.map(withNewWorktreeId)) ||
-        sessionChanged
-      sessionChanged = moveSessionKey(session.tabGroupLayouts) || sessionChanged
-      sessionChanged = moveSessionKey(session.activeGroupIdByWorktree) || sessionChanged
-      sessionChanged = moveSessionKey(session.lastVisitedAtByWorktreeId) || sessionChanged
-      sessionChanged =
-        moveSessionKey(session.defaultTerminalTabsAppliedByWorktreeId) || sessionChanged
-      if (session.activeWorktreeIdsOnShutdown?.includes(oldWorktreeId)) {
-        session.activeWorktreeIdsOnShutdown = session.activeWorktreeIdsOnShutdown.map((id) =>
-          id === oldWorktreeId ? newWorktreeId : id
-        )
-        sessionChanged = true
-      }
-      if (session.activeWorktreeId === oldWorktreeId) {
-        session.activeWorktreeId = newWorktreeId
-        sessionChanged = true
-      }
-      if (session.activeWorkspaceKey === oldWorkspaceKey) {
-        session.activeWorkspaceKey = newWorkspaceKey
-        sessionChanged = true
-      }
-      if (session.sleepingAgentSessionsByPaneKey) {
-        let sleepingChanged = false
-        const nextSleeping = { ...session.sleepingAgentSessionsByPaneKey }
-        for (const [paneKey, record] of Object.entries(nextSleeping)) {
-          if (record.worktreeId !== oldWorktreeId) {
-            continue
-          }
-          nextSleeping[paneKey] = { ...record, worktreeId: newWorktreeId }
-          sleepingChanged = true
-        }
-        if (sleepingChanged) {
-          session.sleepingAgentSessionsByPaneKey = nextSleeping
-          sessionChanged = true
-        }
-      }
-      if (session.terminalSurfaceTombstonesByPaneKey) {
-        let tombstonesChanged = false
-        const nextTombstones = { ...session.terminalSurfaceTombstonesByPaneKey }
-        for (const [paneKey, tombstone] of Object.entries(nextTombstones)) {
-          if (tombstone.worktreeId !== oldWorktreeId) {
-            continue
-          }
-          nextTombstones[paneKey] = { ...tombstone, worktreeId: newWorktreeId }
-          tombstonesChanged = true
-        }
-        if (tombstonesChanged) {
-          session.terminalSurfaceTombstonesByPaneKey = nextTombstones
-          sessionChanged = true
-        }
-      }
-      return sessionChanged
-    }
-
-    let changed = moveKey(this.state.worktreeMeta)
-    // Record the prior id so a session minted under it isn't reaped as an orphan.
-    const newMeta = this.state.worktreeMeta[newWorktreeId]
-    if (newMeta) {
-      const prior = newMeta.priorWorktreeIds ?? []
-      if (!prior.includes(oldWorktreeId)) {
-        newMeta.priorWorktreeIds = [...prior, oldWorktreeId]
-        changed = true
-      }
-    }
-
-    changed = moveKey(this.state.worktreeLineageById) || changed
-    const movedLineage = this.state.worktreeLineageById[newWorktreeId]
-    if (movedLineage && movedLineage.worktreeId === oldWorktreeId) {
-      movedLineage.worktreeId = newWorktreeId
-    }
-    // Why: children carry this as parentWorktreeId; keep the denormalized path-derived id consistent (parentWorktreeInstanceId is stable).
-    for (const lineage of Object.values(this.state.worktreeLineageById)) {
-      if (lineage.parentWorktreeId === oldWorktreeId) {
-        lineage.parentWorktreeId = newWorktreeId
-        changed = true
-      }
-    }
-
-    if (oldWorkspaceKey in this.state.workspaceLineageByChildKey) {
-      const lineage = this.state.workspaceLineageByChildKey[oldWorkspaceKey]
-      this.state.workspaceLineageByChildKey[newWorkspaceKey] = {
-        ...lineage,
-        childWorkspaceKey: newWorkspaceKey
-      }
-      delete this.state.workspaceLineageByChildKey[oldWorkspaceKey]
-      changed = true
-    }
-    for (const [childKey, lineage] of Object.entries(this.state.workspaceLineageByChildKey)) {
-      if (lineage.parentWorkspaceKey === oldWorkspaceKey) {
-        this.state.workspaceLineageByChildKey[childKey as WorkspaceKey] = {
-          ...lineage,
-          parentWorkspaceKey: newWorkspaceKey
-        }
-        changed = true
-      }
-    }
-
-    changed = migrateSession(this.state.workspaceSession) || changed
-    for (const session of Object.values(this.state.workspaceSessionsByHostId ?? {})) {
-      changed = migrateSession(session) || changed
-    }
-    for (const selectionsByWorktree of Object.values(
-      this.state.mobileClientTabSelectionsByDeviceId ?? {}
-    )) {
-      changed = moveKey(selectionsByWorktree) || changed
-    }
-    const showDotfiles = this.state.ui?.showDotfilesByWorktree
-    if (showDotfiles) {
-      changed = moveKey(showDotfiles) || changed
-    }
-
-    if (changed) {
+    if (migrateWorktreeIdentityOperation(this.state, oldWorktreeId, newWorktreeId)) {
       this.scheduleSave()
     }
   }
@@ -6026,452 +2604,55 @@ export class Store {
     }
   }
 
+  private getSettingsMutationOperations(): SettingsMutationOperations {
+    return {
+      state: this.state,
+      removeRetainedBlob: (slot) => this.protectedSecrets.removeRetainedBlob(slot),
+      scheduleSave: () => this.scheduleSave(),
+      notifySettingsChanged: (updates, originWebContentsId) =>
+        this.notifySettingsChanged(updates, originWebContentsId)
+    }
+  }
+
   updateSettings(
     updates: Partial<GlobalSettings>,
     options: { notifyListeners?: boolean; originWebContentsId?: number } = {}
   ): GlobalSettings {
-    const sanitizedUpdates = stripRetiredGlobalSettings(updates)
-    if ('opencodeSessionCookie' in updates && !updates.opencodeSessionCookie) {
-      this.protectedSecrets.removeRetainedBlob(PROTECTED_SECRET_SLOT.opencodeSessionCookie)
-    }
-    if ('httpProxyUrl' in updates && !updates.httpProxyUrl) {
-      this.protectedSecrets.removeRetainedBlob(PROTECTED_SECRET_SLOT.httpProxyUrl)
-    }
-    // Why: coerce to boolean here (not the IPC edge) so every write path is covered and a truthy non-bool can't persist as "tray-minimize on".
-    if ('minimizeToTrayOnClose' in updates) {
-      sanitizedUpdates.minimizeToTrayOnClose = updates.minimizeToTrayOnClose === true
-    }
-    if ('showMenuBarIcon' in updates) {
-      sanitizedUpdates.showMenuBarIcon = updates.showMenuBarIcon === true
-    }
-    // Why: the artifact publish capability must be an exact boolean on disk; no truthy value grants it.
-    if ('artifactSharingEnabled' in updates) {
-      sanitizedUpdates.artifactSharingEnabled = updates.artifactSharingEnabled === true
-    }
-    if ('disabledTuiAgents' in updates) {
-      sanitizedUpdates.disabledTuiAgents = normalizeDisabledTuiAgents(updates.disabledTuiAgents)
-    }
-    if ('worktreeVisibilityDefaults' in updates) {
-      sanitizedUpdates.worktreeVisibilityDefaults = {
-        ...this.state.settings.worktreeVisibilityDefaults,
-        ...(normalizeWorktreeVisibilityDefaults(updates.worktreeVisibilityDefaults) ?? {
-          external: 'hide'
-        })
-      }
-    }
-    if ('agentDefaultArgs' in updates) {
-      sanitizedUpdates.agentDefaultArgs = normalizeTuiAgentArgsRecord(updates.agentDefaultArgs)
-      sanitizedUpdates.agentYoloDefaultsMigrated = true
-    }
-    if ('agentDefaultEnv' in updates) {
-      sanitizedUpdates.agentDefaultEnv = normalizeTuiAgentEnvRecord(updates.agentDefaultEnv)
-      sanitizedUpdates.agentYoloDefaultsMigrated = true
-    }
-    if ('terminalQuickCommands' in updates) {
-      sanitizedUpdates.terminalQuickCommands = normalizeTerminalQuickCommands(
-        updates.terminalQuickCommands
-      )
-    }
-    if ('terminalCustomThemes' in updates) {
-      sanitizedUpdates.terminalCustomThemes = normalizeTerminalCustomThemes(
-        updates.terminalCustomThemes
-      )
-    }
-    if ('terminalCursorStyle' in updates) {
-      Object.assign(
-        sanitizedUpdates,
-        normalizeTerminalCursorStyleDefault(
-          { terminalCursorStyle: updates.terminalCursorStyle },
-          { preserveExplicitValue: true }
-        )
-      )
-    }
-    if ('terminalScrollbackRows' in updates) {
-      sanitizedUpdates.terminalScrollbackRows = normalizeDesktopTerminalScrollbackRows(
-        updates.terminalScrollbackRows
-      )
-    }
-    if (
-      'terminalTuiScrollSensitivity' in updates ||
-      'terminalTuiScrollSensitivityDefaultedToOne' in updates
-    ) {
-      sanitizedUpdates.terminalTuiScrollSensitivityDefaultedToOne = true
-    }
-    if ('visibleTaskProviders' in updates || 'defaultTaskSource' in updates) {
-      const taskProviderSettings = normalizeTaskProviderSettings({
-        visibleTaskProviders:
-          'visibleTaskProviders' in updates
-            ? updates.visibleTaskProviders
-            : this.state.settings.visibleTaskProviders,
-        defaultTaskSource:
-          'defaultTaskSource' in updates
-            ? updates.defaultTaskSource
-            : this.state.settings.defaultTaskSource
-      })
-      sanitizedUpdates.defaultTaskSource = taskProviderSettings.defaultTaskSource
-      sanitizedUpdates.visibleTaskProviders = taskProviderSettings.visibleTaskProviders
-      if ('visibleTaskProviders' in updates) {
-        sanitizedUpdates.visibleTaskProvidersDefaultedForJira = true
-      }
-    }
-    if ('autoRenameBranchFromWork' in updates || 'autoRenameBranchFromWorkDefaultedOn' in updates) {
-      sanitizedUpdates.autoRenameBranchFromWorkDefaultedOn = true
-    }
-    if ('openInApplications' in updates) {
-      sanitizedUpdates.openInApplications = normalizeOpenInApplications(updates.openInApplications)
-    }
-    if ('terminalShortcutPolicy' in updates) {
-      sanitizedUpdates.terminalShortcutPolicy = normalizeTerminalShortcutPolicy(
-        updates.terminalShortcutPolicy
-      )
-    }
-    if ('sourceControlGroupOrder' in updates) {
-      sanitizedUpdates.sourceControlGroupOrder = normalizeSourceControlGroupOrder(
-        updates.sourceControlGroupOrder
-      )
-    }
-    if ('appIcon' in updates) {
-      sanitizedUpdates.appIcon = normalizeAppIconId(updates.appIcon)
-    }
-    if ('uiLanguage' in updates) {
-      sanitizedUpdates.uiLanguage = normalizeUiLanguage(updates.uiLanguage)
-    }
-    if ('prBotAuthorOverrides' in updates) {
-      // Why: every writer (desktop IPC, web RPC, migrations) hits this boundary, so the persisted list stays bounded and well-formed.
-      sanitizedUpdates.prBotAuthorOverrides = normalizePRBotAuthorOverrides(
-        updates.prBotAuthorOverrides
-      )
-    }
-    if ('mobilePairingCustomAddress' in updates) {
-      sanitizedUpdates.mobilePairingCustomAddress = normalizeMobilePairingCustomAddress(
-        updates.mobilePairingCustomAddress
-      )
-    }
-    if ('mobilePairingCustomAddresses' in updates) {
-      sanitizedUpdates.mobilePairingCustomAddresses = normalizeMobilePairingCustomAddresses(
-        updates.mobilePairingCustomAddresses
-      )
-    }
-    if (
-      'mobilePairingCustomAddress' in sanitizedUpdates ||
-      'mobilePairingCustomAddresses' in sanitizedUpdates
-    ) {
-      const mobilePairingCustomAddress =
-        'mobilePairingCustomAddress' in sanitizedUpdates
-          ? sanitizedUpdates.mobilePairingCustomAddress
-          : this.state.settings.mobilePairingCustomAddress
-      if (mobilePairingCustomAddress) {
-        sanitizedUpdates.mobilePairingCustomAddresses = addMobilePairingCustomAddress(
-          sanitizedUpdates.mobilePairingCustomAddresses ??
-            this.state.settings.mobilePairingCustomAddresses ??
-            [],
-          mobilePairingCustomAddress
-        )
-      }
-    }
-    const historyWithPreviousLayout = buildWorkspaceDirHistoryForUpdate(
-      this.state.settings,
-      sanitizedUpdates
-    )
-    if (historyWithPreviousLayout) {
-      sanitizedUpdates.workspaceDirHistory = historyWithPreviousLayout
-    }
-    // Why deep-merge telemetry: a partial update (e.g. flipping only `optedIn`) must not clobber siblings like `installId`.
-    const mergedTelemetry =
-      sanitizedUpdates.telemetry !== undefined
-        ? { ...this.state.settings.telemetry, ...sanitizedUpdates.telemetry }
-        : this.state.settings.telemetry
-    if ('sourceControlAi' in sanitizedUpdates) {
-      sanitizedUpdates.sourceControlAi = retireLegacyInstructionsForClearedTextActionRecipes(
-        sanitizedUpdates.sourceControlAi,
-        this.state.settings
-      )
-      const normalizedSourceControlAi = normalizeSourceControlAiSettings(
-        sanitizedUpdates.sourceControlAi,
-        this.state.settings.commitMessageAi
-      )
-      sanitizedUpdates.sourceControlAi = normalizedSourceControlAi
-      sanitizedUpdates.commitMessageAi = projectSourceControlAiToLegacyCommitMessageAi(
-        normalizedSourceControlAi,
-        this.state.settings.commitMessageAi
-      )
-    } else if ('commitMessageAi' in sanitizedUpdates) {
-      sanitizedUpdates.sourceControlAi = mergeLegacyCommitMessageAiIntoSourceControlAi(
-        this.state.settings.sourceControlAi,
-        sanitizedUpdates.commitMessageAi
-      )
-    }
-    const previousSettings = this.state.settings
-    this.state.settings = {
-      ...this.state.settings,
-      ...sanitizedUpdates,
-      notifications: normalizeNotificationSettings({
-        ...this.state.settings.notifications,
-        ...sanitizedUpdates.notifications
-      }),
-      ...(mergedTelemetry !== undefined ? { telemetry: mergedTelemetry } : {})
-    }
-    this.scheduleSave()
-    const changedUpdates = {} as Partial<GlobalSettings> & Record<string, unknown>
-    for (const key of Object.keys(sanitizedUpdates) as (keyof GlobalSettings)[]) {
-      if (!Object.is(previousSettings[key], this.state.settings[key])) {
-        changedUpdates[String(key)] = this.state.settings[key]
-      }
-    }
-    if (options.notifyListeners === true && Object.keys(changedUpdates).length > 0) {
-      this.notifySettingsChanged(changedUpdates, options.originWebContentsId)
-    }
-    return this.state.settings
+    return updateSettingsOperation(this.getSettingsMutationOperations(), updates, options)
   }
 
   // ── UI State ───────────────────────────────────────────────────────
 
-  getUI(): PersistedState['ui'] {
-    const uiState = stripMainOwnedTelemetryMarkerFromUI(this.state.ui)
+  private getUIUpdateOperations(): UIUpdateOperations {
     return {
-      ...getDefaultUIState(),
-      ...uiState,
-      groupBy: normalizeGroupBy(this.state.ui?.groupBy),
-      sortBy: normalizeSortBy(this.state.ui?.sortBy),
-      projectOrderBy: normalizeProjectOrderBy(this.state.ui?.projectOrderBy),
-      rightSidebarTab: normalizeRightSidebarTab(this.state.ui?.rightSidebarTab),
-      rightSidebarExplorerView: normalizeRightSidebarExplorerView(
-        this.state.ui?.rightSidebarExplorerView,
-        this.state.ui?.rightSidebarTab
-      ),
-      worktreeCardProperties: normalizeWorktreeCardProperties(
-        this.state.ui?.worktreeCardProperties
-      ),
-      agentActivityDisplayMode: normalizeAgentActivityDisplayMode(
-        this.state.ui?.agentActivityDisplayMode
-      ),
-      workspaceStatuses: normalizeWorkspaceStatuses(this.state.ui?.workspaceStatuses),
-      workspaceBoardOpacity: clampWorkspaceBoardOpacity(this.state.ui?.workspaceBoardOpacity),
-      workspaceBoardColumnWidth: clampWorkspaceBoardColumnWidth(
-        this.state.ui?.workspaceBoardColumnWidth
-      ),
-      syncTaskStatusFromWorkspaceBoard: this.state.ui?.syncTaskStatusFromWorkspaceBoard === true,
-      usagePercentageDisplay: normalizeUsagePercentageDisplay(
-        this.state.ui?.usagePercentageDisplay
-      ),
-      statusBarUsageMode: normalizeStatusBarUsageMode(this.state.ui?.statusBarUsageMode),
-      // Why: strict boolean coercion so a missing/legacy value reads as false (first-run notice still fires).
-      trayMinimizeNoticeShown: this.state.ui?.trayMinimizeNoticeShown === true,
-      osc52ClipboardDefaultOnNoticePending:
-        this.state.ui?.osc52ClipboardDefaultOnNoticePending === true,
-      markdownTocPanelWidth: clampMarkdownTocPanelWidth(this.state.ui?.markdownTocPanelWidth),
-      combinedDiffFileTreeWidth: clampCombinedDiffFileTreeWidth(
-        this.state.ui?.combinedDiffFileTreeWidth
-      ),
-      visibleWorkspaceHostIds: normalizeVisibleExecutionHostIds(
-        this.state.ui?.visibleWorkspaceHostIds
-      ),
-      workspaceHostOrder: normalizeExecutionHostOrder(this.state.ui?.workspaceHostOrder),
-      manualRepoOrder: normalizeManualRepoOrder(this.state.ui?.manualRepoOrder),
-      browserDefaultZoomLevel: normalizeBrowserPageZoomLevel(
-        this.state.ui?.browserDefaultZoomLevel
-      ),
-      showDotfilesByWorktree: normalizeShowDotfilesByWorktree(
-        this.state.ui?.showDotfilesByWorktree
-      ),
-      featureTipsSeenIds: normalizeFeatureTipIds(this.state.ui?.featureTipsSeenIds),
-      contextualToursSeenIds: normalizeContextualTourIds(this.state.ui?.contextualToursSeenIds),
-      featureInteractions: normalizeFeatureInteractions(this.state.ui?.featureInteractions),
-      activeView: this.activeViewPreference.get()
+      state: this.state,
+      removeRetainedBlob: (slot) => this.protectedSecrets.removeRetainedBlob(slot),
+      setActiveView: (activeView) => this.activeViewPreference.set(activeView),
+      getUI: () => this.getUI(),
+      scheduleSave: () => this.scheduleSave(),
+      notifyUIChanged: () => this.notifyUIChanged()
     }
+  }
+
+  getUI(): PersistedState['ui'] {
+    return getPersistedUI(this.state, this.activeViewPreference.get())
   }
 
   updateUI(updates: Partial<PersistedState['ui']>): void {
-    if ('browserKagiSessionLink' in updates && !updates.browserKagiSessionLink) {
-      this.protectedSecrets.removeRetainedBlob(PROTECTED_SECRET_SLOT.browserKagiSessionLink)
+    updatePersistedUI(this.getUIUpdateOperations(), updates)
+  }
+
+  private getFeatureInteractionOperations(): FeatureInteractionOperations {
+    return {
+      state: this.state,
+      scheduleSave: () => this.scheduleSave(),
+      notifyUIChanged: () => this.notifyUIChanged(),
+      getUI: () => this.getUI()
     }
-    const sanitizedUpdates = stripMainOwnedTelemetryMarkerFromUI(updates)
-    const { activeView, ...durableUpdates } = sanitizedUpdates
-    const activeViewChanged = this.activeViewPreference.set(activeView)
-    if (Object.keys(durableUpdates).length === 0) {
-      if (activeViewChanged) {
-        this.notifyUIChanged()
-      }
-      return
-    }
-    const currentUI = {
-      ...getDefaultUIState(),
-      ...stripMainOwnedTelemetryMarkerFromUI(this.state.ui)
-    }
-    const previousUI = {
-      ...this.getUI(),
-      // Why: the legacy field stays unchanged as a migration/downgrade
-      // fallback; the profile sidecar is authoritative in current builds.
-      activeView: currentUI.activeView
-    }
-    const nextRightSidebarTab =
-      sanitizedUpdates.rightSidebarTab !== undefined
-        ? normalizeRightSidebarTab(sanitizedUpdates.rightSidebarTab)
-        : normalizeRightSidebarTab(this.state.ui?.rightSidebarTab)
-    const nextRightSidebarExplorerView =
-      sanitizedUpdates.rightSidebarExplorerView !== undefined
-        ? normalizeRightSidebarExplorerView(
-            sanitizedUpdates.rightSidebarExplorerView,
-            nextRightSidebarTab
-          )
-        : sanitizedUpdates.rightSidebarTab === 'search'
-          ? 'search'
-          : normalizeRightSidebarExplorerView(
-              this.state.ui?.rightSidebarExplorerView,
-              nextRightSidebarTab
-            )
-    const nextUI = {
-      ...currentUI,
-      ...durableUpdates,
-      workspaceCleanup: mergeWorkspaceCleanupUIState(
-        currentUI.workspaceCleanup,
-        durableUpdates.workspaceCleanup
-      ),
-      groupBy: durableUpdates.groupBy
-        ? normalizeGroupBy(durableUpdates.groupBy)
-        : normalizeGroupBy(this.state.ui?.groupBy),
-      sortBy: durableUpdates.sortBy
-        ? normalizeSortBy(durableUpdates.sortBy)
-        : normalizeSortBy(this.state.ui?.sortBy),
-      projectOrderBy: updates.projectOrderBy
-        ? normalizeProjectOrderBy(updates.projectOrderBy)
-        : normalizeProjectOrderBy(this.state.ui?.projectOrderBy),
-      activeView: currentUI.activeView,
-      rightSidebarTab: nextRightSidebarTab,
-      rightSidebarExplorerView: nextRightSidebarExplorerView,
-      worktreeCardProperties:
-        sanitizedUpdates.worktreeCardProperties !== undefined
-          ? normalizeWorktreeCardProperties(sanitizedUpdates.worktreeCardProperties)
-          : normalizeWorktreeCardProperties(this.state.ui?.worktreeCardProperties),
-      agentActivityDisplayMode:
-        updates.agentActivityDisplayMode !== undefined
-          ? normalizeAgentActivityDisplayMode(updates.agentActivityDisplayMode)
-          : normalizeAgentActivityDisplayMode(this.state.ui?.agentActivityDisplayMode),
-      workspaceStatuses:
-        sanitizedUpdates.workspaceStatuses !== undefined
-          ? normalizeWorkspaceStatuses(sanitizedUpdates.workspaceStatuses)
-          : normalizeWorkspaceStatuses(this.state.ui?.workspaceStatuses),
-      workspaceBoardOpacity: clampWorkspaceBoardOpacity(
-        sanitizedUpdates.workspaceBoardOpacity ?? this.state.ui?.workspaceBoardOpacity
-      ),
-      workspaceBoardColumnWidth: clampWorkspaceBoardColumnWidth(
-        sanitizedUpdates.workspaceBoardColumnWidth ?? this.state.ui?.workspaceBoardColumnWidth
-      ),
-      syncTaskStatusFromWorkspaceBoard:
-        sanitizedUpdates.syncTaskStatusFromWorkspaceBoard !== undefined
-          ? sanitizedUpdates.syncTaskStatusFromWorkspaceBoard === true
-          : this.state.ui?.syncTaskStatusFromWorkspaceBoard === true,
-      usagePercentageDisplay: normalizeUsagePercentageDisplay(
-        sanitizedUpdates.usagePercentageDisplay ?? this.state.ui?.usagePercentageDisplay
-      ),
-      statusBarUsageMode: normalizeStatusBarUsageMode(
-        sanitizedUpdates.statusBarUsageMode ?? this.state.ui?.statusBarUsageMode
-      ),
-      markdownTocPanelWidth: clampMarkdownTocPanelWidth(
-        sanitizedUpdates.markdownTocPanelWidth ?? this.state.ui?.markdownTocPanelWidth
-      ),
-      combinedDiffFileTreeWidth: clampCombinedDiffFileTreeWidth(
-        sanitizedUpdates.combinedDiffFileTreeWidth ?? this.state.ui?.combinedDiffFileTreeWidth
-      ),
-      visibleWorkspaceHostIds:
-        updates.visibleWorkspaceHostIds !== undefined
-          ? normalizeVisibleExecutionHostIds(updates.visibleWorkspaceHostIds)
-          : normalizeVisibleExecutionHostIds(this.state.ui?.visibleWorkspaceHostIds),
-      workspaceHostOrder:
-        updates.workspaceHostOrder !== undefined
-          ? normalizeExecutionHostOrder(updates.workspaceHostOrder)
-          : normalizeExecutionHostOrder(this.state.ui?.workspaceHostOrder),
-      manualRepoOrder:
-        updates.manualRepoOrder !== undefined
-          ? normalizeManualRepoOrder(updates.manualRepoOrder)
-          : normalizeManualRepoOrder(this.state.ui?.manualRepoOrder),
-      browserDefaultZoomLevel: normalizeBrowserPageZoomLevel(
-        updates.browserDefaultZoomLevel ?? this.state.ui?.browserDefaultZoomLevel
-      ),
-      showDotfilesByWorktree:
-        updates.showDotfilesByWorktree !== undefined
-          ? normalizeShowDotfilesByWorktree(updates.showDotfilesByWorktree)
-          : normalizeShowDotfilesByWorktree(this.state.ui?.showDotfilesByWorktree),
-      featureTipsSeenIds:
-        sanitizedUpdates.featureTipsSeenIds !== undefined
-          ? normalizeFeatureTipIds(sanitizedUpdates.featureTipsSeenIds)
-          : normalizeFeatureTipIds(this.state.ui?.featureTipsSeenIds),
-      // Why: renderer and paired clients can mark different tours seen from stale snapshots; union so completed tours stay suppressed.
-      contextualToursSeenIds:
-        updates.contextualToursSeenIds !== undefined
-          ? mergeContextualTourSeenIds(
-              this.state.ui?.contextualToursSeenIds,
-              updates.contextualToursSeenIds
-            )
-          : normalizeContextualTourIds(this.state.ui?.contextualToursSeenIds),
-      // Why: runtime RPCs and the renderer both record education state; merge so a stale renderer snapshot can't erase runtime-only interactions.
-      featureInteractions:
-        sanitizedUpdates.featureInteractions !== undefined
-          ? mergeFeatureInteractions(
-              this.state.ui?.featureInteractions,
-              sanitizedUpdates.featureInteractions
-            )
-          : normalizeFeatureInteractions(this.state.ui?.featureInteractions)
-    }
-    if (persistedUIValuesEqual(previousUI, nextUI)) {
-      if (activeViewChanged) {
-        this.notifyUIChanged()
-      }
-      return
-    }
-    this.state.ui = nextUI
-    this.scheduleSave()
-    this.notifyUIChanged()
   }
 
   recordFeatureInteraction(id: FeatureInteractionId): PersistedState['ui'] {
-    const featureInteractions = normalizeFeatureInteractions(this.state.ui?.featureInteractions)
-    const telemetryBuckets = normalizeFeatureInteractionTelemetryBuckets(
-      this.state.featureInteractionTelemetryBuckets
-    )
-    const existing = featureInteractions[id]
-    const previousCount = existing?.interactionCount ?? 0
-    const nextCount = previousCount + 1
-    const previousBucket = getFeatureInteractionUsageBucket(previousCount)
-    const nextBucket = getFeatureInteractionUsageBucket(nextCount)
-    const lastEmittedBucket = telemetryBuckets[id] ?? null
-    const shouldEmit =
-      nextBucket !== null &&
-      (lastEmittedBucket === null ||
-        compareFeatureInteractionUsageBuckets(nextBucket, lastEmittedBucket) > 0)
-
-    this.state.ui = {
-      ...this.state.ui,
-      featureInteractions: {
-        ...featureInteractions,
-        [id]: {
-          firstInteractedAt: existing?.firstInteractedAt ?? Date.now(),
-          interactionCount: nextCount
-        }
-      }
-    }
-    this.state.featureInteractionTelemetryBuckets = shouldEmit
-      ? { ...telemetryBuckets, [id]: nextBucket }
-      : telemetryBuckets
-    this.scheduleSave()
-    // Why: live UI only consumes the seen transition; count-only telemetry must not re-hydrate the renderer.
-    if (!existing) {
-      this.notifyUIChanged()
-    }
-
-    if (shouldEmit) {
-      track('feature_interaction_usage_bucket_reached', {
-        feature_id: id,
-        feature_category: getFeatureInteractionCategory(id),
-        count_bucket: nextBucket,
-        bucket_source:
-          lastEmittedBucket === null && previousBucket !== null && previousBucket === nextBucket
-            ? 'observed_existing'
-            : 'crossed_now',
-        ...getCohortAtEmit()
-      })
-    }
-    return this.getUI()
+    return recordFeatureInteractionOperation(this.getFeatureInteractionOperations(), id)
   }
 
   // ── Onboarding ────────────────────────────────────────────────────
@@ -6965,32 +3146,6 @@ export class Store {
     )
   }
 
-  private sshRemotePtyLeaseMayReferenceBinding(
-    lease: SshRemotePtyLease,
-    binding: {
-      ptyId: string
-      targetId: string
-      worktreeId?: string
-      tabId?: string
-      leafId?: string
-    }
-  ): boolean {
-    const bindingPtyId = this.getRelayPtyIdForSshLeaseComparison(binding.targetId, binding.ptyId)
-    if (lease.targetId !== binding.targetId || lease.ptyId !== bindingPtyId) {
-      return false
-    }
-    // Why: target removal is destructive; scrub matching bindings before deleting the lease, else removing the tombstone can revive stale PTY ids.
-    return (
-      (binding.worktreeId === undefined ||
-        lease.worktreeId === undefined ||
-        lease.worktreeId === binding.worktreeId) &&
-      (binding.tabId === undefined || lease.tabId === undefined || lease.tabId === binding.tabId) &&
-      (binding.leafId === undefined ||
-        lease.leafId === undefined ||
-        lease.leafId === binding.leafId)
-    )
-  }
-
   private getConnectionIdForWorktree(worktreeId: string): string | null {
     const repoId = getRepoIdFromWorktreeId(worktreeId)
     return this.state.repos.find((repo) => repo.id === repoId)?.connectionId ?? null
@@ -7184,83 +3339,49 @@ export class Store {
 
   // ── SSH Targets ────────────────────────────────────────────────────
 
+  private getSshTargetStateOperations(): SshTargetStateOperations {
+    return {
+      state: this.state,
+      protectedSecrets: this.protectedSecrets,
+      scheduleSave: () => this.scheduleSave(),
+      flush: () => this.flush()
+    }
+  }
+
   getSshTargets(): SshTarget[] {
-    return (this.state.sshTargets ?? []).map(normalizeSshTarget)
+    return getSshTargetsOperation(this.state)
   }
 
   getSshTarget(id: string): SshTarget | undefined {
-    const target = this.state.sshTargets?.find((t) => t.id === id)
-    return target ? normalizeSshTarget(target) : undefined
+    return getSshTargetOperation(this.state, id)
   }
 
   addSshTarget(target: SshTarget): void {
-    this.state.sshTargets ??= []
-    this.state.sshTargets.push(normalizeSshTarget(target))
-    this.scheduleSave()
+    addSshTargetOperation(this.getSshTargetStateOperations(), target)
   }
 
   updateSshTarget(id: string, updates: Partial<Omit<SshTarget, 'id'>>): SshTarget | null {
-    const target = this.state.sshTargets?.find((t) => t.id === id)
-    if (!target) {
-      return null
-    }
-    const normalized = normalizeSshTarget({ ...target, ...updates })
-    Object.assign(target, updates, normalized)
-    if (!Object.hasOwn(normalized, 'relayGracePeriodSeconds')) {
-      delete target.relayGracePeriodSeconds
-    }
-    if (!Object.hasOwn(normalized, 'systemSshConnectionReuse')) {
-      delete target.systemSshConnectionReuse
-    }
-    this.scheduleSave()
-    return { ...target }
+    return updateSshTargetOperation(this.getSshTargetStateOperations(), id, updates)
   }
 
   removeSshTarget(id: string): void {
-    const targets = this.state.sshTargets ?? []
-    const recoveries = this.state.sshPtyConsumerRecoveries ?? []
-    const nextTargets = targets.filter((target) => target.id !== id)
-    const nextRecoveries = recoveries.filter((record) => record.targetId !== id)
-    if (nextTargets.length === targets.length && nextRecoveries.length === recoveries.length) {
-      return
-    }
-    this.state.sshTargets = nextTargets
-    this.state.sshPtyConsumerRecoveries = nextRecoveries
-    this.protectedSecrets.removeRetainedBlob(sshPtyOwnerLeaseSecretSlot(id))
-    this.scheduleSave()
+    removeSshTargetOperation(this.getSshTargetStateOperations(), id)
   }
 
   // ── Live Claude PTY sessions ───────────────────────────────────────
 
   getClaudeLivePtySessionIds(): string[] {
-    return [...(this.state.claudeLivePtySessionIds ?? [])]
+    return getClaudeLivePtySessionIdsOperation(this.state)
   }
 
   addClaudeLivePtySessionId(sessionId: string): void {
-    if (sessionId.length === 0 || sessionId.length > 512) {
-      return
-    }
-    const ids = this.state.claudeLivePtySessionIds ?? []
-    if (ids.includes(sessionId)) {
-      return
-    }
-    // Why: drop oldest at the cap — stale ids get pruned against the daemon at startup, so only recency matters.
-    this.state.claudeLivePtySessionIds = [...ids, sessionId].slice(-MAX_CLAUDE_LIVE_PTY_SESSION_IDS)
-    // Why: flush sync so a force-quit right after a Claude spawn still seeds the live-PTY gate next launch.
-    this.flush()
+    addClaudeLivePtySessionIdOperation(this.getSshTargetStateOperations(), sessionId)
   }
 
   removeClaudeLivePtySessionId(sessionId: string): void {
-    const ids = this.state.claudeLivePtySessionIds ?? []
-    if (!ids.includes(sessionId)) {
-      return
-    }
-    this.state.claudeLivePtySessionIds = ids.filter((id) => id !== sessionId)
-    this.scheduleSave()
+    removeClaudeLivePtySessionIdOperation(this.getSshTargetStateOperations(), sessionId)
   }
 
-  /** Compacted, so callers get a watermark plus the names above it rather than every spent name.
-   *  Copied because the array is stored state. */
   getRetiredWorktreeNameRegistry(repoId: string): RetiredNameRegistry {
     const stored = this.state.retiredWorktreeNamesByRepo?.[repoId]
     return stored
@@ -7275,8 +3396,6 @@ export class Store {
       : EMPTY_RETIRED_NAME_REGISTRY
   }
 
-  /** Records a generated workspace name as spent for this repo. Called with the name main actually
-   *  used, not the one the renderer proposed — the create path can advance past it on collision. */
   addRetiredWorktreeName(repoId: string, name: string): void {
     const normalized = normalizeRetirableGeneratedName(name)
     if (!repoId || !normalized) {
@@ -7285,8 +3404,6 @@ export class Store {
     this.applyRetiredWorktreeNames(repoId, [normalized])
   }
 
-  /** Seeds retirements discovered by the one-time backfill. Merges rather than replaces so a
-   *  concurrent create during backfill is not lost. Returns true when anything was added. */
   mergeRetiredWorktreeNames(repoId: string, names: Iterable<string>): boolean {
     if (!repoId) {
       return false
@@ -7337,55 +3454,31 @@ export class Store {
   }
 
   getDeletedSshConfigAliases(): string[] {
-    return [...(this.state.deletedSshConfigAliases ?? [])]
+    return getDeletedSshConfigAliasesOperation(this.state)
   }
 
   addDeletedSshConfigAlias(alias: string): void {
-    this.state.deletedSshConfigAliases ??= []
-    if (!this.state.deletedSshConfigAliases.includes(alias)) {
-      this.state.deletedSshConfigAliases.push(alias)
-      this.scheduleSave()
-    }
+    addDeletedSshConfigAliasOperation(this.getSshTargetStateOperations(), alias)
   }
 
   removeDeletedSshConfigAlias(alias: string): void {
-    const current = this.state.deletedSshConfigAliases
-    if (!current || !current.includes(alias)) {
-      return
-    }
-    this.state.deletedSshConfigAliases = current.filter((entry) => entry !== alias)
-    this.scheduleSave()
+    removeDeletedSshConfigAliasOperation(this.getSshTargetStateOperations(), alias)
   }
 
   clearDeletedSshConfigAliases(): void {
-    if (this.state.deletedSshConfigAliases && this.state.deletedSshConfigAliases.length > 0) {
-      this.state.deletedSshConfigAliases = []
-      this.scheduleSave()
-    }
+    clearDeletedSshConfigAliasesOperation(this.getSshTargetStateOperations())
   }
 
   getRemovedSshTargetTombstones(): RemovedSshTargetTombstone[] {
-    return [...(this.state.removedSshTargetTombstones ?? [])]
+    return getRemovedSshTargetTombstonesOperation(this.state)
   }
 
   addRemovedSshTargetTombstone(tombstone: RemovedSshTargetTombstone): void {
-    const existing = this.state.removedSshTargetTombstones ?? []
-    // Why: dedupe by oldTargetId so re-removing the same id can't stack duplicate tombstones; newest wins.
-    const filtered = existing.filter((t) => t.oldTargetId !== tombstone.oldTargetId)
-    // Cap the history so pathological churn can't grow the state file unbounded.
-    this.state.removedSshTargetTombstones = [...filtered, tombstone].slice(
-      -MAX_REMOVED_SSH_TARGET_TOMBSTONES
-    )
-    this.scheduleSave()
+    addRemovedSshTargetTombstoneOperation(this.getSshTargetStateOperations(), tombstone)
   }
 
   removeRemovedSshTargetTombstone(oldTargetId: string): void {
-    const existing = this.state.removedSshTargetTombstones
-    if (!existing?.some((t) => t.oldTargetId === oldTargetId)) {
-      return
-    }
-    this.state.removedSshTargetTombstones = existing.filter((t) => t.oldTargetId !== oldTargetId)
-    this.scheduleSave()
+    removeRemovedSshTargetTombstoneOperation(this.getSshTargetStateOperations(), oldTargetId)
   }
 
   /**
@@ -7393,391 +3486,121 @@ export class Store {
    * a re-added target's id so orphaned workspaces reattach. Returns re-pointed repo ids.
    */
   reassignSshTargetId(oldTargetId: string, newTargetId: string): string[] {
-    if (oldTargetId === newTargetId) {
-      return []
+    const operations: SshTargetReassignmentOperations = {
+      state: this.state,
+      protectedSecrets: this.protectedSecrets,
+      syncProjectHostSetupCompatibilityState: () => this.syncProjectHostSetupCompatibilityState(),
+      scheduleSave: () => this.scheduleSave()
     }
-    const oldHostId = toSshExecutionHostId(oldTargetId)
-    const newHostId = toSshExecutionHostId(newTargetId)
-    const repoIds = new Set<string>()
-    for (const repo of this.state.repos) {
-      const matchesConnection = repo.connectionId === oldTargetId
-      const matchesHost = repo.executionHostId === oldHostId
-      if (!matchesConnection && !matchesHost) {
-        continue
-      }
-      if (matchesConnection) {
-        repo.connectionId = newTargetId
-      }
-      // Why: don't stamp executionHostId where it was unset — addRemoteRepoFromPath repos derive the host from connectionId.
-      if (matchesHost) {
-        repo.executionHostId = newHostId
-      }
-      repoIds.add(repo.id)
-    }
-    // Re-point worktree metas whose hostId pointed at the old SSH host.
-    let metaChanged = false
-    for (const meta of Object.values(this.state.worktreeMeta)) {
-      if (meta.hostId === oldHostId) {
-        meta.hostId = newHostId
-        metaChanged = true
-      }
-    }
-    // Why: any carrier still holding the old id later throws `SSH target not found` (STA-1468); migrate them all.
-    let carrierChanged = migrateWorkspaceSessionSshTargetId(
-      this.state.workspaceSession,
-      oldTargetId,
-      newTargetId
-    )
-    for (const session of Object.values(this.state.workspaceSessionsByHostId ?? {})) {
-      if (session && migrateWorkspaceSessionSshTargetId(session, oldTargetId, newTargetId)) {
-        carrierChanged = true
-      }
-    }
-    // Why: partitions are read by host id; re-key from the removed id to the new one (keep new if it already exists).
-    const partitions = this.state.workspaceSessionsByHostId
-    const oldPartition = partitions?.[oldHostId]
-    if (partitions && oldPartition) {
-      delete partitions[oldHostId]
-      partitions[newHostId] ??= oldPartition
-      carrierChanged = true
-    }
-    if (migrateUiHostScopeSshTargetId(this.state.ui, oldTargetId, newTargetId)) {
-      carrierChanged = true
-    }
-    for (const lease of this.state.sshRemotePtyLeases ?? []) {
-      if (lease.targetId === oldTargetId) {
-        lease.targetId = newTargetId
-        carrierChanged = true
-      }
-    }
-    const recoveries = this.state.sshPtyConsumerRecoveries ?? []
-    const retainedRecoveries = recoveries.filter((record) => record.targetId !== oldTargetId)
-    if (retainedRecoveries.length !== recoveries.length) {
-      this.state.sshPtyConsumerRecoveries = retainedRecoveries
-      this.protectedSecrets.removeRetainedBlob(sshPtyOwnerLeaseSecretSlot(oldTargetId))
-      carrierChanged = true
-    }
-    let setupsChanged = false
-    const keptSetups: ProjectHostSetup[] = []
-    for (const setup of this.state.projectHostSetups) {
-      if (setup.hostId !== oldHostId) {
-        keptSetups.push(setup)
-        continue
-      }
-      const duplicate = this.state.projectHostSetups.some(
-        (entry) =>
-          entry !== setup && entry.projectId === setup.projectId && entry.hostId === newHostId
-      )
-      // Why: drop the old ghost row that would violate (projectId, hostId) uniqueness with the re-added host's setup.
-      if (duplicate) {
-        setupsChanged = true
-        continue
-      }
-      setup.hostId = newHostId
-      setup.updatedAt = Date.now()
-      keptSetups.push(setup)
-      setupsChanged = true
-    }
-    if (setupsChanged) {
-      this.state.projectHostSetups = keptSetups
-    }
-    // Why: repo-row and host-setup rewrites affect host-setup compatibility; meta-only rewrites don't, so gate the sync here.
-    if (repoIds.size > 0 || setupsChanged) {
-      this.syncProjectHostSetupCompatibilityState()
-    }
-    if (repoIds.size > 0 || metaChanged || carrierChanged || setupsChanged) {
-      this.scheduleSave()
-    }
-    return [...repoIds]
+    return reassignSshTargetIdOperation(operations, oldTargetId, newTargetId)
   }
 
   // ── SSH PTY Consumer Recovery ──────────────────────────────────────
 
-  getSshPtyConsumerRecovery(targetId: string): SshPtyConsumerRecovery | null {
-    const record = (this.state.sshPtyConsumerRecoveries ?? []).find(
-      (candidate) => candidate.targetId === targetId
-    )
-    if (
-      record &&
-      this.protectedSecrets.isSealed(sshPtyOwnerLeaseSecretSlot(record.targetId), record.ownerLease)
-    ) {
-      return null
+  private getSshPtyConsumerRecoveryOperations(): SshPtyConsumerRecoveryOperations {
+    return {
+      state: this.state,
+      protectedSecrets: this.protectedSecrets,
+      flushDurableStateOrThrowAsync: () => this.flushDurableStateOrThrowAsync()
     }
-    return record ? structuredClone(record) : null
+  }
+
+  getSshPtyConsumerRecovery(targetId: string): SshPtyConsumerRecovery | null {
+    return getSshPtyConsumerRecoveryOperation(this.getSshPtyConsumerRecoveryOperations(), targetId)
   }
 
   async upsertSshPtyConsumerRecovery(record: SshPtyConsumerRecovery): Promise<void> {
-    const normalized = normalizeSshPtyConsumerRecovery(record)
-    if (!normalized) {
-      throw new Error('Invalid SSH PTY consumer recovery record')
-    }
-    const recoveries = this.state.sshPtyConsumerRecoveries ?? []
-    this.state.sshPtyConsumerRecoveries = [
-      ...recoveries.filter((candidate) => candidate.targetId !== normalized.targetId),
-      normalized
-    ]
-    await this.flushSshPtyConsumerRecovery()
+    await upsertSshPtyConsumerRecoveryOperation(this.getSshPtyConsumerRecoveryOperations(), record)
   }
 
   async removeSshPtyConsumerRecovery(targetId: string): Promise<void> {
-    const recoveries = this.state.sshPtyConsumerRecoveries ?? []
-    const next = recoveries.filter((record) => record.targetId !== targetId)
-    if (next.length === recoveries.length) {
-      return
-    }
-    this.state.sshPtyConsumerRecoveries = next
-    this.protectedSecrets.removeRetainedBlob(sshPtyOwnerLeaseSecretSlot(targetId))
-    await this.flushSshPtyConsumerRecovery()
-  }
-
-  private async flushSshPtyConsumerRecovery(): Promise<void> {
-    // Why: ownership must be durable before relay setup continues, but this runs on the live
-    // establish/reconnect path — a sync flush would park the main thread on a stalled profile mount.
-    // Why not caught here: the failure must reach the awaiting caller.
-    await this.flushDurableStateOrThrowAsync()
+    await removeSshPtyConsumerRecoveryOperation(
+      this.getSshPtyConsumerRecoveryOperations(),
+      targetId
+    )
   }
 
   // ── SSH Remote PTY Leases ──────────────────────────────────────────
 
+  private getSshPtyBindingCleanupOperations(): SshPtyBindingCleanupOperations {
+    return {
+      state: this.state,
+      toComparablePtyId: (targetId, ptyId) =>
+        this.getRelayPtyIdForSshLeaseComparison(targetId, ptyId),
+      scheduleSave: () => this.scheduleSave()
+    }
+  }
+
+  private getSshPtyLeaseOperations(): SshPtyLeaseOperations {
+    return {
+      state: this.state,
+      toStoredPtyId: (targetId, ptyId) => this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId),
+      clearBindingsForTarget: (targetId) =>
+        clearSshRemotePtyBindingsForTargetOperation(
+          this.getSshPtyBindingCleanupOperations(),
+          targetId
+        ),
+      clearBindingsForLeases: (targetId, leases) =>
+        clearSshRemotePtyBindingsForLeasesOperation(
+          this.getSshPtyBindingCleanupOperations(),
+          targetId,
+          leases
+        ),
+      flush: () => this.flush(),
+      flushDurableStateOrThrowAsync: () => this.flushDurableStateOrThrowAsync()
+    }
+  }
+
   getSshRemotePtyLeases(targetId?: string): SshRemotePtyLease[] {
-    const leases = this.state.sshRemotePtyLeases ?? []
-    return leases.filter((lease) => targetId === undefined || lease.targetId === targetId)
+    return getSshRemotePtyLeasesOperation(this.state, targetId)
   }
 
   upsertSshRemotePtyLease(
     lease: Omit<SshRemotePtyLease, 'createdAt' | 'updatedAt'> &
       Partial<Pick<SshRemotePtyLease, 'createdAt' | 'updatedAt'>>
   ): void {
-    this.state.sshRemotePtyLeases ??= []
-    const normalizedLease = { ...lease }
-    if (normalizedLease.leafId !== undefined && !isTerminalLeafId(normalizedLease.leafId)) {
-      delete normalizedLease.leafId
-    }
-    // Why: store target-local pty ids in leases so reconnect can call relay pty.attach with raw ids (app ids are global).
-    normalizedLease.ptyId = this.getRelayPtyIdForSshLeaseStorage(
-      normalizedLease.targetId,
-      normalizedLease.ptyId
-    )
-    const now = Date.now()
-    const existingIndex = this.state.sshRemotePtyLeases.findIndex(
-      (entry) =>
-        entry.targetId === normalizedLease.targetId && entry.ptyId === normalizedLease.ptyId
-    )
-    const existing = existingIndex !== -1 ? this.state.sshRemotePtyLeases[existingIndex] : undefined
-    const next: SshRemotePtyLease = {
-      ...existing,
-      ...normalizedLease,
-      createdAt: existing?.createdAt ?? normalizedLease.createdAt ?? now,
-      updatedAt: normalizedLease.updatedAt ?? now
-    }
-    if (existingIndex !== -1) {
-      this.state.sshRemotePtyLeases[existingIndex] = next
-    } else {
-      this.state.sshRemotePtyLeases.push(next)
-    }
-    this.flush()
+    upsertSshRemotePtyLeaseOperation(this.getSshPtyLeaseOperations(), lease)
   }
 
   markSshRemotePtyLeases(targetId: string, state: SshRemotePtyLease['state']): void {
-    if (this.updateSshRemotePtyLeaseStates(targetId, state)) {
-      this.flush()
-    }
+    markSshRemotePtyLeasesOperation(this.getSshPtyLeaseOperations(), targetId, state)
   }
 
   // Why no write of its own: the committed quit path calls this immediately before the final store
   // flush, and that flush is what persists it. A durable write here would race the flush and be
   // rejected the moment it latches, which is exactly how an attached lease used to survive quit.
   markSshRemotePtyLeasesForShutdown(targetId: string, state: SshRemotePtyLease['state']): void {
-    this.updateSshRemotePtyLeaseStates(targetId, state)
+    markSshRemotePtyLeasesForShutdownOperation(this.getSshPtyLeaseOperations(), targetId, state)
   }
 
   async markSshRemotePtyLeasesAsync(
     targetId: string,
     state: SshRemotePtyLease['state']
   ): Promise<void> {
-    if (this.updateSshRemotePtyLeaseStates(targetId, state)) {
-      await this.flushDurableStateOrThrowAsync()
-    }
+    await markSshRemotePtyLeasesAsyncOperation(this.getSshPtyLeaseOperations(), targetId, state)
   }
 
   async markSshRemotePtyLeasesAttachedAsync(
     targetId: string,
     ptyIds: readonly string[]
   ): Promise<void> {
-    const relayPtyIds = new Set(
-      ptyIds.map((ptyId) => this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId))
+    await markSshRemotePtyLeasesAttachedAsyncOperation(
+      this.getSshPtyLeaseOperations(),
+      targetId,
+      ptyIds
     )
-    if (this.updateSshRemotePtyLeaseStates(targetId, 'attached', relayPtyIds)) {
-      await this.flushDurableStateOrThrowAsync()
-    }
-  }
-
-  private updateSshRemotePtyLeaseStates(
-    targetId: string,
-    state: SshRemotePtyLease['state'],
-    ptyIds?: ReadonlySet<string>
-  ): boolean {
-    const now = Date.now()
-    let changed = false
-    const shouldClearBindings = state === 'terminated' || state === 'expired'
-    const leasesToClear: SshRemotePtyLease[] = []
-    this.state.sshRemotePtyLeases ??= []
-    for (const lease of this.state.sshRemotePtyLeases) {
-      if (lease.targetId !== targetId || (ptyIds && !ptyIds.has(lease.ptyId))) {
-        continue
-      }
-      if (state === 'attached' && (lease.state === 'terminated' || lease.state === 'expired')) {
-        continue
-      }
-      if (state === 'detached' && lease.state !== 'attached') {
-        continue
-      }
-      if (lease.state !== state) {
-        lease.state = state
-        lease.updatedAt = now
-        if (state === 'attached') {
-          lease.lastAttachedAt = now
-        } else if (state === 'detached') {
-          lease.lastDetachedAt = now
-        }
-        changed = true
-      }
-      if (shouldClearBindings) {
-        leasesToClear.push(lease)
-      }
-    }
-    const bindingsChanged = shouldClearBindings
-      ? this.clearSshRemotePtyBindingsForLeases(targetId, leasesToClear)
-      : false
-    return changed || bindingsChanged
   }
 
   markSshRemotePtyLease(targetId: string, ptyId: string, state: SshRemotePtyLease['state']): void {
-    const relayPtyId = this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId)
-    const lease = this.state.sshRemotePtyLeases?.find(
-      (entry) => entry.targetId === targetId && entry.ptyId === relayPtyId
-    )
-    if (!lease) {
-      return
-    }
-    const shouldClearBindings = state === 'terminated' || state === 'expired'
-    if (lease.state === state) {
-      if (shouldClearBindings && this.clearSshRemotePtyBindingsForLeases(targetId, [lease])) {
-        this.flush()
-      }
-      return
-    }
-    const now = Date.now()
-    lease.state = state
-    lease.updatedAt = now
-    if (state === 'attached') {
-      lease.lastAttachedAt = now
-    } else if (state === 'detached') {
-      lease.lastDetachedAt = now
-    }
-    if (shouldClearBindings) {
-      this.clearSshRemotePtyBindingsForLeases(targetId, [lease])
-    }
-    this.flush()
+    markSshRemotePtyLeaseOperation(this.getSshPtyLeaseOperations(), targetId, ptyId, state)
   }
 
   removeSshRemotePtyLease(targetId: string, ptyId: string): void {
-    const relayPtyId = this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId)
-    const leases = (this.state.sshRemotePtyLeases ?? []).filter(
-      (lease) => lease.targetId === targetId && lease.ptyId === relayPtyId
-    )
-    const before = this.state.sshRemotePtyLeases?.length ?? 0
-    this.clearSshRemotePtyBindingsForLeases(targetId, leases)
-    this.state.sshRemotePtyLeases = (this.state.sshRemotePtyLeases ?? []).filter(
-      (lease) => lease.targetId !== targetId || lease.ptyId !== relayPtyId
-    )
-    if (this.state.sshRemotePtyLeases.length !== before) {
-      this.flush()
-    }
+    removeSshRemotePtyLeaseOperation(this.getSshPtyLeaseOperations(), targetId, ptyId)
   }
 
   removeSshRemotePtyLeases(targetId: string): void {
-    this.state.sshRemotePtyLeases ??= []
-    this.clearSshRemotePtyBindingsForTarget(targetId)
-    const before = this.state.sshRemotePtyLeases.length
-    this.state.sshRemotePtyLeases = this.state.sshRemotePtyLeases.filter(
-      (lease) => lease.targetId !== targetId
-    )
-    if (this.state.sshRemotePtyLeases.length !== before) {
-      this.flush()
-    }
-  }
-
-  private clearSshRemotePtyBindingsForTarget(targetId: string): void {
-    const leases = this.state.sshRemotePtyLeases?.filter((lease) => lease.targetId === targetId)
-    this.clearSshRemotePtyBindingsForLeases(targetId, leases ?? [])
-  }
-
-  private clearSshRemotePtyBindingsForLeases(
-    targetId: string,
-    leases: SshRemotePtyLease[]
-  ): boolean {
-    if (!leases?.length) {
-      return false
-    }
-    let changed = false
-    const sessions = new Set(
-      [
-        this.state.workspaceSession,
-        this.state.workspaceSessionsByHostId?.[toSshExecutionHostId(targetId)]
-      ].filter((session): session is WorkspaceSessionState => Boolean(session))
-    )
-    for (const session of sessions) {
-      for (const [worktreeId, tabs] of Object.entries(session.tabsByWorktree ?? {})) {
-        for (const tab of tabs) {
-          if (
-            tab.ptyId &&
-            leases.some((lease) =>
-              this.sshRemotePtyLeaseMayReferenceBinding(lease, {
-                ptyId: tab.ptyId!,
-                worktreeId,
-                targetId,
-                tabId: tab.id
-              })
-            )
-          ) {
-            tab.ptyId = null
-            changed = true
-          }
-        }
-      }
-      for (const [tabId, layout] of Object.entries(session.terminalLayoutsByTabId ?? {})) {
-        const bindings = layout.ptyIdsByLeafId
-        if (!bindings) {
-          continue
-        }
-        const worktreeId = Object.entries(session.tabsByWorktree ?? {}).find(([, tabs]) =>
-          tabs.some((tab) => tab.id === tabId)
-        )?.[0]
-        const nextBindings = Object.fromEntries(
-          Object.entries(bindings).filter(
-            ([leafId, ptyId]) =>
-              !leases.some((lease) =>
-                this.sshRemotePtyLeaseMayReferenceBinding(lease, {
-                  ptyId,
-                  targetId,
-                  worktreeId,
-                  tabId,
-                  leafId
-                })
-              )
-          )
-        )
-        if (Object.keys(nextBindings).length !== Object.keys(bindings).length) {
-          layout.ptyIdsByLeafId = nextBindings
-          changed = true
-        }
-      }
-    }
-    if (changed) {
-      this.scheduleSave()
-    }
-    return changed
+    removeSshRemotePtyLeasesOperation(this.getSshPtyLeaseOperations(), targetId)
   }
 
   // ── Flush (for shutdown) ───────────────────────────────────────────
