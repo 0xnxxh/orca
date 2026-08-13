@@ -11,20 +11,18 @@ type SessionTabsEvent =
   | { type: 'snapshots'; snapshots: RuntimeMobileSessionTabsResult[] }
   | { type: 'end' }
 
-function structuredOnly(snapshot: RuntimeMobileSessionTabsResult): RuntimeMobileSessionTabsResult {
+export function projectLocalStructuredSessionTabs(
+  snapshot: RuntimeMobileSessionTabsResult
+): RuntimeMobileSessionTabsResult {
   const structuredIds = new Set(
     snapshot.tabs.filter((tab) => tab.type === 'agent-session').map((tab) => tab.id)
   )
   return {
     ...snapshot,
     tabs: snapshot.tabs.filter((tab) => structuredIds.has(tab.id)),
-    tabGroups: snapshot.tabGroups?.map((group) => ({
-      ...group,
-      tabOrder: group.tabOrder.filter((id) => structuredIds.has(id)),
-      activeTabId:
-        group.activeTabId && structuredIds.has(group.activeTabId) ? group.activeTabId : null,
-      recentTabIds: group.recentTabIds?.filter((id) => structuredIds.has(id))
-    }))
+    // Why: replaying local terminal topology under the structured owner clones the workspace layout.
+    tabGroups: undefined,
+    tabGroupLayout: undefined
   }
 }
 
@@ -34,7 +32,7 @@ function applySnapshots(snapshots: readonly RuntimeMobileSessionTabsResult[]): v
     for (const snapshot of snapshots) {
       const patch = applyWebSessionTabsSnapshot(
         next,
-        structuredOnly(snapshot),
+        projectLocalStructuredSessionTabs(snapshot),
         LOCAL_STRUCTURED_SESSION_OWNER
       )
       next = patch === next ? next : ({ ...next, ...patch } as typeof state)
