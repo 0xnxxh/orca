@@ -905,14 +905,14 @@ class RemoteRuntimeTerminalMultiplexer {
           })
         } else if (target === 'recovery') {
           // Why: a server-pushed recovery snapshot replaces terminal state
-          // mid-session; clear the screen and scrollback before applying it.
-          // An empty snapshot is still applied so stale dropped output does
-          // not linger on a terminal the model says is blank.
-          stream.callbacks.onSnapshot(`\x1b[2J\x1b[3J\x1b[H${data ?? ''}`, {
-            pendingEscapeTailAnsi: info?.pendingEscapeTailAnsi,
-            seq: info?.seq,
-            kittyKeyboardFlags: info?.kittyKeyboardFlags
-          })
+          // mid-session; atomically clear and apply only when it has content.
+          if (data) {
+            stream.callbacks.onSnapshot(`\x1b[2J\x1b[3J\x1b[H${data}`, {
+              pendingEscapeTailAnsi: info?.pendingEscapeTailAnsi,
+              seq: info?.seq,
+              kittyKeyboardFlags: info?.kittyKeyboardFlags
+            })
+          }
         }
       } else if (matchesPendingRequest) {
         pendingRequest.resolve({
@@ -994,7 +994,7 @@ class RemoteRuntimeTerminalMultiplexer {
 
   // Why: on a detected gap, discard the corrupt tail and pull a fresh
   // authoritative snapshot. The request carries no requestId so the server
-  // reply renders through the initial-snapshot path (full reset), self-healing
+  // reply renders through the recovery path (full reset), self-healing
   // without surfacing an error to the user.
   private requestResyncSnapshot(stream: RemoteRuntimeMultiplexedTerminalState): void {
     if (stream.resyncInFlight) {

@@ -42,6 +42,7 @@ class FakeMultiplexServer {
   truncateNextRecoverySnapshot = false
   dropNextRecoverySnapshotEnd = false
   holdNextRecoverySnapshot = false
+  emptyNextRecoverySnapshot = false
   snapshotRequests: (number | undefined)[] = []
   private heldManualRequestId: number | null = null
   private snapshotData = 'INITIAL'
@@ -73,7 +74,8 @@ class FakeMultiplexServer {
       }
       // Resync request: the server serializes the *current* buffer, so recovery
       // includes everything the client missed.
-      this.snapshotData = 'RECOVERED'
+      this.snapshotData = this.emptyNextRecoverySnapshot ? '' : 'RECOVERED'
+      this.emptyNextRecoverySnapshot = false
       if (typeof payload?.requestId !== 'number' && this.holdNextRecoverySnapshot) {
         // The reply's binary frames were all dropped under backpressure.
         this.holdNextRecoverySnapshot = false
@@ -248,6 +250,21 @@ describe('remote terminal frame-drop resync', () => {
     server.replaySnapshotCoveredOutput('ccc')
     server.output('ddd')
     expect(data).toEqual(['aaa', 'ddd'])
+  })
+
+  it('keeps a painted pane when recovery has no content', async () => {
+    const { data, snapshots } = await subscribeClient()
+    server.emptyNextRecoverySnapshot = true
+
+    server.output('painted')
+    server.dropNextOutput = true
+    server.output('dropped')
+    server.output('gap')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(data).toEqual(['painted'])
+    expect(snapshots).toEqual(['INITIAL'])
   })
 
   it('retries a truncated recovery on a backoff without accepting output across the gap', async () => {

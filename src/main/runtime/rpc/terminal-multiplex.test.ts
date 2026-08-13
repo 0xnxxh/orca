@@ -2857,6 +2857,43 @@ describe('terminal multiplex RPC', () => {
     await harness.dispatchPromise
   })
 
+  it('does not publish an empty ACK overflow recovery snapshot', async () => {
+    const flooded = 'x'.repeat(3 * 1024 * 1024)
+    const harness = startSourceRangeOverflowHarness({
+      recover: async () => ({
+        data: '',
+        cols: 120,
+        rows: 40,
+        source: 'renderer',
+        seq: flooded.length
+      })
+    })
+    await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
+    sendDesktopSourceRangeSubscribe(harness.handlers)
+    await vi.waitFor(() => expect(harness.getDataListener()).toBeDefined())
+    const frameCount = harness.binaryFrames.length
+
+    await acknowledgeSourceRangeOverflow(harness, harness.getDataListener()!, flooded)
+    await vi.waitFor(() => expect(harness.cancel).toHaveBeenCalledOnce())
+
+    expect(
+      harness.binaryFrames
+        .slice(frameCount)
+        .map(decodeTerminalStreamFrame)
+        .some(
+          (frame) =>
+            frame?.opcode === TerminalStreamOpcode.SnapshotStart &&
+            decodeTerminalStreamJson<{ reason?: string }>(frame.payload)?.reason ===
+              'ack-pending-overflow'
+        )
+    ).toBe(false)
+    expect(harness.reserve.mock.calls.some((call) => call[2] === 'ack-pending-overflow')).toBe(
+      false
+    )
+    harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
+    await harness.dispatchPromise
+  })
+
   it('caps stalled ACK output and snapshots before resuming retained tail frames', async () => {
     const messages: string[] = []
     const binaryFrames: Uint8Array<ArrayBufferLike>[] = []

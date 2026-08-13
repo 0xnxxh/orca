@@ -225,4 +225,28 @@ describe('terminal.multiplex requested-snapshot replay trim', () => {
       vi.useRealTimers()
     }
   })
+
+  it('suppresses an empty untagged resync reply', async () => {
+    vi.useFakeTimers()
+    try {
+      const harness = await setupMultiplexStream()
+      const frameCountBeforeRequest = harness.binaryFrames.length
+
+      harness.setSnapshot({ data: '', seq: 12 })
+      harness.deferNextSerialize()
+      harness.sendClientFrame(TerminalStreamOpcode.SnapshotRequest, encodeTerminalStreamJson({}))
+      await harness.releaseSerialize()
+
+      expect(
+        harness.binaryFrames
+          .slice(frameCountBeforeRequest)
+          .map((frame) => decodeTerminalStreamFrame(frame))
+          .some((frame) => frame?.opcode === TerminalStreamOpcode.SnapshotStart)
+      ).toBe(false)
+
+      await harness.finish()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

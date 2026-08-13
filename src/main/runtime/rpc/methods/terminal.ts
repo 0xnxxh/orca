@@ -118,6 +118,12 @@ type SerializedSnapshot = {
   kittyKeyboardFlags?: number
 } | null
 
+function hasSerializedSnapshotContent(
+  snapshot: SerializedSnapshot
+): snapshot is Exclude<SerializedSnapshot, null> {
+  return Boolean(snapshot && (snapshot.data.length > 0 || snapshot.scrollbackAnsi))
+}
+
 type TerminalViewportClient = {
   id: string
   type?: 'mobile' | 'desktop'
@@ -1813,7 +1819,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           if (closed || streams.get(stream.streamId) !== stream || stream.outputPaused) {
             return
           }
-          if (!serialized) {
+          if (!hasSerializedSnapshotContent(serialized)) {
             throw new Error('Remote terminal recovery snapshot unavailable.')
           }
           if (
@@ -2329,6 +2335,9 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
               })
               return
             }
+          }
+          if (typeof requestId !== 'number' && !hasSerializedSnapshotContent(serialized)) {
+            return
           }
           sentSnapshotOutputSeq = serialized?.seq
           sendSnapshotFrames((opcode, payload) => sendFrame(stream.streamId, opcode, payload), {
