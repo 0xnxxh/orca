@@ -4,6 +4,7 @@ import { parse } from 'yaml'
 import { describe, expect, it } from 'vitest'
 
 const workflow = parse(readFileSync('.github/workflows/pr.yml', 'utf8'))
+const headlessLinuxGuide = readFileSync('docs/reference/headless-linux-server.md', 'utf8')
 
 describe('headless serve shutdown PR gate', () => {
   it('packages an x64 AppImage before running the Docker signal oracle', () => {
@@ -16,5 +17,11 @@ describe('headless serve shutdown PR gate', () => {
       'node config/scripts/run-headless-serve-shutdown-docker.mjs --appimage dist/orca-linux.AppImage'
     )
     expect(steps.indexOf(shutdownStep)).toBeGreaterThan(steps.indexOf(packageStep))
+  })
+
+  it('keeps owned Xvfb alive during the documented systemd graceful stop', () => {
+    expect(headlessLinuxGuide).toMatch(
+      /\[Service\][\s\S]*?^ExecStart=.*orca-linux\.AppImage serve.*\n[\s\S]*?^KillMode=mixed$/m
+    )
   })
 })
