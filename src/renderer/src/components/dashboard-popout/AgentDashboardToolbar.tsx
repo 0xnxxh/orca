@@ -1,5 +1,4 @@
 import { ChevronDown, Filter, Search, X } from 'lucide-react'
-import { AgentStateDot } from '@/components/AgentStateDot'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -21,10 +20,7 @@ import {
   type DashboardReviewFilter,
   toggleDashboardFilter
 } from './agent-board-filtering'
-import { countAgentMapCards, type AgentMapState } from './agent-map-filter'
 import {
-  AGENT_STATE_ROWS,
-  agentStateLabel,
   projectOptions,
   REVIEW_OPTIONS,
   reviewCountsByState,
@@ -32,7 +28,6 @@ import {
   workspaceStatusOptions
 } from './agent-dashboard-filter-options'
 import { AgentDashboardFilterChips } from './AgentDashboardFilterChips'
-import { AgentMapContentFilterItems } from './AgentMapContentFilterItems'
 import { FilterOptionCount } from './FilterOptionCount'
 import { ShortcutKeyCombo } from '@/components/ShortcutKeyCombo'
 
@@ -44,16 +39,6 @@ type AgentDashboardToolbarProps = {
   onQueryChange: (query: string) => void
   filters: DashboardFilters
   onFiltersChange: (filters: DashboardFilters) => void
-  /** Map-only: the board's columns already separate agents by state. */
-  agentStates?: ReadonlySet<AgentMapState>
-  onAgentStateToggle?: (state: AgentMapState) => void
-  onAgentStatesReset?: () => void
-  showAgentlessWorkspaces?: boolean
-  agentlessWorkspaceCount?: number
-  onShowAgentlessWorkspacesChange?: (show: boolean) => void
-  /** Map-only: the directional parent→child dispatch edges. */
-  showOrchestrationLinks?: boolean
-  onShowOrchestrationLinksChange?: (show: boolean) => void
   searchInputRef: React.RefObject<HTMLInputElement | null>
   /** Replaces the built-in dropdown. The map needs a popover: its panel holds
    *  range sliders, and a Radix menu swallows the arrow keys those need. */
@@ -68,14 +53,6 @@ export function AgentDashboardToolbar({
   onQueryChange,
   filters,
   onFiltersChange,
-  agentStates,
-  onAgentStateToggle,
-  onAgentStatesReset,
-  showAgentlessWorkspaces,
-  agentlessWorkspaceCount = 0,
-  onShowAgentlessWorkspacesChange,
-  showOrchestrationLinks,
-  onShowOrchestrationLinksChange,
   searchInputRef,
   filterControl
 }: AgentDashboardToolbarProps): React.JSX.Element {
@@ -83,15 +60,7 @@ export function AgentDashboardToolbar({
   const projects = projectOptions(cards, filterOptions?.projects)
   const statuses = workspaceStatusOptions(cards, filterOptions?.workspaceStatuses)
   const reviewCounts = reviewCountsByState(cards)
-  const agentStateCounts = agentStates ? countAgentMapCards(cards) : null
-  // A muted state is an active filter, so the badge counts them like the rest.
-  const mutedStateCount = agentStates ? AGENT_STATE_ROWS.length - agentStates.size : 0
-  const activeCount =
-    activeDashboardFilterCount(filters) +
-    mutedStateCount +
-    (showAgentlessWorkspaces === true ? 1 : 0) +
-    // Links show by default, so only hiding them is a deviation worth badging.
-    (showOrchestrationLinks === false ? 1 : 0)
+  const activeCount = activeDashboardFilterCount(filters)
   const toggleProject = (id: string): void =>
     onFiltersChange({ ...filters, projects: toggleDashboardFilter(filters.projects, id) })
   const toggleStatus = (id: string): void =>
@@ -106,9 +75,6 @@ export function AgentDashboardToolbar({
     })
   const clearFilters = (): void => {
     onFiltersChange({ projects: [], workspaceStatuses: [], reviewStates: [] })
-    onAgentStatesReset?.()
-    onShowAgentlessWorkspacesChange?.(false)
-    onShowOrchestrationLinksChange?.(true)
   }
   const reviewLabel = (id: DashboardReviewFilter): string =>
     translate('dashboardPopout.filters.reviewChip', 'Review: {{state}}', {
@@ -180,37 +146,6 @@ export function AgentDashboardToolbar({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64" sideOffset={6}>
-              {showAgentlessWorkspaces !== undefined &&
-              onShowAgentlessWorkspacesChange &&
-              onShowOrchestrationLinksChange ? (
-                <AgentMapContentFilterItems
-                  showAgentlessWorkspaces={showAgentlessWorkspaces}
-                  agentlessWorkspaceCount={agentlessWorkspaceCount}
-                  onShowAgentlessWorkspacesChange={onShowAgentlessWorkspacesChange}
-                  showOrchestrationLinks={showOrchestrationLinks !== false}
-                  onShowOrchestrationLinksChange={onShowOrchestrationLinksChange}
-                />
-              ) : null}
-              {agentStates && agentStateCounts ? (
-                <>
-                  <DropdownMenuLabel>
-                    {translate('dashboardPopout.map.filters.showStates', 'Agent states')}
-                  </DropdownMenuLabel>
-                  {AGENT_STATE_ROWS.map(({ state, dotState }) => (
-                    <DropdownMenuCheckboxItem
-                      key={state}
-                      checked={agentStates.has(state)}
-                      onCheckedChange={() => onAgentStateToggle?.(state)}
-                      onSelect={(event) => event.preventDefault()}
-                    >
-                      <AgentStateDot state={dotState} size="md" />
-                      <span className="truncate">{agentStateLabel(state)}</span>
-                      <FilterOptionCount count={agentStateCounts[state]} />
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                  <DropdownMenuSeparator />
-                </>
-              ) : null}
               <DropdownMenuLabel>
                 {translate('dashboardPopout.filters.project', 'Project')}
               </DropdownMenuLabel>
@@ -282,11 +217,9 @@ export function AgentDashboardToolbar({
           projects={projects}
           statuses={statuses}
           reviewLabel={reviewLabel}
-          showAgentlessWorkspaces={showAgentlessWorkspaces === true}
           onProjectToggle={toggleProject}
           onStatusToggle={toggleStatus}
           onReviewToggle={toggleReview}
-          onAgentlessWorkspacesToggle={() => onShowAgentlessWorkspacesChange?.(false)}
           onClear={clearFilters}
         />
       ) : null}
