@@ -1,5 +1,5 @@
-import { createElement } from 'react'
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { createElement, type ReactElement } from 'react'
+import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from './rpc-client'
 import type { ConnectionState } from './types'
@@ -41,6 +41,11 @@ const HOST = {
   lastConnected: 0
 }
 
+type MountedRenderer = {
+  unmount(): void
+  update(element: ReactElement): void
+}
+
 function fakeClient(): RpcClient {
   return {
     sendRequest: vi.fn(),
@@ -71,7 +76,7 @@ describe('wanted host open recovery', () => {
     openHostLogicalClientMock.mockReturnValue(client)
 
     let observed: { client: RpcClient | null; state: ConnectionState } | null = null
-    let renderer: ReactTestRenderer | null = null
+    let renderer: MountedRenderer | null = null
     function Probe(): null {
       observed = useHostClient(HOST.id)
       return null
@@ -103,7 +108,7 @@ describe('wanted host open recovery', () => {
     openHostLogicalClientMock.mockReturnValue(client)
 
     let observed: { client: RpcClient | null; state: ConnectionState } | null = null
-    let renderer: ReactTestRenderer | null = null
+    let renderer: MountedRenderer | null = null
     function Probe(): null {
       observed = useHostClient(HOST.id)
       return null
@@ -133,7 +138,7 @@ describe('wanted host open recovery', () => {
     openHostLogicalClientMock.mockReturnValueOnce(client)
 
     let observed: { client: RpcClient | null; state: ConnectionState } | null = null
-    let renderer: ReactTestRenderer | null = null
+    let renderer: MountedRenderer | null = null
     function Probe(): null {
       observed = useHostClient(HOST.id)
       return null
@@ -162,7 +167,7 @@ describe('wanted host open recovery', () => {
       .mockResolvedValueOnce([HOST])
     openHostLogicalClientMock.mockReturnValue(client)
 
-    let renderer: ReactTestRenderer | null = null
+    let renderer: MountedRenderer | null = null
     function Probe(): null {
       useHostClient(HOST.id)
       return null
@@ -192,7 +197,7 @@ describe('wanted host open recovery', () => {
     loadHostsMock.mockRejectedValue(new Error('catalog unavailable'))
 
     let forgetHostClient: ((hostId: string) => void) | null = null
-    let renderer: ReactTestRenderer | null = null
+    let renderer: MountedRenderer | null = null
     function Probe(): null {
       useHostClient(HOST.id)
       forgetHostClient = useForgetHostClient()
@@ -243,7 +248,7 @@ describe('wanted host open recovery', () => {
       )
     }
 
-    let renderer: ReactTestRenderer | null = null
+    let renderer: MountedRenderer | null = null
     try {
       await act(async () => {
         renderer = create(createElement(App, { oldVisible: true, newVisible: false }))
@@ -276,7 +281,7 @@ describe('wanted host open recovery', () => {
       return null
     }
 
-    let renderer: ReactTestRenderer | null = null
+    let renderer: MountedRenderer | null = null
     try {
       act(() => {
         renderer = create(createElement(RpcClientProvider, null, createElement(Probe)))
@@ -310,7 +315,7 @@ describe('wanted host open recovery', () => {
       return createElement(RpcClientProvider, null, visible ? createElement(Probe) : null)
     }
 
-    let renderer: ReactTestRenderer | null = null
+    let renderer: MountedRenderer | null = null
     try {
       act(() => {
         renderer = create(createElement(App, { visible: true }))
@@ -358,7 +363,7 @@ describe('wanted host open recovery', () => {
       )
     }
 
-    let renderer: ReactTestRenderer | null = null
+    let renderer: MountedRenderer | null = null
     try {
       act(() => {
         renderer = create(createElement(App, { showReplacement: false }))
