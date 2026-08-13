@@ -181,6 +181,7 @@
           "assertions": [
             "local zsh and bash wrappers survive Fig-shaped exec replacements",
             "bash prompt rewrites are re-pinned before exec and temporary hooks are removed after normal startup",
+            "bash nounset, redirection-only exec, and failed-exec prompt-array paths preserve user shell state",
             "zsh exec targets and redirections expand against the user ZDOTDIR before wrapper re-entry",
             "zsh bare exec redirections and user exec functions retain native behavior"
           ]
@@ -199,8 +200,8 @@
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts src/main/providers/local-pty-shell-ready.test.ts src/relay/pty-shell-launch.test.ts",
           "result": "passed",
-          "durationSeconds": 4.65,
-          "summary": "All 107 focused local, daemon, and relay assertions passed, including real zsh/bash exec restoration, command modifiers, ZDOTDIR expansion ordering, and DEBUG trap invocation preservation when the user enables functrace during startup."
+          "durationSeconds": 6.19,
+          "summary": "All 110 focused local, daemon, and relay assertions passed, including real zsh/bash exec restoration, command modifiers, ZDOTDIR expansion ordering, nounset and prompt-array cleanup, redirection-only exec behavior, and DEBUG trap invocation preservation when the user enables functrace during startup."
         }
       ],
       "runtimeBudget": {
@@ -213,7 +214,7 @@
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "PR head 05c0ac91dd1 failed the exact exec \"$ZDOTDIR/zsh-replacement\" oracle with status 127 after expanding the target inside Orca's wrapper directory. The just-in-time shim candidate passed that oracle plus all 107 focused assertions. The pre-fix Bash guard reported USER_DEBUG_NESTED=0 after a profile enabled functrace; the reviewed guard reports USER_DEBUG_NESTED=1 while keeping the ordinary non-functrace trap unmultiplied. The existing #13767 red/green evidence independently proves the original replacement-shell readiness failure."
+        "evidence": "PR head 05c0ac91dd1 failed the exact exec \"$ZDOTDIR/zsh-replacement\" oracle with status 127 after expanding the target inside Orca's wrapper directory. The just-in-time shim candidate passed that oracle. The pre-fix Bash guard reported USER_DEBUG_NESTED=0 after a profile enabled functrace; the reviewed guard reports USER_DEBUG_NESTED=1 while keeping the ordinary non-functrace trap unmultiplied. Exact head 205e63e4338 armed prompt hooks for redirection-only exec, failed with an unbound PROMPT_COMMAND under nounset, and ran a trailing prompt-array element five times; the reviewed candidate keeps the bridge unarmed, restores the replacement hooks, and runs each array element once. All 110 focused assertions pass. The existing #13767 red/green evidence independently proves the original replacement-shell readiness failure."
       },
       "performanceBudget": {
         "required": true,

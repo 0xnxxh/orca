@@ -63,6 +63,7 @@ __orca_install_exec_prompt_hooks() {
     unset PROMPT_COMMAND
     PROMPT_COMMAND="$_orca_exec_joined"
   fi
+  PROMPT_COMMAND="\${PROMPT_COMMAND:-}"
   PROMPT_COMMAND="\${PROMPT_COMMAND//__orca_exec_osc133_precmd;/}"
   PROMPT_COMMAND="\${PROMPT_COMMAND//;__orca_exec_osc133_precmd/}"
   PROMPT_COMMAND="\${PROMPT_COMMAND//__orca_exec_osc133_prompt_done;/}"
@@ -90,7 +91,10 @@ __orca_startup_command_is_exec() {
   local _orca_exec_command="$1" _orca_exec_char _orca_exec_previous
   local _orca_exec_word="" _orca_exec_quote="" _orca_exec_name=""
   local _orca_exec_index=0 _orca_exec_nested_parens=0 _orca_exec_nested_braces=0
-  local _orca_exec_modifier=0 _orca_exec_escaped=0
+  local _orca_exec_modifier=0 _orca_exec_escaped=0 _orca_exec_found=0
+  local _orca_exec_has_redirection=0 _orca_exec_skip_option_value=0
+  local _orca_exec_skip_redirection_target=0 _orca_exec_options_done=0
+  local _orca_exec_redirection_prefix=""
   while (( _orca_exec_index <= \${#_orca_exec_command} )); do
     if (( _orca_exec_index == \${#_orca_exec_command} )); then
       _orca_exec_char=" "
@@ -126,23 +130,62 @@ __orca_startup_command_is_exec() {
     elif [[ "$_orca_exec_char" == "{" && "$_orca_exec_previous" == "$" ]]; then
       _orca_exec_nested_braces=1
       _orca_exec_word="\${_orca_exec_word}$_orca_exec_char"
+    elif [[ "$_orca_exec_char" == "<" || "$_orca_exec_char" == ">" ]]; then
+      if (( !_orca_exec_has_redirection )); then
+        _orca_exec_redirection_prefix="$_orca_exec_word"
+        _orca_exec_has_redirection=1
+      fi
+      _orca_exec_word="\${_orca_exec_word}$_orca_exec_char"
     elif [[ "$_orca_exec_char" == [[:space:]] ]]; then
       if [[ -n "$_orca_exec_word" ]]; then
-        if [[ "$_orca_exec_word" == "exec" ]]; then
-          return 0
+        if (( !_orca_exec_found && _orca_exec_has_redirection )) &&
+          [[ "$_orca_exec_redirection_prefix" == "exec" ]]; then
+          _orca_exec_found=1
+          _orca_exec_redirection_prefix=""
         fi
-        _orca_exec_name="\${_orca_exec_word%%=*}"
-        if (( !_orca_exec_modifier )) && [[ "$_orca_exec_word" == *=* &&
-          "$_orca_exec_name" == [a-zA-Z_]* && "$_orca_exec_name" != *[!a-zA-Z0-9_]* ]]; then
-          :
-        elif (( !_orca_exec_modifier )) && [[ "$_orca_exec_word" == "builtin" || "$_orca_exec_word" == "command" ]]; then
-          _orca_exec_modifier=1
-        elif (( _orca_exec_modifier )) && [[ "$_orca_exec_word" == -* ]]; then
-          :
+        if (( _orca_exec_found )); then
+          if (( _orca_exec_skip_redirection_target )); then
+            _orca_exec_skip_redirection_target=0
+          elif (( _orca_exec_has_redirection )); then
+            if [[ -n "$_orca_exec_redirection_prefix" &&
+              "$_orca_exec_redirection_prefix" == *[!0-9]* &&
+              ! "$_orca_exec_redirection_prefix" =~ ^[{][a-zA-Z_][a-zA-Z0-9_]*[}]$ ]]; then
+              return 0
+            fi
+            case "$_orca_exec_word" in
+              *">"|*"<"|*">&"|*"<&"|*"<<-"|*">|") _orca_exec_skip_redirection_target=1 ;;
+            esac
+          elif (( _orca_exec_skip_option_value )); then
+            _orca_exec_skip_option_value=0
+          elif (( _orca_exec_options_done )); then
+            return 0
+          else
+            case "$_orca_exec_word" in
+              -a) _orca_exec_skip_option_value=1 ;;
+              -c|-l|-cl|-lc) ;;
+              --) _orca_exec_options_done=1 ;;
+              -*) return 1 ;;
+              *) return 0 ;;
+            esac
+          fi
+        elif [[ "$_orca_exec_word" == "exec" ]]; then
+          _orca_exec_found=1
         else
-          return 1
+          _orca_exec_name="\${_orca_exec_word%%=*}"
+          if (( !_orca_exec_modifier )) && [[ "$_orca_exec_word" == *=* &&
+            "$_orca_exec_name" == [a-zA-Z_]* && "$_orca_exec_name" != *[!a-zA-Z0-9_]* ]]; then
+            :
+          elif (( !_orca_exec_modifier )) && [[ "$_orca_exec_word" == "builtin" || "$_orca_exec_word" == "command" ]]; then
+            _orca_exec_modifier=1
+          elif (( _orca_exec_modifier )) && [[ "$_orca_exec_word" == -* ]]; then
+            :
+          else
+            return 1
+          fi
         fi
         _orca_exec_word=""
+        _orca_exec_has_redirection=0
+        _orca_exec_redirection_prefix=""
       fi
     else
       _orca_exec_word="\${_orca_exec_word}$_orca_exec_char"
@@ -203,8 +246,10 @@ __orca_remove_exec_prompt_hooks() {
       [[ -n "$_orca_exec_prompt_part" ]] || continue
       _orca_exec_joined="\${_orca_exec_joined}\${_orca_exec_joined:+;}$_orca_exec_prompt_part"
     done
+    unset PROMPT_COMMAND
     PROMPT_COMMAND="$_orca_exec_joined"
   fi
+  PROMPT_COMMAND="\${PROMPT_COMMAND:-}"
   PROMPT_COMMAND="\${PROMPT_COMMAND//__orca_exec_osc133_precmd;/}"
   PROMPT_COMMAND="\${PROMPT_COMMAND//;__orca_exec_osc133_precmd/}"
   PROMPT_COMMAND="\${PROMPT_COMMAND//__orca_exec_osc133_prompt_done;/}"

@@ -606,7 +606,7 @@ describePosix('local PTY shell-ready launch config', () => {
         'if [[ -z "${ORCA_EXEC_REPRO_DONE:-}" ]]; then',
         '  export ORCA_EXEC_REPRO_DONE=1',
         '  PROMPT_COMMAND=\'printf "USER_EXEC_PROMPT\\n"\'',
-        '  Q_START_TEXT="local seed" exec -a figterm-test bash --noprofile --norc -l -i',
+        '  Q_START_TEXT="local seed" exec -a 3> /dev/null figterm-test bash --noprofile --norc -l -i',
         'fi',
         ''
       ].join('\n')
@@ -639,6 +639,73 @@ describePosix('local PTY shell-ready launch config', () => {
     expect(output).not.toContain('LEAKprompt_done')
     expect(output).toContain('FUNCTRACE_OFF')
     expect(output).toContain('CHILD_TEMP_PC=unset')
+  })
+
+  itWithBash('does not arm bash exec hooks for redirection-only commands', async () => {
+    const { getBashShellReadyRcfileContent } = await importFreshLocalPtyShellReady()
+    writeFileSync(
+      join(userDataPath, '.bash_profile'),
+      [
+        'unset PROMPT_COMMAND',
+        'exec 3>"$HOME/startup-redirection"',
+        'printf "REDIRECTION_PC=%s:ARMED=%s\\n" "${PROMPT_COMMAND+set}" "$_orca_exec_prompt_hooks_installed"',
+        'exec 3>&-',
+        ''
+      ].join('\n')
+    )
+
+    const output = runInteractiveBashRcfile(getBashShellReadyRcfileContent(), userDataPath)
+
+    expect(output).toContain('REDIRECTION_PC=:ARMED=0')
+  })
+
+  itWithBash('survives nounset before an exec replacement without PROMPT_COMMAND', async () => {
+    const { getBashShellReadyRcfileContent } = await importFreshLocalPtyShellReady()
+    writeFileSync(
+      join(userDataPath, '.bash_profile'),
+      [
+        'if [[ -z "${ORCA_EXEC_REPRO_DONE:-}" ]]; then',
+        '  export ORCA_EXEC_REPRO_DONE=1',
+        '  unset PROMPT_COMMAND',
+        '  set -u',
+        '  exec -a figterm-test bash --noprofile --norc -l -i',
+        'fi',
+        ''
+      ].join('\n')
+    )
+
+    const output = runInteractiveBashRcfile(
+      getBashShellReadyRcfileContent(),
+      userDataPath,
+      'printf \'NOUNSET_EXEC_PC=%s\\n\' "$PROMPT_COMMAND"\nexit 0\n'
+    )
+
+    expect(output).toContain('NOUNSET_EXEC_PC=__orca_exec_osc133_precmd')
+    expect(output).not.toContain('unbound variable')
+  })
+
+  itWithBash('flattens a prompt array replaced after a failed exec', async () => {
+    const { getBashShellReadyRcfileContent } = await importFreshLocalPtyShellReady()
+    writeFileSync(
+      join(userDataPath, '.bash_profile'),
+      [
+        'PROMPT_COMMAND=(\'printf "ARRAY_ZERO\\n"\' \'printf "ARRAY_ONE\\n"\')',
+        'shopt -s execfail',
+        'exec /orca-missing-replacement 2>/dev/null',
+        'PROMPT_COMMAND=(\'printf "ARRAY_ZERO\\n"\' \'printf "ARRAY_ONE\\n"\')',
+        ''
+      ].join('\n')
+    )
+
+    const output = runInteractiveBashRcfile(
+      getBashShellReadyRcfileContent(),
+      userDataPath,
+      'exit 0\n'
+    )
+
+    expect(output.split('ARRAY_ZERO')).toHaveLength(2)
+    expect(output.split('ARRAY_ONE')).toHaveLength(2)
+    expect(output).not.toContain('__orca_exec_osc133_precmd: command not found')
   })
 
   itWithBash('preserves user-enabled functrace and nested DEBUG trap behavior', async () => {
