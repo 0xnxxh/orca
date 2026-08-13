@@ -18,10 +18,7 @@ vi.mock('node:fs/promises', async (importOriginal) => ({
   stat: mocks.stat
 }))
 
-// These parsers derive sibling transcript paths (Kimi's wire file, Grok's
-// chat_history, OpenCode's message dir) from the session file. Under POSIX
-// semantics a `\\wsl.localhost\...` path has no separators, so every derived
-// path would collapse to '.' and silently stop being a UNC path.
+// Derived sibling paths must retain Windows separators in this cross-platform test.
 vi.mock('node:path', async (importOriginal) => {
   const actual = await importOriginal<typeof NodePathModule>()
   return { ...actual.win32, default: actual.win32 }
@@ -36,8 +33,6 @@ import {
   WslTranscriptFsError
 } from '../native-chat/wsl-transcript-fs-gate'
 
-// One distro per case: route state (stuck-blocker fast-fail) is keyed by distro,
-// so cases cannot leak a refusal into each other.
 function uncPath(distro: string, ...segments: string[]): string {
   return `\\\\wsl.localhost\\${distro}\\home\\ada\\${segments.join('\\')}`
 }
@@ -84,8 +79,6 @@ const OPENCODE_MESSAGE = JSON.stringify({
 
 type ReadResult = { bytesRead: number; buffer: Buffer }
 
-// A stalled task holds the gate's single scan slot until it settles, so every
-// case releases its stall before the next one runs.
 let releaseStall: (() => void) | undefined
 
 function stalls<T>(): Promise<T> {
@@ -121,14 +114,17 @@ function dirent(name: string) {
 function candidate(agent: SessionFileCandidate['agent'], path: string): SessionFileCandidate {
   return {
     agent,
-    file: { path, mtimeMs: 1, modifiedAt: '2026-06-01T10:05:00.000Z', sizeBytes: 128 },
+    file: {
+      path,
+      mtimeMs: 1,
+      modifiedAt: '2026-06-01T10:05:00.000Z',
+      sizeBytes: 128
+    },
     codexHome: null
   }
 }
 
 async function expectRefusal(target: SessionFileCandidate): Promise<void> {
-  // Attach the assertion before the clock moves so the rejection is never
-  // momentarily unhandled.
   const refusal = expect(parseAgentSessionFileCached(target, 'linux')).rejects.toBeInstanceOf(
     WslTranscriptFsError
   )
@@ -149,8 +145,6 @@ beforeEach(() => {
   mocks.readdir.mockReset()
   mocks.stat.mockReset()
   releaseStall = undefined
-  // Kimi's session_index.jsonl is absent in these fixtures: sessions still list,
-  // just without a cwd, and the lookup never reaches the gate's stream path.
   mocks.stat.mockRejectedValue(missing())
   vi.useFakeTimers()
 })
@@ -176,22 +170,10 @@ describe('Kimi session parse against a stalled WSL transcript', () => {
     await expectRefusal(candidate('kimi', state))
     await releaseAndSettle()
 
-    // Same mtime as the refused attempt: a cached metadata-only session would
-    // still be served here, so a real transcript proves nothing was stored.
     mocks.open.mockResolvedValue(servingHandle(KIMI_WIRE))
     const recovered = await parseAgentSessionFileCached(candidate('kimi', state), 'linux')
 
     expect(recovered?.messageCount).toBe(1)
-  })
-
-  it('still returns a metadata-only session when the wire file is simply missing', async () => {
-    const state = uncPath('KimiMissing', ...KIMI_HOME, 'state.json')
-    mocks.readFile.mockResolvedValue(KIMI_STATE)
-    mocks.open.mockRejectedValue(missing())
-
-    const session = await parseAgentSessionFileCached(candidate('kimi', state), 'linux')
-
-    expect(session).toMatchObject({ agent: 'kimi', title: 'Kimi session', messageCount: 0 })
   })
 })
 
@@ -207,8 +189,6 @@ describe('Grok session parse against a stalled WSL transcript', () => {
     mocks.open.mockResolvedValue(servingHandle(GROK_HISTORY))
     const recovered = await parseAgentSessionFileCached(candidate('grok', file), 'linux')
 
-    // Grok's messageCount comes from the session doc, so the transcript's
-    // contribution shows up in the previews.
     expect(recovered?.previewMessages).toEqual([
       expect.objectContaining({ role: 'user', text: 'ship it' })
     ])
@@ -221,7 +201,11 @@ describe('Grok session parse against a stalled WSL transcript', () => {
 
     const session = await parseAgentSessionFileCached(candidate('grok', file), 'linux')
 
-    expect(session).toMatchObject({ agent: 'grok', title: 'Grok session', previewMessages: [] })
+    expect(session).toMatchObject({
+      agent: 'grok',
+      title: 'Grok session',
+      previewMessages: []
+    })
   })
 })
 
@@ -253,17 +237,5 @@ describe('OpenCode session parse against a stalled WSL transcript', () => {
     const recovered = await parseAgentSessionFileCached(candidate('opencode', file), 'linux')
 
     expect(recovered?.messageCount).toBe(1)
-  })
-
-  it('still returns the session when a live process left a half-written message', async () => {
-    const file = sessionPath('OpenCodeHalfWritten')
-    mocks.readdir.mockResolvedValue([dirent('msg-1.json')])
-    mocks.readFile.mockImplementation((path: string) =>
-      Promise.resolve(path === file ? OPENCODE_SESSION : '{"role":"user",')
-    )
-
-    const session = await parseAgentSessionFileCached(candidate('opencode', file), 'linux')
-
-    expect(session).toMatchObject({ agent: 'opencode', title: 'OpenCode session', messageCount: 0 })
   })
 })

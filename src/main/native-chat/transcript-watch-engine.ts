@@ -1,6 +1,6 @@
 import type { NativeChatMessage, NativeChatTurnLifecycle } from '../../shared/native-chat-types'
-import { boundaryFingerprint } from './transcript-boundary-fingerprint'
 import {
+  boundaryFingerprint,
   readTranscriptFileVersion,
   transcriptFileVersionChanged,
   type TranscriptFileVersion

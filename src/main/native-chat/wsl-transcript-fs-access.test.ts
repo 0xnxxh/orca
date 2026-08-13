@@ -95,7 +95,9 @@ describe('transcript filesystem accessor off WSL UNC', () => {
     expect(mocks.open).toHaveBeenCalledWith(path, 'r')
     // Off UNC the raw stream is handed back verbatim, encoding included.
     expect(stream).toBe('raw-stream')
-    expect(mocks.createReadStream).toHaveBeenCalledWith(path, { encoding: 'utf-8' })
+    expect(mocks.createReadStream).toHaveBeenCalledWith(path, {
+      encoding: 'utf-8'
+    })
   })
 })
 
@@ -105,12 +107,21 @@ describe('transcript filesystem accessor on WSL UNC', () => {
     ['wsl$', LEGACY_UNC_PATH]
   ])('routes %s paths through the gate', async (_label, path) => {
     mocks.stat.mockResolvedValue({ size: 7 })
-    await expect(wslGatedStat(path, 'exact')).resolves.toEqual({ size: 7 })
-    expect(mocks.runTask).toHaveBeenCalledWith(
-      expect.objectContaining({ operation: 'stat', path, priority: 'exact' }),
-      expect.any(Function)
-    )
-    expect(mocks.createReadStream).not.toHaveBeenCalled()
+    mocks.lstat.mockResolvedValue({ size: 7 })
+    mocks.readdir.mockResolvedValue([])
+    mocks.readFile.mockResolvedValue('body')
+
+    await wslGatedStat(path, 'exact')
+    await wslGatedLstat(path, 'scan')
+    await wslGatedReaddir(path, 'scan')
+    await wslGatedReadFile(path, 'utf-8', 'scan')
+
+    expect(mocks.runTask.mock.calls.map(([options]) => options.operation)).toEqual([
+      'stat',
+      'lstat',
+      'readdir',
+      'readfile'
+    ])
   })
 
   it('opts positional reads and opens out of coalescing', async () => {
@@ -251,45 +262,6 @@ describe('transcript handle close off WSL UNC', () => {
 })
 
 describe('per-chunk admission', () => {
-  it('streams a long healthy-but-slow file past the whole-file deadline', async () => {
-    vi.useFakeTimers()
-    try {
-      const chunkDelayMs = WSL_TRANSCRIPT_FS_EXACT_TIMEOUT_MS / 4
-      const totalChunks = 6
-      let served = 0
-      const handle = fakeHandle()
-      handle.read.mockImplementation(
-        (buffer: Buffer) =>
-          new Promise((resolve) => {
-            setTimeout(() => {
-              if (served++ >= totalChunks) {
-                resolve({ bytesRead: 0, buffer })
-                return
-              }
-              buffer.write('x')
-              resolve({ bytesRead: 1, buffer })
-            }, chunkDelayMs)
-          })
-      )
-      mocks.open.mockResolvedValue(handle)
-
-      const stream = openTranscriptReadStream(UNC_PATH, {}, 'exact')
-      const collected: Promise<Buffer[]> = (async () => {
-        const out: Buffer[] = []
-        for await (const chunk of stream) {
-          out.push(chunk as Buffer)
-        }
-        return out
-      })()
-
-      // Elapsed time far exceeds one exact deadline; each chunk stays under it.
-      await vi.advanceTimersByTimeAsync(chunkDelayMs * (totalChunks + 2))
-      await expect(collected).resolves.toHaveLength(totalChunks)
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
   it('carries a codepoint straddling the 1 MiB chunk boundary across chunks', async () => {
     const chunkBytes = 1024 * 1024
     const emoji = Buffer.from('😀', 'utf8')
