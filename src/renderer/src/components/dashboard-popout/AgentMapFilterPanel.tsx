@@ -27,19 +27,14 @@ import {
   summarizeTimeRanges,
   type AgentMapSectionSummary
 } from './agent-map-filter-summaries'
-import {
-  ALL_AGENT_MAP_HOSTS,
-  countAgentMapAgentTypes,
-  countAgentMapCards,
-  type AgentMapHostCounts
-} from './agent-map-filter'
+import { countAgentMapAgentTypes, countAgentMapCards } from './agent-map-filter'
 import { AGENT_MAP_QUICK_VIEWS } from './agent-map-quick-views'
 import { AGENT_MAP_TIME_FIELDS, type AgentMapTimeField } from './agent-map-time-filter'
 import { AgentMapFilterCheckbox } from './AgentMapFilterCheckbox'
 import { AgentMapFilterSection } from './AgentMapFilterSection'
 import { AgentMapTimeRangeField } from './AgentMapTimeRangeField'
 import type { AgentMapFilterControls } from './useAgentMapFilters'
-import { hostLabel, timeFieldLabel } from './agent-map-filter-labels'
+import { timeFieldLabel } from './agent-map-filter-labels'
 
 type AgentMapFilterPanelProps = {
   cards: DashboardCard[]
@@ -53,10 +48,9 @@ type AgentMapFilterPanelProps = {
   onShowAgentlessWorkspacesChange: (show: boolean) => void
   showOrchestrationLinks: boolean
   onShowOrchestrationLinksChange: (show: boolean) => void
-  hostCounts: AgentMapHostCounts
 }
 
-type SectionId = 'quick' | 'host' | 'state' | 'provider' | 'time' | 'workspace' | 'content'
+type SectionId = 'quick' | 'state' | 'agent' | 'time' | 'workspace' | 'content'
 
 export function AgentMapFilterPanel({
   cards,
@@ -69,8 +63,7 @@ export function AgentMapFilterPanel({
   showAgentlessWorkspaces,
   onShowAgentlessWorkspacesChange,
   showOrchestrationLinks,
-  onShowOrchestrationLinksChange,
-  hostCounts
+  onShowOrchestrationLinksChange
 }: AgentMapFilterPanelProps): React.JSX.Element {
   const [open, setOpen] = useState<ReadonlySet<SectionId>>(() => new Set<SectionId>(['quick']))
   const toggleSection = (id: SectionId, next: boolean): void =>
@@ -89,7 +82,6 @@ export function AgentMapFilterPanel({
   const projects = projectOptions(cards, filterOptions?.projects)
   const statuses = workspaceStatusOptions(cards, filterOptions?.workspaceStatuses)
   const reviewCounts = reviewCountsByState(cards)
-  const hosts = ALL_AGENT_MAP_HOSTS.filter((host) => hostCounts[host] > 0)
   const agentTypes = [...agentTypeCounts.keys()]
 
   const boardActive = activeDashboardFilterCount(filters)
@@ -208,25 +200,6 @@ export function AgentMapFilterPanel({
             </div>
           </AgentMapFilterSection>
 
-          {hosts.length > 1 ? (
-            <AgentMapFilterSection
-              title={translate('dashboardPopout.map.filters.hosts', 'Hosts')}
-              summary={summarizeSelection(map.hosts, hosts.length, hostLabel)}
-              open={open.has('host')}
-              onOpenChange={(next) => toggleSection('host', next)}
-            >
-              {hosts.map((host) => (
-                <AgentMapFilterCheckbox
-                  key={host}
-                  label={hostLabel(host)}
-                  checked={map.hosts.has(host)}
-                  count={hostCounts[host]}
-                  onToggle={() => map.toggleHost(host)}
-                />
-              ))}
-            </AgentMapFilterSection>
-          ) : null}
-
           <AgentMapFilterSection
             title={translate('dashboardPopout.map.filters.showStates', 'Agent states')}
             summary={summarizeSelection(map.states, AGENT_STATE_ROWS.length, agentStateLabel)}
@@ -247,10 +220,10 @@ export function AgentMapFilterPanel({
 
           {agentTypes.length > 1 ? (
             <AgentMapFilterSection
-              title={translate('dashboardPopout.map.filters.providers', 'Providers')}
+              title={translate('dashboardPopout.map.filters.agents', 'Agents')}
               summary={summarizeSelection(map.agentTypes, agentTypes.length, (id) => id)}
-              open={open.has('provider')}
-              onOpenChange={(next) => toggleSection('provider', next)}
+              open={open.has('agent')}
+              onOpenChange={(next) => toggleSection('agent', next)}
             >
               {agentTypes.map((agentType) => (
                 <AgentMapFilterCheckbox

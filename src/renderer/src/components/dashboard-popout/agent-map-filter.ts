@@ -1,14 +1,9 @@
-import type {
-  DashboardCard,
-  DashboardCardHostKind,
-  DashboardWorkspace
-} from '../../../../shared/dashboard-snapshot'
+import type { DashboardCard, DashboardCardHostKind } from '../../../../shared/dashboard-snapshot'
 import { agentMapNodeStatus } from './agent-map-node-metadata'
 import { matchesAgentMapTimeRanges, type AgentMapTimeRanges } from './agent-map-time-filter'
 
 export type AgentMapState = 'attention' | 'working' | 'done' | 'idle'
 export type AgentMapCounts = Record<AgentMapState, number>
-export type AgentMapHostCounts = Record<DashboardCardHostKind, number>
 
 export const ALL_AGENT_MAP_HOSTS: readonly DashboardCardHostKind[] = [
   'local',
@@ -84,20 +79,6 @@ export function filterAgentMapCards({
     }
     return true
   })
-}
-
-export function countAgentMapHosts(
-  cards: DashboardCard[],
-  workspaces: readonly DashboardWorkspace[] = []
-): AgentMapHostCounts {
-  const counts: AgentMapHostCounts = { local: 0, ssh: 0, wsl: 0, remote: 0 }
-  for (const card of cards) {
-    counts[card.hostKind ?? 'local'] += 1
-  }
-  for (const workspace of workspaces) {
-    counts[workspace.hostKind] += 1
-  }
-  return counts
 }
 
 export function countAgentMapCards(cards: DashboardCard[]): AgentMapCounts {

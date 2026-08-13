@@ -118,8 +118,8 @@ export function AgentMapFilterChips({
       onRemove: () => onShowOrchestrationLinksChange(true)
     })
   }
-  // Host and provider chips need the option universe to know what "all" is, so
-  // they ride the panel's summary rather than a chip.
+  // Agent chips need the option universe to know what "all" is, so they ride
+  // the panel's summary rather than a chip.
 
   if (chips.length === 0) {
     return null

@@ -273,7 +273,7 @@ describe('AgentKanbanBoard', () => {
     expect(screen.getByRole('button', { name: /^Filter/ })).not.toHaveAccessibleName(/1/)
   })
 
-  it('applies host selection to workspaces without agents', async () => {
+  it('shows agentless workspaces across hosts without a host filter', async () => {
     renderBoard([card({ paneKey: 'busy' })], {
       workspaces: [
         workspace(),
@@ -290,13 +290,15 @@ describe('AgentKanbanBoard', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^Filter/ }, MAP_LOAD_TIMEOUT))
     fireEvent.click(screen.getByRole('button', { name: /^Workspace/ }))
     fireEvent.click(screen.getByRole('checkbox', { name: /Workspaces without agents/ }))
-    fireEvent.click(screen.getByRole('button', { name: /^Hosts/ }))
-    fireEvent.click(screen.getByRole('checkbox', { name: /Local/ }))
     fireEvent.keyDown(document.body, { key: 'Escape' })
 
     expect(
-      screen.queryByRole('button', { name: 'Open Local empty worktree details' })
-    ).not.toBeInTheDocument()
+      await screen.findByRole(
+        'button',
+        { name: 'Open Local empty worktree details' },
+        MAP_LOAD_TIMEOUT
+      )
+    ).toBeInTheDocument()
     expect(
       await screen.findByRole(
         'button',

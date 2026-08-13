@@ -14,11 +14,7 @@ import {
   filterDashboardWorkspaces,
   type DashboardFilters
 } from './agent-board-filtering'
-import {
-  countAgentMapAgentTypes,
-  countAgentMapHosts,
-  filterAgentMapCards
-} from './agent-map-filter'
+import { countAgentMapAgentTypes, filterAgentMapCards } from './agent-map-filter'
 import { selectAgentlessMapWorkspaces } from './agent-map-workspace-visibility'
 import { AgentMapFilterChips } from './AgentMapFilterChips'
 import { AgentMapFilterPanel } from './AgentMapFilterPanel'
@@ -84,11 +80,6 @@ export function AgentDashboardMapView({
       }),
     [snapshot.cards, snapshot.workspaces]
   )
-  // Counted before host muting, so a muted host keeps its row and its count.
-  const hostCounts = useMemo(
-    () => countAgentMapHosts(snapshot.cards, agentlessWorkspaces),
-    [agentlessWorkspaces, snapshot.cards]
-  )
   // The map's own facets run here so the panel can report one shown-count that
   // matches what the canvas actually draws.
   const visibleCards = useMemo(
@@ -137,7 +128,6 @@ export function AgentDashboardMapView({
             filters={filters}
             onFiltersChange={onFiltersChange}
             map={mapFilters}
-            hostCounts={hostCounts}
             agentlessWorkspaceCount={agentlessWorkspaces.length}
             showAgentlessWorkspaces={showAgentlessWorkspaces}
             onShowAgentlessWorkspacesChange={setShowAgentlessWorkspaces}

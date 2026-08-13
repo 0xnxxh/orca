@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import type { DashboardCardHostKind } from '../../../../shared/dashboard-snapshot'
-import { ALL_AGENT_MAP_HOSTS, type AgentMapState } from './agent-map-filter'
+import type { AgentMapState } from './agent-map-filter'
 import {
   applyAgentMapQuickView,
   emptyAgentMapFilterState,
@@ -19,7 +18,6 @@ export type AgentMapFilterControls = AgentMapFilterState & {
   activeCount: number
   toggleState: (state: AgentMapState) => void
   resetStates: () => void
-  toggleHost: (host: DashboardCardHostKind) => void
   toggleAgentType: (agentType: string) => void
   setTimeRange: (field: AgentMapTimeField, range: AgentMapTimeRange) => void
   resetTimeRanges: () => void
@@ -63,7 +61,6 @@ export function useAgentMapFilters(agentTypes: readonly string[]): AgentMapFilte
 
   const activeCount =
     (filters.states.size === ALL_AGENT_MAP_STATES.length ? 0 : 1) +
-    (filters.hosts.size === ALL_AGENT_MAP_HOSTS.length ? 0 : 1) +
     (enabledAgentTypes.size === agentTypes.length ? 0 : 1) +
     activeAgentMapTimeFields(filters.timeRanges).length +
     (filters.unreadOnly ? 1 : 0) +
@@ -80,10 +77,6 @@ export function useAgentMapFilters(agentTypes: readonly string[]): AgentMapFilte
     resetStates: useCallback(
       () => patch({ states: new Set<AgentMapState>(ALL_AGENT_MAP_STATES) }),
       [patch]
-    ),
-    toggleHost: useCallback(
-      (host) => setFilters((c) => ({ ...c, hosts: toggle(c.hosts, host) })),
-      []
     ),
     toggleAgentType: useCallback(
       (agentType) => setMutedAgentTypes((current) => toggle(current, agentType)),

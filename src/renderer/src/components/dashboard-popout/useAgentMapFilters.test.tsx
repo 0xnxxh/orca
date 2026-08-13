@@ -20,7 +20,7 @@ describe('useAgentMapFilters', () => {
     expect(hook.result.current.activeCount).toBe(1)
   })
 
-  it('preserves a muted provider across disappearance and reappearance', () => {
+  it('preserves a muted agent type across disappearance and reappearance', () => {
     let agentTypes = ['claude', 'codex']
     const hook = renderHook(() => useAgentMapFilters(agentTypes))
 
@@ -38,7 +38,7 @@ describe('useAgentMapFilters', () => {
     expect(hook.result.current.activeCount).toBe(1)
   })
 
-  it('enables a newly discovered provider', () => {
+  it('enables a newly discovered agent type', () => {
     let agentTypes = ['claude']
     const hook = renderHook(() => useAgentMapFilters(agentTypes))
 

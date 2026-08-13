@@ -1,15 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type {
-  DashboardCard,
-  DashboardCardHostKind,
-  DashboardWorkspace
-} from '../../../../shared/dashboard-snapshot'
-import {
-  agentMapState,
-  countAgentMapCards,
-  countAgentMapHosts,
-  filterAgentMapCards
-} from './agent-map-filter'
+import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import { agentMapState, countAgentMapCards, filterAgentMapCards } from './agent-map-filter'
 
 const NOW = 2_000_000_000
 
@@ -33,18 +24,6 @@ function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
     unseen: false,
     hostKind: 'local',
     ...overrides
-  }
-}
-
-function workspace(worktreeId: string, hostKind: DashboardCardHostKind): DashboardWorkspace {
-  return {
-    repoId: 'repo-1',
-    worktreeId,
-    repoName: 'Orca',
-    worktreeName: worktreeId,
-    hostKind,
-    executionHostId: hostKind === 'local' ? 'local' : `ssh:${worktreeId}`,
-    workspaceKind: 'worktree'
   }
 }
 
@@ -113,15 +92,6 @@ describe('agent map filtering', () => {
         enabledHosts: new Set(['ssh'])
       })
     ).toEqual([])
-  })
-
-  it('counts cards and agentless workspaces into the same host tallies', () => {
-    expect(
-      countAgentMapHosts(
-        [card({ paneKey: 'a' }), card({ paneKey: 'b', hostKind: 'ssh' })],
-        [workspace('w-1', 'ssh'), workspace('w-2', 'wsl')]
-      )
-    ).toEqual({ local: 1, ssh: 2, wsl: 1, remote: 0 })
   })
 
   it('counts all four display states', () => {

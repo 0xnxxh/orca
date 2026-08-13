@@ -15371,7 +15371,6 @@
       },
       "filters": {
         "showStates": "Agent states",
-        "hosts": "Hosts",
         "agentlessWorkspaces": "Workspaces without agents",
         "orchestrationLinks": "Orchestration links",
         "orchestrationLinksHidden": "Orchestration links hidden",
@@ -15380,7 +15379,7 @@
         "reset": "Reset",
         "ofTotalAgents": "of {{total}} agents shown",
         "quickViews": "Quick views",
-        "providers": "Providers",
+        "agents": "Agents",
         "time": "Time",
         "lifespan": "Session lifespan",
         "sinceMessage": "Since last message",
