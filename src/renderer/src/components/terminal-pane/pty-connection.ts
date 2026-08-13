@@ -1136,6 +1136,7 @@ export function connectPanePty(
   let resetRendererOrderedSeqForPtyExit: (exitedPtyId: string) => void = () => {}
   let cleanupStartupDraftPasteTimers = (): void => {}
   let unregisterE2ePtyDataInjection = (): void => {}
+  let resumePendingReplayDataDrain = (): void => {}
   let startupInjectTimer: ReturnType<typeof setTimeout> | null = null
   let agentTaskCompleteNotificationGraceTimer: ReturnType<typeof setTimeout> | null = null
   let agentTaskCompleteNotificationMaxTimer: ReturnType<typeof setTimeout> | null = null
@@ -4349,6 +4350,28 @@ export function connectPanePty(
       }
     }
   }
+  const reportRemoteViewportOnReveal = (): void => {
+    const revealedPtyId = transport.getPtyId()
+    if (
+      !revealedPtyId ||
+      !isRemoteRuntimePtyId(revealedPtyId) ||
+      pane.container.clientWidth <= 0 ||
+      pane.container.clientHeight <= 0 ||
+      shouldSuppressDesktopPtyResize()
+    ) {
+      return
+    }
+    safeFitAndThen(pane, 'remote-reveal-viewport', () => {
+      if (disposed || transport.getPtyId() !== revealedPtyId || shouldSuppressDesktopPtyResize()) {
+        return
+      }
+      const cols = pane.terminal.cols
+      const rows = pane.terminal.rows
+      if (Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
+        transport.resize(cols, rows)
+      }
+    })
+  }
   let pendingForegroundGridDriftCheckRaf: number | null = null
   let lastForegroundGridDriftCheckAt = Number.NEGATIVE_INFINITY
   const readProposedTerminalGrid = (): { cols: number; rows: number } | null => {
@@ -4421,6 +4444,9 @@ export function connectPanePty(
     pendingGeometryReportRaf = null
     if (disposed) {
       return
+    }
+    if (pane.container.clientWidth > 0 && pane.container.clientHeight > 0) {
+      resumePendingReplayDataDrain()
     }
     if (
       deferTerminalGeometryMutationDuringRebuild(
@@ -5608,6 +5634,8 @@ export function connectPanePty(
     type PendingReplayData = {
       data: string
       clearBeforeReplay: boolean
+      snapshotCols?: number
+      snapshotRows?: number
       ptyId: string | null
       generation: number
       streamGeneration: number
@@ -5658,6 +5686,22 @@ export function connectPanePty(
             continue
           }
         }
+        const snapshotDimensions = resolvePositiveTerminalDimensions(
+          payload.snapshotCols,
+          payload.snapshotRows
+        )
+        if (
+          snapshotDimensions &&
+          (pane.terminal.cols !== snapshotDimensions.cols ||
+            pane.terminal.rows !== snapshotDimensions.rows)
+        ) {
+          suppressStructuralReplayPtyResize = true
+          try {
+            pane.terminal.resize(snapshotDimensions.cols, snapshotDimensions.rows)
+          } finally {
+            suppressStructuralReplayPtyResize = false
+          }
+        }
         if (clearBeforeReplay || data.length > 0) {
           // Why: an empty clearing frame is still an authoritative repaint and
           // must clear a stale agent signal from an earlier payload.
@@ -5699,7 +5743,13 @@ export function connectPanePty(
       return appliedCurrentPayload
     }
     const scheduleReplayDataDrain = (): void => {
-      if (replayDrainQueued) {
+      if (
+        replayDrainQueued ||
+        pendingReplayData === null ||
+        pane.container.clientWidth <= 0 ||
+        pane.container.clientHeight <= 0 ||
+        !safeFit(pane)
+      ) {
         return
       }
       const scheduledPtyId = pendingReplayData?.ptyId ?? null
@@ -5724,7 +5774,12 @@ export function connectPanePty(
               shouldRestore: () =>
                 !disposed &&
                 transport.getPtyId() === scheduledPtyId &&
-                transportStreamGeneration === scheduledStreamGeneration
+                transportStreamGeneration === scheduledStreamGeneration,
+              afterRestore: () => {
+                if (replayCompleted) {
+                  safeFit(pane)
+                }
+              }
             }
           )
         )
@@ -5741,6 +5796,7 @@ export function connectPanePty(
           finishReattachLiveDataDeferral(replayCompleted, scheduledStreamGeneration)
         })
     }
+    resumePendingReplayDataDrain = scheduleReplayDataDrain
     const replayDataCallback = (
       data: string,
       meta: PtyReplayDataMeta = {},
@@ -5749,6 +5805,8 @@ export function connectPanePty(
       pendingReplayData = {
         data,
         clearBeforeReplay: meta.clearBeforeReplay !== false,
+        ...(meta.snapshotCols !== undefined ? { snapshotCols: meta.snapshotCols } : {}),
+        ...(meta.snapshotRows !== undefined ? { snapshotRows: meta.snapshotRows } : {}),
         ptyId: transport.getPtyId(),
         generation: (replayPayloadGeneration += 1),
         streamGeneration,
@@ -9283,6 +9341,8 @@ export function connectPanePty(
     noteVisibilityResume() {
       armVisibleRemoteViewportClaim()
       claimPendingVisibleRemoteViewport()
+      reportRemoteViewportOnReveal()
+      resumePendingReplayDataDrain()
       ptySizeReassertion.request({ fit: false })
       consumeHibernatedAgentWake()
       requestKnownWindowsShiftEnterReconfirmation()
