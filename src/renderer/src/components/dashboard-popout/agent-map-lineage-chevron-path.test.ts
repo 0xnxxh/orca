@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   agentMapDirectLineageChevronPath,
-  agentMapLineagePathCacheSize
+  agentMapLineageChevronPath
 } from './agent-map-lineage-chevron-path'
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('agentMapDirectLineageChevronPath', () => {
   it('runs every chevron directly from the parent toward the child', () => {
@@ -63,31 +67,70 @@ describe('agentMapDirectLineageChevronPath', () => {
     expect(pitches.flat().every((pitch) => pitch === 8)).toBe(true)
   })
 
-  it('serves an unmoved edge from cache instead of rebuilding it', () => {
+  it('keeps fixed pitch across degenerate and multi-segment paths', () => {
+    const path = agentMapLineageChevronPath([
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+      { x: 9, y: 0 },
+      { x: 9, y: 23 },
+      { x: 30, y: 23 }
+    ])
+    const tips = [...path.matchAll(/M [-\d.]+ [-\d.]+ L ([-\d.]+) ([-\d.]+) L/g)].map((match) => ({
+      x: Number(match[1]),
+      y: Number(match[2])
+    }))
+
+    expect(tips).toEqual([
+      { x: 6.5, y: 0 },
+      { x: 9, y: 5.5 },
+      { x: 9, y: 13.5 },
+      { x: 9, y: 21.5 },
+      { x: 15.5, y: 23 },
+      { x: 23.5, y: 23 }
+    ])
+  })
+
+  it('serves an unmoved edge from cache instead of rebuilding it', async () => {
+    vi.resetModules()
+    const { agentMapDirectLineageChevronPath: cachedPath } =
+      await import('./agent-map-lineage-chevron-path')
     const parent = { x: 3, y: 5, radius: 20 }
     const child = { x: 903, y: 5, radius: 20 }
-    const before = agentMapLineagePathCacheSize()
-    const first = agentMapDirectLineageChevronPath(parent, child)
-    const afterMiss = agentMapLineagePathCacheSize()
-    const second = agentMapDirectLineageChevronPath({ ...parent }, { ...child })
+    const hypot = vi.spyOn(Math, 'hypot')
+    const first = cachedPath(parent, child)
 
-    expect(afterMiss).toBe(before + 1) // first call was a miss
-    expect(agentMapLineagePathCacheSize()).toBe(afterMiss) // second stored nothing → hit
+    expect(hypot).toHaveBeenCalled()
+    hypot.mockClear()
+    const second = cachedPath({ ...parent }, { ...child })
+
+    expect(hypot).not.toHaveBeenCalled()
     expect(second).toBe(first)
   })
 
-  it('bounds the cache as edges churn', () => {
-    const hot = [
-      { x: -1, y: -1, radius: 2 },
-      { x: -1, y: -400, radius: 2 }
-    ] as const
-    for (let i = 0; i < 600; i += 1) {
-      agentMapDirectLineageChevronPath({ x: i, y: 1_000, radius: 2 }, { x: i, y: 1_200, radius: 2 })
-      if (i % 10 === 0) {
-        agentMapDirectLineageChevronPath(hot[0], hot[1])
-      }
+  it('keeps 512 recently used paths and evicts the least-recently-used path', async () => {
+    vi.resetModules()
+    const { agentMapDirectLineageChevronPath: cachedPath } =
+      await import('./agent-map-lineage-chevron-path')
+    const edge = (x: number) =>
+      [
+        { x, y: 1_000, radius: 2 },
+        { x, y: 1_200, radius: 2 }
+      ] as const
+    for (let i = 0; i < 512; i += 1) {
+      cachedPath(...edge(i))
     }
 
-    expect(agentMapLineagePathCacheSize()).toBe(512)
+    const hypot = vi.spyOn(Math, 'hypot')
+    cachedPath(...edge(0))
+    expect(hypot).not.toHaveBeenCalled()
+
+    cachedPath(...edge(512))
+    hypot.mockClear()
+    cachedPath(...edge(1))
+    expect(hypot).toHaveBeenCalled()
+
+    hypot.mockClear()
+    cachedPath(...edge(0))
+    expect(hypot).not.toHaveBeenCalled()
   })
 })

@@ -123,8 +123,3 @@ export function agentMapDirectLineageChevronPath(
   }
   return path
 }
-
-/** The cache is module-private, so its bound is only observable through here. */
-export function agentMapLineagePathCacheSize(): number {
-  return lineagePathCache.size
-}
