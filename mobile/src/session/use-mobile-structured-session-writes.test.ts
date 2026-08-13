@@ -182,6 +182,60 @@ describe('useMobileStructuredSessionWrites', () => {
     expect(api!.outbox).toEqual([])
   })
 
+  it('does not install a saved outbox entry after switching sessions', async () => {
+    const saved = deferred<void>()
+    vi.mocked(saveMobileStructuredOutbox).mockReturnValueOnce(saved.promise)
+
+    let sending!: Promise<boolean>
+    act(() => {
+      sending = api!.send('old session message')
+    })
+    await vi.waitFor(() => expect(saveMobileStructuredOutbox).toHaveBeenCalledTimes(1))
+
+    sessionId = 'mobile_2'
+    await act(async () => {
+      renderer!.update(createElement(Probe))
+      await Promise.resolve()
+    })
+    expect(api!.outbox).toEqual([])
+
+    await act(async () => {
+      saved.resolve()
+      await expect(sending).resolves.toBe(false)
+      await Promise.resolve()
+    })
+
+    expect(api!.outbox).toEqual([])
+    expect(sendRequest).not.toHaveBeenCalled()
+  })
+
+  it('serializes concurrent sends against the latest durable outbox', async () => {
+    connected = false
+    act(() => renderer!.update(createElement(Probe)))
+    const firstSave = deferred<void>()
+    vi.mocked(saveMobileStructuredOutbox).mockReturnValueOnce(firstSave.promise)
+
+    let first!: Promise<boolean>
+    let second!: Promise<boolean>
+    act(() => {
+      first = api!.send('one')
+      second = api!.send('two')
+    })
+    await vi.waitFor(() => expect(saveMobileStructuredOutbox).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      firstSave.resolve()
+      await expect(Promise.all([first, second])).resolves.toEqual([true, true])
+    })
+
+    expect(api!.outbox.map((entry) => entry.body.blocks[0])).toEqual([
+      { type: 'text', text: 'one' },
+      { type: 'text', text: 'two' }
+    ])
+    expect(saveMobileStructuredOutbox).toHaveBeenLastCalledWith('mobile_1', api!.outbox)
+    expect(sendRequest).not.toHaveBeenCalled()
+  })
+
   it.each(['agent_session_operation_conflict', 'agent_session_operation_expired'] as const)(
     'rotates a send operation after %s',
     async (code) => {

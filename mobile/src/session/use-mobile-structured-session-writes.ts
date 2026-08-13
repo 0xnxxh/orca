@@ -4,11 +4,7 @@ import type {
   AgentSessionMutationResult,
   AgentSessionSendResult
 } from '../../../src/shared/agent-session-wire'
-import {
-  reconcileStructuredAgentSessionOutbox,
-  structuredAgentSessionSendRequest,
-  updateStructuredAgentSessionOutboxEntry
-} from '../../../src/shared/structured-agent-session-outbox'
+import { structuredAgentSessionSendRequest } from '../../../src/shared/structured-agent-session-outbox'
 import type { RpcClient } from '../transport/rpc-client'
 import type { PendingNativeChatImage } from './mobile-native-chat-image-attachment'
 import {
@@ -23,6 +19,7 @@ import {
 } from './mobile-structured-outbox-entry'
 import type { MobileStructuredOutboxEntry } from './mobile-structured-outbox-store'
 import { useMobileStructuredOutboxPersistence } from './use-mobile-structured-outbox-persistence'
+import { useMobileStructuredOutboxMutations } from './use-mobile-structured-outbox-mutations'
 import { useMobileStructuredSessionMutations } from './use-mobile-structured-session-mutations'
 import type { MobileStructuredSessionWrites } from './mobile-structured-session-write-types'
 
@@ -56,8 +53,16 @@ export function useMobileStructuredSessionWrites(args: {
     handoffOperationId: args.handoffOperationId,
     onRefusal: setError
   })
+  const outboxMutations = useMobileStructuredOutboxMutations({
+    activeSessionRef,
+    hydrationRef,
+    outboxRef,
+    setOutbox,
+    persist
+  })
 
   useEffect(() => {
+    outboxMutations.beginSession()
     activeSessionRef.current = sessionId
     dispatchGenerationRef.current += 1
     dispatchingRef.current = false
@@ -77,22 +82,14 @@ export function useMobileStructuredSessionWrites(args: {
     })
     hydrationRef.current = hydration
     return hydration.cancel
-  }, [sessionId])
+  }, [outboxMutations, sessionId])
 
   useEffect(() => {
     if (!sessionId || submissions.length === 0 || outboxRef.current.length === 0) {
       return
     }
-    const next = reconcileStructuredAgentSessionOutbox(outboxRef.current, submissions)
-    if (
-      next.length !== outboxRef.current.length ||
-      next.some((entry, index) => entry !== outboxRef.current[index])
-    ) {
-      outboxRef.current = next
-      setOutbox(next)
-      void persist(sessionId, next)
-    }
-  }, [persist, sessionId, submissions])
+    void outboxMutations.reconcile(sessionId, submissions)
+  }, [outboxMutations, sessionId, submissions])
 
   useEffect(() => {
     activeSessionRef.current = sessionId
@@ -101,20 +98,12 @@ export function useMobileStructuredSessionWrites(args: {
     dispatchingRef.current = false
     blockedIdRef.current = null
     if (sessionId) {
-      const current = outboxRef.current
-      const next = current.map((entry) =>
-        entry.state === 'dispatching' ? { ...entry, state: 'queued' as const } : entry
-      )
-      if (next.some((entry, index) => entry !== current[index])) {
-        outboxRef.current = next
-        setOutbox(next)
-        void persist(sessionId, next)
-      }
+      void outboxMutations.normalizeDispatching(sessionId)
     }
     if (connected) {
       setDispatchVersion((current) => current + 1)
     }
-  }, [connected, fence, persist, sessionId])
+  }, [connected, fence, outboxMutations, sessionId])
 
   const replaceEntry = useCallback(
     async (
@@ -124,12 +113,9 @@ export function useMobileStructuredSessionWrites(args: {
       if (!sessionId) {
         return
       }
-      const next = updateStructuredAgentSessionOutboxEntry(outboxRef.current, id, update)
-      outboxRef.current = next
-      setOutbox(next)
-      await persist(sessionId, next)
+      await outboxMutations.replaceEntry(sessionId, id, update)
     },
-    [persist, sessionId]
+    [outboxMutations, sessionId]
   )
 
   useEffect(() => {
@@ -239,7 +225,7 @@ export function useMobileStructuredSessionWrites(args: {
         return false
       }
       const hydration = hydrationRef.current
-      if (!(await waitForMobileStructuredOutboxHydration(hydration, sessionId))) {
+      if (!hydration || !(await waitForMobileStructuredOutboxHydration(hydration, sessionId))) {
         setError('Chat session is still loading')
         return false
       }
@@ -247,19 +233,18 @@ export function useMobileStructuredSessionWrites(args: {
         return false
       }
       const entry = createQueuedMobileStructuredOutboxEntry({ sessionId, text, attachments })
-      const next = [...outboxRef.current, entry]
       try {
-        await persist(sessionId, next)
+        const saved = await outboxMutations.enqueue(sessionId, hydration, entry)
+        if (saved) {
+          setError(null)
+        }
+        return saved
       } catch {
         setError('Message could not be saved to the outbox')
         return false
       }
-      outboxRef.current = next
-      setOutbox(next)
-      setError(null)
-      return true
     },
-    [persist, sessionId]
+    [outboxMutations, sessionId]
   )
 
   const takeQueuedForEdit = useCallback(

@@ -53,7 +53,13 @@ describe('local structured session tab projection', () => {
     } satisfies RuntimeMobileSessionTabsResult
 
     expect(projectLocalStructuredSessionTabs(snapshot)).toMatchObject({
-      tabGroups: undefined,
+      tabGroups: [
+        {
+          id: 'structured-group',
+          activeTabId: 'agent-session:codex-1',
+          tabOrder: ['agent-session:codex-1']
+        }
+      ],
       tabGroupLayout: undefined,
       tabs: [expect.objectContaining({ type: 'agent-session', agent: 'codex' })]
     })
