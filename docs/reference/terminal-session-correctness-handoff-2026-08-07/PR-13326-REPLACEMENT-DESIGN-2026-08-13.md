@@ -176,7 +176,31 @@ belong to a superseded connection whose `startFreshSpawn` no longer does anythin
 "stale renderer work" hazard from the original handoff, showing up as a dead button rather than as
 a wrong write.
 
-**Next step:** instrument `onStartNewTerminal` itself — confirm whether the handler runs, whether
-`startFreshSpawn` is entered, and which connection generation owns the closure the user clicked.
-Do not add more spawn-path guards until that is answered; the last two fixes were each necessary
-and neither was sufficient, which is the signature of working the wrong layer.
+**Instrumented, and the closure hypothesis was WRONG.** Temporary logging in the handler, the
+transport and main, correlated in one run, gives:
+
+```
+RENDERER [card] entered          {disposed: false}
+RENDERER [card] transport.spawn  {admittedSessionId: undefined, refuseAdoption: true}
+MAIN     [ssh-pty] spawn() called with sessionId=ssh:…@@pty-1, attempting pty.attach
+MAIN     [ssh-pty] pty.attach FAILED … identity mismatch
+MAIN     Error in handler for 'pty:spawn': SSH_PTY_IDENTITY_MISMATCH
+RENDERER [card] resolved         {freshPtyId: null, disposed: false}
+```
+
+So: the handler runs, the connection is live, and the renderer half is CORRECT — it sends no
+session id and asks for adoption to be refused. **Main re-derives the session id anyway** and
+attaches the unreachable shell, so the spawn rejects and the action resolves null.
+
+**The remaining defect is one line of main, not a renderer race.** `createFreshShellForUnreachablePane`
+gates only `earlyStablePaneOwner` (the pre-adoption at `pty.ts:~5997`). A second owner resolution
+downstream in the same spawn flow still resolves the pane's owner and passes `sessionId: owner.ptyId`
+to the provider. `resolveStablePaneOwner` has several call sites (`pty.ts:4431, 4457, 4480, 4925,
+4987, 5092, 5946`); `:5946` is local-only (`!args.connectionId`) so it is not the one. The SSH path
+goes through the `spawnForStablePane`/`stablePaneSpawn` branch around `:5092-5102`.
+
+**Next step:** find which of those sites supplies the owner on the SSH spawn path and gate it with
+the same flag, then re-run the gate. This is the third site of the same rule — the first two fixes
+were each necessary and neither sufficient — so gate it where the owner is CONSUMED (the single
+place `sessionId: owner.ptyId` is passed to `provider.spawn`) rather than adding a third condition
+at a third producer.
