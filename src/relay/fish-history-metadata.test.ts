@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   writeFileSync
 } from 'node:fs'
 import { rm } from 'node:fs/promises'
@@ -76,9 +77,12 @@ describe('relay Fish history metadata', () => {
   it('removes metadata without unlinking an unverified history pathname', () => {
     const metadataRoot = join(root, 'metadata')
     const historyFile = join(dataRoot, 'fish', `${session}_history`)
+    const replacementFile = join(dataRoot, 'fish', `${session}_history-replacement`)
     mkdirSync(join(dataRoot, 'fish'), { recursive: true })
-    writeFileSync(historyFile, 'secret')
+    writeFileSync(historyFile, 'attested')
     recordRelayFishHistoryPath(worktreeId, { XDG_DATA_HOME: dataRoot }, metadataRoot)
+    writeFileSync(replacementFile, 'secret')
+    renameSync(replacementFile, historyFile)
 
     deleteRelayFishHistory(worktreeId, metadataRoot)
     deleteRelayFishHistory(worktreeId, metadataRoot)
