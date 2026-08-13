@@ -113,13 +113,55 @@ describe('legacy terminal shim neutralization', () => {
       expect(cmd).not.toContain('where.exe')
       expect(cmd).toContain('for %%P in ("%orca_clean_path:;=" "%") do call :orca_try_candidate')
       expect(cmd).toContain(`if exist "%%~fG\\${command}.exe"`)
-      // A candidate inside the wrapper directory must still be rejected.
-      expect(cmd).toContain('if /I not "%%~fG\\"=="%~dp0"')
+      // A candidate inside the wrapper directory must still be rejected, compared against the
+      // cached wrapper dir because %~dp0 is rebound inside a CALL.
+      expect(cmd).toContain('if /I not "%%~fG\\"=="%orca_wrapper_dir%"')
+      // Relative entries resolve against the cwd, so they must be rejected like empty ones.
+      // Why: the rooted-path test must not shell out — an external tool would itself be
+      // resolved from the cwd, reintroducing the hijack.
+      expect(cmd).not.toContain('findstr')
+      expect(cmd).toContain('if "%orca_candidate:~1,2%"==":\\" goto orca_candidate_rooted')
+      expect(cmd).toContain('if "%orca_candidate:~0,2%"=="\\\\" goto orca_candidate_rooted')
+      // Why: these two guards are the only thing stopping an empty element reaching the cwd on
+      // Windows; deleting either left every other assertion green.
+      expect(cmd).toContain('if "%~1"=="" exit /b')
 
       const powershell = readFileSync(join(win32Dir, `${command}-wrapper.ps1`), 'utf8')
       expect(powershell).not.toContain('Get-Command')
       expect(powershell).toContain("($env:PATH -split ';')")
+      // Why: the rooted check must reject drive-relative 'C:foo', which still resolves against
+      // the cwd — so the IsPathRooted call must be gone, replaced by an explicit prefix match.
+      expect(powershell).not.toContain('[IO.Path]::IsPathRooted(')
+      expect(powershell).toContain("-notmatch '^([A-Za-z]:")
+      expect(powershell).toContain('if (-not $dir) { continue }')
       expect(powershell).toContain('Test-Path -LiteralPath $candidate -PathType Leaf')
+    }
+  })
+
+  it('guards both cmd PATH walks so an empty variable cannot break parsing', () => {
+    // Why: `%VAR:;=" "%` on an empty variable leaves an unbalanced quote that desynchronizes
+    // cmd parsing for the rest of the file, turning the not-found branch into
+    // `1>&2 was unexpected at this time.` Reproduced on Windows before this guard.
+    const userData = makeUserDataDir()
+    const win32Dir = join(userData, 'orca-terminal-attribution', 'win32')
+    mkdirSync(win32Dir, { recursive: true })
+
+    neutralizeLegacyTerminalShimDir(userData)
+
+    for (const command of ['git', 'gh'] as const) {
+      const cmd = readFileSync(join(win32Dir, `${command}.cmd`), 'utf8')
+      expect(cmd).toContain('if not defined PATH goto :orca_path_walked')
+      expect(cmd).toContain('if not defined orca_clean_path goto :orca_candidates_walked')
+      for (const [guard, loop] of [
+        ['if not defined PATH goto :orca_path_walked', 'for %%P in ("%PATH:;='],
+        [
+          'if not defined orca_clean_path goto :orca_candidates_walked',
+          'for %%P in ("%orca_clean_path:;='
+        ]
+      ] as const) {
+        expect(cmd.indexOf(guard)).toBeGreaterThan(-1)
+        expect(cmd.indexOf(guard)).toBeLessThan(cmd.indexOf(loop))
+      }
     }
   })
 
@@ -141,6 +183,13 @@ describe('legacy terminal shim neutralization', () => {
     writeFileSync(join(hostile, 'git'), "#!/usr/bin/env bash\nprintf 'HOSTILE\\n'\n", {
       mode: 0o755
     })
+    // Reachable only through a relative PATH entry resolved against the hostile cwd.
+    mkdirSync(join(hostile, 'node_modules', '.bin'), { recursive: true })
+    writeFileSync(
+      join(hostile, 'node_modules', '.bin', 'git'),
+      "#!/usr/bin/env bash\nprintf 'HOSTILE\\n'\n",
+      { mode: 0o755 }
+    )
 
     const result = spawnSync(join(shimDir, 'git'), ['--version'], {
       cwd: hostile,
@@ -152,6 +201,33 @@ describe('legacy terminal shim neutralization', () => {
 
     expect(result.stdout).toContain('REAL')
     expect(result.stdout).not.toContain('HOSTILE')
+
+    // Why: every spelling that means "current directory" must lose — a leading/trailing empty
+    // element, and any relative entry (`.`, or a repo-local bin dir).
+    for (const cwdSpelling of [
+      `:${realBin}:/usr/bin:/bin`,
+      `${realBin}:/usr/bin:/bin:`,
+      `.:${realBin}:/usr/bin:/bin`,
+      `..:${realBin}:/usr/bin:/bin`,
+      `node_modules/.bin:${realBin}:/usr/bin:/bin`
+    ]) {
+      const run = spawnSync(join(shimDir, 'git'), ['--version'], {
+        cwd: hostile,
+        env: { ...process.env, PATH: cwdSpelling },
+        encoding: 'utf8'
+      })
+      expect(run.stdout, `PATH=${cwdSpelling}`).toContain('REAL')
+      expect(run.stdout, `PATH=${cwdSpelling}`).not.toContain('HOSTILE')
+    }
+
+    // Why: invoked with no slash in $0, `${BASH_SOURCE%/*}` yields the file name rather than a
+    // directory, so self-exclusion missed the shim dir and the lookup resolved back to itself.
+    const noSlash = spawnSync('bash', ['git', '--version'], {
+      cwd: shimDir,
+      env: { ...process.env, PATH: `${shimDir}:${realBin}:/usr/bin:/bin` },
+      encoding: 'utf8'
+    })
+    expect(noSlash.stdout).toContain('REAL')
   })
 
   it('removes every Windows PATH occurrence of both captured wrapper directories', () => {
