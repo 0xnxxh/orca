@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
-import { basename, dirname, isAbsolute, join } from 'node:path'
-import { existsSync, rmSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path'
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
 /**
  * Per-worktree fish history, which fish models as a session NAME rather than a path.
@@ -27,6 +27,15 @@ const SAFE_SESSION_NAME = /^orca_[0-9a-f]{1,64}$/
 export const MAX_RETAINED_FISH_HISTORY_PATHS = 16
 export const MAX_FISH_HISTORY_META_BYTES = 32 * 1024
 const MAX_FISH_HISTORY_PATH_CANDIDATES = MAX_RETAINED_FISH_HISTORY_PATHS * 4
+export const FISH_HISTORY_LOCATION_ATTESTATION = 'fish-history-locations.json'
+
+type FishHistoryLocationAttestation = {
+  path: string
+  directoryDevice: string
+  directoryInode: string
+  directoryBirthtimeNs: string
+}
+type FishHistoryDirectoryIdentity = Omit<FishHistoryLocationAttestation, 'path'>
 
 export function isSafeFishHistorySession(session: unknown): session is string {
   return typeof session === 'string' && SAFE_SESSION_NAME.test(session)
@@ -53,19 +62,145 @@ export function resolveFishHistoryFilePath(
   return join(dataHome, 'fish', `${session}_history`)
 }
 
-/**
- * Accepts a path recorded at spawn time only if it still names this session's own
- * history file, so a tampered meta.json cannot steer `rmSync` somewhere else.
- */
-export function isTrustedFishHistoryPath(session: string, path: unknown): path is string {
+/** Validate path shape only; deletion authority comes from a separate identity attestation. */
+function isCanonicalFishHistoryPath(session: string, path: unknown): path is string {
   return Boolean(
     typeof path === 'string' &&
     path &&
     isSafeFishHistorySession(session) &&
     isAbsolute(path) &&
+    resolve(path) === path &&
     basename(dirname(path)) === 'fish' &&
     basename(path) === `${session}_history`
   )
+}
+
+function fishHistoryDirectoryIdentity(path: string): FishHistoryDirectoryIdentity | null {
+  const directory = dirname(path)
+  const root = parse(directory).root
+  let current = root
+  try {
+    const segments = relative(root, directory).split(sep).filter(Boolean)
+    const roots =
+      segments.length === 0 ? [root] : segments.map((segment) => (current = join(current, segment)))
+    let identity: FishHistoryDirectoryIdentity | null = null
+    for (const candidate of roots) {
+      const stat = lstatSync(candidate, { bigint: true })
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        return null
+      }
+      identity = {
+        directoryDevice: stat.dev.toString(),
+        directoryInode: stat.ino.toString(),
+        directoryBirthtimeNs: stat.birthtimeNs.toString()
+      }
+    }
+    return identity
+  } catch {
+    return null
+  }
+}
+
+function readFishHistoryLocationAttestations(
+  attestationPath: string,
+  session: string
+): FishHistoryLocationAttestation[] {
+  try {
+    const stat = lstatSync(attestationPath)
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_FISH_HISTORY_META_BYTES) {
+      return []
+    }
+    const raw: unknown = JSON.parse(readFileSync(attestationPath, 'utf8'))
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return []
+    }
+    const record = raw as Record<string, unknown>
+    if (
+      record.version !== 1 ||
+      record.fishSession !== session ||
+      !Array.isArray(record.locations)
+    ) {
+      return []
+    }
+    const candidates = record.locations.slice(-MAX_FISH_HISTORY_PATH_CANDIDATES)
+    const retained: FishHistoryLocationAttestation[] = []
+    const seen = new Set<string>()
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const candidate = candidates[index]
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+        continue
+      }
+      const location = candidate as Record<string, unknown>
+      if (
+        !isCanonicalFishHistoryPath(session, location.path) ||
+        typeof location.directoryDevice !== 'string' ||
+        typeof location.directoryInode !== 'string' ||
+        typeof location.directoryBirthtimeNs !== 'string' ||
+        seen.has(location.path)
+      ) {
+        continue
+      }
+      seen.add(location.path)
+      retained.push({
+        path: location.path,
+        directoryDevice: location.directoryDevice,
+        directoryInode: location.directoryInode,
+        directoryBirthtimeNs: location.directoryBirthtimeNs
+      })
+      if (retained.length === MAX_RETAINED_FISH_HISTORY_PATHS) {
+        break
+      }
+    }
+    return retained.toReversed()
+  } catch {
+    return []
+  }
+}
+
+/** Record a spawn-derived fish location outside meta.json, bound to its directory identity. */
+export function attestFishHistoryLocation(
+  attestationPath: string,
+  session: string,
+  historyPath: string | null
+): void {
+  if (!historyPath || !isCanonicalFishHistoryPath(session, historyPath)) {
+    return
+  }
+  try {
+    mkdirSync(dirname(historyPath), { recursive: true, mode: 0o700 })
+    const identity = fishHistoryDirectoryIdentity(historyPath)
+    if (!identity) {
+      console.warn(`[pty:history] Refusing to attest symlinked fish history path ${historyPath}`)
+      return
+    }
+    const retained = readFishHistoryLocationAttestations(attestationPath, session)
+    const active = retained.at(-1)
+    if (
+      active?.path === historyPath &&
+      active.directoryDevice === identity.directoryDevice &&
+      active.directoryInode === identity.directoryInode &&
+      active.directoryBirthtimeNs === identity.directoryBirthtimeNs
+    ) {
+      return
+    }
+    const existing = retained.filter((entry) => entry.path !== historyPath)
+    const locations = [...existing, { path: historyPath, ...identity }].slice(
+      -MAX_RETAINED_FISH_HISTORY_PATHS
+    )
+    mkdirSync(dirname(attestationPath), { recursive: true, mode: 0o700 })
+    if (existsSync(attestationPath) && lstatSync(attestationPath).isSymbolicLink()) {
+      return
+    }
+    writeFileSync(
+      attestationPath,
+      JSON.stringify({ version: 1, fishSession: session, locations }),
+      { mode: 0o600 }
+    )
+  } catch (error) {
+    console.warn(
+      `[pty:history] Failed to attest fish history location: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
 }
 
 export function normalizeFishHistoryPaths(
@@ -77,7 +212,7 @@ export function normalizeFishHistoryPaths(
   const newestFirst: string[] = []
   const seen = new Set<string>()
   const retain = (path: unknown): void => {
-    if (!isTrustedFishHistoryPath(session, path) || seen.has(path)) {
+    if (!isCanonicalFishHistoryPath(session, path) || seen.has(path)) {
       return
     }
     seen.add(path)
@@ -102,50 +237,37 @@ export function normalizeFishHistoryPaths(
   return retained
 }
 
-/**
- * Removes one worktree's fish history file.
- *
- * `recordedPath` is the path resolved from the PTY's own spawn env when the
- * session was minted; the main process env is only a fallback, because the two
- * disagree whenever Orca was launched with a different `XDG_DATA_HOME`/`HOME`
- * than the shells it spawns.
- *
- * Neither can see a `set -gx XDG_DATA_HOME …` that lives inside the user's
- * config.fish — fish resolves that after we have handed off. That file cannot be
- * found from here, so it is reported instead of being dropped silently.
- */
-export function deleteFishHistoryFile(
-  session: string,
-  options: {
-    recordedPath?: string | null
-    recordedPaths?: readonly unknown[]
-    env?: NodeJS.ProcessEnv
-  } = {}
-): void {
-  const candidates = new Set<string>()
-  if (isTrustedFishHistoryPath(session, options.recordedPath)) {
-    candidates.add(options.recordedPath)
-  }
-  for (const path of (options.recordedPaths ?? []).slice(0, MAX_RETAINED_FISH_HISTORY_PATHS)) {
-    if (isTrustedFishHistoryPath(session, path)) {
-      candidates.add(path)
-    }
-  }
-  const fromEnv = resolveFishHistoryFilePath(session, options.env ?? process.env)
-  if (fromEnv) {
-    candidates.add(fromEnv)
-  }
-  if (candidates.size === 0) {
+/** Delete only spawn-attested locations whose non-symlink directory identity still matches. */
+export function deleteFishHistoryFile(session: string, attestationPath: string): void {
+  const locations = readFishHistoryLocationAttestations(attestationPath, session)
+  if (locations.length === 0) {
+    console.warn(`[pty:history] No attested fish history location for session ${session}`)
     return
   }
   let removed = false
-  for (const path of candidates) {
+  for (const location of locations) {
     try {
-      removed ||= existsSync(path)
-      rmSync(path, { force: true })
+      const identity = fishHistoryDirectoryIdentity(location.path)
+      if (
+        !identity ||
+        identity.directoryDevice !== location.directoryDevice ||
+        identity.directoryInode !== location.directoryInode ||
+        identity.directoryBirthtimeNs !== location.directoryBirthtimeNs
+      ) {
+        console.warn(`[pty:history] Refusing fish history cleanup after directory identity changed`)
+        continue
+      }
+      if (existsSync(location.path)) {
+        const stat = lstatSync(location.path)
+        if (stat.isSymbolicLink() || !stat.isFile()) {
+          continue
+        }
+        removed = true
+      }
+      rmSync(location.path, { force: true })
     } catch (err) {
       console.warn(
-        `[pty:history] Failed to delete fish history ${path}: ${err instanceof Error ? err.message : String(err)}`
+        `[pty:history] Failed to delete fish history ${location.path}: ${err instanceof Error ? err.message : String(err)}`
       )
     }
   }
@@ -153,7 +275,7 @@ export function deleteFishHistoryFile(
     // Explicit: a config.fish-set XDG_DATA_HOME leaves a file we cannot locate,
     // and silence would hide one leaked history file per deleted worktree.
     console.warn(
-      `[pty:history] No fish history file found for session ${session}; if fish keeps history outside ${[...candidates].join(' or ')} (e.g. XDG_DATA_HOME set in config.fish) that file is left behind.`
+      `[pty:history] No attested fish history file found for session ${session}; a config.fish-only XDG_DATA_HOME remains outside Orca's cleanup authority.`
     )
   }
 }

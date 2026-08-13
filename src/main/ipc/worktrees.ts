@@ -249,6 +249,7 @@ import {
   removeStaleLocalWorktreeRegistrationAfterFilesystemRemoval,
   recoverLocalWindowsWorktreeRemoval
 } from '../local-worktree-removal-recovery'
+import { deleteRemoteWorktreeHistory } from '../remote-worktree-history-cleanup'
 
 const NullableWorkspaceLinkedItemSchema = WorkspaceLinkedItemSchema.nullable()
 const NullableTaskSourceContextSchema = TaskSourceContextSchema.nullable()
@@ -2417,9 +2418,7 @@ export function registerWorktreeHandlers(
               })
             })
             await withWorktreeRemoveStageSpan('metadata_purge', 'folder', async () => {
-              await sshPtyProvider?.deleteWorktreeHistory?.(args.worktreeId).catch((err) => {
-                console.warn(`[pty:history] remote folder cleanup failed:`, err)
-              })
+              await deleteRemoteWorktreeHistory(sshPtyProvider, args.worktreeId)
               removeWorktreeMetadataAndTransientState(store, args.worktreeId, removalHostId)
             })
             preservedBranchCleanupByScope.delete(
@@ -2509,6 +2508,10 @@ export function registerWorktreeHandlers(
                   args.worktreeId,
                   removedPushTarget,
                   store
+                )
+                await deleteRemoteWorktreeHistory(
+                  getSshPtyProvider(repo.connectionId),
+                  args.worktreeId
                 )
               } else {
                 const removalGate = await runtime.acquireFileWatcherRemoval(worktreePath)
@@ -2607,6 +2610,10 @@ export function registerWorktreeHandlers(
                   args.worktreeId,
                   removedPushTarget,
                   store
+                )
+                await deleteRemoteWorktreeHistory(
+                  getSshPtyProvider(repo.connectionId),
+                  args.worktreeId
                 )
               } else {
                 await cleanupUnusedWorktreePushTargetRemote(
@@ -2726,10 +2733,7 @@ export function registerWorktreeHandlers(
               }
             }
 
-            const remoteRemoveOptions = {
-              ...(!deleteBranch ? { deleteBranch } : {}),
-              worktreeId: args.worktreeId
-            }
+            const remoteRemoveOptions = !deleteBranch ? { deleteBranch } : {}
             const removalGate = await withWorktreeRemoveStageSpan(
               'watcher_gate',
               'remote',
@@ -2749,7 +2753,13 @@ export function registerWorktreeHandlers(
                 'git_remove',
                 'remote',
                 async () =>
-                  provider!.removeWorktree(canonicalWorktreePath, args.force, remoteRemoveOptions)
+                  Object.keys(remoteRemoveOptions).length > 0
+                    ? provider!.removeWorktree(
+                        canonicalWorktreePath,
+                        args.force,
+                        remoteRemoveOptions
+                      )
+                    : provider!.removeWorktree(canonicalWorktreePath, args.force)
               )
               removalCompleted = true
             } finally {
@@ -2765,6 +2775,10 @@ export function registerWorktreeHandlers(
               args.worktreeId,
               removedPushTarget,
               store
+            )
+            await deleteRemoteWorktreeHistory(
+              getSshPtyProvider(remoteConnectionId),
+              args.worktreeId
             )
             rememberPreservedBranchCleanupTarget(
               args.worktreeId,

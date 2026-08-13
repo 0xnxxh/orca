@@ -8895,9 +8895,7 @@ describe('registerWorktreeHandlers', () => {
         ORCA_WORKTREE_PATH: '/remote/feature-wt'
       })
     )
-    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined, {
-      worktreeId: 'repo-ssh::/remote/feature-wt'
-    })
+    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined)
     expect(runtimeStub.closeFileWatchersForRemoval).toHaveBeenCalledWith(
       '/remote/feature-wt',
       'conn-1'
@@ -9023,9 +9021,7 @@ describe('registerWorktreeHandlers', () => {
     })
 
     expect(provider.worktreeIsClean).not.toHaveBeenCalled()
-    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', true, {
-      worktreeId: 'repo-ssh::/remote/feature-wt'
-    })
+    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', true)
   })
 
   it('continues SSH worktree removal when the archive hook fails', async () => {
@@ -9081,9 +9077,7 @@ describe('registerWorktreeHandlers', () => {
       await handlers['worktrees:remove'](null, {
         worktreeId: 'repo-ssh::/remote/feature-wt'
       })
-      expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined, {
-        worktreeId: 'repo-ssh::/remote/feature-wt'
-      })
+      expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined)
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         '[hooks] archive hook failed for /remote/feature-wt:',
         expect.stringContaining('archive hook exited 7')
@@ -9141,9 +9135,7 @@ describe('registerWorktreeHandlers', () => {
       await handlers['worktrees:remove'](null, {
         worktreeId: 'repo-ssh::/remote/feature-wt'
       })
-      expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined, {
-        worktreeId: 'repo-ssh::/remote/feature-wt'
-      })
+      expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined)
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         '[hooks] archive hook failed for /remote/feature-wt:',
         'relay disconnected'
@@ -9268,9 +9260,7 @@ describe('registerWorktreeHandlers', () => {
     })
 
     expect(provider.execNonInteractive).not.toHaveBeenCalled()
-    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined, {
-      worktreeId: 'repo-ssh::/remote/feature-wt'
-    })
+    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined)
   })
 
   it('uses the workspace host when duplicate repo ids exist across local and SSH', async () => {
@@ -9317,9 +9307,7 @@ describe('registerWorktreeHandlers', () => {
       hostId: 'ssh:conn-1'
     })
 
-    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined, {
-      worktreeId: 'repo-shared::/remote/feature-wt'
-    })
+    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined)
     expect(removeWorktreeMock).not.toHaveBeenCalled()
   })
 
@@ -9837,6 +9825,110 @@ describe('registerWorktreeHandlers', () => {
     expect(mainWindow.webContents.send).toHaveBeenCalledWith('worktrees:changed', {
       repoId: 'repo-1'
     })
+  })
+
+  it('routes already-missing SSH history cleanup through the PTY owner', async () => {
+    const repo = {
+      id: 'repo-ssh',
+      path: '/remote/repo',
+      displayName: 'ssh',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'conn-1'
+    }
+    const worktreeId = 'repo-ssh::/remote/already-deleted'
+    const gitProvider = {
+      listWorktrees: vi.fn().mockResolvedValue([
+        {
+          path: repo.path,
+          head: 'main',
+          branch: 'refs/heads/main',
+          isBare: false,
+          isMainWorktree: true
+        }
+      ])
+    }
+    const fsProvider = {
+      stat: vi.fn().mockRejectedValue(Object.assign(new Error('missing'), { code: 'ENOENT' }))
+    }
+    const deleteWorktreeHistory = vi.fn().mockResolvedValue(undefined)
+    store.getRepo.mockReturnValue(repo)
+    store.getWorktreeMeta.mockReturnValue(
+      makeWorktreeMeta({ hostId: 'ssh:conn-1', orcaCreationSource: 'ssh' })
+    )
+    getSshGitProviderMock.mockReturnValue(gitProvider)
+    getSshFilesystemProviderMock.mockReturnValue(fsProvider)
+    getSshPtyProviderMock.mockReturnValue({ deleteWorktreeHistory } as never)
+
+    await handlers['worktrees:remove'](null, { worktreeId })
+
+    expect(deleteWorktreeHistory).toHaveBeenCalledWith(worktreeId)
+    expect(deleteWorktreeHistory.mock.invocationCallOrder[0]).toBeLessThan(
+      store.removeWorktreeMeta.mock.invocationCallOrder[0]
+    )
+    expect(store.removeWorktreeMeta).toHaveBeenCalledWith(worktreeId, 'ssh:conn-1')
+  })
+
+  it('routes SSH orphan-directory history cleanup through the PTY owner', async () => {
+    const repo = {
+      id: 'repo-ssh',
+      path: '/remote/repo',
+      displayName: 'ssh',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'conn-1'
+    }
+    const worktreePath = '/remote/orphan'
+    const worktreeId = `${repo.id}::${worktreePath}`
+    const gitProvider = {
+      listWorktrees: vi.fn().mockResolvedValue([
+        {
+          path: repo.path,
+          head: 'main',
+          branch: 'refs/heads/main',
+          isBare: false,
+          isMainWorktree: true
+        }
+      ])
+    }
+    const fsProvider = {
+      lstat: vi.fn(async (path: string) => ({
+        type: path === `${worktreePath}/.git` ? 'file' : 'directory'
+      })),
+      readFile: vi.fn(async (path: string) => ({
+        isBinary: false,
+        content:
+          path === `${worktreePath}/.git`
+            ? `gitdir: ${repo.path}/.git/worktrees/orphan\n`
+            : `${worktreePath}/.git\n`
+      })),
+      deletePath: vi.fn().mockResolvedValue(undefined)
+    }
+    const deleteWorktreeHistory = vi.fn().mockResolvedValue(undefined)
+    const ptyProvider = {
+      listProcesses: vi.fn().mockResolvedValue([]),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      deleteWorktreeHistory
+    }
+    store.getRepo.mockReturnValue(repo)
+    store.getWorktreeMeta.mockReturnValue(
+      makeWorktreeMeta({
+        hostId: 'ssh:conn-1',
+        orcaCreatedAt: Date.now(),
+        orcaCreationSource: 'ssh'
+      })
+    )
+    getSshGitProviderMock.mockReturnValue(gitProvider)
+    getSshFilesystemProviderMock.mockReturnValue(fsProvider)
+    getSshPtyProviderMock.mockReturnValue(ptyProvider as never)
+
+    await handlers['worktrees:remove'](null, { worktreeId, force: true })
+
+    expect(fsProvider.deletePath).toHaveBeenCalledWith(worktreePath, true)
+    expect(deleteWorktreeHistory).toHaveBeenCalledWith(worktreeId)
+    expect(deleteWorktreeHistory.mock.invocationCallOrder[0]).toBeLessThan(
+      store.removeWorktreeMeta.mock.invocationCallOrder[0]
+    )
   })
 
   it('force-removes a legacy Orca-created orphaned worktree directory after Git tracking is gone', async () => {

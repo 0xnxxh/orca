@@ -7,6 +7,7 @@ const {
   mkdirSyncMock,
   writeFileSyncMock,
   readFileSyncMock,
+  lstatSyncMock,
   rmSyncMock,
   renameSyncMock,
   readdirSyncMock,
@@ -19,6 +20,7 @@ const {
   mkdirSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
+  lstatSyncMock: vi.fn(),
   rmSyncMock: vi.fn(),
   renameSyncMock: vi.fn(),
   readdirSyncMock: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock('fs', () => ({
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
   readFileSync: readFileSyncMock,
+  lstatSync: lstatSyncMock,
   rmSync: rmSyncMock,
   renameSync: renameSyncMock,
   readdirSync: readdirSyncMock,
@@ -101,6 +104,15 @@ describe('terminal-history', () => {
     getPathMock.mockReturnValue('/fake/userData')
     existsSyncMock.mockReturnValue(true)
     statSyncMock.mockReturnValue({ isDirectory: () => true, size: 100 })
+    lstatSyncMock.mockReturnValue({
+      dev: 1n,
+      ino: 2n,
+      birthtimeNs: 3n,
+      size: 100,
+      isDirectory: () => true,
+      isFile: () => true,
+      isSymbolicLink: () => false
+    })
   })
 
   describe('resolveShellKind', () => {
@@ -365,7 +377,7 @@ describe('terminal-history', () => {
 
       injectHistoryEnv(env, 'repo-1::/path/wt', '/usr/bin/fish', '/path/wt')
 
-      expect(readFileSyncMock).not.toHaveBeenCalled()
+      expect(readFileSyncMock).toHaveBeenCalledTimes(1)
       const meta = JSON.parse(writeFileSyncMock.mock.calls.at(-1)?.[1] as string) as FishHistoryMeta
       expect(meta.fishHistoryPaths).toEqual([meta.fishHistoryPath])
     })
@@ -490,59 +502,30 @@ describe('terminal-history', () => {
       await flushPendingWorktreeHistoryDeletions()
     })
 
-    it('removes the fish session file recorded in meta.json, which lives outside the tree', async () => {
-      // Pinned: fish resolves its data dir from the ambient XDG_DATA_HOME/HOME.
-      const originalDataHome = process.env.XDG_DATA_HOME
-      process.env.XDG_DATA_HOME = ['', 'pinned', 'data'].join(sep)
-      try {
-        existsSyncMock.mockReturnValue(true)
-        readFileSyncMock.mockReturnValue(JSON.stringify({ worktreeId, fishSession: session }))
-        deleteWorktreeHistoryDir('repo-1::/path/wt')
-        expect(rmSyncMock).toHaveBeenCalledWith(
-          ['', 'pinned', 'data', 'fish', historyFilename].join(sep),
-          expect.objectContaining({ force: true })
-        )
-      } finally {
-        if (originalDataHome === undefined) {
-          delete process.env.XDG_DATA_HOME
-        } else {
-          process.env.XDG_DATA_HOME = originalDataHome
-        }
-      }
+    it('does not infer deletion authority from the ambient fish data path', async () => {
+      existsSyncMock.mockReturnValue(true)
+      readFileSyncMock.mockReturnValue(JSON.stringify({ worktreeId, fishSession: session }))
+
+      deleteWorktreeHistoryDir('repo-1::/path/wt')
+
+      expect(rmSyncMock).not.toHaveBeenCalled()
       await flushPendingWorktreeHistoryDeletions()
     })
 
-    it('prefers the spawn-env path recorded in meta.json over this process env', async () => {
-      const originalDataHome = process.env.XDG_DATA_HOME
-      process.env.XDG_DATA_HOME = ['', 'main', 'data'].join(sep)
+    it('does not trust a spawn-env path copied into meta.json', async () => {
       const recorded = ['', 'spawn', 'data', 'fish', historyFilename].join(sep)
-      try {
-        existsSyncMock.mockReturnValue(true)
-        readFileSyncMock.mockReturnValue(
-          JSON.stringify({
-            worktreeId,
-            fishSession: session,
-            fishHistoryPath: recorded
-          })
-        )
-        deleteWorktreeHistoryDir('repo-1::/path/wt')
-        expect(rmSyncMock).toHaveBeenCalledWith(recorded, expect.objectContaining({ force: true }))
-        // The main-process guess stays as a fallback for pre-existing meta.json files.
-        expect(rmSyncMock).toHaveBeenCalledWith(
-          ['', 'main', 'data', 'fish', historyFilename].join(sep),
-          expect.objectContaining({ force: true })
-        )
-      } finally {
-        if (originalDataHome === undefined) {
-          delete process.env.XDG_DATA_HOME
-        } else {
-          process.env.XDG_DATA_HOME = originalDataHome
-        }
-      }
+      existsSyncMock.mockReturnValue(true)
+      readFileSyncMock.mockReturnValue(
+        JSON.stringify({ worktreeId, fishSession: session, fishHistoryPath: recorded })
+      )
+
+      deleteWorktreeHistoryDir('repo-1::/path/wt')
+
+      expect(rmSyncMock).not.toHaveBeenCalled()
       await flushPendingWorktreeHistoryDeletions()
     })
 
-    it('deletes every recorded fish path while isolating individual failures', async () => {
+    it('refuses every raw fish path in tampered metadata', async () => {
       const first = ['', 'data', 'one', 'fish', historyFilename].join(sep)
       const second = ['', 'data', 'two', 'fish', historyFilename].join(sep)
       readFileSyncMock.mockReturnValue(
@@ -553,15 +536,9 @@ describe('terminal-history', () => {
           fishHistoryPaths: [first, second]
         })
       )
-      rmSyncMock.mockImplementation((path: string) => {
-        if (path === first) {
-          throw new Error('busy')
-        }
-      })
-
       expect(() => deleteWorktreeHistoryDir('repo-1::/path/wt')).not.toThrow()
-      expect(rmSyncMock).toHaveBeenCalledWith(first, expect.objectContaining({ force: true }))
-      expect(rmSyncMock).toHaveBeenCalledWith(second, expect.objectContaining({ force: true }))
+      expect(rmSyncMock).not.toHaveBeenCalledWith(first, expect.anything())
+      expect(rmSyncMock).not.toHaveBeenCalledWith(second, expect.anything())
       expect(renameSyncMock).toHaveBeenCalled()
       await flushPendingWorktreeHistoryDeletions()
     })
@@ -582,10 +559,7 @@ describe('terminal-history', () => {
       deleteWorktreeHistoryDir('repo-1::/path/wt')
 
       expect(rmSyncMock.mock.calls.length).toBeLessThanOrEqual(MAX_RETAINED_FISH_HISTORY_PATHS + 1)
-      expect(rmSyncMock).toHaveBeenCalledWith(
-        paths.at(-1),
-        expect.objectContaining({ force: true })
-      )
+      expect(rmSyncMock).not.toHaveBeenCalledWith(paths.at(-1), expect.anything())
       expect(rmSyncMock).not.toHaveBeenCalledWith(paths[0], expect.anything())
       await flushPendingWorktreeHistoryDeletions()
     })
@@ -637,7 +611,7 @@ describe('terminal-history', () => {
         // The history dir exists (so the tree is deleted) but the fish file does not.
         existsSyncMock.mockImplementation((path: string) => !path.includes(historyFilename))
         deleteWorktreeHistoryDir('repo-1::/path/wt')
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining('No fish history file found'))
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('No attested fish history'))
       } finally {
         warn.mockRestore()
       }

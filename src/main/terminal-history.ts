@@ -1,6 +1,8 @@
 import { join, basename } from 'node:path'
 import { mkdirSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import {
+  attestFishHistoryLocation,
+  FISH_HISTORY_LOCATION_ATTESTATION,
   fishHistorySessionName,
   isSafeFishHistorySession,
   MAX_FISH_HISTORY_META_BYTES,
@@ -103,6 +105,13 @@ function writeMetaFile(
     const fishHistoryPaths = fish
       ? normalizeFishHistoryPaths(fish.session, undefined, [...existingFishPaths, fish.historyPath])
       : existingFishPaths
+    if (fish) {
+      attestFishHistoryLocation(
+        join(dir, FISH_HISTORY_LOCATION_ATTESTATION),
+        fish.session,
+        fish.historyPath
+      )
+    }
     if (
       existing &&
       !existing.fishHistoryMetadataNeedsRewrite &&
@@ -136,9 +145,9 @@ export type HistoryDirMeta = {
   createdAt?: string
   /** fish session name whose history file lives in the user's fish data dir. */
   fishSession?: string
-  /** That file's path resolved from the PTY's spawn env, which the main process env can contradict. */
+  /** Legacy/rollback path hint; deletion requires the separate identity attestation. */
   fishHistoryPath?: string
-  /** Most-recent paths this session used as XDG_DATA_HOME changed across launches. */
+  /** Bounded legacy/rollback path hints across XDG_DATA_HOME changes. */
   fishHistoryPaths?: string[]
   /** In-memory migration signal; never persisted. */
   fishHistoryMetadataNeedsRewrite?: true

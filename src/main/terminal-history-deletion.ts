@@ -1,7 +1,7 @@
 import { basename, dirname, join } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, renameSync } from 'node:fs'
 import { removeHostTree } from './host-tree-removal'
-import { deleteFishHistoryFile } from './fish-history-session'
+import { deleteFishHistoryFile, FISH_HISTORY_LOCATION_ATTESTATION } from './fish-history-session'
 import { readHistoryMeta } from './terminal-history'
 import {
   getHistoryRoot,
@@ -123,10 +123,7 @@ export function scheduleWorktreeHistoryTreeDeletion(dir: string, historyRoot: st
   const meta = readHistoryMeta(dir)
   const wslDistro = wslDistroForHistoryRoot(historyRoot)
   if (meta?.fishSession && !wslDistro) {
-    deleteFishHistoryFile(meta.fishSession, {
-      recordedPath: meta.fishHistoryPath,
-      recordedPaths: meta.fishHistoryPaths
-    })
+    deleteFishHistoryFile(meta.fishSession, join(dir, FISH_HISTORY_LOCATION_ATTESTATION))
   }
   const tombstone = tombstoneHistoryTree(dir, historyRoot)
   if (!tombstone) {

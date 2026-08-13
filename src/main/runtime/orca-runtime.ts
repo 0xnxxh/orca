@@ -918,6 +918,7 @@ import {
   resolveWorktreeSharedDirectories
 } from '../git/worktree-shared-directories'
 import { deleteWorktreeHistoryDir } from '../terminal-history-deletion'
+import { deleteRemoteWorktreeHistory } from '../remote-worktree-history-cleanup'
 import {
   cleanupUnusedWorktreePushTargetRemote,
   cleanupUnusedWorktreePushTargetRemoteSsh,
@@ -24451,6 +24452,7 @@ export class OrcaRuntimeService {
               .then((gate) => gate.finish(false))
               .catch(() => {})
           }
+          await deleteRemoteWorktreeHistory(sshPtyProvider, removalTarget.id)
           this.clearOptimisticReconcileToken(removalTarget.id)
           this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
           this.preservedBranchCleanupByScope.delete(cleanupScopeKey)
@@ -24495,9 +24497,7 @@ export class OrcaRuntimeService {
               console.warn(`[worktree-teardown] failed for ${removalTarget.id}:`, err)
             })
           }
-          await folderSshPtyProvider?.deleteWorktreeHistory?.(removalTarget.id).catch((err) => {
-            console.warn(`[pty:history] remote folder cleanup failed:`, err)
-          })
+          await deleteRemoteWorktreeHistory(folderSshPtyProvider, removalTarget.id)
           this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
           this.preservedBranchCleanupByScope.delete(cleanupScopeKey)
           this.invalidateResolvedWorktreeCache()
@@ -24581,6 +24581,10 @@ export class OrcaRuntimeService {
                 removalTarget.id,
                 removedPushTarget,
                 store
+              )
+              await deleteRemoteWorktreeHistory(
+                this.getSshProviderFn?.(repo.connectionId),
+                removalTarget.id
               )
             } else {
               const removalGate = await this.acquireFileWatcherRemoval(removalTarget.path)
@@ -24687,6 +24691,12 @@ export class OrcaRuntimeService {
                   store,
                   localWorktreeGitOptions
                 ))
+            if (repo.connectionId) {
+              await deleteRemoteWorktreeHistory(
+                this.getSshProviderFn?.(repo.connectionId),
+                removalTarget.id
+              )
+            }
             this.clearOptimisticReconcileToken(removalTarget.id)
             this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
             this.preservedBranchCleanupByScope.delete(cleanupScopeKey)
@@ -24750,10 +24760,7 @@ export class OrcaRuntimeService {
           return removalResult ?? {}
         }
         if (repo.connectionId) {
-          const remoteRemoveOptions = {
-            ...(!deleteBranch ? { deleteBranch } : {}),
-            worktreeId: removalTarget.id
-          }
+          const remoteRemoveOptions = !deleteBranch ? { deleteBranch } : {}
           const removalGate = await this.acquireFileWatcherRemoval(
             canonicalWorktreePath,
             repo.connectionId
@@ -24765,11 +24772,9 @@ export class OrcaRuntimeService {
               connectionId: repo.connectionId,
               allowUnverifiedStop: allowUnverifiedPtyStop
             })
-            rawRemovalResult = await provider!.removeWorktree(
-              canonicalWorktreePath,
-              force,
-              remoteRemoveOptions
-            )
+            rawRemovalResult = await (Object.keys(remoteRemoveOptions).length > 0
+              ? provider!.removeWorktree(canonicalWorktreePath, force, remoteRemoveOptions)
+              : provider!.removeWorktree(canonicalWorktreePath, force))
             removalCompleted = true
           } finally {
             await removalGate.finish(removalCompleted)
@@ -24784,6 +24789,10 @@ export class OrcaRuntimeService {
             removalTarget.id,
             removedPushTarget,
             store
+          )
+          await deleteRemoteWorktreeHistory(
+            this.getSshProviderFn?.(repo.connectionId),
+            removalTarget.id
           )
           this.rememberPreservedBranchCleanupTarget(
             removalTarget.id,

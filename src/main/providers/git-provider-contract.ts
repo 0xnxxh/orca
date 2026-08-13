@@ -82,7 +82,7 @@ export type IGitProvider = {
   removeWorktree(
     worktreePath: string,
     force?: boolean,
-    options?: { deleteBranch?: boolean; forceBranchDelete?: boolean; worktreeId?: string }
+    options?: { deleteBranch?: boolean; forceBranchDelete?: boolean }
   ): Promise<RemoveWorktreeResult>
   renameCurrentBranch?(worktreePath: string, newBranch: string): Promise<void>
   forceDeletePreservedBranch?(

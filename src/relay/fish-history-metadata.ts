@@ -1,11 +1,10 @@
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
+  attestFishHistoryLocation,
   deleteFishHistoryFile,
   fishHistorySessionName,
-  MAX_FISH_HISTORY_META_BYTES,
-  normalizeFishHistoryPaths,
   resolveFishHistoryFilePath
 } from '../main/fish-history-session'
 import { hashWorktreeId } from '../main/terminal-history-id'
@@ -18,31 +17,6 @@ function metadataPath(worktreeId: string, root: string): string {
   return join(root, `${hashWorktreeId(worktreeId)}.json`)
 }
 
-function readPaths(worktreeId: string, root: string): string[] {
-  try {
-    const file = metadataPath(worktreeId, root)
-    if (statSync(file).size > MAX_FISH_HISTORY_META_BYTES) {
-      return []
-    }
-    const raw: unknown = JSON.parse(readFileSync(file, 'utf8'))
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      return []
-    }
-    const record = raw as Record<string, unknown>
-    const session = fishHistorySessionName(hashWorktreeId(worktreeId))
-    if (record.fishSession !== session) {
-      return []
-    }
-    return normalizeFishHistoryPaths(
-      session,
-      record.fishHistoryPath,
-      Array.isArray(record.fishHistoryPaths) ? record.fishHistoryPaths : undefined
-    )
-  } catch {
-    return []
-  }
-}
-
 export function recordRelayFishHistoryPath(
   worktreeId: string,
   env: NodeJS.ProcessEnv,
@@ -53,35 +27,12 @@ export function recordRelayFishHistoryPath(
   if (!activePath) {
     return
   }
-  try {
-    const paths = normalizeFishHistoryPaths(session, undefined, [
-      ...readPaths(worktreeId, root),
-      activePath
-    ])
-    mkdirSync(root, { recursive: true, mode: 0o700 })
-    writeFileSync(
-      metadataPath(worktreeId, root),
-      JSON.stringify({
-        fishSession: session,
-        fishHistoryPath: activePath,
-        fishHistoryPaths: paths
-      }),
-      { mode: 0o600 }
-    )
-  } catch (error) {
-    console.warn(
-      `[pty:history] Failed to record relay fish history: ${error instanceof Error ? error.message : String(error)}`
-    )
-  }
+  attestFishHistoryLocation(metadataPath(worktreeId, root), session, activePath)
 }
 
-export function deleteRelayFishHistory(
-  worktreeId: string,
-  root = metadataRoot(),
-  env: NodeJS.ProcessEnv = process.env
-): void {
+export function deleteRelayFishHistory(worktreeId: string, root = metadataRoot()): void {
   const session = fishHistorySessionName(hashWorktreeId(worktreeId))
-  deleteFishHistoryFile(session, { recordedPaths: readPaths(worktreeId, root), env })
+  deleteFishHistoryFile(session, metadataPath(worktreeId, root))
   try {
     rmSync(metadataPath(worktreeId, root), { force: true })
   } catch (error) {
