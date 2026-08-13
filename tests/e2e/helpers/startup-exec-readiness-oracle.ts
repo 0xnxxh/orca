@@ -43,6 +43,13 @@ fi
 `
 }
 
+export function zshExecProfileContents(runId: string, barrier?: BashExecProfileBarrier): string {
+  return bashExecProfileContents(runId, barrier).replace(
+    'exec -a figterm-sta4067 /bin/bash --noprofile --norc -l -i',
+    'exec -a figterm-sta4067 /bin/zsh -o noglobalrcs -l -i'
+  )
+}
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`
 }
@@ -106,12 +113,24 @@ export function installBashExecProfile(
   return () => rmSync(profilePath, { force: true })
 }
 
+export function installZshExecProfile(
+  homePath: string,
+  runId: string,
+  barrier?: BashExecProfileBarrier
+): () => void {
+  const profilePath = path.join(homePath, '.zprofile')
+  writeFileSync(profilePath, zshExecProfileContents(runId, barrier))
+  return () => rmSync(profilePath, { force: true })
+}
+
 export async function createStartupExecTerminal(
   page: Page,
   worktreeId: string,
   runId: string,
   ledgerPath: string,
-  tabIdNamespace: 'owning-client' | 'paired-client'
+  tabIdNamespace: 'owning-client' | 'paired-client',
+  shell: '/bin/bash' | '/bin/zsh' = '/bin/bash',
+  shellEnv: Record<string, string> = {}
 ): Promise<StartupExecTerminal> {
   const startupMarker = `STA4067_STARTUP_READY_${runId}`
   const command = [
@@ -123,7 +142,7 @@ export async function createStartupExecTerminal(
   }>(page, 'session.tabs.createTerminal', {
     worktree: `id:${worktreeId}`,
     command,
-    env: { SHELL: '/bin/bash' },
+    env: { ...shellEnv, SHELL: shell },
     startupCommandDelivery: 'shell-ready',
     activate: false,
     select: false,

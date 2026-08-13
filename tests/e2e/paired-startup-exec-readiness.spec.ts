@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Page } from '@stablyai/playwright-test'
 import { expect, test } from './helpers/orca-app'
@@ -12,7 +12,7 @@ import {
   closeStartupExecTerminal,
   createStartupExecTerminal,
   expectStartupExecRecovery,
-  installBashExecProfile
+  installZshExecProfile
 } from './helpers/startup-exec-readiness-oracle'
 
 async function waitForWorktree(page: Page, id: string): Promise<void> {
@@ -51,6 +51,31 @@ function expectLedger(ledgerPath: string): void {
   expect(tty).toMatch(/^\/dev\//)
 }
 
+async function releaseExecBarrier(
+  startedPath: string,
+  releasePath: string,
+  ledgerPath: string
+): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        existsSync(startedPath)
+          ? 'started'
+          : existsSync(ledgerPath)
+            ? readFileSync(ledgerPath, 'utf8').trim()
+            : 'pending',
+      { timeout: 30_000 }
+    )
+    .toBe('started')
+  expect(existsSync(ledgerPath)).toBe(false)
+  writeFileSync(releasePath, '')
+}
+
+function cleanupExecBarrier(startedPath: string, releasePath: string): void {
+  rmSync(startedPath, { force: true })
+  rmSync(releasePath, { force: true })
+}
+
 test('recovers startup exec through a headed paired desktop owner @headful', async ({
   electronApp,
   orcaPage
@@ -59,7 +84,9 @@ test('recovers startup exec through a headed paired desktop owner @headful', asy
   const runId = `headed_${Date.now()}`
   const homePath = await electronApp.evaluate(({ app }) => app.getPath('home'))
   const ledgerPath = path.join(homePath, `.sta4067-${runId}.ledger`)
-  const removeProfile = installBashExecProfile(homePath, runId)
+  const startedPath = path.join(homePath, `.sta4067-${runId}.started`)
+  const releasePath = path.join(homePath, `.sta4067-${runId}.release`)
+  const removeProfile = installZshExecProfile(homePath, runId, { releasePath, startedPath })
   const worktreeId = await orcaPage.evaluate(() => window.__store?.getState().activeWorktreeId)
   if (!worktreeId) {
     throw new Error('Headed owner has no active worktree')
@@ -74,15 +101,19 @@ test('recovers startup exec through a headed paired desktop owner @headful', asy
       worktreeId,
       runId,
       ledgerPath,
-      'paired-client'
+      'paired-client',
+      '/bin/zsh',
+      { ORCA_ORIG_ZDOTDIR: homePath, ORCA_ZSHENV_SOURCE_DIR: homePath }
     )
     terminal = created.terminal
+    await releaseExecBarrier(startedPath, releasePath, ledgerPath)
     await expectStartupExecRecovery(client.page, created, runId)
     expectLedger(ledgerPath)
   } finally {
     await closeStartupExecTerminal(orcaPage, terminal)
     await client.dispose()
     removeProfile()
+    cleanupExecBarrier(startedPath, releasePath)
   }
 })
 
@@ -94,7 +125,9 @@ test('recovers the same startup exec through an isolated headless orca serve', a
   const host = await launchHeadlessPairedRuntimeHost()
   const homePath = await host.app.evaluate(({ app }) => app.getPath('home'))
   const ledgerPath = path.join(homePath, `.sta4067-${runId}.ledger`)
-  const removeProfile = installBashExecProfile(homePath, runId)
+  const startedPath = path.join(homePath, `.sta4067-${runId}.started`)
+  const releasePath = path.join(homePath, `.sta4067-${runId}.release`)
+  const removeProfile = installZshExecProfile(homePath, runId, { releasePath, startedPath })
   const client = await launchPairedWebClient(host.app, host.offer, { waitForWorkspace: false })
   let terminal: string | null = null
   try {
@@ -120,15 +153,19 @@ test('recovers the same startup exec through an isolated headless orca serve', a
       worktreeId,
       runId,
       ledgerPath,
-      'paired-client'
+      'paired-client',
+      '/bin/zsh',
+      { ORCA_ORIG_ZDOTDIR: homePath, ORCA_ZSHENV_SOURCE_DIR: homePath }
     )
     terminal = created.terminal
+    await releaseExecBarrier(startedPath, releasePath, ledgerPath)
     await expectStartupExecRecovery(client.page, created, runId)
     expectLedger(ledgerPath)
   } finally {
     await closeStartupExecTerminal(client.page, terminal)
     await client.dispose()
     removeProfile()
+    cleanupExecBarrier(startedPath, releasePath)
     await host.dispose()
   }
 })
