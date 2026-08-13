@@ -69,6 +69,7 @@ import type { PtyIncarnationId } from '../../shared/pty-incarnation'
 import { resolveSafePtyDefaultCwd } from '../providers/pty-default-cwd'
 import { PtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
 import { ColdRestorePayloadCache, type ColdRestorePayload } from './cold-restore-payload-cache'
+import { buildDurableCheckpointSnapshot } from './daemon-durable-history-snapshot'
 import { PtyProcessListAdmission } from '../providers/pty-process-list-admission'
 import {
   iterateTerminalHistorySeedChunks,
@@ -831,15 +832,16 @@ export class DaemonPtyAdapter implements IPtyProvider {
       }
     }
 
-    const isAltScreen = result.snapshot.modes.alternateScreen
-    const snapshotPrefix = result.snapshot.scrollbackAnsi + result.snapshot.rehydrateSequences
-    const snapshotFrame = result.snapshot.snapshotAnsi
+    const reattachSnapshot = await this.overlayDurableRestoreSnapshot(sessionId, result.snapshot)
+    const isAltScreen = reattachSnapshot.modes.alternateScreen
+    const snapshotPrefix = reattachSnapshot.scrollbackAnsi + reattachSnapshot.rehydrateSequences
+    const snapshotFrame = reattachSnapshot.snapshotAnsi
     const snapshotPayload = snapshotPrefix + snapshotFrame
     // Why kitty flags ride beside the payload, not inside it: the snapshot reaches renderer xterms where POST_REPLAY_REATTACH_RESET's kitty reset must win (terminal-query-authority.md §kitty).
     // Why known `0` is no longer dropped: the pane tracker must be able to tell
     // "the app negotiated nothing" from "this reattach proved nothing".
     const kittyKeyboardFlags = parseTerminalKittyKeyboardFlags(
-      result.snapshot.modes.kittyKeyboardFlags
+      reattachSnapshot.modes.kittyKeyboardFlags
     )
     return {
       id: sessionId,
@@ -849,14 +851,14 @@ export class DaemonPtyAdapter implements IPtyProvider {
       ...launchIdentity(),
       ...(providerWslDistro !== undefined ? { wslDistro: providerWslDistro } : {}),
       snapshot: snapshotPayload,
-      snapshotCols: result.snapshot.cols,
-      snapshotRows: result.snapshot.rows,
+      snapshotCols: reattachSnapshot.cols,
+      snapshotRows: reattachSnapshot.rows,
       // Why only for an alt frame: normal history remains safe to replay at its capture grid.
-      ...(isAltScreen && snapshotFrame && result.snapshot.frameRestoreAnsi
+      ...(isAltScreen && snapshotFrame && reattachSnapshot.frameRestoreAnsi
         ? {
             snapshotPrefixAnsi: snapshotPrefix,
             snapshotFrameAnsi: snapshotFrame,
-            snapshotFrameRestoreAnsi: result.snapshot.frameRestoreAnsi
+            snapshotFrameRestoreAnsi: reattachSnapshot.frameRestoreAnsi
           }
         : {}),
       ...(providerSequence ? { providerSequence } : {}),
@@ -866,10 +868,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
       isReattach: true,
       isAlternateScreen: isAltScreen,
       // Why: the snapshot ANSI has no title frame; carry lastTitle beside it so main can seed title records after a relaunch.
-      ...(result.snapshot.lastTitle ? { lastTitle: result.snapshot.lastTitle } : {}),
+      ...(reattachSnapshot.lastTitle ? { lastTitle: reattachSnapshot.lastTitle } : {}),
       // Why: carry the mid-escape tail so the renderer writes it after the reattach reset, else a split escape renders literally (#7329).
-      ...(result.snapshot.pendingEscapeTailAnsi
-        ? { pendingEscapeTailAnsi: result.snapshot.pendingEscapeTailAnsi }
+      ...(reattachSnapshot.pendingEscapeTailAnsi
+        ? { pendingEscapeTailAnsi: reattachSnapshot.pendingEscapeTailAnsi }
         : {})
     }
   }
@@ -1226,28 +1228,73 @@ export class DaemonPtyAdapter implements IPtyProvider {
       if (!snapshot || typeof snapshot.outputSequence !== 'number') {
         return null
       }
-      const kittyKeyboardFlags = parseTerminalKittyKeyboardFlags(snapshot.modes.kittyKeyboardFlags)
-      return {
-        data: snapshot.rehydrateSequences + snapshot.snapshotAnsi,
-        frameRestoreAnsi: snapshot.frameRestoreAnsi,
-        scrollbackAnsi: snapshot.scrollbackAnsi,
-        cols: snapshot.cols,
-        rows: snapshot.rows,
-        cwd: snapshot.cwd,
-        lastTitle: snapshot.lastTitle,
-        seq: snapshot.outputSequence,
-        source: 'headless',
-        oscLinks: snapshot.oscLinks,
-        alternateScreen: snapshot.modes.alternateScreen,
-        // Why known `0` is carried too: it proves the app negotiated nothing at
-        // this boundary, which is a different fact from a source that cannot say.
-        ...(kittyKeyboardFlags !== undefined ? { kittyKeyboardFlags } : {}),
-        ...(snapshot.pendingEscapeTailAnsi
-          ? { pendingEscapeTailAnsi: snapshot.pendingEscapeTailAnsi }
-          : {})
-      }
+      const restored =
+        this.historyManager && this.historyReader && opts.scrollbackRows !== 0
+          ? await this.overlayDurableRestoreSnapshot(id, snapshot)
+          : snapshot
+      return this.toProviderBufferSnapshot(restored)
     } catch {
       return null
+    }
+  }
+
+  private toProviderBufferSnapshot(
+    snapshot: NonNullable<GetSnapshotResult['snapshot']>
+  ): PtyProviderBufferSnapshot | null {
+    if (typeof snapshot.outputSequence !== 'number') {
+      return null
+    }
+    const kittyKeyboardFlags = parseTerminalKittyKeyboardFlags(snapshot.modes.kittyKeyboardFlags)
+    return {
+      data: snapshot.rehydrateSequences + snapshot.snapshotAnsi,
+      frameRestoreAnsi: snapshot.frameRestoreAnsi,
+      scrollbackAnsi: snapshot.scrollbackAnsi,
+      cols: snapshot.cols,
+      rows: snapshot.rows,
+      cwd: snapshot.cwd,
+      lastTitle: snapshot.lastTitle,
+      seq: snapshot.outputSequence,
+      source: 'headless',
+      oscLinks: snapshot.oscLinks,
+      alternateScreen: snapshot.modes.alternateScreen,
+      // Why known `0` is carried too: it proves the app negotiated nothing at
+      // this boundary, which is a different fact from a source that cannot say.
+      ...(kittyKeyboardFlags !== undefined ? { kittyKeyboardFlags } : {}),
+      ...(snapshot.pendingEscapeTailAnsi
+        ? { pendingEscapeTailAnsi: snapshot.pendingEscapeTailAnsi }
+        : {})
+    }
+  }
+
+  private async overlayDurableRestoreSnapshot(
+    sessionId: string,
+    liveSnapshot: NonNullable<GetSnapshotResult['snapshot']>
+  ): Promise<NonNullable<GetSnapshotResult['snapshot']>> {
+    if (!this.historyManager || !this.historyReader) {
+      return liveSnapshot
+    }
+    try {
+      // Why exclusive compact: an independent take/append races the 5s tick, can
+      // seq-gap the log, and would remount a stale checkpoint over the live window.
+      await this.runExclusiveCheckpoint(async () => {
+        const result = await this.takeSnapshotAndCheckpoint(sessionId, { teardown: false })
+        if (result === 'committed') {
+          this.sessionsNeedingFullCheckpoint.delete(sessionId)
+        }
+      })
+      const restoreInfo = await this.historyReader.detectColdRestore(sessionId, {
+        ignoreCleanEnd: true,
+        wslDistro: this.wslDistrosBySessionId.get(sessionId)
+      })
+      if (!restoreInfo) {
+        return liveSnapshot
+      }
+      return await buildDurableCheckpointSnapshot({
+        liveSnapshot,
+        restoreInfo
+      })
+    } catch {
+      return liveSnapshot
     }
   }
 
@@ -2102,7 +2149,17 @@ export class DaemonPtyAdapter implements IPtyProvider {
       teardownSnapshot: opts.teardown
     })
     if (take?.snapshot && this.historyManager) {
-      const checkpoint = await this.historyManager.checkpoint(sessionId, take.snapshot)
+      // Why require drainedRecords: an older daemon still empties the pending
+      // queue on includeSnapshot but omits the field. Treating absence as []
+      // would compact stale disk history and reset the log.
+      const snapshot =
+        take.drainedRecords === undefined
+          ? take.snapshot
+          : await this.buildDurableHistorySnapshot(sessionId, take.snapshot, [
+              ...take.drainedRecords,
+              ...take.records
+            ])
+      const checkpoint = await this.historyManager.checkpoint(sessionId, snapshot)
       if (checkpoint !== 'committed') {
         // Why take.records is dropped, not appended: the pending output this take drained went into the snapshot that
         // failed to land, so appending the held tail at the next contiguous seq would splice it over that hole and
@@ -2110,13 +2167,36 @@ export class DaemonPtyAdapter implements IPtyProvider {
         return checkpoint
       }
       this.lastFullCheckpointAt.set(sessionId, Date.now())
-      if (take.records.length > 0) {
-        // Why: held parser-state bytes (an incomplete shell-ready marker) aren't in the snapshot; keep them as a post-checkpoint log tail.
+      if (take.records.length > 0 && snapshot === take.snapshot) {
+        // Why: live-window fallback still lacks held parser-state bytes; keep them as a post-checkpoint log tail.
         await this.historyManager.appendIncrements(sessionId, take.seq, take.records)
       }
       return 'committed'
     }
     return 'unavailable'
+  }
+
+  private async buildDurableHistorySnapshot(
+    sessionId: string,
+    liveSnapshot: NonNullable<TakePendingOutputResult['snapshot']>,
+    pendingRecords: TakePendingOutputResult['records']
+  ): Promise<NonNullable<TakePendingOutputResult['snapshot']>> {
+    if (!this.historyReader) {
+      return liveSnapshot
+    }
+    try {
+      const restoreInfo = await this.historyReader.detectColdRestore(sessionId, {
+        ignoreCleanEnd: true,
+        wslDistro: this.wslDistrosBySessionId.get(sessionId)
+      })
+      return await buildDurableCheckpointSnapshot({
+        liveSnapshot,
+        restoreInfo,
+        pendingRecords
+      })
+    } catch {
+      return liveSnapshot
+    }
   }
 
   // Why: the token read no longer throws, so audit its absence directly after an authenticated drop.
