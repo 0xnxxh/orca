@@ -10210,7 +10210,7 @@ describe('connectPanePty', () => {
       claim: true
     })
     expect(written).toContain(viewportClear)
-    expect(written).not.toContain('\x1b[0m\x1b[2J\x1b[3J\x1b[H')
+    expect(written).not.toContain('\x1b[0m\x1b(B\x0f\x1b[2J\x1b[3J\x1b[H')
     expect(written).toEqual(
       expect.arrayContaining([coldScrollback, POST_REPLAY_MODE_RESET, blankViewport])
     )
@@ -15466,7 +15466,7 @@ describe('connectPanePty', () => {
     expect(getMainBufferSnapshot).toHaveBeenCalledWith('pty-id', { scrollbackRows: 5000 })
     expect(pane.terminal.resize).toHaveBeenCalledWith(100, 30)
     expect(pane.terminal.write).toHaveBeenCalledWith(
-      '\x1b[0m\x1b[2J\x1b[3J\x1b[H',
+      '\x1b[0m\x1b(B\x0f\x1b[2J\x1b[3J\x1b[H',
       expect.any(Function)
     )
     expect(pane.terminal.write).toHaveBeenCalledWith('snapshot-state\r\n', expect.any(Function))
@@ -15519,7 +15519,7 @@ describe('connectPanePty', () => {
 
     expect(getMainBufferSnapshot).toHaveBeenCalledWith('pty-id', { scrollbackRows: 5000 })
     expect(pane.terminal.write).toHaveBeenCalledWith(
-      '\x1b[0m\x1b[?1049l\x1b[2J\x1b[3J\x1b[H',
+      '\x1b[0m\x1b(B\x0f\x1b[?1049l\x1b[2J\x1b[3J\x1b[H',
       expect.any(Function)
     )
     expect(pane.terminal.write).toHaveBeenCalledWith(
@@ -15527,16 +15527,16 @@ describe('connectPanePty', () => {
       expect.any(Function)
     )
     expect(pane.terminal.write).toHaveBeenCalledWith(
-      '\x1b[0m\x1b[?1049h\x1b[2J\x1b[H',
+      '\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H',
       expect.any(Function)
     )
     const writes = (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map(
       (call) => call[0]
     )
     expect(writes.indexOf('preserved-shell-history\r\n')).toBeLessThan(
-      writes.indexOf('\x1b[0m\x1b[?1049h\x1b[2J\x1b[H')
+      writes.indexOf('\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H')
     )
-    expect(writes.indexOf('\x1b[0m\x1b[?1049h\x1b[2J\x1b[H')).toBeLessThan(
+    expect(writes.indexOf('\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H')).toBeLessThan(
       writes.indexOf('altscreen-snapshot\r\n')
     )
     expect(pane.terminal.write).toHaveBeenCalledWith('altscreen-snapshot\r\n', expect.any(Function))
@@ -15866,7 +15866,7 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(10)
 
     const written = pane.terminal.write.mock.calls.map(([data]) => data as string)
-    const resetIndex = written.indexOf('\x1b[0m')
+    const resetIndex = written.findIndex((data) => data.startsWith('\x1b[0m'))
     const liveIndex = written.findIndex((data) => data.includes('live-after-reveal'))
     expect(resetIndex).toBeGreaterThanOrEqual(0)
     expect(liveIndex).toBeGreaterThanOrEqual(0)
@@ -16390,7 +16390,7 @@ describe('connectPanePty', () => {
     expect(pane.terminal.clear).toHaveBeenCalled()
     expect(pane.terminal.write).not.toHaveBeenCalledWith(live, expect.any(Function))
     expect(pane.terminal.write).not.toHaveBeenCalledWith(
-      '\x1b[0m\x1b[2J\x1b[3J\x1b[H',
+      '\x1b[0m\x1b(B\x0f\x1b[2J\x1b[3J\x1b[H',
       expect.any(Function)
     )
     disposable.dispose()
@@ -17288,7 +17288,7 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(6)
 
     expect(pane.terminal.write).not.toHaveBeenCalledWith(
-      '\x1b[0m\x1b[2J\x1b[3J\x1b[H',
+      '\x1b[0m\x1b(B\x0f\x1b[2J\x1b[3J\x1b[H',
       expect.any(Function)
     )
     expect(pane.terminal.write).toHaveBeenCalledWith(

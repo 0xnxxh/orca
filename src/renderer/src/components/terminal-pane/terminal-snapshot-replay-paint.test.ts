@@ -42,7 +42,7 @@ describe('resolvePositiveTerminalDimensions', () => {
 describe('buildMainModelSnapshotReplayWrites', () => {
   it('clears normal buffer + scrollback before a normal-buffer snapshot', () => {
     expect(buildMainModelSnapshotReplayWrites({ data: 'shell-output' })).toEqual([
-      '\x1b[0m\x1b[2J\x1b[3J\x1b[H',
+      '\x1b[0m\x1b(B\x0f\x1b[2J\x1b[3J\x1b[H',
       'shell-output'
     ])
   })
@@ -59,9 +59,9 @@ describe('buildMainModelSnapshotReplayWrites', () => {
         scrollbackAnsi: 'normal-history'
       })
     ).toEqual([
-      '\x1b[0m\x1b[?1049l\x1b[2J\x1b[3J\x1b[H',
+      '\x1b[0m\x1b(B\x0f\x1b[?1049l\x1b[2J\x1b[3J\x1b[H',
       'normal-history',
-      '\x1b[0m\x1b[?1049h\x1b[2J\x1b[H',
+      '\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H',
       'alt-frame'
     ])
   })
@@ -69,7 +69,7 @@ describe('buildMainModelSnapshotReplayWrites', () => {
   it('enters a cleared alt screen when no split scrollback is available', () => {
     expect(
       buildMainModelSnapshotReplayWrites({ data: 'alt-frame', alternateScreen: true })
-    ).toEqual(['\x1b[0m\x1b[?1049h\x1b[2J\x1b[H', 'alt-frame'])
+    ).toEqual(['\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H', 'alt-frame'])
   })
 })
 
@@ -153,9 +153,9 @@ describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
         { skipAltFrame: true }
       )
     ).toEqual([
-      '\x1b[0m\x1b[?1049l\x1b[2J\x1b[3J\x1b[H',
+      '\x1b[0m\x1b(B\x0f\x1b[?1049l\x1b[2J\x1b[3J\x1b[H',
       'normal-history',
-      '\x1b[0m\x1b[?1049h\x1b[2J\x1b[H',
+      '\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H',
       'complete-live-state'
     ])
   })
@@ -172,7 +172,7 @@ describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
         },
         { skipAltFrame: true }
       )
-    ).toEqual(['\x1b[0m\x1b[?1049h\x1b[2J\x1b[H', 'complete-live-state'])
+    ).toEqual(['\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H', 'complete-live-state'])
   })
 
   it('keeps composed data when an older producer omits the mode boundary', () => {
@@ -181,13 +181,13 @@ describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
         { data: 'legacy-modes-and-frame', alternateScreen: true },
         { skipAltFrame: true }
       )
-    ).toEqual(['\x1b[0m\x1b[?1049h\x1b[2J\x1b[H', 'legacy-modes-and-frame'])
+    ).toEqual(['\x1b[0m\x1b(B\x0f\x1b[?1049h\x1b[2J\x1b[H', 'legacy-modes-and-frame'])
   })
 
   it('never drops a normal-buffer snapshot, whose rows reflow correctly', () => {
     expect(
       buildMainModelSnapshotReplayWrites({ data: 'shell-output' }, { skipAltFrame: true })
-    ).toEqual(['\x1b[0m\x1b[2J\x1b[3J\x1b[H', 'shell-output'])
+    ).toEqual(['\x1b[0m\x1b(B\x0f\x1b[2J\x1b[3J\x1b[H', 'shell-output'])
   })
 
   // STA-4042: a replay only runs because renderer-bound bytes were dropped, so
@@ -206,6 +206,8 @@ describe('buildMainModelSnapshotReplayWrites alt-frame skip', () => {
     ]
     for (const writes of branches) {
       expect(writes[0].startsWith('\x1b[0m')).toBe(true)
+      // charset too: a dropped ESC(B renders text as box characters
+      expect(writes[0].includes('\x1b(B')).toBe(true)
       // Nothing may be replayed ahead of the first reset.
       expect(writes.indexOf('scrollback')).not.toBe(0)
     }

@@ -124,7 +124,7 @@ import {
   POST_REPLAY_MODE_RESET,
   POST_REPLAY_REATTACH_RESET,
   POST_REPLAY_REATTACH_RESET_KEEP_MOUSE,
-  RESET_GRAPHIC_RENDITION,
+  RESET_AFTER_BYTE_GAP,
   RESET_KITTY_KEYBOARD_PROTOCOL,
   RESET_TERMINAL_CURSOR_STYLE
 } from '../../../../shared/terminal-mode-reset-profiles'
@@ -7064,9 +7064,10 @@ export function connectPanePty(
       // held the `ESC[22m`/`ESC[0m` closing a run, xterm still has bold (or any
       // other attribute) latched. Abandoning means no snapshot will rebuild the
       // buffer, so nothing else ever clears it and every later cell inherits it
-      // (STA-4042). Cheap and idempotent; a live TUI re-arms its own attributes
-      // on the next write.
-      writePtyOutputToXterm(RESET_GRAPHIC_RENDITION, true)
+      // (STA-4042). Same for the charset designation, whose loss renders text as
+      // box characters. Cheap and idempotent; a live TUI re-asserts both on its
+      // next write.
+      writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
       if (hadPendingOverflow) {
         return
       }
