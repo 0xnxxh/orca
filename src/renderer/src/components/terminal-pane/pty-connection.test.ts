@@ -12103,6 +12103,28 @@ describe('connectPanePty', () => {
       return { transport, pane, dataCallback: capturedDataCallback.current!, binding }
     }
 
+    // STA-4042 root: the restore-needed marker is the ONE point where "bytes
+    // were dropped" is known. The emulator carries state across chunks just like
+    // the cross-chunk parser the handler already resets, so the gap is closed
+    // here rather than left to each recovery path to remember.
+    it('closes the emulator state gap when a drop is announced', async () => {
+      enableMainAuthority()
+      const deps = createDeps({ isVisibleRef: { current: false } })
+      const { pane, dataCallback } = await connectHiddenPane(deps)
+      dataCallback('hidden output\r\n', { seq: 16, rawLength: 16 })
+      pane.terminal.write.mockClear()
+
+      const { _dispatchPtyModelRestoreNeededForTest } = await import('./pty-model-restore-channel')
+      _dispatchPtyModelRestoreNeededForTest({ id: 'pty-id', reason: 'hidden-drop', markerSeq: 64 })
+      await flushAsyncTicks(4)
+
+      const written = pane.terminal.write.mock.calls.map(([data]) => data as string)
+      const gapReset = written.find((data) => data.startsWith('\x1b[0m'))
+      expect(gapReset).toBeDefined()
+      // charset too: a dropped ESC(B otherwise renders text as box characters
+      expect(gapReset).toContain('\x1b(B')
+    })
+
     it('marks the PTY hidden on hidden output and clears it before requesting restore on reveal', async () => {
       enableMainAuthority()
       const deps = createDeps({ isVisibleRef: { current: false } })

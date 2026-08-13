@@ -6101,6 +6101,14 @@ export function connectPanePty(
       })
       // Why: dropped bytes invalidate cross-chunk carry — a partial OSC-9999 prefix spanning the gap would corrupt the next live chunk.
       transport.resetCrossChunkParserState?.()
+      // Why the emulator too: it carries state across chunks exactly like the
+      // parser does. If the gap swallowed the `ESC[22m` closing a bold run (or
+      // the `ESC(B` leaving line-drawing), every cell written afterwards
+      // inherits it. This marker is the one point where "bytes were dropped" is
+      // known, so close the state gap here instead of relying on each recovery
+      // path to remember — restore, abandon and overflow then all start from a
+      // known pen (STA-4042).
+      writePtyOutputToXterm(RESET_AFTER_BYTE_GAP, true)
       // Why gated (rc.7.perf loop): on a visible pane these markers come from our own restore starving ACKs; re-arming per marker kept the fetch loop alive all flood, so defer to one post-flood repaint.
       if (isForegroundRestoreBackpressureContext()) {
         noteHiddenOutputRestoreFloodBackpressure()
