@@ -162,6 +162,7 @@ import { getHostDisplayLabelOverrides } from '../../../shared/host-setting-overr
 import { queueWorkspaceActivationTerminalFocus } from '@/lib/workspace-activation-terminal-focus'
 import { getSettingsForRepoRuntimeOwner } from '@/lib/repo-runtime-owner'
 import { getSuggestedCreatureName } from '@/components/sidebar/worktree-name-suggestions'
+import { useRetiredWorktreeNames } from '@/hooks/useRetiredWorktreeNames'
 import type { SmartWorkspaceNameSelection } from '@/components/new-workspace/SmartWorkspaceNameField'
 import {
   isBlockingJiraUrlIntent,
@@ -1591,9 +1592,11 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const shouldWaitForSetupCheck = Boolean(selectedRepo) && selectedRepoIsGit && isSetupCheckPending
 
   // Why: blank name with no other seed → globally-unique creature name so workspaces don't collide across repos or on a literal default.
+  // Retired names are excluded too, so a recreated workspace never reuses a deleted one's path.
+  const retiredWorktreeNames = useRetiredWorktreeNames(repoId)
   const fallbackCreatureName = useMemo(
-    () => getSuggestedCreatureName(worktreesByRepo),
-    [worktreesByRepo]
+    () => getSuggestedCreatureName(worktreesByRepo, undefined, retiredWorktreeNames),
+    [worktreesByRepo, retiredWorktreeNames]
   )
   const workspaceSeedName = useMemo(
     () =>

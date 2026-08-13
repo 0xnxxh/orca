@@ -108,8 +108,10 @@ import {
   areWorktreePathsEqual,
   formatWorktreeRemovalError,
   isOrphanCompatiblePreflightError,
-  isOrphanedWorktreeError
+  isOrphanedWorktreeError,
+  computeWorktreePath
 } from './worktree-logic'
+import { discoverRetiredWorktreeNames, retirableLeafName } from '../worktree-name-retirement'
 import { dedupeWorktreesByPath } from './worktree-path-comparison'
 import { joinWorktreeRelativePath } from '../runtime/runtime-relative-paths'
 import {
@@ -602,6 +604,9 @@ function getPreservedBranchCleanupTarget(
 }
 
 const loggedUnavailableSshGitProviders = new Set<string>()
+/** Repos whose retirement registry has been seeded this run; the scan is idempotent, so a
+ *  per-run guard is enough to keep repeated suggestion reads from re-scanning the filesystem. */
+const backfilledRetirementRepoIds = new Set<string>()
 const loggedWorktreeListFailures = new Set<string>()
 const loggedMalformedWorktreeMetaKeys = new Set<string>()
 export const DETECTED_WORKTREE_PROVIDER_TIMEOUT_MS = 30_000
@@ -1820,6 +1825,7 @@ export function registerWorktreeHandlers(
   // Remove previously registered handlers so re-register works when macOS re-activates and creates a new window.
   ipcMain.removeHandler('worktrees:listAll')
   ipcMain.removeHandler('worktrees:list')
+  ipcMain.removeHandler('worktrees:listRetiredNames')
   ipcMain.removeHandler('worktrees:listDetected')
   ipcMain.removeHandler('worktrees:listKnownForExecutionHost')
   ipcMain.removeHandler('worktrees:forgetRemovedForExecutionHost')
@@ -1904,6 +1910,35 @@ export function registerWorktreeHandlers(
     })
 
     return results.flat()
+  })
+
+  ipcMain.handle('worktrees:listRetiredNames', async (_event, args: { repoId: string }) => {
+    const repo = store.getRepo(args.repoId)
+    if (!repo) {
+      return []
+    }
+    // Why: seed once per app run rather than at startup — the scan is two directory reads, and
+    // repeating it per run also picks up workspaces deleted outside Orca since the last launch.
+    if (!backfilledRetirementRepoIds.has(args.repoId)) {
+      backfilledRetirementRepoIds.add(args.repoId)
+      try {
+        const probePath = computeWorktreePath(
+          'orca-retirement-probe',
+          repo.path,
+          store.getSettings()
+        )
+        const worktreeParent = probePath.slice(
+          0,
+          probePath.length - retirableLeafName(probePath).length - 1
+        )
+        const discovered = await discoverRetiredWorktreeNames({ workspaceRoots: [worktreeParent] })
+        store.mergeRetiredWorktreeNames(args.repoId, discovered)
+      } catch (err) {
+        // Best effort: without the seed we only under-retire, which is the pre-existing behavior.
+        console.warn(`[worktrees] retirement backfill failed for repo ${args.repoId}:`, err)
+      }
+    }
+    return store.getRetiredWorktreeNames(args.repoId)
   })
 
   ipcMain.handle('worktrees:list', async (_event, args: { repoId: string }) => {

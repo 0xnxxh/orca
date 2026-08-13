@@ -932,6 +932,7 @@ import {
   getWorktreeCreateCandidate,
   WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS
 } from '../worktree-create-candidates'
+import { retirableLeafName } from '../worktree-name-retirement'
 import { normalizeSparseDirectories } from '../ipc/sparse-checkout-directories'
 import type { PtyBindingSourceExpectation, Store } from '../persistence'
 import type { StatsCollector } from '../stats/collector'
@@ -1108,6 +1109,9 @@ export type CodexRateLimitResetRpcResult = {
 type RuntimeStore = {
   getRepos: Store['getRepos']
   getRepo: Store['getRepo']
+  /** Optional so older embedders of RuntimeStore keep type-checking; the create path skips
+   *  retirement when absent, which only means a name stays issuable. */
+  addRetiredWorktreeName?: Store['addRetiredWorktreeName']
   addRepo: Store['addRepo']
   updateRepo: Store['updateRepo']
   getProjects?: Store['getProjects']
@@ -22535,6 +22539,10 @@ export class OrcaRuntimeService {
     }
 
     const worktreeId = `${repo.id}::${created.path}`
+    // Why: retire the leaf Git actually used, not the requested name — the create loop advances
+    // past collisions, and Git may canonicalize the path. Retirement is permanent because agent
+    // CLIs key conversation state by cwd, so a reissued name would inherit the prior occupant's.
+    this.store.addRetiredWorktreeName?.(repo.id, retirableLeafName(created.path))
     const now = Date.now()
     // Why: PR/MR-created worktrees can start from a head ref/SHA while Source
     // Control must compare against the review target branch.

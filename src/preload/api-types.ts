@@ -1354,6 +1354,9 @@ export type PreloadApi = {
   }
   worktrees: {
     list: (args: { repoId: string }) => Promise<Worktree[]>
+    /** Generated names already spent in this repo, including deleted workspaces. Name suggestions
+     *  exclude these so a recreated workspace never lands on a prior occupant's path. */
+    listRetiredNames: (args: { repoId: string }) => Promise<string[]>
     listDetected: {
       (
         args: ListDetectedWorktreesArgs

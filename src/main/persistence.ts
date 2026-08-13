@@ -2334,6 +2334,34 @@ const MAX_CLAUDE_LIVE_PTY_SESSION_IDS = 200
 // Why: bound removed-SSH-target history so remove/re-add churn can't grow the file unbounded.
 const MAX_REMOVED_SSH_TARGET_TOMBSTONES = 50
 
+/** Why: a corrupt or hand-edited map must degrade to "nothing retired" rather than throw during
+ *  load — over-retiring costs one name from a 552-entry pool, but a load failure costs the app. */
+function normalizeRetiredWorktreeNamesByRepo(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+  const byRepo: Record<string, string[]> = {}
+  for (const [repoId, names] of Object.entries(value as Record<string, unknown>)) {
+    if (!repoId || !Array.isArray(names)) {
+      continue
+    }
+    const seen = new Set<string>()
+    for (const entry of names) {
+      if (typeof entry !== 'string') {
+        continue
+      }
+      const normalized = entry.trim().toLowerCase()
+      if (normalized.length > 0 && normalized.length <= 256) {
+        seen.add(normalized)
+      }
+    }
+    if (seen.size > 0) {
+      byRepo[repoId] = [...seen]
+    }
+  }
+  return byRepo
+}
+
 function normalizeClaudeLivePtySessionIds(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return []
@@ -3819,6 +3847,9 @@ export class Store {
                 (alias): alias is string => typeof alias === 'string'
               )
             : [],
+          retiredWorktreeNamesByRepo: normalizeRetiredWorktreeNamesByRepo(
+            parsed.retiredWorktreeNamesByRepo
+          ),
           sshRemotePtyLeases: (parsed.sshRemotePtyLeases ?? [])
             .map(normalizeSshRemotePtyLease)
             .filter((lease): lease is SshRemotePtyLease => lease !== null),
@@ -7181,6 +7212,58 @@ export class Store {
     }
     this.state.claudeLivePtySessionIds = ids.filter((id) => id !== sessionId)
     this.scheduleSave()
+  }
+
+  getRetiredWorktreeNames(repoId: string): string[] {
+    return [...(this.state.retiredWorktreeNamesByRepo?.[repoId] ?? [])]
+  }
+
+  /** Records a generated workspace name as spent for this repo. Called with the name main actually
+   *  used, not the one the renderer proposed — the create path can advance past it on collision. */
+  addRetiredWorktreeName(repoId: string, name: string): void {
+    const normalized = name.trim().toLowerCase()
+    if (!repoId || normalized.length === 0) {
+      return
+    }
+    this.state.retiredWorktreeNamesByRepo ??= {}
+    const existing = this.state.retiredWorktreeNamesByRepo[repoId]
+    if (existing?.includes(normalized)) {
+      return
+    }
+    this.state.retiredWorktreeNamesByRepo[repoId] = existing
+      ? [...existing, normalized]
+      : [normalized]
+    this.scheduleSave()
+  }
+
+  /** Seeds retirements discovered by the one-time backfill. Merges rather than replaces so a
+   *  concurrent create during backfill is not lost. Returns true when anything was added. */
+  mergeRetiredWorktreeNames(repoId: string, names: Iterable<string>): boolean {
+    if (!repoId) {
+      return false
+    }
+    const incoming = new Set<string>()
+    for (const name of names) {
+      const normalized = name.trim().toLowerCase()
+      if (normalized.length > 0) {
+        incoming.add(normalized)
+      }
+    }
+    if (incoming.size === 0) {
+      return false
+    }
+    this.state.retiredWorktreeNamesByRepo ??= {}
+    const existing = this.state.retiredWorktreeNamesByRepo[repoId] ?? []
+    const merged = new Set(existing)
+    for (const name of incoming) {
+      merged.add(name)
+    }
+    if (merged.size === existing.length) {
+      return false
+    }
+    this.state.retiredWorktreeNamesByRepo[repoId] = [...merged]
+    this.scheduleSave()
+    return true
   }
 
   getDeletedSshConfigAliases(): string[] {

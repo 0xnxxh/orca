@@ -21,11 +21,19 @@ function pickRandom<T>(items: readonly T[], random: () => number): T {
   return items[Math.floor(random() * items.length)]
 }
 
+/** `retiredNames` are names already spent in the active repo, including ones whose workspace was
+ *  deleted. Reissuing one would place the new workspace on the prior occupant's path, where agent
+ *  CLIs would hand it that workspace's conversation history — so spent names are never offered
+ *  again, and the pool degrades to suffixed variants instead of recycling. */
 export function getSuggestedCreatureName(
   worktreesByRepo: Record<string, WorktreePathLike[]>,
-  random: () => number = Math.random
+  random: () => number = Math.random,
+  retiredNames: Iterable<string> = []
 ): string {
   const usedNames = collectUsedNames(worktreesByRepo)
+  for (const retiredName of retiredNames) {
+    usedNames.add(normalizeSuggestedName(retiredName))
+  }
 
   // Why: names are lowercased (branch names are conventionally lowercase, e.g.
   // fix/seahorse), and a random pick keeps fresh worktrees from all starting at
