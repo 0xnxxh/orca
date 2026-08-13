@@ -62,18 +62,18 @@ export function TerminalAdvancedTypographyControls({
 
       <SearchableSetting
         title={translate(
-          'auto.components.settings.TerminalAppearanceSection.80bfdf3fac',
+          'auto.components.settings.TerminalAdvancedTypographyControls.f5fa1a08f1',
           'Bold Font Weight'
         )}
         description={translate(
-          'auto.components.settings.TerminalAppearanceSection.ff65195bcd',
-          'Weight used for bold text. Fonts expose only a few real weights, so set this above Font Weight or bold will look identical to normal text.'
+          'auto.components.settings.TerminalAdvancedTypographyControls.0e0d1ee15a',
+          'Adjust independently from Font Weight. Some fonts map several values to one face, so lower Font Weight or choose another font if bold looks unchanged.'
         )}
         keywords={['terminal', 'typography', 'weight', 'bold']}
       >
         <NumberField
           label={translate(
-            'auto.components.settings.TerminalAppearanceSection.80bfdf3fac',
+            'auto.components.settings.TerminalAdvancedTypographyControls.f5fa1a08f1',
             'Bold Font Weight'
           )}
           description=""

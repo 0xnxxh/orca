@@ -7629,9 +7629,11 @@
           "e90afcc44f": "off",
           "16c471ee03": "on",
           "typographyAdvanced": "Typography",
-          "dimUnfocusedPanes": "Dim unfocused panes.",
-          "80bfdf3fac": "Bold Font Weight",
-          "ff65195bcd": "Weight used for bold text. Fonts expose only a few real weights, so set this above Font Weight or bold will look identical to normal text."
+          "dimUnfocusedPanes": "Dim unfocused panes."
+        },
+        "TerminalAdvancedTypographyControls": {
+          "f5fa1a08f1": "Bold Font Weight",
+          "0e0d1ee15a": "Adjust independently from Font Weight. Some fonts map several values to one face, so lower Font Weight or choose another font if bold looks unchanged."
         },
         "TerminalFontSizeSetting": {
           "9b5252c85a": "px",
