@@ -2103,7 +2103,9 @@
         "pluginCommandFailed": "Could not run the plugin command.",
         "recentChatsTerminalsHeader": "Recent Chats & Terminals",
         "27f10cca63": "Search chats, terminals, worktrees, settings, and actions...",
-        "2770f02910": "Search chats, terminals, worktrees, settings, and actions"
+        "2770f02910": "Search chats, terminals, worktrees, settings, and actions",
+        "paletteOpenTabBranch": "Branch name",
+        "paletteOpenTabWorkspace": "Workspace name"
       },
       "github": {
         "pr": {
