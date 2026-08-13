@@ -5895,6 +5895,8 @@ export function registerPtyHandlers(
         cwd?: string
         // Why: fresh local spawns opt into recovering a saved cwd whose dir was deleted (#7239); reattach/remote need exact cwd, so the flag alone isn't sufficient.
         cwdFallback?: 'worktree'
+        /** Create a shell for this pane rather than adopting the one it records. */
+        createFreshShellForUnreachablePane?: boolean
         env?: Record<string, string>
         envToDelete?: string[]
         command?: string
@@ -5994,8 +5996,14 @@ export function registerPtyHandlers(
       if (existingPaneSpawn) {
         return { ...(await existingPaneSpawn.promise), isReattach: true }
       }
+      // Why the caller may refuse adoption: the unreachable-pane card offers "Start a new terminal"
+      // for a pane whose recorded shell cannot be reached. Resolving an owner here makes the action
+      // attach that shell first — and when it is unreachable the attach fails, the action creates
+      // nothing, and the card comes back. The button is dead in the one state it is offered in.
+      // Skipping the resolve is what makes it a creation: nothing is killed, and the old shell is
+      // left alive and unbound for the cleanup surface.
       const earlyStablePaneOwner =
-        earlyPaneKey && args.worktreeId
+        earlyPaneKey && args.worktreeId && args.createFreshShellForUnreachablePane !== true
           ? resolveStablePaneOwner(runtime, store, earlyPaneKey, args.worktreeId, args.connectionId)
           : null
       const earlyWorktreeId = args.worktreeId

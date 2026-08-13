@@ -556,6 +556,8 @@ type FreshSpawnOptions = {
    *  connect falls back to its constructor values, so a "fresh" shell would resume the saved agent
    *  session — the duplicate transcript the disconnected pane exists to prevent. */
   suppressSavedStartup?: boolean
+  /** Refuse adoption of the pane's recorded shell; see the unreachable-pane action. */
+  createFreshShellForUnreachablePane?: boolean
 }
 
 type ColdRestoreAgentResumeStartup = PendingStartupCommand & {
@@ -5213,7 +5215,11 @@ export function connectPanePty(
             // with, so the suppression has to be explicit.
             void startFreshSpawn(null, {
               forceBlankRestoredViewport: true,
-              suppressSavedStartup: true
+              suppressSavedStartup: true,
+              // Refuse adoption. This pane's recorded shell is the one we could not reach, so
+              // attaching it first only fails again and creates nothing — which left this button
+              // doing nothing at all in the one state it is offered in.
+              createFreshShellForUnreachablePane: true
             }).then((freshPtyId) => {
               if (!freshPtyId) {
                 // The replacement never started. Keep the old binding and put the card back, or the
@@ -5407,6 +5413,9 @@ export function connectPanePty(
       const outputCallbacks = captureTransportOutputCallbacks(reportError)
       const spawnedRaw = transport.connect({
         ...(options.suppressSavedStartup ? { suppressSavedStartup: true } : {}),
+        ...(options.createFreshShellForUnreachablePane
+          ? { createFreshShellForUnreachablePane: true }
+          : {}),
         url: '',
         cols,
         rows,

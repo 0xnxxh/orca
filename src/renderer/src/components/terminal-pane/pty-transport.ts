@@ -837,6 +837,9 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
           rows: options.rows ?? 24,
           cwd,
           ...(shouldSendLocalCwdFallback ? { cwdFallback } : {}),
+          ...(options.createFreshShellForUnreachablePane
+            ? { createFreshShellForUnreachablePane: true }
+            : {}),
           env: spawnEnv,
           ...((options.envToDelete ?? envToDelete)
             ? { envToDelete: options.envToDelete ?? envToDelete }

@@ -154,6 +154,9 @@ export type PtyTransport = {
      *  Omitting the fields is not enough — connect falls back to its constructor values, so a
      *  "fresh" spawn would silently resume the saved agent session. */
     suppressSavedStartup?: boolean
+    /** Refuse adoption: this pane's recorded shell cannot be reached, so attaching it would fail
+     *  and create nothing. The old shell is left alive and unbound. */
+    createFreshShellForUnreachablePane?: boolean
     launchToken?: string
     launchAgent?: TuiAgent
     startupCommandDelivery?: StartupCommandDelivery
