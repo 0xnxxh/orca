@@ -183,6 +183,11 @@ export async function expectStartupExecRecovery(
   runId: string
 ): Promise<void> {
   await expect
+    .poll(() => readTerminal(page, created.terminal), { timeout: RECOVERY_DEADLINE_MS })
+    .toMatchObject({
+      tail: expect.arrayContaining([expect.stringContaining(created.startupMarker)])
+    })
+  await expect
     .poll(() => getTerminalContent(page), { timeout: RECOVERY_DEADLINE_MS })
     .toContain(created.startupMarker)
   const painted = await getTerminalContent(page)

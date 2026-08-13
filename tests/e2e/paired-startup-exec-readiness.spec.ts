@@ -8,6 +8,7 @@ import {
   launchPairedWebClient
 } from './helpers/paired-electron-client'
 import {
+  callStartupExecRuntime,
   closeStartupExecTerminal,
   createStartupExecTerminal,
   expectStartupExecRecovery,
@@ -26,6 +27,19 @@ async function waitForWorktree(page: Page, id: string): Promise<void> {
               .some((candidate) => candidate.id === worktreeId),
           id
         ),
+      { timeout: 30_000 }
+    )
+    .toBe(true)
+  await expect
+    .poll(
+      async () => {
+        const listed = await callStartupExecRuntime<{ worktrees: { id: string }[] }>(
+          page,
+          'worktree.list',
+          {}
+        )
+        return listed.worktrees.some((candidate) => candidate.id === id)
+      },
       { timeout: 30_000 }
     )
     .toBe(true)

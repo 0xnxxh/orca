@@ -6,6 +6,10 @@ import { parse } from 'yaml'
 const projectDir = resolve(import.meta.dirname, '../..')
 const prWorkflow = parse(readFileSync(join(projectDir, '.github/workflows/pr.yml'), 'utf8'))
 const e2eWorkflow = parse(readFileSync(join(projectDir, '.github/workflows/e2e.yml'), 'utf8'))
+const sshDockerRunner = readFileSync(
+  join(projectDir, 'config/scripts/run-ssh-docker-terminal-parking-e2e.mjs'),
+  'utf8'
+)
 
 const filterStep = prWorkflow.jobs['e2e-paths'].steps.find(
   (step) => step.name === 'Filter changed E2E specs'
@@ -70,6 +74,13 @@ describe('PR E2E gate contract', () => {
     )
     expect(changedRun.env.TEST_FILES_JSON).toBe('${{ inputs.test_files }}')
     expect(changedRun.run).toContain('pnpm run test:e2e "${TEST_FILES[@]}" --workers=1')
+  })
+
+  it('keeps startup-exec live parity in the isolated SSH lane', () => {
+    expect(sshDockerRunner).toContain('tests/e2e/ssh-startup-exec-readiness.spec.ts')
+    expect(sshDockerRunner).toContain('tests/e2e/paired-startup-exec-readiness.spec.ts')
+    expect(sshDockerRunner).toContain("'electron-headless'")
+    expect(sshDockerRunner).toContain("'electron-headful'")
   })
 
   it('keeps dedicated E2E workflows out of pull request CI', () => {
