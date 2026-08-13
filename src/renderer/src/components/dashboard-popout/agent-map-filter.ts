@@ -1,9 +1,20 @@
-import type { DashboardCard, DashboardCardHostKind } from '../../../../shared/dashboard-snapshot'
+import type {
+  DashboardCard,
+  DashboardCardHostKind,
+  DashboardWorkspace
+} from '../../../../shared/dashboard-snapshot'
 import { agentMapNodeStatus } from './agent-map-node-metadata'
 
 export type AgentMapState = 'attention' | 'working' | 'done' | 'idle'
-export type AgentMapHostFilter = 'all' | DashboardCardHostKind
 export type AgentMapCounts = Record<AgentMapState, number>
+export type AgentMapHostCounts = Record<DashboardCardHostKind, number>
+
+export const ALL_AGENT_MAP_HOSTS: readonly DashboardCardHostKind[] = [
+  'local',
+  'ssh',
+  'wsl',
+  'remote'
+]
 
 export function agentMapState(card: DashboardCard): AgentMapState {
   const state = agentMapNodeStatus(card)
@@ -21,19 +32,31 @@ export function agentMapState(card: DashboardCard): AgentMapState {
 export function filterAgentMapCards({
   cards,
   enabledStates,
-  hostFilter
+  enabledHosts
 }: {
   cards: DashboardCard[]
   enabledStates: ReadonlySet<AgentMapState>
-  hostFilter: AgentMapHostFilter
+  enabledHosts: ReadonlySet<DashboardCardHostKind>
 }): DashboardCard[] {
   // Project filtering lives in the shared toolbar filter, which has already
   // narrowed these cards.
   return cards.filter(
-    (card) =>
-      (hostFilter === 'all' || (card.hostKind ?? 'local') === hostFilter) &&
-      enabledStates.has(agentMapState(card))
+    (card) => enabledHosts.has(card.hostKind ?? 'local') && enabledStates.has(agentMapState(card))
   )
+}
+
+export function countAgentMapHosts(
+  cards: DashboardCard[],
+  workspaces: readonly DashboardWorkspace[] = []
+): AgentMapHostCounts {
+  const counts: AgentMapHostCounts = { local: 0, ssh: 0, wsl: 0, remote: 0 }
+  for (const card of cards) {
+    counts[card.hostKind ?? 'local'] += 1
+  }
+  for (const workspace of workspaces) {
+    counts[workspace.hostKind] += 1
+  }
+  return counts
 }
 
 export function countAgentMapCards(cards: DashboardCard[]): AgentMapCounts {

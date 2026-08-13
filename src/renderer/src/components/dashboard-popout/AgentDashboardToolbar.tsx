@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils'
 import { getWorkspaceStatusVisualMeta } from '../sidebar/workspace-status'
 import type {
   DashboardCard,
-  DashboardFilterOption,
+  DashboardCardHostKind,
   DashboardFilterOptions
 } from '../../../../shared/dashboard-snapshot'
 import {
@@ -25,13 +25,26 @@ import {
   type DashboardReviewFilter,
   toggleDashboardFilter
 } from './agent-board-filtering'
-import { countAgentMapCards, type AgentMapState } from './agent-map-filter'
+import {
+  ALL_AGENT_MAP_HOSTS,
+  countAgentMapCards,
+  type AgentMapHostCounts,
+  type AgentMapState
+} from './agent-map-filter'
+import {
+  AGENT_STATE_ROWS,
+  agentStateLabel,
+  projectOptions,
+  REVIEW_OPTIONS,
+  reviewCountsByState,
+  reviewStateLabel,
+  workspaceStatusOptions
+} from './agent-dashboard-filter-options'
 import { AgentDashboardFilterChips } from './AgentDashboardFilterChips'
 import { AgentMapContentFilterItems } from './AgentMapContentFilterItems'
+import { AgentMapHostFilterItems } from './AgentMapHostFilterItems'
 import { FilterOptionCount } from './FilterOptionCount'
 import { ShortcutKeyCombo } from '@/components/ShortcutKeyCombo'
-
-type FilterOption = { id: string; label: string; count: number; color?: string }
 
 type AgentDashboardToolbarProps = {
   cards: DashboardCard[]
@@ -45,6 +58,11 @@ type AgentDashboardToolbarProps = {
   agentStates?: ReadonlySet<AgentMapState>
   onAgentStateToggle?: (state: AgentMapState) => void
   onAgentStatesReset?: () => void
+  /** Map-only: the board has no host dimension to slice. */
+  enabledHosts?: ReadonlySet<DashboardCardHostKind>
+  hostCounts?: AgentMapHostCounts
+  onHostToggle?: (host: DashboardCardHostKind) => void
+  onHostsReset?: () => void
   showAgentlessWorkspaces?: boolean
   agentlessWorkspaceCount?: number
   onShowAgentlessWorkspacesChange?: (show: boolean) => void
@@ -52,114 +70,6 @@ type AgentDashboardToolbarProps = {
   showOrchestrationLinks?: boolean
   onShowOrchestrationLinksChange?: (show: boolean) => void
   searchInputRef: React.RefObject<HTMLInputElement | null>
-}
-
-const AGENT_STATE_ROWS: {
-  state: AgentMapState
-  dotState: 'waiting' | 'working' | 'done' | 'idle'
-}[] = [
-  { state: 'attention', dotState: 'waiting' },
-  { state: 'working', dotState: 'working' },
-  { state: 'done', dotState: 'done' },
-  { state: 'idle', dotState: 'idle' }
-]
-
-function agentStateLabel(state: AgentMapState): string {
-  switch (state) {
-    case 'attention':
-      return translate('dashboardPopout.bucket.attention', 'Needs You')
-    case 'working':
-      return translate('dashboardPopout.bucket.working', 'Working')
-    case 'done':
-      return translate('dashboardPopout.bucket.done', 'Done')
-    case 'idle':
-      return translate('dashboardPopout.bucket.idle', 'Idle')
-  }
-}
-
-function countBy(
-  cards: DashboardCard[],
-  value: (card: DashboardCard) => string
-): Map<string, number> {
-  const counts = new Map<string, number>()
-  for (const card of cards) {
-    const key = value(card)
-    counts.set(key, (counts.get(key) ?? 0) + 1)
-  }
-  return counts
-}
-
-function workspaceStatusOptions(
-  cards: DashboardCard[],
-  configured: DashboardFilterOption[] | undefined
-): FilterOption[] {
-  const counts = countBy(cards, (card) => card.workspaceStatusId ?? '')
-  if (configured) {
-    return configured.map((option) => ({
-      ...option,
-      count: counts.get(option.id) ?? 0
-    }))
-  }
-  const options = new Map<string, FilterOption>()
-  for (const card of cards) {
-    if (!card.workspaceStatusId || options.has(card.workspaceStatusId)) {
-      continue
-    }
-    options.set(card.workspaceStatusId, {
-      id: card.workspaceStatusId,
-      label: card.workspaceStatusLabel ?? card.workspaceStatusId,
-      color: card.workspaceStatusColor,
-      count: counts.get(card.workspaceStatusId) ?? 0
-    })
-  }
-  return [...options.values()]
-}
-
-function projectOptions(
-  cards: DashboardCard[],
-  configured: DashboardFilterOption[] | undefined
-): FilterOption[] {
-  const counts = countBy(cards, (card) => card.repoId)
-  if (configured) {
-    return configured.map((option) => ({
-      ...option,
-      count: counts.get(option.id) ?? 0
-    }))
-  }
-  const options = new Map<string, FilterOption>()
-  for (const card of cards) {
-    if (!options.has(card.repoId)) {
-      options.set(card.repoId, {
-        id: card.repoId,
-        label: card.repoName,
-        count: counts.get(card.repoId) ?? 0
-      })
-    }
-  }
-  return [...options.values()]
-}
-
-const REVIEW_OPTIONS: readonly DashboardReviewFilter[] = [
-  'open',
-  'draft',
-  'merged',
-  'closed',
-  'none'
-]
-
-function reviewStateLabel(state: DashboardReviewFilter): string {
-  switch (state) {
-    case 'open':
-      return translate('dashboardPopout.filters.review.open', 'Open')
-    case 'draft':
-      return translate('dashboardPopout.filters.review.draft', 'Draft')
-    case 'merged':
-      return translate('dashboardPopout.filters.review.merged', 'Merged')
-    case 'closed':
-      return translate('dashboardPopout.filters.review.closed', 'Closed')
-    case 'none':
-      return translate('dashboardPopout.filters.review.none', 'No review')
-  }
 }
 
 export function AgentDashboardToolbar({
@@ -173,6 +83,10 @@ export function AgentDashboardToolbar({
   agentStates,
   onAgentStateToggle,
   onAgentStatesReset,
+  enabledHosts,
+  hostCounts,
+  onHostToggle,
+  onHostsReset,
   showAgentlessWorkspaces,
   agentlessWorkspaceCount = 0,
   onShowAgentlessWorkspacesChange,
@@ -183,16 +97,19 @@ export function AgentDashboardToolbar({
   const isMac = navigator.userAgent.includes('Mac')
   const projects = projectOptions(cards, filterOptions?.projects)
   const statuses = workspaceStatusOptions(cards, filterOptions?.workspaceStatuses)
-  const reviewCounts = countBy(
-    cards,
-    (card) => card.review?.state ?? (card.hasReview ? 'unknown' : 'none')
-  )
+  const reviewCounts = reviewCountsByState(cards)
   const agentStateCounts = agentStates ? countAgentMapCards(cards) : null
   // A muted state is an active filter, so the badge counts them like the rest.
   const mutedStateCount = agentStates ? AGENT_STATE_ROWS.length - agentStates.size : 0
+  // Hosts the fleet does not use are never offered, so they cannot read as muted.
+  const mutedHostCount =
+    enabledHosts && hostCounts
+      ? ALL_AGENT_MAP_HOSTS.filter((host) => hostCounts[host] > 0 && !enabledHosts.has(host)).length
+      : 0
   const activeCount =
     activeDashboardFilterCount(filters) +
     mutedStateCount +
+    mutedHostCount +
     (showAgentlessWorkspaces === true ? 1 : 0) +
     // Links show by default, so only hiding them is a deviation worth badging.
     (showOrchestrationLinks === false ? 1 : 0)
@@ -211,6 +128,7 @@ export function AgentDashboardToolbar({
   const clearFilters = (): void => {
     onFiltersChange({ projects: [], workspaceStatuses: [], reviewStates: [] })
     onAgentStatesReset?.()
+    onHostsReset?.()
     onShowAgentlessWorkspacesChange?.(false)
     onShowOrchestrationLinksChange?.(true)
   }
@@ -310,6 +228,13 @@ export function AgentDashboardToolbar({
                 ))}
                 <DropdownMenuSeparator />
               </>
+            ) : null}
+            {enabledHosts && hostCounts && onHostToggle ? (
+              <AgentMapHostFilterItems
+                enabledHosts={enabledHosts}
+                hostCounts={hostCounts}
+                onHostToggle={onHostToggle}
+              />
             ) : null}
             <DropdownMenuLabel>
               {translate('dashboardPopout.filters.project', 'Project')}

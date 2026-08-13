@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
-import { agentMapState, countAgentMapCards, filterAgentMapCards } from './agent-map-filter'
+import type {
+  DashboardCard,
+  DashboardCardHostKind,
+  DashboardWorkspace
+} from '../../../../shared/dashboard-snapshot'
+import {
+  agentMapState,
+  countAgentMapCards,
+  countAgentMapHosts,
+  filterAgentMapCards
+} from './agent-map-filter'
 
 const NOW = 2_000_000_000
 
@@ -27,6 +36,18 @@ function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
   }
 }
 
+function workspace(worktreeId: string, hostKind: DashboardCardHostKind): DashboardWorkspace {
+  return {
+    repoId: 'repo-1',
+    worktreeId,
+    repoName: 'Orca',
+    worktreeName: worktreeId,
+    hostKind,
+    executionHostId: hostKind === 'local' ? 'local' : `ssh:${worktreeId}`,
+    workspaceKind: 'worktree'
+  }
+}
+
 describe('agent map filtering', () => {
   it('files both unseen and acknowledged completions under done, never idle', () => {
     expect(agentMapState(card({ unseen: true }))).toBe('done')
@@ -41,7 +62,7 @@ describe('agent map filtering', () => {
     const visible = filterAgentMapCards({
       cards: [hidden],
       enabledStates: new Set(['done']),
-      hostFilter: 'ssh'
+      enabledHosts: new Set(['ssh'])
     })
 
     expect(visible).toEqual([hidden])
@@ -49,16 +70,58 @@ describe('agent map filtering', () => {
       filterAgentMapCards({
         cards: [hidden],
         enabledStates: new Set(['idle']),
-        hostFilter: 'ssh'
+        enabledHosts: new Set(['ssh'])
       })
     ).toEqual([])
     expect(
       filterAgentMapCards({
         cards: [hidden],
         enabledStates: new Set(['done']),
-        hostFilter: 'local'
+        enabledHosts: new Set(['local'])
       })
     ).toEqual([])
+  })
+
+  it('keeps every selected host rather than one at a time', () => {
+    const local = card({ paneKey: 'local' })
+    const ssh = card({ paneKey: 'ssh', hostKind: 'ssh' })
+    const wsl = card({ paneKey: 'wsl', hostKind: 'wsl' })
+
+    expect(
+      filterAgentMapCards({
+        cards: [local, ssh, wsl],
+        enabledStates: new Set(['done']),
+        enabledHosts: new Set(['local', 'wsl'])
+      })
+    ).toEqual([local, wsl])
+  })
+
+  it('treats a missing hostKind as local', () => {
+    const legacy = card({ paneKey: 'legacy', hostKind: undefined })
+
+    expect(
+      filterAgentMapCards({
+        cards: [legacy],
+        enabledStates: new Set(['done']),
+        enabledHosts: new Set(['local'])
+      })
+    ).toEqual([legacy])
+    expect(
+      filterAgentMapCards({
+        cards: [legacy],
+        enabledStates: new Set(['done']),
+        enabledHosts: new Set(['ssh'])
+      })
+    ).toEqual([])
+  })
+
+  it('counts cards and agentless workspaces into the same host tallies', () => {
+    expect(
+      countAgentMapHosts(
+        [card({ paneKey: 'a' }), card({ paneKey: 'b', hostKind: 'ssh' })],
+        [workspace('w-1', 'ssh'), workspace('w-2', 'wsl')]
+      )
+    ).toEqual({ local: 1, ssh: 2, wsl: 1, remote: 0 })
   })
 
   it('counts all four display states', () => {

@@ -14,7 +14,9 @@ import {
   filterDashboardWorkspaces,
   type DashboardFilters
 } from './agent-board-filtering'
+import { countAgentMapHosts } from './agent-map-filter'
 import { selectAgentlessMapWorkspaces } from './agent-map-workspace-visibility'
+import { useAgentMapHostFilter } from './useAgentMapHostFilter'
 import { useAgentMapStateFilter } from './useAgentMapStateFilter'
 
 const AgentMap = lazyWithRetry(
@@ -61,6 +63,7 @@ export function AgentDashboardMapView({
   onWorkspaceContextMenuOpenChange
 }: AgentDashboardMapViewProps): React.JSX.Element {
   const { agentStates, toggleAgentState, resetAgentStates } = useAgentMapStateFilter()
+  const { hosts, toggleHost, resetHosts } = useAgentMapHostFilter()
   const [showAgentlessWorkspaces, setShowAgentlessWorkspaces] = useState(false)
   const [showOrchestrationLinks, setShowOrchestrationLinks] = useState(true)
   const agentlessWorkspaces = useMemo(
@@ -72,6 +75,11 @@ export function AgentDashboardMapView({
         filters: EMPTY_DASHBOARD_FILTERS
       }),
     [snapshot.cards, snapshot.workspaces]
+  )
+  // Counted before host muting, so a muted host keeps its row and its count.
+  const hostCounts = useMemo(
+    () => countAgentMapHosts(snapshot.cards, agentlessWorkspaces),
+    [agentlessWorkspaces, snapshot.cards]
   )
   const visibleAgentlessWorkspaces = useMemo(
     () =>
@@ -92,6 +100,10 @@ export function AgentDashboardMapView({
         agentStates={agentStates}
         onAgentStateToggle={toggleAgentState}
         onAgentStatesReset={resetAgentStates}
+        enabledHosts={hosts}
+        hostCounts={hostCounts}
+        onHostToggle={toggleHost}
+        onHostsReset={resetHosts}
         showAgentlessWorkspaces={showAgentlessWorkspaces}
         agentlessWorkspaceCount={agentlessWorkspaces.length}
         onShowAgentlessWorkspacesChange={setShowAgentlessWorkspaces}
@@ -107,9 +119,9 @@ export function AgentDashboardMapView({
             repoIconsByRepoId={snapshot.repoIconsByRepoId}
             now={now}
             className={dialogCard ? 'w-1/2 flex-none' : undefined}
-            compact={dialogCard !== null}
             selectedPaneKey={dialogCard?.paneKey}
             enabledStates={agentStates}
+            enabledHosts={hosts}
             showOrchestrationLinks={showOrchestrationLinks}
             launchableAgentsByWorktreeId={snapshot.launchableAgentsByWorktreeId}
             workspaceContextMenusEnabled={workspaceContextMenusEnabled}
