@@ -64,7 +64,7 @@ export function matchesWorkspaceCleanupStatus(
   facets: WorkspaceCleanupFacets,
   filter: WorkspaceCleanupStatusFilter
 ): boolean {
-  if (filter.workspaceStatuses.length > 0 && !matchesWorkspaceStatusList(facets, filter)) {
+  if (!matchesWorkspaceStatusList(facets, filter)) {
     return false
   }
   return (
@@ -193,7 +193,10 @@ function matchesWorkspaceStatusList(
   if (facets.workspaceStatus === null) {
     return filter.matchStatusless
   }
-  return filter.workspaceStatuses.includes(facets.workspaceStatus)
+  return (
+    filter.workspaceStatuses.length === 0 ||
+    filter.workspaceStatuses.includes(facets.workspaceStatus)
+  )
 }
 
 function getIdleSignalAt(

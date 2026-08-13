@@ -52,6 +52,7 @@ export function useWorkspaceCleanupDialogLifecycle(): WorkspaceCleanupDialogLife
   const { startWorkspaceCleanupScan } = useWorkspaceCleanupScanLifecycle({
     open,
     loading,
+    removalInFlight: removal.removalInFlight,
     removalInFlightRef,
     resetRowFailures,
     onFreshOpen

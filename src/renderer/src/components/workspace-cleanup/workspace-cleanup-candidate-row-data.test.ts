@@ -41,6 +41,18 @@ describe('workspace cleanup candidate row data', () => {
     ).toBe(true)
   })
 
+  it('keeps unpushed risk visible for archived rows', () => {
+    expect(
+      getCandidateFactStatus(
+        makeCandidate({
+          tier: 'review',
+          reasons: ['archived'],
+          git: { clean: true, upstreamAhead: 2, upstreamBehind: 0, checkedAt: 1 }
+        })
+      )
+    ).toMatchObject({ label: 'Unpushed commits' })
+  })
+
   it('suppresses the git metadata chip when the status pill already names git risk', () => {
     expect(
       shouldShowGitMetadataChip(

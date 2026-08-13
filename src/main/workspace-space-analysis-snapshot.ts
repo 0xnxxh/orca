@@ -37,7 +37,7 @@ function isPersistableWorktreeRow(value: unknown): value is WorkspaceSpaceWorktr
   return (
     typeof value.worktreeId === 'string' &&
     typeof value.repoId === 'string' &&
-    typeof value.executionHostId === 'string' &&
+    (value.executionHostId === undefined || typeof value.executionHostId === 'string') &&
     typeof value.status === 'string' &&
     typeof value.sizeBytes === 'number' &&
     typeof value.reclaimableBytes === 'number' &&
@@ -212,15 +212,18 @@ export async function pruneWorkspaceSpaceAnalysisSnapshot(
   try {
     await withSidecarSnapshotQueue(file, async () => {
       const existing = await readWorkspaceSpaceAnalysisSnapshot(snapshotDirectory)
-      const removed = existing?.worktrees.find(
+      const removed = existing?.worktrees.filter(
         (row) =>
           row.worktreeId === worktreeId &&
           (executionHostId === undefined || row.executionHostId === executionHostId)
       )
-      if (!existing || !removed) {
+      if (!existing || !removed || removed.length === 0) {
         return
       }
-      await writeSnapshot(file, withoutWorktreeRow(existing, removed))
+      await writeSnapshot(
+        file,
+        removed.reduce((analysis, row) => withoutWorktreeRow(analysis, row), existing)
+      )
     })
   } catch (error) {
     console.warn('[workspace-space] failed to prune analysis snapshot:', error)

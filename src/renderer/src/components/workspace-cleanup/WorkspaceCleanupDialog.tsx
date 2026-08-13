@@ -56,6 +56,7 @@ function WorkspaceCleanupDialogContent({
   const scan = useAppStore((s) => s.workspaceCleanupScan)
   const scanProgress = useAppStore((s) => s.workspaceCleanupProgress)
   const error = useAppStore((s) => s.workspaceCleanupError)
+  const spaceError = useAppStore((s) => s.workspaceSpaceScanError)
   const repos = useAppStore((s) => s.repos)
   const markCandidateViewed = useAppStore((s) => s.markWorkspaceCleanupCandidateViewed)
   const dismissCandidates = useAppStore((s) => s.dismissWorkspaceCleanupCandidates)
@@ -123,7 +124,6 @@ function WorkspaceCleanupDialogContent({
     streaming: loading,
     sort: browse.sort
   })
-  const rowIds = useMemo(() => new Set(rows.map((row) => row.worktreeId)), [rows])
   const candidateIds = useMemo(
     () => new Set(candidates.map((candidate) => candidate.worktreeId)),
     [candidates]
@@ -139,8 +139,19 @@ function WorkspaceCleanupDialogContent({
   )
   const initialLoading = loading && candidates.length === 0
   const runSpaceScan = useCallback(() => {
-    void refreshWorkspaceSpace().catch(() => undefined)
-  }, [refreshWorkspaceSpace])
+    void refreshWorkspaceSpace().catch((scanError: unknown) => {
+      if (!mountedRef.current) {
+        return
+      }
+      toast.error(
+        translate(
+          'components.workspace.cleanup.browse.measureSizesFailed',
+          'Could not measure workspace sizes'
+        ),
+        { description: scanError instanceof Error ? scanError.message : String(scanError) }
+      )
+    })
+  }, [mountedRef, refreshWorkspaceSpace])
 
   const selectedCandidates = useMemo(() => {
     const byId = new Map(rows.map((row) => [row.worktreeId, row.candidate]))
@@ -173,7 +184,9 @@ function WorkspaceCleanupDialogContent({
   const pruneSelectionToVisibleRows = useEffectEvent(() => {
     setSelectedIds((current) => {
       const next = new Set(
-        [...current].filter((id) => rowIds.has(id) && !deletingWorktreeIds.has(id))
+        [...current].filter(
+          (id) => facetRows.facetMatchedWorktreeIds.has(id) && !deletingWorktreeIds.has(id)
+        )
       )
       return next.size === current.size ? current : next
     })
@@ -187,7 +200,7 @@ function WorkspaceCleanupDialogContent({
     // currently review after a filter change — and only then; a
     // streaming refresh re-classifying a row must not silently deselect it.
     pruneSelectionToVisibleRows()
-  }, [browse.filters, open, removal.confirming])
+  }, [facetRows.facetMatchedWorktreeIds, open, removal.confirming])
 
   const pruneVanishedSelections = useEffectEvent(() => {
     const kept = [...selectedIds].filter(
@@ -329,6 +342,9 @@ function WorkspaceCleanupDialogContent({
 
             {initialLoading ? <WorkspaceCleanupInitialScanBanner progress={scanProgress} /> : null}
             {error ? <WorkspaceCleanupNotice tone="destructive" message={error} /> : null}
+            {!error && spaceError ? (
+              <WorkspaceCleanupNotice tone="destructive" message={spaceError} />
+            ) : null}
             {!error && scanNoticeMessage ? (
               <WorkspaceCleanupNotice message={scanNoticeMessage} />
             ) : null}

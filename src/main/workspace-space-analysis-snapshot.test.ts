@@ -147,6 +147,23 @@ describe('workspace space analysis snapshot', () => {
     await expect(readWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir)).resolves.toBeNull()
   })
 
+  it('loads legacy rows without an execution host id', async () => {
+    const { executionHostId: _executionHostId, ...legacyRow } = makeWorktreeRow()
+    const analysis = makeAnalysis([makeWorktreeRow()])
+    await writeFile(
+      join(userDataDirHolder.dir, SNAPSHOT_FILE),
+      JSON.stringify({
+        version: 2,
+        analysis: { ...analysis, worktrees: [legacyRow] }
+      }),
+      'utf-8'
+    )
+
+    await expect(readWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir)).resolves.toMatchObject({
+      worktrees: [expect.objectContaining({ worktreeId: legacyRow.worktreeId })]
+    })
+  })
+
   it('prunes a removed worktree row and rebalances totals', async () => {
     const removed = makeWorktreeRow({ sizeBytes: 3000, reclaimableBytes: 3000 })
     const kept = makeWorktreeRow({
@@ -255,5 +272,30 @@ describe('workspace space analysis snapshot', () => {
         totalSizeBytes: 0
       })
     ])
+  })
+
+  it('prunes every host-colliding row when the host is unknown', async () => {
+    const local = makeWorktreeRow({ sizeBytes: 1000, reclaimableBytes: 1000 })
+    const remote = makeWorktreeRow({
+      executionHostId: 'ssh:ssh-1',
+      isRemote: true,
+      sizeBytes: 3000,
+      reclaimableBytes: 3000
+    })
+    await persistWorkspaceSpaceAnalysisSnapshot(
+      userDataDirHolder.dir,
+      makeAnalysis([local, remote])
+    )
+
+    await pruneWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir, local.worktreeId)
+
+    const cached = await readWorkspaceSpaceAnalysisSnapshot(userDataDirHolder.dir)
+    expect(cached?.worktrees).toEqual([])
+    expect(cached).toMatchObject({
+      worktreeCount: 0,
+      scannedWorktreeCount: 0,
+      totalSizeBytes: 0,
+      reclaimableBytes: 0
+    })
   })
 })

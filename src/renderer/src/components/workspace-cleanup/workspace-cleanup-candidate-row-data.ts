@@ -36,15 +36,6 @@ export function getCandidateFactStatus(candidate: WorkspaceCleanupCandidate): {
       tone: 'neutral'
     }
   }
-  if (candidate.reasons.includes('archived')) {
-    return {
-      label: translate(
-        'auto.components.workspace.cleanup.WorkspaceCleanupDialog.archivedStatus',
-        'Archived'
-      ),
-      tone: 'neutral'
-    }
-  }
   if (candidate.blockers.length > 0) {
     return { label: getWorkspaceCleanupBlockerLabel(candidate.blockers[0]), tone: 'neutral' }
   }
@@ -64,6 +55,15 @@ export function getCandidateFactStatus(candidate: WorkspaceCleanupCandidate): {
         'Dirty'
       ),
       tone: 'review'
+    }
+  }
+  if (candidate.reasons.includes('archived')) {
+    return {
+      label: translate(
+        'auto.components.workspace.cleanup.WorkspaceCleanupDialog.archivedStatus',
+        'Archived'
+      ),
+      tone: 'neutral'
     }
   }
   return null

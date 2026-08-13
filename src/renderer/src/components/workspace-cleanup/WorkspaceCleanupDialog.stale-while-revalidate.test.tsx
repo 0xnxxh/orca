@@ -20,7 +20,7 @@ const holders = vi.hoisted(() => ({
   },
   infoToasts: [] as string[],
   rig: null as null | {
-    resolvers: ((result: { scannedAt: number; candidates: never[]; errors: never[] }) => void)[]
+    resolvers: ((result: WorkspaceCleanupScanResult) => void)[]
   }
 }))
 
@@ -127,7 +127,7 @@ function installApi(cachedScan: WorkspaceCleanupScanResult | null): ScanRig {
     },
     ui: { set: vi.fn().mockResolvedValue(undefined) }
   }
-  holders.rig = rig as unknown as typeof holders.rig
+  holders.rig = rig
   return rig
 }
 
@@ -155,7 +155,7 @@ async function openDialog(): Promise<void> {
 }
 
 function rowNames(): string[] {
-  return [...(container?.querySelectorAll('span.truncate.text-sm.font-medium') ?? [])].map(
+  return [...(container?.querySelectorAll('[data-workspace-cleanup-row-name]') ?? [])].map(
     (node) => node.textContent ?? ''
   )
 }
@@ -288,9 +288,36 @@ describe('WorkspaceCleanupDialog stale-while-revalidate', () => {
     // Rows stay selectable during the stream.
     const checkbox = rowCheckbox('alpha')
     expect(checkbox).not.toBeNull()
+    const before = checkbox?.getAttribute('aria-checked')
     await act(async () => {
       checkbox?.click()
     })
+    expect(rowCheckbox('alpha')?.getAttribute('aria-checked')).not.toBe(before)
+  })
+
+  it('does not clear selection while free-text search hides the row', async () => {
+    installApi(cachedFleet())
+    await renderDialog()
+    await openDialog()
+
+    if (rowCheckbox('alpha')?.getAttribute('aria-checked') !== 'true') {
+      await act(async () => rowCheckbox('alpha')?.click())
+    }
+    expect(rowCheckbox('alpha')?.getAttribute('aria-checked')).toBe('true')
+    const search = container?.querySelector<HTMLInputElement>('[aria-label="Search workspaces"]')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    await act(async () => {
+      setter?.call(search, 'beta')
+      search?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+    expect(rowNames()).toEqual(['beta'])
+
+    await act(async () => {
+      setter?.call(search, '')
+      search?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
     expect(rowCheckbox('alpha')?.getAttribute('aria-checked')).toBe('true')
   })
 

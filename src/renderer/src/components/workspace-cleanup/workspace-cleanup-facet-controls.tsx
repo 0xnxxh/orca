@@ -180,24 +180,26 @@ export function FacetTextField({
 }
 
 export function FacetCheckbox({
+  id,
   label,
   checked,
   onChange
 }: {
+  id: string
   label: string
   checked: boolean
   onChange: (next: boolean) => void
 }): React.JSX.Element {
-  const id = `workspace-cleanup-facet-${label.replace(/\W+/g, '-').toLowerCase()}`
+  const checkboxId = `workspace-cleanup-facet-${id}`
   return (
     <div className="flex items-center gap-2">
       <Checkbox
-        id={id}
+        id={checkboxId}
         aria-label={label}
         checked={checked}
         onCheckedChange={(next) => onChange(next === true)}
       />
-      <Label htmlFor={id} className="cursor-pointer text-xs font-normal text-foreground">
+      <Label htmlFor={checkboxId} className="cursor-pointer text-xs font-normal text-foreground">
         {label}
       </Label>
     </div>

@@ -136,61 +136,67 @@ export function useWorkspaceCleanupRemoval({
     const removableWorktreeIds = removableCandidates.map((candidate) => candidate.worktreeId)
     setRowFailures({})
     markWorktreesQueuedForDeletion(removableWorktreeIds)
-    startWorkspaceCleanupBackgroundRemoval({
-      candidates: removableCandidates,
-      removeCandidates,
-      onProgress: (progress) => {
-        if (mountedRef.current) {
-          setRemovalProgress(progress)
-        }
-      },
-      onRowFailed: (failure) => {
-        clearQueuedDeleteState(failure.worktreeId)
-      },
-      onResult: (result) => {
-        const nextFailures: Record<string, string> = {}
-        for (const failure of result.failures) {
-          nextFailures[failure.worktreeId] = failure.message
-          clearQueuedDeleteState(failure.worktreeId)
-        }
-        if (mountedRef.current) {
-          setRowFailures(nextFailures)
-          onDeselect(result.removedIds)
-          settle()
-        }
-        removalInFlightRef.current = false
-      },
-      onLateResult: (result) => {
-        for (const failure of result.failures) {
-          // Why: a late failure can come from a hung preflight whose row never
-          // reached 'deleting'; clear its queued overlay like every other path.
-          clearQueuedDeleteState(failure.worktreeId)
-        }
-        if (!mountedRef.current || removalBatchIdRef.current !== removalBatchId) {
-          return
-        }
-        setRowFailures((current) => {
-          const next = { ...current }
-          for (const id of result.removedIds) {
-            delete next[id]
-          }
-          for (const failure of result.failures) {
-            next[failure.worktreeId] = failure.message
-          }
-          return next
-        })
-        onDeselect(result.removedIds)
-      },
-      onError: () => {
-        for (const worktreeId of removableWorktreeIds) {
-          clearWorktreeDeleteState(worktreeId)
-        }
-        if (mountedRef.current) {
-          settle()
-        }
-        removalInFlightRef.current = false
+    const handleRemovalError = (): void => {
+      for (const worktreeId of removableWorktreeIds) {
+        clearWorktreeDeleteState(worktreeId)
       }
-    })
+      if (mountedRef.current) {
+        settle()
+      }
+      removalInFlightRef.current = false
+    }
+    try {
+      startWorkspaceCleanupBackgroundRemoval({
+        candidates: removableCandidates,
+        removeCandidates,
+        onProgress: (progress) => {
+          if (mountedRef.current) {
+            setRemovalProgress(progress)
+          }
+        },
+        onRowFailed: (failure) => {
+          clearQueuedDeleteState(failure.worktreeId)
+        },
+        onResult: (result) => {
+          const nextFailures: Record<string, string> = {}
+          for (const failure of result.failures) {
+            nextFailures[failure.worktreeId] = failure.message
+            // Why: defensively covers failures that never reached onRowFailed.
+            clearQueuedDeleteState(failure.worktreeId)
+          }
+          if (mountedRef.current) {
+            setRowFailures(nextFailures)
+            onDeselect(result.removedIds)
+            settle()
+          }
+          removalInFlightRef.current = false
+        },
+        onLateResult: (result) => {
+          for (const failure of result.failures) {
+            // Why: a late failure can come from a hung preflight whose row never
+            // reached 'deleting'; clear its queued overlay like every other path.
+            clearQueuedDeleteState(failure.worktreeId)
+          }
+          if (!mountedRef.current || removalBatchIdRef.current !== removalBatchId) {
+            return
+          }
+          setRowFailures((current) => {
+            const next = { ...current }
+            for (const id of result.removedIds) {
+              delete next[id]
+            }
+            for (const failure of result.failures) {
+              next[failure.worktreeId] = failure.message
+            }
+            return next
+          })
+          onDeselect(result.removedIds)
+        },
+        onError: handleRemovalError
+      })
+    } catch {
+      handleRemovalError()
+    }
   }, [
     clearQueuedDeleteState,
     clearWorktreeDeleteState,

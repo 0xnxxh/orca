@@ -41,6 +41,14 @@ describe('facet building', () => {
     expect(facets.hostId).toBe('local')
   })
 
+  it('preserves a disconnected candidate execution host', () => {
+    const facets = makeFacets({
+      candidate: { connectionId: 'builder', executionHostId: 'ssh:builder' },
+      worktree: null
+    })
+    expect(facets.hostId).toBe('ssh:builder')
+  })
+
   it('treats a missing size entry as unsized rather than zero', () => {
     expect(makeFacets().sizeBytes).toBeNull()
     expect(makeFacets({ sizeBytes: 0 }).sizeBytes).toBe(0)
@@ -185,6 +193,22 @@ describe('status filter', () => {
     expect(matchesWorkspaceCleanupFilters(statusless, state, FACET_NOW)).toBe(false)
     state.status.matchStatusless = true
     expect(matchesWorkspaceCleanupFilters(statusless, state, FACET_NOW)).toBe(true)
+  })
+
+  it('excludes statusless rows even when no named status is selected', () => {
+    const state = filters((s) => {
+      s.safety.dismissed = 'any'
+      s.status.workspaceStatuses = []
+      s.status.matchStatusless = false
+    })
+    expect(matchesWorkspaceCleanupFilters(makeFacets(), state, FACET_NOW)).toBe(false)
+    expect(
+      matchesWorkspaceCleanupFilters(
+        makeFacets({ worktree: { workspaceStatus: 'in-review' } }),
+        state,
+        FACET_NOW
+      )
+    ).toBe(true)
   })
 
   it('applies tri-state flags', () => {

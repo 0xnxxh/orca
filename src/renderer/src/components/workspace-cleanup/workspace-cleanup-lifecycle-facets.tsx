@@ -55,6 +55,7 @@ export function WorkspaceCleanupLifecycleFacets({
           onChange={(idleMinDays) => onPatch('activity', { idleMinDays })}
         />
         <FacetCheckbox
+          id="activity-never-visited"
           label={translate('components.workspace.cleanup.browse.neverVisited', 'Never opened')}
           checked={filters.activity.neverVisited}
           onChange={(neverVisited) => onPatch('activity', { neverVisited })}
@@ -80,6 +81,7 @@ export function WorkspaceCleanupLifecycleFacets({
           onChange={(megabytes) => onPatch('size', { maxBytes: fromMegabytes(megabytes) })}
         />
         <FacetCheckbox
+          id="size-include-unsized"
           label={translate(
             'components.workspace.cleanup.browse.includeUnsized',
             'Include unmeasured workspaces'
@@ -105,6 +107,7 @@ export function WorkspaceCleanupLifecycleFacets({
           />
         ) : null}
         <FacetCheckbox
+          id="status-match-statusless"
           label={translate(
             'components.workspace.cleanup.browse.matchStatusless',
             'Include workspaces with no status'
@@ -181,6 +184,7 @@ export function WorkspaceCleanupLifecycleFacets({
           onChange={(presence) => onPatch('context', { presence })}
         />
         <FacetCheckbox
+          id="context-completely-empty"
           label={translate(
             'components.workspace.cleanup.browse.completelyEmpty',
             'Nothing left to lose'

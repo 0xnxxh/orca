@@ -570,6 +570,25 @@ describe('workspace cleanup scan progress', () => {
     await expect(Promise.all([legacy, full])).resolves.toHaveLength(2)
   })
 
+  it('still joins the first key while a different scan key is running', async () => {
+    const firstPending = deferred<WorkspaceCleanupScanResult>()
+    const secondPending = deferred<WorkspaceCleanupScanResult>()
+    const scan = vi.fn((args?: { skipGitWorktreeIds?: string[] }) =>
+      args?.skipGitWorktreeIds?.includes('second') ? secondPending.promise : firstPending.promise
+    )
+    installWorkspaceCleanupApi(scan)
+    const store = createCleanupTestStore()
+
+    const first = store.getState().scanWorkspaceCleanup({ skipGitWorktreeIds: ['first'] })
+    const second = store.getState().scanWorkspaceCleanup({ skipGitWorktreeIds: ['second'] })
+    const firstAgain = store.getState().scanWorkspaceCleanup({ skipGitWorktreeIds: ['first'] })
+
+    expect(scan).toHaveBeenCalledTimes(2)
+    firstPending.resolve({ scannedAt: NOW, candidates: [], errors: [] })
+    secondPending.resolve({ scannedAt: NOW, candidates: [], errors: [] })
+    await expect(Promise.all([first, second, firstAgain])).resolves.toHaveLength(3)
+  })
+
   it('keeps stale cleanup results visible after a broad refresh failure', async () => {
     const previous = { scannedAt: NOW, candidates: [makeCandidate()], errors: [] }
     const scan = vi

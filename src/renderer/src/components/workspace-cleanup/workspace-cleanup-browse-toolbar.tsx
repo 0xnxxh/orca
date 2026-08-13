@@ -50,6 +50,7 @@ export function WorkspaceCleanupBrowseToolbar({
         hasActiveFilters={activeFilters}
         sizeScan={{
           measuredCount: facetRows.measuredSizeCount,
+          unmeasuredCount: facetRows.unmeasuredSizeCount,
           scanning: spaceScanning,
           scannedCount: spaceProgress?.scannedWorktreeCount ?? 0,
           totalCount: spaceProgress?.totalWorktreeCount ?? 0,

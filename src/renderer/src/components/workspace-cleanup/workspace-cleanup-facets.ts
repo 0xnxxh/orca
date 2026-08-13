@@ -121,7 +121,7 @@ export function buildWorkspaceCleanupFacets(
     displayName: candidate.displayName,
     path: candidate.path,
     branch,
-    hostId: worktree?.hostId ?? LOCAL_EXECUTION_HOST_ID,
+    hostId: worktree?.hostId ?? candidate.executionHostId ?? LOCAL_EXECUTION_HOST_ID,
     tier: candidate.tier,
     blockers: candidate.blockers,
     blockerCount: candidate.blockers.length,

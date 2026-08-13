@@ -47,11 +47,9 @@ export function WorkspaceCleanupDialogHeader({
             progress={scanProgress}
           />
           <span className="text-sm font-medium text-foreground">
-            {selectedCount}{' '}
-            {translate(
-              'auto.components.workspace.cleanup.WorkspaceCleanupDialog.ac5ba84cc1',
-              'selected'
-            )}
+            {translate('components.workspace.cleanup.browse.selectedCount', '{{value0}} selected', {
+              value0: selectedCount
+            })}
           </span>
           <Button
             variant="destructive"

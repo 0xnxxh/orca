@@ -191,6 +191,10 @@ export async function persistWorkspaceCleanupScanResult(
       const filteredResult = excludeRowsPrunedDuringScan(file, result)
       const broad = !args.worktreeId && args.includeAllWorkspaces === true
       if (broad) {
+        const existing = await readWorkspaceCleanupScanSnapshot(snapshotDirectory)
+        if (existing && existing.scannedAt > filteredResult.scannedAt) {
+          return
+        }
         await writeSnapshot(file, filteredResult)
         clearSupersededPrunes(file, result, true)
         return

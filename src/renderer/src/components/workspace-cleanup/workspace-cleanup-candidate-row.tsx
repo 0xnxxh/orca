@@ -146,7 +146,9 @@ export const CandidateRow = React.memo(function CandidateRow({
 
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <span className="min-w-0 truncate text-sm font-medium">{candidate.displayName}</span>
+            <span data-workspace-cleanup-row-name className="min-w-0 truncate text-sm font-medium">
+              {candidate.displayName}
+            </span>
             {deletionPhase ? (
               <StatusPill tone="destructive">
                 {deletionPhase === 'queued'
@@ -192,6 +194,7 @@ export const CandidateRow = React.memo(function CandidateRow({
             />
             {gitEvidencePending ? (
               <span
+                role="status"
                 className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full border border-border bg-background px-1.5 text-[11px] font-medium text-muted-foreground"
                 aria-label={translate(
                   'components.workspace.cleanup.browse.checkingGitRow',

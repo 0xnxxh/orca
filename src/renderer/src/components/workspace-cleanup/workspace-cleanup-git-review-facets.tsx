@@ -195,6 +195,7 @@ export function WorkspaceCleanupGitReviewFacets({
           onChange={(dismissed) => onPatch('safety', { dismissed })}
         />
         <FacetCheckbox
+          id="safety-selectable-only"
           label={translate(
             'components.workspace.cleanup.browse.selectableOnly',
             'Only workspaces I can delete now'

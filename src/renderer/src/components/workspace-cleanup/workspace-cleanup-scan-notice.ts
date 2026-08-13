@@ -24,15 +24,28 @@ export function formatWorkspaceCleanupScanNotice(
   if (visibleErrors.length === 1) {
     const error = visibleErrors[0]
     const repoName = formatScanErrorRepoName(error, repoNameById)
-    return `Could not check ${repoName}: ${formatScanErrorReason(error.message)}. Some workspaces may be missing. Refresh to try again.`
+    return translate(
+      'components.workspace.cleanup.scan.singleError',
+      'Could not check {{value0}}: {{value1}}. Some workspaces may be missing. Refresh to try again.',
+      { value0: repoName, value1: formatScanErrorReason(error.message) }
+    )
   }
   const repoNames = visibleErrors
     .slice(0, 3)
     .map((error) => formatScanErrorRepoName(error, repoNameById))
     .join(', ')
   const moreCount = visibleErrors.length - 3
-  const suffix = moreCount > 0 ? `, +${moreCount} more` : ''
-  return `Could not check ${visibleErrors.length} repositories (${repoNames}${suffix}). Some workspaces may be missing. Refresh to try again.`
+  const suffix =
+    moreCount > 0
+      ? translate('components.workspace.cleanup.scan.moreErrors', ', +{{value0}} more', {
+          value0: moreCount
+        })
+      : ''
+  return translate(
+    'components.workspace.cleanup.scan.multipleErrors',
+    'Could not check {{value0}} repositories ({{value1}}{{value2}}). Some workspaces may be missing. Refresh to try again.',
+    { value0: visibleErrors.length, value1: repoNames, value2: suffix }
+  )
 }
 
 export function formatWorkspaceCleanupScanProgress(
@@ -56,11 +69,31 @@ export function formatWorkspaceCleanupReadyToast(
   suggestedCount: number
 ): string {
   if (workspaceCount === 0) {
-    return 'No workspaces found.'
+    return translate('components.workspace.cleanup.scan.noWorkspaces', 'No workspaces found.')
   }
-  const workspaceNoun = workspaceCount === 1 ? 'workspace' : 'workspaces'
-  const suggestedNoun = suggestedCount === 1 ? 'suggestion' : 'suggestions'
-  return `${workspaceCount} ${workspaceNoun} found, with ${suggestedCount} cleanup ${suggestedNoun}.`
+  if (workspaceCount === 1) {
+    return suggestedCount === 1
+      ? translate(
+          'components.workspace.cleanup.scan.readyOneOne',
+          '1 workspace found, with 1 cleanup suggestion.'
+        )
+      : translate(
+          'components.workspace.cleanup.scan.readyOneMany',
+          '1 workspace found, with {{value0}} cleanup suggestions.',
+          { value0: suggestedCount }
+        )
+  }
+  return suggestedCount === 1
+    ? translate(
+        'components.workspace.cleanup.scan.readyManyOne',
+        '{{value0}} workspaces found, with 1 cleanup suggestion.',
+        { value0: workspaceCount }
+      )
+    : translate(
+        'components.workspace.cleanup.scan.readyManyMany',
+        '{{value0}} workspaces found, with {{value1}} cleanup suggestions.',
+        { value0: workspaceCount, value1: suggestedCount }
+      )
 }
 
 function formatScanErrorRepoName(
@@ -72,12 +105,17 @@ function formatScanErrorRepoName(
     return repoName
   }
   const fallback = error.repoId ? repoNameById.get(error.repoId)?.trim() : ''
-  return fallback || 'a repository'
+  return (
+    fallback || translate('components.workspace.cleanup.scan.fallbackRepository', 'a repository')
+  )
 }
 
 function formatScanErrorReason(message: string | undefined): string {
   if (!message || message === 'Could not scan workspace cleanup for this repository.') {
-    return 'Git could not list worktrees'
+    return translate(
+      'components.workspace.cleanup.scan.gitListFailed',
+      'Git could not list worktrees'
+    )
   }
   return message.replace(/\.$/, '')
 }

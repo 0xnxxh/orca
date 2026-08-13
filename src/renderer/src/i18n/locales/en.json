@@ -15391,7 +15391,29 @@
           "openWorkspace": "Open workspace",
           "workspaceStatus": "Workspace status: {{value0}}",
           "measuringSizesProgress": "Measuring {{value0}}/{{value1}}",
-          "measuringSizes": "Measuring sizes"
+          "measuringSizes": "Measuring sizes",
+          "measureSizesFailed": "Could not measure workspace sizes",
+          "selectedCount": "{{value0}} selected"
+        },
+        "scan": {
+          "progress": "Scanning workspaces ({{value0}}/{{value1}})",
+          "singleError": "Could not check {{value0}}: {{value1}}. Some workspaces may be missing. Refresh to try again.",
+          "moreErrors": ", +{{value0}} more",
+          "multipleErrors": "Could not check {{value0}} repositories ({{value1}}{{value2}}). Some workspaces may be missing. Refresh to try again.",
+          "noWorkspaces": "No workspaces found.",
+          "readyOneOne": "1 workspace found, with 1 cleanup suggestion.",
+          "readyOneMany": "1 workspace found, with {{value0}} cleanup suggestions.",
+          "readyManyOne": "{{value0}} workspaces found, with 1 cleanup suggestion.",
+          "readyManyMany": "{{value0}} workspaces found, with {{value1}} cleanup suggestions.",
+          "fallbackRepository": "a repository",
+          "gitListFailed": "Git could not list worktrees"
+        },
+        "relativeTime": {
+          "never": "Never",
+          "justNow": "Just now",
+          "minutesAgo": "{{value0}}m ago",
+          "hoursAgo": "{{value0}}h ago",
+          "daysAgo": "{{value0}}d ago"
         }
       }
     },
@@ -15420,6 +15442,13 @@
       "sent": "Session context sent to {{agent}} in a new session.",
       "deliveryFailed": "The new {{agent}} session started, but its context could not be sent.",
       "launchFailed": "Could not start a new {{agent}} session."
+    },
+    "status": {
+      "bar": {
+        "workspaceSpace": {
+          "otherTopLevelItems": "Other top-level items ({{value0}})"
+        }
+      }
     }
   },
   "dashboardPopout": {

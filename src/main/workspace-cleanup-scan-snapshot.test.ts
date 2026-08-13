@@ -84,6 +84,26 @@ describe('workspace cleanup scan snapshot', () => {
     await expect(readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir)).resolves.toEqual(result)
   })
 
+  it('does not let an older broad scan overwrite a newer snapshot', async () => {
+    const newer = {
+      scannedAt: NOW + 1,
+      candidates: [makeCandidate({ displayName: 'Newer' })],
+      errors: []
+    }
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      newer
+    )
+    await persistWorkspaceCleanupScanResult(
+      userDataDirHolder.dir,
+      { includeAllWorkspaces: true },
+      makeBroadResult([makeCandidate({ displayName: 'Older' })])
+    )
+
+    await expect(readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir)).resolves.toEqual(newer)
+  })
+
   it('returns null when no snapshot has been persisted', async () => {
     await expect(readWorkspaceCleanupScanSnapshot(userDataDirHolder.dir)).resolves.toBeNull()
   })

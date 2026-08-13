@@ -18,6 +18,7 @@ import {
 } from './workspace-cleanup-facets'
 import {
   countWorkspaceCleanupFacetMatches,
+  filterWorkspaceCleanupFacets,
   runWorkspaceCleanupQuery
 } from './workspace-cleanup-query'
 import {
@@ -32,6 +33,7 @@ import type {
 export type WorkspaceCleanupFacetRows = {
   rows: WorkspaceCleanupFacets[]
   selectableWorktreeIds: string[]
+  facetMatchedWorktreeIds: ReadonlySet<string>
   matchedCount: number
   totalCount: number
   facetCounts: WorkspaceCleanupFacetCounts
@@ -40,6 +42,7 @@ export type WorkspaceCleanupFacetRows = {
   sizeByWorktreeId: ReadonlyMap<string, number>
   /** 0 means the workspace-space scan has never produced a usable size. */
   measuredSizeCount: number
+  unmeasuredSizeCount: number
 }
 
 /**
@@ -163,7 +166,13 @@ export function useWorkspaceCleanupFacetRows({
     () => countWorkspaceCleanupFacetMatches(facets, facetFilters, now),
     [facets, facetFilters, now]
   )
+  const facetMatchedWorktreeIds = useMemo(
+    () =>
+      new Set(filterWorkspaceCleanupFacets(facets, facetFilters, now).map((row) => row.worktreeId)),
+    [facets, facetFilters, now]
+  )
   const measuredSizeCount = useMemo(() => countWorkspaceCleanupMeasuredRows(facets), [facets])
+  const unmeasuredSizeCount = facets.length - measuredSizeCount
 
   const options = useMemo<WorkspaceCleanupFacetOptions>(
     () => ({
@@ -189,12 +198,14 @@ export function useWorkspaceCleanupFacetRows({
   return {
     rows: result.rows,
     selectableWorktreeIds: result.selectableWorktreeIds,
+    facetMatchedWorktreeIds,
     matchedCount: result.matchedCount,
     totalCount: result.totalCount,
     facetCounts,
     options,
     reviewInfoByWorktreeId,
     sizeByWorktreeId,
-    measuredSizeCount
+    measuredSizeCount,
+    unmeasuredSizeCount
   }
 }

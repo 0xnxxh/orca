@@ -4,14 +4,12 @@ import {
   type WorkspaceCleanupBrowseState
 } from '../../../../shared/workspace-cleanup-browse-state'
 
-const WorkspaceCleanupDismissal = z
-  .object({
-    worktreeId: z.string(),
-    dismissedAt: z.number().finite(),
-    fingerprint: z.string(),
-    classifierVersion: z.number().finite()
-  })
-  .strict()
+const WorkspaceCleanupDismissal = z.object({
+  worktreeId: z.string(),
+  dismissedAt: z.number().finite(),
+  fingerprint: z.string(),
+  classifierVersion: z.number().finite()
+})
 
 /**
  * Deliberately unvalidated shape, then normalized: the filter groups must NOT be
@@ -25,9 +23,7 @@ const WorkspaceCleanupBrowse = z
   .custom<WorkspaceCleanupBrowseState>()
   .transform((value) => normalizeWorkspaceCleanupBrowseState(value))
 
-export const WorkspaceCleanup = z
-  .object({
-    dismissals: z.record(z.string(), WorkspaceCleanupDismissal),
-    browse: WorkspaceCleanupBrowse.optional()
-  })
-  .strict()
+export const WorkspaceCleanup = z.object({
+  dismissals: z.record(z.string(), WorkspaceCleanupDismissal),
+  browse: WorkspaceCleanupBrowse.optional()
+})

@@ -17,6 +17,7 @@ vi.mock('./use-workspace-cleanup-facet-rows', () => ({
     return {
       rows: [],
       selectableWorktreeIds: [],
+      facetMatchedWorktreeIds: new Set(),
       matchedCount: 0,
       totalCount: 0,
       facetCounts: {
@@ -34,7 +35,8 @@ vi.mock('./use-workspace-cleanup-facet-rows', () => ({
       options: { workspaceStatuses: [], hostIds: [], repos: [], reviewProviders: [] },
       reviewInfoByWorktreeId: new Map(),
       sizeByWorktreeId: new Map(),
-      measuredSizeCount: 0
+      measuredSizeCount: 0,
+      unmeasuredSizeCount: 0
     }
   }
 }))

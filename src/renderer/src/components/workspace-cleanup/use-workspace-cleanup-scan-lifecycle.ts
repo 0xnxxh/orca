@@ -17,12 +17,14 @@ export type WorkspaceCleanupScanLifecycle = {
 export function useWorkspaceCleanupScanLifecycle({
   open,
   loading,
+  removalInFlight,
   removalInFlightRef,
   resetRowFailures,
   onFreshOpen
 }: {
   open: boolean
   loading: boolean
+  removalInFlight: boolean
   removalInFlightRef: { current: boolean }
   resetRowFailures: () => void
   onFreshOpen: () => void
@@ -113,7 +115,10 @@ export function useWorkspaceCleanupScanLifecycle({
     // Why: reopening mid-batch keeps the deletion progress view; a broad scan
     // started here would be discarded by the removal's scan invalidation, so
     // skip it while a removal batch is running.
-    if (autoScanAttemptedForOpenRef.current || removalInFlightRef.current) {
+    if (removalInFlight || removalInFlightRef.current) {
+      return
+    }
+    if (autoScanAttemptedForOpenRef.current) {
       return
     }
     autoScanAttemptedForOpenRef.current = true
@@ -123,7 +128,7 @@ export function useWorkspaceCleanupScanLifecycle({
       return
     }
     hydrateThenScan()
-  }, [hydrateThenScan, loading, onFreshOpen, open, removalInFlightRef])
+  }, [hydrateThenScan, loading, onFreshOpen, open, removalInFlight, removalInFlightRef])
 
   return { startWorkspaceCleanupScan }
 }

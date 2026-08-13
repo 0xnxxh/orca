@@ -90,10 +90,7 @@ const WORKSPACE_CLEANUP_PREFLIGHT_CONCURRENCY = 4
 // unverifiable must still fail if real work becomes visible before removal.
 const WORKSPACE_CLEANUP_CONCRETE_RISK_BLOCKERS = ['dirty-files', 'unpushed-commits'] as const
 
-let inFlightWorkspaceCleanupScan: {
-  key: string
-  promise: Promise<WorkspaceCleanupScanResult>
-} | null = null
+const inFlightWorkspaceCleanupScans = new Map<string, Promise<WorkspaceCleanupScanResult>>()
 let latestWorkspaceCleanupScanToken = 0
 let finalizedWorkspaceCleanupScanToken = 0
 let workspaceCleanupProgressQueue: {
@@ -176,12 +173,13 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
     }
     const scanKey = getWorkspaceCleanupScanKey(scanArgs)
 
-    if (inFlightWorkspaceCleanupScan?.key === scanKey) {
+    const existingInFlight = inFlightWorkspaceCleanupScans.get(scanKey)
+    if (existingInFlight) {
       set({ workspaceCleanupLoading: true, workspaceCleanupError: null })
       try {
-        return await inFlightWorkspaceCleanupScan.promise
+        return await existingInFlight
       } finally {
-        if (!inFlightWorkspaceCleanupScan) {
+        if (!inFlightWorkspaceCleanupScans.has(scanKey)) {
           set({ workspaceCleanupLoading: false })
         }
       }
@@ -226,7 +224,7 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
       }
       return result
     })()
-    inFlightWorkspaceCleanupScan = { key: scanKey, promise }
+    inFlightWorkspaceCleanupScans.set(scanKey, promise)
 
     try {
       return await promise
@@ -237,8 +235,8 @@ export const createWorkspaceCleanupSlice: StateCreator<AppState, [], [], Workspa
       }
       throw error
     } finally {
-      if (inFlightWorkspaceCleanupScan?.promise === promise) {
-        inFlightWorkspaceCleanupScan = null
+      if (inFlightWorkspaceCleanupScans.get(scanKey) === promise) {
+        inFlightWorkspaceCleanupScans.delete(scanKey)
       }
     }
   },
@@ -404,7 +402,7 @@ function getWorkspaceCleanupScanKey(args: WorkspaceCleanupScanArgs): string {
 function invalidateWorkspaceCleanupScanProgress(): void {
   latestWorkspaceCleanupScanToken += 1
   finalizedWorkspaceCleanupScanToken = 0
-  inFlightWorkspaceCleanupScan = null
+  inFlightWorkspaceCleanupScans.clear()
   workspaceCleanupProgressQueue = null
   workspaceCleanupEnrichmentCache = null
   workspaceCleanupProgressCandidateIndex = null
