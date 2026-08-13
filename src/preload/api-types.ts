@@ -1472,6 +1472,7 @@ export type PreloadApi = {
       env?: Record<string, string>
       envToDelete?: string[]
       command?: string
+      commandDelivery?: 'renderer' | 'provider'
       launchConfig?: SleepingAgentLaunchConfig
       resumeProviderSession?: AgentProviderSessionMetadata
       launchToken?: string

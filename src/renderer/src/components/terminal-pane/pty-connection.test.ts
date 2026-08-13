@@ -4368,7 +4368,7 @@ describe('connectPanePty', () => {
     )
   })
 
-  it('delivers terminal-paste startup commands through xterm before submitting', async () => {
+  it('keeps SSH terminal-paste startup commands renderer-owned', async () => {
     const pendingTimeouts: (() => void)[] = []
     const originalSetTimeout = globalThis.setTimeout
     globalThis.setTimeout = vi.fn((fn: () => void) => {
@@ -4384,7 +4384,7 @@ describe('connectPanePty', () => {
       transport.connect.mockImplementation(
         async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
           capturedDataCallback.current = callbacks.onData ?? null
-          return 'pty-local-paste'
+          return 'pty-ssh-paste'
         }
       )
       transportFactoryQueue.push(transport)
@@ -4392,7 +4392,8 @@ describe('connectPanePty', () => {
       mockStoreState = {
         ...mockStoreState,
         tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: null }] },
-        repos: [{ id: 'repo1', connectionId: null }]
+        repos: [{ id: 'repo1', connectionId: 'ssh-conn-1' }],
+        sshConnectionStates: new Map([['ssh-conn-1', { status: 'connected' }]])
       }
 
       const pane = createPane(1)
@@ -4406,6 +4407,7 @@ describe('connectPanePty', () => {
 
       connectPanePty(pane as never, manager as never, deps as never)
       expect(createdTransportOptions[0]?.command).toBeUndefined()
+      expect(createdTransportOptions[0]?.commandDelivery).toBeUndefined()
       expect(capturedDataCallback.current).not.toBeNull()
 
       capturedDataCallback.current?.('user@host $ ')
@@ -6500,121 +6502,77 @@ describe('connectPanePty', () => {
     expect(transport.sendInput).not.toHaveBeenCalled()
   })
 
-  it('waits for shell-ready before unhinted SSH startup commands', async () => {
-    // Capture the setTimeout callback directly so we can fire it without vi.useFakeTimers() (which would also replace beforeEach's rAF mock).
-    const pendingTimeouts: (() => void)[] = []
-    const originalSetTimeout = globalThis.setTimeout
-    globalThis.setTimeout = vi.fn((fn: () => void) => {
-      pendingTimeouts.push(fn)
-      return 999 as unknown as ReturnType<typeof setTimeout>
-    }) as unknown as typeof setTimeout
-
-    try {
-      const { connectPanePty } = await import('./pty-connection')
-
-      const capturedDataCallback: { current: ((data: string) => void) | null } = {
-        current: null
-      }
-      const transport = createMockTransport('pty-id')
-      transport.connect.mockImplementation(
-        async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
-          capturedDataCallback.current = callbacks.onData ?? null
-          return 'pty-ssh-1'
-        }
-      )
-      transportFactoryQueue.push(transport)
-
-      // SSH connection: the relay gets command metadata while the renderer owns delivery.
-      mockStoreState = {
-        ...mockStoreState,
-        tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: null }] },
-        repos: [{ id: 'repo1', connectionId: 'ssh-conn-1' }],
-        // Why: startup delivery assumes a live connection; a disconnected target routes through the deferred-connect gate instead of spawning synchronously.
-        sshConnectionStates: new Map([['ssh-conn-1', { status: 'connected' }]])
-      }
-
-      const pane = createPane(1)
-      const manager = createManager(1)
-      const deps = createDeps({ startup: { command: "claude 'say test'" } })
-
-      connectPanePty(pane as never, manager as never, deps as never)
-      expect(capturedDataCallback.current).not.toBeNull()
-
-      capturedDataCallback.current?.('user@remote $ ')
-      expect(transport.sendInput).not.toHaveBeenCalled()
-
-      capturedDataCallback.current?.('\x1b]777;orca-shell-ready\x07user@remote $ ')
-      for (const fn of pendingTimeouts.splice(0)) {
-        fn()
-      }
-
-      expect(createdTransportOptions[0]).toEqual(
-        expect.objectContaining({ startupCommandDelivery: 'shell-ready' })
-      )
-      expect(transport.sendInput).toHaveBeenCalledWith("claude 'say test'\r")
-    } finally {
-      globalThis.setTimeout = originalSetTimeout
+  it('delegates ordinary SSH startup delivery to the provider without a renderer duplicate', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
+    const transport = createMockTransport('pty-id')
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      capturedDataCallback.current = callbacks.onData ?? null
+      return 'pty-ssh-1'
+    })
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: null }] },
+      repos: [{ id: 'repo1', connectionId: 'ssh-conn-1' }],
+      sshConnectionStates: new Map([['ssh-conn-1', { status: 'connected' }]])
     }
+
+    connectPanePty(
+      createPane(1) as never,
+      createManager(1) as never,
+      createDeps({ startup: { command: "claude 'say test'" } }) as never
+    )
+    await flushAsyncTicks()
+    capturedDataCallback.current?.('\x1b]777;orca-shell-ready\x07user@remote $ ')
+
+    expect(createdTransportOptions[0]).toEqual(
+      expect.objectContaining({
+        command: "claude 'say test'",
+        commandDelivery: 'provider',
+        startupCommandDelivery: 'shell-ready'
+      })
+    )
+    expect(transport.sendInput).not.toHaveBeenCalledWith("claude 'say test'\r")
   })
 
-  it('waits for the SSH shell-ready marker before sending hinted startup commands', async () => {
-    const pendingTimeouts: (() => void)[] = []
-    const originalSetTimeout = globalThis.setTimeout
-    globalThis.setTimeout = vi.fn((fn: () => void) => {
-      pendingTimeouts.push(fn)
-      return 999 as unknown as ReturnType<typeof setTimeout>
-    }) as unknown as typeof setTimeout
-
-    try {
-      const { connectPanePty } = await import('./pty-connection')
-
-      const capturedDataCallback: { current: ((data: string) => void) | null } = {
-        current: null
-      }
-      const transport = createMockTransport('pty-id')
-      transport.connect.mockImplementation(
-        async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
-          capturedDataCallback.current = callbacks.onData ?? null
-          return 'pty-ssh-1'
-        }
-      )
-      transportFactoryQueue.push(transport)
-
-      mockStoreState = {
-        ...mockStoreState,
-        tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: null }] },
-        repos: [{ id: 'repo1', connectionId: 'ssh-conn-1' }],
-        // Why: startup delivery assumes a live connection; a disconnected target routes through the deferred-connect gate instead of spawning synchronously.
-        sshConnectionStates: new Map([['ssh-conn-1', { status: 'connected' }]])
-      }
-
-      const pane = createPane(1)
-      const manager = createManager(1)
-      const deps = createDeps({
-        startup: {
-          command: "codex 'linked issue context'",
-          startupCommandDelivery: 'shell-ready'
-        }
-      })
-
-      connectPanePty(pane as never, manager as never, deps as never)
-      expect(capturedDataCallback.current).not.toBeNull()
-
-      capturedDataCallback.current?.('user@remote $ ')
-      for (const fn of pendingTimeouts.splice(0)) {
-        fn()
-      }
-      expect(transport.sendInput).not.toHaveBeenCalled()
-
-      capturedDataCallback.current?.('\x1b]777;orca-shell-ready\x07user@remote $ ')
-      for (const fn of pendingTimeouts.splice(0)) {
-        fn()
-      }
-
-      expect(transport.sendInput).toHaveBeenCalledWith("codex 'linked issue context'\r")
-    } finally {
-      globalThis.setTimeout = originalSetTimeout
+  it('arms draft observation after a provider-owned SSH startup succeeds', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
+    const transport = createMockTransport('pty-codex')
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      capturedDataCallback.current = callbacks.onData ?? null
+      return 'pty-ssh-codex'
+    })
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: null }] },
+      repos: [{ id: 'repo1', connectionId: 'ssh-conn-1' }],
+      sshConnectionStates: new Map([['ssh-conn-1', { status: 'connected' }]])
     }
+    const prompt = 'https://linear.app/stably/issue/STA-4067'
+
+    connectPanePty(
+      createPane(1) as never,
+      createManager(1) as never,
+      createDeps({
+        startup: {
+          command: 'codex',
+          launchAgent: 'codex',
+          launchConfig: { agentArgs: '', agentEnv: {} },
+          launchToken: 'launch-token-ssh',
+          draftPrompt: prompt
+        }
+      }) as never
+    )
+    await flushAsyncTicks()
+    capturedDataCallback.current?.('\x1b[?2004h\x1b[2K› ')
+    await flushAsyncTicks()
+
+    expect(createdTransportOptions[0]?.commandDelivery).toBe('provider')
+    expect(transport.sendInput).not.toHaveBeenCalledWith('codex\r')
+    expect(transport.sendInputAccepted).toHaveBeenCalledWith(`\x1b[200~${prompt}\x1b[201~`)
   })
 
   it('orders a startup draft behind existing user input when Codex renders its composer', async () => {
@@ -6783,7 +6741,7 @@ describe('connectPanePty', () => {
     ).toBe(true)
   })
 
-  it('falls back for SSH shell-ready startup commands when no marker arrives', async () => {
+  it('does not fall back to renderer delivery when provider-owned SSH output has no marker', async () => {
     const pendingTimeouts: (() => void)[] = []
     const originalSetTimeout = globalThis.setTimeout
     globalThis.setTimeout = vi.fn((fn: () => void) => {
@@ -6834,13 +6792,14 @@ describe('connectPanePty', () => {
         fn()
       }
 
-      expect(transport.sendInput).toHaveBeenCalledWith("codex 'linked issue context'\r")
+      expect(createdTransportOptions[0]?.commandDelivery).toBe('provider')
+      expect(transport.sendInput).not.toHaveBeenCalledWith("codex 'linked issue context'\r")
     } finally {
       globalThis.setTimeout = originalSetTimeout
     }
   })
 
-  it('falls back for quiet SSH shell-ready startup commands with no output', async () => {
+  it('does not duplicate a quiet provider-owned SSH startup command', async () => {
     const pendingTimeouts: (() => void)[] = []
     const originalSetTimeout = globalThis.setTimeout
     globalThis.setTimeout = vi.fn((fn: () => void) => {
@@ -6892,13 +6851,14 @@ describe('connectPanePty', () => {
         fn()
       }
 
-      expect(transport.sendInput).toHaveBeenCalledWith("codex 'linked issue context'\r")
+      expect(createdTransportOptions[0]?.commandDelivery).toBe('provider')
+      expect(transport.sendInput).not.toHaveBeenCalledWith("codex 'linked issue context'\r")
     } finally {
       globalThis.setTimeout = originalSetTimeout
     }
   })
 
-  it('waits for shell-ready for SSH Codex native prefill commands without an explicit hint', async () => {
+  it('uses provider delivery for SSH Codex native prefill commands without an explicit hint', async () => {
     const pendingTimeouts: (() => void)[] = []
     const originalSetTimeout = globalThis.setTimeout
     globalThis.setTimeout = vi.fn((fn: () => void) => {
@@ -6946,13 +6906,16 @@ describe('connectPanePty', () => {
         fn()
       }
 
-      expect(transport.sendInput).toHaveBeenCalledWith("codex --prefill 'linked issue context'\r")
+      expect(createdTransportOptions[0]?.commandDelivery).toBe('provider')
+      expect(transport.sendInput).not.toHaveBeenCalledWith(
+        "codex --prefill 'linked issue context'\r"
+      )
     } finally {
       globalThis.setTimeout = originalSetTimeout
     }
   })
 
-  it('uses the sequenced startup command hint for SSH shell-ready detection', async () => {
+  it('keeps sequenced SSH startup wrappers provider-owned', async () => {
     const pendingTimeouts: (() => void)[] = []
     const originalSetTimeout = globalThis.setTimeout
     globalThis.setTimeout = vi.fn((fn: () => void) => {
@@ -7006,7 +6969,8 @@ describe('connectPanePty', () => {
         fn()
       }
 
-      expect(transport.sendInput).toHaveBeenCalledWith(`${wrapperCommand}\r`)
+      expect(createdTransportOptions[0]?.commandDelivery).toBe('provider')
+      expect(transport.sendInput).not.toHaveBeenCalledWith(`${wrapperCommand}\r`)
     } finally {
       globalThis.setTimeout = originalSetTimeout
     }
@@ -8286,7 +8250,7 @@ describe('connectPanePty', () => {
     expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'fresh-ssh-pty')
   })
 
-  it('submits a cold-restore resume command after SSH expired-session fallback', async () => {
+  it('delegates a cold-restore resume command after SSH expired-session fallback', async () => {
     const pendingTimeouts: (() => void)[] = []
     const originalSetTimeout = globalThis.setTimeout
     globalThis.setTimeout = vi.fn((fn: () => void) => {
@@ -8359,6 +8323,7 @@ describe('connectPanePty', () => {
         2,
         expect.objectContaining({
           command: "codex '--dangerously-bypass-approvals-and-sandbox' 'resume' 'codex-session-1'",
+          commandDelivery: 'provider',
           startupCommandDelivery: 'shell-ready',
           env: expect.objectContaining({
             ORCA_PANE_KEY: paneKey,
@@ -8369,7 +8334,7 @@ describe('connectPanePty', () => {
           })
         })
       )
-      expect(transport.sendInput).toHaveBeenCalledWith(
+      expect(transport.sendInput).not.toHaveBeenCalledWith(
         "codex '--dangerously-bypass-approvals-and-sandbox' 'resume' 'codex-session-1'\r"
       )
     } finally {
