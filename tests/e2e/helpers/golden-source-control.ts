@@ -26,19 +26,31 @@ export function createGoldenWorktree(repoPath: string, label: string): GoldenWor
     cwd: repoPath,
     stdio: 'pipe'
   })
-  execFileSync('git', ['config', 'extensions.worktreeConfig', 'true'], {
-    cwd: worktreePath,
-    stdio: 'pipe'
-  })
-  execFileSync('git', ['config', '--worktree', 'user.name', GOLDEN_GIT_AUTHOR_NAME], {
-    cwd: worktreePath,
-    stdio: 'pipe'
-  })
-  execFileSync('git', ['config', '--worktree', 'user.email', GOLDEN_GIT_AUTHOR_EMAIL], {
-    cwd: worktreePath,
-    stdio: 'pipe'
-  })
-  return { branchName, worktreePath }
+  const fixture: GoldenWorktree = { branchName, worktreePath }
+  // Callers only register cleanup once this returns, so roll back here or the
+  // half-built worktree and branch leak into every later run.
+  try {
+    execFileSync('git', ['config', 'extensions.worktreeConfig', 'true'], {
+      cwd: worktreePath,
+      stdio: 'pipe'
+    })
+    execFileSync('git', ['config', '--worktree', 'user.name', GOLDEN_GIT_AUTHOR_NAME], {
+      cwd: worktreePath,
+      stdio: 'pipe'
+    })
+    execFileSync('git', ['config', '--worktree', 'user.email', GOLDEN_GIT_AUTHOR_EMAIL], {
+      cwd: worktreePath,
+      stdio: 'pipe'
+    })
+  } catch (setupError) {
+    try {
+      cleanupGoldenWorktree(repoPath, fixture)
+    } catch {
+      // Keep the setup failure as the reported cause.
+    }
+    throw setupError
+  }
+  return fixture
 }
 
 export function cleanupGoldenWorktree(repoPath: string, fixture: GoldenWorktree): void {
