@@ -641,17 +641,23 @@ describePosix('local PTY shell-ready launch config', () => {
     expect(output).toContain('CHILD_TEMP_PC=unset')
   })
 
-  itWithBash('preserves functrace enabled by a user profile', async () => {
+  itWithBash('preserves user-enabled functrace and nested DEBUG trap behavior', async () => {
     const { getBashShellReadyRcfileContent } = await importFreshLocalPtyShellReady()
-    writeFileSync(join(userDataPath, '.bash_profile'), 'set -T\n')
+    writeFileSync(
+      join(userDataPath, '.bash_profile'),
+      'set -T\nprofile_nested() { :; }\nprofile_nested\nprintf "USER_DEBUG_NESTED=%s\\n" "${USER_DEBUG_NESTED:-0}"\n'
+    )
+    const wrapper = `trap '[[ " \${FUNCNAME[*]} " != *" profile_nested "* ]] || USER_DEBUG_NESTED=1' DEBUG
+${getBashShellReadyRcfileContent()}`
 
     const output = runInteractiveBashRcfile(
-      getBashShellReadyRcfileContent(),
+      wrapper,
       userDataPath,
       "shopt -qo functrace && printf 'USER_FUNCTRACE_ON\\n'\nexit 0\n"
     )
 
     expect(output).toContain('USER_FUNCTRACE_ON')
+    expect(output).toContain('USER_DEBUG_NESTED=1')
   })
 
   itWithBash('does not multiply a pre-existing DEBUG trap inside startup functions', async () => {

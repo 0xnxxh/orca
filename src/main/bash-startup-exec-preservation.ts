@@ -156,7 +156,8 @@ _orca_exec_command_check_body="$(declare -f __orca_startup_command_is_exec)"
 __orca_preserve_startup_exec() {
   local _orca_exec_command="$BASH_COMMAND"
   if [[ -n "\${_orca_exec_startup_chained_debug_trap:-}" ]] &&
-    { [[ "\${_orca_exec_functrace_was_set:-0}" == "1" ]] || (( \${#FUNCNAME[@]} <= 1 )); }; then
+    { [[ "\${_orca_exec_functrace_was_set:-0}" == "1" ||
+      "\${_orca_exec_user_enabled_functrace:-0}" == "1" ]] || (( \${#FUNCNAME[@]} <= 1 )); }; then
     eval "$_orca_exec_startup_chained_debug_trap" || true
   fi
   case "$_orca_exec_command" in
