@@ -1828,7 +1828,9 @@ const BRACKETED_PASTE_END = '\x1b[201~'
 const BRACKETED_PASTE_QUIET_MS = 1500
 const DRAFT_PASTE_READY_TIMEOUT_MS = 8000
 const MOBILE_TERMINAL_SURFACE_TIMEOUT_MS = 10_000
-const REJECTED_SPLIT_PTY_STOP_TIMEOUT_MS = 10_000
+// Why: the split already failed; the caller waits on this teardown only to learn whether the
+// fallback kill is needed, so keep it short — an unreachable host must not stall the rejection.
+const REJECTED_SPLIT_PTY_STOP_TIMEOUT_MS = 2_000
 const MOBILE_TERMINAL_READY_FALLBACK_MS = 1000
 const SSH_PANE_RECOVERY_GRACE_MS = 30_000
 // Why: long enough that a keystroke burst to a proven-dead leaf probes once,
@@ -27392,7 +27394,12 @@ export class OrcaRuntimeService {
               tabId: parentTabId,
               leafId: parsedPaneKey.leafId,
               ptyId: pty.ptyId,
-              ...(sourceIncarnationId ? { incarnationId: sourceIncarnationId } : {})
+              // Why: the store can only match its own persisted map, so a live-only id it never
+              // recorded would reject every split from a session restored without incarnations.
+              // The live id is fenced by revalidateSourceAuthority below instead.
+              ...(sourceAuthority.persistedIncarnationId
+                ? { incarnationId: sourceAuthority.persistedIncarnationId }
+                : {})
             }
           }
         : {})
@@ -27447,6 +27454,9 @@ export class OrcaRuntimeService {
       revalidateSourceAuthority()
       if (!sourceAuthority.persisted) {
         await revealSplit()
+        // Why: rejecting here unmounts the pane the reveal just added only because the retire
+        // below always emits its exit and the tab still holds the source sibling — the renderer's
+        // exit handler closes non-final panes. Never close it by tabId: that drops the whole tab.
         revalidateSourceAuthority()
       }
       if (createdPty) {

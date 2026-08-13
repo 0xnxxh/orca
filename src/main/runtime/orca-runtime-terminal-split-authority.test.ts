@@ -284,10 +284,14 @@ describe('remote runtime terminal split authority', () => {
       ).toBeUndefined()
       expect(harness.spawn).toHaveBeenCalledWith(
         expect.objectContaining({
-          expectedSourceBinding: expect.objectContaining({
-            ptyId: SOURCE_PTY_ID,
-            incarnationId: 'source-before'
-          })
+          expectedSourceBinding: expect.objectContaining({ ptyId: SOURCE_PTY_ID })
+        })
+      )
+      // Why: persistence never recorded this incarnation, so sending it would make the store
+      // reject every split from a restored pane; the live id is fenced in-runtime instead.
+      expect(harness.spawn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expectedSourceBinding: expect.not.objectContaining({ incarnationId: expect.anything() })
         })
       )
 
@@ -312,7 +316,7 @@ describe('remote runtime terminal split authority', () => {
     await vi.waitFor(() => expect(harness.spawn).toHaveBeenCalledOnce())
     expect(harness.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
-        expectedSourceBinding: expect.objectContaining({ incarnationId: 'remote-before' })
+        expectedSourceBinding: expect.not.objectContaining({ incarnationId: expect.anything() })
       })
     )
 
