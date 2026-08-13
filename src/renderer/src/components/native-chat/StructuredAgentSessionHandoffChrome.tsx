@@ -126,7 +126,8 @@ export function StructuredAgentSessionHandoffChrome({
                 type="button"
                 variant="ghost"
                 size="xs"
-                onClick={() => onRequest('to-tui', 'now')}
+                // A submitted turn can reach the host before isWorking updates; after-turn is immediate when idle.
+                onClick={() => onRequest('to-tui', 'after-turn')}
               >
                 {translate('components.native-chat.handoff.openAgentTui', 'Open agent TUI')}
               </Button>

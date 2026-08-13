@@ -95,6 +95,10 @@ function submit(params: AgentSessionHandoffRequest) {
   return coordinator.request('client-1', params)
 }
 
+async function expectAccepted(params: AgentSessionHandoffRequest): Promise<void> {
+  expect(await submit(params)).toMatchObject({ ok: true })
+}
+
 function process(spawnToken: string, pid: number) {
   return {
     hostId: 'local',
@@ -351,9 +355,7 @@ describe('structured session ownership handoff', () => {
     await appendStatus('running')
     expect(await submit(request('to-tui', 'after-turn'))).toMatchObject({ ok: true })
     expect(coordinator.status(SESSION).phase).toBe('queued')
-    expect(
-      await submit(request('to-tui', 'after-turn', { action: 'cancel-queued' }))
-    ).toMatchObject({ ok: true })
+    await expectAccepted(request('to-tui', 'after-turn', { action: 'cancel-queued' }))
     await appendStatus('completed')
     await new Promise((resolve) => setTimeout(resolve, 200))
     expect(launchTui).not.toHaveBeenCalled()
@@ -666,9 +668,7 @@ describe('structured session ownership handoff', () => {
     waitForTuiExit.mockRejectedValueOnce(new Error('terminal_handle_stale'))
     const retryOperation = operationId()
 
-    expect(
-      await submit(request('to-native', 'now', { operationId: retryOperation }))
-    ).toMatchObject({ ok: true })
+    await expectAccepted(request('to-native', 'now', { operationId: retryOperation }))
     await waitForPhase('failed')
 
     expect(coordinator.status(SESSION)).toMatchObject({
@@ -683,9 +683,9 @@ describe('structured session ownership handoff', () => {
       handoffOperationId: null
     })
 
-    expect(
-      await submit(request('to-native', 'now', { action: 'retry', operationId: retryOperation }))
-    ).toMatchObject({ ok: true })
+    await expectAccepted(
+      request('to-native', 'now', { action: 'retry', operationId: retryOperation })
+    )
     await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('native'))
     expect(waitForTuiExit).toHaveBeenCalledTimes(2)
   })
@@ -741,12 +741,17 @@ describe('structured session ownership handoff', () => {
     expect(store.getRecord(SESSION)?.lease.runtimeKind).toBe('native')
   })
 
-  it('keeps a recoverable native owner after repeated transfers and a dead TUI relaunch', async () => {
-    for (let cycle = 0; cycle < 2; cycle += 1) {
-      await moveToTui()
-      expect(await submit(request('to-native', 'after-turn'))).toMatchObject({ ok: true })
-      await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('native'))
-    }
+  it('completes a queued second cycle and keeps native recoverable after a dead relaunch', async () => {
+    await moveToTui()
+    expect(await submit(request('to-native', 'after-turn'))).toMatchObject({ ok: true })
+    await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('native'))
+    await appendStatus('running')
+    expect(await submit(request('to-tui', 'after-turn'))).toMatchObject({ ok: true })
+    await appendStatus('completed')
+    await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('tui'))
+    expect(await submit(request('to-native', 'after-turn'))).toMatchObject({ ok: true })
+    await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('native'))
+
     launchTui.mockImplementationOnce(async ({ fence, spawnToken }) => ({
       ...makeTuiOwner(fence, spawnToken),
       link: link(fence + 1, 'dead-relaunch')
@@ -798,9 +803,7 @@ describe('structured session ownership handoff', () => {
     await moveToTui()
     importFailure = new Error('history unavailable')
     const retryOperation = operationId()
-    expect(
-      await submit(request('to-native', 'after-turn', { operationId: retryOperation }))
-    ).toMatchObject({ ok: true })
+    await expectAccepted(request('to-native', 'after-turn', { operationId: retryOperation }))
     await waitForPhase('failed')
     expect(coordinator.status(SESSION)).toMatchObject({
       owner: 'tui',
@@ -813,9 +816,9 @@ describe('structured session ownership handoff', () => {
       handoffStage: 'old-owner-stopped'
     })
 
-    expect(
-      await submit(request('to-native', 'now', { action: 'retry', operationId: retryOperation }))
-    ).toMatchObject({ ok: true })
+    await expectAccepted(
+      request('to-native', 'now', { action: 'retry', operationId: retryOperation })
+    )
     await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('native'))
     expect(waitForTuiExit).toHaveBeenCalledOnce()
   })
@@ -824,9 +827,7 @@ describe('structured session ownership handoff', () => {
     await moveToTui()
     nativeAcquireFailure = new Error('native proof unavailable')
     const retryOperation = operationId()
-    expect(
-      await submit(request('to-native', 'after-turn', { operationId: retryOperation }))
-    ).toMatchObject({ ok: true })
+    await expectAccepted(request('to-native', 'after-turn', { operationId: retryOperation }))
     await waitForPhase('failed')
 
     expect(coordinator.status(SESSION)).toMatchObject({
@@ -847,9 +848,9 @@ describe('structured session ownership handoff', () => {
       phase: 'failed',
       operationId: retryOperation
     })
-    expect(
-      await submit(request('to-native', 'now', { action: 'retry', operationId: retryOperation }))
-    ).toMatchObject({ ok: true })
+    await expectAccepted(
+      request('to-native', 'now', { action: 'retry', operationId: retryOperation })
+    )
     await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('native'))
     expect(waitForTuiExit).toHaveBeenCalledOnce()
     expect(acquireNativeCalls).toBe(2)
