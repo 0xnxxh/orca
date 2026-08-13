@@ -2587,6 +2587,11 @@ function resolveClaudePaneState(
     : 'done'
 }
 
+/** Child lifecycle events that end work. They say nothing about the lead being busy, so they must never be the reason a pane reads 'working'. */
+function isClaudeChildTerminatingEvent(eventName: unknown): boolean {
+  return eventName === 'SubagentStop' || eventName === 'TeammateIdle'
+}
+
 /** SubagentStart/Stop/TeammateIdle update the roster and re-emit the lead's last known state with the fresh child list, so the sidebar reflects spawn/finish even when a background child outlives the lead turn with no other hook traffic. */
 function normalizeClaudeSubagentLifecycleEvent(
   state: HookListenerState,
@@ -2722,9 +2727,12 @@ function buildClaudeCachedLeadStatusPayload(
   paneKey: string,
   hookPayload: Record<string, unknown>
 ): ParsedAgentStatusPayload | null {
-  // Why: default 'working' — a spawn proves activity even before the lead's first state-bearing event (e.g. Orca restarted mid-session).
   const lead = state.claudeLeadStateByPaneKey.get(paneKey)
-  const leadState = lead?.state ?? 'working'
+  // Why: with no cached lead (Orca restarted mid-session) the fallback must follow the event's
+  // evidence. A spawn or child tool call proves activity; a stop/idle proves the opposite, so
+  // defaulting those to 'working' mints a phantom no Stop will ever clear. 'done' still gates up
+  // through resolveClaudePaneState when the roster or background work proves the pane is busy.
+  const leadState = lead?.state ?? (isClaudeChildTerminatingEvent(eventName) ? 'done' : 'working')
   return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
     stateName: resolveClaudePaneState(state, paneKey, {
       state: leadState,
