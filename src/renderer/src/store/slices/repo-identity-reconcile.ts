@@ -89,8 +89,9 @@ export function reuseEqualRecordMap<T>(
   next: Readonly<Record<string, T>>
 ): Readonly<Record<string, T>> {
   const nextKeys = Object.keys(next)
-  const previousKeys = Object.keys(previous)
-  let identical = nextKeys.length === previousKeys.length
+  // Why: a matching key count plus every `next` key resolving to an equal `previous` entry below
+  // means the key sets match, so a removed key always lands as either a count or a lookup miss.
+  let identical = nextKeys.length === Object.keys(previous).length
   const reconciled: Record<string, T> = {}
   for (const key of nextKeys) {
     const existing = Object.hasOwn(previous, key) ? previous[key] : undefined
@@ -100,14 +101,6 @@ export function reuseEqualRecordMap<T>(
     }
     identical = false
     reconciled[key] = next[key]
-  }
-  if (identical) {
-    for (const key of previousKeys) {
-      if (!Object.hasOwn(next, key)) {
-        identical = false
-        break
-      }
-    }
   }
   return identical ? previous : reconciled
 }
