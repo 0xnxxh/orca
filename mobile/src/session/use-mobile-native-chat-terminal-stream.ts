@@ -116,8 +116,7 @@ export function useMobileNativeChatTerminalStream(args: {
       (rearmAttemptsRef.current.get(handle) ?? 0) >= MAX_REARM_ATTEMPTS
     )
   }, [])
-  // oxlint-disable-next-line react-doctor/effect-needs-cleanup -- The route owns streams; the hook cancels its proof timer on unmount.
-  useEffect(() => {
+  const reconcileStream = useCallback(() => {
     const handle = args.activeHandle
     if (coveredHandleRef.current && coveredHandleRef.current !== handle) {
       forgetRearmState(coveredHandleRef.current)
@@ -222,6 +221,7 @@ export function useMobileNativeChatTerminalStream(args: {
     rearmBudgetRevision,
     webReadyRevision
   ])
+  useEffect(() => reconcileStream(), [reconcileStream])
   useEffect(() => cancelHealthyStreamProof, [cancelHealthyStreamProof])
   // Why memoized: the session route keeps this object in callback dep arrays, and a
   // fresh literal per render would rebuild them on every keystroke. All three members
