@@ -9347,20 +9347,26 @@ export class OrcaRuntimeService {
       },
       stopRecoveredOwner: (record) => this.stopStructuredSessionProcess(record),
       tuiStatus: (owner) => this.structuredTuiStatus(owner),
-      stopFailedTuiLaunch: async (owner) => {
+      closeTuiOwner: (owner) => this.closeStructuredTuiOwner(owner),
+      stopFailedTuiLaunch: async (owner) => void (await this.closeStructuredTuiOwner(owner))
+    }
+  }
+
+  private async closeStructuredTuiOwner(
+    owner: StructuredTuiOwner
+  ): Promise<{ transcriptPath?: string }> {
+    if (this.ptysById.get(owner.terminal.ptyId)?.connected) {
+      const current = this.refreshStructuredTuiOwnerBinding(owner)
+      try {
+        await this.closeTerminal(current.terminal.handle)
+      } catch (error) {
         if (this.ptysById.get(owner.terminal.ptyId)?.connected) {
-          const current = this.refreshStructuredTuiOwnerBinding(owner)
-          try {
-            await this.closeTerminal(current.terminal.handle)
-          } catch (error) {
-            if (this.ptysById.get(owner.terminal.ptyId)?.connected) {
-              throw error
-            }
-          }
+          throw error
         }
-        await this.waitForStructuredTuiOwnerExit(owner)
       }
     }
+    await this.waitForStructuredTuiOwnerExit(owner)
+    return owner.transcriptPath ? { transcriptPath: owner.transcriptPath } : {}
   }
 
   private refreshStructuredTuiOwnerBinding(owner: StructuredTuiOwner): StructuredTuiOwner {
@@ -9495,8 +9501,12 @@ export class OrcaRuntimeService {
     }
     if (pty?.connected) {
       const text = buildTerminalWaitText(pty.tailBuffer, pty.tailPartialLine, pty.preview)
+      const blocked = detectTerminalWaitBlockedReason(text) !== null
+      if (!blocked && isKnownReadyPromptPreview(text)) {
+        return 'idle'
+      }
       return hasStructuredTuiIdleEvidence({
-        blocked: detectTerminalWaitBlockedReason(text) !== null,
+        blocked,
         status: pty.lastAgentStatus,
         statusObservedLive: pty.lastAgentStatusObservedLive
       })

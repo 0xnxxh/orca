@@ -43,7 +43,9 @@ export async function handoffStructuredSessionToNative(
         terminal: owner.terminal,
         hostLabel: deps.transport?.hostLabel
       })
-      const exited = await deps.transport!.waitForTuiExit(owner)
+      const exited = deps.transport!.closeTuiOwner
+        ? await deps.transport!.closeTuiOwner(owner)
+        : await deps.transport!.waitForTuiExit(owner)
       transcriptPath = exited.transcriptPath ?? owner.transcriptPath
     } catch (error) {
       const current = context.requireRecord(sessionId)

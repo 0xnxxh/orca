@@ -40,6 +40,9 @@ let launchTui: ReturnType<typeof vi.fn<StructuredAgentSessionHandoffTransport['l
 let waitForTuiExit: ReturnType<
   typeof vi.fn<StructuredAgentSessionHandoffTransport['waitForTuiExit']>
 >
+let closeTuiOwner: ReturnType<
+  typeof vi.fn<NonNullable<StructuredAgentSessionHandoffTransport['closeTuiOwner']>>
+>
 let waitForTuiIdleOrExit: ReturnType<
   typeof vi.fn<StructuredAgentSessionHandoffTransport['waitForTuiIdleOrExit']>
 >
@@ -208,6 +211,7 @@ function createCoordinator(): StructuredAgentSessionHandoffCoordinator {
         return { ...owner, process: record.lease.ownerProcess ?? owner.process }
       },
       stopRecoveredOwner,
+      closeTuiOwner,
       waitForTuiExit,
       waitForTuiIdleOrExit,
       tuiStatus: () => (tuiIdle ? 'idle' : 'busy'),
@@ -287,6 +291,7 @@ beforeEach(async () => {
   })
   launchTui = vi.fn(async ({ fence, spawnToken }) => makeTuiOwner(fence, spawnToken))
   waitForTuiExit = vi.fn(async (owner) => ({ transcriptPath: owner.transcriptPath }))
+  closeTuiOwner = vi.fn(async (owner) => ({ transcriptPath: owner.transcriptPath }))
   waitForTuiIdleOrExit = vi.fn(async () => tuiReadiness)
   reproveTuiOwner = vi.fn(async ({ record, owner }) => {
     expect(record.lease.ownerProcess).toEqual(owner.process)
@@ -335,6 +340,8 @@ describe('structured session ownership handoff', () => {
         link: expect.objectContaining({ linkId: forwardRecord.lease.provenHandleLinkId })
       })
     })
+    expect(closeTuiOwner).toHaveBeenCalledOnce()
+    expect(waitForTuiExit).not.toHaveBeenCalled()
 
     const messages = journal.snapshot().items.filter((item) => item.body.kind === 'message')
     expect(messages).toHaveLength(2)
@@ -611,13 +618,13 @@ describe('structured session ownership handoff', () => {
     tuiReadiness = null
     expect(await submit(request('to-native', 'after-turn'))).toMatchObject({ ok: true })
     expect(coordinator.status(SESSION).phase).toBe('queued')
-    expect(waitForTuiExit).not.toHaveBeenCalled()
+    expect(closeTuiOwner).not.toHaveBeenCalled()
     tuiIdle = true
     tuiReadiness = 'idle'
-    await vi.waitFor(() => expect(waitForTuiExit).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(closeTuiOwner).toHaveBeenCalledOnce())
   })
 
-  it('completes a mobile-originated queued reverse after the owning TUI exits', async () => {
+  it('closes the owning TUI and completes a mobile-originated queued reverse', async () => {
     await moveToTui()
     tuiIdle = false
     tuiReadiness = null
@@ -625,11 +632,10 @@ describe('structured session ownership handoff', () => {
 
     expect(await coordinator.request('mobile-device-a', reverse)).toMatchObject({ ok: true })
     expect(coordinator.status(SESSION).phase).toBe('queued')
-    tuiReadiness = 'exited'
     await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('native'))
 
-    expect(reproveTuiOwner).not.toHaveBeenCalled()
-    expect(waitForTuiExit).toHaveBeenCalledOnce()
+    expect(reproveTuiOwner).toHaveBeenCalledOnce()
+    expect(closeTuiOwner).toHaveBeenCalledOnce()
     expect(store.getRecord(SESSION)?.lease).toMatchObject({
       runtimeKind: 'native',
       claimStatus: 'live',
@@ -645,7 +651,7 @@ describe('structured session ownership handoff', () => {
 
     expect(reproveTuiOwner).toHaveBeenCalledOnce()
     expect(reproveTuiOwner.mock.invocationCallOrder[0]).toBeLessThan(
-      waitForTuiExit.mock.invocationCallOrder[0] ?? Infinity
+      closeTuiOwner.mock.invocationCallOrder[0] ?? Infinity
     )
   })
 
@@ -655,7 +661,7 @@ describe('structured session ownership handoff', () => {
     expect(await submit(request('to-native', 'now'))).toMatchObject({ ok: true })
     await waitForPhase('failed')
 
-    expect(waitForTuiExit).not.toHaveBeenCalled()
+    expect(closeTuiOwner).not.toHaveBeenCalled()
     expect(store.getRecord(SESSION)?.lease).toMatchObject({
       runtimeKind: 'tui',
       claimStatus: 'live',
@@ -665,7 +671,7 @@ describe('structured session ownership handoff', () => {
 
   it('rolls a stale reverse handle back to one durable TUI owner and retries', async () => {
     await moveToTui()
-    waitForTuiExit.mockRejectedValueOnce(new Error('terminal_handle_stale'))
+    closeTuiOwner.mockRejectedValueOnce(new Error('terminal_handle_stale'))
     const retryOperation = operationId()
 
     await expectAccepted(request('to-native', 'now', { operationId: retryOperation }))
@@ -687,14 +693,14 @@ describe('structured session ownership handoff', () => {
       request('to-native', 'now', { action: 'retry', operationId: retryOperation })
     )
     await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('native'))
-    expect(waitForTuiExit).toHaveBeenCalledTimes(2)
+    expect(closeTuiOwner).toHaveBeenCalledTimes(2)
   })
 
   it('keeps one recoverable owner when a queued reverse auto-fire fails', async () => {
     await moveToTui()
     tuiIdle = false
     tuiReadiness = null
-    waitForTuiExit.mockRejectedValueOnce(new Error('terminal_handle_stale'))
+    closeTuiOwner.mockRejectedValueOnce(new Error('terminal_handle_stale'))
 
     expect(await submit(request('to-native', 'after-turn'))).toMatchObject({ ok: true })
     expect(coordinator.status(SESSION).phase).toBe('queued')
@@ -820,7 +826,7 @@ describe('structured session ownership handoff', () => {
       request('to-native', 'now', { action: 'retry', operationId: retryOperation })
     )
     await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('native'))
-    expect(waitForTuiExit).toHaveBeenCalledOnce()
+    expect(closeTuiOwner).toHaveBeenCalledOnce()
   })
 
   it('abandons a failed native acquisition and retries from the stopped TUI', async () => {
@@ -852,7 +858,7 @@ describe('structured session ownership handoff', () => {
       request('to-native', 'now', { action: 'retry', operationId: retryOperation })
     )
     await vi.waitFor(() => expect(coordinator.status(SESSION).owner).toBe('native'))
-    expect(waitForTuiExit).toHaveBeenCalledOnce()
+    expect(closeTuiOwner).toHaveBeenCalledOnce()
     expect(acquireNativeCalls).toBe(2)
   })
 

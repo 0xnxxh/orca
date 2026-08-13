@@ -41,6 +41,7 @@ let transcriptPath: string
 let optionFailure: Error | null
 const dispatchedModels: string[] = []
 const launchedOptions: (Readonly<Record<string, string>> | undefined)[] = []
+const closedTuiOwners: StructuredTuiOwner[] = []
 
 function envelope(method: string, fields: Record<string, unknown>): AgentSessionMutationEnvelope {
   return {
@@ -94,6 +95,10 @@ function handoffTransport(): StructuredAgentSessionHandoffTransport {
         record.lease.ownerProcess?.spawnToken ?? record.lease.reservedSpawnToken ?? 'recovered'
       ),
     stopRecoveredOwner: async () => undefined,
+    closeTuiOwner: async (owner) => {
+      closedTuiOwners.push(owner)
+      return { transcriptPath: owner.transcriptPath }
+    },
     waitForTuiExit: async (owner) => ({ transcriptPath: owner.transcriptPath }),
     waitForTuiIdleOrExit: async () => 'idle',
     tuiStatus: () => 'idle'
@@ -165,6 +170,7 @@ beforeEach(async () => {
   optionFailure = null
   dispatchedModels.length = 0
   launchedOptions.length = 0
+  closedTuiOwners.length = 0
   const accountHome = join(root, 'codex-home')
   const sessionsDir = join(accountHome, 'sessions', '2026', '08', '12')
   transcriptPath = join(sessionsDir, `rollout-2026-08-12T10-00-00-${THREAD}.jsonl`)
@@ -258,6 +264,7 @@ describe('structured session handoff options', () => {
     )
 
     expect(launchedOptions).toEqual([{ model: PICKED_MODEL, effort: PICKED_EFFORT }])
+    expect(closedTuiOwners).toHaveLength(1)
     expect(acquire.mock.calls[1]?.[0].options).toEqual({
       model: PICKED_MODEL,
       effort: PICKED_EFFORT

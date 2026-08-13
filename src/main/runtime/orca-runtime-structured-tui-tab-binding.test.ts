@@ -213,6 +213,7 @@ describe('structured TUI launch tab binding', () => {
       waitForTerminal(): Promise<unknown>
       waitForStructuredTuiProof(): Promise<{ transcriptPath?: string }>
       waitForStructuredTuiPtyExit(): Promise<void>
+      closeTerminal(handle: string): Promise<unknown>
       handles: Map<
         string,
         {
@@ -250,6 +251,8 @@ describe('structured TUI launch tab binding', () => {
     internal.waitForStructuredTuiProof = waitForStructuredTuiProof
     const waitForStructuredTuiPtyExit = vi.fn(async () => {})
     internal.waitForStructuredTuiPtyExit = waitForStructuredTuiPtyExit
+    const closeTerminal = vi.fn(async () => undefined)
+    internal.closeTerminal = closeTerminal
     readStructuredTuiProcessIdentity.mockResolvedValue({
       hostId: 'local',
       pid: 4243,
@@ -325,6 +328,37 @@ describe('structured TUI launch tab binding', () => {
       'idle'
     )
 
+    explicitStatus = null
+    const livePty = (
+      runtime as unknown as {
+        ptysById: Map<
+          string,
+          {
+            tailBuffer: string[]
+            tailPartialLine: string
+            preview: string
+            lastAgentStatus: null
+            lastAgentStatusObservedLive: boolean
+          }
+        >
+      }
+    ).ptysById.get('pty-structured')!
+    Object.assign(livePty, {
+      tailBuffer: [
+        'OpenAI Codex (v0.147.0)',
+        'model: gpt-5.6-terra',
+        'directory: /tmp/structured-handoff'
+      ],
+      tailPartialLine: '',
+      preview: '',
+      lastAgentStatus: null,
+      lastAgentStatusObservedLive: false
+    })
+    expect(transport.tuiStatus(owner)).toBe('idle')
+    await expect(transport.waitForTuiIdleOrExit(owner, new AbortController().signal)).resolves.toBe(
+      'idle'
+    )
+
     const pty = (
       runtime as unknown as {
         ptysById: Map<string, { connected: boolean; launchToken: string | null }>
@@ -347,6 +381,11 @@ describe('structured TUI launch tab binding', () => {
     await transport.waitForTuiExit(rebound)
     expect(waitForStructuredTuiPtyExit).toHaveBeenCalledWith('pty-structured')
     expect(waitForStructuredTuiProof).toHaveBeenCalledOnce()
+
+    await expect(transport.closeTuiOwner?.(rebound)).resolves.toEqual({
+      transcriptPath: '/tmp/rollout.jsonl'
+    })
+    expect(closeTerminal).toHaveBeenCalledWith(rebound.terminal.handle)
 
     explicitStatus = null
     pty.connected = false
