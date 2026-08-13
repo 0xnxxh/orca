@@ -4693,7 +4693,12 @@ export function registerPtyHandlers(
         rows: args.rows,
         cwd,
         env,
-        ...(isNewDaemonSession ? { isNewSession: true } : {})
+        ...(isNewDaemonSession ? { isNewSession: true } : {}),
+        ...(isDaemonHostSpawn
+          ? {
+              historyIsolationEnabled: getSettings?.()?.terminalScopeHistoryByWorktree ?? true
+            }
+          : {})
       }
       if (!args.connectionId && !isDaemonHostSpawn) {
         spawnOptions.codexHomePathOverride = { value: selectedCodexHomePath }
@@ -6377,7 +6382,12 @@ export function registerPtyHandlers(
           cwd,
           ...(prevalidatedCwd && !isDaemonHostSpawn ? { prevalidatedCwd } : {}),
           env: spawnEnv,
-          ...(isMintedSessionId ? { isNewSession: true } : {})
+          ...(isMintedSessionId ? { isNewSession: true } : {}),
+          ...(isDaemonHostSpawn
+            ? {
+                historyIsolationEnabled: getSettings?.()?.terminalScopeHistoryByWorktree ?? true
+              }
+            : {})
         }
         if (!args.connectionId && !isDaemonHostSpawn) {
           spawnOptions.codexHomePathOverride = { value: selectedCodexHomePath }

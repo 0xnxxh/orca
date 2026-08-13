@@ -273,6 +273,54 @@ describe('terminal-history', () => {
       }
     })
 
+    it('retains every fish path when XDG_DATA_HOME changes', () => {
+      const firstEnv = { XDG_DATA_HOME: ['', 'data', 'one'].join(sep) }
+      const secondEnv = { XDG_DATA_HOME: ['', 'data', 'two'].join(sep) }
+      const worktreeId = 'repo-1::/path/wt'
+      const first = injectHistoryEnv(firstEnv, worktreeId, '/usr/bin/fish', '/path/wt')
+      const firstMeta = writeFileSyncMock.mock.calls.at(-1)?.[1] as string
+      readFileSyncMock.mockReturnValue(firstMeta)
+
+      injectHistoryEnv(secondEnv, worktreeId, '/usr/bin/fish', '/path/wt')
+      const meta = JSON.parse(writeFileSyncMock.mock.calls.at(-1)?.[1] as string) as {
+        fishHistoryPath: string
+        fishHistoryPaths: string[]
+      }
+      const filename = `${first.fishSession}_history`
+
+      expect(meta.fishHistoryPath).toBe(['', 'data', 'one', 'fish', filename].join(sep))
+      expect(meta.fishHistoryPaths).toEqual([
+        ['', 'data', 'one', 'fish', filename].join(sep),
+        ['', 'data', 'two', 'fish', filename].join(sep)
+      ])
+    })
+
+    it('migrates legacy singular fish metadata without replacing its rollback path', () => {
+      const worktreeId = 'repo-1::/path/wt'
+      const session = fishHistorySessionName(hashWorktreeId(worktreeId))
+      const legacyPath = ['', 'legacy', 'fish', `${session}_history`].join(sep)
+      readFileSyncMock.mockReturnValue(
+        JSON.stringify({ worktreeId, fishSession: session, fishHistoryPath: legacyPath })
+      )
+
+      injectHistoryEnv(
+        { XDG_DATA_HOME: ['', 'current'].join(sep) },
+        worktreeId,
+        '/usr/bin/fish',
+        '/path/wt'
+      )
+      const meta = JSON.parse(writeFileSyncMock.mock.calls.at(-1)?.[1] as string) as {
+        fishHistoryPath: string
+        fishHistoryPaths: string[]
+      }
+
+      expect(meta.fishHistoryPath).toBe(legacyPath)
+      expect(meta.fishHistoryPaths).toEqual([
+        legacyPath,
+        ['', 'current', 'fish', `${session}_history`].join(sep)
+      ])
+    })
+
     it('gives two fish worktrees different history sessions', () => {
       const envA: Record<string, string> = {}
       injectHistoryEnv(envA, 'repo-1::/path/wt-a', '/usr/bin/fish', '/path/wt-a')
@@ -443,6 +491,45 @@ describe('terminal-history', () => {
       await flushPendingWorktreeHistoryDeletions()
     })
 
+    it('deletes every recorded fish path while isolating individual failures', async () => {
+      const first = ['', 'data', 'one', 'fish', 'orca_abc123_history'].join(sep)
+      const second = ['', 'data', 'two', 'fish', 'orca_abc123_history'].join(sep)
+      readFileSyncMock.mockReturnValue(
+        JSON.stringify({
+          worktreeId: 'repo-1::/path/wt',
+          fishSession: 'orca_abc123',
+          fishHistoryPath: first,
+          fishHistoryPaths: [first, second]
+        })
+      )
+      rmSyncMock.mockImplementation((path: string) => {
+        if (path === first) {
+          throw new Error('busy')
+        }
+      })
+
+      expect(() => deleteWorktreeHistoryDir('repo-1::/path/wt')).not.toThrow()
+      expect(rmSyncMock).toHaveBeenCalledWith(first, expect.objectContaining({ force: true }))
+      expect(rmSyncMock).toHaveBeenCalledWith(second, expect.objectContaining({ force: true }))
+      expect(renameSyncMock).toHaveBeenCalled()
+      await flushPendingWorktreeHistoryDeletions()
+    })
+
+    it('runtime-validates malformed fish metadata before the normal tombstone', async () => {
+      readFileSyncMock.mockReturnValue(
+        JSON.stringify({
+          worktreeId: 'repo-1::/path/wt',
+          fishSession: 'orca_abc123',
+          fishHistoryPath: 42,
+          fishHistoryPaths: [null, 7, { path: '/tmp/nope' }]
+        })
+      )
+
+      expect(() => deleteWorktreeHistoryDir('repo-1::/path/wt')).not.toThrow()
+      expect(renameSyncMock).toHaveBeenCalled()
+      await flushPendingWorktreeHistoryDeletions()
+    })
+
     it('refuses a recorded path that does not name its own session file', async () => {
       const originalDataHome = process.env.XDG_DATA_HOME
       process.env.XDG_DATA_HOME = ['', 'main', 'data'].join(sep)
@@ -586,6 +673,33 @@ describe('terminal-history', () => {
         expect.stringContaining(`.pending-delete${sep}dir2.`),
         expect.objectContaining({ recursive: true, force: true })
       )
+    })
+
+    it('continues GC after one orphan tombstone fails', () => {
+      existsSyncMock.mockImplementation((path: string) => !path.includes('terminal-history-wsl'))
+      readdirSyncMock.mockImplementation((dir: string) => {
+        if (dir.endsWith('.pending-delete')) {
+          return []
+        }
+        if (dir.endsWith('terminal-history')) {
+          return ['broken', 'healthy']
+        }
+        return ['meta.json']
+      })
+      statSyncMock.mockReturnValue({ isDirectory: () => true, size: 100 })
+      readFileSyncMock.mockReturnValue(
+        JSON.stringify({
+          worktreeId: 'orphan',
+          createdAt: new Date(Date.now() - 10 * 60 * 1000).toISOString()
+        })
+      )
+      renameSyncMock.mockImplementationOnce(() => {
+        throw new Error('busy')
+      })
+
+      expect(() => runHistoryGc(new Set())).not.toThrow()
+      expect(renameSyncMock).toHaveBeenCalledTimes(2)
+      expect(rmAsyncMock).toHaveBeenCalledTimes(1)
     })
 
     it('skips recently-created directories to avoid TOCTOU race', () => {

@@ -5,6 +5,7 @@ import type { ExecutionHostKind } from '../../../../shared/execution-host'
 import type { SourceControlAgentActionDeliveryPlanState } from './SourceControlAgentActionDialogForm'
 import { buildSourceControlAgentConnectionErrorPlan } from './source-control-agent-action-dialog-support'
 import { resolveInitialNativeChatSessionOptions } from '@/components/native-chat/native-chat-launch-session-options'
+import { resolveTuiAgentLaunchEnv } from '../../../../shared/tui-agent-launch-defaults'
 
 type BuildSourceControlAgentDeliveryPlanArgs = {
   selectedAgent: TuiAgent | null
@@ -39,6 +40,9 @@ export function buildSourceControlAgentDeliveryPlan({
     agent: selectedAgent,
     commandInput,
     agentArgs,
+    agentEnv: selectedAgent
+      ? resolveTuiAgentLaunchEnv(selectedAgent, settings?.agentDefaultEnv)
+      : undefined,
     sessionOptions: selectedAgent
       ? resolveInitialNativeChatSessionOptions(settings, {
           agent: selectedAgent,

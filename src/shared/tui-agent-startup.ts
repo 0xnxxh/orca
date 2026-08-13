@@ -57,7 +57,7 @@ export function buildAgentStartupPlan(args: {
   isRemote?: boolean
 }): AgentStartupPlan | null {
   const { agent, prompt, cmdOverrides, platform, allowEmptyPromptLaunch = false } = args
-  const shell = resolveStartupShell(platform, args.shell)
+  const shell = resolveStartupShell(platform, args.shell, args.agentEnv)
   const trimmedPrompt = prompt.trim()
   const config = TUI_AGENT_CONFIG[agent]
   const usesQuery = config.promptInjectionMode === 'hermes-query' && Boolean(trimmedPrompt)
@@ -203,7 +203,7 @@ export function buildAgentResumeStartupPlan(args: {
   if (!argv) {
     return null
   }
-  const shell = resolveStartupShell(args.platform, args.shell)
+  const shell = resolveStartupShell(args.platform, args.shell, args.agentEnv)
   const config = TUI_AGENT_CONFIG[args.agent]
   const resolvedAgentCommand = args.agentCommand?.trim()
   const baseCommand = resolvedAgentCommand
@@ -256,7 +256,7 @@ export function buildAgentDraftLaunchPlan(args: {
   isRemote?: boolean
 }): AgentDraftLaunchPlan | null {
   const { agent, draft, cmdOverrides, platform } = args
-  const shell = resolveStartupShell(platform, args.shell)
+  const shell = resolveStartupShell(platform, args.shell, args.agentEnv)
   const config = TUI_AGENT_CONFIG[agent]
   const trimmed = draft.trim()
   if (!trimmed) {

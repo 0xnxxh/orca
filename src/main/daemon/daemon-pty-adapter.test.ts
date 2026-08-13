@@ -24,8 +24,17 @@ import { getDaemonSocketPath, serializeDaemonPidFile } from './daemon-spawner'
 import { PtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
 import { TERMINAL_HISTORY_INLINE_SEED_CODE_UNITS } from './terminal-history-seed-chunks'
 
-const { getMacDaemonSystemResolverHealthMock } = vi.hoisted(() => ({
-  getMacDaemonSystemResolverHealthMock: vi.fn(async () => 'unknown')
+const { getMacDaemonSystemResolverHealthMock, injectHistoryEnvMock } = vi.hoisted(() => ({
+  getMacDaemonSystemResolverHealthMock: vi.fn(async () => 'unknown'),
+  injectHistoryEnvMock: vi.fn(
+    (env: Record<string, string>, worktreeId: string, shellPath: string) => {
+      const fishSession = `orca_${worktreeId.replace(/\W/g, '')}`
+      if (shellPath.endsWith('fish')) {
+        env.fish_history = fishSession
+      }
+      return { shell: 'fish', histFile: null, fishSession, historyDir: '/history' }
+    }
+  )
 }))
 
 const itOnPosix = process.platform === 'win32' ? it.skip : it
@@ -37,6 +46,11 @@ vi.mock('./daemon-health', async (importOriginal) => {
     getMacDaemonSystemResolverHealth: getMacDaemonSystemResolverHealthMock
   }
 })
+
+vi.mock('../terminal-history', () => ({
+  injectHistoryEnv: injectHistoryEnvMock,
+  logHistoryInjection: vi.fn()
+}))
 
 function createTestDir(): string {
   return mkdtempSync(join(tmpdir(), 'daemon-adapter-test-'))
@@ -135,6 +149,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
     adapter = new DaemonPtyAdapter({ socketPath, tokenPath })
     lastSpawnOpts = null
+    injectHistoryEnvMock.mockClear()
     getMacDaemonSystemResolverHealthMock.mockReset()
     getMacDaemonSystemResolverHealthMock.mockResolvedValue('unknown')
   })
@@ -161,6 +176,44 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(result.id).toBeDefined()
       expect(typeof result.id).toBe('string')
       expect(result.providerSequence).toEqual({ value: 0, generation: 'reset' })
+    })
+
+    it('matches local-provider fish history scoping for fresh worktree and folder sessions', async () => {
+      for (const worktreeId of ['repo-1::/repo/a', 'folder:folder-1']) {
+        await adapter.spawn({
+          cols: 80,
+          rows: 24,
+          cwd: '/repo',
+          env: { SHELL: 'fish' },
+          worktreeId,
+          isNewSession: true,
+          historyIsolationEnabled: true
+        })
+        expect(injectHistoryEnvMock).toHaveBeenLastCalledWith(
+          expect.any(Object),
+          worktreeId,
+          'fish',
+          '/repo'
+        )
+        expect(lastSpawnOpts?.env?.fish_history).toContain(worktreeId.replace(/\W/g, ''))
+      }
+    })
+
+    it('honors the disabled history setting before dispatching to the daemon', async () => {
+      for (const historyIsolationEnabled of [false, undefined]) {
+        await adapter.spawn({
+          cols: 80,
+          rows: 24,
+          cwd: '/repo',
+          env: { SHELL: 'fish' },
+          worktreeId: 'repo-1::/repo',
+          isNewSession: true,
+          historyIsolationEnabled
+        })
+      }
+
+      expect(injectHistoryEnvMock).not.toHaveBeenCalled()
+      expect(lastSpawnOpts?.env?.fish_history).toBeUndefined()
     })
 
     it('carries classified startup spans from the daemon source to the adapter', async () => {

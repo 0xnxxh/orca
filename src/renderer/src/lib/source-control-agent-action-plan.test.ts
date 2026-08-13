@@ -109,4 +109,23 @@ describe('planSourceControlAgentActionLaunch', () => {
     expect(result.ok && result.delivery).toBe('draft-native')
     expect(result.ok && result.commandLabel).toContain('--prefill')
   })
+
+  it.each([
+    { agentShell: '/bin/bash', expectedTeardown: 'unset ORCA_PI_PREFILL' },
+    { agentShell: '/usr/bin/fish', expectedTeardown: 'set -e ORCA_PI_PREFILL' }
+  ])(
+    'quotes source-control drafts for agent SHELL=$agentShell',
+    ({ agentShell, expectedTeardown }) => {
+      const result = planSourceControlAgentActionLaunch({
+        agent: 'pi',
+        commandInput: 'Fix checks',
+        promptDelivery: 'draft',
+        detectedAgents: ['pi'],
+        agentEnv: { SHELL: agentShell },
+        platform: 'linux'
+      })
+
+      expect(result.ok && result.plan.launchCommand).toContain(expectedTeardown)
+    }
+  )
 })

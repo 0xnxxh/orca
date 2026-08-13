@@ -170,8 +170,12 @@ export function tokenizeStartupCommand(
 
 export function resolveStartupShell(
   platform: NodeJS.Platform,
-  shell?: AgentStartupShell
+  shell?: AgentStartupShell,
+  agentEnv?: Record<string, string> | null
 ): AgentStartupShell {
+  if (platform !== 'win32' && agentEnv?.SHELL) {
+    return resolveLoginShellStartupDialect(agentEnv.SHELL)
+  }
   return shell ?? (platform === 'win32' ? 'powershell' : 'posix')
 }
 

@@ -11,6 +11,8 @@ import {
 import { getClientLoginShell } from '@/lib/client-login-shell'
 import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 import { parseWslUncPath } from '../../../shared/wsl-paths'
+import { getExecutionHostIdForWorktree } from '@/lib/worktree-runtime-owner'
+import { parseExecutionHostId } from '../../../shared/execution-host'
 
 type AiVaultResumeShellState = Pick<
   AppState,
@@ -82,4 +84,34 @@ export function getAiVaultResumeWorkspacePath(
       .flat()
       .find((candidate) => candidate.id === targetWorktreeId)?.path ?? null
   )
+}
+
+export function getAiVaultResumePlatform(
+  state: Pick<
+    AppState,
+    | 'activeRepoId'
+    | 'activeWorktreeId'
+    | 'folderWorkspaces'
+    | 'projectGroups'
+    | 'projects'
+    | 'repos'
+    | 'settings'
+    | 'worktreesByRepo'
+  >,
+  worktreeId?: string | null
+): NodeJS.Platform {
+  const targetWorktreeId = worktreeId ?? state.activeWorktreeId
+  const executionHost = parseExecutionHostId(getExecutionHostIdForWorktree(state, targetWorktreeId))
+  if (executionHost?.kind === 'ssh' || executionHost?.kind === 'runtime') {
+    return 'linux'
+  }
+  const projectRuntime = getLocalProjectExecutionRuntimeContext(state, worktreeId, CLIENT_PLATFORM)
+  if (projectRuntime?.status === 'repair-required') {
+    return projectRuntime.repair.preferredRuntime.kind === 'wsl' ? 'linux' : CLIENT_PLATFORM
+  }
+  if (projectRuntime?.status === 'resolved' && projectRuntime.runtime.kind === 'wsl') {
+    return 'linux'
+  }
+  const workspacePath = getAiVaultResumeWorkspacePath(state, targetWorktreeId)
+  return workspacePath && parseWslUncPath(workspacePath) ? 'linux' : CLIENT_PLATFORM
 }

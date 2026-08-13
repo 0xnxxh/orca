@@ -49,8 +49,9 @@ export function resolveFishHistoryFilePath(
  * Accepts a path recorded at spawn time only if it still names this session's own
  * history file, so a tampered meta.json cannot steer `rmSync` somewhere else.
  */
-function isTrustedRecordedPath(session: string, path: string | null | undefined): path is string {
+function isTrustedRecordedPath(session: string, path: unknown): path is string {
   return Boolean(
+    typeof path === 'string' &&
     path &&
     SAFE_SESSION_NAME.test(session) &&
     isAbsolute(path) &&
@@ -72,11 +73,20 @@ function isTrustedRecordedPath(session: string, path: string | null | undefined)
  */
 export function deleteFishHistoryFile(
   session: string,
-  options: { recordedPath?: string | null; env?: NodeJS.ProcessEnv } = {}
+  options: {
+    recordedPath?: string | null
+    recordedPaths?: readonly unknown[]
+    env?: NodeJS.ProcessEnv
+  } = {}
 ): void {
   const candidates = new Set<string>()
   if (isTrustedRecordedPath(session, options.recordedPath)) {
     candidates.add(options.recordedPath)
+  }
+  for (const path of options.recordedPaths ?? []) {
+    if (isTrustedRecordedPath(session, path)) {
+      candidates.add(path)
+    }
   }
   const fromEnv = resolveFishHistoryFilePath(session, options.env ?? process.env)
   if (fromEnv) {

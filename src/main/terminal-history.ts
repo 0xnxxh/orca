@@ -82,11 +82,21 @@ function writeMetaFile(
   try {
     const metaPath = join(dir, 'meta.json')
     const existing = existsSync(metaPath) ? readHistoryMeta(dir) : null
+    const sameFishSession = existing?.fishSession === fish?.session
+    const existingFishPaths = sameFishSession
+      ? [existing?.fishHistoryPath, ...(existing?.fishHistoryPaths ?? [])].filter(
+          (path): path is string => typeof path === 'string'
+        )
+      : []
+    const fishHistoryPaths = fish?.historyPath
+      ? [...new Set([...existingFishPaths, fish.historyPath])]
+      : existingFishPaths
     if (
       existing &&
       (!fish ||
-        (existing.fishSession === fish.session &&
-          existing.fishHistoryPath === (fish.historyPath ?? undefined)))
+        (sameFishSession &&
+          (!fish.historyPath ||
+            (existing.fishHistoryPath && existingFishPaths.includes(fish.historyPath)))))
     ) {
       return
     }
@@ -96,7 +106,9 @@ function writeMetaFile(
         worktreeId,
         createdAt: existing?.createdAt ?? new Date().toISOString(),
         ...(fish ? { fishSession: fish.session } : {}),
-        ...(fish?.historyPath ? { fishHistoryPath: fish.historyPath } : {})
+        // Why: retain the oldest singular path so a rollback still deletes pre-upgrade history.
+        ...(fishHistoryPaths[0] ? { fishHistoryPath: fishHistoryPaths[0] } : {}),
+        ...(fishHistoryPaths.length > 0 ? { fishHistoryPaths } : {})
       }),
       { mode: 0o600 }
     )
@@ -112,12 +124,30 @@ export type HistoryDirMeta = {
   fishSession?: string
   /** That file's path resolved from the PTY's spawn env, which the main process env can contradict. */
   fishHistoryPath?: string
+  /** Every path this session used as XDG_DATA_HOME changed across launches. */
+  fishHistoryPaths?: string[]
 }
 
 /** Read one history directory's meta.json, or null when it is absent or unparseable. */
 export function readHistoryMeta(dir: string): HistoryDirMeta | null {
   try {
-    return JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf-8')) as HistoryDirMeta
+    const raw: unknown = JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf-8'))
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return null
+    }
+    const record = raw as Record<string, unknown>
+    const fishHistoryPaths = Array.isArray(record.fishHistoryPaths)
+      ? record.fishHistoryPaths.filter((path): path is string => typeof path === 'string')
+      : undefined
+    return {
+      ...(typeof record.worktreeId === 'string' ? { worktreeId: record.worktreeId } : {}),
+      ...(typeof record.createdAt === 'string' ? { createdAt: record.createdAt } : {}),
+      ...(typeof record.fishSession === 'string' ? { fishSession: record.fishSession } : {}),
+      ...(typeof record.fishHistoryPath === 'string'
+        ? { fishHistoryPath: record.fishHistoryPath }
+        : {}),
+      ...(fishHistoryPaths && fishHistoryPaths.length > 0 ? { fishHistoryPaths } : {})
+    }
   } catch {
     return null
   }

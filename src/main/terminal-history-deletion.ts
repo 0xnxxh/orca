@@ -100,7 +100,8 @@ export function scheduleWorktreeHistoryTreeDeletion(dir: string, historyRoot: st
   const meta = readHistoryMeta(dir)
   if (meta?.fishSession) {
     deleteFishHistoryFile(meta.fishSession, {
-      recordedPath: meta.fishHistoryPath
+      recordedPath: meta.fishHistoryPath,
+      recordedPaths: meta.fishHistoryPaths
     })
   }
   const tombstone = tombstoneHistoryTree(dir, historyRoot)

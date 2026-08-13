@@ -16,7 +16,7 @@ import { resolveAiVaultResumeStartupShell } from './ai-vault-resume-shell'
 
 type ResumeShellState = Parameters<typeof buildAiVaultResumeCopyCommandForWorktree>[0]['state']
 
-function makeState(worktreeHostId?: string): ResumeShellState {
+function makeState(worktreeHostId?: string, agentShell?: string): ResumeShellState {
   return {
     activeRepoId: 'repo-1',
     activeWorktreeId: 'repo-1::worktree-1',
@@ -26,7 +26,7 @@ function makeState(worktreeHostId?: string): ResumeShellState {
     projects: [{ id: 'repo-1', sourceRepoIds: ['repo-1'] }],
     settings: {
       agentDefaultArgs: { codex: '' },
-      agentDefaultEnv: { codex: {} }
+      agentDefaultEnv: { codex: agentShell ? { SHELL: agentShell } : {} }
     },
     worktreesByRepo: {
       'repo-1': [
@@ -163,5 +163,31 @@ describe('copied real-home Codex resume command', () => {
     ).toBe(
       "unset CODEX_HOME; unset ORCA_CODEX_HOME; cd '/home/alice/repo' && codex 'resume' 'session one'"
     )
+  })
+
+  it('uses POSIX teardown when the agent environment replaces fish with bash', () => {
+    expect(
+      withLoginShell('/opt/homebrew/bin/fish', () =>
+        buildAiVaultResumeCopyCommandForWorktree({
+          state: makeState(undefined, '/bin/bash'),
+          worktreeId: 'repo-1::worktree-1',
+          session
+        })
+      )
+    ).toBe(
+      "unset CODEX_HOME; unset ORCA_CODEX_HOME; cd '/home/alice/repo' && codex 'resume' 'session one'"
+    )
+  })
+
+  it('uses fish quoting when the agent environment replaces bash with fish', () => {
+    expect(
+      withLoginShell('/bin/bash', () =>
+        buildAiVaultResumeCopyCommandForWorktree({
+          state: makeState(undefined, '/usr/bin/fish'),
+          worktreeId: 'repo-1::worktree-1',
+          session
+        })
+      )
+    ).toBe("cd '/home/alice/repo' && CODEX_HOME= ORCA_CODEX_HOME= codex 'resume' 'session one'")
   })
 })

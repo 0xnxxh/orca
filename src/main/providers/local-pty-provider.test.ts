@@ -240,6 +240,27 @@ describe('LocalPtyProvider', () => {
       expect(typeof result.id).toBe('string')
     })
 
+    it('scopes fish history only while the worktree-history setting is enabled', async () => {
+      await provider.spawn({
+        cols: 80,
+        rows: 24,
+        cwd: '/repo/a',
+        worktreeId: 'repo-1::/repo/a',
+        env: { SHELL: 'fish' }
+      })
+      expect(spawnMock.mock.calls.at(-1)?.[2].env.fish_history).toMatch(/^orca_[0-9a-f]{16}$/)
+
+      provider.configure({ isHistoryEnabled: () => false })
+      await provider.spawn({
+        cols: 80,
+        rows: 24,
+        cwd: '/repo/b',
+        worktreeId: 'folder:folder-1',
+        env: { SHELL: 'fish' }
+      })
+      expect(spawnMock.mock.calls.at(-1)?.[2].env.fish_history).toBeUndefined()
+    })
+
     it('expands variables in PATH before spawning a Windows shell', async () => {
       Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
 

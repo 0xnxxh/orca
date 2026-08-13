@@ -87,4 +87,30 @@ describe('resolveLocalAgentStartupShell', () => {
 
     expect(plan?.launchCommand).toBe('pi; set -e ORCA_PI_PREFILL')
   })
+
+  it('lets an agent bash override replace a fish login-shell dialect', () => {
+    const plan = buildAgentDraftLaunchPlan({
+      agent: 'pi',
+      draft: 'hello',
+      cmdOverrides: {},
+      platform: 'darwin',
+      shell: 'fish',
+      agentEnv: { SHELL: '/bin/bash' }
+    })
+
+    expect(plan?.launchCommand).toBe('pi; unset ORCA_PI_PREFILL')
+  })
+
+  it('lets an agent fish override replace a sh-family login-shell dialect', () => {
+    const plan = buildAgentDraftLaunchPlan({
+      agent: 'pi',
+      draft: 'hello',
+      cmdOverrides: {},
+      platform: 'linux',
+      shell: 'posix',
+      agentEnv: { SHELL: '/usr/bin/fish' }
+    })
+
+    expect(plan?.launchCommand).toBe('pi; set -e ORCA_PI_PREFILL')
+  })
 })

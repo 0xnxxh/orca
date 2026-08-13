@@ -2,6 +2,7 @@ import {
   buildAgentDraftLaunchPlan,
   buildAgentStartupPlan,
   planAgentCliArgsSuffix,
+  resolveStartupShell,
   type AgentStartupPlan
 } from '@/lib/tui-agent-startup'
 import { CLIENT_PLATFORM } from '@/lib/new-workspace'
@@ -38,6 +39,7 @@ export function planSourceControlAgentActionLaunch(args: {
   disabledAgents?: TuiAgent[]
   cmdOverrides?: Partial<Record<TuiAgent, string>>
   agentArgs?: string | null
+  agentEnv?: Record<string, string> | null
   sessionOptions?: Record<string, SessionOptionValue>
   platform?: NodeJS.Platform
   terminalWindowsShell?: string | null
@@ -90,13 +92,14 @@ export function planSourceControlAgentActionLaunch(args: {
   const cmdOverrides = args.cmdOverrides ?? {}
   const platform = args.platform ?? CLIENT_PLATFORM
   const isRemote = args.isRemote ?? false
-  const shell =
+  const configuredShell =
     resolveClientAgentStartupShell({
       platform,
       isRemote,
       terminalWindowsShell: args.terminalWindowsShell,
       executionHostKind: args.executionHostKind ?? null
     }) ?? (platform === 'win32' ? 'powershell' : 'posix')
+  const shell = resolveStartupShell(platform, configuredShell, args.agentEnv)
   const plannedArgs = planAgentCliArgsSuffix(args.agentArgs, shell)
   if (!plannedArgs.ok) {
     return { ok: false, error: plannedArgs.error }
@@ -113,6 +116,7 @@ export function planSourceControlAgentActionLaunch(args: {
       shell,
       isRemote,
       agentArgs: args.agentArgs,
+      agentEnv: args.agentEnv,
       sessionOptions: args.sessionOptions,
       allowEmptyPromptLaunch: true
     })
@@ -126,6 +130,7 @@ export function planSourceControlAgentActionLaunch(args: {
       shell,
       isRemote,
       agentArgs: args.agentArgs,
+      agentEnv: args.agentEnv,
       sessionOptions: args.sessionOptions
     })
     if (draftLaunchPlan) {
@@ -153,6 +158,7 @@ export function planSourceControlAgentActionLaunch(args: {
         shell,
         isRemote,
         agentArgs: args.agentArgs,
+        agentEnv: args.agentEnv,
         sessionOptions: args.sessionOptions,
         allowEmptyPromptLaunch: true
       })
@@ -167,6 +173,7 @@ export function planSourceControlAgentActionLaunch(args: {
       shell,
       isRemote,
       agentArgs: args.agentArgs,
+      agentEnv: args.agentEnv,
       sessionOptions: args.sessionOptions,
       allowEmptyPromptLaunch: true
     })
@@ -180,6 +187,7 @@ export function planSourceControlAgentActionLaunch(args: {
       shell,
       isRemote,
       agentArgs: args.agentArgs,
+      agentEnv: args.agentEnv,
       sessionOptions: args.sessionOptions,
       allowEmptyPromptLaunch: false
     })
