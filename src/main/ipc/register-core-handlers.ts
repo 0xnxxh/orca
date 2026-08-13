@@ -25,6 +25,8 @@ import { registerRuntimeHandlers } from './runtime'
 import { registerRuntimeEnvironmentHandlers } from './runtime-environments'
 import { registerEphemeralVmHandlers } from './ephemeral-vm'
 import { registerAiVaultHandlers } from './ai-vault'
+import { listWorkspaceSshAiVaultHosts } from './ai-vault-workspace-ssh-hosts'
+import { getRegisteredSshState, listRegisteredSshTargets } from './ssh'
 import { registerNativeChatHandlers } from './native-chat'
 import { registerNotificationHandlers } from './notifications'
 import { registerNotebookHandlers } from './notebook'
@@ -220,6 +222,12 @@ export function registerCoreHandlers(
     prepareSessionResume: lifecycleOptions.prepareAiVaultSessionResume,
     getActiveRuntimeAiVaultHostInfos: () =>
       getSavedRuntimeAiVaultHostInfos(app.getPath('userData')),
+    getExpectedSshAiVaultHosts: () =>
+      listWorkspaceSshAiVaultHosts({
+        getRepos: () => store.getRepos(),
+        listTargets: listRegisteredSshTargets,
+        getConnectionStatus: (targetId) => getRegisteredSshState(targetId)?.status
+      }),
     scanRuntimeAiVaultSessions: async (environmentId, args, options) =>
       scanRuntimeAiVaultSessions(app.getPath('userData'), environmentId, args, options),
     resolveRuntimeAiVaultSessionTitles: async (environmentId, args) =>
