@@ -23,7 +23,7 @@ export function terminalSnapshotFromColdRestore(
 ): TerminalSnapshot {
   return {
     snapshotAnsi: info.snapshotAnsi,
-    scrollbackAnsi: info.scrollbackAnsi,
+    scrollbackAnsi: info.modes.alternateScreen ? info.scrollbackAnsi : '',
     oscLinks: info.oscLinks,
     rehydrateSequences: info.rehydrateSequences,
     ...(info.pendingEscapeTailAnsi ? { pendingEscapeTailAnsi: info.pendingEscapeTailAnsi } : {}),
@@ -42,12 +42,17 @@ export async function buildDurableCheckpointSnapshot(opts: {
   liveSnapshot: TerminalSnapshot
   restoreInfo: ColdRestoreInfo | null
   pendingRecords?: readonly PendingOutputRecord[]
+  scrollbackRows?: number
 }): Promise<TerminalSnapshot> {
   const pendingRecords = opts.pendingRecords ?? []
   if (!opts.restoreInfo && pendingRecords.length === 0) {
     return opts.liveSnapshot
   }
-  if (opts.restoreInfo && pendingRecords.length === 0) {
+  if (
+    opts.restoreInfo &&
+    pendingRecords.length === 0 &&
+    (opts.scrollbackRows === undefined || opts.scrollbackRows >= DAEMON_RESTORE_SCROLLBACK_ROWS)
+  ) {
     return terminalSnapshotFromColdRestore(opts.restoreInfo, {
       outputSequence: opts.liveSnapshot.outputSequence,
       frameRestoreAnsi: opts.liveSnapshot.frameRestoreAnsi
@@ -57,7 +62,10 @@ export async function buildDurableCheckpointSnapshot(opts: {
   const emulator = new HeadlessEmulator({
     cols: opts.restoreInfo?.cols ?? opts.liveSnapshot.cols,
     rows: opts.restoreInfo?.rows ?? opts.liveSnapshot.rows,
-    scrollback: DAEMON_RESTORE_SCROLLBACK_ROWS
+    scrollback: Math.min(
+      opts.scrollbackRows ?? DAEMON_RESTORE_SCROLLBACK_ROWS,
+      DAEMON_RESTORE_SCROLLBACK_ROWS
+    )
   })
   const replay = new ColdRestoreReplayWriter(emulator)
   try {
@@ -104,7 +112,7 @@ export async function buildDurableCheckpointSnapshot(opts: {
 
 function restoreBaseFrom(restoreInfo: ColdRestoreInfo): RestoreBase {
   return {
-    scrollbackAnsi: restoreInfo.scrollbackAnsi,
+    scrollbackAnsi: restoreInfo.modes.alternateScreen ? restoreInfo.scrollbackAnsi : '',
     rehydrateSequences: restoreInfo.rehydrateSequences,
     snapshotAnsi: restoreInfo.snapshotAnsi,
     ...(restoreInfo.pendingEscapeTailAnsi

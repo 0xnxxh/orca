@@ -70,6 +70,7 @@ import { resolveSafePtyDefaultCwd } from '../providers/pty-default-cwd'
 import { PtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
 import { ColdRestorePayloadCache, type ColdRestorePayload } from './cold-restore-payload-cache'
 import { buildDurableCheckpointSnapshot } from './daemon-durable-history-snapshot'
+import { DAEMON_SESSION_SCROLLBACK_ROWS } from './daemon-session-scrollback-window'
 import { PtyProcessListAdmission } from '../providers/pty-process-list-admission'
 import {
   iterateTerminalHistorySeedChunks,
@@ -87,6 +88,7 @@ import {
 } from './daemon-audit-classifier'
 import type { DaemonEvidenceSource, ExactDaemonIncarnation } from './daemon-incarnation-evidence'
 import { createDaemonAuditEligibilityTracker } from './daemon-audit-eligibility-event'
+import { normalizeDesktopTerminalSnapshotRows } from '../../shared/terminal-scrollback-policy'
 
 type PendingDaemonSpawnOperation = {
   exitsBySessionId: Map<string, { incarnationId?: string }[]>
@@ -1219,9 +1221,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
       return null
     }
     try {
+      const scrollbackRows = normalizeDesktopTerminalSnapshotRows(opts.scrollbackRows)
       const result = await this.client.request<GetSnapshotResult>('getSnapshot', {
         sessionId: id,
-        ...(typeof opts.scrollbackRows === 'number' ? { scrollbackRows: opts.scrollbackRows } : {})
+        ...(scrollbackRows !== undefined ? { scrollbackRows } : {})
       })
       const snapshot = result.snapshot
       // Why: older v19 daemons lack an absolute output sequence, so their snapshot can't reconcile bytes queued on the other socket.
@@ -1229,8 +1232,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
         return null
       }
       const restored =
-        this.historyManager && this.historyReader && opts.scrollbackRows !== 0
-          ? await this.overlayDurableRestoreSnapshot(id, snapshot)
+        this.historyManager &&
+        this.historyReader &&
+        (scrollbackRows === undefined || scrollbackRows > DAEMON_SESSION_SCROLLBACK_ROWS)
+          ? await this.overlayDurableRestoreSnapshot(id, snapshot, scrollbackRows)
           : snapshot
       return this.toProviderBufferSnapshot(restored)
     } catch {
@@ -1268,7 +1273,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   private async overlayDurableRestoreSnapshot(
     sessionId: string,
-    liveSnapshot: NonNullable<GetSnapshotResult['snapshot']>
+    liveSnapshot: NonNullable<GetSnapshotResult['snapshot']>,
+    scrollbackRows?: number
   ): Promise<NonNullable<GetSnapshotResult['snapshot']>> {
     if (!this.historyManager || !this.historyReader) {
       return liveSnapshot
@@ -1291,7 +1297,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
       }
       return await buildDurableCheckpointSnapshot({
         liveSnapshot,
-        restoreInfo
+        restoreInfo,
+        scrollbackRows
       })
     } catch {
       return liveSnapshot

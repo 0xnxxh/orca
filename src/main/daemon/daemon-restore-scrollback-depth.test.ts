@@ -191,6 +191,7 @@ describe('STA-4091 previously recoverable restore depth', () => {
           restoreInfo
         })
         expect(durable.outputSequence).toBe(9)
+        expect(durable.scrollbackAnsi).toBe('')
         expect(snapshotText(durable)).toContain(PREVIOUSLY_RECOVERABLE_LINE)
       } finally {
         live.dispose()
@@ -272,6 +273,23 @@ describe('STA-4091 previously recoverable restore depth', () => {
       expect(text).toContain(NEWEST_WRITTEN_LINE)
       expect(text).toContain(PREVIOUSLY_RECOVERABLE_LINE)
       expect(text).toContain(OLDEST_WRITTEN_LINE)
+      expect(text.split(OLDEST_WRITTEN_LINE)).toHaveLength(2)
+    })
+
+    it('honors a bounded remount snapshot depth', async () => {
+      const { id } = await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'bounded-remount-depth',
+        cwd: '/tmp'
+      })
+      lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+
+      const snapshot = await adapter.getBufferSnapshot(id, { scrollbackRows: 24 })
+      const text = `${snapshot?.scrollbackAnsi ?? ''}${snapshot?.data ?? ''}`
+      expect(text).toContain(NEWEST_WRITTEN_LINE)
+      expect(text).not.toContain(PREVIOUSLY_RECOVERABLE_LINE)
+      expect(text).not.toContain(OLDEST_WRITTEN_LINE)
     })
 
     it('restores that depth after a keepHistory restart compact', async () => {
