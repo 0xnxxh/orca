@@ -29953,13 +29953,20 @@ export class OrcaRuntimeService {
     // The sync hasPty rescue closes the spawn/list race: a just-spawned PTY can
     // register after the inventory snapshot, and federation reads one
     // connected:false as exited.
+    let directLiveness: boolean | null | undefined
+    try {
+      directLiveness = leaf.ptyId ? this.ptyController?.hasPty?.(leaf.ptyId) : undefined
+    } catch {
+      directLiveness = null
+    }
     const provenAbsent =
       provenLivePtyIds !== null &&
       leaf.ptyId !== null &&
       !provenLivePtyIds.has(leaf.ptyId) &&
       !leaf.ptyId.startsWith('remote:') &&
       parseAppSshPtyId(leaf.ptyId) === null &&
-      this.ptyController?.hasPty?.(leaf.ptyId) !== true
+      directLiveness !== true &&
+      directLiveness !== null
     return {
       handle: this.issueHandle(leaf),
       ptyId: leaf.ptyId,

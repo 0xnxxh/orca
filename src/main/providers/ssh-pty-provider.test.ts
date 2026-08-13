@@ -642,9 +642,8 @@ describe('SshPtyProvider', () => {
       })
     })
 
-    // Pane identity is deliberately no longer sent: the relay's copy is frozen
-    // at spawn, so moving a pane to another tab made it refuse a live shell.
-    it('reattaches without asking the relay to police pane identity', async () => {
+    // New relays prioritize incarnation; old relays ignore that field and retain this weaker fence.
+    it('preserves pane identity for relays that predate incarnation fencing', async () => {
       mux.request.mockResolvedValue({ replay: 'buffered-output' })
 
       await provider.spawn({
@@ -660,7 +659,9 @@ describe('SshPtyProvider', () => {
         cols: 80,
         rows: 24,
         suppressReplayNotification: true,
-        exitProofSupported: true
+        exitProofSupported: true,
+        expectedPaneKey: 'tab-a:leaf-a',
+        expectedTabId: 'tab-a'
       })
     })
 

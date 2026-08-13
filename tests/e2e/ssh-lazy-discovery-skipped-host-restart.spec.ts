@@ -159,7 +159,7 @@ async function reportShellPid(
         return execDockerSshRelayTargetCommand(
           target,
           `cat ${shellQuote(stamp)} 2>/dev/null || printf ''`
-        )
+        ).trim()
       },
       {
         timeout: 90_000,
@@ -168,7 +168,7 @@ async function reportShellPid(
       }
     )
     .toMatch(/^\d+$/)
-  return Number(execDockerSshRelayTargetCommand(target, `cat ${shellQuote(stamp)}`))
+  return Number(execDockerSshRelayTargetCommand(target, `cat ${shellQuote(stamp)}`).trim())
 }
 
 async function readWorktreeTabIds(page: Page, worktreeId: string): Promise<string[]> {

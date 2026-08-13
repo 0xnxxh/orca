@@ -120,7 +120,8 @@ function detachedLease() {
     state: 'detached' as const,
     worktreeId: 'worktree-1',
     tabId: 'tab-1',
-    leafId: LEAF_ID
+    leafId: LEAF_ID,
+    incarnationId: 'inc-proven-exit'
   }
 }
 
@@ -227,21 +228,70 @@ describe('SshRelaySession reattach failures never fabricate an exit', () => {
       formatPtyExitedError(RELAY_PTY_ID, 0, 'inc-proven-exit')
     )
 
-    expect(deps.mockStore.markSshRemotePtyLease).toHaveBeenCalledWith(
+    expect(deps.mockStore.markSshRemotePtyLeasesTerminatedAsync).toHaveBeenCalledWith(TARGET_ID, [
+      RELAY_PTY_ID
+    ])
+  })
+
+  it('persists a reconnect batch of proven exits in one async write', async () => {
+    const deps = createMockDeps()
+    const secondPtyId = 'pty-second'
+    const secondIncarnationId = 'inc-proven-second-exit'
+    const attachForReconnect = vi.fn().mockImplementation((ptyId: string) => {
+      const incarnationId = ptyId === RELAY_PTY_ID ? 'inc-proven-exit' : secondIncarnationId
+      return Promise.reject(new Error(formatPtyExitedError(ptyId, 0, incarnationId)))
+    })
+    vi.mocked(getSshPtyProvider).mockReturnValue({
+      attachForReconnect,
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn()
+    } as unknown as ReturnType<typeof getSshPtyProvider>)
+    vi.mocked(deps.mockStore.getSshRemotePtyLeases).mockReturnValue([
+      detachedLease(),
+      {
+        ...detachedLease(),
+        ptyId: secondPtyId,
+        leafId: '22222222-2222-4222-8222-222222222222',
+        incarnationId: secondIncarnationId
+      }
+    ] as ReturnType<typeof deps.mockStore.getSshRemotePtyLeases>)
+    const session = new SshRelaySession(
       TARGET_ID,
-      RELAY_PTY_ID,
-      'terminated'
+      deps.getMainWindow,
+      deps.mockStore,
+      deps.mockPortForward
     )
+
+    await session.establish(deps.mockConn)
+
+    expect(deps.mockStore.markSshRemotePtyLeasesTerminatedAsync).toHaveBeenCalledOnce()
+    expect(deps.mockStore.markSshRemotePtyLeasesTerminatedAsync).toHaveBeenCalledWith(TARGET_ID, [
+      RELAY_PTY_ID,
+      secondPtyId
+    ])
+    expect(deps.mockStore.markSshRemotePtyLease).not.toHaveBeenCalled()
+  })
+
+  it('does not retire the lease for proof naming another PTY', async () => {
+    const { deps } = await reattachFailsWith(
+      formatPtyExitedError('pty-some-other-shell', 0, 'inc-proven-exit')
+    )
+
+    expect(deps.mockStore.markSshRemotePtyLeasesTerminatedAsync).not.toHaveBeenCalled()
+  })
+
+  it('does not retire the lease for proof naming another incarnation', async () => {
+    const { deps } = await reattachFailsWith(
+      formatPtyExitedError(RELAY_PTY_ID, 0, 'inc-some-other-shell')
+    )
+
+    expect(deps.mockStore.markSshRemotePtyLeasesTerminatedAsync).not.toHaveBeenCalled()
   })
 
   it('does not retire the lease when the failure proves nothing', async () => {
     const { deps } = await reattachFailsWith(UNPROVEN_NOT_FOUND)
 
-    expect(deps.mockStore.markSshRemotePtyLease).not.toHaveBeenCalledWith(
-      TARGET_ID,
-      RELAY_PTY_ID,
-      'terminated'
-    )
+    expect(deps.mockStore.markSshRemotePtyLeasesTerminatedAsync).not.toHaveBeenCalled()
   })
 
   it('routes an unproven not-found into the non-destructive detached branch', async () => {

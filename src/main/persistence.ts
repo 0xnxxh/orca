@@ -97,6 +97,7 @@ import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
 import { MOBILE_PAIRING_USERDATA_FILES } from './runtime/mobile-pairing-files'
 import { normalizePersistedMobileClientTabSelections } from './runtime/client-session-tab-selection-persistence'
 import { sanitizeWorkspaceSessionTerminalRetirements } from './runtime/mobile-session-terminal-persistence-retirement'
+import { findTerminalTabIdForLeaf } from './runtime/workspace-session-terminal-membership-authority'
 import {
   removeRepoFromHostWorkspaceSessions,
   removeRepoFromWorkspaceSession
@@ -2836,6 +2837,7 @@ export class Store {
   private pendingGithubCacheWrite: Promise<void> | null = null
   private readonly staleGithubCacheTempCleanup: Promise<void>
   private gitUsernameCache = new Map<string, string>()
+  private readonly sshRemotePtyLeaseMutationVersions = new WeakMap<SshRemotePtyLease, number>()
   private readonly protectedSecrets = new ProtectedSecretPersistence()
   private loadNeedsSave = false
   private settingsChangeListeners = new Set<
@@ -7272,6 +7274,12 @@ export class Store {
     return leases.filter((lease) => targetId === undefined || lease.targetId === targetId)
   }
 
+  private advanceSshRemotePtyLeaseMutationVersion(lease: SshRemotePtyLease): number {
+    const version = (this.sshRemotePtyLeaseMutationVersions.get(lease) ?? 0) + 1
+    this.sshRemotePtyLeaseMutationVersions.set(lease, version)
+    return version
+  }
+
   upsertSshRemotePtyLease(
     lease: Omit<SshRemotePtyLease, 'createdAt' | 'updatedAt'> &
       Partial<Pick<SshRemotePtyLease, 'createdAt' | 'updatedAt'>>
@@ -7346,6 +7354,7 @@ export class Store {
       ) {
         lease.state = 'expired'
         lease.updatedAt = now
+        this.advanceSshRemotePtyLeaseMutationVersion(lease)
         superseded.push(lease)
       }
     }
@@ -7452,61 +7461,141 @@ export class Store {
         continue
       }
       const { state, updatedAt } = lease
-      restore.push(() => {
-        lease.state = state
-        lease.updatedAt = updatedAt
-      })
       lease.state = 'expired'
       lease.updatedAt = now
+      const rollbackVersion = this.advanceSshRemotePtyLeaseMutationVersion(lease)
+      restore.push(() => {
+        if (
+          this.state.sshRemotePtyLeases?.includes(lease) &&
+          this.sshRemotePtyLeaseMutationVersions.get(lease) === rollbackVersion &&
+          lease.state === 'expired' &&
+          lease.updatedAt === now
+        ) {
+          lease.state = state
+          lease.updatedAt = updatedAt
+          this.advanceSshRemotePtyLeaseMutationVersion(lease)
+        }
+      })
       superseded.push(lease)
     }
     if (superseded.length === 0) {
       return 0
     }
-    const sessionsBefore = this.cloneSshLeaseBindingSessions(targetId)
+    const bindingsBefore = this.snapshotSshLeaseBindings(targetId, superseded)
     this.clearSshRemotePtyBindingsForLeases(targetId, superseded, 'local')
+    this.scheduleSave()
     try {
       // Why the ASYNC twin: the sync flush fsyncs a multi-MB file from the Electron main thread,
       // and this runs on every reconnect. On a stalled network profile mount that syscall is
       // uninterruptible and nothing can bound it — see flushAsync. Why "OrThrow" and not plain
       // flush(): flush() swallows write errors, which would leave these leases retired in memory
       // but attached on disk for the rest of the session.
-      await this.flushDurableStateOrThrowAsync()
+      await this.flushDurableStateOrThrowAsync(false)
     } catch (err) {
       for (const undo of restore) {
         undo()
       }
-      this.restoreSshLeaseBindingSessions(targetId, sessionsBefore)
+      this.restoreSshLeaseBindings(targetId, superseded, bindingsBefore)
+      this.scheduleSave()
       console.error('[persistence] Failed to retire duplicate pane leases:', err)
       return 0
     }
     return superseded.length
   }
 
-  private cloneSshLeaseBindingSessions(targetId: string): {
-    local?: WorkspaceSessionState
-    host?: WorkspaceSessionState
+  private snapshotSshLeaseBindings(
+    targetId: string,
+    leases: SshRemotePtyLease[]
+  ): {
+    tabs: { leafId: string; ptyId: string }[]
+    leaves: { leafId: string; ptyId: string }[]
   } {
-    const host = this.state.workspaceSessionsByHostId?.[toSshExecutionHostId(targetId)]
-    return {
-      ...(this.state.workspaceSession
-        ? { local: cloneWorkspaceSessionState(this.state.workspaceSession) }
-        : {}),
-      ...(host ? { host: cloneWorkspaceSessionState(host) } : {})
+    const tabSnapshots: { leafId: string; ptyId: string }[] = []
+    const leaves: { leafId: string; ptyId: string }[] = []
+    const session = this.state.workspaceSession
+    for (const [worktreeId, tabs] of Object.entries(session?.tabsByWorktree ?? {})) {
+      for (const tab of tabs) {
+        if (tab.ptyId) {
+          const lease = leases.find((candidate) =>
+            this.sshRemotePtyLeaseMayReferenceBinding(candidate, {
+              ptyId: tab.ptyId!,
+              worktreeId,
+              targetId,
+              tabId: tab.id
+            })
+          )
+          if (lease?.leafId) {
+            tabSnapshots.push({ leafId: lease.leafId, ptyId: tab.ptyId })
+          }
+        }
+      }
     }
+    for (const [tabId, layout] of Object.entries(session?.terminalLayoutsByTabId ?? {})) {
+      const worktreeId = Object.entries(session?.tabsByWorktree ?? {}).find(([, tabs]) =>
+        tabs.some((tab) => tab.id === tabId)
+      )?.[0]
+      for (const [leafId, ptyId] of Object.entries(layout.ptyIdsByLeafId ?? {})) {
+        if (
+          leases.some(
+            (lease) =>
+              lease.leafId === leafId &&
+              this.sshRemotePtyLeaseMayReferenceBinding(lease, {
+                ptyId,
+                targetId,
+                ...(worktreeId ? { worktreeId } : {}),
+                tabId,
+                leafId
+              })
+          )
+        ) {
+          leaves.push({ leafId, ptyId })
+        }
+      }
+    }
+    return { tabs: tabSnapshots, leaves }
   }
 
-  private restoreSshLeaseBindingSessions(
+  private restoreSshLeaseBindings(
     targetId: string,
-    sessions: { local?: WorkspaceSessionState; host?: WorkspaceSessionState }
-  ): void {
-    if (sessions.local) {
-      this.state.workspaceSession = sessions.local
+    leases: SshRemotePtyLease[],
+    snapshots: {
+      tabs: { leafId: string; ptyId: string }[]
+      leaves: { leafId: string; ptyId: string }[]
     }
-    if (sessions.host) {
-      this.state.workspaceSessionsByHostId = {
-        ...this.state.workspaceSessionsByHostId,
-        [toSshExecutionHostId(targetId)]: sessions.host
+  ): void {
+    const currentLeases = new Set(this.state.sshRemotePtyLeases ?? [])
+    const session = this.state.workspaceSession
+    const hasLiveLease = (snapshot: { leafId: string; ptyId: string }): boolean =>
+      leases.some(
+        (lease) =>
+          currentLeases.has(lease) &&
+          lease.state !== 'terminated' &&
+          lease.state !== 'expired' &&
+          lease.targetId === targetId &&
+          lease.leafId === snapshot.leafId &&
+          lease.ptyId === this.getRelayPtyIdForSshLeaseComparison(targetId, snapshot.ptyId)
+      )
+    for (const snapshot of snapshots.tabs) {
+      const tabId = findTerminalTabIdForLeaf(session, snapshot.leafId)
+      const tab = Object.values(session?.tabsByWorktree ?? {})
+        .flat()
+        .find((candidate) => candidate.id === tabId)
+      if (hasLiveLease(snapshot) && tab?.ptyId === null) {
+        tab.ptyId = snapshot.ptyId
+      }
+    }
+    for (const snapshot of snapshots.leaves) {
+      const tabId = findTerminalTabIdForLeaf(session, snapshot.leafId)
+      const layout = tabId ? session?.terminalLayoutsByTabId?.[tabId] : undefined
+      if (
+        hasLiveLease(snapshot) &&
+        layout &&
+        layout.ptyIdsByLeafId?.[snapshot.leafId] === undefined
+      ) {
+        layout.ptyIdsByLeafId = {
+          ...layout.ptyIdsByLeafId,
+          [snapshot.leafId]: snapshot.ptyId
+        }
       }
     }
   }
@@ -7529,6 +7618,7 @@ export class Store {
     state: SshRemotePtyLease['state']
   ): Promise<void> {
     if (this.updateSshRemotePtyLeaseStates(targetId, state)) {
+      this.scheduleSave()
       await this.flushDurableStateOrThrowAsync()
     }
   }
@@ -7541,7 +7631,27 @@ export class Store {
       ptyIds.map((ptyId) => this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId))
     )
     if (this.updateSshRemotePtyLeaseStates(targetId, 'attached', relayPtyIds)) {
+      this.scheduleSave()
       await this.flushDurableStateOrThrowAsync()
+    }
+  }
+
+  async markSshRemotePtyLeasesTerminatedAsync(
+    targetId: string,
+    ptyIds: readonly string[]
+  ): Promise<void> {
+    const relayPtyIds = new Set(
+      ptyIds.map((ptyId) => this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId))
+    )
+    if (this.updateSshRemotePtyLeaseStates(targetId, 'terminated', relayPtyIds)) {
+      this.scheduleSave()
+      try {
+        await this.flushDurableStateOrThrowAsync(false)
+      } catch (error) {
+        // Keep the proven exit retryable after a transient persistence failure.
+        this.scheduleSave()
+        throw error
+      }
     }
   }
 
@@ -7565,6 +7675,7 @@ export class Store {
       if (state === 'detached' && lease.state !== 'attached') {
         continue
       }
+      this.advanceSshRemotePtyLeaseMutationVersion(lease)
       if (lease.state !== state) {
         lease.state = state
         lease.updatedAt = now
@@ -7593,6 +7704,7 @@ export class Store {
     if (!lease) {
       return
     }
+    this.advanceSshRemotePtyLeaseMutationVersion(lease)
     const shouldClearBindings = state === 'terminated' || state === 'expired'
     if (lease.state === state) {
       if (shouldClearBindings && this.clearSshRemotePtyBindingsForLeases(targetId, [lease])) {
@@ -7775,10 +7887,11 @@ export class Store {
 
   // Async twin of flushOrThrow: durable state only. Active-view and GitHub sidecars are
   // quit/startup work and must not be snapshotted on the live SSH establish/reconnect path.
-  private async flushDurableStateOrThrowAsync(): Promise<void> {
+  private async flushDurableStateOrThrowAsync(drainToStableGeneration = true): Promise<void> {
     if (this.writesFrozen || this.quitFlushStarted) {
       throw new Error('Cannot flush while persistence is finalized')
     }
+    const requiredDurableGeneration = this.writeGeneration
     for (;;) {
       if (this.writeTimer) {
         clearTimeout(this.writeTimer)
@@ -7787,6 +7900,12 @@ export class Store {
       this.firstPendingSaveAt = null
       const generation = this.writeGeneration
       await this.enqueueWrite()
+      if (
+        !drainToStableGeneration &&
+        this.lastDurableWriteGeneration >= requiredDurableGeneration
+      ) {
+        break
+      }
       if (generation === this.writeGeneration) {
         break
       }

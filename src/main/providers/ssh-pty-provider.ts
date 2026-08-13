@@ -2,7 +2,6 @@ import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
 import type { IPtyProvider, PtyProcessInfo, PtySpawnOptions, PtySpawnResult } from './types'
 import { toAppSshPtyId, toRelaySshPtyId } from './ssh-pty-id'
 import { createSshPtyAppliedSizeReader } from './ssh-pty-applied-size'
-import { isRelayAttestedPtyIncarnationId } from '../../shared/pty-incarnation'
 import type {
   RemoteCliBridgeEnv,
   SshPtyDataCallback,
@@ -14,6 +13,7 @@ import { SshPtyProviderOutputState } from './ssh-pty-provider-output-state'
 import { spawnFreshSshPty } from './ssh-agent-session-create-operation'
 import { mapSshPtyProcessList } from './ssh-agent-session-process-list'
 import {
+  buildSshPtyReconnectAttachParams,
   requestSshPtyAttach,
   reattachSshPtySessionWithExitFence,
   type PtySourceRecoveryRequest,
@@ -184,19 +184,15 @@ export class SshPtyProvider implements IPtyProvider {
   async attachForReconnect(
     id: string,
     sourceRecovery?: PtySourceRecoveryRequest,
-    expectedIncarnationId?: string
+    expectedIncarnationId?: string,
+    legacyExpectedIdentity?: { paneKey?: string; tabId?: string }
   ): Promise<SshPtyAttachResult> {
-    // Why: reconnect owns replay delivery so stale/duplicate attach results can
-    // be filtered before they reach the renderer. Pane identity stays unsent (the relay froze it at
-    // spawn, so it rejected moved panes); the shell's own identity is sent instead. This path
-    // reattaches every pty after a relay returns — exactly when ids have been recycled.
-    const params = {
+    const params = buildSshPtyReconnectAttachParams({
       id: this.toRelayPtyId(id),
-      suppressReplayNotification: true,
-      exitProofSupported: true,
-      ...(isRelayAttestedPtyIncarnationId(expectedIncarnationId) ? { expectedIncarnationId } : {}),
-      ...(sourceRecovery ? { sourceRecovery } : {})
-    }
+      ...(sourceRecovery ? { sourceRecovery } : {}),
+      ...(expectedIncarnationId ? { expectedIncarnationId } : {}),
+      ...(legacyExpectedIdentity ? { legacyExpectedIdentity } : {})
+    })
     const relayPtyId = this.toRelayPtyId(id)
     return await requestSshPtyAttach({
       mux: this.mux,

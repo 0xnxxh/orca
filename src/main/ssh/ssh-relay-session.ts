@@ -11,7 +11,8 @@ import { SshPtyProvider } from '../providers/ssh-pty-provider'
 import type { SshPtyAttachResult } from '../providers/ssh-pty-session-reattach'
 import type { SshPtyDataCallback, SshPtyExitCallback } from '../providers/ssh-pty-provider-contract'
 import type { SshPtyRecoveryActivationLease } from '../providers/ssh-pty-notification-routing'
-import { isSshPtyExitedError, isSshPtyNotFoundError } from '../providers/ssh-pty-errors'
+import { isSshPtyIdentityMismatchError, isSshPtyNotFoundError } from '../providers/ssh-pty-errors'
+import { parseMatchingPtyExitedError } from '../../shared/ssh-pty-failure-tokens'
 import { toAppSshPtyId, toRelaySshPtyId } from '../providers/ssh-pty-id'
 import { SshFilesystemProvider } from '../providers/ssh-filesystem-provider'
 import { isMethodNotFoundError } from './ssh-filesystem-stream-reader'
@@ -97,6 +98,8 @@ import {
   parseRemoteOrcaCliPostOutput
 } from './ssh-remote-orchestration-post-output'
 import { toSshExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
+import { isTerminalLeafId, makePaneKey } from '../../shared/stable-pane-id'
+import { isValidTerminalTabId } from '../../shared/terminal-tab-id'
 import {
   SSH_AI_VAULT_LIST_SESSIONS_METHOD,
   SSH_AI_VAULT_LIST_SESSIONS_TIMEOUT_MS,
@@ -195,7 +198,24 @@ type RemoteCliBridgeEnv = {
   pathDelimiter?: ':' | ';'
 }
 
+type LegacyExpectedPtyIdentity = { paneKey?: string; tabId?: string }
 type TargetedDeliveryRecovery = 'confirm-existing' | 'fresh-activation'
+
+function legacyExpectedIdentityForLease(lease: {
+  tabId?: string
+  leafId?: string
+}): LegacyExpectedPtyIdentity | undefined {
+  if (typeof lease.tabId !== 'string' || lease.tabId.length === 0) {
+    return undefined
+  }
+  const paneKey =
+    isValidTerminalTabId(lease.tabId) &&
+    typeof lease.leafId === 'string' &&
+    isTerminalLeafId(lease.leafId)
+      ? makePaneKey(lease.tabId, lease.leafId)
+      : undefined
+  return { ...(paneKey ? { paneKey } : {}), tabId: lease.tabId }
+}
 
 function parseRecoveryComplete(params: Record<string, unknown>): PtySourceRecoveryComplete | null {
   if (
@@ -1986,16 +2006,24 @@ export class SshRelaySession {
       ? new Map<string, SshPtyLease>([[relayPtyId, activeLease]])
       : new Map<string, SshPtyLease>()
     const attachedLeaseIds = new Set<string>()
+    const terminatedLeaseIds = new Set<string>()
     await this.reattachKnownPty({
       ptyProvider,
       ptyId: relayPtyId,
       activeLeaseByPtyId,
       attachedLeaseIds,
+      terminatedLeaseIds,
       mux,
       providerGeneration,
       shouldContinue,
       targetedDeliveryRecovery
     })
+    if (terminatedLeaseIds.size > 0) {
+      await this.store.markSshRemotePtyLeasesTerminatedAsync(
+        this.targetId,
+        Array.from(terminatedLeaseIds)
+      )
+    }
     if (attachedLeaseIds.size > 0 && shouldContinue()) {
       await this.store.markSshRemotePtyLeasesAttachedAsync(
         this.targetId,
@@ -2261,6 +2289,7 @@ export class SshRelaySession {
     const activeLeaseByPtyId = new Map(activeLeases.map((lease) => [lease.ptyId, lease]))
     const leasedPtyIds = activeLeases.map((lease) => lease.ptyId)
     const attachedLeaseIds = new Set<string>()
+    const terminatedLeaseIds = new Set<string>()
     // Why: after app restart ptyOwnership is empty, but durable SSH leases still describe grace-window survivors.
     const ptyIds = Array.from(
       new Set([
@@ -2288,6 +2317,7 @@ export class SshRelaySession {
             ptyId,
             activeLeaseByPtyId,
             attachedLeaseIds,
+            terminatedLeaseIds,
             mux,
             providerGeneration,
             shouldContinue
@@ -2307,6 +2337,12 @@ export class SshRelaySession {
     await Promise.all(
       Array.from({ length: Math.min(SSH_PTY_REATTACH_MAX_CONCURRENCY, ptyIds.length) }, worker)
     )
+    if (terminatedLeaseIds.size > 0) {
+      await this.store.markSshRemotePtyLeasesTerminatedAsync(
+        this.targetId,
+        Array.from(terminatedLeaseIds)
+      )
+    }
     if (attachedLeaseIds.size > 0 && shouldContinue()) {
       await this.store.markSshRemotePtyLeasesAttachedAsync(
         this.targetId,
@@ -2320,6 +2356,7 @@ export class SshRelaySession {
     ptyId: string
     activeLeaseByPtyId: Map<string, SshPtyLease>
     attachedLeaseIds: Set<string>
+    terminatedLeaseIds: Set<string>
     mux: SshChannelMultiplexer
     providerGeneration: number
     shouldContinue: () => boolean
@@ -2330,6 +2367,7 @@ export class SshRelaySession {
       ptyId,
       activeLeaseByPtyId,
       attachedLeaseIds,
+      terminatedLeaseIds,
       mux,
       providerGeneration,
       shouldContinue,
@@ -2363,7 +2401,10 @@ export class SshRelaySession {
         ptyId,
         recoveryRequest,
         shouldContinue,
-        activeLeaseByPtyId.get(ptyId)?.incarnationId
+        activeLeaseByPtyId.get(ptyId)?.incarnationId,
+        activeLeaseByPtyId.get(ptyId)
+          ? legacyExpectedIdentityForLease(activeLeaseByPtyId.get(ptyId)!)
+          : undefined
       )
       sourceActivationLease = attachResult.sourceActivationLease
       if (!shouldContinue()) {
@@ -2509,7 +2550,13 @@ export class SshRelaySession {
       if (!shouldContinue()) {
         return
       }
-      this.handlePtyReattachFailure(ptyId, pendingReattach, error)
+      this.handlePtyReattachFailure(
+        ptyId,
+        pendingReattach,
+        error,
+        activeLeaseByPtyId.get(ptyId)?.incarnationId,
+        terminatedLeaseIds
+      )
     } finally {
       recoveryActivationLease?.retire()
       sourceActivationLease?.rollback()
@@ -2594,7 +2641,8 @@ export class SshRelaySession {
     ptyId: string,
     recoveryRequest: PtySourceRecoveryRequest | undefined,
     shouldContinue: () => boolean,
-    expectedIncarnationId: string | undefined
+    expectedIncarnationId: string | undefined,
+    legacyExpectedIdentity: LegacyExpectedPtyIdentity | undefined
   ): Promise<SshPtyAttachResult> {
     let lastError: unknown
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -2606,7 +2654,8 @@ export class SshRelaySession {
           ptyProvider,
           ptyId,
           recoveryRequest,
-          expectedIncarnationId
+          expectedIncarnationId,
+          legacyExpectedIdentity
         )
       } catch (error) {
         lastError = error
@@ -2616,7 +2665,12 @@ export class SshRelaySession {
         if (
           !shouldContinue() ||
           isSshPtyNotFoundError(error) ||
-          isSshPtyExitedError(error) ||
+          isSshPtyIdentityMismatchError(error) ||
+          parseMatchingPtyExitedError(
+            error instanceof Error ? error.message : String(error),
+            ptyId,
+            expectedIncarnationId
+          ) !== null ||
           attempt === 1
         ) {
           throw error
@@ -2631,7 +2685,8 @@ export class SshRelaySession {
     ptyProvider: SshPtyProvider,
     ptyId: string,
     recoveryRequest: PtySourceRecoveryRequest | undefined,
-    expectedIncarnationId: string | undefined
+    expectedIncarnationId: string | undefined,
+    legacyExpectedIdentity: LegacyExpectedPtyIdentity | undefined
   ): Promise<SshPtyAttachResult> {
     let timer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
@@ -2645,10 +2700,14 @@ export class SshRelaySession {
       timer.unref?.()
     })
     try {
-      // Only pass what we actually have: a caller with nothing to add keeps the older call shape.
       const attach =
-        expectedIncarnationId !== undefined
-          ? ptyProvider.attachForReconnect(ptyId, recoveryRequest, expectedIncarnationId)
+        expectedIncarnationId !== undefined || legacyExpectedIdentity !== undefined
+          ? ptyProvider.attachForReconnect(
+              ptyId,
+              recoveryRequest,
+              expectedIncarnationId,
+              legacyExpectedIdentity
+            )
           : recoveryRequest !== undefined
             ? ptyProvider.attachForReconnect(ptyId, recoveryRequest)
             : ptyProvider.attachForReconnect(ptyId)
@@ -2679,15 +2738,20 @@ export class SshRelaySession {
   private handlePtyReattachFailure(
     ptyId: string,
     pending: PendingPtyReattach,
-    error: unknown
+    error: unknown,
+    expectedIncarnationId: string | undefined,
+    terminatedLeaseIds: Set<string>
   ): void {
-    // An exit the relay watched is the one answer that settles it, so retire the record rather than
-    // re-attaching a shell known dead on every future reconnect. `markSshRemotePtyLease` normalizes
-    // the id itself, and terminated is not the state the recovery grant reads, so this retires the
-    // record without authorizing a replacement.
+    // An exact exit proof settles the lease; queue it for one post-worker durable retirement batch.
+    // `terminated` is not the recovery-grant state, so this cannot authorize a replacement.
 
-    if (isSshPtyExitedError(error)) {
-      this.store.markSshRemotePtyLease(this.targetId, ptyId, 'terminated')
+    const exitProof = parseMatchingPtyExitedError(
+      error instanceof Error ? error.message : String(error),
+      ptyId,
+      expectedIncarnationId
+    )
+    if (exitProof) {
+      terminatedLeaseIds.add(ptyId)
     }
     // Nothing else proves it — not even a not-found, which the relay also returns when it merely
     // cannot hand this id back — so every other failure leaves the pane detached and recoverable.

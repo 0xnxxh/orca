@@ -456,6 +456,26 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     )
   })
 
+  it('sends pane identity beside incarnation for relays that only understand the legacy fence', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const attachForReconnect = vi.fn().mockResolvedValue({ incarnationId: 'incarnation-lease' })
+    vi.mocked(getSshPtyProvider).mockReturnValue({
+      attachForReconnect,
+      dispose: vi.fn()
+    } as unknown as ReturnType<typeof getSshPtyProvider>)
+    vi.mocked(mockStore.getSshRemotePtyLeases).mockReturnValue([
+      { ...detachedLease(), incarnationId: 'incarnation-lease' }
+    ] as ReturnType<typeof mockStore.getSshRemotePtyLeases>)
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+
+    await session.establish(mockConn)
+
+    expect(attachForReconnect).toHaveBeenCalledWith('pty-live', undefined, 'incarnation-lease', {
+      paneKey: `tab-1:${INCARNATION_LEAF_ID}`,
+      tabId: 'tab-1'
+    })
+  })
+
   it('does not restore a PTY whose matching exit shares the attach reply batch', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow, mockWindow } = createMockDeps()
     const incarnationId = 'incarnation-exited-during-attach'

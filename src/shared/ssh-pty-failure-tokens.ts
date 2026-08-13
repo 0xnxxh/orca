@@ -3,6 +3,8 @@
 // what an identity mismatch meant — main marked it, the renderer ignored the
 // mark and respawned a live shell. One definition, so a change reaches both.
 
+import { isRelayAttestedPtyIncarnationId } from './pty-incarnation'
+
 /** The host proved the session is gone. Callers may respawn. */
 export const SSH_SESSION_EXPIRED_ERROR = 'SSH_SESSION_EXPIRED'
 
@@ -53,6 +55,20 @@ export function parsePtyExitedError(
     // Malformed encoding cannot be trusted to name a shell, so it names none.
     return null
   }
+}
+
+export function parseMatchingPtyExitedError(
+  message: string,
+  expectedId: string,
+  expectedIncarnationId: unknown
+): { id: string; code: number; incarnationId: string } | null {
+  const proof = parsePtyExitedError(message)
+  return proof &&
+    proof.id === expectedId &&
+    isRelayAttestedPtyIncarnationId(expectedIncarnationId) &&
+    proof.incarnationId === expectedIncarnationId
+    ? proof
+    : null
 }
 
 export function isSshPtyIdentityMismatchMessage(message: string): boolean {

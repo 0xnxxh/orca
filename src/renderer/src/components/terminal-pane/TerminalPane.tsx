@@ -3210,6 +3210,7 @@ function TerminalPane(
                   paneTransportsRef.current.get(pane.id)?.retryRecovery?.()
                 }}
                 onStartNewTerminal={recoveryState.unreachablePane?.onStartNewTerminal}
+                onRestoreTerminalFocus={() => pane.terminal.focus()}
               />,
               pane.container,
               `remote-runtime-reconnect-${pane.id}`

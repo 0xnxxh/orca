@@ -10,12 +10,12 @@ Review artifact. Repo: Orca (Electron + renderer + relay). Everything below mark
 
 Orca runs terminals on four "routes":
 
-| Route | Provider | Survives app restart |
-| --- | --- | --- |
-| local in-process | `LocalPtyProvider` | no |
-| local daemon | `DaemonPtyAdapter` (swapped into the same slot) | yes |
-| direct SSH | `SshPtyProvider` → remote relay | yes, within a grace window |
-| paired remote runtime | not an `IPtyProvider`; runtime RPC | yes |
+| Route                 | Provider                                        | Survives app restart       |
+| --------------------- | ----------------------------------------------- | -------------------------- |
+| local in-process      | `LocalPtyProvider`                              | no                         |
+| local daemon          | `DaemonPtyAdapter` (swapped into the same slot) | yes                        |
+| direct SSH            | `SshPtyProvider` → remote relay                 | yes, within a grace window |
+| paired remote runtime | not an `IPtyProvider`; runtime RPC              | yes                        |
 
 Reported failures:
 
@@ -30,12 +30,14 @@ Reported failures:
 
 **[V] Dispatch is a substitution for daemon, a parallel registry for SSH.**
 `src/main/ipc/pty.ts:932-941`:
+
 ```ts
 function getProvider(connectionId) {
-  if (!connectionId) return localProvider          // local AND daemon — one slot
-  const provider = sshProviders.get(connectionId)  // SSH — separate map
+  if (!connectionId) return localProvider // local AND daemon — one slot
+  const provider = sshProviders.get(connectionId) // SSH — separate map
 }
 ```
+
 The daemon is installed by `setLocalPtyProvider(routedAdapter)`
 (`src/main/daemon/daemon-init.ts:1031`) and adds **zero** branches to the shared
 spine. The paired runtime is encapsulated behind a `PtyTransport`. SSH is neither —
@@ -47,9 +49,11 @@ The `remote:` predicate is re-declared 5 times in the renderer.
 
 **[V] The transport dropped the half that makes it persistent.**
 `src/main/ssh/relay-protocol.ts:34`:
+
 ```ts
 export const MessageType = { Regular: 1, KeepAlive: 9 } as const
 ```
+
 The 13-byte frame header was copied from a well-known persistent protocol, but
 only 2 of its 9 message types were kept. Dropped: `Control`, `Ack`, `Disconnect`,
 `ReplayRequest`, `Pause`, `Resume`, `None`. The surviving ACK field feeds only
@@ -64,23 +68,23 @@ ledger, daemon batcher — the last deliberately lossy).
 
 **[V] Three durable records exist, plus a fourth copy on the host.**
 
-| | key | pane identity is |
-| --- | --- | --- |
-| PTY binding (`WorkspaceSessionState`) | `(hostId, tabId, leafId)` | **the key** |
-| `SshRemotePtyLease` | `(targetId, relayPtyId)` | **optional payload** |
-| `SshPtyConsumerRecovery` | `targetId` | n/a (per-target resume token) |
-| relay `attachIdentity` | per PTY, in-memory | compare-only |
+|                                       | key                       | pane identity is              |
+| ------------------------------------- | ------------------------- | ----------------------------- |
+| PTY binding (`WorkspaceSessionState`) | `(hostId, tabId, leafId)` | **the key**                   |
+| `SshRemotePtyLease`                   | `(targetId, relayPtyId)`  | **optional payload**          |
+| `SshPtyConsumerRecovery`              | `targetId`                | n/a (per-target resume token) |
+| relay `attachIdentity`                | per PTY, in-memory        | compare-only                  |
 
 **[R] ~374 lines of pure lease↔binding reconciliation in `persistence.ts`**, and 9
 enumerated states where the records can disagree. Example of an independent latent
 bug: absence of a lease means "restorable" in `isRestorablePtyBinding` but "not
 restorable" in `hasRestorableSshRemotePtyLease` — so whether a binding survives
-depends on whether a *sibling leaf* had a binding.
+depends on whether a _sibling leaf_ had a binding.
 
 **[V] The relay holds nothing durably.** Its PTY table is
 `private ptys = new Map<string, ManagedPty>()` (`src/relay/pty-handler.ts:356`).
 No relay-side persistence of PTY state exists. `pty.serialize`/`revive` hand state
-to the *client* and take it back; `revive` requires the original PIDs to still be
+to the _client_ and take it back; `revive` requires the original PIDs to still be
 alive. On PTY exit the entry is deleted with no tombstone.
 
 **[V] Pane identity is write-only over the wire.** `listProcesses` and `attach`
@@ -120,7 +124,7 @@ implementation parameterised by unit and limit; one chunk-and-ack primitive; one
 lane vocabulary; binary PTY payloads reusing the binary terminal frame Orca already
 ships to mobile; prebuilt native binaries so first connect stops needing a compiler;
 then teach the relay to listen on a loopback WebSocket, forward that port, and let
-the *same* client serve the SSH route — after which SSH is "launch + access" only.
+the _same_ client serve the SSH route — after which SSH is "launch + access" only.
 
 ### Plane 2 — control plane (proposed here; the reviewed contribution)
 
@@ -131,7 +135,7 @@ The lease answers two different questions with one record keyed for neither:
 
 Proposal: split by question.
 
-- **Ownership record**, keyed `(host, pane)` — the *same* key local already uses.
+- **Ownership record**, keyed `(host, pane)` — the _same_ key local already uses.
   Transport-specific payload (lease state + timestamps for SSH; nothing extra for
   local). Makes "one pane, one live shell" structural rather than enforced.
 - **Orphan inventory**, keyed `(host, ptyId)` — live shells with no owner. Feeds the
@@ -140,19 +144,14 @@ Proposal: split by question.
 - Offline consumers keep reading local disk synchronously, unchanged.
 
 Claimed payoff: the ~209 lines of supersession/ranking/rollback/dual-matchers exist
-*only* to bolt a pane-keyed constraint onto a pty-keyed record, and become
+_only_ to bolt a pane-keyed constraint onto a pty-keyed record, and become
 unnecessary.
 
-## 5. Known open defect in the shipped work
+## 5. Historical defect, now resolved
 
-A "superseded PTY" fence was added to `pty:write`/`writeAccepted`/`resize`/`signal`.
-**[V]** Its maps (`ptyPaneKey`, `paneKeyPtyId`) have exactly two writers, both spawn
-paths (`pty.ts:5222`, `pty.ts:6668`). The SSH relay reattach path never populates
-them (it calls `runtime.registerPty` instead), so `isSupersededPtyId` returns
-`false` ("unknown, not stale") for every relay-reattached PTY after restart. The
-fence is **inert on the path it was built for**. Its test pins the *consumer* call
-sites and mirrors the predicate structurally, so it cannot detect that the
-*producer* never runs on that route.
+This defect was resolved by the shared `bindPaneShell` producer used by relay reattach and both
+spawn handlers. Its mutation proof is recorded in
+[S5](./new-design-goalposts.md#s5--the-superseded-pane-fence-is-live-on-the-reattach-path--proven).
 
 ## 6. Hard constraints
 
@@ -175,7 +174,7 @@ sites and mirrors the predicate structurally, so it cannot detect that the
    disconnected; relay restart; host reboot; PTY exit during disconnect; two panes
    racing for one shell; migration from existing on-disk state; a pane deleted while
    its shell lives; the same worktree open in two windows.
-2. **Simplicity.** Is there a *simpler* design with the same correctness? Simpler
+2. **Simplicity.** Is there a _simpler_ design with the same correctness? Simpler
    means fewer code paths and fewer concepts, not merely fewer lines. Is the
    two-record split actually necessary, or is there a single-record formulation that
    survives the section-3 refutations?

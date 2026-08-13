@@ -209,6 +209,291 @@ describe('STA-3077: existing duplicate leases are healed, not revived', () => {
     expect(liveLeasesForPane(store)).toHaveLength(2)
   })
 
+  it('does not chase store mutations after the retirement generation is durable', async () => {
+    const store = await createStore({
+      sshRemotePtyLeases: [
+        { ...leaseFor('relay-pty-a', 1), createdAt: 1 },
+        { ...leaseFor('relay-pty-b', 2), createdAt: 2 }
+      ]
+    })
+    const internal = store as unknown as { enqueueWrite: () => Promise<void> }
+    const enqueueWrite = internal.enqueueWrite.bind(store)
+    let injectedMutation = false
+    const enqueueSpy = vi.spyOn(internal, 'enqueueWrite').mockImplementation(async () => {
+      await enqueueWrite()
+      if (!injectedMutation) {
+        injectedMutation = true
+        store.updateUI({ sidebarWidth: 777 })
+      }
+    })
+
+    expect(await store.supersedeDuplicatePaneLeases(TARGET)).toBe(1)
+
+    expect(enqueueSpy).toHaveBeenCalledOnce()
+    enqueueSpy.mockRestore()
+    await store.flushPendingOrThrowAsync({ drainToStableGeneration: false })
+  })
+
+  it('retries when a mutation invalidates the retirement write before rename', async () => {
+    const store = await createStore({
+      sshRemotePtyLeases: [
+        { ...leaseFor('relay-pty-a', 1), createdAt: 1 },
+        { ...leaseFor('relay-pty-b', 2), createdAt: 2 }
+      ]
+    })
+    const internal = store as unknown as { writeToDiskAsync: () => Promise<void> }
+    const writeToDiskAsync = internal.writeToDiskAsync.bind(store)
+    let injectedMutation = false
+    const writeSpy = vi.spyOn(internal, 'writeToDiskAsync').mockImplementation(async () => {
+      const write = writeToDiskAsync()
+      if (!injectedMutation) {
+        injectedMutation = true
+        store.updateUI({ sidebarWidth: 778 })
+      }
+      await write
+    })
+
+    expect(await store.supersedeDuplicatePaneLeases(TARGET)).toBe(1)
+
+    expect(writeSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not undo a concurrent confirmation of the provisional expired state', async () => {
+    const store = await createStore({
+      sshRemotePtyLeases: [
+        { ...leaseFor('relay-pty-a', 1), createdAt: 1 },
+        { ...leaseFor('relay-pty-b', 2), createdAt: 2 }
+      ]
+    })
+    let rejectWrite: (error: Error) => void = () => {}
+    vi.spyOn(
+      store as unknown as { flushDurableStateOrThrowAsync: () => Promise<void> },
+      'flushDurableStateOrThrowAsync'
+    ).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectWrite = reject
+        })
+    )
+
+    const retirement = store.supersedeDuplicatePaneLeases(TARGET)
+    store.markSshRemotePtyLease(TARGET, 'relay-pty-a', 'expired')
+    rejectWrite(new Error('disk full'))
+
+    expect(await retirement).toBe(0)
+    expect(
+      store.getSshRemotePtyLeases(TARGET).find((lease) => lease.ptyId === 'relay-pty-a')?.state
+    ).toBe('expired')
+    await store.flushPendingOrThrowAsync({ drainToStableGeneration: false })
+  })
+
+  it('rolls back after a rejected concurrent attach request', async () => {
+    const store = await createStore({
+      sshRemotePtyLeases: [
+        { ...leaseFor('relay-pty-a', 1), createdAt: 1 },
+        { ...leaseFor('relay-pty-b', 2), createdAt: 2 }
+      ]
+    })
+    let rejectWrite: (error: Error) => void = () => {}
+    vi.spyOn(
+      store as unknown as { flushDurableStateOrThrowAsync: () => Promise<void> },
+      'flushDurableStateOrThrowAsync'
+    ).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectWrite = reject
+        })
+    )
+
+    const retirement = store.supersedeDuplicatePaneLeases(TARGET)
+    store.markSshRemotePtyLease(TARGET, 'relay-pty-a', 'attached')
+    rejectWrite(new Error('disk full'))
+
+    expect(await retirement).toBe(0)
+    expect(
+      store.getSshRemotePtyLeases(TARGET).find((lease) => lease.ptyId === 'relay-pty-a')?.state
+    ).toBe('attached')
+  })
+
+  it('does not roll back concurrent session or lease changes after a failed write', async () => {
+    const store = await createStore({
+      sshRemotePtyLeases: [
+        { ...leaseFor('relay-pty-a', 1), createdAt: 1 },
+        { ...leaseFor('relay-pty-b', 2), createdAt: 2 }
+      ]
+    })
+    let rejectWrite: (error: Error) => void = () => {}
+    vi.spyOn(
+      store as unknown as { flushDurableStateOrThrowAsync: () => Promise<void> },
+      'flushDurableStateOrThrowAsync'
+    ).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectWrite = reject
+        })
+    )
+
+    const retirement = store.supersedeDuplicatePaneLeases(TARGET)
+    store.markSshRemotePtyLease(TARGET, 'relay-pty-a', 'terminated')
+    const concurrentTab = 'tab-concurrent'
+    const concurrentLeaf = '8a2b4c6d-1e3f-4a5b-8c7d-9e0f1a2b3c4d'
+    store.persistPtyBinding({
+      worktreeId: WORKTREE,
+      tabId: concurrentTab,
+      leafId: concurrentLeaf,
+      ptyId: 'relay-pty-concurrent',
+      incarnationId: 'inc-concurrent'
+    })
+    rejectWrite(new Error('disk full'))
+
+    expect(await retirement).toBe(0)
+    expect(
+      store.getSshRemotePtyLeases(TARGET).find((lease) => lease.ptyId === 'relay-pty-a')?.state
+    ).toBe('terminated')
+    expect(
+      store.getWorkspaceSession().terminalLayoutsByTabId?.[concurrentTab]?.ptyIdsByLeafId?.[
+        concurrentLeaf
+      ]
+    ).toBe('relay-pty-concurrent')
+  })
+
+  it('does not restore a binding for a lease removed during a failed write', async () => {
+    const store = await createStore({
+      sshRemotePtyLeases: [
+        { ...leaseFor('relay-pty-a', 1), createdAt: 1 },
+        { ...leaseFor('relay-pty-b', 2), createdAt: 2 }
+      ]
+    })
+    store.persistPtyBinding({
+      worktreeId: WORKTREE,
+      tabId: TAB,
+      leafId: LEAF,
+      ptyId: 'relay-pty-a',
+      incarnationId: 'inc-a'
+    })
+    delete store.getWorkspaceSession().terminalLayoutsByTabId?.[TAB]?.ptyIdsByLeafId?.[LEAF]
+    let rejectWrite: (error: Error) => void = () => {}
+    vi.spyOn(
+      store as unknown as { flushDurableStateOrThrowAsync: () => Promise<void> },
+      'flushDurableStateOrThrowAsync'
+    ).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectWrite = reject
+        })
+    )
+
+    const retirement = store.supersedeDuplicatePaneLeases(TARGET)
+    store.removeSshRemotePtyLease(TARGET, 'relay-pty-a')
+    rejectWrite(new Error('disk full'))
+
+    expect(await retirement).toBe(0)
+    expect(store.getSshRemotePtyLeases(TARGET).some((lease) => lease.ptyId === 'relay-pty-a')).toBe(
+      false
+    )
+    expect(
+      store.getWorkspaceSession().tabsByWorktree?.[WORKTREE]?.find((tab) => tab.id === TAB)?.ptyId
+    ).toBeNull()
+  })
+
+  it('restores a tab binding into the moved leaf after a concurrent session replacement', async () => {
+    const store = await createStore({
+      sshRemotePtyLeases: [
+        { ...leaseFor('relay-pty-a', 1), createdAt: 1 },
+        { ...leaseFor('relay-pty-b', 2), createdAt: 2 }
+      ]
+    })
+    store.persistPtyBinding({
+      worktreeId: WORKTREE,
+      tabId: TAB,
+      leafId: LEAF,
+      ptyId: 'relay-pty-a',
+      incarnationId: 'inc-a'
+    })
+    delete store.getWorkspaceSession().terminalLayoutsByTabId?.[TAB]?.ptyIdsByLeafId?.[LEAF]
+    let rejectWrite: (error: Error) => void = () => {}
+    vi.spyOn(
+      store as unknown as { flushDurableStateOrThrowAsync: () => Promise<void> },
+      'flushDurableStateOrThrowAsync'
+    ).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectWrite = reject
+        })
+    )
+
+    const retirement = store.supersedeDuplicatePaneLeases(TARGET)
+    expect(
+      store.getWorkspaceSession().tabsByWorktree?.[WORKTREE]?.find((tab) => tab.id === TAB)?.ptyId
+    ).toBeNull()
+    const movedTabId = 'tab-moved'
+    const replacement = structuredClone(store.getWorkspaceSession())
+    const movedTab = replacement.tabsByWorktree?.[WORKTREE]?.find((tab) => tab.id === TAB)
+    if (!movedTab || !replacement.terminalLayoutsByTabId?.[TAB]) {
+      throw new Error('expected source tab and layout')
+    }
+    movedTab.id = movedTabId
+    replacement.terminalLayoutsByTabId[movedTabId] = replacement.terminalLayoutsByTabId[TAB]
+    delete replacement.terminalLayoutsByTabId[TAB]
+    store.setWorkspaceSession(replacement)
+    rejectWrite(new Error('disk full'))
+
+    expect(await retirement).toBe(0)
+    expect(
+      store.getWorkspaceSession().tabsByWorktree?.[WORKTREE]?.find((tab) => tab.id === movedTabId)
+        ?.ptyId
+    ).toBe('relay-pty-a')
+    await store.flushPendingOrThrowAsync({ drainToStableGeneration: false })
+  })
+
+  it('does not restore a retired binding after the leaf is deleted', async () => {
+    const otherTab = 'tab-other'
+    const store = await createStore({
+      sshRemotePtyLeases: [
+        { ...leaseFor('relay-pty-a', 1), createdAt: 1 },
+        { ...leaseFor('relay-pty-b', 2), createdAt: 2, tabId: otherTab }
+      ]
+    })
+    store.persistPtyBinding({
+      worktreeId: WORKTREE,
+      tabId: TAB,
+      leafId: LEAF,
+      ptyId: 'relay-pty-a',
+      incarnationId: 'inc-a'
+    })
+    store.persistPtyBinding({
+      worktreeId: WORKTREE,
+      tabId: otherTab,
+      leafId: LEAF,
+      ptyId: 'relay-pty-b',
+      incarnationId: 'inc-b'
+    })
+    let rejectWrite: (error: Error) => void = () => {}
+    vi.spyOn(
+      store as unknown as { flushDurableStateOrThrowAsync: () => Promise<void> },
+      'flushDurableStateOrThrowAsync'
+    ).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectWrite = reject
+        })
+    )
+
+    const retirement = store.supersedeDuplicatePaneLeases(TARGET)
+    expect(store.getWorkspaceSession().terminalLayoutsByTabId?.[TAB]?.ptyIdsByLeafId?.[LEAF]).toBe(
+      undefined
+    )
+    const replacement = structuredClone(store.getWorkspaceSession())
+    replacement.tabsByWorktree![WORKTREE] = []
+    replacement.terminalLayoutsByTabId = {}
+    store.setWorkspaceSession(replacement)
+    rejectWrite(new Error('disk full'))
+
+    expect(await retirement).toBe(0)
+    expect(store.getWorkspaceSession().tabsByWorktree?.[WORKTREE]).toEqual([])
+    expect(store.getWorkspaceSession().terminalLayoutsByTabId).toEqual({})
+  })
+
   it('leaves distinct panes alone', async () => {
     const otherLeaf = '8a2b4c6d-1e3f-4a5b-8c7d-9e0f1a2b3c4d'
     const store = await createStore({
@@ -240,6 +525,46 @@ describe('STA-3077: existing duplicate leases are healed, not revived', () => {
     const byPtyId = new Map(store.getSshRemotePtyLeases(TARGET).map((l) => [l.ptyId, l]))
     expect(byPtyId.get('relay-pty-a')?.incarnationId).toBe('inc-host-a')
     expect(byPtyId.get('relay-pty-b')?.incarnationId).toBeUndefined()
+  })
+})
+
+describe('SSH reconnect lease retirement batching', () => {
+  it('keeps concurrent terminal state when the asynchronous write fails', async () => {
+    const store = await createStore({
+      sshRemotePtyLeases: [
+        { ...leaseFor('relay-pty-a', 1), createdAt: 1 },
+        { ...leaseFor('relay-pty-b', 2), createdAt: 2 }
+      ]
+    })
+    let rejectWrite: (error: Error) => void = () => {}
+    vi.spyOn(
+      store as unknown as { flushDurableStateOrThrowAsync: () => Promise<void> },
+      'flushDurableStateOrThrowAsync'
+    ).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectWrite = reject
+        })
+    )
+
+    const retirement = store.markSshRemotePtyLeasesTerminatedAsync(TARGET, ['relay-pty-a'])
+    const concurrentTab = 'tab-concurrent'
+    const concurrentLeaf = '8a2b4c6d-1e3f-4a5b-8c7d-9e0f1a2b3c4d'
+    store.persistPtyBinding({
+      worktreeId: WORKTREE,
+      tabId: concurrentTab,
+      leafId: concurrentLeaf,
+      ptyId: 'relay-pty-concurrent',
+      incarnationId: 'inc-concurrent'
+    })
+    rejectWrite(new Error('disk full'))
+
+    await expect(retirement).rejects.toThrow('disk full')
+    expect(
+      store.getWorkspaceSession().terminalLayoutsByTabId?.[concurrentTab]?.ptyIdsByLeafId?.[
+        concurrentLeaf
+      ]
+    ).toBe('relay-pty-concurrent')
   })
 })
 

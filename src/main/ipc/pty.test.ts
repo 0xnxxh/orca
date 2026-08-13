@@ -253,6 +253,7 @@ import {
   getLocalPtyProvider,
   isCurrentPtyExit,
   restorePtyIncarnation,
+  bindPaneShell,
   type PrepareCodexSessionResume
 } from './pty'
 import { __resetPersistedWindowsPathCacheForTests } from '../pty/windows-environment-path'
@@ -7880,6 +7881,7 @@ describe('registerPtyHandlers', () => {
           id: opts.sessionId ?? 'daemon-pty'
         })),
         write,
+        hasPty: vi.fn(() => true),
         resize: vi.fn(args.resize ?? (() => {})),
         getAppliedSize: vi.fn(args.getAppliedSize ?? (async () => args.applied)),
         kill: vi.fn(),
@@ -8102,6 +8104,107 @@ describe('registerPtyHandlers', () => {
       await Promise.resolve()
 
       expect(write).not.toHaveBeenCalled()
+    })
+
+    it('does not forward queued host input after the pane rebinds', async () => {
+      const write = setupProviderWithAppliedSize({ applied: { cols: 80, rows: 24 } })
+      let resolveClaim: (claimed: boolean) => void = () => {}
+      const claimRemoteDesktopHost = vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveClaim = resolve
+          })
+      )
+      const runtime = {
+        setPtyController: vi.fn(),
+        createPreAllocatedTerminalHandle: vi.fn(() => null),
+        registerPty: vi.fn(),
+        getDriver: vi.fn(() => ({ kind: 'idle' })),
+        claimRemoteDesktopHost,
+        onPtySpawned: vi.fn(),
+        onPtyExit: vi.fn(),
+        onPtyData: vi.fn()
+      }
+      handlers.clear()
+      registerPtyHandlers(mainWindow as never, runtime as never)
+      const spawn = await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24, env: {} })
+      const id = (spawn as { id: string }).id
+      const leafId = '3f1c9a2e-7b4d-4e1a-9c8f-2d5e6a7b8c90'
+      const bindingStore = {
+        persistPtyBinding: vi.fn(() => true),
+        getWorkspaceSession: vi.fn(() => getDefaultWorkspaceSession())
+      }
+      bindPaneShell({
+        store: bindingStore,
+        worktreeId: 'repo-1:wt-1',
+        tabId: 'tab-1',
+        leafId,
+        ptyId: id
+      })
+      const claim = onMock.mock.calls.find((entry: unknown[]) => entry[0] === 'pty:claimViewport')
+      const writeEvent = onMock.mock.calls.find((entry: unknown[]) => entry[0] === 'pty:write')
+
+      claim?.[1](mainWindowIpcEvent, { id, cols: 125, rows: 48 })
+      writeEvent?.[1](mainWindowIpcEvent, { id, data: 'queued' })
+      const accepted = handlers.get('pty:writeAccepted')!(mainWindowIpcEvent, {
+        id,
+        data: 'accepted'
+      })
+      bindPaneShell({
+        store: bindingStore,
+        worktreeId: 'repo-1:wt-1',
+        tabId: 'tab-1',
+        leafId,
+        ptyId: 'pty-successor'
+      })
+      resolveClaim(true)
+
+      await expect(accepted).resolves.toBe(false)
+      await Promise.resolve()
+      expect(write).not.toHaveBeenCalled()
+      clearProviderPtyState(id)
+      clearProviderPtyState('pty-successor')
+    })
+
+    it('does not forward queued host input after the PTY incarnation changes', async () => {
+      const write = setupProviderWithAppliedSize({ applied: { cols: 80, rows: 24 } })
+      let resolveClaim: (claimed: boolean) => void = () => {}
+      const runtime = {
+        setPtyController: vi.fn(),
+        createPreAllocatedTerminalHandle: vi.fn(() => null),
+        registerPty: vi.fn(),
+        getDriver: vi.fn(() => ({ kind: 'idle' })),
+        claimRemoteDesktopHost: vi.fn(
+          () =>
+            new Promise<boolean>((resolve) => {
+              resolveClaim = resolve
+            })
+        ),
+        onPtySpawned: vi.fn(),
+        onPtyExit: vi.fn(),
+        onPtyData: vi.fn()
+      }
+      handlers.clear()
+      registerPtyHandlers(mainWindow as never, runtime as never)
+      const spawn = await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24, env: {} })
+      const id = (spawn as { id: string }).id
+      restorePtyIncarnation(id, 'incarnation-old')
+      const claim = onMock.mock.calls.find((entry: unknown[]) => entry[0] === 'pty:claimViewport')
+      const writeEvent = onMock.mock.calls.find((entry: unknown[]) => entry[0] === 'pty:write')
+
+      claim?.[1](mainWindowIpcEvent, { id, cols: 125, rows: 48 })
+      writeEvent?.[1](mainWindowIpcEvent, { id, data: 'queued' })
+      const accepted = handlers.get('pty:writeAccepted')!(mainWindowIpcEvent, {
+        id,
+        data: 'accepted'
+      })
+      restorePtyIncarnation(id, 'incarnation-new')
+      resolveClaim(true)
+
+      await expect(accepted).resolves.toBe(false)
+      await Promise.resolve()
+      expect(write).not.toHaveBeenCalled()
+      clearProviderPtyState(id)
     })
 
     it('does not populate the remote reclaim cache when only a phone drives', async () => {
@@ -8707,12 +8810,17 @@ describe('registerPtyHandlers', () => {
         }
       }): Promise<{ id: string }>
     }
+    let emitExit: ((event: { exitCode: number; signal: number }) => void) | undefined
+    const kill = vi.fn(() => emitExit?.({ exitCode: 0, signal: 0 }))
     const proc = {
       onData: vi.fn(),
-      onExit: vi.fn(),
+      onExit: vi.fn((callback) => {
+        emitExit = callback
+        return makeDisposable()
+      }),
       write: vi.fn(),
       resize: vi.fn(),
-      kill: vi.fn(),
+      kill,
       process: 'zsh',
       pid: 12345
     }
@@ -8767,7 +8875,7 @@ describe('registerPtyHandlers', () => {
     expect(store.persistPtyBinding).toHaveBeenCalledWith(
       expect.objectContaining({ expectedSourceBinding })
     )
-    expect(proc.kill).toHaveBeenCalledOnce()
+    expect(kill).toHaveBeenCalledOnce()
   })
 
   it('reports lower-owner commit before rejecting an early-exited runtime incarnation', async () => {
@@ -9698,6 +9806,7 @@ describe('registerPtyHandlers', () => {
       })
     )
     expect(store.persistPtyBinding.mock.calls[0]!).toHaveLength(1)
+    expect(getPtyIdForPaneKey(paneKey)).toBe('pty-persisted-owner')
     expect(
       mainWindow.webContents.send.mock.calls.filter(([channel]) => channel === 'pty:spawned')
     ).toHaveLength(1)
@@ -10537,9 +10646,7 @@ describe('registerPtyHandlers', () => {
     const freshPtyId = `ssh:${connectionId}@@fresh-relay-pty`
     const remoteSpawn = vi.fn(async (options: { attachOnly?: boolean; command?: string }) => {
       if (options.attachOnly) {
-        // The reattach mints this only after verifying the relay's observed exit names this shell.
-        // A bare not-found reaches here too and must NOT retire the owner — pinned by the sibling
-        // clause below, because retirement authorizes a replacement carrying the resume payload.
+        // Proven exit: only this error authorizes retiring the owner (bare not-found must not).
         throw new Error('SSH_SESSION_EXPIRED: dead-relay-pty')
       }
       return { id: freshPtyId, incarnationId: 'inc-fresh-ssh-owner' }
@@ -17851,6 +17958,31 @@ describe('registerPtyHandlers', () => {
     expect(mockProc.proc.write).toHaveBeenNthCalledWith(2, 'tail')
   })
 
+  it('stops a chunked write when the PTY incarnation changes between chunks', async () => {
+    vi.useFakeTimers()
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+    registerPtyHandlers(mainWindow as never)
+    const result = (await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24
+    })) as { id: string }
+    restorePtyIncarnation(result.id, 'incarnation-old')
+    const text = ['x'.repeat(TERMINAL_INPUT_CHUNK_MAX_BYTES), 'tail'].join('')
+
+    const writeResult = handlers.get('pty:writeAccepted')!(mainWindowIpcEvent, {
+      id: result.id,
+      data: text
+    })
+    expect(mockProc.proc.write).toHaveBeenCalledOnce()
+    restorePtyIncarnation(result.id, 'incarnation-new')
+    await vi.runAllTimersAsync()
+
+    await expect(writeResult).resolves.toBe(false)
+    expect(mockProc.proc.write).toHaveBeenCalledOnce()
+    clearProviderPtyState(result.id)
+  })
+
   it('yields while validating accepted large acknowledged pty writes before provider writes', async () => {
     const mockProc = createMockProc()
     spawnMock.mockReturnValue(mockProc.proc)
@@ -17873,6 +18005,30 @@ describe('registerPtyHandlers', () => {
     await vi.runAllTimersAsync()
     await expect(writeResult).resolves.toBe(true)
     expect(mockProc.proc.write.mock.calls.map(([chunk]) => chunk).join('')).toBe(text)
+  })
+
+  it('drops a deferred write when the PTY incarnation changes during validation', async () => {
+    vi.useFakeTimers()
+    const mockProc = createMockProc()
+    spawnMock.mockReturnValue(mockProc.proc)
+    registerPtyHandlers(mainWindow as never)
+    const result = (await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24
+    })) as { id: string }
+    restorePtyIncarnation(result.id, 'incarnation-old')
+    const text = 'é'.repeat(CLIPBOARD_TEXT_MEASURE_YIELD_CODE_UNITS + 1)
+
+    const writeResult = handlers.get('pty:writeAccepted')!(mainWindowIpcEvent, {
+      id: result.id,
+      data: text
+    })
+    restorePtyIncarnation(result.id, 'incarnation-new')
+    await vi.runAllTimersAsync()
+
+    await expect(writeResult).resolves.toBe(false)
+    expect(mockProc.proc.write).not.toHaveBeenCalled()
+    clearProviderPtyState(result.id)
   })
 
   it('rejects oversized acknowledged pty writes before provider writes', async () => {

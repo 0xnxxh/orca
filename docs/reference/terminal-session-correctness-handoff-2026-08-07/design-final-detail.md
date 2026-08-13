@@ -7,34 +7,38 @@ Problem (from the brief): SSH reconnect grows pane cardinality (2 -> 19 -> 20, S
 
 One rule, applied without exception:
 
-  Ownership ("which shell does this pane own?") is DURABLE, CLIENT-LOCAL, and read
-  synchronously from disk while offline. Evidence about a shell's FATE is
-  NON-DURABLE, HOST-LOCAL, and must be REPORTED by the host, never INFERRED by the
-  client from timing, from the absence of an entry, or from the shape of an error
-  string.
+Ownership ("which shell does this pane own?") is DURABLE, CLIENT-LOCAL, and read
+synchronously from disk while offline. Evidence about a shell's FATE is
+NON-DURABLE, HOST-LOCAL, and must be REPORTED by the host, never INFERRED by the
+client from timing, from the absence of an entry, or from the shape of an error
+string.
 
 Every defect found across three review rounds is one violation of the second clause. The design's job is to remove all of them, not to add an authority layer.
 
-SCOPE DECLARATION (grok, low): the record is host-agnostic (`hostId` is a field). The *death rule*'s row 2 is relay-specific. Local and daemon panes reach `terminated` only through row 1 (an exit observed in-process, which is how they already work) and never through row 2. That is stated rather than left implicit.
+SCOPE DECLARATION (grok, low): the record is host-agnostic (`hostId` is a field). The _death rule_'s row 2 is relay-specific. Local and daemon panes reach `terminated` only through row 1 (an exit observed in-process, which is how they already work) and never through row 2. That is stated rather than left implicit.
 
 =====================================================================
 D1. THE DURABLE RECORD
 =====================================================================
+
 ```ts
 /** Main-owned. TOP-LEVEL in PersistedState — never inside WorkspaceSessionState. */
 type PaneShellOwnership = {
-  leafId: string          // PRIMARY KEY. Terminal-layout leaf UUID.
+  leafId: string // PRIMARY KEY. Terminal-layout leaf UUID.
   hostId: ExecutionHostId // FIELD: 'local' | 'ssh:<target>' | 'runtime:<id>'
-  worktreeId: string      // FIELD. Opaque FULL string incl. any `::workspace:<uuid>` suffix.
-  ptyId: string           // RELAY-NATIVE form for SSH (toRelaySshPtyId). One namespace, always.
-  incarnationId: string   // REQUIRED. Relay mints one per pty (relay/pty-handler.ts:1525).
-  relayInstanceId?: string// The relay PROCESS that owned it, as reported at bind time.
+  worktreeId: string // FIELD. Opaque FULL string incl. any `::workspace:<uuid>` suffix.
+  ptyId: string // RELAY-NATIVE form for SSH (toRelaySshPtyId). One namespace, always.
+  incarnationId: string // REQUIRED. Relay mints one per pty (relay/pty-handler.ts:1525).
+  relayInstanceId?: string // The relay PROCESS that owned it, as reported at bind time.
   state: 'attached' | 'detached' | 'terminated'
-  createdAt: number; updatedAt: number
-  lastAttachedAt?: number; lastDetachedAt?: number
+  createdAt: number
+  updatedAt: number
+  lastAttachedAt?: number
+  lastDetachedAt?: number
 }
 // Storage: PersistedState.paneShellOwnershipByLeafId: Record<string, PaneShellOwnership>
 ```
+
 Note what is NOT here: no `tabId`, no `paneKey`, no `hostEpoch`, no `resumed`, no second (pty-keyed) record.
 
 WHY `leafId` AND NOT `paneKey`. `makePaneKey(tabId, leafId)` returns `${tabId}:${leafId}` and the repo states at src/shared/stable-pane-id.ts:47-49 that "only the leaf UUID is remint-stable pane identity (the tab half changes on pane break-out)" — which is why `isEquivalentPaneKey` exists at :50-57. The mutation is a shipping gesture: `detachTerminalPaneToTab` (src/renderer/src/components/terminal-pane/terminal-pane-tab-detach.ts:245-310) moves a LIVE pane and its ptyId into a new tab via `createTab(..., initialPtyId)` while explicitly not killing the PTY (:275-276). `leafId` is a UUID and is never remapped once it is one (src/main/persistence.ts:1858-1872 skips ids already passing `isTerminalLeafId`). Keying by the leaf deletes the transfer problem instead of managing it.
@@ -46,11 +50,12 @@ WHY TOP-LEVEL. `session:set` / `session:set-sync` (src/main/ipc/session.ts:13, :
 UNIQUENESS. At most one non-terminal record may name a given `(hostId, ptyId, incarnationId)`, enforced on write through a reverse index. Not ptyId alone: leases store the relay-native id (`getRelayPtyIdForSshLeaseStorage` -> `toRelaySshPtyId` strips the connection scope, src/main/persistence.ts:6641-6643, src/shared/ssh-pty-id.ts:58-67) and relay ids are `pty-${this.nextId++}` with `nextId = 1` per relay PROCESS (src/relay/pty-handler.ts:356-357, :1440-1443), so `pty-1` recurs on every host after every relay restart. Round 1's rejection ("a cross-target collision on ptyId is impossible") is withdrawn; it is guaranteed, not impossible.
 
 =====================================================================
-D2. DELETE PANE IDENTITY FROM THE ATTACH PATH  (the largest round-3 change)
+D2. DELETE PANE IDENTITY FROM THE ATTACH PATH (the largest round-3 change)
 =====================================================================
 Both reviewers independently attacked the attach-time identity comparison. Verified, and it is worse than either stated: the apparatus is simultaneously over-strict and under-strict, and it is a live duplicate-agent bug today.
 
 VERIFIED FACTS
+
 - The relay compares frozen strings: `attachIdentityMismatches` (src/relay/pty-handler.ts:334-339) does full-string `expected.paneKey !== managed.paneKey || expected.tabId !== managed.tabId`; `attachIdentity` is captured once at spawn from `ORCA_PANE_KEY`/`ORCA_TAB_ID` (:1512-1517, :1446). On mismatch it throws `PTY "<id>" not found (identity mismatch)` (:1616-1626).
 - `isSshPtyNotFoundError` is a message regex `/PTY ".+" not found/i` (src/main/providers/ssh-pty-errors.ts:12-15), so it is TRUE for the mismatch string. `reattachSshPtySession` re-emits it as `SSH_SESSION_EXPIRED: <id> SSH_PTY_IDENTITY_MISMATCH` (src/main/providers/ssh-pty-session-reattach.ts:218-226).
 - The renderer's `isProvenSshSessionGoneError` returns TRUE for anything containing `SSH_SESSION_EXPIRED` and for the raw not-found regex, and IGNORES the mismatch marker (src/renderer/src/components/terminal-pane/reattach-failure-classification.ts:24-30). Its two call sites then clear the binding and call `startFreshColdRestoreAgentResume` (pty-connection.ts:8839-8847, :9086-9097) — a second shell and a SECOND AGENT RESUME while the original shell keeps running. That is RC2, on a live process, reachable from a shipped gesture.
@@ -58,6 +63,7 @@ VERIFIED FACTS
 - The apparatus does not even do its own stated job ("generation resets can reuse PTY IDs; reject conflicting identities", pty-handler.ts:1615): after a relay restart that recycles `pty-3` for the SAME pane, paneKey and tabId both match and a different shell is accepted.
 
 RESOLUTION — delete the comparison; do not replace it with another comparison.
+
 1. Relay: delete `attachIdentity`, `attachIdentityMismatches`, the `params.expectedPaneKey`/`expectedTabId` handling and the `(identity mismatch)` throw. `ManagedPty.paneKey`/`tabId` STAY — they are documented as separate from attach identity (pty-handler.ts:139-143) and are used by the exit listener (:765) and, newly, by listProcesses reporting (D4). paneKey stops being an authorization INPUT and becomes a reported HINT.
 2. Main: delete `ExpectedPtyIdentity`, `expectedIdentityForLease`, `expectedIdentityByPtyId`, the `expectedIdentity` parameter threaded through `attachPtyWithRetry`, `isSshPtyIdentityMismatchError`, `SSH_PTY_IDENTITY_MISMATCH_ERROR`, the marker append, and the mismatch branch at ssh-relay-session.ts:2628-2634.
 3. Renderer: `isProvenSshSessionGoneError` keeps only proofs. (After step 1/2 the mismatch string ceases to exist; the renderer fix ships FIRST and independently, because it must protect users running against relays that have not been redeployed.)
@@ -73,18 +79,19 @@ ONE IDENTITY RULE, EVERYWHERE: the leaf is identity; the tab is derived location
 D3. THE DEATH RULE — two rows, one new field
 =====================================================================
 `resumed` and `hostEpoch` are deleted and must not be built.
+
 - `resumed: replaces !== null` (src/shared/pty-consumer-session.ts:275); `expireOwner()` nulls the incumbent after `PTY_CONSUMER_OWNER_GRACE_MS = 30_000` (:281-287, contract :2), after which admission takes `if (!current) return this.newOwner(...)` (:215-216) and `resumed` is false regardless of proof. Unreachable for quit, sleep, overnight, reboot — the normal case. Its own contract comment says it means "the client's checkpoints for the previous claim no longer apply" (pty-consumer-session-contract.ts:49-52): a delivery-checkpoint flag, not liveness.
 - `hostEpoch = Date.now() - os.uptime()*1000` under exact equality is a reconstructed estimate; second-granularity uptime, NTP steps and suspend/resume make it differ on an unrebooted host, and "differs" was the grant-YES row — it fails OPEN toward respawn. Repo precedent settles it: `readCurrentDaemonReadyIdentity` reads `/proc/sys/kernel/random/boot_id` on Linux only and returns bare `{ startedAtMs }` elsewhere (src/main/daemon/daemon-ready-identity.ts:11-13).
 
 THE ONE NEW GRANT FIELD: `relayInstanceId?: string` on `PtyConsumerSessionGrant` (src/shared/pty-consumer-session-contract.ts:43-59) — a `randomUUID()` minted once at relay process start (`randomUUID` is already imported at relay/pty-handler.ts:6). It is genuinely new information: the grant's existing `serverBuildId` is `launchVersion` (src/relay/relay.ts:694-696), a build string that is identical across restarts of the same build.
 
-| Condition | Transition | Respawn grant |
-| --- | --- | --- |
-| PTY exit observed on a live attached stream | `terminated` | yes |
+| Condition                                                                          | Transition   | Respawn grant        |
+| ---------------------------------------------------------------------------------- | ------------ | -------------------- |
+| PTY exit observed on a live attached stream                                        | `terminated` | yes                  |
 | attach returns not-found AND the grant's `relayInstanceId` EQUALS the recorded one | `terminated` | yes (subject to E-1) |
-| attach returns an incarnation different from the recorded one | `detached` | no |
-| `relayInstanceId` absent on either side, or differing | `detached` | no |
-| any other error (today's `restoreRequired` path, ssh-relay-session.ts:2612-2620) | `detached` | no |
+| attach returns an incarnation different from the recorded one                      | `detached`   | no                   |
+| `relayInstanceId` absent on either side, or differing                              | `detached`   | no                   |
+| any other error (today's `restoreRequired` path, ssh-relay-session.ts:2612-2620)   | `detached`   | no                   |
 
 Row 2 is sound and UNBOUNDED IN TIME: `this.ptys` is the relay process's only store (pty-handler.ts:356) and entries are deleted on exit, so "the same process that minted this pty no longer has it" means it exited. It is sound on Windows too, because the relay OBSERVED the exit — unlike any rule that reasons from a relay restart. A restarted relay reports a different id and we correctly claim no knowledge.
 
@@ -95,10 +102,12 @@ STOP FABRICATING THE EXIT. `handlePtyReattachFailure` currently sends `pty:exit 
 =====================================================================
 D4. ORPHANS — a connect-time projection, never an authority
 =====================================================================
+
 ```
 orphans(host) = successful listProcesses(host)
                 MINUS { (ptyId, incarnationId) named by a non-terminal record on this host }
 ```
+
 Computed at connect/reattach, held in memory for the connection's life, discarded on disconnect. No durability, no migration, no rollback.
 
 WHAT `listProcesses` IS: it iterates only `this.ptys` (pty-handler.ts:1894-1911) — the current relay process's Map. No durability, no OS scan. It is therefore (i) the cleanup-UI source and (ii) a SUPPLEMENT to the reattach work list, never the sole discovery authority. The work list stays `getPtyIdsForConnection(target) UNION` the non-terminal records (today's `leasedPtyIds` shape, ssh-relay-session.ts:2211-2219).
@@ -116,6 +125,7 @@ OLD-RELAY DEGRADATION: a relay that omits `paneKey` yields unclassified orphans 
 =====================================================================
 D5. RECORD LIFETIME — three exits, none of them "absent from a list"
 =====================================================================
+
 1. RETIRE (delete). The record reached `terminated` (row 1 or row 2 of D3, or explicit user close via `retireExitedPty`, ssh-relay-session.ts:2153-2172). Terminal records are garbage-collected after a bounded retention (long enough to serve any surviving grant window) so they cannot mask a recycled `pty-1`. There is NO retire-on-absence clause: the case it was written for (shell exited during a disconnect, relay still up) is already covered by row 2 — the attach itself proves the exit — so deleting the clause costs nothing and removes a direct contradiction with #8459.
 2. RELEASE (keep the shell, drop the claim). Fired ONLY from the explicit pane-close and tab-delete code paths — never from "this publish did not contain the leaf". Detach is not atomic across layouts: `createTab` installs an empty layout, then `setTabLayout(sourceTabId, ...)` removes the leaf, then `setTabLayout(tab.id, ...)` adds it (terminal-pane-tab-detach.ts:298-300), so between the last two no layout contains the leafId, and any `session:set` flush in that window would look like a durable removal. Released records are cleared to a non-claiming state: the shell becomes orphan-eligible (visible, adoptable) and is deliberately NOT `terminated`, so it can never authorize a respawn.
 3. EXPLICIT USER CLOSE -> `terminated`, and the record dies with the shell.
@@ -125,15 +135,21 @@ RESIDUAL, STATED HONESTLY: a shell that died while the relay ALSO restarted leav
 PRODUCT AFFORDANCE, REQUIRED IN THE SAME PR. A `detached` pane renders as disconnected with two explicit actions — "reattach (retry)" and "start a new shell" (the latter retires the record). Nothing infers death, nothing auto-spawns. Per AGENTS.md this must follow docs/STYLEGUIDE.md. COPY CONSTRAINT: the UI must never assert that a shell is dead. The claim "after a relay crash the shells are almost certainly dead" is REMOVED from this design: it rests on POSIX master-fd close SIGHUPing the foreground group, and on Windows the relay is deliberately launched through WMI because "Windows sshd kills the exec channel's process tree on close" (src/main/ssh/ssh-relay-deploy.ts:1805), with ConPTY and no SIGHUP. No rule in this design concludes anything from a relay restart, so the design is correct either way; only the copy had to change.
 
 =====================================================================
-D6. PRECONDITION P — one partition per (target, pane). BLOCKS everything.
+D6. HISTORICAL — one partition per (target, pane). SUPERSEDED.
 =====================================================================
+This migration proposal was rejected. The shipped containment keeps the existing persistence
+planes and gives the pane binding one local home; see [S4](./new-design-goalposts.md#s4--one-partition-per-target-pane--proven).
+
 SSH pane bindings live in two partitions today. Readers and writers that consult ONLY `ssh:<target>`: `resolvePersistedStablePaneOwner` (src/main/ipc/pty.ts:676-677), `retirePersistedStablePaneOwner` (:760-761, :783), the CAS write `persistPtyBinding(..., expectedBinding)` (:833), and the two spawn upserts (:5108, :6493). Against that, the relay reattach write has no hostId (ssh-relay-session.ts:2500-2511 -> `resolveHostId(undefined)` -> `LOCAL_EXECUTION_HOST_ID`, persistence.ts:6243-6246) and the renderer keeps SSH worktrees in `local` deliberately (workspace-session-host-persistence.ts:167-173). `durablyBoundPtyIdForPane` hedges ssh-first-then-local (persistence.ts:7269-7277), so `supersedeSiblingLeasesForPane` early-returns when the bound pty differs (:7229-7232) — supersession silently no-ops and both leases stay live. That is the STA-3077 mechanism itself.
 
 FIX: one accessor `sessionForSshPaneBindings(connectionId): WorkspaceSessionState` returning the `local` partition, routed through by EVERY reader and EVERY writer above, flipped in a single atomic PR — not five write-site edits. `local` wins because the only publisher of pane membership writes there and `mayCreate:false` is evaluated there. A one-time fold moves `ssh:<target>.terminalLayoutsByTabId[*].ptyIdsByLeafId` and `tabsByWorktree[*].ptyId` into `local`, preferring `local` on conflict; the loser is NOT demoted to orphan-candidate by ptyId alone (recycled ids collide) — it carries `incarnationId` or is dropped.
 
 =====================================================================
-D7. PRECONDITION F — one bind producer, so the shipped fence has one
+D7. HISTORICAL — one bind producer. RESOLVED.
 =====================================================================
+The shared `bindPaneShell` producer now serves relay reattach and both spawn handlers; see
+[S5](./new-design-goalposts.md#s5--the-superseded-pane-fence-is-live-on-the-reattach-path--proven).
+
 `rememberPaneKeyForPty` (ipc/pty.ts:517-525) has two callers, both spawn (:5222, :6668). `restoreReattachedPtyRuntime` calls `runtime.registerPty` instead (ssh-relay-session.ts:2523), and `isSupersededPtyId` returns `false` for an unrecorded id by design (:284-296) — so the shipped superseded-PTY fence is INERT on the path it was built for. Collapse to one `bindPaneShell({ hostId, worktreeId, leafId, ptyId, incarnationId, relayInstanceId })` that, in one call, (a) resolves the current tab containing the leaf (refusing if none), (b) writes the durable record, (c) writes the in-memory `ptyPaneKey`/`paneKeyPtyId` fence maps using the paneKey composed from the CURRENT tab, (d) calls `registerPty`. All three paths call it and nothing else.
 
 =====================================================================
@@ -148,6 +164,7 @@ OFFLINE / SYNCHRONOUS ACCESS PATH (refutation B, honored exactly). `setLocalWork
 =====================================================================
 D9. THE REATTACH ALGORITHM (SSH, on connect)
 =====================================================================
+
 1. Obtain the consumer owner grant. Read `grant.relayInstanceId` (may be absent — old relay).
 2. Work list = `getPtyIdsForConnection(target)` UNION `{ r.ptyId | r.hostId === 'ssh:'+target and r.state !== 'terminated' }`, every id normalized through `toRelaySshPtyId`.
 3. PROCESS GATE. For each record: if both `grant.relayInstanceId` and `r.relayInstanceId` are present and differ, do not attach by that id. Set `detached`. Its shell, if any, is rediscoverable only through step 5.
@@ -162,26 +179,28 @@ D10. MIGRATION, SEQUENCING, ROLLBACK
 =====================================================================
 ORDER — each its own PR, each independently revertible:
 
-| | Step | Contents |
-| --- | --- | --- |
-| A | Identity-mismatch is not death | Renderer: `isProvenSshSessionGoneError` stops treating the mismatch marker as proof. Relay+main: delete the whole attach-identity apparatus (D2). Pure bug fix, no design dependency, ships FIRST; the renderer half must ship even before relays are redeployed. |
-| E-0 | Stop lying about exits | Collapse the plain-not-found branch of `handlePtyReattachFailure` into the existing non-destructive `restoreRequired` branch (D3). Ships with, or immediately followed by, the D5 disconnected-pane affordance. |
-| P | Single partition | D6: one accessor for every reader and writer, plus the fold migration, atomically. |
-| F | Single bind producer | D7: `bindPaneShell`; makes the shipped fence live on the reattach path; introduces tab-from-layout resolution. |
-| E-1 | Prove the grant executes | Production-id-shape oracle for `recoverTerminalPane`; record the actual behavior. |
-| E-2 | Death rule | `relayInstanceId` on the grant + the D3 table. Conditional on E-1. |
-| W | Projection | `paneKey` through relay -> `PtyProcessInfo` -> admission allowlist; incarnation-scoped subtraction; explicit-only kill (D4). |
-| K | Re-key | The leaf-keyed record + D8 + D5 lifetime + `reassignSshTargetId` field rewrite + porting all lease readers. |
+|     | Step                           | Contents                                                                                                                                                                                                                                                          |
+| --- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A   | Identity-mismatch is not death | Renderer: `isProvenSshSessionGoneError` stops treating the mismatch marker as proof. Relay+main: delete the whole attach-identity apparatus (D2). Pure bug fix, no design dependency, ships FIRST; the renderer half must ship even before relays are redeployed. |
+| E-0 | Stop lying about exits         | Collapse the plain-not-found branch of `handlePtyReattachFailure` into the existing non-destructive `restoreRequired` branch (D3). Ships with, or immediately followed by, the D5 disconnected-pane affordance.                                                   |
+| P   | Single partition               | D6: one accessor for every reader and writer, plus the fold migration, atomically.                                                                                                                                                                                |
+| F   | Single bind producer           | D7: `bindPaneShell`; makes the shipped fence live on the reattach path; introduces tab-from-layout resolution.                                                                                                                                                    |
+| E-1 | Prove the grant executes       | Production-id-shape oracle for `recoverTerminalPane`; record the actual behavior.                                                                                                                                                                                 |
+| E-2 | Death rule                     | `relayInstanceId` on the grant + the D3 table. Conditional on E-1.                                                                                                                                                                                                |
+| W   | Projection                     | `paneKey` through relay -> `PtyProcessInfo` -> admission allowlist; incarnation-scoped subtraction; explicit-only kill (D4).                                                                                                                                      |
+| K   | Re-key                         | The leaf-keyed record + D8 + D5 lifetime + `reassignSshTargetId` field rewrite + porting all lease readers.                                                                                                                                                       |
 
 E-1 CONTEXT (why E-2 is conditional). The chain `not-found -> expired -> 30s grant -> createTerminal` has one spawn-authorizing caller, `recoverTerminalPane` (src/main/runtime/orca-runtime.ts:16449-16490), gated on `getRecentExpiredSshLease(...)`, whose comparison is raw `lease.ptyId === ptyId` with no normalization (:6310). `lease.ptyId` is relay-native (persistence.ts:7184) while the graph's `pty.ptyId` is app-form `ssh:<conn>@@pty-N` (ssh-relay-session.ts:2523), so for a real SSH pane they can never be equal, and the branch also cannot be reached by a local pane (it requires an SSH lease). The covering test seeds both sides as `'pty-expired'` and registers with a NULL connectionId (orca-runtime.test.ts:1350-1370, :2932-2940) — a shape production cannot produce. Do not build grant-arbitration machinery before E-1 shows the branch executing.
 
 FORWARD MIGRATION AT K, per `SshRemotePtyLease`:
+
 - has `leafId` -> one record. `state`, `createdAt`, `updatedAt` copied VERBATIM (any surviving grace window reads `updatedAt`). `worktreeId` copied as an OPAQUE FULL STRING — the `::workspace:<uuid>` folder-workspace suffix must survive, since matching is full-string equality (persistence.ts:7239, orca-runtime.ts:6308) and issue #12474 was a comparator that stripped exactly that. `ptyId` stays relay-native. `tabId` is DROPPED (D1). `relayInstanceId` absent -> the record falls to `detached` on first reconnect with no ambiguity to resolve. `incarnationId` absent on a legacy row -> treat as adoption-eligible rather than as a subtracting claim, so it cannot mask a recycled id.
 - no `leafId` -> no record; recovered at first reconnect by the leaf-half `paneKey` match, or listed as an orphan.
 - ALSO synthesize a record from any live layout binding (`ptyIdsByLeafId`) whose ptyId has no lease, so a bound-but-unleased pane is not silently demoted.
 - Sequence AFTER the legacy numeric-leaf remap (persistence.ts:1858-1872) so every record keys on a UUID.
 
 PORT EVERY LEASE READER — the "write-only legacy projection" claim was FALSE and is corrected. Verified production readers of `sshRemotePtyLeases` outside persistence.ts:
+
 - `getRecentExpiredSshLease` (orca-runtime.ts:6295-6316) with `ptyId` UNDEFINED, feeding `hasRecentExpiredSshLeasePane` (:6318-6323) -> the headless-mobile terminal-tab filter (:5290-5299 region, the `onlyRuntimeOwnedTerminals` filter) and `hasLiveOrPersistedServeOrSshOwnedPtyBinding` (:6355-6360). These are a live VISIBILITY signal for paired mobile/HUB clients and are NOT killed by the namespace bug, because they pass `ptyId` undefined. Port: "a non-terminal record names this leaf" replaces "an `expired` lease within 30s". Visibility becomes bounded by the D5 lifetime rule instead of a timer; that behavior change is deliberate and must be covered by an oracle.
 - `ssh:terminateSessions` (src/main/ipc/ssh.ts:1282-1300) enumerates leases and distinguishes owned from expired (#2626). This is the EXISTING kill affordance; the D4 orphan UI FEEDS it rather than duplicating it. It is re-expressed over records: non-terminal records plus projection entries, with kill always explicit (D4).
 - `ssh:resetRelay` (ipc/ssh.ts:1370-1385) marks every live lease `expired` after force-killing the relay. Ported to: mark records `detached` (never `terminated` — the client killed the relay, which proves nothing about the shells). BEHAVIOR CHANGE, flagged for the owner: a user-initiated relay reset stops silently re-showing panes for 30s and instead shows the disconnected affordance.
@@ -196,6 +215,7 @@ PARTIAL WRITE / ROLLBACK. Reuse the existing discipline (persistence.ts:7346-736
 =====================================================================
 D11. ORACLES — each must redden under a stated mutation
 =====================================================================
+
 1. DETACH-TO-TAB OVER SSH, THROUGH THE REAL RELAY COMPARISON. Bind an SSH pane in tab A leaf L, run `detachTerminalPaneToTab` to tab B, disconnect, reconnect. Assert: exactly one shell on the host, no second agent resume, the pane reattaches and the ptyId lands in tab B's layout. THIS MUST BE RED BEFORE STEP A. If it is green today, the harness stubbed the relay comparison or omitted `ORCA_PANE_KEY`/`ORCA_TAB_ID` from the spawn env, and the whole detach oracle family is measuring nothing. Gate the program on it going red first.
 2. Identity mismatch is not proof of death. Assert `isProvenSshSessionGoneError` is false for the mismatch string, no record reaches `terminated`, no grant. Mutation: restore `.includes(SSH_SESSION_EXPIRED)` as the sole predicate (reattach-failure-classification.ts:29).
 3. Wrong-incarnation attach is abandoned, not adopted and not fatal. Relay returns a different `incarnationId` than recorded: assert no bind, no stream, `detached`, no grant, activation lease rolled back. Mutation: skip the response check.

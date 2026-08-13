@@ -575,6 +575,7 @@ export function bindPaneShell(args: {
   incarnationId?: string
   startupCwd?: string
   mayCreate?: boolean
+  expectedBinding?: { ptyId: string; incarnationId?: string }
   expectedSourceBinding?: PtyBindingSourceExpectation
 }): { bound: boolean; tabId: string } {
   const tabId = args.tabId
@@ -586,6 +587,7 @@ export function bindPaneShell(args: {
     ...(args.incarnationId ? { incarnationId: args.incarnationId } : {}),
     ...(args.startupCwd ? { startupCwd: args.startupCwd } : {}),
     ...(args.mayCreate === false ? { mayCreate: false } : {}),
+    ...(args.expectedBinding ? { expectedBinding: args.expectedBinding } : {}),
     ...(args.expectedSourceBinding ? { expectedSourceBinding: args.expectedSourceBinding } : {})
   })
   if (bound === false) {
@@ -888,7 +890,8 @@ function persistAdmittedStablePaneBinding(args: {
   if (!args.store || !args.owner || !args.worktreeId || !expectedBinding) {
     return false
   }
-  const persisted = args.store.persistPtyBinding({
+  const persisted = bindPaneShell({
+    store: args.store,
     worktreeId: args.worktreeId,
     tabId: args.owner.tabId,
     leafId: args.owner.leafId,
@@ -897,7 +900,7 @@ function persistAdmittedStablePaneBinding(args: {
     ...(args.startupCwd ? { startupCwd: args.startupCwd } : {}),
     expectedBinding
   })
-  if (persisted === false) {
+  if (persisted.bound === false) {
     throw new Error('terminal_pane_owner_changed')
   }
   return true
@@ -7115,11 +7118,20 @@ export function registerPtyHandlers(
     mainWindow.webContents.send('pty:writeUnavailable', { id })
   }
 
+  type PtyWriteFence = { incarnationId: string | undefined }
+
+  const isCurrentPtyWrite = (id: string, fence: PtyWriteFence): boolean =>
+    !isSupersededPtyId(id) && ptyIncarnationById.get(id) === fence.incarnationId
+
   const writePtyProviderInputWithinLimit = (
     provider: IPtyProvider,
     id: string,
-    data: string
+    data: string,
+    fence: PtyWriteFence
   ): boolean | Promise<boolean> => {
+    if (!isCurrentPtyWrite(id, fence)) {
+      return false
+    }
     const chunks = iterateTerminalInputChunks(data)
     const first = chunks.next()
     if (first.done) {
@@ -7131,21 +7143,24 @@ export function registerPtyHandlers(
       provider.write(id, first.value)
       return true
     }
-    return writePtyProviderInputChunks(provider, id, chunks, first.value, second.value)
+    return writePtyProviderInputChunks(provider, id, chunks, first.value, second.value, fence)
   }
 
   const writePtyProviderInput = (
     provider: IPtyProvider,
     id: string,
-    data: string
+    data: string,
+    fence: PtyWriteFence
   ): boolean | Promise<boolean> => {
     try {
       const tooLarge = isTerminalInputTooLargeWithDeferredMeasurement(data)
       if (typeof tooLarge === 'boolean') {
-        return tooLarge ? false : writePtyProviderInputWithinLimit(provider, id, data)
+        return tooLarge ? false : writePtyProviderInputWithinLimit(provider, id, data, fence)
       }
       return tooLarge
-        .then((result) => (result ? false : writePtyProviderInputWithinLimit(provider, id, data)))
+        .then((result) =>
+          result ? false : writePtyProviderInputWithinLimit(provider, id, data, fence)
+        )
         .catch((error) => {
           reportUnavailablePtyWrite(id, error)
           return false
@@ -7161,12 +7176,16 @@ export function registerPtyHandlers(
     id: string,
     chunks: Iterator<string>,
     firstChunk: string,
-    secondChunk: string
+    secondChunk: string,
+    fence: PtyWriteFence
   ): Promise<boolean> => {
     try {
       let chunk: IteratorResult<string> = { done: false, value: firstChunk }
       let nextChunk: IteratorResult<string> = { done: false, value: secondChunk }
       while (!chunk.done) {
+        if (!isCurrentPtyWrite(id, fence)) {
+          return false
+        }
         provider.write(id, chunk.value)
         if (!nextChunk.done) {
           await new Promise((resolve) => setTimeout(resolve, 0))
@@ -7211,9 +7230,15 @@ export function registerPtyHandlers(
     !mainWindow.isDestroyed() &&
     !(typeof mainWebContents.isDestroyed === 'function' && mainWebContents.isDestroyed())
 
-  const writePtyInput = (args: PtyWritePayload): boolean | Promise<boolean> => {
+  const writePtyInput = (
+    args: PtyWritePayload,
+    fence: PtyWriteFence
+  ): boolean | Promise<boolean> => {
     // Why: mobile-presence-lock defense-in-depth — the renderer's onData guard can let one keystroke slip during the state-flip lag, so catch it server-side. See docs/mobile-presence-lock.md.
     if (runtime?.getDriver(args.id).kind === 'mobile') {
+      return false
+    }
+    if (!isCurrentPtyWrite(args.id, fence)) {
       return false
     }
     const provider = ptyOwnership.has(args.id) ? tryGetProviderForPty(args.id) : undefined
@@ -7227,14 +7252,20 @@ export function registerPtyHandlers(
       if (visibleRendererPtys.has(args.id)) {
         clearHiddenRendererResizeOutput(args.id)
       }
-      return writePtyProviderInput(provider, args.id, args.data)
+      return writePtyProviderInput(provider, args.id, args.data, fence)
     } catch {
       return false
     }
   }
 
-  const writePtyInputAccepted = (args: PtyWritePayload): boolean | Promise<boolean> => {
+  const writePtyInputAccepted = (
+    args: PtyWritePayload,
+    fence: PtyWriteFence
+  ): boolean | Promise<boolean> => {
     if (runtime?.getDriver(args.id).kind === 'mobile') {
+      return false
+    }
+    if (!isCurrentPtyWrite(args.id, fence)) {
       return false
     }
     // Why: the ack infers Ctrl+C/Escape reached the local PTY; SSH providers are fire-and-forget relay notifications and can't truthfully acknowledge yet.
@@ -7252,7 +7283,7 @@ export function registerPtyHandlers(
       if (visibleRendererPtys.has(args.id)) {
         clearHiddenRendererResizeOutput(args.id)
       }
-      return writePtyProviderInput(provider, args.id, args.data)
+      return writePtyProviderInput(provider, args.id, args.data, fence)
     } catch {
       return false
     }
@@ -7266,27 +7297,29 @@ export function registerPtyHandlers(
     }
     // Why here and not in the renderer: input queued before a reattach would
     // otherwise land on whatever PTY now holds the pane.
-    if (isSupersededPtyId(args.id)) {
+    const fence: PtyWriteFence = { incarnationId: ptyIncarnationById.get(args.id) }
+    if (!isCurrentPtyWrite(args.id, fence)) {
       return
     }
     const claimTail = hostViewportClaimTails.get(args.id)
     if (claimTail) {
-      void claimTail.then((claimed) => (claimed ? writePtyInput(args) : false))
+      void claimTail.then((claimed) => (claimed ? writePtyInput(args, fence) : false))
       return
     }
-    writePtyInput(args)
+    writePtyInput(args, fence)
   })
   ipcMain.handle('pty:writeAccepted', (event, args: unknown): boolean | Promise<boolean> => {
     if (!isPtyWriteEventFromMainWindow(event, mainWindow.webContents) || !isPtyWritePayload(args)) {
       return false
     }
-    if (isSupersededPtyId(args.id)) {
+    const fence: PtyWriteFence = { incarnationId: ptyIncarnationById.get(args.id) }
+    if (!isCurrentPtyWrite(args.id, fence)) {
       return false
     }
     const claimTail = hostViewportClaimTails.get(args.id)
     return claimTail
-      ? claimTail.then((claimed) => (claimed ? writePtyInputAccepted(args) : false))
-      : writePtyInputAccepted(args)
+      ? claimTail.then((claimed) => (claimed ? writePtyInputAccepted(args, fence) : false))
+      : writePtyInputAccepted(args, fence)
   })
 
   ipcMain.removeAllListeners('pty:claimViewport')

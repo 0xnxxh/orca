@@ -809,11 +809,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         // Why: cwd fallback is only for fresh local spawns — reattach keeps the session's cwd and SSH transports resolve cwd on the remote host.
         const shouldSendLocalCwdFallback =
           cwdFallback === 'worktree' && !connectionId && !admittedSessionId
-        // Every constructor value that can LAUNCH OR RESUME an agent. `suppressSavedStartup` drops
-        // the set at once: a "fresh" shell inheriting any one of them can resume the very session
-        // it was meant to leave alone, and suppressing them field by field is how two were missed.
-        // `env`/`envToDelete` stay deliberately outside — they cannot start or resume anything on
-        // their own, and the spawn still needs the pane's identity environment.
+        // Every constructor value that can launch or resume an agent is suppressed together.
         const saved = options.suppressSavedStartup
           ? ({} as Partial<{
               command: typeof command
@@ -831,12 +827,17 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
               launchAgent,
               startupCommandDelivery
             }
+        let spawnEnv = options.env ?? env
+        if (options.suppressSavedStartup && spawnEnv?.ORCA_AGENT_LAUNCH_TOKEN !== undefined) {
+          spawnEnv = { ...spawnEnv }
+          delete spawnEnv.ORCA_AGENT_LAUNCH_TOKEN
+        }
         const result = await window.api.pty.spawn({
           cols: options.cols ?? 80,
           rows: options.rows ?? 24,
           cwd,
           ...(shouldSendLocalCwdFallback ? { cwdFallback } : {}),
-          env: options.env ?? env,
+          env: spawnEnv,
           ...((options.envToDelete ?? envToDelete)
             ? { envToDelete: options.envToDelete ?? envToDelete }
             : {}),

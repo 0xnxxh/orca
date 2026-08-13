@@ -119,7 +119,7 @@ The implementation design must explicitly settle:
 - mixed-version capability and isolated legacy behavior;
 - lost-device consumer retirement and compaction liveness;
 - one-way migration/cutover; and
-- the four-role deletion oracle and strictly net-negative production target.
+- the four-role deletion oracle and minimised, justified production-code target.
 
 Reuse existing pane, PTY, incarnation, CAS, and three-valued liveness primitives
 where their semantics match. Do not equate client routing IDs with host identity
@@ -142,8 +142,9 @@ A sensible dependency shape is:
 3. local/daemon/WSL/SSH/relay/paired/remote adapters using those primitives;
 4. durable outcome, projection, reset, and recovery lifecycle;
 5. one-way migration and capability cutover;
-6. deletion of superseded writers, ledgers, quarantine, repair scans, timers
-   used as verdicts, and duplicate state machines; and
+6. deletion of superseded writers, ledgers, repair scans, timers used as verdicts,
+   and duplicate state machines; retain `terminal-input-quarantine.ts` until a
+   replacement passes its destructive-input oracle; and
 7. full platform, skew, performance, packaging, and independent review proof.
 
 Each stack layer must be safe and tested, but the comprehensive status remains
@@ -180,9 +181,9 @@ are required. At minimum the final matrix must include:
 5. Rerun all journeys and static/package checks on the rebased SHA.
 6. Report production, tests, docs, CI/runner, generated, and vendored LOC
    separately.
-7. Require strictly negative aggregate production source net LOC against the
-   frozen pre-program baseline, including all program-attributable carry-in and
-   stack layers.
+7. Minimise aggregate production source net LOC against the frozen pre-program
+   baseline, including all program-attributable carry-in and stack layers, and
+   justify every net addition as required by D1.
 8. Run an independent repository review and the release-readiness checklist.
 9. Resolve every P0–P2 finding.
 10. Only then prepare the comprehensive PR and ask the user to approve any
@@ -269,5 +270,6 @@ Stop and return to the user before:
 > [`goalposts.md`](./goalposts.md) passes on one rebased candidate. Reconcile the
 > conflicting open work in [`related-open-work.md`](./related-open-work.md),
 > build discriminating real SSH/daemon/paired/remote/cross-platform journeys,
-> remove root causes and superseded reconciliation, and finish with strictly
-> net-negative production LOC and no correctness or performance regression.
+> remove root causes and superseded reconciliation, minimise and justify every
+> production-code addition per D1, and finish with no correctness or performance
+> regression.

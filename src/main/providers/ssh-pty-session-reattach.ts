@@ -10,7 +10,7 @@ import {
   isSshPtyExitedError,
   isSshPtyIdentityMismatchError
 } from './ssh-pty-errors'
-import { parsePtyExitedError } from '../../shared/ssh-pty-failure-tokens'
+import { parseMatchingPtyExitedError } from '../../shared/ssh-pty-failure-tokens'
 import { toAppSshPtyId, toRelaySshPtyId } from './ssh-pty-id'
 import type { PtySpawnOptions, PtySpawnResult } from './types'
 import type { SshPtySpawnExitRaceTracker } from './ssh-pty-spawn-exit-race'
@@ -30,6 +30,29 @@ export type SshPtyAttachResult = {
   sourceRecovery?: PtySourceRecoveryResult
   sourceActivation?: PtySourceReceivingActivation
   sourceActivationLease?: SshPtyReceivingActivationLease
+}
+
+export function buildSshPtyReconnectAttachParams(args: {
+  id: string
+  sourceRecovery?: PtySourceRecoveryRequest
+  expectedIncarnationId?: string
+  legacyExpectedIdentity?: { paneKey?: string; tabId?: string }
+}): Record<string, unknown> {
+  return {
+    id: args.id,
+    suppressReplayNotification: true,
+    exitProofSupported: true,
+    ...(isRelayAttestedPtyIncarnationId(args.expectedIncarnationId)
+      ? { expectedIncarnationId: args.expectedIncarnationId }
+      : {}),
+    ...(args.legacyExpectedIdentity?.paneKey
+      ? { expectedPaneKey: args.legacyExpectedIdentity.paneKey }
+      : {}),
+    ...(args.legacyExpectedIdentity?.tabId
+      ? { expectedTabId: args.legacyExpectedIdentity.tabId }
+      : {}),
+    ...(args.sourceRecovery ? { sourceRecovery: args.sourceRecovery } : {})
+  }
 }
 
 type SshPtyReattachResult = PtySpawnResult & {
@@ -90,6 +113,18 @@ export async function requestSshPtyAttach(args: {
   rememberPtyIncarnation?: (relayPtyId: string, incarnationId: unknown) => void
 }): Promise<SshPtyAttachResult> {
   let activationLease: SshPtyReceivingActivationLease | undefined
+  const parseResult = (value: unknown): SshPtyAttachResult => {
+    const result = parseSshPtyAttachResult(value)
+    const expectedIncarnationId = args.params.expectedIncarnationId
+    // Old relays ignore the request fence, so their response must prove the same shell.
+    if (
+      isRelayAttestedPtyIncarnationId(expectedIncarnationId) &&
+      result.incarnationId !== expectedIncarnationId
+    ) {
+      throw new Error(`${SSH_PTY_IDENTITY_MISMATCH_ERROR}: ${args.relayPtyId}`)
+    }
+    return result
+  }
   const installFromResult = (result: SshPtyAttachResult): void => {
     if (!activationLease && result.sourceActivation && args.installSourceActivation) {
       activationLease = args.installSourceActivation(args.relayPtyId, result.sourceActivation)
@@ -98,9 +133,9 @@ export async function requestSshPtyAttach(args: {
   try {
     const rawResult = await args.mux.request('pty.attach', args.params, {
       ...(args.timeoutMs === undefined ? {} : { timeoutMs: args.timeoutMs }),
-      beforeResolve: (value) => installFromResult(parseSshPtyAttachResult(value))
+      beforeResolve: (value) => installFromResult(parseResult(value))
     })
-    const result = parseSshPtyAttachResult(rawResult)
+    const result = parseResult(rawResult)
     installFromResult(result)
     args.rememberPtyIncarnation?.(args.relayPtyId, result.incarnationId)
     if (args.commitSourceActivation) {
@@ -190,11 +225,8 @@ export async function reattachSshPtySession(args: {
   const relaySessionId = toRelaySshPtyId(args.connectionId, args.sessionId)
   console.warn(`[ssh-pty] spawn() called with sessionId=${args.sessionId}, attempting pty.attach`)
   try {
-    // Why no expected pane identity: the relay froze it at spawn, so moving a
-    // pane to another tab made it refuse a live shell — and refuse by saying
-    // "not found", which read as death. It never caught what it was for either:
-    // a relay restart recycling this id for a new shell leaves pane and tab
-    // matching. Recycling is caught by the incarnation the attach returns.
+    const expectedPaneKey = args.options.paneKey ?? args.options.env?.ORCA_PANE_KEY
+    const expectedTabId = args.options.tabId ?? args.options.env?.ORCA_TAB_ID
     const attachResult = await requestSshPtyAttach({
       mux: args.mux,
       relayPtyId: relaySessionId,
@@ -210,10 +242,12 @@ export async function reattachSshPtySession(args: {
         // The shell's own identity, so it survives a pane moving between tabs — unlike the pane
         // identity this replaced. Sent only when the host attested it: a locally synthesized
         // stand-in is not stable across reconnects and would refuse the pane its own shell. An
-        // older relay ignores the field, which leaves today's permissive behaviour.
+        // older relay ignores the field, so the legacy pane fence below remains its fallback.
         ...(isRelayAttestedPtyIncarnationId(args.options.expectedIncarnationId)
           ? { expectedIncarnationId: args.options.expectedIncarnationId }
-          : {})
+          : {}),
+        ...(expectedPaneKey ? { expectedPaneKey } : {}),
+        ...(expectedTabId ? { expectedTabId } : {})
       },
       installSourceActivation: args.installSourceActivation,
       rememberPtyIncarnation: args.rememberPtyIncarnation
@@ -247,9 +281,12 @@ export async function reattachSshPtySession(args: {
     // versions differ, so a proof we cannot tie to the incarnation we asked about is not proof and
     // falls through to the disconnected pane instead of replacing a shell that may be running.
     if (isSshPtyExitedError(error)) {
-      const proof = parsePtyExitedError(error instanceof Error ? error.message : String(error))
-      const expected = args.options.expectedIncarnationId
-      if (proof && isRelayAttestedPtyIncarnationId(expected) && proof.incarnationId === expected) {
+      const proof = parseMatchingPtyExitedError(
+        error instanceof Error ? error.message : String(error),
+        relaySessionId,
+        args.options.expectedIncarnationId
+      )
+      if (proof) {
         throw new Error(`${SSH_SESSION_EXPIRED_ERROR}: ${relaySessionId}`)
       }
       throw error

@@ -122,6 +122,16 @@ describe('only an exit the relay watched is a death', () => {
     expect(transportWouldReportSessionExpired(error.message)).toBe(false)
   })
 
+  it('does not publish expiry for an exit that names a different PTY id', async () => {
+    const error = await reattachError(
+      formatPtyExitedError('pty-some-other-shell', 0, 'inc-host-7'),
+      'inc-host-7'
+    )
+
+    expect(error.message).not.toContain(SSH_SESSION_EXPIRED_ERROR)
+    expect(transportWouldReportSessionExpired(error.message)).toBe(false)
+  })
+
   it('does not publish expiry for an exit when the pane knows no incarnation', async () => {
     const error = await reattachError(formatPtyExitedError(RELAY_PTY_ID, 0, 'inc-host-7'))
 
@@ -143,16 +153,9 @@ describe('only an exit the relay watched is a death', () => {
   })
 })
 
-// The relay only compares identity fields present on BOTH sides ("absent
-// identity stays permissive", relay/pty-handler.ts). So not sending them stops
-// every relay version from rejecting a moved pane — including relays already
-// deployed on people's hosts, with no wire change and no redeploy.
-//
-// Nothing is lost: the check existed to catch a relay restart recycling pty-N
-// for a new shell, and in exactly that case the pane and tab both still match,
-// so it accepted the wrong shell anyway. What IS sent is the shell's own
-// incarnation, which catches that case and follows the pane between tabs.
-describe('reattach does not ask the relay to police pane identity', () => {
+// New relays prioritize incarnation, so the pane fields do not reject a moved pane. Old relays
+// ignore the additive incarnation field and still need their weaker pane fence.
+describe('reattach preserves the old-relay pane fence', () => {
   async function attachParams(
     extraOptions: Record<string, unknown> = {}
   ): Promise<Record<string, unknown>> {
@@ -178,12 +181,12 @@ describe('reattach does not ask the relay to police pane identity', () => {
     return (call?.[1] ?? call?.[0] ?? {}) as Record<string, unknown>
   }
 
-  it('sends no expected pane key', async () => {
-    expect(await attachParams()).not.toHaveProperty('expectedPaneKey')
+  it('sends the current pane key for relays that do not understand incarnation', async () => {
+    expect(await attachParams()).toMatchObject({ expectedPaneKey: 'tab-new:leaf-1' })
   })
 
-  it('sends no expected tab id', async () => {
-    expect(await attachParams()).not.toHaveProperty('expectedTabId')
+  it('sends the current tab id for relays that do not understand incarnation', async () => {
+    expect(await attachParams()).toMatchObject({ expectedTabId: 'tab-new' })
   })
 
   // The producer pin for the relay's incarnation guard. The guard is only worth having if the
@@ -191,7 +194,9 @@ describe('reattach does not ask the relay to police pane identity', () => {
   // the relay stays permissive on an absent field, so a silent regression reads as "all green".
   it('sends the expected incarnation when the host attested one', async () => {
     expect(await attachParams({ expectedIncarnationId: 'inc-host-7' })).toMatchObject({
-      expectedIncarnationId: 'inc-host-7'
+      expectedIncarnationId: 'inc-host-7',
+      expectedPaneKey: 'tab-new:leaf-1',
+      expectedTabId: 'tab-new'
     })
   })
 

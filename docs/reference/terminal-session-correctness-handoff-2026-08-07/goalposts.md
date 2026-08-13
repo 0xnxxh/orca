@@ -395,12 +395,13 @@ remains correct.
 Mocking `process.platform`, running Linux inside Docker, or passing in-process
 wire unit tests does not prove the corresponding native or live-skew row.
 
-## G6 — Simpler, strictly smaller production code
+## G6 — Simpler, minimised production code
 
-**Current status: partial; final size condition currently fails.**
+**Current status: partial; structural clauses remain open.**
 
-The user has tightened this gate: the final integrated program must contain
-strictly less production source than its frozen pre-program baseline.
+Decision D1 replaces the original strict inequality: the final integrated
+program must minimise production source and justify every net addition against
+the correctness it buys.
 
 The default baseline is
 `5ed45739e94bdf6460364e033bfcec9b32c0b42a`, the base recorded by GitHub for
