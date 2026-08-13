@@ -177,6 +177,31 @@ describe('workspace cleanup snapshot IPC', () => {
     await expect(scan).rejects.toThrow('cancelled')
   })
 
+  it('keeps legacy suggestion-only and full broad scans isolated across modes', async () => {
+    scanWorkspaceCleanupMock.mockImplementation((_store, _args, options) => {
+      return new Promise((resolve, reject) => {
+        options.signal?.addEventListener('abort', () => reject(new Error('cancelled')), {
+          once: true
+        })
+        setTimeout(() => resolve({ scannedAt: NOW, candidates: [], errors: [] }), 5)
+      })
+    })
+    registerWorkspaceCleanupHandlers(makeEmptyStore())
+    const handler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'workspaceCleanup:scan')?.[1]
+
+    // Why: different includeAllWorkspaces modes are separate lanes; one must
+    // not abort the other even from the same renderer.
+    const [legacy, full] = await Promise.allSettled([
+      handler?.(makeScanEvent({ id: 7 }), { includeAllWorkspaces: false }) as Promise<unknown>,
+      handler?.(makeScanEvent({ id: 7 }), { includeAllWorkspaces: true }) as Promise<unknown>
+    ])
+
+    expect(legacy?.status).toBe('fulfilled')
+    expect(full?.status).toBe('fulfilled')
+  })
+
   it('supersedes a concurrent broad scan from the same renderer', async () => {
     const settlements: Promise<unknown>[] = []
     scanWorkspaceCleanupMock.mockImplementation((_store, _args, options) => {

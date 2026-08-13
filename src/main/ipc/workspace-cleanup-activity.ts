@@ -134,18 +134,29 @@ async function readNewestReflogEntryAt(
   try {
     // A tail cut can start mid-line; scanning backward for the last parseable
     // entry tolerates that.
-    const lines = (await readTextFile(reflogPath, { tailBytes: REFLOG_TAIL_BYTES })).split('\n')
-    for (let index = lines.length - 1; index >= 0; index -= 1) {
-      // The trailing timezone + tab anchors the capture, so no digit-count floor is needed.
-      const seconds = /\s(\d{1,11})\s[-+]\d{4}\t/.exec(lines[index] ?? '')?.[1]
-      if (seconds) {
-        return Number(seconds) * 1000
-      }
+    const tail = await readTextFile(reflogPath, { tailBytes: REFLOG_TAIL_BYTES })
+    const newestFromTail = parseNewestReflogEntryAt(tail)
+    if (newestFromTail !== 0 || tail.length === 0) {
+      return newestFromTail
     }
-    return 0
+    // Why: a single record longer than the tail window keeps its timestamp
+    // before the window starts; fall back to the full read in that rare case.
+    return parseNewestReflogEntryAt(await readTextFile(reflogPath))
   } catch {
     return 0
   }
+}
+
+function parseNewestReflogEntryAt(reflog: string): number {
+  const lines = reflog.split('\n')
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    // The trailing timezone + tab anchors the capture, so no digit-count floor is needed.
+    const seconds = /\s(\d{1,11})\s[-+]\d{4}\t/.exec(lines[index] ?? '')?.[1]
+    if (seconds) {
+      return Number(seconds) * 1000
+    }
+  }
+  return 0
 }
 
 async function readLocalWorktreeGitDir(

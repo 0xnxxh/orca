@@ -37,7 +37,14 @@ type WorkspaceCleanupHandlerDeps = {
 // Why: module scope — handler re-registration on a new main window must not
 // orphan the previous window's controllers in a discarded map.
 const activeScans = new Map<string, AbortController>()
-const broadScanControllersBySender = new Map<number, AbortController>()
+// Keyed by sender AND scan mode: legacy suggestion-only and full-workspace
+// broad scans are separate lanes and must not supersede each other, matching
+// the renderer's broad-scan registry.
+const broadScanControllersBySenderMode = new Map<string, AbortController>()
+
+function getBroadScanModeKey(senderId: number, args: WorkspaceCleanupScanArgs): string {
+  return `${senderId}\0${args.includeAllWorkspaces === true}`
+}
 
 export function registerWorkspaceCleanupHandlers(
   store: Store,
@@ -65,12 +72,13 @@ export function registerWorkspaceCleanupHandlers(
         activeScans.set(scanKey, controller)
       }
       const targeted = hasTargetedWorkspaceCleanupScan(scanArgs)
+      const broadScanKey = getBroadScanModeKey(sender.id, scanArgs)
       if (!targeted) {
-        // Why: two broad fleet scans from one renderer can only be a refresh
-        // race; running both doubles git subprocess and fs load for a result
-        // the renderer will discard.
-        broadScanControllersBySender.get(sender.id)?.abort()
-        broadScanControllersBySender.set(sender.id, controller)
+        // Why: two same-mode broad fleet scans from one renderer can only be a
+        // refresh race; running both doubles git subprocess and fs load for a
+        // result the renderer will discard.
+        broadScanControllersBySenderMode.get(broadScanKey)?.abort()
+        broadScanControllersBySenderMode.set(broadScanKey, controller)
       }
       // Why: a window close or reload must stop the fleet scan's git and fs
       // work, not merely mute its progress events.
@@ -101,8 +109,8 @@ export function registerWorkspaceCleanupHandlers(
         if (scanKey && activeScans.get(scanKey) === controller) {
           activeScans.delete(scanKey)
         }
-        if (!targeted && broadScanControllersBySender.get(sender.id) === controller) {
-          broadScanControllersBySender.delete(sender.id)
+        if (!targeted && broadScanControllersBySenderMode.get(broadScanKey) === controller) {
+          broadScanControllersBySenderMode.delete(broadScanKey)
         }
       }
     }
