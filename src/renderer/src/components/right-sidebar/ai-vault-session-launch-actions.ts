@@ -86,7 +86,8 @@ export function useAiVaultSessionLaunchActions({
 
   const handleResume = useCallback(
     (session: AiVaultSession, targetWorktreeId?: string): void => {
-      if (activateAiVaultStructuredSession(session)) {
+      if (session.structuredSession) {
+        void activateAiVaultStructuredSession(session)
         return
       }
       const targetId = resolveAiVaultSessionLaunchTargetOrNotify({

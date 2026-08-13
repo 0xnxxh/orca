@@ -127,6 +127,10 @@ export function hasPersistedStructuredAgentSessionTurn(
 
 export type StructuredAgentSessionProjectedStatus = 'working' | 'attention' | 'idle'
 
+export function structuredAgentSessionTabId(sessionId: string): string {
+  return `structured-agent-session-${sessionId}`
+}
+
 export function projectStructuredAgentSessionStatus(
   items: readonly AgentJournalRenderItem[]
 ): StructuredAgentSessionProjectedStatus {

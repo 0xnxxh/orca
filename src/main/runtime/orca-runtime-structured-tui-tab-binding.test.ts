@@ -45,7 +45,32 @@ function notifier(revealTerminalSession: ReturnType<typeof vi.fn>) {
   }
 }
 
+function structuredTabNotifier() {
+  return {
+    ...notifier(vi.fn()),
+    focusEditorTab: vi.fn()
+  }
+}
+
 describe('structured TUI launch tab binding', () => {
+  it('reveals the structured chat tab when reverse handoff completes', () => {
+    const runtime = new OrcaRuntimeService()
+    const targetNotifier = structuredTabNotifier()
+    runtime.setNotifier(targetNotifier as never)
+    const transport = (
+      runtime as unknown as {
+        createStructuredAgentSessionHandoffTransport(): StructuredAgentSessionHandoffTransport
+      }
+    ).createStructuredAgentSessionHandoffTransport()
+
+    transport.revealNativeSession?.({ workspaceId: WORKTREE_ID, sessionId: 'session-1' })
+
+    expect(targetNotifier.focusEditorTab).toHaveBeenCalledWith(
+      'structured-agent-session-session-1',
+      WORKTREE_ID
+    )
+  })
+
   it('recovers a live TUI from durable owner inventory in a fresh runtime', async () => {
     const namespace = {
       machine: 'native:test',

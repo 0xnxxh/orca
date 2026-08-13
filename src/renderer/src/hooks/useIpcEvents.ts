@@ -1867,6 +1867,9 @@ export function useIpcEvents(): void {
           (item) => item.id === tabId
         )
         const browserTarget = resolveBrowserSessionTabTarget(store, worktreeId, tabId)
+        if (tab?.contentType === 'agent-session' && store.activeWorktreeId !== worktreeId) {
+          return
+        }
         if (!tab) {
           if (browserTarget) {
             // Why: older/mobile fallback snapshots identify browser tabs by workspace id when no unified tab wrapper exists.
@@ -1884,7 +1887,9 @@ export function useIpcEvents(): void {
         store.setActiveView('terminal')
         store.focusGroup(worktreeId, tab.groupId)
         store.activateTab(tab.id)
-        if (browserTarget) {
+        if (tab.contentType === 'agent-session') {
+          store.setActiveTabType('agent-session')
+        } else if (browserTarget) {
           // Why: browser tabs need their own active-page state, not the editor file activation path.
           store.setActiveBrowserTab(browserTarget.workspaceId)
           store.setActiveTabType('browser')

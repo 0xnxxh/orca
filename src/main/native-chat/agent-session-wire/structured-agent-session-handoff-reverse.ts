@@ -114,6 +114,10 @@ export async function handoffStructuredSessionToNative(
     throw error
   }
   context.releaseOwner(sessionId)
+  deps.transport?.revealNativeSession?.({
+    workspaceId: record.location.workspaceId,
+    sessionId
+  })
   context.setStatus(sessionId, {
     owner: 'native',
     direction: null,

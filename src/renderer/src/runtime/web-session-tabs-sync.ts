@@ -75,6 +75,7 @@ import {
   shouldSkipWebRuntimeWakeTerminalRespawn
 } from './web-runtime-wake-terminal-respawn'
 import { isRuntimeSubscriptionReplayResponse } from '../../../shared/runtime-subscription-replay'
+import { structuredAgentSessionTabId } from '../../../shared/structured-agent-session-projection'
 import { queueAcceptedWebSessionTerminalSnapshot } from './web-session-terminal-handle-events'
 import { recoverWebSessionTerminalOrphansBeforeApply } from './web-session-terminal-orphan-recovery'
 import {
@@ -836,7 +837,7 @@ function buildMirroredAgentTabs(
   now: number
 ): MirroredAgentTab[] {
   return snapshot.tabs.filter(isAgentSessionTab).map((tab, index) => {
-    const localId = `structured-agent-session-${tab.sessionId}`
+    const localId = structuredAgentSessionTabId(tab.sessionId)
     const existing = currentUnifiedTabs.find(
       (candidate) => candidate.contentType === 'agent-session' && candidate.id === localId
     )
