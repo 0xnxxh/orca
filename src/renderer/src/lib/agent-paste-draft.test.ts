@@ -286,7 +286,7 @@ describe('pasteDraftWhenAgentReady', () => {
     expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
 
     // Only the hard timeout (and failed process check) resolves it — to false.
-    await vi.advanceTimersByTimeAsync(20000)
+    await vi.advanceTimersByTimeAsync(8000)
     await flushMicrotasks(5)
     await vi.advanceTimersByTimeAsync(1000)
     await expect(promise).resolves.toBe(false)
@@ -309,7 +309,33 @@ describe('pasteDraftWhenAgentReady', () => {
     await flushMicrotasks()
 
     testState.ptyObserver?.(DECSET_BRACKETED_PASTE)
-    await vi.advanceTimersByTimeAsync(20000)
+    await vi.advanceTimersByTimeAsync(8000)
+
+    await expect(promise).resolves.toBe(true)
+    expect(testState.sendRuntimePtyInputVerified).toHaveBeenCalledWith(
+      {},
+      'pty-1',
+      PASTED_ISSUE_URL
+    )
+  })
+
+  it('keeps the existing fallback budget for unrelated markerless agents', async () => {
+    testState.inspectRuntimeTerminalProcess.mockResolvedValue({
+      foregroundProcess: 'claude',
+      hasChildProcesses: false
+    })
+    const promise = pasteDraftWhenAgentReady({
+      tabId: 'tab-1',
+      content: ISSUE_URL,
+      agent: 'claude',
+      forcePaste: true
+    })
+    await flushMicrotasks()
+
+    await vi.advanceTimersByTimeAsync(7999)
+    expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await flushMicrotasks(5)
 
     await expect(promise).resolves.toBe(true)
     expect(testState.sendRuntimePtyInputVerified).toHaveBeenCalledWith(

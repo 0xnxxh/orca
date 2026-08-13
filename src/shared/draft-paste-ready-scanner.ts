@@ -21,22 +21,6 @@ export type DraftPasteReadyScanResult = {
 }
 
 /**
- * Backstop for every draft-paste delivery path: how long to wait for a ready
- * signal before falling back to a best-effort, ownership-checked paste.
- *
- * One budget for all signals. The value is a property of how slowly an agent can
- * boot, not of how readiness is detected — a marker, a quiet window, and a
- * process check all wait on the same cold start. First-run codex on a cold app
- * can take >8s to mount its composer, past which the old budget gave up and
- * dropped the launch prompt (STA-3367).
- *
- * Lives beside the scanner so all three delivery owners (renderer tab paste,
- * renderer startup paste, main runtime startup paste) share one policy and
- * cannot drift apart.
- */
-export const DRAFT_PASTE_READY_TIMEOUT_MS = 20000
-
-/**
  * Pure, incremental scanner shared by the renderer and main-process draft-paste
  * readiness waiters so the two delivery paths (desktop-local vs runtime/SSH/
  * remote) cannot drift. It only parses the PTY byte stream; timers, the PTY

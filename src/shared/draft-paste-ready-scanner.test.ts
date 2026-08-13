@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  createDraftPasteReadyScanner,
-  DRAFT_PASTE_READY_TIMEOUT_MS
-} from './draft-paste-ready-scanner'
+import { createDraftPasteReadyScanner } from './draft-paste-ready-scanner'
 
 const DECSET_BRACKETED_PASTE = '\x1b[?2004h'
 const SHOW_CURSOR = '\x1b[?25h'
@@ -137,13 +134,5 @@ describe('createDraftPasteReadyScanner', () => {
         armQuietTimer: false
       })
     })
-  })
-})
-
-describe('DRAFT_PASTE_READY_TIMEOUT_MS', () => {
-  it('leaves room for a cold-boot composer (STA-3367)', () => {
-    // Why: the reported drop was a first-run codex composer mounting past the old
-    // 8s budget. Pinned once here; every delivery path imports rather than restates it.
-    expect(DRAFT_PASTE_READY_TIMEOUT_MS).toBe(20000)
   })
 })

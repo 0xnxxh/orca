@@ -304,10 +304,7 @@ import {
 import type { SetupSplitDirection, TuiAgent } from '../../../../shared/types'
 import { isWslUncPath } from '../../../../shared/wsl-paths'
 import { isTuiAgent, TUI_AGENT_CONFIG } from '../../../../shared/tui-agent-config'
-import {
-  createDraftPasteReadyScanner,
-  DRAFT_PASTE_READY_TIMEOUT_MS
-} from '../../../../shared/draft-paste-ready-scanner'
+import { createDraftPasteReadyScanner } from '../../../../shared/draft-paste-ready-scanner'
 import { sendAgentDraftPasteContent } from '@/lib/agent-draft-paste-content'
 import { writeTerminalPastePtyInput } from './terminal-pty-paste-writer'
 import {
@@ -346,6 +343,7 @@ const STARTUP_DRAFT_PASTE_QUIET_MS = 1500
 // contain private repo/user names; the terminal itself shows where it opened.
 export const STARTUP_CWD_FALLBACK_NOTICE =
   '\r\n[Orca opened this terminal at the workspace root because its saved start folder no longer exists.]\r\n'
+const STARTUP_DRAFT_PASTE_TIMEOUT_MS = 8000
 const HIDDEN_OUTPUT_RESTORE_PENDING_CHARS = 512 * 1024
 const HIDDEN_OUTPUT_RESTORE_DEFERRED_RETRY_MS = 50
 const HIDDEN_OUTPUT_RESTORE_DEFERRED_RETRY_MAX = 3
@@ -4785,10 +4783,10 @@ export function connectPanePty(
       }
       schedulePendingStartupCommandDelivery()
     }
-    const startupDraftReadySignal =
-      startupDraftAgentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
     const startupDraftReadyScanner = ownsStartupDraftPaste
-      ? createDraftPasteReadyScanner(startupDraftReadySignal)
+      ? createDraftPasteReadyScanner(
+          startupDraftAgentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
+        )
       : null
     let startupDraftReadinessArmed = false
     let startupDraftPasteSettled = !ownsStartupDraftPaste
@@ -4883,7 +4881,7 @@ export function connectPanePty(
       startupDraftHardTimer = setTimeout(() => {
         startupDraftHardTimer = null
         void deliverStartupDraftIfAgentOwnsPty()
-      }, DRAFT_PASTE_READY_TIMEOUT_MS)
+      }, STARTUP_DRAFT_PASTE_TIMEOUT_MS)
     }
     const armStartupDraftQuietTimer = (): void => {
       if (!startupDraftReadyScanner || startupDraftPasteSettled) {
