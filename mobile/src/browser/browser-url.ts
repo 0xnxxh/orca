@@ -38,7 +38,7 @@ export function compactMobileBrowserFileAddress(value: string): string | null {
       return null
     }
     const segments = url.pathname.split('/').filter(Boolean)
-    const encodedFilename = segments[segments.length - 1]
+    const encodedFilename = segments.at(-1)
     if (!encodedFilename) {
       return 'file:'
     }
