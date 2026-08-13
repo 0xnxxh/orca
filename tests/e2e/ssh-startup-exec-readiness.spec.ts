@@ -14,6 +14,7 @@ import {
   bashExecProfileContents,
   closeStartupExecTerminal,
   createStartupExecTerminal,
+  expectStartupCommandQueuedByCompatibilityFallback,
   expectStartupExecRecovery
 } from './helpers/startup-exec-readiness-oracle'
 import { ensureTerminalVisible, waitForActiveWorktree, waitForSessionReady } from './helpers/store'
@@ -67,6 +68,7 @@ test.describe('startup exec readiness over live SSH', () => {
           { timeout: 30_000 }
         )
         .toBe('ready')
+      await expectStartupCommandQueuedByCompatibilityFallback(orcaPage, created)
       expect(
         execDockerSshRelayTargetControlCommand(target, `test ! -e '${ledgerPath}' && echo pending`)
       ).toBe('pending')

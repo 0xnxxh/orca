@@ -28,7 +28,7 @@
         "https://linear.app/stably/issue/STA-4067",
         "https://github.com/stablyai/orca/pull/14161"
       ],
-      "invariant": "Before user startup files run, the wrapper publishes its shell PID. If a later exec discards the ready marker, prompt fallback releases queued startup input only after the launched shell's actual executable image with that exact PID owns the PTY foreground, emits its post-hook line-editor enable sequence, and exposes zle/readline termios; startup reads, line-init hooks, child foreground processes, and non-shell readline replacements cannot trigger early fallback release.",
+      "invariant": "Before user startup files run, the wrapper publishes its shell PID. If a later exec discards the ready marker, proof-based recovery releases queued startup input only after the launched shell's actual executable image with that exact PID owns the PTY foreground, emits its post-hook line-editor enable sequence, and exposes zle/readline termios; startup reads, line-init hooks, child foreground processes, and non-shell readline replacements cannot trigger that proof. The existing bounded compatibility timeout may enqueue input without proof, but must not publish readiness, lose or duplicate that input across reconnect, or execute it before the replacement shell can accept it.",
       "oracle": "Run the real generated wrappers under node-pty with disposable zsh and bash startup files. Plain and exec -a replacement shells must receive one queued command at their first completed line editor without waiting for the 15-second timeout. The identical oracle must time out without the startup identity and prompt fallback. Same-shell reads, child-process reads, a blocking zle-line-init hook, sqlite3, and sqlite3 renamed zsh must not trigger prompt fallback. Relay owner coverage must strip the identity and release through the same prompt contract.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts src/main/line-editor-ready-output-scanner.test.ts src/main/shell-startup-identity-scanner.test.ts src/main/shell-prompt-readiness-probe.test.ts src/shared/pty-slave-line-discipline-echo.test.ts src/shared/shell-process-readiness.test.ts src/main/daemon/session.test.ts src/main/daemon/shell-ready.test.ts src/main/providers/local-pty-shell-ready.test.ts src/main/providers/local-pty-provider.test.ts src/relay/pty-shell-launch.test.ts src/relay/pty-handler.test.ts",
@@ -75,7 +75,7 @@
         {
           "file": "tests/e2e/ssh-startup-exec-readiness.spec.ts",
           "assertions": [
-            "a Docker Linux OpenSSH/Bash replacement shell accepts the startup command exactly once after a readiness-time reconnect",
+            "a Docker Linux OpenSSH/Bash replacement shell retains one compatibility-fallback input across reconnect without executing it before the blocked replacement can accept it",
             "the owning terminal handle and raw PTY identity remain singular and stable",
             "painted output, authoritative terminal output, and the first interactive input each appear exactly once"
           ]
@@ -105,7 +105,7 @@
           "command": "ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/ssh-startup-exec-readiness.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
           "result": "passed",
           "durationSeconds": 17,
-          "summary": "The live OpenSSH/Bash relay journey passed after a bounded disconnect/reconnect during blocked rc-file exec readiness, with exact-once startup output/input and stable pane plus owner PTY identities."
+          "summary": "The live OpenSSH/Bash relay journey crossed the bounded compatibility fallback while rc-file exec was blocked, proved one queued command echo with no command execution, then passed a disconnect/reconnect with exact-once startup output/input and stable pane plus owner PTY identities."
         },
         {
           "date": "2026-08-12",
@@ -127,7 +127,7 @@
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "Daemon oracle SHA-256 b13b08006a38b2adc2acb51ae9342909514e55ab4822fac4fbb76cd49b344cc6 was byte-identical across runs: affected baseline 09ec516ae5 failed 4 of 14, while latest main bc2e30000b and candidate 96dd696886 passed 14 of 14. The unchanged live SSH oracle failed on latest main and with the candidate ownership change reverted because the ledger stayed pending after reconnect, then passed on the candidate in 17.2 seconds with exact-once output/input and stable PTY identity."
+        "evidence": "Daemon oracle SHA-256 b13b08006a38b2adc2acb51ae9342909514e55ab4822fac4fbb76cd49b344cc6 was byte-identical across runs: affected baseline 09ec516ae5 failed 4 of 14, while pre-PR main bc2e30000b and this PR passed 14 of 14. The unchanged live SSH oracle failed on bc2e30000b and with the ownership change reverted because the ledger stayed pending after reconnect, then passed on this PR. The exact reviewed base is 150cc6f50c; its intervening daemon scrollback change does not alter startup delivery."
       },
       "performanceBudget": {
         "required": true,

@@ -246,6 +246,19 @@ export async function expectStartupExecRecovery(
   expect(await waitForActivePanePtyId(page, 30_000)).toBe(created.panePtyId)
 }
 
+export async function expectStartupCommandQueuedByCompatibilityFallback(
+  page: Page,
+  created: StartupExecTerminal
+): Promise<void> {
+  const [commandEchoMarker] = splitMarker(created.startupMarker)
+  await expect
+    .poll(() => readTerminal(page, created.terminal), { timeout: RECOVERY_DEADLINE_MS })
+    .toMatchObject({ tail: expect.arrayContaining([expect.stringContaining(commandEchoMarker)]) })
+  expect(
+    count((await readTerminal(page, created.terminal)).tail.join('\n'), commandEchoMarker)
+  ).toBe(1)
+}
+
 export async function closeStartupExecTerminal(page: Page, terminal: string | null): Promise<void> {
   if (terminal) {
     await callStartupExecRuntime(page, 'terminal.closeTab', { terminal }).catch(() => undefined)
