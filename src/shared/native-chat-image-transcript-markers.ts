@@ -3,8 +3,8 @@ import { isTextBlock, type NativeChatBlock, type NativeChatMessage } from './nat
 const IMAGE_SOURCE_MARKER = /^\[Image:\s*source:\s*(.+?)\]\s*$/
 const IMAGE_PROMPT_MARKER = /\[Image #\d+\]/
 const IMAGE_PROMPT_MARKERS = /\[Image #\d+\]/g
-const IMAGE_PROMPT_MARKER_AT_START = /^\[Image #\d+\]/
-const IMAGE_PROMPT_MARKER_AT_END = /\[Image #\d+\]$/
+const IMAGE_PROMPT_MARKER_AT_START = /^[^\S\r\n]*\[Image #\d+\]/
+const IMAGE_PROMPT_MARKER_AT_END = /\[Image #\d+\][^\S\r\n]*$/
 const HORIZONTAL_WHITESPACE_START = /^[^\S\r\n]+/
 const HORIZONTAL_WHITESPACE_END = /[^\S\r\n]+$/
 

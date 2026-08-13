@@ -44,8 +44,10 @@ describe('normalizeImageTranscriptMessages', () => {
   it.each([
     ['[Image #1] describe this', 'describe this'],
     ['[Image #1]\t  describe this', 'describe this'],
+    [' \t[Image #1] describe this', 'describe this'],
     ['describe this [Image #1]', 'describe this'],
     ['describe this  \t[Image #1]', 'describe this'],
+    ['describe this [Image #1]\t  ', 'describe this'],
     ['describe [Image #1] this', 'describe  this'],
     ['describe  [Image #1]\t this', 'describe  \t this'],
     ['describe[Image #1]\t  this', 'describe\t  this'],
