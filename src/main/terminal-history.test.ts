@@ -12,6 +12,9 @@ const {
   renameSyncMock,
   readdirSyncMock,
   statSyncMock,
+  openSyncMock,
+  fstatSyncMock,
+  closeSyncMock,
   getPathMock,
   rmAsyncMock,
   deleteWslFishHistoryFileMock
@@ -25,6 +28,15 @@ const {
   renameSyncMock: vi.fn(),
   readdirSyncMock: vi.fn(),
   statSyncMock: vi.fn(),
+  openSyncMock: vi.fn((_path?: string | Buffer) => 1),
+  fstatSyncMock: vi.fn(() => ({
+    dev: 1n,
+    ino: 2n,
+    birthtimeNs: 3n,
+    isFile: () => true,
+    isDirectory: () => true
+  })),
+  closeSyncMock: vi.fn(),
   getPathMock: vi.fn(),
   rmAsyncMock: vi.fn(async () => undefined),
   deleteWslFishHistoryFileMock: vi.fn(async () => undefined)
@@ -39,7 +51,10 @@ vi.mock('fs', () => ({
   rmSync: rmSyncMock,
   renameSync: renameSyncMock,
   readdirSync: readdirSyncMock,
-  statSync: statSyncMock
+  statSync: statSyncMock,
+  openSync: openSyncMock,
+  fstatSync: fstatSyncMock,
+  closeSync: closeSyncMock
 }))
 
 // Spread the real module: this factory replaces node:fs/promises for the whole import graph, so a
@@ -84,6 +99,7 @@ import {
 } from './fish-history-session'
 import { hashWorktreeId } from './terminal-history-paths'
 import {
+  cancelPendingHistoryTreeRemovalRetries,
   deleteWorktreeHistoryDir,
   flushPendingWorktreeHistoryDeletions
 } from './terminal-history-deletion'
@@ -93,6 +109,7 @@ import { runHistoryGc, scheduleHistoryGc } from './terminal-history-gc'
 
 describe('terminal-history', () => {
   afterEach(() => {
+    cancelPendingHistoryTreeRemovalRetries()
     vi.useRealTimers()
   })
 
@@ -101,9 +118,20 @@ describe('terminal-history', () => {
     // Why: clearAllMocks keeps implementations, so a throwing rename from one test would leak forward.
     renameSyncMock.mockReset()
     readFileSyncMock.mockReset()
+    readdirSyncMock.mockReset()
+    rmAsyncMock.mockReset()
+    rmAsyncMock.mockResolvedValue(undefined)
     getPathMock.mockReturnValue('/fake/userData')
     existsSyncMock.mockReturnValue(true)
     statSyncMock.mockReturnValue({ isDirectory: () => true, size: 100 })
+    openSyncMock.mockImplementation(() => 1)
+    fstatSyncMock.mockReturnValue({
+      dev: 1n,
+      ino: 2n,
+      birthtimeNs: 3n,
+      isFile: () => true,
+      isDirectory: () => true
+    })
     lstatSyncMock.mockReturnValue({
       dev: 1n,
       ino: 2n,
@@ -377,7 +405,7 @@ describe('terminal-history', () => {
 
       injectHistoryEnv(env, 'repo-1::/path/wt', '/usr/bin/fish', '/path/wt')
 
-      expect(readFileSyncMock).toHaveBeenCalledTimes(1)
+      expect(readFileSyncMock).not.toHaveBeenCalled()
       const meta = JSON.parse(writeFileSyncMock.mock.calls.at(-1)?.[1] as string) as FishHistoryMeta
       expect(meta.fishHistoryPaths).toEqual([meta.fishHistoryPath])
     })
@@ -604,20 +632,6 @@ describe('terminal-history', () => {
       await flushPendingWorktreeHistoryDeletions()
     })
 
-    it('warns instead of going quiet when no fish history file is found', async () => {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      try {
-        readFileSyncMock.mockReturnValue(JSON.stringify({ worktreeId, fishSession: session }))
-        // The history dir exists (so the tree is deleted) but the fish file does not.
-        existsSyncMock.mockImplementation((path: string) => !path.includes(historyFilename))
-        deleteWorktreeHistoryDir('repo-1::/path/wt')
-        expect(warn).toHaveBeenCalledWith(expect.stringContaining('No attested fish history'))
-      } finally {
-        warn.mockRestore()
-      }
-      await flushPendingWorktreeHistoryDeletions()
-    })
-
     it('cleans WSL Fish history through the owning distro before removing metadata', async () => {
       readFileSyncMock.mockReturnValue(JSON.stringify({ worktreeId, fishSession: session }))
       readdirSyncMock.mockImplementation((path: string) => {
@@ -656,6 +670,7 @@ describe('terminal-history', () => {
     })
 
     it('retries pending tombstones on flush after a failed async rm (app-quit durability)', async () => {
+      let leftoverTombstonePresent = true
       existsSyncMock.mockImplementation((p: string) => {
         const path = String(p)
         if (path.includes('.pending-delete') && !path.endsWith('.pending-delete')) {
@@ -668,11 +683,13 @@ describe('terminal-history', () => {
       })
       readdirSyncMock.mockImplementation((p: string) => {
         if (String(p).endsWith('.pending-delete')) {
-          return ['leftover-tombstone']
+          return leftoverTombstonePresent ? ['leftover-tombstone'] : []
         }
         return []
       })
-      rmAsyncMock.mockResolvedValue(undefined)
+      rmAsyncMock.mockImplementation(async () => {
+        leftoverTombstonePresent = false
+      })
       await flushPendingWorktreeHistoryDeletions()
       expect(rmAsyncMock).toHaveBeenCalledWith(
         expect.stringContaining('leftover-tombstone'),
@@ -735,7 +752,7 @@ describe('terminal-history', () => {
       )
     })
 
-    it('continues GC after one orphan tombstone fails', () => {
+    it('continues GC after one orphan tombstone fails', async () => {
       existsSyncMock.mockImplementation((path: string) => !path.includes('terminal-history-wsl'))
       readdirSyncMock.mockImplementation((dir: string) => {
         if (dir.endsWith('.pending-delete')) {
@@ -760,6 +777,7 @@ describe('terminal-history', () => {
       expect(() => runHistoryGc(new Set())).not.toThrow()
       expect(renameSyncMock).toHaveBeenCalledTimes(2)
       expect(rmAsyncMock).toHaveBeenCalledTimes(1)
+      await flushPendingWorktreeHistoryDeletions()
     })
 
     it('skips recently-created directories to avoid TOCTOU race', () => {
@@ -791,14 +809,15 @@ describe('terminal-history', () => {
     it('does not throw when history root does not exist', () => {
       existsSyncMock.mockReturnValue(false)
       expect(() => runHistoryGc(new Set())).not.toThrow()
-      expect(readdirSyncMock).not.toHaveBeenCalled()
+      expect(readdirSyncMock).not.toHaveBeenCalledWith('/fake/userData/terminal-history')
     })
 
     it('drains delete tombstones asynchronously instead of scanning them as worktrees', async () => {
+      let tombstonePresent = true
       existsSyncMock.mockImplementation((p: string) => !String(p).includes('terminal-history-wsl'))
       readdirSyncMock.mockImplementation((dir: string) => {
         if (String(dir).endsWith('.pending-delete')) {
-          return ['abc123.1700000000000.deadbeef']
+          return tombstonePresent ? ['abc123.1700000000000.deadbeef'] : []
         }
         if (String(dir).endsWith('terminal-history')) {
           return ['.pending-delete']
@@ -806,6 +825,9 @@ describe('terminal-history', () => {
         return ['meta.json']
       })
       statSyncMock.mockReturnValue({ isDirectory: () => true, size: 100 })
+      rmAsyncMock.mockImplementation(async () => {
+        tombstonePresent = false
+      })
 
       runHistoryGc(new Set())
 

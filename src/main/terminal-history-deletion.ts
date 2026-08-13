@@ -12,6 +12,7 @@ import { hashWorktreeId } from './terminal-history-id'
 import { deleteWslFishHistoryFile } from './wsl-fish-history-cleanup'
 
 const pendingHistoryTreeRemovals = new Map<string, Promise<void>>()
+export const MAX_PENDING_HISTORY_TREE_REMOVALS = 64
 // Why: a tombstone that fails once (Windows EBUSY under AV) would otherwise sit on disk for the whole
 // desktop session — only the next launch re-queues it. Bounded so a genuinely stuck tree stops retrying.
 export const HISTORY_TREE_REMOVAL_RETRY_DELAYS_MS = [30_000, 120_000]
@@ -27,6 +28,10 @@ function wslDistroForHistoryRoot(historyRoot: string): string | undefined {
 
 function getPendingDeleteRoot(historyRoot: string): string {
   return join(historyRoot, PENDING_DELETE_DIR_NAME)
+}
+
+function historyRootForTombstone(dir: string): string {
+  return dirname(dirname(dir))
 }
 
 /** Move a history tree to a pending-delete tombstone (metadata-only) so the critical path never walks it. */
@@ -77,15 +82,22 @@ function scheduleHistoryTreeRemoval(dir: string, wslDistro?: string): void {
   if (pendingHistoryTreeRemovals.has(dir)) {
     return
   }
-  // A rescan (GC / startup drain) hitting the same tombstone supersedes its pending retry.
+  // Leave excess tombstones on disk; admission is intentionally bounded.
+  if (
+    pendingHistoryTreeRemovals.size + historyTreeRemovalRetryTimers.size >=
+    MAX_PENDING_HISTORY_TREE_REMOVALS
+  ) {
+    return
+  }
+  // A rescan must not cancel a delayed retry for a real failure.
   const pendingRetry = historyTreeRemovalRetryTimers.get(dir)
   if (pendingRetry) {
-    clearTimeout(pendingRetry)
-    historyTreeRemovalRetryTimers.delete(dir)
+    return
   }
   if (wslDistro) {
     wslDistroByTombstone.set(dir, wslDistro)
   }
+  let removalSucceeded = false
   const cleanupDistro = wslDistroByTombstone.get(dir)
   const meta = cleanupDistro ? readHistoryMeta(dir) : null
   const cleanup =
@@ -94,10 +106,12 @@ function scheduleHistoryTreeRemoval(dir: string, wslDistro?: string): void {
           console.warn(
             `[pty:history] Failed to delete WSL fish history: ${err instanceof Error ? err.message : String(err)}`
           )
+          throw err
         })
       : null
   const removal = (cleanup ? cleanup.then(() => removeHostTree(dir)) : removeHostTree(dir))
     .then(() => {
+      removalSucceeded = true
       historyTreeRemovalAttempts.delete(dir)
       wslDistroByTombstone.delete(dir)
     })
@@ -110,6 +124,9 @@ function scheduleHistoryTreeRemoval(dir: string, wslDistro?: string): void {
     .finally(() => {
       if (pendingHistoryTreeRemovals.get(dir) === removal) {
         pendingHistoryTreeRemovals.delete(dir)
+      }
+      if (removalSucceeded) {
+        schedulePendingHistoryTreeRemovals(historyRootForTombstone(dir))
       }
     })
   pendingHistoryTreeRemovals.set(dir, removal)

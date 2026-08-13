@@ -1,4 +1,12 @@
-import { mkdirSync, rmSync } from 'node:fs'
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  unlinkSync
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { hashWorktreeId } from '../main/terminal-history-id'
@@ -29,11 +37,42 @@ export function injectRelayHistoryEnv(
     return null
   }
   try {
-    const dir = join(HISTORY_ROOT, hashWorktreeId(worktreeId))
-    mkdirSync(dir, { recursive: true, mode: 0o700 })
-    const path = join(dir, filename)
+    mkdirSync(HISTORY_ROOT, { recursive: true, mode: 0o700 })
+    const rootStat = lstatSync(HISTORY_ROOT)
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+      return null
+    }
+    const path = join(HISTORY_ROOT, `${hashWorktreeId(worktreeId)}-${filename}`)
+    let existing: ReturnType<typeof lstatSync> | null = null
+    try {
+      const stat = lstatSync(path, { bigint: true })
+      if (stat.isSymbolicLink() || !stat.isFile()) {
+        return null
+      }
+      existing = stat
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        return null
+      }
+    }
+    const fd = openSync(
+      path,
+      fsConstants.O_RDWR |
+        fsConstants.O_CREAT |
+        (process.platform === 'win32' ? 0 : fsConstants.O_NOFOLLOW),
+      0o600
+    )
+    const actual = fstatSync(fd, { bigint: true })
+    if (
+      !actual.isFile() ||
+      (existing && (actual.dev !== existing.dev || actual.ino !== existing.ino))
+    ) {
+      closeSync(fd)
+      return null
+    }
+    closeSync(fd)
     env.HISTFILE = path
-    return dir
+    return HISTORY_ROOT
   } catch {
     return null
   }
@@ -41,7 +80,22 @@ export function injectRelayHistoryEnv(
 
 export function deleteRelayHistory(worktreeId: string): void {
   try {
-    rmSync(join(HISTORY_ROOT, hashWorktreeId(worktreeId)), { recursive: true, force: true })
+    const rootStat = lstatSync(HISTORY_ROOT)
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+      return
+    }
+    for (const filename of ['bash_history', 'zsh_history']) {
+      const path = join(HISTORY_ROOT, `${hashWorktreeId(worktreeId)}-${filename}`)
+      try {
+        if (!lstatSync(path).isSymbolicLink()) {
+          unlinkSync(path)
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw error
+        }
+      }
+    }
   } catch (error) {
     console.warn(
       `[pty:history] Failed to delete relay shell history: ${error instanceof Error ? error.message : String(error)}`

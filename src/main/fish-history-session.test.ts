@@ -9,7 +9,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   attestFishHistoryLocation,
@@ -103,5 +103,53 @@ describe('fish history location attestation', () => {
     deleteFishHistoryFile(session, attestationPath)
 
     expect(readFileSync(owned, 'utf8')).toBe('replacement')
+  })
+
+  it('rejects a final history symlink replacement', () => {
+    const dataRoot = join(root, 'data')
+    const owned = historyPath(dataRoot)
+    attestFishHistoryLocation(attestationPath, session, owned)
+    const target = join(root, 'target-history')
+    writeFileSync(target, 'unrelated')
+    rmSync(owned)
+    symlinkSync(target, owned)
+
+    deleteFishHistoryFile(session, attestationPath)
+
+    expect(readFileSync(target, 'utf8')).toBe('unrelated')
+  })
+
+  it('rejects a replacement regular file with a different identity', () => {
+    const dataRoot = join(root, 'data')
+    const owned = historyPath(dataRoot)
+    attestFishHistoryLocation(attestationPath, session, owned)
+    rmSync(owned)
+    writeFileSync(owned, 'replacement')
+
+    deleteFishHistoryFile(session, attestationPath)
+
+    expect(readFileSync(owned, 'utf8')).toBe('replacement')
+  })
+
+  it('fails closed for version-one attestations without file identity', () => {
+    const dataRoot = join(root, 'data')
+    const owned = historyPath(dataRoot)
+    mkdirSync(dirname(owned), { recursive: true })
+    writeFileSync(owned, 'history')
+    mkdirSync(dirname(attestationPath), { recursive: true })
+    writeFileSync(
+      attestationPath,
+      JSON.stringify({
+        version: 1,
+        fishSession: session,
+        locations: [
+          { path: owned, directoryDevice: '1', directoryInode: '1', directoryBirthtimeNs: '1' }
+        ]
+      })
+    )
+
+    deleteFishHistoryFile(session, attestationPath)
+
+    expect(readFileSync(owned, 'utf8')).toBe('history')
   })
 })
