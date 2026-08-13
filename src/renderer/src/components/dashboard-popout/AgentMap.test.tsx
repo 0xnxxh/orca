@@ -162,6 +162,20 @@ describe('AgentMap', () => {
     expect(ring).not.toHaveClass('is-open')
   })
 
+  it('counts acknowledged completions as done in worktree details', () => {
+    renderMap([
+      card({
+        bucket: 'idle',
+        dotState: 'done',
+        unseen: false,
+        finishedAt: NOW - 60_000
+      })
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Open Agent map worktree details' }))
+
+    expect(screen.getByText('1 agent · 0 active · 1 done')).toBeInTheDocument()
+  })
+
   it('starts a new agent from the worktree details picker', () => {
     const onSpawnAgent = vi.fn()
     renderMap([card()], {

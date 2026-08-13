@@ -35,17 +35,11 @@ describe('Agent Map glow performance boundary', () => {
     // 2 base + 4 agent statuses + 4 worktree statuses.
     expect(glowRules).toHaveLength(10)
     for (const rule of glowRules ?? []) {
-      // Keyframes and filters stay banned outright: they repaint the halo continuously,
-      // and the halo is drawn once per active node across the whole fleet.
-      expect(rule).not.toMatch(/filter:|animation:/)
-      // A transition is allowed, but only to cross-fade the status colour. Anything that
-      // animates geometry (width, transform, opacity) would repaint on every frame of a
-      // change for every active node, which is what this boundary exists to prevent.
-      const transition = rule.match(/transition:([^;]+);/)?.[1]
-      if (transition !== undefined) {
-        expect(transition.trim()).toMatch(/^stroke \d+ms ease$/)
-      }
+      expect(rule).not.toMatch(/filter:|animation:|transition:/)
     }
+
+    const markRule = css.match(/\.agent-map-agent-mark\s*\{[^}]+\}/s)?.[0]
+    expect(markRule).not.toMatch(/filter:|animation:|transition:/)
   })
 
   it('confines the finish flare to nodes inside the recency window', () => {
@@ -53,10 +47,9 @@ describe('Agent Map glow performance boundary', () => {
     const metadata = source('agent-map-node-metadata.ts')
 
     // The flare is the one animated element on an agent node, so it must stay gated on
-    // `finishedRecently` rather than on the status — otherwise every done agent on the
-    // map animates forever and the glow budget above is meaningless.
+    // the globally capped recent-finish set rather than on status alone.
     expect(component.match(/data-agent-map-agent-finish-flare/g)).toHaveLength(1)
-    expect(component).toMatch(/agent\.finishedRecently\s*&&/)
+    expect(component).toMatch(/recentFinishPaneKeys\.has\(agent\.card\.paneKey\)\s*&&/)
     expect(component).not.toMatch(/<filter|filter=/)
 
     const css = source('agent-map.css')

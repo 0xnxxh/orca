@@ -30,26 +30,51 @@ export function agentMapNodeStatus(card: DashboardCard): AgentMapNodeStatus {
  *  Must stay in step with the `agent-map-finish-flare` duration in `agent-map.css`, or
  *  the element unmounts mid-ripple; the glow performance test asserts the two match. */
 export const AGENT_MAP_FINISH_FLARE_MS = 1_400
+// Static completion emphasis remains uncapped; this bounds animated SVG paint only.
+export const AGENT_MAP_MAX_CONCURRENT_FINISH_FLARES = 4
 
-/** Gates the flare element so only the handful of nodes that just changed carry animated
- *  paint work — the rest of the fleet stays static, per the glow performance boundary.
- *
- *  Deliberately reads the wall clock instead of the map's `now` prop: `now` ticks once
- *  every 30s to refresh relative timestamps, so measuring a 1s window against it fires at
- *  random moments rather than on the transition. The map re-renders when the card's state
- *  changes, so the wall clock is ~0ms past `stateChangedAt` exactly when it matters. */
-export function isAgentMapRecentFinish(card: DashboardCard): boolean {
-  if (agentMapNodeStatus(card) !== 'done') {
+/** Uses wall time because the map's relative-timestamp clock advances only every 30s. */
+export function isAgentMapRecentFinish(card: DashboardCard, currentTime = Date.now()): boolean {
+  if (card.dotState !== 'done' || !card.unseen) {
     return false
   }
   const changedAt = card.stateChangedAt || card.finishedAt || 0
   if (changedAt <= 0) {
     return false
   }
-  const elapsed = Date.now() - changedAt
+  const elapsed = currentTime - changedAt
   // A fleet that loads with finished work already on it must not flare all at once, so a
   // finish that happened before this render window is never treated as fresh.
   return elapsed >= 0 && elapsed < AGENT_MAP_FINISH_FLARE_MS
+}
+
+/** Selects only the freshest finishes so burst updates cannot animate the whole fleet. */
+export function selectAgentMapRecentFinishPaneKeys(
+  cards: readonly DashboardCard[]
+): ReadonlySet<string> {
+  const currentTime = Date.now()
+  const recent: { paneKey: string; changedAt: number }[] = []
+  for (const card of cards) {
+    if (!isAgentMapRecentFinish(card, currentTime)) {
+      continue
+    }
+    const changedAt = card.stateChangedAt || card.finishedAt || 0
+    const index = recent.findIndex(
+      (item) =>
+        changedAt > item.changedAt || (changedAt === item.changedAt && card.paneKey < item.paneKey)
+    )
+    if (index === -1) {
+      if (recent.length < AGENT_MAP_MAX_CONCURRENT_FINISH_FLARES) {
+        recent.push({ paneKey: card.paneKey, changedAt })
+      }
+      continue
+    }
+    recent.splice(index, 0, { paneKey: card.paneKey, changedAt })
+    if (recent.length > AGENT_MAP_MAX_CONCURRENT_FINISH_FLARES) {
+      recent.pop()
+    }
+  }
+  return new Set(recent.map((item) => item.paneKey))
 }
 
 export type AgentMapStatusCounts = Record<AgentMapNodeStatus, number>

@@ -7,7 +7,6 @@ import {
   agentMapNodeStatus,
   agentMapQuietCount,
   emptyAgentMapStatusCounts,
-  isAgentMapRecentFinish,
   type AgentMapNodeStatus,
   type AgentMapStatusCounts
 } from './agent-map-node-metadata'
@@ -53,8 +52,6 @@ export type AgentMapAgentNode = {
   radius: number
   durationMinutes: number
   status: AgentMapNodeStatus
-  /** True only inside the flare window after a finish; drives the one-shot emphasis. */
-  finishedRecently: boolean
   motionState?: AgentMapMotionState
 }
 
@@ -178,8 +175,7 @@ function buildLocalWorktree(
         y,
         radius: AGENT_MAP_AGENT_RADIUS,
         durationMinutes: agentMapDurationMinutes(card, now),
-        status: agentMapNodeStatus(card),
-        finishedRecently: isAgentMapRecentFinish(card)
+        status: agentMapNodeStatus(card)
       })) ??
       placeAgentMapAgents({
         worktreeId: id,

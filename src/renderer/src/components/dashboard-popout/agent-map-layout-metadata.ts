@@ -4,8 +4,7 @@ import {
   agentMapDurationMinutes,
   agentMapNodeStatus,
   agentMapQuietCount,
-  emptyAgentMapStatusCounts,
-  isAgentMapRecentFinish
+  emptyAgentMapStatusCounts
 } from './agent-map-node-metadata'
 
 export function refreshAgentMapMetadata(
@@ -36,8 +35,7 @@ export function refreshAgentMapMetadata(
             ...agent,
             card,
             durationMinutes: agentMapDurationMinutes(card, now),
-            status: agentMapNodeStatus(card),
-            finishedRecently: isAgentMapRecentFinish(card)
+            status: agentMapNodeStatus(card)
           }
         ]
       })

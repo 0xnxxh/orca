@@ -33,6 +33,7 @@ type AgentMapWorktreeRingNodeProps = {
   selectedPaneKey: string | null
   allowAggregation: boolean
   showOrchestrationLinks: boolean
+  recentFinishPaneKeys: ReadonlySet<string>
   launchableAgents?: readonly TuiAgent[]
   nodeRefs: MutableRefObject<Map<string, SVGGElement>>
   onSelectAgent: (card: DashboardCard) => void
@@ -61,6 +62,7 @@ function WorktreeDetails({
 }): React.JSX.Element {
   const activeCount =
     worktree.statusCounts.working + worktree.statusCounts.blocked + worktree.statusCounts.waiting
+  const doneCount = worktree.statusCounts.done + worktree.statusCounts['done-seen']
   return (
     <PopoverContent align="center" sideOffset={10} className="w-80 p-0">
       <header className="border-b border-border px-3 py-2.5">
@@ -76,7 +78,7 @@ function WorktreeDetails({
               defaultValue_other: '{{total}} agents · {{active}} active · {{done}} done',
               total: worktree.agents.length,
               active: activeCount,
-              done: worktree.statusCounts.done
+              done: doneCount
             }
           )}
         </span>
@@ -164,6 +166,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
   selectedPaneKey,
   allowAggregation,
   showOrchestrationLinks,
+  recentFinishPaneKeys,
   launchableAgents,
   nodeRefs,
   onSelectAgent,
@@ -343,7 +346,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                     ) : null}
                     {/* One-shot ripple at the moment of finishing. Mounted only inside the
                         flare window so animated paint stays off the resting fleet. */}
-                    {agent.finishedRecently && !agentExiting ? (
+                    {recentFinishPaneKeys.has(agent.card.paneKey) && !agentExiting ? (
                       <circle
                         className="agent-map-agent-finish-flare"
                         data-agent-map-agent-finish-flare=""

@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import {
   AGENT_MAP_FINISH_FLARE_MS,
+  AGENT_MAP_MAX_CONCURRENT_FINISH_FLARES,
   agentMapNodeStatus,
   agentMapQuietCount,
   emptyAgentMapStatusCounts,
-  isAgentMapRecentFinish
+  isAgentMapRecentFinish,
+  selectAgentMapRecentFinishPaneKeys
 } from './agent-map-node-metadata'
 
 const NOW = 2_000_000_000
@@ -60,6 +62,7 @@ describe('agentMapNodeStatus', () => {
 describe('isAgentMapRecentFinish', () => {
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('flares on the transition into done, measured against the wall clock', () => {
@@ -74,11 +77,17 @@ describe('isAgentMapRecentFinish', () => {
     expect(isAgentMapRecentFinish(justFinished)).toBe(false)
   })
 
-  it('ignores the map now prop, which only ticks every 30s', () => {
-    // The regression this guards: gating the flare on the `now` passed through the layout
-    // made it sample a 1s window against a 30s clock, so it fired at random moments
-    // instead of on the transition. The predicate must not take `now` at all.
-    expect(isAgentMapRecentFinish).toHaveLength(1)
+  it('samples the wall clock once and caps bursty fleet updates', () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(NOW)
+    const selected = selectAgentMapRecentFinishPaneKeys(
+      Array.from({ length: 200 }, (_, index) =>
+        card({ paneKey: `pane-${index}`, unseen: true, stateChangedAt: NOW - index })
+      )
+    )
+
+    expect(clock).toHaveBeenCalledOnce()
+    expect(selected.size).toBe(AGENT_MAP_MAX_CONCURRENT_FINISH_FLARES)
+    expect([...selected]).toEqual(['pane-0', 'pane-1', 'pane-2', 'pane-3'])
   })
 
   it('does not flare work that finished before this session', () => {

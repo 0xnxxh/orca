@@ -11,6 +11,7 @@ import type {
   AgentMapWorktreeRing
 } from './agent-map-layout'
 import { AGENT_MAP_LINEAGE_RELATION, shouldAggregateAgentMapWorktree } from './agent-map-layout'
+import { selectAgentMapRecentFinishPaneKeys } from './agent-map-node-metadata'
 import { selectVisibleAgentMapLabels } from './agent-map-label-declutter'
 import { agentMapDirectLineageChevronPath } from './agent-map-lineage-chevron-path'
 import { AgentMapWorktreeLabel } from './AgentMapWorktreeLabel'
@@ -124,6 +125,15 @@ export const AgentMapScene = memo(function AgentMapScene({
     }
     return agents
   }, [allowAggregation, layout, selectedPaneKey, zoom])
+  const recentFinishPaneKeys = useMemo(
+    () =>
+      selectAgentMapRecentFinishPaneKeys(
+        layout.projects.flatMap((project) =>
+          project.worktrees.flatMap((worktree) => worktree.agents.map((agent) => agent.card))
+        )
+      ),
+    [layout]
+  )
   return (
     <>
       {layout.projects.map((project) => {
@@ -210,6 +220,7 @@ export const AgentMapScene = memo(function AgentMapScene({
                 selectedPaneKey={selectedPaneKey}
                 allowAggregation={allowAggregation}
                 showOrchestrationLinks={showOrchestrationLinks}
+                recentFinishPaneKeys={recentFinishPaneKeys}
                 launchableAgents={launchableAgentsByWorktreeId?.[worktree.worktreeId]}
                 nodeRefs={nodeRefs}
                 onSelectAgent={onSelectAgent}
