@@ -101,6 +101,26 @@ describe('provisioned-root adoption', () => {
     expect(result.worktree.path).toBe('c:\\workspace\\repo\\')
   })
 
+  it('requests an authoritative scan for a runtime-owned SSH checkout', async () => {
+    await adoptEphemeralVmProvisionedRoot(
+      makeRequest({
+        workspaceRunContext: {
+          kind: 'workspace-run',
+          projectId: 'project-1',
+          hostId: 'ssh:runtime-ssh-vm-1',
+          projectHostSetupId: 'setup-1',
+          repoId: 'repo-runtime',
+          path: 'C:\\workspace\\repo'
+        }
+      })
+    )
+
+    expect(store.fetchWorktrees).toHaveBeenCalledWith('repo-runtime', {
+      executionHostId: 'ssh:runtime-ssh-vm-1',
+      requireAuthoritative: true
+    })
+  })
+
   it('passes source intent to provisioning and keeps the adopted base ref', async () => {
     store.repos = [
       {

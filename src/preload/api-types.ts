@@ -43,7 +43,8 @@ import type {
   LegacyDetectedWorktreeRequest,
   ListKnownWorktreesForExecutionHostArgs,
   ListDetectedWorktreesArgs,
-  ProviderRequestId
+  ProviderRequestId,
+  RuntimeOwnedSshAuthorityValidationArgs
 } from '../shared/detected-worktree-provider-contract'
 import type {
   HostRepoCatalogSnapshot,
@@ -1350,6 +1351,9 @@ export type PreloadApi = {
       ): Promise<HostQualifiedDetectedWorktreeResult | DetectedWorktreeListResult>
       (args: LegacyDetectedWorktreeRequest): Promise<DetectedWorktreeListResult>
     }
+    isRuntimeOwnedSshAuthorityCurrent?: (
+      args: RuntimeOwnedSshAuthorityValidationArgs
+    ) => Promise<boolean>
     listKnownForExecutionHost?: (
       args: ListKnownWorktreesForExecutionHostArgs
     ) => Promise<HostQualifiedKnownWorktreeResult>
