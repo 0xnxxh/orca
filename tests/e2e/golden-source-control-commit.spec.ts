@@ -6,6 +6,8 @@ import {
   cleanupGoldenWorktree,
   createGoldenWorktree,
   GOLDEN_CHANGED_PATH,
+  GOLDEN_GIT_AUTHOR_EMAIL,
+  GOLDEN_GIT_AUTHOR_NAME,
   installPassingNodePreCommitHook,
   openGoldenSourceControl,
   seedGoldenSourceEdit
@@ -52,6 +54,12 @@ test('@golden stages and commits a file through Source Control', async ({
       { timeout: 20_000, message: 'Golden commit worktree did not become clean' }
     )
     .toBe('')
+  expect(
+    execFileSync('git', ['show', '-s', '--format=%an%n%ae%n%s', 'HEAD'], {
+      cwd: fixture.worktreePath,
+      encoding: 'utf8'
+    }).trim()
+  ).toBe(`${GOLDEN_GIT_AUTHOR_NAME}\n${GOLDEN_GIT_AUTHOR_EMAIL}\ntest: golden daily loop`)
   await expect.poll(() => existsSync(hookMarkerPath), { timeout: 20_000 }).toBe(true)
   await expect(
     orcaPage.locator('[data-sonner-toast]').filter({ hasText: /node|command not found|cmd\.exe/i })

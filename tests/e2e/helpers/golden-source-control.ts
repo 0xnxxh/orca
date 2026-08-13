@@ -8,6 +8,8 @@ import { expect } from './orca-app'
 export const GOLDEN_CHANGED_PATH = 'src/index.ts'
 export const GOLDEN_REMOVED_LINE = 'export const hello = "world"'
 export const GOLDEN_ADDED_LINE = 'export const hello = "golden daily loop"'
+export const GOLDEN_GIT_AUTHOR_NAME = 'Orca E2E'
+export const GOLDEN_GIT_AUTHOR_EMAIL = 'orca-e2e@example.invalid'
 const GOLDEN_PRE_COMMIT_MARKER = '.e2e-pre-commit-ran'
 
 export type GoldenWorktree = {
@@ -22,6 +24,18 @@ export function createGoldenWorktree(repoPath: string, label: string): GoldenWor
   const worktreePath = path.join(os.tmpdir(), branchName)
   execFileSync('git', ['worktree', 'add', worktreePath, '-b', branchName], {
     cwd: repoPath,
+    stdio: 'pipe'
+  })
+  execFileSync('git', ['config', 'extensions.worktreeConfig', 'true'], {
+    cwd: worktreePath,
+    stdio: 'pipe'
+  })
+  execFileSync('git', ['config', '--worktree', 'user.name', GOLDEN_GIT_AUTHOR_NAME], {
+    cwd: worktreePath,
+    stdio: 'pipe'
+  })
+  execFileSync('git', ['config', '--worktree', 'user.email', GOLDEN_GIT_AUTHOR_EMAIL], {
+    cwd: worktreePath,
     stdio: 'pipe'
   })
   return { branchName, worktreePath }
@@ -65,10 +79,6 @@ export function installPassingNodePreCommitHook(fixture: GoldenWorktree): string
   const hookPath = path.join(hooksPath, 'pre-commit')
   const markerPath = path.join(hooksPath, GOLDEN_PRE_COMMIT_MARKER)
   fixture.hooksPath = hooksPath
-  execFileSync('git', ['config', 'extensions.worktreeConfig', 'true'], {
-    cwd: fixture.worktreePath,
-    stdio: 'pipe'
-  })
   execFileSync('git', ['config', '--worktree', 'core.hooksPath', hooksPath], {
     cwd: fixture.worktreePath,
     stdio: 'pipe'
@@ -133,24 +143,29 @@ export async function openGoldenSourceControl(
   fixture: GoldenWorktree
 ): Promise<void> {
   await activateGoldenWorktree(page, repoPath, fixture.worktreePath)
-  await page.evaluate(async (worktreePath) => {
+  await page.evaluate(() => {
     const store = window.__store
     if (!store) {
       throw new Error('window.__store is not available')
     }
     const state = store.getState()
-    const worktree = Object.values(state.worktreesByRepo)
-      .flat()
-      .find((entry) => entry.id === state.activeWorktreeId)
-    if (!worktree) {
-      throw new Error('Golden worktree is not active')
-    }
-    state.setGitStatus(worktree.id, await window.api.git.status({ worktreePath }))
     state.setRightSidebarTab('explorer')
     state.setRightSidebarOpen(true)
-  }, fixture.worktreePath)
+  })
   await page.getByRole('button', { name: /Source Control/ }).click()
   await expect(page.getByRole('textbox', { name: 'Commit message' })).toBeVisible({
     timeout: 10_000
   })
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const state = window.__store?.getState()
+          return state?.activeWorktreeId
+            ? Object.hasOwn(state.gitStatusByWorktree, state.activeWorktreeId)
+            : false
+        }),
+      { timeout: 10_000, message: 'Automatic Git status refresh did not complete' }
+    )
+    .toBe(true)
 }

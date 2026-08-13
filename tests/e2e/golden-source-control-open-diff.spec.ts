@@ -19,15 +19,15 @@ test('@golden opens an unstaged file diff from Source Control', async ({
 }) => {
   const fixture = createGoldenWorktree(testRepoPath, 'open-diff')
   registerPostElectronShutdownCleanup(async () => cleanupGoldenWorktree(testRepoPath, fixture))
-  seedGoldenSourceEdit(fixture.worktreePath)
 
   await waitForSessionReady(orcaPage)
   await openGoldenSourceControl(orcaPage, testRepoPath, fixture)
+  seedGoldenSourceEdit(fixture.worktreePath)
 
   const changedFile = orcaPage
     .locator('[data-testid="source-control-entry"]')
     .filter({ hasText: path.basename(GOLDEN_CHANGED_PATH) })
-  await expect(changedFile).toBeVisible()
+  await expect(changedFile).toBeVisible({ timeout: 15_000 })
   await changedFile.click()
 
   await expect(orcaPage.locator('.monaco-diff-editor')).toBeVisible({ timeout: 20_000 })
