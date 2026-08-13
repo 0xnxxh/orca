@@ -314,7 +314,7 @@ describe('workspace cleanup scan progress', () => {
     await scanPromise
   })
 
-  it('publishes the final scan result without waiting for queued progress', async () => {
+  it('drains queued progress before publishing the final scan result', async () => {
     const pending = deferred<WorkspaceCleanupScanResult>()
     const terminalProbe = deferred<boolean>()
     let scanSettled = false
@@ -372,15 +372,17 @@ describe('workspace cleanup scan progress', () => {
       candidates: [finalCandidate],
       errors: []
     })
-    await scanPromise
-    expect(scanSettled).toBe(true)
+    await Promise.resolve()
+    expect(scanSettled).toBe(false)
 
     terminalProbe.resolve(false)
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await scanPromise
+    expect(scanSettled).toBe(true)
 
     expect(
       store.getState().workspaceCleanupScan?.candidates.map((candidate) => candidate.worktreeId)
     ).toEqual(['repo1::/tmp/final'])
+    expect(hasChildProcesses).toHaveBeenCalledTimes(1)
     expect(store.getState().workspaceCleanupProgress).toMatchObject({
       scannedWorktreeCount: 1,
       totalWorktreeCount: 1
