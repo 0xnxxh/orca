@@ -36,20 +36,27 @@ export class CheckpointSessionQueue {
     sessionId: string,
     operation: () => Promise<T>,
     deadlineMs: number,
-    onDeadline: T
+    onDeadline: T,
+    onDeadlineFired?: () => void
   ): Promise<T> {
     const work = this.enqueue(sessionId, operation)
-    return new Promise<T>((resolve) => {
-      const timer = setTimeout(() => resolve(onDeadline), deadlineMs)
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        try {
+          onDeadlineFired?.()
+        } finally {
+          resolve(onDeadline)
+        }
+      }, deadlineMs)
       timer.unref?.()
       work.then(
         (value) => {
           clearTimeout(timer)
           resolve(value)
         },
-        () => {
+        (error: unknown) => {
           clearTimeout(timer)
-          resolve(onDeadline)
+          reject(error)
         }
       )
     })

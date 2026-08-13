@@ -57,6 +57,7 @@ describe('CheckpointSessionQueue', () => {
     const queue = new CheckpointSessionQueue()
     const stalled = deferred<void>()
     let completed = false
+    const onDeadlineFired = vi.fn()
 
     const outcome = await queue.runWithDeadline(
       'stalled',
@@ -66,15 +67,35 @@ describe('CheckpointSessionQueue', () => {
         return 'durable'
       },
       5,
-      'live'
+      'live',
+      onDeadlineFired
     )
 
     expect(outcome).toBe('live')
+    expect(onDeadlineFired).toHaveBeenCalledOnce()
     // Why: abandoning the wait must not abandon the write, or a reattach deadline
     // would drop durable history instead of merely delaying it.
     expect(completed).toBe(false)
     stalled.resolve()
     await vi.waitFor(() => expect(completed).toBe(true))
+  })
+
+  it('propagates operation failures instead of reporting a deadline', async () => {
+    const queue = new CheckpointSessionQueue()
+    const onDeadlineFired = vi.fn()
+
+    await expect(
+      queue.runWithDeadline(
+        'failed',
+        async () => {
+          throw new Error('daemon unavailable')
+        },
+        50,
+        'timed-out',
+        onDeadlineFired
+      )
+    ).rejects.toThrow('daemon unavailable')
+    expect(onDeadlineFired).not.toHaveBeenCalled()
   })
 
   it('keeps a later waiter behind an abandoned operation', async () => {

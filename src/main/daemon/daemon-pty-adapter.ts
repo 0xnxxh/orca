@@ -258,6 +258,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // Why per session: exclusivity protects one session directory's tmp-write/rename, so ordering
   // every session behind one tail let a single stalled checkpoint block all reattaches (STA-4173).
   private checkpointQueue = new CheckpointSessionQueue()
+  private overlayCheckpointAdmissions = 0
+  private overlayDeadlineWarnedSessionIds = new Set<string>()
+  private periodicDeadlineWarnedSessionIds = new Set<string>()
   private keepHistoryShutdowns = new Set<Promise<void>>()
   private disconnectOnlyPromise: Promise<void> | null = null
   // Why: checkpoint persistence needs the getSnapshot RPC (v4+); legacy daemons reject it, spamming logs every 5s.
@@ -1173,6 +1176,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.sessionsNeedingFullCheckpoint.delete(id)
     this.sessionsNeedingLiveCheckpoint.delete(id)
     this.sessionsNeedingContinuityCheckpoint.delete(id)
+    this.overlayDeadlineWarnedSessionIds.delete(id)
+    this.periodicDeadlineWarnedSessionIds.delete(id)
     this.lastFullCheckpointAt.delete(id)
     this.stopCheckpointTimerIfIdle()
     this.initialCwds.delete(id)
@@ -1328,15 +1333,34 @@ export class DaemonPtyAdapter implements IPtyProvider {
     if (this.checkpointQueue.isSaturated(sessionId)) {
       return liveSnapshot
     }
+    // Why reserve before enqueueing: pane mounts can arrive in one turn, before any compact starts.
+    // Count abandoned waits until their writes settle so a relaunch cannot fan out unbounded work.
+    if (this.overlayCheckpointAdmissions >= MAX_CONCURRENT_CHECKPOINTS) {
+      return liveSnapshot
+    }
+    this.overlayCheckpointAdmissions++
     // Why per session with a deadline: a reattach is a user click, so it must wait
     // on this session's own compact and nothing else. A blown deadline does not
     // cancel that compact — it keeps running and still commits — so the fallback
     // costs restore depth for this one reattach, never durable history (STA-4173).
     return await this.checkpointQueue.runWithDeadline(
       sessionId,
-      () => this.compactDurableRestoreSnapshot(sessionId, liveSnapshot, scrollbackRows),
+      async () => {
+        try {
+          return await this.compactDurableRestoreSnapshot(sessionId, liveSnapshot, scrollbackRows)
+        } finally {
+          this.overlayCheckpointAdmissions--
+          this.overlayDeadlineWarnedSessionIds.delete(sessionId)
+        }
+      },
       DURABLE_HISTORY_OVERLAY_DEADLINE_MS,
-      liveSnapshot
+      liveSnapshot,
+      () => {
+        if (!this.overlayDeadlineWarnedSessionIds.has(sessionId)) {
+          this.overlayDeadlineWarnedSessionIds.add(sessionId)
+          console.warn('[history] durable snapshot overlay deadline exceeded:', sessionId)
+        }
+      }
     )
   }
 
@@ -1672,6 +1696,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.sessionsNeedingFullCheckpoint.clear()
     this.sessionsNeedingLiveCheckpoint.clear()
     this.sessionsNeedingContinuityCheckpoint.clear()
+    this.overlayDeadlineWarnedSessionIds.clear()
+    this.periodicDeadlineWarnedSessionIds.clear()
     this.pausedProducerSessionIds.clear()
     this.producerResumesOwedOnReconnect.clear()
     this.stopCheckpointTimer()
@@ -1782,6 +1808,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.sessionsNeedingFullCheckpoint.clear()
     this.sessionsNeedingLiveCheckpoint.clear()
     this.sessionsNeedingContinuityCheckpoint.clear()
+    this.overlayDeadlineWarnedSessionIds.clear()
+    this.periodicDeadlineWarnedSessionIds.clear()
     this.coldRestoreCache.clear()
     this.wslDistrosBySessionId.clear()
     this.pausedProducerSessionIds.clear()
@@ -2159,7 +2187,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
     sessionId: string,
     opts: { final: boolean; teardown: boolean }
   ): Promise<'done' | 'deferred'> {
-    const run = (): Promise<'done' | 'deferred'> => this.writeSessionCheckpoint(sessionId, opts)
+    const run = async (): Promise<'done' | 'deferred'> => {
+      try {
+        return await this.writeSessionCheckpoint(sessionId, opts)
+      } finally {
+        this.periodicDeadlineWarnedSessionIds.delete(sessionId)
+      }
+    }
     // Why final waits without a deadline: sleep/disconnect needs the last snapshot on disk, and
     // deferring there would silently drop what the user left on screen rather than delay it.
     if (opts.final) {
@@ -2174,7 +2208,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
       sessionId,
       run,
       PERIODIC_CHECKPOINT_DEADLINE_MS,
-      'deferred'
+      'deferred',
+      () => {
+        if (!this.periodicDeadlineWarnedSessionIds.has(sessionId)) {
+          this.periodicDeadlineWarnedSessionIds.add(sessionId)
+          console.warn('[history] periodic checkpoint deadline exceeded:', sessionId)
+        }
+      }
     )
   }
 
@@ -2692,6 +2732,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
         this.sessionsNeedingFullCheckpoint.delete(event.sessionId)
         this.sessionsNeedingLiveCheckpoint.delete(event.sessionId)
         this.sessionsNeedingContinuityCheckpoint.delete(event.sessionId)
+        this.overlayDeadlineWarnedSessionIds.delete(event.sessionId)
+        this.periodicDeadlineWarnedSessionIds.delete(event.sessionId)
         // Why: a reused sessionId (renderer respawns a persisted ptyId) must not inherit the dead session's snapshot cooldown.
         this.lastFullCheckpointAt.delete(event.sessionId)
         this.stopCheckpointTimerIfIdle()

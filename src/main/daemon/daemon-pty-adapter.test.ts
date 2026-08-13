@@ -2539,6 +2539,30 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(checkpoint).not.toHaveBeenCalled()
     })
 
+    it('logs non-final checkpoint RPC failures', async () => {
+      historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+      const request = vi.fn(async () => {
+        throw new Error('daemon socket unavailable')
+      })
+      const internals = historyAdapter as unknown as {
+        client: { request: typeof request; disconnect: ReturnType<typeof vi.fn> }
+        checkpointSessions(sessionIds: Iterable<string>): Promise<Set<string>>
+      }
+      internals.client = { request, disconnect: vi.fn() }
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      try {
+        await expect(internals.checkpointSessions(['broken'])).resolves.toEqual(new Set())
+        expect(warn).toHaveBeenCalledWith(
+          '[history] checkpoint failed:',
+          'broken',
+          expect.objectContaining({ message: 'daemon socket unavailable' })
+        )
+      } finally {
+        warn.mockRestore()
+      }
+    })
+
     describe('full-snapshot cooldown', () => {
       type CooldownInternals = {
         client: { request: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }
