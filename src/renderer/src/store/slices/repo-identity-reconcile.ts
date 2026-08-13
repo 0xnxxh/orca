@@ -85,9 +85,9 @@ export function reconcileFetchedRepos(
  * changed — so a cloned no-op refresh leaves Object.is subscribers untouched.
  */
 export function reuseEqualRecordMap<T>(
-  previous: Record<string, T>,
-  next: Record<string, T>
-): Record<string, T> {
+  previous: Readonly<Record<string, T>>,
+  next: Readonly<Record<string, T>>
+): Readonly<Record<string, T>> {
   const nextKeys = Object.keys(next)
   const previousKeys = Object.keys(previous)
   let identical = nextKeys.length === previousKeys.length

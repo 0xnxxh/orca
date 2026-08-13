@@ -1391,8 +1391,8 @@ async function listWorktreeLineageForRuntime(
   settings: AppState['settings'],
   options: BackgroundRuntimeRefreshOptions = {}
 ): Promise<{
-  worktreeLineageById: Record<string, WorktreeLineage>
-  workspaceLineageByChildKey: Record<string, WorkspaceLineage>
+  worktreeLineageById: Readonly<Record<string, WorktreeLineage>>
+  workspaceLineageByChildKey: Readonly<Record<string, WorkspaceLineage>>
 }> {
   const target = getActiveRuntimeTarget(settings)
   type LineageListResponse = {
@@ -1575,8 +1575,8 @@ function applyHostLineageRefresh(
   set: Parameters<StateCreator<AppState>>[0],
   hostId: ExecutionHostId,
   lineage: {
-    worktreeLineageById: Record<string, WorktreeLineage>
-    workspaceLineageByChildKey: Record<string, WorkspaceLineage>
+    worktreeLineageById: Readonly<Record<string, WorktreeLineage>>
+    workspaceLineageByChildKey: Readonly<Record<string, WorkspaceLineage>>
   }
 ): void {
   set((s) => {
@@ -1648,8 +1648,8 @@ function mergeLineageForHost(
     'repos' | 'settings' | 'worktreesByRepo' | 'detectedWorktreesByRepo' | 'worktreeLineageById'
   >,
   hostId: ExecutionHostId,
-  lineage: Record<string, WorktreeLineage>
-): Record<string, WorktreeLineage> {
+  lineage: Readonly<Record<string, WorktreeLineage>>
+): Readonly<Record<string, WorktreeLineage>> {
   const next: Record<string, WorktreeLineage> = {}
   for (const [worktreeId, existing] of Object.entries(state.worktreeLineageById)) {
     if (getWorktreeHostId(state, worktreeId) !== hostId) {
@@ -1672,8 +1672,8 @@ function mergeWorkspaceLineageForHost(
     | 'workspaceLineageByChildKey'
   >,
   hostId: ExecutionHostId,
-  lineage: Record<string, WorkspaceLineage>
-): Record<string, WorkspaceLineage> {
+  lineage: Readonly<Record<string, WorkspaceLineage>>
+): Readonly<Record<string, WorkspaceLineage>> {
   const next: Record<string, WorkspaceLineage> = {}
   for (const [childKey, existing] of Object.entries(state.workspaceLineageByChildKey)) {
     const childScope = parseWorkspaceKey(existing.childWorkspaceKey)
