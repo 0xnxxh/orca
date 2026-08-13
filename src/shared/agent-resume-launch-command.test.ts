@@ -9,6 +9,7 @@ const providerSession = { key: 'session_id', id: SESSION_ID } as const
 
 const SHELLS: { platform: NodeJS.Platform; shell: AgentStartupShell }[] = [
   { platform: 'linux', shell: 'posix' },
+  { platform: 'linux', shell: 'unix' },
   { platform: 'darwin', shell: 'posix' },
   { platform: 'win32', shell: 'powershell' },
   { platform: 'win32', shell: 'cmd' }

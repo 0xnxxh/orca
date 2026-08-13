@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 import {
   getHistoryRoot,
   listWslHistoryRoots,
@@ -9,6 +9,7 @@ import {
   schedulePendingHistoryTreeRemovals,
   scheduleWorktreeHistoryTreeDeletion
 } from './terminal-history-deletion'
+import { readHistoryMeta } from './terminal-history'
 
 // Why 5 minutes: GC runs ~10s after startup, and the live-worktree snapshot is
 // taken just before. A worktree created between the snapshot and GC execution
@@ -61,11 +62,8 @@ function gcScanRoot(
         continue
       }
 
-      const meta = JSON.parse(readFileSync(metaPath, 'utf-8')) as {
-        worktreeId?: string
-        createdAt?: string
-      }
-      if (!meta.worktreeId) {
+      const meta = readHistoryMeta(entryPath)
+      if (!meta?.worktreeId) {
         continue
       }
 

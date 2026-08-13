@@ -1566,10 +1566,13 @@ describe('SshGitProvider', () => {
   })
 
   it('removeWorktree sends git.removeWorktree request', async () => {
-    await provider.removeWorktree('/home/user/feat', true)
+    await provider.removeWorktree('/home/user/feat', true, {
+      worktreeId: 'repo-1::/home/user/feat'
+    })
     expect(mux.request).toHaveBeenCalledWith('git.removeWorktree', {
       worktreePath: '/home/user/feat',
-      force: true
+      force: true,
+      worktreeId: 'repo-1::/home/user/feat'
     })
   })
 

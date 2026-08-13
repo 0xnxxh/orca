@@ -147,6 +147,10 @@ export class SshPtyProvider implements IPtyProvider {
     })
   }
 
+  async deleteWorktreeHistory(worktreeId: string): Promise<void> {
+    await this.mux.request('pty.deleteWorktreeHistory', { worktreeId })
+  }
+
   async supportsAgentSessionClaims(options: { signal?: AbortSignal } = {}): Promise<boolean> {
     return await this.agentSessionCapabilities.supportsClaims(options)
   }

@@ -13,9 +13,17 @@ import {
 import { PTY_STARTUP_INGRESS_VERSION } from '../shared/pty-startup-ingress'
 import { stripLegacyTerminalShimEnv } from '../main/pty/legacy-terminal-shim-dir'
 
-const { mockPtySpawn, mockPtyInstance, mockCreateShellPromptReadinessProbe } = vi.hoisted(() => ({
+const {
+  deleteRelayFishHistoryMock,
+  mockPtySpawn,
+  mockPtyInstance,
+  mockCreateShellPromptReadinessProbe,
+  recordRelayFishHistoryPathMock
+} = vi.hoisted(() => ({
+  deleteRelayFishHistoryMock: vi.fn(),
   mockPtySpawn: vi.fn(),
   mockCreateShellPromptReadinessProbe: vi.fn(),
+  recordRelayFishHistoryPathMock: vi.fn(),
   mockPtyInstance: {
     // Why: attach now proves the backing pid is alive before replaying, so the
     // default managed PTY must report a live pid. Reuse the test runner's own
@@ -42,6 +50,11 @@ vi.mock('../main/pty/posix-pty-process-groups', () => ({
 
 vi.mock('../main/shell-prompt-readiness-probe', () => ({
   createShellPromptReadinessProbe: mockCreateShellPromptReadinessProbe
+}))
+
+vi.mock('./fish-history-metadata', () => ({
+  deleteRelayFishHistory: deleteRelayFishHistoryMock,
+  recordRelayFishHistoryPath: recordRelayFishHistoryPathMock
 }))
 
 import {
@@ -146,6 +159,8 @@ describe('PtyHandler', () => {
     mockPtyInstance.pause.mockReset()
     mockPtyInstance.resume.mockReset()
     mockCreateShellPromptReadinessProbe.mockReset()
+    deleteRelayFishHistoryMock.mockReset()
+    recordRelayFishHistoryPathMock.mockReset()
     mockCreateShellPromptReadinessProbe.mockReturnValue({
       notifyOutput: vi.fn(),
       dispose: vi.fn()
@@ -183,6 +198,7 @@ describe('PtyHandler', () => {
     expect(methods).toContain('pty.inspectProcess')
     expect(methods).toContain('pty.listProcesses')
     expect(methods).toContain('pty.getDefaultShell')
+    expect(methods).toContain('pty.deleteWorktreeHistory')
 
     const notifMethods = Array.from(dispatcher._notificationHandlers.keys())
     expect(notifMethods).toContain('pty.data')
@@ -705,6 +721,44 @@ describe('PtyHandler', () => {
       })
     }
   })
+
+  it('uses the requested PTY Fish shell and scopes its history on the relay owner', async () => {
+    await dispatcher.callRequest('pty.spawn', {
+      env: { SHELL: '/usr/bin/fish' },
+      worktreeId: 'repo-1::/remote/wt',
+      historyIsolationEnabled: true
+    })
+
+    expect(mockPtySpawn.mock.calls[0]?.[0]).toBe('/usr/bin/fish')
+    const spawnEnv = mockPtySpawn.mock.calls[0]?.[2]?.env as Record<string, string>
+    expect(spawnEnv.fish_history).toMatch(/^orca_[0-9a-f]{16}$/)
+    expect(recordRelayFishHistoryPathMock).toHaveBeenCalledWith(
+      'repo-1::/remote/wt',
+      expect.objectContaining({ fish_history: spawnEnv.fish_history })
+    )
+  })
+
+  it('deletes persisted Fish history on its process owner', async () => {
+    await dispatcher.callRequest('pty.deleteWorktreeHistory', {
+      worktreeId: 'repo-1::/remote/wt'
+    })
+
+    expect(deleteRelayFishHistoryMock).toHaveBeenCalledWith('repo-1::/remote/wt')
+  })
+
+  it.each([undefined, 'true'])(
+    'leaves omitted or malformed scoped-history disabled',
+    async (flag) => {
+      await dispatcher.callRequest('pty.spawn', {
+        env: { SHELL: '/usr/bin/fish' },
+        worktreeId: 'repo-1::/remote/wt',
+        historyIsolationEnabled: flag
+      })
+
+      const spawnEnv = mockPtySpawn.mock.calls[0]?.[2]?.env as Record<string, string>
+      expect(spawnEnv.fish_history).toBeUndefined()
+    }
+  )
 
   it('ignores Windows shell overrides on non-Windows relay hosts', async () => {
     const originalPlatform = process.platform
@@ -3084,6 +3138,32 @@ describe('PtyHandler', () => {
     expect(callArgs.env.TERM_PROGRAM).toBe('Orca')
     expect(callArgs.env.ORCA_SHELL_READY_MARKER).toBe('0')
     expect(callArgs.env.ORCA_SHELL_STARTUP_IDENTITY).toBe('0')
+  })
+
+  it('revive restores scoped Fish history without requiring it from legacy state', async () => {
+    await dispatcher.callRequest('pty.spawn', {
+      env: { SHELL: '/usr/bin/fish' },
+      worktreeId: 'repo-1::/remote/wt',
+      historyIsolationEnabled: true
+    })
+    const firstEnv = mockPtySpawn.mock.calls[0]?.[2]?.env as Record<string, string>
+    const state = (await dispatcher.callRequest('pty.serialize', { ids: ['pty-1'] })) as string
+
+    await handler.dispose({ waitForPhysicalExit: false })
+    mockPtySpawn.mockClear()
+    dispatcher = createMockDispatcher()
+    handler = new PtyHandler(dispatcher as unknown as RelayDispatcher)
+    const shellSpy = vi.spyOn(ptyShellUtils, 'resolveDefaultShell').mockReturnValue('/usr/bin/fish')
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      await dispatcher.callRequest('pty.revive', { state })
+    } finally {
+      killSpy.mockRestore()
+      shellSpy.mockRestore()
+    }
+
+    const revivedEnv = mockPtySpawn.mock.calls[0]?.[2]?.env as Record<string, string>
+    expect(revivedEnv.fish_history).toBe(firstEnv.fish_history)
   })
 
   it('fences both revived worktree identity and cwd with rollback', async () => {

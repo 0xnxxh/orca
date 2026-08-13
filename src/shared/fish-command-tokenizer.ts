@@ -86,10 +86,13 @@ function decodeFishEscape(value: string, start: number): EscapeDecode {
       : fromCode(digits, 8, 0)
   }
   if (char === 'c' && value[start + 1]) {
+    const control = value[start + 1]
     return {
-      text: String.fromCharCode(value.charCodeAt(start + 1) & 0x1f),
+      text: /^[A-Za-z]$/.test(control)
+        ? String.fromCharCode(control.charCodeAt(0) & 0x1f)
+        : value.slice(start, start + 2),
       next: start + 2,
-      diverges: false
+      diverges: !/^[A-Za-z]$/.test(control)
     }
   }
   return { text: char, next: start + 1, diverges: false }

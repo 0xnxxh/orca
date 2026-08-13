@@ -24,19 +24,17 @@ describe('resolveLocalAgentStartupShell', () => {
     expect(resolveLocalAgentStartupShell({ ...posixHost, hostLoginShell: undefined })).toBe('posix')
   })
 
-  // Why each of these matters: `set -e VAR` in bash enables errexit instead of
-  // clearing anything, so a wrong dialect is worse than the sh default.
-  it('refuses the local dialect for a remote target', () => {
+  it('uses the portable Unix dialect for a remote target', () => {
     expect(
       resolveLocalAgentStartupShell({
         ...posixHost,
         isRemote: true,
         hostLoginShell: '/usr/bin/fish'
       })
-    ).toBeUndefined()
+    ).toBe('unix')
   })
 
-  it('refuses the local dialect for ssh and runtime execution hosts', () => {
+  it('uses the portable Unix dialect for ssh and runtime execution hosts', () => {
     for (const executionHostKind of ['ssh', 'runtime'] as const) {
       expect(
         resolveLocalAgentStartupShell({
@@ -44,11 +42,11 @@ describe('resolveLocalAgentStartupShell', () => {
           executionHostKind,
           hostLoginShell: '/usr/bin/fish'
         })
-      ).toBeUndefined()
+      ).toBe('unix')
     }
   })
 
-  it('refuses the local dialect when the target platform is not this one (WSL)', () => {
+  it('uses the portable Unix dialect when the target platform is not this one (WSL)', () => {
     expect(
       resolveLocalAgentStartupShell({
         ...posixHost,
@@ -56,7 +54,7 @@ describe('resolveLocalAgentStartupShell', () => {
         hostPlatform: 'win32',
         hostLoginShell: '/usr/bin/fish'
       })
-    ).toBeUndefined()
+    ).toBe('unix')
   })
 
   it('keeps the Windows shell families untouched', () => {

@@ -11,6 +11,8 @@ import type { SleepingAgentLaunchConfig } from '../../../shared/agent-session-re
 import type { GlobalSettings, OnboardingState, TuiAgent } from '../../../shared/types'
 import { resolveInitialNativeChatSessionOptions } from '@/components/native-chat/native-chat-launch-session-options'
 import type { SessionOptionValue } from '../../../shared/native-chat-session-options'
+import { resolveLoginShellStartupDialect } from '../../../shared/tui-agent-startup-shell'
+import { getClientLoginShell } from '@/lib/client-login-shell'
 
 export type OnboardingFolderAgentStartup = {
   command: string
@@ -54,6 +56,7 @@ export function buildOnboardingFolderAgentStartup(
       nativeChatTranscriptIsLocalReadable
     }),
     platform: getClientPlatform(),
+    shell: resolveLoginShellStartupDialect(getClientLoginShell()),
     allowEmptyPromptLaunch: true
   })
   if (!startupPlan) {

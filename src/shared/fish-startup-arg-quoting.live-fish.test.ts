@@ -97,6 +97,9 @@ describe('quoteStartupArg round-trips through real fish', () => {
     itWithFish(`survives ${name}`, () => {
       expect(fishArgv(quoteStartupArg(value, 'fish'))).toEqual([value])
     })
+    itWithFish(`survives ${name} through an unknown Unix host`, () => {
+      expect(fishArgv(quoteStartupArg(value, 'unix'))).toEqual([value])
+    })
   }
 
   itWithFish('keeps multiple arguments separate', () => {
@@ -109,6 +112,12 @@ describe('quoteStartupArg round-trips through real fish', () => {
     expect(fishArgv(quoteStartupArg('\\\\server\\share', 'posix'))).toEqual(['\\server\\share'])
     // And a trailing backslash is a hard syntax error that would kill the launch.
     expect(() => fishArgv(quoteStartupArg('ends with a backslash\\', 'posix'))).toThrow()
+  })
+
+  itWithFish('accepts the portable Unix trailing-backslash form', () => {
+    expect(fishArgv(quoteStartupArg('ends with a backslash\\', 'unix'))).toEqual([
+      'ends with a backslash\\'
+    ])
   })
 
   itWithFish('proves the sh tokenizer this replaced disagreed with fish', () => {

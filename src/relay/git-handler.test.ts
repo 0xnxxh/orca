@@ -17,6 +17,14 @@ import {
   type RelayDispatcher
 } from './git-handler-test-setup'
 
+const { deleteRelayFishHistoryMock } = vi.hoisted(() => ({
+  deleteRelayFishHistoryMock: vi.fn()
+}))
+
+vi.mock('./fish-history-metadata', () => ({
+  deleteRelayFishHistory: deleteRelayFishHistoryMock
+}))
+
 type GitBufferSpyTarget = {
   gitBuffer(args: string[], cwd: string): Promise<Buffer>
 }
@@ -62,6 +70,7 @@ describe('GitHandler', () => {
     dispatcher = createMockDispatcher()
     const ctx = new RelayContext()
     handler = new GitHandler(dispatcher as unknown as RelayDispatcher, ctx)
+    deleteRelayFishHistoryMock.mockReset()
   })
 
   afterEach(async () => {
@@ -153,6 +162,28 @@ describe('GitHandler', () => {
       dispatcher.callRequest('git.removeWorktree', { worktreePath: '/repo-feature' })
     ).rejects.toBe(removalError)
     expect(runWithRemovalFence).toHaveBeenCalledWith('/repo-feature', expect.any(Function))
+  })
+
+  it('cleans process-owner Fish history after removing a remote worktree', async () => {
+    gitInit(tmpDir)
+    writeFileSync(path.join(tmpDir, 'tracked.txt'), 'initial')
+    gitCommit(tmpDir, 'initial')
+    const worktreePath = `${tmpDir}-feature`
+    try {
+      execFileSync('git', ['worktree', 'add', '-b', 'feature', worktreePath], {
+        cwd: tmpDir,
+        stdio: 'pipe'
+      })
+
+      await dispatcher.callRequest('git.removeWorktree', {
+        worktreePath,
+        worktreeId: 'repo-1::/remote/feature'
+      })
+
+      expect(deleteRelayFishHistoryMock).toHaveBeenCalledWith('repo-1::/remote/feature')
+    } finally {
+      await fs.rm(worktreePath, { recursive: true, force: true })
+    }
   })
 
   describe('abortMerge', () => {

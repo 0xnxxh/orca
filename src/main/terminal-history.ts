@@ -1,10 +1,19 @@
 import { join, basename } from 'node:path'
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { fishHistorySessionName, resolveFishHistoryFilePath } from './fish-history-session'
+import { mkdirSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import {
+  fishHistorySessionName,
+  isSafeFishHistorySession,
+  MAX_FISH_HISTORY_META_BYTES,
+  normalizeFishHistoryPaths,
+  resolveFishHistoryFilePath
+} from './fish-history-session'
 import { parseWslPath, toLinuxPath } from './wsl'
-import { getHistoryRoot, getHistoryRootWsl, hashWorktreeId } from './terminal-history-paths'
+import { getHistoryRoot, getHistoryRootWsl } from './terminal-history-paths'
+import { hashWorktreeId } from './terminal-history-id'
 
 type ShellKind = 'zsh' | 'bash' | 'fish' | 'pwsh' | 'powershell' | 'cmd' | 'unknown'
+
+export const MAX_HISTORY_META_BYTES = MAX_FISH_HISTORY_META_BYTES
 
 // ─── Shell Detection ───────────────────────────────────────────────
 
@@ -83,20 +92,25 @@ function writeMetaFile(
     const metaPath = join(dir, 'meta.json')
     const existing = existsSync(metaPath) ? readHistoryMeta(dir) : null
     const sameFishSession = existing?.fishSession === fish?.session
-    const existingFishPaths = sameFishSession
-      ? [existing?.fishHistoryPath, ...(existing?.fishHistoryPaths ?? [])].filter(
-          (path): path is string => typeof path === 'string'
-        )
-      : []
-    const fishHistoryPaths = fish?.historyPath
-      ? [...new Set([...existingFishPaths, fish.historyPath])]
+    const existingFishPaths =
+      sameFishSession && fish
+        ? normalizeFishHistoryPaths(
+            fish.session,
+            existing?.fishHistoryPath,
+            existing?.fishHistoryPaths
+          )
+        : []
+    const fishHistoryPaths = fish
+      ? normalizeFishHistoryPaths(fish.session, undefined, [...existingFishPaths, fish.historyPath])
       : existingFishPaths
     if (
       existing &&
+      !existing.fishHistoryMetadataNeedsRewrite &&
       (!fish ||
         (sameFishSession &&
           (!fish.historyPath ||
-            (existing.fishHistoryPath && existingFishPaths.includes(fish.historyPath)))))
+            (existing.fishHistoryPath === fish.historyPath &&
+              existingFishPaths.at(-1) === fish.historyPath))))
     ) {
       return
     }
@@ -106,8 +120,8 @@ function writeMetaFile(
         worktreeId,
         createdAt: existing?.createdAt ?? new Date().toISOString(),
         ...(fish ? { fishSession: fish.session } : {}),
-        // Why: retain the oldest singular path so a rollback still deletes pre-upgrade history.
-        ...(fishHistoryPaths[0] ? { fishHistoryPath: fishHistoryPaths[0] } : {}),
+        // Why: old builds read only the singular field, so it must identify the active path.
+        ...(fishHistoryPaths.at(-1) ? { fishHistoryPath: fishHistoryPaths.at(-1) } : {}),
         ...(fishHistoryPaths.length > 0 ? { fishHistoryPaths } : {})
       }),
       { mode: 0o600 }
@@ -124,29 +138,52 @@ export type HistoryDirMeta = {
   fishSession?: string
   /** That file's path resolved from the PTY's spawn env, which the main process env can contradict. */
   fishHistoryPath?: string
-  /** Every path this session used as XDG_DATA_HOME changed across launches. */
+  /** Most-recent paths this session used as XDG_DATA_HOME changed across launches. */
   fishHistoryPaths?: string[]
+  /** In-memory migration signal; never persisted. */
+  fishHistoryMetadataNeedsRewrite?: true
 }
 
 /** Read one history directory's meta.json, or null when it is absent or unparseable. */
 export function readHistoryMeta(dir: string): HistoryDirMeta | null {
   try {
-    const raw: unknown = JSON.parse(readFileSync(join(dir, 'meta.json'), 'utf-8'))
+    const metaPath = join(dir, 'meta.json')
+    if (statSync(metaPath).size > MAX_HISTORY_META_BYTES) {
+      return null
+    }
+    const raw: unknown = JSON.parse(readFileSync(metaPath, 'utf-8'))
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       return null
     }
     const record = raw as Record<string, unknown>
-    const fishHistoryPaths = Array.isArray(record.fishHistoryPaths)
-      ? record.fishHistoryPaths.filter((path): path is string => typeof path === 'string')
-      : undefined
+    const expectedFishSession = fishHistorySessionName(basename(dir).split('.')[0])
+    const fishSession =
+      isSafeFishHistorySession(record.fishSession) && record.fishSession === expectedFishSession
+        ? record.fishSession
+        : undefined
+    const fishHistoryPaths = fishSession
+      ? normalizeFishHistoryPaths(
+          fishSession,
+          record.fishHistoryPath,
+          Array.isArray(record.fishHistoryPaths) ? record.fishHistoryPaths : undefined
+        )
+      : []
+    const rawFishPaths = Array.isArray(record.fishHistoryPaths) ? record.fishHistoryPaths : []
+    const canonicalFishPath = fishHistoryPaths.at(-1)
+    const fishHistoryMetadataNeedsRewrite = Boolean(
+      record.fishSession !== undefined &&
+      (!fishSession ||
+        record.fishHistoryPath !== canonicalFishPath ||
+        rawFishPaths.length !== fishHistoryPaths.length ||
+        rawFishPaths.some((path, index) => path !== fishHistoryPaths[index]))
+    )
     return {
       ...(typeof record.worktreeId === 'string' ? { worktreeId: record.worktreeId } : {}),
       ...(typeof record.createdAt === 'string' ? { createdAt: record.createdAt } : {}),
-      ...(typeof record.fishSession === 'string' ? { fishSession: record.fishSession } : {}),
-      ...(typeof record.fishHistoryPath === 'string'
-        ? { fishHistoryPath: record.fishHistoryPath }
-        : {}),
-      ...(fishHistoryPaths && fishHistoryPaths.length > 0 ? { fishHistoryPaths } : {})
+      ...(fishSession ? { fishSession } : {}),
+      ...(fishHistoryPaths.at(-1) ? { fishHistoryPath: fishHistoryPaths.at(-1) } : {}),
+      ...(fishHistoryPaths.length > 0 ? { fishHistoryPaths } : {}),
+      ...(fishHistoryMetadataNeedsRewrite ? { fishHistoryMetadataNeedsRewrite: true } : {})
     }
   } catch {
     return null
@@ -237,6 +274,26 @@ export function injectHistoryEnv(
   result.histFile = spawnEnv.HISTFILE
   result.historyDir = spawnEnv.HISTFILE.replace(/[/\\][^/\\]+$/, '')
   return result
+}
+
+/** WSL's outer executable hides the login shell, so carry both history knobs. */
+export function injectWslFishHistoryEnv(
+  spawnEnv: Record<string, string>,
+  worktreeId: string,
+  wslDistro: string
+): string | null {
+  if (spawnEnv.fish_history) {
+    return null
+  }
+  const worktreeHash = hashWorktreeId(worktreeId)
+  const historyDir = ensureHistoryDir(worktreeHash, wslDistro)
+  if (!historyDir) {
+    return null
+  }
+  const session = fishHistorySessionName(worktreeHash)
+  writeMetaFile(historyDir, worktreeId, { session, historyPath: null })
+  spawnEnv.fish_history = session
+  return session
 }
 
 /** Re-point the history env when shell fallback changes the shell kind — e.g. zsh

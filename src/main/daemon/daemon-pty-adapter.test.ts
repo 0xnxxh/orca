@@ -24,18 +24,20 @@ import { getDaemonSocketPath, serializeDaemonPidFile } from './daemon-spawner'
 import { PtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
 import { TERMINAL_HISTORY_INLINE_SEED_CODE_UNITS } from './terminal-history-seed-chunks'
 
-const { getMacDaemonSystemResolverHealthMock, injectHistoryEnvMock } = vi.hoisted(() => ({
-  getMacDaemonSystemResolverHealthMock: vi.fn(async () => 'unknown'),
-  injectHistoryEnvMock: vi.fn(
-    (env: Record<string, string>, worktreeId: string, shellPath: string) => {
-      const fishSession = `orca_${worktreeId.replace(/\W/g, '')}`
-      if (shellPath.endsWith('fish')) {
-        env.fish_history = fishSession
+const { getMacDaemonSystemResolverHealthMock, injectHistoryEnvMock, injectWslFishHistoryEnvMock } =
+  vi.hoisted(() => ({
+    getMacDaemonSystemResolverHealthMock: vi.fn(async () => 'unknown'),
+    injectHistoryEnvMock: vi.fn(
+      (env: Record<string, string>, worktreeId: string, shellPath: string) => {
+        const fishSession = `orca_${worktreeId.replace(/\W/g, '')}`
+        if (shellPath.endsWith('fish')) {
+          env.fish_history = fishSession
+        }
+        return { shell: 'fish', histFile: null, fishSession, historyDir: '/history' }
       }
-      return { shell: 'fish', histFile: null, fishSession, historyDir: '/history' }
-    }
-  )
-}))
+    ),
+    injectWslFishHistoryEnvMock: vi.fn()
+  }))
 
 const itOnPosix = process.platform === 'win32' ? it.skip : it
 
@@ -49,6 +51,7 @@ vi.mock('./daemon-health', async (importOriginal) => {
 
 vi.mock('../terminal-history', () => ({
   injectHistoryEnv: injectHistoryEnvMock,
+  injectWslFishHistoryEnv: injectWslFishHistoryEnvMock,
   logHistoryInjection: vi.fn()
 }))
 
@@ -214,6 +217,21 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
       expect(injectHistoryEnvMock).not.toHaveBeenCalled()
       expect(lastSpawnOpts?.env?.fish_history).toBeUndefined()
+    })
+
+    it('does not mutate scoped history on an existing-session attach', async () => {
+      await adapter.spawn({ cols: 80, rows: 24, sessionId: 'existing-session' })
+      injectHistoryEnvMock.mockClear()
+
+      await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'existing-session',
+        worktreeId: 'repo-1::/repo',
+        historyIsolationEnabled: true
+      })
+
+      expect(injectHistoryEnvMock).not.toHaveBeenCalled()
     })
 
     it('carries classified startup spans from the daemon source to the adapter', async () => {

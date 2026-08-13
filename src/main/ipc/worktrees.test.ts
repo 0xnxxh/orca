@@ -8624,7 +8624,8 @@ describe('registerWorktreeHandlers', () => {
   // Folder projects can be SSH-backed, and folder workspace ids are `repoId::path::workspace:<uuid>`
   // — reusable across hosts — so the sweep must name the owning connection.
   it('fences an SSH folder workspace PTY sweep to the owning connection', async () => {
-    const sshPtyProvider = { id: 'ssh-pty-provider' } as never
+    const deleteWorktreeHistory = vi.fn().mockResolvedValue(undefined)
+    const sshPtyProvider = { id: 'ssh-pty-provider', deleteWorktreeHistory } as never
     const worktreeId = 'repo-folder::/remote/folder::workspace:child-1'
     store.getRepo.mockReturnValue({
       id: 'repo-folder',
@@ -8651,6 +8652,7 @@ describe('registerWorktreeHandlers', () => {
       includeProviderInventory: true,
       includeLocalRegistry: false
     })
+    expect(deleteWorktreeHistory).toHaveBeenCalledWith(worktreeId)
   })
 
   it('fences a mirrored runtime folder workspace sweep to its environment', async () => {
@@ -8893,7 +8895,9 @@ describe('registerWorktreeHandlers', () => {
         ORCA_WORKTREE_PATH: '/remote/feature-wt'
       })
     )
-    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined)
+    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined, {
+      worktreeId: 'repo-ssh::/remote/feature-wt'
+    })
     expect(runtimeStub.closeFileWatchersForRemoval).toHaveBeenCalledWith(
       '/remote/feature-wt',
       'conn-1'
@@ -9019,7 +9023,9 @@ describe('registerWorktreeHandlers', () => {
     })
 
     expect(provider.worktreeIsClean).not.toHaveBeenCalled()
-    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', true)
+    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', true, {
+      worktreeId: 'repo-ssh::/remote/feature-wt'
+    })
   })
 
   it('continues SSH worktree removal when the archive hook fails', async () => {
@@ -9075,7 +9081,9 @@ describe('registerWorktreeHandlers', () => {
       await handlers['worktrees:remove'](null, {
         worktreeId: 'repo-ssh::/remote/feature-wt'
       })
-      expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined)
+      expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined, {
+        worktreeId: 'repo-ssh::/remote/feature-wt'
+      })
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         '[hooks] archive hook failed for /remote/feature-wt:',
         expect.stringContaining('archive hook exited 7')
@@ -9133,7 +9141,9 @@ describe('registerWorktreeHandlers', () => {
       await handlers['worktrees:remove'](null, {
         worktreeId: 'repo-ssh::/remote/feature-wt'
       })
-      expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined)
+      expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined, {
+        worktreeId: 'repo-ssh::/remote/feature-wt'
+      })
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         '[hooks] archive hook failed for /remote/feature-wt:',
         'relay disconnected'
@@ -9258,7 +9268,9 @@ describe('registerWorktreeHandlers', () => {
     })
 
     expect(provider.execNonInteractive).not.toHaveBeenCalled()
-    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined)
+    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined, {
+      worktreeId: 'repo-ssh::/remote/feature-wt'
+    })
   })
 
   it('uses the workspace host when duplicate repo ids exist across local and SSH', async () => {
@@ -9305,7 +9317,9 @@ describe('registerWorktreeHandlers', () => {
       hostId: 'ssh:conn-1'
     })
 
-    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined)
+    expect(provider.removeWorktree).toHaveBeenCalledWith('/remote/feature-wt', undefined, {
+      worktreeId: 'repo-shared::/remote/feature-wt'
+    })
     expect(removeWorktreeMock).not.toHaveBeenCalled()
   })
 

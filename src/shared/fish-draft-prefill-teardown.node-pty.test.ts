@@ -139,10 +139,40 @@ describe('fish clears an agent draft prefill variable', () => {
         expect(await liveness('POSIXLEFT')).toBe(true)
         expect(statusOf('POSIXLEFT')).toBe('0')
 
-        expect(await run('FISHRC', clearEnvCommand(VAR, 'fish'))).toBe(true)
-        expect(statusOf('FISHRC')).toBe('0')
+        expect(await run('UNIXRC', clearEnvCommand(VAR, 'unix'))).toBe(true)
+        expect(statusOf('UNIXRC')).toBe('0')
         expect(await liveness('FISHLEFT')).toBe(true)
         expect(statusOf('FISHLEFT')).toBe('1')
+
+        expect(await run('GLOBAL', `set -gx ${VAR} global; ${clearEnvCommand(VAR, 'unix')}`)).toBe(
+          true
+        )
+        expect(await liveness('GLOBALLEFT')).toBe(true)
+        expect(statusOf('GLOBALLEFT')).toBe('1')
+
+        expect(
+          await run(
+            'LOCAL',
+            `function orca_clear_local; set -lx ${VAR} local; ${clearEnvCommand(VAR, 'unix')}; set -q ${VAR}; end; orca_clear_local`
+          )
+        ).toBe(true)
+        expect(statusOf('LOCAL')).toBe('1')
+
+        expect(
+          await run('UNIVERSAL', `set -Ux ${VAR} universal; ${clearEnvCommand(VAR, 'unix')}`)
+        ).toBe(true)
+        expect(await liveness('UNIVERSALLEFT')).toBe(true)
+        expect(statusOf('UNIVERSALLEFT')).toBe('1')
+
+        expect(
+          await run(
+            'ALIAS',
+            `set -gx ${VAR} alias-draft; alias orca_prefill_agent 'test "$${VAR}" = alias-draft'; orca_prefill_agent; ${clearEnvCommand(VAR, 'unix')}`
+          )
+        ).toBe(true)
+        expect(statusOf('ALIAS')).toBe('0')
+        expect(await liveness('ALIASLEFT')).toBe(true)
+        expect(statusOf('ALIASLEFT')).toBe('1')
       } finally {
         term.write('exit\r')
         await waitUntil(() => exited, 5_000)

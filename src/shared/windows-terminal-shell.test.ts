@@ -21,15 +21,15 @@ describe('resolveWindowsShellStartupFamily', () => {
     expect(resolveWindowsShellStartupFamily('C:\\Windows\\System32\\cmd.exe')).toBe('cmd')
   })
 
-  it('maps Git Bash and WSL shells to POSIX quoting', () => {
+  it('maps Git Bash to POSIX and WSL to portable Unix quoting', () => {
     expect(resolveWindowsShellStartupFamily('git-bash')).toBe('posix')
-    expect(resolveWindowsShellStartupFamily('wsl.exe')).toBe('posix')
+    expect(resolveWindowsShellStartupFamily('wsl.exe')).toBe('unix')
     expect(resolveWindowsShellStartupFamily('C:\\Program Files\\Git\\bin\\bash.exe')).toBe('posix')
   })
 
-  it('maps extension-less bash and wsl entries to POSIX quoting', () => {
+  it('maps extension-less bash and wsl entries to their Unix quoting', () => {
     expect(resolveWindowsShellStartupFamily('bash')).toBe('posix')
-    expect(resolveWindowsShellStartupFamily('wsl')).toBe('posix')
+    expect(resolveWindowsShellStartupFamily('wsl')).toBe('unix')
     expect(resolveWindowsShellStartupFamily('C:\\Program Files\\Git\\bin\\bash')).toBe('posix')
   })
 })

@@ -1059,6 +1059,10 @@ describe('LocalPtyProvider', () => {
       ])
       expect(spawnCall[1][5]).toContain('exec "\\$_orca_wsl_shell" -l')
       expect(spawnCall[2].env.HISTFILE).toContain('terminal-history-wsl/Debian')
+      expect(spawnCall[2].env.fish_history).toMatch(/^orca_[0-9a-f]{16}$/)
+      expect(spawnCall[2].env.WSLENV?.split(':')).toEqual(
+        expect.arrayContaining(['HISTFILE', 'fish_history'])
+      )
     })
 
     it.each(['/home/jin/repo', '/a', '/c'])(

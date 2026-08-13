@@ -31,12 +31,10 @@ export function resolveWindowsShellStartupFamily(
   // Why: wsl.exe and bash.exe (Git for Windows) launch POSIX shells, so queued
   // commands must use POSIX quoting and `cd '<cwd>'` rather than cmd/PowerShell.
   // Extension-less forms reach the same executables through PATHEXT.
-  if (
-    basename === 'wsl.exe' ||
-    basename === 'wsl' ||
-    basename === 'bash.exe' ||
-    basename === 'bash'
-  ) {
+  if (basename === 'wsl.exe' || basename === 'wsl') {
+    return 'unix'
+  }
+  if (basename === 'bash.exe' || basename === 'bash') {
     return 'posix'
   }
   return 'powershell'

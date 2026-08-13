@@ -70,6 +70,9 @@ describe('fish startup shell dialect', () => {
   it('clears variables with fish syntax instead of the sh `unset` fish rejects', () => {
     expect(clearEnvCommand('CODEX_HOME', 'fish')).toBe('set -e CODEX_HOME')
     expect(clearEnvCommand('CODEX_HOME', 'posix')).toBe('unset CODEX_HOME')
+    expect(clearEnvCommand('CODEX_HOME', 'unix')).toBe(
+      `command test -n "$fish_pid" && builtin eval 'set -el CODEX_HOME; set -eg CODEX_HOME; set -eU CODEX_HOME; true' || command eval 'unset CODEX_HOME'`
+    )
     expect(clearEnvCommand('CODEX_HOME', 'cmd')).toBe('set "CODEX_HOME="')
     expect(clearEnvCommand('CODEX_HOME', 'powershell')).toBe(
       'Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue'
@@ -110,6 +113,16 @@ describe('fish startup shell dialect', () => {
     ]) {
       const tokenized = tokenizeStartupCommand(quoteStartupArg(value, 'fish'), 'fish')
       expect(tokenized.ok && tokenized.tokens).toEqual([value])
+    }
+  })
+
+  it('keeps unknown-Unix generated arguments valid for both parsers', () => {
+    for (const value of [String.raw`use \d+ and \\server\share`, "it's mine", 'ends\\']) {
+      const quoted = quoteStartupArg(value, 'unix')
+      const fish = tokenizeStartupCommand(quoted, 'fish')
+      const posix = tokenizeStartupCommand(quoted, 'posix')
+      expect(fish.ok && fish.tokens).toEqual([value])
+      expect(posix.ok && posix.tokens).toEqual([value])
     }
   })
 

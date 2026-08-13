@@ -599,6 +599,7 @@ describe('launchWorkItemDirect', () => {
       agentEnv: {},
       sessionOptions: undefined,
       platform: 'linux',
+      shell: 'unix',
       isRemote: true
     })
     expect(buildAgentStartupPlan).toHaveBeenCalledWith({
@@ -609,6 +610,7 @@ describe('launchWorkItemDirect', () => {
       agentEnv: {},
       sessionOptions: undefined,
       platform: 'linux',
+      shell: 'unix',
       isRemote: true,
       allowEmptyPromptLaunch: true
     })

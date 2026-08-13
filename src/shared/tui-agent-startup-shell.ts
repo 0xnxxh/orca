@@ -3,7 +3,7 @@ import { tokenizeFishStartupCommand } from './fish-command-tokenizer'
 
 // Why: fish shares POSIX word splitting and `;` chaining, but NOT quoting or
 // escaping — see quoteStartupArg and fish-command-tokenizer.ts.
-export type AgentStartupShell = 'posix' | 'fish' | 'powershell' | 'cmd'
+export type AgentStartupShell = 'posix' | 'fish' | 'unix' | 'powershell' | 'cmd'
 
 type WindowsStartupShell = Extract<AgentStartupShell, 'powershell' | 'cmd'>
 
@@ -16,7 +16,7 @@ type WindowsStartupShell = Extract<AgentStartupShell, 'powershell' | 'cmd'>
  * never hardcode `'posix'` behind this check.
  */
 export function isPosixStartupShell(shell: AgentStartupShell): boolean {
-  return shell === 'posix' || shell === 'fish'
+  return shell === 'posix' || shell === 'fish' || shell === 'unix'
 }
 
 function isWindowsStartupShell(shell: AgentStartupShell): shell is WindowsStartupShell {
@@ -165,7 +165,22 @@ export function tokenizeStartupCommand(
   if (isWindowsStartupShell(shell)) {
     return tokenizeWindowsStartupCommand(value, shell)
   }
-  return shell === 'fish' ? tokenizeFishStartupCommand(value) : tokenizeCustomCommandTemplate(value)
+  if (shell === 'fish') {
+    return tokenizeFishStartupCommand(value)
+  }
+  const posix = tokenizeCustomCommandTemplate(value)
+  if (shell === 'posix' || !posix.ok) {
+    return posix
+  }
+  const fish = tokenizeFishStartupCommand(value)
+  if (
+    !fish.ok ||
+    fish.tokens.length !== posix.tokens.length ||
+    fish.tokens.some((token, index) => token !== posix.tokens[index])
+  ) {
+    return { ok: false, error: 'Command syntax depends on the remote Unix shell.' }
+  }
+  return posix
 }
 
 export function resolveStartupShell(
@@ -176,7 +191,34 @@ export function resolveStartupShell(
   if (platform !== 'win32' && agentEnv?.SHELL) {
     return resolveLoginShellStartupDialect(agentEnv.SHELL)
   }
-  return shell ?? (platform === 'win32' ? 'powershell' : 'posix')
+  return shell ?? (platform === 'win32' ? 'powershell' : 'unix')
+}
+
+function quotePortableUnixArg(value: string): string {
+  if (!value) {
+    return "''"
+  }
+  const parts: string[] = []
+  let literal = ''
+  const flushLiteral = (): void => {
+    if (literal) {
+      parts.push(`'${literal}'`)
+      literal = ''
+    }
+  }
+  for (const char of value) {
+    if (char === "'") {
+      flushLiteral()
+      parts.push(`"'"`)
+    } else if (char === '\\') {
+      flushLiteral()
+      parts.push(`"\\\\"`)
+    } else {
+      literal += char
+    }
+  }
+  flushLiteral()
+  return parts.join('')
 }
 
 export function quoteStartupArg(value: string, shell: AgentStartupShell): string {
@@ -185,6 +227,9 @@ export function quoteStartupArg(value: string, shell: AgentStartupShell): string
   }
   if (shell === 'cmd') {
     return `"${value.replace(/([\^&|<>()%!"])/g, '^$1')}"`
+  }
+  if (shell === 'unix') {
+    return quotePortableUnixArg(value)
   }
   // Why: fish single quotes are NOT literal. `\\` and `\'` are escapes inside
   // them, so the sh `'\''` idiom collapses every backslash (a `\d+` regex, a
@@ -219,6 +264,10 @@ export function clearEnvCommand(name: string, shell: AgentStartupShell): string 
   // the variable exported (e.g. an account-routed CODEX_HOME survives).
   if (shell === 'fish') {
     return `set -e ${name}`
+  }
+  if (shell === 'unix') {
+    // Why: inherited globals can hide universal values, so erase every Fish scope before the sh fallback.
+    return `command test -n "$fish_pid" && builtin eval 'set -el ${name}; set -eg ${name}; set -eU ${name}; true' || command eval 'unset ${name}'`
   }
   return `unset ${name}`
 }

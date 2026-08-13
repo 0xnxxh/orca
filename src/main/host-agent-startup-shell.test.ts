@@ -24,11 +24,11 @@ describe('resolveHostAgentStartupShell', () => {
     )
   })
 
-  it('stays on the sh default for a remote workspace', () => {
+  it('uses portable Unix syntax for a remote workspace', () => {
     process.env.SHELL = '/opt/homebrew/bin/fish'
-    expect(
-      resolveHostAgentStartupShell({ platform: process.platform, isRemote: true })
-    ).toBeUndefined()
+    expect(resolveHostAgentStartupShell({ platform: process.platform, isRemote: true })).toBe(
+      'unix'
+    )
   })
 
   it('stays on the sh default when the workspace platform is not this host', () => {

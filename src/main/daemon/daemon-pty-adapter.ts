@@ -68,7 +68,8 @@ import { shouldUseShellReadyStartupDelivery } from '../../shared/codex-startup-d
 import type { PtyIncarnationId } from '../../shared/pty-incarnation'
 import { resolveSafePtyDefaultCwd } from '../providers/pty-default-cwd'
 import { resolveUnixShellPath } from '../providers/local-pty-utils'
-import { injectHistoryEnv, logHistoryInjection } from '../terminal-history'
+import { injectHistoryEnv, injectWslFishHistoryEnv, logHistoryInjection } from '../terminal-history'
+import { addWslEnvKeys } from '../wsl-env'
 import { PtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
 import { ColdRestorePayloadCache, type ColdRestorePayload } from './cold-restore-payload-cache'
 import { PtyProcessListAdmission } from '../providers/pty-process-list-admission'
@@ -387,23 +388,39 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   private withHistoryIsolation(opts: PtySpawnOptions): PtySpawnOptions {
+    const wslContext = resolveWslSessionContext({
+      cwd: opts.cwd,
+      sessionId: opts.sessionId,
+      shellOverride: opts.shellOverride,
+      terminalWindowsWslDistro: opts.terminalWindowsWslDistro
+    })
     if (
-      process.platform === 'win32' ||
-      opts.isNewSession !== true ||
+      opts.attachOnly === true ||
+      (opts.sessionId !== undefined && opts.isNewSession !== true) ||
       !opts.worktreeId ||
-      opts.historyIsolationEnabled !== true
+      opts.historyIsolationEnabled !== true ||
+      (process.platform === 'win32' && !wslContext)
     ) {
       return opts
     }
     const env = { ...opts.env }
-    const preferredShell = opts.shellOverride || env.SHELL || process.env.SHELL || '/bin/zsh'
+    const preferredShell = wslContext
+      ? 'bash'
+      : opts.shellOverride || env.SHELL || process.env.SHELL || '/bin/zsh'
     const shellPath = resolveUnixShellPath(preferredShell)
-    const result = injectHistoryEnv(
+    const historyArgs = [
       env,
       opts.worktreeId,
       shellPath,
       opts.cwd ?? resolveSafePtyDefaultCwd()
-    )
+    ] as const
+    const result = wslContext
+      ? injectHistoryEnv(...historyArgs, { wslDistro: wslContext.distro })
+      : injectHistoryEnv(...historyArgs)
+    if (wslContext) {
+      injectWslFishHistoryEnv(env, opts.worktreeId, wslContext.distro)
+      addWslEnvKeys(env, ['HISTFILE', 'fish_history'])
+    }
     logHistoryInjection(opts.worktreeId, result)
     return { ...opts, env }
   }

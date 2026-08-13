@@ -2386,15 +2386,15 @@ export function registerWorktreeHandlers(
                 'Cannot delete the project root workspace. Remove the folder project instead.'
               )
             }
+            const ownerHost = parseExecutionHostId(removalHostId)
+            const sshPtyProvider =
+              ownerHost?.kind === 'ssh' ? getSshPtyProvider(ownerHost.targetId) : undefined
             // Why: folder workspaces share one root, so there's no Git remove step to close shells; sweep PTYs before dropping metadata.
             await withWorktreeRemoveStageSpan('pty_sweep', 'folder', async () => {
               // Folder projects can be SSH-backed, so fence the sweep to the owning host exactly
               // like the git paths — the local inventory must never reach a remote workspace's id.
               // The resolved repo is authoritative here: path-derived metadata is shared by
               // same-id host copies and can describe a different owner's workspace.
-              const ownerHost = parseExecutionHostId(removalHostId)
-              const sshPtyProvider =
-                ownerHost?.kind === 'ssh' ? getSshPtyProvider(ownerHost.targetId) : undefined
               const externalHost = ownerHost?.kind === 'ssh' || ownerHost?.kind === 'runtime'
               await killAllProcessesForWorktree(args.worktreeId, {
                 runtime,
@@ -2417,6 +2417,9 @@ export function registerWorktreeHandlers(
               })
             })
             await withWorktreeRemoveStageSpan('metadata_purge', 'folder', async () => {
+              await sshPtyProvider?.deleteWorktreeHistory?.(args.worktreeId).catch((err) => {
+                console.warn(`[pty:history] remote folder cleanup failed:`, err)
+              })
               removeWorktreeMetadataAndTransientState(store, args.worktreeId, removalHostId)
             })
             preservedBranchCleanupByScope.delete(
@@ -2723,7 +2726,10 @@ export function registerWorktreeHandlers(
               }
             }
 
-            const remoteRemoveOptions = !deleteBranch ? { deleteBranch } : {}
+            const remoteRemoveOptions = {
+              ...(!deleteBranch ? { deleteBranch } : {}),
+              worktreeId: args.worktreeId
+            }
             const removalGate = await withWorktreeRemoveStageSpan(
               'watcher_gate',
               'remote',
@@ -2743,13 +2749,7 @@ export function registerWorktreeHandlers(
                 'git_remove',
                 'remote',
                 async () =>
-                  Object.keys(remoteRemoveOptions).length > 0
-                    ? provider!.removeWorktree(
-                        canonicalWorktreePath,
-                        args.force,
-                        remoteRemoveOptions
-                      )
-                    : provider!.removeWorktree(canonicalWorktreePath, args.force)
+                  provider!.removeWorktree(canonicalWorktreePath, args.force, remoteRemoveOptions)
               )
               removalCompleted = true
             } finally {

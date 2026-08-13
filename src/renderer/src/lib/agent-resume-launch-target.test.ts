@@ -86,7 +86,7 @@ describe('resolveAgentResumeLaunchTarget on a Windows client', () => {
         executionHostId: 'ssh:ssh-1',
         terminalWindowsShell: 'cmd.exe'
       })
-    ).resolves.toEqual({ platform: 'linux', shell: undefined })
+    ).resolves.toEqual({ platform: 'linux', shell: 'unix' })
   })
 
   it('does not describe a remote runtime host with the local Windows shell setting', async () => {
@@ -104,7 +104,7 @@ describe('resolveAgentResumeLaunchTarget on a Windows client', () => {
         worktreePath: '\\\\wsl.localhost\\Ubuntu\\home\\neil\\repo',
         terminalWindowsShell: 'cmd.exe'
       })
-    ).resolves.toEqual({ platform: 'linux', shell: undefined })
+    ).resolves.toEqual({ platform: 'linux', shell: 'unix' })
   })
 
   it('keeps POSIX quoting for a project pinned to a WSL runtime', async () => {
@@ -122,7 +122,7 @@ describe('resolveAgentResumeLaunchTarget on a Windows client', () => {
         } as AgentResumeLaunchTargetArgs['projectRuntime'],
         terminalWindowsShell: 'cmd.exe'
       })
-    ).resolves.toEqual({ platform: 'linux', shell: undefined })
+    ).resolves.toEqual({ platform: 'linux', shell: 'unix' })
   })
 })
 

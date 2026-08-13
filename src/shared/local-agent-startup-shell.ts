@@ -27,14 +27,16 @@ export function resolveLocalAgentStartupShell(
   args: LocalAgentStartupShellArgs
 ): AgentStartupShell | undefined {
   if (args.platform === 'win32' || args.isRemote) {
-    return resolveLocalWindowsAgentStartupShell(args)
+    return (
+      resolveLocalWindowsAgentStartupShell(args) ?? (args.platform === 'win32' ? undefined : 'unix')
+    )
   }
   if (args.executionHostKind === 'ssh' || args.executionHostKind === 'runtime') {
-    return undefined
+    return 'unix'
   }
   // Why: a WSL workspace resolves to 'linux' on a win32 host — a different shell entirely.
   if (args.hostPlatform !== args.platform) {
-    return undefined
+    return 'unix'
   }
   return resolveLoginShellStartupDialect(args.hostLoginShell)
 }

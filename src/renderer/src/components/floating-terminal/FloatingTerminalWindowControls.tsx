@@ -20,6 +20,8 @@ import {
 } from '../../../../shared/tui-agent-launch-defaults'
 import { translate } from '@/i18n/i18n'
 import { useOptionalShortcutLabel } from '@/hooks/useShortcutLabel'
+import { getClientLoginShell } from '@/lib/client-login-shell'
+import { resolveLoginShellStartupDialect } from '../../../../shared/tui-agent-startup-shell'
 
 type FloatingTerminalWindowControlsProps = {
   maximized: boolean
@@ -79,6 +81,7 @@ export function FloatingTerminalWindowControls({
       agentArgs: resolveTuiAgentLaunchArgs(defaultAgent, state.settings?.agentDefaultArgs),
       agentEnv: resolveTuiAgentLaunchEnv(defaultAgent, state.settings?.agentDefaultEnv),
       platform: CLIENT_PLATFORM,
+      shell: resolveLoginShellStartupDialect(getClientLoginShell()),
       allowEmptyPromptLaunch: true
     })
     if (!startupPlan) {

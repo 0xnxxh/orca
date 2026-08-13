@@ -16,6 +16,7 @@ import { splitWorktreeIdForFilesystem } from '../../shared/worktree-id'
 import { isBracketedPasteSafeShell } from '../../shared/startup-command-submission'
 import {
   injectHistoryEnv,
+  injectWslFishHistoryEnv,
   updateHistoryEnvForFallback,
   logHistoryInjection,
   type HistoryInjectionResult
@@ -847,6 +848,10 @@ export class LocalPtyProvider implements IPtyProvider {
       historyResult = injectHistoryEnv(finalEnv, worktreeId, effectiveShellPath, cwd, {
         wslDistro: launchWslDistro
       })
+      if (isWslTerminal && launchWslDistro) {
+        injectWslFishHistoryEnv(finalEnv, worktreeId, launchWslDistro)
+        addWslEnvKeys(finalEnv, ['HISTFILE', 'fish_history'])
+      }
       logHistoryInjection(worktreeId, historyResult)
     }
 

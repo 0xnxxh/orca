@@ -12,7 +12,8 @@ const {
   readdirSyncMock,
   statSyncMock,
   getPathMock,
-  rmAsyncMock
+  rmAsyncMock,
+  deleteWslFishHistoryFileMock
 } = vi.hoisted(() => ({
   existsSyncMock: vi.fn(),
   mkdirSyncMock: vi.fn(),
@@ -23,7 +24,8 @@ const {
   readdirSyncMock: vi.fn(),
   statSyncMock: vi.fn(),
   getPathMock: vi.fn(),
-  rmAsyncMock: vi.fn(async () => undefined)
+  rmAsyncMock: vi.fn(async () => undefined),
+  deleteWslFishHistoryFileMock: vi.fn(async () => undefined)
 }))
 
 vi.mock('fs', () => ({
@@ -60,19 +62,30 @@ vi.mock('./wsl', () => ({
   toLinuxPath: toLinuxPathMock
 }))
 
+vi.mock('./wsl-fish-history-cleanup', () => ({
+  deleteWslFishHistoryFile: deleteWslFishHistoryFileMock
+}))
+
 import {
   resolveShellKind,
   ensureHistoryDir,
   injectHistoryEnv,
+  MAX_HISTORY_META_BYTES,
   updateHistoryEnvForFallback,
   type HistoryInjectionResult
 } from './terminal-history'
-import { fishHistorySessionName, resolveFishHistoryFilePath } from './fish-history-session'
+import {
+  fishHistorySessionName,
+  MAX_RETAINED_FISH_HISTORY_PATHS,
+  resolveFishHistoryFilePath
+} from './fish-history-session'
 import { hashWorktreeId } from './terminal-history-paths'
 import {
   deleteWorktreeHistoryDir,
   flushPendingWorktreeHistoryDeletions
 } from './terminal-history-deletion'
+
+type FishHistoryMeta = { fishHistoryPath: string; fishHistoryPaths: string[] }
 import { runHistoryGc, scheduleHistoryGc } from './terminal-history-gc'
 
 describe('terminal-history', () => {
@@ -273,7 +286,7 @@ describe('terminal-history', () => {
       }
     })
 
-    it('retains every fish path when XDG_DATA_HOME changes', () => {
+    it('retains fish paths when XDG_DATA_HOME changes and points rollback at the active path', () => {
       const firstEnv = { XDG_DATA_HOME: ['', 'data', 'one'].join(sep) }
       const secondEnv = { XDG_DATA_HOME: ['', 'data', 'two'].join(sep) }
       const worktreeId = 'repo-1::/path/wt'
@@ -282,20 +295,17 @@ describe('terminal-history', () => {
       readFileSyncMock.mockReturnValue(firstMeta)
 
       injectHistoryEnv(secondEnv, worktreeId, '/usr/bin/fish', '/path/wt')
-      const meta = JSON.parse(writeFileSyncMock.mock.calls.at(-1)?.[1] as string) as {
-        fishHistoryPath: string
-        fishHistoryPaths: string[]
-      }
+      const meta = JSON.parse(writeFileSyncMock.mock.calls.at(-1)?.[1] as string) as FishHistoryMeta
       const filename = `${first.fishSession}_history`
 
-      expect(meta.fishHistoryPath).toBe(['', 'data', 'one', 'fish', filename].join(sep))
+      expect(meta.fishHistoryPath).toBe(['', 'data', 'two', 'fish', filename].join(sep))
       expect(meta.fishHistoryPaths).toEqual([
         ['', 'data', 'one', 'fish', filename].join(sep),
         ['', 'data', 'two', 'fish', filename].join(sep)
       ])
     })
 
-    it('migrates legacy singular fish metadata without replacing its rollback path', () => {
+    it('migrates legacy singular fish metadata and points rollback at the active path', () => {
       const worktreeId = 'repo-1::/path/wt'
       const session = fishHistorySessionName(hashWorktreeId(worktreeId))
       const legacyPath = ['', 'legacy', 'fish', `${session}_history`].join(sep)
@@ -309,16 +319,55 @@ describe('terminal-history', () => {
         '/usr/bin/fish',
         '/path/wt'
       )
-      const meta = JSON.parse(writeFileSyncMock.mock.calls.at(-1)?.[1] as string) as {
-        fishHistoryPath: string
-        fishHistoryPaths: string[]
-      }
+      const meta = JSON.parse(writeFileSyncMock.mock.calls.at(-1)?.[1] as string) as FishHistoryMeta
 
-      expect(meta.fishHistoryPath).toBe(legacyPath)
+      expect(meta.fishHistoryPath).toBe(['', 'current', 'fish', `${session}_history`].join(sep))
       expect(meta.fishHistoryPaths).toEqual([
         legacyPath,
         ['', 'current', 'fish', `${session}_history`].join(sep)
       ])
+    })
+
+    it('bounds and normalizes retained fish paths while preserving the active path', () => {
+      const worktreeId = 'repo-1::/path/wt'
+      const session = fishHistorySessionName(hashWorktreeId(worktreeId))
+      const filename = `${session}_history`
+      const paths = Array.from({ length: 40 }, (_, index) =>
+        ['', 'data', String(index), 'fish', filename].join(sep)
+      )
+      readFileSyncMock.mockReturnValue(
+        JSON.stringify({
+          worktreeId,
+          fishSession: session,
+          fishHistoryPath: paths[0],
+          fishHistoryPaths: paths
+        })
+      )
+
+      injectHistoryEnv(
+        { XDG_DATA_HOME: ['', 'active'].join(sep) },
+        worktreeId,
+        '/usr/bin/fish',
+        '/path/wt'
+      )
+      const meta = JSON.parse(writeFileSyncMock.mock.calls.at(-1)?.[1] as string) as FishHistoryMeta
+      const activePath = ['', 'active', 'fish', filename].join(sep)
+
+      expect(meta.fishHistoryPaths).toHaveLength(MAX_RETAINED_FISH_HISTORY_PATHS)
+      expect(new Set(meta.fishHistoryPaths).size).toBe(meta.fishHistoryPaths.length)
+      expect(meta.fishHistoryPaths.at(-1)).toBe(activePath)
+      expect(meta.fishHistoryPath).toBe(activePath)
+    })
+
+    it('replaces oversized metadata without parsing it', () => {
+      statSyncMock.mockReturnValue({ isDirectory: () => true, size: MAX_HISTORY_META_BYTES + 1 })
+      const env = { XDG_DATA_HOME: ['', 'active'].join(sep) }
+
+      injectHistoryEnv(env, 'repo-1::/path/wt', '/usr/bin/fish', '/path/wt')
+
+      expect(readFileSyncMock).not.toHaveBeenCalled()
+      const meta = JSON.parse(writeFileSyncMock.mock.calls.at(-1)?.[1] as string) as FishHistoryMeta
+      expect(meta.fishHistoryPaths).toEqual([meta.fishHistoryPath])
     })
 
     it('gives two fish worktrees different history sessions', () => {
@@ -425,6 +474,10 @@ describe('terminal-history', () => {
   })
 
   describe('deleteWorktreeHistoryDir', () => {
+    const worktreeId = 'repo-1::/path/wt'
+    const session = fishHistorySessionName(hashWorktreeId(worktreeId))
+    const historyFilename = `${session}_history`
+
     it('tombstones then async-removes the history directory without recursive rmSync', async () => {
       existsSyncMock.mockReturnValue(true)
       deleteWorktreeHistoryDir('repo-1::/path/wt')
@@ -443,12 +496,10 @@ describe('terminal-history', () => {
       process.env.XDG_DATA_HOME = ['', 'pinned', 'data'].join(sep)
       try {
         existsSyncMock.mockReturnValue(true)
-        readFileSyncMock.mockReturnValue(
-          JSON.stringify({ worktreeId: 'repo-1::/path/wt', fishSession: 'orca_abc123' })
-        )
+        readFileSyncMock.mockReturnValue(JSON.stringify({ worktreeId, fishSession: session }))
         deleteWorktreeHistoryDir('repo-1::/path/wt')
         expect(rmSyncMock).toHaveBeenCalledWith(
-          ['', 'pinned', 'data', 'fish', 'orca_abc123_history'].join(sep),
+          ['', 'pinned', 'data', 'fish', historyFilename].join(sep),
           expect.objectContaining({ force: true })
         )
       } finally {
@@ -464,13 +515,13 @@ describe('terminal-history', () => {
     it('prefers the spawn-env path recorded in meta.json over this process env', async () => {
       const originalDataHome = process.env.XDG_DATA_HOME
       process.env.XDG_DATA_HOME = ['', 'main', 'data'].join(sep)
-      const recorded = ['', 'spawn', 'data', 'fish', 'orca_abc123_history'].join(sep)
+      const recorded = ['', 'spawn', 'data', 'fish', historyFilename].join(sep)
       try {
         existsSyncMock.mockReturnValue(true)
         readFileSyncMock.mockReturnValue(
           JSON.stringify({
-            worktreeId: 'repo-1::/path/wt',
-            fishSession: 'orca_abc123',
+            worktreeId,
+            fishSession: session,
             fishHistoryPath: recorded
           })
         )
@@ -478,7 +529,7 @@ describe('terminal-history', () => {
         expect(rmSyncMock).toHaveBeenCalledWith(recorded, expect.objectContaining({ force: true }))
         // The main-process guess stays as a fallback for pre-existing meta.json files.
         expect(rmSyncMock).toHaveBeenCalledWith(
-          ['', 'main', 'data', 'fish', 'orca_abc123_history'].join(sep),
+          ['', 'main', 'data', 'fish', historyFilename].join(sep),
           expect.objectContaining({ force: true })
         )
       } finally {
@@ -492,12 +543,12 @@ describe('terminal-history', () => {
     })
 
     it('deletes every recorded fish path while isolating individual failures', async () => {
-      const first = ['', 'data', 'one', 'fish', 'orca_abc123_history'].join(sep)
-      const second = ['', 'data', 'two', 'fish', 'orca_abc123_history'].join(sep)
+      const first = ['', 'data', 'one', 'fish', historyFilename].join(sep)
+      const second = ['', 'data', 'two', 'fish', historyFilename].join(sep)
       readFileSyncMock.mockReturnValue(
         JSON.stringify({
-          worktreeId: 'repo-1::/path/wt',
-          fishSession: 'orca_abc123',
+          worktreeId,
+          fishSession: session,
           fishHistoryPath: first,
           fishHistoryPaths: [first, second]
         })
@@ -515,11 +566,35 @@ describe('terminal-history', () => {
       await flushPendingWorktreeHistoryDeletions()
     })
 
+    it('bounds synchronous fish cleanup for oversized retained arrays', async () => {
+      const paths = Array.from({ length: 100 }, (_, index) =>
+        ['', 'data', String(index), 'fish', `${session}_history`].join(sep)
+      )
+      readFileSyncMock.mockReturnValue(
+        JSON.stringify({
+          worktreeId,
+          fishSession: session,
+          fishHistoryPath: paths[0],
+          fishHistoryPaths: paths
+        })
+      )
+
+      deleteWorktreeHistoryDir('repo-1::/path/wt')
+
+      expect(rmSyncMock.mock.calls.length).toBeLessThanOrEqual(MAX_RETAINED_FISH_HISTORY_PATHS + 1)
+      expect(rmSyncMock).toHaveBeenCalledWith(
+        paths.at(-1),
+        expect.objectContaining({ force: true })
+      )
+      expect(rmSyncMock).not.toHaveBeenCalledWith(paths[0], expect.anything())
+      await flushPendingWorktreeHistoryDeletions()
+    })
+
     it('runtime-validates malformed fish metadata before the normal tombstone', async () => {
       readFileSyncMock.mockReturnValue(
         JSON.stringify({
-          worktreeId: 'repo-1::/path/wt',
-          fishSession: 'orca_abc123',
+          worktreeId,
+          fishSession: session,
           fishHistoryPath: 42,
           fishHistoryPaths: [null, 7, { path: '/tmp/nope' }]
         })
@@ -530,23 +605,21 @@ describe('terminal-history', () => {
       await flushPendingWorktreeHistoryDeletions()
     })
 
-    it('refuses a recorded path that does not name its own session file', async () => {
+    it('refuses a matching session filename outside a fish data directory', async () => {
       const originalDataHome = process.env.XDG_DATA_HOME
       process.env.XDG_DATA_HOME = ['', 'main', 'data'].join(sep)
+      const unrelated = ['', 'tmp', historyFilename].join(sep)
       try {
         existsSyncMock.mockReturnValue(true)
         readFileSyncMock.mockReturnValue(
           JSON.stringify({
-            worktreeId: 'repo-1::/path/wt',
-            fishSession: 'orca_abc123',
-            fishHistoryPath: ['', 'etc', 'passwd'].join(sep)
+            worktreeId,
+            fishSession: session,
+            fishHistoryPath: unrelated
           })
         )
         deleteWorktreeHistoryDir('repo-1::/path/wt')
-        expect(rmSyncMock).not.toHaveBeenCalledWith(
-          ['', 'etc', 'passwd'].join(sep),
-          expect.anything()
-        )
+        expect(rmSyncMock).not.toHaveBeenCalledWith(unrelated, expect.anything())
       } finally {
         if (originalDataHome === undefined) {
           delete process.env.XDG_DATA_HOME
@@ -560,17 +633,30 @@ describe('terminal-history', () => {
     it('warns instead of going quiet when no fish history file is found', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       try {
-        readFileSyncMock.mockReturnValue(
-          JSON.stringify({ worktreeId: 'repo-1::/path/wt', fishSession: 'orca_abc123' })
-        )
+        readFileSyncMock.mockReturnValue(JSON.stringify({ worktreeId, fishSession: session }))
         // The history dir exists (so the tree is deleted) but the fish file does not.
-        existsSyncMock.mockImplementation((path: string) => !path.includes('orca_abc123_history'))
+        existsSyncMock.mockImplementation((path: string) => !path.includes(historyFilename))
         deleteWorktreeHistoryDir('repo-1::/path/wt')
         expect(warn).toHaveBeenCalledWith(expect.stringContaining('No fish history file found'))
       } finally {
         warn.mockRestore()
       }
       await flushPendingWorktreeHistoryDeletions()
+    })
+
+    it('cleans WSL Fish history through the owning distro before removing metadata', async () => {
+      readFileSyncMock.mockReturnValue(JSON.stringify({ worktreeId, fishSession: session }))
+      readdirSyncMock.mockImplementation((path: string) => {
+        if (path.endsWith('terminal-history-wsl')) {
+          return ['Ubuntu']
+        }
+        return []
+      })
+
+      deleteWorktreeHistoryDir(worktreeId)
+      await flushPendingWorktreeHistoryDeletions()
+
+      expect(deleteWslFishHistoryFileMock).toHaveBeenCalledWith('Ubuntu', session)
     })
 
     it('leaves the live directory alone when the tombstone rename fails', async () => {

@@ -24495,6 +24495,9 @@ export class OrcaRuntimeService {
               console.warn(`[worktree-teardown] failed for ${removalTarget.id}:`, err)
             })
           }
+          await folderSshPtyProvider?.deleteWorktreeHistory?.(removalTarget.id).catch((err) => {
+            console.warn(`[pty:history] remote folder cleanup failed:`, err)
+          })
           this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
           this.preservedBranchCleanupByScope.delete(cleanupScopeKey)
           this.invalidateResolvedWorktreeCache()
@@ -24747,7 +24750,10 @@ export class OrcaRuntimeService {
           return removalResult ?? {}
         }
         if (repo.connectionId) {
-          const remoteRemoveOptions = !deleteBranch ? { deleteBranch } : {}
+          const remoteRemoveOptions = {
+            ...(!deleteBranch ? { deleteBranch } : {}),
+            worktreeId: removalTarget.id
+          }
           const removalGate = await this.acquireFileWatcherRemoval(
             canonicalWorktreePath,
             repo.connectionId
@@ -24759,9 +24765,11 @@ export class OrcaRuntimeService {
               connectionId: repo.connectionId,
               allowUnverifiedStop: allowUnverifiedPtyStop
             })
-            rawRemovalResult = await (Object.keys(remoteRemoveOptions).length > 0
-              ? provider!.removeWorktree(canonicalWorktreePath, force, remoteRemoveOptions)
-              : provider!.removeWorktree(canonicalWorktreePath, force))
+            rawRemovalResult = await provider!.removeWorktree(
+              canonicalWorktreePath,
+              force,
+              remoteRemoveOptions
+            )
             removalCompleted = true
           } finally {
             await removalGate.finish(removalCompleted)

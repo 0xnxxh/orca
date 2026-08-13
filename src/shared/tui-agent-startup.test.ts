@@ -39,7 +39,7 @@ describe('tui agent startup plans', () => {
     }
   )
 
-  it('uses POSIX quoting when the target shell is Linux', () => {
+  it('uses portable Unix quoting when the target shell is unknown', () => {
     const plan = buildAgentStartupPlan({
       agent: 'claude',
       prompt: "fix Bob's branch",
@@ -47,7 +47,7 @@ describe('tui agent startup plans', () => {
       platform: 'linux'
     })
 
-    expect(plan?.launchCommand).toBe("claude 'fix Bob'\\''s branch'")
+    expect(plan?.launchCommand).toBe(`claude 'fix Bob'"'"'s branch'`)
   })
 
   it('uses PowerShell quoting by default when the target shell is Windows', () => {
@@ -180,7 +180,8 @@ describe('tui agent startup plans', () => {
       agent: 'hermes',
       prompt: 'run it',
       cmdOverrides: {},
-      platform: 'linux'
+      platform: 'linux',
+      shell: 'posix'
     })
 
     expect(plan?.launchCommand).toMatch(/^sh -c /)
@@ -850,7 +851,8 @@ describe('tui agent startup plans', () => {
       agent: 'omp',
       draft: 'fix the omp regression',
       cmdOverrides: {},
-      platform: 'linux'
+      platform: 'linux',
+      shell: 'posix'
     })
 
     expect(plan).not.toBeNull()

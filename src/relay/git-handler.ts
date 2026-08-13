@@ -96,6 +96,7 @@ import { endSubprocessStdin } from '../shared/subprocess-stdin-write'
 import { clearGitStatusLineStatsCache } from '../shared/git-status-line-stats-cache'
 import { invalidateGitBranchLineTotalInFlight } from '../shared/git-branch-line-total'
 import { streamRelayGitStdout } from './git-stdout-stream'
+import { deleteRelayFishHistory } from './fish-history-metadata'
 
 const execFileAsync = promisify(execFile)
 const MAX_GIT_BUFFER = 10 * 1024 * 1024
@@ -1461,10 +1462,15 @@ export class GitHandler {
   }
 
   private async removeWorktree(params: Record<string, unknown>) {
-    const remove = () =>
-      this.runWithGitReadCacheClear(() =>
+    const remove = async () => {
+      const result = await this.runWithGitReadCacheClear(() =>
         removeWorktreeOp(this.git.bind(this), params, this.gitCapabilities)
       )
+      if (typeof params.worktreeId === 'string') {
+        deleteRelayFishHistory(params.worktreeId)
+      }
+      return result
+    }
     const worktreePath = params.worktreePath
     return this.watcherRegistry && typeof worktreePath === 'string'
       ? this.watcherRegistry.runWithRemovalFence(expandTilde(worktreePath), remove)

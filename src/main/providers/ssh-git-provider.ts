@@ -740,7 +740,7 @@ export class SshGitProvider implements IGitProvider {
   async removeWorktree(
     worktreePath: string,
     force?: boolean,
-    options?: { deleteBranch?: boolean; forceBranchDelete?: boolean }
+    options?: { deleteBranch?: boolean; forceBranchDelete?: boolean; worktreeId?: string }
   ): Promise<RemoveWorktreeResult> {
     return this.runWithDiffDedupeClear(
       async () =>
