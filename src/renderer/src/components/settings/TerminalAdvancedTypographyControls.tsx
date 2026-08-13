@@ -1,10 +1,12 @@
 import type { GlobalSettings } from '../../../../shared/types'
 import {
   DEFAULT_TERMINAL_FONT_WEIGHT,
+  DEFAULT_TERMINAL_FONT_WEIGHT_BOLD,
   TERMINAL_FONT_WEIGHT_MAX,
   TERMINAL_FONT_WEIGHT_MIN,
   TERMINAL_FONT_WEIGHT_STEP,
-  normalizeTerminalFontWeight
+  normalizeTerminalFontWeight,
+  normalizeTerminalFontWeightBold
 } from '../../../../shared/terminal-fonts'
 import {
   fontFamilyHasKnownLigatures,
@@ -54,6 +56,35 @@ export function TerminalAdvancedTypographyControls({
           suffix="100-900"
           onChange={(value) =>
             updateSettings({ terminalFontWeight: normalizeTerminalFontWeight(value) })
+          }
+        />
+      </SearchableSetting>
+
+      <SearchableSetting
+        title={translate(
+          'auto.components.settings.TerminalAppearanceSection.80bfdf3fac',
+          'Bold Font Weight'
+        )}
+        description={translate(
+          'auto.components.settings.TerminalAppearanceSection.ff65195bcd',
+          'Weight used for bold text. Fonts expose only a few real weights, so set this above Font Weight or bold will look identical to normal text.'
+        )}
+        keywords={['terminal', 'typography', 'weight', 'bold']}
+      >
+        <NumberField
+          label={translate(
+            'auto.components.settings.TerminalAppearanceSection.80bfdf3fac',
+            'Bold Font Weight'
+          )}
+          description=""
+          value={normalizeTerminalFontWeightBold(settings.terminalFontWeightBold)}
+          defaultValue={DEFAULT_TERMINAL_FONT_WEIGHT_BOLD}
+          min={TERMINAL_FONT_WEIGHT_MIN}
+          max={TERMINAL_FONT_WEIGHT_MAX}
+          step={TERMINAL_FONT_WEIGHT_STEP}
+          suffix="100-900"
+          onChange={(value) =>
+            updateSettings({ terminalFontWeightBold: normalizeTerminalFontWeightBold(value) })
           }
         />
       </SearchableSetting>
