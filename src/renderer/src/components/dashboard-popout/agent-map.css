@@ -153,7 +153,7 @@
 }
 
 .agent-map-worktree-status-glow.fleet-status-waiting {
-  stroke: color-mix(in srgb, var(--color-amber-500) 28%, transparent);
+  stroke: color-mix(in srgb, var(--agent-question) 32%, transparent);
 }
 
 .agent-map-worktree-status-glow.fleet-status-working {
@@ -199,7 +199,7 @@
 }
 
 .agent-map-worktree-ring.is-waiting {
-  stroke: var(--color-amber-500);
+  stroke: var(--agent-question);
 }
 
 .agent-map-worktree-ring.is-blocked {
@@ -366,7 +366,7 @@
 }
 
 .agent-map-agent-status-glow.fleet-status-waiting {
-  stroke: color-mix(in srgb, var(--color-amber-500) 42%, transparent);
+  stroke: color-mix(in srgb, var(--agent-question) 48%, transparent);
 }
 
 .agent-map-agent-status-glow.fleet-status-blocked {
@@ -418,7 +418,7 @@
 }
 
 .fleet-status-waiting .agent-map-agent-mark {
-  stroke: var(--color-amber-500);
+  stroke: var(--agent-question);
 }
 
 /* Unread: filled core. Fill survives zoom-out further than a halo does, and it is the
@@ -443,6 +443,19 @@
   pointer-events: none;
   stroke: var(--background);
   stroke-width: 2;
+}
+
+/* Shape cue for 'waiting': hue alone can't carry it at low zoom or for
+   red-green CVD, where orange and blocked-red converge. */
+.agent-map-agent-question-backdrop {
+  fill: var(--background);
+  pointer-events: none;
+  stroke: none;
+}
+
+.agent-map-agent-question-icon {
+  overflow: visible;
+  pointer-events: none;
 }
 
 .agent-map-aggregate-node circle {
@@ -482,8 +495,8 @@
 }
 
 .agent-map-legend-dot.fleet-status-waiting {
-  background: var(--color-amber-500);
-  box-shadow: 0 0 4px color-mix(in srgb, var(--color-amber-500) 72%, transparent);
+  background: var(--agent-question);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--agent-question) 72%, transparent);
   opacity: 1;
 }
 
