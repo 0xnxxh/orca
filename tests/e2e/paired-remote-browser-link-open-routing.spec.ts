@@ -12,13 +12,8 @@ import {
   type PairedElectronClient
 } from './helpers/paired-electron-client'
 
-// What this proves: "Open Link In Orca Browser" inside a remote browser pane opens the link on the
-// runtime that owns the pane — never on the client machine. The URL is a dev-server URL, so a
-// client-local fallback would silently load a *different machine's* server while looking
-// successful. The second act puts the workspace on this machine (the execution-host switch a user
-// makes) while the pane still shows the runtime's page: the open must fail visibly in the pane
-// instead of quietly landing here. Every verdict comes from outside the client under test — the
-// host's own RPC connection, the DOM the user sees, and the fixture server's request log.
+// The link is a dev-server URL, so a client-local fallback would silently load a *different
+// machine's* server while looking successful.
 
 const PANE_PATH = '/remote-pane'
 const LINK_PATH = '/remote-link-target'
@@ -82,10 +77,7 @@ async function startLinkFixtureServer(): Promise<LinkFixtureServer> {
   }
 }
 
-/**
- * What the host itself says it owns, asked over the host's own connection rather than proxied
- * through the client under test — the client cannot talk its way out of this one.
- */
+/** Asked over the host's own connection, not proxied through the client under test. */
 async function readHostBrowserUrls(
   host: HeadlessPairedRuntimeHost,
   worktreeId: string
@@ -98,11 +90,7 @@ async function readHostBrowserUrls(
   return response.result.tabs.filter((tab) => tab.type === 'browser').map((tab) => tab.url ?? '')
 }
 
-/**
- * Browser pages this machine renders itself. A remote pane is a screencast image; a client-local
- * tab is an Electron <webview> with the page really loaded here, so the URLs below are exactly the
- * pages the client machine's own browser is showing.
- */
+/** A remote pane is a screencast image; a <webview> means the page really loaded on this machine. */
 async function readLocalBrowserViewUrls(page: Page): Promise<string[]> {
   return page.evaluate(() =>
     Array.from(document.querySelectorAll('webview')).map(
@@ -163,10 +151,6 @@ async function focusMirroredPage(page: Page, worktreeId: string, pageId: string)
 
 type LinkOpenOutcome = 'opened on this machine' | 'pending' | 'refused'
 
-/**
- * Collapses the click's aftermath into the one distinction that matters, using only what a user
- * could see: did the pane refuse the open, or is this machine's browser now showing the URL?
- */
 async function readLinkOpenOutcome(page: Page, linkUrl: string): Promise<LinkOpenOutcome> {
   if ((await readLocalBrowserViewUrls(page)).some((url) => url.startsWith(linkUrl))) {
     return 'opened on this machine'
