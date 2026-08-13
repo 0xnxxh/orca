@@ -305,13 +305,18 @@ describe('SSH readoption catalog identity', () => {
   it('keeps projects and host setups across a no-op recordSshRepoReadoptions([])', async () => {
     const store = createTestStore()
     await store.getState().fetchRepos()
-    const projects = store.getState().projects
-    const setups = store.getState().projectHostSetups
+    const before = store.getState()
+    const projects = before.projects
+    const setups = before.projectHostSetups
     expect(projects).toHaveLength(1)
     expect(setups).toHaveLength(1)
 
     store.getState().recordSshRepoReadoptions([])
 
+    // Why: the empty-in/empty-pending call must hand the state object back untouched, or the
+    // freshly allocated pendingSshRepoReadoptions alone would wake every store subscriber.
+    expect(store.getState()).toBe(before)
+    expect(store.getState().pendingSshRepoReadoptions).toBe(before.pendingSshRepoReadoptions)
     expect(store.getState().projects).toBe(projects)
     expect(store.getState().projects[0]).toBe(projects[0])
     expect(store.getState().projectHostSetups).toBe(setups)

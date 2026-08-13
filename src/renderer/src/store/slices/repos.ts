@@ -2025,7 +2025,9 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       )
       // Why: mergeProjectHostSetupCompatibility always allocates; a no-op readoption
       // must not churn catalog identity. This write is all-repos, not host-scoped,
-      // so it cannot go through mergeFetchedProjectCompatibilityForHost.
+      // so it cannot go through mergeFetchedProjectCompatibilityForHost. Reconcile
+      // hands the store arrays straight back when nothing moved, so writing them
+      // unconditionally still leaves identity-keyed selectors untouched.
       const projects = reconcileCatalogRows(
         s.projects,
         compatibility.projects,
@@ -2040,10 +2042,8 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         repos,
         pendingSshRepoReadoptions: reconciliation.pendingReadoptions,
         ...worktreeState,
-        ...(catalogRowsUnchanged(projects, s.projects) ? {} : { projects }),
-        ...(catalogRowsUnchanged(projectHostSetups, s.projectHostSetups)
-          ? {}
-          : { projectHostSetups })
+        projects,
+        projectHostSetups
       }
     }),
 
