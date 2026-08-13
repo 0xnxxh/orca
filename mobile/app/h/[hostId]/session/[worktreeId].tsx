@@ -3105,6 +3105,10 @@ export default function SessionScreen() {
     hostId,
     worktreeId,
     worktreeName: routeWorktreeName,
+    nativeChatSessionId:
+      activeSessionTab?.type === 'terminal'
+        ? (activeSessionTab.agentStatus?.providerSession?.id ?? null)
+        : null,
     activeHandleRef,
     terminalCwdRef,
     openBrowser: (url) => void handleCreateBrowserRef.current?.(url),
