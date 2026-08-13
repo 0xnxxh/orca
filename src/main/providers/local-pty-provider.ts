@@ -29,9 +29,6 @@ import { prepareMacosTccLoginShell } from './macos-tcc-login-shell'
 import {
   getMarkerlessShellLaunchConfig,
   getShellReadyLaunchConfig,
-  createShellReadyScanState,
-  drainShellReadyHeldBytes,
-  scanForShellReady,
   writeStartupCommandWhenShellReady,
   STARTUP_COMMAND_READY_MAX_WAIT_MS
 } from './local-pty-shell-ready'
@@ -76,10 +73,10 @@ import {
   readPtySlavePath
 } from '../../shared/pty-slave-line-discipline-echo'
 import {
-  createShellStartupIdentityScanState,
-  drainShellStartupIdentityHeldBytes,
-  scanForShellStartupIdentity
-} from '../shell-startup-identity-scanner'
+  createShellStartupOutputScanState,
+  drainShellStartupOutputScanState,
+  scanShellStartupOutput
+} from '../shell-startup-output-scanner'
 import {
   createShellPromptReadinessProbe,
   type ShellPromptReadinessProbe
@@ -961,11 +958,8 @@ export class LocalPtyProvider implements IPtyProvider {
     let shellReadyTimeout: ReturnType<typeof setTimeout> | null = null
     let shellStartupPid: number | null = null
     let shellPromptReadinessProbe: ShellPromptReadinessProbe | null = null
-    let shellStartupIdentityScanState = shellReadyLaunch?.supportsReadyMarker
-      ? createShellStartupIdentityScanState()
-      : null
-    const shellReadyScanState = shellReadyLaunch?.supportsReadyMarker
-      ? createShellReadyScanState()
+    let shellStartupOutputScanState = shellReadyLaunch?.supportsReadyMarker
+      ? createShellStartupOutputScanState()
       : null
     const shellReadyPromise = args.command
       ? new Promise<ShellReadySignal>((resolve) => {
@@ -987,23 +981,17 @@ export class LocalPtyProvider implements IPtyProvider {
       resolve(signal)
     }
     const releaseHeldShellReadyBytes = (): void => {
-      if (!shellReadyScanState) {
+      if (!shellStartupOutputScanState) {
         return
       }
-      let heldBytes = shellStartupIdentityScanState
-        ? drainShellStartupIdentityHeldBytes(shellStartupIdentityScanState)
-        : ''
-      shellStartupIdentityScanState = null
-      if (heldBytes) {
-        heldBytes = scanForShellReady(shellReadyScanState, heldBytes).output
-      }
-      heldBytes += drainShellReadyHeldBytes(shellReadyScanState)
+      const heldBytes = drainShellStartupOutputScanState(shellStartupOutputScanState)
+      shellStartupOutputScanState = null
       if (heldBytes.length === 0) {
         return
       }
       startupIngress.accept(heldBytes)
     }
-    if (shellReadyScanState) {
+    if (shellStartupOutputScanState) {
       shellPromptReadinessProbe = createShellPromptReadinessProbe({
         slavePath: readPtySlavePath(proc),
         shellPath,
@@ -1048,18 +1036,13 @@ export class LocalPtyProvider implements IPtyProvider {
     const disposables: { dispose: () => void }[] = []
     const onDataDisposable = proc.onData((rawData) => {
       let data = rawData
-      if (shellStartupIdentityScanState && resolveShellReady) {
-        const scanned = scanForShellStartupIdentity(shellStartupIdentityScanState, data)
+      if (shellStartupOutputScanState && resolveShellReady) {
+        const scanned = scanShellStartupOutput(shellStartupOutputScanState, data)
         data = scanned.output
         if (scanned.shellPid) {
           shellStartupPid = scanned.shellPid
-          shellStartupIdentityScanState = null
         }
-      }
-      if (shellReadyScanState && resolveShellReady) {
-        const scanned = scanForShellReady(shellReadyScanState, data)
-        data = scanned.output
-        if (scanned.matched) {
+        if (scanned.ready) {
           finishShellReady({ postMarkerBytesObserved: scanned.postMarkerBytesObserved })
         }
       }
