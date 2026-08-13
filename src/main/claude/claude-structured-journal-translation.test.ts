@@ -173,6 +173,15 @@ describe('Claude structured journal translation', () => {
     })
   })
 
+  it('ignores empty user frames emitted by control-only requests', () => {
+    const state = sinkState()
+    const translator = createClaudeJournalTranslator({ sink: state.sink })
+
+    translator.handle(message('user', 'control-only', []))
+
+    expect(state.items).toEqual([])
+  })
+
   it('creates addressable approval and multi-question cards and cancels them durably', () => {
     const state = sinkState()
     const bindings: unknown[][] = []

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAgentSessionOptionCatalog } from '../../../src/shared/agent-session-option-catalog'
-import type { AgentSessionOptionsResult } from '../../../src/shared/agent-session-wire'
+import type {
+  AgentSessionOptionResult,
+  AgentSessionOptionsResult
+} from '../../../src/shared/agent-session-wire'
 import type { SessionOptionValue } from '../../../src/shared/native-chat-session-options'
 import {
   applyStructuredAgentSessionOptions,
@@ -9,7 +12,6 @@ import {
   createStructuredAgentSessionOptionState,
   structuredAgentSessionOptionSnapshot
 } from '../../../src/shared/structured-agent-session-options'
-import type { AgentSessionOptionResult } from '../../../src/shared/agent-session-wire'
 import type { RpcClient } from '../transport/rpc-client'
 import type { MobileStructuredAgent } from './mobile-structured-session-create'
 import type { MobileNativeChatSessionOptionsController } from './use-mobile-native-chat-session-options'

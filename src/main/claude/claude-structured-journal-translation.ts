@@ -195,7 +195,11 @@ export function createClaudeJournalTranslator(
       })
       changed = true
     }
-    if (envelope.role === 'user' && message.parent_tool_use_id === null) {
+    if (
+      envelope.role === 'user' &&
+      envelope.content.length > 0 &&
+      message.parent_tool_use_id === null
+    ) {
       if (currentTurn) {
         publishLifecycle(currentTurn.sessionId, currentTurn.turnId, false)
       }
