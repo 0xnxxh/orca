@@ -103,6 +103,7 @@ export function NativeChatStructuredSession(props: {
       <StructuredAgentSessionHandoffChrome
         status={controller.handoff}
         isWorking={controller.isWorking}
+        hasPersistedTurn={controller.hasPersistedTurn}
         onRequest={(direction, mode, action) => {
           void controller.requestHandoff(direction, mode, action)
         }}

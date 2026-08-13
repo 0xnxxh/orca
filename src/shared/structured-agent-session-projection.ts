@@ -116,6 +116,15 @@ export function activeStructuredAgentSessionTurnId(
   return null
 }
 
+export function hasPersistedStructuredAgentSessionTurn(
+  items: readonly AgentJournalRenderItem[]
+): boolean {
+  return items.some(
+    (item) =>
+      item.body.kind === 'message' && (item.body.role === 'user' || item.body.role === 'assistant')
+  )
+}
+
 export type StructuredAgentSessionProjectedStatus = 'working' | 'attention' | 'idle'
 
 export function projectStructuredAgentSessionStatus(

@@ -5,11 +5,13 @@ import type {
 } from '../../../../shared/agent-session-wire'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { translate } from '@/i18n/i18n'
 
 type Props = {
   status: AgentSessionHandoffStatus | null
   isWorking: boolean
+  hasPersistedTurn: boolean
   onRequest: (
     direction: AgentSessionHandoffDirection,
     mode: AgentSessionHandoffMode,
@@ -54,6 +56,7 @@ function handoffStageCopy(status: AgentSessionHandoffStatus): string {
 export function StructuredAgentSessionHandoffChrome({
   status,
   isWorking,
+  hasPersistedTurn,
   onRequest
 }: Props): React.JSX.Element | null {
   if (!status) {
@@ -122,15 +125,30 @@ export function StructuredAgentSessionHandoffChrome({
                 </Button>
               </>
             ) : (
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                // A submitted turn can reach the host before isWorking updates; after-turn is immediate when idle.
-                onClick={() => onRequest('to-tui', 'after-turn')}
-              >
-                {translate('components.native-chat.handoff.openAgentTui', 'Open agent TUI')}
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      disabled={!hasPersistedTurn}
+                      // A submitted turn can reach the host before isWorking updates; after-turn is immediate when idle.
+                      onClick={() => onRequest('to-tui', 'after-turn')}
+                    >
+                      {translate('components.native-chat.handoff.openAgentTui', 'Open agent TUI')}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                {!hasPersistedTurn ? (
+                  <TooltipContent side="bottom" sideOffset={4}>
+                    {translate(
+                      'components.native-chat.handoff.sendFirst',
+                      'Send a message first to open the agent TUI.'
+                    )}
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
             )
           ) : owner === 'tui' && phase === 'idle' ? (
             <Button
