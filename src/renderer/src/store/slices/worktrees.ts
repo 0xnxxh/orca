@@ -768,7 +768,8 @@ function notifyRuntimeScopeForbiddenIfNeeded(error: unknown): boolean {
 function applyDetectedWorktreeUpdates(
   detectedWorktreesByRepo: AppState['detectedWorktreesByRepo'],
   worktreeId: string,
-  rawUpdates: Partial<WorktreeMeta>
+  rawUpdates: Partial<WorktreeMeta>,
+  matchesWorktree: (worktree: Worktree) => boolean = () => true
 ): AppState['detectedWorktreesByRepo'] {
   // Why: mirrors applyWorktreeUpdates — detected rows feed the same palette.
   const updates = withoutErasedRequiredWorktreeFields(rawUpdates)
@@ -778,7 +779,7 @@ function applyDetectedWorktreeUpdates(
   for (const [repoId, result] of Object.entries(detectedWorktreesByRepo)) {
     let repoChanged = false
     const nextWorktrees = result.worktrees.map((worktree) => {
-      if (worktree.id !== worktreeId) {
+      if (worktree.id !== worktreeId || !matchesWorktree(worktree)) {
         return worktree
       }
       repoChanged = true
@@ -4985,7 +4986,17 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
   updateWorktreeMeta: async (worktreeId, updates, options) => {
     const shouldApplyUpdate = options?.shouldApply
-    const existingWorktree = get().getKnownWorktreeById(worktreeId)
+    const executionHostId = options?.executionHostId
+    const existingWorktree = get().getKnownWorktreeById(worktreeId, executionHostId)
+    if (executionHostId && !existingWorktree) {
+      return {
+        ok: false,
+        error: translate(
+          'auto.store.slices.worktrees.hostQualifiedWorkspaceMissing',
+          'Could not find this workspace on the requested host.'
+        )
+      }
+    }
     if (shouldApplyUpdate && !shouldApplyUpdate(existingWorktree)) {
       return { ok: true }
     }
@@ -5016,9 +5027,12 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
     }
-    const normalizedUpdates = existingWorktree
-      ? clearOlderHostedReviewLinksForReplacement(updates, existingWorktree)
+    const ownerScopedUpdates = executionHostId
+      ? { ...updates, hostId: existingWorktree?.hostId ?? executionHostId }
       : updates
+    const normalizedUpdates = existingWorktree
+      ? clearOlderHostedReviewLinksForReplacement(ownerScopedUpdates, existingWorktree)
+      : ownerScopedUpdates
     // Why: manual PR linking supplies only the number; resolve the head branch so Push targets the review branch.
     const linkedPrForPushTarget = isPositiveHostedReviewNumber(normalizedUpdates.linkedPR)
       ? normalizedUpdates.linkedPR
@@ -5029,7 +5043,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       existingWorktree &&
       !existingWorktree.pushTarget
         ? await resolveGitHubReviewPushTarget(
-            settingsForWorktreeOwner(get(), worktreeId),
+            executionHostId
+              ? settingsForRepoOwner(get(), existingWorktree.repoId, executionHostId, true)
+              : settingsForWorktreeOwner(get(), worktreeId),
             existingWorktree.repoId,
             linkedPrForPushTarget
           )
@@ -5047,7 +5063,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       resolvedPushTarget === undefined &&
       existingHostedReviewPushTargetLookup !== null &&
       existingHostedReviewPushTargetLookup.key !== nextHostedReviewPushTargetLookup?.key
-    const worktreeForUpdate = get().getKnownWorktreeById(worktreeId)
+    const worktreeForUpdate = get().getKnownWorktreeById(worktreeId, executionHostId)
     if (shouldApplyUpdate && !shouldApplyUpdate(worktreeForUpdate)) {
       return { ok: true }
     }
@@ -5062,7 +5078,12 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       (normalizedUpdates.linkedGiteaPR === null &&
         (worktreeForUpdate?.linkedGiteaPR ?? null) !== null)
     const reviewRepo = shouldRefreshHostedReview
-      ? get().repos.find((repo) => repo.id === worktreeForUpdate?.repoId)
+      ? executionHostId
+        ? findRepoForHost(get().repos, worktreeForUpdate?.repoId ?? '', {
+            hostId: executionHostId,
+            settings: get().settings
+          })
+        : get().repos.find((repo) => repo.id === worktreeForUpdate?.repoId)
       : undefined
     const reviewBranch = worktreeForUpdate?.branch.replace(/^refs\/heads\//, '')
 
@@ -5085,15 +5106,32 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
     let didApply = false
     set((s) => {
-      if (shouldApplyUpdate && !shouldApplyUpdate(findKnownWorktreeById(s, worktreeId))) {
+      if (
+        shouldApplyUpdate &&
+        !shouldApplyUpdate(findKnownWorktreeById(s, worktreeId, executionHostId))
+      ) {
         return {}
       }
       didApply = true
-      const nextWorktrees = applyWorktreeUpdates(s.worktreesByRepo, worktreeId, enriched)
+      const matchesOwner = executionHostId
+        ? (worktree: Worktree): boolean =>
+            worktreeMatchesHost(
+              worktree,
+              executionHostId,
+              worktreeHostMatchOptions(s, worktree.repoId, executionHostId)
+            )
+        : undefined
+      const nextWorktrees = applyWorktreeUpdates(
+        s.worktreesByRepo,
+        worktreeId,
+        enriched,
+        matchesOwner
+      )
       const nextDetectedWorktrees = applyDetectedWorktreeUpdates(
         s.detectedWorktreesByRepo,
         worktreeId,
-        enriched
+        enriched,
+        matchesOwner
       )
       const cacheKey =
         reviewRepo && reviewBranch
@@ -5177,7 +5215,18 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     }
 
     try {
-      await persistWorktreeMeta(settingsForWorktreeOwner(get(), worktreeId), worktreeId, enriched)
+      await persistWorktreeMeta(
+        executionHostId
+          ? settingsForRepoOwner(
+              get(),
+              existingWorktree?.repoId ?? getRepoIdFromWorktreeId(worktreeId),
+              executionHostId,
+              true
+            )
+          : settingsForWorktreeOwner(get(), worktreeId),
+        worktreeId,
+        enriched
+      )
       if (
         !options?.suppressHostedReviewRefresh &&
         reviewRepo &&
@@ -5217,7 +5266,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       }
     } catch (err) {
       if (isRuntimeSelectorNotFoundError(err)) {
-        void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
+        void get().fetchWorktrees(
+          getRepoIdFromWorktreeId(worktreeId),
+          executionHostId ? { executionHostId } : undefined
+        )
         return {
           ok: false,
           error: translate(
@@ -5227,7 +5279,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         }
       }
       console.error('Failed to update worktree meta:', err)
-      void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
+      void get().fetchWorktrees(
+        getRepoIdFromWorktreeId(worktreeId),
+        executionHostId ? { executionHostId } : undefined
+      )
       // Why: the refetch above reverts the optimistic write, so a caller that
       // closes its surface on this path shows the user a save that undid itself.
       return { ok: false, error: err instanceof Error ? err.message : String(err) }

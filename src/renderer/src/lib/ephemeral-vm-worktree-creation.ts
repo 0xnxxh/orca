@@ -4,6 +4,7 @@ import { prepareEphemeralVmWorkspaceTarget } from '@/lib/ephemeral-vm-workspace-
 import type { WorktreeCreationRequest } from '@/lib/pending-worktree-creation'
 import { getProjectIdentityKey } from '../../../shared/project-host-setup-projection'
 import { normalizeRuntimePathForComparison } from '../../../shared/cross-platform-path'
+import { parseExecutionHostId } from '../../../shared/execution-host'
 import type { CreateWorktreeResult, Repo, WorktreeMeta } from '../../../shared/types'
 import { translate } from '@/i18n/i18n'
 
@@ -197,9 +198,14 @@ export async function adoptEphemeralVmProvisionedRoot(
     ? normalizeRuntimePathForComparison(expectedPath)
     : null
   const refreshedStore = useAppStore.getState()
+  const parsedHost = hostId ? parseExecutionHostId(hostId) : null
   const worktree = (refreshedStore.worktreesByRepo[request.repoId] ?? []).find(
     (candidate) =>
       candidate.isMainWorktree &&
+      (!hostId ||
+        candidate.hostId === hostId ||
+        (parsedHost?.kind === 'runtime' &&
+          candidate.runtimeOwnerEnvironmentId === parsedHost.environmentId)) &&
       normalizedExpectedPath !== null &&
       normalizeRuntimePathForComparison(candidate.path) === normalizedExpectedPath
   )
@@ -210,6 +216,7 @@ export async function adoptEphemeralVmProvisionedRoot(
   const now = Date.now()
   const metadata: Partial<WorktreeMeta> = {
     displayName: request.displayName ?? request.name,
+    ...(hostId ? { hostId: worktree.hostId ?? hostId } : {}),
     ephemeralVmCheckoutMode: 'provisioned-root',
     lastActivityAt: now,
     createdAt: now,
@@ -250,7 +257,9 @@ export async function adoptEphemeralVmProvisionedRoot(
       : {}),
     ...(request.workspaceStatus !== undefined ? { workspaceStatus: request.workspaceStatus } : {})
   }
-  const updated = await refreshedStore.updateWorktreeMeta(worktree.id, metadata)
+  const updated = await refreshedStore.updateWorktreeMeta(worktree.id, metadata, {
+    executionHostId: hostId
+  })
   if (!updated.ok) {
     throw new Error(updated.error)
   }

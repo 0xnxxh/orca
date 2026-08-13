@@ -320,6 +320,7 @@
           "81f13f48d2": "Git could not safely delete branch \"{{value0}}\" after deleting worktree \"{{value1}}\", so Orca kept it to avoid losing local commits.",
           "runtimeScopeForbiddenTitle": "This connection has limited (mobile) access",
           "runtimeScopeForbiddenDescription": "Workspaces are unavailable on a mobile-scope pairing. Reconnect using the browser access link from Settings → Runtime Environments → Share this Orca server.",
+          "hostQualifiedWorkspaceMissing": "Could not find this workspace on the requested host.",
           "a17f4d2e93": "Could not update this workspace."
         },
         "repos": {

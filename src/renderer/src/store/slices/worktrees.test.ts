@@ -6953,6 +6953,54 @@ describe('worktree remote runtime mutations', () => {
     expect(store.getState().worktreesByRepo.repo1[0]?.comment).toBe('remote note')
   })
 
+  it('updates only the requested host when worktree ids collide across SSH hosts', async () => {
+    const store = createTestStore()
+    const worktreeId = 'repo-shared::/workspace/repo'
+    const first = makeWorktree({
+      id: worktreeId,
+      repoId: 'repo-shared',
+      hostId: 'ssh:first'
+    })
+    const second = makeWorktree({
+      id: worktreeId,
+      repoId: 'repo-shared',
+      hostId: 'ssh:second'
+    })
+    store.setState({
+      repos: [
+        {
+          id: 'repo-shared',
+          path: '/workspace/repo',
+          displayName: 'First',
+          badgeColor: '#000',
+          addedAt: 0,
+          connectionId: 'first'
+        },
+        {
+          id: 'repo-shared',
+          path: '/workspace/repo',
+          displayName: 'Second',
+          badgeColor: '#111',
+          addedAt: 1,
+          connectionId: 'second'
+        }
+      ],
+      worktreesByRepo: { 'repo-shared': [first, second] }
+    } as Partial<AppState>)
+
+    const result = await store
+      .getState()
+      .updateWorktreeMeta(worktreeId, { comment: 'first only' }, { executionHostId: 'ssh:first' })
+
+    expect(result).toEqual({ ok: true })
+    expect(store.getState().worktreesByRepo['repo-shared']?.[0]?.comment).toBe('first only')
+    expect(store.getState().worktreesByRepo['repo-shared']?.[1]?.comment).toBe('')
+    expect(mockApi.worktrees.updateMeta).toHaveBeenCalledWith({
+      worktreeId,
+      updates: expect.objectContaining({ comment: 'first only', hostId: 'ssh:first' })
+    })
+  })
+
   it('fails provisioned-root metadata closed on an older remote runtime', async () => {
     const store = createTestStore()
     const wt = makeWorktree({ id: 'repo1::/path/wt1', repoId: 'repo1', path: '/path/wt1' })

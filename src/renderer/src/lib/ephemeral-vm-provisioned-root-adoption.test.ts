@@ -55,13 +55,14 @@ describe('provisioned-root adoption', () => {
     store.worktreesByRepo = {}
     store.repos = []
     store.pendingWorktreeCreations = { 'creation-1': {} }
-    store.fetchWorktrees.mockImplementation(async () => {
+    store.fetchWorktrees.mockImplementation(async (_repoId, options) => {
       store.worktreesByRepo = {
         'repo-runtime': [
           {
             id: 'repo-runtime::C:\\workspace\\repo',
             repoId: 'repo-runtime',
             path: 'c:\\workspace\\repo\\',
+            hostId: options?.executionHostId ?? 'runtime:env-1',
             isMainWorktree: true
           }
         ] as never
@@ -92,11 +93,13 @@ describe('provisioned-root adoption', () => {
       'repo-runtime::C:\\workspace\\repo',
       expect.objectContaining({
         displayName: 'Feature workspace',
+        hostId: 'runtime:env-1',
         ephemeralVmCheckoutMode: 'provisioned-root',
         baseRef: 'origin/main',
         linkedIssue: 13044,
         workspaceStatus: 'in-progress'
-      })
+      }),
+      { executionHostId: 'runtime:env-1' }
     )
     expect(result.worktree.path).toBe('c:\\workspace\\repo\\')
   })
@@ -119,6 +122,39 @@ describe('provisioned-root adoption', () => {
       executionHostId: 'ssh:runtime-ssh-vm-1',
       requireAuthoritative: true
     })
+  })
+
+  it('adopts only the requested host when sibling hosts publish the same id and path', async () => {
+    store.fetchWorktrees.mockImplementation(async () => {
+      store.worktreesByRepo = {
+        'repo-runtime': [
+          {
+            id: 'repo-runtime::C:\\workspace\\repo',
+            repoId: 'repo-runtime',
+            path: 'C:\\workspace\\repo',
+            hostId: 'runtime:env-2',
+            isMainWorktree: true
+          },
+          {
+            id: 'repo-runtime::C:\\workspace\\repo',
+            repoId: 'repo-runtime',
+            path: 'C:\\workspace\\repo',
+            hostId: 'runtime:env-1',
+            isMainWorktree: true
+          }
+        ] as never
+      }
+      return true
+    })
+
+    const result = await adoptEphemeralVmProvisionedRoot(makeRequest())
+
+    expect(result.worktree.hostId).toBe('runtime:env-1')
+    expect(store.updateWorktreeMeta).toHaveBeenCalledWith(
+      result.worktree.id,
+      expect.objectContaining({ hostId: 'runtime:env-1' }),
+      { executionHostId: 'runtime:env-1' }
+    )
   })
 
   it('passes source intent to provisioning and keeps the adopted base ref', async () => {
@@ -184,6 +220,7 @@ describe('provisioned-root adoption', () => {
             id: 'repo-runtime::C:\\workspace\\other',
             repoId: 'repo-runtime',
             path: 'C:\\workspace\\other',
+            hostId: 'runtime:env-1',
             isMainWorktree: true
           }
         ] as never
