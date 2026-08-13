@@ -271,7 +271,9 @@ export class StructuredAgentSessionHost {
     params: AgentSessionHandoffRequest
   ): Promise<AgentSessionMutationResult<AgentSessionHandoffResult>> {
     this.requireSession(params.envelope.sessionId)
-    return this.handoffs.request(caller.callerKey, params)
+    return this.serialize(params.envelope.sessionId, () =>
+      this.handoffs.request(caller.callerKey, params)
+    )
   }
 
   async handoffStatus(sessionId: string): Promise<AgentSessionHandoffStatus> {

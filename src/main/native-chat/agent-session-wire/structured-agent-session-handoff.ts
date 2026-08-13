@@ -82,7 +82,7 @@ export class StructuredAgentSessionHandoffCoordinator {
     callerKey: string,
     params: AgentSessionHandoffRequest
   ): Promise<AgentSessionMutationResult<AgentSessionHandoffResult>> {
-    const record = this.requireRecord(params.envelope.sessionId)
+    let record = this.requireRecord(params.envelope.sessionId)
     const currentStatus = this.statuses.get(record.sessionId)
     const admission = await admitStructuredHandoffRequest({
       deps: this.deps,
@@ -103,12 +103,15 @@ export class StructuredAgentSessionHandoffCoordinator {
       return { ok: false, refusal: admission.refusal }
     }
     const { fingerprint } = admission
+    record = this.requireRecord(params.envelope.sessionId)
+    const admittedStatus = this.statuses.get(record.sessionId)
     const action = params.action ?? 'start'
     if (action === 'cancel-queued') {
       if (
-        currentStatus?.phase !== 'queued' ||
-        currentStatus.operationId === null ||
-        currentStatus.direction !== params.direction
+        admittedStatus?.phase !== 'queued' ||
+        admittedStatus.operationId === null ||
+        admittedStatus.direction !== params.direction ||
+        !this.queue.cancel(record.sessionId)
       ) {
         return this.refuseAdmitted(
           callerKey,
@@ -117,8 +120,7 @@ export class StructuredAgentSessionHandoffCoordinator {
           'No matching queued handoff exists.'
         )
       }
-      this.queue.cancel(record.sessionId)
-      await this.operationGuard.settle(record.sessionId, currentStatus.operationId, {
+      await this.operationGuard.settle(record.sessionId, admittedStatus.operationId, {
         status: 'failed',
         code: 'agent_session_operation_conflict'
       })
@@ -139,7 +141,7 @@ export class StructuredAgentSessionHandoffCoordinator {
       )
     }
     if (action === 'recover') {
-      if (!structuredManualRecoveryIsAdmissible(record, currentStatus)) {
+      if (!structuredManualRecoveryIsAdmissible(record, admittedStatus)) {
         return this.refuseAdmitted(
           callerKey,
           params,

@@ -125,8 +125,12 @@ export function applyAgentSessionReservation(
   if (request.expectedFence === null) {
     throw new Error('agent_session_conflict')
   }
+  const pinned =
+    existing.launchEnv || !request.launchEnv
+      ? existing
+      : { ...existing, launchEnv: { ...request.launchEnv }, updatedAt: request.now }
   return reserveAgentSessionOwner({
-    record: existing,
+    record: pinned,
     expectedFence: request.expectedFence,
     probe: request.probe,
     reservation

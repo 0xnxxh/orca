@@ -2,7 +2,9 @@ import type { AgentSessionHandoffRequest } from '../../../shared/agent-session-w
 import { stopStructuredNativeTurn } from './structured-agent-session-handoff-flow-context'
 import { handoffStructuredSessionToTui } from './structured-agent-session-handoff-forward'
 import type { StructuredAgentSessionHandoffOperationGuard } from './structured-agent-session-handoff-operation-guard'
+import { assertScheduledStructuredHandoffIsAdmissible } from './structured-agent-session-handoff-revalidation'
 import { handoffStructuredSessionToNative } from './structured-agent-session-handoff-reverse'
+import { structuredTuiStatus } from './structured-agent-session-handoff-status'
 import type {
   StructuredAgentSessionHandoffDeps,
   StructuredAgentSessionHandoffFlowContext
@@ -38,12 +40,13 @@ export class StructuredAgentSessionHandoffFlowRunner {
   }): void {
     const { callerKey, params, turnId, fingerprint, tuiAlreadyExited = false } = input
     const sessionId = params.envelope.sessionId
+    const journalSequence = this.input.deps.session(sessionId).journal.cursor().sequence
     this.input.operationGuard.start(sessionId, {
       callerKey,
       operationId: params.envelope.clientOperationId,
       fingerprint
     })
-    const flow = this.run(params, turnId, tuiAlreadyExited)
+    const flow = this.run(params, turnId, tuiAlreadyExited, journalSequence)
       .then(() => {
         this.input.operationGuard.finish(sessionId, params.envelope.clientOperationId)
         return this.input.deps.store.recordOperationOutcome({
@@ -68,10 +71,21 @@ export class StructuredAgentSessionHandoffFlowRunner {
   private run(
     params: AgentSessionHandoffRequest,
     turnId: string | null,
-    tuiAlreadyExited: boolean
+    tuiAlreadyExited: boolean,
+    journalSequence: number
   ): Promise<void> {
     const sessionId = params.envelope.sessionId
     return this.input.deps.schedule(sessionId, async () => {
+      const context = this.input.flowContext()
+      assertScheduledStructuredHandoffIsAdmissible({
+        record: context.requireRecord(sessionId),
+        journal: this.input.deps.session(sessionId).journal,
+        params,
+        turnId,
+        journalSequence,
+        tuiAlreadyExited,
+        tuiStatus: structuredTuiStatus(context.owner(sessionId), this.input.deps.transport)
+      })
       if (turnId && params.mode === 'stop-turn') {
         const stopped = await stopStructuredNativeTurn(this.input.deps, sessionId, turnId)
         if (!stopped) {
@@ -79,9 +93,9 @@ export class StructuredAgentSessionHandoffFlowRunner {
         }
       }
       await (params.direction === 'to-tui'
-        ? handoffStructuredSessionToTui(this.input.flowContext(), params, params.action === 'retry')
+        ? handoffStructuredSessionToTui(context, params, params.action === 'retry')
         : handoffStructuredSessionToNative(
-            this.input.flowContext(),
+            context,
             params,
             params.action === 'retry',
             tuiAlreadyExited

@@ -611,10 +611,9 @@ describe('structured session ownership handoff', () => {
     expect(await submit(request('to-native', 'after-turn'))).toMatchObject({ ok: true })
     expect(coordinator.status(SESSION).phase).toBe('queued')
     expect(waitForTuiExit).not.toHaveBeenCalled()
+    tuiIdle = true
     tuiReadiness = 'idle'
     await vi.waitFor(() => expect(waitForTuiExit).toHaveBeenCalledOnce())
-    expect(tuiIdle).toBe(false)
-    expect(waitForTuiIdleOrExit).toHaveBeenCalled()
   })
 
   it('completes a mobile-originated queued reverse after the owning TUI exits', async () => {
@@ -700,6 +699,7 @@ describe('structured session ownership handoff', () => {
 
     expect(await submit(request('to-native', 'after-turn'))).toMatchObject({ ok: true })
     expect(coordinator.status(SESSION).phase).toBe('queued')
+    tuiIdle = true
     tuiReadiness = 'idle'
     await waitForPhase('failed')
 

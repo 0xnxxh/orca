@@ -12,9 +12,11 @@ import type {
 export class StructuredAgentSessionHandoffQueue {
   private readonly controllers = new Map<string, AbortController>()
 
-  cancel(sessionId: string): void {
-    this.controllers.get(sessionId)?.abort()
+  cancel(sessionId: string): boolean {
+    const controller = this.controllers.get(sessionId)
+    controller?.abort()
     this.controllers.delete(sessionId)
+    return controller !== undefined
   }
 
   enqueue(
