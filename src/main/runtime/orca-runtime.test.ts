@@ -14862,6 +14862,9 @@ describe('OrcaRuntimeService', () => {
         },
         terminalLayoutsByTabId: {
           [tabId]: makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: ptyId })
+        },
+        terminalPtyIncarnationsByPaneKey: {
+          [makePaneKey(tabId, HEADLESS_LEAF_ID)]: 'live-source-incarnation'
         }
       })
     )
@@ -14898,7 +14901,9 @@ describe('OrcaRuntimeService', () => {
     const splitSpawn = spawn.mock.calls[0]?.[0] as
       | { expectedSourceBinding?: { incarnationId?: string } }
       | undefined
-    expect(splitSpawn?.expectedSourceBinding).not.toHaveProperty('incarnationId')
+    expect(splitSpawn?.expectedSourceBinding).toMatchObject({
+      incarnationId: 'live-source-incarnation'
+    })
 
     runtime.syncWindowGraph(1, {
       tabs: [

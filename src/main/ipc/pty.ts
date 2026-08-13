@@ -5506,6 +5506,15 @@ export function registerPtyHandlers(
       }
       return killWithCurrentProvider()
     },
+    retireRejectedPty: (ptyId) => {
+      let connectionId: string | null | undefined = ptyOwnership.get(ptyId)
+      const parsedSshId = connectionId === undefined ? parseAppSshPtyId(ptyId) : null
+      connectionId ??= parsedSshId?.connectionId
+      const incarnationId = finishPtyShutdown(ptyId, connectionId, store)
+      runtime?.onPtyExit(ptyId, 0, incarnationId)
+      rememberSyntheticKillExit(ptyId)
+      sendPtyExitToRenderer({ id: ptyId, code: 0 })
+    },
     markReversibleStops: (ptyIds) => {
       for (const ptyId of ptyIds) {
         reversibleStopOwnersByPtyId.set(ptyId, (reversibleStopOwnersByPtyId.get(ptyId) ?? 0) + 1)
