@@ -30,4 +30,29 @@ describe('StructuredAgentSessionHandoffChrome', () => {
 
     expect(onRequest).toHaveBeenCalledWith('to-tui', 'after-turn')
   })
+
+  it('offers one Retry action for a recoverable dead TUI owner', () => {
+    const onRequest = vi.fn()
+    render(
+      <StructuredAgentSessionHandoffChrome
+        status={{
+          owner: 'tui',
+          direction: 'to-native',
+          phase: 'failed',
+          stage: 'old-owner-stopped',
+          operationId: '1800000000000-00000000000000000000000000000001',
+          error: {
+            message: "Couldn't resume chat — the agent terminal still owns this session",
+            recoverableOwner: 'tui'
+          }
+        }}
+        isWorking={false}
+        onRequest={onRequest}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: 'Return to chat' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(onRequest).toHaveBeenCalledWith('to-native', 'now', 'retry')
+  })
 })

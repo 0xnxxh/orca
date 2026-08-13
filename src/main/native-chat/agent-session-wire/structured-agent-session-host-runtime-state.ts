@@ -13,13 +13,15 @@ export class StructuredAgentSessionHostRuntimeState {
 
   constructor(
     private readonly deps: StructuredAgentSessionHostDeps,
-    onLeaseRenewed?: (record: AgentSessionRecord) => Promise<void>
+    onLeaseRenewed?: (record: AgentSessionRecord) => Promise<void>,
+    onDeadTuiOwner?: (record: AgentSessionRecord, probe: AgentSessionOwnerProbe) => Promise<void>
   ) {
     this.leaseRenewer = new StructuredAgentSessionLeaseRenewer({
       store: deps.store,
       probe: (record) => this.probeRecord(record),
       now: () => deps.now?.() ?? Date.now(),
       ...(onLeaseRenewed ? { onRenewed: onLeaseRenewed } : {}),
+      ...(onDeadTuiOwner ? { onDeadTuiOwner } : {}),
       onError: ({ sessionId, error }) => deps.onEventSinkError?.({ sessionId, error })
     })
   }

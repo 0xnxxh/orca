@@ -1,4 +1,7 @@
-import type { AgentSessionOwnerProbe } from '../../../shared/agent-session-lease-adjudication'
+import {
+  isProvenDeadProbe,
+  type AgentSessionOwnerProbe
+} from '../../../shared/agent-session-lease-adjudication'
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
 import {
   AGENT_SESSION_LEASE_TTL_MS,
@@ -17,6 +20,7 @@ export class StructuredAgentSessionLeaseRenewer {
       probe: (record: AgentSessionRecord) => Promise<AgentSessionOwnerProbe>
       now: () => number
       onRenewed?: (record: AgentSessionRecord) => Promise<void>
+      onDeadTuiOwner?: (record: AgentSessionRecord, probe: AgentSessionOwnerProbe) => Promise<void>
       onError?: (input: { sessionId: string; error: unknown }) => void
       intervalMs?: number
     }
@@ -61,10 +65,19 @@ export class StructuredAgentSessionLeaseRenewer {
 
   private async renewRecord(record: AgentSessionRecord): Promise<void> {
     try {
+      const probe = await this.input.probe(record)
+      if (
+        record.lease.runtimeKind === 'tui' &&
+        isProvenDeadProbe(probe) &&
+        this.input.onDeadTuiOwner
+      ) {
+        await this.input.onDeadTuiOwner(record, probe)
+        return
+      }
       const renewed = await this.input.store.renewLease({
         sessionId: record.sessionId,
         fence: record.lease.runtimeFence,
-        childProbe: await this.input.probe(record),
+        childProbe: probe,
         now: this.input.now()
       })
       await this.input.onRenewed?.(renewed)

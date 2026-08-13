@@ -302,7 +302,7 @@ export class StructuredAgentSessionHandoffCoordinator {
     )
   }
 
-  private setStatus(sessionId: string, status: AgentSessionHandoffStatus): void {
+  setStatus(sessionId: string, status: AgentSessionHandoffStatus): void {
     this.statuses.set(sessionId, status)
     this.deps.publish(sessionId, status)
   }

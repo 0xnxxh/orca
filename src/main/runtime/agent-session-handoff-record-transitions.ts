@@ -1,6 +1,8 @@
+import type { AgentSessionOwnerProbe } from '../../shared/agent-session-lease-adjudication'
 import type { AgentSessionHandoffStage } from '../../shared/agent-session-record'
 import {
   abandonAgentSessionHandoffAttempt,
+  recoverDeadTuiOwnerForHandoff,
   reserveAgentSessionHandoffOwner,
   rollbackAgentSessionHandoffPreparation,
   stopAgentSessionOwnerForHandoff,
@@ -24,6 +26,21 @@ export function setStoredAgentSessionHandoffStage(
 ) {
   return store.transitionHandoff(args.sessionId, (record) =>
     setAgentSessionHandoffStage({ ...args, record })
+  )
+}
+
+export function recoverStoredDeadTuiOwnerForHandoff(
+  store: AgentSessionRecordStore,
+  args: {
+    sessionId: string
+    expectedFence: number
+    operationId: string
+    probe: AgentSessionOwnerProbe
+    now: number
+  }
+) {
+  return store.transitionHandoff(args.sessionId, (record) =>
+    recoverDeadTuiOwnerForHandoff({ ...args, record })
   )
 }
 

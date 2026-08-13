@@ -1,8 +1,39 @@
+import type { AgentSessionOwnerProbe } from '../../shared/agent-session-lease-adjudication'
 import type {
   AgentSessionOwnerRuntimeKind,
   AgentSessionRecord
 } from '../../shared/agent-session-record'
-import { assertFence, reserveAgentSessionOwner, withLease } from './agent-session-lease-transitions'
+import {
+  assertFence,
+  evictAgentSessionOwner,
+  reserveAgentSessionOwner,
+  withLease
+} from './agent-session-lease-transitions'
+
+export function recoverDeadTuiOwnerForHandoff(args: {
+  record: AgentSessionRecord
+  expectedFence: number
+  operationId: string
+  probe: AgentSessionOwnerProbe
+  now: number
+}): AgentSessionRecord {
+  const { record } = args
+  assertFence(record.lease, args.expectedFence)
+  if (
+    record.lease.runtimeKind !== 'tui' ||
+    record.lease.handoffStage !== null ||
+    record.lease.claimStatus !== 'live' ||
+    record.lease.ownerProcess === null
+  ) {
+    throw new Error('agent_session_ownership_unknown')
+  }
+  const evicted = evictAgentSessionOwner(args)
+  return withLease(evicted, {
+    ...evicted.lease,
+    handoffStage: 'old-owner-stopped',
+    handoffOperationId: args.operationId
+  })
+}
 
 export function stopAgentSessionOwnerForHandoff(args: {
   record: AgentSessionRecord

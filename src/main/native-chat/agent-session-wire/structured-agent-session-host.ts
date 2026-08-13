@@ -68,8 +68,15 @@ export class StructuredAgentSessionHost {
   private readonly restartRestore = new StructuredAgentSessionRestartRestoreGate()
 
   constructor(readonly deps: StructuredAgentSessionHostDeps) {
-    this.runtimeState = new StructuredAgentSessionHostRuntimeState(deps, (record) =>
-      this.restoreRenewedHandoff(record.sessionId)
+    this.runtimeState = new StructuredAgentSessionHostRuntimeState(
+      deps,
+      (record) => this.restoreRenewedHandoff(record.sessionId),
+      (record, probe) =>
+        this.sessions.has(record.sessionId)
+          ? this.serialize(record.sessionId, () =>
+              this.handoffs.recoverDeadTuiOwner(record.sessionId, record.lease.runtimeFence, probe)
+            )
+          : Promise.resolve()
     )
     this.reconcileLeases = createRestartReconciler({
       store: deps.store,

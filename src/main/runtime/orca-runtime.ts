@@ -9133,6 +9133,7 @@ export class OrcaRuntimeService {
             worktree: `id:${record.location.workspaceId}`,
             agent: 'codex',
             providerSession: { key: 'session_id', id: head.handle.threadId },
+            ...(record.options ? { launchPreferences: record.options } : {}),
             presentation: 'background'
           },
           {},
@@ -25904,6 +25905,7 @@ export class OrcaRuntimeService {
       },
       ompResumeFilePath: request.ompResumeFilePath,
       sessionOptions: this.toAgentSessionOptions(request.launchPreferences),
+      sessionOptionsOverrideAgentArgs: Boolean(request.launchPreferences),
       platform,
       shell,
       isRemote
