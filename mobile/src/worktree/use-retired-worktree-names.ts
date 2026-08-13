@@ -25,8 +25,7 @@ export function useRetiredWorktreeNames(
     }
     let cancelled = false
     void client
-      // limit 1 because only the retirement map is wanted; the rows are incidental.
-      .sendRequest('worktree.list', { repo: `id:${repoId}`, limit: 1 })
+      .sendRequest('worktree.listRetiredNames', { repo: `id:${repoId}` })
       .then((response) => {
         if (cancelled) {
           return

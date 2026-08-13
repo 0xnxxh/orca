@@ -158,7 +158,10 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
     getSettings: vi.fn(),
     getWorktreeMeta: vi.fn(),
     setWorktreeMeta: vi.fn(),
-    removeWorktreeMeta: vi.fn()
+    removeWorktreeMeta: vi.fn(),
+    addRetiredWorktreeName: vi.fn(),
+    getRetiredWorktreeNames: vi.fn(),
+    mergeRetiredWorktreeNames: vi.fn()
   }
 
   beforeEach(() => {
@@ -200,6 +203,9 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
     store.getWorktreeMeta.mockReset()
     store.setWorktreeMeta.mockReset()
     store.removeWorktreeMeta.mockReset()
+    store.addRetiredWorktreeName.mockReset()
+    store.getRetiredWorktreeNames.mockReset()
+    store.mergeRetiredWorktreeNames.mockReset()
 
     for (const key of Object.keys(handlers)) {
       delete handlers[key]
@@ -236,6 +242,7 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
     })
     resolveSetupRunnerShellMock.mockReturnValue(undefined)
     store.getWorktreeMeta.mockReturnValue(undefined)
+    store.getRetiredWorktreeNames.mockReturnValue([])
     store.setWorktreeMeta.mockReturnValue({})
     resolveLocalGitUsernameMock.mockResolvedValue('')
     getDefaultBaseRefMock.mockReturnValue('origin/main')
@@ -302,6 +309,7 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
       false
     )
     expect(resolveLocalGitUsernameMock).not.toHaveBeenCalled()
+    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith('repo-1', 'improve-dashboard')
     expect(store.setWorktreeMeta).toHaveBeenCalledWith(
       'repo-1::C:/workspaces/improve-dashboard',
       expect.objectContaining({

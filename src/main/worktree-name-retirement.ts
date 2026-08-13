@@ -137,15 +137,22 @@ export function getRetiredWorktreeNamesByRepo(
     if (isFolderRepo(candidate)) {
       continue
     }
+    const retiredNames = getRetiredNames(candidate.id)
+    if (retiredNames.length === 0) {
+      continue
+    }
     const collisionKey = getRetirementCollisionKey(candidate, settings)
     let names = namesByCollisionKey.get(collisionKey)
     if (!names) {
       names = new Set()
       namesByCollisionKey.set(collisionKey, names)
     }
-    for (const name of getRetiredNames(candidate.id)) {
+    for (const name of retiredNames) {
       names.add(name)
     }
+  }
+  if (namesByCollisionKey.size === 0) {
+    return {}
   }
   const requestedRepoIds = new Set(repoIds)
   const byRepo: Record<string, string[]> = {}

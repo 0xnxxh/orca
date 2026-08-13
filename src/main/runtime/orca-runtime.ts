@@ -21091,6 +21091,22 @@ export class OrcaRuntimeService {
     }
   }
 
+  async listRetiredWorktreeNames(repoSelector: string): Promise<Record<string, string[]>> {
+    const store = this.store
+    if (!store?.getRetiredWorktreeNames) {
+      return {}
+    }
+    const repo = await this.resolveRepoSelector(repoSelector)
+    if (store.mergeRetiredWorktreeNames) {
+      try {
+        await ensureRetiredWorktreeNamesBackfilled(store, repo, store.getSettings())
+      } catch (error) {
+        console.warn(`[runtime] retirement backfill failed for repo ${repo.id}:`, error)
+      }
+    }
+    return this.collectRetiredNamesForRepos(new Set([repo.id]))
+  }
+
   /** Why: scoped to the repos in the page plus any explicitly requested one, so the payload cannot
    *  grow with the number of repos on the host; a client only suggests names for repos it sees. */
   private collectRetiredNamesForRepos(repoIds: Set<string>): Record<string, string[]> {

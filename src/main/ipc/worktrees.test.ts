@@ -316,7 +316,10 @@ describe('registerWorktreeHandlers', () => {
     removeWorktreeLineage: vi.fn(),
     getAllWorkspaceLineage: vi.fn(),
     getFolderWorkspaces: vi.fn(),
-    getProjectGroups: vi.fn()
+    getProjectGroups: vi.fn(),
+    addRetiredWorktreeName: vi.fn(),
+    getRetiredWorktreeNames: vi.fn(),
+    mergeRetiredWorktreeNames: vi.fn()
   }
   let runtimeStub: {
     resolveRemoteTrackingBase: ReturnType<typeof vi.fn>
@@ -400,6 +403,9 @@ describe('registerWorktreeHandlers', () => {
       store.getAllWorkspaceLineage,
       store.getFolderWorkspaces,
       store.getProjectGroups,
+      store.addRetiredWorktreeName,
+      store.getRetiredWorktreeNames,
+      store.mergeRetiredWorktreeNames,
       killAllProcessesForWorktreeMock,
       clearProviderPtyStateMock,
       getLocalPtyProviderMock,
@@ -448,6 +454,7 @@ describe('registerWorktreeHandlers', () => {
     })
     store.getWorktreeMeta.mockReturnValue(undefined)
     store.getAllWorktreeMeta.mockReturnValue({})
+    store.getRetiredWorktreeNames.mockReturnValue([])
     store.setWorktreeMeta.mockReturnValue({})
     store.getProjectHostSetups.mockReturnValue([
       {

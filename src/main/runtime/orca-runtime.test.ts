@@ -1331,6 +1331,9 @@ const store = {
       addedAt: 1
     }
   ],
+  addRetiredWorktreeName: () => {},
+  getRetiredWorktreeNames: () => [],
+  mergeRetiredWorktreeNames: () => false,
   addRepo: () => {},
   updateRepo: (id: string, updates: Record<string, unknown>) =>
     ({
@@ -4048,12 +4051,13 @@ describe('OrcaRuntimeService', () => {
   })
 
   it('does not reuse stale in-flight worktree scans after creating a worktree', async () => {
-    const runtime = new OrcaRuntimeService(store)
+    const addRetiredWorktreeName = vi.fn()
+    const runtime = new OrcaRuntimeService({ ...store, addRetiredWorktreeName })
     const staleScan = deferred<typeof MOCK_GIT_WORKTREES>()
     const createdWorktree = {
-      path: '/tmp/workspaces/cache-race',
+      path: '/tmp/workspaces/nautilus',
       head: 'def',
-      branch: 'cache-race',
+      branch: 'nautilus',
       isBare: false,
       isMainWorktree: false
     }
@@ -4067,7 +4071,7 @@ describe('OrcaRuntimeService', () => {
     const staleLookup = runtime.showManagedWorktree(TEST_WORKTREE_ID)
     const result = await runtime.createManagedWorktree({
       repoSelector: 'id:repo-1',
-      name: 'cache-race'
+      name: 'nautilus'
     })
     const freshLookup = runtime.showManagedWorktree(result.worktree.id)
 
@@ -4083,6 +4087,7 @@ describe('OrcaRuntimeService', () => {
         worktrees: expect.arrayContaining([expect.objectContaining({ path: createdWorktree.path })])
       }
     )
+    expect(addRetiredWorktreeName).toHaveBeenCalledWith(TEST_REPO_ID, 'nautilus')
   })
 
   it('creates additional workspace metadata for folder-mode repos through runtime create', async () => {

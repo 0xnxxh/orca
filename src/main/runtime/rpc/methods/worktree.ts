@@ -44,6 +44,13 @@ export const WORKTREE_METHODS: RpcMethod[] = [
     handler: async (params, { runtime }) => runtime.listManagedWorktrees(params.repo, params.limit)
   }),
   defineMethod({
+    name: 'worktree.listRetiredNames',
+    params: WorktreeDetectedListParams,
+    handler: async (params, { runtime }) => ({
+      retiredNamesByRepo: await runtime.listRetiredWorktreeNames(params.repo)
+    })
+  }),
+  defineMethod({
     name: 'worktree.detectedList',
     params: WorktreeDetectedListParams,
     handler: async (params, { runtime }) => runtime.listDetectedManagedWorktrees(params.repo)
@@ -289,18 +296,11 @@ export const WORKTREE_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'worktree.forceDeleteBranch',
     params: WorktreeForceDeleteBranch,
-    handler: async (params, { runtime }) =>
-      params.hostId
-        ? runtime.forceDeletePreservedBranch(
-            params.worktree,
-            params.branchName,
-            params.expectedHead,
-            params.hostId
-          )
-        : runtime.forceDeletePreservedBranch(
-            params.worktree,
-            params.branchName,
-            params.expectedHead
-          )
+    handler: async (params, { runtime }) => {
+      const deletionArgs = [params.worktree, params.branchName, params.expectedHead] as const
+      return params.hostId
+        ? runtime.forceDeletePreservedBranch(...deletionArgs, params.hostId)
+        : runtime.forceDeletePreservedBranch(...deletionArgs)
+    }
   })
 ]
