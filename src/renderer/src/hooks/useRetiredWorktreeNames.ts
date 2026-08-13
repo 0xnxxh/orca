@@ -8,12 +8,22 @@ import { useEffect, useState } from 'react'
  *
  *  Failure returns an empty set, which degrades to the pre-existing behavior (a spent name can be
  *  suggested) rather than blocking workspace creation. */
-export function useRetiredWorktreeNames(repoId: string | null | undefined): string[] {
-  const [retiredNames, setRetiredNames] = useState<string[]>([])
+export function useRetiredWorktreeNames(
+  repoId: string | null | undefined,
+  refreshKey: unknown
+): {
+  names: string[]
+  loading: boolean
+} {
+  const [loaded, setLoaded] = useState<{
+    repoId: string
+    refreshKey: unknown
+    names: string[]
+  } | null>(null)
 
   useEffect(() => {
     if (!repoId) {
-      setRetiredNames([])
+      setLoaded(null)
       return
     }
     let cancelled = false
@@ -21,19 +31,23 @@ export function useRetiredWorktreeNames(repoId: string | null | undefined): stri
       .listRetiredNames({ repoId })
       .then((names) => {
         if (!cancelled) {
-          setRetiredNames(names)
+          setLoaded({ repoId, refreshKey, names })
         }
       })
       .catch((err) => {
         if (!cancelled) {
-          setRetiredNames([])
+          setLoaded({ repoId, refreshKey, names: [] })
         }
         console.warn(`Failed to load retired workspace names for repo ${repoId}:`, err)
       })
     return () => {
       cancelled = true
     }
-  }, [repoId])
+  }, [refreshKey, repoId])
 
-  return retiredNames
+  return {
+    names:
+      loaded && loaded.repoId === repoId && loaded.refreshKey === refreshKey ? loaded.names : [],
+    loading: Boolean(repoId) && (loaded?.repoId !== repoId || loaded?.refreshKey !== refreshKey)
+  }
 }

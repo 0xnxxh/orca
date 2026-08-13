@@ -933,7 +933,11 @@ import {
   getWorktreeCreateCandidate,
   WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS
 } from '../worktree-create-candidates'
-import { retirableLeafName } from '../worktree-name-retirement'
+import {
+  ensureRetiredWorktreeNamesBackfilled,
+  getRetiredWorktreeNamesByRepo,
+  retirableLeafName
+} from '../worktree-name-retirement'
 import { normalizeSparseDirectories } from '../ipc/sparse-checkout-directories'
 import type { PtyBindingSourceExpectation, Store } from '../persistence'
 import type { StatsCollector } from '../stats/collector'
@@ -1114,6 +1118,7 @@ type RuntimeStore = {
    *  retirement when absent, which only means a name stays issuable. */
   addRetiredWorktreeName?: Store['addRetiredWorktreeName']
   getRetiredWorktreeNames?: Store['getRetiredWorktreeNames']
+  mergeRetiredWorktreeNames?: Store['mergeRetiredWorktreeNames']
   addRepo: Store['addRepo']
   updateRepo: Store['updateRepo']
   getProjects?: Store['getProjects']
@@ -21041,8 +21046,24 @@ export class OrcaRuntimeService {
     if (!Number.isInteger(limit) || limit <= 0) {
       throw new Error('invalid_limit')
     }
+    const selectedRepo = repoSelector ? await this.resolveRepoSelector(repoSelector) : null
+    if (
+      selectedRepo &&
+      this.store?.getRetiredWorktreeNames &&
+      this.store.mergeRetiredWorktreeNames
+    ) {
+      try {
+        await ensureRetiredWorktreeNamesBackfilled(
+          this.store,
+          selectedRepo,
+          this.store.getSettings()
+        )
+      } catch (error) {
+        console.warn(`[runtime] retirement backfill failed for repo ${selectedRepo.id}:`, error)
+      }
+    }
     const resolved = await this.listResolvedWorktrees()
-    const repoId = repoSelector ? (await this.resolveRepoSelector(repoSelector)).id : null
+    const repoId = selectedRepo?.id ?? null
     const visibilitySourceMatchersByRepoId =
       this.buildRuntimeVisibilitySourceMatchersByRepoId(resolved)
     const worktrees = resolved.filter((worktree) => {
@@ -21077,14 +21098,9 @@ export class OrcaRuntimeService {
     if (!store?.getRetiredWorktreeNames) {
       return {}
     }
-    const byRepo: Record<string, string[]> = {}
-    for (const repoId of repoIds) {
-      const names = store.getRetiredWorktreeNames(repoId)
-      if (names.length > 0) {
-        byRepo[repoId] = names
-      }
-    }
-    return byRepo
+    const repos = store.getRepos()
+    const settings = store.getSettings()
+    return getRetiredWorktreeNamesByRepo(store, repoIds, repos, settings)
   }
 
   async listDetectedManagedWorktrees(

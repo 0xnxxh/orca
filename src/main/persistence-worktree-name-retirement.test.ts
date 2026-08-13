@@ -64,6 +64,13 @@ describe('worktree name retirement registry', () => {
     expect(store.getRetiredWorktreeNames(REPO)).toEqual([])
   })
 
+  it('does not persist arbitrary user and issue-title names', async () => {
+    const store = await createStore()
+    store.addRetiredWorktreeName(REPO, 'fix-login-redirect')
+    store.addRetiredWorktreeName(REPO, 'STA-4189-duplicate-name')
+    expect(store.getRetiredWorktreeNames(REPO)).toEqual([])
+  })
+
   it('returns a copy so callers cannot mutate the registry in place', async () => {
     const store = await createStore()
     store.addRetiredWorktreeName(REPO, 'nautilus')
@@ -102,5 +109,12 @@ describe('worktree name retirement registry', () => {
       retiredWorktreeNamesByRepo: { [REPO]: ['nautilus', 42, null, 'Seahorse'] }
     })
     expect(store.getRetiredWorktreeNames(REPO).sort()).toEqual(['nautilus', 'seahorse'])
+  })
+
+  it('drops legacy arbitrary names while loading the persisted map', async () => {
+    const store = await createStore({
+      retiredWorktreeNamesByRepo: { [REPO]: ['fix-login', 'Nautilus'] }
+    })
+    expect(store.getRetiredWorktreeNames(REPO)).toEqual(['nautilus'])
   })
 })

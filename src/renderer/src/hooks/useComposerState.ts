@@ -1593,7 +1593,16 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
 
   // Why: blank name with no other seed → globally-unique creature name so workspaces don't collide across repos or on a literal default.
   // Retired names are excluded too, so a recreated workspace never reuses a deleted one's path.
-  const retiredWorktreeNames = useRetiredWorktreeNames(repoId)
+  const retiredNamesRefreshKey = useMemo(
+    () =>
+      (worktreesByRepo[repoId] ?? [])
+        .map((worktree) => worktree.path)
+        .sort()
+        .join('\0'),
+    [repoId, worktreesByRepo]
+  )
+  const { names: retiredWorktreeNames, loading: retiredWorktreeNamesLoading } =
+    useRetiredWorktreeNames(repoId, retiredNamesRefreshKey)
   const fallbackCreatureName = useMemo(
     () => getSuggestedCreatureName(worktreesByRepo, undefined, retiredWorktreeNames),
     [worktreesByRepo, retiredWorktreeNames]
@@ -3571,6 +3580,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     }
     if (
       !workspaceSeedName ||
+      retiredWorktreeNamesLoading ||
       selectedRepoRequiresConnection ||
       shouldWaitForSetupCheck ||
       shouldWaitForIssueAutomationCheck ||
@@ -4034,6 +4044,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     shouldWaitForIssueAutomationCheck,
     shouldWaitForSetupCheck,
     sourceIntentBlocksCreate,
+    retiredWorktreeNamesLoading,
     taskSourceContext,
     workspaceSeedName,
     isProjectGroupTarget,
@@ -4084,6 +4095,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       }
       if (
         !workspaceNameSeed ||
+        retiredWorktreeNamesLoading ||
         sourceIntentBlocksCreate ||
         selectedRepoRequiresConnection ||
         (requiresExplicitSetupChoice && !setupDecision) ||
@@ -4620,6 +4632,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       settings?.openAgentTabsInChatByDefault,
       smartNameMode,
       sourceIntentBlocksCreate,
+      retiredWorktreeNamesLoading,
       disabledTuiAgents,
       setupDecision,
       sparseEnabled,
@@ -4653,9 +4666,10 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     sparseError
   }
   const repoCreateDisabled =
-    createGateMode === 'quick'
+    retiredWorktreeNamesLoading ||
+    (createGateMode === 'quick'
       ? getQuickComposerCreateDisabled(createGateInput)
-      : getFullComposerCreateDisabled(createGateInput)
+      : getFullComposerCreateDisabled(createGateInput))
   const createDisabled = isProjectGroupTarget ? folderCreateDisabled : repoCreateDisabled
   const cardProps: ComposerCardProps = {
     eligibleRepos: isProjectGroupTarget ? folderSourceRepos : eligibleRepos,

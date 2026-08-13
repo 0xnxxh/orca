@@ -12,12 +12,15 @@ import type { RpcClient } from '../transport/rpc-client'
 export function useRetiredWorktreeNames(
   client: RpcClient | null | undefined,
   repoId: string | null | undefined
-): readonly string[] {
-  const [retiredNames, setRetiredNames] = useState<readonly string[]>([])
+): { names: readonly string[]; loading: boolean } {
+  const [loaded, setLoaded] = useState<{
+    repoId: string
+    names: readonly string[]
+  } | null>(null)
 
   useEffect(() => {
     if (!client || !repoId) {
-      setRetiredNames([])
+      setLoaded(null)
       return
     }
     let cancelled = false
@@ -32,11 +35,11 @@ export function useRetiredWorktreeNames(
           | { retiredNamesByRepo?: Record<string, string[]> }
           | undefined
         const names = result?.retiredNamesByRepo?.[repoId]
-        setRetiredNames(Array.isArray(names) ? names : [])
+        setLoaded({ repoId, names: Array.isArray(names) ? names : [] })
       })
       .catch(() => {
         if (!cancelled) {
-          setRetiredNames([])
+          setLoaded({ repoId, names: [] })
         }
       })
     return () => {
@@ -44,5 +47,8 @@ export function useRetiredWorktreeNames(
     }
   }, [client, repoId])
 
-  return retiredNames
+  return {
+    names: loaded && loaded.repoId === repoId ? loaded.names : [],
+    loading: Boolean(client && repoId) && loaded?.repoId !== repoId
+  }
 }

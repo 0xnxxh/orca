@@ -170,6 +170,7 @@ import {
   pruneAutomationRuns
 } from '../shared/automation-run-retention'
 import { pruneWorkspaceSessionBrowserHistory } from '../shared/workspace-session-browser-history'
+import { normalizeRetirableGeneratedName } from './worktree-name-retirement'
 import {
   FOLDER_WORKSPACE_INSTANCE_SEPARATOR,
   getRepoIdFromWorktreeId,
@@ -2350,8 +2351,8 @@ function normalizeRetiredWorktreeNamesByRepo(value: unknown): Record<string, str
       if (typeof entry !== 'string') {
         continue
       }
-      const normalized = entry.trim().toLowerCase()
-      if (normalized.length > 0 && normalized.length <= 256) {
+      const normalized = normalizeRetirableGeneratedName(entry)
+      if (normalized) {
         seen.add(normalized)
       }
     }
@@ -7221,8 +7222,8 @@ export class Store {
   /** Records a generated workspace name as spent for this repo. Called with the name main actually
    *  used, not the one the renderer proposed — the create path can advance past it on collision. */
   addRetiredWorktreeName(repoId: string, name: string): void {
-    const normalized = name.trim().toLowerCase()
-    if (!repoId || normalized.length === 0) {
+    const normalized = normalizeRetirableGeneratedName(name)
+    if (!repoId || !normalized) {
       return
     }
     this.state.retiredWorktreeNamesByRepo ??= {}
@@ -7244,8 +7245,8 @@ export class Store {
     }
     const incoming = new Set<string>()
     for (const name of names) {
-      const normalized = name.trim().toLowerCase()
-      if (normalized.length > 0) {
+      const normalized = normalizeRetirableGeneratedName(name)
+      if (normalized) {
         incoming.add(normalized)
       }
     }
