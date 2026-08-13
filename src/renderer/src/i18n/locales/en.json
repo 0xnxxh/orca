@@ -14471,7 +14471,9 @@
           "tableStatus": "Status",
           "tableActions": "Actions",
           "newAutomation": "New Automation",
-          "rowActions": "Automation actions"
+          "rowActions": "Automation actions",
+          "tableLastRun": "Last run",
+          "noListMatches": "No automations match."
         },
         "AutomationsPageSkeleton": {
           "55527b7bcf": "Loading automations"
@@ -14565,6 +14567,14 @@
               "name": "Hourly maintenance check",
               "prompt": "Check for stuck work, stale generated files, failing validation, and anything that needs human attention. Report only actionable issues."
             }
+          },
+          "list": {
+            "last": {
+              "run": {
+                "done": "Done",
+                "failed": "Failed"
+              }
+            }
           }
         },
         "external": {
@@ -14597,6 +14607,19 @@
         },
         "AutomationListLocalRows": {
           "c92c9463c6": "Automation actions"
+        },
+        "AutomationListFilterMenu": {
+          "removeFilter": "Remove {{value0}} filter",
+          "failed": "Failed",
+          "succeeded": "Succeeded",
+          "neverRan": "Never ran",
+          "filters": "Filters",
+          "all": "All",
+          "clear": "Clear filters"
+        },
+        "AutomationListSortHeader": {
+          "sortedAscending": "{{value0}}, sorted ascending",
+          "sortedDescending": "{{value0}}, sorted descending"
         }
       },
       "agent": {
