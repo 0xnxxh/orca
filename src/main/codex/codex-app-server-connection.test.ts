@@ -213,6 +213,24 @@ describe('openCodexAppServerConnection', () => {
     await connection.close()
   })
 
+  it('surfaces valid but unclassified frames instead of dropping them', async () => {
+    const { child, spawnImpl } = stubChild()
+    answerInitialize(child)
+    const frames: { kind: string; payload: unknown }[] = []
+    const connection = await openCodexAppServerConnection(
+      { command: 'codex', args: ['app-server'] },
+      { onUnhandledFrame: (kind, payload) => frames.push({ kind, payload }) },
+      spawnImpl
+    )
+
+    child.stdout.write(`${JSON.stringify({ id: 'late-string-id', result: { value: 1 } })}\n`)
+    child.stdout.write(`${JSON.stringify({ id: 999, result: { value: 2 } })}\n`)
+    await vi.waitFor(() => expect(frames).toHaveLength(2))
+
+    expect(frames.map((frame) => frame.kind)).toEqual(['frame:unclassified', 'response:unmatched'])
+    await connection.close()
+  })
+
   it('fails in-flight requests and reports an unexpected exit once', async () => {
     const { child, spawnImpl } = stubChild({ exitOnStdinEnd: false })
     answerInitialize(child)

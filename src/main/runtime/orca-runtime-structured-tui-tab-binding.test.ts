@@ -159,6 +159,8 @@ describe('structured TUI launch tab binding', () => {
     })
     expect(resolvePinnedCodexRolloutProof).toHaveBeenCalledWith(namespace.providerRoot, 'thread-1')
     expect(writeAgentSessionProof).not.toHaveBeenCalled()
+    expect(agentSessionPtyWriteGate.boundSessionId('pty-cold-owner')).toBe('session-1')
+    agentSessionPtyWriteGate.unbindPty('pty-cold-owner')
   })
 
   it('rebuilds a Claude proving link from current launch-token-bound hook evidence', async () => {

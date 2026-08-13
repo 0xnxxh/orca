@@ -13,8 +13,7 @@ import {
 import { createCodexJournalTranslator } from './codex-structured-journal-translation'
 import {
   isCodexAppServerRequestError,
-  openCodexAppServerConnection,
-  type CodexAppServerServerRequest
+  openCodexAppServerConnection
 } from './codex-app-server-connection'
 import { isCodexAppServerUnsupportedError } from './codex-app-server-session'
 import {
@@ -22,8 +21,7 @@ import {
   codexProcessIdentity,
   codexProviderHandleLink
 } from './codex-structured-owner-identity'
-import { answerCodexPrompt, receiveCodexPromptRequest } from './codex-structured-prompt-replies'
-import { readCodexThreadId, readCodexTurnId } from './codex-structured-thread-facts'
+import { answerCodexPrompt } from './codex-structured-prompt-replies'
 import { openCodexThread } from './codex-structured-thread-open'
 import { dispatchCodexTurn, isCodexTurnOptionKey } from './codex-structured-turn-start'
 import { supportsCodexStructuredLocation } from './codex-structured-location-support'
@@ -42,6 +40,11 @@ import {
   type CodexStructuredSessionAdapterDeps,
   type CodexStructuredSessionEvent
 } from './codex-structured-session-state'
+import {
+  deliverCodexNotification,
+  deliverCodexServerRequest,
+  deliverCodexUnhandledFrame
+} from './codex-structured-provider-events'
 
 export type {
   CodexStructuredLaunch,
@@ -101,6 +104,10 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
           onServerRequest: (request) =>
             this.deliver(acquisition, sessionId, () =>
               this.handleServerRequest(sessionId, request)
+            ),
+          onUnhandledFrame: (kind, payload) =>
+            this.deliver(acquisition, sessionId, () =>
+              this.handleUnhandledFrame(sessionId, kind, payload)
             ),
           onExit: (error) => this.handleExit(sessionId, acquisition, error)
         }
@@ -190,20 +197,13 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
   }
 
   private handleNotification(sessionId: string, method: string, params: unknown): void {
-    const session = this.sessions.get(sessionId)
-    if (!session) {
-      return
-    }
-    // A subagent runs on its own thread over the same connection: its turns must
-    // not answer the root thread's waiter, and its events must carry the thread
-    // they actually came from.
-    const threadId = readCodexThreadId(params) ?? session.threadId
-    if (method === 'turn/started' && threadId === session.threadId) {
-      const turnId = readCodexTurnId(params)
-      const waiter = turnId ? session.turnIdWaiters.shift() : undefined
-      waiter?.(turnId as string)
-    }
-    this.emit(session, { type: 'notification', sessionId, threadId, method, params })
+    deliverCodexNotification(
+      sessionId,
+      this.sessions.get(sessionId),
+      method,
+      params,
+      (session, event) => this.emit(session, event)
+    )
   }
 
   /** Journal first so observers never see an event ahead of its durable row. */
@@ -212,24 +212,23 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
     this.deps.onEvent?.(event)
   }
 
-  private handleServerRequest(sessionId: string, request: CodexAppServerServerRequest): void {
-    const session = this.sessions.get(sessionId)
-    if (!session) {
-      return
-    }
-    const prompt = receiveCodexPromptRequest(session.prompts, session.connection, request)
-    if (!prompt) {
-      return
-    }
-    this.emit(session, {
-      type: 'prompt',
+  private handleServerRequest(
+    sessionId: string,
+    request: Parameters<typeof deliverCodexServerRequest>[2]
+  ): void {
+    deliverCodexServerRequest(sessionId, this.sessions.get(sessionId), request, (session, event) =>
+      this.emit(session, event)
+    )
+  }
+
+  private handleUnhandledFrame(sessionId: string, kind: string, params: unknown): void {
+    deliverCodexUnhandledFrame(
       sessionId,
-      threadId: prompt.threadId,
-      method: request.method,
-      params: request.params,
-      codexItemId: prompt.codexItemId,
-      promptKey: prompt.promptKey
-    })
+      this.sessions.get(sessionId),
+      kind,
+      params,
+      (session, event) => this.emit(session, event)
+    )
   }
 
   bindPromptItemId = (sessionId: string, journalItemId: string, promptKey: string): void =>

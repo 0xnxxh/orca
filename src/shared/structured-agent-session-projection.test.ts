@@ -3,6 +3,7 @@ import type { AgentJournalRenderItem } from './agent-session-journal-types'
 import { parsePaneKey } from './stable-pane-id'
 import {
   activeStructuredAgentSessionTurnId,
+  projectStructuredItemToNativeChat,
   projectStructuredAgentSessionStatus,
   structuredAgentSessionPaneKey
 } from './structured-agent-session-projection'
@@ -47,5 +48,27 @@ describe('structured agent session status projection', () => {
 
     expect(structuredAgentSessionPaneKey('structured-agent-session-1', 'session-1')).toBe(paneKey)
     expect(parsePaneKey(paneKey)).toMatchObject({ tabId: 'structured-agent-session-1' })
+  })
+
+  it('preserves provider-frame detail on the backward-compatible status line', () => {
+    const projected = projectStructuredItemToNativeChat(
+      item('frame', 1, {
+        kind: 'status',
+        text: 'codex · notification:new/event',
+        providerFrame: {
+          provider: 'codex',
+          kind: 'notification:new/event',
+          payload: { head: '{}', byteLength: 2, digest: 'digest', truncated: false }
+        }
+      })
+    )
+
+    expect(projected?.blocks).toEqual([
+      expect.objectContaining({
+        type: 'text',
+        text: 'codex · notification:new/event',
+        providerFrame: expect.objectContaining({ kind: 'notification:new/event' })
+      })
+    ])
   })
 })

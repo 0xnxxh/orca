@@ -398,7 +398,7 @@ describe('codex journal translation', () => {
     expect(tap.publishes()).toBe(1)
   })
 
-  it('ignores an event carrying no item and a delta naming no item', () => {
+  it('journals malformed item events and deltas instead of hiding them', () => {
     const { translator, tap, window } = translatorWith()
 
     translator.handle(TURN_STARTED)
@@ -406,7 +406,40 @@ describe('codex journal translation', () => {
     translator.handle(notification('item/agentMessage/delta', { delta: 'orphan' }))
     window.fire()
 
-    expect(tap.rows).toEqual([])
+    expect(tap.rows.map((row) => row.body)).toEqual([
+      expect.objectContaining({
+        kind: 'status',
+        providerFrame: expect.objectContaining({ kind: 'notification:item/completed' })
+      }),
+      expect.objectContaining({
+        kind: 'status',
+        providerFrame: expect.objectContaining({ kind: 'notification:item/agentMessage/delta' })
+      })
+    ])
+  })
+
+  it('journals unknown notifications, server requests, and decoded provider frames', () => {
+    const { translator, tap } = translatorWith()
+
+    translator.handle(notification('future/notification', { value: 1 }))
+    translator.handle({
+      type: 'server-request',
+      sessionId: SESSION_ID,
+      threadId: THREAD_ID,
+      method: 'future/request',
+      params: { value: 2 }
+    })
+    translator.handle({
+      type: 'provider-frame',
+      sessionId: SESSION_ID,
+      threadId: THREAD_ID,
+      kind: 'frame:unclassified',
+      payload: { value: 3 }
+    })
+
+    expect(
+      tap.rows.map((row) => (row.body.kind === 'status' ? row.body.providerFrame?.kind : undefined))
+    ).toEqual(['notification:future/notification', 'request:future/request', 'frame:unclassified'])
   })
 
   it('writes nothing more after dispose', () => {

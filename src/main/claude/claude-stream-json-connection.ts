@@ -22,9 +22,14 @@ export type ClaudeControlCancelRequest = {
   request_id: string
 }
 
+export type ClaudeControlResponder = Pick<
+  ClaudeStreamJsonConnection,
+  'respond' | 'respondWithError'
+>
+
 export type ClaudeStreamJsonConnectionHandlers = {
   onMessage?: (message: Record<string, unknown>) => void
-  onControlRequest?: (request: ClaudeControlRequest) => void
+  onControlRequest?: (request: ClaudeControlRequest, responder?: ClaudeControlResponder) => void
   onControlCancelRequest?: (request: ClaudeControlCancelRequest) => void
   onExit?: (error: Error) => void
 }
@@ -137,12 +142,25 @@ export async function openClaudeStreamJsonConnection(
     return queued
   }
 
+  const respond = (requestId: string, response: unknown): Promise<void> =>
+    writeLine({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: requestId, response }
+    })
+
+  const respondWithError = (requestId: string, error: string): Promise<void> =>
+    writeLine({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: requestId, error }
+    })
+
   const dispatchMessage = (message: Record<string, unknown>): void => {
     if (message.type === 'control_response') {
       const response = isRecord(message.response) ? message.response : null
       const requestId = typeof response?.request_id === 'string' ? response.request_id : null
       const waiter = requestId ? pending.get(requestId) : undefined
       if (!waiter || !requestId || !response) {
+        handlers.onMessage?.(message)
         return
       }
       pending.delete(requestId)
@@ -167,7 +185,7 @@ export async function openClaudeStreamJsonConnection(
       isRecord(message.request) &&
       typeof message.request.subtype === 'string'
     ) {
-      handlers.onControlRequest?.(message as ClaudeControlRequest)
+      handlers.onControlRequest?.(message as ClaudeControlRequest, { respond, respondWithError })
       return
     }
     if (message.type === 'control_cancel_request' && typeof message.request_id === 'string') {
@@ -262,16 +280,8 @@ export async function openClaudeStreamJsonConnection(
     },
     send: writeLine,
     request,
-    respond: (requestId, response) =>
-      writeLine({
-        type: 'control_response',
-        response: { subtype: 'success', request_id: requestId, response }
-      }),
-    respondWithError: (requestId, error) =>
-      writeLine({
-        type: 'control_response',
-        response: { subtype: 'error', request_id: requestId, error }
-      }),
+    respond,
+    respondWithError,
     close
   }
 }

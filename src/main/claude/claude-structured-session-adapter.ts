@@ -6,11 +6,15 @@ import type {
 import type { StructuredAgentSessionEventSink } from '../native-chat/agent-session-wire/structured-agent-session-event-sink'
 import {
   openClaudeStreamJsonConnection,
-  type ClaudeControlRequest
+  type ClaudeControlRequest,
+  type ClaudeControlResponder
 } from './claude-stream-json-connection'
 import { answerClaudePrompt, cancelClaudeTurn } from './claude-structured-control-actions'
 import { dispatchClaudeTurn, resolveClaudeReplayWaiter } from './claude-structured-dispatch'
-import { handleClaudeInboundControl } from './claude-structured-inbound-control'
+import {
+  handleClaudeInboundControl,
+  handleClaudeInboundControlCancel
+} from './claude-structured-inbound-control'
 import {
   claudeAuthDiagnostic,
   readClaudeFrameString,
@@ -87,11 +91,15 @@ export class ClaudeStructuredSessionAdapter implements StructuredAgentSessionAda
         this.emit(liveSession, input.events, { type: 'message', sessionId, message })
       )
     }
-    const onControlRequest = (request: ClaudeControlRequest): void => {
+    const onControlRequest = (
+      request: ClaudeControlRequest,
+      responder?: ClaudeControlResponder
+    ): void => {
       handleClaudeInboundControl({
         sessionId,
         attempt,
         request,
+        responder,
         emit: (event) =>
           this.deliver(attempt, sessionId, () => this.emit(liveSession, input.events, event))
       })
@@ -121,16 +129,13 @@ export class ClaudeStructuredSessionAdapter implements StructuredAgentSessionAda
           onMessage,
           onControlRequest,
           onControlCancelRequest: ({ request_id: requestId }) => {
-            const prompt = prompts.cancel(requestId)
-            if (prompt) {
-              this.deliver(attempt, sessionId, () =>
-                this.emit(liveSession, input.events, {
-                  type: 'prompt-cancelled',
-                  sessionId,
-                  promptKey: prompt.promptKey
-                })
-              )
-            }
+            handleClaudeInboundControlCancel({
+              sessionId,
+              attempt,
+              requestId,
+              emit: (event) =>
+                this.deliver(attempt, sessionId, () => this.emit(liveSession, input.events, event))
+            })
           },
           onExit: (error) => {
             if (!attempt.published) {

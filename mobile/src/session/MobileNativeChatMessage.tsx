@@ -146,6 +146,9 @@ function Prose({
   onOpenFile?: (relativePath: string) => void
 }): React.JSX.Element | null {
   if (isTextBlock(block)) {
+    if (block.providerFrame) {
+      return <MobileProviderFrame block={block} />
+    }
     // Inverted (user) bubbles use a fixed dark-on-light text rather than the
     // markdown renderer's light-on-dark palette.
     if (invert) {
@@ -178,6 +181,38 @@ function Prose({
     )
   }
   return null
+}
+
+function MobileProviderFrame({
+  block
+}: {
+  block: Extract<NativeChatBlock, { type: 'text' }>
+}): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+  const frame = block.providerFrame!
+  return (
+    <View>
+      <Pressable style={styles.providerFrameRow} onPress={() => setExpanded((value) => !value)}>
+        {expanded ? (
+          <ChevronDown size={15} color={colors.textMuted} strokeWidth={2} />
+        ) : (
+          <SquareChevronRight size={15} color={colors.textMuted} strokeWidth={2} />
+        )}
+        <Text style={styles.providerFrameProvider}>{frame.provider}</Text>
+        <Text style={styles.providerFrameKind} numberOfLines={1}>
+          {frame.kind}
+        </Text>
+      </Pressable>
+      {expanded ? (
+        <View style={styles.providerFrameDetail}>
+          <Text style={styles.mono}>
+            {frame.payload.head}
+            {frame.payload.truncated ? '\n…' : ''}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  )
 }
 
 /** A run of a message's tool calls/results, collapsed to a one-line summary that

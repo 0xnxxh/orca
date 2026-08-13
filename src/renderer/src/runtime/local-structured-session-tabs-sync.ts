@@ -20,8 +20,17 @@ export function projectLocalStructuredSessionTabs(
   return {
     ...snapshot,
     tabs: snapshot.tabs.filter((tab) => structuredIds.has(tab.id)),
-    // Why: replaying local terminal group ids under the structured owner clones the workspace layout.
-    tabGroups: undefined
+    tabGroups: snapshot.tabGroups
+      ?.map((group) => ({
+        ...group,
+        tabOrder: group.tabOrder.filter((id) => structuredIds.has(id)),
+        activeTabId:
+          group.activeTabId && structuredIds.has(group.activeTabId) ? group.activeTabId : null,
+        recentTabIds: group.recentTabIds?.filter((id) => structuredIds.has(id))
+      }))
+      .filter((group) => group.tabOrder.length > 0),
+    // Why: group membership locates chats; the renderer's split tree remains locally authoritative.
+    tabGroupLayout: undefined
   }
 }
 
@@ -32,7 +41,9 @@ function applySnapshots(snapshots: readonly RuntimeMobileSessionTabsResult[]): v
       const patch = applyWebSessionTabsSnapshot(
         next,
         projectLocalStructuredSessionTabs(snapshot),
-        LOCAL_STRUCTURED_SESSION_OWNER
+        LOCAL_STRUCTURED_SESSION_OWNER,
+        Date.now(),
+        { preserveLocalLayout: true }
       )
       next = patch === next ? next : ({ ...next, ...patch } as typeof state)
     }

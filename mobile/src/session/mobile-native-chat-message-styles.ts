@@ -117,6 +117,31 @@ export const styles = StyleSheet.create({
     color: colors.accentBlue,
     textDecorationLine: 'underline'
   },
+  providerFrameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: 3
+  },
+  providerFrameProvider: {
+    color: colors.textPrimary,
+    fontFamily: typography.monoFamily,
+    fontSize: MONO_SIZE,
+    fontWeight: '600'
+  },
+  providerFrameKind: {
+    flex: 1,
+    color: colors.textMuted,
+    fontFamily: typography.monoFamily,
+    fontSize: MONO_SIZE
+  },
+  providerFrameDetail: {
+    maxHeight: 240,
+    borderRadius: radii.button,
+    backgroundColor: colors.bgPanel,
+    padding: spacing.md,
+    marginTop: spacing.xs
+  },
   toolDetail: {
     paddingLeft: spacing.lg,
     paddingBottom: spacing.xs,

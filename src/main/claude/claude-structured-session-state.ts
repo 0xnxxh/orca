@@ -18,6 +18,7 @@ export type ClaudeAuthDiagnostic = {
 
 export type ClaudeStructuredSessionEvent =
   | { type: 'message'; sessionId: string; message: Record<string, unknown> }
+  | { type: 'provider-frame'; sessionId: string; kind: string; payload: unknown }
   | { type: 'prompt'; sessionId: string; prompt: ClaudePendingPrompt }
   | { type: 'prompt-cancelled'; sessionId: string; promptKey: string }
   | { type: 'options'; sessionId: string; models: unknown[] }

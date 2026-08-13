@@ -15138,6 +15138,7 @@
         "exitTerminal": "Exit the agent terminal to continue in chat.",
         "switchingOwner": "Switching session owner…",
         "retry": "Retry",
+        "retryProof": "Retry proof",
         "details": "Details",
         "stage": {
           "finishingChat": "Finishing chat session…",

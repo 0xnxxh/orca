@@ -122,6 +122,10 @@ type SessionTabsRemovalFence = {
   pendingCount: number
 }
 
+export type WebSessionTabsSnapshotApplyOptions = {
+  preserveLocalLayout?: boolean
+}
+
 type TrackedWebSessionTabsWorktree = {
   worktree: string
   freshness: SnapshotFreshness
@@ -2342,7 +2346,8 @@ function applyWebSessionTabsSnapshotWithContext(
   rawSnapshot: RuntimeMobileSessionTabsResult,
   environmentId: string,
   now = Date.now(),
-  batchContext?: WebSessionTabsBatchContext
+  batchContext?: WebSessionTabsBatchContext,
+  options?: WebSessionTabsSnapshotApplyOptions
 ): WebSessionTabsSyncState | Partial<WebSessionTabsSyncState> {
   const worktreeId = rawSnapshot.worktree
   if (worktreeId === FLOATING_TERMINAL_WORKTREE_ID) {
@@ -3110,7 +3115,7 @@ function applyWebSessionTabsSnapshotWithContext(
         )
       : state.activeGroupIdByWorktree
   const nextLayoutByWorktree = (() => {
-    if (!nextGroups) {
+    if (!nextGroups || options?.preserveLocalLayout) {
       return state.layoutByWorktree
     }
     const validGroupIds = new Set(nextGroups.map((group) => group.id))
@@ -3370,9 +3375,17 @@ export function applyWebSessionTabsSnapshot(
   state: WebSessionTabsSyncState,
   rawSnapshot: RuntimeMobileSessionTabsResult,
   environmentId: string,
-  now = Date.now()
+  now = Date.now(),
+  options?: WebSessionTabsSnapshotApplyOptions
 ): WebSessionTabsSyncState | Partial<WebSessionTabsSyncState> {
-  return applyWebSessionTabsSnapshotWithContext(state, rawSnapshot, environmentId, now)
+  return applyWebSessionTabsSnapshotWithContext(
+    state,
+    rawSnapshot,
+    environmentId,
+    now,
+    undefined,
+    options
+  )
 }
 
 export function applyWebSessionTabsSnapshots(

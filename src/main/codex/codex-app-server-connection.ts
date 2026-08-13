@@ -8,6 +8,16 @@ import {
   isCodexMethodNotFoundError,
   killCodexAppServerProcessTree
 } from './codex-app-server-session'
+import type {
+  CodexAppServerConnection,
+  CodexAppServerConnectionHandlers
+} from './codex-app-server-connection-types'
+
+export type {
+  CodexAppServerConnection,
+  CodexAppServerConnectionHandlers,
+  CodexAppServerServerRequest
+} from './codex-app-server-connection-types'
 
 // Structured chat needs a persistent bidirectional child and per-request deadlines;
 // the request-scoped app-server runner cannot carry approvals or streamed turns.
@@ -36,35 +46,6 @@ export type CodexAppServerLaunch = {
   env?: Record<string, string>
   /** Keys stripped after the overlay, matching `CodexAppServerInvocation`. */
   envToDelete?: readonly string[]
-}
-
-export type CodexAppServerServerRequest = {
-  id: number | string
-  method: string
-  params: unknown
-}
-
-export type CodexAppServerConnectionHandlers = {
-  onNotification?: (method: string, params: unknown) => void
-  /** Codex blocks the turn until this id is answered, so every request must
-   *  reach `respond` or `respondWithError` exactly once. */
-  onServerRequest?: (request: CodexAppServerServerRequest) => void
-  /** Death the caller did not ask for. Never fires after `close()`. */
-  onExit?: (error: Error) => void
-}
-
-export type CodexAppServerConnection = {
-  readonly pid: number | undefined
-  readonly closed: boolean
-  request: (
-    method: string,
-    params?: Record<string, unknown>,
-    options?: { timeoutMs?: number }
-  ) => Promise<unknown>
-  notify: (method: string, params?: Record<string, unknown>) => void
-  respond: (id: number | string, result: unknown) => void
-  respondWithError: (id: number | string, code: number, message: string) => void
-  close: () => Promise<void>
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
@@ -187,10 +168,12 @@ export async function openCodexAppServerConnection(
       return
     }
     if (typeof message.id !== 'number') {
+      handlers.onUnhandledFrame?.('frame:unclassified', message)
       return
     }
     const waiter = pending.get(message.id)
     if (!waiter) {
+      handlers.onUnhandledFrame?.('response:unmatched', message)
       return
     }
     pending.delete(message.id)
@@ -234,6 +217,7 @@ export async function openCodexAppServerConnection(
       }
       const parsed = parseCodexAppServerJsonLine(line)
       if (!parsed) {
+        handlers.onUnhandledFrame?.('frame:invalid-json', line)
         continue
       }
       try {
@@ -345,7 +329,15 @@ export async function openCodexAppServerConnection(
   try {
     await request(
       'initialize',
-      { clientInfo: { name: 'orca_desktop', title: 'Orca', version: '0.0.0' } },
+      {
+        clientInfo: { name: 'orca_desktop', title: 'Orca', version: '0.0.0' },
+        capabilities: {
+          experimentalApi: false,
+          requestAttestation: false,
+          mcpServerOpenaiFormElicitation: false,
+          extensions: {}
+        }
+      },
       { timeoutMs: HANDSHAKE_TIMEOUT_MS }
     )
     notify('initialized')

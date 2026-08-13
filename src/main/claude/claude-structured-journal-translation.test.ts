@@ -173,13 +173,88 @@ describe('Claude structured journal translation', () => {
     })
   })
 
-  it('ignores empty user frames emitted by control-only requests', () => {
+  it('renders empty user frames through the provider fallback', () => {
     const state = sinkState()
     const translator = createClaudeJournalTranslator({ sink: state.sink })
 
     translator.handle(message('user', 'control-only', []))
 
-    expect(state.items).toEqual([])
+    expect(state.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          body: expect.objectContaining({
+            kind: 'status',
+            providerFrame: expect.objectContaining({ kind: 'message:user:empty' })
+          })
+        })
+      ])
+    )
+  })
+
+  it('renders every unmodeled Claude frame family as a bounded provider row', () => {
+    const state = sinkState()
+    const translator = createClaudeJournalTranslator({ sink: state.sink })
+
+    translator.handle({
+      type: 'message',
+      sessionId: 'orca-session',
+      message: { type: 'system', subtype: 'compact_boundary', summary: 'x'.repeat(100_000) }
+    })
+    translator.handle({
+      type: 'message',
+      sessionId: 'orca-session',
+      message: { type: 'system', subtype: 'hook_response', hook_name: 'PostToolUse' }
+    })
+    translator.handle({
+      type: 'message',
+      sessionId: 'orca-session',
+      message: { type: 'system', subtype: 'command_started', command: '/compact' }
+    })
+    translator.handle({
+      type: 'message',
+      sessionId: 'orca-session',
+      message: { type: 'result', usage: { input_tokens: 12 }, total_cost_usd: 0.01 }
+    })
+    translator.handle({
+      type: 'message',
+      sessionId: 'orca-session',
+      message: { type: 'tool_progress', tool_use_id: 'tool-1', elapsed_time_seconds: 2 }
+    })
+    translator.handle({
+      type: 'message',
+      sessionId: 'orca-session',
+      message: { type: 'prompt_suggestion', suggestion: '/compact' }
+    })
+    translator.handle(
+      message('user', 'attachment-1', [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf' } }
+      ])
+    )
+    translator.handle({
+      type: 'provider-frame',
+      sessionId: 'orca-session',
+      kind: 'control_request:future_control',
+      payload: { subtype: 'future_control' }
+    })
+
+    const frames = state.items.flatMap((item) =>
+      item.body.kind === 'status' && item.body.providerFrame ? [item.body.providerFrame] : []
+    )
+    expect(frames.map((frame) => frame.kind)).toEqual(
+      expect.arrayContaining([
+        'message:system:compact_boundary',
+        'message:system:hook_response',
+        'message:system:command_started',
+        'message:result',
+        'message:tool_progress',
+        'message:prompt_suggestion',
+        'message:user:content:document',
+        'control_request:future_control'
+      ])
+    )
+    expect(
+      frames.find((frame) => frame.kind === 'message:system:compact_boundary')?.payload
+    ).toEqual(expect.objectContaining({ truncated: true, byteLength: expect.any(Number) }))
   })
 
   it('preserves a question group as one addressable prompt and cancels it durably', () => {

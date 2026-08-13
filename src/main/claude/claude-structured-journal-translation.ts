@@ -31,6 +31,11 @@ import {
   claudeQuestionItems
 } from './claude-structured-prompt-items'
 import type { ClaudePromptRegistry } from './claude-structured-prompt-replies'
+import {
+  claudeProviderFrameKind,
+  createClaudeProviderFrameFallback,
+  isModeledClaudeContent
+} from './claude-structured-provider-fallback'
 
 export type ClaudeJournalTranslatorDeps = {
   sink: StructuredAgentSessionEventSink
@@ -91,6 +96,7 @@ export function createClaudeJournalTranslator(
   const latestStreamText = new Map<string, string>()
   const checkpointLengths = new Map<string, number>()
   let currentTurn: { sessionId: string; turnId: string } | null = null
+  const providerFallback = createClaudeProviderFrameFallback(deps.sink)
 
   const publishLifecycle = (sessionId: string, turnId: string, running: boolean): void => {
     const identity = lifecycleIdentity(sessionId, turnId)
@@ -150,10 +156,10 @@ export function createClaudeJournalTranslator(
     return true
   }
 
-  const handleMessage = (message: Record<string, unknown>): void => {
+  const handleMessage = (message: Record<string, unknown>): boolean => {
     const envelope = readClaudeMessageEnvelope(message)
     if (!envelope) {
-      return
+      return false
     }
     const identity = claudeMessageIdentity(envelope)
     const key = agentJournalItemKey(identity)
@@ -195,6 +201,16 @@ export function createClaudeJournalTranslator(
       })
       changed = true
     }
+    const unhandledContent = envelope.content.filter((part) => !isModeledClaudeContent(part))
+    for (const part of unhandledContent) {
+      const partType = claudeText(claudeRecord(part)?.type) ?? 'unknown'
+      providerFallback.append(`message:${envelope.role}:content:${partType}`, part)
+      changed = true
+    }
+    if (envelope.content.length === 0) {
+      providerFallback.append(`message:${envelope.role}:empty`, message)
+      changed = true
+    }
     if (
       envelope.role === 'user' &&
       envelope.content.length > 0 &&
@@ -209,6 +225,7 @@ export function createClaudeJournalTranslator(
     if (changed) {
       deps.sink.publish()
     }
+    return true
   }
 
   const handlePrompt = (event: Extract<ClaudeStructuredSessionEvent, { type: 'prompt' }>): void => {
@@ -262,8 +279,13 @@ export function createClaudeJournalTranslator(
           publishLifecycle(currentTurn.sessionId, currentTurn.turnId, false)
           currentTurn = null
         }
+        providerFallback.append(claudeProviderFrameKind(event.message), event.message)
       } else if (event.type === 'message') {
-        handleMessage(event.message)
+        if (!handleMessage(event.message)) {
+          providerFallback.append(claudeProviderFrameKind(event.message), event.message)
+        }
+      } else if (event.type === 'provider-frame') {
+        providerFallback.append(event.kind, event.payload)
       }
     },
     flush: flushStreams,

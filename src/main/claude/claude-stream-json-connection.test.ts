@@ -116,6 +116,25 @@ describe('Claude stream-json connection', () => {
     ])
   })
 
+  it('forwards unmatched control responses to the provider-frame path', async () => {
+    const process = fakeSpawn()
+    const onMessage = vi.fn()
+    await openClaudeStreamJsonConnection(
+      { command: 'claude', args: [], cwd: '/work' },
+      { onMessage },
+      process.spawnImpl
+    )
+    const frame = {
+      type: 'control_response',
+      response: { subtype: 'success', request_id: 'provider-owned', response: { opaque: true } }
+    }
+
+    process.child.stdout.write(`${JSON.stringify(frame)}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(onMessage).toHaveBeenCalledWith(frame)
+  })
+
   it('fails closed on malformed provider output', async () => {
     const process = fakeSpawn()
     const onExit = vi.fn()

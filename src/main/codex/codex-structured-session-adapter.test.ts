@@ -750,7 +750,7 @@ describe('CodexStructuredSessionAdapter prompts', () => {
     ])
   })
 
-  it('refuses a request it does not model instead of leaving the turn blocked', async () => {
+  it('declines MCP elicitation and journals the explicit disposition', async () => {
     const codex = fakeCodex()
     const events: CodexStructuredSessionEvent[] = []
     await acquired(codex, {}, events)
@@ -762,7 +762,7 @@ describe('CodexStructuredSessionAdapter prompts', () => {
     })
 
     expect(codex.connections[0].replies).toEqual([
-      { id: 13, code: -32601, message: 'Orca does not handle mcpServer/elicitation/request' }
+      { id: 13, result: { action: 'decline', content: null, _meta: null } }
     ])
     expect(events.some((event) => event.type === 'prompt')).toBe(false)
   })

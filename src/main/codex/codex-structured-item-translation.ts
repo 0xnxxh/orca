@@ -7,6 +7,7 @@ import {
   boundInlineText,
   DEFAULT_JOURNAL_PAYLOAD_LIMITS
 } from '../native-chat/agent-session-journal/journal-payload-bounds'
+import { unhandledProviderFrameJournalItem } from '../native-chat/agent-session-wire/unhandled-provider-frame'
 
 // Codex thread items → journal item bodies and durable identities.
 //
@@ -173,6 +174,7 @@ function commandState(item: CodexThreadItem): 'running' | 'completed' | 'failed'
 export type CodexJournalItem = {
   body: AgentJournalItemBody | null
   blobs: { digest: string; payload: string }[]
+  handled: boolean
 }
 
 function commandItem(item: CodexThreadItem): CodexJournalItem {
@@ -189,16 +191,16 @@ function commandItem(item: CodexThreadItem): CodexJournalItem {
     blobs:
       output !== null && bounded?.bounded.truncated
         ? [{ digest: bounded.bounded.digest, payload: output }]
-        : []
+        : [],
+    handled: true
   }
 }
 
 /**
  * Journal body for a Codex item, or null for one with nothing to render.
  *
- * An unmodelled item type is skipped rather than journaled as a placeholder: a
- * row the client cannot render is worse than a gap, and the ordinal projection
- * already guarantees skipping it costs the following messages nothing.
+ * Known empty items wait for later deltas. Unknown types become bounded status
+ * rows so a provider release cannot make new activity invisible.
  */
 export function codexJournalItem(item: CodexThreadItem): CodexJournalItem {
   if (item.type === 'userMessage' || item.type === 'agentMessage') {
@@ -208,7 +210,8 @@ export function codexJournalItem(item: CodexThreadItem): CodexJournalItem {
         blocks.length === 0
           ? null
           : { kind: 'message', role: item.type === 'userMessage' ? 'user' : 'assistant', blocks },
-      blobs: []
+      blobs: [],
+      handled: true
     }
   }
   if (item.type === 'commandExecution') {
@@ -222,7 +225,8 @@ export function codexJournalItem(item: CodexThreadItem): CodexJournalItem {
         input: { changes: item.changes ?? null },
         state: commandState(item)
       },
-      blobs: []
+      blobs: [],
+      handled: true
     }
   }
   if (item.type === 'reasoning') {
@@ -235,10 +239,14 @@ export function codexJournalItem(item: CodexThreadItem): CodexJournalItem {
         text === null
           ? null
           : { kind: 'status', text: boundInlineText(text, DEFAULT_JOURNAL_PAYLOAD_LIMITS).text },
-      blobs: []
+      blobs: [],
+      handled: true
     }
   }
-  return { body: null, blobs: [] }
+  return {
+    ...unhandledProviderFrameJournalItem('codex', `item:${item.type}`, item),
+    handled: false
+  }
 }
 
 export function codexItemBody(item: CodexThreadItem): AgentJournalItemBody | null {
