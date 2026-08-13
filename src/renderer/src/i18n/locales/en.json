@@ -15453,7 +15453,13 @@
       "clear": "Clear search",
       "results": "{{shown}} of {{total}} shown"
     },
-    "settingsLabel": "Agent Dashboard settings"
+    "settingsLabel": "Agent Dashboard settings",
+    "host": {
+      "sshNamed": "SSH host · {{host}}",
+      "ssh": "SSH host",
+      "remoteNamed": "Remote Orca host · {{host}}",
+      "remote": "Remote Orca host"
+    }
   },
   "dashboard": {
     "sidebar": {
