@@ -21,7 +21,10 @@ vi.mock('node:fs/promises', async (importOriginal) => ({
 }))
 
 import { listOpenCodeDatabases } from './scanner'
-import { WSL_TRANSCRIPT_FS_SCAN_TIMEOUT_MS } from '../native-chat/wsl-transcript-fs-gate'
+import {
+  WSL_TRANSCRIPT_FS_SCAN_TIMEOUT_MS,
+  WslTranscriptFsError
+} from '../native-chat/wsl-transcript-fs-gate'
 
 // A stalled task holds the gate's single scan slot until it settles, so every
 // case releases its stall before the next one runs.
@@ -82,16 +85,27 @@ afterEach(async () => {
 describe('OpenCode database discovery on a stalled WSL data directory', () => {
   it('gates the data-directory listing instead of hanging the scan', async () => {
     mocks.readdir.mockImplementation(stalls)
+    // Asserted because an empty list alone also matches a missing data dir; the
+    // AI Vault's OpenCode source turns this callback into the scan issue.
+    const onRefusal = vi.fn()
 
-    expect(await settlesOnlyAtTheScanDeadline(listOpenCodeDatabases())).toEqual([])
+    expect(await settlesOnlyAtTheScanDeadline(listOpenCodeDatabases(onRefusal))).toEqual([])
+    expect(onRefusal).toHaveBeenCalledWith(UNC_DATA_DIR, expect.any(WslTranscriptFsError))
   })
 
   it('gates an absolute UNC OPENCODE_DB probe instead of hanging the scan', async () => {
     process.env.OPENCODE_DB = UNC_DATABASE
     mocks.stat.mockImplementation(stalls)
+    const onRefusal = vi.fn()
 
-    expect(await settlesOnlyAtTheScanDeadline(listOpenCodeDatabases())).toEqual([])
+    expect(await settlesOnlyAtTheScanDeadline(listOpenCodeDatabases(onRefusal))).toEqual([])
     expect(mocks.readdir).not.toHaveBeenCalled()
+    // Loose on the path: `isAbsolute` is host-flavoured, so a UNC override only
+    // stays verbatim on Windows. The refusal reaching the caller is the contract.
+    expect(onRefusal).toHaveBeenCalledWith(
+      expect.stringContaining('opencode.db'),
+      expect.any(WslTranscriptFsError)
+    )
   })
 
   it('still lists databases when the distro answers', async () => {

@@ -4,6 +4,7 @@ import { wslGatedReaddir } from '../native-chat/wsl-transcript-fs-access'
 import { WslTranscriptFsError } from '../native-chat/wsl-transcript-fs-gate'
 import { resolveOpenCodeStorageDirectory } from '../opencode/opencode-data-directory'
 import { listOpenCodeDatabases } from '../opencode-usage/scanner'
+import { recordSessionScanIssue } from './session-scan-issues'
 import { discoverOpenCodeSessions } from './session-scanner-opencode-sqlite-discovery'
 import type { AiVaultScanOptions, SessionFileDiscovery } from './session-scanner-types'
 
@@ -50,7 +51,7 @@ async function opencodeDbPathsForSource(
   }
   if (sourceIndex === 0) {
     return listOpenCodeDatabases((path, error) => {
-      issues.push({ agent: 'opencode', path, message: error.message })
+      recordSessionScanIssue(issues, { agent: 'opencode', path, message: error.message })
     })
   }
   const wslHomeDir = wslHomeDirs[sourceIndex - 1]
@@ -73,7 +74,11 @@ async function listOpenCodeDatabasesInDirectory(
     // A stalled WSL data dir still degrades to "no databases", but the gap has
     // to be reportable — an empty list otherwise reads as "OpenCode not used".
     if (error instanceof WslTranscriptFsError) {
-      issues.push({ agent: 'opencode', path: dataDir, message: error.message })
+      recordSessionScanIssue(issues, {
+        agent: 'opencode',
+        path: dataDir,
+        message: error.message
+      })
     }
     return []
   }

@@ -62,16 +62,13 @@ async function consumeGrokChatHistory(
   accumulator: SessionAccumulator,
   sessionDir: string
 ): Promise<void> {
+  const input = openTranscriptReadStream(
+    join(sessionDir, 'chat_history.jsonl'),
+    { encoding: 'utf-8' },
+    'scan'
+  )
+  const lines = createInterface({ input, crlfDelay: Infinity })
   try {
-    const lines = createInterface({
-      input: openTranscriptReadStream(
-        join(sessionDir, 'chat_history.jsonl'),
-        { encoding: 'utf-8' },
-        'scan'
-      ),
-      crlfDelay: Infinity
-    })
-
     for await (const line of lines) {
       const record = parseJsonObject(line)
       if (!record) {
@@ -122,6 +119,11 @@ async function consumeGrokChatHistory(
     if (error instanceof WslTranscriptFsError) {
       throw error
     }
+  } finally {
+    // readline.close() leaves the underlying stream open; destroy it so a
+    // mid-read failure cannot leak the gated transcript handle.
+    lines.close()
+    input.destroy()
   }
 }
 

@@ -91,11 +91,9 @@ async function consumeKimiWireTranscript(
     }
   }
 
+  const input = openTranscriptReadStream(wirePath, { encoding: 'utf-8' }, 'scan')
+  const lines = createInterface({ input, crlfDelay: Infinity })
   try {
-    const lines = createInterface({
-      input: openTranscriptReadStream(wirePath, { encoding: 'utf-8' }, 'scan'),
-      crlfDelay: Infinity
-    })
     for await (const line of lines) {
       const record = parseJsonObject(line)
       if (!record) {
@@ -126,6 +124,11 @@ async function consumeKimiWireTranscript(
     if (error instanceof WslTranscriptFsError) {
       throw error
     }
+  } finally {
+    // readline.close() leaves the underlying stream open; destroy it so a
+    // mid-read failure cannot leak the gated transcript handle.
+    lines.close()
+    input.destroy()
   }
   flushAssistant()
 }
