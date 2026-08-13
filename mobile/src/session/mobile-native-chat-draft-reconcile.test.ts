@@ -47,6 +47,27 @@ describe('mobile native chat image preview reconciliation', () => {
     ])
   })
 
+  it('reconciles a middle-marker echo without changing its rendered whitespace', () => {
+    const messages = [
+      userText('source', '[Image: source: /tmp/a.png]'),
+      userText('prompt', 'look [Image #1] here')
+    ]
+    const preview = { ...pending('pending', ['file:///a.jpg']), text: 'look here' }
+    const unconfirmed: UnconfirmedSend = {
+      draftKey: 'draft',
+      pendingKey: 'pending-key',
+      text: 'look here',
+      normalizedText: 'look here',
+      baselineTailMessageId: null,
+      deadline: null
+    }
+
+    expect(findLandedUnconfirmedSends(messages, [unconfirmed])).toEqual([unconfirmed])
+    expect(findLandedImagePreviewEchoes(messages, [preview])).toEqual([
+      { pendingId: 'pending', messageId: 'prompt', images: ['file:///a.jpg'] }
+    ])
+  })
+
   it('keeps separate adjacent image-only sends independently reconcilable', () => {
     const landed = findLandedImagePreviewEchoes(
       [

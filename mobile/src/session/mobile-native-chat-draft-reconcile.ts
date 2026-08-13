@@ -16,6 +16,10 @@ export type UnconfirmedSend = {
   deadline: ReturnType<typeof setTimeout> | null
 }
 
+export function normalizeReconcileText(text: string): string {
+  return text.trim().replace(/\s+/g, ' ')
+}
+
 export function normalizedUserText(message: NativeChatMessage): string | null {
   if (message.role !== 'user') {
     return null
@@ -26,7 +30,7 @@ export function normalizedUserText(message: NativeChatMessage): string | null {
     .join('')
   // Claude can place `[Image #N]` anywhere in a caption echo, so strip it
   // before comparing against the sent text.
-  const stripped = stripImagePromptMarker(text).trim()
+  const stripped = normalizeReconcileText(stripImagePromptMarker(text))
   return stripped || null
 }
 
@@ -171,7 +175,7 @@ export function findLandedImagePreviewEchoes(
     if (!entry.images?.length) {
       continue
     }
-    const targetText = entry.text.trim()
+    const targetText = normalizeReconcileText(entry.text)
     const candidates = normalized.filter((message) => {
       if (message.role !== 'user') {
         return false

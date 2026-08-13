@@ -7,6 +7,7 @@ import {
   findLandedUnconfirmedSends,
   mergeLandedImagePreviewEchoes,
   migrateImagePreviewMessageIds,
+  normalizeReconcileText,
   normalizedUserText,
   type UnconfirmedSend
 } from './mobile-native-chat-draft-reconcile'
@@ -132,14 +133,13 @@ export function useMobileNativeChatDrafts(args: {
       if (!draftKey) {
         return null
       }
-      const normalizedText = text.trim()
-      const currentMessages = messagesRef.current
+      const normalizedText = normalizeReconcileText(text)
       return {
         draftKey,
         pendingKey,
         normalizedText,
-        baselineOccurrences: countUserTextOccurrences(currentMessages, normalizedText),
-        baselineTailMessageId: currentMessages[currentMessages.length - 1]?.id ?? null
+        baselineOccurrences: countUserTextOccurrences(messagesRef.current, normalizedText),
+        baselineTailMessageId: messagesRef.current[messagesRef.current.length - 1]?.id ?? null
       }
     },
     [draftKey, pendingKey]
@@ -299,26 +299,23 @@ export function useMobileNativeChatDrafts(args: {
           landedCounts.set(text, (landedCounts.get(text) ?? 0) + 1)
         }
       }
-      // Why: compare against the count captured before send; historical equal
-      // turns cannot clear a new echo, while duplicates land one occurrence each.
-      // An image-only echo has no text to match, so it reconciles by ORDINAL
-      // against the count of new `[Image: source: …]` echo turns after its
-      // baseline tail — text echoes are excluded so an unrelated outstanding
+      // Counts captured before send keep historical equal turns from clearing a new echo.
+      // Image-only echoes reconcile by ORDINAL against new `[Image: source: …]`
+      // turns after the baseline tail — text echoes are excluded so an unrelated outstanding
       // text send cannot clear it. Ordinal-vs-count stays stable when the effect
       // re-runs on the shrunken list, and ignores paginated-in history.
       const next = current.filter((item) => {
         if (landedImagePendingIds.has(item.id)) {
           return false
         }
-        // Image echoes hand their local URIs to the authoritative message above;
-        // never drop them through the text-only fallback before that handoff.
+        // Keep image echoes until their local preview reaches the authoritative message.
         if (item.images?.length) {
           return true
         }
         return item.text.trim() === ''
           ? countImageSourceTurnsAfter(messages, item.baselineTailMessageId) <
               item.expectedOccurrence
-          : (landedCounts.get(item.text.trim()) ?? 0) < item.expectedOccurrence
+          : (landedCounts.get(normalizeReconcileText(item.text)) ?? 0) < item.expectedOccurrence
       })
       if (next.length === current.length) {
         return previous
