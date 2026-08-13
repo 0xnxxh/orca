@@ -937,6 +937,11 @@ export function useIpcEvents(): void {
         // Why: project events can reveal target CRUD, but known target states already arrive by push.
         void refreshRuntimeEnvironmentSshTargetMetadata(environmentId).catch(() => {})
         const repos = await useAppStore.getState().fetchRuntimeEnvironmentRepos(environmentId)
+        // Why: the host emits one reposChanged for group/folder-workspace edits too, so those
+        // catalogs go stale without this; groups first because folder workspaces resolve owners from them.
+        const runtimeOwner = { runtimeEnvironmentId: environmentId }
+        await useAppStore.getState().fetchProjectGroups(runtimeOwner)
+        await useAppStore.getState().fetchFolderWorkspaces(runtimeOwner)
         await refreshRuntimeProjectWorktreesAndLineage(
           environmentId,
           repos,
