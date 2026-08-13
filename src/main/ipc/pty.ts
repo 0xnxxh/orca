@@ -110,11 +110,11 @@ import {
   markClaudePtyExited,
   markClaudePtySpawned
 } from '../claude-accounts/live-pty-gate'
-import {
-  applyTerminalAttributionEnv,
-  resolveAttributionShellFamily
-} from '../attribution/terminal-attribution'
 import { ensureLinuxTerminalOrcaCliShimDir } from '../cli/linux-terminal-orca-cli-shim'
+import {
+  isLegacyTerminalShimPathEntry,
+  stripLegacyTerminalShimEnv
+} from '../pty/legacy-terminal-shim-dir'
 import { registerPty, unregisterPty } from '../memory/pty-registry'
 import { advertisedUrlWatcher } from '../ports/advertised-url-watcher'
 import { track } from '../telemetry/client'
@@ -1123,14 +1123,12 @@ export type BuildPtyHostEnvOptions = {
    *  and strip only an inherited Orca-owned override so nested Orca panes do not
    *  leak the parent's managed home. A user-set CODEX_HOME is preserved. */
   stripInheritedOrcaCodexHome?: boolean
-  githubAttributionEnabled: boolean
   /** Launch command the renderer chose (e.g. 'pi', 'omp', 'claude'); resolves the per-agent
    *  extension target for Pi/OMP. Undefined for bare shells → defaults to Pi. NEVER infer from
    *  disk presence (cross-agent shadowing when both dirs exist). */
   launchCommand?: string
   /** Trusted agent identity for wrapped commands that cannot be recognized from text. */
   launchAgent?: TuiAgent
-  shellPath?: string
   isWsl?: boolean
   /** Distro for WSL spawns (null = Windows default distro); drives the WSL hook relay + endpoint repoint. Only read when isWsl. */
   wslDistro?: string | null
@@ -1158,7 +1156,9 @@ function promoteAgentTeamsShimPath(
     return
   }
   const shimPath = firstPathEntry(requestedPath)
-  if (!shimPath) {
+  // Why: requestedPath is captured before buildPtyHostEnv scrubs, so a legacy entry that
+  // reached the front would be re-prepended here and outlive the scrub.
+  if (!shimPath || isLegacyTerminalShimPathEntry(shimPath)) {
     return
   }
   const currentPathKey = env.PATH !== undefined || env.Path === undefined ? 'PATH' : 'Path'
@@ -1892,22 +1892,9 @@ export function buildPtyHostEnv(
       : bundledCliBin
   }
 
-  // Why: PATH shims keep GitHub attribution scoped to Orca's own PTYs without rewriting user git config.
-  if (!opts.githubAttributionEnabled) {
-    delete baseEnv.ORCA_ENABLE_GIT_ATTRIBUTION
-    delete baseEnv.ORCA_GIT_COMMIT_TRAILER
-    delete baseEnv.ORCA_GH_PR_FOOTER
-    delete baseEnv.ORCA_GH_ISSUE_FOOTER
-    delete baseEnv.ORCA_ATTRIBUTION_SHIM_DIR
-  }
-  applyTerminalAttributionEnv(baseEnv, {
-    enabled: opts.githubAttributionEnabled,
-    userDataPath: opts.userDataPath,
-    shellFamily: resolveAttributionShellFamily({
-      shellPath: opts.shellPath,
-      isWsl: opts.isWsl
-    })
-  })
+  // Why: must run after the prepends above — they re-read PATH from the unscrubbed
+  // process.env when baseEnv carries none, which is the daemon path's normal shape.
+  stripLegacyTerminalShimEnv(baseEnv, process.platform)
 
   return baseEnv
 }
@@ -2454,10 +2441,8 @@ export function registerPtyHandlers(
             skipCodexHomeEnv,
             settings: getSettings?.()
           }),
-          githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false,
           launchCommand: ctx?.command,
           launchAgent: ctx?.launchAgent,
-          shellPath: ctx?.shellPath,
           isWsl: ctx?.isWsl,
           wslDistro: ctx?.wslDistro ?? null,
           agentStatusHooksEnabled: isAgentStatusHooksEnabled(getSettings?.()),
@@ -4683,10 +4668,8 @@ export function registerPtyHandlers(
           selectedCodexHomePath,
           skipCodexHomeEnv,
           stripInheritedOrcaCodexHome,
-          githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false,
           launchCommand,
           launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined,
-          shellPath: daemonShellOverride ?? process.env.COMSPEC,
           isWsl: shouldSkipCodexHomeEnvForWindowsShell(daemonShellOverride, cwd),
           wslDistro: codexSelectionTarget.runtime === 'wsl' ? expectedWslDistro : null,
           agentStatusHooksEnabled: isAgentStatusHooksEnabled(getSettings?.()),
@@ -6198,9 +6181,7 @@ export function registerPtyHandlers(
         const requestedAgentTeamsPath = baseEnv?.ORCA_AGENT_TEAMS_TEAM_ID
           ? baseEnv[resolvePathEnvKey(baseEnv, process.platform)]
           : undefined
-        const agentTeamsEnvToDelete = shouldRefreshAgentTeamsEnv
-          ? ['TERM_PROGRAM', 'ORCA_ATTRIBUTION_SHIM_DIR']
-          : undefined
+        const agentTeamsEnvToDelete = shouldRefreshAgentTeamsEnv ? ['TERM_PROGRAM'] : undefined
         if (baseEnv && stablePaneKey) {
           baseEnv.ORCA_PANE_KEY = stablePaneKey
           if (typeof args.tabId === 'string') {
@@ -6339,10 +6320,8 @@ export function registerPtyHandlers(
               selectedCodexHomePath,
               skipCodexHomeEnv,
               stripInheritedOrcaCodexHome,
-              githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false,
               launchCommand,
               launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined,
-              shellPath: effectiveShellOverride ?? process.env.COMSPEC,
               isWsl: shouldSkipCodexHomeEnvForWindowsShell(effectiveShellOverride, cwd),
               wslDistro: codexSelectionTarget.runtime === 'wsl' ? expectedWslDistro : null,
               agentStatusHooksEnabled: isAgentStatusHooksEnabled(getSettings?.()),
