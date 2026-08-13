@@ -100,7 +100,7 @@ if (process.stdin.isTTY) {
 }
 process.stdin.setEncoding('utf8')
 process.stdin.on('data', (chunk) => {
-  pendingInput += chunk
+  pendingInput += typeof chunk === 'string' ? chunk : chunk.toString()
   consumeInput()
 })
 process.stdin.resume()
