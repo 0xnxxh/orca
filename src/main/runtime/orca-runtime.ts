@@ -7,6 +7,7 @@ import {
   isCursorAgentTitle,
   isCursorNativeAgentTitle,
   isOpenCodeNativeTitle,
+  isBrailleSpinnerOnlyAgentTitle,
   isQuarterCircleSpinnerOnlyAgentTitle,
   isShellProcess,
   normalizeTerminalTitle
@@ -16800,11 +16801,12 @@ export class OrcaRuntimeService {
       }
     }
     if (terminal.titleStatus) {
-      // Why: an OpenCode marker and a lone quarter-circle spinner (STA-4028) are activity,
-      // not identity, so resolve both through the identity/foreground evidence path.
+      // Why: an OpenCode marker and a lone progress spinner (STA-4028/STA-4048) are
+      // activity, not identity, so resolve both through the identity/foreground path.
       if (
         isOpenCodeNativeTitle(terminal.title) ||
-        isQuarterCircleSpinnerOnlyAgentTitle(terminal.title)
+        isQuarterCircleSpinnerOnlyAgentTitle(terminal.title) ||
+        isBrailleSpinnerOnlyAgentTitle(terminal.title)
       ) {
         const isRunningAgent = await this.isTerminalRunningAgent(handle)
         this.assertTerminalAgentStatusPtyBinding(handle, ptyId)
@@ -37614,7 +37616,8 @@ function getLatestLeafTitle(leaf: RuntimeLeafRecord, tabTitle: string | null): s
 }
 
 // Why: an 'agent' title only proves an agent owns the pane when something other than a
-// quarter-circle spinner carries it — those glyphs are generic progress frames (STA-4028).
+// generic progress spinner carries it — those glyphs are activity, not identity
+// (STA-4028 quarter circles, STA-4048 braille).
 function agentTitleProvesAgentPresence(
   title: string | null,
   classification: 'agent' | 'management' | 'neutral'
@@ -37622,7 +37625,16 @@ function agentTitleProvesAgentPresence(
   return (
     classification === 'agent' &&
     !isOpenCodeNativeTitle(title) &&
-    !isQuarterCircleSpinnerOnlyAgentTitle(title)
+    !isQuarterCircleSpinnerOnlyAgentTitle(title) &&
+    !isBrailleSpinnerOnlyAgentTitle(title)
+  )
+}
+
+function ptyLaunchRecordOwnsCurrentIncarnation(pty: RuntimePtyWorktreeRecord): boolean {
+  return (
+    pty.launchAgent !== null &&
+    pty.launchToken !== null &&
+    pty.launchIncarnationId === pty.incarnationId
   )
 }
 
@@ -37631,13 +37643,16 @@ function ptyTitleProvesAgentPresence(
   title: string | null,
   classification: 'agent' | 'management' | 'neutral'
 ): boolean {
-  return (
-    agentTitleProvesAgentPresence(title, classification) ||
-    (isQuarterCircleSpinnerOnlyAgentTitle(title) &&
-      pty.launchAgent === 'claude' &&
-      pty.launchToken !== null &&
-      pty.launchIncarnationId === pty.incarnationId)
-  )
+  if (agentTitleProvesAgentPresence(title, classification)) {
+    return true
+  }
+  if (!ptyLaunchRecordOwnsCurrentIncarnation(pty)) {
+    return false
+  }
+  if (isQuarterCircleSpinnerOnlyAgentTitle(title)) {
+    return pty.launchAgent === 'claude'
+  }
+  return isBrailleSpinnerOnlyAgentTitle(title)
 }
 
 function classifyAgentTitle(title: string | null): 'agent' | 'management' | 'neutral' {

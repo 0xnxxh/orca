@@ -16,8 +16,10 @@ import {
   containsAgentName,
   containsAgentSpinnerGlyph,
   containsAny,
+  containsBrailleSpinner,
   containsQuarterCircleSpinner,
   containsLegacyAgentName,
+  isCursorAgentTitle,
   isClaudeManagementTitle,
   isGeminiTerminalTitle,
   isPiAgentTitle,
@@ -235,4 +237,20 @@ export function isQuarterCircleSpinnerOnlyAgentTitle(title: string | null | unde
     return false
   }
   return detectAgentStatusFromTitle(title.replace(QUARTER_CIRCLE_SPINNER_RE, '').trim()) === null
+}
+
+/**
+ * True when a braille spinner frame is the only agent evidence a title carries.
+ * ora, installers, and many CLIs animate these glyphs, so they prove activity,
+ * not identity — write authorization needs independent evidence (STA-4048).
+ */
+export function isBrailleSpinnerOnlyAgentTitle(title: string | null | undefined): boolean {
+  if (!title || !containsBrailleSpinner(title)) {
+    return false
+  }
+  // Why: Orca's synthetic Cursor spinner title is identity, not a generic progress frame.
+  if (isCursorAgentTitle(title)) {
+    return false
+  }
+  return detectAgentStatusFromTitle(title.replace(BRAILLE_SPINNER_RE, '').trim()) === null
 }
