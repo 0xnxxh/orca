@@ -488,6 +488,42 @@ describe('folder workspace diff comment rollback convergence', () => {
     expect(bodies(store, key)).toEqual(['hydrated'])
   })
 
+  it('keeps a successful write that straddles a chain break as the floor', async () => {
+    const store = createTestStore()
+    const folderWorkspace = seedLocalFolderWorkspace(store)
+    const key = folderWorkspaceKey(folderWorkspace.id)
+    folderWorkspacesUpdate.mockImplementation(async ({ updates }) => {
+      if (folderWorkspacesUpdate.mock.calls.length > 1) {
+        throw new Error('disk full')
+      }
+      return { ...folderWorkspace, ...updates }
+    })
+
+    // Why: no await, so the replacement + E land before A dequeues — A's payload already carries `hydrated`.
+    const addA = addNote(store, key, 'note A', 1)
+    const hydrated = [
+      {
+        id: 'h1',
+        worktreeId: key,
+        filePath: 'README.md',
+        lineNumber: 9,
+        body: 'hydrated',
+        createdAt: 1,
+        side: 'modified'
+      } as DiffComment
+    ]
+    store.setState({ folderWorkspaces: [{ ...folderWorkspace, diffComments: hydrated }] })
+    const addE = addNote(store, key, 'note E', 2)
+
+    await Promise.all([addA, addE])
+    // Why: write #1 put ['hydrated', 'note E'] on disk, so E's failure must not roll back past it.
+    expect(bodies(store, key)).toEqual(['hydrated', 'note E'])
+    expect(folderWorkspacesUpdate.mock.calls[0][0].updates.diffComments).toEqual([
+      expect.objectContaining({ body: 'hydrated' }),
+      expect.objectContaining({ body: 'note E' })
+    ])
+  })
+
   it('rolls back when the write throws before reaching persist', async () => {
     const store = createTestStore()
     const folderWorkspace = seedLocalFolderWorkspace(store)

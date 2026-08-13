@@ -201,8 +201,10 @@ function enqueuePersist(
     floorSeedEpochByQueue.set(queueKey, (floorSeedEpochByQueue.get(queueKey) ?? 0) + 1)
   }
   lastMutationNextByQueue.set(queueKey, mutation.next)
-  const seedEpoch = floorSeedEpochByQueue.get(queueKey)
   const run = async (): Promise<void> => {
+    // Why: capture at dequeue time, alongside `stateList` — an epoch read at enqueue time would bar every write
+    //      that straddles a chain break from recording a floor its coalesced payload already carries.
+    const seedEpoch = floorSeedEpochByQueue.get(queueKey)
     // Why: the state-side array, not the normalized copy sent to disk — restoring the same instance keeps
     //      `getDiffComments` identity stable instead of churning selectors.
     let stateList: DiffComment[] | undefined
