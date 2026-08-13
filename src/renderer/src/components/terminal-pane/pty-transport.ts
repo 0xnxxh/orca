@@ -795,8 +795,14 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         return { id: options.sessionId, exitedBeforeAttach: true } satisfies PtyConnectResult
       }
 
+      // A session id IS the instruction to attach: the provider reattaches on it before any
+      // pane-owner logic runs. So refusing adoption has to drop it here, at the last gate before
+      // the IPC — skipping owner resolution in main is not enough, and left this action still
+      // attaching the very shell it could not reach.
       const admittedSessionId =
-        options.sessionId && !isPreHandlerPtyStateDiscarded(options.sessionId)
+        options.sessionId &&
+        !options.createFreshShellForUnreachablePane &&
+        !isPreHandlerPtyStateDiscarded(options.sessionId)
           ? options.sessionId
           : undefined
 

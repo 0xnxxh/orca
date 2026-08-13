@@ -146,3 +146,37 @@ any of the others.
 - If exact cleanup cannot be achieved within existing local/provider contracts, take the leak (P3).
   Do **not** add `expectedIncarnationId` to remote shutdown — that is a separate, capability-
   negotiated wire change with its own review.
+
+---
+
+## 9. Findings from running the gate (2026-08-13)
+
+The oracle in §5 works: the state is inducible and the card appears reliably. Running it found
+three things that reading had not.
+
+**Fixed — the card's buttons were unclickable.** `TerminalErrorToast` renders at `z-50` in the same
+bottom strip and was suppressed only for the connection overlay, not for the pane's own card. In
+the one state this affordance exists for, both actions were covered. `TerminalPane.tsx` now also
+suppresses it while the active pane shows the card.
+
+**Fixed — a session id is the instruction to attach.** "Start a new terminal" was still sending the
+pane's recorded `sessionId`, which routes straight to reattach before any pane-owner logic runs, so
+the action attached the very shell it could not reach and created nothing. Skipping owner
+resolution in main was NOT enough on its own; the id had to be dropped at the last gate before the
+IPC (`admittedSessionId` in `pty-transport.ts`).
+
+**OPEN — the action produces no spawn at all.** With both fixes in, the measured result after
+clicking is still `visible=true launches=1 shells=1`: the card clears briefly, no shell is created,
+and the card returns. The main log over the same window shows only the pane's own restore retries
+(three `spawn() called with sessionId=…` → `identity mismatch`), never a fresh spawn.
+
+The evidence points at the action closure rather than the spawn path: the pane retries its restore
+while the card is up, each retry republishes the card, and the button the test clicks appears to
+belong to a superseded connection whose `startFreshSpawn` no longer does anything. That is the
+"stale renderer work" hazard from the original handoff, showing up as a dead button rather than as
+a wrong write.
+
+**Next step:** instrument `onStartNewTerminal` itself — confirm whether the handler runs, whether
+`startFreshSpawn` is entered, and which connection generation owns the closure the user clicked.
+Do not add more spawn-path guards until that is answered; the last two fixes were each necessary
+and neither was sufficient, which is the signature of working the wrong layer.

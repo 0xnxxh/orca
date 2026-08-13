@@ -112,7 +112,20 @@ test.describe('an unreachable SSH pane recovers rather than being replaced', () 
         `nothing recorded a shell identity to make unmatchable — ${rewritten.diagnostics}`
       ).toBe(true)
 
-      const secondLaunch = await restart.launch()
+      const mainLog: string[] = []
+      const secondLaunch = await restart.launch({
+        onStderr: (chunk) => {
+          for (const line of chunk.split('\n')) {
+            if (
+              /ssh-pty|spawn\(\)|identity mismatch|not found|stable pane|owner_changed|pty:spawn/i.test(
+                line
+              )
+            ) {
+              mainLog.push(line.trim())
+            }
+          }
+        }
+      })
       secondApp = secondLaunch.app
       await waitForSessionReady(secondLaunch.page, 60_000)
       await expect
@@ -141,6 +154,8 @@ test.describe('an unreachable SSH pane recovers rather than being replaced', () 
       //    shell is created — the pane keeps the terminal it already had.
       await banner.getByRole('button', { name: 'Start a new terminal' }).click()
 
+      // The recorded shell cannot be reached, so this action must CREATE one rather than attach
+      // the unreachable one first — which is what left the button doing nothing at all.
       // The recorded shell cannot be reached, so this action must CREATE one rather than attach
       // the unreachable one first — which is what left the button doing nothing at all.
       await expect(banner, 'the card stayed up after the pane was given a new shell').toBeHidden({
