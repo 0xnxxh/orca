@@ -45,13 +45,14 @@ describe('AgentStateDot', () => {
   })
 
   it.each(['permission', 'waiting'] satisfies AgentDotState[])(
-    'renders %s as an amber question glyph',
+    'renders %s as the shared question glyph',
     (state) => {
       const markup = renderMarkup(state)
 
       expect(markup).toContain('lucide-message-circle-question-mark')
-      expect(markup).toContain('text-amber-500')
-      expect(markup).not.toContain('bg-amber-500')
+      // One token across sidebar, tabs, dashboard and map — never a raw hue.
+      expect(markup).toContain('text-agent-question')
+      expect(markup).not.toContain('text-amber-500')
       expect(markup).not.toContain('data-agent-spinner')
     }
   )
