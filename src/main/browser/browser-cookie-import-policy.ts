@@ -230,7 +230,7 @@ export async function removeAllCookiesExcept(
       return
     } catch {
       // Why: a rejected bulk clear can still have emptied part of the jar, so fall through to the
-      // per-cookie path, which re-removes whatever survived and keeps its rollback.
+      // per-cookie path and let it re-remove whatever survived.
     }
   }
 
