@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { expect, test } from './helpers/orca-app'
+import { ensureDockerSshRelayImage } from './helpers/docker-ssh-relay-image'
 import {
   cleanupDockerSshRelayTarget,
   execDockerSshRelayTargetCommand,
@@ -22,6 +23,7 @@ test('adopts a recipe-provisioned SSH root without creating a linked worktree', 
   let target: DockerSshRelayTarget | null = null
   const sourceRepo = mkdtempSync(path.join(tmpdir(), 'orca-provisioned-root-source-'))
   try {
+    ensureDockerSshRelayImage(process.cwd())
     target = startDockerSshRelayTarget(testInfo)
     seedRecipeRepo(sourceRepo, target)
     await waitForSessionReady(orcaPage)
