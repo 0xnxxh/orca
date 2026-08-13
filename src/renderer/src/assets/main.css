@@ -174,7 +174,7 @@
   /* "An agent is asking you something" — one hue for every surface that shows
      it (sidebar, tabs, dashboard, agent map). Orange, not amber: on the map it
      has to stay separable from working-yellow at a glance. */
-  --agent-question: var(--color-orange-500);
+  --agent-question: var(--color-orange-600);
   /* Legible weight for text/glyphs on a tinted --agent-question surface. */
   --agent-question-text: var(--color-orange-700);
   --status-success: #15803d;
