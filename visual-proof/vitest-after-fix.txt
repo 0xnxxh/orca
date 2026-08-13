@@ -1,0 +1,12 @@
+[WARN] The "pnpm" field in package.json is no longer read by pnpm. The following keys were ignored: "pnpm.overrides", "pnpm.supportedArchitectures", "pnpm.onlyBuiltDependencies", "pnpm.patchedDependencies". See https://pnpm.io/settings for the new home of each setting.
+
+ RUN  v4.1.5 /Users/brennanbenson/orca/workspaces/orca/sta-4061-cookie-partition-rollback
+
+ ✓ src/main/browser/browser-cookie-import-partition-rollback.electron.test.ts (1 test) 731ms
+     ✓ never resurrects a removed partitioned cookie  724ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  18:17:34
+   Duration  948ms (transform 28ms, setup 25ms, import 63ms, tests 731ms, environment 0ms)
+
