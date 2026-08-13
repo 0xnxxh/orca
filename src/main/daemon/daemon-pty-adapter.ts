@@ -1473,8 +1473,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       )
       return processes
     } catch (error) {
-      const missingAuthenticatedToken =
-        isMissingTokenFileError(error) && this.client.hasObservedAuthenticatedDisconnect()
+      const missingAuthenticatedToken = this.isRetiredEndpointTokenMissing()
       const missingNamedPipe = isMissingWindowsNamedPipeError(error)
       this.observeAuditFailure(
         missingAuthenticatedToken
@@ -2121,13 +2120,21 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   // Why: on daemon-death errors, respawn a fresh daemon and retry once rather than leaving terminals broken until app restart.
+  /**
+   * Why a file check and not an errno shape: the client reads the token totally now, so a retired
+   * endpoint fails at the connect rather than the open. The fact worth auditing is unchanged — the
+   * token is gone after we were authenticated — and the filesystem answers it directly. An absent
+   * token before any authenticated session still proves nothing; a daemon may be mid-startup.
+   */
+  private isRetiredEndpointTokenMissing(): boolean {
+    return this.client.hasObservedAuthenticatedDisconnect() && !existsSync(this.tokenPath)
+  }
+
   private async withDaemonRetry<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn()
     } catch (err) {
-      // Why: the token is removed only after an authenticated drop; an initial missing token may still hide a live daemon.
-      const missingRetiredEndpointToken =
-        isMissingTokenFileError(err) && this.client.hasObservedAuthenticatedDisconnect()
+      const missingRetiredEndpointToken = this.isRetiredEndpointTokenMissing()
       if (missingRetiredEndpointToken) {
         this.observeAuditFailure(
           'token_missing_after_authenticated_disconnect',
@@ -2531,14 +2538,6 @@ export function isDaemonGoneError(err: unknown): boolean {
     // reaches whoever owns it; surfacing this to the user would strand the request instead.
     msg === DAEMON_ENDPOINT_LOST_MESSAGE
   )
-}
-
-function isMissingTokenFileError(err: unknown): boolean {
-  if (!(err instanceof Error)) {
-    return false
-  }
-  const errno = err as NodeJS.ErrnoException
-  return errno.code === 'ENOENT' && errno.syscall === 'open'
 }
 
 function isMissingWindowsNamedPipeError(err: unknown): boolean {
