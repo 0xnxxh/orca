@@ -42,6 +42,19 @@ describe('Agent Map glow performance boundary', () => {
     expect(markRule).not.toMatch(/filter:|animation:|transition:/)
   })
 
+  it('keeps the waiting badge on the native SVG paint path', () => {
+    const marker = source('AgentMapQuestionMarker.tsx')
+    const css = source('agent-map.css')
+    const markerRules = css.match(/\.agent-map-agent-question-[^{}]*\{[^}]+\}/gs) ?? []
+
+    expect(marker).not.toContain('<foreignObject')
+    expect(marker).toContain('<AgentQuestionIcon')
+    expect(markerRules).toHaveLength(2)
+    for (const rule of markerRules) {
+      expect(rule).not.toMatch(/filter:|animation:|transition:/)
+    }
+  })
+
   it('confines the finish flare to nodes inside the recency window', () => {
     const component = source('AgentMapWorktreeRingNode.tsx')
     const metadata = source('agent-map-node-metadata.ts')

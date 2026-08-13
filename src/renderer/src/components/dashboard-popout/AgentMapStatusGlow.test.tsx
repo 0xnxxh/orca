@@ -67,7 +67,8 @@ describe('AgentMap status glow', () => {
     }
     expect(marker).toBeInTheDocument()
     // Same glyph the sidebar and tabs use, not a map-local invention.
-    expect(container.querySelector('.agent-map-agent-question-icon svg')).toBeInTheDocument()
+    expect(container.querySelector('svg.agent-map-agent-question-icon')).toBeInTheDocument()
+    expect(marker!.parentElement!.querySelector('foreignObject')).not.toBeInTheDocument()
   })
 
   it('keeps the question badge clear of the unread dot', () => {

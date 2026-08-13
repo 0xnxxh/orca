@@ -7,8 +7,17 @@ import { cn } from '@/lib/utils'
 // (--agent-question) so the four never drift apart; the map paints the same
 // token from agent-map.css. Callers pass sizing via className.
 
-export function AgentQuestionIcon({ className }: { className?: string }): React.JSX.Element {
+type AgentQuestionIconProps = React.ComponentProps<typeof MessageCircleQuestion>
+
+export function AgentQuestionIcon({
+  className,
+  ...props
+}: AgentQuestionIconProps): React.JSX.Element {
   return (
-    <MessageCircleQuestion className={cn('text-agent-question', className)} aria-hidden="true" />
+    <MessageCircleQuestion
+      {...props}
+      className={cn('text-agent-question', className)}
+      aria-hidden="true"
+    />
   )
 }

@@ -25,17 +25,13 @@ export function AgentMapQuestionMarker({
         r={iconSize * 0.62}
         vectorEffect="none"
       />
-      <foreignObject
+      <AgentQuestionIcon
         className="agent-map-agent-question-icon"
         x={-iconSize / 2}
         y={-iconSize / 2}
         width={iconSize}
         height={iconSize}
-      >
-        <div>
-          <AgentQuestionIcon />
-        </div>
-      </foreignObject>
+      />
     </g>
   )
 }

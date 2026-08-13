@@ -458,19 +458,6 @@
   pointer-events: none;
 }
 
-.agent-map-agent-question-icon > div {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  align-items: center;
-  justify-content: center;
-}
-
-.agent-map-agent-question-icon svg {
-  width: 100%;
-  height: 100%;
-}
-
 .agent-map-aggregate-node circle {
   fill: color-mix(in srgb, var(--muted-foreground) 12%, var(--card));
   stroke: color-mix(in srgb, var(--muted-foreground) 46%, transparent);
