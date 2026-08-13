@@ -685,7 +685,7 @@ type InflightChecks = {
 const inflightChecksRequests = new Map<string, InflightChecks>()
 const inflightCommentsRequests = new Map<string, Promise<PRComment[]>>()
 type InflightWorkItems = {
-  promise: Promise<GitHubWorkItem[]>
+  promise: Promise<readonly GitHubWorkItem[]>
   force: boolean
   noCache: boolean
   requireComplete: boolean
@@ -1974,7 +1974,7 @@ export type GitHubSlice = {
     limit: number,
     query: string,
     options?: FetchOptions
-  ) => Promise<GitHubWorkItem[]>
+  ) => Promise<readonly GitHubWorkItem[]>
   /**
    * Fan out one work-item query across repos; partial failures don't reject — a repo with no cached fallback increments `failedCount`, but one served stale cache on rejection isn't counted.
    * `githubUnavailable`: every selected GitHub source refresh failed because GitHub was unreachable (5xx/network/rate-limit), even if stale cache remains — lets the caller attribute the stale/empty list.
@@ -2658,7 +2658,13 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     return null
   },
 
-  fetchWorkItems: async (repoId, repoPath, limit, query, options): Promise<GitHubWorkItem[]> => {
+  fetchWorkItems: async (
+    repoId,
+    repoPath,
+    limit,
+    query,
+    options
+  ): Promise<readonly GitHubWorkItem[]> => {
     if (isGitHubWorkItemsQueryTooLarge(query)) {
       return []
     }
