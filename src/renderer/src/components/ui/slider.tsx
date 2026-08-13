@@ -3,12 +3,19 @@ import { Slider as SliderPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/utils'
 
+type SliderProps = React.ComponentProps<typeof SliderPrimitive.Root> & {
+  thumbLabels?: readonly string[]
+  thumbValueLabels?: readonly string[]
+}
+
 function Slider({
   className,
   value,
   defaultValue,
+  thumbLabels,
+  thumbValueLabels,
   ...props
-}: React.ComponentProps<typeof SliderPrimitive.Root>): React.ReactElement {
+}: SliderProps): React.ReactElement {
   const thumbCount = Math.max((value ?? defaultValue)?.length ?? 1, 1)
 
   return (
@@ -33,6 +40,8 @@ function Slider({
         <SliderPrimitive.Thumb
           key={index}
           data-slot="slider-thumb"
+          aria-label={thumbLabels?.[index]}
+          aria-valuetext={thumbValueLabels?.[index]}
           className={cn(
             'block size-4 rounded-full border border-primary/40 bg-background shadow-sm',
             'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',

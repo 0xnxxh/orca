@@ -46,4 +46,25 @@ describe('Slider', () => {
     expect(handles).toHaveLength(2)
     expect(handles.map((handle) => handle.getAttribute('aria-valuenow'))).toEqual(['20', '80'])
   })
+
+  it('labels range thumbs and their display values', () => {
+    render(
+      <Slider
+        value={[4, 14]}
+        min={0}
+        max={14}
+        thumbLabels={['Quiet time minimum', 'Quiet time maximum']}
+        thumbValueLabels={['30m', '∞']}
+      />
+    )
+
+    expect(screen.getByRole('slider', { name: 'Quiet time minimum' })).toHaveAttribute(
+      'aria-valuetext',
+      '30m'
+    )
+    expect(screen.getByRole('slider', { name: 'Quiet time maximum' })).toHaveAttribute(
+      'aria-valuetext',
+      '∞'
+    )
+  })
 })

@@ -75,14 +75,21 @@ export function agentMapDurations(
   card: DashboardCard,
   now: number
 ): Record<AgentMapTimeField, number> {
-  const enteredState = card.stateChangedAt || card.startedAt
+  const startedAt = validTimestamp(card.startedAt) ? card.startedAt : null
+  const enteredState = validTimestamp(card.stateChangedAt) ? card.stateChangedAt : startedAt
+  const lastMessage = validTimestamp(card.statusUpdatedAt) ? card.statusUpdatedAt : enteredState
+  const finishedAt = validTimestamp(card.finishedAt) ? card.finishedAt : null
   return {
-    lifespan: Math.max(0, (card.finishedAt ?? now) - card.startedAt),
+    lifespan: startedAt === null ? 0 : Math.max(0, (finishedAt ?? now) - startedAt),
     // No per-message timestamp rides the snapshot; the last accepted hook update
     // is the closest thing to "when this agent last said something".
-    sinceMessage: Math.max(0, now - (card.statusUpdatedAt ?? enteredState)),
-    timeInState: Math.max(0, now - enteredState)
+    sinceMessage: lastMessage === null ? 0 : Math.max(0, now - lastMessage),
+    timeInState: enteredState === null ? 0 : Math.max(0, now - enteredState)
   }
+}
+
+function validTimestamp(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
 function withinRange(value: number, range: AgentMapTimeRange): boolean {

@@ -102,7 +102,16 @@ export function AgentDashboardMapView({
         orchestrationOnly: mapFilters.orchestrationOnly,
         now
       }).filter((card) => !mapFilters.unreadOnly || card.unseen),
-    [cards, mapFilters, now]
+    [
+      cards,
+      mapFilters.states,
+      mapFilters.hosts,
+      mapFilters.agentTypes,
+      mapFilters.timeRanges,
+      mapFilters.orchestrationOnly,
+      mapFilters.unreadOnly,
+      now
+    ]
   )
   const visibleAgentlessWorkspaces = useMemo(
     () =>
@@ -147,6 +156,8 @@ export function AgentDashboardMapView({
         }
         showAgentlessWorkspaces={showAgentlessWorkspaces}
         onShowAgentlessWorkspacesChange={setShowAgentlessWorkspaces}
+        showOrchestrationLinks={showOrchestrationLinks}
+        onShowOrchestrationLinksChange={setShowOrchestrationLinks}
         onClear={() => {
           onFiltersChange(EMPTY_DASHBOARD_FILTERS)
           mapFilters.reset()
@@ -163,6 +174,7 @@ export function AgentDashboardMapView({
             now={now}
             className={dialogCard ? 'w-1/2 flex-none' : undefined}
             selectedPaneKey={dialogCard?.paneKey}
+            enabledHosts={mapFilters.hosts}
             showOrchestrationLinks={showOrchestrationLinks}
             launchableAgentsByWorktreeId={snapshot.launchableAgentsByWorktreeId}
             workspaceContextMenusEnabled={workspaceContextMenusEnabled}

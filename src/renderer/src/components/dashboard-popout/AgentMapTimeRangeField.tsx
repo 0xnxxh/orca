@@ -47,6 +47,11 @@ export function AgentMapTimeRangeField({
         step={1}
         minStepsBetweenThumbs={0}
         value={[range.min, range.max]}
+        thumbLabels={[
+          translate('dashboardPopout.map.filters.timeMinimum', '{{label}} minimum', { label }),
+          translate('dashboardPopout.map.filters.timeMaximum', '{{label}} maximum', { label })
+        ]}
+        thumbValueLabels={[agentMapTimeStopLabel(range.min), agentMapTimeStopLabel(range.max)]}
         onValueChange={([min, max]) => onChange({ min, max })}
       />
       <div className="mt-1 flex justify-between text-[9px] text-muted-foreground">

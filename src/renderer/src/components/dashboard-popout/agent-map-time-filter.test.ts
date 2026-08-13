@@ -8,7 +8,7 @@ import {
   matchesAgentMapTimeRanges
 } from './agent-map-time-filter'
 
-const NOW = 2_000_000_000
+const NOW = 2_000_000_000_000
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 
@@ -55,6 +55,12 @@ describe('agent map time filtering', () => {
 
     expect(durations.sinceMessage).toBe(45 * MINUTE)
     expect(durations.timeInState).toBe(45 * MINUTE)
+  })
+
+  it('does not classify unknown timestamps as ancient', () => {
+    expect(
+      agentMapDurations(card({ startedAt: 0, stateChangedAt: 0, statusUpdatedAt: undefined }), NOW)
+    ).toEqual({ lifespan: 0, sinceMessage: 0, timeInState: 0 })
   })
 
   it('keeps every card when the ranges are untouched', () => {

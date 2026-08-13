@@ -250,6 +250,101 @@ describe('AgentKanbanBoard', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('counts hidden orchestration links and restores them from the active chip', async () => {
+    renderBoard([
+      card({ paneKey: 'parent', worktreeId: 'parent-worktree' }),
+      card({ paneKey: 'child', worktreeId: 'child-worktree', parentPaneKey: 'parent' })
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Filter/ }, MAP_LOAD_TIMEOUT))
+    fireEvent.click(screen.getByRole('button', { name: /^Workspace/ }))
+
+    const linksToggle = screen.getByRole('checkbox', { name: /Orchestration links/ })
+    fireEvent.click(linksToggle)
+
+    expect(linksToggle).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByRole('button', { name: /^Filter/ })).toHaveAccessibleName(/1/)
+
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(screen.getByText('Orchestration links hidden')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Orchestration links hidden' }))
+    expect(screen.queryByText('Orchestration links hidden')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Filter/ })).not.toHaveAccessibleName(/1/)
+  })
+
+  it('applies host selection to workspaces without agents', async () => {
+    renderBoard([card({ paneKey: 'busy' })], {
+      workspaces: [
+        workspace(),
+        workspace({ worktreeId: 'local-empty', worktreeName: 'Local empty' }),
+        workspace({
+          worktreeId: 'ssh-empty',
+          worktreeName: 'SSH empty',
+          hostKind: 'ssh',
+          executionHostId: 'ssh:test'
+        })
+      ]
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Filter/ }, MAP_LOAD_TIMEOUT))
+    fireEvent.click(screen.getByRole('button', { name: /^Workspace/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /Workspaces without agents/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Hosts/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /Local/ }))
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+
+    expect(
+      screen.queryByRole('button', { name: 'Open Local empty worktree details' })
+    ).not.toBeInTheDocument()
+    expect(
+      await screen.findByRole(
+        'button',
+        { name: 'Open SSH empty worktree details' },
+        MAP_LOAD_TIMEOUT
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('replaces board and content filters when applying a quick view', async () => {
+    renderBoard(
+      [
+        card({
+          paneKey: 'one',
+          repoId: 'r1',
+          repoName: 'One',
+          workspaceStatusId: 'active',
+          workspaceStatusLabel: 'Active'
+        }),
+        card({ paneKey: 'two', repoId: 'r2', repoName: 'Two', worktreeId: 'w2' })
+      ],
+      {
+        workspaces: [workspace(), workspace({ worktreeId: 'empty', worktreeName: 'Empty child' })]
+      }
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Map' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Filter/ }, MAP_LOAD_TIMEOUT))
+    fireEvent.click(screen.getByRole('button', { name: /^Project/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /One/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Workspace/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /Active/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /No review/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /Workspaces without agents/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Everything' }))
+
+    expect(screen.queryByText('One', { selector: 'span.rounded-full' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Active', { selector: 'span.rounded-full' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Review: No review')).not.toBeInTheDocument()
+    expect(screen.getByText('of 2 agents shown').parentElement).toHaveTextContent(
+      '2 of 2 agents shown'
+    )
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(
+      screen.queryByRole('button', { name: 'Open Empty child worktree details' })
+    ).not.toBeInTheDocument()
+  })
+
   it('keeps the selected map visible beside its terminal panel', async () => {
     const agent = card({ paneKey: 'map-agent', conversationName: 'Map agent' })
     render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="map" />)

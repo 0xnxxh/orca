@@ -93,7 +93,11 @@ export function AgentMapFilterPanel({
   const agentTypes = [...agentTypeCounts.keys()]
 
   const boardActive = activeDashboardFilterCount(filters)
-  const activeCount = boardActive + map.activeCount + (showAgentlessWorkspaces ? 1 : 0)
+  const activeCount =
+    boardActive +
+    map.activeCount +
+    (showAgentlessWorkspaces ? 1 : 0) +
+    (showOrchestrationLinks ? 0 : 1)
 
   const clearAll = (): void => {
     onFiltersChange({ projects: [], workspaceStatuses: [], reviewStates: [] })
@@ -101,6 +105,12 @@ export function AgentMapFilterPanel({
     onShowAgentlessWorkspacesChange(false)
     onShowOrchestrationLinksChange(true)
     setOpen(new Set<SectionId>(['quick']))
+  }
+  const applyQuickView = (id: Parameters<typeof map.applyQuickView>[0]): void => {
+    onFiltersChange({ projects: [], workspaceStatuses: [], reviewStates: [] })
+    onShowAgentlessWorkspacesChange(false)
+    onShowOrchestrationLinksChange(true)
+    map.applyQuickView(id)
   }
 
   // Board-style facets: an empty list means "no filter", so the count is what is
@@ -189,7 +199,7 @@ export function AgentMapFilterPanel({
                 <button
                   key={view.id}
                   type="button"
-                  onClick={() => map.applyQuickView(view.id)}
+                  onClick={() => applyQuickView(view.id)}
                   className="rounded-md bg-muted px-2 py-1 text-[11px] hover:bg-accent"
                 >
                   {view.label()}

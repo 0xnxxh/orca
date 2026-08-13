@@ -21,6 +21,8 @@ type AgentMapFilterChipsProps = {
   statusLabel: (id: string) => string
   showAgentlessWorkspaces: boolean
   onShowAgentlessWorkspacesChange: (show: boolean) => void
+  showOrchestrationLinks: boolean
+  onShowOrchestrationLinksChange: (show: boolean) => void
   onClear: () => void
 }
 
@@ -34,6 +36,8 @@ export function AgentMapFilterChips({
   statusLabel,
   showAgentlessWorkspaces,
   onShowAgentlessWorkspacesChange,
+  showOrchestrationLinks,
+  onShowOrchestrationLinksChange,
   onClear
 }: AgentMapFilterChipsProps): React.JSX.Element | null {
   const chips: Chip[] = []
@@ -69,7 +73,7 @@ export function AgentMapFilterChips({
       label: translate('dashboardPopout.map.filters.stateChip', 'State: {{states}}', {
         states: [...map.states].map(agentStateLabel).join(', ')
       }),
-      onRemove: () => map.applyQuickView('everything')
+      onRemove: map.resetStates
     })
   }
   for (const field of activeAgentMapTimeFields(map.timeRanges)) {
@@ -102,6 +106,16 @@ export function AgentMapFilterChips({
         'Workspaces without agents'
       ),
       onRemove: () => onShowAgentlessWorkspacesChange(false)
+    })
+  }
+  if (!showOrchestrationLinks) {
+    chips.push({
+      id: 'orchestration-links',
+      label: translate(
+        'dashboardPopout.map.filters.orchestrationLinksHidden',
+        'Orchestration links hidden'
+      ),
+      onRemove: () => onShowOrchestrationLinksChange(true)
     })
   }
   // Host and provider chips need the option universe to know what "all" is, so
