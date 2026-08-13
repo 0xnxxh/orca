@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { agentMapDirectLineageChevronPath } from './agent-map-lineage-chevron-path'
+import {
+  agentMapDirectLineageChevronPath,
+  agentMapLineagePathCacheSize
+} from './agent-map-lineage-chevron-path'
 
 describe('agentMapDirectLineageChevronPath', () => {
   it('runs every chevron directly from the parent toward the child', () => {
@@ -41,6 +44,50 @@ describe('agentMapDirectLineageChevronPath', () => {
       { x: 10_000, y: 0, radius: 0 }
     )
 
-    expect(path.match(/\bM\b/g)).toHaveLength(32)
+    expect(path.match(/\bM\b/g)).toHaveLength(256)
+  })
+
+  it('keeps the same chevron pitch however far apart the nodes are', () => {
+    const pitches = [60, 200, 900].map((distance) => {
+      const tips = [
+        ...agentMapDirectLineageChevronPath(
+          { x: 0, y: 0, radius: 0 },
+          { x: distance, y: 0, radius: 0 }
+        ).matchAll(/M [-\d.]+ [-\d.]+ L ([-\d.]+) [-\d.]+ L/g)
+      ].map((match) => Number(match[1]))
+
+      expect(tips.length).toBeGreaterThan(2)
+      return tips.slice(1).map((tip, index) => tip - tips[index])
+    })
+
+    expect(pitches.flat().every((pitch) => pitch === 8)).toBe(true)
+  })
+
+  it('serves an unmoved edge from cache instead of rebuilding it', () => {
+    const parent = { x: 3, y: 5, radius: 20 }
+    const child = { x: 903, y: 5, radius: 20 }
+    const before = agentMapLineagePathCacheSize()
+    const first = agentMapDirectLineageChevronPath(parent, child)
+    const afterMiss = agentMapLineagePathCacheSize()
+    const second = agentMapDirectLineageChevronPath({ ...parent }, { ...child })
+
+    expect(afterMiss).toBe(before + 1) // first call was a miss
+    expect(agentMapLineagePathCacheSize()).toBe(afterMiss) // second stored nothing → hit
+    expect(second).toBe(first)
+  })
+
+  it('bounds the cache as edges churn', () => {
+    const hot = [
+      { x: -1, y: -1, radius: 2 },
+      { x: -1, y: -400, radius: 2 }
+    ] as const
+    for (let i = 0; i < 600; i += 1) {
+      agentMapDirectLineageChevronPath({ x: i, y: 1_000, radius: 2 }, { x: i, y: 1_200, radius: 2 })
+      if (i % 10 === 0) {
+        agentMapDirectLineageChevronPath(hot[0], hot[1])
+      }
+    }
+
+    expect(agentMapLineagePathCacheSize()).toBe(512)
   })
 })
