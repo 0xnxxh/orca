@@ -117,6 +117,18 @@ export function filterSetupScriptPromptDismissalsToValidRepos(
       }
     }
   }
+  // Why: fetchRepos / fetchRuntimeEnvironmentRepos / validateRepoScopedUi assign
+  // this into set() on every catalog refresh. SetupScriptPromptCard Object.is-
+  // subscribes to the array, so a fresh copy on a no-op prune is a guaranteed miss.
+  // Compare against the original input, not the sanitize copy — sanitize always
+  // allocates, including for [] and already-valid host-identity keys.
+  if (
+    Array.isArray(value) &&
+    value.length === next.length &&
+    value.every((entry, index) => entry === next[index])
+  ) {
+    return value
+  }
   return next
 }
 
