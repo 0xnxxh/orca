@@ -117,7 +117,8 @@ describe('worktree visibility sources', () => {
     ).toEqual([{ id: 'team', rootPath: '/srv/team' }])
     expect(
       normalizeCustomWorktreeVisibilitySources([
-        { id: 'drive-relative', rootPath: '\\Users\\dev\\team' },
+        { id: 'drive-relative', rootPath: 'C:Users\\dev\\team' },
+        { id: 'root-relative', rootPath: '\\Users\\dev\\team' },
         { id: 'drive', rootPath: 'C:\\Users\\dev\\team' },
         { id: 'unc', rootPath: '\\\\server\\share\\team' }
       ])
