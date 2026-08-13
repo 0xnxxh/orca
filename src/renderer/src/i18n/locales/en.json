@@ -15397,7 +15397,10 @@
       "agentCount": "{{count}} agents",
       "agentCount_one": "{{count}} agent",
       "agentCount_other": "{{count}} agents",
-      "noWorkspaceAgents": "No agents in this workspace."
+      "noWorkspaceAgents": "No agents in this workspace.",
+      "status": {
+        "doneSeen": "Done, seen"
+      }
     },
     "placeholder": {
       "title": "Agent dashboard",
