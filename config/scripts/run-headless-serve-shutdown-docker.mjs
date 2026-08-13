@@ -31,6 +31,8 @@ if (launcherExecOverlay && entrypoint !== 'launcher') {
 }
 
 const appImage = resolve(appImageArg)
+const shutdownDockerDirectory = resolve('config', 'docker', 'headless-serve-shutdown')
+const shutdownDockerfile = resolve(shutdownDockerDirectory, 'Dockerfile')
 if (!existsSync(appImage)) {
   fail(`AppImage not found: ${appImage}`)
 }
@@ -46,10 +48,10 @@ try {
     '--platform',
     platform,
     '-f',
-    'config/docker/headless-serve-shutdown/Dockerfile',
+    shutdownDockerfile,
     '-t',
     image,
-    'config/docker/headless-serve-shutdown'
+    shutdownDockerDirectory
   ])
   docker(['volume', 'create', artifactVolume])
   docker([

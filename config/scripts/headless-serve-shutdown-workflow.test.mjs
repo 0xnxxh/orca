@@ -7,13 +7,29 @@ const workflow = parse(readFileSync('.github/workflows/pr.yml', 'utf8'))
 const headlessLinuxGuide = readFileSync('docs/reference/headless-linux-server.md', 'utf8')
 
 function readSystemdUnitBlocks(doc, unitName) {
-  return [...doc.matchAll(new RegExp(`^# /etc/systemd/system/${unitName}$`, 'gm'))].map((match) => {
-    const start = match.index + match[0].length
-    return doc.slice(start, doc.indexOf('```', start))
-  })
+  const escapedUnitName = unitName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return [...doc.matchAll(new RegExp(`^# /etc/systemd/system/${escapedUnitName}$`, 'gm'))].map(
+    (match) => {
+      const start = match.index + match[0].length
+      const end = doc.indexOf('```', start)
+      if (end === -1) {
+        throw new Error(`Missing closing code fence for ${unitName}`)
+      }
+      return doc.slice(start, end)
+    }
+  )
 }
 
 describe('headless serve shutdown PR gate', () => {
+  it('reads only exact, closed systemd unit blocks', () => {
+    expect(
+      readSystemdUnitBlocks('# /etc/systemd/system/orca-serveXservice\n```', 'orca-serve.service')
+    ).toEqual([])
+    expect(() =>
+      readSystemdUnitBlocks('# /etc/systemd/system/orca-serve.service\n', 'orca-serve.service')
+    ).toThrow('Missing closing code fence for orca-serve.service')
+  })
+
   it('packages an x64 AppImage before running the Docker signal oracle', () => {
     const steps = workflow.jobs.package.steps
     const packageStep = steps.find((step) => step.name === 'Package unpacked app')
