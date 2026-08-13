@@ -32,7 +32,8 @@ export function terminalSnapshotFromColdRestore(
     modes: info.modes,
     cols: info.cols,
     rows: info.rows,
-    scrollbackLines: countAnsiRows(info.scrollbackAnsi),
+    scrollbackLines:
+      info.scrollbackLines ?? Math.max(0, countAnsiRows(info.scrollbackAnsi) - info.rows),
     ...(info.lastTitle ? { lastTitle: info.lastTitle } : {}),
     ...(opts?.outputSequence !== undefined ? { outputSequence: opts.outputSequence } : {})
   }
@@ -103,7 +104,8 @@ export async function buildDurableCheckpointSnapshot(opts: {
         ? { frameRestoreAnsi: opts.liveSnapshot.frameRestoreAnsi }
         : {})
     }
-  } catch {
+  } catch (error) {
+    console.warn('[history] durable snapshot rebuild failed:', error)
     return opts.liveSnapshot
   } finally {
     emulator.dispose()

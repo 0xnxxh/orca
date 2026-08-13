@@ -70,6 +70,7 @@ import { resolveSafePtyDefaultCwd } from '../providers/pty-default-cwd'
 import { PtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
 import { ColdRestorePayloadCache, type ColdRestorePayload } from './cold-restore-payload-cache'
 import { buildDurableCheckpointSnapshot } from './daemon-durable-history-snapshot'
+import { DAEMON_RESTORE_SCROLLBACK_ROWS } from './daemon-restore-scrollback-depth'
 import { DAEMON_SESSION_SCROLLBACK_ROWS } from './daemon-session-scrollback-window'
 import { PtyProcessListAdmission } from '../providers/pty-process-list-admission'
 import {
@@ -100,6 +101,11 @@ type HistoryRecoveryContext = {
   freeze: HistoryRecoveryFreeze | null
   unreadableSessionId: string | null
   identityChanged: boolean
+}
+
+type SnapshotCheckpointResult = {
+  checkpoint: HistoryCheckpointResult
+  snapshot: NonNullable<TakePendingOutputResult['snapshot']> | null
 }
 
 // Why take-and-clear together: every consuming branch must reset the field, so pairing them stops one from forgetting.
@@ -226,6 +232,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private dirtySessionVersions = new Map<string, number>()
   // Why: a cold-restored session is a fresh shell atop a pre-crash log; incremental appends would be rejected on restore, so the first tick re-anchors with a full snapshot.
   private sessionsNeedingFullCheckpoint = new Set<string>()
+  // Why: overflow or an unpersisted drain breaks disk-to-queue continuity, so only the daemon emulator can safely re-anchor the next checkpoint.
+  private sessionsNeedingLiveCheckpoint = new Set<string>()
   private checkpointTimer: ReturnType<typeof setTimeout> | null = null
   private checkpointInFlight: Promise<void> | null = null
   private keepHistoryShutdowns = new Set<Promise<void>>()
@@ -755,6 +763,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
           })
           if (this.historyManager.hasWriter(sessionId)) {
             this.sessionsNeedingFullCheckpoint.add(sessionId)
+            this.sessionsNeedingLiveCheckpoint.add(sessionId)
             this.lastFullCheckpointAt.delete(sessionId)
           }
         } else if (canReanchorHistory) {
@@ -816,6 +825,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       if (!wasAlreadyManaged) {
         // Why: a previous adapter may have drained records it never persisted, so appending would leave a seq gap the reader rejects; force a full snapshot to re-anchor.
         this.sessionsNeedingFullCheckpoint.add(sessionId)
+        this.sessionsNeedingLiveCheckpoint.add(sessionId)
         this.lastFullCheckpointAt.delete(sessionId)
       }
     }
@@ -1130,6 +1140,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
     // Why: the !keepHistory path takes no final checkpoint, so clear sessionsNeedingFullCheckpoint here or it stays stranded (no-op under keepHistory).
     this.sessionsNeedingFullCheckpoint.delete(id)
+    this.sessionsNeedingLiveCheckpoint.delete(id)
     this.lastFullCheckpointAt.delete(id)
     this.stopCheckpointTimerIfIdle()
     this.initialCwds.delete(id)
@@ -1282,12 +1293,23 @@ export class DaemonPtyAdapter implements IPtyProvider {
     try {
       // Why exclusive compact: an independent take/append races the 5s tick, can
       // seq-gap the log, and would remount a stale checkpoint over the live window.
+      const checkpointResult: { value?: SnapshotCheckpointResult } = {}
       await this.runExclusiveCheckpoint(async () => {
-        const result = await this.takeSnapshotAndCheckpoint(sessionId, { teardown: false })
-        if (result === 'committed') {
+        checkpointResult.value = await this.takeSnapshotAndCheckpoint(sessionId, {
+          teardown: false,
+          forceLiveSnapshot: this.sessionsNeedingLiveCheckpoint.has(sessionId)
+        })
+        if (checkpointResult.value.checkpoint === 'committed') {
           this.sessionsNeedingFullCheckpoint.delete(sessionId)
         }
       })
+      const checkpoint = checkpointResult.value
+      if (checkpoint?.checkpoint !== 'committed' || !checkpoint.snapshot) {
+        return checkpoint?.snapshot ?? liveSnapshot
+      }
+      if (scrollbackRows === undefined || scrollbackRows >= DAEMON_RESTORE_SCROLLBACK_ROWS) {
+        return checkpoint.snapshot
+      }
       const restoreInfo = await this.historyReader.detectColdRestore(sessionId, {
         ignoreCleanEnd: true,
         wslDistro: this.wslDistrosBySessionId.get(sessionId)
@@ -1296,11 +1318,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
         return liveSnapshot
       }
       return await buildDurableCheckpointSnapshot({
-        liveSnapshot,
+        liveSnapshot: checkpoint.snapshot,
         restoreInfo,
         scrollbackRows
       })
-    } catch {
+    } catch (error) {
+      console.warn('[history] durable snapshot overlay failed:', sessionId, error)
       return liveSnapshot
     }
   }
@@ -1472,6 +1495,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       }
       if (historyManager.hasWriter(session.sessionId)) {
         this.sessionsNeedingFullCheckpoint.add(session.sessionId)
+        this.sessionsNeedingLiveCheckpoint.add(session.sessionId)
         this.lastFullCheckpointAt.delete(session.sessionId)
         this.markSessionDirty(session.sessionId)
       }
@@ -1591,6 +1615,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.dirtySessionVersions.clear()
     this.lastFullCheckpointAt.clear()
     this.sessionsNeedingFullCheckpoint.clear()
+    this.sessionsNeedingLiveCheckpoint.clear()
     this.pausedProducerSessionIds.clear()
     this.producerResumesOwedOnReconnect.clear()
     this.stopCheckpointTimer()
@@ -1698,6 +1723,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.stopCheckpointTimer()
     this.dirtySessionVersions.clear()
     this.lastFullCheckpointAt.clear()
+    this.sessionsNeedingFullCheckpoint.clear()
+    this.sessionsNeedingLiveCheckpoint.clear()
     this.coldRestoreCache.clear()
     this.wslDistrosBySessionId.clear()
     this.pausedProducerSessionIds.clear()
@@ -2092,13 +2119,15 @@ export class DaemonPtyAdapter implements IPtyProvider {
       // Why take-with-snapshot not plain getSnapshot: it clears pending records in the same turn as the serialize,
       // so a warm reattach won't re-append records the checkpoint already contains (double-replay on cold restore).
       const checkpoint = await this.takeSnapshotAndCheckpoint(sessionId, {
-        teardown: opts.teardown
+        teardown: opts.teardown,
+        forceLiveSnapshot: this.sessionsNeedingLiveCheckpoint.has(sessionId)
       })
-      if (checkpoint === 'retryable') {
+      if (checkpoint.checkpoint !== 'committed') {
         this.sessionsNeedingFullCheckpoint.add(sessionId)
         return 'deferred'
       }
       this.sessionsNeedingFullCheckpoint.delete(sessionId)
+      this.sessionsNeedingLiveCheckpoint.delete(sessionId)
       return 'done'
     }
     const take = await this.client.request<TakePendingOutputResult | null>('takePendingOutput', {
@@ -2113,8 +2142,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
         this.sessionsNeedingFullCheckpoint.add(sessionId)
         return 'deferred'
       }
-      const checkpoint = await this.takeSnapshotAndCheckpoint(sessionId, { teardown: false })
-      if (checkpoint === 'retryable') {
+      const checkpoint = await this.takeSnapshotAndCheckpoint(sessionId, {
+        teardown: false,
+        forceLiveSnapshot: true
+      })
+      if (checkpoint.checkpoint !== 'committed') {
         this.sessionsNeedingFullCheckpoint.add(sessionId)
         return 'deferred'
       }
@@ -2137,8 +2169,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
         this.sessionsNeedingFullCheckpoint.add(sessionId)
         return 'deferred'
       }
-      const checkpoint = await this.takeSnapshotAndCheckpoint(sessionId, { teardown: false })
-      if (checkpoint === 'retryable') {
+      const checkpoint = await this.takeSnapshotAndCheckpoint(sessionId, {
+        teardown: false,
+        forceLiveSnapshot: true
+      })
+      if (checkpoint.checkpoint !== 'committed') {
         this.sessionsNeedingFullCheckpoint.add(sessionId)
         return 'deferred'
       }
@@ -2148,8 +2183,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   private async takeSnapshotAndCheckpoint(
     sessionId: string,
-    opts: { teardown: boolean }
-  ): Promise<HistoryCheckpointResult> {
+    opts: { teardown: boolean; forceLiveSnapshot?: boolean }
+  ): Promise<SnapshotCheckpointResult> {
     const take = await this.client.request<TakePendingOutputResult | null>('takePendingOutput', {
       sessionId,
       includeSnapshot: true,
@@ -2160,7 +2195,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       // queue on includeSnapshot but omits the field. Treating absence as []
       // would compact stale disk history and reset the log.
       const snapshot =
-        take.drainedRecords === undefined
+        take.drainedRecords === undefined || opts.forceLiveSnapshot === true || take.overflowed
           ? take.snapshot
           : await this.buildDurableHistorySnapshot(sessionId, take.snapshot, [
               ...take.drainedRecords,
@@ -2171,16 +2206,20 @@ export class DaemonPtyAdapter implements IPtyProvider {
         // Why take.records is dropped, not appended: the pending output this take drained went into the snapshot that
         // failed to land, so appending the held tail at the next contiguous seq would splice it over that hole and
         // defeat the log's seq-gap detection. A stale prefix beats an undetectable hole.
-        return checkpoint
+        this.sessionsNeedingFullCheckpoint.add(sessionId)
+        this.sessionsNeedingLiveCheckpoint.add(sessionId)
+        this.markSessionDirty(sessionId)
+        return { checkpoint, snapshot: take.snapshot }
       }
       this.lastFullCheckpointAt.set(sessionId, Date.now())
       if (take.records.length > 0 && snapshot === take.snapshot) {
         // Why: live-window fallback still lacks held parser-state bytes; keep them as a post-checkpoint log tail.
         await this.historyManager.appendIncrements(sessionId, take.seq, take.records)
       }
-      return 'committed'
+      this.sessionsNeedingLiveCheckpoint.delete(sessionId)
+      return { checkpoint: 'committed', snapshot }
     }
-    return 'unavailable'
+    return { checkpoint: 'unavailable', snapshot: take?.snapshot ?? null }
   }
 
   private async buildDurableHistorySnapshot(
@@ -2201,7 +2240,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
         restoreInfo,
         pendingRecords
       })
-    } catch {
+    } catch (error) {
+      console.warn('[history] durable history rebuild failed:', sessionId, error)
       return liveSnapshot
     }
   }
@@ -2491,6 +2531,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         }
         // Why: an exited session can't be checkpointed again; clearing its pending-full flag prevents a permanent leak.
         this.sessionsNeedingFullCheckpoint.delete(event.sessionId)
+        this.sessionsNeedingLiveCheckpoint.delete(event.sessionId)
         // Why: a reused sessionId (renderer respawns a persisted ptyId) must not inherit the dead session's snapshot cooldown.
         this.lastFullCheckpointAt.delete(event.sessionId)
         this.stopCheckpointTimerIfIdle()

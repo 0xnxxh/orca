@@ -20,6 +20,7 @@ import type { SubprocessHandle } from './session'
 const PREVIOUSLY_RECOVERABLE_LINE = 'LINE_01000'
 const OLDEST_WRITTEN_LINE = 'LINE_00001'
 const NEWEST_WRITTEN_LINE = `LINE_${String(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT).padStart(5, '0')}`
+const FRESH_AFTER_CHECKPOINT = 'FRESH_AFTER_CHECKPOINT'
 
 function numberedOutput(lineCount: number): string {
   let output = ''
@@ -192,6 +193,7 @@ describe('STA-4091 previously recoverable restore depth', () => {
         })
         expect(durable.outputSequence).toBe(9)
         expect(durable.scrollbackAnsi).toBe('')
+        expect(durable.scrollbackLines).toBe(restoreInfo?.scrollbackLines)
         expect(snapshotText(durable)).toContain(PREVIOUSLY_RECOVERABLE_LINE)
       } finally {
         live.dispose()
@@ -350,6 +352,115 @@ describe('STA-4091 previously recoverable restore depth', () => {
       const text = `${snapshot?.scrollbackAnsi ?? ''}${snapshot?.data ?? ''}`
       expect(text).toContain(NEWEST_WRITTEN_LINE)
       expect(text).not.toContain(OLDEST_WRITTEN_LINE)
+    })
+
+    it('reanchors from the live window after pending output overflows', async () => {
+      const { id } = await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'overflow-reanchor',
+        cwd: '/tmp'
+      })
+      lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+      await adapter.getBufferSnapshot(id)
+
+      const overflowLine = `BULK_${'x'.repeat(100)}\r\n`
+      lastSubprocess.emitData(overflowLine.repeat(20_000))
+      lastSubprocess.emitData(`${FRESH_AFTER_CHECKPOINT}\r\n`)
+
+      const snapshot = await adapter.getBufferSnapshot(id)
+      const text = `${snapshot?.scrollbackAnsi ?? ''}${snapshot?.data ?? ''}`
+      expect(text).toContain(FRESH_AFTER_CHECKPOINT)
+      const restore = await new HistoryReader(historyDir).detectColdRestore(id, {
+        ignoreCleanEnd: true
+      })
+      expect(snapshotText(restore ?? {})).toContain(FRESH_AFTER_CHECKPOINT)
+    })
+
+    it.each(['retryable', 'unavailable'] as const)(
+      'returns the current live snapshot when a durable checkpoint is %s',
+      async (checkpointResult) => {
+        const { id } = await adapter.spawn({
+          cols: 80,
+          rows: 24,
+          sessionId: `checkpoint-${checkpointResult}`,
+          cwd: '/tmp'
+        })
+        lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+        await adapter.getBufferSnapshot(id)
+        lastSubprocess.emitData(`${FRESH_AFTER_CHECKPOINT}\r\n`)
+
+        const internals = adapter as unknown as {
+          historyManager: HistoryManager
+          sessionsNeedingLiveCheckpoint: Set<string>
+        }
+        const checkpoint = vi
+          .spyOn(internals.historyManager, 'checkpoint')
+          .mockResolvedValueOnce(checkpointResult)
+
+        const snapshot = await adapter.getBufferSnapshot(id)
+        const text = `${snapshot?.scrollbackAnsi ?? ''}${snapshot?.data ?? ''}`
+        expect(text).toContain(FRESH_AFTER_CHECKPOINT)
+        expect(internals.sessionsNeedingLiveCheckpoint.has(id)).toBe(true)
+
+        const recovered = await adapter.getBufferSnapshot(id)
+        expect(`${recovered?.scrollbackAnsi ?? ''}${recovered?.data ?? ''}`).toContain(
+          FRESH_AFTER_CHECKPOINT
+        )
+        const restore = await new HistoryReader(historyDir).detectColdRestore(id, {
+          ignoreCleanEnd: true
+        })
+        expect(snapshotText(restore ?? {})).toContain(FRESH_AFTER_CHECKPOINT)
+        expect(checkpoint.mock.calls.at(-1)?.[1].scrollbackLines).toBe(
+          DAEMON_SESSION_SCROLLBACK_ROWS
+        )
+        expect(internals.sessionsNeedingLiveCheckpoint.has(id)).toBe(false)
+
+        checkpoint.mockResolvedValueOnce(checkpointResult)
+        const reattach = await adapter.spawn({
+          cols: 80,
+          rows: 24,
+          sessionId: id,
+          cwd: '/tmp'
+        })
+        expect(reattach.isReattach).toBe(true)
+        expect(reattach.snapshot).toContain(FRESH_AFTER_CHECKPOINT)
+      }
+    )
+
+    it('uses the post-drain sequence for output produced during an overlay', async () => {
+      const { id } = await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'overlay-sequence',
+        cwd: '/tmp'
+      })
+      lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+      await adapter.getBufferSnapshot(id)
+
+      const internals = adapter as unknown as {
+        client: { request: (method: string, params?: unknown) => Promise<unknown> }
+      }
+      const request = internals.client.request.bind(internals.client)
+      let injected = false
+      vi.spyOn(internals.client, 'request').mockImplementation(async (method, params) => {
+        if (
+          method === 'takePendingOutput' &&
+          (params as { includeSnapshot?: boolean } | undefined)?.includeSnapshot &&
+          !injected
+        ) {
+          injected = true
+          lastSubprocess.emitData(`${FRESH_AFTER_CHECKPOINT}\r\n`)
+        }
+        return request(method, params)
+      })
+
+      const overlaid = await adapter.getBufferSnapshot(id)
+      const current = await adapter.getBufferSnapshot(id, { scrollbackRows: 24 })
+      expect(`${overlaid?.scrollbackAnsi ?? ''}${overlaid?.data ?? ''}`).toContain(
+        FRESH_AFTER_CHECKPOINT
+      )
+      expect(overlaid?.seq).toBe(current?.seq)
     })
   })
 })
