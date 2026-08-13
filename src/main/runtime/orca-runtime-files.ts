@@ -185,6 +185,7 @@ type TerminalFileGrant = {
   expiresAt: number
   statIdentity: string | null
   readOnly: boolean
+  provenance: 'terminal-output' | 'native-chat'
   expiryTimer?: ReturnType<typeof setTimeout>
 }
 
@@ -826,7 +827,8 @@ export class RuntimeFileCommands {
           artifactPath,
           connectionId,
           clientId,
-          readOnly: true
+          readOnly: true,
+          provenance: 'native-chat'
         })
       }
 
@@ -933,6 +935,7 @@ export class RuntimeFileCommands {
     connectionId?: string
     clientId?: string
     readOnly?: boolean
+    provenance?: TerminalFileGrant['provenance']
   }): Promise<RuntimeTerminalPathResolution> {
     const stats = args.connectionId
       ? await this.statRemoteTerminalPath(args.artifactPath, args.connectionId)
@@ -956,6 +959,7 @@ export class RuntimeFileCommands {
           connectionId: args.connectionId,
           clientId: args.clientId,
           readOnly: args.readOnly === true,
+          provenance: args.provenance ?? 'terminal-output',
           stats
         })
     return {
@@ -1021,6 +1025,7 @@ export class RuntimeFileCommands {
     connectionId?: string
     clientId?: string
     readOnly?: boolean
+    provenance: TerminalFileGrant['provenance']
     stats: RuntimeFileStatLike
   }): TerminalFileGrant {
     assertTerminalArtifactNotHardLinked(args.stats)
@@ -1033,7 +1038,8 @@ export class RuntimeFileCommands {
       ...(args.clientId ? { clientId: args.clientId } : {}),
       expiresAt: Date.now() + TERMINAL_FILE_GRANT_TTL_MS,
       statIdentity: terminalFileStatIdentity(args.stats),
-      readOnly: args.readOnly === true
+      readOnly: args.readOnly === true,
+      provenance: args.provenance
     }
     this.terminalFileGrants.set(grant.id, grant)
     this.scheduleTerminalFileGrantExpiry(grant)
@@ -1352,12 +1358,15 @@ export class RuntimeFileCommands {
     if (!provider) {
       throw new Error(SSH_FILESYSTEM_PROVIDER_UNAVAILABLE_MESSAGE)
     }
-    const allowedPath = await this.resolveAllowedRemoteTerminalArtifactPath(
-      grant.absolutePath,
-      grant.connectionId
-    )
-    // Why: relay I/O follows symlinks, so re-canonicalize a remote temp-artifact grant after the process can mutate it.
-    if (allowedPath !== grant.absolutePath) {
+    const canonicalPath =
+      grant.provenance === 'native-chat'
+        ? await provider.realpath(grant.absolutePath)
+        : await this.resolveAllowedRemoteTerminalArtifactPath(
+            grant.absolutePath,
+            grant.connectionId
+          )
+    // Why: relay I/O follows symlinks, so re-canonicalize after the remote process can mutate the path.
+    if (canonicalPath !== grant.absolutePath) {
       throw new Error('terminal_file_grant_stale')
     }
     return provider

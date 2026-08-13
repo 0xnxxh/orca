@@ -949,11 +949,18 @@ describe('RuntimeFileCommands', () => {
       )
     }
 
-    function createRemoteTerminalArtifactGrantFixture(artifactPath = '/tmp/result.json') {
-      const { commands, store } = createRuntimeFileCommands({ path: '/repo' })
+    function createRemoteTerminalArtifactGrantFixture(
+      artifactPath = '/tmp/result.json',
+      nativeChat = false
+    ) {
+      const { commands, store } = createRuntimeFileCommands({
+        path: '/repo',
+        ...(nativeChat ? { hasRecentNativeChatOutputPath: vi.fn(() => true) } : {})
+      })
       store.getRepo.mockReturnValue({ connectionId: 'ssh-1' })
       let realArtifactPath = artifactPath
-      const stat = vi.fn().mockResolvedValue({ type: 'file', size: 11, mtime: 3 })
+      let artifactStat = { type: 'file', size: 11, mtime: 3 }
+      const stat = vi.fn(async () => artifactStat)
       const readTerminalArtifact = vi
         .fn()
         .mockResolvedValue({ content: '{"ok":true}', isBinary: false })
@@ -971,8 +978,18 @@ describe('RuntimeFileCommands', () => {
         writeTerminalArtifact,
         moveArtifactTarget: (nextPath: string) => {
           realArtifactPath = nextPath
+        },
+        replaceArtifact: () => {
+          artifactStat = { type: 'file', size: 12, mtime: 4 }
         }
       }
+    }
+
+    function resolveRemoteNativeChatArtifact(commands: RuntimeFileCommands, artifactPath: string) {
+      return commands.resolveTerminalPath('id:wt-1', artifactPath, null, 'client-a', null, true, {
+        tabId: 'tab-1',
+        sessionId: 'session-1'
+      })
     }
 
     it('resolves an absolute path inside the worktree to a relative path', async () => {
@@ -2374,6 +2391,69 @@ describe('RuntimeFileCommands', () => {
       ).rejects.toThrow('binary_file')
       expect(writeFile).not.toHaveBeenCalled()
       expect(writeTerminalArtifact).toHaveBeenCalled()
+    })
+
+    it('reads a remote non-temp artifact cited by native chat', async () => {
+      const artifactPath = '/home/me/report.json'
+      const { commands, readTerminalArtifact } = createRemoteTerminalArtifactGrantFixture(
+        artifactPath,
+        true
+      )
+      const result = await resolveRemoteNativeChatArtifact(commands, artifactPath)
+      const target = absoluteFileTarget(result)
+
+      await expect(
+        commands.readTerminalArtifactFile(
+          'id:wt-1',
+          target.grantId,
+          target.absolutePath,
+          'client-a'
+        )
+      ).resolves.toMatchObject({ content: '{"ok":true}' })
+      expect(readTerminalArtifact).toHaveBeenCalledWith(
+        artifactPath,
+        expect.objectContaining({ expectedRealPath: artifactPath })
+      )
+    })
+
+    it('rejects a retargeted remote native-chat artifact grant', async () => {
+      const artifactPath = '/home/me/report.json'
+      const { commands, readTerminalArtifact, moveArtifactTarget } =
+        createRemoteTerminalArtifactGrantFixture(artifactPath, true)
+      const result = await resolveRemoteNativeChatArtifact(commands, artifactPath)
+      const target = absoluteFileTarget(result)
+
+      moveArtifactTarget('/home/me/private.json')
+
+      await expect(
+        commands.readTerminalArtifactFile(
+          'id:wt-1',
+          target.grantId,
+          target.absolutePath,
+          'client-a'
+        )
+      ).rejects.toThrow('terminal_file_grant_stale')
+      expect(readTerminalArtifact).not.toHaveBeenCalled()
+    })
+
+    it('rejects a replaced remote native-chat artifact grant', async () => {
+      const artifactPath = '/home/me/report.json'
+      const { commands, readTerminalArtifact, replaceArtifact } =
+        createRemoteTerminalArtifactGrantFixture(artifactPath, true)
+      const result = await resolveRemoteNativeChatArtifact(commands, artifactPath)
+      const target = absoluteFileTarget(result)
+
+      replaceArtifact()
+
+      await expect(
+        commands.readTerminalArtifactFile(
+          'id:wt-1',
+          target.grantId,
+          target.absolutePath,
+          'client-a'
+        )
+      ).rejects.toThrow('terminal_file_grant_stale')
+      expect(readTerminalArtifact).not.toHaveBeenCalled()
     })
 
     it('rejects remote terminal artifact reads when a grant no longer resolves to the granted path', async () => {
