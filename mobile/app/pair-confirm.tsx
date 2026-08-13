@@ -112,9 +112,7 @@ export default function PairConfirmScreen() {
       // Why: re-pairing the same desktop now reuses its existing host id
       // (STA-1840 dedup), so a client cached under that id from an earlier
       // pairing would keep the stale endpoint/relay. Close it so the
-      // destination screen opens a fresh client with the newly-paired
-      // profile — the removeHost() path already refreshes on re-pair, and a
-      // brand-new host has no cached entry so this is a no-op.
+      // Refresh any cached client from the newly persisted pairing profile.
       refreshHostClient(hostId)
       const onboardingSteps = await loadMobileOnboardingSteps()
       if (!mountedRef.current) {

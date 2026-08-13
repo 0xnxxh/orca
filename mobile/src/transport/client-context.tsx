@@ -197,6 +197,9 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     (hostId: string, acquisition: HostClientAcquisition) => {
       const acquisitionCount = acquisitionsRef.current.release(hostId, acquisition)
       if (acquisitionCount === null) {
+        if (acquisitionsRef.current.count(hostId) === 0) {
+          closeEntry(hostId, { forgetPrimedHost: false, preserveAcquisitions: false })
+        }
         return
       }
       const entry = storeRef.current.get(hostId)

@@ -46,6 +46,9 @@ export function useAllHostClients(hostIds: string[], options?: UseAllHostClients
       for (const id of acquiredHostIds) {
         const acquisition = acquisitionsRef.current.get(id)
         if (!acquisition) {
+          if (closeUnusedRef.current) {
+            ctx.closeIfUnused(id)
+          }
           continue
         }
         if (closeUnusedRef.current) {
@@ -91,6 +94,9 @@ export function useAllHostClients(hostIds: string[], options?: UseAllHostClients
       if (!nextAcquiredHostIds.has(id)) {
         const acquisition = acquisitionsRef.current.get(id)
         if (!acquisition) {
+          if (closeUnusedOnRelease) {
+            ctx.closeIfUnused(id)
+          }
           continue
         }
         if (closeUnusedOnRelease) {

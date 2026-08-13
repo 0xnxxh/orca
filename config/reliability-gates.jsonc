@@ -804,13 +804,16 @@
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["lan", "tailscale", "cloud-relay"],
       "coverageNotes": "Deterministic React/provider tests cover catalog, missing-host, construction, cancellation, release, forget, refresh, backoff, and stale-generation outcomes. Direct and relay session tests cover authenticated activity before semantic decoding, three fair misses, scheduler stalls, identity replacement, write failure, and foreground coalescing. Physical iOS/Android sleep, carrier/Tailscale loss, and production relay paths remain live-test gaps.",
-      "motivatingLinks": ["https://linear.app/stably/issue/STA-4153/mobile-app-disconnects-frequently"],
+      "motivatingLinks": [
+        "https://linear.app/stably/issue/STA-4153/mobile-app-disconnects-frequently"
+      ],
       "invariant": "A provider-wanted host without a logical client retries every current-generation pre-client failure until success or explicit cancellation, while release, disconnect, forget, refresh, and stale async continuations preserve their distinct resurrection policies. One authenticated direct or relay physical session terminates only after three fair consecutive silent probe windows, or immediately when the current session cannot write; authenticated traffic, scheduler stalls, and replacement identities cannot manufacture death.",
       "oracle": "Inject rejected and never-settling catalog reads, missing profiles, synchronous construction failure, release, refresh, forget, revival, and stale completion under fake time. Require bounded 1s through 60s retry, exact current-generation publication, and no zero-owner or forgotten-client resurrection. Inject direct and relay authenticated text/binary traffic, silent probe windows, stalled clocks, replacement identities, and throwing or failed writes. Require one observation-only status probe at a time, tolerance of two fair misses, exactly-once termination on the third, and no semantic decoder or wire-format change.",
       "commands": [
-        "pnpm --dir mobile exec vitest run --root .. mobile/src/transport/host-open-recovery.test.tsx mobile/src/transport/host-open-retry-scheduler.test.ts mobile/src/transport/rpc-session-liveness-watchdog.test.ts mobile/src/transport/rpc-session-liveness-integration.test.ts mobile/src/transport/mobile-relay-rpc-session.test.ts mobile/src/transport/mobile-endpoint-nudge-router.test.ts mobile/src/transport/mobile-relay-e2ee-link.test.ts"
+        "pnpm --dir mobile exec vitest run --root .. mobile/src/transport/client-context.test.ts mobile/src/transport/host-open-recovery.test.tsx mobile/src/transport/host-open-retry-scheduler.test.ts mobile/src/transport/rpc-session-liveness-watchdog.test.ts mobile/src/transport/rpc-session-liveness-integration.test.ts mobile/src/transport/mobile-relay-rpc-session.test.ts mobile/src/transport/mobile-endpoint-nudge-router.test.ts mobile/src/transport/mobile-relay-e2ee-link.test.ts"
       ],
       "testFiles": [
+        "mobile/src/transport/client-context.test.ts",
         "mobile/src/transport/host-open-recovery.test.tsx",
         "mobile/src/transport/host-open-retry-scheduler.test.ts",
         "mobile/src/transport/rpc-session-liveness-watchdog.test.ts",
@@ -820,6 +823,10 @@
         "mobile/src/transport/mobile-relay-e2ee-link.test.ts"
       ],
       "assertionRefs": [
+        {
+          "file": "mobile/src/transport/client-context.test.ts",
+          "assertions": ["a retired close-on-release owner closes an ownerless manual reconnect"]
+        },
         {
           "file": "mobile/src/transport/host-open-recovery.test.tsx",
           "assertions": [
@@ -845,6 +852,7 @@
           "assertions": [
             "direct handshake and probe write exceptions recover without escaping",
             "one silent foreground window preserves the connected direct socket",
+            "authenticated terminal binary output restores direct-session liveness",
             "a replay write failure retains every queued stream for the replacement session",
             "liveness probe replies cannot consume the authentication retry budget"
           ]
@@ -863,10 +871,10 @@
           "date": "2026-08-13",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm --dir mobile exec vitest run --root .. mobile/src/transport/host-open-recovery.test.tsx mobile/src/transport/host-open-retry-scheduler.test.ts mobile/src/transport/rpc-session-liveness-watchdog.test.ts mobile/src/transport/rpc-session-liveness-integration.test.ts mobile/src/transport/mobile-relay-rpc-session.test.ts mobile/src/transport/mobile-endpoint-nudge-router.test.ts mobile/src/transport/mobile-relay-e2ee-link.test.ts",
+          "command": "pnpm --dir mobile exec vitest run --root .. mobile/src/transport/client-context.test.ts mobile/src/transport/host-open-recovery.test.tsx mobile/src/transport/host-open-retry-scheduler.test.ts mobile/src/transport/rpc-session-liveness-watchdog.test.ts mobile/src/transport/rpc-session-liveness-integration.test.ts mobile/src/transport/mobile-relay-rpc-session.test.ts mobile/src/transport/mobile-endpoint-nudge-router.test.ts mobile/src/transport/mobile-relay-e2ee-link.test.ts",
           "result": "passed",
-          "durationSeconds": 0.87,
-          "summary": "Seven focused files passed 36 deterministic provider lifecycle and direct/relay physical-session tests."
+          "durationSeconds": 1.11,
+          "summary": "Eight focused files passed 51 deterministic provider lifecycle and direct/relay physical-session tests."
         }
       ],
       "runtimeBudget": {

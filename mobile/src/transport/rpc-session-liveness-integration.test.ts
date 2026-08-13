@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { connect } from './rpc-client'
+import { encodeTerminalStreamFrame, TerminalStreamOpcode } from './terminal-stream-protocol'
 
 vi.mock('./e2ee', () => ({
   generateKeyPair: () => ({
@@ -100,6 +101,27 @@ describe('physical session liveness', () => {
     } finally {
       client.close()
     }
+  })
+
+  it('counts authenticated terminal binary output as liveness', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const socket = sockets[0]!
+    socket.authenticate()
+    client.notifyForeground()
+    socket.onmessage?.({
+      data: encodeTerminalStreamFrame({
+        opcode: TerminalStreamOpcode.Output,
+        streamId: 42,
+        seq: 1,
+        payload: new TextEncoder().encode('hello')
+      })
+    })
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(8_000)
+
+    expect(socket.close).not.toHaveBeenCalled()
+    expect(client.getState()).toBe('connected')
+    client.close()
   })
 
   it('turns a probe write exception into session recovery', () => {

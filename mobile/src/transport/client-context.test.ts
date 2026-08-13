@@ -221,6 +221,40 @@ describe('useHostClient', () => {
     harness.unmount()
   })
 
+  it('closes an ownerless reconnect after disconnect retires a mounted owner', async () => {
+    const initialClient = makeFakeClient('connected')
+    const replacementClient = makeFakeClient('connected')
+    connectMock.mockReturnValueOnce(initialClient).mockReturnValueOnce(replacementClient)
+    loadHostsMock.mockResolvedValue([HOST])
+    let disconnectHost: ((hostId: string) => void) | null = null
+    let reconnectHost: ((hostId: string) => Promise<void>) | null = null
+
+    function Probe(): null {
+      useAllHostClients([HOST.id], { closeUnusedOnRelease: true })
+      disconnectHost = useDisconnectHostClient()
+      reconnectHost = useForceReconnect()
+      return null
+    }
+    function App({ visible }: { visible: boolean }) {
+      return createElement(RpcClientProvider, null, visible ? createElement(Probe) : null)
+    }
+
+    let renderer: ReactTestRenderer | null = null
+    await act(async () => {
+      renderer = create(createElement(App, { visible: true }))
+      await Promise.resolve()
+    })
+    await act(async () => {
+      disconnectHost?.(HOST.id)
+      await reconnectHost?.(HOST.id)
+    })
+    act(() => renderer?.update(createElement(App, { visible: false })))
+
+    expect(initialClient.closeMock).toHaveBeenCalledOnce()
+    expect(replacementClient.closeMock).toHaveBeenCalledOnce()
+    act(() => renderer?.unmount())
+  })
+
   it('reports disconnected instead of hanging when the host id is unknown', async () => {
     loadHostsMock.mockResolvedValue([])
 
