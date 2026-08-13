@@ -4697,14 +4697,28 @@
           "bff3bdd00c": "Cambiar nombre del espacio de trabajo",
           "8df295a78d": "No se pudo cambiar el nombre del espacio de trabajo."
         },
+        "WorktreeVisibilityHelpPopover": {
+          "c41f2d7e90": "¿Qué worktrees se ocultan de forma predeterminada?",
+          "8db4e19a26": "Este ajuste nunca oculta los worktrees creados mediante Orca.",
+          "54a7c2f183": "En los repositorios recién añadidos, los worktrees creados manualmente o con otra herramienta se ocultan de forma predeterminada para evitar elementos inesperados en la barra lateral.",
+          "b9e0d43675": "«Mostrar siempre» incluye los worktrees ajenos a Orca actuales y futuros, incluidos los worktrees de agentes en .claude/worktrees/* y .gsd-workspaces/*. Cuando está desactivado, usa «Mostrar» abajo para añadir uno individualmente."
+        },
         "WorktreeVisibilityDialog": {
           "83a5ba8dd1": "Worktrees que no son de Orca",
-          "f1f71b9f02": "Importar",
+          "f1f71b9f02": "Mostrar siempre",
           "759371df43": "Ocultar",
-          "25ddf19920": "{{value0}} disponible para importar",
+          "25ddf19920": "{{value0}} oculto actualmente",
           "8372e4bbd9": "{{value0}} mostrado actualmente",
           "5d02a5647f": "Oculto de la barra lateral",
-          "3e045d4cb8": "Mostrado en la barra lateral"
+          "3e045d4cb8": "Mostrado en la barra lateral",
+          "a3f19c07d2": "Comprobando…",
+          "b8d24e61f5": "No se pudieron listar los worktrees de este repositorio.",
+          "c5e70a93b1": "Reintentar",
+          "7d21c5e848": "Worktrees ocultos ({{value0}})",
+          "9b53f7a160": "Elige qué worktrees ocultos mostrar de forma individual.",
+          "2f80cd4b97": "Mostrando…",
+          "e64b81d3a9": "Mostrar",
+          "d40d436fc2": "No se pudo actualizar la visibilidad de los worktrees. Inténtalo de nuevo."
         },
         "add": {
           "repo": {

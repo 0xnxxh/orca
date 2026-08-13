@@ -4919,6 +4919,7 @@ export class Store {
         | 'externalWorktreeVisibilityPromptDismissedAt'
         | 'externalWorktreeInboxBaselinePaths'
         | 'importedExternalWorktreePaths'
+        | 'agentWorktreeVisibility'
         | 'projectGroupId'
         | 'projectGroupOrder'
         | 'projectHostSetupMethod'

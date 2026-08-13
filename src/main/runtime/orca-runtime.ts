@@ -19149,6 +19149,7 @@ export class OrcaRuntimeService {
         | 'externalWorktreeVisibilityPromptDismissedAt'
         | 'externalWorktreeInboxBaselinePaths'
         | 'importedExternalWorktreePaths'
+        | 'agentWorktreeVisibility'
         | 'projectGroupId'
         | 'projectGroupOrder'
       >

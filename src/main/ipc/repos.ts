@@ -2126,6 +2126,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
             | 'externalWorktreeVisibilityPromptDismissedAt'
             | 'externalWorktreeInboxBaselinePaths'
             | 'importedExternalWorktreePaths'
+            | 'agentWorktreeVisibility'
             | 'projectGroupId'
             | 'projectGroupOrder'
           >
@@ -2195,6 +2196,14 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         updates.externalWorktreeVisibility !== 'show'
       ) {
         delete updates.externalWorktreeVisibility
+      }
+      if (
+        'agentWorktreeVisibility' in updates &&
+        updates.agentWorktreeVisibility !== undefined &&
+        updates.agentWorktreeVisibility !== 'hide' &&
+        updates.agentWorktreeVisibility !== 'show'
+      ) {
+        delete updates.agentWorktreeVisibility
       }
       if (
         'externalWorktreeVisibilityPromptDismissedAt' in updates &&

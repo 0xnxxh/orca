@@ -4738,6 +4738,25 @@ describe('Store', () => {
     expect(updated!.externalWorktreeVisibilityLegacy).toBe(true)
   })
 
+  it('persists agent worktree visibility independently from external visibility', async () => {
+    const store = await createStore()
+    store.addRepo(makeRepo({ externalWorktreeVisibility: 'hide' }))
+
+    const updated = store.updateRepo('r1', { agentWorktreeVisibility: 'show' })
+
+    expect(updated).toMatchObject({
+      externalWorktreeVisibility: 'hide',
+      agentWorktreeVisibility: 'show'
+    })
+
+    store.flush()
+    const reloaded = await createStore()
+    expect(reloaded.getRepo('r1')).toMatchObject({
+      externalWorktreeVisibility: 'hide',
+      agentWorktreeVisibility: 'show'
+    })
+  })
+
   it('updateRepo clears source-control AI overrides independently from other clearable fields', async () => {
     const store = await createStore()
     store.addRepo(

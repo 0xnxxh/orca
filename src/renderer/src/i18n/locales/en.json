@@ -4900,14 +4900,28 @@
           "bff3bdd00c": "Rename workspace",
           "8df295a78d": "Failed to rename workspace."
         },
+        "WorktreeVisibilityHelpPopover": {
+          "c41f2d7e90": "Which worktrees are hidden by default?",
+          "8db4e19a26": "This setting never hides worktrees created through Orca.",
+          "54a7c2f183": "For newly added repositories, worktrees created manually or by another tool are hidden by default to avoid unexpected sidebar clutter.",
+          "b9e0d43675": "Always show includes current and future non-Orca worktrees, including agent worktrees under .claude/worktrees/* and .gsd-workspaces/*. When it is off, use Show below to add one individually."
+        },
         "WorktreeVisibilityDialog": {
           "83a5ba8dd1": "Non-Orca worktrees",
-          "f1f71b9f02": "Import",
+          "f1f71b9f02": "Always show",
           "759371df43": "Hide",
-          "25ddf19920": "{{value0}} available to import",
+          "25ddf19920": "{{value0}} currently hidden",
           "8372e4bbd9": "{{value0}} currently shown",
           "5d02a5647f": "Hidden from sidebar",
-          "3e045d4cb8": "Shown in sidebar"
+          "3e045d4cb8": "Shown in sidebar",
+          "a3f19c07d2": "Checking…",
+          "b8d24e61f5": "Could not list this repo's worktrees.",
+          "c5e70a93b1": "Try again",
+          "7d21c5e848": "Hidden worktrees ({{value0}})",
+          "9b53f7a160": "Choose which hidden worktrees to show individually.",
+          "2f80cd4b97": "Showing…",
+          "e64b81d3a9": "Show",
+          "d40d436fc2": "Could not update worktree visibility. Try again."
         },
         "add": {
           "repo": {
