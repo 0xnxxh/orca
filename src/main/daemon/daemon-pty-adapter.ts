@@ -2273,6 +2273,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         opts?.requiredPreviousPendingOutputSeq !== undefined &&
         restoreInfo?.pendingOutputSeq !== opts.requiredPreviousPendingOutputSeq
       ) {
+        console.warn('[history] durable continuity unproven; using live snapshot:', sessionId)
         return liveSnapshot
       }
       return await buildDurableCheckpointSnapshot({

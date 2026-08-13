@@ -60,6 +60,15 @@ function createMockSubprocess(): SubprocessHandle & {
   }
 }
 
+function simulateAdapterCrash(adapter: DaemonPtyAdapter): void {
+  const internals = adapter as unknown as {
+    client: { disconnect: () => void }
+    stopCheckpointTimer: () => void
+  }
+  internals.stopCheckpointTimer()
+  internals.client.disconnect()
+}
+
 describe('STA-4091 previously recoverable restore depth', () => {
   it('live daemon memory still drops older rows so session count cannot grow unbounded', async () => {
     const subprocess = createMockSubprocess()
@@ -361,6 +370,81 @@ describe('STA-4091 previously recoverable restore depth', () => {
         ignoreCleanEnd: true
       })
       expect(snapshotText(restore ?? {})).toContain(OLDEST_WRITTEN_LINE)
+    })
+
+    it('preserves durable depth after an incremental append and adapter crash', async () => {
+      const { id } = await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'incremental-crash-depth',
+        cwd: '/tmp'
+      })
+      lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+      await adapter.getBufferSnapshot(id)
+      lastSubprocess.emitData(`${FRESH_AFTER_CHECKPOINT}\r\n`)
+
+      const oldInternals = adapter as unknown as { checkpointDirtySessions: () => Promise<void> }
+      await oldInternals.checkpointDirtySessions()
+      const beforeCrash = await new HistoryReader(historyDir).detectColdRestore(id, {
+        ignoreCleanEnd: true
+      })
+      expect(beforeCrash?.pendingOutputSeq).toBe(2)
+      expect(snapshotText(beforeCrash ?? {})).toContain(OLDEST_WRITTEN_LINE)
+
+      simulateAdapterCrash(adapter)
+      adapter = new DaemonPtyAdapter({
+        socketPath: getDaemonSocketPath(dir),
+        tokenPath: join(dir, 'test.token'),
+        historyPath: historyDir
+      })
+
+      const reattach = await adapter.spawn({ cols: 80, rows: 24, sessionId: id, cwd: '/tmp' })
+      expect(reattach.snapshot).toContain(FRESH_AFTER_CHECKPOINT)
+      expect(reattach.snapshot).toContain(OLDEST_WRITTEN_LINE)
+      const restored = await new HistoryReader(historyDir).detectColdRestore(id, {
+        ignoreCleanEnd: true
+      })
+      expect(snapshotText(restored ?? {})).toContain(OLDEST_WRITTEN_LINE)
+    })
+
+    it('uses the live window when a crashed adapter left a pending-output gap', async () => {
+      const { id } = await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'incremental-gap-depth',
+        cwd: '/tmp'
+      })
+      lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+      await adapter.getBufferSnapshot(id)
+      lastSubprocess.emitData(`${FRESH_AFTER_CHECKPOINT}\r\n`)
+
+      const oldInternals = adapter as unknown as {
+        client: { request: (method: string, params: unknown) => Promise<unknown> }
+      }
+      await oldInternals.client.request('takePendingOutput', {
+        sessionId: id,
+        includeSnapshot: false
+      })
+      simulateAdapterCrash(adapter)
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      adapter = new DaemonPtyAdapter({
+        socketPath: getDaemonSocketPath(dir),
+        tokenPath: join(dir, 'test.token'),
+        historyPath: historyDir
+      })
+
+      const reattach = await adapter.spawn({ cols: 80, rows: 24, sessionId: id, cwd: '/tmp' })
+      expect(reattach.snapshot).toContain(FRESH_AFTER_CHECKPOINT)
+      expect(reattach.snapshot).not.toContain(OLDEST_WRITTEN_LINE)
+      const restored = await new HistoryReader(historyDir).detectColdRestore(id, {
+        ignoreCleanEnd: true
+      })
+      expect(snapshotText(restored ?? {})).not.toContain(OLDEST_WRITTEN_LINE)
+      expect(restored?.scrollbackLines).toBe(DAEMON_SESSION_SCROLLBACK_ROWS)
+      expect(warn).toHaveBeenCalledWith(
+        '[history] durable continuity unproven; using live snapshot:',
+        id
+      )
     })
 
     it('falls back to the live window when durable history cannot be read', async () => {

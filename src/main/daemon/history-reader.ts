@@ -317,9 +317,10 @@ export class HistoryReader {
           }
         }
         const snapshot = emulator.getSnapshot()
+        const lastBatch = log.batches.at(-1)!
         return {
           restoreInfo: coldRestoreInfoFromSnapshot(
-            snapshot,
+            { ...snapshot, pendingOutputSeq: lastBatch.seq },
             snapshot.cwd ?? checkpoint?.cwd ?? meta.cwd,
             meta
           ),
