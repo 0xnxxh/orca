@@ -104,10 +104,17 @@ export function GeneralPane({
   const sourceDefaultsSupportedRuntimeEnvironmentId = useAppStore(
     (s) => s.worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId
   )
+  const defaultsSupportedRuntimeEnvironmentId = useAppStore(
+    (s) => s.worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId
+  )
   const activeRuntimeTarget = getActiveRuntimeTarget(settings)
-  const sourceDefaultsSupported =
+  const defaultsSupported =
     activeRuntimeTarget.kind === 'local' ||
-    activeRuntimeTarget.environmentId === sourceDefaultsSupportedRuntimeEnvironmentId
+    activeRuntimeTarget.environmentId === defaultsSupportedRuntimeEnvironmentId
+  const sourceDefaultsSupported =
+    defaultsSupported &&
+    (activeRuntimeTarget.kind === 'local' ||
+      activeRuntimeTarget.environmentId === sourceDefaultsSupportedRuntimeEnvironmentId)
   const generalNavigationSearchEntries = getGeneralNavigationSearchEntries()
   const tabOrderKeywords = getTabOrderControlSearchKeywords(generalNavigationSearchEntries)
   const projectRuntimeSearchEntries = wslSupportedPlatform
@@ -159,6 +166,7 @@ export function GeneralPane({
         settings={settings}
         updateSettings={updateSettings}
         updateSettingsOrThrow={updateSettingsOrThrow}
+        defaultsSupported={defaultsSupported}
         sourceDefaultsSupported={sourceDefaultsSupported}
       />
     ) : null,

@@ -61,7 +61,7 @@ describe('runtime worktree visibility defaults', () => {
     expect(hydrated.sourceDefaultsSupportedRuntimeEnvironmentId).toBeNull()
   })
 
-  it('does not record a focused runtime projection as the local default', async () => {
+  it('preserves local defaults while projecting the focused runtime owner', async () => {
     runtimeCall.mockResolvedValue({
       ok: true,
       result: { settings: { worktreeVisibilityDefaults: { external: 'show' } } },
@@ -76,7 +76,7 @@ describe('runtime worktree visibility defaults', () => {
       {}
     )
 
-    expect(hydrated.defaultsByHost[LOCAL_EXECUTION_HOST_ID]).toBeUndefined()
+    expect(hydrated.defaultsByHost[LOCAL_EXECUTION_HOST_ID]).toEqual({ external: 'hide' })
     expect(hydrated.defaultsByHost['runtime:env-1']).toEqual({ external: 'show' })
   })
 })

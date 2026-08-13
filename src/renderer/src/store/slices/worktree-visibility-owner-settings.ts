@@ -32,6 +32,21 @@ export async function readRuntimeWorktreeVisibilityDefaults(
   }
 }
 
+export async function readRuntimeWorktreeVisibilitySnapshot(environmentId: string): Promise<{
+  defaults: WorktreeVisibilityDefaults | null | undefined
+  sourceDefaultsSupported: boolean
+}> {
+  const defaults = await readRuntimeWorktreeVisibilityDefaults(environmentId)
+  const sourceDefaultsSupported =
+    defaults !== undefined &&
+    (await runtimeEnvironmentSupportsCapability(
+      environmentId,
+      WORKTREE_VISIBILITY_SOURCE_DEFAULTS_RUNTIME_CAPABILITY,
+      15_000
+    ).catch(() => false))
+  return { defaults, sourceDefaultsSupported }
+}
+
 export async function hydrateOwnerWorktreeVisibilityDefaults(
   settings: GlobalSettings,
   defaultsByHost: WorktreeVisibilityDefaultsByHost
@@ -54,18 +69,14 @@ export async function hydrateOwnerWorktreeVisibilityDefaults(
     }
   }
   const hostId = toRuntimeExecutionHostId(target.environmentId)
-  const localDefaults = defaultsByHost[LOCAL_EXECUTION_HOST_ID]
+  const localDefaults =
+    defaultsByHost[LOCAL_EXECUTION_HOST_ID] ?? settings.worktreeVisibilityDefaults
   const ownerDefaultsByHost = localDefaults
     ? { ...defaultsByHost, [LOCAL_EXECUTION_HOST_ID]: localDefaults }
     : defaultsByHost
-  const defaults = await readRuntimeWorktreeVisibilityDefaults(target.environmentId)
-  const sourceDefaultsSupported =
-    defaults !== undefined &&
-    (await runtimeEnvironmentSupportsCapability(
-      target.environmentId,
-      WORKTREE_VISIBILITY_SOURCE_DEFAULTS_RUNTIME_CAPABILITY,
-      15_000
-    ).catch(() => false))
+  const { defaults, sourceDefaultsSupported } = await readRuntimeWorktreeVisibilitySnapshot(
+    target.environmentId
+  )
   if (defaults) {
     return {
       settings: { ...settings, worktreeVisibilityDefaults: defaults },

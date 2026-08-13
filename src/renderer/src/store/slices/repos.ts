@@ -55,7 +55,7 @@ import {
   reconcileFetchedRepos
 } from './repo-identity-reconcile'
 import { retainValidFilterRepoIds } from './repo-filter-selection'
-import { readRuntimeWorktreeVisibilityDefaults } from './worktree-visibility-owner-settings'
+import { readRuntimeWorktreeVisibilitySnapshot } from './worktree-visibility-owner-settings'
 import {
   mergeSshRepoReadoptions,
   reconcileReadoptedSshRepoRows,
@@ -143,7 +143,6 @@ export type RepoUpdate = Partial<
     | 'externalWorktreeVisibilityPromptDismissedAt'
     | 'externalWorktreeInboxBaselinePaths'
     | 'importedExternalWorktreePaths'
-    | 'agentWorktreeVisibility'
     | 'customWorktreeVisibilitySources'
     | 'worktreeVisibilitySourcePreferences'
     | 'projectGroupId'
@@ -151,6 +150,7 @@ export type RepoUpdate = Partial<
   >
 > & {
   externalWorktreeVisibility?: Repo['externalWorktreeVisibility'] | null
+  agentWorktreeVisibility?: Repo['agentWorktreeVisibility'] | null
   sourceControlAi?: Repo['sourceControlAi'] | null
   externalWorktreeDiscoverySuppressedAt?: Repo['externalWorktreeDiscoverySuppressedAt'] | null
 }
@@ -2170,10 +2170,11 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     const targetHostId = getRuntimeTargetHostId(target)
     claimRepoCatalogGeneration(get, targetHostId, catalogGeneration)
     try {
-      const [catalog, visibilityDefaults] = await Promise.all([
+      const [catalog, visibilitySnapshot] = await Promise.all([
         fetchRepoCatalogForTarget(target),
-        readRuntimeWorktreeVisibilityDefaults(environmentId)
+        readRuntimeWorktreeVisibilitySnapshot(environmentId)
       ])
+      const visibilityDefaults = visibilitySnapshot.defaults
       if (
         runtimeRepoFetchGenerationByEnvironment.get(environmentId) !== requestGeneration ||
         !isLatestRepoCatalogGeneration(get, targetHostId, catalogGeneration) ||
@@ -2240,7 +2241,9 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
                       ...s.settings,
                       worktreeVisibilityDefaults: visibilityDefaults
                     },
-                    worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: environmentId
+                    worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: environmentId,
+                    worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId:
+                      visibilitySnapshot.sourceDefaultsSupported ? environmentId : null
                   }
                 : {
                     settings: Object.fromEntries(
@@ -2248,7 +2251,8 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
                         ([key]) => key !== 'worktreeVisibilityDefaults'
                       )
                     ) as GlobalSettings,
-                    worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: null
+                    worktreeVisibilityDefaultsSupportedRuntimeEnvironmentId: null,
+                    worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId: null
                   }
               : {}
             : {}),
@@ -2377,13 +2381,14 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           environmentId: environment.id
         }
         claimRepoCatalogGeneration(get, getRuntimeTargetHostId(target), generation)
-        const [catalogResult, visibilityDefaults] = await Promise.all([
+        const [catalogResult, visibilitySnapshot] = await Promise.all([
           fetchRepoCatalogForTarget(target).then(
             (catalog) => ({ ok: true as const, catalog }),
             (error: unknown) => ({ ok: false as const, error })
           ),
-          readRuntimeWorktreeVisibilityDefaults(environment.id)
+          readRuntimeWorktreeVisibilitySnapshot(environment.id)
         ])
+        const visibilityDefaults = visibilitySnapshot.defaults
         const hostId = getRuntimeTargetHostId(target)
         if (
           visibilityDefaults !== undefined &&
@@ -2397,7 +2402,14 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
                   worktreeVisibilityDefaultsByHost: {
                     ...state.worktreeVisibilityDefaultsByHost,
                     [hostId]: visibilityDefaults
-                  }
+                  },
+                  ...(getActiveRuntimeTarget(state.settings).kind === 'environment' &&
+                  state.settings?.activeRuntimeEnvironmentId === environment.id
+                    ? {
+                        worktreeVisibilitySourceDefaultsSupportedRuntimeEnvironmentId:
+                          visibilitySnapshot.sourceDefaultsSupported ? environment.id : null
+                      }
+                    : {})
                 }
           )
         }
@@ -3879,6 +3891,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
               sourceControlAi,
               externalWorktreeDiscoverySuppressedAt,
               externalWorktreeVisibility,
+              agentWorktreeVisibility,
               ...updatesWithoutClearSentinels
             } = sanitizedUpdates
             mergedRepo = { ...mergedRepo, ...updatesWithoutClearSentinels }
@@ -3895,6 +3908,13 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
               mergedRepo = { ...repoWithoutVisibility, externalWorktreeVisibilityLegacy: false }
             } else if (externalWorktreeVisibility !== undefined) {
               mergedRepo = { ...mergedRepo, externalWorktreeVisibility }
+            }
+            if (agentWorktreeVisibility === null) {
+              const { agentWorktreeVisibility: _agentVisibility, ...repoWithoutAgentVisibility } =
+                mergedRepo
+              mergedRepo = repoWithoutAgentVisibility
+            } else if (agentWorktreeVisibility !== undefined) {
+              mergedRepo = { ...mergedRepo, agentWorktreeVisibility }
             }
             if (externalWorktreeDiscoverySuppressedAt === null) {
               const {

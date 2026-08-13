@@ -20,6 +20,7 @@ import { translate } from '@/i18n/i18n'
 
 type Props = {
   settings: GlobalSettings
+  defaultsSupported: boolean
   sourceDefaultsSupported: boolean
   updateSettings: (updates: Partial<GlobalSettings>) => void | Promise<void>
 }
@@ -28,6 +29,7 @@ const DEFAULT_WORKTREE_VISIBILITY_DEFAULTS: WorktreeVisibilityDefaults = { exter
 
 export function GlobalWorktreeVisibilitySourcesSetting({
   settings,
+  defaultsSupported,
   sourceDefaultsSupported,
   updateSettings
 }: Props): React.JSX.Element {
@@ -147,13 +149,20 @@ export function GlobalWorktreeVisibilitySourcesSetting({
         customSources={customSources}
         removableSourceIds={removableSourceIds}
         showCounts={false}
-        disabled={pending}
+        disabled={pending || !defaultsSupported}
         sourceDefaultsDisabled={!sourceDefaultsSupported}
         onAdd={handleAdd}
         onRemove={handleRemove}
         onToggle={handleToggle}
       />
-      {!sourceDefaultsSupported ? (
+      {!defaultsSupported ? (
+        <p className="text-xs text-muted-foreground">
+          {translate(
+            'auto.components.settings.GlobalWorktreeVisibilitySourcesSetting.updateServerDefaults',
+            'Update this server to configure visibility defaults.'
+          )}
+        </p>
+      ) : !sourceDefaultsSupported ? (
         <p className="text-xs text-muted-foreground">
           {translate(
             'auto.components.settings.GlobalWorktreeVisibilitySourcesSetting.updateServer',

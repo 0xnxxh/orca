@@ -4723,7 +4723,14 @@
           "addLocation": "Añadir ubicación",
           "worktreeRoot": "Raíz de worktrees",
           "add": "Añadir",
-          "rootHelp": "Orca reconocerá los worktrees dentro de esta carpeta."
+          "rootHelp": "Orca reconocerá los worktrees dentro de esta carpeta.",
+          "projectSource": "Fuente del proyecto",
+          "shown": "Visible",
+          "hidden": "Oculto",
+          "projectOverride": "Anulación del proyecto · Global: {{value0}}",
+          "usingGlobal": "Usando la configuración global: {{value0}}",
+          "useGlobalFor": "Usar la configuración global para {{value0}}",
+          "useGlobal": "Usar global"
         },
         "add": {
           "repo": {
@@ -10137,7 +10144,8 @@
         },
         "GlobalWorktreeVisibilitySourcesSetting": {
           "saveFailed": "No se pudieron guardar los valores predeterminados de visibilidad.",
-          "updateServer": "Actualiza este servidor para configurar los valores predeterminados de las fuentes."
+          "updateServer": "Actualiza este servidor para configurar los valores predeterminados de las fuentes.",
+          "updateServerDefaults": "Actualiza este servidor para configurar los valores predeterminados de visibilidad."
         }
       },
       "right": {

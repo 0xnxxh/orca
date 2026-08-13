@@ -5438,7 +5438,14 @@
           "addLocation": "Add location",
           "worktreeRoot": "Worktree root",
           "add": "Add",
-          "rootHelp": "Orca will recognize worktrees beneath this folder."
+          "rootHelp": "Orca will recognize worktrees beneath this folder.",
+          "projectSource": "Project source",
+          "shown": "Shown",
+          "hidden": "Hidden",
+          "projectOverride": "Project override · Global: {{value0}}",
+          "usingGlobal": "Using global: {{value0}}",
+          "useGlobalFor": "Use global for {{value0}}",
+          "useGlobal": "Use global"
         }
       },
       "shared": {
@@ -10704,7 +10711,8 @@
         },
         "GlobalWorktreeVisibilitySourcesSetting": {
           "saveFailed": "Could not save visibility defaults.",
-          "updateServer": "Update this server to configure source defaults."
+          "updateServer": "Update this server to configure source defaults.",
+          "updateServerDefaults": "Update this server to configure visibility defaults."
         }
       },
       "right": {

@@ -35621,6 +35621,61 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it('applies global custom-source visibility to mobile summaries and file resolution', async () => {
+    const globalRoot = '/tmp/global-worktrees'
+    const globalWorktreePath = `${globalRoot}/review`
+    vi.mocked(listWorktrees).mockResolvedValue([
+      {
+        path: TEST_REPO_PATH,
+        head: 'main',
+        branch: 'main',
+        isBare: false,
+        isMainWorktree: true
+      },
+      {
+        path: globalWorktreePath,
+        head: 'review',
+        branch: 'feature/review',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+    const repo = {
+      ...store.getRepos()[0],
+      externalWorktreeVisibility: 'hide' as const,
+      externalWorktreeVisibilityLegacy: false
+    }
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getRepos: () => [repo],
+      getRepo: () => repo,
+      getSettings: () => ({
+        ...store.getSettings(),
+        worktreeVisibilityDefaults: {
+          external: 'hide' as const,
+          customSources: [{ id: 'global', rootPath: globalRoot }],
+          sourcePreferences: { custom: { global: 'show' as const } }
+        }
+      })
+    } as never)
+
+    const summaries = await runtime.getWorktreePs()
+    const target = await (
+      runtime as unknown as {
+        resolveKnownWorkspaceFileTarget: (
+          path: string,
+          executionHostId: 'local'
+        ) => Promise<{ worktree: { path: string }; relativePath: string } | null>
+      }
+    ).resolveKnownWorkspaceFileTarget(`${globalWorktreePath}/src/app.ts`, 'local')
+
+    expect(summaries.worktrees.map((worktree) => worktree.path)).toContain(globalWorktreePath)
+    expect(target).toMatchObject({
+      worktree: { path: globalWorktreePath },
+      relativePath: 'src/app.ts'
+    })
+  })
+
   it('marks saved session tabs with live PTYs as host sidebar activity', async () => {
     const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(
       makeWorkspaceSessionWithHeadlessTerminal()

@@ -3480,10 +3480,18 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   }) as WorktreeSlice['fetchWorktrees'],
 
   fetchAllWorktrees: async (options) => {
-    const { repos } = get()
+    const repos = options?.visibilityOwnerHostId
+      ? get().repos.filter((repo) => {
+          const repoHost = parseExecutionHostId(getRepoExecutionHostId(repo))
+          const ownerHost = parseExecutionHostId(options.visibilityOwnerHostId)
+          return ownerHost?.kind === 'runtime'
+            ? repoHost?.kind === 'runtime' && repoHost.environmentId === ownerHost.environmentId
+            : repoHost?.kind !== 'runtime'
+        })
+      : get().repos
 
     // Why: after the one-shot hydration purge, later calls only refresh cached lists — no IPC double-probe for the per-repo success signal.
-    if (get().hasHydratedWorktreePurge) {
+    if (get().hasHydratedWorktreePurge || options?.visibilityOwnerHostId) {
       await mapReposForWorktreeRefresh(repos, async (r) => {
         try {
           const requestStartedState = get()

@@ -4716,7 +4716,14 @@
           "addLocation": "添加位置",
           "worktreeRoot": "工作树根目录",
           "add": "添加",
-          "rootHelp": "Orca 会识别此文件夹下的工作树。"
+          "rootHelp": "Orca 会识别此文件夹下的工作树。",
+          "projectSource": "项目来源",
+          "shown": "显示",
+          "hidden": "隐藏",
+          "projectOverride": "项目覆盖 · 全局：{{value0}}",
+          "usingGlobal": "使用全局设置：{{value0}}",
+          "useGlobalFor": "为 {{value0}} 使用全局设置",
+          "useGlobal": "使用全局设置"
         },
         "add": {
           "repo": {
@@ -10157,7 +10164,8 @@
         },
         "GlobalWorktreeVisibilitySourcesSetting": {
           "saveFailed": "无法保存可见性默认设置。",
-          "updateServer": "请更新此服务器以配置来源默认设置。"
+          "updateServer": "请更新此服务器以配置来源默认设置。",
+          "updateServerDefaults": "请更新此服务器以配置可见性默认设置。"
         }
       },
       "right": {

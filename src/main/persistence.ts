@@ -5038,7 +5038,6 @@ export class Store {
         | 'externalWorktreeVisibilityPromptDismissedAt'
         | 'externalWorktreeInboxBaselinePaths'
         | 'importedExternalWorktreePaths'
-        | 'agentWorktreeVisibility'
         | 'customWorktreeVisibilitySources'
         | 'worktreeVisibilitySourcePreferences'
         | 'projectGroupId'
@@ -5047,6 +5046,7 @@ export class Store {
       >
     > & {
       externalWorktreeVisibility?: Repo['externalWorktreeVisibility'] | null
+      agentWorktreeVisibility?: Repo['agentWorktreeVisibility'] | null
       sourceControlAi?: Repo['sourceControlAi'] | null
       externalWorktreeDiscoverySuppressedAt?: Repo['externalWorktreeDiscoverySuppressedAt'] | null
     },
@@ -5116,6 +5116,13 @@ export class Store {
       delete repo.externalWorktreeVisibility
       repo.externalWorktreeVisibilityLegacy = false
       delete sanitizedUpdates.externalWorktreeVisibility
+    }
+    if (
+      'agentWorktreeVisibility' in sanitizedUpdates &&
+      sanitizedUpdates.agentWorktreeVisibility === null
+    ) {
+      delete repo.agentWorktreeVisibility
+      delete sanitizedUpdates.agentWorktreeVisibility
     }
     if (
       'externalWorktreeVisibility' in sanitizedUpdates &&

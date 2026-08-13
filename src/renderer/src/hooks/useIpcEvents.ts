@@ -1274,7 +1274,7 @@ export function useIpcEvents(): void {
             : {})
         })
         if ('worktreeVisibilityDefaults' in updates) {
-          void store.fetchAllWorktrees()
+          void store.fetchAllWorktrees({ visibilityOwnerHostId: 'local' })
         }
       })
     )

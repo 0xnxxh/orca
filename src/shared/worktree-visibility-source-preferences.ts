@@ -57,6 +57,18 @@ export function removeCustomWorktreeSourcePreference(
   return preferenceResult({ ...legacyBuiltInPreferences(repo), ...current?.builtIn }, custom)
 }
 
+export function removeBuiltInWorktreeSourcePreference(
+  repo: Pick<Repo, 'agentWorktreeVisibility' | 'worktreeVisibilitySourcePreferences'>,
+  sourceId: keyof NonNullable<WorktreeVisibilitySourcePreferences['builtIn']>
+): WorktreeVisibilitySourcePreferences {
+  const current = normalizeWorktreeVisibilitySourcePreferences(
+    repo.worktreeVisibilitySourcePreferences
+  )
+  const builtIn = { ...legacyBuiltInPreferences(repo), ...current?.builtIn }
+  delete builtIn[sourceId]
+  return preferenceResult(builtIn, { ...current?.custom })
+}
+
 export function buildDefaultWorktreeSourcePreferenceUpdate(
   defaults: WorktreeVisibilityDefaults,
   source: WorktreeVisibilitySourceMatch,

@@ -97,6 +97,7 @@ import {
   computerAwakeSettingsForMode,
   normalizeComputerAwakeMode
 } from '../../../shared/computer-awake-mode'
+import { normalizeWorktreeVisibilityDefaults } from '../../../shared/external-worktree-visibility'
 import type { RateLimitState } from '../../../shared/rate-limit-types'
 import type { RuntimeStatus, RuntimeSyncWindowGraph } from '../../../shared/runtime-types'
 import { assertFileMutationOwnershipCapability } from '../../../shared/file-mutation-ownership'
@@ -699,7 +700,7 @@ function createWebPreloadApi(): Partial<PreloadApi> {
         }
         if ('worktreeVisibilityDefaults' in sanitizedUpdates) {
           sanitizedUpdates.worktreeVisibilityDefaults = {
-            ...getStoredSettings().worktreeVisibilityDefaults,
+            ...settingsForActiveVisibilityOwner(getStoredSettings()).worktreeVisibilityDefaults,
             ...sanitizedUpdates.worktreeVisibilityDefaults
           }
         }
@@ -3831,19 +3832,15 @@ async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> {
       15_000
     )
     const runtimeSettings: Partial<GlobalSettings> = {}
-    worktreeVisibilityDefaultsRuntimeEnvironmentId = null
-    worktreeVisibilityDefaultsRuntimeValue = null
     const currentEnvironment = requireActiveEnvironmentOrNull()
-    if (
-      currentEnvironment?.id === requestedEnvironment.id &&
-      (result.settings.worktreeVisibilityDefaults?.external === 'hide' ||
-        result.settings.worktreeVisibilityDefaults?.external === 'show')
-    ) {
-      worktreeVisibilityDefaultsRuntimeValue = {
-        ...result.settings.worktreeVisibilityDefaults,
-        external: result.settings.worktreeVisibilityDefaults.external
-      }
-      worktreeVisibilityDefaultsRuntimeEnvironmentId = requestedEnvironment.id
+    if (currentEnvironment?.id === requestedEnvironment.id) {
+      const visibilityDefaults = normalizeWorktreeVisibilityDefaults(
+        result.settings.worktreeVisibilityDefaults
+      )
+      worktreeVisibilityDefaultsRuntimeEnvironmentId = visibilityDefaults
+        ? requestedEnvironment.id
+        : null
+      worktreeVisibilityDefaultsRuntimeValue = visibilityDefaults ?? null
     }
     if (typeof result.settings.experimentalNewWorktreeCardStyle === 'boolean') {
       runtimeSettings.experimentalNewWorktreeCardStyle =
@@ -3901,13 +3898,9 @@ async function syncRuntimeBackedSettings(
     return localNext
   }
   const runtimeUpdates: Partial<GlobalSettings> = {}
-  if (
-    updates.worktreeVisibilityDefaults?.external === 'hide' ||
-    updates.worktreeVisibilityDefaults?.external === 'show'
-  ) {
-    runtimeUpdates.worktreeVisibilityDefaults = {
-      external: updates.worktreeVisibilityDefaults.external
-    }
+  const visibilityDefaults = normalizeWorktreeVisibilityDefaults(updates.worktreeVisibilityDefaults)
+  if (visibilityDefaults) {
+    runtimeUpdates.worktreeVisibilityDefaults = visibilityDefaults
   }
   if (typeof updates.experimentalNewWorktreeCardStyle === 'boolean') {
     runtimeUpdates.experimentalNewWorktreeCardStyle = updates.experimentalNewWorktreeCardStyle
@@ -3937,19 +3930,24 @@ async function syncRuntimeBackedSettings(
     )
     const runtimeSettings = { ...result.settings }
     delete runtimeSettings.activeRuntimeEnvironmentId
-    const external = runtimeSettings.worktreeVisibilityDefaults?.external
+    const updatedVisibilityDefaults = normalizeWorktreeVisibilityDefaults(
+      runtimeSettings.worktreeVisibilityDefaults
+    )
     if (
       requireActiveEnvironmentOrNull()?.id === requestedEnvironment.id &&
-      (external === 'hide' || external === 'show')
+      updatedVisibilityDefaults
     ) {
       worktreeVisibilityDefaultsRuntimeEnvironmentId = requestedEnvironment.id
-      worktreeVisibilityDefaultsRuntimeValue = { external }
+      worktreeVisibilityDefaultsRuntimeValue = updatedVisibilityDefaults
     }
     delete runtimeSettings.worktreeVisibilityDefaults
     const next = mergeSettings(localNext, runtimeSettings)
     writeStoredSettings(next)
     return next
-  } catch {
+  } catch (error) {
+    if (visibilityDefaults) {
+      throw error
+    }
     // Why: unpaired/offline web clients still need local settings persistence.
     return localNext
   }

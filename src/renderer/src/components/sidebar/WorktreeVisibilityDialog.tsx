@@ -56,6 +56,7 @@ import {
 } from './worktree-visibility-repo-sources'
 import { WorktreeVisibilityGlobalSettingsLink } from './WorktreeVisibilityGlobalSettingsLink'
 import { WorktreeVisibilityScanStatus } from './WorktreeVisibilityScanStatus'
+import { createWorktreeVisibilityUseGlobalMutation } from './worktree-visibility-use-global'
 
 export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
   const activeModal = useAppStore((s) => s.activeModal)
@@ -319,6 +320,17 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
     [commitSourceUpdate, repo, visibilityDefaults]
   )
 
+  const handleUseDefault = useCallback(
+    async (source: WorktreeVisibilitySourceRow) => {
+      if (!repo) {
+        return
+      }
+      const mutation = createWorktreeVisibilityUseGlobalMutation(repo, source, visibilityDefaults)
+      await commitSourceUpdate(mutation.updates, mutation.isAccepted)
+    },
+    [commitSourceUpdate, repo, visibilityDefaults]
+  )
+
   const handleRemoveSource = useCallback(
     async (source: CustomWorktreeVisibilitySource) => {
       if (!repo) {
@@ -373,6 +385,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           onAdd={handleAddSource}
           onRemove={handleRemoveSource}
           onToggle={handleSourceToggle}
+          onUseDefault={handleUseDefault}
         />
 
         <WorktreeVisibilityGlobalSettingsLink />

@@ -12,6 +12,7 @@ type GeneralWorkspaceSettingsSectionProps = {
   settings: GlobalSettings
   updateSettings: (updates: Partial<GlobalSettings>) => void
   updateSettingsOrThrow?: (updates: Partial<GlobalSettings>) => void | Promise<void>
+  defaultsSupported?: boolean
   sourceDefaultsSupported?: boolean
 }
 
@@ -19,6 +20,7 @@ export function GeneralWorkspaceSettingsSection({
   settings,
   updateSettings,
   updateSettingsOrThrow = updateSettings,
+  defaultsSupported = true,
   sourceDefaultsSupported = true
 }: GeneralWorkspaceSettingsSectionProps): React.JSX.Element {
   return (
@@ -67,6 +69,7 @@ export function GeneralWorkspaceSettingsSection({
         >
           <GlobalWorktreeVisibilitySourcesSetting
             settings={settings}
+            defaultsSupported={defaultsSupported}
             sourceDefaultsSupported={sourceDefaultsSupported}
             updateSettings={updateSettingsOrThrow}
           />

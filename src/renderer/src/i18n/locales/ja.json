@@ -4704,7 +4704,14 @@
           "addLocation": "場所を追加",
           "worktreeRoot": "ワークツリールート",
           "add": "追加",
-          "rootHelp": "Orca はこのフォルダー配下のワークツリーを認識します。"
+          "rootHelp": "Orca はこのフォルダー配下のワークツリーを認識します。",
+          "projectSource": "プロジェクトのソース",
+          "shown": "表示",
+          "hidden": "非表示",
+          "projectOverride": "プロジェクトの上書き · グローバル: {{value0}}",
+          "usingGlobal": "グローバル設定を使用: {{value0}}",
+          "useGlobalFor": "{{value0}} にグローバル設定を使用",
+          "useGlobal": "グローバルを使用"
         },
         "add": {
           "repo": {
@@ -10137,7 +10144,8 @@
         },
         "GlobalWorktreeVisibilitySourcesSetting": {
           "saveFailed": "表示設定のデフォルトを保存できませんでした。",
-          "updateServer": "ソースのデフォルトを設定するには、このサーバーを更新してください。"
+          "updateServer": "ソースのデフォルトを設定するには、このサーバーを更新してください。",
+          "updateServerDefaults": "表示のデフォルトを設定するには、このサーバーを更新してください。"
         }
       },
       "right": {

@@ -9192,13 +9192,17 @@ export class OrcaRuntimeService {
       }
     >()
     const resolvedWorktrees = await this.listResolvedWorktrees()
-    const visibilitySourceMatchersByRepoId =
-      this.buildRuntimeVisibilitySourceMatchersByRepoId(resolvedWorktrees)
+    const settings = this.store?.getSettings()
+    const visibilitySourceMatchersByRepoId = this.buildRuntimeVisibilitySourceMatchersByRepoId(
+      resolvedWorktrees,
+      settings?.worktreeVisibilityDefaults
+    )
     for (const worktree of resolvedWorktrees) {
       if (
         !this.isRuntimeWorktreeVisible(
           worktree,
-          visibilitySourceMatchersByRepoId.get(worktree.repoId)
+          visibilitySourceMatchersByRepoId.get(worktree.repoId),
+          settings
         )
       ) {
         continue
@@ -17697,7 +17701,10 @@ export class OrcaRuntimeService {
     })
   }
 
-  async getWorktreePs(limit = DEFAULT_WORKTREE_PS_LIMIT): Promise<{
+  async getWorktreePs(
+    limit = DEFAULT_WORKTREE_PS_LIMIT,
+    sourceDefaultsSupported = true
+  ): Promise<{
     worktrees: RuntimeWorktreePsSummary[]
     totalCount: number
     truncated: boolean
@@ -17706,11 +17713,25 @@ export class OrcaRuntimeService {
       throw new Error('invalid_limit')
     }
     const resolvedWorktreeSnapshot = await this.listResolvedWorktreeSnapshot()
+    const settings = this.store?.getSettings()
+    const visibilityDefaults = sourceDefaultsSupported
+      ? settings?.worktreeVisibilityDefaults
+      : settings?.worktreeVisibilityDefaults
+        ? { external: settings.worktreeVisibilityDefaults.external }
+        : undefined
+    const visibilitySettings = settings
+      ? { ...settings, worktreeVisibilityDefaults: visibilityDefaults }
+      : undefined
     const visibilitySourceMatchersByRepoId = this.buildRuntimeVisibilitySourceMatchersByRepoId(
-      resolvedWorktreeSnapshot.worktrees
+      resolvedWorktreeSnapshot.worktrees,
+      visibilityDefaults
     )
     const resolvedWorktrees = resolvedWorktreeSnapshot.worktrees.filter((worktree) =>
-      this.isRuntimeWorktreeVisible(worktree, visibilitySourceMatchersByRepoId.get(worktree.repoId))
+      this.isRuntimeWorktreeVisible(
+        worktree,
+        visibilitySourceMatchersByRepoId.get(worktree.repoId),
+        visibilitySettings
+      )
     )
     // Why: worktree.ps backs the mobile sidebar, so it must use the same
     // host-owned imported-worktree visibility gate as worktree.list/desktop.
@@ -21004,7 +21025,8 @@ export class OrcaRuntimeService {
 
   async listManagedWorktrees(
     repoSelector?: string,
-    limit = DEFAULT_WORKTREE_LIST_LIMIT
+    limit = DEFAULT_WORKTREE_LIST_LIMIT,
+    sourceDefaultsSupported = true
   ): Promise<RuntimeWorktreeListResult> {
     if (!Number.isInteger(limit) || limit <= 0) {
       throw new Error('invalid_limit')
@@ -21012,9 +21034,17 @@ export class OrcaRuntimeService {
     const resolved = await this.listResolvedWorktrees()
     const repoId = repoSelector ? (await this.resolveRepoSelector(repoSelector)).id : null
     const settings = this.store?.getSettings()
+    const visibilityDefaults = sourceDefaultsSupported
+      ? settings?.worktreeVisibilityDefaults
+      : settings?.worktreeVisibilityDefaults
+        ? { external: settings.worktreeVisibilityDefaults.external }
+        : undefined
+    const visibilitySettings = settings
+      ? { ...settings, worktreeVisibilityDefaults: visibilityDefaults }
+      : undefined
     const visibilitySourceMatchersByRepoId = this.buildRuntimeVisibilitySourceMatchersByRepoId(
       resolved,
-      settings?.worktreeVisibilityDefaults
+      visibilityDefaults
     )
     const worktrees = resolved.filter((worktree) => {
       if (repoId && worktree.repoId !== repoId) {
@@ -21023,7 +21053,7 @@ export class OrcaRuntimeService {
       return this.isRuntimeWorktreeVisible(
         worktree,
         visibilitySourceMatchersByRepoId.get(worktree.repoId),
-        settings
+        visibilitySettings
       )
     })
     return {
@@ -21035,19 +21065,27 @@ export class OrcaRuntimeService {
 
   async listDetectedManagedWorktrees(
     repoSelector: string,
-    connectionId?: string | null
+    connectionId?: string | null,
+    sourceDefaultsSupported = true
   ): Promise<DetectedWorktreeListResult> {
     return this.listDetectedWorktreesForResolvedRepo(
-      await this.resolveRepoSelectorForConnection(repoSelector, connectionId)
+      await this.resolveRepoSelectorForConnection(repoSelector, connectionId),
+      sourceDefaultsSupported
     )
   }
 
   private async listDetectedWorktreesForResolvedRepo(
-    repo: Repo
+    repo: Repo,
+    sourceDefaultsSupported = true
   ): Promise<DetectedWorktreeListResult> {
     const store = this.requireStore()
     const settings = store.getSettings()
-    const visibilityDefaults = settings.worktreeVisibilityDefaults
+    const visibilityDefaults = sourceDefaultsSupported
+      ? settings.worktreeVisibilityDefaults
+      : settings.worktreeVisibilityDefaults
+        ? { external: settings.worktreeVisibilityDefaults.external }
+        : undefined
+    const visibilitySettings = { ...settings, worktreeVisibilityDefaults: visibilityDefaults }
     if (isFolderRepo(repo)) {
       const worktrees = listRuntimeFolderWorkspaces(store, repo)
       const matcher = createWorktreeVisibilitySourceMatcher(
@@ -21055,7 +21093,7 @@ export class OrcaRuntimeService {
         resolveCustomWorktreeVisibilitySources(repo, visibilityDefaults)
       )
       const detected = worktrees.map((worktree) =>
-        this.toRuntimeDetectedWorktree(repo, worktree, matcher, settings)
+        this.toRuntimeDetectedWorktree(repo, worktree, matcher, visibilitySettings)
       )
       return {
         repoId: repo.id,
@@ -21088,7 +21126,7 @@ export class OrcaRuntimeService {
         repo,
         worktree,
         worktreeVisibilitySourceMatcher,
-        settings
+        visibilitySettings
       )
       if (scan.ok) {
         return detectedWorktree

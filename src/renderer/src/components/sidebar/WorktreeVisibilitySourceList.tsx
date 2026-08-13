@@ -28,6 +28,11 @@ import {
   isLegacyRepoForExternalWorktreeVisibility
 } from '../../../../shared/external-worktree-visibility'
 import { getRuntimePathBasename } from '../../../../shared/cross-platform-path'
+import {
+  getWorktreeVisibilitySourceProvenance,
+  getWorktreeVisibilitySourceProvenanceLabel,
+  WorktreeVisibilityUseGlobalButton
+} from './worktree-visibility-source-provenance'
 
 export type WorktreeVisibilitySourceRow =
   | { kind: 'built-in'; id: BuiltInWorktreeVisibilitySourceId }
@@ -46,6 +51,7 @@ type Props = {
   onAdd: (rootPath: string) => Promise<WorktreeVisibilitySourceAddResult>
   onRemove: (source: CustomWorktreeVisibilitySource) => Promise<void>
   onToggle: (source: WorktreeVisibilitySourceRow, enabled: boolean) => Promise<void>
+  onUseDefault?: (source: WorktreeVisibilitySourceRow) => Promise<void>
 }
 
 export type WorktreeVisibilitySourceAddResult =
@@ -151,7 +157,8 @@ export default function WorktreeVisibilitySourceList({
   sourceDefaultsDisabled = false,
   onAdd,
   onRemove,
-  onToggle
+  onToggle,
+  onUseDefault
 }: Props): React.JSX.Element {
   const [rootPath, setRootPath] = useState('')
   const [inputError, setInputError] = useState<string | null>(null)
@@ -252,6 +259,12 @@ export default function WorktreeVisibilitySourceList({
           const count = sourceCounts.get(key) ?? 0
           const accessibleLabel = getAccessibleSourceLabel(source, label)
           const sourceDisabled = disabled || (source.kind !== 'other' && sourceDefaultsDisabled)
+          const provenance = getWorktreeVisibilitySourceProvenance(
+            repo,
+            source,
+            visibilityDefaults,
+            repoCustomSourceIds
+          )
           return (
             <div
               key={key}
@@ -284,6 +297,11 @@ export default function WorktreeVisibilitySourceList({
                 <span className="block truncate font-mono text-[11px] text-muted-foreground">
                   {getSourcePath(source)}
                 </span>
+                {provenance ? (
+                  <span className="block text-[11px] text-muted-foreground">
+                    {getWorktreeVisibilitySourceProvenanceLabel(provenance)}
+                  </span>
+                ) : null}
               </span>
               <span className="flex items-center gap-1">
                 {source.kind === 'custom' &&
@@ -313,6 +331,14 @@ export default function WorktreeVisibilitySourceList({
                       )}
                     </TooltipContent>
                   </Tooltip>
+                ) : null}
+                {provenance?.kind === 'project-override' && onUseDefault ? (
+                  <WorktreeVisibilityUseGlobalButton
+                    source={source}
+                    accessibleLabel={accessibleLabel}
+                    disabled={sourceDisabled}
+                    onUseDefault={onUseDefault}
+                  />
                 ) : null}
                 <Switch
                   checked={isSourceEnabled(repo, source, visibilityDefaults, repoCustomSourceIds)}

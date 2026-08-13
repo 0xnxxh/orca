@@ -162,7 +162,10 @@ export type WorktreeSlice = {
     ): Promise<HostQualifiedDetectedWorktreeResult>
     (repoId: string, options?: WorktreeFetchOptions): Promise<boolean>
   }
-  fetchAllWorktrees: (options?: { hydrationPurge?: 'allow' | 'defer' }) => Promise<void>
+  fetchAllWorktrees: (options?: {
+    hydrationPurge?: 'allow' | 'defer'
+    visibilityOwnerHostId?: ExecutionHostId
+  }) => Promise<void>
   fetchWorktreeLineage: (options?: {
     forceLocalOwner?: boolean
     executionHostId?: ExecutionHostId

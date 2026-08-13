@@ -2125,7 +2125,6 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
             | 'externalWorktreeVisibilityPromptDismissedAt'
             | 'externalWorktreeInboxBaselinePaths'
             | 'importedExternalWorktreePaths'
-            | 'agentWorktreeVisibility'
             | 'customWorktreeVisibilitySources'
             | 'worktreeVisibilitySourcePreferences'
             | 'projectGroupId'
@@ -2133,6 +2132,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
           >
         > & {
           externalWorktreeVisibility?: Repo['externalWorktreeVisibility'] | null
+          agentWorktreeVisibility?: Repo['agentWorktreeVisibility'] | null
           sourceControlAi?: Repo['sourceControlAi'] | null
           externalWorktreeDiscoverySuppressedAt?:
             | Repo['externalWorktreeDiscoverySuppressedAt']
@@ -2203,6 +2203,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       }
       if (
         'agentWorktreeVisibility' in updates &&
+        updates.agentWorktreeVisibility !== null &&
         updates.agentWorktreeVisibility !== undefined &&
         updates.agentWorktreeVisibility !== 'hide' &&
         updates.agentWorktreeVisibility !== 'show'

@@ -205,6 +205,24 @@ function sourceSwitch(label = 'Claude Code'): HTMLButtonElement {
   return control as HTMLButtonElement
 }
 
+function sourceRow(label: string): HTMLElement {
+  const row = sourceSwitch(label).parentElement?.parentElement
+  if (!row) {
+    throw new Error(`No ${label} source row`)
+  }
+  return row
+}
+
+function useGlobalButton(label: string): HTMLButtonElement {
+  const control = document.querySelector<HTMLButtonElement>(
+    `button[aria-label="Use global for ${label}"]`
+  )
+  if (!control) {
+    throw new Error(`No Use global button for ${label}`)
+  }
+  return control
+}
+
 async function click(element: HTMLElement): Promise<void> {
   await act(async () => {
     element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
@@ -599,6 +617,61 @@ describe('WorktreeVisibilityDialog', () => {
     expect(mocks.state.closeModal).not.toHaveBeenCalled()
   })
 
+  it('shows when source visibility is inherited from the global default', async () => {
+    mocks.state.repos = [makeRepo({ externalWorktreeVisibility: undefined })]
+    mocks.state.settings = {
+      worktreeVisibilityDefaults: {
+        external: 'hide',
+        sourcePreferences: { builtIn: { claude: 'show' } }
+      }
+    }
+
+    await renderDialog()
+
+    expect(sourceRow('Claude Code').textContent).toContain('Using global: Shown')
+    expect(sourceRow('GSD').textContent).toContain('Using global: Hidden')
+    expect(sourceRow('Other locations').textContent).toContain('Using global: Hidden')
+    expect(document.querySelector('button[aria-label^="Use global for"]')).toBeNull()
+  })
+
+  it('labels project overrides and resets a built-in source to global inheritance', async () => {
+    mocks.state.repos = [
+      makeRepo({
+        worktreeVisibilitySourcePreferences: {
+          builtIn: { claude: 'show', gsd: 'show' }
+        }
+      })
+    ]
+    mocks.state.settings = {
+      worktreeVisibilityDefaults: {
+        external: 'hide',
+        sourcePreferences: { builtIn: { claude: 'hide', gsd: 'hide' } }
+      }
+    }
+    await renderDialog()
+
+    expect(sourceRow('Claude Code').textContent).toContain('Project override · Global: Hidden')
+    await click(useGlobalButton('Claude Code'))
+
+    expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
+      agentWorktreeVisibility: null,
+      worktreeVisibilitySourcePreferences: { builtIn: { gsd: 'show' } }
+    })
+  })
+
+  it('materializes the remaining legacy source override when one source uses global', async () => {
+    mocks.state.repos = [makeRepo({ agentWorktreeVisibility: 'show' })]
+    mocks.state.settings = { worktreeVisibilityDefaults: { external: 'hide' } }
+    await renderDialog()
+
+    await click(useGlobalButton('Claude Code'))
+
+    expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
+      agentWorktreeVisibility: null,
+      worktreeVisibilitySourcePreferences: { builtIn: { gsd: 'show' } }
+    })
+  })
+
   it('migrates legacy Always show to both built-in source rows', async () => {
     mocks.state.repos = [makeRepo({ agentWorktreeVisibility: 'show' })]
     await renderDialog()
@@ -820,6 +893,35 @@ describe('WorktreeVisibilityDialog', () => {
     await click(sourceSwitch('/srv/global-team'))
     expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
       worktreeVisibilitySourcePreferences: { custom: { 'global-team': 'hide' } }
+    })
+  })
+
+  it('resets global custom and Other locations without changing their global defaults', async () => {
+    mocks.state.repos = [
+      makeRepo({
+        externalWorktreeVisibility: 'show',
+        worktreeVisibilitySourcePreferences: { custom: { 'global-team': 'hide' } }
+      })
+    ]
+    mocks.state.settings = {
+      worktreeVisibilityDefaults: {
+        external: 'hide',
+        customSources: [{ id: 'global-team', rootPath: '/srv/global-team' }],
+        sourcePreferences: { custom: { 'global-team': 'show' } }
+      }
+    }
+    await renderDialog()
+
+    expect(sourceRow('/srv/global-team').textContent).toContain('Project override · Global: Shown')
+    expect(sourceRow('Other locations').textContent).toContain('Project override · Global: Hidden')
+    await click(useGlobalButton('/srv/global-team'))
+    await click(useGlobalButton('Other locations'))
+
+    expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
+      worktreeVisibilitySourcePreferences: {}
+    })
+    expect(mocks.state.updateRepo).toHaveBeenCalledWith('repo-1', {
+      externalWorktreeVisibility: null
     })
   })
 })

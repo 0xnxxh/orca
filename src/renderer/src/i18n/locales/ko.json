@@ -4704,7 +4704,14 @@
           "addLocation": "위치 추가",
           "worktreeRoot": "워크트리 루트",
           "add": "추가",
-          "rootHelp": "Orca는 이 폴더 아래의 워크트리를 인식합니다."
+          "rootHelp": "Orca는 이 폴더 아래의 워크트리를 인식합니다.",
+          "projectSource": "프로젝트 소스",
+          "shown": "표시",
+          "hidden": "숨김",
+          "projectOverride": "프로젝트 재정의 · 전역: {{value0}}",
+          "usingGlobal": "전역 설정 사용: {{value0}}",
+          "useGlobalFor": "{{value0}}에 전역 설정 사용",
+          "useGlobal": "전역 사용"
         },
         "add": {
           "repo": {
@@ -10137,7 +10144,8 @@
         },
         "GlobalWorktreeVisibilitySourcesSetting": {
           "saveFailed": "가시성 기본값을 저장할 수 없습니다.",
-          "updateServer": "소스 기본값을 구성하려면 이 서버를 업데이트하세요."
+          "updateServer": "소스 기본값을 구성하려면 이 서버를 업데이트하세요.",
+          "updateServerDefaults": "표시 기본값을 구성하려면 이 서버를 업데이트하세요."
         }
       },
       "right": {

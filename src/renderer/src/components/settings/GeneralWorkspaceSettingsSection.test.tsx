@@ -32,6 +32,7 @@ afterEach(() => {
 function renderSection(
   updateSettings: (updates: object) => void | Promise<void>,
   options: {
+    defaultsSupported?: boolean
     sourceDefaultsSupported?: boolean
     worktreeVisibilityDefaults?: ReturnType<typeof getDefaultSettings>['worktreeVisibilityDefaults']
   } = {}
@@ -43,6 +44,7 @@ function renderSection(
       <GeneralWorkspaceSettingsSection
         settings={settings}
         updateSettings={updateSettings}
+        defaultsSupported={options.defaultsSupported}
         sourceDefaultsSupported={options.sourceDefaultsSupported}
       />
     )
@@ -82,13 +84,23 @@ describe('GeneralWorkspaceSettingsSection external visibility', () => {
   })
 
   it('keeps Other locations available while source defaults require a newer host', () => {
-    renderSection(vi.fn(), { sourceDefaultsSupported: false })
+    renderSection(vi.fn(), { defaultsSupported: true, sourceDefaultsSupported: false })
 
     expect(getSwitch('Show current and future worktrees from Claude Code').disabled).toBe(true)
     expect(getSwitch('Show current and future worktrees from GSD').disabled).toBe(true)
     expect(getSwitch('Show current and future worktrees from Other locations').disabled).toBe(false)
     expect(container.querySelector<HTMLInputElement>('#custom-worktree-root')?.disabled).toBe(true)
     expect(container.textContent).toContain('Update this server to configure source defaults.')
+  })
+
+  it('disables all visibility defaults when the paired host lacks base support', () => {
+    renderSection(vi.fn(), { defaultsSupported: false, sourceDefaultsSupported: false })
+
+    expect(getSwitch('Show current and future worktrees from Claude Code').disabled).toBe(true)
+    expect(getSwitch('Show current and future worktrees from GSD').disabled).toBe(true)
+    expect(getSwitch('Show current and future worktrees from Other locations').disabled).toBe(true)
+    expect(container.querySelector<HTMLInputElement>('#custom-worktree-root')?.disabled).toBe(true)
+    expect(container.textContent).toContain('Update this server to configure visibility defaults.')
   })
 
   it('writes only Other locations when a downgraded host retains source fields', async () => {

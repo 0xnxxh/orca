@@ -51,7 +51,7 @@ it('reclassifies worktrees after changing the host visibility default', async ()
 
   await store.getState().updateSettings({ worktreeVisibilityDefaults: { external: 'show' } })
 
-  expect(fetchAllWorktrees).toHaveBeenCalledOnce()
+  expect(fetchAllWorktrees).toHaveBeenCalledWith({ visibilityOwnerHostId: 'local' })
 })
 
 it('does not restore a stale owner after its visibility write resolves', async () => {
@@ -115,6 +115,25 @@ it('rejects source-default writes before contacting an older runtime host', asyn
       set: vi.fn()
     })
   ).rejects.toThrow('Update this server to configure source defaults.')
+  expect(runtimeCall).not.toHaveBeenCalled()
+})
+
+it('rejects base visibility writes before contacting an unsupported runtime host', async () => {
+  const runtimeCall = vi.fn()
+  vi.stubGlobal('window', { api: { runtimeEnvironments: { call: runtimeCall } } })
+  const currentSettings = {
+    activeRuntimeEnvironmentId: 'env-a'
+  } as GlobalSettings
+
+  await expect(
+    persistVisibilityAwareSettings({
+      normalizedUpdates: { worktreeVisibilityDefaults: { external: 'show' } },
+      currentSettings,
+      supportedRuntimeEnvironmentId: null,
+      sourceDefaultsSupportedRuntimeEnvironmentId: null,
+      set: vi.fn()
+    })
+  ).rejects.toThrow('Update this server to configure visibility defaults.')
   expect(runtimeCall).not.toHaveBeenCalled()
 })
 

@@ -25,6 +25,9 @@ export async function persistVisibilityAwareSettings(args: {
   const target = getActiveRuntimeTarget(currentSettings)
   if ('worktreeVisibilityDefaults' in normalizedUpdates && target.kind === 'environment') {
     const { worktreeVisibilityDefaults, ...localUpdates } = normalizedUpdates
+    if (target.environmentId !== supportedRuntimeEnvironmentId) {
+      throw new Error('Update this server to configure visibility defaults.')
+    }
     if (
       worktreeVisibilityDefaults &&
       target.environmentId !== sourceDefaultsSupportedRuntimeEnvironmentId &&
