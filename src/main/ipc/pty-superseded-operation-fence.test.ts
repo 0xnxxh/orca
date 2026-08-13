@@ -78,6 +78,16 @@ describe('superseded PTY operation fence', () => {
 })
 
 describe('the fence is wired into every mutating handler', () => {
+  it('combines supersession and incarnation in the write fence', async () => {
+    const { readFileSync } = await import('node:fs')
+    const source = readFileSync('src/main/ipc/pty.ts', 'utf-8')
+    const start = source.indexOf('const isCurrentPtyWrite')
+
+    expect(start).toBeGreaterThan(0)
+    expect(source.slice(start, start + 300)).toContain('isSupersededPtyId')
+    expect(source.slice(start, start + 300)).toContain('ptyIncarnationById')
+  })
+
   // The capability existed for months and was never called from these handlers.
   // Pin the call site, not the capability — that is the failure this program hit.
   it.each(['pty:write', 'pty:writeAccepted', 'pty:resize', 'pty:signal'])(
@@ -90,7 +100,9 @@ describe('the fence is wired into every mutating handler', () => {
         new RegExp(`ipcMain\\.(?:on|handle)\\(\\s*'${channel.replace(':', ':')}'`)
       )
       expect(start, `${channel} handler not found`).toBeGreaterThan(0)
-      expect(source.slice(start, start + 700)).toContain('isSupersededPtyId')
+      expect(source.slice(start, start + 700)).toContain(
+        channel.startsWith('pty:write') ? 'isCurrentPtyWrite' : 'isSupersededPtyId'
+      )
     }
   )
 
