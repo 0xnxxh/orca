@@ -2217,9 +2217,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
               sessionId,
               take.snapshot,
               [...take.drainedRecords, ...take.records],
-              opts.requireContinuityProof === true
-                ? { requiredPreviousPendingOutputSeq: take.seq - 1 }
-                : undefined
+              {
+                pendingRecordsAreComplete: take.seq === 1,
+                ...(opts.requireContinuityProof === true
+                  ? { requiredPreviousPendingOutputSeq: take.seq - 1 }
+                  : {})
+              }
             )
       const checkpoint = await this.historyManager.checkpoint(sessionId, snapshot, {
         pendingOutputSeq: take.seq
@@ -2259,7 +2262,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
     sessionId: string,
     liveSnapshot: NonNullable<TakePendingOutputResult['snapshot']>,
     pendingRecords: TakePendingOutputResult['records'],
-    opts?: { requiredPreviousPendingOutputSeq?: number }
+    opts: {
+      pendingRecordsAreComplete: boolean
+      requiredPreviousPendingOutputSeq?: number
+    }
   ): Promise<NonNullable<TakePendingOutputResult['snapshot']>> {
     if (!this.historyReader) {
       return liveSnapshot
@@ -2270,8 +2276,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
         wslDistro: this.wslDistrosBySessionId.get(sessionId)
       })
       if (
-        opts?.requiredPreviousPendingOutputSeq !== undefined &&
-        restoreInfo?.pendingOutputSeq !== opts.requiredPreviousPendingOutputSeq
+        (!restoreInfo && !opts.pendingRecordsAreComplete) ||
+        (opts.requiredPreviousPendingOutputSeq !== undefined &&
+          restoreInfo?.pendingOutputSeq !== opts.requiredPreviousPendingOutputSeq)
       ) {
         console.warn('[history] durable continuity unproven; using live snapshot:', sessionId)
         return liveSnapshot

@@ -8,6 +8,7 @@ import { DaemonServer } from './daemon-server'
 import { buildDurableCheckpointSnapshot } from './daemon-durable-history-snapshot'
 import { DAEMON_RESTORE_SCROLLBACK_ROWS } from './daemon-restore-scrollback-depth'
 import { DAEMON_SESSION_SCROLLBACK_ROWS } from './daemon-session-scrollback-window'
+import { getHistorySessionDirName } from './history-paths'
 import { getDaemonSocketPath } from './daemon-spawner'
 import { HeadlessEmulator } from './headless-emulator'
 import { HistoryManager } from './history-manager'
@@ -370,6 +371,44 @@ describe('STA-4091 previously recoverable restore depth', () => {
         ignoreCleanEnd: true
       })
       expect(snapshotText(restore ?? {})).toContain(OLDEST_WRITTEN_LINE)
+    })
+
+    it('uses the live window when durable history disappears after a prior drain', async () => {
+      const { id } = await adapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'missing-history-after-drain',
+        cwd: '/tmp'
+      })
+      lastSubprocess.emitData(numberedOutput(DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT))
+      await adapter.getBufferSnapshot(id)
+      lastSubprocess.emitData(`${FRESH_AFTER_CHECKPOINT}\r\n`)
+
+      const internals = adapter as unknown as { checkpointDirtySessions: () => Promise<void> }
+      await internals.checkpointDirtySessions()
+      rmSync(join(historyDir, getHistorySessionDirName(id), 'checkpoint.json'))
+      lastSubprocess.emitData('TAIL_AFTER_HISTORY_LOSS\r\n')
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      try {
+        const snapshot = await adapter.getBufferSnapshot(id)
+        const text = `${snapshot?.scrollbackAnsi ?? ''}${snapshot?.data ?? ''}`
+        expect(text).toContain(NEWEST_WRITTEN_LINE)
+        expect(text).toContain('TAIL_AFTER_HISTORY_LOSS')
+        expect(text).not.toContain(OLDEST_WRITTEN_LINE)
+        const restored = await new HistoryReader(historyDir).detectColdRestore(id, {
+          ignoreCleanEnd: true
+        })
+        expect(snapshotText(restored ?? {})).toContain(NEWEST_WRITTEN_LINE)
+        expect(snapshotText(restored ?? {})).toContain('TAIL_AFTER_HISTORY_LOSS')
+        expect(restored?.scrollbackLines).toBe(DAEMON_SESSION_SCROLLBACK_ROWS)
+        expect(warn).toHaveBeenCalledWith(
+          '[history] durable continuity unproven; using live snapshot:',
+          id
+        )
+      } finally {
+        warn.mockRestore()
+      }
     })
 
     it('preserves durable depth after an incremental append and adapter crash', async () => {
