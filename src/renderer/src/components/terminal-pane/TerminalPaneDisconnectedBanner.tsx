@@ -175,7 +175,7 @@ export function TerminalPaneDisconnectedBanner({
           <div className="mt-0.5 text-xs leading-5 text-muted-foreground">{body}</div>
         </div>
         {!retrying ? (
-          <div className="flex shrink-0 items-center gap-2 @max-[360px]/disconnected-banner:w-full @max-[360px]/disconnected-banner:flex-wrap @max-[360px]/disconnected-banner:justify-end @max-[240px]/disconnected-banner:gap-0">
+          <div className="flex shrink-0 items-center gap-2 @max-[360px]/disconnected-banner:w-full @max-[360px]/disconnected-banner:flex-wrap @max-[360px]/disconnected-banner:justify-end @max-[240px]/disconnected-banner:justify-center @max-[240px]/disconnected-banner:gap-0">
             {compactActions ? (
               <Tooltip>
                 <TooltipTrigger asChild>{reconnectButton}</TooltipTrigger>

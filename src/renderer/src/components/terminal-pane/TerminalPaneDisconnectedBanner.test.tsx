@@ -124,6 +124,7 @@ describe('TerminalPaneDisconnectedBanner, unreachable SSH pane', () => {
     expect(banner).toHaveAttribute('data-terminal-pane-disconnected-variant', 'ssh-pane')
     expect(banner).toHaveClass('@container/disconnected-banner', 'inset-x-0')
     expect(card).toHaveClass('max-h-full', 'overflow-y-auto')
+    expect(buttons[0].parentElement).toHaveClass('@max-[240px]/disconnected-banner:justify-center')
     for (const button of buttons) {
       expect(button).toHaveAttribute('data-size', 'icon-xs')
     }
