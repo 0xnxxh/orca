@@ -37,6 +37,6 @@ describe('WorkspaceCleanupFilterBar', () => {
       />
     )
 
-    expect(screen.queryByRole('button', { name: 'Measure sizes' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Scan sizes' })).toBeNull()
   })
 })

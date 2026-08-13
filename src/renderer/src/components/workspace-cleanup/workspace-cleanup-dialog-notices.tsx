@@ -55,38 +55,32 @@ export function WorkspaceCleanupSizeScanBanner({
     ? totalCount > 0
       ? translate(
           'components.workspace.cleanup.browse.measuringSizesProgress',
-          'Measuring {{value0}}/{{value1}}',
+          'Scanning {{value0}}/{{value1}}',
           { value0: scannedCount, value1: totalCount }
         )
-      : translate('components.workspace.cleanup.browse.measuringSizes', 'Measuring sizes')
-    : translate('components.workspace.cleanup.browse.measureSizes', 'Measure sizes')
+      : translate('components.workspace.cleanup.browse.measuringSizes', 'Scanning sizes')
+    : translate('components.workspace.cleanup.browse.measureSizes', 'Scan sizes')
 
   return (
-    <div className="flex flex-col items-stretch gap-3 border-b border-border bg-muted/25 px-5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+    <div className="flex items-center justify-between gap-4 border-b border-border bg-muted/25 px-5 py-3">
       <div className="flex min-w-0 items-start gap-2">
         <HardDrive className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
           <div className="text-xs font-medium text-foreground">
             {translate(
               'components.workspace.cleanup.browse.measureSizesTitle',
-              'Measure workspace sizes'
+              'Scan workspace sizes'
             )}
           </div>
           <div className="mt-0.5 text-xs text-muted-foreground">
             {translate(
               'components.workspace.cleanup.browse.measureSizesDescription',
-              'Measure disk usage to compare, sort, and filter workspaces by size.'
+              'Scan disk usage to compare, sort, and filter workspaces by size.'
             )}
           </div>
         </div>
       </div>
-      <Button
-        className="shrink-0 self-start"
-        variant="outline"
-        size="sm"
-        disabled={scanning}
-        onClick={onRun}
-      >
+      <Button className="shrink-0" variant="outline" size="sm" disabled={scanning} onClick={onRun}>
         {scanning ? <Loader2 className="size-3.5 animate-spin" /> : null}
         {actionLabel}
       </Button>

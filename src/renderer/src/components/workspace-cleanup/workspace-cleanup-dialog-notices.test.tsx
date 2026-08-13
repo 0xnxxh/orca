@@ -29,7 +29,7 @@ describe('WorkspaceCleanupInitialScanBanner', () => {
 })
 
 describe('WorkspaceCleanupSizeScanBanner', () => {
-  it('explains why measurement is useful and exposes the action', () => {
+  it('explains why scanning is useful and exposes the action', () => {
     render(
       <WorkspaceCleanupSizeScanBanner
         scanning={false}
@@ -39,11 +39,11 @@ describe('WorkspaceCleanupSizeScanBanner', () => {
       />
     )
 
-    expect(screen.getByText('Measure workspace sizes')).toBeTruthy()
+    expect(screen.getByText('Scan workspace sizes')).toBeTruthy()
     expect(
-      screen.getByText('Measure disk usage to compare, sort, and filter workspaces by size.')
+      screen.getByText('Scan disk usage to compare, sort, and filter workspaces by size.')
     ).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Measure sizes' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Scan sizes' })).toBeTruthy()
   })
 
   it('shows determinate progress and disables duplicate runs', () => {
@@ -52,7 +52,7 @@ describe('WorkspaceCleanupSizeScanBanner', () => {
     )
 
     expect(
-      (screen.getByRole('button', { name: 'Measuring 23/100' }) as HTMLButtonElement).disabled
+      (screen.getByRole('button', { name: 'Scanning 23/100' }) as HTMLButtonElement).disabled
     ).toBe(true)
   })
 })

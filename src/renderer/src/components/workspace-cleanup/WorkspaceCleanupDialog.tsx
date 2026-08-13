@@ -146,7 +146,7 @@ function WorkspaceCleanupDialogContent({
       toast.error(
         translate(
           'components.workspace.cleanup.browse.measureSizesFailed',
-          'Could not measure workspace sizes'
+          'Could not scan workspace sizes'
         ),
         { description: scanError instanceof Error ? scanError.message : String(scanError) }
       )
