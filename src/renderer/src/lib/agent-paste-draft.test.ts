@@ -27,6 +27,7 @@ const testState = vi.hoisted(() => ({
   ptyObserver: null as ((data: string) => void) | null,
   unsubscribe: vi.fn(),
   subscribeToPtyData: vi.fn(),
+  replayPreHandlerPtyData: vi.fn(),
   isRemoteRuntimePtyId: vi.fn(),
   sendRuntimePtyInputVerified: vi.fn(),
   inspectRuntimeTerminalProcess: vi.fn(),
@@ -47,6 +48,10 @@ vi.mock('@/store', () => ({
 
 vi.mock('@/components/terminal-pane/pty-data-sidecar-subscriptions', () => ({
   subscribeToPtyData: testState.subscribeToPtyData
+}))
+
+vi.mock('@/components/terminal-pane/pty-pre-handler-buffer', () => ({
+  replayPreHandlerPtyData: testState.replayPreHandlerPtyData
 }))
 
 vi.mock('@/runtime/runtime-terminal-inspection', () => ({
@@ -88,6 +93,7 @@ describe('pasteDraftWhenAgentReady', () => {
         return testState.unsubscribe
       }
     )
+    testState.replayPreHandlerPtyData.mockReset()
     testState.isRemoteRuntimePtyId.mockReset()
     testState.isRemoteRuntimePtyId.mockReturnValue(false)
     testState.sendRuntimePtyInputVerified.mockReset()
@@ -128,8 +134,14 @@ describe('pasteDraftWhenAgentReady', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('subscribes during PTY binding before buffered Codex output drains', async () => {
+  it('replays buffered Codex output during PTY binding before the primary drain', async () => {
     testState.appState.ptyIdsByTabId = {}
+    testState.replayPreHandlerPtyData.mockImplementation(
+      (_ptyId: string, observer: (data: string) => void) => {
+        observer(CODEX_COMPOSER_PROMPT_RENDER)
+        observer(DECSET_BRACKETED_PASTE)
+      }
+    )
     const promise = pasteDraftWhenAgentReady({
       tabId: 'tab-1',
       content: ISSUE_URL,
@@ -144,11 +156,7 @@ describe('pasteDraftWhenAgentReady', () => {
     }
     expect(testState.storeSubscribers.size).toBe(0)
     expect(testState.ptyObserver).not.toBeNull()
-
-    // Matches pty-transport: updateTabPtyId notifies the store before the
-    // pre-handler buffer drains, with Codex 0.147 rendering its glyph first.
-    testState.ptyObserver?.(CODEX_COMPOSER_PROMPT_RENDER)
-    testState.ptyObserver?.(DECSET_BRACKETED_PASTE)
+    expect(testState.replayPreHandlerPtyData).toHaveBeenCalledWith('pty-1', testState.ptyObserver)
     await flushMicrotasks()
 
     expect(testState.sendRuntimePtyInputVerified).toHaveBeenCalledWith(
