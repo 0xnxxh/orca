@@ -1,11 +1,9 @@
-import { useId } from 'react'
+import { useId, useMemo } from 'react'
 import { SquareTerminal, XIcon } from 'lucide-react'
 import { AgentStateDot } from '@/components/AgentStateDot'
 import { Button } from '@/components/ui/button'
-import {
-  NativeChatConversation,
-  type NativeChatConversationLiveState
-} from '@/components/native-chat/NativeChatView'
+import { NativeChatConversation } from '@/components/native-chat/NativeChatConversation'
+import type { NativeChatConversationLiveState } from '@/components/native-chat/native-chat-conversation-types'
 import type { NativeChatPtyWriter } from '@/components/native-chat/native-chat-pty-writer'
 import type { NativeChatAttachmentOwner } from '@/components/native-chat/native-chat-attachment-upload'
 import { isAskUserQuestionTool } from '../../../../shared/agent-question-answered-intent'
@@ -107,6 +105,7 @@ function AgentChatBody({
   onSwitchToTerminal?: () => void
   ptyWriter?: NativeChatPtyWriter
 }): React.JSX.Element {
+  const liveState = useMemo(() => conversationLiveState(card), [card])
   if (mode.kind === 'degraded') {
     return <AgentChatFallback card={card} reason={mode.reason} />
   }
@@ -126,7 +125,7 @@ function AgentChatBody({
       sessionOptionsEnabled={false}
       fileDropEnabled={false}
       fileLinksEnabled={false}
-      liveState={conversationLiveState(card)}
+      liveState={liveState}
     />
   )
 }

@@ -15,6 +15,7 @@ export { NativeChatConversation } from './NativeChatConversation'
 /** Resolves an agent terminal into its native conversation and composer UI. */
 export default function NativeChatView({
   terminalTabId,
+  isVisible,
   paneKey: preferredPaneKey,
   targetPtyId = null,
   launchAgent,
@@ -45,6 +46,7 @@ export default function NativeChatView({
           agent={resolution.agent}
           sessionId={resolution.sessionId}
           transcriptPath={resolution.transcriptPath}
+          isVisible={isVisible}
           targetPtyId={targetPtyId}
           terminalTabId={terminalTabId}
           onSwitchToTerminal={onSwitchToTerminal}

@@ -53,6 +53,7 @@ export function NativeChatConversation({
   transcriptPath,
   targetPtyId,
   terminalTabId,
+  isVisible = true,
   onSwitchToTerminal,
   readTerminalScreen,
   contextMenuActions,
@@ -75,7 +76,8 @@ export function NativeChatConversation({
     agent,
     sessionId,
     transcriptPath,
-    runtimeEnvironmentId
+    runtimeEnvironmentId,
+    enabled: isVisible
   })
   const session = useMemo<typeof retainedSession>(() => {
     if (

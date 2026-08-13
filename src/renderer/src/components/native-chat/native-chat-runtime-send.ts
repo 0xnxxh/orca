@@ -25,6 +25,7 @@ import {
   sendVerifiedNativeChatMessageWithImages
 } from './native-chat-verified-send'
 export { sendNativeChatAskAnswer } from './native-chat-ask-answer-send'
+export { sendNativeChatTypedCommand, typeNativeChatCommand } from './native-chat-command-send'
 
 export { NATIVE_CHAT_ADVANCE_BUFFER_MS, NATIVE_CHAT_QUESTION_STEP_MS, NATIVE_CHAT_SUBMIT_DELAY_MS }
 export { NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT } from './native-chat-send'

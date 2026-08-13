@@ -6,7 +6,7 @@ import {
   type NativeChatResolvedTarget
 } from './native-chat-composer-target'
 import { pushHistory, type HistoryState } from './native-chat-composer-state'
-import { sendNativeChatMessageVerified } from './native-chat-runtime-send'
+import { sendNativeChatMessageVerified, typeNativeChatCommand } from './native-chat-runtime-send'
 import { cancelNativeChatPtySends, waitForNativeChatPtyIdle } from './native-chat-pty-send-queue'
 import {
   createClaudeModelSwitchConfirmationObserver,
@@ -87,13 +87,22 @@ export function useNativeChatSessionOptionCommand(args: {
           // submit immediately so historical output cannot satisfy the match.
           observer.arm()
         }
-        const accepted = await sendNativeChatMessageVerified(
-          target.settings,
-          target.ptyId,
-          command,
-          sendController.signal,
-          target.writer
-        )
+        const accepted =
+          agent === 'codex'
+            ? await typeNativeChatCommand(
+                target.settings,
+                target.ptyId,
+                command,
+                sendController.signal,
+                target.writer
+              )
+            : await sendNativeChatMessageVerified(
+                target.settings,
+                target.ptyId,
+                command,
+                sendController.signal,
+                target.writer
+              )
         if (!accepted) {
           throw new Error('The terminal did not accept the command.')
         }

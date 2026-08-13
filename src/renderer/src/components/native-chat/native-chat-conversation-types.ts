@@ -12,6 +12,8 @@ export type NativeChatConversationProps = {
   transcriptPath: string | null
   targetPtyId: string | null
   terminalTabId: string
+  /** Suspends transcript work while the hosting surface is hidden. */
+  isVisible?: boolean
   onSwitchToTerminal?: () => void
   readTerminalScreen?: () => string | null
   contextMenuActions?: Omit<NativeChatContextMenuActions, 'onPaste'>

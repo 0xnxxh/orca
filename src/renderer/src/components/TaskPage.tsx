@@ -43,6 +43,7 @@ import { useAllWorktrees, useRepoMap } from '@/store/selectors'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { getLocalPreflightContext, localPreflightContextKey } from '@/lib/local-preflight-context'
 import { getProviderRuntimeContextKey } from '@/lib/provider-runtime-context'
+import { compareNumericLocaleText } from '@/lib/locale-text-collators'
 import {
   getSettingsFocusedExecutionHostId,
   parseExecutionHostId,
@@ -846,7 +847,7 @@ function compareLinearIssues(a: LinearIssue, b: LinearIssue, orderBy: LinearOrde
     return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   }
   if (orderBy === 'identifier') {
-    return a.identifier.localeCompare(b.identifier, undefined, { numeric: true })
+    return compareNumericLocaleText(a.identifier, b.identifier)
   }
 
   const priorityDelta = getLinearPriorityRank(a.priority) - getLinearPriorityRank(b.priority)
@@ -6959,7 +6960,7 @@ export default function TaskPage(): React.JSX.Element {
     const authorityPage = pages.findIndex((page) =>
       page?.some((item) => authorityItemKeys.has(taskPageGitHubItemKey(item.repoId, item.id)))
     )
-    const quietPage = authorityPage >= 0 ? authorityPage : currentPage
+    const quietPage = authorityPage !== -1 ? authorityPage : currentPage
     const visiblePage = currentPage > quietPage ? currentPage : undefined
     const pageItemKeys = (page: number): Set<string> =>
       new Set((pages[page] ?? []).map((item) => taskPageGitHubItemKey(item.repoId, item.id)))

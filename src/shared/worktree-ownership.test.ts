@@ -477,7 +477,7 @@ describe('agent scratch worktrees', () => {
     ).toBe('orca-managed')
   })
 
-  it('hides agent scratch even when the repo shows non-Orca worktrees', () => {
+  it('keeps agent scratch hidden by default for new and legacy repos', () => {
     for (const repo of [
       makeRepo({ externalWorktreeVisibility: 'show' }),
       makeRepo({ addedAt: EXTERNAL_WORKTREE_VISIBILITY_ROLLOUT_AT - 1 })
@@ -491,6 +491,25 @@ describe('agent scratch worktrees', () => {
       })
       expect(detected.ownership).toBe('agent-scratch')
       expect(detected.visible).toBe(false)
+    }
+  })
+
+  it('shows agent scratch when its repo policy is enabled', () => {
+    const repo = makeRepo({
+      externalWorktreeVisibility: 'hide',
+      agentWorktreeVisibility: 'show'
+    })
+    const settings = makeSettings()
+
+    for (const path of [scratchPath, '/repos/app/.gsd-workspaces/phase-1']) {
+      const detected = toDetectedWorktree({
+        repo,
+        settings,
+        worktree: makeWorktree({ path, isMainWorktree: false }),
+        knownOrcaLayouts: buildKnownOrcaWorkspaceLayouts(settings, repo)
+      })
+
+      expect(detected).toMatchObject({ ownership: 'agent-scratch', visible: true })
     }
   })
 

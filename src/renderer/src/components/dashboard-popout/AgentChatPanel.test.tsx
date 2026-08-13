@@ -7,7 +7,7 @@ import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import { AgentChatPanel } from './AgentChatPanel'
 
 const nativeChatConversation = vi.hoisted(() => vi.fn())
-vi.mock('@/components/native-chat/NativeChatView', () => ({
+vi.mock('@/components/native-chat/NativeChatConversation', () => ({
   NativeChatConversation: (props: Record<string, unknown>) => {
     nativeChatConversation(props)
     return <div data-testid="native-chat-conversation" />

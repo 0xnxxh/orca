@@ -5,7 +5,7 @@ import {
   emitNativeChatPickerItemAccepted,
   emitNativeChatSendClassified
 } from '@/lib/native-chat-telemetry'
-import { sendNativeChatMessage } from './native-chat-runtime-send'
+import { sendNativeChatMessage, sendNativeChatTypedCommand } from './native-chat-runtime-send'
 import {
   nativeChatComposerTargetIsRemote,
   type NativeChatResolvedTarget
@@ -61,9 +61,10 @@ export function useNativeChatPickerCommandDispatch(args: {
       if (!target || disabled || isDispatchingSessionOption || verifiedPendingRef.current) {
         return
       }
-      const handle = sendNativeChatMessage(target.settings, target.ptyId, text, {
-        writer: target.writer
-      })
+      const handle =
+        agent === 'codex'
+          ? sendNativeChatTypedCommand(target.settings, target.ptyId, text, target.writer)
+          : sendNativeChatMessage(target.settings, target.ptyId, text, { writer: target.writer })
       trackPendingSend(handle)
       const finishAcceptedCommand = (): void => {
         emitNativeChatPickerItemAccepted({ agent, itemKind: 'command' })

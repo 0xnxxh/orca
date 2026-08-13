@@ -4,9 +4,11 @@ import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 const sendNativeChatMessage = vi.fn()
+const sendNativeChatTypedCommand = vi.fn()
 
 vi.mock('./native-chat-runtime-send', () => ({
-  sendNativeChatMessage: (...args: unknown[]) => sendNativeChatMessage(...args)
+  sendNativeChatMessage: (...args: unknown[]) => sendNativeChatMessage(...args),
+  sendNativeChatTypedCommand: (...args: unknown[]) => sendNativeChatTypedCommand(...args)
 }))
 vi.mock('@/lib/native-chat-telemetry', () => ({
   emitNativeChatMessageSent: vi.fn(),
@@ -29,7 +31,7 @@ describe('useNativeChatPickerCommandDispatch', () => {
         settleDelivery = resolve
       })
     }
-    sendNativeChatMessage.mockReturnValue(handle)
+    sendNativeChatTypedCommand.mockReturnValue(handle)
     const setDraft = vi.fn()
     const setNotice = vi.fn()
     const setVerifiedSendPending = vi.fn()
@@ -72,7 +74,13 @@ describe('useNativeChatPickerCommandDispatch', () => {
       result.current(command)
     })
 
-    expect(sendNativeChatMessage).toHaveBeenCalledOnce()
+    expect(sendNativeChatTypedCommand).toHaveBeenCalledOnce()
+    expect(sendNativeChatTypedCommand).toHaveBeenCalledWith(
+      {},
+      'pty-1',
+      '/clear',
+      expect.any(Object)
+    )
     expect(setVerifiedSendPending).toHaveBeenCalledWith(true)
     expect(setDraft).not.toHaveBeenCalled()
     expect(onSlashCommand).not.toHaveBeenCalled()

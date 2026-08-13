@@ -35,7 +35,7 @@ export function patchDashboardSnapshotFromAgentStatus(
     return { matched: true, snapshot }
   }
   const index = snapshot.cards.findIndex((card) => card.paneKey === event.paneKey)
-  if (index < 0) {
+  if (index === -1) {
     return { matched: false, snapshot }
   }
   const card = snapshot.cards[index]
@@ -53,6 +53,12 @@ export function patchDashboardSnapshotFromAgentStatus(
   const nextCard: DashboardCard = {
     ...card,
     ...(event.agentType ? { agentType: event.agentType } : {}),
+    ...(card.viewMode === 'chat' && event.providerSession
+      ? {
+          sessionId: event.providerSession.id || undefined,
+          transcriptPath: event.providerSession.transcriptPath || undefined
+        }
+      : {}),
     ...(event.prompt ? { task: event.prompt, lastUserMessage: event.prompt } : {}),
     ...(event.lastAssistantMessage !== undefined
       ? { lastAgentMessage: event.lastAssistantMessage || undefined }

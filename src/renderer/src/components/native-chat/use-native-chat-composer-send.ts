@@ -14,6 +14,7 @@ import {
 import type { NativeChatSendLifecycle } from './use-native-chat-send-lifecycle'
 import {
   sendNativeChatMessage,
+  sendNativeChatTypedCommand,
   sendNativeChatMessageWithImageAttachments,
   submitNativeChatPrompt,
   type NativeChatSendHandle
@@ -22,6 +23,7 @@ import { resolveNativeChatLaunchDraftSend } from './native-chat-launch-draft-sen
 import { emitNativeChatMessageSent } from '@/lib/native-chat-telemetry'
 import { useAppStore } from '../../store'
 import { translate } from '@/i18n/i18n'
+import { isSlashCommandDraft } from '../../../../shared/native-chat-slash-commands'
 
 export function useNativeChatComposerSend(args: {
   agent: AgentType
@@ -94,7 +96,10 @@ export function useNativeChatComposerSend(args: {
     const routedSendOptions = { ...sendOptions, writer: target.writer }
     let handle: NativeChatSendHandle | null = null
     if (classification !== 'chat' && imagePaths.length === 0) {
-      handle = sendNativeChatMessage(target.settings, target.ptyId, draft, routedSendOptions)
+      handle =
+        agent === 'codex' && isSlashCommandDraft(draft)
+          ? sendNativeChatTypedCommand(target.settings, target.ptyId, draft, target.writer)
+          : sendNativeChatMessage(target.settings, target.ptyId, draft, routedSendOptions)
     } else if (imagePaths.length > 0) {
       handle = sendNativeChatMessageWithImageAttachments(
         target.settings,
@@ -139,19 +144,21 @@ export function useNativeChatComposerSend(args: {
     if (handle?.delivered) {
       setVerifiedSendPending(true)
       trackPendingSend(handle)
-      void handle.delivered.then((delivered) => {
-        setVerifiedSendPending(false)
-        if (delivered) {
-          finishAcceptedSend(false)
-          return
-        }
-        setNotice(
-          translate(
-            'components.native-chat.composer.sendRejected',
-            'The terminal did not accept the message. Try again.'
+      void handle.delivered
+        .catch(() => false)
+        .then((delivered) => {
+          if (delivered) {
+            finishAcceptedSend(false)
+            return
+          }
+          setNotice(
+            translate(
+              'components.native-chat.composer.sendRejected',
+              'The terminal did not accept the message. Try again.'
+            )
           )
-        )
-      })
+        })
+        .finally(() => setVerifiedSendPending(false))
       return
     }
     finishAcceptedSend(true)

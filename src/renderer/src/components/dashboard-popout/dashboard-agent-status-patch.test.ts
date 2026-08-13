@@ -115,6 +115,46 @@ describe('patchDashboardSnapshotFromAgentStatus', () => {
     expect(result.snapshot.cards[0].interactiveToolName).toBeUndefined()
   })
 
+  it('opens a chat card when its live status reports the provider session', () => {
+    const original = snapshot([
+      card({ viewMode: 'chat', sessionId: undefined, transcriptPath: undefined })
+    ])
+
+    const result = patchDashboardSnapshotFromAgentStatus(
+      original,
+      event({
+        providerSession: {
+          key: 'session_id',
+          id: 'session-2',
+          transcriptPath: '/tmp/session-2.jsonl'
+        }
+      })
+    )
+
+    expect(result.snapshot.cards[0]).toMatchObject({
+      sessionId: 'session-2',
+      transcriptPath: '/tmp/session-2.jsonl'
+    })
+  })
+
+  it('clears a stale transcript path when the provider session changes without one', () => {
+    const original = snapshot([
+      card({
+        viewMode: 'chat',
+        sessionId: 'session-1',
+        transcriptPath: '/tmp/session-1.jsonl'
+      })
+    ])
+
+    const result = patchDashboardSnapshotFromAgentStatus(
+      original,
+      event({ providerSession: { key: 'session_id', id: 'session-2' } })
+    )
+
+    expect(result.snapshot.cards[0]?.sessionId).toBe('session-2')
+    expect(result.snapshot.cards[0]?.transcriptPath).toBeUndefined()
+  })
+
   it('ignores stale, wrong-workspace, and session-only events', () => {
     const original = snapshot()
     expect(
