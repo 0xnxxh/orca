@@ -1112,6 +1112,7 @@ type RuntimeStore = {
   /** Optional so older embedders of RuntimeStore keep type-checking; the create path skips
    *  retirement when absent, which only means a name stays issuable. */
   addRetiredWorktreeName?: Store['addRetiredWorktreeName']
+  getRetiredWorktreeNames?: Store['getRetiredWorktreeNames']
   addRepo: Store['addRepo']
   updateRepo: Store['updateRepo']
   getProjects?: Store['getProjects']
@@ -21027,11 +21028,37 @@ export class OrcaRuntimeService {
         visibilitySourceMatchersByRepoId.get(worktree.repoId)
       )
     })
-    return {
-      worktrees: worktrees.slice(0, limit),
-      totalCount: worktrees.length,
-      truncated: worktrees.length > limit
+    const page = worktrees.slice(0, limit)
+    const retirementRepoIds = new Set(page.map((worktree) => worktree.repoId))
+    // Why: an explicitly selected repo must report its retirements even when the page is empty or
+    // truncated past it. A repo with no live workspaces is exactly the case where every generated
+    // name looks free, so omitting it would reissue names precisely where it matters most.
+    if (repoId) {
+      retirementRepoIds.add(repoId)
     }
+    return {
+      worktrees: page,
+      totalCount: worktrees.length,
+      truncated: worktrees.length > limit,
+      retiredNamesByRepo: this.collectRetiredNamesForRepos(retirementRepoIds)
+    }
+  }
+
+  /** Why: scoped to the repos in the page plus any explicitly requested one, so the payload cannot
+   *  grow with the number of repos on the host; a client only suggests names for repos it sees. */
+  private collectRetiredNamesForRepos(repoIds: Set<string>): Record<string, string[]> {
+    const store = this.store
+    if (!store?.getRetiredWorktreeNames) {
+      return {}
+    }
+    const byRepo: Record<string, string[]> = {}
+    for (const repoId of repoIds) {
+      const names = store.getRetiredWorktreeNames(repoId)
+      if (names.length > 0) {
+        byRepo[repoId] = names
+      }
+    }
+    return byRepo
   }
 
   async listDetectedManagedWorktrees(

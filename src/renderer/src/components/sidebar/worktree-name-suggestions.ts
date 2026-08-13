@@ -1,5 +1,8 @@
-import { MARINE_CREATURES } from '@/constants/marine-creatures'
 import { basename } from '@/lib/path'
+import {
+  normalizeSuggestedName,
+  selectSuggestedCreatureName
+} from '../../../../shared/worktree-name-suggestion'
 
 type WorktreePathLike = {
   path: string
@@ -17,14 +20,14 @@ function collectUsedNames(worktreesByRepo: Record<string, WorktreePathLike[]>): 
   return usedNames
 }
 
-function pickRandom<T>(items: readonly T[], random: () => number): T {
-  return items[Math.floor(random() * items.length)]
-}
-
 /** `retiredNames` are names already spent in the active repo, including ones whose workspace was
  *  deleted. Reissuing one would place the new workspace on the prior occupant's path, where agent
  *  CLIs would hand it that workspace's conversation history — so spent names are never offered
- *  again, and the pool degrades to suffixed variants instead of recycling. */
+ *  again, and the pool degrades to suffixed variants instead of recycling.
+ *
+ *  Live dedup stays cross-repo while retirement is per-repo: two live workspaces sharing a name
+ *  are confusing in a flat sidebar, but a name retired under one repo says nothing about the same
+ *  name under another, whose path never collided. */
 export function getSuggestedCreatureName(
   worktreesByRepo: Record<string, WorktreePathLike[]>,
   random: () => number = Math.random,
@@ -34,34 +37,11 @@ export function getSuggestedCreatureName(
   for (const retiredName of retiredNames) {
     usedNames.add(normalizeSuggestedName(retiredName))
   }
-
-  // Why: names are lowercased (branch names are conventionally lowercase, e.g.
-  // fix/seahorse), and a random pick keeps fresh worktrees from all starting at
-  // the same creature and marching down the list in lockstep.
-  const available = MARINE_CREATURES.map(normalizeSuggestedName).filter(
-    (name) => !usedNames.has(name)
-  )
-  if (available.length > 0) {
-    return pickRandom(available, random)
-  }
-
-  // Every base name is taken — fall back to numbered variants.
-  let suffix = 2
-  while (true) {
-    const numbered = MARINE_CREATURES.map(
-      (name) => `${normalizeSuggestedName(name)}-${suffix}`
-    ).filter((name) => !usedNames.has(name))
-    if (numbered.length > 0) {
-      return pickRandom(numbered, random)
-    }
-    suffix += 1
-  }
+  return selectSuggestedCreatureName(usedNames, random)
 }
 
 export function shouldApplySuggestedName(name: string, previousSuggestedName: string): boolean {
   return !name.trim() || name === previousSuggestedName
 }
 
-export function normalizeSuggestedName(name: string): string {
-  return name.trim().toLowerCase()
-}
+export { normalizeSuggestedName }

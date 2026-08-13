@@ -20,6 +20,7 @@ import { useNewWorktreeDrawerNavigation } from './use-new-worktree-drawer-naviga
 import { PickerListDrawer } from './PickerListDrawer'
 import { MobileAgentIcon } from './MobileAgentIcon'
 import { getSuggestedCreatureName } from './worktree-name-suggestion'
+import { useRetiredWorktreeNames } from '../worktree/use-retired-worktree-names'
 import { deriveWorkspaceSshGate, workspaceSshStatusLabel } from '../tasks/workspace-ssh-gate'
 import {
   isSetupHookTrusted,
@@ -186,6 +187,9 @@ function NewWorktreeModalContent({
   const [initialRepos] = useState(() => (hostId ? (getCachedRepos(hostId) as Repo[] | null) : null))
   const [repos, setRepos] = useState<Repo[]>(initialRepos ?? [])
   const [selectedRepo, setSelectedRepo] = useState<Repo | null>(null)
+  // Why: a deleted workspace's directory can still hold agent conversation state keyed by cwd, so
+  // its name must never be suggested again. Fetched per selected repo while the sheet is open.
+  const retiredWorktreeNames = useRetiredWorktreeNames(client, selectedRepo?.id)
   const { drawerView, formSheetVisible, formSheetInteractive, transitionDrawer, openSourceDrawer } =
     useNewWorktreeDrawerNavigation(visible)
   const createInFlightRef = useRef(false)
@@ -601,7 +605,9 @@ function NewWorktreeModalContent({
       // the authoritative collision is checked server-side against git
       // branches/remotes/PRs, so we also retry-with-suffix on conflict.
       const trimmedName = composer.name.trim()
-      const baseName = trimmedName || getSuggestedCreatureName(existingWorktreePaths ?? [])
+      const baseName =
+        trimmedName ||
+        getSuggestedCreatureName(existingWorktreePaths ?? [], undefined, retiredWorktreeNames)
 
       let setupDecision: SetupDecision = 'inherit'
       if (setupCommand) {
