@@ -38,7 +38,10 @@ import {
   setWorktreeNavActivator,
   setWorktreeNavViewActivator
 } from '@/store/slices/worktree-nav-history'
-import { resumeSleepingAgentSessionsForWorktree } from '@/lib/resume-sleeping-agent-session'
+import {
+  gateWorktreeAgentActivation,
+  workspaceHasSleepingAgentSessions
+} from '@/lib/worktree-agent-activation-gate'
 import { queueHookCommandsForFirstWorktreeTab } from '@/lib/hook-command-delayed-delivery'
 import {
   getRuntimeEnvironmentIdForWorktree,
@@ -260,8 +263,16 @@ export function activateAndRevealFolderWorkspace(
   if (!state.isNavigatingHistory) {
     state.recordWorktreeVisit(workspaceKey)
   }
-  resumeSleepingAgentSessionsForWorktree(workspaceKey)
-  const primaryTabId = ensureFolderWorkspaceInitialTerminal(folderWorkspace, opts?.startup)
+  const shouldGateAutoResume =
+    !opts?.startup && workspaceHasSleepingAgentSessions(state, workspaceKey)
+  if (shouldGateAutoResume) {
+    void gateWorktreeAgentActivation(workspaceKey).then(() => {
+      ensureFolderWorkspaceInitialTerminal(folderWorkspace)
+    })
+  }
+  const primaryTabId = shouldGateAutoResume
+    ? null
+    : ensureFolderWorkspaceInitialTerminal(folderWorkspace, opts?.startup)
 
   if (opts?.sidebarRevealBehavior) {
     state.revealWorktreeInSidebar(workspaceKey, { behavior: opts.sidebarRevealBehavior })
@@ -336,18 +347,26 @@ export function activateAndRevealWorktree(
   }
 
   // Why: sleeping destroys the local PTY but preserves the provider session id, so waking should restore those CLI sessions automatically.
-  resumeSleepingAgentSessionsForWorktree(worktreeId)
+  const shouldGateAutoResume =
+    !hasActivationWork && workspaceHasSleepingAgentSessions(postActivationState, worktreeId)
+  if (shouldGateAutoResume) {
+    void gateWorktreeAgentActivation(worktreeId).then(() => {
+      ensureWorktreeHasInitialTerminal(useAppStore.getState(), worktreeId)
+    })
+  }
 
   // 4. Ensure a focusable surface exists for externally-created worktrees
-  const primaryTabId = ensureWorktreeHasInitialTerminal(
-    useAppStore.getState(),
-    worktreeId,
-    opts?.startup,
-    opts?.setup,
-    opts?.issueCommand,
-    opts?.defaultTabs,
-    opts?.backendStartupTerminalSpawned ? { backendStartupTerminalSpawned: true } : undefined
-  )
+  const primaryTabId = shouldGateAutoResume
+    ? null
+    : ensureWorktreeHasInitialTerminal(
+        useAppStore.getState(),
+        worktreeId,
+        opts?.startup,
+        opts?.setup,
+        opts?.issueCommand,
+        opts?.defaultTabs,
+        opts?.backendStartupTerminalSpawned ? { backendStartupTerminalSpawned: true } : undefined
+      )
   if (primaryTabId && opts?.initialCwd) {
     useAppStore.getState().queueTabInitialCwd(primaryTabId, opts.initialCwd)
   }

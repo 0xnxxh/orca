@@ -73,12 +73,14 @@ type FakeConnection = Omit<CodexAppServerConnection, 'closed'> & {
   calls: { method: string; params?: Record<string, unknown> }[]
   replies: { id: number | string; result?: unknown; code?: number }[]
   resumedThreadId: string | null
+  launch: Parameters<typeof openCodexAppServerConnection>[0]
 }
 
 function fakeCodex(): CodexScript {
   const connections: FakeConnection[] = []
-  const openConnection = (async (_launch, handlers = {}) => {
+  const openConnection = (async (launch, handlers = {}) => {
     const connection: FakeConnection = {
+      launch,
       handlers,
       calls: [],
       replies: [],
@@ -307,6 +309,10 @@ beforeEach(async () => {
         claimKeyId: 'key-1',
         resolveWorkspacePath: async (workspaceId) => `/repos/${workspaceId}`,
         resolveCodexCommand: () => '/usr/local/bin/codex',
+        resolveLaunchEnv: async () => ({
+          CODEX_LB_API_KEY: 'shell-exported',
+          CODEX_HOME: '/shell/home'
+        }),
         openCodexConnection: codex.openConnection
       }).then(() => undefined),
     registerSubscriptionCleanup: vi.fn((id: string, dispose: () => void) =>
@@ -386,6 +392,10 @@ describe('a structured codex session over agentSession.*', () => {
       createIntentParams()
     )
     expect(created.snapshot.items).toEqual([])
+    expect(codex.live().launch.env).toMatchObject({
+      CODEX_LB_API_KEY: 'shell-exported',
+      CODEX_HOME: '/home/dev/.codex'
+    })
     const stream = await subscribe('sub-first-send')
     const body = { kind: 'message', role: 'user', blocks: [{ type: 'text', text: 'hi' }] }
 

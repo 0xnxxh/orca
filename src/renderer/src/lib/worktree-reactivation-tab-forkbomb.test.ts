@@ -2,6 +2,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAppStore, type AppState } from '@/store'
 import { activateAndRevealWorktree } from './worktree-activation'
+import { waitForWorktreeAgentActivationGateForTests } from './worktree-agent-activation-gate'
 import { makeCreatedAgentWorktree as makeWorktree } from '@/lib/worktree-activation-created-agent-test-state'
 
 const initialAppStoreState = useAppStore.getState()
@@ -52,7 +53,7 @@ afterEach(() => {
 })
 
 describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
-  it('re-captured sleeping codex session resumes once, not once per reopen', () => {
+  it('re-captured sleeping codex session resumes once, not once per reopen', async () => {
     const worktree = { ...makeWorktree(), createdWithAgent: undefined }
     useAppStore.setState(baseState(worktree))
     const providerSession = { key: 'session_id' as const, id: 'codex-session-1' }
@@ -80,6 +81,7 @@ describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
       }))
 
       activateAndRevealWorktree(worktree.id)
+      await waitForWorktreeAgentActivationGateForTests(worktree.id)
       const state = useAppStore.getState()
       const tabs = state.tabsByWorktree[worktree.id] ?? []
 

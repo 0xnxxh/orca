@@ -21,6 +21,7 @@ import { setStructuredAgentSessionHost } from '../native-chat/agent-session-wire
 import { AgentSessionRecordStore } from './agent-session-record-store'
 import { probeAgentSessionProcessIdentity } from './agent-session-process-identity-probe'
 import { agentSessionPtyWriteGate } from './agent-session-pty-write-gate'
+import { resolveLoginShellEnvironment } from '../startup/login-shell-environment'
 
 /** Sibling of the journal tree rather than inside it: one file adjudicates every
  *  session's lease, while a journal is per session. */
@@ -39,6 +40,7 @@ export type StructuredAgentSessionRuntimeDeps = {
   /** Transport for the Codex child. Overridden only to drive the whole runtime
    *  against a scripted app-server; production spawns the real one. */
   openCodexConnection?: CodexStructuredSessionAdapterDeps['openConnection']
+  resolveLaunchEnv?: () => Promise<NodeJS.ProcessEnv>
   onError?: (input: { scope: string; error: unknown }) => void
   handoffTransport?: StructuredAgentSessionHandoffTransport
 }
@@ -103,6 +105,8 @@ async function install(deps: StructuredAgentSessionRuntimeDeps): Promise<Install
       journalRoot: deps.stateDirectory,
       claimKeyId: deps.claimKeyId,
       probeOwner: createStructuredAgentSessionOwnerProbe(deps.hostId),
+      resolveLaunchEnv: async () =>
+        (await (deps.resolveLaunchEnv ?? resolveLoginShellEnvironment)()) as Record<string, string>,
       onEventSinkError: ({ sessionId, error }) =>
         deps.onError?.({ scope: `structured-agent-session-journal:${sessionId}`, error }),
       ...(deps.handoffTransport ? { handoffTransport: deps.handoffTransport } : {})

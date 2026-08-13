@@ -23,7 +23,7 @@ export type StructuredAgentSessionHostDeps = {
   mintSpawnToken?: () => string
   resolveLaunchEnv?: (
     provider: AgentSessionRecord['provider']
-  ) => Record<string, string> | undefined
+  ) => Promise<Record<string, string> | undefined> | Record<string, string> | undefined
   now?: () => number
   onEventSinkError?: (input: { sessionId: string; error: unknown }) => void
   handoffTransport?: StructuredAgentSessionHandoffTransport

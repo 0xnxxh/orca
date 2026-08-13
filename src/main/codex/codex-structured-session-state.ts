@@ -12,6 +12,7 @@ export type CodexStructuredLaunch = {
   cwd: string
   codexHome: string | null
   resumeThreadId: string | null
+  env?: Record<string, string>
 }
 
 export type CodexStructuredSessionEvent =

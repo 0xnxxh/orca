@@ -16,11 +16,8 @@ import {
   openCodexAppServerConnection
 } from './codex-app-server-connection'
 import { isCodexAppServerUnsupportedError } from './codex-app-server-session'
-import {
-  CODEX_SPAWN_TOKEN_ENV,
-  codexProcessIdentity,
-  codexProviderHandleLink
-} from './codex-structured-owner-identity'
+import { codexProcessIdentity, codexProviderHandleLink } from './codex-structured-owner-identity'
+import { buildCodexStructuredChildEnvironment } from './codex-structured-child-environment'
 import { answerCodexPrompt } from './codex-structured-prompt-replies'
 import { openCodexThread } from './codex-structured-thread-open'
 import { dispatchCodexTurn, isCodexTurnOptionKey } from './codex-structured-turn-start'
@@ -91,10 +88,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
         {
           command: launch.command,
           args: launch.args,
-          env: {
-            [CODEX_SPAWN_TOKEN_ENV]: input.spawnToken,
-            ...(launch.codexHome ? { CODEX_HOME: launch.codexHome } : {})
-          }
+          env: buildCodexStructuredChildEnvironment(launch, input.spawnToken)
         },
         {
           onNotification: (method, params) =>
