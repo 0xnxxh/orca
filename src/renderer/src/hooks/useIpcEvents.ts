@@ -1884,7 +1884,9 @@ export function useIpcEvents(): void {
         store.setActiveView('terminal')
         store.focusGroup(worktreeId, tab.groupId)
         store.activateTab(tab.id)
-        if (browserTarget) {
+        if (tab.contentType === 'agent-session') {
+          store.setActiveTabType('agent-session')
+        } else if (browserTarget) {
           // Why: browser tabs need their own active-page state, not the editor file activation path.
           store.setActiveBrowserTab(browserTarget.workspaceId)
           store.setActiveTabType('browser')

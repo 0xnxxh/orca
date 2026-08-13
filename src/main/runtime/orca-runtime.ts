@@ -172,6 +172,7 @@ import type { ArtifactCloudService } from '../artifacts/artifact-cloud-service'
 import { ORCHESTRATION_MESSAGE_WAIT_DEFAULT_TIMEOUT_MS } from '../../shared/orchestration-message-wait-timeout'
 import { shouldForwardHeadlessTerminalQueryReply } from './headless-terminal-query-reply-policy'
 import type { TerminalRevealIdentity } from '../../shared/terminal-reveal-identity'
+import { structuredAgentSessionTabId } from '../../shared/structured-agent-session-projection'
 import type {
   OrchestrationCompatibilityEvidence,
   OrchestrationCompatibilityHostStamp
@@ -9348,6 +9349,15 @@ export class OrcaRuntimeService {
       stopRecoveredOwner: (record) => this.stopStructuredSessionProcess(record),
       tuiStatus: (owner) => this.structuredTuiStatus(owner),
       closeTuiOwner: (owner) => this.closeStructuredTuiOwner(owner),
+      revealNativeSession: ({ workspaceId, sessionId }) => {
+        this.publishStructuredAgentSessionTab({
+          workspaceId,
+          sessionId,
+          agent: 'codex',
+          activate: false
+        })
+        this.notifier?.focusEditorTab?.(structuredAgentSessionTabId(sessionId), workspaceId)
+      },
       stopFailedTuiLaunch: async (owner) => void (await this.closeStructuredTuiOwner(owner))
     }
   }

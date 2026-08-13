@@ -34,14 +34,17 @@ export function projectLocalStructuredSessionTabs(
   }
 }
 
-function applySnapshots(snapshots: readonly RuntimeMobileSessionTabsResult[]): void {
+export function applyStructuredSessionTabSnapshots(
+  snapshots: readonly RuntimeMobileSessionTabsResult[],
+  owner = LOCAL_STRUCTURED_SESSION_OWNER
+): void {
   applyWebSessionTabsStorePatch((state) => {
     let next = state
     for (const snapshot of snapshots) {
       const patch = applyWebSessionTabsSnapshot(
         next,
         projectLocalStructuredSessionTabs(snapshot),
-        LOCAL_STRUCTURED_SESSION_OWNER,
+        owner,
         Date.now(),
         { preserveLocalLayout: true }
       )
@@ -63,7 +66,7 @@ async function startLocalStructuredSessionTabsSync(args: {
   void window.api.runtime.call({ method: 'session.tabs.listAll', params: {} }).then((response) => {
     if (!args.isDisposed() && response.ok) {
       const result = response.result as { snapshots?: RuntimeMobileSessionTabsResult[] }
-      applySnapshots(result.snapshots ?? [])
+      applyStructuredSessionTabSnapshots(result.snapshots ?? [])
     }
   })
   if (!supported) {
@@ -77,9 +80,9 @@ async function startLocalStructuredSessionTabsSync(args: {
       }
       const event = response.result as SessionTabsEvent
       if (event.type === 'snapshots') {
-        applySnapshots(event.snapshots)
+        applyStructuredSessionTabSnapshots(event.snapshots)
       } else if (event.type === 'snapshot' || event.type === 'updated') {
-        applySnapshots([event])
+        applyStructuredSessionTabSnapshots([event])
       }
     }
   )
