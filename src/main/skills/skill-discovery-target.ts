@@ -4,6 +4,7 @@ import { getDefaultWslDistro, getWslHome, parseWslPath, toLinuxPath } from '../w
 import { clearSkillRootScanCache, discoverSkills } from './discovery'
 import { discoverSkillsInWsl } from './skill-discovery-wsl'
 import { stablePathId } from './skill-discovery-sources'
+import { getRepoExecutionHostId } from '../../shared/execution-host'
 import { SkillScanCoalescer } from './skill-scan-coalescer'
 
 // Why: on WSL the unit of cost is the wsl.exe boot plus one `find` per skill, so
@@ -75,9 +76,13 @@ export function resolveSkillDiscoveryTarget(
 function repoDigest(repos: readonly Repo[]): string {
   return stablePathId(
     repos
-      .map((repo) => repo.path)
+      // Why: the source builder keeps only locally-executed repos, so the same
+      // path reassigned to another execution host is a different root set.
+      .map((repo) => `${getRepoExecutionHostId(repo)}\0${repo.path}`)
       .sort((left, right) => left.localeCompare(right))
-      .join('\n')
+      // NUL is the one byte a path cannot contain, so no repo list can be spelled
+      // two ways that digest alike.
+      .join('\0')
   )
 }
 

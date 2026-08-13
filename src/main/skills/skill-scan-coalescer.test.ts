@@ -107,6 +107,46 @@ describe('SkillScanCoalescer', () => {
     expect(runs).toBe(2)
   })
 
+  it('does not let a scan that started before a refresh publish its stale result', async () => {
+    const coalescer = new SkillScanCoalescer<string>(8)
+    const slowScan = deferred<string>()
+
+    // A focus/mount scan is already in flight when the user installs a skill.
+    const inFlight = coalescer.run('root', { ttlMs: 10_000 }, () => slowScan.promise)
+    const refreshed = await coalescer.run(
+      'root',
+      { ttlMs: 10_000, refresh: true },
+      async () => 'after-install'
+    )
+    expect(refreshed.value).toBe('after-install')
+
+    // The older scan now lands. It must not overwrite the post-install entry with
+    // a pre-install listing and a fresh lifetime.
+    slowScan.resolve('before-install')
+    await inFlight
+
+    expect(await coalescer.run('root', { ttlMs: 10_000 }, async () => 'rescanned')).toEqual({
+      value: 'after-install',
+      source: 'cached'
+    })
+  })
+
+  it('does not let a scan that started before clear() repopulate the cache', async () => {
+    const coalescer = new SkillScanCoalescer<string>(8)
+    const slowScan = deferred<string>()
+
+    const inFlight = coalescer.run('root', { ttlMs: 10_000 }, () => slowScan.promise)
+    // A skill update run rewrote disk while that scan was walking it.
+    coalescer.clear()
+    slowScan.resolve('pre-update')
+    await inFlight
+
+    expect(await coalescer.run('root', { ttlMs: 10_000 }, async () => 'post-update')).toEqual({
+      value: 'post-update',
+      source: 'scanned'
+    })
+  })
+
   it('does not cache a failed scan', async () => {
     const coalescer = new SkillScanCoalescer<number>(8)
     let runs = 0
@@ -138,6 +178,31 @@ describe('SkillScanCoalescer', () => {
 
     expect((await scan('a')).source).toBe('cached')
     expect((await scan('b')).source).toBe('scanned')
+  })
+
+  it('stops joining a scan that never settles, and keeps one pending entry per key', async () => {
+    let now = 1_000
+    const coalescer = new SkillScanCoalescer<number>(8, () => now)
+    const wedged = deferred<number>()
+    let runs = 0
+    const task = (): Promise<number> => {
+      runs += 1
+      // The first scan models a root on a stalled mount: its readdir never settles.
+      return runs === 1 ? wedged.promise : Promise.resolve(runs)
+    }
+
+    void coalescer.run('root', { ttlMs: 0 }, task)
+    now = 1_100
+    // Still young enough to share.
+    const joined = coalescer.run('root', { ttlMs: 0 }, task)
+    now = 40_000
+
+    expect(await coalescer.run('root', { ttlMs: 0 }, task)).toEqual({ value: 2, source: 'scanned' })
+    expect(runs).toBe(2)
+
+    // The wedged callers are still waiting on the original scan, not orphaned.
+    wedged.resolve(99)
+    expect((await joined).value).toBe(99)
   })
 
   it('clears everything on demand', async () => {

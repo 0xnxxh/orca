@@ -29,9 +29,13 @@ const MAX_MARKDOWN_BYTES = 256 * 1024
 // per open workspace used to re-walk the same directories once per pane. Sharing
 // them for a few seconds is what bounds that fan-out.
 export const SKILL_ROOT_SCAN_TTL_MS = 10_000
-// Roots are the fixed home set plus two per local repo; this holds a large repo
-// list without letting a long-lived host accumulate entries without bound.
-const MAX_CACHED_SKILL_ROOTS = 256
+// Why: sized off the root formula, not a round number. One scan builds
+// `12 fixed home roots + 2 per local repo (+ cwd) + plugin roots`, so a bound
+// smaller than a single scan's root count makes that scan evict its own earlier
+// entries and the cache degrades to a ~0% hit rate — exactly the walk this
+// exists to prevent. This holds a ~500-repo install. Most repo roots do not
+// exist, and a missing root caches as `{exists: false, skills: []}`.
+const MAX_CACHED_SKILL_ROOTS = 1_024
 
 type RootScan = { exists: boolean; skills: ScannedSkill[] }
 

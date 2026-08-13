@@ -87,6 +87,13 @@ coalesceSkillScan(key, { ttlMs, refresh }, run)
 Rejections are never cached, and the in-flight entry is cleared on settle, so a
 failed scan never pins a bad result.
 
+An in-flight scan is only joinable for 30 s. A skill root on a stalled network
+mount can leave a `readdir` that never settles; joining it forever would let one
+wedged mount permanently wedge discovery for every later caller — strictly worse
+than before this cache existed, where each caller at least retried. Past that age
+a new caller starts its own scan and replaces the pending entry, so at most one
+survives per key.
+
 ### Three call sites
 
 | Site | Key | TTL | Why |
@@ -112,7 +119,13 @@ Renderer mapping:
   old is correct — and it is what removes the storm at its source. The renderer
   discovery cache gains that freshness window (previously entries never
   expired), so a non-forced focus refresh still re-reads disk once the window
-  lapses.
+  lapses. The window is 15 s, matching the focus-rescan cooldown
+  `useSkillFreshness` already applies to the other disk-reading scan.
+- **Remote runtimes**: `discoverSkillsForRuntimeTarget` drops the caller's target
+  for a remote call because every field in it describes the *client's* host.
+  `refresh` is the exception and is forwarded — it describes the request, and
+  without it an explicit re-check on an SSH/remote runtime would read that host's
+  shared scan instead of its disk.
 - **Explicit change signals stay authoritative.** The install-completed event,
   the Settings recheck button, and terminal-exit refreshes still call
   `refresh(true)`, which now also sets `refresh: true` on the wire and bypasses
@@ -134,7 +147,7 @@ Renderer mapping:
 Each *real* (uncached) scan emits one line:
 
 ```
-[skills] scan target=native-host roots=15 present=3 skills=12 packages=12 cached-roots=12 ms=41
+[skills] scan target=native-host roots=15 present=3 cached=13 skills=12 ms=41 walked=home-claude,home-agents
 ```
 
 Root **ids** (`home-claude`, `repo-agents-<hash>`) are logged, never absolute
@@ -195,6 +208,8 @@ regression, so it is deliberately out of scope here.
 ## Tradeoff
 
 Discovery latency is unchanged on a cold scan and lower on a warm one. The cost
-is bounded staleness: a focus-triggered refresh may show a result up to the
-freshness window old, and a non-refreshing client may see a host result up to
-10 s old. Every explicit "something changed" path bypasses both.
+is bounded staleness, and the two windows compose: a focus-triggered read can be
+served from a renderer entry up to 15 s old that was itself filled from a host
+root scan up to 10 s old, so worst case is ~25 s behind disk. Every explicit
+"something changed" path — install completed, Settings **Refresh**, native-chat
+**Retry**, terminal exit — bypasses both and reads disk.
