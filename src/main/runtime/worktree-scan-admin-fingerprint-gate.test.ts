@@ -63,14 +63,15 @@ function makeMeta(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function makeStore(options: { connectionId?: string; repoCount?: number } = {}) {
+function makeStore(options: { connectionId?: string; repoCount?: number; repoPath?: string } = {}) {
   const metaById: Record<string, ReturnType<typeof makeMeta>> = {
     [WORKTREE_ID]: makeMeta(),
     [MAIN_WORKTREE_ID]: makeMeta({ displayName: 'main' })
   }
+  const basePath = options.repoPath ?? REPO_PATH
   const repos = Array.from({ length: options.repoCount ?? 1 }, (_unused, index) => ({
     id: index === 0 ? REPO_ID : `${REPO_ID}-${index}`,
-    path: index === 0 ? REPO_PATH : `${REPO_PATH}-${index}`,
+    path: index === 0 ? basePath : `${basePath}-${index}`,
     displayName: 'app',
     badgeColor: 'blue',
     addedAt: 1,
@@ -105,7 +106,9 @@ function makeStore(options: { connectionId?: string; repoCount?: number } = {}) 
 
 type RuntimeInternals = { listResolvedWorktrees: () => Promise<unknown> }
 
-function makeRuntime(options: { connectionId?: string; repoCount?: number } = {}): {
+function makeRuntime(
+  options: { connectionId?: string; repoCount?: number; repoPath?: string } = {}
+): {
   runtime: OrcaRuntimeService
   list: () => Promise<unknown>
 } {
@@ -225,6 +228,24 @@ describe('worktree scan admin-fingerprint gate', () => {
       await list()
 
       expect(scanCount()).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never probes a repo whose scan TTL already reaches the reconcile interval', async () => {
+    // Agent-scratch roots carry a 5-minute TTL, so a fingerprint could never be reused. Reading one
+    // would be pure work on a polling path.
+    vi.useFakeTimers()
+    try {
+      const { list } = makeRuntime({ repoPath: '/tmp/.codex-tmp/capsule-a' })
+
+      await list()
+      vi.advanceTimersByTime(WORKTREE_SCAN_ADMIN_RECONCILE_INTERVAL_MS + 1_000)
+      await list()
+
+      expect(scanCount()).toBe(2)
+      expect(readRepoWorktreeAdminFingerprintMock).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
