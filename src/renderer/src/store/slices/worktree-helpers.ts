@@ -58,6 +58,8 @@ export type WorktreeFetchOptions = {
   requireAuthoritative?: boolean
   executionHostId?: ExecutionHostId
   forceLocalOwner?: boolean
+  /** Reuse one runtime-history snapshot across a caller-owned refresh batch. */
+  provisionedRootRuntimeWorkspaceKeys?: ReadonlySet<string>
   /** Skip automatic remote lineage when the caller owns a final host-wide refresh. */
   suppressRemoteLineageRefresh?: boolean
 }

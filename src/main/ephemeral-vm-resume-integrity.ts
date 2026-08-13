@@ -3,6 +3,7 @@ import { updateEphemeralVmRuntimeStatus } from '../shared/ephemeral-vm-runtime-s
 import type { EphemeralVmRuntimeRecord } from '../shared/ephemeral-vm-runtimes'
 import type { EphemeralVmRecipeResult } from '../shared/ephemeral-vm-recipes'
 import {
+  getEphemeralVmRecipeResultCheckoutMode,
   getEphemeralVmRecipeResultConnection,
   getEphemeralVmRecipeResultProjectRoot
 } from '../shared/ephemeral-vm-recipes'
@@ -12,6 +13,13 @@ export type EphemeralVmResumeIntegrityResult =
   | { ok: true }
   | { ok: false; runtime: EphemeralVmRuntimeRecord; error: string }
 type EphemeralVmResumeIntegrityFailure = Extract<EphemeralVmResumeIntegrityResult, { ok: false }>
+
+function ownsProvisionedRoot(runtime: EphemeralVmRuntimeRecord): boolean {
+  return (
+    runtime.provisionedProjectRoot !== undefined ||
+    getEphemeralVmRecipeResultCheckoutMode(runtime.recipeResult) === 'provisioned-root'
+  )
+}
 
 export function validateEphemeralVmResumeIntegrity(args: {
   userDataPath: string
@@ -31,7 +39,7 @@ export function validateEphemeralVmResumeIntegrity(args: {
   const provisionedRoot =
     existing.provisionedProjectRoot ?? getEphemeralVmRecipeResultProjectRoot(existing.recipeResult)
   if (
-    existing.recipe?.checkoutMode === 'provisioned-root' &&
+    ownsProvisionedRoot(existing) &&
     normalizeRuntimePathForComparison(provisionedRoot) !==
       normalizeRuntimePathForComparison(getEphemeralVmRecipeResultProjectRoot(resume.result))
   ) {
@@ -52,11 +60,10 @@ export function persistFailedEphemeralVmResume(args: {
   error: string
   recipeResult?: EphemeralVmRecipeResult
 }): EphemeralVmResumeIntegrityFailure {
-  const provisionedProjectRoot =
-    args.existing.recipe?.checkoutMode === 'provisioned-root'
-      ? (args.existing.provisionedProjectRoot ??
-        getEphemeralVmRecipeResultProjectRoot(args.existing.recipeResult))
-      : undefined
+  const provisionedProjectRoot = ownsProvisionedRoot(args.existing)
+    ? (args.existing.provisionedProjectRoot ??
+      getEphemeralVmRecipeResultProjectRoot(args.existing.recipeResult))
+    : undefined
   const runtime = updateEphemeralVmRuntimeStatus(args.userDataPath, args.existing.id, {
     status: 'resume_failed',
     ...(args.recipeResult ? { recipeResult: args.recipeResult } : {}),

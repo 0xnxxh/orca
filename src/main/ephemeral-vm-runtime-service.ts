@@ -247,6 +247,7 @@ export async function resumeEphemeralVmRuntime(
   const runtime = updateEphemeralVmRuntimeStatus(args.userDataPath, existing.id, {
     status: 'running',
     ...(!resume.skipped ? { recipeResult: resume.result } : {}),
+    resumeConnectionPending: !resume.skipped,
     updatedAt: Date.now()
   })
   return { ok: true, runtime, skipped: resume.skipped }

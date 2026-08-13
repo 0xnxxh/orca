@@ -46,17 +46,19 @@ function provisionedResult(projectRoot: string, resourceId: string) {
   }
 }
 
-function persistRuntime(userDataPath: string, withImmutableRoot = true): void {
+const provisionedRecipe = {
+  id: 'cloud-sandbox',
+  name: 'Cloud Sandbox',
+  create: './create.sh',
+  resume: './resume.sh',
+  checkoutMode: 'provisioned-root' as const
+}
+
+function persistRuntime(userDataPath: string, withImmutableRoot = true, withRecipe = true): void {
   upsertEphemeralVmRuntime(userDataPath, {
     id: 'runtime-1',
     recipeId: 'cloud-sandbox',
-    recipe: {
-      id: 'cloud-sandbox',
-      name: 'Cloud Sandbox',
-      create: './create.sh',
-      resume: './resume.sh',
-      checkoutMode: 'provisioned-root'
-    },
+    ...(withRecipe ? { recipe: provisionedRecipe } : {}),
     repoId: 'repo-1',
     ...(withImmutableRoot ? { provisionedProjectRoot: '/workspace/repo' } : {}),
     connectionMode: 'orca-server',
@@ -157,6 +159,60 @@ describe('ephemeral VM resume integrity', () => {
         status: 'resume_failed',
         provisionedProjectRoot: '/workspace/repo',
         recipeResult: { projectRoot: '/workspace/moved' }
+      }
+    })
+  })
+
+  it('persists connection publication before returning provider resume success', async () => {
+    const userDataPath = makeDir()
+    persistRuntime(userDataPath)
+    resumeRecipe.mockResolvedValue({
+      ok: true,
+      skipped: false,
+      context: {},
+      result: provisionedResult('/workspace/repo', 'new-resource'),
+      stdout: '',
+      stderr: ''
+    })
+
+    await expect(
+      resumeEphemeralVmRuntime({
+        userDataPath,
+        repoPath: '/repo',
+        recipe: provisionedRecipe,
+        runtimeId: 'runtime-1'
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      runtime: { status: 'running', resumeConnectionPending: true }
+    })
+  })
+
+  it('rejects a moved root for a legacy runtime without a recipe snapshot', async () => {
+    const userDataPath = makeDir()
+    persistRuntime(userDataPath, false, false)
+    resumeRecipe.mockResolvedValue({
+      ok: true,
+      skipped: false,
+      context: {},
+      result: provisionedResult('/workspace/moved', 'new-resource'),
+      stdout: '',
+      stderr: ''
+    })
+
+    const result = await resumeEphemeralVmRuntime({
+      userDataPath,
+      repoPath: '/repo',
+      recipe: provisionedRecipe,
+      runtimeId: 'runtime-1'
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('projectRoot stable'),
+      runtime: {
+        status: 'resume_failed',
+        provisionedProjectRoot: '/workspace/repo'
       }
     })
   })

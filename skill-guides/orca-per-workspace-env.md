@@ -331,6 +331,11 @@ Concrete pattern: §7f.
 
 ### 7d. Suspend / resume / destroy — per workspace
 
+Lifecycle hooks must be replay-safe for the same `instanceId` and provider resource. Orca coalesces
+concurrent resume requests, but a desktop crash can occur after the provider accepts a command and
+before Orca stores its result. Query provider state when needed, treat an already-reached target state
+as success, and never allocate a replacement resource from `resume`.
+
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail

@@ -243,7 +243,7 @@ describe('repo slice project host setup lifecycle', () => {
     expect(store.getState().tabsByWorktree[worktreeId]).toEqual([])
   })
 
-  it('rejects failed setup deletion without mutating imported project state', async () => {
+  it('returns null for failed setup deletion without mutating imported project state', async () => {
     const attachedSetup = { ...runtimeSetup, repoId: runtimeRepo.id }
     const worktree = makeWorktree({
       id: `${runtimeRepo.id}::${runtimeRepo.path}`,
@@ -264,7 +264,7 @@ describe('repo slice project host setup lifecycle', () => {
 
     await expect(
       store.getState().deleteProjectHostSetup({ setupId: attachedSetup.id })
-    ).rejects.toThrow('runtime unavailable')
+    ).resolves.toBeNull()
 
     expect(store.getState().projects).toEqual([project])
     expect(store.getState().projectHostSetups).toEqual([attachedSetup])

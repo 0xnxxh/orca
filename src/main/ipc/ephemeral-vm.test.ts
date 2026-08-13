@@ -671,6 +671,7 @@ describe('registerEphemeralVmHandlers', () => {
     expect(resumed).toEqual(
       expect.objectContaining({
         status: 'running',
+        resumeConnectionPending: false,
         recipeResult: expect.objectContaining({ projectRoot: '/workspace/repo' })
       })
     )

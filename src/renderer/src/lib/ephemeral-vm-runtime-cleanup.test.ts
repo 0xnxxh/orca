@@ -64,6 +64,24 @@ describe('cleanupEphemeralVmRuntimesForDeleted', () => {
     expect(destroyed).toEqual({ runtimeIds: [], sshTargetIds: [] })
   })
 
+  it('retries a completed provider cleanup while its SSH target remains', async () => {
+    listRuntimes.mockResolvedValue([
+      runtime({
+        id: 'rt-1',
+        workspaceId: 'wt-1',
+        status: 'cleanup_failed',
+        cleanupStatus: 'succeeded',
+        sshTargetId: 'runtime-ssh-a'
+      })
+    ])
+    cleanup.mockResolvedValue({ status: 'cleaned', cleanupStatus: 'succeeded' })
+
+    await expect(cleanupEphemeralVmRuntimesForDeleted({ workspaceIds: ['wt-1'] })).resolves.toEqual(
+      { runtimeIds: ['rt-1'], sshTargetIds: ['runtime-ssh-a'] }
+    )
+    expect(cleanup).toHaveBeenCalledWith({ runtimeId: 'rt-1' })
+  })
+
   it('swallows listRuntimes failures', async () => {
     listRuntimes.mockRejectedValue(new Error('boom'))
     await expect(cleanupEphemeralVmRuntimesForDeleted({ workspaceIds: ['wt-1'] })).resolves.toEqual(
@@ -71,11 +89,26 @@ describe('cleanupEphemeralVmRuntimesForDeleted', () => {
     )
   })
 
-  it('does not report runtime or SSH target ids when cleanup fails', async () => {
+  it('reports a removed SSH target when provider cleanup fails', async () => {
     listRuntimes.mockResolvedValue([
       runtime({ id: 'rt-1', workspaceId: 'wt-1', sshTargetId: 'runtime-ssh-a' })
     ])
     cleanup.mockResolvedValue({ status: 'cleanup_failed', cleanupStatus: 'failed' })
+
+    await expect(cleanupEphemeralVmRuntimesForDeleted({ workspaceIds: ['wt-1'] })).resolves.toEqual(
+      { runtimeIds: [], sshTargetIds: ['runtime-ssh-a'] }
+    )
+  })
+
+  it('does not report an SSH target retained after cleanup setup fails', async () => {
+    listRuntimes.mockResolvedValue([
+      runtime({ id: 'rt-1', workspaceId: 'wt-1', sshTargetId: 'runtime-ssh-a' })
+    ])
+    cleanup.mockResolvedValue({
+      status: 'cleanup_failed',
+      cleanupStatus: 'failed',
+      sshTargetId: 'runtime-ssh-a'
+    })
 
     await expect(cleanupEphemeralVmRuntimesForDeleted({ workspaceIds: ['wt-1'] })).resolves.toEqual(
       { runtimeIds: [], sshTargetIds: [] }

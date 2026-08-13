@@ -35,17 +35,16 @@ export async function cleanupEphemeralVmRuntimesForDeleted(args: {
     const runtimes = await window.api.ephemeralVm.listRuntimes()
     const matchingRuntimes = runtimes.filter(
       (runtime) =>
-        runtime.cleanupStatus !== 'succeeded' &&
+        (runtime.cleanupStatus !== 'succeeded' || runtime.sshTargetId !== undefined) &&
         ((runtime.workspaceId !== undefined && workspaceIdSet.has(runtime.workspaceId)) ||
           (runtime.sshTargetId !== undefined && sshTargetIdSet.has(runtime.sshTargetId)))
     )
     for (const runtime of matchingRuntimes) {
       const cleaned = await window.api.ephemeralVm.cleanup({ runtimeId: runtime.id })
-      if (cleaned.status !== 'cleaned') {
-        continue
+      if (cleaned.status === 'cleaned') {
+        matches.runtimeIds.push(runtime.id)
       }
-      matches.runtimeIds.push(runtime.id)
-      if (runtime.sshTargetId) {
+      if (runtime.sshTargetId && !cleaned.sshTargetId) {
         matches.sshTargetIds.push(runtime.sshTargetId)
       }
     }

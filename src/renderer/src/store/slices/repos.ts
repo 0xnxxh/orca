@@ -3445,7 +3445,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         description: message,
         duration: ERROR_TOAST_DURATION
       })
-      throw err
+      return null
     }
   },
 

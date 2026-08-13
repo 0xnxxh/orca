@@ -56,6 +56,8 @@ export const EphemeralVmRuntimeRecordSchema = z.object({
   ref: z.string().min(1).optional(),
   orcaVersion: z.string().min(1).optional(),
   provisionedProjectRoot: z.string().min(1).optional(),
+  /** Provider resume completed; retry only local connection publication. */
+  resumeConnectionPending: z.boolean().optional(),
   connectionMode: EphemeralVmRuntimeConnectionModeSchema.optional(),
   runtimeEnvironmentId: z.string().min(1).optional(),
   sshTargetId: z.string().min(1).optional(),
