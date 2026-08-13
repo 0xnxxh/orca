@@ -2194,10 +2194,8 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     }
     // Why: startup hydration needs the newest local catalog, not unreachable remote hosts.
     settleLocalCatalog(localCatalogOutcome)
-    if (
-      get().reposFetchGeneration !== generation &&
-      !isLatestRepoCatalogGeneration(get, LOCAL_EXECUTION_HOST_ID, generation)
-    ) {
+    // Why: a newer local-only refresh must not cancel this load's unrelated remote catalogs.
+    if (latestAllHostRepoCatalogGenerationByStore.get(get) !== generation) {
       return
     }
     if (options?.remoteHosts === 'skip') {
