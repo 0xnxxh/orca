@@ -6,6 +6,13 @@ import { describe, expect, it } from 'vitest'
 const workflow = parse(readFileSync('.github/workflows/pr.yml', 'utf8'))
 const headlessLinuxGuide = readFileSync('docs/reference/headless-linux-server.md', 'utf8')
 
+function readSystemdUnitBlocks(doc, unitName) {
+  return [...doc.matchAll(new RegExp(`^# /etc/systemd/system/${unitName}$`, 'gm'))].map((match) => {
+    const start = match.index + match[0].length
+    return doc.slice(start, doc.indexOf('```', start))
+  })
+}
+
 describe('headless serve shutdown PR gate', () => {
   it('packages an x64 AppImage before running the Docker signal oracle', () => {
     const steps = workflow.jobs.package.steps
@@ -20,8 +27,14 @@ describe('headless serve shutdown PR gate', () => {
   })
 
   it('keeps owned Xvfb alive during the documented systemd graceful stop', () => {
-    expect(headlessLinuxGuide).toMatch(
-      /\[Service\][\s\S]*?^ExecStart=.*orca-linux\.AppImage serve.*\n[\s\S]*?^KillMode=mixed$/m
-    )
+    const serveUnits = readSystemdUnitBlocks(headlessLinuxGuide, 'orca-serve.service')
+    const ownedXvfbUnits = serveUnits.filter((unit) => !/^Environment=DISPLAY=/m.test(unit))
+    const managedXvfbUnits = serveUnits.filter((unit) => /^Environment=DISPLAY=/m.test(unit))
+
+    expect(ownedXvfbUnits).toHaveLength(1)
+    expect(ownedXvfbUnits[0]).toMatch(/^ExecStart=.*orca-linux\.AppImage serve.*$/m)
+    expect(ownedXvfbUnits[0]).toMatch(/^KillMode=mixed$/m)
+    expect(managedXvfbUnits).toHaveLength(1)
+    expect(managedXvfbUnits[0]).not.toMatch(/^KillMode=/m)
   })
 })
