@@ -179,9 +179,12 @@ export async function openWorkspaceBrowserTab(
     throw openFailure(presentation.error, 'no active worktree route')
   }
   const environmentId = route.runtimeEnvironmentId?.trim() || null
-  const expectedEnvironmentId = request.expectedRuntimeEnvironmentId?.trim() || null
+  const expectedEnvironmentId =
+    request.expectedRuntimeEnvironmentId === undefined
+      ? null
+      : request.expectedRuntimeEnvironmentId.trim()
   if (
-    expectedEnvironmentId &&
+    expectedEnvironmentId !== null &&
     !isExpectedRuntimeBrowserRoute(
       state,
       availability,
