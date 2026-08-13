@@ -88,7 +88,6 @@ import {
   isSshPtyIdentityMismatchError,
   isSshPtyNotFoundError
 } from '../providers/ssh-pty-errors'
-import { isRelayAttestedPtyIncarnationId } from '../../shared/pty-incarnation'
 import { parseAppSshPtyId, toAppSshPtyId, toRelaySshPtyId } from '../providers/ssh-pty-id'
 import { createPtySpawnTiming } from './pty-spawn-timing'
 import {
@@ -235,7 +234,7 @@ import {
 } from '../project-groups/folder-workspace-path-status'
 import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import { resolveLocalProjectRuntimeForWorktreeId } from '../local-project-runtime-resolution'
-import { isPtyIncarnationId } from '../../shared/pty-incarnation'
+import { isPtyIncarnationId, isRelayAttestedPtyIncarnationId } from '../../shared/pty-incarnation'
 import type { PtyListedSession } from '../../shared/pty-listed-session'
 
 // ─── Provider Registry ──────────────────────────────────────────────
