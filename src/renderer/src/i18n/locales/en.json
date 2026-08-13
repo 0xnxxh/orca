@@ -939,6 +939,12 @@
         "description": "Permission messages from macOS may appear when an agent or terminal tool running in Orca attempts to access protected files. Grant Full Disk Access in Settings to reduce these prompts.",
         "openSettings": "Open Settings",
         "dismiss": "Don't show again"
+      },
+      "useMacTccAttributionSeveredNotice": {
+        "title": "macOS permissions may not reach Orca terminals",
+        "description": "Running Orca terminals are hosted by a daemon started by a previous Orca installation. macOS may not apply Orca’s Accessibility, Automation, or protected-file permissions to them. Restart the daemon from Manage Sessions to restore access. This will close all running Orca terminals.",
+        "openManageSessions": "Open Manage Sessions",
+        "dismiss": "Dismiss"
       }
     },
     "components": {
@@ -15370,7 +15376,6 @@
     },
     "map": {
       "host": {
-        "all": "All hosts",
         "local": "Local",
         "ssh": "SSH",
         "wsl": "WSL",
@@ -15378,13 +15383,31 @@
       },
       "filters": {
         "showStates": "Agent states",
-        "canvasSummary": "{{shown}} of {{total}} agents shown",
         "agentlessWorkspaces": "Workspaces without agents",
         "orchestrationLinks": "Orchestration links",
-        "workspaceVisibility": "Map content"
+        "orchestrationLinksHidden": "Orchestration links hidden",
+        "workspaceVisibility": "Map content",
+        "title": "Map controls",
+        "reset": "Reset",
+        "ofTotalAgents": "of {{total}} agents shown",
+        "quickViews": "Quick views",
+        "agents": "Agents",
+        "time": "Time",
+        "lifespan": "Session lifespan",
+        "sinceMessage": "Since last message",
+        "timeInState": "Time in current state",
+        "timeMinimum": "{{label}} minimum",
+        "timeMaximum": "{{label}} maximum",
+        "timeAny": "any",
+        "timeRangeCount": "{{count}} ranges",
+        "resetRanges": "Reset ranges",
+        "summaryAll": "All",
+        "summaryCount": "{{shown}} of {{total}}",
+        "summarySelected": "{{count}} selected",
+        "workspace": "Workspace",
+        "stateChip": "State: {{states}}"
       },
       "liveContainmentMap": "Live containment map",
-      "hostFilter": "Host filter",
       "empty": "No agents match the current filters.",
       "canvasLabel": "Nested project, workspace, and agent map",
       "zoomOut": "Zoom out",
@@ -15406,6 +15429,16 @@
       "noWorkspaceAgents": "No agents in this workspace.",
       "status": {
         "doneSeen": "Done, seen"
+      },
+      "quickView": {
+        "everything": "Everything",
+        "attention": "Needs me",
+        "stuck": "Stuck",
+        "unread": "Unread",
+        "recent": "Last 30 min",
+        "longRunning": "Long runners",
+        "stale": "Stale > 3d",
+        "orchestration": "Orchestration"
       }
     },
     "placeholder": {
@@ -15469,7 +15502,8 @@
       "project": "Project",
       "workspaceStatus": "Workspace status",
       "reviewStatus": "PR / MR status",
-      "clearAll": "Clear all filters"
+      "clearAll": "Clear all filters",
+      "removeChip": "Remove {{filter}}"
     },
     "search": {
       "placeholder": "Search worktree, project, or agent…",
