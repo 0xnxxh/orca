@@ -108,8 +108,7 @@ describe('openMobileNativeChatFileTap', () => {
         absolutePath: '/Users/ada/orca-plans/result.html',
         grantId: 'grant-1',
         nativeChatTab: 'tab-1',
-        nativeChatSession: 'session-1',
-        readOnly: 'true'
+        nativeChatSession: 'session-1'
       })
     })
   })

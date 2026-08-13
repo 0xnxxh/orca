@@ -67,7 +67,6 @@ describe('mobile-file-preview-route', () => {
       cwd: '/tmp/run',
       nativeChatTab: 'tab-1',
       nativeChatSession: 'session-1',
-      readOnly: 'true',
       line: '12',
       column: '3'
     })
@@ -85,7 +84,6 @@ describe('mobile-file-preview-route', () => {
         cwd: '/tmp/run',
         nativeChatTab: 'tab-1',
         nativeChatSession: 'session-1',
-        readOnly: 'true',
         line: '12',
         column: '3'
       }

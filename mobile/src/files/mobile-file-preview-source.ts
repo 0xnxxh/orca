@@ -21,10 +21,10 @@ export function previewSourceFromRoute(
             nativeChatContext: {
               tabId: params.nativeChatTab,
               sessionId: params.nativeChatSession
-            }
+            },
+            readOnly: true as const
           }
-        : {}),
-      ...(params.readOnly === 'true' ? { readOnly: true as const } : {})
+        : {})
     }
   }
   if (!params.relativePath) {
@@ -43,9 +43,6 @@ export function sourceKeyForPreview(source: MobileFilePreviewSource | null): str
   const key = ['terminal', source.worktreeId, source.absolutePath, source.terminalHandle ?? '']
   if (source.nativeChatContext) {
     key.push(source.nativeChatContext.tabId, source.nativeChatContext.sessionId)
-  }
-  if (source.readOnly) {
-    key.push('read-only')
   }
   return JSON.stringify(key)
 }

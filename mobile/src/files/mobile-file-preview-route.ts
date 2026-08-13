@@ -12,7 +12,6 @@ export type MobileFilePreviewRouteParams = {
   cwd?: string
   nativeChatTab?: string
   nativeChatSession?: string
-  readOnly?: string
   line?: string
   column?: string
   name?: string
@@ -40,7 +39,6 @@ type RawPreviewRouteParams = {
   cwd?: MobileFilePreviewParamValue
   nativeChatTab?: MobileFilePreviewParamValue
   nativeChatSession?: MobileFilePreviewParamValue
-  readOnly?: MobileFilePreviewParamValue
   line?: MobileFilePreviewParamValue
   column?: MobileFilePreviewParamValue
   name?: MobileFilePreviewParamValue
@@ -84,7 +82,6 @@ export function normalizeMobileFilePreviewRouteParams(
         cwd: optionalSingleParam(params.cwd),
         nativeChatTab: optionalSingleParam(params.nativeChatTab),
         nativeChatSession: optionalSingleParam(params.nativeChatSession),
-        readOnly: optionalSingleParam(params.readOnly),
         line: optionalSingleParam(params.line),
         column: optionalSingleParam(params.column),
         name: optionalSingleParam(params.name),
