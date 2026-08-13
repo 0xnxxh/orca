@@ -1,5 +1,5 @@
 import { basename } from 'node:path'
-import { getRepoExecutionHostId } from '../../shared/execution-host'
+import { getRepoExecutionHostId, normalizeExecutionHostId } from '../../shared/execution-host'
 import type { Store } from '../persistence'
 import type { Repo, WorktreeMeta } from '../../shared/types'
 import {
@@ -61,7 +61,7 @@ function createDisconnectedSshCandidate(
     repoId: repo.id,
     repoName: repo.displayName,
     connectionId: repo.connectionId ?? null,
-    executionHostId: getRepoExecutionHostId(repo),
+    executionHostId: normalizeExecutionHostId(meta.hostId) ?? getRepoExecutionHostId(repo),
     displayName: meta.displayName || basename(path),
     branch: basename(path),
     path,

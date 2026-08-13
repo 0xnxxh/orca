@@ -15255,8 +15255,10 @@
         },
         "browse": {
           "noSizes": "No workspace sizes measured yet.",
-          "noSizesDescription": "Sizes come from the disk-space scan. Run it to sort and filter by size.",
+          "noSizesDescription": "Sizes appear after disk usage has been measured.",
           "measureSizes": "Measure sizes",
+          "measureSizesTitle": "Measure workspace sizes",
+          "measureSizesDescription": "Measure disk usage to compare, sort, and filter workspaces by size.",
           "sizeOnDisk": "Size on disk: {{value0}}",
           "checkingGitRow": "Checking git status",
           "searchPlaceholder": "Search name, repo, branch, path, host",

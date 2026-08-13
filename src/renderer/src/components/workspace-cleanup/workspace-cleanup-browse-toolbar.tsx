@@ -6,7 +6,10 @@ import {
   hasActiveWorkspaceCleanupFilters,
   listActiveWorkspaceCleanupFacetGroups
 } from './workspace-cleanup-active-facets'
-import { WorkspaceCleanupEmptyState } from './workspace-cleanup-dialog-notices'
+import {
+  WorkspaceCleanupEmptyState,
+  WorkspaceCleanupSizeScanBanner
+} from './workspace-cleanup-dialog-notices'
 import { WorkspaceCleanupFilterBar } from './workspace-cleanup-filter-bar'
 import { WorkspaceCleanupSortHeader } from './workspace-cleanup-sort-header'
 import type { WorkspaceSpaceScanProgress } from '../../../../shared/workspace-space-types'
@@ -37,6 +40,14 @@ export function WorkspaceCleanupBrowseToolbar({
   const activeFilters = hasActiveWorkspaceCleanupFilters(browse.filters)
   return (
     <>
+      {spaceScanning || facetRows.unmeasuredSizeCount > 0 ? (
+        <WorkspaceCleanupSizeScanBanner
+          scanning={spaceScanning}
+          scannedCount={spaceProgress?.scannedWorktreeCount ?? 0}
+          totalCount={spaceProgress?.totalWorktreeCount ?? 0}
+          onRun={onRunSpaceScan}
+        />
+      ) : null}
       <WorkspaceCleanupFilterBar
         facetProps={{
           filters: browse.filters,
@@ -48,14 +59,6 @@ export function WorkspaceCleanupBrowseToolbar({
         activeFacetGroupCount={listActiveWorkspaceCleanupFacetGroups(browse.filters).length}
         matchedCount={facetRows.matchedCount}
         hasActiveFilters={activeFilters}
-        sizeScan={{
-          measuredCount: facetRows.measuredSizeCount,
-          unmeasuredCount: facetRows.unmeasuredSizeCount,
-          scanning: spaceScanning,
-          scannedCount: spaceProgress?.scannedWorktreeCount ?? 0,
-          totalCount: spaceProgress?.totalWorktreeCount ?? 0,
-          onRun: onRunSpaceScan
-        }}
         gitEvidence={{ pendingCount: gitPendingCount, totalCount: gitCheckedTotal }}
         onQueryChange={(query) => browse.patchFilters('query', query)}
         onClearFilters={browse.clearFilters}
@@ -75,13 +78,8 @@ export function WorkspaceCleanupBrowseToolbar({
           )}
           description={translate(
             'components.workspace.cleanup.browse.noSizesDescription',
-            'Sizes come from the disk-space scan. Run it to sort and filter by size.'
+            'Sizes appear after disk usage has been measured.'
           )}
-          actionLabel={translate(
-            'components.workspace.cleanup.browse.measureSizes',
-            'Measure sizes'
-          )}
-          onAction={onRunSpaceScan}
         />
       ) : null}
     </>

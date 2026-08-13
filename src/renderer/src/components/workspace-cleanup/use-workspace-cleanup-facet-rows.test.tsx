@@ -179,4 +179,52 @@ describe('useWorkspaceCleanupFacetRows hot paths', () => {
     expect(view.result.current.rows[0]?.sizeBytes).toBe(4_096)
     expect(view.result.current.measuredSizeCount).toBe(1)
   })
+
+  it('includes folder repositories discovered from cleanup candidates', () => {
+    const candidate = makeFacetCandidate({ repoId: 'folder-1', repoName: 'Loose files' })
+    const view = renderHook(() =>
+      useWorkspaceCleanupFacetRows({
+        candidates: [candidate],
+        filters: createDefaultWorkspaceCleanupFilterState(),
+        sort: DEFAULT_WORKSPACE_CLEANUP_SORT,
+        now: 1_700_000_000_000
+      })
+    )
+
+    expect(view.result.current.options.repos).toEqual([{ id: 'folder-1', label: 'Loose files' }])
+  })
+
+  it('projects same-id streamed sizes only onto their owning hosts', () => {
+    const worktreeId = 'repo-1::/repo/alpha'
+    const candidates = [
+      makeFacetCandidate({ worktreeId, displayName: 'local', executionHostId: 'local' }),
+      makeFacetCandidate({
+        worktreeId,
+        displayName: 'remote',
+        connectionId: 'builder',
+        executionHostId: 'ssh:builder'
+      })
+    ]
+    holders.state = {
+      ...holders.state!,
+      workspaceSpaceMeasurements: [
+        { worktreeId, executionHostId: 'ssh:builder', status: 'ok', sizeBytes: 4_096 }
+      ]
+    }
+    const view = renderHook(() =>
+      useWorkspaceCleanupFacetRows({
+        candidates,
+        filters: createDefaultWorkspaceCleanupFilterState(),
+        sort: DEFAULT_WORKSPACE_CLEANUP_SORT,
+        now: 1_700_000_000_000
+      })
+    )
+
+    expect(
+      view.result.current.rows.find((row) => row.displayName === 'local')?.sizeBytes
+    ).toBeNull()
+    expect(view.result.current.rows.find((row) => row.displayName === 'remote')?.sizeBytes).toBe(
+      4_096
+    )
+  })
 })

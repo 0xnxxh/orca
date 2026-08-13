@@ -1,5 +1,5 @@
 import React from 'react'
-import { HardDrive, Loader2, RotateCcw, Search, SlidersHorizontal } from 'lucide-react'
+import { Loader2, RotateCcw, Search, SlidersHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -8,15 +8,6 @@ import { translate } from '@/i18n/i18n'
 import { WorkspaceCleanupGitReviewFacets } from './workspace-cleanup-git-review-facets'
 import { WorkspaceCleanupLifecycleFacets } from './workspace-cleanup-lifecycle-facets'
 import type { WorkspaceCleanupFacetGroupProps } from './workspace-cleanup-facet-panel-model'
-
-export type WorkspaceCleanupSizeScanState = {
-  measuredCount: number
-  unmeasuredCount: number
-  scanning: boolean
-  scannedCount: number
-  totalCount: number
-  onRun: () => void
-}
 
 export type WorkspaceCleanupGitEvidenceProgress = {
   pendingCount: number
@@ -28,7 +19,6 @@ export function WorkspaceCleanupFilterBar({
   activeFacetGroupCount,
   matchedCount,
   hasActiveFilters,
-  sizeScan,
   gitEvidence,
   onQueryChange,
   onClearFilters
@@ -37,7 +27,6 @@ export function WorkspaceCleanupFilterBar({
   activeFacetGroupCount: number
   matchedCount: number
   hasActiveFilters: boolean
-  sizeScan: WorkspaceCleanupSizeScanState
   gitEvidence: WorkspaceCleanupGitEvidenceProgress
   onQueryChange: (query: string) => void
   onClearFilters: () => void
@@ -112,25 +101,6 @@ export function WorkspaceCleanupFilterBar({
             { value0: gitEvidence.pendingCount }
           )}
         </span>
-      ) : null}
-
-      {sizeScan.scanning || sizeScan.unmeasuredCount > 0 ? (
-        <Button variant="outline" size="sm" disabled={sizeScan.scanning} onClick={sizeScan.onRun}>
-          {sizeScan.scanning ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <HardDrive className="size-3.5" />
-          )}
-          {sizeScan.scanning
-            ? sizeScan.totalCount > 0
-              ? translate(
-                  'components.workspace.cleanup.browse.measuringSizesProgress',
-                  'Measuring {{value0}}/{{value1}}',
-                  { value0: sizeScan.scannedCount, value1: sizeScan.totalCount }
-                )
-              : translate('components.workspace.cleanup.browse.measuringSizes', 'Measuring sizes')
-            : translate('components.workspace.cleanup.browse.measureSizes', 'Measure sizes')}
-        </Button>
       ) : null}
     </div>
   )

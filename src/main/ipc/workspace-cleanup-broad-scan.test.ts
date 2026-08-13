@@ -159,6 +159,25 @@ describe('workspace cleanup broad scan opt-in', () => {
     ])
   })
 
+  it('preserves a worktree runtime host on cleanup candidates', async () => {
+    const runtimeMeta = makeWorktreeMeta({
+      lastActivityAt: NOW - 40 * DAY_MS,
+      hostId: 'runtime:env-1'
+    })
+    const store = {
+      ...makeStore(),
+      getWorktreeMeta: (worktreeId: string) =>
+        worktreeId === 'repo-1::/repo-old' ? runtimeMeta : META_BY_WORKTREE_ID[worktreeId]
+    } as Store
+
+    const result = await scanWorkspaceCleanup(store, { includeAllWorkspaces: true })
+
+    expect(
+      result.candidates.find((candidate) => candidate.worktreeId === 'repo-1::/repo-old')
+        ?.executionHostId
+    ).toBe('runtime:env-1')
+  })
+
   it('keeps the legacy suggestion-only projection when the flag is absent', async () => {
     const result = await scanWorkspaceCleanup(makeStore())
 

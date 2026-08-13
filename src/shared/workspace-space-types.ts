@@ -72,7 +72,7 @@ export type WorkspaceSpaceAnalyzeResult =
 
 export type WorkspaceSpaceWorktreeMeasurement = Pick<
   WorkspaceSpaceWorktree,
-  'worktreeId' | 'status' | 'sizeBytes'
+  'worktreeId' | 'executionHostId' | 'status' | 'sizeBytes'
 >
 
 export type WorkspaceSpaceDirectoryScanResult = {

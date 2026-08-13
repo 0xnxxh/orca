@@ -1,11 +1,7 @@
 import type { LiveAgentWorktreeStatus } from '@/lib/worktree-activity-state'
-import { LOCAL_EXECUTION_HOST_ID, type ExecutionHostId } from '../../../../shared/execution-host'
-import type { Worktree, WorkspaceStatusDefinition } from '../../../../shared/types'
+import type { ExecutionHostId } from '../../../../shared/execution-host'
+import type { WorkspaceStatusDefinition } from '../../../../shared/types'
 import { getWorkspaceStatus } from '../../../../shared/workspace-statuses'
-import type {
-  WorkspaceSpaceWorktree,
-  WorkspaceSpaceWorktreeMeasurement
-} from '../../../../shared/workspace-space-types'
 import {
   canSelectWorkspaceCleanupCandidate,
   type WorkspaceCleanupBlocker,
@@ -20,27 +16,12 @@ import type {
   WorkspaceCleanupTicketSource
 } from '../../../../shared/workspace-cleanup-filter-model'
 import type { WorkspaceCleanupReviewInfo } from './workspace-cleanup-presentation'
-
-/** Structural subset of `Worktree` — Pick keeps it in sync when the source type moves. */
-export type WorkspaceCleanupWorktreeFacts = Pick<Worktree, 'id'> &
-  Partial<
-    Pick<
-      Worktree,
-      | 'workspaceStatus'
-      | 'isArchived'
-      | 'isPinned'
-      | 'isUnread'
-      | 'comment'
-      | 'hostId'
-      | 'branch'
-      | 'createdAt'
-      | 'linkedWorkItem'
-      | 'linkedLinearIssue'
-      | 'linkedIssue'
-      | 'locked'
-      | 'prunable'
-    >
-  >
+import {
+  getWorkspaceCleanupCandidateHostId,
+  getWorkspaceCleanupHostIdentity,
+  type WorkspaceCleanupWorktreeFacts
+} from './workspace-cleanup-host-identity'
+export type { WorkspaceCleanupWorktreeFacts } from './workspace-cleanup-host-identity'
 
 export type WorkspaceCleanupFacetSources = {
   worktreeById?: ReadonlyMap<string, WorkspaceCleanupWorktreeFacts>
@@ -107,8 +88,18 @@ export function buildWorkspaceCleanupFacets(
   candidate: WorkspaceCleanupCandidate,
   sources: WorkspaceCleanupFacetSources = {}
 ): WorkspaceCleanupFacets {
-  const worktree = sources.worktreeById?.get(candidate.worktreeId) ?? null
-  const review = sources.reviewInfoByWorktreeId?.get(candidate.worktreeId) ?? EMPTY_REVIEW_INFO
+  const hostIdentity = getWorkspaceCleanupHostIdentity(
+    getWorkspaceCleanupCandidateHostId(candidate),
+    candidate.worktreeId
+  )
+  const worktree =
+    sources.worktreeById?.get(hostIdentity) ??
+    sources.worktreeById?.get(candidate.worktreeId) ??
+    null
+  const review =
+    sources.reviewInfoByWorktreeId?.get(hostIdentity) ??
+    sources.reviewInfoByWorktreeId?.get(candidate.worktreeId) ??
+    EMPTY_REVIEW_INFO
   const ticketSources = getTicketSources(worktree)
   const localContextCount = getLocalContextCount(candidate)
   const hasComment = (worktree?.comment ?? '').trim().length > 0
@@ -121,7 +112,7 @@ export function buildWorkspaceCleanupFacets(
     displayName: candidate.displayName,
     path: candidate.path,
     branch,
-    hostId: worktree?.hostId ?? candidate.executionHostId ?? LOCAL_EXECUTION_HOST_ID,
+    hostId: worktree?.hostId ?? getWorkspaceCleanupCandidateHostId(candidate),
     tier: candidate.tier,
     blockers: candidate.blockers,
     blockerCount: candidate.blockers.length,
@@ -132,7 +123,10 @@ export function buildWorkspaceCleanupFacets(
     lastActivityAt: candidate.lastActivityAt,
     createdAt: toFiniteOrNull(worktree?.createdAt ?? candidate.createdAt),
     lastVisitedAt: toFiniteOrNull(sources.lastVisitedAtByWorktreeId?.[candidate.worktreeId]),
-    sizeBytes: toFiniteOrNull(sources.sizeBytesByWorktreeId?.get(candidate.worktreeId)),
+    sizeBytes: toFiniteOrNull(
+      sources.sizeBytesByWorktreeId?.get(hostIdentity) ??
+        sources.sizeBytesByWorktreeId?.get(candidate.worktreeId)
+    ),
     workspaceStatus: normalizeStatus(worktree?.workspaceStatus),
     workspaceStatusLabel: getWorkspaceStatusLabel(worktree, sources.workspaceStatuses),
     isArchived: worktree?.isArchived ?? candidate.reasons.includes('archived'),
@@ -164,36 +158,8 @@ export function buildWorkspaceCleanupFacetList(
   return candidates.map((candidate) => buildWorkspaceCleanupFacets(candidate, sources))
 }
 
-/** Only `ok` scans carry a trustworthy byte count; everything else stays unsized. */
-export function buildWorkspaceCleanupSizeIndex(
-  worktrees:
-    | readonly (WorkspaceSpaceWorktree | WorkspaceSpaceWorktreeMeasurement)[]
-    | null
-    | undefined
-): Map<string, number> {
-  const index = new Map<string, number>()
-  for (const entry of worktrees ?? []) {
-    if (entry.status === 'ok' && Number.isFinite(entry.sizeBytes)) {
-      index.set(entry.worktreeId, entry.sizeBytes)
-    }
-  }
-  return index
-}
-
 export function countWorkspaceCleanupMeasuredRows(rows: readonly WorkspaceCleanupFacets[]): number {
   return rows.reduce((count, row) => count + (row.sizeBytes === null ? 0 : 1), 0)
-}
-
-export function buildWorkspaceCleanupWorktreeIndex(
-  worktreesByRepo: Readonly<Record<string, readonly WorkspaceCleanupWorktreeFacts[]>>
-): Map<string, WorkspaceCleanupWorktreeFacts> {
-  const index = new Map<string, WorkspaceCleanupWorktreeFacts>()
-  for (const worktrees of Object.values(worktreesByRepo)) {
-    for (const worktree of worktrees) {
-      index.set(worktree.id, worktree)
-    }
-  }
-  return index
 }
 
 function getLocalContextCount(candidate: WorkspaceCleanupCandidate): number {

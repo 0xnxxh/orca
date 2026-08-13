@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
-import { WorkspaceCleanupInitialScanBanner } from './workspace-cleanup-dialog-notices'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  WorkspaceCleanupInitialScanBanner,
+  WorkspaceCleanupSizeScanBanner
+} from './workspace-cleanup-dialog-notices'
 
 afterEach(cleanup)
 
@@ -22,5 +25,34 @@ describe('WorkspaceCleanupInitialScanBanner', () => {
 
     expect(screen.getByText('Scanning workspaces (23/3048)')).toBeTruthy()
     expect(screen.queryByText('Checked workspaces so far: 23')).toBeNull()
+  })
+})
+
+describe('WorkspaceCleanupSizeScanBanner', () => {
+  it('explains why measurement is useful and exposes the action', () => {
+    render(
+      <WorkspaceCleanupSizeScanBanner
+        scanning={false}
+        scannedCount={0}
+        totalCount={0}
+        onRun={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('Measure workspace sizes')).toBeTruthy()
+    expect(
+      screen.getByText('Measure disk usage to compare, sort, and filter workspaces by size.')
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Measure sizes' })).toBeTruthy()
+  })
+
+  it('shows determinate progress and disables duplicate runs', () => {
+    render(
+      <WorkspaceCleanupSizeScanBanner scanning scannedCount={23} totalCount={100} onRun={vi.fn()} />
+    )
+
+    expect(
+      (screen.getByRole('button', { name: 'Measuring 23/100' }) as HTMLButtonElement).disabled
+    ).toBe(true)
   })
 })

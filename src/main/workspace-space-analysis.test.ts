@@ -42,14 +42,14 @@ vi.mock('./project-runtime-git-options', () => ({
 
 import { analyzeWorkspaceSpace, WorkspaceSpaceScanCancelledError } from './workspace-space-analysis'
 
-function createStore(repos: Repo[]): Store {
+function createStore(repos: Repo[], worktreeHostId?: `runtime:${string}`): Store {
   return {
     getRepos: () => repos,
     getWorktreeMeta: (worktreeId: string) => {
       if (worktreeId.endsWith('feature')) {
-        return { displayName: 'Feature Workspace', lastActivityAt: 200 }
+        return { displayName: 'Feature Workspace', lastActivityAt: 200, hostId: worktreeHostId }
       }
-      return undefined
+      return worktreeHostId ? { hostId: worktreeHostId } : undefined
     }
   } as Store
 }
@@ -199,7 +199,7 @@ describe('analyzeWorkspaceSpace', () => {
     ])
     const progress: unknown[] = []
 
-    await analyzeWorkspaceSpace(createStore([repo]), {
+    await analyzeWorkspaceSpace(createStore([repo], 'runtime:env-1'), {
       scanId: 'scan-1',
       onProgress: (event) => progress.push(event)
     })
@@ -226,6 +226,7 @@ describe('analyzeWorkspaceSpace', () => {
         completedMeasurements: [
           expect.objectContaining({
             worktreeId: `repo-1::${repoPath}`,
+            executionHostId: 'runtime:env-1',
             status: 'ok',
             sizeBytes: expect.any(Number)
           })

@@ -19,6 +19,10 @@ import type { WorkspaceCleanupReviewInfo } from './workspace-cleanup-presentatio
 import { formatWorkspaceCleanupRelativeTime } from './workspace-cleanup-relative-time'
 import { StatusPill } from './workspace-cleanup-status-pill'
 import { WorkspaceCleanupCandidateList } from './workspace-cleanup-candidate-list'
+import {
+  getWorkspaceCleanupCandidateHostId,
+  getWorkspaceCleanupHostIdentity
+} from './workspace-cleanup-host-identity'
 
 const CONFIRM_REMOVE_ROW_ESTIMATE_PX = 76
 
@@ -133,7 +137,16 @@ export function WorkspaceCleanupConfirmRemove({
               <ConfirmRemoveRow
                 key={candidate.worktreeId}
                 candidate={candidate}
-                reviewInfo={reviewInfoByWorktreeId.get(candidate.worktreeId) ?? EMPTY_REVIEW_INFO}
+                reviewInfo={
+                  reviewInfoByWorktreeId.get(
+                    getWorkspaceCleanupHostIdentity(
+                      getWorkspaceCleanupCandidateHostId(candidate),
+                      candidate.worktreeId
+                    )
+                  ) ??
+                  reviewInfoByWorktreeId.get(candidate.worktreeId) ??
+                  EMPTY_REVIEW_INFO
+                }
                 last={index === candidates.length - 1}
               />
             )}
