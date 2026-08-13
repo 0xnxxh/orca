@@ -70,4 +70,12 @@ describe('Agent Map glow performance boundary', () => {
     expect(windowMs).toBeGreaterThan(0)
     expect(cssMs).toBe(windowMs)
   })
+
+  it('selects capped flares before rendering instead of flattening the scene', () => {
+    const map = source('AgentMap.tsx')
+    const scene = source('AgentMapScene.tsx')
+
+    expect(map).toMatch(/selectAgentMapRecentFinishPaneKeys\(visibleCards\)/)
+    expect(scene).not.toContain('selectAgentMapRecentFinishPaneKeys')
+  })
 })
