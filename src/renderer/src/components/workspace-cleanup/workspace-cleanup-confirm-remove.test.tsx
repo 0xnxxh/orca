@@ -60,6 +60,7 @@ describe('WorkspaceCleanupConfirmRemove', () => {
       root.render(
         <WorkspaceCleanupConfirmRemove
           candidates={candidates}
+          now={Date.now()}
           reviewInfoByWorktreeId={new Map()}
           progress={null}
           onBack={vi.fn()}

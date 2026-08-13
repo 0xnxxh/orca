@@ -16,6 +16,7 @@ import {
 } from '../../shared/workspace-cleanup'
 import { parseExecutionHostId } from '../../shared/execution-host'
 import { scanWorkspaceCleanup } from './workspace-cleanup-scan'
+import { hasTargetedWorkspaceCleanupScan } from './workspace-cleanup-scan-targets'
 import {
   persistWorkspaceCleanupScanResult,
   readWorkspaceCleanupScanSnapshot
@@ -33,12 +34,16 @@ type WorkspaceCleanupHandlerDeps = {
   getLocalPtyProvider?: () => IPtyProvider
 }
 
+// Why: module scope — handler re-registration on a new main window must not
+// orphan the previous window's controllers in a discarded map.
+const activeScans = new Map<string, AbortController>()
+const broadScanControllersBySender = new Map<number, AbortController>()
+
 export function registerWorkspaceCleanupHandlers(
   store: Store,
   deps: WorkspaceCleanupHandlerDeps = {}
 ): void {
   const snapshotDirectory = store.getProfileStorageDirectory()
-  const activeScans = new Map<string, AbortController>()
   ipcMain.removeHandler('workspaceCleanup:scan')
   ipcMain.removeHandler('workspaceCleanup:cancelScan')
   ipcMain.removeHandler('workspaceCleanup:getCachedScan')
@@ -53,30 +58,51 @@ export function registerWorkspaceCleanupHandlers(
     'workspaceCleanup:scan',
     async (event, args?: WorkspaceCleanupScanArgs): Promise<WorkspaceCleanupScanResult> => {
       const scanArgs = args ?? {}
-      const scanKey = getWorkspaceCleanupScanKey(event.sender.id, scanArgs.scanId)
-      const controller = scanKey ? new AbortController() : undefined
-      if (scanKey && controller) {
+      const sender = event.sender
+      const scanKey = getWorkspaceCleanupScanKey(sender.id, scanArgs.scanId)
+      const controller = new AbortController()
+      if (scanKey) {
         activeScans.set(scanKey, controller)
       }
+      const targeted = hasTargetedWorkspaceCleanupScan(scanArgs)
+      if (!targeted) {
+        // Why: two broad fleet scans from one renderer can only be a refresh
+        // race; running both doubles git subprocess and fs load for a result
+        // the renderer will discard.
+        broadScanControllersBySender.get(sender.id)?.abort()
+        broadScanControllersBySender.set(sender.id, controller)
+      }
+      // Why: a window close or reload must stop the fleet scan's git and fs
+      // work, not merely mute its progress events.
+      const onSenderDestroyed = (): void => controller.abort()
+      sender.once('destroyed', onSenderDestroyed)
       try {
         const result = await scanWorkspaceCleanup(store, scanArgs, {
-          signal: controller?.signal,
+          signal: controller.signal,
           onProgress: scanArgs.scanId
             ? (progress) => {
-                if (!event.sender.isDestroyed()) {
-                  event.sender.send('workspaceCleanup:scanProgress', progress)
+                if (!sender.isDestroyed()) {
+                  sender.send('workspaceCleanup:scanProgress', progress)
                 }
               }
             : undefined
         })
-        // Focused scans are live-only; persisting each rewrites and fsyncs the fleet snapshot.
-        if (!scanArgs.worktreeId && !scanArgs.worktreeIds?.length) {
+        // Focused scans are live-only; persisting each rewrites and fsyncs the
+        // fleet snapshot. worktreeIds: [] is still targeted — persisting its
+        // empty result would wipe the fleet cache.
+        if (!targeted) {
           void persistWorkspaceCleanupScanResult(snapshotDirectory, scanArgs, result)
         }
         return result
       } finally {
+        if (!sender.isDestroyed()) {
+          sender.removeListener('destroyed', onSenderDestroyed)
+        }
         if (scanKey && activeScans.get(scanKey) === controller) {
           activeScans.delete(scanKey)
+        }
+        if (!targeted && broadScanControllersBySender.get(sender.id) === controller) {
+          broadScanControllersBySender.delete(sender.id)
         }
       }
     }
@@ -100,6 +126,9 @@ export function registerWorkspaceCleanupHandlers(
 
   ipcMain.handle('workspaceCleanup:dismiss', (_event, args: WorkspaceCleanupDismissArgs) => {
     const next = { ...store.getUI().workspaceCleanup?.dismissals }
+    for (const worktreeId of args.removedWorktreeIds ?? []) {
+      delete next[worktreeId]
+    }
     for (const dismissal of args.dismissals ?? []) {
       if (
         dismissal &&

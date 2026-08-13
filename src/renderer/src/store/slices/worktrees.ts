@@ -4324,10 +4324,13 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         }
       }
 
-      if (options?.snapshotPruneBatchId && !snapshotPruneHandledByLocalMain) {
+      if (!snapshotPruneHandledByLocalMain) {
         try {
           await window.api.workspaceCleanup?.recordRemovalSnapshotPrune?.({
-            batchId: options.snapshotPruneBatchId,
+            // Why: a single (unbatched) remote delete must still drop the row
+            // from the local persisted snapshots or it resurrects from cache;
+            // an unknown batch id degrades to an immediate one-off prune.
+            batchId: options?.snapshotPruneBatchId ?? `single-removal:${worktreeId}`,
             worktreeId,
             ...(hostId ? { executionHostId: hostId } : {})
           })

@@ -28,6 +28,9 @@ function removeDeletedWorktreesFromAnalysis(
 ): WorkspaceSpaceAnalysis {
   const deletedSet = new Set(deletedWorktreeIds)
   const worktrees = analysis.worktrees.filter((worktree) => !deletedSet.has(worktree.worktreeId))
+  if (worktrees.length === analysis.worktrees.length) {
+    return analysis
+  }
   const rowsByRepoId = new Map<string, typeof worktrees>()
   for (const worktree of worktrees) {
     const repoRows = rowsByRepoId.get(worktree.repoId) ?? []
@@ -184,13 +187,26 @@ export const createWorkspaceSpaceSlice: StateCreator<AppState, [], [], Workspace
     }
     set((state) => {
       const deletedSet = new Set(worktreeIds)
+      const nextMeasurements = state.workspaceSpaceMeasurements.filter(
+        (measurement) => !deletedSet.has(measurement.worktreeId)
+      )
+      const nextAnalysis = state.workspaceSpaceAnalysis
+        ? removeDeletedWorktreesFromAnalysis(state.workspaceSpaceAnalysis, worktreeIds)
+        : null
+      // Why: this runs on every worktree removal and list refresh; a no-op
+      // must not mint new identities and wake every space subscriber.
+      if (
+        nextMeasurements.length === state.workspaceSpaceMeasurements.length &&
+        nextAnalysis === state.workspaceSpaceAnalysis
+      ) {
+        return state
+      }
       return {
-        workspaceSpaceAnalysis: state.workspaceSpaceAnalysis
-          ? removeDeletedWorktreesFromAnalysis(state.workspaceSpaceAnalysis, worktreeIds)
-          : null,
-        workspaceSpaceMeasurements: state.workspaceSpaceMeasurements.filter(
-          (measurement) => !deletedSet.has(measurement.worktreeId)
-        )
+        workspaceSpaceAnalysis: nextAnalysis,
+        workspaceSpaceMeasurements:
+          nextMeasurements.length === state.workspaceSpaceMeasurements.length
+            ? state.workspaceSpaceMeasurements
+            : nextMeasurements
       }
     })
   }

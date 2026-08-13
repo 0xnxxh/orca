@@ -102,6 +102,61 @@ describe('useWorkspaceCleanupGitEvidence', () => {
     expect(view.result.current.pendingWorktreeIds.size).toBe(5)
   })
 
+  it('chunks dispatches at the shared target batch limit so no queued id is dropped', async () => {
+    const first = Array.from({ length: 300 }, (_, i) => deferredCandidate(`a${i}`))
+    const grown = [...first, ...Array.from({ length: 600 }, (_, i) => deferredCandidate(`b${i}`))]
+    const view = renderHook(
+      ({ candidates }: { candidates: ReturnType<typeof deferredCandidate>[] }) =>
+        useWorkspaceCleanupGitEvidence({ enabled: true, candidates, scannedAt: 1 }),
+      { initialProps: { candidates: first } }
+    )
+
+    await waitFor(() => expect(holders.scan).toHaveBeenCalledTimes(1))
+    expect(pending[0]?.worktreeIds).toHaveLength(300)
+
+    // 600 more ids queue while the first request is in flight.
+    view.rerender({ candidates: grown })
+    await waitFor(() => expect(view.result.current.totalCount).toBe(900))
+    expect(holders.scan).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      pending[0]?.resolve({ scannedAt: 1, candidates: [], errors: [] })
+    })
+    await waitFor(() => expect(holders.scan).toHaveBeenCalledTimes(2))
+    expect(pending[1]?.worktreeIds).toHaveLength(500)
+
+    await act(async () => {
+      pending[1]?.resolve({ scannedAt: 1, candidates: [], errors: [] })
+    })
+    await waitFor(() => expect(holders.scan).toHaveBeenCalledTimes(3))
+    expect(pending[2]?.worktreeIds).toHaveLength(100)
+
+    const dispatched = pending.flatMap((request) => request.worktreeIds)
+    expect(new Set(dispatched).size).toBe(900)
+  })
+
+  it('keeps state identity stable when a progress frame changes nothing', async () => {
+    const candidates = [deferredCandidate('a')]
+    const view = renderHook(() =>
+      useWorkspaceCleanupGitEvidence({ enabled: true, candidates, scannedAt: 1 })
+    )
+    await waitFor(() => expect(holders.scan).toHaveBeenCalledTimes(1))
+    const before = view.result.current
+
+    await act(async () => {
+      pending[0]?.onProgress?.({
+        scanId: 'noop',
+        scannedAt: 1,
+        scannedWorktreeCount: 0,
+        totalWorktreeCount: 1,
+        candidates: [makeFacetCandidate({ worktreeId: 'unrelated' })],
+        errors: [],
+        candidateMode: 'append'
+      })
+    })
+    expect(view.result.current).toBe(before)
+  })
+
   it('restarts evidence collection when the settled scan snapshot changes', async () => {
     const candidates = [deferredCandidate('a')]
     const view = renderHook(

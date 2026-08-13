@@ -118,6 +118,18 @@ describe('workspace space slice', () => {
     ])
   })
 
+  it('keeps state identity when removal matches no worktree', () => {
+    const store = createWorkspaceSpaceTestStore()
+    store.setState({ workspaceSpaceAnalysis: makeAnalysis() })
+    const before = store.getState()
+
+    store.getState().removeWorkspaceSpaceWorktrees(['repo-2::/elsewhere'])
+
+    expect(store.getState()).toBe(before)
+    expect(store.getState().workspaceSpaceAnalysis).toBe(before.workspaceSpaceAnalysis)
+    expect(store.getState().workspaceSpaceMeasurements).toBe(before.workspaceSpaceMeasurements)
+  })
+
   it('removes deleted worktrees from cached analysis totals', () => {
     const store = createWorkspaceSpaceTestStore()
     store.setState({ workspaceSpaceAnalysis: makeAnalysis() })

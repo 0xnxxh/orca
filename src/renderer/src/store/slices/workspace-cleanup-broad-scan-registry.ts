@@ -50,16 +50,30 @@ export function releaseInFlightWorkspaceCleanupScan(
   supersededScanIds.delete(scanId)
 }
 
+// Why: a scan whose promise never settles (renderer teardown mid-scan) would
+// otherwise leave its id here for the process lifetime.
+const MAX_SUPERSEDED_SCAN_IDS = 64
+
 export function supersedeInFlightWorkspaceCleanupScans(
-  cancelScan: ((scanId: string) => Promise<boolean>) | undefined
+  cancelScan: ((scanId: string) => Promise<boolean>) | undefined,
+  shouldSupersede: (key: string) => boolean = () => true
 ): void {
-  for (const { scanId } of inFlightScans.values()) {
+  for (const [key, { scanId }] of inFlightScans) {
+    if (!shouldSupersede(key)) {
+      continue
+    }
     supersededScanIds.add(scanId)
+    inFlightScans.delete(key)
     void cancelScan?.(scanId).catch((error: unknown) => {
       console.warn('Failed to cancel superseded workspace cleanup scan:', error)
     })
   }
-  inFlightScans.clear()
+  for (const scanId of supersededScanIds) {
+    if (supersededScanIds.size <= MAX_SUPERSEDED_SCAN_IDS) {
+      break
+    }
+    supersededScanIds.delete(scanId)
+  }
 }
 
 export function throwIfWorkspaceCleanupScanSuperseded(scanId: string): void {

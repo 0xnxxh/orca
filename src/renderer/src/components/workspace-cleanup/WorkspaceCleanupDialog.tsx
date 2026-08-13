@@ -34,6 +34,11 @@ import {
 import { useWorkspaceCleanupFacetRows } from './use-workspace-cleanup-facet-rows'
 import { useWorkspaceCleanupGitEvidence } from './use-workspace-cleanup-git-evidence'
 import { useWorkspaceCleanupRowOrder } from './use-workspace-cleanup-row-order'
+import {
+  formatVanishedSelectionNotice,
+  getDefaultSelectedWorkspaceCleanupIds,
+  toggleSetMember
+} from './workspace-cleanup-selection-model'
 
 /** One filterable list of every workspace Orca knows about. */
 export default function WorkspaceCleanupDialog(): React.JSX.Element | null {
@@ -80,6 +85,9 @@ function WorkspaceCleanupDialogContent({
   )
 
   const browse = useWorkspaceCleanupBrowseState()
+  // Why: facet counts/options are only rendered inside the filter popover;
+  // tracking its open state lets their O(N) passes skip while it is closed.
+  const [facetPanelOpen, setFacetPanelOpen] = useState(false)
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(() => new Set())
   const [rowsScrollElement, setRowsScrollElement] = useState<HTMLDivElement | null>(null)
   const selectedDefaultsScanAtRef = useRef<number | null>(null)
@@ -90,10 +98,16 @@ function WorkspaceCleanupDialogContent({
   const selectionTouchedRef = useRef(false)
   const mountedRef = useMountedRef()
 
+  // Why: the facet clock must be stable across renders but never older than
+  // this open — a hydrated snapshot's scannedAt can be days stale, which would
+  // misbucket idle thresholds and keep dead agent statuses "fresh".
+  const [openedAt, setOpenedAt] = useState(() => Date.now())
+
   useEffect(() => {
     if (open && !wasOpenRef.current) {
       defaultsAppliedForOpenRef.current = false
       selectionTouchedRef.current = false
+      setOpenedAt(Date.now())
     }
     wasOpenRef.current = open
   }, [open])
@@ -111,13 +125,16 @@ function WorkspaceCleanupDialogContent({
     () => applyWorkspaceCleanupGitEvidence(candidates, gitEvidence.evidenceByWorktreeId),
     [candidates, gitEvidence.evidenceByWorktreeId]
   )
-  // Why: a live clock would re-run every facet on each render; the scan time is
-  // the honest "as of" moment for every relative threshold in the list.
+  // Why: a live clock would re-run every facet on each render; the newer of
+  // scan time and open time is the honest stable "as of" moment — a fresh scan
+  // keeps its timestamp, a stale hydrated snapshot is judged from this open.
+  const facetNow = Math.max(scan?.scannedAt ?? 0, openedAt)
   const facetRows = useWorkspaceCleanupFacetRows({
     candidates: evidencedCandidates,
     filters: browse.filters,
     sort: browse.sort,
-    now: scan?.scannedAt ?? Date.now()
+    now: facetNow,
+    facetPanelOpen
   })
   const rows = useWorkspaceCleanupRowOrder({
     rows: facetRows.rows,
@@ -197,10 +214,11 @@ function WorkspaceCleanupDialogContent({
       return
     }
     // Why: destructive selection must stay scoped to the rows the user can
-    // currently review after a filter change — and only then; a
-    // streaming refresh re-classifying a row must not silently deselect it.
+    // currently review after a filter change — and only then; keying on the
+    // user's filter state (not the matched set, whose identity changes every
+    // streaming tick) keeps a re-classified row from being silently deselected.
     pruneSelectionToVisibleRows()
-  }, [facetRows.facetMatchedWorktreeIds, open, removal.confirming])
+  }, [browse.filters, open, removal.confirming])
 
   const pruneVanishedSelections = useEffectEvent(() => {
     const kept = [...selectedIds].filter(
@@ -352,6 +370,8 @@ function WorkspaceCleanupDialogContent({
             <WorkspaceCleanupBrowseToolbar
               browse={browse}
               facetRows={facetRows}
+              facetPanelOpen={facetPanelOpen}
+              onFacetPanelOpenChange={setFacetPanelOpen}
               selectableCount={selectableWorktreeIds.length}
               selectedCount={selectedCount}
               spaceScanning={workspaceSpaceScanning}
@@ -367,6 +387,7 @@ function WorkspaceCleanupDialogContent({
                 {initialLoading ? <WorkspaceCleanupSkeletonRows /> : null}
                 <WorkspaceCleanupRowList
                   rows={rows}
+                  now={facetNow}
                   scannedCount={candidates.length}
                   hasScanned={scan != null}
                   loading={loading}
@@ -391,6 +412,7 @@ function WorkspaceCleanupDialogContent({
         ) : (
           <WorkspaceCleanupConfirmRemove
             candidates={removal.confirmCandidates}
+            now={facetNow}
             reviewInfoByWorktreeId={facetRows.reviewInfoByWorktreeId}
             progress={removal.removalProgress}
             onBack={removal.backToList}
@@ -401,40 +423,4 @@ function WorkspaceCleanupDialogContent({
       </DialogContent>
     </Dialog>
   )
-}
-
-function formatVanishedSelectionNotice(count: number): string {
-  return count === 1
-    ? translate(
-        'components.workspace.cleanup.browse.selectionVanishedOne',
-        '1 selected workspace no longer exists.'
-      )
-    : translate(
-        'components.workspace.cleanup.browse.selectionVanished',
-        '{{value0}} selected workspaces no longer exist.',
-        { value0: count }
-      )
-}
-
-function getDefaultSelectedWorkspaceCleanupIds(
-  candidates: readonly WorkspaceCleanupCandidate[],
-  deletingWorktreeIds: ReadonlySet<string> = new Set()
-): Set<string> {
-  return new Set(
-    candidates
-      .filter(
-        (candidate) => candidate.selectedByDefault && !deletingWorktreeIds.has(candidate.worktreeId)
-      )
-      .map((candidate) => candidate.worktreeId)
-  )
-}
-
-function toggleSetMember(current: Set<string>, value: string): Set<string> {
-  const next = new Set(current)
-  if (next.has(value)) {
-    next.delete(value)
-  } else {
-    next.add(value)
-  }
-  return next
 }

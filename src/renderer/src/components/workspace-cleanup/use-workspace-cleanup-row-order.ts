@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useMemo, useRef } from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import type { WorkspaceCleanupSortState } from '../../../../shared/workspace-cleanup-filter-model'
 
 type OrderedRow = { worktreeId: string }
@@ -82,9 +82,14 @@ export function useWorkspaceCleanupRowOrder<Row extends OrderedRow>({
   streaming: boolean
   sort: WorkspaceCleanupSortState
 }): readonly Row[] {
-  const frozenOrderRef = useRef<WorkspaceCleanupFrozenRowOrder>(UNCOMMITTED_ROW_ORDER)
+  // Why: the frozen order must be React-owned state — a ref read during render
+  // is not a valid memo input under concurrent rendering and could arrange the
+  // list from a different render pass's order. The idle capture stays in a ref
+  // because it is only read and written inside the commit effect.
+  const [frozenOrder, setFrozenOrder] =
+    useState<WorkspaceCleanupFrozenRowOrder>(UNCOMMITTED_ROW_ORDER)
+  const idleOrderRef = useRef<WorkspaceCleanupFrozenRowOrder>(UNCOMMITTED_ROW_ORDER)
   const sortSignature = `${sort.field}:${sort.direction}`
-  const frozenOrder = frozenOrderRef.current
   const orderedRows = useMemo(
     () =>
       !streaming || frozenOrder.sortSignature !== sortSignature
@@ -93,12 +98,23 @@ export function useWorkspaceCleanupRowOrder<Row extends OrderedRow>({
     [frozenOrder, rows, sortSignature, streaming]
   )
   const commitFrozenOrder = useEffectEvent(() => {
-    const current = frozenOrderRef.current
     // Why: only committed renders may advance the order a later stream holds.
-    frozenOrderRef.current =
-      !streaming || current.sortSignature !== sortSignature
-        ? createWorkspaceCleanupFrozenRowOrder(rows, sortSignature)
-        : extendWorkspaceCleanupFrozenRowOrder(rows, current)
+    if (!streaming) {
+      idleOrderRef.current = createWorkspaceCleanupFrozenRowOrder(rows, sortSignature)
+      setFrozenOrder((current) =>
+        current === UNCOMMITTED_ROW_ORDER ? current : UNCOMMITTED_ROW_ORDER
+      )
+      return
+    }
+    setFrozenOrder((current) => {
+      const base =
+        current !== UNCOMMITTED_ROW_ORDER && current.sortSignature === sortSignature
+          ? current
+          : idleOrderRef.current.sortSignature === sortSignature
+            ? idleOrderRef.current
+            : createWorkspaceCleanupFrozenRowOrder(rows, sortSignature)
+      return extendWorkspaceCleanupFrozenRowOrder(rows, base)
+    })
   })
   useEffect(() => {
     commitFrozenOrder()

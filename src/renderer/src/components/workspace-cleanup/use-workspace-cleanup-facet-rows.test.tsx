@@ -194,6 +194,74 @@ describe('useWorkspaceCleanupFacetRows hot paths', () => {
     expect(view.result.current.options.repos).toEqual([{ id: 'folder-1', label: 'Loose files' }])
   })
 
+  it('skips every downstream pass when a streaming tick changes no candidate', () => {
+    const candidates = [makeFacetCandidate(), makeFacetCandidate({ worktreeId: 'repo-1::/b' })]
+    const filters = createDefaultWorkspaceCleanupFilterState()
+    const view = renderHook(
+      ({ current }) =>
+        useWorkspaceCleanupFacetRows({
+          candidates: current,
+          filters,
+          sort: DEFAULT_WORKSPACE_CLEANUP_SORT,
+          now: 1_700_000_000_000
+        }),
+      { initialProps: { current: candidates } }
+    )
+    const initialCounts = { ...counts }
+    const matched = view.result.current.facetMatchedWorktreeIds
+    const rows = view.result.current.rows
+
+    // A no-op progress tick delivers a fresh array of the same candidate objects.
+    view.rerender({ current: [...candidates] })
+
+    expect(counts).toEqual(initialCounts)
+    expect(view.result.current.rows).toBe(rows)
+    expect(view.result.current.facetMatchedWorktreeIds).toBe(matched)
+  })
+
+  it('keeps facet identity for untouched rows when a tick replaces one candidate', () => {
+    const stable = makeFacetCandidate()
+    const replaced = makeFacetCandidate({ worktreeId: 'repo-1::/b' })
+    const filters = createDefaultWorkspaceCleanupFilterState()
+    const view = renderHook(
+      ({ current }) =>
+        useWorkspaceCleanupFacetRows({
+          candidates: current,
+          filters,
+          sort: DEFAULT_WORKSPACE_CLEANUP_SORT,
+          now: 1_700_000_000_000
+        }),
+      { initialProps: { current: [stable, replaced] } }
+    )
+    const stableFacet = view.result.current.rows.find((row) => row.worktreeId === stable.worktreeId)
+
+    view.rerender({
+      current: [stable, makeFacetCandidate({ worktreeId: 'repo-1::/b', displayName: 'renamed' })]
+    })
+
+    expect(view.result.current.rows.find((row) => row.worktreeId === stable.worktreeId)).toBe(
+      stableFacet
+    )
+    expect(
+      view.result.current.rows.find((row) => row.worktreeId === 'repo-1::/b')?.displayName
+    ).toBe('renamed')
+  })
+
+  it('skips facet count and option passes while the filter panel is closed', () => {
+    const view = renderHook(() =>
+      useWorkspaceCleanupFacetRows({
+        candidates: [makeFacetCandidate()],
+        filters: createDefaultWorkspaceCleanupFilterState(),
+        sort: DEFAULT_WORKSPACE_CLEANUP_SORT,
+        now: 1_700_000_000_000,
+        facetPanelOpen: false
+      })
+    )
+
+    expect(counts.facetCounts).toBe(0)
+    expect(view.result.current.options.repos).toEqual([])
+  })
+
   it('projects same-id streamed sizes only onto their owning hosts', () => {
     const worktreeId = 'repo-1::/repo/alpha'
     const candidates = [

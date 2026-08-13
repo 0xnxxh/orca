@@ -28,6 +28,8 @@ describe('WorkspaceCleanupFilterBar', () => {
           options: { workspaceStatuses: [], hostIds: [], repos: [], reviewProviders: [] },
           onPatch: vi.fn()
         }}
+        facetPanelOpen={false}
+        onFacetPanelOpenChange={vi.fn()}
         activeFacetGroupCount={0}
         matchedCount={100}
         hasActiveFilters={false}

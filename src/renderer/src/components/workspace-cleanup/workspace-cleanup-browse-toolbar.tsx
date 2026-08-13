@@ -2,10 +2,7 @@ import React from 'react'
 import { translate } from '@/i18n/i18n'
 import type { WorkspaceCleanupBrowseController } from './use-workspace-cleanup-browse-state'
 import type { WorkspaceCleanupFacetRows } from './use-workspace-cleanup-facet-rows'
-import {
-  hasActiveWorkspaceCleanupFilters,
-  listActiveWorkspaceCleanupFacetGroups
-} from './workspace-cleanup-active-facets'
+import { listActiveWorkspaceCleanupFacetGroups } from './workspace-cleanup-active-facets'
 import {
   WorkspaceCleanupEmptyState,
   WorkspaceCleanupSizeScanBanner
@@ -17,6 +14,8 @@ import type { WorkspaceSpaceScanProgress } from '../../../../shared/workspace-sp
 export function WorkspaceCleanupBrowseToolbar({
   browse,
   facetRows,
+  facetPanelOpen,
+  onFacetPanelOpenChange,
   selectableCount,
   selectedCount,
   spaceScanning,
@@ -28,6 +27,8 @@ export function WorkspaceCleanupBrowseToolbar({
 }: {
   browse: WorkspaceCleanupBrowseController
   facetRows: WorkspaceCleanupFacetRows
+  facetPanelOpen: boolean
+  onFacetPanelOpenChange: (open: boolean) => void
   selectableCount: number
   selectedCount: number
   spaceScanning: boolean
@@ -37,7 +38,13 @@ export function WorkspaceCleanupBrowseToolbar({
   onRunSpaceScan: () => void
   onToggleSelectAll: (selectAll: boolean) => void
 }): React.JSX.Element {
-  const activeFilters = hasActiveWorkspaceCleanupFilters(browse.filters)
+  // Why: this toolbar re-renders per keystroke and per streaming tick; the
+  // group comparisons must not rerun unless the filter state itself changed.
+  const activeFacetGroupCount = React.useMemo(
+    () => listActiveWorkspaceCleanupFacetGroups(browse.filters).length,
+    [browse.filters]
+  )
+  const activeFilters = browse.filters.query.trim().length > 0 || activeFacetGroupCount > 0
   return (
     <>
       {spaceScanning || facetRows.unmeasuredSizeCount > 0 ? (
@@ -56,7 +63,9 @@ export function WorkspaceCleanupBrowseToolbar({
           options: facetRows.options,
           onPatch: browse.patchFilters
         }}
-        activeFacetGroupCount={listActiveWorkspaceCleanupFacetGroups(browse.filters).length}
+        facetPanelOpen={facetPanelOpen}
+        onFacetPanelOpenChange={onFacetPanelOpenChange}
+        activeFacetGroupCount={activeFacetGroupCount}
         matchedCount={facetRows.matchedCount}
         hasActiveFilters={activeFilters}
         gitEvidence={{ pendingCount: gitPendingCount, totalCount: gitCheckedTotal }}

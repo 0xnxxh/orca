@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import type { WorkspaceCleanupCandidate } from '../../../../shared/workspace-cleanup'
-import { selectWorkspaceCleanupGitEvidenceTargets } from './workspace-cleanup-git-evidence'
+import {
+  selectWorkspaceCleanupGitEvidenceTargets,
+  WORKSPACE_CLEANUP_GIT_EVIDENCE_MAX_TARGETS
+} from './workspace-cleanup-git-evidence'
 
 export type WorkspaceCleanupGitEvidenceState = {
   /** Focused re-scan results, keyed by worktree id. */
@@ -49,10 +52,14 @@ export function useWorkspaceCleanupGitEvidence({
   // stale pass and must not resurrect its pending banner.
   const generationRef = useRef(0)
 
+  // Why: streaming ticks call publish repeatedly; unchanged evidence must not
+  // mint new Map/Set identities or every subscriber re-renders per tick.
+  const publishDirtyRef = useRef(false)
   const publish = useCallback(() => {
-    if (!mountedRef.current) {
+    if (!mountedRef.current || !publishDirtyRef.current) {
       return
     }
+    publishDirtyRef.current = false
     setState({
       evidenceByWorktreeId: new Map(evidenceRef.current),
       pendingWorktreeIds: new Set([...queuedRef.current, ...inFlightRef.current]),
@@ -67,8 +74,10 @@ export function useWorkspaceCleanupGitEvidence({
       return
     }
     const generation = generationRef.current
-    const worktreeIds = queueRef.current
-    queueRef.current = []
+    // Why: main truncates targeted scans at this shared limit; a larger request
+    // would silently drop the overflow ids while marking them attempted.
+    const worktreeIds = queueRef.current.slice(0, WORKSPACE_CLEANUP_GIT_EVIDENCE_MAX_TARGETS)
+    queueRef.current = queueRef.current.slice(worktreeIds.length)
     const scanId = crypto.randomUUID()
     activeScanIdRef.current = scanId
     for (const worktreeId of worktreeIds) {
@@ -77,6 +86,7 @@ export function useWorkspaceCleanupGitEvidence({
       activeRequestWorktreeIdsRef.current.add(worktreeId)
       attemptedRef.current.add(worktreeId)
     }
+    publishDirtyRef.current = true
     const acceptCandidates = (nextCandidates: readonly WorkspaceCleanupCandidate[]): void => {
       if (generation !== generationRef.current) {
         return
@@ -87,6 +97,7 @@ export function useWorkspaceCleanupGitEvidence({
         }
         evidenceRef.current.set(candidate.worktreeId, candidate)
         inFlightRef.current.delete(candidate.worktreeId)
+        publishDirtyRef.current = true
       }
       publish()
     }
@@ -103,8 +114,8 @@ export function useWorkspaceCleanupGitEvidence({
         }
         for (const worktreeId of worktreeIds) {
           activeRequestWorktreeIdsRef.current.delete(worktreeId)
-          if (generation === generationRef.current) {
-            inFlightRef.current.delete(worktreeId)
+          if (generation === generationRef.current && inFlightRef.current.delete(worktreeId)) {
+            publishDirtyRef.current = true
           }
         }
         pump()
@@ -130,14 +141,22 @@ export function useWorkspaceCleanupGitEvidence({
       attemptedRef.current.clear()
       evidenceRef.current.clear()
       totalRef.current = 0
+      publishDirtyRef.current = true
       publish()
     }
     if (!enabled) {
       return
     }
+    // Why: the exclusion set must cover queued/in-flight ids too — a cap that
+    // counts them would permanently skip everything past it on a settled scan.
     const targets = selectWorkspaceCleanupGitEvidenceTargets(candidates, {
-      resolvedWorktreeIds: attemptedRef.current
-    }).filter((id) => !queuedRef.current.has(id) && !inFlightRef.current.has(id))
+      resolvedWorktreeIds: new Set([
+        ...attemptedRef.current,
+        ...queuedRef.current,
+        ...inFlightRef.current
+      ]),
+      maxTargets: Number.POSITIVE_INFINITY
+    })
     if (targets.length === 0) {
       return
     }
@@ -146,6 +165,7 @@ export function useWorkspaceCleanupGitEvidence({
       queuedRef.current.add(target)
     }
     totalRef.current += targets.length
+    publishDirtyRef.current = true
     pump()
   }, [candidates, enabled, pump, publish, scannedAt])
 

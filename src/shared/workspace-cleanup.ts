@@ -87,6 +87,8 @@ export type WorkspaceCleanupScanArgs = {
   // Why: optional so an older client still receives the legacy suggestion-only
   // broad scan; only a client that renders the full list asks for every row.
   includeAllWorkspaces?: boolean
+  /** Re-stat activity for targeted rows; removal preflight needs fresh, batched evidence scans do not. */
+  refreshActivity?: boolean
 }
 
 export const WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT = 500
@@ -131,6 +133,8 @@ export type WorkspaceCleanupLocalProcessResult = {
 
 export type WorkspaceCleanupDismissArgs = {
   dismissals: WorkspaceCleanupDismissal[]
+  /** Removed worktrees' persisted dismissals are dead weight; prune them. */
+  removedWorktreeIds?: string[]
 }
 
 export const WORKSPACE_CLEANUP_HARD_BLOCKERS: ReadonlySet<WorkspaceCleanupBlocker> = new Set([

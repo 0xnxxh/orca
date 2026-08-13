@@ -10,6 +10,8 @@ import { formatWorkspaceCleanupRelativeTime } from './workspace-cleanup-relative
 
 export type WorkspaceCleanupRowListState = {
   rows: readonly WorkspaceCleanupFacets[]
+  /** The dialog's "as of" clock; keeps row labels consistent with filter bucketing. */
+  now: number
   /** Rows the scan produced before filtering; separates "empty fleet" from "no matches". */
   scannedCount: number
   hasScanned: boolean
@@ -70,7 +72,7 @@ export function WorkspaceCleanupRowList(props: WorkspaceCleanupRowListState): Re
             reviewInfo={row.review}
             last={rows.length > 1 && index === rows.length - 1}
             expanded={props.expandedRowIds.has(row.worktreeId)}
-            lastActivityLabel={formatWorkspaceCleanupRelativeTime(row.lastActivityAt)}
+            lastActivityLabel={formatWorkspaceCleanupRelativeTime(row.lastActivityAt, props.now)}
             sizeLabel={row.sizeBytes === null ? null : formatBytes(row.sizeBytes)}
             workspaceStatusLabel={row.workspaceStatusLabel}
             gitEvidencePending={props.gitPendingWorktreeIds.has(row.worktreeId)}

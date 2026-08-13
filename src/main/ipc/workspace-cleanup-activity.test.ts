@@ -134,7 +134,8 @@ describe('resolveWorkspaceCleanupActivityWorktree', () => {
       readTextFile
     )
 
-    expect(readTextFile).toHaveBeenCalledWith(reflogPath)
+    // Why: only the tail of the reflog is read — the newest entry is enough.
+    expect(readTextFile).toHaveBeenCalledWith(reflogPath, { tailBytes: 8192 })
     expect(worktree.lastActivityAt).toBe(1_700_000_900_000)
   })
 

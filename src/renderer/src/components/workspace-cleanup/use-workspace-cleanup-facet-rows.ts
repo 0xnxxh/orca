@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '@/store'
 import { getLiveAgentStatusByWorktreeId } from '@/lib/worktree-activity-state'
@@ -9,7 +9,6 @@ import type {
   WorkspaceCleanupSortState
 } from '../../../../shared/workspace-cleanup-filter-model'
 import {
-  buildWorkspaceCleanupFacetList,
   countWorkspaceCleanupMeasuredRows,
   type WorkspaceCleanupFacets
 } from './workspace-cleanup-facets'
@@ -20,7 +19,6 @@ import {
 } from './workspace-cleanup-query'
 import {
   buildWorkspaceCleanupReviewLookup,
-  getWorkspaceCleanupReviewInfo,
   type WorkspaceCleanupReviewInfo
 } from './workspace-cleanup-presentation'
 import type {
@@ -30,10 +28,14 @@ import type {
 import {
   buildWorkspaceCleanupSizeIndex,
   buildWorkspaceCleanupWorktreeIndex,
-  countWorkspaceCleanupCandidateIds,
-  getWorkspaceCleanupCandidateHostId,
-  getWorkspaceCleanupHostIdentity
+  countWorkspaceCleanupCandidateIds
 } from './workspace-cleanup-host-identity'
+import {
+  computeWorkspaceCleanupFacetList,
+  computeWorkspaceCleanupReviewInfoIndex,
+  type WorkspaceCleanupFacetListCache,
+  type WorkspaceCleanupReviewInfoCache
+} from './workspace-cleanup-facet-row-caches'
 
 export type WorkspaceCleanupFacetRows = {
   rows: WorkspaceCleanupFacets[]
@@ -50,21 +52,49 @@ export type WorkspaceCleanupFacetRows = {
   unmeasuredSizeCount: number
 }
 
+const EMPTY_FACET_COUNTS: WorkspaceCleanupFacetCounts = Object.freeze({
+  activity: 0,
+  size: 0,
+  status: 0,
+  agent: 0,
+  git: 0,
+  review: 0,
+  ticket: 0,
+  context: 0,
+  location: 0,
+  safety: 0
+})
+
+const EMPTY_FACET_OPTIONS: WorkspaceCleanupFacetOptions = Object.freeze({
+  workspaceStatuses: Object.freeze([]),
+  hostIds: Object.freeze([]),
+  repos: Object.freeze([]),
+  reviewProviders: Object.freeze([])
+})
+
 /**
  * Joins the scan rows with everything the flat list filters and sorts on:
  * renderer-only signals (visits, live agents, review cache, dismissals) plus
  * sizes from the EXISTING workspace-space scan — no second scanner.
+ *
+ * Per-candidate work is cached on candidate object identity (see
+ * workspace-cleanup-facet-row-caches) so streaming ticks touch only changed
+ * rows and no-op ticks skip every downstream pass.
  */
 export function useWorkspaceCleanupFacetRows({
   candidates,
   filters,
   sort,
-  now
+  now,
+  facetPanelOpen = true
 }: {
   candidates: readonly WorkspaceCleanupCandidate[]
   filters: WorkspaceCleanupFilterState
   sort: WorkspaceCleanupSortState
   now: number
+  /** Facet counts/options are only rendered inside the filter popover; pass
+   * false while it is closed to skip their O(N) passes entirely. */
+  facetPanelOpen?: boolean
 }): WorkspaceCleanupFacetRows {
   const sources = useAppStore(
     useShallow((s) => ({
@@ -91,23 +121,29 @@ export function useWorkspaceCleanupFacetRows({
     () => buildWorkspaceCleanupReviewLookup({ repos, worktreesByRepo }),
     [repos, worktreesByRepo]
   )
+  const worktreeById = useMemo(
+    () => buildWorkspaceCleanupWorktreeIndex(worktreesByRepo, repos),
+    [repos, worktreesByRepo]
+  )
+  const liveAgentStatusByWorktreeId = useMemo(
+    () => getLiveAgentStatusByWorktreeId(sources.agentStatusByPaneKey, sources.tabsByWorktree, now),
+    [now, sources.agentStatusByPaneKey, sources.tabsByWorktree]
+  )
+  const dismissedWorktreeIds = useMemo(
+    () => new Set(Object.keys(sources.dismissals)),
+    [sources.dismissals]
+  )
 
+  const reviewCacheRef = useRef<WorkspaceCleanupReviewInfoCache | null>(null)
   const reviewInfoByWorktreeId = useMemo(() => {
-    const infos = new Map<string, WorkspaceCleanupReviewInfo>()
-    const reviewSources = { hostedReviewCache, repos, settings, worktreesByRepo }
-    for (const candidate of candidates) {
-      const info = getWorkspaceCleanupReviewInfo(candidate, reviewSources, reviewLookup)
-      infos.set(
-        getWorkspaceCleanupHostIdentity(
-          getWorkspaceCleanupCandidateHostId(candidate),
-          candidate.worktreeId
-        ),
-        info
-      )
-      if (candidateIdCounts.get(candidate.worktreeId) === 1) {
-        infos.set(candidate.worktreeId, info)
-      }
-    }
+    const { cache, infos } = computeWorkspaceCleanupReviewInfoIndex({
+      candidates,
+      candidateIdCounts,
+      reviewSources: { hostedReviewCache, repos, settings, worktreesByRepo },
+      reviewLookup,
+      cache: reviewCacheRef.current
+    })
+    reviewCacheRef.current = cache
     return infos
   }, [
     candidateIdCounts,
@@ -133,35 +169,33 @@ export function useWorkspaceCleanupFacetRows({
     ])
   }, [candidates, completedSizeByWorktreeId, sources.spaceMeasurements])
 
-  const facets = useMemo(
-    () =>
-      buildWorkspaceCleanupFacetList(candidates, {
-        worktreeById: buildWorkspaceCleanupWorktreeIndex(sources.worktreesByRepo, sources.repos),
+  const facetCacheRef = useRef<WorkspaceCleanupFacetListCache | null>(null)
+  const facets = useMemo(() => {
+    const { cache, list } = computeWorkspaceCleanupFacetList({
+      candidates,
+      sources: {
+        worktreeById,
         workspaceStatuses: sources.workspaceStatuses,
         sizeBytesByWorktreeId: sizeByWorktreeId,
         lastVisitedAtByWorktreeId: sources.lastVisitedAtByWorktreeId,
-        liveAgentStatusByWorktreeId: getLiveAgentStatusByWorktreeId(
-          sources.agentStatusByPaneKey,
-          sources.tabsByWorktree,
-          now
-        ),
+        liveAgentStatusByWorktreeId,
         reviewInfoByWorktreeId,
-        dismissedWorktreeIds: new Set(Object.keys(sources.dismissals))
-      }),
-    [
-      candidates,
-      now,
-      reviewInfoByWorktreeId,
-      sizeByWorktreeId,
-      sources.agentStatusByPaneKey,
-      sources.dismissals,
-      sources.lastVisitedAtByWorktreeId,
-      sources.tabsByWorktree,
-      sources.workspaceStatuses,
-      sources.worktreesByRepo,
-      sources.repos
-    ]
-  )
+        dismissedWorktreeIds
+      },
+      cache: facetCacheRef.current
+    })
+    facetCacheRef.current = cache
+    return list
+  }, [
+    candidates,
+    dismissedWorktreeIds,
+    liveAgentStatusByWorktreeId,
+    reviewInfoByWorktreeId,
+    sizeByWorktreeId,
+    sources.lastVisitedAtByWorktreeId,
+    sources.workspaceStatuses,
+    worktreeById
+  ])
 
   const result = useMemo(
     () => runWorkspaceCleanupQuery(facets, { filters, sort }, now),
@@ -195,22 +229,37 @@ export function useWorkspaceCleanupFacetRows({
     ]
   )
   const facetCounts = useMemo(
-    () => countWorkspaceCleanupFacetMatches(facets, facetFilters, now),
-    [facets, facetFilters, now]
-  )
-  const facetMatchedWorktreeIds = useMemo(
     () =>
-      new Set(filterWorkspaceCleanupFacets(facets, facetFilters, now).map((row) => row.worktreeId)),
-    [facets, facetFilters, now]
+      facetPanelOpen
+        ? countWorkspaceCleanupFacetMatches(facets, facetFilters, now)
+        : EMPTY_FACET_COUNTS,
+    [facetFilters, facetPanelOpen, facets, now]
   )
+  const matchedIdsRef = useRef<ReadonlySet<string>>(new Set())
+  const facetMatchedWorktreeIds = useMemo(() => {
+    const next = new Set(
+      filterWorkspaceCleanupFacets(facets, facetFilters, now).map((row) => row.worktreeId)
+    )
+    const previous = matchedIdsRef.current
+    // Why: destructive selection pruning keys off this set; identity must only
+    // change when membership does.
+    if (previous.size === next.size && [...next].every((id) => previous.has(id))) {
+      return previous
+    }
+    matchedIdsRef.current = next
+    return next
+  }, [facetFilters, facets, now])
   const measuredSizeCount = useMemo(() => countWorkspaceCleanupMeasuredRows(facets), [facets])
   const unmeasuredSizeCount = facets.length - measuredSizeCount
 
   const options = useMemo<WorkspaceCleanupFacetOptions>(() => {
-    const repos = new Map<string, string>()
+    if (!facetPanelOpen) {
+      return EMPTY_FACET_OPTIONS
+    }
+    const repoLabels = new Map<string, string>()
     for (const row of facets) {
-      if (!repos.has(row.repoId)) {
-        repos.set(row.repoId, row.repoName)
+      if (!repoLabels.has(row.repoId)) {
+        repoLabels.set(row.repoId, row.repoName)
       }
     }
     return {
@@ -219,7 +268,7 @@ export function useWorkspaceCleanupFacetRows({
         label: status.label
       })),
       hostIds: [...new Set(facets.map((row) => row.hostId))].sort(),
-      repos: [...repos].map(([id, label]) => ({ id, label })),
+      repos: [...repoLabels].map(([id, label]) => ({ id, label })),
       reviewProviders: [
         ...new Set(
           facets
@@ -228,7 +277,7 @@ export function useWorkspaceCleanupFacetRows({
         )
       ].sort()
     }
-  }, [facets, sources.workspaceStatuses])
+  }, [facetPanelOpen, facets, sources.workspaceStatuses])
 
   return {
     rows: result.rows,

@@ -36,6 +36,7 @@ const EMPTY_REVIEW_INFO: WorkspaceCleanupReviewInfo = {
 
 export function WorkspaceCleanupConfirmRemove({
   candidates,
+  now,
   reviewInfoByWorktreeId,
   progress,
   onBack,
@@ -43,6 +44,8 @@ export function WorkspaceCleanupConfirmRemove({
   onConfirm
 }: {
   candidates: WorkspaceCleanupCandidate[]
+  /** The dialog's "as of" clock; keeps labels consistent with the list view. */
+  now: number
   reviewInfoByWorktreeId: ReadonlyMap<string, WorkspaceCleanupReviewInfo>
   progress: WorkspaceCleanupRemovalProgress | null
   onBack: () => void
@@ -137,6 +140,7 @@ export function WorkspaceCleanupConfirmRemove({
               <ConfirmRemoveRow
                 key={candidate.worktreeId}
                 candidate={candidate}
+                now={now}
                 reviewInfo={
                   reviewInfoByWorktreeId.get(
                     getWorkspaceCleanupHostIdentity(
@@ -182,10 +186,12 @@ export function WorkspaceCleanupConfirmRemove({
 
 function ConfirmRemoveRow({
   candidate,
+  now,
   reviewInfo,
   last
 }: {
   candidate: WorkspaceCleanupCandidate
+  now: number
   reviewInfo: WorkspaceCleanupReviewInfo
   last: boolean
 }): React.JSX.Element {
@@ -203,7 +209,7 @@ function ConfirmRemoveRow({
             'auto.components.workspace.cleanup.WorkspaceCleanupDialog.352f15d6fc',
             'Last active'
           )}{' '}
-          {formatWorkspaceCleanupRelativeTime(candidate.lastActivityAt)}
+          {formatWorkspaceCleanupRelativeTime(candidate.lastActivityAt, now)}
         </span>
         {factStatus ? <StatusPill tone={factStatus.tone}>{factStatus.label}</StatusPill> : null}
         {reviewInfo.label ? (

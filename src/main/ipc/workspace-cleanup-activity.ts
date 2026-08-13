@@ -1,4 +1,4 @@
-import { lstat, readFile } from 'node:fs/promises'
+import { lstat, open, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Repo, Worktree } from '../../shared/types'
 import { getPersistedWorkspaceCleanupActivityAt } from '../../shared/workspace-cleanup'
@@ -6,7 +6,11 @@ import { parseWslUncPath } from '../../shared/wsl-paths'
 import { toWindowsWslPath } from '../wsl'
 
 type StatPath = (targetPath: string) => Promise<{ mtimeMs: number }>
-type ReadTextFile = (targetPath: string) => Promise<string>
+type ReadTextFile = (targetPath: string, options?: { tailBytes?: number }) => Promise<string>
+
+// Why: only the newest reflog entry matters; a long-lived main worktree's full
+// reflog can be megabytes, and it was read and split whole per broad scan.
+const REFLOG_TAIL_BYTES = 8192
 
 export function resolvePersistedWorkspaceCleanupActivityWorktree(worktree: Worktree): Worktree {
   const persistedActivityAt = getPersistedWorkspaceCleanupActivityAt(worktree)
@@ -16,13 +20,24 @@ export function resolvePersistedWorkspaceCleanupActivityWorktree(worktree: Workt
   return { ...worktree, lastActivityAt: persistedActivityAt }
 }
 
+export type WorkspaceCleanupFsActivityCache = Map<string, Promise<number>>
+
 export async function resolveWorkspaceCleanupActivityWorktree(
   repo: Repo,
   worktree: Worktree,
   statPath: StatPath = statLocalPath,
-  readTextFile: ReadTextFile = readLocalTextFile
+  readTextFile: ReadTextFile = readLocalTextFile,
+  // Why: folder workspaces surface one row per instance of the same directory;
+  // the filesystem probes are identical per path and must run once per scan.
+  fsActivityCache?: WorkspaceCleanupFsActivityCache
 ): Promise<Worktree> {
-  const activityAt = await resolveWorkspaceCleanupActivityAt(repo, worktree, statPath, readTextFile)
+  const activityAt = await resolveWorkspaceCleanupActivityAt(
+    repo,
+    worktree,
+    statPath,
+    readTextFile,
+    fsActivityCache
+  )
   if (activityAt <= worktree.lastActivityAt) {
     return worktree
   }
@@ -34,27 +49,48 @@ async function statLocalPath(targetPath: string): Promise<{ mtimeMs: number }> {
   return { mtimeMs: Number(stats.mtimeMs) }
 }
 
-async function readLocalTextFile(targetPath: string): Promise<string> {
-  return readFile(targetPath, 'utf8')
+async function readLocalTextFile(
+  targetPath: string,
+  options?: { tailBytes?: number }
+): Promise<string> {
+  if (options?.tailBytes === undefined) {
+    return readFile(targetPath, 'utf8')
+  }
+  const handle = await open(targetPath, 'r')
+  try {
+    const { size } = await handle.stat()
+    const length = Math.min(options.tailBytes, size)
+    if (length === 0) {
+      return ''
+    }
+    const { buffer, bytesRead } = await handle.read({
+      buffer: Buffer.alloc(length),
+      position: size - length
+    })
+    return buffer.toString('utf8', 0, bytesRead)
+  } finally {
+    await handle.close()
+  }
 }
 
 async function resolveWorkspaceCleanupActivityAt(
   repo: Repo,
   worktree: Worktree,
   statPath: StatPath,
-  readTextFile: ReadTextFile
+  readTextFile: ReadTextFile,
+  fsActivityCache?: WorkspaceCleanupFsActivityCache
 ): Promise<number> {
   const persistedActivityAt = getPersistedWorkspaceCleanupActivityAt(worktree)
   if (repo.connectionId) {
     return persistedActivityAt
   }
 
-  const filesystemActivityAt = await getNewestLocalWorktreeActivityAt(
-    worktree.path,
-    statPath,
-    readTextFile
-  )
-  return Math.max(persistedActivityAt, filesystemActivityAt)
+  let filesystemActivity = fsActivityCache?.get(worktree.path)
+  if (!filesystemActivity) {
+    filesystemActivity = getNewestLocalWorktreeActivityAt(worktree.path, statPath, readTextFile)
+    fsActivityCache?.set(worktree.path, filesystemActivity)
+  }
+  return Math.max(persistedActivityAt, await filesystemActivity)
 }
 
 // Why: best-effort only. Win32 stat over \\wsl.localhost (9P) can falsely
@@ -96,7 +132,9 @@ async function readNewestReflogEntryAt(
   readTextFile: ReadTextFile
 ): Promise<number> {
   try {
-    const lines = (await readTextFile(reflogPath)).split('\n')
+    // A tail cut can start mid-line; scanning backward for the last parseable
+    // entry tolerates that.
+    const lines = (await readTextFile(reflogPath, { tailBytes: REFLOG_TAIL_BYTES })).split('\n')
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       // The trailing timezone + tab anchors the capture, so no digit-count floor is needed.
       const seconds = /\s(\d{1,11})\s[-+]\d{4}\t/.exec(lines[index] ?? '')?.[1]

@@ -192,6 +192,11 @@ function clearSupersededPrunes(
  * Persist a completed scan: a broad (includeAllWorkspaces) scan replaces the snapshot, anything
  * narrower patches matching rows into it. Never throws — the snapshot is a refetchable cache.
  */
+// Why: skip the full snapshot read whose only purpose is the scannedAt
+// comparison — on a large fleet that read is a multi-hundred-KB synchronous
+// JSON.parse per scan.
+const lastPersistedScannedAtByFile = new Map<string, number>()
+
 export async function persistWorkspaceCleanupScanResult(
   snapshotDirectory: string,
   args: WorkspaceCleanupScanArgs,
@@ -201,13 +206,22 @@ export async function persistWorkspaceCleanupScanResult(
   try {
     await withSidecarSnapshotQueue(file, async () => {
       const filteredResult = excludeRowsPrunedDuringScan(file, result)
-      const broad = !args.worktreeId && args.includeAllWorkspaces === true
+      // worktreeIds (even empty) is a targeted scan; persisting it as broad
+      // would replace the fleet snapshot with a subset.
+      const broad =
+        !args.worktreeId && !Array.isArray(args.worktreeIds) && args.includeAllWorkspaces === true
       if (broad) {
-        const existing = await readWorkspaceCleanupScanSnapshot(snapshotDirectory)
-        if (existing && existing.scannedAt > filteredResult.scannedAt) {
+        let knownScannedAt = lastPersistedScannedAtByFile.get(file)
+        if (knownScannedAt === undefined) {
+          const existing = await readWorkspaceCleanupScanSnapshot(snapshotDirectory)
+          knownScannedAt = existing?.scannedAt
+        }
+        if (knownScannedAt !== undefined && knownScannedAt > filteredResult.scannedAt) {
+          lastPersistedScannedAtByFile.set(file, knownScannedAt)
           return
         }
         await writeSnapshot(file, filteredResult)
+        lastPersistedScannedAtByFile.set(file, filteredResult.scannedAt)
         clearSupersededPrunes(file, result, true)
         return
       }

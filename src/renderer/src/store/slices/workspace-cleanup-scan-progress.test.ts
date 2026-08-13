@@ -470,7 +470,8 @@ describe('workspace cleanup scan progress', () => {
     terminalProbe.resolve(false)
     await secondScan
     firstPending.resolve({ scannedAt: NOW - 1, candidates: [firstCandidate], errors: [] })
-    await firstScan
+    // Why: the first fleet scan was superseded when the second started.
+    await expect(firstScan).rejects.toBeInstanceOf(WorkspaceCleanupScanSupersededError)
 
     expect(
       store.getState().workspaceCleanupScan?.candidates.map((candidate) => candidate.worktreeId)
@@ -484,7 +485,7 @@ describe('workspace cleanup scan progress', () => {
     const refreshedCandidate = makeCandidate({ worktreeId: 'repo1::/tmp/refreshed' })
     const broadScans = [firstBroadScan, secondBroadScan]
     const scan = vi.fn((args?: WorkspaceCleanupScanArgs) => {
-      if (args?.worktreeId) {
+      if (args?.worktreeId || args?.worktreeIds) {
         return Promise.resolve({ scannedAt: NOW, candidates: [candidate], errors: [] })
       }
       const nextBroadScan = broadScans.shift()
@@ -561,8 +562,10 @@ describe('workspace cleanup scan progress', () => {
     await second
     expect(store.getState().workspaceCleanupScan).toMatchObject(secondResult)
 
+    // Why: the first fleet scan was superseded when the second started — its
+    // late settlement must neither surface nor clobber the newer result.
     firstPending.resolve(firstResult)
-    await expect(Promise.all([first, second])).resolves.toEqual([firstResult, secondResult])
+    await expect(first).rejects.toBeInstanceOf(WorkspaceCleanupScanSupersededError)
     expect(store.getState().workspaceCleanupScan).toMatchObject(secondResult)
   })
 
@@ -584,7 +587,7 @@ describe('workspace cleanup scan progress', () => {
     await expect(Promise.all([legacy, full])).resolves.toHaveLength(2)
   })
 
-  it('still joins the first key while a different scan key is running', async () => {
+  it('restarts a superseded key instead of joining the cancelled scan', async () => {
     const firstPending = deferred<WorkspaceCleanupScanResult>()
     const secondPending = deferred<WorkspaceCleanupScanResult>()
     const scan = vi.fn((args?: { skipGitWorktreeIds?: string[] }) =>
@@ -597,10 +600,15 @@ describe('workspace cleanup scan progress', () => {
     const second = store.getState().scanWorkspaceCleanup({ skipGitWorktreeIds: ['second'] })
     const firstAgain = store.getState().scanWorkspaceCleanup({ skipGitWorktreeIds: ['first'] })
 
-    expect(scan).toHaveBeenCalledTimes(2)
+    // Why: each new fleet scan supersedes the previous one — only the latest
+    // request may run, and a re-issued key starts fresh rather than joining
+    // the cancelled scan.
+    expect(scan).toHaveBeenCalledTimes(3)
     firstPending.resolve({ scannedAt: NOW, candidates: [], errors: [] })
     secondPending.resolve({ scannedAt: NOW, candidates: [], errors: [] })
-    await expect(Promise.all([first, second, firstAgain])).resolves.toHaveLength(3)
+    await expect(first).rejects.toBeInstanceOf(WorkspaceCleanupScanSupersededError)
+    await expect(second).rejects.toBeInstanceOf(WorkspaceCleanupScanSupersededError)
+    await expect(firstAgain).resolves.toMatchObject({ scannedAt: NOW })
   })
 
   it('keeps stale cleanup results visible after a broad refresh failure', async () => {

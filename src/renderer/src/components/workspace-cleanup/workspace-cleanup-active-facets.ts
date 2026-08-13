@@ -37,21 +37,34 @@ export function hasActiveWorkspaceCleanupFilters(filters: WorkspaceCleanupFilter
 
 /** Selection order is not meaning, so array members compare as sets. */
 function isGroupEqual(left: unknown, right: unknown): boolean {
-  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right))
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false
+    }
+    const leftMembers = left.map(String).sort()
+    const rightMembers = right.map(String).sort()
+    return leftMembers.every((member, index) => member === rightMembers[index])
+  }
+  if (isRecord(left) || isRecord(right)) {
+    if (!isRecord(left) || !isRecord(right)) {
+      return false
+    }
+    const leftKeys = Object.keys(left).sort()
+    const rightKeys = Object.keys(right).sort()
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key, index) => key === rightKeys[index] && isGroupEqual(trim(left[key]), trim(right[key]))
+      )
+    )
+  }
+  return left === right
 }
 
-function normalize(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return [...value].map(String).sort()
-  }
-  if (value !== null && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
-      a.localeCompare(b)
-    )
-    return entries.map(([key, entry]) => [
-      key,
-      typeof entry === 'string' ? entry.trim() : normalize(entry)
-    ])
-  }
-  return value
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object'
+}
+
+function trim(value: unknown): unknown {
+  return typeof value === 'string' ? value.trim() : value
 }

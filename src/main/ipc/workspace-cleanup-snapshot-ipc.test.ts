@@ -42,6 +42,19 @@ import { registerWorkspaceCleanupHandlers } from './workspace-cleanup'
 
 const NOW = 1_700_000_000_000
 
+function makeScanEvent(senderOverrides: Record<string, unknown> = {}): never {
+  return {
+    sender: {
+      id: 1,
+      isDestroyed: () => false,
+      send: vi.fn(),
+      once: vi.fn(),
+      removeListener: vi.fn(),
+      ...senderOverrides
+    }
+  } as never
+}
+
 function makeEmptyStore(): Store {
   return {
     getProfileStorageDirectory: () => '/profile-a',
@@ -81,7 +94,7 @@ describe('workspace cleanup snapshot IPC', () => {
       .mock.calls.find(([channel]) => channel === 'workspaceCleanup:scan')?.[1]
 
     const args = { includeAllWorkspaces: true }
-    const result = await handler?.({ sender: { send: vi.fn() } } as never, args)
+    const result = await handler?.(makeScanEvent(), args)
 
     expect(persistScanResultMock).toHaveBeenCalledWith('/profile-a', args, result)
   })
@@ -92,7 +105,7 @@ describe('workspace cleanup snapshot IPC', () => {
       .mocked(ipcMain.handle)
       .mock.calls.find(([channel]) => channel === 'workspaceCleanup:scan')?.[1]
 
-    await handler?.({ sender: { send: vi.fn() } } as never, { worktreeId: 'repo-1::/repo-feature' })
+    await handler?.(makeScanEvent(), { worktreeId: 'repo-1::/repo-feature' })
 
     expect(persistScanResultMock).not.toHaveBeenCalled()
   })
@@ -103,9 +116,22 @@ describe('workspace cleanup snapshot IPC', () => {
       .mocked(ipcMain.handle)
       .mock.calls.find(([channel]) => channel === 'workspaceCleanup:scan')?.[1]
 
-    await handler?.({ sender: { send: vi.fn() } } as never, {
+    await handler?.(makeScanEvent(), {
       worktreeIds: ['repo-1::/repo-a', 'repo-1::/repo-b']
     })
+
+    expect(persistScanResultMock).not.toHaveBeenCalled()
+  })
+
+  it('does not persist an empty-target scan over the fleet snapshot', async () => {
+    registerWorkspaceCleanupHandlers(makeEmptyStore())
+    const handler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'workspaceCleanup:scan')?.[1]
+
+    // Why: worktreeIds: [] is a targeted scan that returns nothing; persisting
+    // it as broad would wipe the fleet cache.
+    await handler?.(makeScanEvent(), { worktreeIds: [], includeAllWorkspaces: true })
 
     expect(persistScanResultMock).not.toHaveBeenCalled()
   })
@@ -120,9 +146,60 @@ describe('workspace cleanup snapshot IPC', () => {
     })
 
     await expect(
-      handler?.({ sender: { isDestroyed: () => true, send } } as never, { scanId: 'scan-1' })
+      handler?.(makeScanEvent({ isDestroyed: () => true, send }), { scanId: 'scan-1' })
     ).resolves.toEqual({ scannedAt: NOW, candidates: [], errors: [] })
     expect(send).not.toHaveBeenCalled()
+  })
+
+  it('aborts the scan when the invoking renderer is destroyed mid-flight', async () => {
+    let abortListener: (() => void) | undefined
+    scanWorkspaceCleanupMock.mockImplementation((_store, _args, options) => {
+      return new Promise((_resolve, reject) => {
+        options.signal?.addEventListener('abort', () => reject(new Error('cancelled')), {
+          once: true
+        })
+      })
+    })
+    registerWorkspaceCleanupHandlers(makeEmptyStore())
+    const handler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'workspaceCleanup:scan')?.[1]
+    const event = makeScanEvent({
+      once: vi.fn((eventName: string, listener: () => void) => {
+        if (eventName === 'destroyed') {
+          abortListener = listener
+        }
+      })
+    })
+
+    const scan = handler?.(event, { includeAllWorkspaces: true })
+    abortListener?.()
+    await expect(scan).rejects.toThrow('cancelled')
+  })
+
+  it('supersedes a concurrent broad scan from the same renderer', async () => {
+    const settlements: Promise<unknown>[] = []
+    scanWorkspaceCleanupMock.mockImplementation((_store, _args, options) => {
+      return new Promise((resolve, reject) => {
+        options.signal?.addEventListener('abort', () => reject(new Error('cancelled')), {
+          once: true
+        })
+        setTimeout(() => resolve({ scannedAt: NOW, candidates: [], errors: [] }), 5)
+      })
+    })
+    registerWorkspaceCleanupHandlers(makeEmptyStore())
+    const handler = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.find(([channel]) => channel === 'workspaceCleanup:scan')?.[1]
+
+    settlements.push(
+      handler?.(makeScanEvent({ id: 7 }), { includeAllWorkspaces: true }) as Promise<unknown>,
+      handler?.(makeScanEvent({ id: 7 }), { includeAllWorkspaces: true }) as Promise<unknown>
+    )
+    const [first, second] = await Promise.allSettled(settlements)
+
+    expect(first?.status).toBe('rejected')
+    expect(second?.status).toBe('fulfilled')
   })
 
   it('cancels only the invoking renderer scan id', async () => {
@@ -135,7 +212,7 @@ describe('workspace cleanup snapshot IPC', () => {
     })
     registerWorkspaceCleanupHandlers(makeEmptyStore())
     const handlers = Object.fromEntries(vi.mocked(ipcMain.handle).mock.calls)
-    const event = { sender: { id: 7, isDestroyed: () => false, send: vi.fn() } } as never
+    const event = makeScanEvent({ id: 7 })
 
     const scan = handlers['workspaceCleanup:scan']?.(event, { scanId: 'scan-1' })
     expect(handlers['workspaceCleanup:cancelScan']?.(event, 'scan-1')).toBe(true)

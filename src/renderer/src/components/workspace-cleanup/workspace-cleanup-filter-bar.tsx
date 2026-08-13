@@ -16,6 +16,8 @@ export type WorkspaceCleanupGitEvidenceProgress = {
 
 export function WorkspaceCleanupFilterBar({
   facetProps,
+  facetPanelOpen,
+  onFacetPanelOpenChange,
   activeFacetGroupCount,
   matchedCount,
   hasActiveFilters,
@@ -24,6 +26,8 @@ export function WorkspaceCleanupFilterBar({
   onClearFilters
 }: {
   facetProps: WorkspaceCleanupFacetGroupProps
+  facetPanelOpen: boolean
+  onFacetPanelOpenChange: (open: boolean) => void
   activeFacetGroupCount: number
   matchedCount: number
   hasActiveFilters: boolean
@@ -51,7 +55,7 @@ export function WorkspaceCleanupFilterBar({
         />
       </div>
 
-      <Popover modal={false}>
+      <Popover modal={false} open={facetPanelOpen} onOpenChange={onFacetPanelOpenChange}>
         <PopoverTrigger asChild>
           <Button variant="outline" size="sm" className="shrink-0">
             <SlidersHorizontal className="size-3.5" />
