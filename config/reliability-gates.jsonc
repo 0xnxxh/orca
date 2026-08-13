@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-10",
+  "updatedAt": "2026-08-12",
   "policy": {
     "maturityLevels": ["experimental", "soak", "blocking", "accepted-gap", "deprecated"],
     "blockingPromotion": {
@@ -10,6 +10,103 @@
     }
   },
   "gates": [
+    {
+      "id": "terminal-session.shell-ready-exec-prompt-fallback",
+      "title": "Startup exec falls back to the identified shell's line editor",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "terminal-session-readiness",
+      "layer": "posix-pty-and-shell-startup",
+      "surfaces": ["queued terminal startup commands", "zsh and bash startup files"],
+      "platforms": ["macos", "linux"],
+      "providers": ["local", "local-daemon", "ssh-daemon", "ssh-relay", "paired-runtime"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["local", "local-daemon", "ssh-relay"],
+      "coverageNotes": "Real macOS node-pty integration covers zsh 5.9 .zshenv/.zprofile and bash 3.2 profile replacement shells, including exec -a names, same-shell and child-process silent reads, a blocking zle-line-init hook, non-shell readline replacements, and a non-shell image renamed zsh. An Ubuntu 20.04 container confirms compatible zsh/bash termios. Deterministic owner contracts cover local, daemon, and SSH relay identity stripping plus provider- and renderer-owned delivery. Renderer-owned relay fallback publishes the existing ready marker, so mixed client/host versions need no new wire capability. Live SSH, paired-runtime, and WSL remain gaps.",
+      "motivatingLinks": ["https://github.com/stablyai/orca/issues/13767"],
+      "invariant": "Before user startup files run, the wrapper publishes its shell PID. If a later exec discards the ready marker, prompt fallback releases queued startup input only after the launched shell's actual executable image with that exact PID owns the PTY foreground, emits its post-hook line-editor enable sequence, and exposes zle/readline termios; startup reads, line-init hooks, child foreground processes, and non-shell readline replacements cannot trigger early fallback release.",
+      "oracle": "Run the real generated wrappers under node-pty with disposable zsh and bash startup files. Plain and exec -a replacement shells must receive one queued command at their first completed line editor without waiting for the 15-second timeout. The identical oracle must time out without the startup identity and prompt fallback. Same-shell reads, child-process reads, a blocking zle-line-init hook, sqlite3, and sqlite3 renamed zsh must not trigger prompt fallback. Relay owner coverage must strip the identity and release through the same prompt contract.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts src/main/line-editor-ready-output-scanner.test.ts src/main/shell-startup-identity-scanner.test.ts src/main/shell-prompt-readiness-probe.test.ts src/shared/pty-slave-line-discipline-echo.test.ts src/shared/shell-process-readiness.test.ts src/main/daemon/session.test.ts src/main/daemon/shell-ready.test.ts src/main/providers/local-pty-shell-ready.test.ts src/main/providers/local-pty-provider.test.ts src/relay/pty-shell-launch.test.ts src/relay/pty-handler.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts src/relay/pty-handler.test.ts"
+      ],
+      "testFiles": [
+        "src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts",
+        "src/main/line-editor-ready-output-scanner.test.ts",
+        "src/main/shell-startup-identity-scanner.test.ts",
+        "src/main/shell-prompt-readiness-probe.test.ts",
+        "src/shared/pty-slave-line-discipline-echo.test.ts",
+        "src/shared/shell-process-readiness.test.ts",
+        "src/main/daemon/session.test.ts",
+        "src/main/daemon/shell-ready.test.ts",
+        "src/main/providers/local-pty-shell-ready.test.ts",
+        "src/main/providers/local-pty-provider.test.ts",
+        "src/relay/pty-shell-launch.test.ts",
+        "src/relay/pty-handler.test.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts",
+          "assertions": [
+            "real zsh .zshenv/.zprofile and bash profile replacement shells receive queued input exactly once",
+            "same-shell raw silent reads retain queued input",
+            "child-process raw silent reads retain queued input while the identified shell is not foreground",
+            "a blocking zle-line-init read retains queued input until the hook completes",
+            "sqlite3 and a sqlite3 image renamed zsh cannot impersonate the launched shell executable path",
+            "zsh configurations without a line-editor enable sequence retain the existing timeout backstop"
+          ]
+        },
+        {
+          "file": "src/relay/pty-handler.test.ts",
+          "assertions": [
+            "the SSH relay owner strips startup identity and releases provider-delivered input through prompt readiness",
+            "renderer-owned SSH delivery receives the existing ready marker after authoritative relay prompt readiness",
+            "normal renderer-owned ready markers pass through unchanged and retain no readiness state"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/repro-13767-shell-ready-marker-lost-to-exec.test.ts src/main/line-editor-ready-output-scanner.test.ts src/main/shell-startup-identity-scanner.test.ts src/main/shell-prompt-readiness-probe.test.ts src/shared/pty-slave-line-discipline-echo.test.ts src/shared/shell-process-readiness.test.ts src/main/daemon/session.test.ts src/main/daemon/shell-ready.test.ts src/main/providers/local-pty-shell-ready.test.ts src/main/providers/local-pty-provider.test.ts src/relay/pty-shell-launch.test.ts src/relay/pty-handler.test.ts",
+          "result": "passed",
+          "durationSeconds": 4,
+          "summary": "All real exec, silent-read, line-init-hook, renamed-image, disabled-bracketed-paste, and relay-owner oracles plus identity, foreground, executable-image, protocol, and line-editor contracts passed."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 6,
+        "scope": "real local zsh/bash exec and silent-read integration gate"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "Fresh deterministic local runs pass; CI and soak history have not started."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "Oracle SHA-256 b13b08006a38b2adc2acb51ae9342909514e55ab4822fac4fbb76cd49b344cc6 is byte-identical across runs. Latest main 09ec516ae5 and the candidate with its production implementation reverted both failed exactly the three zsh .zprofile/.zshenv and bash exec cases by deterministic 5-second timeout; the zle-line-init oracle also exposed unsafe baseline delivery, while all ten other safety controls passed. The candidate passed all 14 on macOS."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "The normal ready-marker path cancels before external probing. A missing marker triggers a debounced stty read only after a line-editor enable sequence, followed by narrow PID status and executable-image inspection only when termios matches. Slow ordinary startup output triggers zero probes; rejected protocol emissions are capped at four probes per startup. There is no per-command hook or steady-state polling."
+      },
+      "promotionCriteria": [
+        "Collect Linux, SSH-daemon, and paired-runtime live evidence.",
+        "Collect CI and soak history without unexplained flakes.",
+        "Keep same-shell, child-process, line-init-hook, and non-shell readline contracts green."
+      ],
+      "knownGaps": [
+        "The fallback requires a readable POSIX PTY slave; WSL through wsl.exe, ConPTY, and native Windows retain the existing timeout backstop.",
+        "An exec integration that forks a replacement shell instead of retaining the identified shell PID retains the existing timeout backstop.",
+        "A zsh configuration that disables bracketed-paste output emits no safe post-hook protocol signal and retains the existing timeout backstop.",
+        "The pre-existing timeout backstop can still deliver queued input to a non-shell replacement after it expires; this fallback prevents indefinite startup hangs and is unchanged by the prompt fallback.",
+        "The fallback restores safe startup-command delivery but cannot recreate OSC 133 hooks or overlay restores already discarded by exec.",
+        "Startup code running in the launched shell can deliberately spoof the public line-editor enable sequence after configuring matching termios; the existing timeout path already trusts a public OSC marker from the same startup code."
+      ],
+      "demotionRule": "Keep experimental or demote if prompt fallback enters a normal, child, or line-init read; a non-shell executable triggers prompt fallback; the identified shell PID is not foreground; delivery duplicates; ordinary startup output spawns probes; probe attempts exceed four; or the focused gate flakes without an identified harness defect."
+    },
     {
       "id": "editor.restored-sibling-owner-reparent",
       "title": "Restored sibling tabs migrate filesystem authority before becoming editable",
@@ -1360,6 +1457,136 @@
         "Browser screencast subscribers share the fixed contract but have no dedicated reveal journey; the web and mobile clients run parallel transports and are unaffected."
       ],
       "demotionRule": "Demote if a retired runtime transport can leave a renderer subscription without a close event, if a close is delivered more than once, if one failing teardown strands its sibling subscriptions, if payload frames from a retired transport reach the renderer, or if a revealed remote terminal can stay blank or reject input after a reconnect."
+    },
+    {
+      "id": "browser-session.remote-terminal-link-ownership",
+      "title": "Paired terminal links open one browser on their owning runtime",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "browser-runtime",
+      "layer": "renderer-paired-runtime-routing",
+      "surfaces": [
+        "paired remote terminal HTTP links",
+        "terminal link action destinations",
+        "runtime-owned managed browser creation"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["remote-runtime", "ssh"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["remote-runtime", "ssh"],
+      "coverageNotes": "A headed macOS desktop host and separate paired Electron client exercise a real mirrored terminal link, owner-asserted host browser creation, exact host/client page identity, rendered DOM, explicit browser-tab activation, client external-browser suppression, exact host/client close convergence, and continued original-PTY liveness. Unit contracts cover OSC, WebLinksAddon, click fallback, explicit System Browser routing, failed creation, incapable runtimes, and unchanged direct SSH behavior.",
+      "motivatingLinks": [
+        "https://stablygroup.slack.com/archives/C0AK2T3JEF4/p1786567689897109",
+        "https://github.com/stablyai/orca/issues/12418"
+      ],
+      "invariant": "Selecting Orca Browser for an HTTP link in a runtime-owned terminal creates exactly one browser page on that owning runtime and exactly one mirrored client browser workspace, with matching remote page identity and no client external-browser call. Explicit System Browser remains client-owned, direct SSH remains system-browser-only, and unknown or mismatched owners fail closed.",
+      "oracle": "Use the focused routing contracts as the byte-identical baseline/candidate oracle. Require runtime OSC, WebLinksAddon, click fallback, action-menu, and modifier paths to target the exact owner without client fallback, while direct SSH and generic remote document links stay external. Separately run one byte-identical headed paired Electron journey on the candidate and with only runtime browser registration disabled. Require one new host browser tab, one new client mirror with exact page identity, rendered fixture DOM, explicit browser-tab activation, zero client shell.openExternal calls, exact close convergence, unchanged terminal counts, and continued output on the original PTY.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-runtime-host-link-routing.test.ts src/renderer/src/components/terminal-pane/terminal-link-action-routing.test.ts src/renderer/src/components/terminal-pane/terminal-link-open-hints.test.ts src/renderer/src/lib/http-link-routing.test.ts src/renderer/src/lib/http-link-modifier-routing.test.ts src/renderer/src/lib/workspace-browser-tab-open.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-runtime-host-link-routing.test.ts src/renderer/src/components/terminal-pane/terminal-link-action-routing.test.ts src/renderer/src/lib/workspace-browser-tab-open.test.ts",
+        "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-browser-link.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1"
+      ],
+      "testFiles": [
+        "src/renderer/src/components/terminal-pane/terminal-runtime-host-link-routing.test.ts",
+        "src/renderer/src/components/terminal-pane/terminal-link-action-routing.test.ts",
+        "src/renderer/src/components/terminal-pane/terminal-link-open-hints.test.ts",
+        "src/renderer/src/lib/http-link-routing.test.ts",
+        "src/renderer/src/lib/http-link-modifier-routing.test.ts",
+        "src/renderer/src/lib/workspace-browser-tab-open.test.ts",
+        "tests/e2e/paired-remote-terminal-browser-link.spec.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/renderer/src/components/terminal-pane/terminal-runtime-host-link-routing.test.ts",
+          "assertions": [
+            "OSC, WebLinksAddon, and click-fallback activations route through the exact runtime owner",
+            "direct SSH continues to use only the system browser"
+          ]
+        },
+        {
+          "file": "src/renderer/src/lib/workspace-browser-tab-open.test.ts",
+          "assertions": [
+            "an asserted runtime cannot fall back to a client browser",
+            "mismatched and incapable runtime owners fail closed"
+          ]
+        },
+        {
+          "file": "tests/e2e/paired-remote-terminal-browser-link.spec.ts",
+          "assertions": [
+            "one terminal action produces one host page and one client mirror with exact identity",
+            "the host browser renders the fixture while client external navigation stays empty",
+            "an explicit browser-tab click reveals the exact mirror",
+            "closing the mirror returns host and client inventories to baseline",
+            "the original remote PTY accepts and renders fresh output after browser close"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-runtime-host-link-routing.test.ts src/renderer/src/components/terminal-pane/terminal-link-action-routing.test.ts src/renderer/src/lib/workspace-browser-tab-open.test.ts",
+          "result": "failed",
+          "durationSeconds": 2.58,
+          "summary": "Latest main e4c278eb523 failed 6/25 owner-routing assertions: runtime terminal links called the viewing client's external browser and the managed-browser helper did not enforce an asserted runtime owner."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-runtime-host-link-routing.test.ts src/renderer/src/components/terminal-pane/terminal-link-action-routing.test.ts src/renderer/src/components/terminal-pane/terminal-link-open-hints.test.ts src/renderer/src/lib/http-link-routing.test.ts src/renderer/src/lib/http-link-modifier-routing.test.ts src/renderer/src/lib/workspace-browser-tab-open.test.ts",
+          "result": "passed",
+          "durationSeconds": 1.83,
+          "summary": "Candidate passed 84/84 across six focused routing, modifier, availability, owner assertion, failure, SSH, and system-browser contract files."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-browser-link.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 32.9,
+          "summary": "Candidate created one host browser and one client mirror with matching page identity, rendered the fixture, activated on an explicit tab click, made zero client external-browser calls, converged both inventories after exact UI close, and delivered fresh output on the original remote PTY."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_FORCE_HEADFUL=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-browser-link.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "failed",
+          "durationSeconds": 60,
+          "summary": "The byte-identical final Electron oracle failed at its exact host/client identity barrier when the sole source delta replaced src/renderer/src/store/index.ts registration lines 110-113 with registerRuntimeHttpLinkBrowserOpener(null); no host-owned browser appeared within the deterministic 60-second bound."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 45,
+        "scope": "six focused renderer contract files plus one isolated headed paired-runtime journey"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "The focused contracts are deterministic and the headed paired-runtime journey passed locally after its PTY namespace oracle was corrected; longer CI and soak history is not yet available."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "The focused owner-routing oracle is red on latest main e4c278eb523 and green on the candidate. The byte-identical headed Electron oracle is green on the candidate and red when the sole source delta replaces the runtime browser opener registration with registerRuntimeHttpLinkBrowserOpener(null); candidate evidence proves exact host/client identity, rendered content, explicit activation, exact close convergence, original-PTY survival, and absence of client external navigation."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "The production change adds no timer, polling, retry, subprocess, stream opcode, RPC method, or host publication. Each link hover or activation performs bounded in-memory owner and capability lookups; an Orca Browser action issues the same single browser creation and snapshot reconciliation already used by the tab bar."
+      },
+      "promotionCriteria": [
+        "Collect Linux and physical Windows paired-server evidence.",
+        "Collect a live headless-serve terminal-link journey.",
+        "Collect 100 consecutive focused CI passes or 14 days without an unexplained flake."
+      ],
+      "knownGaps": [
+        "Live paired-server validation currently covers macOS only.",
+        "A live headless-serve journey and multiple simultaneous viewers are not exercised by the Electron journey.",
+        "Direct SSH intentionally retains its existing system-browser-only semantics.",
+        "Terminal-link activation does not change the existing asynchronous host/client focus policy."
+      ],
+      "demotionRule": "Demote if one runtime terminal link creates a client-owned or duplicate browser, targets a runtime other than the pane owner, invokes the client external browser for Orca Browser, or removes the source terminal."
     },
     {
       "id": "browser-session.remote-html-preview-ownership",
@@ -7533,14 +7760,16 @@
       "providers": ["local", "daemon", "ssh", "wsl", "remote-runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["local", "daemon"],
-      "coverageNotes": "Runtime and provider-contract tests on macOS cover exact-PTY authorization, local/daemon fresh confirmation, exact ConPTY membership, and unsupported-provider fail-closed behavior. Physical Windows, live Linux, SSH, WSL, and remote-runtime validation remain explicit gaps; providers without confirmation preserve conservative refusal on a shell conflict.",
+      "coverageNotes": "Runtime and provider-contract tests on macOS cover exact-PTY authorization, verified managed-Claude launch identity, local/daemon fresh confirmation, exact ConPTY membership, and unsupported-provider fail-closed behavior. Physical Windows, live Linux, SSH, WSL, and remote-runtime validation remain explicit gaps; providers without confirmation preserve conservative refusal when no verified launch identity exists.",
       "motivatingLinks": ["https://github.com/stablyai/orca/issues/8303"],
-      "invariant": "A guarded note send writes only to the exact PTY binding checked by the guard and only while permission/wait evidence allows input; fresh hook state conflicting with an ordinary shell foreground requires fresh provider confirmation of a recognized agent in that PTY.",
-      "oracle": "Fresh explicit state plus ordinary PowerShell plus confirmed recognized agent is sendable on the same PTY. Confirmed shell/non-agent, unavailable confirmation, PTY exit, handle rebind, or a callback PTY mismatch returns a refusal or not-writable result and writes zero bytes.",
+      "invariant": "A guarded note send writes only to the exact PTY binding checked by the guard and only while permission/wait evidence allows input; a generic busy title requires independent agent identity from the title, a verified managed launch bound to the current PTY incarnation, or the foreground process; fresh hook state conflicting with an ordinary shell foreground requires fresh provider confirmation of a recognized agent in that PTY.",
+      "oracle": "A quarter-circle Claude task title authorizes without a provider lookup only on the exact PTY incarnation carrying verified managed-Claude launch identity; the same title in a bare pane, with an unverified launch hint, or after PTY incarnation replacement is refused while current Claude activity remains a working signal. Fresh explicit state plus ordinary PowerShell plus confirmed recognized agent is sendable on the same PTY. Confirmed shell/non-agent, unavailable confirmation, PTY exit, handle rebind, or a callback PTY mismatch returns a refusal or not-writable result and writes zero bytes.",
       "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/quarter-circle-title-send-authorization.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/rpc/terminal-send.test.ts src/main/ipc/pty.test.ts src/main/providers/agent-foreground-process.test.ts src/main/providers/local-pty-provider.test.ts src/main/providers/windows-conpty-process-membership.test.ts src/main/daemon/daemon-foreground-confirmation-protocol.test.ts src/main/daemon/pty-subprocess.test.ts src/renderer/src/lib/active-agent-note-send.test.ts src/renderer/src/components/browser-pane/BrowserAnnotationSendMenuContent.test.tsx"
       ],
       "testFiles": [
+        "src/main/runtime/quarter-circle-title-send-authorization.test.ts",
         "src/main/runtime/orca-runtime.test.ts",
         "src/main/runtime/rpc/terminal-send.test.ts",
         "src/main/ipc/pty.test.ts",
@@ -7553,6 +7782,14 @@
         "src/renderer/src/components/browser-pane/BrowserAnnotationSendMenuContent.test.tsx"
       ],
       "assertionRefs": [
+        {
+          "file": "src/main/runtime/quarter-circle-title-send-authorization.test.ts",
+          "assertions": [
+            "a verified managed-Claude launch authorizes a task-text quarter-circle title without foreground-process work",
+            "a bare pane, an unverified launch hint, and a replacement PTY incarnation remain refused",
+            "quarter circles remain working signals and braille authorization is unchanged"
+          ]
+        },
         {
           "file": "src/main/runtime/orca-runtime.test.ts",
           "assertions": [
@@ -7621,6 +7858,15 @@
       ],
       "evidenceRuns": [
         {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/quarter-circle-title-send-authorization.test.ts",
+          "result": "passed",
+          "durationSeconds": 20.9,
+          "summary": "The focused file passed 9 tests, including current-incarnation managed-Claude authorization with zero foreground calls and fail-closed bare, unverified, and replacement-incarnation quarter-circle titles."
+        },
+        {
           "date": "2026-07-11",
           "runner": "local",
           "platform": "macos",
@@ -7640,11 +7886,11 @@
       },
       "redGreenEvidence": {
         "status": "partial",
-        "evidence": "Removing strong confirmation fails the shell-conflict success oracle, while removing either exact-binding comparison fails zero-write rebind coverage; saved intentional-break and physical Windows evidence remain missing."
+        "evidence": "Before the verified-launch fallback, the managed-Claude unavailable-foreground case failed with isRunningAgent false; the focused file passed 7 tests after the fix. Removing the launch-incarnation comparison makes the replacement-incarnation refusal fail. Removing strong confirmation fails the shell-conflict success oracle, while removing either exact-binding comparison fails zero-write rebind coverage; physical Windows evidence remains missing."
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Confirmation is invoked at most once per status evaluation and only for fresh explicit hook state whose ordinary foreground result is a shell. Count tests prove permission/title blockers and ordinary recognized-agent evidence add zero confirmations; no polling, retry, session listing, provider fanout, or runtime-global cache is added, and existing provider snapshot dedup remains authoritative."
+        "evidence": "Confirmation is invoked at most once per status evaluation and only for fresh explicit hook state whose ordinary foreground result is a shell. Count tests prove verified managed-Claude launch identity, permission/title blockers, and ordinary recognized-agent evidence add zero provider calls; no polling, retry, session listing, provider fanout, or runtime-global cache is added, and existing provider snapshot dedup remains authoritative."
       },
       "promotionCriteria": [
         "Run the browser annotation existing-agent and repeat-send path in Electron on Windows ConPTY without a recognition refusal.",
@@ -7657,7 +7903,7 @@
         "SSH, WSL, legacy daemon, and remote-runtime providers without confirmation remain intentionally fail-closed on an ordinary-shell conflict; no live artifacts cover those degraded paths.",
         "No live Linux PTY, paired-web, mobile/relay, restore/replay, or multi-window artifact is attached; those surfaces receive no renderer, persistence, or protocol change."
       ],
-      "demotionRule": "Keep non-blocking or demote to protection none if provider confirmation becomes unconditional, exact-PTY mismatch can write bytes, unsupported providers fail open, or the focused gate flakes without an actionable product or harness defect."
+      "demotionRule": "Keep non-blocking or demote to protection none if a generic busy title authorizes without exact title, verified-launch, or foreground identity; provider confirmation becomes unconditional; exact-PTY mismatch can write bytes; unsupported providers fail open; or the focused gate flakes without an actionable product or harness defect."
     },
     {
       "id": "terminal-input.agent-prompt-injection",

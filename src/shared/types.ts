@@ -289,6 +289,8 @@ export type Repo = {
   externalWorktreeInboxBaselinePaths?: string[]
   /** External worktree paths explicitly imported while global visibility stays hide. */
   importedExternalWorktreePaths?: string[]
+  /** Opt-in repo policy for coding-agent scratch worktrees; absent means hide. */
+  agentWorktreeVisibility?: ExternalWorktreeVisibility
   /** User permanently opted out of the new-external-worktree inbox for this repo. */
   externalWorktreeDiscoverySuppressedAt?: number
   /** Paths (relative to the primary checkout) that should be APFS clone-copied
@@ -357,6 +359,7 @@ export type FolderWorkspace = {
   lastActivityAt: number
   createdAt: number
   updatedAt: number
+  diffComments?: DiffComment[]
 }
 
 export type WorkspaceLinkedItem = {
@@ -2796,7 +2799,6 @@ export type GlobalSettings = {
   autoRenameBranchFromWorkDefaultedOn?: boolean
   branchPrefix: BranchPrefixStrategy
   branchPrefixCustom: string
-  enableGitHubAttribution: boolean
   theme: 'system' | 'dark' | 'light'
   /** Controls the left sidebar surface without changing terminal brightness. */
   leftSidebarAppearanceMode: LeftSidebarAppearanceMode

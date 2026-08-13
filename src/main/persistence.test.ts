@@ -4738,6 +4738,25 @@ describe('Store', () => {
     expect(updated!.externalWorktreeVisibilityLegacy).toBe(true)
   })
 
+  it('persists agent worktree visibility independently from external visibility', async () => {
+    const store = await createStore()
+    store.addRepo(makeRepo({ externalWorktreeVisibility: 'hide' }))
+
+    const updated = store.updateRepo('r1', { agentWorktreeVisibility: 'show' })
+
+    expect(updated).toMatchObject({
+      externalWorktreeVisibility: 'hide',
+      agentWorktreeVisibility: 'show'
+    })
+
+    store.flush()
+    const reloaded = await createStore()
+    expect(reloaded.getRepo('r1')).toMatchObject({
+      externalWorktreeVisibility: 'hide',
+      agentWorktreeVisibility: 'show'
+    })
+  })
+
   it('updateRepo clears source-control AI overrides independently from other clearable fields', async () => {
     const store = await createStore()
     store.addRepo(
@@ -5044,7 +5063,19 @@ describe('Store', () => {
     const updated = store.updateFolderWorkspace(workspace.id, {
       comment: 'Coordinate api and web',
       isPinned: true,
-      lastActivityAt: 123
+      lastActivityAt: 123,
+      diffComments: [
+        {
+          id: 'note-1',
+          worktreeId: folderWorkspaceKey(workspace.id),
+          filePath: 'README.md',
+          source: 'markdown',
+          lineNumber: 1,
+          body: 'Review this paragraph',
+          createdAt: 100,
+          side: 'modified'
+        }
+      ]
     })
 
     expect(workspace.folderPath).toBe('/workspace/platform')
@@ -5056,9 +5087,16 @@ describe('Store', () => {
       linkedTask,
       comment: 'Coordinate api and web',
       isPinned: true,
-      lastActivityAt: 123
+      lastActivityAt: 123,
+      diffComments: [expect.objectContaining({ id: 'note-1', body: 'Review this paragraph' })]
     })
     expect(store.getFolderWorkspaces()).toHaveLength(1)
+    store.flush()
+
+    const restored = await createStore()
+    expect(restored.getFolderWorkspace(workspace.id)?.diffComments).toEqual([
+      expect.objectContaining({ id: 'note-1', body: 'Review this paragraph' })
+    ])
   })
 
   it('round-trips Jira item and source context for repo-less folder workspaces', async () => {
