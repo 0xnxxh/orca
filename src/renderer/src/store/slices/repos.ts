@@ -1781,8 +1781,8 @@ export type RepoSlice = {
   activeRepoId: string | null
   // Monotonic sequence so overlapping catalog fetches can drop stale same-host results (#7020).
   reposFetchGeneration: number
-  pendingSshRepoReadoptions: SshRepoReadoption[]
-  recordSshRepoReadoptions: (readoptions: SshRepoReadoption[]) => void
+  pendingSshRepoReadoptions: readonly SshRepoReadoption[]
+  recordSshRepoReadoptions: (readoptions: readonly SshRepoReadoption[]) => void
   fetchRepos: (options?: RuntimeCatalogFetchOptions) => Promise<void>
   fetchReposForAllHosts: (options?: AllHostCatalogFetchOptions) => Promise<void>
   awaitLocalRepoCatalogSettlement: () => Promise<void>
