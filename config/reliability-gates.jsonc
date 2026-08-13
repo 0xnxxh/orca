@@ -8401,12 +8401,16 @@
       "providers": ["local", "daemon", "ssh", "wsl", "remote-runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["local", "daemon", "ssh"],
-      "coverageNotes": "A deterministic service-state-machine oracle now models a current-contract worker and coordinator whose renderer graph identities disappear across an app/runtime update. It exercises the production verifier with restored PTY and hydrated hook commitments, proves authenticated completion replay across a fresh runtime, explicit takeover, ordinary mail routing, remote-attachment process fencing, retained Task/Dispatch/terminal identity, and unchanged fixture marker bytes, and rejects foreign pane evidence. Other deterministic units cover authority-aware legacy formatting, exact legacy worker identity planning, local worker presentation, retained-output reads after adoption, reveal-failure warnings, stable-pane Run/Dispatch routing, creator pane/process/Run-generation fencing, indexed retained-Run lookup scaling, the SSH in-process CLI fallback, exact legacy Task/Dispatch/report-receipt verification, JSON rejection envelopes, and capability-negotiated Run-home settlement with lost-ack replay. Three isolated macOS Electron journeys launch fake Codex workers through the real RPC path. The compiled-CLI journey spawns fresh out/cli processes for rejected and accepted worker_done plus worker-release, then independently verifies runtime and SQLite state. The presentation and restart journeys assert immediate inactive presentation, one live agent PID, stable PTY/incarnation/tab/leaf/worktree/Task/Dispatch identity, and no interruption after workspace re-entry; the restart journey additionally proves exact background adoption with readable ACK output and no resume replay. Distinct A/B artifacts plus live SSH, WSL, folder, remote-runtime, Linux, and Windows cutover journeys remain explicit gaps.",
+      "coverageNotes": "A deterministic service-state-machine oracle now models a current-contract worker and coordinator whose renderer graph identities disappear across an app/runtime update. It exercises the production verifier with restored PTY and hydrated hook commitments, proves authenticated completion replay across a fresh runtime, explicit takeover, ordinary mail routing, remote-attachment process fencing, retained Task/Dispatch/terminal identity, and unchanged fixture marker bytes, and rejects foreign pane evidence. Other deterministic units cover authority-aware legacy formatting, exact legacy worker identity planning, local worker presentation, retained-output reads after adoption, reveal-failure warnings, stable-pane Run/Dispatch routing, creator pane/process/Run-generation fencing, indexed retained-Run lookup scaling, the SSH in-process CLI fallback, exact legacy Task/Dispatch/report-receipt verification, JSON rejection envelopes, and capability-negotiated Run-home settlement. The federation oracle drops the first terminal ACK, restarts Run-home twice, verifies replay through the existing polling path and the persisted acknowledgment watermark, races identical reports, accepts preexisting same-outcome ACK batches, rejects conflicting batches, and covers protocol v1/v2 completion across independently updated peers. A migration unit upgrades a v26 database with a zeroed watermark without replaying older migrations. Three isolated macOS Electron journeys launch fake Codex workers through the real RPC path. Distinct installed A/B artifacts plus live SSH, WSL, folder, Linux, and Windows cutover journeys remain explicit gaps.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/11107#discussion_r3663321387",
-        "https://github.com/stablyai/orca/issues/13858"
+        "https://github.com/stablyai/orca/issues/13858",
+        "https://github.com/stablyai/orca/pull/14105",
+        "https://linear.app/stably/issue/STA-4020",
+        "https://linear.app/stably/issue/STA-4021",
+        "https://linear.app/stably/issue/STA-4022"
       ],
-      "invariant": "Starting a worker in the coordinator's current workspace must materialize one inactive terminal tab before worker-start returns, preserve coordinator focus, and remain exactly once after workspace re-entry. After an app update or restart, an exact live legacy worker must fence automatic provider resume, adopt its original PTY into its original background pane, retain readable output, and clear the resume record without spawning, writing, signalling, interrupting, replacing, or focusing the worker. A current-contract worker whose renderer graph identity is temporarily absent must retain its Dispatch capability and settle exactly once from exact hook-attested handle, pane, and process evidence; otherwise only an exact attested coordinator may take over. A worker_done caller may report success only after the owning runtime returns an explicit lifecycle verdict or authoritative reads prove that the exact Task, Dispatch, and worker report receipt settled the expected outcome. A federated worker may accept only the Run-home runtime's settlement verdict. An exact existing target workspace must receive a discoverable tab without stealing coordinator focus; if renderer reveal fails, worker-start must expose that the live worker remains background-only. Run and Dispatch checks must resolve through the caller's stable pane identity when a terminal handle is reminted, while a live handle outranks mismatched pane metadata. A nested worker's creator edge requires the current creator pane, process incarnation, and owning Run generation; reminting and rebinding that pane to another Run must remove the stale edge. Explicit legacy terminal inspection remains handle-scoped, and remote or headless worker presentation remains background-only.",
+      "invariant": "Starting a worker in the coordinator's current workspace must materialize one inactive terminal tab before worker-start returns, preserve coordinator focus, and remain exactly once after workspace re-entry. After an app update or restart, an exact live legacy worker must fence automatic provider resume, adopt its original PTY into its original background pane, retain readable output, and clear the resume record without spawning, writing, signalling, interrupting, replacing, or focusing the worker. A current-contract worker whose renderer graph identity is temporarily absent must retain its Dispatch capability and settle exactly once from exact hook-attested handle, pane, and process evidence; otherwise only an exact attested coordinator may take over. A worker_done caller may report success only after the owning runtime returns an explicit lifecycle verdict or authoritative reads prove that the exact Task, Dispatch, and worker report receipt settled the expected outcome. Federated terminal settlement must remain replay-eligible until the worker durably acknowledges it, and identical same-outcome retries must converge idempotently. Independently updated clients and worker servers must preserve the negotiated protocol: current peers use Run-home lifecycle settlement, while protocol v1/v2 peers retain their legacy completion path without receiving newer-only fields. A federated worker may accept only the authority defined by its negotiated protocol. An exact existing target workspace must receive a discoverable tab without stealing coordinator focus; if renderer reveal fails, worker-start must expose that the live worker remains background-only. Run and Dispatch checks must resolve through the caller's stable pane identity when a terminal handle is reminted, while a live handle outranks mismatched pane metadata. A nested worker's creator edge requires the current creator pane, process incarnation, and owning Run generation; reminting and rebinding that pane to another Run must remove the stale edge. Explicit legacy terminal inspection remains handle-scoped, and remote or headless worker presentation remains background-only.",
       "oracle": "Drive Run create, Task create, and worker-start through production Electron runtimes with a deterministic Codex fixture. Require append-only ledgers with one still-live PID and no interruption, a visible inactive worker tab while the coordinator stays active, Run delivery through stable pane identity, and stable PTY/incarnation, tab, leaf, worktree, Task, and Dispatch across workspace re-entry. In a restart journey, retain the original daemon PTY and PID, remove renderer ownership, retain sleeping-session evidence, mark the Dispatch legacy, relaunch, and require exact inactive tab adoption, readable ACK output, cleared resume state, one spawn, and no resume argv or Conversation interrupted text after another workspace round trip. The service oracle removes renderer lookup identity from current-contract callers while retaining real restored-PTY and hook commitments, replays authenticated completion and takeover across fresh runtimes, and requires one Task, Dispatch, terminal authority, message, mutation, ordinary-mail delivery, remote process fencing, and unchanged fixture marker bytes while foreign pane evidence remains rejected. Unit tests separately remint a creator pane and process from Run A into Run B, require the nested Run A worker to fall back to its current coordinator, require indexed query plans, and bound 300 Task reads with 50,000 retained Runs. They also assert authority-specific legacy affordances, exact identity and owner matching, retained-output fallback, pane-stable routing, federated non-activation, and SSH fallback parity.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/orchestration-runtime-update-settlement.test.ts --reporter=dot",
@@ -8414,6 +8418,7 @@
         "pnpm exec vitest run --config config/vitest.config.ts src/cli/handlers/orchestration-lifecycle-rejection.test.ts src/cli/handlers/orchestration-lifecycle-json-rejection.test.ts src/cli/handlers/orchestration-migration.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration/formatter.test.ts src/main/runtime/rpc/methods/orchestration-federation.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration/federation-acknowledgment-migration.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration/orchestration-legacy-worker-terminal-recovery.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration/orchestration-creator-authority-performance.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts",
@@ -8436,6 +8441,7 @@
         "src/main/runtime/rpc/methods/orchestration.test.ts",
         "src/main/runtime/rpc/methods/orchestration-federation.test.ts",
         "src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts",
+        "src/main/runtime/orchestration/federation-acknowledgment-migration.test.ts",
         "src/main/ssh/ssh-remote-orca-cli.test.ts",
         "tests/e2e/orchestration-worker-terminal-visibility.spec.ts",
         "tests/e2e/orchestration-legacy-worker-restart-recovery.spec.ts",
@@ -8530,14 +8536,27 @@
           "file": "src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts",
           "assertions": [
             "a remote worker_done waits for Run-home settlement even when an older CLI omits the wait hint",
-            "older negotiated federation protocols reject before queueing",
-            "a committed settlement is replayed after an acknowledgment is lost",
+            "protocol v1/v2 clients can start fresh workers and complete success or failure on a current worker server",
+            "protocol v1/v2 completion ACK loss replays safely after a Run-home restart without newer-only wire fields",
+            "a current Run home still completes reports from legacy protocol v1/v2 worker servers",
+            "persisted protocol v1/v2 workers retain legacy-compatible completion after their worker server updates",
+            "the existing relay polling path retries a committed settlement across Run-home restarts until the worker acknowledgment watermark advances",
+            "identical pending reports coalesce to one relay and every caller receives the same Run-home verdict",
+            "preexisting same-outcome terminal ACK batches settle atomically while conflicting outcomes acknowledge nothing",
             "an aborted settlement wait returns operation_unknown instead of accepted success",
             "an already-aborted signal registers no settlement waiter",
             "a Run-home terminal verdict settles the remote attachment and revokes its capability",
             "a terminal verdict cannot settle an unrelated relay item",
             "a terminal verdict cannot contradict the exact queued worker report outcome",
             "a rejected report replays its exact verdict without mutating durable rejection mail twice"
+          ]
+        },
+        {
+          "file": "src/main/runtime/orchestration/federation-acknowledgment-migration.test.ts",
+          "assertions": [
+            "a v26 database gains a zeroed durable home-to-worker acknowledgment watermark",
+            "a complete v26 database starts migration at v26 rather than replaying v7-v26",
+            "the migration advances schema version without losing the imported relay cursor"
           ]
         },
         {
@@ -8582,6 +8601,69 @@
         }
       ],
       "evidenceRuns": [
+        {
+          "date": "2026-08-13",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 6.02,
+          "summary": "The 70f1d52f mixed-version oracle passed all 21 cases. Protocol v1/v2 clients started fresh workers on a current server, completed success and failure with explicit legacy authority, and automatically retried a lost ACK after Run-home restart; current-protocol settlement and duplicate-report controls stayed green."
+        },
+        {
+          "date": "2026-08-13",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts --reporter=dot",
+          "result": "failed",
+          "durationSeconds": 4.21,
+          "summary": "The byte-identical 70f1d52f oracle failed 6 mixed-version cases while 15 controls passed when the fresh v1/v2 refusal was restored: success and failure through both negotiated versions plus both lost-ACK restart cases."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts --reporter=dot",
+          "result": "failed",
+          "durationSeconds": 5.05,
+          "summary": "The byte-identical ac7bdf4e federation oracle failed 7 of 17 tests on affected 09ec516ae5: fresh v1/v2 work started before completion rejection, persisted v1/v2 work could not finish after update, same-outcome ACKs rejected, duplicate reports remained pending, and a dropped ACK was not replayed."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts --reporter=dot",
+          "result": "failed",
+          "durationSeconds": 5.86,
+          "summary": "The same byte-identical oracle failed the same 7 of 17 tests on latest main 1136503c6a."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 4.28,
+          "summary": "The same byte-identical oracle passed all 17 tests on candidate 008f740161, including restart replay and both directions of v1/v2 update compatibility."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/methods/orchestration-federation-lifecycle-settlement.test.ts --reporter=dot",
+          "result": "failed",
+          "durationSeconds": 19.84,
+          "summary": "With the claimed production files restored to latest main in 3a15d3ed5d, the same byte-identical oracle returned to the same 7 failures while 10 unaffected cases still passed."
+        },
+        {
+          "date": "2026-08-12",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orchestration/federation-acknowledgment-migration.test.ts --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 0.47,
+          "summary": "A complete v26 database resolved migration start at v26, upgraded to v27, retained its imported cursor, and initialized the durable acknowledgment watermark to zero."
+        },
         {
           "date": "2026-08-12",
           "runner": "local",
@@ -8692,11 +8774,11 @@
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "The byte-identical compiled-CLI Electron oracle failed on latest main 5ea7df1a5b because a wrong worker identity exited zero with ok=true while Dispatch stayed dispatched, passed on combined candidate d697666ce8 with a nonzero ok=false rejection and explicit completed verdict for the exact worker, and reproduced the main failure when the claimed production files were disabled at merge-base 64aec94cb2. The earlier byte-identical service oracle was also red on main, green on candidate, red with authority propagation disabled, and green after restore. Distinct installed A/B and CI artifacts are still needed."
+        "evidence": "The byte-identical ac7bdf4e federation oracle failed 7 of 17 tests on affected 09ec516ae5 and latest main 1136503c6a, passed 17 of 17 on candidate 008f740161, and returned to the same 7 failures when the claimed production files were restored to latest main in 3a15d3ed5d. The follow-up byte-identical 70f1d52f oracle passes 21 of 21 with fresh v1/v2 compatibility and fails 6 mixed-version cases while 15 controls pass when only the refusal is restored. Together they prove dropped-ACK replay across Run-home restarts for current and legacy protocols, identical and preexisting same-outcome retry convergence, conflicting-outcome refusal, fresh and persisted old-client/current-server completion, current-client/old-server completion, and legacy wire isolation. The compiled-CLI Electron oracle separately failed on main 5ea7df1a5b, passed on candidate d697666ce8, and reproduced its original failure with the claimed production files disabled. Distinct installed A/B and CI artifacts are still needed."
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Worker-start reuses the existing one-shot renderer reveal and adds no polling, provider listing, or output work. Startup recovery performs one bounded controller inventory per legacy candidate, exact owner/identity checks, one background reveal, and a provider/renderer snapshot only when an adopted worker's in-memory tail is empty and terminal.read is explicitly requested. Check adds one optional pane-key field and reuses the existing Run scan or bounded active-Dispatch lookup. Federated and explicitly background terminals are unchanged."
+        "evidence": "Worker-start reuses the existing one-shot renderer reveal and adds no polling, provider listing, or output work. Startup recovery performs one bounded controller inventory per legacy candidate, exact owner/identity checks, one background reveal, and a provider/renderer snapshot only when an adopted worker's in-memory tail is empty and terminal.read is explicitly requested. Check adds one optional pane-key field and reuses the existing Run scan or bounded active-Dispatch lookup. Federation replay keeps the existing per-Dispatch polling cadence and existing transport queue limit, retaining a terminal Dispatch only while its imported cursor exceeds one persisted acknowledgment watermark. Each successful ACK adds one primary-key SQLite update; exact eligibility is a primary-key lookup, and identical pending terminal lookup is bounded by the existing 256-item per-Dispatch relay quota and pending-relay index. A version-aware schema sentinel keeps valid v26 databases on the direct v26-to-v27 migration path."
       },
       "promotionCriteria": [
         "Collect 100 consecutive passes or 14 days of stable CI history on macOS, Linux, and Windows.",

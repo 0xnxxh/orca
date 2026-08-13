@@ -2721,6 +2721,10 @@ export class OrcaRuntimeService {
   private managedHookReconciliationTail: Promise<void> = Promise.resolve()
   private readonly orchestrationEnvironmentTransport: OrchestrationEnvironmentTransport | null
   private readonly orchestrationFederationTimers = new Map<string, ReturnType<typeof setInterval>>()
+  private orchestrationTerminalHistoryRecoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private orchestrationTerminalHistoryRecoveryInFlight: Promise<void> | null = null
+  private orchestrationTerminalRecoveryRowId = 0
+  private orchestrationFederationRelayGeneration = 0
   private readonly orchestrationFederationSyncs = new Map<
     string,
     { db: OrchestrationDb; promise: Promise<void> }
@@ -3851,15 +3855,15 @@ export class OrcaRuntimeService {
       const { app } = require('electron')
       const dbPath = join(app.getPath('userData'), 'orchestration.db')
       this._orchestrationDb = new OrchestrationDb(dbPath)
+      this.ensureOrchestrationFederationRelay()
     }
     return this._orchestrationDb
   }
 
   setOrchestrationDb(db: OrchestrationDb): void {
-    clearFederationAckCheckpoints(this)
-    this.orchestrationFederationSyncs.clear()
-    this.orchestrationFederationWarnings.clear()
+    this.stopOrchestrationFederationRelay()
     this._orchestrationDb = db
+    this.ensureOrchestrationFederationRelay()
   }
 
   private getLegacyWorkerTerminalRecoveryPlan(): LegacyWorkerTerminalRecoveryPlan {
@@ -4738,8 +4742,7 @@ export class OrcaRuntimeService {
         continue
       }
       const tick = () => {
-        const worker = this.getOrchestrationDb().getWorkerDispatch(dispatch.dispatch_id)
-        if (!worker || !['starting', 'ready', 'stopping'].includes(worker.state)) {
+        if (!this.getOrchestrationDb().isFederatedDispatchRelayEligible(dispatch.dispatch_id)) {
           const activeTimer = this.orchestrationFederationTimers.get(dispatch.dispatch_id)
           if (activeTimer) {
             clearInterval(activeTimer)
@@ -4755,13 +4758,64 @@ export class OrcaRuntimeService {
       this.orchestrationFederationTimers.set(dispatch.dispatch_id, timer)
       tick()
     }
+    this.ensureTerminalHistoryRecovery()
+  }
+
+  private ensureTerminalHistoryRecovery(): void {
+    if (
+      this.orchestrationTerminalHistoryRecoveryTimer ||
+      this.orchestrationTerminalHistoryRecoveryInFlight
+    ) {
+      return
+    }
+    const generation = this.orchestrationFederationRelayGeneration
+    const recovery = this.recoverNextTerminalHistoryAcknowledgment(generation).catch((error) => {
+      console.warn('[orchestration] terminal federation acknowledgment recovery failed', error)
+    })
+    this.orchestrationTerminalHistoryRecoveryInFlight = recovery
+    void recovery.finally(() => {
+      if (this.orchestrationTerminalHistoryRecoveryInFlight === recovery) {
+        this.orchestrationTerminalHistoryRecoveryInFlight = null
+      }
+    })
+  }
+
+  private async recoverNextTerminalHistoryAcknowledgment(generation: number): Promise<void> {
+    const db = this.getOrchestrationDb()
+    let historical = db.findNextTerminalFederatedDispatchPendingAcknowledgment(
+      this.orchestrationTerminalRecoveryRowId
+    )
+    if (!historical && this.orchestrationTerminalRecoveryRowId > 0) {
+      this.orchestrationTerminalRecoveryRowId = 0
+      historical = db.findNextTerminalFederatedDispatchPendingAcknowledgment(0)
+    }
+    if (!historical) {
+      return
+    }
+    this.orchestrationTerminalRecoveryRowId = historical.rowId
+    await this.syncOrchestrationFederatedDispatch(historical.dispatchId).catch(() => undefined)
+    if (generation !== this.orchestrationFederationRelayGeneration) {
+      return
+    }
+    this.orchestrationTerminalHistoryRecoveryTimer = setTimeout(() => {
+      this.orchestrationTerminalHistoryRecoveryTimer = null
+      this.ensureTerminalHistoryRecovery()
+    }, 1_000)
+    this.orchestrationTerminalHistoryRecoveryTimer.unref?.()
   }
 
   stopOrchestrationFederationRelay(): void {
+    this.orchestrationFederationRelayGeneration += 1
     for (const timer of this.orchestrationFederationTimers.values()) {
       clearInterval(timer)
     }
     this.orchestrationFederationTimers.clear()
+    if (this.orchestrationTerminalHistoryRecoveryTimer) {
+      clearTimeout(this.orchestrationTerminalHistoryRecoveryTimer)
+      this.orchestrationTerminalHistoryRecoveryTimer = null
+    }
+    this.orchestrationTerminalHistoryRecoveryInFlight = null
+    this.orchestrationTerminalRecoveryRowId = 0
     this.orchestrationFederationWarnings.clear()
     this.orchestrationFederationSyncs.clear()
     clearFederationAckCheckpoints(this)
