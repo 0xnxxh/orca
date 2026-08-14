@@ -12,17 +12,10 @@ import {
   type SmartClass,
   type WorktreeAttention
 } from './smart-attention'
-import { reuseArrayIfEqual } from './worktree-agent-row-selectors'
+import { useReusedArrayIdentity } from './use-reused-array-identity'
 
 // Debounce re-sort after a sortEpoch bump so background score changes don't jar row positions.
 const SORT_SETTLE_MS = 3_000
-
-function useReusedArrayIdentity<T>(next: T[]): T[] {
-  const previousRef = useRef<T[]>(next)
-  const result = reuseArrayIfEqual(previousRef.current, next)
-  previousRef.current = result
-  return result
-}
 
 export function useWorktreeListSmartOrder(args: {
   allWorktrees: readonly Worktree[]

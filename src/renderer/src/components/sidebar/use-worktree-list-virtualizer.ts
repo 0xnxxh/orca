@@ -136,6 +136,7 @@ export function useWorktreeListVirtualizer(args: {
     getItemKey: getVirtualItemKey
   })
   // Why: TanStack's default correction writes scrollTop while cards remeasure mid-wheel, which feels like rubber-banding.
+  // TODO(scroll-origin-migration): wall-clock suppression misclassifies under jank; migrate to programmaticScrollMarks + restoreSignal (see CombinedDiffViewer).
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (_item, _delta, instance) =>
     shouldAdjustWorktreeSidebarMeasuredRowScroll({
       isScrolling: instance.isScrolling,

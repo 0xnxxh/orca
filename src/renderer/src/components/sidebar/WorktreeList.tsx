@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { CircleX } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { createLineageToggleHandlerCache } from './worktree-lineage-toggle-handler-cache'
-import { reuseArrayIfEqual } from './worktree-agent-row-selectors'
+import { useReusedArrayIdentity } from './use-reused-array-identity'
 import { useShallow } from 'zustand/react/shallow'
 import type { AppState } from '@/store/types'
 import {
@@ -239,14 +239,6 @@ type ProjectGroupDeleteDialogState = {
   groupId: string
   groupName: string
   removeContainedProjects: boolean
-}
-
-// Why: epoch-driven recomputes often produce arrays whose contents and order are unchanged; reusing the previous identity when element-wise equal keeps downstream memos and React.memo'd cards bailing out. Safe only because elements (Worktree objects / id strings) are immutably REPLACED on change — never wrap arrays of mutated-in-place objects.
-function useReusedArrayIdentity<T>(next: T[]): T[] {
-  const previousRef = useRef<T[]>(next)
-  const result = reuseArrayIfEqual(previousRef.current, next)
-  previousRef.current = result
-  return result
 }
 
 const USER_SCROLL_MEASUREMENT_ADJUSTMENT_SUPPRESS_MS = 500
@@ -739,11 +731,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       sidebarProjectGroupHeaderIdsByBucket
     ]
   )
-  const firstHeaderIndexRef = useRef(firstHeaderIndex)
-  firstHeaderIndexRef.current = firstHeaderIndex
   const stickyHeaderIndexes = useMemo(() => getStickyHeaderIndexes(renderRows), [renderRows])
-  const stickyHeaderIndexesRef = useRef(stickyHeaderIndexes)
-  stickyHeaderIndexesRef.current = stickyHeaderIndexes
   const activeStickyHeaderIndexRef = useRef<number | null>(null)
   const activeStickyHostIndexRef = useRef<number | null>(null)
   const stickyRangeStartIndexRef = useRef(0)
