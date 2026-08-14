@@ -68,7 +68,11 @@ export function WorkspaceCleanupFilterBar({
           </Button>
         </PopoverTrigger>
         <PopoverContent align="end" sideOffset={6} className="w-[320px] p-0">
-          <ScrollArea className="max-h-[420px]">
+          {/* Why: the cap must sit on the scroll viewport. On the Root it only
+              clips — the viewport is h-full, which collapses to auto under an
+              indefinite height, so the panel grew past the cap unscrollably and
+              hid the last facet groups behind the footer. */}
+          <ScrollArea viewportClassName="max-h-[420px]">
             <WorkspaceCleanupLifecycleFacets {...facetProps} />
             <WorkspaceCleanupGitReviewFacets {...facetProps} />
           </ScrollArea>
