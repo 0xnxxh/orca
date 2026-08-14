@@ -1,5 +1,5 @@
 import { createElement } from 'react'
-import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 
@@ -47,15 +47,16 @@ import { setCachedRepos } from '../cache/repo-cache'
 import { NewWorktreeModal } from './NewWorktreeModal'
 
 const repos = [{ id: 'repo-1', displayName: 'orca', path: '/src/orca', kind: 'git' }]
+type TestRenderer = ReturnType<typeof create>
 
-function repoPickerItems(renderer: ReactTestRenderer | null): { label: string; detail: string }[] {
+function repoPickerItems(renderer: TestRenderer | null): { label: string; detail: string }[] {
   const pickers = renderer?.root.findAll((node) => node.type === 'PickerListDrawer') ?? []
   const repoPicker = pickers.find((node) => node.props.title === 'Repository')
   return repoPicker?.props.items ?? []
 }
 
 describe('NewWorktreeModal repo list', () => {
-  let renderer: ReactTestRenderer | null = null
+  let renderer: TestRenderer | null = null
 
   beforeEach(() => {
     setCachedRepos('host-1', repos)
