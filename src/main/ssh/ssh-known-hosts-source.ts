@@ -32,25 +32,44 @@ export function resolveKnownHostsFiles(resolved: SshResolvedConfig | null): stri
   return [...new Set(reported.filter((path) => path !== EXPLICIT_NONE))]
 }
 
-async function readEntries(path: string): Promise<KnownHostsEntry[]> {
-  try {
-    return parseKnownHosts(await readFile(path, 'utf8'))
-  } catch {
-    // Missing, unreadable or a directory. Skipping is not failing open: a file we cannot read
-    // contributes no trust, and the remaining files still decide.
-    return []
-  }
-}
-
 /**
  * The union across every file. The caller runs `matchKnownHosts` once over the result, so an exact
  * hit in any file wins and a disagreeing entry in another file is not a mismatch.
  */
-export async function loadKnownHostsEntries(
+export async function loadKnownHostsEntries(files: readonly string[]): Promise<KnownHostsEntry[]> {
+  return (await loadKnownHostsEvidence(files)).entries
+}
+
+export type KnownHostsEvidence = {
+  entries: KnownHostsEntry[]
+  /**
+   * How many configured files we could actually read. Zero is NOT the same as "this host is
+   * unknown": if every source is unreadable we have no evidence at all, and treating that as first
+   * contact would silently accept a changed key. The caller must refuse to record trust then.
+   */
+  readableFileCount: number
+  configuredFileCount: number
+}
+
+export async function loadKnownHostsEvidence(
   files: readonly string[]
-): Promise<KnownHostsEntry[]> {
-  const perFile = await Promise.all(files.map((path) => readEntries(path)))
-  return perFile.flat()
+): Promise<KnownHostsEvidence> {
+  const perFile = await Promise.all(
+    files.map(async (path) => {
+      try {
+        return { entries: parseKnownHosts(await readFile(path, 'utf8')), readable: true }
+      } catch {
+        // Missing, unreadable or a directory. A file we cannot read contributes no trust; the
+        // remaining files still decide, and the count tells the caller whether any spoke at all.
+        return { entries: [] as KnownHostsEntry[], readable: false }
+      }
+    })
+  )
+  return {
+    entries: perFile.flatMap((file) => file.entries),
+    readableFileCount: perFile.filter((file) => file.readable).length,
+    configuredFileCount: files.length
+  }
 }
 
 /**
@@ -62,5 +81,10 @@ export function resolveKnownHostsLookupHost(
   resolved: SshResolvedConfig | null,
   dialedHost: string
 ): string {
-  return resolved?.hostKeyAlias || resolved?.hostname || dialedHost
+  // Deliberately NOT `resolved.hostname`: `ssh -G` echoes its own argument back as `hostname` when
+  // no Host block matches, which for a manual target is the Orca label. Keying on that consults a
+  // name `ssh` never wrote, so the real host's entries are missed entirely and an impersonated
+  // host reads as first contact. `dialedHost` is what ssh2 actually connects to, with HostName
+  // resolution already applied by buildConnectConfig.
+  return resolved?.hostKeyAlias || dialedHost
 }

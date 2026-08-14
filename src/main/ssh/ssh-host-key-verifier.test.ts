@@ -89,6 +89,19 @@ describe('the ssh2 host key verifier', () => {
     expect(returned).toBeUndefined()
   })
 
+  // A superseded attempt has nobody waiting on it; accepting would record trust for a connection
+  // that no longer exists.
+  it('denies once its connect attempt has been superseded', () => {
+    const { accepted } = run({ isCurrentAttempt: () => false })
+    expect(accepted).toBe(false)
+  })
+
+  it('does not record a key for a superseded attempt', () => {
+    const rememberHostKey = vi.fn()
+    run({ isCurrentAttempt: () => false, rememberHostKey })
+    expect(rememberHostKey).not.toHaveBeenCalled()
+  })
+
   describe('remembering', () => {
     it('records a first-contact key', () => {
       const rememberHostKey = vi.fn()
@@ -160,6 +173,14 @@ describe('host key algorithm ordering', () => {
     const ordered = orderServerHostKeyAlgorithms(entries, 'example.com', 22, supported)
     expect(ordered?.slice(0, 2).sort()).toEqual(['rsa-sha2-512', 'ssh-rsa'])
     expect(ordered?.indexOf('ssh-ed25519')).toBeGreaterThan(1)
+  })
+
+  // Types we recorded ourselves must be promoted too, or a host known only to us is left open to
+  // the same downgrade the known_hosts path is protected against.
+  it('leads with a type known only from our own store', () => {
+    const ordered = orderServerHostKeyAlgorithms([], 'example.com', 22, supported, ['ssh-rsa'])
+    expect(ordered?.[0]).toMatch(/rsa/)
+    expect(ordered?.indexOf('ssh-ed25519')).toBeGreaterThan(0)
   })
 
   it('does not propose a type the transport does not support', () => {

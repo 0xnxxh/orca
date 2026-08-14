@@ -23,7 +23,7 @@ export type HostKeyDecisionInput = {
   /** From the user's known_hosts files, unioned. */
   knownHostsOutcome: KnownHostsOutcome
   /** From our own store: does it already hold this exact key for host+port+type? */
-  storeOutcome: 'match' | 'mismatch' | 'unknown'
+  storeOutcome: 'match' | 'mismatch' | 'unknown-type-known-host' | 'unknown'
   /** Effective `StrictHostKeyChecking`; anything unrecognised is treated as `ask`. */
   strictHostKeyChecking: string
   /**
@@ -115,11 +115,15 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
 
   // We hold a key for this host, just not of the presented type. Treating that as first contact is
   // the downgrade an attacker who cannot forge the known key would reach for.
-  if (knownHostsOutcome === 'unknown-type-known-host') {
+  if (
+    knownHostsOutcome === 'unknown-type-known-host' ||
+    storeOutcome === 'unknown-type-known-host'
+  ) {
     return {
       action: 'reject',
       outcome: 'unknown-type-known-host',
-      disagreeingSource: 'known-hosts',
+      disagreeingSource:
+        knownHostsOutcome === 'unknown-type-known-host' ? 'known-hosts' : 'orca-store',
       reason: rejection(
         displayHost,
         'The host offered a key of a type we have not seen for it before, while a key of another type is already known. This can mean the host was rebuilt, or that something is impersonating it.'

@@ -33,6 +33,13 @@ describe('deciding what to do with a presented host key', () => {
         'an unfamiliar key type for a host we know',
         { knownHostsOutcome: 'unknown-type-known-host' as const },
         'unknown-type-known-host'
+      ],
+      // Same downgrade, our own records. Without this the guard covers known_hosts only, so a key
+      // we learned on first contact could be sidestepped by presenting another type.
+      [
+        'an unfamiliar key type for a host only we know',
+        { storeOutcome: 'unknown-type-known-host' as const },
+        'unknown-type-known-host'
       ]
     ])('rejects %s', (_label, overrides, outcome) => {
       const decision = decideHostKey(input(overrides))

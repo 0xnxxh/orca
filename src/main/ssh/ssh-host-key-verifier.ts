@@ -21,7 +21,7 @@ export type TrustedHostKeyLookup = (query: {
   port: number
   keyType: string
   key: Buffer
-}) => 'match' | 'mismatch' | 'unknown'
+}) => 'match' | 'mismatch' | 'unknown-type-known-host' | 'unknown'
 
 export type HostKeyVerifierDeps = {
   host: string
@@ -42,6 +42,12 @@ export type HostKeyVerifierDeps = {
   }) => void
   /** Called on every decision so accepts and rejections are auditable. */
   onDecision?: (decision: HostKeyDecision & { fingerprint: string; keyType: string }) => void
+  /**
+   * False once this connect attempt has been superseded or disposed. A late verifier must deny
+   * rather than accept: the attempt it belongs to is gone, so nothing will consume the result, and
+   * accepting would record trust on behalf of a connection nobody is waiting for.
+   */
+  isCurrentAttempt?: () => boolean
 }
 
 export function hostKeyFingerprintOf(key: Buffer): string {
@@ -62,9 +68,13 @@ export function orderServerHostKeyAlgorithms(
   entries: readonly KnownHostsEntry[],
   host: string,
   port: number,
-  supported: readonly string[]
+  supported: readonly string[],
+  /** Types we recorded ourselves. Without these, a host known only to us is never promoted, and
+   *  type scoping degrades into the downgrade it exists to prevent for exactly the hosts we
+   *  learned on first contact. */
+  storedKeyTypes: readonly string[] = []
 ): string[] | undefined {
-  const known = new Set<string>()
+  const known = new Set<string>(storedKeyTypes)
   for (const entry of entries) {
     if (entry.marker === 'revoked') {
       continue
@@ -114,6 +124,10 @@ export function createHostKeyVerifier(
 ): (key: Buffer, verify: VerifyCallback) => undefined {
   return (key, verify) => {
     try {
+      if (deps.isCurrentAttempt && !deps.isCurrentAttempt()) {
+        verify(false)
+        return undefined
+      }
       const keyType = readHostKeyType(key)
       if (!keyType) {
         // A key whose own header we cannot read is not something to reason about further.

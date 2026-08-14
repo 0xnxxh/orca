@@ -128,6 +128,25 @@ describe('matching a presented key', () => {
     })
   })
 
+  // The design moved IPv6 into scope: a literal that comes back `unknown` because we mangled the
+  // brackets is prompt-training, the harm the whole outcome vocabulary exists to avoid.
+  describe('IPv6 literals', () => {
+    it('matches a bare literal on the default port', () => {
+      const contents = line('2001:db8::1', ED_A)
+      expect(verdict(contents, { host: '2001:db8::1', key: ED_A })).toBe('match')
+    })
+
+    it('matches a bracketed literal on its port', () => {
+      const contents = line('[2001:db8::1]:2222', ED_A)
+      expect(verdict(contents, { host: '2001:db8::1', port: 2222, key: ED_A })).toBe('match')
+    })
+
+    it('reports a change for a literal', () => {
+      const contents = line('2001:db8::1', ED_A)
+      expect(verdict(contents, { host: '2001:db8::1', key: ED_B })).toBe('mismatch')
+    })
+  })
+
   describe('patterns', () => {
     it.each([
       ['a star glob', line('*.example.com', ED_A), 'host.example.com', 'match'],

@@ -223,10 +223,24 @@ describe('resolveKnownHostsLookupHost', () => {
     expect(resolveKnownHostsLookupHost(resolved, '127.0.0.1')).toBe('bastion')
   })
 
-  it('uses the resolved hostname, never the Orca label', () => {
-    const resolved = resolvedConfig({ hostname: 'prod.internal' })
+  // INVERTED from 'uses the resolved hostname, never the Orca label'. That test encoded an
+  // assumption verified false against OpenSSH 10.2p1: `ssh -G` echoes its own argument back as
+  // `hostname` when no Host block matches, so for a manual target `resolved.hostname` IS the Orca
+  // label — the one name the design forbids keying on, and one `ssh` never wrote. Keying on it
+  // consults no entries at all, so an impersonated host reads as first contact.
+  //
+  // The dialed host is correct in both cases: buildConnectConfig has already applied HostName
+  // resolution, so a config alias dials the real host too.
+  it('uses the dialed host, because a resolved hostname can just echo the label', () => {
+    const resolved = resolvedConfig({ hostname: 'my-orca-label' })
 
-    expect(resolveKnownHostsLookupHost(resolved, 'my-orca-label')).toBe('prod.internal')
+    expect(resolveKnownHostsLookupHost(resolved, '10.0.0.5')).toBe('10.0.0.5')
+  })
+
+  it('still prefers an explicit HostKeyAlias over the dialed host', () => {
+    const resolved = resolvedConfig({ hostname: 'my-orca-label', hostKeyAlias: 'bastion' })
+
+    expect(resolveKnownHostsLookupHost(resolved, '10.0.0.5')).toBe('bastion')
   })
 
   it('falls back to the dialed host when nothing was resolved', () => {
