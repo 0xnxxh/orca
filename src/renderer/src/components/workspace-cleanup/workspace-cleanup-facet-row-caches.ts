@@ -23,16 +23,20 @@ import {
  * rows reuse their previous facet/review objects and the row array itself
  * keeps identity when nothing changed, which is what lets React.memo and
  * downstream memos hold.
+ *
+ * The caches are owned by useMemo keyed on their invalidation inputs (never
+ * refs — ref writes during render are unsafe under concurrent rendering).
+ * Filling them during render is safe because they are content-addressed and
+ * idempotent: a replayed or discarded render stores the same value for the
+ * same key.
  */
-type SourceToken = readonly unknown[]
+export type WorkspaceCleanupReviewInfoCache = WeakMap<
+  WorkspaceCleanupCandidate,
+  WorkspaceCleanupReviewInfo
+>
 
-function tokensEqual(left: SourceToken, right: SourceToken): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index])
-}
-
-export type WorkspaceCleanupReviewInfoCache = {
-  token: SourceToken
-  byCandidate: WeakMap<WorkspaceCleanupCandidate, WorkspaceCleanupReviewInfo>
+export function createWorkspaceCleanupReviewInfoCache(): WorkspaceCleanupReviewInfoCache {
+  return new WeakMap()
 }
 
 export function computeWorkspaceCleanupReviewInfoIndex(args: {
@@ -40,25 +44,15 @@ export function computeWorkspaceCleanupReviewInfoIndex(args: {
   candidateIdCounts: ReadonlyMap<string, number>
   reviewSources: WorkspaceCleanupRendererStateInputs
   reviewLookup: WorkspaceCleanupReviewLookup
-  cache: WorkspaceCleanupReviewInfoCache | null
-}): { cache: WorkspaceCleanupReviewInfoCache; infos: Map<string, WorkspaceCleanupReviewInfo> } {
-  const { candidates, candidateIdCounts, reviewSources, reviewLookup } = args
-  const token: SourceToken = [
-    reviewSources.hostedReviewCache,
-    reviewSources.repos,
-    reviewSources.settings,
-    reviewSources.worktreesByRepo
-  ]
-  let cache = args.cache
-  if (!cache || !tokensEqual(cache.token, token)) {
-    cache = { token, byCandidate: new WeakMap() }
-  }
+  cache: WorkspaceCleanupReviewInfoCache
+}): Map<string, WorkspaceCleanupReviewInfo> {
+  const { candidates, candidateIdCounts, reviewSources, reviewLookup, cache } = args
   const infos = new Map<string, WorkspaceCleanupReviewInfo>()
   for (const candidate of candidates) {
-    let info = cache.byCandidate.get(candidate)
+    let info = cache.get(candidate)
     if (info === undefined) {
       info = getWorkspaceCleanupReviewInfo(candidate, reviewSources, reviewLookup)
-      cache.byCandidate.set(candidate, info)
+      cache.set(candidate, info)
     }
     infos.set(
       getWorkspaceCleanupHostIdentity(
@@ -71,7 +65,7 @@ export function computeWorkspaceCleanupReviewInfoIndex(args: {
       infos.set(candidate.worktreeId, info)
     }
   }
-  return { cache, infos }
+  return infos
 }
 
 type FacetCacheEntry = {
@@ -84,9 +78,12 @@ type FacetCacheEntry = {
 }
 
 export type WorkspaceCleanupFacetListCache = {
-  token: SourceToken
   byCandidate: WeakMap<WorkspaceCleanupCandidate, FacetCacheEntry>
   lastList: WorkspaceCleanupFacets[]
+}
+
+export function createWorkspaceCleanupFacetListCache(): WorkspaceCleanupFacetListCache {
+  return { byCandidate: new WeakMap(), lastList: [] }
 }
 
 export function computeWorkspaceCleanupFacetList(args: {
@@ -94,14 +91,9 @@ export function computeWorkspaceCleanupFacetList(args: {
   sources: Required<Omit<WorkspaceCleanupFacetSources, 'workspaceStatuses'>> & {
     workspaceStatuses: readonly WorkspaceStatusDefinition[]
   }
-  cache: WorkspaceCleanupFacetListCache | null
-}): { cache: WorkspaceCleanupFacetListCache; list: WorkspaceCleanupFacets[] } {
-  const { candidates, sources } = args
-  const token: SourceToken = [sources.worktreeById, sources.workspaceStatuses]
-  let cache = args.cache
-  if (!cache || !tokensEqual(cache.token, token)) {
-    cache = { token, byCandidate: new WeakMap(), lastList: [] }
-  }
+  cache: WorkspaceCleanupFacetListCache
+}): WorkspaceCleanupFacets[] {
+  const { candidates, sources, cache } = args
   const list = candidates.map((candidate) => {
     const hostIdentity = getWorkspaceCleanupHostIdentity(
       getWorkspaceCleanupCandidateHostId(candidate),
@@ -144,8 +136,8 @@ export function computeWorkspaceCleanupFacetList(args: {
   // downstream memo skip its O(N) pass on no-op streaming ticks.
   const previous = cache.lastList
   if (previous.length === list.length && list.every((facet, index) => facet === previous[index])) {
-    return { cache, list: previous }
+    return previous
   }
   cache.lastList = list
-  return { cache, list }
+  return list
 }

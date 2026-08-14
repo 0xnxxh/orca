@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '@/store'
 import { getLiveAgentStatusByWorktreeId } from '@/lib/worktree-activity-state'
@@ -33,8 +33,8 @@ import {
 import {
   computeWorkspaceCleanupFacetList,
   computeWorkspaceCleanupReviewInfoIndex,
-  type WorkspaceCleanupFacetListCache,
-  type WorkspaceCleanupReviewInfoCache
+  createWorkspaceCleanupFacetListCache,
+  createWorkspaceCleanupReviewInfoCache
 } from './workspace-cleanup-facet-row-caches'
 
 export type WorkspaceCleanupFacetRows = {
@@ -117,13 +117,25 @@ export function useWorkspaceCleanupFacetRows({
     () => countWorkspaceCleanupCandidateIds(candidates),
     [candidates]
   )
-  const reviewLookup = useMemo(
-    () => buildWorkspaceCleanupReviewLookup({ repos, worktreesByRepo }),
-    [repos, worktreesByRepo]
+  // Why: each per-candidate cache lives in one memo together with the derived
+  // context it is keyed on — the memo deps ARE the cache invalidation, no refs
+  // (ref writes during render are unsafe under concurrent rendering), and
+  // interior fills are content-addressed and idempotent.
+  const reviewContext = useMemo(
+    () => ({
+      sources: { hostedReviewCache, repos, settings, worktreesByRepo },
+      lookup: buildWorkspaceCleanupReviewLookup({ repos, worktreesByRepo }),
+      cache: createWorkspaceCleanupReviewInfoCache()
+    }),
+    [hostedReviewCache, repos, settings, worktreesByRepo]
   )
-  const worktreeById = useMemo(
-    () => buildWorkspaceCleanupWorktreeIndex(worktreesByRepo, repos),
-    [repos, worktreesByRepo]
+  const facetContext = useMemo(
+    () => ({
+      worktreeById: buildWorkspaceCleanupWorktreeIndex(worktreesByRepo, repos),
+      workspaceStatuses: sources.workspaceStatuses,
+      cache: createWorkspaceCleanupFacetListCache()
+    }),
+    [repos, sources.workspaceStatuses, worktreesByRepo]
   )
   const liveAgentStatusByWorktreeId = useMemo(
     () => getLiveAgentStatusByWorktreeId(sources.agentStatusByPaneKey, sources.tabsByWorktree, now),
@@ -134,26 +146,17 @@ export function useWorkspaceCleanupFacetRows({
     [sources.dismissals]
   )
 
-  const reviewCacheRef = useRef<WorkspaceCleanupReviewInfoCache | null>(null)
-  const reviewInfoByWorktreeId = useMemo(() => {
-    const { cache, infos } = computeWorkspaceCleanupReviewInfoIndex({
-      candidates,
-      candidateIdCounts,
-      reviewSources: { hostedReviewCache, repos, settings, worktreesByRepo },
-      reviewLookup,
-      cache: reviewCacheRef.current
-    })
-    reviewCacheRef.current = cache
-    return infos
-  }, [
-    candidateIdCounts,
-    candidates,
-    hostedReviewCache,
-    repos,
-    reviewLookup,
-    settings,
-    worktreesByRepo
-  ])
+  const reviewInfoByWorktreeId = useMemo(
+    () =>
+      computeWorkspaceCleanupReviewInfoIndex({
+        candidates,
+        candidateIdCounts,
+        reviewSources: reviewContext.sources,
+        reviewLookup: reviewContext.lookup,
+        cache: reviewContext.cache
+      }),
+    [candidateIdCounts, candidates, reviewContext]
+  )
 
   const completedSizeByWorktreeId = useMemo(
     () => buildWorkspaceCleanupSizeIndex(sources.spaceWorktrees, candidates),
@@ -169,33 +172,31 @@ export function useWorkspaceCleanupFacetRows({
     ])
   }, [candidates, completedSizeByWorktreeId, sources.spaceMeasurements])
 
-  const facetCacheRef = useRef<WorkspaceCleanupFacetListCache | null>(null)
-  const facets = useMemo(() => {
-    const { cache, list } = computeWorkspaceCleanupFacetList({
+  const facets = useMemo(
+    () =>
+      computeWorkspaceCleanupFacetList({
+        candidates,
+        sources: {
+          worktreeById: facetContext.worktreeById,
+          workspaceStatuses: facetContext.workspaceStatuses,
+          sizeBytesByWorktreeId: sizeByWorktreeId,
+          lastVisitedAtByWorktreeId: sources.lastVisitedAtByWorktreeId,
+          liveAgentStatusByWorktreeId,
+          reviewInfoByWorktreeId,
+          dismissedWorktreeIds
+        },
+        cache: facetContext.cache
+      }),
+    [
       candidates,
-      sources: {
-        worktreeById,
-        workspaceStatuses: sources.workspaceStatuses,
-        sizeBytesByWorktreeId: sizeByWorktreeId,
-        lastVisitedAtByWorktreeId: sources.lastVisitedAtByWorktreeId,
-        liveAgentStatusByWorktreeId,
-        reviewInfoByWorktreeId,
-        dismissedWorktreeIds
-      },
-      cache: facetCacheRef.current
-    })
-    facetCacheRef.current = cache
-    return list
-  }, [
-    candidates,
-    dismissedWorktreeIds,
-    liveAgentStatusByWorktreeId,
-    reviewInfoByWorktreeId,
-    sizeByWorktreeId,
-    sources.lastVisitedAtByWorktreeId,
-    sources.workspaceStatuses,
-    worktreeById
-  ])
+      dismissedWorktreeIds,
+      facetContext,
+      liveAgentStatusByWorktreeId,
+      reviewInfoByWorktreeId,
+      sizeByWorktreeId,
+      sources.lastVisitedAtByWorktreeId
+    ]
+  )
 
   const result = useMemo(
     () => runWorkspaceCleanupQuery(facets, { filters, sort }, now),
@@ -235,20 +236,13 @@ export function useWorkspaceCleanupFacetRows({
         : EMPTY_FACET_COUNTS,
     [facetFilters, facetPanelOpen, facets, now]
   )
-  const matchedIdsRef = useRef<ReadonlySet<string>>(new Set())
-  const facetMatchedWorktreeIds = useMemo(() => {
-    const next = new Set(
-      filterWorkspaceCleanupFacets(facets, facetFilters, now).map((row) => row.worktreeId)
-    )
-    const previous = matchedIdsRef.current
-    // Why: destructive selection pruning keys off this set; identity must only
-    // change when membership does.
-    if (previous.size === next.size && [...next].every((id) => previous.has(id))) {
-      return previous
-    }
-    matchedIdsRef.current = next
-    return next
-  }, [facetFilters, facets, now])
+  // Identity churn here is harmless: the only consumer reads the latest set
+  // inside a useEffectEvent body and never keys an effect on it.
+  const facetMatchedWorktreeIds = useMemo<ReadonlySet<string>>(
+    () =>
+      new Set(filterWorkspaceCleanupFacets(facets, facetFilters, now).map((row) => row.worktreeId)),
+    [facetFilters, facets, now]
+  )
   const measuredSizeCount = useMemo(() => countWorkspaceCleanupMeasuredRows(facets), [facets])
   const unmeasuredSizeCount = facets.length - measuredSizeCount
 
