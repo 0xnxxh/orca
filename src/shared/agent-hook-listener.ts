@@ -2620,6 +2620,7 @@ function normalizeClaudeSubagentLifecycleEvent(
   const hasCachedLeadEvidence = cachedLead !== undefined && !ownsUnbackedWait
   let roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
   let endedChildWork = false
+  let endedRuntimeChildWork = false
   if (eventName === 'TeammateIdle') {
     const teammateName = lifecycleId
     // Why: on claude 2.1.21x teammates are turn-based — TeammateIdle means "turn over, awaiting mail", not finished. The row parks as idle (confirmed teammate) instead of leaving, so the sidebar keeps showing resumable children.
@@ -2628,7 +2629,7 @@ function normalizeClaudeSubagentLifecycleEvent(
       for (const [id, tracked] of roster) {
         if (tracked.state === 'working' && claudeTeammateIdMatchesName(id, teammateName)) {
           wasWorking = true
-          break
+          endedRuntimeChildWork ||= tracked.restoredFromSnapshot !== true
         }
       }
       idleClaudeTeammateByName(roster, teammateName)
@@ -2649,7 +2650,9 @@ function normalizeClaudeSubagentLifecycleEvent(
       )
     } else {
       if (roster) {
-        const wasWorking = roster.get(agentId)?.state === 'working'
+        const tracked = roster.get(agentId)
+        const wasWorking = tracked?.state === 'working'
+        endedRuntimeChildWork = wasWorking && tracked.restoredFromSnapshot !== true
         // Why: one-shot stops are true finishes (row removed); teammate-shaped stops are turn ends on 2.1.21x — the row parks idle and a later SubagentStart revives it.
         stopClaudeSubagent(roster, agentId)
         endedChildWork = wasWorking && roster.get(agentId)?.state !== 'working'
@@ -2669,7 +2672,8 @@ function normalizeClaudeSubagentLifecycleEvent(
   }
   return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload, {
     workingChildEvidence,
-    endedChildWork
+    endedChildWork,
+    endedRuntimeChildWork
   })
 }
 
@@ -2727,7 +2731,7 @@ export function reapRestoredClaudeSubagentsForDeadPane(
   return true
 }
 
-/** Drop a child-owned wait when it stops/idles; without a prior lead state, the child ending resolves the pane. */
+/** Drop a child-owned waiting state when the child stops/idles, restoring the displaced lead state. */
 function clearClaudePendingWaitForAgent(
   state: HookListenerState,
   paneKey: string,
@@ -2737,7 +2741,7 @@ function clearClaudePendingWaitForAgent(
   if (lead?.state !== 'waiting' || !lead.waitingAgentId || !ownsWait(lead.waitingAgentId)) {
     return
   }
-  state.claudeLeadStateByPaneKey.set(paneKey, lead.stateBeforeWait ?? { state: 'done' })
+  state.claudeLeadStateByPaneKey.set(paneKey, lead.stateBeforeWait ?? { state: 'working' })
 }
 
 /** Clear an AskUserQuestion wait after the answer is typed (answering emits no hook event; the caller infers it from the submit keystroke). Restores the stashed pre-wait lead state or 'working', drops the cached card, and returns the pane state to emit (gated up to 'working' while children run). */
@@ -2768,14 +2772,28 @@ function buildClaudeCachedLeadStatusPayload(
   eventName: unknown,
   paneKey: string,
   hookPayload: Record<string, unknown>,
-  evidence: { workingChildEvidence?: boolean; endedChildWork?: boolean } = {}
+  evidence: {
+    workingChildEvidence?: boolean
+    endedChildWork?: boolean
+    endedRuntimeChildWork?: boolean
+  } = {}
 ): ParsedAgentStatusPayload | null {
   const lead = state.claudeLeadStateByPaneKey.get(paneKey)
-  if (!lead && !evidence.workingChildEvidence && !evidence.endedChildWork) {
-    return null
+  let leadState = lead?.state
+  if (!leadState) {
+    if (evidence.workingChildEvidence || evidence.endedRuntimeChildWork) {
+      // Why: ending a current-runtime child wakes its parent; only a cached lead boundary can prove the whole pane completed.
+      leadState = 'working'
+    } else if (
+      evidence.endedChildWork &&
+      resolveClaudePaneState(state, paneKey, { state: 'done' }) !== 'done'
+    ) {
+      // Why: a restored child ending proves only that child ended; publish only when independent pane work still gates the aggregate.
+      leadState = 'done'
+    } else {
+      return null
+    }
   }
-  // Why: no-lead completion requires an identity-matched work ending; delayed unknown stops cannot retire newer work.
-  const leadState = lead?.state ?? (evidence.endedChildWork ? 'done' : 'working')
   return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
     stateName: resolveClaudePaneState(state, paneKey, {
       state: leadState,

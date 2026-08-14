@@ -7142,7 +7142,7 @@ describe('Last-status persistence', () => {
     }
   })
 
-  it('confirms done when a post-restart stop matches a restored child identity', async () => {
+  it('waits for a lead boundary after a post-restart stop matches a restored child', async () => {
     const firstServer = new AgentHookServer()
     await firstServer.start({ env: 'production', userDataPath })
     await postHookEvent(
@@ -7159,7 +7159,10 @@ describe('Last-status persistence', () => {
     const server = new AgentHookServer()
     await server.start({ env: 'production', userDataPath })
     try {
-      expect(server.getStatusSnapshot()[0]).toMatchObject({
+      const statusListener = vi.fn()
+      server.subscribeEnrichedStatus(statusListener)
+      const restored = server.getStatusSnapshot()[0]
+      expect(restored).toMatchObject({
         state: 'working',
         restoredUnconfirmed: true,
         subagents: [expect.objectContaining({ id: 'a0000000000000002' })]
@@ -7170,9 +7173,17 @@ describe('Last-status persistence', () => {
         buildBody({ hook_event_name: 'SubagentStop', agent_id: 'a0000000000000002' })
       )
 
+      expect(server.getStatusSnapshot()[0]).toEqual(restored)
+      expect(server.getStatusChangeSnapshot()[0]?.observedInCurrentRuntime).toBe(false)
+      expect(server._getStateForTests().claudeSubagentRosterByPaneKey.size).toBe(0)
+      expect(statusListener).not.toHaveBeenCalled()
+
+      await postHookEvent(server, buildBody({ hook_event_name: 'Stop', background_tasks: [] }))
+
       expect(server.getStatusSnapshot()[0]).toMatchObject({ state: 'done' })
       expect(server.getStatusSnapshot()[0]?.restoredUnconfirmed).toBeUndefined()
       expect(server.getStatusSnapshot()[0]?.subagents).toBeUndefined()
+      expect(statusListener).toHaveBeenCalledTimes(1)
     } finally {
       server.stop()
     }
@@ -7251,6 +7262,15 @@ describe('Last-status persistence', () => {
         server,
         buildBody({ hook_event_name: 'SubagentStop', agent_id: 'a0000000000000005' })
       )
+
+      expect(server.getStatusSnapshot()[0]).toMatchObject({
+        state: 'working',
+        restoredUnconfirmed: true
+      })
+      expect(server._getStateForTests().claudeSubagentRosterByPaneKey.size).toBe(0)
+
+      await postHookEvent(server, buildBody({ hook_event_name: 'Stop', background_tasks: [] }))
+
       expect(server.getStatusSnapshot()[0]).toMatchObject({ state: 'done' })
       expect(server.getStatusSnapshot()[0]?.restoredUnconfirmed).toBeUndefined()
       expect(server.getStatusSnapshot()[0]?.subagents).toBeUndefined()
@@ -7259,7 +7279,7 @@ describe('Last-status persistence', () => {
     }
   })
 
-  it('confirms done when a post-restart idle matches a restored teammate', async () => {
+  it('waits for a lead boundary after a post-restart idle matches a restored teammate', async () => {
     const firstServer = new AgentHookServer()
     await firstServer.start({ env: 'production', userDataPath })
     await postHookEvent(
@@ -7276,7 +7296,8 @@ describe('Last-status persistence', () => {
     const server = new AgentHookServer()
     await server.start({ env: 'production', userDataPath })
     try {
-      expect(server.getStatusSnapshot()[0]).toMatchObject({
+      const restored = server.getStatusSnapshot()[0]
+      expect(restored).toMatchObject({
         state: 'working',
         restoredUnconfirmed: true,
         subagents: [expect.objectContaining({ id: 'areviewer-6d3cb5b5' })]
@@ -7285,6 +7306,17 @@ describe('Last-status persistence', () => {
       await postHookEvent(
         server,
         buildBody({ hook_event_name: 'TeammateIdle', teammate_name: 'reviewer' })
+      )
+
+      expect(server.getStatusSnapshot()[0]).toEqual(restored)
+      expect(server.getStatusChangeSnapshot()[0]?.observedInCurrentRuntime).toBe(false)
+
+      await postHookEvent(
+        server,
+        buildBody({
+          hook_event_name: 'Stop',
+          background_tasks: [{ id: 'treviewer', type: 'teammate', status: 'running' }]
+        })
       )
 
       expect(server.getStatusSnapshot()[0]).toMatchObject({
