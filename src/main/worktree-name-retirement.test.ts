@@ -34,6 +34,15 @@ describe('normalizeRetirableGeneratedName', () => {
     expect(normalizeRetirableGeneratedName(`${FIRST}-100`)).toBe(`${FIRST}-100`)
   })
 
+  it('retires a suffixed name that itself took a collision suffix', () => {
+    // Once the pool is spent the suggester emits `<name>-2`; a collision on that yields
+    // `<name>-2-3`. Stripping only one suffix leaves `<name>-2`, which is not a pool name, so
+    // retirement would no-op at exactly the tier where every base name is already gone.
+    expect(normalizeRetirableGeneratedName(`${FIRST}-2-3`)).toBe(`${FIRST}-2-3`)
+    expect(normalizeRetirableGeneratedName(`${FIRST}-2-3-4`)).toBe(`${FIRST}-2-3-4`)
+    expect(normalizeRetirableGeneratedName('fix-login-2-3')).toBeNull()
+  })
+
   it('rejects names outside the pool and absurdly long input', () => {
     expect(normalizeRetirableGeneratedName('fix-login')).toBeNull()
     expect(normalizeRetirableGeneratedName('')).toBeNull()
