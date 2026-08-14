@@ -126,6 +126,8 @@ export function stopClaudeSubagent(roster: ClaudeSubagentRoster, id: string): vo
     roster.delete(id)
     return
   }
+  tracked.backgroundTasksAuthoritative = undefined
+  tracked.restoredFromSnapshot = undefined
   tracked.state = 'idle'
 }
 
@@ -297,6 +299,8 @@ export function idleClaudeTeammateByName(roster: ClaudeSubagentRoster, name: str
   for (const [id, tracked] of roster) {
     if (claudeTeammateIdMatchesName(id, name)) {
       changed = changed || tracked.state !== 'idle' || tracked.confirmedTeammate !== true
+      tracked.backgroundTasksAuthoritative = undefined
+      tracked.restoredFromSnapshot = undefined
       tracked.state = 'idle'
       tracked.confirmedTeammate = true
     }

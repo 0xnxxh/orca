@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createHookListenerState,
   normalizeHookPayload,
+  seedClaudeSubagentRosterFromSnapshots,
   type HookListenerState
 } from './agent-hook-listener'
 import { makePaneKey } from './stable-pane-id'
@@ -121,6 +122,35 @@ describe('Claude child lifecycle events with no cached lead state', () => {
     expect(idled?.payload.state).toBe('done')
     expect(idled?.payload.subagents).toEqual([
       expect.objectContaining({ id: 'areviewer-6d3cb5b5', state: 'idle' })
+    ])
+  })
+
+  it('keeps a restored teammate after its exact idle proves the live identity', () => {
+    const state = createHookListenerState()
+    const paneKey = makePaneKey('restored-known-idle', LEAF_ID)
+    seedClaudeSubagentRosterFromSnapshots(state, paneKey, [
+      {
+        id: 'areviewer-8f5dc7d7',
+        state: 'working',
+        startedAt: 100,
+        agentType: 'reviewer'
+      }
+    ])
+
+    expect(
+      claudeEvent(state, paneKey, {
+        hook_event_name: 'TeammateIdle',
+        teammate_name: 'reviewer'
+      })?.payload.state
+    ).toBe('done')
+
+    const leadStop = claudeEvent(state, paneKey, {
+      hook_event_name: 'Stop',
+      background_tasks: [{ id: 'treviewer', type: 'teammate', status: 'running' }]
+    })
+
+    expect(leadStop?.payload.subagents).toEqual([
+      expect.objectContaining({ id: 'areviewer-8f5dc7d7', state: 'idle' })
     ])
   })
 
