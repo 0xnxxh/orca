@@ -2850,6 +2850,9 @@ export type PtyBindingSourceExpectation = {
 }
 
 
+/** Caps the hoist ledger. Far above any realistic open-tab count, so a live tab is never evicted. */
+const MAX_HOISTED_TAB_IDS = 512
+
 /** Expired leases are unreachable from reattach; kept only long enough to outlive any in-flight
  *  recovery window by orders of magnitude. */
 const EXPIRED_SSH_LEASE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
@@ -2941,7 +2944,12 @@ export function hoistSshPartitionsIntoLocalSession(
     }
   }
   if (changed) {
-    state.settings = { ...state.settings, sshHoistedTabIds: [...alreadyHoisted] }
+    // Bounded, newest-last. A tab id can be reused by the CLI after its tab closes, and an
+    // unbounded list would both grow for the life of the profile and strand such a pane forever.
+    // Dropping the oldest entries only risks re-hoisting a long-closed tab once, which is the
+    // milder failure of the two.
+    const bounded = [...alreadyHoisted].slice(-MAX_HOISTED_TAB_IDS)
+    state.settings = { ...state.settings, sshHoistedTabIds: bounded }
   }
   return changed
 }
@@ -7631,11 +7639,15 @@ export class Store {
     }
     // Why: matching on lease ptyId first means this scrubs only the predecessor's
     // stale binding — the winner's own binding cannot match and is left intact.
+    // Snapshot before clearing: the clear mutates live pane state (tab.ptyId, ptyIdsByLeafId), so
+    // restoring only the lease rows would leave a predecessor holding a live lease with no binding.
+    const bindingsBefore = this.snapshotSshLeaseBindings(winner.targetId, superseded)
     this.clearSshRemotePtyBindingsForLeases(winner.targetId, superseded, 'local')
     return () => {
       for (const undo of restore) {
         undo()
       }
+      this.restoreSshLeaseBindings(winner.targetId, superseded, bindingsBefore)
     }
   }
 

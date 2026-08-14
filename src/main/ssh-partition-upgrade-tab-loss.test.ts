@@ -137,10 +137,11 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
     ).toBe(true)
   })
 
-  // The counterfactual that makes this a REGRESSION rather than a standing limitation: before
-  // `mayCreate` existed, the same state re-created the tab instead of discarding it. That is what
-  // "before, many of the tabs were retained" described — they were being recreated.
-  it('was recreated rather than discarded before the refusal was introduced', async () => {
+  // NOTE: with the hoist in place this no longer isolates `mayCreate` — the reopen has already
+  // folded the tab into local, so the bind would succeed either way. Kept as a plain end-to-end
+  // assertion that the upgraded profile can bind, not as a counterfactual. The counterfactual it
+  // used to encode is now carried by the hoist's own mutation test.
+  it('binds without needing to create, once the pane has been hoisted', async () => {
     const before = await createStore()
     before.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
     before.flushOrThrow()
