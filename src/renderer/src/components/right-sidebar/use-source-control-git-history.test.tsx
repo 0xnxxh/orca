@@ -58,6 +58,7 @@ function Probe(props: {
   return null
 }
 
+/** Mounts the probe; omitted props fall back to the defaults declared in `Probe`. */
 async function mount(props: Parameters<typeof Probe>[0] = {}): Promise<Root> {
   return mountProbe(<Probe {...props} />)
 }

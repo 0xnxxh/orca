@@ -5,6 +5,16 @@ import type { GitHistoryPanelState } from './GitHistoryPanel'
 
 const EMPTY_GIT_HISTORY_STATE: GitHistoryPanelState = { status: 'idle' }
 
+/**
+ * Loads commit history for the active worktree.
+ *
+ * State is kept per worktree so switching tabs restores the previous result instead of reloading,
+ * and entries are pruned when `worktreeMap` drops a worktree. Fetching is gated on the panel being
+ * expanded and visible, and stale responses are discarded by per-worktree request id.
+ *
+ * `refreshGitHistoryRef` exists for callers that must refresh from an effect without re-subscribing
+ * whenever the callback identity changes.
+ */
 export function useSourceControlGitHistory({
   activeRepoSettings,
   activeWorktreeId,

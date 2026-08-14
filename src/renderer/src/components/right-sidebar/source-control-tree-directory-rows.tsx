@@ -58,6 +58,10 @@ function SourceControlTreeDirectoryHeader({
   )
 }
 
+/**
+ * Working-tree directory row. `actionPaths` must already be scoped to the currently visible
+ * descendants, and bulk actions only render when that scope is non-empty.
+ */
 export function SourceControlTreeDirectoryRow({
   node,
   actionPaths,
@@ -143,6 +147,7 @@ export function SourceControlTreeDirectoryRow({
   )
 }
 
+/** Branch-compare directory row: read-only, so it deliberately exposes no stage/discard actions. */
 export function SourceControlBranchTreeDirectoryRow({
   node,
   isCollapsed,
