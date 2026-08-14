@@ -41,6 +41,8 @@ export const EMPTY_STRUCTURED_AGENT_SESSION: StructuredAgentSessionState = {
   handoff: null
 }
 
+const MAX_RETAINED_SUBMISSIONS = 256
+
 function replaceSnapshot(
   snapshot: AgentJournalSnapshot,
   fence: number,
@@ -84,7 +86,9 @@ function mergeSubmissions(
   for (const submission of incoming) {
     byId.set(submission.clientMessageId, submission)
   }
-  return [...byId.values()].sort((left, right) => left.submittedAt - right.submittedAt)
+  return [...byId.values()]
+    .sort((left, right) => left.submittedAt - right.submittedAt)
+    .slice(-MAX_RETAINED_SUBMISSIONS)
 }
 
 export function reduceStructuredAgentSession(
@@ -109,12 +113,15 @@ export function reduceStructuredAgentSession(
     ) {
       return state
     }
+    const sameEpoch = state.epoch === action.page.epoch
     return {
       epoch: action.page.epoch,
       cursor: action.page.liveCursor ?? null,
       fence: action.page.fence ?? null,
       items: action.page.items,
-      submissions: action.page.submissions,
+      submissions: sameEpoch
+        ? mergeSubmissions(state.submissions, action.page.submissions)
+        : action.page.submissions,
       hasOlder: action.page.hasOlder,
       status: 'ready',
       handoff: state.handoff
