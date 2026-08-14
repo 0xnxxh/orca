@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
-
-const NO_RETIRED_NAMES: readonly string[] = []
+import {
+  retiredNamesAfterRefresh,
+  selectRetiredNames,
+  type RetiredNamesLoad
+} from '../../../shared/worktree/retired-name-cache'
 
 /** Names already spent in a repo, including workspaces that have since been deleted.
  *
@@ -8,26 +11,17 @@ const NO_RETIRED_NAMES: readonly string[] = []
  *  row behind, but its directory may still hold agent conversation state keyed by that path. Only
  *  the host-side registry remembers it, so name suggestions must ask for it explicitly.
  *
- *  Stale-while-revalidate across `refreshKey`, reset only when the repo changes. A refresh fires on
- *  every workspace-list mutation, so create-multiple refetches after each create — dropping to
- *  empty in between would suggest a spent name in exactly that window, which is when
- *  `resetForNextCreate` clears the field. Holding the previous answer also keeps the returned array
- *  referentially stable, so the suggestion memo downstream does not rerun on every refetch.
+ *  `refreshKey` must change on every workspace-list mutation, so create-multiple refetches after
+ *  each create. Caching rules live in `retired-name-cache` because the mobile hook obeys the same
+ *  ones over a different transport.
  *
- *  Failure returns an empty set, which degrades to the pre-existing behavior (a spent name can be
- *  suggested) rather than blocking workspace creation. */
+ *  Deliberately reports no loading state: create is never gated on this fetch — the host skips
+ *  retired candidates before any git work, so a pending fetch can only cost a suggestion. */
 export function useRetiredWorktreeNames(
   repoId: string | null | undefined,
   refreshKey: unknown
-): {
-  names: readonly string[]
-  loading: boolean
-} {
-  const [loaded, setLoaded] = useState<{
-    repoId: string
-    refreshKey: unknown
-    names: readonly string[]
-  } | null>(null)
+): readonly string[] {
+  const [loaded, setLoaded] = useState<RetiredNamesLoad | null>(null)
 
   useEffect(() => {
     if (!repoId) {
@@ -35,22 +29,16 @@ export function useRetiredWorktreeNames(
       return
     }
     let cancelled = false
+    const settle = (names: readonly string[] | null): void => {
+      if (!cancelled) {
+        setLoaded((previous) => retiredNamesAfterRefresh(previous, repoId, names))
+      }
+    }
     void window.api.worktrees
       .listRetiredNames({ repoId })
-      .then((names) => {
-        if (!cancelled) {
-          setLoaded({ repoId, refreshKey, names })
-        }
-      })
+      .then(settle)
       .catch((err) => {
-        if (!cancelled) {
-          // Keep whatever a previous refresh loaded; a transient failure must not un-retire names.
-          setLoaded((previous) => ({
-            repoId,
-            refreshKey,
-            names: previous?.repoId === repoId ? previous.names : NO_RETIRED_NAMES
-          }))
-        }
+        settle(null)
         console.warn(`Failed to load retired workspace names for repo ${repoId}:`, err)
       })
     return () => {
@@ -58,8 +46,5 @@ export function useRetiredWorktreeNames(
     }
   }, [refreshKey, repoId])
 
-  return {
-    names: loaded && loaded.repoId === repoId ? loaded.names : NO_RETIRED_NAMES,
-    loading: Boolean(repoId) && (loaded?.repoId !== repoId || loaded?.refreshKey !== refreshKey)
-  }
+  return selectRetiredNames(loaded, repoId)
 }

@@ -189,8 +189,16 @@ function NewWorktreeModalContent({
   const [selectedRepo, setSelectedRepo] = useState<Repo | null>(null)
   // Why: a deleted workspace's directory can still hold agent conversation state keyed by cwd, so
   // its name must never be suggested again. Fetched per selected repo while the sheet is open.
-  // Create is never gated on it: the host skips retired candidates before doing any git work.
-  const { names: retiredWorktreeNames } = useRetiredWorktreeNames(client, selectedRepo?.id)
+  // Keyed on the path set rather than the array so a poll that changes nothing does not refetch.
+  const retiredNamesRefreshKey = useMemo(
+    () => [...(existingWorktreePaths ?? [])].sort().join('\0'),
+    [existingWorktreePaths]
+  )
+  const retiredWorktreeNames = useRetiredWorktreeNames(
+    client,
+    selectedRepo?.id,
+    retiredNamesRefreshKey
+  )
   const { drawerView, formSheetVisible, formSheetInteractive, transitionDrawer, openSourceDrawer } =
     useNewWorktreeDrawerNavigation(visible)
   const createInFlightRef = useRef(false)
@@ -662,6 +670,8 @@ function NewWorktreeModalContent({
             client,
             repoId: selectedRepo.id,
             baseName,
+            // `baseName` is the suggestion exactly when the user typed nothing, so no identity check
+            // is needed — desktop's seeded composer needs one (useComposerState `nameWasGenerated`).
             nameWasGenerated: !trimmedName,
             createdWithAgentId,
             comment: trimmedNote,

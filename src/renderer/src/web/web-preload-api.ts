@@ -63,6 +63,7 @@ import { legacyBaseRefSearchResult } from '../../../shared/base-ref-search-resul
 import { EMPTY_PTY_MAIN_DELIVERY_DIAGNOSTICS } from '../../../shared/pty-delivery-diagnostics'
 import { createE2EConfig } from '../../../shared/e2e-config'
 import { relativePathInsideRoot } from '../../../shared/cross-platform-path'
+import { readRetiredNamesForRepo } from '../../../shared/worktree/retired-name-cache'
 import {
   applyPRBotAuthorOverride,
   normalizePRBotAuthorOverrides
@@ -1776,12 +1777,10 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
     // degrades the suggestion to the pre-existing behavior rather than blocking workspace create.
     listRetiredNames: async ({ repoId }) => {
       try {
-        const result = await callRuntimeResult<{ retiredNamesByRepo?: Record<string, string[]> }>(
-          'worktree.listRetiredNames',
-          { repo: repoId }
+        return readRetiredNamesForRepo(
+          await callRuntimeResult<unknown>('worktree.listRetiredNames', { repo: repoId }),
+          repoId
         )
-        const names = result.retiredNamesByRepo?.[repoId]
-        return Array.isArray(names) ? names.filter((name) => typeof name === 'string') : []
       } catch {
         return []
       }

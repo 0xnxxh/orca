@@ -1,57 +1,50 @@
 import { useEffect, useState } from 'react'
+import {
+  readRetiredNamesForRepo,
+  retiredNamesAfterRefresh,
+  selectRetiredNames,
+  type RetiredNamesLoad
+} from '../../../src/shared/worktree/retired-name-cache'
 import type { RpcClient } from '../transport/rpc-client'
 
 /** Names already spent in a repo, including workspaces that have since been deleted.
  *
  *  Why a targeted request rather than the workspace catalog: the catalog is served by `worktree.ps`,
  *  which carries rows only. Retired names are needed just while the create sheet is open and only
- *  for one repo, so this mirrors the desktop hook and asks for exactly that.
+ *  for one repo, so this asks for exactly that.
  *
- *  Hosts predating the field omit it, and any failure yields an empty list, so this degrades to
- *  deduping against live workspaces alone — the behavior before retirement existed. */
+ *  `refreshKey` must change on every workspace-list mutation. Caching rules live in
+ *  `retired-name-cache` so this and the desktop hook cannot drift on what a failure means, and no
+ *  loading state is reported because create is never gated on this fetch. */
 export function useRetiredWorktreeNames(
   client: RpcClient | null | undefined,
-  repoId: string | null | undefined
-): { names: readonly string[]; loading: boolean } {
-  const [loaded, setLoaded] = useState<{
-    repoId: string
-    names: readonly string[]
-  } | null>(null)
+  repoId: string | null | undefined,
+  refreshKey: unknown
+): readonly string[] {
+  const [loaded, setLoaded] = useState<RetiredNamesLoad | null>(null)
+  const activeRepoId = client && repoId ? repoId : null
 
   useEffect(() => {
-    if (!client || !repoId) {
+    if (!client || !activeRepoId) {
       setLoaded(null)
       return
     }
     let cancelled = false
+    const settle = (names: readonly string[] | null): void => {
+      if (!cancelled) {
+        setLoaded((previous) => retiredNamesAfterRefresh(previous, activeRepoId, names))
+      }
+    }
     void client
-      .sendRequest('worktree.listRetiredNames', { repo: `id:${repoId}` })
-      .then((response) => {
-        if (cancelled) {
-          return
-        }
-        const result = (response as { result?: unknown }).result as
-          | { retiredNamesByRepo?: Record<string, string[]> }
-          | undefined
-        const names = result?.retiredNamesByRepo?.[repoId]
-        setLoaded({
-          repoId,
-          // A host can answer with a malformed row; a non-string would throw when normalized.
-          names: Array.isArray(names) ? names.filter((name) => typeof name === 'string') : []
-        })
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLoaded({ repoId, names: [] })
-        }
-      })
+      .sendRequest('worktree.listRetiredNames', { repo: `id:${activeRepoId}` })
+      .then((response) =>
+        settle(readRetiredNamesForRepo((response as { result?: unknown }).result, activeRepoId))
+      )
+      .catch(() => settle(null))
     return () => {
       cancelled = true
     }
-  }, [client, repoId])
+  }, [activeRepoId, client, refreshKey])
 
-  return {
-    names: loaded && loaded.repoId === repoId ? loaded.names : [],
-    loading: Boolean(client && repoId) && loaded?.repoId !== repoId
-  }
+  return selectRetiredNames(loaded, activeRepoId)
 }

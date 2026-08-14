@@ -1601,9 +1601,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         .join('\0'),
     [repoId, worktreesByRepo]
   )
-  // Create is never gated on this load: the host skips retired candidates before any git work, so
-  // a pending fetch can only cost a suggestion, never correctness.
-  const { names: retiredWorktreeNames } = useRetiredWorktreeNames(repoId, retiredNamesRefreshKey)
+  const retiredWorktreeNames = useRetiredWorktreeNames(repoId, retiredNamesRefreshKey)
   const fallbackCreatureName = useMemo(
     () => getSuggestedCreatureName(worktreesByRepo, undefined, retiredWorktreeNames),
     [worktreesByRepo, retiredWorktreeNames]
@@ -3650,6 +3648,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       }
       // Why: only a name Orca generated may be retired — the creature pool contains ordinary words
       // ("orca", "runner", "molly") a user can type deliberately and expect to reuse.
+      // The identity check is what a linked PR/issue seed makes necessary here; mobile's blank-create
+      // path (NewWorktreeModal, `nameWasGenerated: !trimmedName`) has no other seed, so it can't
+      // share this expression. Same rule, two submit paths — change both together.
       const nameWasGenerated = !name.trim() && workspaceName === fallbackCreatureName
       const submitBaseBranch =
         smartGitHubResolution.kind === 'pr-start-point'

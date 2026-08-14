@@ -20,7 +20,7 @@ describe('useRetiredWorktreeNames', () => {
       ({ key }: { key: string }) => useRetiredWorktreeNames('repo-1', key),
       { initialProps: { key: 'a' } }
     )
-    await waitFor(() => expect(result.current.names).toEqual(['nautilus']))
+    await waitFor(() => expect(result.current).toEqual(['nautilus']))
 
     let resolveSecond: (names: string[]) => void = () => {}
     listRetiredNames.mockReturnValueOnce(
@@ -30,11 +30,10 @@ describe('useRetiredWorktreeNames', () => {
     )
     rerender({ key: 'b' })
 
-    expect(result.current.names).toEqual(['nautilus'])
-    expect(result.current.loading).toBe(true)
+    expect(result.current).toEqual(['nautilus'])
 
     resolveSecond(['nautilus', 'seahorse'])
-    await waitFor(() => expect(result.current.names).toEqual(['nautilus', 'seahorse']))
+    await waitFor(() => expect(result.current).toEqual(['nautilus', 'seahorse']))
   })
 
   it('returns a referentially stable array across refreshes that change nothing', async () => {
@@ -45,12 +44,12 @@ describe('useRetiredWorktreeNames', () => {
       ({ key }: { key: string }) => useRetiredWorktreeNames('repo-1', key),
       { initialProps: { key: 'a' } }
     )
-    await waitFor(() => expect(result.current.names).toEqual(['nautilus']))
-    const first = result.current.names
+    await waitFor(() => expect(result.current).toEqual(['nautilus']))
+    const first = result.current
 
     rerender({ key: 'b' })
 
-    expect(result.current.names).toBe(first)
+    expect(result.current).toBe(first)
   })
 
   it('drops names when the repo changes rather than showing another repo pool', async () => {
@@ -59,12 +58,12 @@ describe('useRetiredWorktreeNames', () => {
       ({ repoId }: { repoId: string }) => useRetiredWorktreeNames(repoId, 'key'),
       { initialProps: { repoId: 'repo-1' } }
     )
-    await waitFor(() => expect(result.current.names).toEqual(['nautilus']))
+    await waitFor(() => expect(result.current).toEqual(['nautilus']))
 
     listRetiredNames.mockReturnValueOnce(new Promise<string[]>(() => {}))
     rerender({ repoId: 'repo-2' })
 
-    expect(result.current.names).toEqual([])
+    expect(result.current).toEqual([])
   })
 
   it('keeps previously loaded names when a refresh fails', async () => {
@@ -73,13 +72,25 @@ describe('useRetiredWorktreeNames', () => {
       ({ key }: { key: string }) => useRetiredWorktreeNames('repo-1', key),
       { initialProps: { key: 'a' } }
     )
-    await waitFor(() => expect(result.current.names).toEqual(['nautilus']))
+    await waitFor(() => expect(result.current).toEqual(['nautilus']))
 
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     listRetiredNames.mockRejectedValueOnce(new Error('host unreachable'))
     rerender({ key: 'b' })
 
-    await waitFor(() => expect(result.current.loading).toBe(false))
-    expect(result.current.names).toEqual(['nautilus'])
+    await waitFor(() => expect(warn).toHaveBeenCalled())
+    expect(result.current).toEqual(['nautilus'])
+  })
+
+  it('refetches when the refresh key changes', async () => {
+    listRetiredNames.mockResolvedValue(['nautilus'])
+    const { rerender } = renderHook(
+      ({ key }: { key: string }) => useRetiredWorktreeNames('repo-1', key),
+      { initialProps: { key: 'a' } }
+    )
+    await waitFor(() => expect(listRetiredNames).toHaveBeenCalledTimes(1))
+
+    rerender({ key: 'b' })
+    await waitFor(() => expect(listRetiredNames).toHaveBeenCalledTimes(2))
   })
 })

@@ -1,7 +1,7 @@
-import { basename } from '@/lib/path'
 import {
   normalizeSuggestedName,
-  selectSuggestedCreatureName
+  selectSuggestedCreatureName,
+  suggestionPathBasename
 } from '../../../../shared/worktree-name-suggestion'
 
 type WorktreePathLike = {
@@ -14,7 +14,9 @@ function collectUsedNames(worktreesByRepo: Record<string, WorktreePathLike[]>): 
   const usedNames = new Set<string>()
   for (const worktrees of Object.values(worktreesByRepo)) {
     for (const worktree of worktrees) {
-      usedNames.add(normalizeSuggestedName(basename(worktree.path)))
+      // Shared basename, not `@/lib/path`'s: mobile keys collisions the same way, and two copies of
+      // the key could drift into suggesting a name that is in fact taken.
+      usedNames.add(normalizeSuggestedName(suggestionPathBasename(worktree.path)))
     }
   }
   return usedNames
