@@ -23,7 +23,7 @@ export async function scanSshAiVaultSessionsByOwner(args: {
   targetId: string
   listArgs?: AiVaultListArgs
   signal?: AbortSignal
-  timeoutMs: number
+  ownedTimeoutMs: number
   findOwner?: (targetId: string) => Promise<RuntimeOwnedSshAiVaultHost | null>
   scanOwned?: RuntimeOwnedSshAiVaultScanner
 }): Promise<AiVaultListResult> {
@@ -39,7 +39,7 @@ export async function scanSshAiVaultSessionsByOwner(args: {
         throwIfAiVaultScanCancelled(args.signal)
         return await abandonRemoteSessionScanOnCancel(
           args.scanOwned(owner.environmentId, owner.targetId, args.listArgs ?? {}, {
-            timeoutMs: args.timeoutMs
+            timeoutMs: args.ownedTimeoutMs
           }),
           args.signal
         )
@@ -53,7 +53,6 @@ export async function scanSshAiVaultSessionsByOwner(args: {
     }
   }
   return scanSshAiVaultSessions(args.targetId, args.listArgs, {
-    signal: args.signal,
-    timeoutMs: args.timeoutMs
+    signal: args.signal
   })
 }

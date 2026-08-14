@@ -71,7 +71,7 @@ export async function scanAiVaultSessionsByHostScope(
       targetId: parsed.targetId,
       listArgs: args,
       signal,
-      timeoutMs: AI_VAULT_ALL_HOST_SSH_TIMEOUT_MS,
+      ownedTimeoutMs: AI_VAULT_ALL_HOST_SSH_TIMEOUT_MS,
       findOwner: options.findRuntimeOwningSshAiVaultHost,
       scanOwned: options.scanRuntimeOwnedSshAiVaultSessions
     })

@@ -86,7 +86,7 @@ describe('runtime-owned SSH AI Vault routing', () => {
     const pending = scanSshAiVaultSessionsByOwner({
       targetId: 'hub-owned-host',
       signal: controller.signal,
-      timeoutMs: 20_000,
+      ownedTimeoutMs: 20_000,
       findOwner,
       scanOwned
     })
