@@ -8,6 +8,19 @@ import type { PaneForegroundAgentEntry } from '../../store/slices/pane-foregroun
  * ConPTY never forwards it and that ConPTY can be on a remote host — so the client's
  * platform proves nothing about the PTY. Unbracketed, xterm rewrites the paste's
  * newlines to CR and the agent submits whatever draft was parked in its composer.
+ *
+ * Why keyed on the pane's agent and not on the mode bit itself: "we never observed
+ * DECSET 2004" is not usable evidence. Measured in real ptys — zsh 5.9, fish 4.8.1 and
+ * bash >= 5.1 emit `?2004h` at the prompt and `?2004l` just before exec, but macOS
+ * /bin/bash 3.2, /bin/sh, bash 4.4, and any shell with bracketed paste turned off in
+ * .inputrc/zle emit *nothing at all*. A deliberate opt-out is byte-identical to a bare
+ * `cat`. So silence cannot be read as "nobody has an opinion".
+ *
+ * Agent identity is the only signal that disambiguates it: a TUI agent always enables
+ * bracketed paste, so on an agent pane silence can only mean the announcement was lost
+ * in transit (ConPTY, replay) — never an opt-out. Keep this narrow for that reason.
+ * Bracketing a program that never negotiated is measurably worse than useless: the
+ * markers arrive as literal payload bytes and ICRNL still turns the CR into a submit.
  */
 export function shouldForceBracketedMultilinePasteForPane({
   isWindowsClient,
