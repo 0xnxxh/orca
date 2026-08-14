@@ -15,7 +15,7 @@ import {
   writeHooksJson,
   type HooksConfig
 } from './installer-utils'
-import { readHooksJsonRemote, writeHooksJsonRemote } from './installer-utils-remote'
+import { readHooksJsonRemote, writeHooksJsonRemote, unlink } from './installer-utils-remote'
 
 // Why: installs emitted .sh (POSIX) or .cmd/.ps1 (Windows); sweep every variant.
 const SCRIPT_FILES = ['gemini-hook.sh', 'gemini-hook.cmd', 'gemini-hook.ps1'] as const
@@ -99,9 +99,10 @@ export async function removeRetiredGeminiManagedHooksRemote(
     return
   }
   for (const fileName of SCRIPT_FILES) {
-    // Missing file or permission errors are non-fatal for upgrade cleanup.
-    await new Promise<void>((resolve) => {
-      sftp.unlink(`${home}/.orca/agent-hooks/${fileName}`, () => resolve())
-    })
+    try {
+      await unlink(sftp, `${home}/.orca/agent-hooks/${fileName}`)
+    } catch {
+      // Missing file or permission errors are non-fatal for upgrade cleanup.
+    }
   }
 }

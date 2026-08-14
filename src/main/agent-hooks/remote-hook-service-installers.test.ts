@@ -664,16 +664,43 @@ describe('remote hook service installers', () => {
   })
 
   it('fails closed when the agent allowlist is omitted or empty (issue #11641)', async () => {
-    const { sftp, fs } = createFakeSftp()
+    const settingsPath = '/home/dev/.gemini/settings.json'
+    const { sftp, fs } = createFakeSftp({
+      [settingsPath]: JSON.stringify({
+        hooks: {
+          BeforeAgent: [
+            {
+              hooks: [
+                {
+                  type: 'command',
+                  command: "/bin/sh '/home/dev/.orca/agent-hooks/gemini-hook.sh'"
+                }
+              ]
+            }
+          ]
+        },
+        theme: 'dark'
+      }),
+      '/home/dev/.orca/agent-hooks/gemini-hook.sh': '#!/bin/sh\nprintf "{}\\n"\n',
+      '/home/dev/.orca/agent-hooks/gemini-hook.cmd': '@echo off\n',
+      '/home/dev/.orca/agent-hooks/gemini-hook.ps1': 'Write-Output ""\n'
+    })
 
     await expect(installRemoteManagedAgentHooks(sftp, '/home/dev')).resolves.toEqual([])
     await expect(
       installRemoteManagedAgentHooks(sftp, '/home/dev', { agents: [] })
     ).resolves.toEqual([])
 
-    // Why: fake SFTP seeds '/' only; no agent config homes or files may appear.
-    expect([...fs.files.keys()]).toEqual([])
-    expect([...fs.dirs]).toEqual(['/'])
+    // Why: the Gemini sweep still runs on an empty allowlist; no agent installer may run.
+    const settings = JSON.parse(fs.files.get(settingsPath)!) as {
+      hooks: Record<string, unknown>
+      theme: string
+    }
+    expect(settings.theme).toBe('dark')
+    expect(settings.hooks.BeforeAgent).toBeUndefined()
+    for (const fileName of ['gemini-hook.sh', 'gemini-hook.cmd', 'gemini-hook.ps1']) {
+      expect(fs.files.has(`/home/dev/.orca/agent-hooks/${fileName}`)).toBe(false)
+    }
   })
 
   it('stops before the next installer when its relay request is cancelled', async () => {

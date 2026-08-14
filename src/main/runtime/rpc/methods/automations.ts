@@ -7,6 +7,7 @@ import {
 import { normalizeExecutionHostId } from '../../../../shared/execution-host'
 import type { TaskProviderIdentity as SharedTaskProviderIdentity } from '../../../../shared/task-source-context'
 import { isTuiAgent } from '../../../../shared/tui-agent-config'
+import type { TuiAgent } from '../../../../shared/types'
 import { defineMethod, type RpcMethod } from '../core'
 import {
   OptionalBoolean,
@@ -119,11 +120,33 @@ const AutomationCreate = z.object({
   missedRunGraceMinutes: OptionalPositiveInt
 })
 
+// a retired id or null echo from a mixed-version client must not block unrelated edits; rehome to null so scrub semantics (agentId null + paused) hold
+const RETIRED_UPDATE_AGENTS: readonly unknown[] = ['gemini']
+const UpdateTuiAgent = z
+  .unknown()
+  .optional()
+  .transform((value, ctx): TuiAgent | null | undefined => {
+    if (value === undefined) {
+      return undefined
+    }
+    if (value === null) {
+      return null
+    }
+    if (isTuiAgent(value)) {
+      return value
+    }
+    if (RETIRED_UPDATE_AGENTS.includes(value)) {
+      return null
+    }
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Unknown provider' })
+    return z.NEVER
+  })
+
 const AutomationUpdateFields = z.object({
   name: OptionalString,
   prompt: OptionalString,
   precheck: AutomationPrecheck,
-  agentId: TuiAgent.optional(),
+  agentId: UpdateTuiAgent,
   runContext: WorkspaceRunContext,
   sourceContext: TaskSourceContext,
   repo: OptionalString,

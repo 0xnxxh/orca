@@ -48,7 +48,7 @@ function rehomeRetiredStartupAgent(value: unknown): unknown {
   }
   const { startupAgent: _startupAgent, startupPrompt, startupDraft, ...rest } = params
   // An explicit draft wins; the prompt only fills an empty draft slot.
-  const rehomedDraft = startupDraft ?? startupPrompt
+  const rehomedDraft = startupDraft || startupPrompt
   return rehomedDraft === undefined ? rest : { ...rest, startupDraft: rehomedDraft }
 }
 

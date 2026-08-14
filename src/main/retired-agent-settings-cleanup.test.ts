@@ -187,4 +187,15 @@ describe('cleanRetiredAgentReferences', () => {
   it('tolerates a profile missing every optional collection', () => {
     expect(cleanRetiredAgentReferences({} as PersistedState)).toBe(false)
   })
+
+  it('does not touch retired-looking nodes outside the scoped roots', () => {
+    // Unknown or non-agent top-level subtrees are out of scope: a scrub must
+    // not rewrite state this walk has no license to interpret.
+    const githubCache = { pr: { p1: { data: { agentId: 'gemini' }, fetchedAt: 1 } } }
+    const workspaceSession = { workspaces: [{ agentId: 'gemini' }] }
+    const state = profile({ githubCache, workspaceSession })
+    expect(cleanRetiredAgentReferences(state)).toBe(false)
+    expect(state.githubCache).toEqual(githubCache)
+    expect(state.workspaceSession).toEqual(workspaceSession)
+  })
 })

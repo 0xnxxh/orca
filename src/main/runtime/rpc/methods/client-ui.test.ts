@@ -782,6 +782,42 @@ describe('client UI RPC methods', () => {
     expect(response).toMatchObject({ ok: true, result: { ui: updated } })
   })
 
+  it('strips retired status bar items from legacy clients', async () => {
+    const updated: PersistedUIState = {
+      ...getDefaultUIState(),
+      statusBarItems: ['claude', 'ports']
+    }
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      updateUIState: vi.fn(() => updated)
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: CLIENT_UI_METHODS })
+
+    const response = await dispatcher.dispatch(
+      makeRequest('ui.set', { statusBarItems: ['claude', 'gemini', 'antigravity', 'ports'] })
+    )
+
+    expect(runtime.updateUIState).toHaveBeenCalledWith({
+      statusBarItems: ['claude', 'ports']
+    })
+    expect(response).toMatchObject({ ok: true, result: { ui: updated } })
+  })
+
+  it('drops the accepted legacy antigravity status bar key before persisting', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      updateUIState: vi.fn(() => getDefaultUIState())
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: CLIENT_UI_METHODS })
+
+    const response = await dispatcher.dispatch(
+      makeRequest('ui.set', { _antigravityStatusBarDefaultAdded: true, sidebarWidth: 280 })
+    )
+
+    expect(response).toMatchObject({ ok: true })
+    expect(runtime.updateUIState).toHaveBeenCalledWith({ sidebarWidth: 280 })
+  })
+
   it('rejects each star-nag persisted state mutation field from remote clients', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',

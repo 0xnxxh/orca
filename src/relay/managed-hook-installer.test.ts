@@ -90,8 +90,34 @@ describe('registerManagedHookInstaller', () => {
       signal: undefined,
       agents: ['codex']
     })
-    await expect(handler({ agents: ['unknown'] }, context())).rejects.toThrow(
+  })
+
+  it('drops unsupported agents from the detected allowlist instead of failing', async () => {
+    const installManagedHooks = vi.fn().mockResolvedValue({ installers: 1, errors: 0 })
+    const handler = captureHandler(() => ({ installManagedHooks }))
+
+    await handler({ agents: ['codex', 'gemini'] }, context())
+
+    expect(installManagedHooks).toHaveBeenCalledWith({
+      signal: undefined,
+      agents: ['codex']
+    })
+
+    await handler({ agents: ['unknown'] }, context())
+
+    expect(installManagedHooks).toHaveBeenCalledWith({
+      signal: undefined,
+      agents: []
+    })
+  })
+
+  it('fails closed on a malformed detected agent allowlist', async () => {
+    const installManagedHooks = vi.fn().mockResolvedValue({ installers: 0, errors: 0 })
+    const handler = captureHandler(() => ({ installManagedHooks }))
+
+    await expect(handler({ agents: 'codex' }, context())).rejects.toThrow(
       'invalid_managed_hook_agents'
     )
+    expect(installManagedHooks).not.toHaveBeenCalled()
   })
 })

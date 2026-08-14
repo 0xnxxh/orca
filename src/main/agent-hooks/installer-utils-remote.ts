@@ -278,7 +278,7 @@ async function renameOpenSsh(sftp: SFTPWrapper, src: string, dst: string): Promi
   })
 }
 
-async function unlink(sftp: SFTPWrapper, remotePath: string): Promise<void> {
+export async function unlink(sftp: SFTPWrapper, remotePath: string): Promise<void> {
   await sftpOperation<void>(`unlink ${remotePath}`, (callback) => {
     sftp.unlink(remotePath, callback)
   })

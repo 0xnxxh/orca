@@ -68,10 +68,10 @@ function filterRetired(
 }
 
 /**
- * One depth-first pass over the profile. Every shape that stores an agent id
- * does it under one of the key names above, at some nesting depth that differs
- * per shape (settings, per-repo overrides, action recipes, automations), so
- * matching on the key rather than the path covers them all.
+ * One depth-first pass over the given profile subtree. Every shape that stores
+ * an agent id does it under one of the key names above, at some nesting depth
+ * that differs per shape (settings, per-repo overrides, action recipes,
+ * automations), so matching on the key rather than the path covers them all.
  */
 function scrub(node: unknown): boolean {
   if (Array.isArray(node)) {
@@ -110,6 +110,17 @@ function scrub(node: unknown): boolean {
   return changed
 }
 
+/** Top-level profile subtrees that can hold a retired agent reference. */
+const SCRUB_ROOTS: readonly (keyof PersistedState)[] = [
+  'settings',
+  'ui',
+  'repos',
+  'projectHostSetups',
+  'folderWorkspaces',
+  'worktreeMeta',
+  'automations'
+]
+
 /**
  * Rewrites `state` in place. Returns true when anything changed, so the caller
  * can flag the profile for a re-save.
@@ -126,5 +137,8 @@ export function cleanRetiredAgentReferences(state: PersistedState): boolean {
       changed = true
     }
   }
-  return scrub(state) || changed
+  for (const key of SCRUB_ROOTS) {
+    changed = scrub((state as unknown as Record<string, unknown>)[key]) || changed
+  }
+  return changed
 }

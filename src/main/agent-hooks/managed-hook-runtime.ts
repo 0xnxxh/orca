@@ -79,11 +79,7 @@ export async function installManagedHooks(options?: {
   agents?: readonly AgentHookTarget[]
 }): Promise<ManagedHookInstallSummary> {
   options?.signal?.throwIfAborted()
-  // Why: empty/omitted allowlist fails closed before any home/host probes.
   const agents = options?.agents ?? []
-  if (agents.length === 0) {
-    return { installers: 0, errors: 0 }
-  }
   const home = homedir()
   // Why: an empty allowlist installs nothing (the request only carries retired-agent
   // cleanup), so skip the login-shell GROK_HOME probe that install would need.

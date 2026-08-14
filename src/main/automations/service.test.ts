@@ -179,6 +179,68 @@ describe('AutomationService', () => {
     ).toMatchObject({ agentId: 'codex', enabled: true })
   })
 
+  it('re-enables a scrubbed automation when the editor picks a new agent', async () => {
+    vi.setSystemTime(new Date('2026-05-13T08:00:00Z'))
+    const store = await createStore()
+    store.addRepo(makeRepo())
+    const automation = store.createAutomation({
+      name: 'Retired agent check',
+      prompt: 'Check the repo',
+      agentId: 'claude',
+      projectId: 'r1',
+      workspaceMode: 'existing',
+      workspaceId: 'wt1',
+      timezone: 'UTC',
+      rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0',
+      dtstart: new Date('2026-05-14T00:00:00Z').getTime()
+    })
+    clearPersistedAgentId(store, automation.id)
+
+    expect(store.updateAutomation(automation.id, { agentId: 'codex' }).enabled).toBe(true)
+  })
+
+  it('keeps a manually disabled automation off when the editor saves without enabled', async () => {
+    vi.setSystemTime(new Date('2026-05-13T08:00:00Z'))
+    const store = await createStore()
+    store.addRepo(makeRepo())
+    const automation = store.createAutomation({
+      name: 'Retired agent check',
+      prompt: 'Check the repo',
+      agentId: 'claude',
+      projectId: 'r1',
+      workspaceMode: 'existing',
+      workspaceId: 'wt1',
+      timezone: 'UTC',
+      rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0',
+      dtstart: new Date('2026-05-14T00:00:00Z').getTime()
+    })
+    store.updateAutomation(automation.id, { enabled: false })
+
+    expect(store.updateAutomation(automation.id, { agentId: 'codex' }).enabled).toBe(false)
+  })
+
+  it('honors an explicit enabled: false when picking a new agent', async () => {
+    vi.setSystemTime(new Date('2026-05-13T08:00:00Z'))
+    const store = await createStore()
+    store.addRepo(makeRepo())
+    const automation = store.createAutomation({
+      name: 'Retired agent check',
+      prompt: 'Check the repo',
+      agentId: 'claude',
+      projectId: 'r1',
+      workspaceMode: 'existing',
+      workspaceId: 'wt1',
+      timezone: 'UTC',
+      rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0',
+      dtstart: new Date('2026-05-14T00:00:00Z').getTime()
+    })
+    clearPersistedAgentId(store, automation.id)
+
+    expect(
+      store.updateAutomation(automation.id, { agentId: 'codex', enabled: false }).enabled
+    ).toBe(false)
+  })
+
   it('skips dispatch when the selected project host setup is gone', async () => {
     vi.setSystemTime(new Date('2026-05-13T08:00:00Z'))
     const store = await createStore()

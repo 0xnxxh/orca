@@ -1,6 +1,7 @@
 import { useAppStore } from '@/store'
 import {
   agentProviderSessionsEqual,
+  isResumableTuiAgent,
   type SleepingAgentSessionRecord
 } from '../../../shared/agent-session-resume'
 import { AGENT_STATUS_STALE_AFTER_MS } from '../../../shared/agent-status-types'
@@ -173,6 +174,11 @@ export function resumeSleepingAgentSessionsForWorktree(
       continue
     }
     if (record.automaticResumeBlockedBy === 'legacy-orchestration-worker') {
+      continue
+    }
+    if (!isResumableTuiAgent(record.agent)) {
+      // Why: records from pre-retirement builds (e.g. gemini) can never resume; clear so they can't wedge every wake.
+      state.clearSleepingAgentSession(record.paneKey)
       continue
     }
     if (isInvalidWorktreeActivationRecord(record)) {

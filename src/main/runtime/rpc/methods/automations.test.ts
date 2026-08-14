@@ -149,4 +149,70 @@ describe('automation RPC methods', () => {
 
     expect(runtime.updateAutomation).toHaveBeenCalledWith('auto-1', { baseBranch: null })
   })
+
+  it('rehomes a retired agentId update so unrelated edits still land', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      updateAutomation: vi.fn().mockResolvedValue({ id: 'auto-1', name: 'Renamed' })
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: AUTOMATION_METHODS })
+
+    await expect(
+      dispatcher.dispatch(
+        makeRequest('automation.update', {
+          id: 'auto-1',
+          updates: { agentId: 'gemini', name: 'Renamed' }
+        })
+      )
+    ).resolves.toMatchObject({ ok: true })
+
+    expect(runtime.updateAutomation).toHaveBeenCalledWith(
+      'auto-1',
+      expect.objectContaining({ agentId: null, name: 'Renamed' })
+    )
+  })
+
+  it('preserves an explicit null agentId update as a no-op agent edit', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      updateAutomation: vi.fn().mockResolvedValue({ id: 'auto-1', enabled: false })
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: AUTOMATION_METHODS })
+
+    await expect(
+      dispatcher.dispatch(
+        makeRequest('automation.update', {
+          id: 'auto-1',
+          updates: { agentId: null, enabled: false }
+        })
+      )
+    ).resolves.toMatchObject({ ok: true })
+
+    expect(runtime.updateAutomation).toHaveBeenCalledWith(
+      'auto-1',
+      expect.objectContaining({ agentId: null, enabled: false })
+    )
+  })
+
+  it('rejects an unknown agentId update loudly', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      updateAutomation: vi.fn()
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: AUTOMATION_METHODS })
+
+    await expect(
+      dispatcher.dispatch(
+        makeRequest('automation.update', {
+          id: 'auto-1',
+          updates: { agentId: 'not-real' }
+        })
+      )
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'invalid_argument', message: 'Unknown provider' }
+    })
+
+    expect(runtime.updateAutomation).not.toHaveBeenCalled()
+  })
 })

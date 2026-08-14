@@ -5381,7 +5381,10 @@ export class Store {
       agentId,
       // Why: an automation whose agent was retired has no agent to dispatch to,
       // so it stays paused until the user picks a new one.
-      enabled: agentId !== null && (updates.enabled ?? current.enabled),
+      enabled:
+        agentId !== null &&
+        (updates.enabled ??
+          (updates.agentId !== undefined && current.agentId === null ? true : current.enabled)),
       name:
         updates.name !== undefined ? updates.name.trim() || 'Untitled automation' : current.name,
       precheck: Object.hasOwn(updates, 'precheck')

@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -122,20 +122,59 @@ describe.runIf(process.platform !== 'win32')('resolveRelayGrokHome', () => {
 
 describe.runIf(process.platform !== 'win32')('installManagedHooks', () => {
   it.each([
-    ['omitted', undefined],
-    ['empty', { agents: [] }]
+    ['omitted', undefined, ['.orca', SHELL_NAME, SHELL_RUNS_NAME]],
+    ['empty', { agents: [] }, ['.orca', SHELL_NAME]]
   ])(
-    'writes nothing and runs no probe when the allowlist is %s (issue #11641)',
-    async (_label, options) => {
+    'writes nothing and skips the GROK_HOME probe only for an explicit empty allowlist (%s) (issue #11641)',
+    async (_label, options, expectedEntries) => {
       const home = await createTempHome()
       await stubLoginShell(home)
 
       await expect(installManagedHooks(options)).resolves.toEqual({ installers: 0, errors: 0 })
 
-      // Why: no agent config home, no ~/.orca install lock, and no GROK_HOME login-shell probe.
-      expect(await readdir(home)).toEqual([SHELL_NAME])
+      // Why: no agent config home is written; the install lock always creates ~/.orca,
+      // and only an omitted allowlist still probes GROK_HOME through the login shell.
+      expect((await readdir(home)).sort()).toEqual(expectedEntries)
     }
   )
+
+  it('strips retired Gemini managed hooks during an empty-allowlist install', async () => {
+    const home = await createTempHome()
+    await stubLoginShell(home)
+    const scriptPath = join(home, '.orca', 'agent-hooks', 'gemini-hook.sh')
+    await mkdir(join(home, '.gemini'), { recursive: true })
+    await mkdir(join(home, '.orca', 'agent-hooks'), { recursive: true })
+    await writeFile(scriptPath, '#!/bin/sh\nprintf "{}\\n"\n', 'utf8')
+    const settingsPath = join(home, '.gemini', 'settings.json')
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        hooks: {
+          BeforeAgent: [
+            { hooks: [{ type: 'command', command: `/bin/sh '${scriptPath}'` }] },
+            { hooks: [{ type: 'command', command: '/usr/local/bin/user-hook' }] }
+          ]
+        },
+        theme: 'dark'
+      }),
+      'utf8'
+    )
+
+    await expect(installManagedHooks({ agents: [] })).resolves.toEqual({
+      installers: 0,
+      errors: 0
+    })
+
+    const settings = JSON.parse(await readFile(settingsPath, 'utf8')) as {
+      hooks: { BeforeAgent?: { hooks?: { command?: string }[] }[] }
+      theme: string
+    }
+    expect(settings.theme).toBe('dark')
+    expect(settings.hooks.BeforeAgent).toEqual([
+      { hooks: [{ type: 'command', command: '/usr/local/bin/user-hook' }] }
+    ])
+    await expect(readFile(scriptPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
 
   it('still rejects an aborted request rather than resolving an empty summary', async () => {
     const controller = new AbortController()
