@@ -7114,6 +7114,70 @@ describe('Last-status persistence', () => {
     }
   })
 
+  it('keeps an unknown post-restart child stop from confirming a stale working row', async () => {
+    const firstServer = new AgentHookServer()
+    await firstServer.start({ env: 'production', userDataPath })
+    await postHookEvent(
+      firstServer,
+      buildBody({ hook_event_name: 'UserPromptSubmit', prompt: 'may finish offline' })
+    )
+    firstServer.flushStatusPersistSync()
+    firstServer.stop()
+
+    const server = new AgentHookServer()
+    await server.start({ env: 'production', userDataPath })
+    try {
+      const restored = server.getStatusSnapshot()[0]
+      expect(restored).toMatchObject({ state: 'working', restoredUnconfirmed: true })
+
+      await postHookEvent(
+        server,
+        buildBody({ hook_event_name: 'SubagentStop', agent_id: 'a0000000000000001' })
+      )
+
+      expect(server.getStatusSnapshot()[0]).toEqual(restored)
+      expect(server._getStateForTests().claudeSubagentRosterByPaneKey.size).toBe(0)
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('confirms done when a post-restart stop matches a restored child identity', async () => {
+    const firstServer = new AgentHookServer()
+    await firstServer.start({ env: 'production', userDataPath })
+    await postHookEvent(
+      firstServer,
+      buildBody({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a0000000000000002',
+        agent_type: 'reviewer'
+      })
+    )
+    firstServer.flushStatusPersistSync()
+    firstServer.stop()
+
+    const server = new AgentHookServer()
+    await server.start({ env: 'production', userDataPath })
+    try {
+      expect(server.getStatusSnapshot()[0]).toMatchObject({
+        state: 'working',
+        restoredUnconfirmed: true,
+        subagents: [expect.objectContaining({ id: 'a0000000000000002' })]
+      })
+
+      await postHookEvent(
+        server,
+        buildBody({ hook_event_name: 'SubagentStop', agent_id: 'a0000000000000002' })
+      )
+
+      expect(server.getStatusSnapshot()[0]).toMatchObject({ state: 'done' })
+      expect(server.getStatusSnapshot()[0]?.restoredUnconfirmed).toBeUndefined()
+      expect(server.getStatusSnapshot()[0]?.subagents).toBeUndefined()
+    } finally {
+      server.stop()
+    }
+  })
+
   it('lets an identical live OSC observation confirm a hydrated row', async () => {
     const payload = {
       state: 'working' as const,

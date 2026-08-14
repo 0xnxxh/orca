@@ -2587,11 +2587,6 @@ function resolveClaudePaneState(
     : 'done'
 }
 
-/** Child lifecycle events that end work. They say nothing about the lead being busy, so they must never be the reason a pane reads 'working'. */
-function isClaudeChildTerminatingEvent(eventName: unknown): boolean {
-  return eventName === 'SubagentStop' || eventName === 'TeammateIdle'
-}
-
 /** SubagentStart/Stop/TeammateIdle update the roster and re-emit the lead's last known state with the fresh child list, so the sidebar reflects spawn/finish even when a background child outlives the lead turn with no other hook traffic. */
 function normalizeClaudeSubagentLifecycleEvent(
   state: HookListenerState,
@@ -2604,17 +2599,21 @@ function normalizeClaudeSubagentLifecycleEvent(
   if (!lifecycleId) {
     return null
   }
-  const roster = getOrCreateClaudeSubagentRoster(state, paneKey)
+  let roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
+  let removedChild = false
   if (eventName === 'TeammateIdle') {
     const teammateName = lifecycleId
     // Why: on claude 2.1.21x teammates are turn-based — TeammateIdle means "turn over, awaiting mail", not finished. The row parks as idle (confirmed teammate) instead of leaving, so the sidebar keeps showing resumable children.
-    idleClaudeTeammateByName(roster, teammateName)
+    if (roster) {
+      idleClaudeTeammateByName(roster, teammateName)
+    }
     clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) =>
       claudeTeammateIdMatchesName(waitingAgentId, teammateName)
     )
   } else {
     const agentId = lifecycleId
     if (eventName === 'SubagentStart') {
+      roster = getOrCreateClaudeSubagentRoster(state, paneKey)
       upsertWorkingClaudeSubagent(
         roster,
         agentId,
@@ -2622,13 +2621,22 @@ function normalizeClaudeSubagentLifecycleEvent(
         Date.now()
       )
     } else {
-      // Why: one-shot stops are true finishes (row removed); teammate-shaped stops are turn ends on 2.1.21x — the row parks idle and a later SubagentStart revives it.
-      stopClaudeSubagent(roster, agentId)
+      if (roster) {
+        const hadChild = roster.has(agentId)
+        // Why: one-shot stops are true finishes (row removed); teammate-shaped stops are turn ends on 2.1.21x — the row parks idle and a later SubagentStart revives it.
+        stopClaudeSubagent(roster, agentId)
+        removedChild = hadChild && !roster.has(agentId)
+      }
       // Why: a blocked child that dies without another tool event would pin its permission/question wait on the pane forever — nothing else references that agent again.
       clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) => waitingAgentId === agentId)
     }
   }
-  return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload)
+  if (roster?.size === 0) {
+    state.claudeSubagentRosterByPaneKey.delete(paneKey)
+  }
+  return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload, {
+    removedChild
+  })
 }
 
 /** Sync the Claude lead-turn record when the SERVER infers an interrupt outside the hook stream (Ctrl+C with a missed Stop); else a later child lifecycle event resurrects the cancelled pane. */
@@ -2685,7 +2693,7 @@ export function reapRestoredClaudeSubagentsForDeadPane(
   return true
 }
 
-/** Drop a child-owned waiting state when the child stops/idles, restoring the displaced lead state; without a stash, fall back to 'working' (a transient spinner beats a permanently stuck card). */
+/** Drop a child-owned wait when it stops/idles; without a prior lead state, the child ending resolves the pane. */
 function clearClaudePendingWaitForAgent(
   state: HookListenerState,
   paneKey: string,
@@ -2695,7 +2703,7 @@ function clearClaudePendingWaitForAgent(
   if (lead?.state !== 'waiting' || !lead.waitingAgentId || !ownsWait(lead.waitingAgentId)) {
     return
   }
-  state.claudeLeadStateByPaneKey.set(paneKey, lead.stateBeforeWait ?? { state: 'working' })
+  state.claudeLeadStateByPaneKey.set(paneKey, lead.stateBeforeWait ?? { state: 'done' })
 }
 
 /** Clear an AskUserQuestion wait after the answer is typed (answering emits no hook event; the caller infers it from the submit keystroke). Restores the stashed pre-wait lead state or 'working', drops the cached card, and returns the pane state to emit (gated up to 'working' while children run). */
@@ -2725,14 +2733,16 @@ function buildClaudeCachedLeadStatusPayload(
   state: HookListenerState,
   eventName: unknown,
   paneKey: string,
-  hookPayload: Record<string, unknown>
+  hookPayload: Record<string, unknown>,
+  evidence: { removedChild?: boolean } = {}
 ): ParsedAgentStatusPayload | null {
   const lead = state.claudeLeadStateByPaneKey.get(paneKey)
-  // Why: with no cached lead (Orca restarted mid-session) the fallback must follow the event's
-  // evidence. A spawn or child tool call proves activity; a stop/idle proves the opposite, so
-  // defaulting those to 'working' mints a phantom no Stop will ever clear. 'done' still gates up
-  // through resolveClaudePaneState when the roster or background work proves the pane is busy.
-  const leadState = lead?.state ?? (isClaudeChildTerminatingEvent(eventName) ? 'done' : 'working')
+  const roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
+  if (!lead && !claudeRosterHasWorkingSubagent(roster) && !evidence.removedChild) {
+    return null
+  }
+  // Why: no-lead completion requires an identity-matched removal; delayed unknown stops cannot retire newer work.
+  const leadState = lead?.state ?? (evidence.removedChild ? 'done' : 'working')
   return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
     stateName: resolveClaudePaneState(state, paneKey, {
       state: leadState,

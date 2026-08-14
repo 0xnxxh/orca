@@ -19,7 +19,7 @@ function claudeEvent(
 // A fresh listener state is what Orca has after a restart: the lead-turn cache is in-memory only,
 // so a session that outlived the app reports its next child event with no cached lead.
 describe('Claude child lifecycle events with no cached lead state', () => {
-  it('does not mint working from a start-less SubagentStop', () => {
+  it('makes no status claim from an unknown start-less SubagentStop', () => {
     const state = createHookListenerState()
     const paneKey = makePaneKey('startless-stop', LEAF_ID)
 
@@ -28,11 +28,11 @@ describe('Claude child lifecycle events with no cached lead state', () => {
       agent_id: 'achild-0000000000000001'
     })
 
-    expect(stopped?.payload.state).not.toBe('working')
-    expect(stopped?.payload.state).toBe('done')
+    expect(stopped).toBeNull()
+    expect(state.claudeSubagentRosterByPaneKey.size).toBe(0)
   })
 
-  it('does not mint working from a start-less TeammateIdle', () => {
+  it('makes no status claim from an unknown start-less TeammateIdle', () => {
     const state = createHookListenerState()
     const paneKey = makePaneKey('startless-idle', LEAF_ID)
 
@@ -41,8 +41,8 @@ describe('Claude child lifecycle events with no cached lead state', () => {
       teammate_name: 'reviewer'
     })
 
-    expect(idled?.payload.state).not.toBe('working')
-    expect(idled?.payload.state).toBe('done')
+    expect(idled).toBeNull()
+    expect(state.claudeSubagentRosterByPaneKey.size).toBe(0)
   })
 
   it('still reports working for a start-less SubagentStart, which proves activity', () => {
@@ -80,6 +80,46 @@ describe('Claude child lifecycle events with no cached lead state', () => {
     })
 
     expect(stopped?.payload.state).toBe('working')
+  })
+
+  it('resolves an identity-matched child drain to done with no cached lead', () => {
+    const state = createHookListenerState()
+    const paneKey = makePaneKey('startless-known-stop', LEAF_ID)
+
+    claudeEvent(state, paneKey, {
+      hook_event_name: 'SubagentStart',
+      agent_id: 'a0000000000000006',
+      agent_type: 'reviewer'
+    })
+    state.claudeLeadStateByPaneKey.delete(paneKey)
+
+    const stopped = claudeEvent(state, paneKey, {
+      hook_event_name: 'SubagentStop',
+      agent_id: 'a0000000000000006'
+    })
+
+    expect(stopped?.payload.state).toBe('done')
+    expect(state.claudeSubagentRosterByPaneKey.size).toBe(0)
+  })
+
+  it('resolves a first-event child wait when that child stops', () => {
+    const state = createHookListenerState()
+    const paneKey = makePaneKey('startless-wait-stop', LEAF_ID)
+
+    expect(
+      claudeEvent(state, paneKey, {
+        hook_event_name: 'PermissionRequest',
+        agent_id: 'a0000000000000007',
+        tool_name: 'Bash'
+      })?.payload.state
+    ).toBe('waiting')
+
+    const stopped = claudeEvent(state, paneKey, {
+      hook_event_name: 'SubagentStop',
+      agent_id: 'a0000000000000007'
+    })
+
+    expect(stopped?.payload.state).toBe('done')
   })
 
   it('keeps a live lead working when its child stops', () => {
