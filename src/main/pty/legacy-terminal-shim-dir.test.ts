@@ -332,19 +332,36 @@ describe('legacy terminal shim neutralization', () => {
     }
   })
 
-  it('treats a shim directory reached through .. as a shim PATH entry', () => {
-    // Why: a plain suffix test missed `<root>/orca-terminal-attribution/posix/../posix`, so the
-    // entry survived the scrub and the shim stayed reachable.
+  it('does not collapse .. when classifying a shim PATH entry', () => {
+    // Why deliberately not collapsed: collapsing `..` textually is not resolving it. If
+    // `<shim>/posix` is a symlink, `<shim>/posix/../posix` lands somewhere else, and classifying
+    // it as the shim directory deletes a legitimate PATH entry and leaves git unresolvable.
+    // Resolving for real is not available here either: this env is also built for remote and WSL
+    // panes whose paths do not exist on the local filesystem.
     expect(isLegacyTerminalShimPathEntry('/tmp/old/orca-terminal-attribution/posix/../posix')).toBe(
-      true
-    )
-    expect(isLegacyTerminalShimPathEntry('/tmp/old/orca-terminal-attribution/win32/../win32')).toBe(
-      true
-    )
-    expect(isLegacyTerminalShimPathEntry('/tmp/old/orca-terminal-attribution/posix/../other')).toBe(
       false
     )
+    expect(isLegacyTerminalShimPathEntry('/tmp/old/orca-terminal-attribution/posix')).toBe(true)
+    expect(isLegacyTerminalShimPathEntry('/tmp/old/orca-terminal-attribution/win32//')).toBe(true)
     expect(isLegacyTerminalShimPathEntry('/usr/local/bin')).toBe(false)
+  })
+
+  it('strips a captured shim directory spelled with repeated separators', () => {
+    // Why: pathEntrySpellings can only enumerate one added separator, so an entry repeating it
+    // survived the literal removal and kept the captured directory on PATH.
+    const posixEnv = {
+      PATH: '/custom/elsewhere///:/usr/bin',
+      ORCA_ATTRIBUTION_SHIM_DIR: '/custom/elsewhere'
+    }
+    stripLegacyTerminalShimEnv(posixEnv, 'linux')
+    expect(posixEnv.PATH).toBe('/usr/bin')
+
+    const windowsEnv = {
+      Path: 'C:\\Custom\\Else\\\\;C:\\Windows',
+      ORCA_ATTRIBUTION_SHIM_DIR: 'C:\\Custom\\Else'
+    }
+    stripLegacyTerminalShimEnv(windowsEnv, 'win32')
+    expect(windowsEnv.Path).toBe('C:\\Windows')
   })
 
   itOnPosix('does not fall back to the cwd when every PATH entry is filtered out', () => {

@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { join, normalize } from 'node:path'
+import { join } from 'node:path'
 import {
   readVerifiedShebangInterpreter,
   renderLegacyTerminalPosixTombstone,
@@ -146,7 +146,7 @@ function writeFileAtomically(filePath: string, contents: string, mode: number): 
 // literal compare itself has to stay: a shim path may contain the PATH delimiter, which splitting
 // would fragment.
 function pathEntrySpellings(dir: string, windows: boolean): string[] {
-  const base = dir.replace(/[\\/]+$/, '')
+  const base = stripTrailingSeparators(dir)
   if (!base) {
     return [dir]
   }
@@ -157,18 +157,38 @@ function pathEntrySpellings(dir: string, windows: boolean): string[] {
   return [...spellings]
 }
 
+// Why purely lexical, and why `..` is deliberately not collapsed: collapsing it textually is not
+// the same as resolving it. If `<shim>/posix` is a symlink, `<shim>/posix/../posix` resolves
+// somewhere else entirely, and treating it as the shim directory deletes a legitimate PATH entry
+// and leaves git unresolvable. Resolving for real is not an option either: this env is also built
+// for remote and WSL panes, where these paths do not name anything on the local filesystem.
+// A `..` spelling that does slip through costs nothing at runtime -- the directory now holds the
+// pass-through tombstone, and the tombstone excludes its own directory by -ef, so the lookup still
+// reaches the real git.
 export function isLegacyTerminalShimPathEntry(entry: string): boolean {
-  // Why normalize first: a `.../orca-terminal-attribution/posix/../posix` spelling names the shim
-  // directory but fails a plain suffix test, so the entry survived the scrub and the shim stayed
-  // reachable. normalize collapses `..` textually, which is what a suffix test needs.
-  const normalized = normalize(entry.replaceAll('\\', '/'))
-    .replaceAll('\\', '/')
-    .replace(/\/+$/, '')
-    .toLowerCase()
+  const normalized = stripTrailingSeparators(entry.replaceAll('\\', '/')).toLowerCase()
   return (
     normalized.endsWith(`/${LEGACY_SHIM_ROOT_DIR}/posix`) ||
     normalized.endsWith(`/${LEGACY_SHIM_ROOT_DIR}/win32`)
   )
+}
+
+// Why: `pathEntrySpellings` can only enumerate one added separator, so an entry repeating it
+// survived the literal removal. Comparing separator-stripped forms covers any number of them.
+function stripTrailingSeparators(value: string): string {
+  return value.replace(/[\\/]+$/, '')
+}
+
+function namesCapturedShimDir(entry: string, shimDirs: string[], windows: boolean): boolean {
+  const candidate = stripTrailingSeparators(entry)
+  return shimDirs.some((shimDir) => {
+    const target = stripTrailingSeparators(shimDir)
+    return target
+      ? windows
+        ? candidate.toLowerCase() === target.toLowerCase()
+        : candidate === target
+      : false
+  })
 }
 
 export function stripLegacyTerminalShimEnv(
@@ -210,7 +230,12 @@ export function stripLegacyTerminalShimEnv(
     )
     const cleaned = withoutExplicitDirs
       .split(delimiter)
-      .filter((entry) => entry && !isLegacyTerminalShimPathEntry(entry))
+      .filter(
+        (entry) =>
+          entry &&
+          !isLegacyTerminalShimPathEntry(entry) &&
+          !namesCapturedShimDir(entry, explicitShimDirs, windows)
+      )
       .join(delimiter)
     if (cleaned) {
       env[pathKey] = cleaned
