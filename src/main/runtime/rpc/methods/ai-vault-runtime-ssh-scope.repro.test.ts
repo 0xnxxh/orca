@@ -149,6 +149,41 @@ describe('a runtime can scan an SSH host that it owns', () => {
     ])
   })
 
+  it('cancels a named SSH scan when its RPC request aborts', async () => {
+    let scanSignal: AbortSignal | undefined
+    scanSshAiVaultSessions.mockImplementationOnce(
+      (
+        _targetId: string,
+        _args: unknown,
+        options: { signal?: AbortSignal }
+      ): Promise<AiVaultListResult> =>
+        new Promise((_resolve, reject) => {
+          scanSignal = options.signal
+          options.signal?.addEventListener(
+            'abort',
+            () => {
+              const error = new Error('cancelled')
+              error.name = 'AbortError'
+              reject(error)
+            },
+            { once: true }
+          )
+        })
+    )
+    const dispatcher = makeDispatcher()
+    const controller = new AbortController()
+    const pending = dispatcher.dispatch(
+      makeRequest('aiVault.listSessions', { executionHostId: SSH_HOST_OWNED_BY_RUNTIME }),
+      { signal: controller.signal }
+    )
+    await vi.waitFor(() => expect(scanSignal).toBeDefined())
+
+    controller.abort()
+
+    await expect(pending).resolves.toMatchObject({ ok: false })
+    expect(scanSignal?.aborted).toBe(true)
+  })
+
   it('scans the identical host-local sources for the runtime ids it does accept', async () => {
     const dispatcher = makeDispatcher()
 

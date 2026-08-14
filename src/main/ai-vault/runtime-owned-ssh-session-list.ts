@@ -75,7 +75,13 @@ async function loadRuntimeOwnedSshAiVaultTargets(
     return { hosts: [], authoritative: false }
   }
   const hosts = response.result.targets.flatMap((target) => {
-    if (typeof target.id !== 'string' || target.id.length === 0) {
+    if (
+      typeof target !== 'object' ||
+      target === null ||
+      !('id' in target) ||
+      typeof target.id !== 'string' ||
+      target.id.length === 0
+    ) {
       return []
     }
     if (isRuntimeOwnedSshTargetId(target.id)) {
@@ -86,7 +92,9 @@ async function loadRuntimeOwnedSshAiVaultTargets(
         environmentId,
         targetId: target.id,
         executionHostId: toSshExecutionHostId(target.id),
-        ...(typeof target.connected === 'boolean' ? { connected: target.connected } : {})
+        ...('connected' in target && typeof target.connected === 'boolean'
+          ? { connected: target.connected }
+          : {})
       }
     ]
   })
@@ -270,9 +278,7 @@ function unsupportedSshHostMessage(message: string): string {
   return message
 }
 
-function isTargetSummaryList(
-  value: unknown
-): value is { targets: { id?: unknown; connected?: unknown }[] } {
+function isTargetSummaryList(value: unknown): value is { targets: unknown[] } {
   return (
     typeof value === 'object' &&
     value !== null &&

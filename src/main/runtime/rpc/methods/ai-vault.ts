@@ -122,7 +122,7 @@ export const AI_VAULT_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'aiVault.listSessions',
     params: AiVaultListSessionsParams,
-    handler: async (params, { runtime }) => {
+    handler: async (params, { runtime, signal }) => {
       const parsed = params.executionHostId ? parseExecutionHostId(params.executionHostId) : null
       const listArgs = {
         limit: params.unlimited ? undefined : params.limit,
@@ -131,13 +131,13 @@ export const AI_VAULT_METHODS: RpcMethod[] = [
         scopePaths: params.scopePaths
       }
       if (parsed?.kind === 'ssh') {
-        return scanRuntimeSshAiVaultSessions(parsed.targetId, listArgs)
+        return scanRuntimeSshAiVaultSessions(parsed.targetId, listArgs, signal)
       }
       const sshHosts = params.includeOwnedSshHosts === true ? getActiveSshAiVaultHostInfos() : []
       const sshPromise =
         sshHosts.length > 0
           ? Promise.all(
-              sshHosts.map((host) => scanRuntimeSshAiVaultSessions(host.targetId, listArgs))
+              sshHosts.map((host) => scanRuntimeSshAiVaultSessions(host.targetId, listArgs, signal))
             )
           : Promise.resolve([])
       let result: AiVaultListResult
@@ -181,7 +181,8 @@ export const AI_VAULT_METHODS: RpcMethod[] = [
 
 function scanRuntimeSshAiVaultSessions(
   targetId: string,
-  args: AiVaultListArgs
+  args: AiVaultListArgs,
+  signal?: AbortSignal
 ): Promise<AiVaultListResult> {
   const scopePaths = args.scopePaths ?? []
   return scanHostLegWithCache({
@@ -195,6 +196,7 @@ function scanRuntimeSshAiVaultSessions(
     force: args.force === true,
     scan: () =>
       scanSshAiVaultSessions(targetId, args, {
+        ...(signal ? { signal } : {}),
         timeoutMs: OWNED_SSH_SCAN_TIMEOUT_MS
       })
   })
