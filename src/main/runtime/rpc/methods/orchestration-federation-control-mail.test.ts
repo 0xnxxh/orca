@@ -6,12 +6,12 @@ import { OrchestrationDb } from '../../orchestration/db'
 import type { OrchestrationEnvironmentTransport } from '../../orchestration/environment-transport'
 import type { RpcRequest } from '../core'
 import { RpcDispatcher } from '../dispatcher'
-import { fingerprintAuthenticatedPairingDevice } from '../orchestration-mutation-executor'
+import { fingerprintAuthenticatedPairingCredential } from '../orchestration-mutation-executor'
 import { ORCHESTRATION_METHODS } from './orchestration'
 
 describe('orchestration federation control mail', () => {
   const homeToken = 'run-home-device-token'
-  const homeFingerprint = fingerprintAuthenticatedPairingDevice('run-home-device')
+  const homeFingerprint = fingerprintAuthenticatedPairingCredential(homeToken)
   const workerToken = 'worker-local-token'
   const workerPeerFingerprint = 'worker-peer'
   const coordinatorPaneKey = 'tab_coord:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'

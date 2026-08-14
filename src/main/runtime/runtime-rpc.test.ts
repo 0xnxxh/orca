@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- Why: this integration-style RPC test keeps the request/response contract together so regressions in the external CLI surface are easier to spot. */
 import { existsSync, mkdirSync, mkdtempSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -3535,6 +3536,56 @@ describe('OrcaRuntimeRpcServer', () => {
         result: { reset: 'messages', mutation: { replayed: false } }
       })
       expect(db.getInbox()).toEqual([])
+    } finally {
+      db.close()
+      await server.stop()
+    }
+  })
+
+  it('keeps authenticated paired callers attached to existing federated workers', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
+    const runtime = new OrcaRuntimeService()
+    const db = new OrchestrationDb(':memory:')
+    runtime.setOrchestrationDb(db)
+    const server = new OrcaRuntimeRpcServer({ runtime, userDataPath, enableWebSocket: false })
+    server['deviceRegistry'] = new DeviceRegistry(userDataPath)
+    const device = server['deviceRegistry']!.addDevice('existing-cli', 'runtime')
+    const existingFingerprint = createHash('sha256').update(device.token).digest('hex')
+    db.createRemoteDispatchAttachment({
+      dispatchId: 'ctx_existing_remote',
+      taskId: 'task_existing_remote',
+      homePeerFingerprint: existingFingerprint,
+      protocolVersion: 1,
+      runtimeEpoch: 'runtime_before_upgrade',
+      mutationReceipt: {
+        callerFingerprint: existingFingerprint,
+        requestId: 'request_existing_remote',
+        method: 'orchestration.federationAttachStart',
+        payloadHash: 'hash_existing_remote'
+      }
+    })
+    const replies: Record<string, unknown>[] = []
+
+    try {
+      await server['handleWebSocketMessage'](
+        JSON.stringify(
+          withCurrentOrchestrationContract({
+            id: 'show-existing-remote',
+            method: 'orchestration.federationShow',
+            params: { dispatchId: 'ctx_existing_remote' }
+          })
+        ),
+        (response) => replies.push(JSON.parse(response) as Record<string, unknown>),
+        () => {},
+        undefined,
+        undefined,
+        device.token
+      )
+
+      expect(replies[0]).toMatchObject({
+        ok: true,
+        result: { dispatchId: 'ctx_existing_remote', attachment: { state: 'starting' } }
+      })
     } finally {
       db.close()
       await server.stop()

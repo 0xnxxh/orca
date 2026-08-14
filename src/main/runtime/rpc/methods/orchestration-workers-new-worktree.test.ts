@@ -627,6 +627,11 @@ describe('orchestration new-worktree workers', () => {
     db = new OrchestrationDb(join(dir, 'orchestration.db'))
     const restartedRuntime = new OrcaRuntimeService()
     restartedRuntime.setOrchestrationDb(db)
+    vi.spyOn(restartedRuntime, 'getTerminalPaneKey').mockImplementation((handle) =>
+      handle === 'term_coord_reminted'
+        ? `tab_coord_reminted:${coordinatorPaneKey.split(':')[1]}`
+        : null
+    )
     const recreateWorktree = vi
       .spyOn(restartedRuntime, 'createManagedWorktree')
       .mockRejectedValue(new Error('replay recreated the worktree'))
@@ -640,7 +645,8 @@ describe('orchestration new-worktree workers', () => {
     const replay = await restartedDispatcher.dispatch({
       ...request,
       id: 'rpc_worker_start_retry',
-      authToken: 'caller-token-after-restart'
+      authToken: 'caller-token-after-restart',
+      params: { ...(request.params as Record<string, unknown>), from: 'term_coord_reminted' }
     })
 
     expect(first).toMatchObject({
