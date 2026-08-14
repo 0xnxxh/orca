@@ -34638,7 +34638,7 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
-  it('retires the bounded repair once the immediate push points every pending row', async () => {
+  it('does not re-arm repair when immediate delivery precedes the deferred restore scan', async () => {
     vi.useFakeTimers()
     try {
       const runtime = new OrcaRuntimeService(store)
@@ -34655,10 +34655,9 @@ describe('OrcaRuntimeService', () => {
       const [terminal] = (await runtime.listTerminals()).terminals
       runtime.onPtyData('pty-1', '\x1b]0;Codex working\x07', 100)
       runtime.onPtyData('pty-1', '\x1b]0;Codex done\x07', 101)
-      // Why: let the restore scan settle on an empty mailbox so only the arrival path is measured.
-      await vi.advanceTimersByTimeAsync(0)
       db.insertMessage({ from: 'term_worker', to: terminal.handle, subject: 'pointed on arrival' })
 
+      const scanMailboxes = vi.spyOn(db, 'getUndeliveredUnreadMailboxHandles')
       const readPending = vi.spyOn(db, 'getUndeliveredUnreadMessages')
       runtime.notifyMessageArrived(terminal.handle, 'status')
       await Promise.resolve()
@@ -34669,6 +34668,7 @@ describe('OrcaRuntimeService', () => {
 
       const readsAfterImmediatePush = readPending.mock.calls.length
       await vi.advanceTimersByTimeAsync(2_500)
+      expect(scanMailboxes).toHaveBeenCalledTimes(1)
       expect(readPending.mock.calls.length).toBe(readsAfterImmediatePush)
       db.close()
     } finally {

@@ -2854,6 +2854,7 @@ export class OrcaRuntimeService {
     this.repointPendingMessagesForHandle(handle)
   )
   private restoredMessageRepointScanTimer: ReturnType<typeof setTimeout> | null = null
+  private restoredMessageRepointScanRetiredHandles: Set<string> | null = null
   private syntheticTerminalHandles = new Set<string>()
   private detachedPreAllocatedLeaves = new Map<string, RuntimeLeafRecord>()
   private graphSyncCallbacks: (() => void)[] = []
@@ -32101,15 +32102,18 @@ export class OrcaRuntimeService {
       clearTimeout(this.restoredMessageRepointScanTimer)
     }
     const db = this._orchestrationDb
+    const retiredHandles = new Set<string>()
+    this.restoredMessageRepointScanRetiredHandles = retiredHandles
     const timer = setTimeout(() => {
       this.restoredMessageRepointScanTimer = null
+      this.restoredMessageRepointScanRetiredHandles = null
       if (this._orchestrationDb !== db) {
         return
       }
       try {
         this.mailPointerRepointScheduler.scheduleStaggered(
           (db?.getUndeliveredUnreadMailboxHandles?.() ?? []).filter(
-            (handle) => !handle.startsWith('dispatch:')
+            (handle) => !handle.startsWith('dispatch:') && !retiredHandles.has(handle)
           )
         )
       } catch {
@@ -32118,6 +32122,11 @@ export class OrcaRuntimeService {
     }, 0)
     timer.unref?.()
     this.restoredMessageRepointScanTimer = timer
+  }
+
+  private retireMessageRepoint(handle: string): void {
+    this.mailPointerRepointScheduler.cancel(handle)
+    this.restoredMessageRepointScanRetiredHandles?.add(handle)
   }
 
   private repointPendingMessagesForHandle(handle: string): void {
@@ -32889,7 +32898,7 @@ export class OrcaRuntimeService {
     const coversEveryPendingRow = unread.length === pending.length
     if (unread.length === 0) {
       if (pending.length === 0) {
-        this.mailPointerRepointScheduler.cancel(mailboxHandle)
+        this.retireMessageRepoint(mailboxHandle)
       }
       return
     }
@@ -32990,7 +32999,7 @@ export class OrcaRuntimeService {
       }
       this.pointedMessageIdsByHandle.set(mailboxHandle, pointedIdsAfterWrite)
       if (coversEveryPendingRow) {
-        this.mailPointerRepointScheduler.cancel(mailboxHandle)
+        this.retireMessageRepoint(mailboxHandle)
       }
 
       const tabTitle = this.tabs.get(leaf.tabId)?.title
