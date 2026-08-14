@@ -87,6 +87,23 @@ describe('deciding what to do with a presented host key', () => {
       expect(decision.reason).not.toContain('ssh-keygen -R')
     })
 
+    // Verified live against OpenSSH 10.2p1: an ed25519 key offered where known_hosts holds only
+    // ssh-rsa makes ssh print IDENTIFICATION HAS CHANGED and refuse. ssh is blocked too, so the
+    // same remedy applies — without it this case diagnosed the problem and offered no way out.
+    it('names the remedy for an unfamiliar key type known_hosts disagrees on', () => {
+      const decision = decideHostKey(input({ knownHostsOutcome: 'unknown-type-known-host' }))
+      expect(decision.disagreeingSource).toBe('known-hosts')
+      expect(decision.reason).toContain('ssh-keygen -R build-01')
+    })
+
+    // Our own record is not in known_hosts, so ssh-keygen -R would remove nothing.
+    it('does not name ssh-keygen for an unfamiliar key type only we know about', () => {
+      const decision = decideHostKey(input({ storeOutcome: 'unknown-type-known-host' }))
+      expect(decision.disagreeingSource).toBe('orca-store')
+      expect(decision.reason).not.toContain('ssh-keygen -R')
+      expect(decision.reason).toContain('rebuilt')
+    })
+
     it('offers the system-transport escape for certificate-authority hosts', () => {
       const decision = decideHostKey(input({ knownHostsOutcome: 'ca-only' }))
       expect(decision.reason).toContain('ORCA_SSH_FORCE_SYSTEM_TRANSPORT=1')

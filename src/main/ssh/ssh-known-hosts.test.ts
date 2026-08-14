@@ -247,3 +247,67 @@ describe('matching a presented key', () => {
     })
   })
 })
+
+/**
+ * Vectors produced by a real OpenSSH 10.2p1 client against a real sshd on 127.0.0.1:2222, with the
+ * client's verdict recorded from its own output. Everything else in this file states what we believe
+ * ssh does; these state what it did.
+ */
+describe('agreement with a live OpenSSH client', () => {
+  const SERVER_KEY = 'AAAAC3NzaC1lZDI1NTE5AAAAIM2eSSqUqU9LERdg8qNjFiU59unM+JyfwFHLkMxR13oq'
+  const OTHER_KEY = 'AAAAC3NzaC1lZDI1NTE5AAAAIKmVZ4Z+MJ3VYnZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm'
+
+  // `ssh-keygen -H` on `[127.0.0.1]:2222 ssh-ed25519 <SERVER_KEY>`. The salt and hash are its own
+  // output, so this pins that we hash the BRACKETED candidate — hashing the bare host would miss.
+  const HASHED_BRACKETED_ENTRY =
+    '|1|nfzVRh+YQtj+wIqjDBYLW2cryfQ=|Q51GJuiWfUGYpAPuRPyFC/FpKj4= ssh-ed25519 ' + SERVER_KEY
+
+  it('accepts the hashed bracketed entry ssh-keygen -H produced, as ssh did', () => {
+    expect(
+      verdict(HASHED_BRACKETED_ENTRY, { host: '127.0.0.1', port: 2222, key: SERVER_KEY })
+    ).toBe('match')
+  })
+
+  // Live: ssh reached authentication, so it accepted the bare line for a non-default port.
+  it('falls back to the bare host line on a non-default port, as ssh did', () => {
+    expect(
+      verdict(line('127.0.0.1', SERVER_KEY), { host: '127.0.0.1', port: 2222, key: SERVER_KEY })
+    ).toBe('match')
+  })
+
+  // THE one that decides whether the fallback pass may report a change. Live, with
+  // StrictHostKeyChecking=accept-new and a bare line holding a DIFFERENT key, ssh connected and
+  // appended a new `[127.0.0.1]:2222` line — so it read this as first contact, not as a changed
+  // key, and printed no IDENTIFICATION HAS CHANGED banner. Reporting `mismatch` here would refuse a
+  // host ssh connects to happily.
+  it('reports a wrong key on the bare fallback line as unknown, as ssh did', () => {
+    expect(
+      verdict(line('127.0.0.1', OTHER_KEY), { host: '127.0.0.1', port: 2222, key: SERVER_KEY })
+    ).toBe('unknown')
+  })
+
+  // Same file shape, but the entry is for the exact endpoint: live, ssh printed
+  // IDENTIFICATION HAS CHANGED and refused.
+  it('reports a wrong key on the exact bracketed line as a change, as ssh did', () => {
+    expect(
+      verdict(line('[127.0.0.1]:2222', OTHER_KEY), {
+        host: '127.0.0.1',
+        port: 2222,
+        key: SERVER_KEY
+      })
+    ).toBe('mismatch')
+  })
+
+  // Live: known_hosts held an ssh-rsa key for the endpoint and the server offered ed25519 — ssh
+  // printed IDENTIFICATION HAS CHANGED and refused. So our unknown-type-known-host rejection is
+  // neither stricter nor laxer than ssh; treating it as first contact would have been laxer.
+  it('refuses a key type it has not seen for a host it knows, as ssh did', () => {
+    expect(
+      verdict(line('[127.0.0.1]:2222', RSA_A, 'ssh-rsa'), {
+        host: '127.0.0.1',
+        port: 2222,
+        key: SERVER_KEY
+      })
+    ).toBe('unknown-type-known-host')
+  })
+})

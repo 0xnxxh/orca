@@ -144,14 +144,22 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
     knownHostsOutcome === 'unknown-type-known-host' ||
     storeOutcome === 'unknown-type-known-host'
   ) {
+    const fromKnownHosts = knownHostsOutcome === 'unknown-type-known-host'
     return {
       action: 'reject',
       outcome: 'unknown-type-known-host',
-      disagreeingSource:
-        knownHostsOutcome === 'unknown-type-known-host' ? 'known-hosts' : 'orca-store',
+      disagreeingSource: fromKnownHosts ? 'known-hosts' : 'orca-store',
       reason: rejection(
         displayHost,
-        'The host offered a key of a type we have not seen for it before, while a key of another type is already known. This can mean the host was rebuilt, or that something is impersonating it.'
+        // Verified live against OpenSSH 10.2p1: an ed25519 key offered where known_hosts holds only
+        // ssh-rsa makes ssh print IDENTIFICATION HAS CHANGED and refuse. So ssh is blocked too, and
+        // ssh-keygen -R is the remedy that unblocks both — naming it only for the same-type
+        // mismatch left this case with a diagnosis and no way out.
+        `The host offered a key of a type we have not seen for it before, while a key of another type is already known. This can mean the host was rebuilt, or that something is impersonating it.${
+          fromKnownHosts
+            ? ` ssh and git will refuse this host too. Run: ssh-keygen -R ${displayHost}`
+            : ` ${CHANGED_KEY_HINT}`
+        }`
       )
     }
   }
