@@ -1,8 +1,4 @@
-// STA-4048: braille spinner frames are ordinary progress glyphs — ora, installers,
-// countless CLIs animate them — so a title carrying nothing else must not authorize
-// a guarded send. Follows the STA-4028 quarter-circle contract: glyph is activity,
-// identity comes from the title token, a verified managed launch on this exact PTY
-// incarnation, or the foreground process.
+// STA-4048: a generic braille progress title is activity, not guarded-send authority.
 import { describe, expect, it, vi } from 'vitest'
 import { OrcaRuntimeService } from './orca-runtime'
 import { assertTerminalAgentSendable } from './rpc/terminal-agent-send-guard'
@@ -10,7 +6,7 @@ import {
   detectAgentStatusFromTitle,
   isBrailleSpinnerOnlyAgentTitle
 } from '../../shared/agent-detection'
-import type { TuiAgent } from '../../shared/types'
+import type { TuiAgent } from '../../shared/tui-agent'
 
 vi.mock('electron', () => ({
   BrowserWindow: { fromId: vi.fn(() => null) },
