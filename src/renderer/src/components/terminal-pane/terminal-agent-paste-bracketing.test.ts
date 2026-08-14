@@ -110,6 +110,16 @@ describe('shouldForceBracketedMultilinePasteForPane', () => {
     ).toBe(true)
   })
 
+  it('degrades to the pre-fix path instead of throwing on a malformed pane key', () => {
+    // Why: makePaneKey throws on a non-UUID leaf or a tabId containing ':'. The throw
+    // would escape before the paste helper's catch is attached, making the paste a
+    // silent no-op with no error surface.
+    expect(() => decide({ leafId: 'not-a-uuid' })).not.toThrow()
+    expect(decide({ leafId: 'not-a-uuid' })).toBe(false)
+    expect(() => decide({ tabId: 'tab:with:colons' })).not.toThrow()
+    expect(decide({ tabId: 'tab:with:colons' })).toBe(false)
+  })
+
   it('still brackets when shellForeground is latched true while an agent owns the pane', () => {
     // Why: shellForeground is republished only at OSC 133 boundaries, so a shell with
     // no 133 integration leaves it true while an agent runs. Measured live: vetoing on
