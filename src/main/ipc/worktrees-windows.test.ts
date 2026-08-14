@@ -139,6 +139,7 @@ vi.mock('./worktree-logic', async (importOriginal) => {
 })
 
 import { registerWorktreeHandlers } from './worktrees'
+import { resetRetirementCollisionKeyCacheForTests } from '../worktree-name-retirement'
 
 type HandlerMap = Record<string, (_event: unknown, args: unknown) => unknown>
 
@@ -206,6 +207,7 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
     store.addRetiredWorktreeName.mockReset()
     store.getRetiredWorktreeNames.mockReset()
     store.mergeRetiredWorktreeNames.mockReset()
+    resetRetirementCollisionKeyCacheForTests()
 
     for (const key of Object.keys(handlers)) {
       delete handlers[key]
@@ -309,7 +311,8 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
       false
     )
     expect(resolveLocalGitUsernameMock).not.toHaveBeenCalled()
-    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith('repo-1', 'improve-dashboard')
+    // A name the user typed is never retired — the pool holds ordinary words people choose.
+    expect(store.addRetiredWorktreeName).not.toHaveBeenCalled()
     expect(store.setWorktreeMeta).toHaveBeenCalledWith(
       'repo-1::C:/workspaces/improve-dashboard',
       expect.objectContaining({
@@ -339,9 +342,41 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
       }
     ])
 
+    await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: 'nautilus',
+      nameWasGenerated: true
+    })
+
+    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith(expect.any(String), 'nautilus-2')
+  })
+
+  it('leaves a user-typed name reusable even when the same name is retired', async () => {
+    // Why: the creature pool contains ordinary words ("orca", "runner", "molly"). Silently
+    // renaming a deliberate `nautilus` to `nautilus-2` — and burning it — is the wrong trade.
+    store.getRetiredWorktreeNames.mockReturnValue(['nautilus'])
+    computeWorktreePathMock.mockReturnValue('C:\\workspaces\\nautilus')
+    ensurePathWithinWorkspaceMock.mockReturnValue('C:\\workspaces\\nautilus')
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: 'C:/workspaces/nautilus',
+        head: 'abc123',
+        branch: 'refs/heads/nautilus',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+
     await handlers['worktrees:create'](null, { repoId: 'repo-1', name: 'nautilus' })
 
-    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith('repo-1', 'nautilus-2')
+    expect(addWorktreeMock).toHaveBeenCalledWith(
+      'C:\\repo',
+      'C:\\workspaces\\nautilus',
+      'nautilus',
+      'origin/main',
+      false
+    )
+    expect(store.addRetiredWorktreeName).not.toHaveBeenCalled()
   })
 
   it('resolves the Git username when the configured prefix consumes it', async () => {

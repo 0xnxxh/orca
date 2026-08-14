@@ -283,6 +283,7 @@ import {
   registerWorktreeHandlers
 } from './worktrees'
 import { clearConfiguredWorktreeSharedDirectoriesCacheForTests } from '../git/worktree-shared-directories'
+import { resetRetirementCollisionKeyCacheForTests } from '../worktree-name-retirement'
 import {
   getSshProviderAuthority,
   resetSshProviderAuthorities,
@@ -455,6 +456,7 @@ describe('registerWorktreeHandlers', () => {
     store.getWorktreeMeta.mockReturnValue(undefined)
     store.getAllWorktreeMeta.mockReturnValue({})
     store.getRetiredWorktreeNames.mockReturnValue([])
+    resetRetirementCollisionKeyCacheForTests()
     store.setWorktreeMeta.mockReturnValue({})
     store.getProjectHostSetups.mockReturnValue([
       {
@@ -4689,14 +4691,13 @@ describe('registerWorktreeHandlers', () => {
     store.getRepo.mockReturnValue(repo)
     getSshGitProviderMock.mockReturnValue(provider)
     getActiveMultiplexerMock.mockReturnValue(mux)
-    store.getRetiredWorktreeNames.mockImplementation((repoId) =>
-      repoId === 'repo-ssh' ? ['nautilus'] : []
-    )
+    store.getRetiredWorktreeNames.mockReturnValue(['nautilus'])
     store.setWorktreeMeta.mockImplementation((_worktreeId, meta) => meta)
 
     const result = await handlers['worktrees:create'](null, {
       repoId: 'repo-ssh',
       name: 'nautilus',
+      nameWasGenerated: true,
       linkedIssue: 123,
       linkedPR: 456,
       createdWithAgent: 'codex',
@@ -4714,7 +4715,7 @@ describe('registerWorktreeHandlers', () => {
     )
     expect(provider.listWorktrees).toHaveBeenCalledTimes(1)
     expect(provider.worktreeIsClean).not.toHaveBeenCalled()
-    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith('repo-ssh', 'nautilus-2')
+    expect(store.addRetiredWorktreeName).toHaveBeenCalledWith(expect.any(String), 'nautilus-2')
     expect(store.setWorktreeMeta).toHaveBeenCalledWith(
       'repo-ssh::/remote/repo-nautilus-2',
       expect.objectContaining({
@@ -4733,6 +4734,65 @@ describe('registerWorktreeHandlers', () => {
         linkedLinearIssue: 'ENG-123',
         manualOrder: 123_456
       })
+    })
+  })
+
+  it('leaves a user-typed name reusable on the SSH create path', async () => {
+    // Why: `nautilus` is retired here, yet the user typed it — it must neither be skipped nor burned.
+    const repo = {
+      id: 'repo-ssh',
+      path: '/remote/repo',
+      displayName: 'ssh',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'conn-1',
+      worktreeBaseRef: 'origin/main'
+    }
+    const provider = {
+      exec: vi.fn().mockImplementation(async (args: string[]) => {
+        if (args[0] === 'remote') {
+          return { stdout: 'origin\n', stderr: '' }
+        }
+        return { stdout: '', stderr: '' }
+      }),
+      fetchRemoteTrackingRef: vi.fn().mockResolvedValue(undefined),
+      addWorktree: vi.fn().mockResolvedValue(undefined),
+      listWorktrees: vi.fn().mockResolvedValue([
+        {
+          path: '/remote/repo',
+          head: 'base123',
+          branch: 'refs/heads/main',
+          isBare: false,
+          isMainWorktree: true
+        },
+        {
+          path: '/remote/repo-nautilus',
+          head: 'abc123',
+          branch: 'refs/heads/nautilus',
+          isBare: false,
+          isMainWorktree: false
+        }
+      ]),
+      worktreeIsClean: vi.fn().mockResolvedValue({ clean: true })
+    }
+    store.getRepos.mockReturnValue([repo])
+    store.getRepo.mockReturnValue(repo)
+    getSshGitProviderMock.mockReturnValue(provider)
+    getActiveMultiplexerMock.mockReturnValue({
+      request: vi.fn().mockResolvedValue(undefined),
+      notify: vi.fn()
+    })
+    store.getRetiredWorktreeNames.mockReturnValue(['nautilus'])
+    store.setWorktreeMeta.mockImplementation((_worktreeId, meta) => meta)
+
+    const result = await handlers['worktrees:create'](null, {
+      repoId: 'repo-ssh',
+      name: 'nautilus'
+    })
+
+    expect(store.addRetiredWorktreeName).not.toHaveBeenCalled()
+    expect(result).toMatchObject({
+      worktree: expect.objectContaining({ path: '/remote/repo-nautilus' })
     })
   })
 

@@ -13,8 +13,9 @@ vi.mock('electron', () => ({
 vi.mock('./telemetry/client', () => ({ track: vi.fn() }))
 vi.mock('./telemetry/cohort-classifier', () => ({ getCohortAtEmit: vi.fn() }))
 
-const REPO = 'repo-1'
-const OTHER_REPO = 'repo-2'
+// The registry is keyed by the cwd namespace a repo creates into, not by repo id.
+const KEY = 'local:posix:/workspaces/repo-1'
+const OTHER_KEY = 'local:posix:/workspaces/repo-2'
 
 async function createStore(persisted: Record<string, unknown> = {}) {
   mkdirSync(testState.dir, { recursive: true })
@@ -40,81 +41,81 @@ afterEach(() => {
 describe('worktree name retirement registry', () => {
   it('retains a retired name so it is never reissued', async () => {
     const store = await createStore()
-    store.addRetiredWorktreeName(REPO, 'Nautilus')
-    expect(store.getRetiredWorktreeNames(REPO)).toEqual(['nautilus'])
+    store.addRetiredWorktreeName(KEY, 'Nautilus')
+    expect(store.getRetiredWorktreeNames(KEY)).toEqual(['nautilus'])
   })
 
-  it('scopes retirement per repo so one repo does not burn another pool', async () => {
+  it('scopes retirement per cwd namespace so one workspace root does not burn another', async () => {
     const store = await createStore()
-    store.addRetiredWorktreeName(REPO, 'nautilus')
-    expect(store.getRetiredWorktreeNames(OTHER_REPO)).toEqual([])
+    store.addRetiredWorktreeName(KEY, 'nautilus')
+    expect(store.getRetiredWorktreeNames(OTHER_KEY)).toEqual([])
   })
 
   it('normalizes case and whitespace so a name cannot be retired twice', async () => {
     const store = await createStore()
-    store.addRetiredWorktreeName(REPO, '  NaUtIlUs ')
-    store.addRetiredWorktreeName(REPO, 'nautilus')
-    expect(store.getRetiredWorktreeNames(REPO)).toEqual(['nautilus'])
+    store.addRetiredWorktreeName(KEY, '  NaUtIlUs ')
+    store.addRetiredWorktreeName(KEY, 'nautilus')
+    expect(store.getRetiredWorktreeNames(KEY)).toEqual(['nautilus'])
   })
 
-  it('ignores an empty name or missing repo id', async () => {
+  it('ignores an empty name or missing workspace key', async () => {
     const store = await createStore()
-    store.addRetiredWorktreeName(REPO, '   ')
+    store.addRetiredWorktreeName(KEY, '   ')
     store.addRetiredWorktreeName('', 'nautilus')
-    expect(store.getRetiredWorktreeNames(REPO)).toEqual([])
+    expect(store.getRetiredWorktreeNames(KEY)).toEqual([])
   })
 
   it('does not persist arbitrary user and issue-title names', async () => {
     const store = await createStore()
-    store.addRetiredWorktreeName(REPO, 'fix-login-redirect')
-    store.addRetiredWorktreeName(REPO, 'STA-4189-duplicate-name')
-    expect(store.getRetiredWorktreeNames(REPO)).toEqual([])
+    store.addRetiredWorktreeName(KEY, 'fix-login-redirect')
+    store.addRetiredWorktreeName(KEY, 'STA-4189-duplicate-name')
+    expect(store.getRetiredWorktreeNames(KEY)).toEqual([])
   })
 
   it('returns a copy so callers cannot mutate the registry in place', async () => {
     const store = await createStore()
-    store.addRetiredWorktreeName(REPO, 'nautilus')
-    store.getRetiredWorktreeNames(REPO).push('seahorse')
-    expect(store.getRetiredWorktreeNames(REPO)).toEqual(['nautilus'])
+    store.addRetiredWorktreeName(KEY, 'nautilus')
+    store.getRetiredWorktreeNames(KEY).push('seahorse')
+    expect(store.getRetiredWorktreeNames(KEY)).toEqual(['nautilus'])
   })
 
   it('merges backfilled names without dropping a concurrent retirement', async () => {
     const store = await createStore()
-    store.addRetiredWorktreeName(REPO, 'nautilus')
-    expect(store.mergeRetiredWorktreeNames(REPO, ['seahorse', 'starfish'])).toBe(true)
-    expect(store.getRetiredWorktreeNames(REPO).sort()).toEqual(['nautilus', 'seahorse', 'starfish'])
+    store.addRetiredWorktreeName(KEY, 'nautilus')
+    expect(store.mergeRetiredWorktreeNames(KEY, ['seahorse', 'starfish'])).toBe(true)
+    expect(store.getRetiredWorktreeNames(KEY).sort()).toEqual(['nautilus', 'seahorse', 'starfish'])
   })
 
   it('reports no change when a merge adds nothing new', async () => {
     const store = await createStore()
-    store.addRetiredWorktreeName(REPO, 'nautilus')
-    expect(store.mergeRetiredWorktreeNames(REPO, ['NAUTILUS'])).toBe(false)
+    store.addRetiredWorktreeName(KEY, 'nautilus')
+    expect(store.mergeRetiredWorktreeNames(KEY, ['NAUTILUS'])).toBe(false)
   })
 
   it('survives a reload so retirement outlives the workspace and the app session', async () => {
     const store = await createStore({
-      retiredWorktreeNamesByRepo: { [REPO]: ['nautilus', 'seahorse'] }
+      retiredWorktreeNamesByWorkspaceKey: { [KEY]: ['nautilus', 'seahorse'] }
     })
-    expect(store.getRetiredWorktreeNames(REPO).sort()).toEqual(['nautilus', 'seahorse'])
+    expect(store.getRetiredWorktreeNames(KEY).sort()).toEqual(['nautilus', 'seahorse'])
   })
 
   it('degrades to nothing retired when the persisted map is corrupt', async () => {
     // Why: a load failure costs the app; over- or under-retiring costs at most a name.
-    const store = await createStore({ retiredWorktreeNamesByRepo: 'not-an-object' })
-    expect(store.getRetiredWorktreeNames(REPO)).toEqual([])
+    const store = await createStore({ retiredWorktreeNamesByWorkspaceKey: 'not-an-object' })
+    expect(store.getRetiredWorktreeNames(KEY)).toEqual([])
   })
 
   it('drops non-string entries but keeps the valid ones', async () => {
     const store = await createStore({
-      retiredWorktreeNamesByRepo: { [REPO]: ['nautilus', 42, null, 'Seahorse'] }
+      retiredWorktreeNamesByWorkspaceKey: { [KEY]: ['nautilus', 42, null, 'Seahorse'] }
     })
-    expect(store.getRetiredWorktreeNames(REPO).sort()).toEqual(['nautilus', 'seahorse'])
+    expect(store.getRetiredWorktreeNames(KEY).sort()).toEqual(['nautilus', 'seahorse'])
   })
 
   it('drops legacy arbitrary names while loading the persisted map', async () => {
     const store = await createStore({
-      retiredWorktreeNamesByRepo: { [REPO]: ['fix-login', 'Nautilus'] }
+      retiredWorktreeNamesByWorkspaceKey: { [KEY]: ['fix-login', 'Nautilus'] }
     })
-    expect(store.getRetiredWorktreeNames(REPO)).toEqual(['nautilus'])
+    expect(store.getRetiredWorktreeNames(KEY)).toEqual(['nautilus'])
   })
 })

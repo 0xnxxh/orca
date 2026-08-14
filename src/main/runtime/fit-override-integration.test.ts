@@ -64,6 +64,9 @@ const store = {
   getGitHubCache: () => ({ pr: {}, issue: {} }),
   setWorktreeMeta: () => undefined as never,
   removeWorktreeMeta: () => {},
+  getRetiredWorktreeNames: () => [],
+  addRetiredWorktreeName: () => {},
+  mergeRetiredWorktreeNames: () => false,
   getSettings: () => ({
     workspaceDir: '/tmp/workspaces',
     nestWorkspaces: false,

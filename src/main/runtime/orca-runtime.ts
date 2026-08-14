@@ -935,8 +935,8 @@ import {
 } from '../worktree-create-candidates'
 import {
   ensureRetiredWorktreeNamesBackfilled,
-  getRetiredWorktreeNamesByRepo,
-  getRetiredWorktreeNamesForRepo
+  getRetiredWorktreeNamesForRepo,
+  retireGeneratedWorktreeName
 } from '../worktree-name-retirement'
 import { normalizeSparseDirectories } from '../ipc/sparse-checkout-directories'
 import type { PtyBindingSourceExpectation, Store } from '../persistence'
@@ -1114,11 +1114,9 @@ export type CodexRateLimitResetRpcResult = {
 type RuntimeStore = {
   getRepos: Store['getRepos']
   getRepo: Store['getRepo']
-  /** Optional so older embedders of RuntimeStore keep type-checking; the create path skips
-   *  retirement when absent, which only means a name stays issuable. */
-  addRetiredWorktreeName?: Store['addRetiredWorktreeName']
-  getRetiredWorktreeNames?: Store['getRetiredWorktreeNames']
-  mergeRetiredWorktreeNames?: Store['mergeRetiredWorktreeNames']
+  addRetiredWorktreeName: Store['addRetiredWorktreeName']
+  getRetiredWorktreeNames: Store['getRetiredWorktreeNames']
+  mergeRetiredWorktreeNames: Store['mergeRetiredWorktreeNames']
   addRepo: Store['addRepo']
   updateRepo: Store['updateRepo']
   getProjects?: Store['getProjects']
@@ -21046,24 +21044,8 @@ export class OrcaRuntimeService {
     if (!Number.isInteger(limit) || limit <= 0) {
       throw new Error('invalid_limit')
     }
-    const selectedRepo = repoSelector ? await this.resolveRepoSelector(repoSelector) : null
-    if (
-      selectedRepo &&
-      this.store?.getRetiredWorktreeNames &&
-      this.store.mergeRetiredWorktreeNames
-    ) {
-      try {
-        await ensureRetiredWorktreeNamesBackfilled(
-          this.store,
-          selectedRepo,
-          this.store.getSettings()
-        )
-      } catch (error) {
-        console.warn(`[runtime] retirement backfill failed for repo ${selectedRepo.id}:`, error)
-      }
-    }
     const resolved = await this.listResolvedWorktrees()
-    const repoId = selectedRepo?.id ?? null
+    const repoId = repoSelector ? (await this.resolveRepoSelector(repoSelector)).id : null
     const visibilitySourceMatchersByRepoId =
       this.buildRuntimeVisibilitySourceMatchersByRepoId(resolved)
     const worktrees = resolved.filter((worktree) => {
@@ -21075,48 +21057,28 @@ export class OrcaRuntimeService {
         visibilitySourceMatchersByRepoId.get(worktree.repoId)
       )
     })
-    const page = worktrees.slice(0, limit)
-    const retirementRepoIds = new Set(page.map((worktree) => worktree.repoId))
-    // Why: an explicitly selected repo must report its retirements even when the page is empty or
-    // truncated past it. A repo with no live workspaces is exactly the case where every generated
-    // name looks free, so omitting it would reissue names precisely where it matters most.
-    if (repoId) {
-      retirementRepoIds.add(repoId)
-    }
     return {
-      worktrees: page,
+      worktrees: worktrees.slice(0, limit),
       totalCount: worktrees.length,
-      truncated: worktrees.length > limit,
-      retiredNamesByRepo: this.collectRetiredNamesForRepos(retirementRepoIds)
+      truncated: worktrees.length > limit
     }
   }
 
+  /** Keyed by repo id on the wire even though one repo is requested: the caller asked by selector
+   *  and needs to know which repo answered. */
   async listRetiredWorktreeNames(repoSelector: string): Promise<Record<string, string[]>> {
     const store = this.store
-    if (!store?.getRetiredWorktreeNames) {
+    if (!store) {
       return {}
     }
     const repo = await this.resolveRepoSelector(repoSelector)
-    if (store.mergeRetiredWorktreeNames) {
-      try {
-        await ensureRetiredWorktreeNamesBackfilled(store, repo, store.getSettings())
-      } catch (error) {
-        console.warn(`[runtime] retirement backfill failed for repo ${repo.id}:`, error)
-      }
-    }
-    return this.collectRetiredNamesForRepos(new Set([repo.id]))
-  }
-
-  /** Why: scoped to the repos in the page plus any explicitly requested one, so the payload cannot
-   *  grow with the number of repos on the host; a client only suggests names for repos it sees. */
-  private collectRetiredNamesForRepos(repoIds: Set<string>): Record<string, string[]> {
-    const store = this.store
-    if (!store?.getRetiredWorktreeNames) {
-      return {}
-    }
-    const repos = store.getRepos()
     const settings = store.getSettings()
-    return getRetiredWorktreeNamesByRepo(store, repoIds, repos, settings)
+    try {
+      await ensureRetiredWorktreeNamesBackfilled(store, repo, settings)
+    } catch (error) {
+      console.warn(`[runtime] retirement backfill failed for repo ${repo.id}:`, error)
+    }
+    return { [repo.id]: getRetiredWorktreeNamesForRepo(store, repo, settings) }
   }
 
   async listDetectedManagedWorktrees(
@@ -21961,6 +21923,9 @@ export class OrcaRuntimeService {
   async createManagedWorktree(args: {
     repoSelector: string
     name: string
+    /** True only when `name` came from Orca's creature-name generator; gates retirement so a name
+     *  the user typed stays reusable. Absent for CLI and automation callers. */
+    nameWasGenerated?: boolean
     baseBranch?: string
     compareBaseRef?: string
     branchNameOverride?: string
@@ -22298,9 +22263,9 @@ export class OrcaRuntimeService {
     let branchConflictKind: 'local' | 'remote' | null = null
     let worktreePath = ''
     let worktreePathResolved = false
-    const retiredNames = new Set(
-      getRetiredWorktreeNamesForRepo(this.store, repo, this.store.getRepos(), settings)
-    )
+    const retiredNames = args.nameWasGenerated
+      ? new Set(getRetiredWorktreeNamesForRepo(this.store, repo, settings))
+      : null
     // Why: runtime/mobile create-from-review callers should get a new workspace
     // even when the PR branch or review branch name is already in use.
     for (let suffix = 1; suffix <= WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS; suffix += 1) {
@@ -22308,7 +22273,7 @@ export class OrcaRuntimeService {
       effectiveRequestedName = args.name.trim()
         ? getWorktreeCreateCandidate(args.name, suffix)
         : effectiveSanitizedName
-      if (retiredNames.has(effectiveSanitizedName)) {
+      if (retiredNames?.has(effectiveSanitizedName)) {
         continue
       }
       branchName = await resolveCreateBranchName(
@@ -22630,8 +22595,10 @@ export class OrcaRuntimeService {
     }
 
     const worktreeId = `${repo.id}::${created.path}`
-    // Why: repo-qualified layouts decorate the physical leaf; retire the generated collision key.
-    this.store.addRetiredWorktreeName?.(repo.id, effectiveSanitizedName)
+    // Why: repo-qualified layouts decorate the physical leaf; retire the name main actually used.
+    if (args.nameWasGenerated) {
+      retireGeneratedWorktreeName(this.store, repo, settings, effectiveSanitizedName)
+    }
     const now = Date.now()
     // Why: PR/MR-created worktrees can start from a head ref/SHA while Source
     // Control must compare against the review target branch.

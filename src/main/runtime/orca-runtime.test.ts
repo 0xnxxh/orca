@@ -4075,7 +4075,8 @@ describe('OrcaRuntimeService', () => {
     const staleLookup = runtime.showManagedWorktree(TEST_WORKTREE_ID)
     const result = await runtime.createManagedWorktree({
       repoSelector: 'id:repo-1',
-      name: 'nautilus'
+      name: 'nautilus',
+      nameWasGenerated: true
     })
     const freshLookup = runtime.showManagedWorktree(result.worktree.id)
 
@@ -4091,7 +4092,37 @@ describe('OrcaRuntimeService', () => {
         worktrees: expect.arrayContaining([expect.objectContaining({ path: createdWorktree.path })])
       }
     )
-    expect(addRetiredWorktreeName).toHaveBeenCalledWith(TEST_REPO_ID, 'nautilus-2')
+    expect(addRetiredWorktreeName).toHaveBeenCalledWith(expect.any(String), 'nautilus-2')
+  })
+
+  it('neither skips nor retires a name the user typed', async () => {
+    // Why: the pool contains ordinary words. Retirement only ever applies to generated names.
+    const addRetiredWorktreeName = vi.fn()
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      addRetiredWorktreeName,
+      getRetiredWorktreeNames: () => ['nautilus']
+    })
+    const createdWorktree = {
+      path: '/tmp/workspaces/nautilus',
+      head: 'def',
+      branch: 'nautilus',
+      isBare: false,
+      isMainWorktree: false
+    }
+    computeWorktreePathMock.mockReturnValue(createdWorktree.path)
+    ensurePathWithinWorkspaceMock.mockReturnValue(createdWorktree.path)
+    // Not `...Once`: the shared beforeEach re-stubs the resolved value but cannot drain a queue,
+    // so leftover one-shots would poison later tests in this file.
+    vi.mocked(listWorktrees).mockResolvedValue([...MOCK_GIT_WORKTREES, createdWorktree])
+
+    const result = await runtime.createManagedWorktree({
+      repoSelector: 'id:repo-1',
+      name: 'nautilus'
+    })
+
+    expect(result.worktree.path).toBe(createdWorktree.path)
+    expect(addRetiredWorktreeName).not.toHaveBeenCalled()
   })
 
   it('creates additional workspace metadata for folder-mode repos through runtime create', async () => {
@@ -48342,6 +48373,9 @@ describe('OrcaRuntimeService', () => {
         return nextMeta
       },
       removeWorktreeMeta: () => {},
+      getRetiredWorktreeNames: () => [],
+      addRetiredWorktreeName: () => {},
+      mergeRetiredWorktreeNames: () => false,
       getGitHubCache: () => undefined as never,
       getSettings: () => ({
         workspaceDir: 'C:\\workspaces',

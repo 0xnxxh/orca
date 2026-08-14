@@ -894,13 +894,6 @@ export type RuntimeWorktreeListResult = {
   worktrees: RuntimeWorktreeRecord[]
   totalCount: number
   truncated: boolean
-  /** Generated workspace names already spent, keyed by repo id, so a client can avoid suggesting a
-   *  name whose old directory may still hold agent conversation state.
-   *
-   *  Optional on purpose (remote wire compatibility, Rule 1): hosts predating this field omit it,
-   *  and every reader must fall back to deduping against live worktrees alone rather than
-   *  requiring it. Scoped to the repos present in `worktrees` so the payload stays bounded. */
-  retiredNamesByRepo?: Record<string, string[]>
 }
 
 // ── Browser automation types ──
