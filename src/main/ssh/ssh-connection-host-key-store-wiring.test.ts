@@ -11,7 +11,7 @@
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { Socket } from 'node:net'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 // Type-only, so it is erased before vi.mock's hoisted factory runs.
@@ -171,6 +171,32 @@ describe('recording a first-contact host key', () => {
     await expect(second.connect()).rejects.toThrow(/host key verification failed/i)
     expect(hostKeyAccepted).toBe(false)
   })
+
+  // The load-bearing half of the unreadable-known_hosts decision. We connect as ssh does, but the
+  // whole reason that is acceptable is that we write nothing: a first contact we could not check
+  // must never become durable trust that a later connection then believes.
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'records nothing when a known_hosts file exists but cannot be read',
+    async () => {
+      const home = mkdtempSync(join(tmpdir(), 'orca-ssh-home-'))
+      mkdirSync(join(home, '.ssh'))
+      const knownHosts = join(home, '.ssh', 'known_hosts')
+      writeFileSync(knownHosts, '')
+      chmodSync(knownHosts, 0o000)
+      vi.stubEnv('HOME', home)
+
+      try {
+        await new SshConnection(target(), callbacks()).connect()
+        await new Promise((resolve) => setTimeout(resolve, 50))
+
+        expect(hostKeyAccepted).toBe(true)
+        expect(await loadTrustedHostKeys()).toEqual([])
+      } finally {
+        vi.unstubAllEnvs()
+        rmSync(home, { recursive: true, force: true })
+      }
+    }
+  )
 
   // A record per launch would accumulate, and a stale one would eventually read as a mismatch
   // against a VM that is behaving exactly as designed.

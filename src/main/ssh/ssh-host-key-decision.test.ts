@@ -7,7 +7,8 @@ function input(overrides: Partial<HostKeyDecisionInput> = {}): HostKeyDecisionIn
     storeOutcome: 'unknown',
     strictHostKeyChecking: 'ask',
     isEphemeralRuntimeTarget: false,
-    verificationSourcesIncomplete: false,
+    siteConfigSuppressed: false,
+    knownHostsUnreadable: false,
     displayHost: 'build-01',
     port: 22,
     ...overrides
@@ -29,7 +30,6 @@ describe('deciding what to do with a presented host key', () => {
       ['a revoked key', { knownHostsOutcome: 'revoked' as const }, 'revoked'],
       ['a changed key in known_hosts', { knownHostsOutcome: 'mismatch' as const }, 'mismatch'],
       ['a changed key in our own record', { storeOutcome: 'mismatch' as const }, 'mismatch'],
-      ['a certificate-authority host', { knownHostsOutcome: 'ca-only' as const }, 'ca-only'],
       [
         'an unfamiliar key type for a host we know',
         { knownHostsOutcome: 'unknown-type-known-host' as const },
@@ -127,9 +127,28 @@ describe('deciding what to do with a presented host key', () => {
       expect(decision.reason).toContain('rebuilt')
     })
 
-    it('offers the system-transport escape for certificate-authority hosts', () => {
+    // INVERTED, by product decision. ssh2 cannot validate certificates at all, and OpenSSH itself
+    // treats a CA-covered host presenting a plain key as first contact and connects. Refusing was
+    // stricter than ssh, and because `@cert-authority *` is the normal Teleport/Vault-SSH/Smallstep
+    // shape it failed EVERY target for those users — with an escape hatch that is an environment
+    // variable, unreachable when Orca is launched from the Dock.
+    it('does not refuse a certificate-authority host', () => {
       const decision = decideHostKey(input({ knownHostsOutcome: 'ca-only' }))
-      expect(decision.reason).toContain('ORCA_SSH_FORCE_SYSTEM_TRANSPORT=1')
+      expect(decision.action).toBe('accept-and-remember')
+    })
+
+    // The residual risk is accepted, not hidden: we take a plain key we cannot tie to the CA. The
+    // outcome survives so the choice stays auditable in the decision log.
+    it('still reports the certificate-authority outcome for audit', () => {
+      expect(decideHostKey(input({ knownHostsOutcome: 'ca-only' })).outcome).toBe('ca-only')
+    })
+
+    // A CA line does not license a CHANGED key: a plain entry for the host still decides.
+    it('still refuses a changed key on a certificate-authority host', () => {
+      const decision = decideHostKey(
+        input({ knownHostsOutcome: 'ca-only', storeOutcome: 'mismatch' })
+      )
+      expect(decision.action).toBe('reject')
     })
   })
 
@@ -210,6 +229,45 @@ describe('deciding what to do with a presented host key', () => {
     })
   })
 
+  // By product decision: ssh warns and treats the host as unknown rather than refusing, and
+  // refusing breaks an ordinary offline Windows laptop whose OneDrive-backed known_hosts is a cloud
+  // placeholder — while blaming a config file that is fine. We connect as ssh does, but write
+  // nothing, so a first contact we could not check never becomes durable trust.
+  describe('an unreadable known_hosts file', () => {
+    it('connects rather than refusing', () => {
+      expect(decideHostKey(input({ knownHostsUnreadable: true })).action).toBe('accept')
+    })
+
+    it('does not record what it could not verify', () => {
+      expect(decideHostKey(input({ knownHostsUnreadable: true })).action).not.toBe(
+        'accept-and-remember'
+      )
+    })
+
+    // The file we could not read cannot excuse a key that a source we COULD read says has changed.
+    it('still refuses a changed key', () => {
+      const decision = decideHostKey(
+        input({ knownHostsUnreadable: true, knownHostsOutcome: 'mismatch' })
+      )
+      expect(decision.action).toBe('reject')
+    })
+
+    it('still refuses a revoked key', () => {
+      const decision = decideHostKey(
+        input({ knownHostsUnreadable: true, knownHostsOutcome: 'revoked' })
+      )
+      expect(decision.action).toBe('reject')
+    })
+
+    // An unreadable file is weaker evidence than a policy we know exists but cannot read.
+    it('does not override an explicit StrictHostKeyChecking', () => {
+      const decision = decideHostKey(
+        input({ knownHostsUnreadable: true, strictHostKeyChecking: 'true' })
+      )
+      expect(decision.action).toBe('reject')
+    })
+  })
+
   describe('carve-outs', () => {
     // A fresh VM presents a new key every launch, so recording one would accumulate a row per
     // launch and eventually turn a stale record into a spurious mismatch.
@@ -224,18 +282,17 @@ describe('deciding what to do with a presented host key', () => {
       expect(decision.action).toBe('reject')
     })
 
-    // We could not read something that decides this — the system ssh_config, or a known_hosts file
-    // that exists and will not open. Being laxer than ssh is the one outcome that is never
-    // acceptable.
+    // We could not read the system ssh_config, so a site-wide policy may forbid this and we cannot
+    // see it. Being laxer than a policy we cannot read is the one outcome that is never acceptable.
     it('denies an unknown host when a source could not be read', () => {
-      expect(decideHostKey(input({ verificationSourcesIncomplete: true })).action).toBe('reject')
+      expect(decideHostKey(input({ siteConfigSuppressed: true })).action).toBe('reject')
     })
 
     // Only NEW trust is withheld. A host we already know is decided before this is reached, so
-    // being unable to read one source does not disconnect everything the user already verified.
+    // being unable to read the site config does not disconnect everything the user already verified.
     it('still accepts a known host when a source could not be read', () => {
       const decision = decideHostKey(
-        input({ verificationSourcesIncomplete: true, knownHostsOutcome: 'match' })
+        input({ siteConfigSuppressed: true, knownHostsOutcome: 'match' })
       )
       expect(decision.action).toBe('accept')
     })
@@ -245,7 +302,7 @@ describe('deciding what to do with a presented host key', () => {
     // runtimes off for everyone whose HOME diverges from their passwd home.
     it('still accepts an ephemeral target when a source could not be read', () => {
       const decision = decideHostKey(
-        input({ isEphemeralRuntimeTarget: true, verificationSourcesIncomplete: true })
+        input({ isEphemeralRuntimeTarget: true, siteConfigSuppressed: true })
       )
       expect(decision.action).toBe('accept')
     })
@@ -264,7 +321,7 @@ describe('deciding what to do with a presented host key', () => {
       const decision = decideHostKey(
         input({
           isEphemeralRuntimeTarget: true,
-          verificationSourcesIncomplete: true,
+          siteConfigSuppressed: true,
           storeOutcome: 'mismatch'
         })
       )
@@ -287,7 +344,8 @@ describe('deciding what to do with a presented host key', () => {
       { strictHostKeyChecking: 'yes' },
       { strictHostKeyChecking: 'no' },
       { isEphemeralRuntimeTarget: true },
-      { verificationSourcesIncomplete: true }
+      { siteConfigSuppressed: true },
+      { knownHostsUnreadable: true }
     ]
     for (const overrides of cases) {
       expect(decideHostKey(input(overrides)).action).not.toBe('prompt')

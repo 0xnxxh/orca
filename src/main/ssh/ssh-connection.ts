@@ -1270,13 +1270,12 @@ export class SshConnection {
         strictHostKeyChecking: hostKeyResolved?.strictHostKeyChecking ?? 'ask',
         isHostKeyAlias,
         isEphemeralRuntimeTarget: this.target.owner?.type === 'on-demand-runtime',
-        // A source that exists but will not open is the absence of evidence, not evidence of a new
-        // host: the entry that would have said "this key changed" may be in the file we could not
-        // read, so recording trust would accept a changed key the one time we could not check.
-        // Reuses the strict path rather than adding a fifth outcome. An ABSENT file is not this —
-        // that is the normal state for a fresh profile and genuinely means nothing is known.
-        verificationSourcesIncomplete:
-          siteConfigSuppressed || knownHostsEvidence.unreadableFileCount > 0,
+        siteConfigSuppressed,
+        // A file that EXISTS and will not open is the absence of evidence, not evidence of a new
+        // host — the entry that would have said "this key changed" may be in it. An ABSENT file is
+        // not this: that is the normal state for a fresh profile and genuinely means nothing is
+        // known. The decision connects anyway, as ssh does, but records nothing.
+        knownHostsUnreadable: knownHostsEvidence.unreadableFileCount > 0,
         entries: knownHostsEntries,
         // The store's own matcher, against records preloaded above because ssh2's verifier decides
         // synchronously. Reimplementing the comparison here is exactly how the type downgrade got

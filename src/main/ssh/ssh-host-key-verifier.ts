@@ -32,7 +32,8 @@ export type HostKeyVerifierDeps = {
   isHostKeyAlias?: boolean
   strictHostKeyChecking: string
   isEphemeralRuntimeTarget: boolean
-  verificationSourcesIncomplete: boolean
+  siteConfigSuppressed: boolean
+  knownHostsUnreadable: boolean
   /** Already unioned across every known_hosts file. */
   entries: readonly KnownHostsEntry[]
   isTrusted: TrustedHostKeyLookup
@@ -229,7 +230,8 @@ export function createHostKeyVerifier(
         storeOutcome: deps.isTrusted({ host: deps.host, port: deps.port, keyType, key }),
         strictHostKeyChecking: deps.strictHostKeyChecking,
         isEphemeralRuntimeTarget: deps.isEphemeralRuntimeTarget,
-        verificationSourcesIncomplete: deps.verificationSourcesIncomplete,
+        siteConfigSuppressed: deps.siteConfigSuppressed,
+        knownHostsUnreadable: deps.knownHostsUnreadable,
         displayHost: deps.displayHost,
         port: deps.port
       })

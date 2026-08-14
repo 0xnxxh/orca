@@ -32,13 +32,22 @@ export type HostKeyDecisionInput = {
    */
   isEphemeralRuntimeTarget: boolean
   /**
-   * Something that decides this was unreadable, so we cannot prove we are seeing what ssh sees:
-   * `ssh -G` ran on the HOME-divergent `-F` path and suppressed a possible site-wide
-   * StrictHostKeyChecking, or a known_hosts file exists and would not open. Extending NEW trust
-   * while blind is the one outcome that is never acceptable — a host we already know still
-   * connects, because a match is decided before this is consulted.
+   * `ssh -G` ran on the HOME-divergent `-F` path, which suppresses /etc/ssh/ssh_config, so a
+   * site-wide StrictHostKeyChecking may exist that we cannot see. We refuse a NEW host rather than
+   * risk being laxer than the policy; a host we already know still connects, because a match is
+   * decided before this is consulted.
    */
-  verificationSourcesIncomplete: boolean
+  siteConfigSuppressed: boolean
+  /**
+   * A known_hosts file exists and would not open — a Windows OneDrive placeholder while offline,
+   * EACCES on a hardened image, an NFS blip. The entry that would have said "this key changed" may
+   * be in it.
+   *
+   * Deliberately NOT a refusal: ssh warns and treats the host as unknown, and refusing here breaks
+   * an ordinary offline corporate laptop while blaming a config file that is fine. We connect as ssh
+   * does but record nothing, so a first contact we could not check never becomes durable trust.
+   */
+  knownHostsUnreadable: boolean
   displayHost: string
   /** Needed for the remedy string: an off-port entry is keyed `[host]:port` in known_hosts. */
   port: number
@@ -108,7 +117,8 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
     knownHostsOutcome,
     storeOutcome,
     isEphemeralRuntimeTarget,
-    verificationSourcesIncomplete,
+    siteConfigSuppressed,
+    knownHostsUnreadable,
     displayHost,
     port
   } = input
@@ -154,18 +164,6 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
     return { action: 'accept', outcome: 'match' }
   }
 
-  if (knownHostsOutcome === 'ca-only') {
-    return {
-      action: 'reject',
-      outcome: 'ca-only',
-      disagreeingSource: 'known-hosts',
-      reason: rejection(
-        displayHost,
-        'This host is protected by a certificate authority, which this connection type cannot verify. Set ORCA_SSH_FORCE_SYSTEM_TRANSPORT=1 to connect using your system ssh.'
-      )
-    }
-  }
-
   // We hold a key for this host, just not of the presented type. Treating that as first contact is
   // the downgrade an attacker who cannot forge the known key would reach for.
   if (
@@ -192,11 +190,21 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
     }
   }
 
-  // Unknown from here down.
+  // `ca-only` is carried through so the decision log still shows a CA line was involved, even
+  // though the action is the same as first contact.
+  const unknownOutcome: KnownHostsOutcome = knownHostsOutcome === 'ca-only' ? 'ca-only' : 'unknown'
+
+  // Unknown from here down — including `ca-only`, by decision. ssh2 cannot validate certificates at
+  // all, and OpenSSH itself treats a CA-covered host that presents a plain key as first contact and
+  // connects (verified live). Refusing was stricter than ssh and, because `@cert-authority *` is the
+  // normal Teleport/Vault-SSH/Smallstep shape, it failed EVERY target for those users — with an
+  // escape hatch that is an environment variable, unreachable when Orca is launched from the Dock.
+  // The residual risk is real and accepted: for a CA-protected host we accept a plain key we cannot
+  // tie to the CA. The outcome is preserved so the decision is still auditable.
   if (STRICT_VALUES.has(strict)) {
     return {
       action: 'reject',
-      outcome: 'unknown',
+      outcome: unknownOutcome,
       reason: rejection(
         displayHost,
         'The host is not listed in your known_hosts file and StrictHostKeyChecking is enabled.'
@@ -217,25 +225,28 @@ export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
   // row per VM, and a stale row eventually reads as a mismatch against a host that did nothing
   // wrong.
   if (isEphemeralRuntimeTarget) {
-    return { action: 'accept', outcome: 'unknown' }
+    return { action: 'accept', outcome: unknownOutcome }
   }
-  if (verificationSourcesIncomplete) {
-    // We could not read something that decides this, so we cannot prove a policy does not forbid it
-    // or that a known_hosts entry does not contradict it. Refusing to extend NEW trust while blind
-    // is the only way to avoid being laxer than ssh.
+  if (siteConfigSuppressed) {
+    // We could not read the system ssh_config, so we cannot prove a site policy does not forbid
+    // this. Refusing to extend NEW trust while blind is the only way to avoid being laxer than ssh.
     return {
       action: 'reject',
-      outcome: 'unknown',
+      outcome: unknownOutcome,
       reason: rejection(
         displayHost,
-        'The host is unknown and part of the SSH configuration could not be read, so its host key policy cannot be checked.'
+        'The host is unknown and the system SSH configuration could not be read, so its host key policy cannot be checked.'
       )
     }
+  }
+  if (knownHostsUnreadable) {
+    // Connect as ssh does, but do not write a record from evidence we could not read.
+    return { action: 'accept', outcome: unknownOutcome }
   }
   if (LAX_VALUES.has(strict)) {
     // OpenSSH accepts here but does not write. Persisting would silently convert a deliberately
     // lax setting into a permanent trust record.
-    return { action: 'accept', outcome: 'unknown' }
+    return { action: 'accept', outcome: unknownOutcome }
   }
-  return { action: 'accept-and-remember', outcome: 'unknown' }
+  return { action: 'accept-and-remember', outcome: unknownOutcome }
 }

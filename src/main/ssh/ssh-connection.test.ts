@@ -480,55 +480,32 @@ describe('SshConnection', () => {
     }
   })
 
-  // A known_hosts that exists and will not open means we cannot rule out an entry saying this key
-  // changed, so first contact is refused. Both tests below share that setup, which is the only way
-  // the ephemeral carve-out is observable end-to-end: without it they reach the same verdict.
-  describe('when a known_hosts file exists but cannot be read', () => {
-    const setUpUnreadableKnownHosts = (): string => {
+  // A known_hosts that exists and will not open is the absence of evidence, so by product decision
+  // we connect as ssh does — it warns and treats the host as unknown — rather than refusing an
+  // ordinary offline Windows laptop whose OneDrive-backed file is a cloud placeholder. That we
+  // record NOTHING in that state is covered end to end in
+  // ssh-connection-host-key-store-wiring.test.ts, where the store is actually bound.
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'still connects when a known_hosts file exists but cannot be read',
+    async () => {
       const home = mkdtempSync(join(tmpdir(), 'orca-ssh-home-'))
       mkdirSync(join(home, '.ssh'))
       const knownHosts = join(home, '.ssh', 'known_hosts')
       writeFileSync(knownHosts, '')
       chmodSync(knownHosts, 0o000)
       vi.stubEnv('HOME', home)
-      return home
+
+      try {
+        const conn = new SshConnection(createTarget(), createCallbacks())
+        await conn.connect()
+
+        expect(lastHostKeyAccepted).toBe(true)
+        expect(conn.getState().status).toBe('connected')
+      } finally {
+        rmSync(home, { recursive: true, force: true })
+      }
     }
-
-    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-      'refuses an unknown host',
-      async () => {
-        const home = setUpUnreadableKnownHosts()
-        try {
-          const conn = new SshConnection(createTarget(), createCallbacks())
-
-          await expect(conn.connect()).rejects.toThrow(/host key verification failed/i)
-        } finally {
-          rmSync(home, { recursive: true, force: true })
-        }
-      }
-    )
-
-    // A machine provisioned a minute ago cannot be in that file no matter what it says, so refusing
-    // would not make this safer — it would just turn on-demand runtimes off.
-    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-      'still connects an on-demand runtime target',
-      async () => {
-        const home = setUpUnreadableKnownHosts()
-        try {
-          const conn = new SshConnection(
-            createTarget({ owner: { type: 'on-demand-runtime', runtimeId: 'rt-1' } }),
-            createCallbacks()
-          )
-          await conn.connect()
-
-          expect(lastHostKeyAccepted).toBe(true)
-          expect(conn.getState().status).toBe('connected')
-        } finally {
-          rmSync(home, { recursive: true, force: true })
-        }
-      }
-    )
-  })
+  )
 
   // Retrying re-derives the same decision, so a ladder that treated this as transient would back off
   // against a host it has already refused until it gave up — burying the reason.
