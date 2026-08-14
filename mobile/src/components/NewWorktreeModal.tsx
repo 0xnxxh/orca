@@ -63,6 +63,7 @@ import { SmartWorkspaceSourceField } from './SmartWorkspaceSourceField'
 import { SmartWorkspaceSourceDrawer } from './SmartWorkspaceSourceDrawer'
 import { SmartWorkspaceAdvancedFields } from './SmartWorkspaceAdvancedFields'
 import { SetupHookTrustDrawer, type SetupTrustPrompt } from './SetupHookTrustDrawer'
+import { getNewWorkspaceRepoDetail } from './new-workspace-repo-detail'
 
 type Repo = {
   id: string
@@ -70,6 +71,7 @@ type Repo = {
   path: string
   badgeColor?: string
   connectionId?: string | null
+  executionHostId?: 'local' | `ssh:${string}` | `runtime:${string}` | null
   kind?: 'git' | 'folder'
   upstream?: { owner: string; repo: string } | null
   gitRemoteIdentity?: { remoteUrl?: string; canonicalKey?: string } | null
@@ -695,7 +697,13 @@ function NewWorktreeModalContent({
         )
   const pickerAgentOptions = [...visibleAgentOptions, BLANK_TERMINAL]
   const repoPickerItems = useMemo(
-    () => repos.map((repo) => ({ id: repo.id, label: repo.displayName, repo })),
+    () =>
+      repos.map((repo) => ({
+        id: repo.id,
+        label: repo.displayName,
+        detail: getNewWorkspaceRepoDetail(repo),
+        repo
+      })),
     [repos]
   )
 
@@ -815,12 +823,19 @@ function NewWorktreeModalContent({
                     style={[styles.repoDot, { backgroundColor: repoBadgeColor(selectedRepo) }]}
                   />
                 ) : null}
-                <Text
-                  style={[styles.fieldButtonText, !selectedRepo && styles.fieldButtonPlaceholder]}
-                  numberOfLines={1}
-                >
-                  {selectedRepo?.displayName ?? 'Select a repository'}
-                </Text>
+                <View style={styles.fieldButtonCopy}>
+                  <Text
+                    style={[styles.fieldButtonText, !selectedRepo && styles.fieldButtonPlaceholder]}
+                    numberOfLines={1}
+                  >
+                    {selectedRepo?.displayName ?? 'Select a repository'}
+                  </Text>
+                  {selectedRepo ? (
+                    <Text style={styles.fieldButtonDetail} numberOfLines={1}>
+                      {getNewWorkspaceRepoDetail(selectedRepo)}
+                    </Text>
+                  ) : null}
+                </View>
                 <ChevronDown size={14} color={colors.textMuted} />
               </Pressable>
             </View>
@@ -1109,9 +1124,17 @@ const styles = StyleSheet.create({
     borderColor: colors.borderSubtle
   },
   fieldButtonText: {
-    flex: 1,
     fontSize: typography.bodySize,
     color: colors.textPrimary
+  },
+  fieldButtonCopy: {
+    flex: 1,
+    minWidth: 0
+  },
+  fieldButtonDetail: {
+    fontSize: typography.metaSize,
+    color: colors.textMuted,
+    marginTop: 1
   },
   fieldButtonPlaceholder: {
     color: colors.textMuted

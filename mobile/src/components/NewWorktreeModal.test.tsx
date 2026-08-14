@@ -48,10 +48,10 @@ import { NewWorktreeModal } from './NewWorktreeModal'
 
 const repos = [{ id: 'repo-1', displayName: 'orca', path: '/src/orca', kind: 'git' }]
 
-function repoPickerNames(renderer: ReactTestRenderer | null): string[] {
+function repoPickerItems(renderer: ReactTestRenderer | null): { label: string; detail: string }[] {
   const pickers = renderer?.root.findAll((node) => node.type === 'PickerListDrawer') ?? []
   const repoPicker = pickers.find((node) => node.props.title === 'Repository')
-  return ((repoPicker?.props.items ?? []) as { label: string }[]).map((item) => item.label)
+  return repoPicker?.props.items ?? []
 }
 
 describe('NewWorktreeModal repo list', () => {
@@ -92,6 +92,51 @@ describe('NewWorktreeModal repo list', () => {
     })
 
     expect(sendRequest).toHaveBeenCalledWith('repo.list')
-    expect(repoPickerNames(renderer)).toEqual(['orca'])
+    expect(repoPickerItems(renderer)).toEqual([
+      expect.objectContaining({ label: 'orca', detail: 'Local · /src/orca' })
+    ])
+  })
+
+  it('labels same-name local and SSH repositories with their locations', async () => {
+    const listedRepos = [
+      ...repos,
+      {
+        id: 'repo-2',
+        displayName: 'orca',
+        path: '/home/dev/orca',
+        connectionId: 'build-server',
+        kind: 'git'
+      }
+    ]
+    const client = {
+      sendRequest: vi
+        .fn()
+        .mockImplementation((method: string) =>
+          method === 'repo.list'
+            ? Promise.resolve({ ok: true, result: { repos: listedRepos } })
+            : new Promise(() => {})
+        )
+    } as unknown as RpcClient
+
+    await act(async () => {
+      renderer = create(
+        createElement(NewWorktreeModal, {
+          visible: true,
+          client,
+          hostId: 'host-1',
+          onCreated: () => {},
+          onClose: () => {}
+        })
+      )
+      await Promise.resolve()
+    })
+
+    expect(repoPickerItems(renderer)).toEqual([
+      expect.objectContaining({ label: 'orca', detail: 'Local · /src/orca' }),
+      expect.objectContaining({
+        label: 'orca',
+        detail: 'SSH · build-server · /home/dev/orca'
+      })
+    ])
   })
 })
