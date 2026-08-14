@@ -31,6 +31,8 @@ type LastCompletionIdentity = {
   source: CompletionIdentitySource
   identity: string
   agentIdentity: string | null
+  /** End time of the Claude lead turn already announced while the pane stayed `working` for background inventory. The later all-clear `done` repeats this value and must not raise a second banner. */
+  lastTurnCompletedAtNotified?: number
 }
 
 // Why: worktree switches remount a pane while the PTY/hook stream stays live, so stale completion replays must outlive one coordinator.
@@ -57,6 +59,10 @@ const POLL_TIER_INTERVAL_MS: Record<PollCadenceTier, number> = {
   idle: IDLE_POLL_INTERVAL_MS,
   hidden: HIDDEN_POLL_INTERVAL_MS,
   'no-evidence': NO_EVIDENCE_POLL_INTERVAL_MS
+}
+
+function isFiniteTurnCompletedAt(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
 }
 
 function isCompletionHookState(state: ParsedAgentStatusPayload['state']): boolean {
@@ -169,15 +175,30 @@ export function createAgentCompletionCoordinator(
     return `${source}:${currentTurn}:${processSession}`
   }
 
+  function completionIdentityFor(
+    state: string,
+    agentType: string | undefined,
+    timestamp: number
+  ): string {
+    return [state, agentType ?? '', String(Math.trunc(timestamp))].join(':')
+  }
+
   function hookCompletionIdentity(payload: AgentCompletionStatusSnapshot): string | null {
-    if (typeof payload.stateStartedAt !== 'number' || !Number.isFinite(payload.stateStartedAt)) {
+    // Why: `stateStartedAt` is pinned while the reported state does not change. A Claude pane held at `working` by background inventory would otherwise give every turn in the run the same identity.
+    const timestamp = isFiniteTurnCompletedAt(payload.turnCompletedAt)
+      ? payload.turnCompletedAt
+      : payload.stateStartedAt
+    if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
       return null
     }
-    return [
-      payload.state,
-      payload.agentType ?? '',
-      String(Math.trunc(payload.stateStartedAt))
-    ].join(':')
+    return completionIdentityFor(payload.state, payload.agentType, timestamp)
+  }
+
+  function turnCompletedAtAlreadyNotified(turnCompletedAt: number): boolean {
+    return (
+      lastCompletionIdentityByPaneKey.get(options.paneKey)?.lastTurnCompletedAtNotified ===
+      turnCompletedAt
+    )
   }
 
   function hookCompletionAgentIdentity(payload: AgentCompletionStatusSnapshot): string | null {
@@ -269,24 +290,26 @@ export function createAgentCompletionCoordinator(
       terminalIdleConfirmed?: boolean
       agentStatus?: AgentCompletionStatusSnapshot
       completionIdentity?: LastCompletionIdentity | null
+      /** Announce only. The pane is still genuinely `working` (Claude background inventory), so the synthetic `done` must not run pane lifecycle. */
+      notifyWithoutLifecycle?: boolean
     } = {}
-  ): void {
+  ): boolean {
     if (source !== 'hook' && pendingHookDoneTimer !== null) {
-      return
+      return false
     }
     if (requiresFreshWorking || lastCompletedTurn === currentTurn) {
-      return
+      return false
     }
     if (!options.isLive() || !hasAgentRunEvidence) {
-      return
+      return false
     }
     const now = Date.now()
     const token = completionToken(source)
     if (token === lastCompletionToken && now - lastCompletionAt < COMPLETION_REPLAY_GUARD_MS) {
-      return
+      return false
     }
     if (completionIdentityAlreadyNotified(optionsOverride.completionIdentity)) {
-      return
+      return false
     }
     lastCompletionToken = token
     lastCompletionAt = now
@@ -298,7 +321,11 @@ export function createAgentCompletionCoordinator(
     if (optionsOverride.completionIdentity) {
       lastCompletionIdentityByPaneKey.set(options.paneKey, optionsOverride.completionIdentity)
     }
-    if (source === 'hook' && optionsOverride.agentStatus) {
+    if (
+      source === 'hook' &&
+      optionsOverride.agentStatus &&
+      optionsOverride.notifyWithoutLifecycle !== true
+    ) {
       options.dispatchHookLifecycle?.(optionsOverride.agentStatus)
     }
     if (optionsOverride.quietedHookDone === true || source === 'process-exit') {
@@ -309,9 +336,17 @@ export function createAgentCompletionCoordinator(
         ...(optionsOverride.terminalIdleConfirmed === true ? { terminalIdleConfirmed: true } : {}),
         ...(optionsOverride.agentStatus ? { agentStatus: optionsOverride.agentStatus } : {})
       })
+    } else if (optionsOverride.notifyWithoutLifecycle === true && optionsOverride.agentStatus) {
+      // Why: the pane is still `working`; the synthetic done must carry its own snapshot or the notification would read the pinned working row.
+      options.dispatchCompletion(title, {
+        source,
+        quietedHookDone: false,
+        agentStatus: optionsOverride.agentStatus
+      })
     } else {
       options.dispatchCompletion(title)
     }
+    return true
   }
 
   function dispatchAttentionNotification(payload: AgentCompletionStatusSnapshot): void {
@@ -792,6 +827,36 @@ export function createAgentCompletionCoordinator(
       establishAgentEvidence()
     }
     if (payload.state === 'working') {
+      const turnCompletedAt = isFiniteTurnCompletedAt(payload.turnCompletedAt)
+        ? payload.turnCompletedAt
+        : undefined
+      if (turnCompletedAt !== undefined) {
+        // Why: Claude's lead Stop already ended the turn; the pane stays `working` only for background inventory. Announce now, keep lifecycle on the reported working row.
+        if (workingStatusObserved) {
+          const completionSnapshot: AgentCompletionStatusSnapshot = {
+            ...payload,
+            state: 'done',
+            stateStartedAt: turnCompletedAt,
+            turnCompletedAt
+          }
+          const completionIdentity: LastCompletionIdentity = {
+            source: 'hook',
+            identity: completionIdentityFor('done', payload.agentType, turnCompletedAt),
+            agentIdentity: hookCompletionAgentIdentity(payload),
+            lastTurnCompletedAtNotified: turnCompletedAt
+          }
+          const committed = dispatchCompletion('hook', payload.agentType ?? options.paneKey, {
+            notifyWithoutLifecycle: true,
+            agentStatus: completionSnapshot,
+            completionIdentity
+          })
+          if (committed) {
+            lastCompletionIdentity = completionIdentity
+          }
+        }
+        options.dispatchHookLifecycle?.(payload)
+        return
+      }
       clearPendingHookDone()
       // Why: resumed work cancels the debounced attention so a self-resolving pause never notifies.
       clearPendingCodexAttention()
@@ -824,6 +889,19 @@ export function createAgentCompletionCoordinator(
         establishAgentEvidence()
       }
       const hookIdentity = hookCompletionIdentity(payload)
+      const turnCompletedAt = isFiniteTurnCompletedAt(payload.turnCompletedAt)
+        ? payload.turnCompletedAt
+        : undefined
+      if (
+        turnCompletedAt !== undefined &&
+        (turnCompletedAtAlreadyNotified(turnCompletedAt) ||
+          lastCompletionIdentity?.lastTurnCompletedAtNotified === turnCompletedAt ||
+          lastCompletedTurn === currentTurn)
+      ) {
+        // Why: this `done` is the background all-clear of a turn already announced (or completed from another source). Keep pane lifecycle; do not raise a second banner.
+        options.dispatchHookLifecycle?.(payload)
+        return
+      }
       if (
         hookIdentity &&
         lastCompletionIdentity?.source === 'hook' &&

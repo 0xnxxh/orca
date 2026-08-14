@@ -1165,6 +1165,252 @@ describe('agent completion coordinator', () => {
     expect(dispatchCompletion).toHaveBeenCalledTimes(2)
   })
 
+  it('ignores a turn end time that cannot name a turn', () => {
+    const dispatchCompletion = vi.fn()
+    const coordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+
+    coordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000
+    })
+    coordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000,
+      turnCompletedAt: Number.NaN
+    })
+
+    expect(dispatchCompletion).not.toHaveBeenCalled()
+  })
+
+  it('does not announce a gated Stop for a turn it never saw start', () => {
+    const dispatchCompletion = vi.fn()
+    const coordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+
+    coordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+
+    expect(dispatchCompletion).not.toHaveBeenCalled()
+  })
+
+  it('announces a gated Stop immediately and treats the later all-clear as the same turn', () => {
+    const dispatchCompletion = vi.fn()
+    const dispatchHookLifecycle = vi.fn()
+    const coordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      dispatchHookLifecycle,
+      isLive: () => true
+    })
+
+    coordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000
+    })
+    coordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      lastAssistantMessage: 'Which cells need hand-verification?',
+      stateStartedAt: 1_700_000_000_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+    expect(dispatchCompletion).toHaveBeenCalledWith(
+      'claude',
+      expect.objectContaining({
+        source: 'hook',
+        quietedHookDone: false,
+        agentStatus: expect.objectContaining({
+          state: 'done',
+          lastAssistantMessage: 'Which cells need hand-verification?',
+          stateStartedAt: 1_700_000_005_000,
+          turnCompletedAt: 1_700_000_005_000
+        })
+      })
+    )
+    expect(dispatchHookLifecycle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ state: 'working', turnCompletedAt: 1_700_000_005_000 })
+    )
+
+    coordinator.observeHookStatus({
+      state: 'done',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      lastAssistantMessage: 'Which cells need hand-verification?',
+      stateStartedAt: 1_700_000_055_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    vi.advanceTimersByTime(HOOK_DONE_QUIET_MS)
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+    expect(dispatchHookLifecycle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ state: 'done', turnCompletedAt: 1_700_000_005_000 })
+    )
+  })
+
+  it('pairs a background all-clear with the turn it announced even after a working title blip', () => {
+    const dispatchCompletion = vi.fn()
+    const dispatchHookLifecycle = vi.fn()
+    const coordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      dispatchHookLifecycle,
+      isLive: () => true
+    })
+
+    coordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000
+    })
+    coordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(2_000)
+    coordinator.observeTitleWorking()
+
+    coordinator.observeHookStatus({
+      state: 'done',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_050_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    vi.advanceTimersByTime(HOOK_DONE_QUIET_MS)
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+    expect(dispatchHookLifecycle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ state: 'done', turnCompletedAt: 1_700_000_005_000 })
+    )
+  })
+
+  it('does not double-fire after a live remount between the gated Stop and the all-clear', () => {
+    const dispatchCompletion = vi.fn()
+    const firstCoordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+
+    firstCoordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000
+    })
+    firstCoordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+    firstCoordinator.dispose()
+
+    const remounted = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+    remounted.observeHookStatus({
+      state: 'done',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_055_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    vi.advanceTimersByTime(HOOK_DONE_QUIET_MS)
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let a vetoed gated Stop swallow the later all-clear', () => {
+    const dispatchCompletion = vi.fn()
+    const coordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+
+    coordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000
+    })
+    coordinator.observeClassifiedTitleCompletion('Claude done')
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+
+    coordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+
+    coordinator.observeHookStatus({
+      state: 'done',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_055_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    vi.advanceTimersByTime(HOOK_DONE_QUIET_MS)
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+  })
+
   it('cancels a hook completion when the same turn resumes work before the quiet window', () => {
     const dispatchCompletion = vi.fn()
     const coordinator = createAgentCompletionCoordinator({

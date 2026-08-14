@@ -429,7 +429,8 @@ function equivalentParsedAgentStatusPayload(
     a.interrupted === b.interrupted &&
     // Why: a session-boundary done must never be deduped against a cached real done —
     // the flag has to reach receivers deterministically (STA-3386).
-    a.sessionBoundary === b.sessionBoundary
+    a.sessionBoundary === b.sessionBoundary &&
+    a.turnCompletedAt === b.turnCompletedAt
   )
 }
 
@@ -917,6 +918,9 @@ export class AgentHookServer {
         prompt: payload.prompt,
         agentType: payload.agentType,
         ...(restored.state === 'done' && restored.interrupted ? { interrupted: true } : {}),
+        ...(restored.turnCompletedAt !== undefined
+          ? { turnCompletedAt: restored.turnCompletedAt }
+          : {}),
         ...(payload.subagents ? { subagents: payload.subagents } : {})
       }
     })
