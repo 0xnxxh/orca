@@ -3419,10 +3419,11 @@ function applyWebSessionTabsSnapshotOperations(
 
 export function applyWebSessionTabsStorePatch(
   buildPatch: (state: AppState) => WebSessionTabsSyncState | Partial<WebSessionTabsSyncState>,
-  liveSnapshot?: RuntimeMobileSessionTabsResult
+  agentStatusSnapshots?: RuntimeMobileSessionTabsResult | readonly RuntimeMobileSessionTabsResult[],
+  allowCompletionNotification = false
 ): void {
   let mirroredAgentStatusChanged = false
-  const acceptedLiveStatuses: {
+  const acceptedNotificationStatuses: {
     paneKey: string
     worktreeId: string
     payload: ReturnType<typeof pickParsedAgentStatusPayload> & { stateStartedAt: number }
@@ -3430,37 +3431,48 @@ export function applyWebSessionTabsStorePatch(
   useAppStore.setState((state) => {
     const patch = buildPatch(state)
     mirroredAgentStatusChanged = patch !== state && Object.hasOwn(patch, 'agentStatusByPaneKey')
-    if (mirroredAgentStatusChanged && liveSnapshot) {
+    if (mirroredAgentStatusChanged && agentStatusSnapshots) {
       const nextAgentStatuses = patch.agentStatusByPaneKey ?? state.agentStatusByPaneKey
-      for (const surface of liveSnapshot.tabs) {
-        if (surface.type !== 'terminal') {
-          continue
-        }
-        const remapped = remapHostAgentStatus(surface)
-        const accepted = remapped ? nextAgentStatuses[remapped.paneKey] : undefined
-        if (
-          !remapped ||
-          !accepted ||
-          accepted === state.agentStatusByPaneKey[remapped.paneKey] ||
-          !agentStatusEntryEqual(accepted, remapped)
-        ) {
-          continue
-        }
-        const turnCompletedAt = normalizeTurnCompletedAtField(
-          surface.turnCompletedAt,
-          accepted.state
-        )
-        acceptedLiveStatuses.push({
-          paneKey: accepted.paneKey,
-          worktreeId: accepted.worktreeId ?? liveSnapshot.worktree,
-          payload: {
-            ...pickParsedAgentStatusPayload({
-              ...accepted,
-              ...(turnCompletedAt !== undefined ? { turnCompletedAt } : {})
-            }),
-            stateStartedAt: accepted.stateStartedAt
+      const snapshots = Array.isArray(agentStatusSnapshots)
+        ? agentStatusSnapshots
+        : [agentStatusSnapshots]
+      for (const snapshot of snapshots) {
+        for (const surface of snapshot.tabs) {
+          if (surface.type !== 'terminal') {
+            continue
           }
-        })
+          const remapped = remapHostAgentStatus(surface)
+          const accepted = remapped ? nextAgentStatuses[remapped.paneKey] : undefined
+          if (
+            !remapped ||
+            !accepted ||
+            accepted === state.agentStatusByPaneKey[remapped.paneKey] ||
+            !agentStatusEntryEqual(accepted, remapped)
+          ) {
+            continue
+          }
+          const turnCompletedAt = normalizeTurnCompletedAtField(
+            surface.turnCompletedAt,
+            accepted.state
+          )
+          if (
+            !allowCompletionNotification &&
+            (accepted.state !== 'working' || turnCompletedAt !== undefined)
+          ) {
+            continue
+          }
+          acceptedNotificationStatuses.push({
+            paneKey: accepted.paneKey,
+            worktreeId: accepted.worktreeId ?? snapshot.worktree,
+            payload: {
+              ...pickParsedAgentStatusPayload({
+                ...accepted,
+                ...(turnCompletedAt !== undefined ? { turnCompletedAt } : {})
+              }),
+              stateStartedAt: accepted.stateStartedAt
+            }
+          })
+        }
       }
     }
     return patch
@@ -3469,7 +3481,7 @@ export function applyWebSessionTabsStorePatch(
   if (mirroredAgentStatusChanged) {
     useAppStore.getState().scheduleAgentStatusFreshness()
   }
-  for (const status of acceptedLiveStatuses) {
+  for (const status of acceptedNotificationStatuses) {
     observeAgentHookCompletionForNotification(status)
   }
 }
@@ -3538,8 +3550,9 @@ function loadInitialWebSessionTabs(
               receivedFrames[index]!
             )
         )
-        applyWebSessionTabsStorePatch((state) =>
-          applyFreshWebSessionTabsSnapshots(state, applicable, environmentId)
+        applyWebSessionTabsStorePatch(
+          (state) => applyFreshWebSessionTabsSnapshots(state, applicable, environmentId),
+          applicable
         )
       } finally {
         for (const finishRecovery of finishRecoveries) {
@@ -3846,8 +3859,9 @@ export function useWebSessionTabsSync(): void {
         batch.deferredRepairWorktrees.delete(worktreeId)
       }
       if (operations.length > 0) {
-        applyWebSessionTabsStorePatch((state) =>
-          applyWebSessionTabsSnapshotOperations(state, operations)
+        applyWebSessionTabsStorePatch(
+          (state) => applyWebSessionTabsSnapshotOperations(state, operations),
+          operations.map(({ snapshot }) => snapshot)
         )
       }
       finishVisibilityResumeBatchIfIdle(batch)
@@ -4156,8 +4170,10 @@ export function useWebSessionTabsSync(): void {
                             : []
                         )
                         if (freshSnapshots.length > 0) {
-                          applyWebSessionTabsStorePatch((state) =>
-                            applyWebSessionTabsSnapshots(state, freshSnapshots, environmentId)
+                          applyWebSessionTabsStorePatch(
+                            (state) =>
+                              applyWebSessionTabsSnapshots(state, freshSnapshots, environmentId),
+                            freshSnapshots
                           )
                         }
                         const freshSnapshotSet = new Set(freshSnapshots)
@@ -4228,7 +4244,8 @@ export function useWebSessionTabsSync(): void {
                       if (shouldApplyWebSessionTabsSnapshot(recovered, environmentId)) {
                         applyWebSessionTabsStorePatch(
                           (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
-                          event.type === 'updated' && !replayed ? recovered : undefined
+                          recovered,
+                          event.type === 'updated' && !replayed
                         )
                         recordVisibilityResumeSnapshot(environmentId, recovered, receivedFrame)
                       }
@@ -4353,7 +4370,8 @@ export function useWebSessionTabsSync(): void {
         const replayed = isRuntimeSubscriptionReplayResponse(response)
         applyWebSessionTabsStorePatch(
           (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
-          event.type === 'updated' && !replayed ? recovered : undefined
+          recovered,
+          event.type === 'updated' && !replayed
         )
         recordVisibilityResumeSnapshotRef.current(environmentId, recovered, receivedFrame)
       }

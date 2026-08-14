@@ -57,6 +57,10 @@ vi.mock('../store', () => ({
   }
 }))
 
+vi.mock('@/hooks/agent-hook-completion-notifications', () => ({
+  observeAgentHookCompletionForNotification: vi.fn()
+}))
+
 const WT = 'repo::/worktree'
 const ENV = 'web-env-1'
 const NOW = 1_700_000_000_000
