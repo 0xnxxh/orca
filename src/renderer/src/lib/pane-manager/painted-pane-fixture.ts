@@ -10,16 +10,22 @@
  * compositing nothing (stale/blank pixels) while the buffer is intact, which is exactly the
  * reported reconnect/reveal symptom; production repaint paths must bring it back.
  */
-import { Terminal } from '@xterm/xterm'
 import { vi } from 'vitest'
 import { PaneManager } from './pane-manager'
 import type { ManagedPane } from './pane-manager-types'
 
-/** xterm's WidthCache needs a 2D context to open a terminal at all. */
+/** xterm's WidthCache needs a 2D context to open a terminal at all, and its decoration
+ *  layer paints into another one on every refresh; happy-dom supplies neither. */
 export function stubTerminalTextMeasurement(): void {
-  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
-    measureText: () => ({ width: 10 })
-  } as unknown as CanvasRenderingContext2D)
+  const context = new Proxy(
+    { measureText: () => ({ width: 10 }) } as Record<string, unknown>,
+    {
+      get: (target, prop: string) => (prop in target ? target[prop] : () => undefined)
+    }
+  )
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+    context as unknown as CanvasRenderingContext2D
+  )
 }
 
 export type PaneTab = {
@@ -66,9 +72,14 @@ function rowsElement(pane: ManagedPane): Element | null {
   return pane.terminal.element?.querySelector('.xterm-rows') ?? null
 }
 
-/** What the user sees: the DOM renderer's presented rows. */
+/** What the user sees: the DOM renderer's presented rows. A pane detached from the document
+ *  shows nothing no matter what its rows still hold, so report that as blank. */
 export function paintedText(pane: ManagedPane): string {
-  return (rowsElement(pane)?.textContent ?? '').trim()
+  const rows = rowsElement(pane)
+  if (!rows?.isConnected) {
+    return ''
+  }
+  return (rows.textContent ?? '').trim()
 }
 
 /** Models a renderer presenting nothing while the buffer is untouched — the
