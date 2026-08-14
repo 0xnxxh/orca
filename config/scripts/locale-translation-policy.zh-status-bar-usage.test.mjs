@@ -16,7 +16,6 @@ import { repairTranslatedValue } from './locale-translation-policy.mjs'
 const STATUS_BAR_PROVIDERS = [
   ['auto.components.status.bar.StatusBar.3885eb74d8', 'Claude'],
   ['auto.components.status.bar.StatusBar.c0909c686e', 'Codex'],
-  ['auto.components.status.bar.StatusBar.c1df0d67ec', 'Gemini'],
   ['auto.components.status.bar.StatusBar.antigravityUsage', 'Antigravity'],
   ['auto.components.status.bar.StatusBar.8c86cd77b0', 'OpenCode Go'],
   ['auto.components.status.bar.StatusBar.5e59007df4', 'Kimi'],

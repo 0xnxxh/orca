@@ -4,7 +4,6 @@
 export const BRAND_MISTRANSLATIONS = {
   ko: {
     Codex: ['사본', '코덱스'],
-    Gemini: ['쌍둥이자리'],
     Claude: ['클로드'],
     Grok: ['그록'],
     Orca: ['오르카', '범고래'],
@@ -42,7 +41,6 @@ export const BRAND_MISTRANSLATIONS = {
   },
   zh: {
     Codex: ['法典'],
-    Gemini: ['双子座'],
     Claude: ['克洛德', '克劳德'],
     Grok: ['格罗克'],
     Orca: ['虎鲸', '逆戟鲸'],
@@ -94,7 +92,6 @@ export const BRAND_MISTRANSLATIONS = {
   },
   ja: {
     Codex: ['法典', 'コーデックス'],
-    Gemini: ['双子座'],
     Claude: ['クロード'],
     Grok: ['グロック'],
     Orca: ['シャチ', '逆戟鲸', 'オルカ'],
@@ -139,7 +136,6 @@ export const BRAND_MISTRANSLATIONS = {
   },
   es: {
     Codex: ['códice', 'Códice'],
-    Gemini: ['Géminis'],
     Claude: ['claudia', 'Claudia'],
     Orca: ['orca', 'Orcas', 'orcas'],
     OpenCode: ['código abierto', 'Código abierto'],

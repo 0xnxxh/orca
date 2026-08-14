@@ -31,7 +31,6 @@
         "sshToggleDescription": "Muestra hosts SSH configurados y hosts remotos de Orca cuando haya alguno disponible.",
         "resourceUsageToggleDescription": "Muestra el Administrador de recursos. Haz clic para ver CPU, memoria, sesiones, controles del daemon y análisis de disco de los espacios de trabajo.",
         "portsToggleDescription": "Muestra los puertos activos de los espacios de trabajo. Haz clic para ver los puertos de cada espacio de trabajo y los puertos externos.",
-        "antigravityToggleDescription": "Muestra el uso de suscripción de Antigravity para el espacio de trabajo activo.",
         "grokToggleDescription": "Muestra el uso de créditos de suscripción de Grok cuando has iniciado sesión con Grok CLI."
       },
       "menuBarIcon": {
@@ -3260,8 +3259,6 @@
             "06741a2f3d": "Abrir detalles de uso de MiniMax",
             "3bbf140864": "Uso de MiniMax",
             "remoteServerLabel": "Servidor remoto",
-            "antigravityUsage": "Uso de Antigravity",
-            "antigravityUsageDetails": "Abrir detalles de uso de Antigravity",
             "grokUsageAria": "Abrir detalles de uso de Grok",
             "grokUsageMenu": "Uso de Grok",
             "floatingTerminalNewActivity": "{{label}}, nueva actividad"
@@ -7759,9 +7756,6 @@
               "title": "Mostrar también los worktrees fijados en sus listas originales",
               "description": "Los worktrees fijados permanecen en Fijados y también aparecen en Todos, Proyecto, Estado y PR."
             },
-            "antigravityUsageTitle": "Uso de Antigravity",
-            "antigravityUsageDescription": "Muestra el uso de suscripción de Antigravity en la barra de estado.",
-            "antigravityKeyword": "antigravity",
             "f8e2a1c4b6": "Uso de Grok",
             "e7d1b0f3a5": "Muestra el uso semanal de créditos de Grok desde OAuth de Grok CLI.",
             "d6c0a9e2f4": "grok",
@@ -13827,6 +13821,11 @@
               "category": "Mantenimiento",
               "name": "Control de mantenimiento cada hora",
               "prompt": "Compruebe si hay trabajos atascados, archivos generados obsoletos, validación fallida y cualquier cosa que necesite atención humana. Informe solo problemas procesables."
+            }
+          },
+          "draft": {
+            "model": {
+              "a0f61bd7c9": "Sin agente"
             }
           }
         },

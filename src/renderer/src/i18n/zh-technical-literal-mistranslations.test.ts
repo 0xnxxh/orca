@@ -71,7 +71,6 @@ describe('zh provider usage wording (#12881)', () => {
       // status bar item menu
       ['3885eb74d8', 'Claude'],
       ['c0909c686e', 'Codex'],
-      ['antigravityUsage', 'Antigravity'],
       ['8c86cd77b0', 'OpenCode Go'],
       ['5e59007df4', 'Kimi'],
       ['3bbf140864', 'MiniMax'],
@@ -79,7 +78,6 @@ describe('zh provider usage wording (#12881)', () => {
       // Settings > Appearance search index — mirrors the menu labels
       ['9dc15020d7', 'Claude'],
       ['54b1acf24f', 'Codex'],
-      ['antigravityUsageTitle', 'Antigravity'],
       ['bc046e7899', 'OpenCode Go'],
       ['3a6c028ea8', 'Kimi'],
       ['0f08f6b483', 'MiniMax'],
@@ -98,15 +96,9 @@ describe('zh provider usage wording (#12881)', () => {
   })
 
   it('keeps the status bar toggle descriptions on 使用情况', () => {
-    expect(findByKey(zh, 'antigravityUsageDescription')).toBe(
-      '在状态栏中显示 Antigravity 订阅使用情况。'
-    )
     expect(findByKey(zh, 'e7d1b0f3a5')).toBe('显示来自 Grok CLI OAuth 的 Grok 每周额度使用情况。')
     expect(findByKey(zh, 'grokToggleDescription')).toBe(
       '通过 Grok CLI 登录后显示 Grok 订阅额度使用情况。'
-    )
-    expect(findByKey(zh, 'antigravityToggleDescription')).toBe(
-      '显示当前工作区的 Antigravity 订阅使用情况。'
     )
   })
 
@@ -115,7 +107,6 @@ describe('zh provider usage wording (#12881)', () => {
       ['fda8146810', 'Kimi'],
       ['629251f4b6', 'OpenCode Go'],
       ['06741a2f3d', 'MiniMax'],
-      ['antigravityUsageDetails', 'Antigravity'],
       ['grokUsageAria', 'Grok']
     ]) {
       expect(findByKey(zh, key), key).toBe(`打开 ${brand} 使用详情`)

@@ -28,7 +28,6 @@ export const CJK_LATIN_SPACED_TERMS = [
   'Claude',
   'Claude Code',
   'Codex',
-  'Gemini',
   'Kimi',
   'OpenCode',
   'Orca',

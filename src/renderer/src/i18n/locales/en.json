@@ -58,7 +58,6 @@
         "sshToggleDescription": "Show configured SSH and remote Orca hosts when any are available.",
         "resourceUsageToggleDescription": "Show the Resource Manager. Click it for CPU, memory, sessions, daemon controls, and workspace disk scans.",
         "portsToggleDescription": "Show live workspace ports. Click it for workspace-scoped ports and external listeners.",
-        "antigravityToggleDescription": "Show Antigravity subscription usage for the active workspace.",
         "grokToggleDescription": "Show Grok subscription credit usage when signed in via Grok CLI."
       },
       "menuBarIcon": {
@@ -3435,8 +3434,6 @@
             "06741a2f3d": "Open MiniMax usage details",
             "3bbf140864": "MiniMax Usage",
             "remoteServerLabel": "Remote server",
-            "antigravityUsage": "Antigravity Usage",
-            "antigravityUsageDetails": "Open Antigravity usage details",
             "grokUsageAria": "Open Grok usage details",
             "grokUsageMenu": "Grok Usage",
             "floatingTerminalNewActivity": "{{label}}, new activity"
@@ -8179,9 +8176,6 @@
               "title": "Also show pinned worktrees in their original lists",
               "description": "Pinned worktrees stay in Pinned and also appear in All, Project, Status, and PR."
             },
-            "antigravityUsageTitle": "Antigravity Usage",
-            "antigravityUsageDescription": "Show Antigravity subscription usage in the status bar.",
-            "antigravityKeyword": "antigravity",
             "f8e2a1c4b6": "Grok Usage",
             "e7d1b0f3a5": "Show Grok weekly credit usage from Grok CLI OAuth.",
             "d6c0a9e2f4": "grok",
