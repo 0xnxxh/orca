@@ -318,6 +318,7 @@ import {
 } from './crash-reporting/process-gone-classification'
 import { recordProcessGoneCrash as recordProcessGoneCrashEvent } from './crash-reporting/process-gone-recorder'
 import { startCrashpadCapture } from './crash-reporting/crashpad-capture'
+import { startPreGoneProcessMetricsSampling } from './crash-reporting/process-gone-diagnostics'
 import { resolveExpectedTeardownScope } from './crash-reporting/expected-teardown-state'
 import {
   advanceSyntheticTitleSpinnerEntries,
@@ -2849,6 +2850,9 @@ void app.whenReady().then(async () => {
       removeManagedAgentHooks()
     }
   }
+  // Why: process-gone metrics only see survivors; keep a fresh pre-death sample
+  // so a crashed process's last working set reaches its crash report.
+  startPreGoneProcessMetricsSampling()
   app.on('child-process-gone', (_event, details) => {
     recordProcessGoneCrash('child', details.type, details.reason, details.exitCode ?? null, {
       name: details.name,
