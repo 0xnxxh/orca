@@ -13112,12 +13112,20 @@ describe('Store host-partitioned workspace sessions', () => {
     store.setWorkspaceSession(session, 'local')
     store.setWorkspaceSession(session, 'runtime:env-b')
     store.setWorktreeMeta(worktreeId, { hostId: 'local' })
+    const worktreeLineage = makeWorktreeLineage({ worktreeId })
+    const workspaceLineage = makeWorkspaceLineage({
+      childWorkspaceKey: worktreeWorkspaceKey(worktreeId)
+    })
+    store.setWorktreeLineage(worktreeId, worktreeLineage)
+    store.setWorkspaceLineage(workspaceLineage)
 
     // The confirmed removal target is env-b. Bare metadata belongs to the same-id
     // local owner and must not redirect the post-delete purge back to local.
     store.removeWorktreeMeta(worktreeId, 'runtime:env-b')
 
     expect(store.getWorktreeMeta(worktreeId)?.hostId).toBe('local')
+    expect(store.getWorktreeLineage(worktreeId)).toEqual(worktreeLineage)
+    expect(store.getWorkspaceLineage(workspaceLineage.childWorkspaceKey)).toEqual(workspaceLineage)
     expect(store.getWorkspaceSession('local').tabsByWorktree[worktreeId]).toHaveLength(1)
     expect(store.getWorkspaceSession('runtime:env-b').tabsByWorktree[worktreeId]).toBeUndefined()
   })
