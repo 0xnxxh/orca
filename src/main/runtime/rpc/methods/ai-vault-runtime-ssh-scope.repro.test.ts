@@ -267,6 +267,54 @@ describe('a runtime can scan an SSH host that it owns', () => {
     ])
   })
 
+  it('observes an owned SSH cancellation while the local scan is pending', async () => {
+    let resolveLocal!: (result: AiVaultListResult) => void
+    let scanSignal: AbortSignal | undefined
+    scanAiVaultSessionsInWorker.mockReturnValueOnce(
+      new Promise<AiVaultListResult>((resolve) => {
+        resolveLocal = resolve
+      })
+    )
+    scanSshAiVaultSessions.mockImplementationOnce(
+      (
+        _targetId: string,
+        _args: unknown,
+        options: { signal?: AbortSignal }
+      ): Promise<AiVaultListResult> =>
+        new Promise((_resolve, reject) => {
+          scanSignal = options.signal
+          options.signal?.addEventListener(
+            'abort',
+            () => {
+              const error = new Error('cancelled')
+              error.name = 'AbortError'
+              reject(error)
+            },
+            { once: true }
+          )
+        })
+    )
+    const dispatcher = makeDispatcher()
+    const controller = new AbortController()
+    const pending = dispatcher.dispatch(
+      makeRequest('aiVault.listSessions', {
+        executionHostId: 'runtime:hub-runtime',
+        includeOwnedSshHosts: true
+      }),
+      { signal: controller.signal }
+    )
+    await vi.waitFor(() => expect(scanSignal).toBeDefined())
+
+    controller.abort()
+    const settled = await Promise.race([
+      pending,
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending')))
+    ])
+    resolveLocal({ sessions: [], issues: [], scannedAt: SCANNED_AT })
+
+    expect(settled).toMatchObject({ ok: false })
+  })
+
   it('reuses each SSH host leg across repeated non-force all-host scans', async () => {
     const dispatcher = makeDispatcher()
     const params = {

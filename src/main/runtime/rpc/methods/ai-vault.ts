@@ -140,24 +140,21 @@ export const AI_VAULT_METHODS: RpcMethod[] = [
               sshHosts.map((host) => scanRuntimeSshAiVaultSessions(host.targetId, listArgs, signal))
             )
           : Promise.resolve([])
-      let result: AiVaultListResult
-      try {
-        result = await runtime.listAiVaultSessions(listArgs)
-      } catch (error) {
+      const localPromise = runtime.listAiVaultSessions(listArgs).catch((error: unknown) => {
         if (params.includeOwnedSshHosts !== true) {
           throw error
         }
-        result = aiVaultScanIssueResult({
+        return aiVaultScanIssueResult({
           executionHostId: LOCAL_EXECUTION_HOST_ID,
           path: 'this computer',
           message: error instanceof Error ? error.message : 'Local session scan failed.'
         })
-      }
+      })
+      const [result, sshResults] = await Promise.all([localPromise, sshPromise])
       // Why: web clients consume this response directly (no parent-side retag),
       // so host-local sessions must come back stamped as the runtime they addressed.
       const stamped =
         parsed?.kind === 'runtime' ? restampAiVaultListResult(result, parsed.id) : result
-      const sshResults = await sshPromise
       if (sshResults.length === 0) {
         return stamped
       }
