@@ -29,6 +29,7 @@ export type AgentSessionHandoffStatus = {
     handle: string
     tabId: string
     paneKey: string
+    ptyId?: string
   }
   error?: {
     message: string

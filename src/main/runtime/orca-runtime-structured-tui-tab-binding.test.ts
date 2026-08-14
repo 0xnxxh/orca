@@ -73,11 +73,24 @@ describe('structured TUI launch tab binding', () => {
   })
 
   it.each([
-    { restoreMode: 'development reload', durableTerminalHandle: 'term_current_runtime' },
-    { restoreMode: 'packaged restart', durableTerminalHandle: 'term_previous_runtime' }
+    {
+      restoreMode: 'development reload',
+      durableTerminalHandle: 'term_current_runtime',
+      persistedIncarnationId: 'incarnation-1'
+    },
+    {
+      restoreMode: 'packaged restart',
+      durableTerminalHandle: 'term_previous_runtime',
+      persistedIncarnationId: 'incarnation-1'
+    },
+    {
+      restoreMode: 'packaged restart before incarnation hydration',
+      durableTerminalHandle: 'term_previous_runtime',
+      persistedIncarnationId: null
+    }
   ])(
     'recovers a live TUI after a $restoreMode with current runtime routing',
-    async ({ durableTerminalHandle }) => {
+    async ({ durableTerminalHandle, persistedIncarnationId }) => {
       const namespace = {
         machine: 'native:test',
         principal: 'uid:1',
@@ -119,9 +132,9 @@ describe('structured TUI launch tab binding', () => {
             ptyIdsByLeafId: { [leafId]: 'pty-cold-owner' }
           }
         },
-        terminalPtyIncarnationsByPaneKey: {
-          [`tab-cold-owner:${leafId}`]: 'incarnation-1'
-        }
+        terminalPtyIncarnationsByPaneKey: persistedIncarnationId
+          ? { [`tab-cold-owner:${leafId}`]: persistedIncarnationId }
+          : {}
       }
       const runtime = new OrcaRuntimeService(
         { getWorkspaceSession: () => persistedSession } as never,

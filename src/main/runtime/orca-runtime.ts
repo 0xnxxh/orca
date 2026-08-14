@@ -98,6 +98,7 @@ import {
 import { waitForStructuredTuiExitProof } from './structured-tui-exit-proof'
 import { readStructuredTuiProcessIdentity } from './structured-tui-process-identity'
 import { hasStructuredTuiIdleEvidence } from './structured-tui-idle-evidence'
+import { evaluateStructuredTuiRecoveryClaim } from './structured-tui-recovery-claim-match'
 import { getProfileUserDataPath } from '../orca-profiles/profile-storage-paths'
 import { getSystemCodexHomePath } from '../codex/codex-home-paths'
 import {
@@ -9276,26 +9277,73 @@ export class OrcaRuntimeService {
             }),
             canonicalWorktreeId: workspace.id
           })
-          const recoveredCandidates = [...this.ptysById.values()]
-            .flatMap((pty) => pty.agentSessionOwners.map((owner) => ({ pty, owner })))
-            .filter(
-              ({ pty, owner }) =>
-                pty.connected &&
-                owner.phase === 'live' &&
-                owner.ptyId === pty.ptyId &&
-                Boolean(pty.incarnationId) &&
-                runtimeWorktreeIdsEqual(pty.worktreeId, workspace.id) &&
-                runtimeWorktreeIdsEqual(owner.surface.worktreeId, workspace.id) &&
-                scopedAgentSessionClaimsEqual(owner.claim, claim) &&
-                this.hasExactPersistedTerminalSurfaceIdentity({
-                  worktreeId: owner.surface.worktreeId,
-                  tabId: owner.surface.tabId,
-                  leafId: owner.surface.leafId,
-                  ptyId: owner.ptyId,
-                  incarnationId: pty.incarnationId!
-                })
-            )
+          const candidateEvaluations = [...this.ptysById.values()].flatMap((pty) =>
+            pty.agentSessionOwners.map((owner) => {
+              const session = this.getWorkspaceSessionForWorktree(owner.surface.worktreeId)
+              const sessionWorktreeId = session
+                ? resolveTerminalSessionWorktreeId(session, owner.surface.worktreeId)
+                : null
+              const persistedTab = sessionWorktreeId
+                ? session?.tabsByWorktree[sessionWorktreeId]?.find(
+                    (candidate) => candidate.id === owner.surface.tabId
+                  )
+                : null
+              const paneKey = makePaneKey(owner.surface.tabId, owner.surface.leafId)
+              const persisted = {
+                sessionResolved: Boolean(session && sessionWorktreeId),
+                tabPresent: Boolean(persistedTab),
+                ptyId:
+                  session?.terminalLayoutsByTabId[owner.surface.tabId]?.ptyIdsByLeafId?.[
+                    owner.surface.leafId
+                  ] ?? null,
+                incarnationId: session?.terminalPtyIncarnationsByPaneKey?.[paneKey] ?? null
+              }
+              const evaluation = evaluateStructuredTuiRecoveryClaim(
+                {
+                  expectedWorkspaceId: workspace.id,
+                  claimMatches: scopedAgentSessionClaimsEqual(owner.claim, claim),
+                  pty: {
+                    connected: pty.connected,
+                    ptyId: pty.ptyId,
+                    incarnationId: pty.incarnationId,
+                    worktreeId: pty.worktreeId
+                  },
+                  owner: {
+                    phase: owner.phase,
+                    ptyId: owner.ptyId,
+                    surface: owner.surface
+                  },
+                  persisted
+                },
+                runtimeWorktreeIdsEqual
+              )
+              return { pty, owner, persisted, evaluation }
+            })
+          )
+          const recoveredCandidates = candidateEvaluations
+            .filter(({ evaluation }) => evaluation.matches)
+            .map(({ pty, owner }) => ({ pty, owner }))
           const recovered = recoveredCandidates.length === 1 ? recoveredCandidates[0] : null
+          if (!recovered) {
+            console.warn('[structured-tui-recovery] claim mismatch', {
+              sessionId: record.sessionId,
+              expectedWorkspaceId: workspace.id,
+              persistedOwnerProcess: {
+                hostId: identity.hostId,
+                pid: identity.pid,
+                processStartTimeMs: identity.processStartTimeMs,
+                spawnTokenPresent: identity.spawnToken.length > 0
+              },
+              candidates: candidateEvaluations.map(({ pty, owner, persisted, evaluation }) => ({
+                ptyId: pty.ptyId,
+                incarnationId: pty.incarnationId,
+                worktreeId: pty.worktreeId,
+                ownerSurface: owner.surface,
+                persisted,
+                mismatchedFields: evaluation.mismatchedFields
+              }))
+            })
+          }
           if (
             !recovered ||
             !(await this.proveRecoveredStructuredTuiPtyProcess(recovered.pty, identity))
@@ -9380,6 +9428,15 @@ export class OrcaRuntimeService {
       (candidate) => candidate.id === pty.ptyId && candidate.incarnationId === pty.incarnationId
     )
     if (!listed?.rootProcessId || identity.processStartTimeMs === null) {
+      console.warn('[structured-tui-recovery] claimed PTY process mismatch', {
+        ptyId: pty.ptyId,
+        incarnationId: pty.incarnationId,
+        rootProcessId: listed?.rootProcessId ?? null,
+        mismatchedFields: [
+          ...(!listed?.rootProcessId ? ['root-process-id'] : []),
+          ...(identity.processStartTimeMs === null ? ['persisted-process-start-time'] : [])
+        ]
+      })
       return false
     }
     try {
@@ -9389,14 +9446,43 @@ export class OrcaRuntimeService {
         spawnToken: identity.spawnToken,
         agent: 'codex'
       })
-      return (
-        observed.hostId === identity.hostId &&
-        observed.pid === identity.pid &&
-        observed.processStartTimeMs !== null &&
-        Math.abs(observed.processStartTimeMs - identity.processStartTimeMs) <=
-          PROCESS_START_TIME_TOLERANCE_MS
-      )
-    } catch {
+      const matched = {
+        hostId: observed.hostId === identity.hostId,
+        pid: observed.pid === identity.pid,
+        processStartTime:
+          observed.processStartTimeMs !== null &&
+          Math.abs(observed.processStartTimeMs - identity.processStartTimeMs) <=
+            PROCESS_START_TIME_TOLERANCE_MS
+      }
+      if (!Object.values(matched).every(Boolean)) {
+        console.warn('[structured-tui-recovery] claimed PTY process mismatch', {
+          ptyId: pty.ptyId,
+          incarnationId: pty.incarnationId,
+          rootProcessId: listed.rootProcessId,
+          persisted: {
+            hostId: identity.hostId,
+            pid: identity.pid,
+            processStartTimeMs: identity.processStartTimeMs
+          },
+          observed: {
+            hostId: observed.hostId,
+            pid: observed.pid,
+            processStartTimeMs: observed.processStartTimeMs
+          },
+          mismatchedFields: Object.entries(matched)
+            .filter(([, matches]) => !matches)
+            .map(([field]) => field)
+        })
+      }
+      return Object.values(matched).every(Boolean)
+    } catch (error) {
+      console.warn('[structured-tui-recovery] claimed PTY process mismatch', {
+        ptyId: pty.ptyId,
+        incarnationId: pty.incarnationId,
+        rootProcessId: listed.rootProcessId,
+        mismatchedFields: ['codex-child-proof'],
+        error: error instanceof Error ? error.message : String(error)
+      })
       return false
     }
   }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SleepingAgentSessionRecord } from '../../../shared/agent-session-resume'
 import type { PtyListedSession } from '../../../shared/pty-listed-session'
+import type { RuntimeMobileSessionTabsResult } from '../../../shared/runtime-types'
 import { runWorktreeAgentActivationGate } from './worktree-agent-activation-gate'
 
 const WORKTREE_ID = 'repo::/worktree'
@@ -29,6 +30,42 @@ function sleepingRecord(
   }
 }
 
+function runtimeSnapshot(
+  tabId: string,
+  leafId: string,
+  ptyIds: string[]
+): RuntimeMobileSessionTabsResult {
+  return {
+    worktree: WORKTREE_ID,
+    publicationEpoch: 'packaged-run-31759132745',
+    snapshotVersion: 1,
+    activeGroupId: null,
+    activeTabId: null,
+    activeTabType: null,
+    tabs: [
+      ...ptyIds.map((ptyId, index) => ({
+        type: 'terminal' as const,
+        id: `${tabId}:${leafId}:${index}`,
+        title: 'Codex',
+        parentTabId: tabId,
+        leafId,
+        ptyId,
+        status: 'ready' as const,
+        terminal: `term-${index}`,
+        isActive: false
+      })),
+      {
+        type: 'agent-session' as const,
+        id: 'structured-agent-session-live-session',
+        title: 'Codex Chat',
+        sessionId: 'live-session',
+        agent: 'codex' as const,
+        isActive: false
+      }
+    ]
+  }
+}
+
 function testDeps(args: {
   sessions?: PtyListedSession[]
   sleeping?: SleepingAgentSessionRecord[]
@@ -38,9 +75,10 @@ function testDeps(args: {
   const createTab = vi.fn()
   const resume = vi.fn(() => args.resumeCount ?? 1)
   const sleeping = args.sleeping ?? []
+  const ptyIdsByTabId: Record<string, string[]> = {}
   const store = {
     createTab,
-    ptyIdsByTabId: {},
+    ptyIdsByTabId,
     sleepingAgentSessionsByPaneKey: Object.fromEntries(
       sleeping.map((record) => [record.paneKey, record])
     ),
@@ -218,6 +256,129 @@ describe('worktree agent activation gate', () => {
     store.terminalLayoutsByTabId['tab-live']!.ptyIdsByLeafId[LIVE_LEAF_ID] = livePtyId
 
     await expect(runWorktreeAgentActivationGate(WORKTREE_ID, deps)).resolves.toBe('resumed')
+
+    expect(resume).toHaveBeenCalledWith(WORKTREE_ID, {
+      skipClaimKeys: new Set([`${WORKTREE_ID}\0codex\0session_id\0live-session`])
+    })
+  })
+
+  it('uses the exact runtime surface while packaged renderer PTY bindings are absent', async () => {
+    const tabId = 'structured-agent-session-live-session'
+    const live = sleepingRecord(tabId, LIVE_LEAF_ID, 'live-session')
+    const livePtyId = `${WORKTREE_ID}@@live-agent`
+    const { deps, resume } = testDeps({ sessions: [listed(livePtyId)], sleeping: [live] })
+
+    await expect(
+      runWorktreeAgentActivationGate(WORKTREE_ID, {
+        ...deps,
+        hasStructuredSession: async () => ({
+          snapshot: runtimeSnapshot(tabId, LIVE_LEAF_ID, [livePtyId]),
+          ownerBySessionId: new Map([
+            [
+              'live-session',
+              {
+                owner: 'tui',
+                terminal: {
+                  paneKey:
+                    '3359f7c8-9bd8-4931-8104-52b6bdbd108d:2659ee80-d3fc-454f-b4ea-0638de1ae345',
+                  ptyId: livePtyId,
+                  tabId: '3359f7c8-9bd8-4931-8104-52b6bdbd108d'
+                }
+              }
+            ]
+          ])
+        })
+      })
+    ).resolves.toBe('resumed')
+
+    expect(resume).toHaveBeenCalledWith(WORKTREE_ID, {
+      skipClaimKeys: new Set([`${WORKTREE_ID}\0codex\0session_id\0live-session`])
+    })
+  })
+
+  it('does not use an ambiguous tab binding as a live session claim', async () => {
+    const live = sleepingRecord('tab-live', LIVE_LEAF_ID, 'live-session')
+    const livePtyId = `${WORKTREE_ID}@@live-agent`
+    const { deps, resume } = testDeps({ sessions: [listed(livePtyId)], sleeping: [live] })
+    deps.getState().ptyIdsByTabId['tab-live'] = [livePtyId, `${WORKTREE_ID}@@other-agent`]
+
+    await expect(runWorktreeAgentActivationGate(WORKTREE_ID, deps)).resolves.toBe('resumed')
+
+    expect(resume).toHaveBeenCalledWith(WORKTREE_ID, { skipClaimKeys: new Set() })
+  })
+
+  it('does not claim a structured owner whose PTY is absent from live inventory', async () => {
+    const tabId = 'structured-agent-session-live-session'
+    const live = sleepingRecord(tabId, LIVE_LEAF_ID, 'live-session')
+    const livePtyId = `${WORKTREE_ID}@@live-agent`
+    const { deps, resume } = testDeps({ sessions: [listed(livePtyId)], sleeping: [live] })
+
+    await expect(
+      runWorktreeAgentActivationGate(WORKTREE_ID, {
+        ...deps,
+        hasStructuredSession: async () => ({
+          snapshot: runtimeSnapshot(tabId, LIVE_LEAF_ID, [livePtyId]),
+          ownerBySessionId: new Map([
+            [
+              'live-session',
+              {
+                owner: 'tui',
+                terminal: {
+                  paneKey: live.paneKey,
+                  ptyId: `${WORKTREE_ID}@@different-agent`,
+                  tabId
+                }
+              }
+            ]
+          ])
+        })
+      })
+    ).resolves.toBe('resumed')
+
+    expect(resume).toHaveBeenCalledWith(WORKTREE_ID, { skipClaimKeys: new Set() })
+  })
+
+  it('does not claim an owner for a different structured session tab', async () => {
+    const tabId = 'structured-agent-session-other-session'
+    const live = sleepingRecord(tabId, LIVE_LEAF_ID, 'live-session')
+    const livePtyId = `${WORKTREE_ID}@@live-agent`
+    const { deps, resume } = testDeps({ sessions: [listed(livePtyId)], sleeping: [live] })
+
+    await expect(
+      runWorktreeAgentActivationGate(WORKTREE_ID, {
+        ...deps,
+        hasStructuredSession: async () => ({
+          snapshot: runtimeSnapshot(tabId, LIVE_LEAF_ID, [livePtyId]),
+          ownerBySessionId: new Map([
+            [
+              'live-session',
+              {
+                owner: 'tui',
+                terminal: { paneKey: live.paneKey, ptyId: livePtyId, tabId }
+              }
+            ]
+          ])
+        })
+      })
+    ).resolves.toBe('resumed')
+
+    expect(resume).toHaveBeenCalledWith(WORKTREE_ID, { skipClaimKeys: new Set() })
+  })
+
+  it('suppresses the exact structured session when native already owns it', async () => {
+    const tabId = 'structured-agent-session-live-session'
+    const live = sleepingRecord(tabId, LIVE_LEAF_ID, 'live-session')
+    const { deps, resume } = testDeps({ sleeping: [live], resumeCount: 0 })
+
+    await expect(
+      runWorktreeAgentActivationGate(WORKTREE_ID, {
+        ...deps,
+        hasStructuredSession: async () => ({
+          snapshot: runtimeSnapshot(tabId, LIVE_LEAF_ID, []),
+          ownerBySessionId: new Map([['live-session', { owner: 'native' }]])
+        })
+      })
+    ).resolves.toBe('structured')
 
     expect(resume).toHaveBeenCalledWith(WORKTREE_ID, {
       skipClaimKeys: new Set([`${WORKTREE_ID}\0codex\0session_id\0live-session`])
