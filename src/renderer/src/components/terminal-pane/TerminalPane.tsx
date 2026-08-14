@@ -192,7 +192,8 @@ import { useVisibleTerminalTabClaim } from './use-visible-terminal-tab-claim'
 import { TerminalSshReconnectOverlay } from './TerminalSshReconnectOverlay'
 import { TerminalRemoteRuntimeReconnectBanner } from './TerminalRemoteRuntimeReconnectBanner'
 import { selectTerminalTabAgentTypesByLeaf } from './terminal-tab-agent-type-index'
-import { shouldForceBracketedMultilinePasteForPane } from './terminal-agent-paste-bracketing'
+import { resolveProtectedMultilinePasteOptionsForPane } from './terminal-agent-paste-bracketing'
+import { resolveTerminalInputHostPlatform } from './terminal-input-host-platform'
 import { canContinueAgentSessionInNewSession } from './terminal-agent-session-continuation'
 import {
   updateTerminalRemoteRuntimeRecoveryUiState,
@@ -1934,6 +1935,7 @@ function TerminalPane(
         },
         forceBracketedPaste: options?.forceBracketedPaste,
         forceBracketedPasteForMultiline: options?.forceBracketedPasteForMultiline,
+        windowsInputRecordNewline: options?.windowsInputRecordNewline,
         terminalBracketedPasteMode: pane.terminal.modes.bracketedPasteMode
       })
       const execution = await executeTerminalPastePlan(plan, {
@@ -1964,16 +1966,27 @@ function TerminalPane(
       }
     }
 
-    // Why: resolved per pane, not per tab — an agent composer needs bracketing even off
-    // Windows, because a remote ConPTY host never forwards DECSET 2004 to anyone.
-    const resolvePaneForceBracketedMultiline = (pane: ManagedPane): boolean =>
-      shouldForceBracketedMultilinePasteForPane({
+    // Why: resolved per pane and PTY host; split siblings and remote hosts can need
+    // different multiline paste protocols.
+    const resolvePaneProtectedMultilinePasteOptions = (
+      pane: ManagedPane
+    ): TerminalPasteTextOptions | undefined => {
+      const state = useAppStore.getState()
+      const transport = paneTransportsRef.current.get(pane.id) ?? null
+      return resolveProtectedMultilinePasteOptionsForPane({
         isWindowsClient: forceBracketedMultilineTextPaste,
-        agentStatusByPaneKey: useAppStore.getState().agentStatusByPaneKey,
-        paneForegroundAgentByPaneKey: useAppStore.getState().paneForegroundAgentByPaneKey,
+        hostPlatform: resolveTerminalInputHostPlatform({
+          clientPlatform: shortcutPlatform,
+          state,
+          worktreeId,
+          transport
+        }),
+        agentStatusByPaneKey: state.agentStatusByPaneKey,
+        paneForegroundAgentByPaneKey: state.paneForegroundAgentByPaneKey,
         tabId,
         leafId: pane.leafId
       })
+    }
 
     const pasteFromClipboard = (
       pane: ManagedPane,
@@ -1992,7 +2005,7 @@ function TerminalPane(
         saveClipboardImageAsTempFile: window.api.ui.saveClipboardImageAsTempFile,
         connectionId,
         runtimeEnvironmentId,
-        forceBracketedMultilineTextPaste: resolvePaneForceBracketedMultiline(pane),
+        protectedMultilineTextPasteOptions: resolvePaneProtectedMultilinePasteOptions(pane),
         pasteText: (text, options) =>
           executePanePasteText(pane, source, activeElementAtDispatch, text, options),
         onTextPasteError: () =>
@@ -2139,7 +2152,7 @@ function TerminalPane(
         saveClipboardImageAsTempFile: window.api.ui.saveClipboardImageAsTempFile,
         connectionId,
         runtimeEnvironmentId,
-        forceBracketedMultilineTextPaste: resolvePaneForceBracketedMultiline(pane),
+        protectedMultilineTextPasteOptions: resolvePaneProtectedMultilinePasteOptions(pane),
         pasteText: (text, options) =>
           executePanePasteText(pane, 'app-menu', activeElementAtDispatch, text, options),
         onTextPasteError: () =>
@@ -2716,6 +2729,7 @@ function TerminalPane(
             ? 'win32'
             : 'linux'
         const connectionId = getConnectionId(worktreeId) ?? null
+        const pasteState = useAppStore.getState()
         const targetStillMounted = (): boolean => {
           const manager = managerRef.current
           return Boolean(
@@ -2747,10 +2761,16 @@ function TerminalPane(
               transport
             })
           },
-          forceBracketedPasteForMultiline: shouldForceBracketedMultilinePasteForPane({
+          ...resolveProtectedMultilinePasteOptionsForPane({
             isWindowsClient: forceBracketedMultilineTextPaste,
-            agentStatusByPaneKey: useAppStore.getState().agentStatusByPaneKey,
-            paneForegroundAgentByPaneKey: useAppStore.getState().paneForegroundAgentByPaneKey,
+            hostPlatform: resolveTerminalInputHostPlatform({
+              clientPlatform: shortcutPlatform,
+              state: pasteState,
+              worktreeId,
+              transport: transport ?? null
+            }),
+            agentStatusByPaneKey: pasteState.agentStatusByPaneKey,
+            paneForegroundAgentByPaneKey: pasteState.paneForegroundAgentByPaneKey,
             tabId,
             leafId: clickedPane.leafId
           }),

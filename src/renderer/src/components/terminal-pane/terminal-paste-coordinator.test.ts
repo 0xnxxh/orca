@@ -242,6 +242,40 @@ describe('terminal paste coordinator', () => {
     expect(chunks.join('')).not.toContain('\n')
   })
 
+  it('streams large Windows input-record paste with atomic modified Enter newlines', () => {
+    const plan = planTerminalPaste({
+      text: '\nabc\r\ndef\x1b[201~ghi',
+      source: 'keyboard',
+      target: terminalTarget(),
+      windowsInputRecordNewline: 'alt-enter',
+      terminalBracketedPasteMode: true,
+      maxDirectBytes: 4,
+      maxChunkBytes: 4
+    })
+    const chunks = chunkTerminalPastePlan(plan)
+
+    expect(plan.mode).toBe('chunked')
+    expect(plan.bracketed).toBe(false)
+    expect(plan.newlinePolicy).toBe('windows-input-record')
+    expect(chunks.join('')).toBe('\x1b\rabc\x1b\rdef␛[201~ghi')
+    expect(chunks).not.toContain('\x1b[200~')
+    expect(chunks).not.toContain('\x1b[201~')
+  })
+
+  it('accounts for modified-Enter expansion before choosing bounded chunks', () => {
+    const plan = planTerminalPaste({
+      text: '\n\n\n\n',
+      source: 'keyboard',
+      target: terminalTarget(),
+      windowsInputRecordNewline: 'alt-enter',
+      maxDirectBytes: 6,
+      maxBytes: 16
+    })
+
+    expect(plan.mode).toBe('chunked')
+    expect(chunkTerminalPastePlan(plan).join('')).toBe('\x1b\r\x1b\r\x1b\r\x1b\r')
+  })
+
   it('chunks escape-heavy bracketed paste without per-character string sanitizer scans', () => {
     const text = Array.from({ length: 64 }, (_value, index) => `part-${index}\x1b[201~`).join('')
     const plan = planTerminalPaste({
