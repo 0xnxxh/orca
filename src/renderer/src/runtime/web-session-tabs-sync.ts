@@ -6,9 +6,11 @@ import type { RuntimeRpcResponse } from '../../../shared/runtime-rpc-envelope'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
 import {
   AGENT_STATUS_STALE_AFTER_MS,
+  pickParsedAgentStatusPayload,
   type AgentStatusEntry
 } from '../../../shared/agent-status-types'
 import { agentEntryCompletionAt } from '../../../shared/agent-completion-time'
+import { normalizeTurnCompletedAtField } from '../../../shared/agent-status-field-normalization'
 import { agentProviderSessionsEqual } from '../../../shared/agent-session-resume'
 import type {
   RuntimeMobileSessionTabsResult,
@@ -96,6 +98,7 @@ import {
   resetWebSessionBrowserPlacementsForTests
 } from './web-session-browser-placement'
 import { suppressE2eWebRuntimeBrowserSnapshot } from './web-runtime-browser-creation-e2e-fault'
+import { observeAgentHookCompletionForNotification } from '@/hooks/agent-hook-completion-notifications'
 
 const WEB_SESSION_GROUP_PREFIX = 'web-session-tabs:'
 export const WEB_SESSION_TABS_VISIBILITY_RESUME_STAGGER_MS = 100
@@ -3415,17 +3418,59 @@ function applyWebSessionTabsSnapshotOperations(
 }
 
 export function applyWebSessionTabsStorePatch(
-  buildPatch: (state: AppState) => WebSessionTabsSyncState | Partial<WebSessionTabsSyncState>
+  buildPatch: (state: AppState) => WebSessionTabsSyncState | Partial<WebSessionTabsSyncState>,
+  liveSnapshot?: RuntimeMobileSessionTabsResult
 ): void {
   let mirroredAgentStatusChanged = false
+  const acceptedLiveStatuses: {
+    paneKey: string
+    worktreeId: string
+    payload: ReturnType<typeof pickParsedAgentStatusPayload> & { stateStartedAt: number }
+  }[] = []
   useAppStore.setState((state) => {
     const patch = buildPatch(state)
     mirroredAgentStatusChanged = patch !== state && Object.hasOwn(patch, 'agentStatusByPaneKey')
+    if (mirroredAgentStatusChanged && liveSnapshot) {
+      const nextAgentStatuses = patch.agentStatusByPaneKey ?? state.agentStatusByPaneKey
+      for (const surface of liveSnapshot.tabs) {
+        if (surface.type !== 'terminal') {
+          continue
+        }
+        const remapped = remapHostAgentStatus(surface)
+        const accepted = remapped ? nextAgentStatuses[remapped.paneKey] : undefined
+        if (
+          !remapped ||
+          !accepted ||
+          accepted === state.agentStatusByPaneKey[remapped.paneKey] ||
+          !agentStatusEntryEqual(accepted, remapped)
+        ) {
+          continue
+        }
+        const turnCompletedAt = normalizeTurnCompletedAtField(
+          surface.turnCompletedAt,
+          accepted.state
+        )
+        acceptedLiveStatuses.push({
+          paneKey: accepted.paneKey,
+          worktreeId: accepted.worktreeId ?? liveSnapshot.worktree,
+          payload: {
+            ...pickParsedAgentStatusPayload({
+              ...accepted,
+              ...(turnCompletedAt !== undefined ? { turnCompletedAt } : {})
+            }),
+            stateStartedAt: accepted.stateStartedAt
+          }
+        })
+      }
+    }
     return patch
   })
   // Why: paired-web snapshots bypass setAgentStatus, so arm the stale-boundary timer explicitly like local hook events do.
   if (mirroredAgentStatusChanged) {
     useAppStore.getState().scheduleAgentStatusFreshness()
+  }
+  for (const status of acceptedLiveStatuses) {
+    observeAgentHookCompletionForNotification(status)
   }
 }
 
@@ -4181,8 +4226,9 @@ export function useWebSessionTabsSync(): void {
                         acceptReplayedWebSessionTabsSnapshot(environmentId, recovered.worktree)
                       }
                       if (shouldApplyWebSessionTabsSnapshot(recovered, environmentId)) {
-                        applyWebSessionTabsStorePatch((state) =>
-                          applyWebSessionTabsSnapshot(state, recovered, environmentId)
+                        applyWebSessionTabsStorePatch(
+                          (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
+                          event.type === 'updated' && !replayed ? recovered : undefined
                         )
                         recordVisibilityResumeSnapshot(environmentId, recovered, receivedFrame)
                       }
@@ -4304,8 +4350,10 @@ export function useWebSessionTabsSync(): void {
         skipWakeRespawn: shouldSkipWebRuntimeWakeTerminalRespawn(activeWorktreeId)
       })
       if (fresh) {
-        applyWebSessionTabsStorePatch((state) =>
-          applyWebSessionTabsSnapshot(state, recovered, environmentId)
+        const replayed = isRuntimeSubscriptionReplayResponse(response)
+        applyWebSessionTabsStorePatch(
+          (state) => applyWebSessionTabsSnapshot(state, recovered, environmentId),
+          event.type === 'updated' && !replayed ? recovered : undefined
         )
         recordVisibilityResumeSnapshotRef.current(environmentId, recovered, receivedFrame)
       }
