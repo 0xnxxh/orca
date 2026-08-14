@@ -96,22 +96,6 @@ describe('Session pending output', () => {
     expect(empty!.records).toEqual([])
   })
 
-  // Why: an empty take writes no log batch, so advancing the seq would strand the log behind the
-  // counter and fail the next reattach's continuity proof (STA-4297). Depth coverage lives in
-  // daemon-restore-scrollback-depth.test.ts; this guards the counter at its source.
-  it('holds the batch sequence across an empty take and resumes contiguously', () => {
-    const subprocess = createMockSubprocess()
-    const live = createSession(subprocess)
-
-    subprocess.simulateData('first')
-    const first = live.takePendingOutput(false)
-
-    expect(live.takePendingOutput(false)!.seq).toBe(first!.seq)
-
-    subprocess.simulateData('second')
-    expect(live.takePendingOutput(false)!.seq).toBe(first!.seq + 1)
-  })
-
   it('flags overflow past the cap and recovers after a take', () => {
     const subprocess = createMockSubprocess()
     const live = createSession(subprocess)

@@ -287,9 +287,8 @@ export type TakePendingOutputResult = {
   drainedRecords?: PendingOutputRecord[]
   /** Non-decreasing per-session batch sequence. The history log stores it so the
    *  cold-restore reader can detect a lost batch (gap) and discard the log
-   *  instead of replaying a stream with missing bytes. It advances only for takes
-   *  that get persisted, so an empty incremental take repeats the previous value
-   *  rather than stranding the log behind the counter (STA-4297). */
+   *  instead of replaying a stream with missing bytes. Snapshot, record, and
+   *  overflow takes advance it; empty incremental takes repeat the prior value. */
   seq: number
   /** True when the session's pending buffer exceeded its cap and records were
    *  dropped. The caller must fall back to a full snapshot checkpoint. */

@@ -486,9 +486,7 @@ describe('STA-4091 previously recoverable restore depth', () => {
       )
     })
 
-    // Why depth and not the counter: an empty take persists no batch, so advancing the pending-output
-    // seq leaves the log behind and the first post-reattach compact commits the live window over the
-    // deep checkpoint. Assert the recovered depth survives, which is the whole point of durable history.
+    // Assert durable depth, not the sequence that merely enables it.
     it('preserves durable depth when an empty incremental take precedes a warm reattach', async () => {
       const { id } = await adapter.spawn({
         cols: 80,

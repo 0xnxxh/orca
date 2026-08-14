@@ -494,11 +494,7 @@ export class Session {
     this.pendingOutputRecords = []
     this.pendingOutputBytes = 0
     this.pendingOutputOverflowed = false
-    // Why conditional: the seq is the log's continuity ledger, and an empty incremental take writes no
-    // batch (the adapter returns early; HistoryManager also refuses empty appends). Advancing it anyway
-    // leaves the counter ahead of the log forever, so the next reattach's continuity proof fails and
-    // flattens a deep durable checkpoint to the live window (STA-4297). A snapshot take always persists
-    // the seq into the checkpoint, and an overflow is a real log hole, so both still advance.
+    // Empty incremental takes are not persisted; advancing them would create a false reattach gap.
     if (includeSnapshot || records.length > 0 || overflowed) {
       this.pendingOutputSeq += 1
     }
