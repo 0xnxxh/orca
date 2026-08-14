@@ -41,6 +41,7 @@ import {
   type AgentSessionSubscribeInput
 } from './structured-agent-session-subscribers'
 import { StructuredAgentSessionTaskQueue } from './structured-agent-session-task-queue'
+import * as providerSupport from './structured-agent-session-provider-support'
 import { StructuredAgentSessionRestartRestoreGate } from './structured-agent-session-restart-restore-gate'
 import {
   createStructuredAgentSessionHostHandoff,
@@ -95,6 +96,7 @@ export class StructuredAgentSessionHost {
     this.readableRestorer = new StructuredAgentSessionReadableRestorer({
       store: deps.store,
       journalRoot: deps.journalRoot,
+      supportsRecord: (record) => providerSupport.adapterSupportsRecord(deps.adapter, record),
       reconcile: this.reconcileLeases,
       resume: (params) =>
         this.attach({ callerKey: 'trusted-local:host-restart' }, params).then(
@@ -114,7 +116,7 @@ export class StructuredAgentSessionHost {
   hasSession = (sessionId: string): boolean => this.sessions.has(sessionId)
 
   supportsCreate(location: AgentSessionExecutionLocation, agent: string): boolean {
-    return agent === 'codex' && (this.deps.adapter.supportsLocation?.(location) ?? false)
+    return providerSupport.adapterSupportsCreate(this.deps.adapter, location, agent)
   }
 
   listSessionTabs() {
