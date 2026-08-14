@@ -49,8 +49,7 @@ export function useMobileStructuredSessionEntry(args: {
     connected,
     sessionId,
     fence: session.fence,
-    submissions: session.submissions,
-    handoffOperationId: session.handoff?.operationId
+    submissions: session.submissions
   })
   const sessionOptions = useMobileStructuredSessionOptions({
     client,

@@ -3,9 +3,6 @@ import type { AgentJournalRenderItem } from '../../../../shared/agent-session-jo
 import type { AgentType } from '../../../../shared/agent-status-types'
 import type {
   AgentSessionMutationResult,
-  AgentSessionHandoffDirection,
-  AgentSessionHandoffMode,
-  AgentSessionHandoffResult,
   AgentSessionOptionResult,
   AgentSessionOptionsResult,
   AgentSessionPromptResult
@@ -23,7 +20,6 @@ import {
 } from '../../../../shared/structured-agent-session-options'
 import {
   activeStructuredAgentSessionTurnId,
-  hasPersistedStructuredAgentSessionTurn,
   projectStructuredItemsToNativeChat
 } from '../../../../shared/structured-agent-session-projection'
 import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
@@ -234,7 +230,6 @@ export function useStructuredAgentSession(args: {
     send: outboxController.send,
     retry: outboxController.retry,
     isWorking: turnId !== null,
-    hasPersistedTurn: hasPersistedStructuredAgentSessionTurn(state.items),
     turnId,
     cancel: (turnId: string) => mutate('agentSession.cancel', 'agentSession.cancel', { turnId }),
     respond: (item: StructuredPromptItem, optionId: string) =>
@@ -247,18 +242,6 @@ export function useStructuredAgentSession(args: {
       ),
     optionSnapshot,
     optionSurface,
-    setStructuredOption,
-    requestHandoff: (
-      direction: AgentSessionHandoffDirection,
-      mode: AgentSessionHandoffMode,
-      action: 'start' | 'cancel-queued' | 'retry' | 'recover' = 'start'
-    ) =>
-      mutate<AgentSessionHandoffResult>(
-        'agentSession.requestHandoff',
-        'agentSession.requestHandoff',
-        { direction, mode, action },
-        action === 'retry' ? stateRef.current.handoff?.operationId : null
-      ),
-    handoff: state.handoff
+    setStructuredOption
   }
 }

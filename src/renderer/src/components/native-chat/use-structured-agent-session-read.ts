@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import type {
-  AgentSessionHandoffStatus,
   AgentSessionHistoryResult,
   AgentSessionSubscribeEvent
 } from '../../../../shared/agent-session-wire'
@@ -130,18 +129,11 @@ export function useStructuredAgentSessionRead(args: {
       }
     }
     async function refreshTail(): Promise<void> {
-      const [result, handoff] = await Promise.all([
-        callStructuredAgentSession<AgentSessionHistoryResult>(target, 'agentSession.history', {
-          sessionId,
-          direction: 'tail',
-          limit: 40
-        }),
-        callStructuredAgentSession<AgentSessionHandoffStatus>(
-          target,
-          'agentSession.handoffStatus',
-          { sessionId }
-        ).catch(() => null)
-      ])
+      const result = await callStructuredAgentSession<AgentSessionHistoryResult>(
+        target,
+        'agentSession.history',
+        { sessionId, direction: 'tail', limit: 40 }
+      )
       if (stopped) {
         return
       }
@@ -160,9 +152,6 @@ export function useStructuredAgentSessionRead(args: {
           }
         })
         resumeCursorRef.current = result.snapshot.cursor
-      }
-      if (handoff) {
-        dispatch({ type: 'handoff', handoff })
       }
     }
     const refreshOnFocus = (): void => {
