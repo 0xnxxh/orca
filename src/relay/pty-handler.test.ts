@@ -1655,6 +1655,28 @@ describe('PtyHandler', () => {
     ).not.toMatch(/not found/i)
   })
 
+  // The same correction, applied to the FALLBACK fence a client too old to send an incarnation
+  // falls into. That path still compared the tab frozen at spawn, so it refused a moved pane and
+  // stranded a live shell the client could never reach again — and an identity mismatch never
+  // grounds a respawn, so the pane just stayed blank.
+  it('lets a pane that moved tabs attach when the client sends no incarnation', async () => {
+    const first = await spawnPty({ paneKey: 'pane-a', tabId: 'tab-1' })
+
+    await expect(
+      attachPty({ id: first.id, expectedPaneKey: 'pane-a', expectedTabId: 'tab-2' })
+    ).resolves.toMatchObject({ incarnationId: first.incarnationId })
+  })
+
+  // The property that had to survive the narrowing: a recycled id belonging to another pane is
+  // still refused, even with no incarnation to check it against.
+  it('still refuses an incarnation-less attach naming a different pane', async () => {
+    const first = await spawnPty({ paneKey: 'pane-a', tabId: 'tab-1' })
+
+    await expect(
+      attachPty({ id: first.id, expectedPaneKey: 'pane-b', expectedTabId: 'tab-1' })
+    ).rejects.toThrow(/identity mismatch/i)
+  })
+
   it('attaches when the expected incarnation is the shell it names', async () => {
     const first = await spawnPty({})
 

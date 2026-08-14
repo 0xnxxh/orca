@@ -261,6 +261,7 @@ import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree-removal'
 import {
   LOCAL_EXECUTION_HOST_ID,
   getRepoExecutionHostId,
+  getWorktreeExecutionHostId,
   parseExecutionHostId,
   toSshExecutionHostId,
   type ExecutionHostId
@@ -1839,6 +1840,10 @@ const BRACKETED_PASTE_BEGIN = '\x1b[200~'
 const BRACKETED_PASTE_END = '\x1b[201~'
 const BRACKETED_PASTE_QUIET_MS = 1500
 const DRAFT_PASTE_READY_TIMEOUT_MS = 8000
+const CLAUDE_AGENT_PROMPT_RENDER_TIMEOUT_MS = 8000
+const CLAUDE_AGENT_PROMPT_RENDER_QUIET_MS = 1500
+// Why: Claude emits show-cursor while rendering its composer; output must settle afterward.
+const CLAUDE_AGENT_PROMPT_RENDER_MARKER = '\x1b[?25h'
 const MOBILE_TERMINAL_SURFACE_TIMEOUT_MS = 10_000
 // Why: the split already failed; the caller waits on this teardown only to learn whether the
 // fallback kill is needed, so keep it short — an unreachable host must not stall the rejection.
@@ -2494,6 +2499,11 @@ type TerminalWorkspaceLaunchScope = {
   connectionId: string | null
   repo: Repo | null
   folderWorkspace: FolderWorkspace | null
+}
+
+type ResolvedTerminalWorkspaceLaunchTarget = {
+  scope: TerminalWorkspaceLaunchScope
+  managedWorktree: ResolvedWorktree | null
 }
 
 type WorktreeLineageInput = {
@@ -17414,19 +17424,24 @@ export class OrcaRuntimeService {
       suffixFailureError?: string
     } = {}
   ): Promise<void> {
+    const renderGate = this.createClaudeAgentPromptRenderGate(ptyId)
     let wrotePasteBytes = false
     let completedPaste = false
     try {
       const chunks = iterateTerminalInputChunks(pastePayload)
       let chunk = chunks.next()
       while (!chunk.done) {
+        const nextChunk = chunks.next()
         await options.beforeWrite?.(ptyId)
+        if (nextChunk.done) {
+          renderGate?.arm()
+        }
         const wrote = this.ptyController?.write(ptyId, chunk.value) ?? false
         if (!wrote) {
           throw new Error('terminal_not_writable')
         }
         wrotePasteBytes = true
-        chunk = chunks.next()
+        chunk = nextChunk
         if (!chunk.done) {
           await new Promise((resolve) => setTimeout(resolve, 0))
         }
@@ -17436,10 +17451,16 @@ export class OrcaRuntimeService {
       if (wrotePasteBytes && !completedPaste) {
         this.ptyController?.write(ptyId, AGENT_PROMPT_BRACKETED_PASTE_END)
       }
+      renderGate?.dispose()
       throw error
     }
 
-    await new Promise((resolve) => setTimeout(resolve, AGENT_PROMPT_SUBMIT_DELAY_MS))
+    if (renderGate) {
+      await renderGate.wait()
+      renderGate.dispose()
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, AGENT_PROMPT_SUBMIT_DELAY_MS))
+    }
     try {
       await options.beforeWrite?.(ptyId)
     } catch (error) {
@@ -17451,6 +17472,87 @@ export class OrcaRuntimeService {
     const suffixWrote = this.ptyController?.write(ptyId, AGENT_PROMPT_SUBMIT) ?? false
     if (!suffixWrote) {
       throw new Error(options.suffixFailureError ?? 'terminal_not_writable')
+    }
+  }
+
+  private createClaudeAgentPromptRenderGate(ptyId: string): {
+    arm: () => void
+    wait: () => Promise<void>
+    dispose: () => void
+  } | null {
+    const pty = this.ptysById.get(ptyId)
+    if ((pty?.launchAgent ?? pty?.foregroundAgent) !== 'claude') {
+      return null
+    }
+    let armed = false
+    let observedMarker = false
+    let settled = false
+    let markerCarry = ''
+    let quietTimer: NodeJS.Timeout | null = null
+    let hardTimer: NodeJS.Timeout | null = null
+    let resolveRender!: () => void
+    const rendered = new Promise<void>((resolve) => {
+      resolveRender = resolve
+    })
+
+    const finish = (): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      if (quietTimer) {
+        clearTimeout(quietTimer)
+        quietTimer = null
+      }
+      if (hardTimer) {
+        clearTimeout(hardTimer)
+        hardTimer = null
+      }
+      resolveRender()
+    }
+    const armQuietTimer = (): void => {
+      if (quietTimer) {
+        clearTimeout(quietTimer)
+      }
+      quietTimer = setTimeout(finish, CLAUDE_AGENT_PROMPT_RENDER_QUIET_MS)
+    }
+    const unsubscribe = this.subscribeToTerminalData(ptyId, (data) => {
+      if (!armed || settled) {
+        return
+      }
+      if (!observedMarker) {
+        const combined = markerCarry + data
+        markerCarry = combined.slice(-(CLAUDE_AGENT_PROMPT_RENDER_MARKER.length - 1))
+        if (!combined.includes(CLAUDE_AGENT_PROMPT_RENDER_MARKER)) {
+          return
+        }
+        observedMarker = true
+      }
+      armQuietTimer()
+    })
+    return {
+      arm: () => {
+        armed = true
+        markerCarry = ''
+      },
+      wait: async () => {
+        if (settled) {
+          return
+        }
+        hardTimer = setTimeout(finish, CLAUDE_AGENT_PROMPT_RENDER_TIMEOUT_MS)
+        await rendered
+      },
+      dispose: () => {
+        unsubscribe()
+        if (quietTimer) {
+          clearTimeout(quietTimer)
+          quietTimer = null
+        }
+        if (hardTimer) {
+          clearTimeout(hardTimer)
+          hardTimer = null
+        }
+      }
     }
   }
 
@@ -21258,6 +21360,14 @@ export class OrcaRuntimeService {
 
   async showManagedWorktree(worktreeSelector: string) {
     return await this.resolveWorktreeSelector(worktreeSelector)
+  }
+
+  async showManagedTerminalWorkspace(worktreeSelector: string) {
+    const target = await this.resolveTerminalWorkspaceLaunchTarget(worktreeSelector)
+    if (!target.managedWorktree) {
+      throw new Error('selector_not_found')
+    }
+    return target.managedWorktree
   }
 
   async scanWorkspacePorts(repoId?: string): Promise<WorkspacePortScanResult> {
@@ -28540,7 +28650,7 @@ export class OrcaRuntimeService {
 
   private async resolveFolderWorkspaceLaunchScope(
     selector: string
-  ): Promise<TerminalWorkspaceLaunchScope | null> {
+  ): Promise<(TerminalWorkspaceLaunchScope & { folderWorkspace: FolderWorkspace }) | null> {
     const workspace = this.resolveFolderWorkspaceSelector(selector)
     if (!workspace) {
       return null
@@ -28620,23 +28730,35 @@ export class OrcaRuntimeService {
   private async resolveTerminalWorkspaceLaunchScope(
     selector: string
   ): Promise<TerminalWorkspaceLaunchScope> {
+    return (await this.resolveTerminalWorkspaceLaunchTarget(selector)).scope
+  }
+
+  private async resolveTerminalWorkspaceLaunchTarget(
+    selector: string
+  ): Promise<ResolvedTerminalWorkspaceLaunchTarget> {
     const floatingTerminalSelector =
       selector === FLOATING_TERMINAL_WORKTREE_ID ||
       selector === `id:${FLOATING_TERMINAL_WORKTREE_ID}`
     if (floatingTerminalSelector) {
       // Why: the floating sentinel is terminal-only — no backing repo/worktree record for other workspace APIs.
       return {
-        id: FLOATING_TERMINAL_WORKTREE_ID,
-        path: homedir(),
-        connectionId: null,
-        repo: null,
-        folderWorkspace: null
+        scope: {
+          id: FLOATING_TERMINAL_WORKTREE_ID,
+          path: homedir(),
+          connectionId: null,
+          repo: null,
+          folderWorkspace: null
+        },
+        managedWorktree: null
       }
     }
 
     const folderScope = await this.resolveFolderWorkspaceLaunchScope(selector)
     if (folderScope) {
-      return folderScope
+      return {
+        scope: folderScope,
+        managedWorktree: this.folderWorkspaceToResolvedWorktree(folderScope.folderWorkspace)
+      }
     }
 
     const workspaceSelector = selector.startsWith('id:') ? selector.slice(3) : selector
@@ -28645,11 +28767,14 @@ export class OrcaRuntimeService {
     const worktree = await this.resolveWorktreeSelector(worktreeSelector)
     const repo = this.store?.getRepo(worktree.repoId) ?? null
     return {
-      id: worktree.id,
-      path: worktree.path,
-      connectionId: repo?.connectionId ?? null,
-      repo,
-      folderWorkspace: null
+      scope: {
+        id: worktree.id,
+        path: worktree.path,
+        connectionId: repo?.connectionId ?? null,
+        repo,
+        folderWorkspace: null
+      },
+      managedWorktree: worktree
     }
   }
 
@@ -28724,8 +28849,16 @@ export class OrcaRuntimeService {
         runtimePathsEqual(worktree.path, selector.slice(5))
       )
       if (candidates.length > 1) {
-        // Why: the same physical path can appear under multiple repo IDs; a path selector is exact, so take the first row over a dup-registration ambiguity.
-        candidates = [candidates[0]]
+        const hostIds = new Set(
+          candidates.map((worktree) => {
+            const repo = this.store?.getRepo(worktree.repoId)
+            return getWorktreeExecutionHostId(worktree, repo)
+          })
+        )
+        // Why: duplicate registrations on one host describe one path; identical paths on different hosts do not.
+        if (hostIds.size === 1) {
+          candidates = [candidates[0]]
+        }
       }
     } else if (selector.startsWith('branch:')) {
       const branchSelector = selector.slice(7)

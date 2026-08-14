@@ -383,7 +383,10 @@ jobs:
       - name: Package unpacked app
         env:
           ORCA_REUSE_PREPARED_NATIVE_RUNTIME: '1'
-        run: pnpm exec electron-builder --config config/electron-builder.config.cjs --dir
+        run: pnpm exec electron-builder --config config/electron-builder.config.cjs --linux AppImage --x64 --publish never
+
+      - name: Verify headless serve signal shutdown
+        run: node config/scripts/run-headless-serve-shutdown-docker.mjs --appimage dist/orca-linux.AppImage
 
       - name: Smoke packaged CLI
         run: node config/scripts/smoke-packaged-cli.mjs --app-dir=dist/linux-unpacked

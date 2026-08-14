@@ -211,6 +211,11 @@ export type WorktreeSlice = {
       startupDraft?: string
       /** True only when `name` came from the creature-name generator; gates host-side retirement. */
       nameWasGenerated?: boolean
+      provisionedRoot?: {
+        runtimeId: string
+        executionHostId: ExecutionHostId
+        expectedPath: string
+      }
     }
   ) => Promise<CreateWorktreeResult>
   /** Register an in-flight background creation and make it the active surface. */

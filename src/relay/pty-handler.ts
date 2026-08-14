@@ -354,10 +354,10 @@ type PtyIdentity = { paneKey?: string; tabId?: string }
  *  shell is fenced on that instead. Not deleted, because the relay is shared: an upgraded host
  *  would otherwise leave every not-yet-updated client attaching a recycled id unchecked. */
 function attachIdentityMismatches(expected: PtyIdentity, managed: PtyIdentity): boolean {
-  return Boolean(
-    (expected.paneKey && managed.paneKey && expected.paneKey !== managed.paneKey) ||
-    (expected.tabId && managed.tabId && expected.tabId !== managed.tabId)
-  )
+  // Pane key only. The tab is a location a pane can be moved to, and this identity was frozen at
+  // spawn, so comparing it refused panes that had merely moved — a live shell the client could
+  // then never reach, and an identity mismatch never grounds a respawn.
+  return Boolean(expected.paneKey && managed.paneKey && expected.paneKey !== managed.paneKey)
 }
 /** Returns env to merge into the PTY's spawn env. Receives spawn context so augmenters can derive per-PTY identity from paneKey.
  *  `command` is the renderer-chosen agent launch command (`pi`, `omp`, …); undefined for CLI-launched bare shells. */

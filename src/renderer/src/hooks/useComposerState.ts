@@ -4497,10 +4497,14 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
           if (vmRecipeTrustDecision === 'skip') {
             return
           }
+          const selectedRecipe = ephemeralVmRecipes.find(
+            (recipe) => recipe.id === activeEphemeralVmRecipeId
+          )
           ephemeralVmRecipe = {
             sourceRepoId: repoId,
             recipeId: activeEphemeralVmRecipeId,
-            projectId: selectedWorkspaceTarget.target.projectId
+            projectId: selectedWorkspaceTarget.target.projectId,
+            ...(selectedRecipe?.checkoutMode ? { checkoutMode: selectedRecipe.checkoutMode } : {})
           }
         }
 
@@ -4651,6 +4655,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       setupConfig,
       setupPolicy,
       selectedRepoHookContextKey,
+      ephemeralVmRecipes,
       isProjectGroupTarget,
       submitFolderTarget,
       createMultiple,
