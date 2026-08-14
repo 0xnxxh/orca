@@ -2908,7 +2908,14 @@ export function hoistSshPartitionsIntoLocalSession(
       if (missing.length === 0) {
         continue
       }
-      local.tabsByWorktree = { ...local.tabsByWorktree, [worktreeId]: [...existing, ...missing] }
+      // Cloned, not aliased. Spreading the partition's own tab objects in leaves both planes
+      // holding the SAME object, so a mutation scoped to `local` — the whole point of
+      // `arbitratedFrom` — silently rewrites the partition too, stranding a shell whose owner
+      // never voted on that decision.
+      local.tabsByWorktree = {
+        ...local.tabsByWorktree,
+        [worktreeId]: [...existing, ...missing.map((tab) => structuredClone(tab))]
+      }
       for (const tab of missing) {
         alreadyHoisted.add(tab.id)
       }
@@ -2925,7 +2932,11 @@ export function hoistSshPartitionsIntoLocalSession(
       if (!hasTab) {
         continue
       }
-      local.terminalLayoutsByTabId = { ...local.terminalLayoutsByTabId, [tabId]: layout }
+      // Cloned for the same reason: a shared layout leaks `ptyIdsByLeafId` edits across planes.
+      local.terminalLayoutsByTabId = {
+        ...local.terminalLayoutsByTabId,
+        [tabId]: structuredClone(layout)
+      }
       changed = true
     }
     for (const [paneKey, incarnationId] of Object.entries(

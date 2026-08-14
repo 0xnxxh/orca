@@ -373,4 +373,26 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       )
     })
   })
+
+  // The hoisted pane must not ALIAS the partition's objects. `arbitratedFrom: 'local'` exists so a
+  // decision read from one plane cannot mutate the other; a shared object defeats it silently and
+  // strands a shell whose owner never voted on that decision.
+  it('hoists copies, so mutating the local pane leaves the partition alone', async () => {
+    const before = await createStore()
+    before.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
+    before.flushOrThrow()
+    stripHoistMarker()
+
+    const store = await reopenStore()
+    const localTab = (store.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? [])[0]
+    expect(localTab, 'the pane was not hoisted, so aliasing cannot be observed').toBeDefined()
+
+    // A mutation scoped to the local plane.
+    localTab!.ptyId = null
+
+    expect(
+      store.getWorkspaceSession(SSH_PARTITION).tabsByWorktree?.[WORKTREE]?.[0]?.ptyId,
+      'a local-only edit reached through into the ssh partition'
+    ).toBe(PTY)
+  })
 })
