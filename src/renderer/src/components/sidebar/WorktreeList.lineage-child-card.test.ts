@@ -10,7 +10,7 @@ import type {
   WorktreeLineage
 } from '../../../../shared/types'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
-import type * as WorktreeListModule from './WorktreeList'
+import { getPinnedWorktreeRevealCollapsedGroupKeys } from './worktree-list/sidebar-row-reveal-ancestors'
 import { cloneDefaultWorkspaceStatuses } from '../../../../shared/workspace-statuses'
 
 const mockStore = vi.hoisted(() => ({
@@ -23,7 +23,6 @@ type WorktreeListComponent = React.ComponentType<{
 }>
 
 let WorktreeList: WorktreeListComponent
-let getPinnedWorktreeRevealCollapsedGroupKeys: typeof WorktreeListModule.getPinnedWorktreeRevealCollapsedGroupKeys
 
 function makeFolderWorkspacePathStatusMockState(): Record<string, unknown> {
   return {
@@ -830,7 +829,6 @@ describe('WorktreeList lineage child card renderer', () => {
   beforeAll(async () => {
     const module = await import('./WorktreeList')
     WorktreeList = module.default as WorktreeListComponent
-    getPinnedWorktreeRevealCollapsedGroupKeys = module.getPinnedWorktreeRevealCollapsedGroupKeys
   }, 60_000)
 
   it('renders project group headers when repos import before worktree rows load', async () => {
