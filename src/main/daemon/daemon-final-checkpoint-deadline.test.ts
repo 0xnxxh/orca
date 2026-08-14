@@ -119,7 +119,9 @@ describe('STA-4228 final checkpoint honors the caller stop deadline', () => {
           await stalled
         }
         const result = await original(sessionId, snapshot, opts)
-        committed.set(sessionId, (committed.get(sessionId) ?? 0) + 1)
+        if (result === 'committed') {
+          committed.set(sessionId, (committed.get(sessionId) ?? 0) + 1)
+        }
         return result
       }
     )
