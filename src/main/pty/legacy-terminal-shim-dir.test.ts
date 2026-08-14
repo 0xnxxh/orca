@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  symlinkSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -120,7 +121,11 @@ describe('legacy terminal shim neutralization', () => {
       // with a sentinel instead. Verified on Windows.
       // Why: compared against a variable holding the separator — a literal backslash before the
       // closing quote breaks cmd's parser, and a sentinel would corrupt paths containing it.
-      expect(cmd).toContain('set "orca_sep=')
+      // The value matters: any other character silently un-pins the trailing-separator fix.
+      expect(cmd).toContain('set "orca_sep=\\"')
+      // Why: nothing else asserts the *reject* path, so deleting it would reopen the cwd hijack
+      // while every accept-path assertion stayed green.
+      expect(cmd).toMatch(/goto orca_candidate_rooted\r?\nexit \/b/)
       expect(cmd).toContain('if "%orca_candidate_dir:~-1%"=="%orca_sep%"')
       expect(cmd).not.toContain(':\\#=#%')
       // A candidate inside the wrapper directory must still be rejected, compared against the
@@ -232,7 +237,84 @@ describe('legacy terminal shim neutralization', () => {
     expect(resolvePosixTombstoneInterpreter(`${absDir}:/usr/bin`, [])).toBe(join(absDir, 'bash'))
     // Relative and empty entries must be skipped even though they contain an executable bash.
     expect(resolvePosixTombstoneInterpreter(`:relbin:${absDir}`, [])).toBe(join(absDir, 'bash'))
-    expect(resolvePosixTombstoneInterpreter('.:relbin', [])).toBe('/usr/bin/env bash')
+    // Why: a relative entry resolves against the *running process* cwd, so the fixture must live
+    // there — pointing at a tmpdir would make this pass whether or not the guard exists.
+    const cwdRelName = `.orca-interp-${process.pid}`
+    const cwdRelDir = join(process.cwd(), cwdRelName)
+    mkdirSync(cwdRelDir, { recursive: true })
+    try {
+      writeFileSync(join(cwdRelDir, 'bash'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+      expect(resolvePosixTombstoneInterpreter(`.:${cwdRelName}`, [])).toBe('/usr/bin/env bash')
+    } finally {
+      rmSync(cwdRelDir, { recursive: true, force: true })
+    }
+  })
+
+  itOnPosix('resolves its own directory even when CDPATH is set', () => {
+    // Why: with CDPATH set, cd searches it for a relative operand and echoes where it landed,
+    // which the command substitution captures — wrapper_dir went wrong and git died at 127.
+    const userData = makeUserDataDir()
+    const posixDir = join(userData, 'orca-terminal-attribution', 'posix')
+    const realBin = join(userData, 'real-bin')
+    const cdpathDir = join(userData, 'cdpath')
+    mkdirSync(posixDir, { recursive: true })
+    mkdirSync(realBin, { recursive: true })
+    // Why: cd only relocates when CDPATH holds a directory matching the *whole* relative operand,
+    // so the fixture must mirror `orca-terminal-attribution/posix`, not just its first segment.
+    mkdirSync(join(cdpathDir, 'orca-terminal-attribution', 'posix'), { recursive: true })
+    writeFileSync(join(posixDir, 'git'), 'legacy attribution wrapper')
+
+    neutralizeLegacyTerminalShimDir(userData)
+
+    writeFileSync(join(realBin, 'git'), "#!/bin/bash\nprintf 'REAL\\n'\n", { mode: 0o755 })
+
+    const run = spawnSync('/bin/bash', ['orca-terminal-attribution/posix/git', '--version'], {
+      cwd: userData,
+      env: { CDPATH: cdpathDir, PATH: `${posixDir}:${realBin}:/usr/bin:/bin` },
+      encoding: 'utf8',
+      timeout: 20_000
+    })
+
+    expect(run.stdout).toContain('REAL')
+    expect(run.status).toBe(0)
+  })
+
+  itOnPosix('fails closed instead of self-executing when it resolves to itself', () => {
+    // Why: this guard is what turns a bad wrapper_dir into a clean 127 rather than an unbounded
+    // self-exec. Deleting it left the whole suite green, so pin it directly.
+    const userData = makeUserDataDir()
+    const posixDir = join(userData, 'orca-terminal-attribution', 'posix')
+    mkdirSync(posixDir, { recursive: true })
+    writeFileSync(join(posixDir, 'git'), 'legacy attribution wrapper')
+
+    neutralizeLegacyTerminalShimDir(userData)
+
+    // A symlink in another directory resolves to the same inode as the wrapper, so the lookup
+    // finds "git" outside the excluded wrapper dir and it turns out to be this very script.
+    const otherBin = join(userData, 'other-bin')
+    mkdirSync(otherBin, { recursive: true })
+    symlinkSync(join(posixDir, 'git'), join(otherBin, 'git'))
+
+    const run = spawnSync(join(posixDir, 'git'), ['--version'], {
+      cwd: posixDir,
+      env: { PATH: `${otherBin}:${posixDir}` },
+      encoding: 'utf8',
+      timeout: 20_000
+    })
+
+    expect(run.status).toBe(127)
+    expect(run.stderr).toContain('could not locate git')
+    // Why: no timeout kill — a missing guard here degrades into repeated self-exec.
+    expect(run.signal).toBeNull()
+
+    // Why pinned by text too: with wrapper_dir computed correctly this guard is defence in depth
+    // and hard to trigger legitimately, so deleting it would otherwise leave the suite green.
+    const wrapper = readFileSync(join(posixDir, 'git'), 'utf8')
+    expect(wrapper).toContain('-ef "${BASH_SOURCE[0]}"')
+    // Why: reintroducing the external dirname would restore the failure where an unresolvable
+    // dirname left the substitution empty and cd into it silently made wrapper_dir the cwd.
+    expect(wrapper).not.toMatch(/\$\(dirname\b/)
+    expect(wrapper).toContain('CDPATH= cd -P --')
   })
 
   itOnPosix('does not let the cwd supply the script interpreter', async () => {
