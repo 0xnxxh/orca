@@ -41,6 +41,7 @@ const lastCompletionIdentityByPaneKey = new Map<string, LastCompletionIdentity>(
 const handledTurnCompletedAtByPaneKey = new Map<string, number>()
 // Why: title fallback stays blocked only until the stamped background tail reaches its all-clear.
 const pendingStampedTailByPaneKey = new Map<string, number>()
+const coordinatorCountByPaneKey = new Map<string, number>()
 
 const IDLE_POLL_INTERVAL_MS = 2_000
 const ACTIVE_POLL_INTERVAL_MS = 750
@@ -82,6 +83,10 @@ function isAttentionHookState(state: ParsedAgentStatusPayload['state']): boolean
 export function createAgentCompletionCoordinator(
   options: AgentCompletionCoordinatorOptions
 ): AgentCompletionCoordinator {
+  coordinatorCountByPaneKey.set(
+    options.paneKey,
+    (coordinatorCountByPaneKey.get(options.paneKey) ?? 0) + 1
+  )
   let disposed = false
   let agentIdentityEstablished = false
   let hasAgentRunEvidence = false
@@ -1033,13 +1038,22 @@ export function createAgentCompletionCoordinator(
   }
 
   function dispose(): void {
+    if (disposed) {
+      return
+    }
     disposed = true
     clearPollTimer()
     clearPendingHookDone()
     clearPendingCodexAttention()
     dropPendingTitle()
-    // Why: module-scoped identity survives a live-stream remount; evict only on genuine teardown (isLive() false) so it can't leak per closed pane.
-    if (!options.isLive()) {
+    const remainingCoordinators = (coordinatorCountByPaneKey.get(options.paneKey) ?? 1) - 1
+    if (remainingCoordinators > 0) {
+      coordinatorCountByPaneKey.set(options.paneKey, remainingCoordinators)
+    } else {
+      coordinatorCountByPaneKey.delete(options.paneKey)
+    }
+    // Why: one pane can have hook and mounted coordinators; a remount disposal must not erase replay state still owned by its live sibling.
+    if (remainingCoordinators <= 0 && !options.isLive()) {
       lastCompletionIdentityByPaneKey.delete(options.paneKey)
       handledTurnCompletedAtByPaneKey.delete(options.paneKey)
       pendingStampedTailByPaneKey.delete(options.paneKey)
@@ -1063,6 +1077,7 @@ export function resetAgentCompletionCoordinatorIdentitiesForTest(): void {
   lastCompletionIdentityByPaneKey.clear()
   handledTurnCompletedAtByPaneKey.clear()
   pendingStampedTailByPaneKey.clear()
+  coordinatorCountByPaneKey.clear()
 }
 
 export function getAgentCompletionCoordinatorIdentityCountForTest(): number {
