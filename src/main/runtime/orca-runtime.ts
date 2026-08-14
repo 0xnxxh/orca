@@ -33847,6 +33847,7 @@ export class OrcaRuntimeService {
         teamInput: params.team,
         state: params.state,
         assignee: params.assignee ?? undefined,
+        assigneeMe: params.assigneeMe,
         priority: params.priority,
         estimate: params.estimate ?? undefined,
         dueDate: params.dueDate ?? undefined,
@@ -34102,6 +34103,7 @@ export class OrcaRuntimeService {
     teamKey?: string
     state?: string
     assignee?: string
+    assigneeMe?: boolean
     priority?: number
     estimate?: number
     dueDate?: string
@@ -34390,7 +34392,9 @@ export class OrcaRuntimeService {
       }
       fields.stateId = state.id
     }
-    if (params.assignee !== undefined) {
+    if (params.assigneeMe) {
+      fields.assigneeId = (await this.getLinearViewerForWrite(workspaceId)).id
+    } else if (params.assignee !== undefined) {
       fields.assigneeId =
         params.assignee === null
           ? null
@@ -34509,6 +34513,7 @@ export class OrcaRuntimeService {
     params: {
       state?: string
       assignee?: string
+      assigneeMe?: boolean
       priority?: number
       estimate?: number
       dueDate?: string
@@ -34530,7 +34535,9 @@ export class OrcaRuntimeService {
       }
       fields.stateId = state.id
     }
-    if (params.assignee) {
+    if (params.assigneeMe) {
+      fields.assigneeId = (await this.getLinearViewerForWrite(team.workspaceId)).id
+    } else if (params.assignee) {
       fields.assigneeId = await this.resolveLinearAssignee(
         params.assignee,
         team.id,

@@ -25,10 +25,14 @@ type SaveIssueInternals = {
   resolveLinearAssignee(input: string, teamId: string, workspaceId: string): Promise<string>
   resolveLinearAgentState(input: string, states: unknown[]): unknown
   buildLinearSaveUpdate(
-    params: { labels?: string[] },
+    params: { assignee?: string | null; assigneeMe?: boolean; labels?: string[] },
     current: typeof issue,
     workspaceId: string
-  ): Promise<{ labelIds?: string[] }>
+  ): Promise<{ assigneeId?: string | null; labelIds?: string[] }>
+  resolveLinearCreateFields(
+    params: { assignee?: string; assigneeMe?: boolean },
+    team: { id: string; workspaceId: string }
+  ): Promise<{ assigneeId?: string | null }>
 }
 
 afterEach(() => {
@@ -53,6 +57,26 @@ describe('Linear save issue', () => {
         title: 'New issue',
         workspaceId: 'workspace-1'
       })
+    )
+  })
+
+  it('delegates save-issue current-user assignment intent to create', async () => {
+    const runtime = new OrcaRuntimeService()
+    const create = vi.spyOn(runtime, 'linearIssueCreate').mockResolvedValue({
+      issue,
+      meta: { workspaceId: 'workspace-1', writeId: 'write-1', deduplicated: false }
+    })
+
+    await runtime.linearSaveIssue({
+      team: 'ENG',
+      title: 'Assigned issue',
+      assignee: 'me',
+      assigneeMe: true,
+      workspaceId: 'workspace-1'
+    })
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ assignee: 'me', assigneeMe: true })
     )
   })
 
@@ -131,6 +155,45 @@ describe('Linear save issue', () => {
     await expect(
       runtime.resolveLinearAssignee('ADA@EXAMPLE.COM', 'team-1', 'workspace-1')
     ).resolves.toBe('user-1')
+  })
+
+  it('turns save-issue current-user intent into the viewer assignee id', async () => {
+    const runtime = new OrcaRuntimeService() as unknown as SaveIssueInternals
+    vi.spyOn(linearTeams, 'getViewerForWorkspaceOrThrow').mockResolvedValue({
+      id: 'viewer-1',
+      displayName: 'Ada',
+      avatarUrl: null
+    })
+
+    await expect(
+      runtime.resolveLinearCreateFields(
+        { assignee: 'me', assigneeMe: true },
+        { id: 'team-1', workspaceId: 'workspace-1' }
+      )
+    ).resolves.toEqual({ assigneeId: 'viewer-1' })
+    await expect(
+      runtime.buildLinearSaveUpdate({ assignee: 'me', assigneeMe: true }, issue, 'workspace-1')
+    ).resolves.toEqual({ assigneeId: 'viewer-1' })
+  })
+
+  it('rejects an unresolved save-issue assignee instead of dropping it', async () => {
+    const runtime = new OrcaRuntimeService() as unknown as SaveIssueInternals
+    vi.spyOn(linearTeams, 'getTeamMembersOrThrow').mockResolvedValue([])
+
+    await expect(
+      runtime.buildLinearSaveUpdate({ assignee: 'Missing User' }, issue, 'workspace-1')
+    ).rejects.toMatchObject({
+      code: 'linear_invalid_assignee',
+      message: 'No team member exactly matched "Missing User".'
+    })
+  })
+
+  it('keeps explicit save-issue assignee clears', async () => {
+    const runtime = new OrcaRuntimeService() as unknown as SaveIssueInternals
+
+    await expect(
+      runtime.buildLinearSaveUpdate({ assignee: null }, issue, 'workspace-1')
+    ).resolves.toEqual({ assigneeId: null })
   })
 
   it('resolves workflow lifecycle types while preferring exact state names', () => {

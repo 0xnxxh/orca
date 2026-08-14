@@ -30,6 +30,7 @@ export async function buildSaveIssueRequest(
   if (body !== undefined && description !== undefined) {
     throw new RuntimeClientError('invalid_argument', 'Use either --description or --body, not both')
   }
+  const assignee = getNullableStringFlag(flags, 'assignee')
   return {
     input,
     current,
@@ -39,7 +40,8 @@ export async function buildSaveIssueRequest(
     title: getOptionalStringFlag(flags, 'title'),
     description: description ?? body,
     state: getOptionalStringFlag(flags, 'state'),
-    assignee: getNullableStringFlag(flags, 'assignee'),
+    assignee,
+    assigneeMe: assignee?.toLocaleLowerCase() === 'me' || undefined,
     priority: flags.has('priority') ? getPriorityFlag(flags, 'priority') : undefined,
     estimate: getOptionalNullableNumberFlag(flags, 'estimate'),
     dueDate: flags.has('due-date') ? getNullableDueDateFlag(flags, 'due-date') : undefined,

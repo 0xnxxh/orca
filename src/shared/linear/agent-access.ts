@@ -176,6 +176,7 @@ export type LinearSaveIssueRequest = LinearWriteTargetRequest & {
   description?: string
   state?: string
   assignee?: string | null
+  assigneeMe?: boolean
   priority?: number
   estimate?: number | null
   dueDate?: string | null

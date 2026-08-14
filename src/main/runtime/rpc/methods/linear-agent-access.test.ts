@@ -261,6 +261,32 @@ describe('Linear agent access RPC methods', () => {
     expect(runtime.linearIssueAddComment).not.toHaveBeenCalled()
   })
 
+  it('preserves save-issue current-user assignment intent', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      linearSaveIssue: vi.fn().mockResolvedValue({ ok: true })
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: LINEAR_AGENT_ACCESS_METHODS })
+
+    const response = await dispatcher.dispatch(
+      makeRequest('linear.saveIssue', {
+        team: 'ENG',
+        title: 'Assigned issue',
+        assignee: 'me',
+        assigneeMe: true
+      })
+    )
+
+    expect(response.ok).toBe(true)
+    expect(runtime.linearSaveIssue).toHaveBeenCalledWith({
+      team: 'ENG',
+      title: 'Assigned issue',
+      assignee: 'me',
+      assigneeMe: true,
+      writeId: undefined
+    })
+  })
+
   it('rejects workspace all for direct write RPC calls', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',

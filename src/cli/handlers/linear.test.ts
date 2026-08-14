@@ -591,6 +591,31 @@ describe('orca linear CLI handlers', () => {
     )
   })
 
+  it('carries save-issue current-user assignment to the RPC request', async () => {
+    queueFixtures(callMock, okFixture('req_save', createResult()))
+
+    await main(
+      [
+        'linear',
+        'save-issue',
+        '--team',
+        'ENG',
+        '--title',
+        'Assigned issue',
+        '--assignee',
+        'me',
+        '--json'
+      ],
+      '/tmp/repo'
+    )
+
+    expect(callMock).toHaveBeenCalledWith(
+      'linear.saveIssue',
+      expect.objectContaining({ assignee: 'me', assigneeMe: true }),
+      { timeoutMs: 75_000 }
+    )
+  })
+
   it('rejects duplicate body inputs before dispatch', async () => {
     await main(
       ['linear', 'create', '--title', 'Bug', '--body', 'one', '--body-file', 'body.md'],

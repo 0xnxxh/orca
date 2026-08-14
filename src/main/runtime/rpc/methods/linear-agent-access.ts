@@ -136,6 +136,7 @@ const LinearSaveIssue = LinearWriteTarget.extend({
   description: z.string().optional(),
   state: OptionalString,
   assignee: z.string().nullable().optional(),
+  assigneeMe: z.boolean().optional(),
   priority: z.number().int().min(0).max(4).optional(),
   estimate: z.number().min(0).nullable().optional(),
   dueDate: OptionalLinearDueDateOrClear,

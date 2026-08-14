@@ -746,7 +746,7 @@ describe('Linear issue queries', () => {
     ).rejects.toMatchObject({ kind: 'unconfirmed' })
   })
 
-  it('creates parented agent issues with a client supplied id and project id', async () => {
+  it('creates parented agent issues with client supplied issue, project, and assignee ids', async () => {
     const createIssue = vi.fn().mockResolvedValue({
       success: true,
       issue: Promise.resolve({ id: 'issue-created' })
@@ -776,7 +776,8 @@ describe('Linear issue queries', () => {
       createIssueForAgent('team-1', 'Follow up', 'Details', 'workspace-1', {
         id: '33333333-3333-4333-8333-333333333333',
         parentId: 'issue-parent',
-        projectId: 'project-1'
+        projectId: 'project-1',
+        assigneeId: 'viewer-1'
       })
     ).resolves.toMatchObject({
       id: 'issue-created',
@@ -790,7 +791,8 @@ describe('Linear issue queries', () => {
       title: 'Follow up',
       description: 'Details',
       parentId: 'issue-parent',
-      projectId: 'project-1'
+      projectId: 'project-1',
+      assigneeId: 'viewer-1'
     })
     expect(rawRequest.mock.calls.at(-1)?.[0]).toContain('description')
   })

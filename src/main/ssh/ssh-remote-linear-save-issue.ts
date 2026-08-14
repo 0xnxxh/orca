@@ -60,13 +60,15 @@ export async function dispatchRemoteLinearSaveIssue(
       'Use either --description or --body, not both'
     )
   }
+  const assignee = nullableString(parsed.flags, 'assignee')
   return await call(dispatcher, 'linear.saveIssue', {
     ...buildOptionalRemoteTargetRequest(parsed, env),
     team: optionalString(parsed.flags, 'team'),
     title: optionalString(parsed.flags, 'title'),
     description: description ?? body,
     state: optionalString(parsed.flags, 'state'),
-    assignee: nullableString(parsed.flags, 'assignee'),
+    assignee,
+    assigneeMe: assignee?.toLocaleLowerCase() === 'me' || undefined,
     priority: parsed.flags.has('priority') ? priorityFlag(parsed.flags, 'priority') : undefined,
     estimate: nullableNonNegativeInteger(parsed.flags, 'estimate'),
     dueDate: nullableDueDate(parsed.flags, 'due-date'),

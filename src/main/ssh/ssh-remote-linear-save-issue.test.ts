@@ -94,6 +94,30 @@ describe('SSH remote Linear save issue', () => {
     )
   })
 
+  it('forwards current-user assignee intent through the SSH RPC path', async () => {
+    const { runtime, linearSaveIssue } = createRuntime()
+    const result = await runRemoteOrcaCli(runtime, {
+      argv: [
+        'linear',
+        'save-issue',
+        '--team',
+        'ENG',
+        '--title',
+        'Assigned issue',
+        '--assignee',
+        'me',
+        '--json'
+      ],
+      cwd: '/home/alice/remote-repo',
+      env: { ORCA_TERMINAL_HANDLE: 'term_ssh' }
+    })
+
+    expect(result.exitCode).toBe(0)
+    expect(linearSaveIssue).toHaveBeenCalledWith(
+      expect.objectContaining({ assignee: 'me', assigneeMe: true })
+    )
+  })
+
   it('rejects remote body paths instead of reading from the wrong filesystem', async () => {
     const { runtime, linearSaveIssue } = createRuntime()
     const result = await runRemoteOrcaCli(runtime, {
