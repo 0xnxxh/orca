@@ -118,6 +118,8 @@ vi.mock('@/components/AgentStateDot', () => ({
     switch (state) {
       case 'working':
         return 'Working'
+      case 'background':
+        return 'Background work'
       case 'blocked':
         return 'Blocked'
       case 'waiting':
@@ -193,7 +195,8 @@ function agentRow({
   title,
   agentType,
   state = 'done',
-  startedAt = harness.now
+  startedAt = harness.now,
+  backgroundOnly = false
 }: {
   paneKey: string
   tabId: string
@@ -201,11 +204,15 @@ function agentRow({
   agentType: TuiAgent
   state?: AgentStatusState | 'idle'
   startedAt?: number
+  backgroundOnly?: boolean
 }): DashboardAgentRowData {
   const entryState: AgentStatusState = state === 'idle' ? 'working' : state
   return {
     paneKey,
-    entry: agentEntry(paneKey, agentType, entryState, startedAt),
+    entry: {
+      ...agentEntry(paneKey, agentType, entryState, startedAt),
+      ...(backgroundOnly ? { backgroundOnly: true } : {})
+    },
     tab: tab(tabId, { title }) as DashboardAgentRowData['tab'],
     agentType,
     state,
@@ -448,6 +455,36 @@ describe('ReviewNotesSendMenuContent', () => {
     expect(collectText(items[0])).toContain('2m ago')
     expect(collectText(items[0])).toContain('Second session')
     expect(collectText(items[1])).toContain('Claude')
+  })
+
+  it('labels a background-only target without foreground working presentation', () => {
+    const paneKey = makePaneKey(TAB_A, LEAF_A)
+    harness.worktreeAgentRows = [
+      agentRow({
+        paneKey,
+        tabId: TAB_A,
+        title: 'Background session',
+        agentType: 'claude',
+        state: 'working',
+        backgroundOnly: true
+      })
+    ]
+    harness.noteTargets = [
+      {
+        paneKey,
+        tabId: TAB_A,
+        leafId: LEAF_A,
+        agentType: 'claude',
+        tabTitle: 'Background session',
+        status: 'eligible'
+      }
+    ]
+
+    const item = findByType(render(), 'DropdownMenuItem')
+    const dot = findByType(item, 'AgentStateDot')
+
+    expect(dot.props.state).toBe('background')
+    expect(collectText(item)).toContain('Background work')
   })
 
   it('does not target title-detected rows skipped by target derivation', async () => {

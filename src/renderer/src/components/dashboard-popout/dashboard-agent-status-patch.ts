@@ -6,6 +6,7 @@ import {
   type DashboardSnapshot
 } from '../../../../shared/dashboard-snapshot'
 import { dashboardBucketForDotState } from '../dashboard/dashboard-card-bucket'
+import { isBackgroundOnlyAgentActivity } from '../../../../shared/agent-background-only-activity'
 
 export type DashboardAgentStatusPatchResult = {
   matched: boolean
@@ -62,6 +63,7 @@ export function patchDashboardSnapshotFromAgentStatus(
       : {}),
     bucket,
     dotState,
+    backgroundOnly: isBackgroundOnlyAgentActivity(event) || undefined,
     unseen,
     stateChangedAt: stateChanged ? event.stateStartedAt : card.stateChangedAt,
     statusUpdatedAt: event.receivedAt,

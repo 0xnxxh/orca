@@ -86,6 +86,25 @@ describe('patchDashboardSnapshotFromAgentStatus', () => {
     })
   })
 
+  it('updates background-only presentation without changing the working bucket', () => {
+    const marked = patchDashboardSnapshotFromAgentStatus(
+      snapshot(),
+      event({ state: 'working', backgroundOnly: true })
+    ).snapshot.cards[0]
+
+    expect(marked).toMatchObject({
+      bucket: 'working',
+      dotState: 'working',
+      backgroundOnly: true
+    })
+
+    const cleared = patchDashboardSnapshotFromAgentStatus(
+      snapshot([{ ...marked, statusUpdatedAt: 300 }]),
+      event({ state: 'working', backgroundOnly: undefined, receivedAt: 301 })
+    ).snapshot.cards[0]
+    expect(cleared.backgroundOnly).toBeUndefined()
+  })
+
   it('ignores stale, wrong-workspace, and session-only events', () => {
     const original = snapshot()
     expect(

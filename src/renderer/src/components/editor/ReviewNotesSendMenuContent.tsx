@@ -34,6 +34,7 @@ import { useWorktreeAgentRows } from '@/components/sidebar/useWorktreeAgentRows'
 import type { LaunchSource } from '../../../../shared/telemetry-events'
 import type { AgentStatusState } from '../../../../shared/agent-status-types'
 import { translate } from '@/i18n/i18n'
+import { getAgentDotState } from '@/components/sidebar/worktree-card-agent-summary'
 
 type OrderedSendTarget = {
   target: NotesSendAgentTarget
@@ -245,7 +246,7 @@ function AgentTargetMenuItem({
   onSend: (target: NotesSendAgentTarget) => void
 }): React.JSX.Element {
   const tabTitle = target.tabTitle.trim()
-  const state = asDotState(agent?.state ?? 'idle')
+  const state = agent ? getAgentDotState(agent) : asDotState('idle')
   const timeAgo = agent ? formatAgentRelativeTime(agent, now) : null
   const secondaryParts = [
     agentStateLabel(state),

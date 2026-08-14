@@ -200,6 +200,23 @@ describe('buildDashboardSnapshot', () => {
     expect(card.unseen).toBe(true)
   })
 
+  it('preserves background-only presentation without moving the live card', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({ state: 'working', backgroundOnly: true })
+        }
+      }),
+      NOW
+    )
+
+    expect(snapshot.cards[0]).toMatchObject({
+      bucket: 'working',
+      dotState: 'working',
+      backgroundOnly: true
+    })
+  })
+
   it('publishes terminal-backed orchestrated workers under their direct parent', () => {
     const snapshot = buildDashboardSnapshot(
       baseState({

@@ -18,6 +18,7 @@ import { AgentMapQuestionMarker } from './AgentMapQuestionMarker'
 import type { AgentMapFlareStatus } from './agent-map-node-metadata'
 import {
   agentMapAttentionMarkerScale,
+  agentMapDotState,
   agentMapStatusLabel,
   agentName,
   formatDuration,
@@ -111,13 +112,10 @@ function WorktreeDetails({
                     {agentName(agent.card)}
                   </span>
                   <span className="block truncate text-[11px] text-muted-foreground">
-                    {agentMapStatusLabel(agent.status)} · {formatDuration(agent.durationMinutes)}
+                    {agentMapStatusLabel(agent)} · {formatDuration(agent.durationMinutes)}
                   </span>
                 </span>
-                <AgentStateDot
-                  state={agent.status === 'done-seen' ? 'done' : agent.status}
-                  size="md"
-                />
+                <AgentStateDot state={agentMapDotState(agent)} size="md" />
               </button>
             ))
           )}
@@ -321,7 +319,7 @@ export const AgentMapWorktreeRingNode = memo(function AgentMapWorktreeRingNode({
                   tabIndex={agentExiting ? -1 : 0}
                   aria-hidden={agentExiting || undefined}
                   aria-pressed={selectedPaneKey === agent.card.paneKey}
-                  aria-label={`${agentName(agent.card)}, ${agentMapStatusLabel(agent.status)}${agent.card.unseen ? ', unread' : ''}, ${formatDuration(agent.durationMinutes)}, ${worktree.name}, ${project.name}`}
+                  aria-label={`${agentName(agent.card)}, ${agentMapStatusLabel(agent)}${agent.card.unseen ? ', unread' : ''}, ${formatDuration(agent.durationMinutes)}, ${worktree.name}, ${project.name}`}
                   className={`agent-map-agent-node fleet-status-${agent.status}${selectedPaneKey === agent.card.paneKey ? ' is-selected' : ''}${agent.motionState ? ` is-${agent.motionState}` : ''}`}
                   transform={`translate(${agent.x} ${agent.y})`}
                   onClick={(event) => {

@@ -1,19 +1,25 @@
-import { agentStateLabel } from '@/components/AgentStateDot'
+import { agentStateLabel, type AgentDotState } from '@/components/AgentStateDot'
 import { translate } from '@/i18n/i18n'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import { agentMapDirectLineageChevronPath } from './agent-map-lineage-chevron-path'
 import type { AgentMapAgentNode } from './agent-map-layout'
-import type { AgentMapNodeStatus } from './agent-map-node-metadata'
 
 /** Lives here, not in `agent-map-node-metadata`: `agentStateLabel` drags in React and
  *  lucide-react, and that module is on the layout and filter paths, which must stay
  *  free of component imports. `agentStateLabel` is shared with every other dot
  *  renderer, so the map's extra state gets its label here rather than widening
  *  `AgentDotState`. */
-export function agentMapStatusLabel(status: AgentMapNodeStatus): string {
-  return status === 'done-seen'
+export function agentMapDotState(node: AgentMapAgentNode): AgentDotState {
+  if (node.card.backgroundOnly === true && node.status === 'working') {
+    return 'background'
+  }
+  return node.status === 'done-seen' ? 'done' : node.status
+}
+
+export function agentMapStatusLabel(node: AgentMapAgentNode): string {
+  return node.status === 'done-seen'
     ? translate('dashboardPopout.map.status.doneSeen', 'Done, seen')
-    : agentStateLabel(status)
+    : agentStateLabel(agentMapDotState(node))
 }
 
 export function formatDuration(minutes: number): string {

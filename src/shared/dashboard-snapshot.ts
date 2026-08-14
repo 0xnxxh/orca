@@ -84,6 +84,9 @@ export type DashboardCard = {
   agentType: AgentType
   bucket: DashboardBucket
   dotState: DashboardCardDotState
+  /** Presentation-only marker for a finished foreground turn whose registered
+   *  background work keeps the card in the working bucket. */
+  backgroundOnly?: true
   /** One-line task/prompt text shown on the card. */
   task: string
   /** The most recent message the user sent this agent (its current prompt). */

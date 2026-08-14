@@ -87,6 +87,7 @@ function sameCard(a: DashboardCard, b: DashboardCard): boolean {
     a.agentType === b.agentType &&
     a.bucket === b.bucket &&
     a.dotState === b.dotState &&
+    a.backgroundOnly === b.backgroundOnly &&
     a.task === b.task &&
     a.lastUserMessage === b.lastUserMessage &&
     a.lastAgentMessage === b.lastAgentMessage &&
@@ -208,6 +209,8 @@ export const AgentKanbanCard = memo(
     // it". Everything else stays neutral so the tint keeps meaning something.
     const needsYou = card.bucket === 'attention'
     const displayState = dashboardCardDisplayState(card)
+    const dotState =
+      card.backgroundOnly === true && displayState === 'working' ? 'background' : displayState
     const isDone = displayState === 'done'
     // Why: the session's own name heads the card. Without one the worktree is
     // the best heading left — and then the footer drops it rather than say it
@@ -248,7 +251,7 @@ export const AgentKanbanCard = memo(
             >
               {heading}
             </span>
-            {card.askSummary ? null : <AgentStateDot state={displayState} className="ml-auto" />}
+            {card.askSummary ? null : <AgentStateDot state={dotState} className="ml-auto" />}
           </div>
 
           {card.lastUserMessage || card.lastAgentMessage ? (

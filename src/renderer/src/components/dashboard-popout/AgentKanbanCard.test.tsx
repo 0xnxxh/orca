@@ -19,7 +19,9 @@ vi.mock('@/lib/agent-catalog', () => ({
 }))
 
 vi.mock('@/components/AgentStateDot', () => ({
-  AgentStateDot: () => <span data-testid="state-dot" />
+  AgentStateDot: ({ state }: { state: string }) => (
+    <span data-testid="state-dot" data-state={state} />
+  )
 }))
 
 function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
@@ -76,6 +78,23 @@ describe('AgentKanbanCard', () => {
     renderCard({ card: card({ startedAt: 0 }), now: 2_000_000_000 })
 
     expect(screen.queryByText(/\d+d/)).not.toBeInTheDocument()
+  })
+
+  it('renders background-only work without an active foreground spinner', () => {
+    const { rerender } = renderCard({ card: card(), now: 2_000 })
+    expect(screen.getByTestId('state-dot')).toHaveAttribute('data-state', 'working')
+
+    rerender(
+      <TooltipProvider>
+        <AgentKanbanCard
+          card={card({ backgroundOnly: true })}
+          now={2_000}
+          onOpenTerminal={vi.fn()}
+        />
+      </TooltipProvider>
+    )
+
+    expect(screen.getByTestId('state-dot')).toHaveAttribute('data-state', 'background')
   })
 
   it('shows the question glyph once when a summary is available', () => {

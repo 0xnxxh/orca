@@ -56,6 +56,7 @@ import {
 } from './dashboard-worktree-launch-options'
 import { buildDashboardSnapshotFilterOptions } from './dashboard-snapshot-filter-options'
 import { dashboardBucketForDotState } from './dashboard-card-bucket'
+import { isBackgroundOnlyAgentActivity } from '../../../../shared/agent-background-only-activity'
 
 /** The store slices the snapshot builder reads. Kept as a Pick so unit tests
  *  can pass a partial store without constructing the whole AppState. */
@@ -255,7 +256,6 @@ export function buildDashboardSnapshot(
               osRelease: clientHost.osRelease
             })
           : null
-      const finishedAt = lastEnteredDoneAt(row)
       const hostMetadata = includeCardDetails
         ? dashboardCardMapWorkspaceMetadata(
             workspace,
@@ -266,13 +266,13 @@ export function buildDashboardSnapshot(
         : undefined
       // Only repos that actually contribute a card ship their icon.
       repoIconsByRepoId[workspace.projectId] = workspace.repoIcon
-
       cards.push({
         paneKey: row.paneKey,
         ptyId,
         agentType: row.agentType,
         bucket,
         dotState,
+        ...(isBackgroundOnlyAgentActivity(row.entry) ? { backgroundOnly: true } : {}),
         task: isTitleDerived ? '' : rowTask(row),
         repoId: workspace.projectId,
         worktreeId,
@@ -296,7 +296,7 @@ export function buildDashboardSnapshot(
         lastUserMessage: isTitleDerived ? undefined : nonEmpty(row.entry.prompt),
         lastAgentMessage: isTitleDerived ? undefined : nonEmpty(row.entry.lastAssistantMessage),
         startedAt: row.startedAt,
-        finishedAt,
+        finishedAt: lastEnteredDoneAt(row),
         stateChangedAt: row.entry.stateStartedAt || row.startedAt,
         statusUpdatedAt: row.entry.updatedAt,
         // Same derivation as WorktreeCardAgents' unvisitedByPaneKey, so the
