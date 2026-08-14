@@ -425,6 +425,52 @@ describe('SshConnection', () => {
     expect(lastHostKeyAccepted).toBe(true)
   })
 
+  // The point of refusing the key is that we do not trust who is on the other end. ssh2 reports a
+  // denied key as a generic auth failure, and an encrypted identity file makes the passphrase branch
+  // eligible on message shape alone — so without an explicit abort we would hand the secret to the
+  // party we just refused.
+  it('never asks for a credential after refusing a host key', async () => {
+    vi.stubEnv('SSH_AUTH_SOCK', '/tmp/agent.sock')
+    const tempDir = mkdtempSync(join(tmpdir(), 'orca-ssh-key-'))
+    const keyPath = join(tempDir, 'id_ed25519')
+    writeFileSync(keyPath, 'test-key')
+    mockPresentedHostKey = Buffer.from('not-a-real-host-key-blob')
+    const onCredentialRequest = vi.fn(async () => 'secret')
+
+    try {
+      const conn = new SshConnection(
+        createTarget({ identityFile: keyPath }),
+        createCallbacks({ onCredentialRequest })
+      )
+
+      await expect(conn.connect()).rejects.toThrow(/host key verification failed/i)
+      expect(onCredentialRequest).not.toHaveBeenCalled()
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  // 'auth-failed' invites the user to re-enter credentials, which is the wrong thing to offer and
+  // the wrong thing to blame; nothing about their credentials is wrong.
+  it('surfaces a refused host key as an error rather than an auth failure', async () => {
+    mockPresentedHostKey = Buffer.from('not-a-real-host-key-blob')
+    const conn = new SshConnection(createTarget(), createCallbacks())
+
+    await expect(conn.connect()).rejects.toThrow()
+    expect(conn.getState().status).toBe('error')
+    expect(conn.getState().error).toMatch(/host key verification failed/i)
+  })
+
+  // Retrying re-derives the same decision, so a ladder that treated this as transient would back off
+  // against a host it has already refused until it gave up — burying the reason.
+  it('does not retry a refused host key', async () => {
+    mockPresentedHostKey = Buffer.from('not-a-real-host-key-blob')
+    const conn = new SshConnection(createTarget(), createCallbacks())
+
+    await expect(conn.connect()).rejects.toThrow()
+    expect(connectAttempts).toBe(1)
+  })
+
   it('captures the negotiated SSH server key fingerprint', async () => {
     const conn = new SshConnection(createTarget(), createCallbacks())
     await conn.connect()

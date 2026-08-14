@@ -135,6 +135,68 @@ describe('the ssh2 host key verifier', () => {
       expect.objectContaining({ outcome: 'unknown', keyType: 'ssh-ed25519' })
     )
   })
+
+  describe('denials that bypass the policy', () => {
+    // The connect path decides whether to keep offering credentials from the reported decision, so
+    // a denial the report skipped arrives as ssh2's generic handshake failure — and the user is
+    // asked for a passphrase by the host we just refused.
+    it('reports a denial for a key it could not read', () => {
+      const onDecision = vi.fn()
+      createHostKeyVerifier(deps({ onDecision }))(Buffer.alloc(2), () => {})
+      expect(onDecision).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'reject',
+          reason: expect.stringContaining('example.com')
+        })
+      )
+    })
+
+    it('reports a denial when a dependency throws', () => {
+      const onDecision = vi.fn()
+      run({
+        onDecision,
+        isTrusted: () => {
+          throw new Error('store unreadable')
+        }
+      })
+      expect(onDecision).toHaveBeenCalledWith(expect.objectContaining({ action: 'reject' }))
+    })
+
+    // There is no host key to identify here, and the relay keys its install locks on this
+    // fingerprint — reporting a bogus one would be worse than reporting none.
+    it('reports no fingerprint for a key it could not read', () => {
+      const onDecision = vi.fn()
+      createHostKeyVerifier(deps({ onDecision }))(Buffer.alloc(2), () => {})
+      expect(onDecision.mock.calls[0]?.[0]?.fingerprint).toBe('')
+    })
+
+    // This path runs from the verifier's own catch, so a throw here would escape into ssh2 and hang
+    // the handshake instead of failing it.
+    it('still denies when reporting the denial throws', () => {
+      let accepted: boolean | undefined
+      const verifier = createHostKeyVerifier(
+        deps({
+          onDecision: () => {
+            throw new Error('listener blew up')
+          }
+        })
+      )
+      expect(() =>
+        verifier(Buffer.alloc(2), (ok) => {
+          accepted = ok
+        })
+      ).not.toThrow()
+      expect(accepted).toBe(false)
+    })
+
+    // Nobody is waiting on a superseded attempt, and reporting would let it overwrite the live
+    // attempt's outcome.
+    it('reports nothing once its attempt has been superseded', () => {
+      const onDecision = vi.fn()
+      run({ onDecision, isCurrentAttempt: () => false })
+      expect(onDecision).not.toHaveBeenCalled()
+    })
+  })
 })
 
 describe('host key algorithm ordering', () => {

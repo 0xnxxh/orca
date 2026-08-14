@@ -12,7 +12,8 @@ import {
   formatHostKeyFingerprint,
   matchKnownHosts,
   readHostKeyType,
-  type KnownHostsEntry
+  type KnownHostsEntry,
+  type KnownHostsOutcome
 } from './ssh-known-hosts'
 import { decideHostKey, type HostKeyDecision } from './ssh-host-key-decision'
 
@@ -122,17 +123,45 @@ export type VerifyCallback = (accept: boolean) => void
 export function createHostKeyVerifier(
   deps: HostKeyVerifierDeps
 ): (key: Buffer, verify: VerifyCallback) => undefined {
+  // Every denial must be reported, not just the ones the policy produced: the connect path decides
+  // whether to keep offering credentials by looking at the reported decision, so a denial that
+  // slipped past onDecision would reach it as ssh2's generic handshake failure and walk the
+  // credential ladder against a host we just refused.
+  const deny = (verify: VerifyCallback, outcome: KnownHostsOutcome, reason: string): undefined => {
+    try {
+      deps.onDecision?.({
+        action: 'reject',
+        outcome,
+        reason: `Host key verification failed for ${deps.displayHost}. ${reason}`,
+        // Empty: there is no host key here to identify. Consumers must not overwrite a fingerprint
+        // they already hold with this.
+        fingerprint: '',
+        keyType: ''
+      })
+    } catch {
+      // This path already runs from the verifier's own catch; a reporting failure must not become
+      // a throw that leaves the handshake hanging instead of denied.
+    }
+    verify(false)
+    return undefined
+  }
+
   return (key, verify) => {
     try {
       if (deps.isCurrentAttempt && !deps.isCurrentAttempt()) {
+        // No decision is reported: nobody is waiting on this attempt, and reporting would let a
+        // superseded verifier overwrite the live attempt's outcome.
         verify(false)
         return undefined
       }
       const keyType = readHostKeyType(key)
       if (!keyType) {
         // A key whose own header we cannot read is not something to reason about further.
-        verify(false)
-        return undefined
+        return deny(
+          verify,
+          'unknown',
+          'The host offered a key that could not be read as an SSH host key.'
+        )
       }
       const fingerprint = hostKeyFingerprintOf(key)
       const decision = decideHostKey({
@@ -167,7 +196,7 @@ export function createHostKeyVerifier(
       // ssh2 may not catch a throw from inside the verifier, which would leave the handshake
       // hanging rather than failing. Denying is the only safe outcome for an error we cannot
       // interpret.
-      verify(false)
+      return deny(verify, 'unknown', 'The host key could not be checked.')
     }
     return undefined
   }

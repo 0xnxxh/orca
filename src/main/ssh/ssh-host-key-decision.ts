@@ -51,6 +51,28 @@ function rejection(displayHost: string, detail: string): string {
   return `Host key verification failed for ${displayHost}. ${detail}`
 }
 
+/**
+ * A denied host key, carried as a type rather than sniffed from the message.
+ *
+ * The connect path must recognise this before it offers any credential: prompting for a passphrase
+ * or a password after we have decided the host may be impersonated is the one thing a host key check
+ * exists to prevent — the user types the secret straight into whatever answered. Substring matching
+ * would tie that to wording that the reason strings deliberately keep changing.
+ */
+export class HostKeyVerificationError extends Error {
+  readonly outcome: KnownHostsOutcome
+
+  constructor(message: string, outcome: KnownHostsOutcome) {
+    super(message)
+    this.name = 'HostKeyVerificationError'
+    this.outcome = outcome
+  }
+}
+
+export function isHostKeyVerificationError(err: unknown): err is HostKeyVerificationError {
+  return err instanceof HostKeyVerificationError
+}
+
 export function decideHostKey(input: HostKeyDecisionInput): HostKeyDecision {
   const {
     knownHostsOutcome,

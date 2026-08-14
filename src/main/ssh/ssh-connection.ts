@@ -39,6 +39,7 @@ import {
 } from './ssh-connection-utils'
 import { resolveEffectiveProxy, spawnProxyCommand } from './ssh-proxy-command'
 import { createHostKeyVerifier, orderServerHostKeyAlgorithms } from './ssh-host-key-verifier'
+import { HostKeyVerificationError, isHostKeyVerificationError } from './ssh-host-key-decision'
 import { sshGArgsForHost } from './ssh-g-config-resolution'
 // ssh2's own default order, which leads with ed25519 and places RSA fifth through seventh.
 const DEFAULT_SERVER_HOST_KEY_ALGORITHMS = [
@@ -745,6 +746,17 @@ export class SshConnection {
         throw err
       }
 
+      // Why first: everything below this line either offers a credential or retries on another
+      // transport. We have just decided this host may not be the one it claims to be, so prompting
+      // would collect the user's passphrase or password on its behalf, and the system-ssh probe
+      // would connect anyway whenever the disagreement is with our own store rather than
+      // known_hosts. A denied key is final for this attempt.
+      if (isHostKeyVerificationError(err)) {
+        this.proxyProcess?.kill()
+        this.proxyProcess = null
+        throw err
+      }
+
       if (isSystemSshFallbackError(err)) {
         this.proxyProcess?.kill()
         this.proxyProcess = null
@@ -785,7 +797,9 @@ export class SshConnection {
             await this.doSsh2Connect(keyConfig, connectGeneration)
             return
           } catch (keyErr) {
-            if (!(keyErr instanceof Error)) {
+            // Same reason as above: the retry re-runs the handshake, so it can be the attempt that
+            // denies the key, and the passphrase prompt is directly below.
+            if (!(keyErr instanceof Error) || isHostKeyVerificationError(keyErr)) {
               this.proxyProcess?.kill()
               this.proxyProcess = null
               throw keyErr
@@ -1238,7 +1252,7 @@ export class SshConnection {
       // Local to this attempt: an instance field would let a superseded attempt's rejection replace
       // the live attempt's error, and substituting a new Error drops ssh2's `code`, so a transient
       // ECONNRESET would stop being classified as retryable.
-      let hostKeyRejection: string | null = null
+      let hostKeyRejection: HostKeyVerificationError | null = null
 
       // Why the fingerprint is still recorded: the relay uses the negotiated server key to isolate
       // shared-home install locks without comparing PIDs from an unrelated SSH host. Its format is
@@ -1290,11 +1304,21 @@ export class SshConnection {
         },
         isCurrentAttempt: () => !this.disposed && connectGeneration === this.connectGeneration,
         onDecision: (decision) => {
-          if (!this.disposed && connectGeneration === this.connectGeneration) {
+          // Empty when the blob was not a readable host key: there is nothing to identify, and the
+          // relay uses this fingerprint to isolate install locks, so blanking it would be worse
+          // than leaving the previous one.
+          if (
+            decision.fingerprint &&
+            !this.disposed &&
+            connectGeneration === this.connectGeneration
+          ) {
             this.hostKeyFingerprint = decision.fingerprint
           }
           if (decision.action === 'reject') {
-            hostKeyRejection = decision.reason ?? 'Host key verification failed.'
+            hostKeyRejection = new HostKeyVerificationError(
+              decision.reason ?? 'Host key verification failed.',
+              decision.outcome
+            )
           }
         }
       })
@@ -1358,10 +1382,10 @@ export class SshConnection {
         cleanupStartupListeners()
         settled = true
         client.destroy()
-        // Why replace the message: ssh2 reports a denied host key as a generic handshake failure,
+        // Why replace the error: ssh2 reports a denied host key as a generic handshake failure,
         // which the reconnect ladder cannot distinguish from a transient fault and would retry
         // forever against a decision that will never change.
-        reject(hostKeyRejection ? new Error(hostKeyRejection) : err)
+        reject(hostKeyRejection ?? err)
       }
 
       client.on('ready', onReady)
