@@ -140,7 +140,7 @@ describe('legacy terminal shim neutralization', () => {
       const cmd = readFileSync(join(win32Dir, `${command}.cmd`), 'utf8')
       // No where.exe at all: it searches cwd first, so the wrapper walks the cleaned PATH.
       expect(cmd).not.toContain('where.exe')
-      expect(cmd).toContain('for %%P in ("%orca_clean_path:;=" "%") do call :orca_try_candidate')
+      expect(cmd).toContain('for %%P in ("%orca_clean_path:;=" "%") do (')
       expect(cmd).toContain(`if exist "%orca_candidate_dir%\\${command}.exe"`)
       // Why: %~f preserves a trailing separator; without normalizing, a wrapper-dir entry
       // spelled with one escapes self-exclusion and the wrapper tail-loops on itself. The
@@ -149,11 +149,20 @@ describe('legacy terminal shim neutralization', () => {
       expect(cmd).toContain('set "orca_sep=\\"')
       // Why: a captured ORCA_REAL_* may be relative, and both the existence test and the
       // invocation resolve it against the cwd.
-      expect(cmd).toContain('if defined orca_real call :orca_check_rooted "%orca_real%"')
+      expect(cmd).toContain('if defined orca_real call :orca_check_rooted')
       expect(cmd).toContain('if defined orca_real if not defined orca_rooted set "orca_real="')
       // Why: the exported PATH is inherited by the real command; a relative entry left in it lets
       // the cwd select the tools that command spawns.
       expectOrdered(cmd, ':orca_append_path', 'if not defined orca_rooted exit /b')
+      // Why: CALL re-expands its own command line, so path data passed as an argument gets a
+      // second round of percent expansion. A PATH entry holding a literal %CD% became the
+      // current directory before the rooted check saw it and the planted git.cmd ran (rc=66 on
+      // Windows 11). Every caller must hand the value over in a variable instead.
+      expect(cmd).not.toContain('call :orca_check_rooted "')
+      expect(cmd).not.toContain('call :orca_try_candidate "')
+      expect(cmd).not.toContain('call :orca_append_path "')
+      expect(cmd).not.toContain('%~1')
+      expect(cmd).toContain('set "orca_probe=%orca_entry%"\r\ncall :orca_check_rooted\r\n')
       // Why: orca_sep is compared against before the legacy dir is normalized; defining it later
       // made that strip silently no-op and left the legacy dir on PATH.
       expectOrdered(cmd, 'set "orca_sep=', 'if "%orca_legacy_norm:~-1%."')
@@ -162,7 +171,11 @@ describe('legacy terminal shim neutralization', () => {
       expect(cmd).not.toContain('=="%orca_sep%"')
       // Why: nothing else asserts the *reject* path, so deleting it would reopen the cwd hijack
       // while every accept-path assertion stayed green.
-      expectOrdered(cmd, ':orca_try_candidate', 'call :orca_check_rooted "%~1"')
+      expectOrdered(
+        cmd,
+        'call :orca_check_rooted\r\nif not defined orca_rooted exit /b',
+        'for %%G in ("%orca_entry%") do set "orca_candidate_dir='
+      )
       expect(cmd).toContain('if not defined orca_rooted exit /b')
       expect(cmd).toContain('if "%orca_candidate_dir:~-1%."=="%orca_sep%."')
       expect(cmd).not.toContain(':\\#=#%')
@@ -177,7 +190,7 @@ describe('legacy terminal shim neutralization', () => {
       expect(cmd).toContain('if "%orca_probe:~0,2%"=="\\\\" set "orca_rooted=1"')
       // Why: these two guards are the only thing stopping an empty element reaching the cwd on
       // Windows; deleting either left every other assertion green.
-      expect(cmd).toContain('if "%~1"=="" exit /b')
+      expect(cmd).toContain('if not defined orca_entry exit /b')
 
       const powershell = readFileSync(join(win32Dir, `${command}-wrapper.ps1`), 'utf8')
       expect(powershell).not.toContain('Get-Command')
@@ -571,7 +584,7 @@ describe('legacy terminal shim neutralization', () => {
     const cmd = readFileSync(join(win32Dir, 'git.cmd'), 'utf8')
     const cmdCapture = 'set "orca_legacy_wrapper_dir=%ORCA_ATTRIBUTION_SHIM_DIR%"'
     expectOrdered(cmd, cmdCapture, 'set "ORCA_ATTRIBUTION_SHIM_DIR="')
-    expect(cmd).toContain('for %%P in ("%PATH:;=" "%") do call :orca_append_path "%%~P"')
+    expect(cmd).toContain('for %%P in ("%PATH:;=" "%") do (')
     expect(cmd).toContain('if /I "%orca_path_entry_dir%"=="%orca_wrapper_dir%" exit /b')
     expect(cmd).toContain('if defined orca_legacy_wrapper_dir call :orca_reject_legacy_dir')
     // Why: `call :label && ...` is not valid cmd; the flag variable is what makes it work.

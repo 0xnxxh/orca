@@ -26,7 +26,13 @@ if defined orca_legacy_wrapper_dir call :orca_normalize_legacy_dir
 rem Why: an empty PATH leaves the substitution below with an unbalanced quote, which
 rem desynchronizes cmd parsing for the rest of the file. Skip the line entirely instead.
 if not defined PATH goto :orca_path_walked
-for %%P in ("%PATH:;=" "%") do call :orca_append_path "%%~P"
+rem Why the variable: CALL re-expands its own command line, so a PATH entry holding a literal
+rem %CD% would be turned into the current directory before the rooted check below ever sees it,
+rem and the cwd would then be searched for __ORCA_COMMAND__. Proven on Windows 11.
+for %%P in ("%PATH:;=" "%") do (
+  set "orca_entry=%%~P"
+  call :orca_append_path
+)
 :orca_path_walked
 set "PATH=%orca_clean_path%"
 set "ORCA_ENABLE_GIT_ATTRIBUTION="
@@ -40,7 +46,8 @@ set "ORCA_REAL_GH="
 if defined orca_real for %%G in ("%orca_real%") do if /I "%%~dpG"=="%~dp0" set "orca_real="
 rem Why: a captured path may be relative, and both "if exist" and the invocation resolve it
 rem against the current directory, so an inherited .\__ORCA_COMMAND__.exe would run from the repo.
-if defined orca_real call :orca_check_rooted "%orca_real%"
+set "orca_probe=%orca_real%"
+if defined orca_real call :orca_check_rooted
 if defined orca_real if not defined orca_rooted set "orca_real="
 rem Why: clear a captured path that no longer exists, or the PATH walk below is skipped.
 if defined orca_real if not exist "%orca_real%" set "orca_real="
@@ -48,7 +55,10 @@ if defined orca_real goto run
 rem Why: an unqualified Windows command lookup searches the current directory before PATH, so a
 rem repository-local __ORCA_COMMAND__.exe would win. Walk the cleaned PATH ourselves instead.
 if not defined orca_clean_path goto :orca_candidates_walked
-for %%P in ("%orca_clean_path:;=" "%") do call :orca_try_candidate "%%~P"
+for %%P in ("%orca_clean_path:;=" "%") do (
+  set "orca_entry=%%~P"
+  call :orca_try_candidate
+)
 :orca_candidates_walked
 if not defined orca_real (
   echo Orca compatibility wrapper could not locate __ORCA_COMMAND__ on PATH. 1>&2
@@ -67,8 +77,10 @@ exit /b
 :orca_check_rooted
 rem Why: tested in pure batch on purpose. An external tool invoked here would itself be resolved
 rem from the current directory, reintroducing the very hijack this guard exists to prevent.
+rem Why orca_probe rather than an argument: see the CALL re-expansion note above.
 set "orca_rooted="
-set "orca_probe=%~1"
+rem Why: an unset probe would leave the substring syntax below unexpanded and mangle the line.
+if not defined orca_probe exit /b
 if "%orca_probe:~0,2%"=="\\" set "orca_rooted=1"
 if "%orca_probe:~1,2%"==":\" set "orca_rooted=1"
 if "%orca_probe:~1,2%"==":/" set "orca_rooted=1"
@@ -76,11 +88,12 @@ exit /b
 
 :orca_try_candidate
 if defined orca_real exit /b
-if "%~1"=="" exit /b
+if not defined orca_entry exit /b
 rem Why: a relative entry resolves against the current directory, same exposure as an empty one.
-call :orca_check_rooted "%~1"
+set "orca_probe=%orca_entry%"
+call :orca_check_rooted
 if not defined orca_rooted exit /b
-for %%G in ("%~1") do set "orca_candidate_dir=%%~fG"
+for %%G in ("%orca_entry%") do set "orca_candidate_dir=%%~fG"
 rem Why: full-path expansion preserves a trailing separator, so without normalizing, the
 rem self-exclusion below misses a wrapper-dir entry spelled with one and the wrapper resolves
 rem to itself, looping forever.
@@ -94,12 +107,13 @@ if not defined orca_real if exist "%orca_candidate_dir%\__ORCA_COMMAND__.bat" se
 exit /b
 
 :orca_append_path
-if "%~1"=="" exit /b
+if not defined orca_entry exit /b
 rem Why: the exported PATH is inherited by the real git and anything it spawns, so a relative
 rem entry left here lets the current directory select those tools instead.
-call :orca_check_rooted "%~1"
+set "orca_probe=%orca_entry%"
+call :orca_check_rooted
 if not defined orca_rooted exit /b
-for %%G in ("%~1") do set "orca_path_entry_dir=%%~fG"
+for %%G in ("%orca_entry%") do set "orca_path_entry_dir=%%~fG"
 rem Why: full-path expansion preserves a trailing separator; normalize before comparing.
 if "%orca_path_entry_dir:~-1%."=="%orca_sep%." set "orca_path_entry_dir=%orca_path_entry_dir:~0,-1%"
 set "orca_path_entry_dir=%orca_path_entry_dir%\"
@@ -107,7 +121,7 @@ if /I "%orca_path_entry_dir%"=="%orca_wrapper_dir%" exit /b
 set "orca_skip_entry="
 if defined orca_legacy_wrapper_dir call :orca_reject_legacy_dir
 if defined orca_skip_entry exit /b
-if defined orca_clean_path (set "orca_clean_path=%orca_clean_path%;%~1") else set "orca_clean_path=%~1"
+if defined orca_clean_path (set "orca_clean_path=%orca_clean_path%;%orca_entry%") else set "orca_clean_path=%orca_entry%"
 exit /b
 
 :orca_reject_legacy_dir
