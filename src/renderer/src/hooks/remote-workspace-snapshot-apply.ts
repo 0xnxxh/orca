@@ -188,11 +188,22 @@ export async function applyDirectSshRemoteWorkspaceSnapshot({
       // `reconcileWorktreeTabModel(worktreeId)` for each replaced key fixes it and converges — but
       // it also DELETES the tabs whenever `reconnectPersistedTerminals` binds no PTY. That is
       // reachable: the reconnect races a 30s timeout that aborts, and its rejection path is
-      // swallowed, so both fall through to here. `hydrateWorkspaceSession` seeds
-      // `deferredSshSessionIdsByTabId` only when the target is NOT connected, which is exactly
-      // this case, so `terminalTabHasReconnectablePty` sees nothing and the orphan sweep wipes
-      // every worktree in `replaceWorkspaceKeys` — including background ones the user never
-      // opened. Losing tabs on a slow reconnect is worse than tabs that need a click to reappear.
+      // swallowed, so both fall through to here.
+      //
+      // The safety net does not save it, and NOT for the reason it first appears. The deferred-id
+      // seeding lives in `reconnectPersistedTerminals` (terminals.ts:4283-4318) — inside the very
+      // call the timeout aborts — not in `hydrateWorkspaceSession`. It early-returns on
+      // `signal?.aborted` (:4321-4326) BEFORE committing the map at :4349, so on this race no
+      // deferred id is written at all, whatever the connection state. Worse, when `options` is
+      // present — and the snapshot path always passes `directSshAuthority` — it first STRIPS
+      // existing deferred entries for the scoped tabs (:4283-4289), removing an already-seeded net
+      // before deciding whether to re-seed. So `terminalTabHasReconnectablePty` sees nothing and
+      // the orphan sweep wipes every worktree in `replaceWorkspaceKeys`, including background ones
+      // the user never opened. Losing tabs on a slow reconnect is worse than tabs that need a
+      // click to reappear.
+      //
+      // Gating on the `sshConnected` check at terminals.ts:4308 alone does NOT cover this — the
+      // abort early-return at :4321 fires first.
       //
       // A fix must gate on reconnect having actually bound something, and needs a test for the
       // failed-reconnect path, which nothing covers today.
