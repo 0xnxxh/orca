@@ -221,43 +221,51 @@ export function matchKnownHosts(
     }
   }
 
-  let sawKnownHostOtherType = false
+  // A CA line is a MARKER, so it never satisfies a plain host key and never stops the fallback pass.
+  // Tracked across passes because it describes the host either way.
   let sawCertAuthority = false
 
   for (let passIndex = 0; passIndex < passes.length; passIndex += 1) {
     const candidates = passes[passIndex]!
+    // Per pass, never carried forward. These describe what THIS candidate form knows, and the
+    // fallback form's knowledge is not admissible as evidence of a change — see below.
     let sawSameTypeForHost = false
+    let sawPlainEntryForHost = false
 
     for (const entry of entries) {
       if (entry.marker === 'revoked' || !matchesHost(entry, candidates)) {
         continue
       }
       if (entry.marker === 'cert-authority') {
-        // A CA line only validates certificates; it never matches a plain host key.
         sawCertAuthority = true
         continue
       }
-      if (entry.keyType === query.keyType) {
-        if (entry.key.equals(query.key)) {
-          return 'match'
-        }
-        sawSameTypeForHost = true
-      } else {
-        sawKnownHostOtherType = true
+      // Byte equality implies the types agree: the blob carries its own algorithm name, and parsing
+      // already rejected any line whose declared type disagreed with it.
+      if (entry.key.equals(query.key)) {
+        return 'match'
       }
+      sawPlainEntryForHost = true
+      sawSameTypeForHost ||= entry.keyType === query.keyType
     }
 
-    // Only the first (most specific) pass may report a change. On the fallback pass OpenSSH
-    // downgrades a wrong key to "not known", so reporting mismatch there would be a false alarm.
-    if (sawSameTypeForHost && passIndex === 0) {
-      return 'mismatch'
+    // The first pass decides if it knows this host AT ALL. OpenSSH runs the bare-host fallback only
+    // when the port-qualified lookup matched no plain entry of ANY type; when one was there, its
+    // verdict is final. Verified live against OpenSSH 10.2p1 on 127.0.0.1:2223 — an off-port RSA
+    // entry plus a bare, correct ed25519 line makes ssh print IDENTIFICATION HAS CHANGED with no
+    // "checking without port identifier", where continuing to the fallback returns `match` and
+    // ACCEPTS A CHANGED KEY.
+    if (passIndex === 0 && sawPlainEntryForHost) {
+      // Both refuse. The distinction only picks the message: a changed key of the type we hold, or
+      // a type we have never seen for a host we do know. ssh calls both HOST_CHANGED.
+      return sawSameTypeForHost ? 'mismatch' : 'unknown-type-known-host'
     }
   }
 
-  if (sawCertAuthority) {
-    return 'ca-only'
-  }
-  // We hold a key for this host, just not of the presented type. Not first contact — an attacker
-  // who cannot forge the known type could otherwise present a different one to get a soft outcome.
-  return sawKnownHostOtherType ? 'unknown-type-known-host' : 'unknown'
+  // Nothing after the first pass may report a change. On the fallback pass OpenSSH downgrades any
+  // non-match to "not known" — including an entry of another type, which it treats as plain first
+  // contact. Verified live: a bare ssh-rsa entry, dialed on 2223 against an ed25519-only server,
+  // makes ssh add the host and connect. Reporting unknown-type-known-host there refuses a host ssh
+  // accepts, which is why these flags are scoped to their pass.
+  return sawCertAuthority ? 'ca-only' : 'unknown'
 }

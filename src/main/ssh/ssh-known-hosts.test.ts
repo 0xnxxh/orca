@@ -267,6 +267,31 @@ describe('agreement with a live OpenSSH client', () => {
     ).toBe('match')
   })
 
+  // THE accept-a-changed-key case. Live on 127.0.0.1:2223 against an ed25519-only server, with an
+  // off-port RSA entry AND a bare correct ed25519 line, ssh printed IDENTIFICATION HAS CHANGED and
+  // refused — and printed NO "checking without port identifier", so the fallback never ran. ssh
+  // gates that pass on the port-qualified lookup matching no plain entry of ANY type; gating it on
+  // "no match and no same-type mismatch" instead reaches the bare line and returns `match`.
+  it('does not fall back past an off-port entry of another type, as ssh did not', () => {
+    const contents = `${line('[127.0.0.1]:2223', RSA_A, 'ssh-rsa')}\n${line('127.0.0.1', SERVER_KEY)}`
+    expect(verdict(contents, { host: '127.0.0.1', port: 2223, key: SERVER_KEY })).toBe(
+      'unknown-type-known-host'
+    )
+  })
+
+  // The same flags, the opposite error. Live, a BARE ssh-rsa entry dialed on 2223 against the same
+  // ed25519-only server made ssh add the host and connect — plain first contact. Letting the
+  // fallback pass set unknown-type-known-host refuses a host ssh accepts.
+  it('treats an other-type entry found only on the fallback pass as unknown, as ssh did', () => {
+    expect(
+      verdict(line('127.0.0.1', RSA_A, 'ssh-rsa'), {
+        host: '127.0.0.1',
+        port: 2223,
+        key: SERVER_KEY
+      })
+    ).toBe('unknown')
+  })
+
   // Live: ssh reached authentication, so it accepted the bare line for a non-default port.
   it('falls back to the bare host line on a non-default port, as ssh did', () => {
     expect(
