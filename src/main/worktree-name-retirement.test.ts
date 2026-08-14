@@ -10,7 +10,7 @@ import {
   discoverRetiredWorktreeNames,
   ensureRetiredWorktreeNamesBackfilled,
   extractBucketLeafCandidates,
-  getRetiredWorktreeNamesForRepo,
+  getRetiredNameRegistryForRepo,
   normalizeRetirableGeneratedName,
   resetRetirementCollisionKeyCacheForTests
 } from './worktree-name-retirement'
@@ -207,16 +207,16 @@ describe('discoverRetiredWorktreeNames', () => {
   })
 })
 
-describe('getRetiredWorktreeNamesForRepo', () => {
+describe('getRetiredNameRegistryForRepo', () => {
   const settingsFor = (nestWorkspaces: boolean): GlobalSettings =>
     ({ workspaceDir: '/workspaces', nestWorkspaces }) as GlobalSettings
   const storeOf = (byRepo: Record<string, string[]>) => {
     const calls: string[] = []
     return {
       calls,
-      getRetiredWorktreeNames: (repoId: string) => {
+      getRetiredWorktreeNameRegistry: (repoId: string) => {
         calls.push(repoId)
-        return byRepo[repoId] ?? []
+        return { exhaustedTiers: 0, names: byRepo[repoId] ?? [] }
       }
     }
   }
@@ -226,7 +226,7 @@ describe('getRetiredWorktreeNamesForRepo', () => {
     const repos = [makeRepo('repo-a', '/repos/a'), makeRepo('repo-b', '/repos/b')]
 
     expect(
-      getRetiredWorktreeNamesForRepo(store, repos[1], repos, settingsFor(false)).sort()
+      [...getRetiredNameRegistryForRepo(store, repos[1], repos, settingsFor(false)).names].sort()
     ).toEqual([FIRST, SECOND].sort())
   })
 
@@ -234,9 +234,10 @@ describe('getRetiredWorktreeNamesForRepo', () => {
     const store = storeOf({ 'repo-a': [FIRST], 'repo-b': [SECOND] })
     const repos = [makeRepo('repo-a', '/repos/a'), makeRepo('repo-b', '/repos/b')]
 
-    expect(getRetiredWorktreeNamesForRepo(store, repos[1], repos, settingsFor(true))).toEqual([
-      SECOND
-    ])
+    expect(getRetiredNameRegistryForRepo(store, repos[1], repos, settingsFor(true))).toEqual({
+      exhaustedTiers: 0,
+      names: [SECOND]
+    })
   })
 
   it('never probes a path for peers that hold no retirements', () => {
@@ -258,9 +259,10 @@ describe('getRetiredWorktreeNamesForRepo', () => {
       ...Array.from({ length: 20 }, (_unused, index) => spyRepo(`peer-${index}`, `/repos/${index}`))
     ]
 
-    expect(getRetiredWorktreeNamesForRepo(store, repos[0], repos, settingsFor(false))).toEqual([
-      FIRST
-    ])
+    expect(getRetiredNameRegistryForRepo(store, repos[0], repos, settingsFor(false))).toEqual({
+      exhaustedTiers: 0,
+      names: [FIRST]
+    })
     expect(pathReads.filter((id) => id.startsWith('peer-'))).toEqual([])
   })
 
@@ -269,7 +271,7 @@ describe('getRetiredWorktreeNamesForRepo', () => {
     const folderRepo = { ...makeRepo('folder', '/repos/folder'), kind: 'folder' as const }
 
     expect(
-      getRetiredWorktreeNamesForRepo(store, folderRepo, [folderRepo], settingsFor(false))
+      getRetiredNameRegistryForRepo(store, folderRepo, [folderRepo], settingsFor(false)).names
     ).toEqual([])
   })
 })

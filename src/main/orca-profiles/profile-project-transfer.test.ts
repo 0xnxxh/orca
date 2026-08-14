@@ -128,7 +128,7 @@ describe('profile project transfer', () => {
             }
           ]
         },
-        retiredWorktreeNamesByRepo: { 'repo-1': ['nautilus'] },
+        retiredWorktreeNamesByRepo: { 'repo-1': { exhaustedTiers: 0, names: ['nautilus'] } },
         worktreeMeta: {
           [sourceWorktreeId]: makeWorktreeMeta({ projectHostSetupId: 'repo-1' })
         },
@@ -182,7 +182,10 @@ describe('profile project transfer', () => {
     ])
     // Why: without the re-key the destination profile reissues a name whose old directory may
     // still hold the previous occupant's agent conversation.
-    expect(target.retiredWorktreeNamesByRepo?.[targetRepoId]).toEqual(['nautilus'])
+    expect(target.retiredWorktreeNamesByRepo?.[targetRepoId]).toEqual({
+      exhaustedTiers: 0,
+      names: ['nautilus']
+    })
     expect(target.workspaceSession.tabsByWorktree).toEqual({})
     expect(readProfileState('personal').repos.map((repo) => repo.id)).toEqual(['repo-1'])
   })

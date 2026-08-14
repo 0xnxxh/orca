@@ -139,7 +139,8 @@ import {
   getWorktreeCreateCandidate,
   WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS
 } from '../worktree-create-candidates'
-import { getRetiredWorktreeNamesForRepo } from '../worktree-name-retirement'
+import { getRetiredNameRegistryForRepo } from '../worktree-name-retirement'
+import { createRetiredNameLookup } from '../../shared/worktree/retired-name-registry'
 
 const SSH_WORKTREE_CREATE_FETCH_FRESHNESS_MS = 30_000
 const SSH_WORKTREE_CREATE_FETCH_CACHE_MAX = 512
@@ -1555,8 +1556,10 @@ export async function createRemoteWorktree(
   let selectedExistingLocalBranchName: string | null = null
   let lastBranchConflictKind: 'local' | 'remote' | null = null
   let remotePathResolved = false
-  const retiredNames = args.nameWasGenerated
-    ? new Set(getRetiredWorktreeNamesForRepo(store, repo, store.getRepos(), settings))
+  const isRetiredName = args.nameWasGenerated
+    ? createRetiredNameLookup(
+        getRetiredNameRegistryForRepo(store, repo, store.getRepos(), settings)
+      )
     : null
   // Why: duplicate PR/MR checkouts still need a workspace; suffix branch/path while preserving review metadata and push target.
   for (let suffix = 1; suffix <= WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS; suffix += 1) {
@@ -1564,7 +1567,7 @@ export async function createRemoteWorktree(
     effectiveRequestedName = args.name.trim()
       ? getWorktreeCreateCandidate(args.name, suffix)
       : effectiveSanitizedName
-    if (retiredNames?.has(effectiveSanitizedName)) {
+    if (isRetiredName?.(effectiveSanitizedName)) {
       continue
     }
     branchName = await resolveCreateBranchNameSsh(
@@ -2104,8 +2107,10 @@ export async function createLocalWorktree(
   let lastBranchConflictKind: 'local' | 'remote' | null = null
   let lastExistingPR: Awaited<ReturnType<typeof getPRForBranch>> | null = null
   let lastExistingReviewNumber: number | null = null
-  const retiredNames = args.nameWasGenerated
-    ? new Set(getRetiredWorktreeNamesForRepo(store, repo, store.getRepos(), settings))
+  const isRetiredName = args.nameWasGenerated
+    ? createRetiredNameLookup(
+        getRetiredNameRegistryForRepo(store, repo, store.getRepos(), settings)
+      )
     : null
   // Why: a create-from-review branch override may already exist locally; suffix both branch and path instead of blocking the user.
   for (let suffix = 1; suffix <= WORKTREE_CREATE_MAX_SUFFIX_ATTEMPTS; suffix += 1) {
@@ -2113,7 +2118,7 @@ export async function createLocalWorktree(
     effectiveRequestedName = requestedName.trim()
       ? getWorktreeCreateCandidate(requestedName, suffix)
       : effectiveSanitizedName
-    if (retiredNames?.has(effectiveSanitizedName)) {
+    if (isRetiredName?.(effectiveSanitizedName)) {
       continue
     }
     lastExistingReviewNumber = null

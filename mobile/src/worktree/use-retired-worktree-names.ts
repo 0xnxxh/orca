@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
-  readRetiredNamesForRepo,
+  readRetiredNameRegistryForRepo,
   retiredNamesAfterRefresh,
-  selectRetiredNames,
+  selectRetiredNameRegistry,
   type RetiredNamesLoad
 } from '../../../src/shared/worktree/retired-name-cache'
+import type { RetiredNameRegistry } from '../../../src/shared/worktree/retired-name-registry'
 import type { RpcClient } from '../transport/rpc-client'
 
 /** Names already spent in a repo, including workspaces that have since been deleted.
@@ -20,7 +21,7 @@ export function useRetiredWorktreeNames(
   client: RpcClient | null | undefined,
   repoId: string | null | undefined,
   refreshKey: unknown
-): readonly string[] {
+): RetiredNameRegistry {
   const [loaded, setLoaded] = useState<RetiredNamesLoad | null>(null)
   const activeRepoId = client && repoId ? repoId : null
 
@@ -30,15 +31,17 @@ export function useRetiredWorktreeNames(
       return
     }
     let cancelled = false
-    const settle = (names: readonly string[] | null): void => {
+    const settle = (registry: RetiredNameRegistry | null): void => {
       if (!cancelled) {
-        setLoaded((previous) => retiredNamesAfterRefresh(previous, activeRepoId, names))
+        setLoaded((previous) => retiredNamesAfterRefresh(previous, activeRepoId, registry))
       }
     }
     void client
       .sendRequest('worktree.listRetiredNames', { repo: `id:${activeRepoId}` })
       .then((response) =>
-        settle(readRetiredNamesForRepo((response as { result?: unknown }).result, activeRepoId))
+        settle(
+          readRetiredNameRegistryForRepo((response as { result?: unknown }).result, activeRepoId)
+        )
       )
       .catch(() => settle(null))
     return () => {
@@ -46,5 +49,5 @@ export function useRetiredWorktreeNames(
     }
   }, [activeRepoId, client, refreshKey])
 
-  return selectRetiredNames(loaded, activeRepoId)
+  return selectRetiredNameRegistry(loaded, activeRepoId)
 }

@@ -19,6 +19,7 @@ import type { ProjectGroup } from './project-group-types'
 import type { Project, ProjectHostSetup } from './project-types'
 import type { Repo } from './repo-types'
 import type { SparsePreset } from './worktree/create-types'
+import type { RetiredNameRegistry } from './worktree/retired-name-registry'
 import type { WorkspaceLineage, WorktreeLineage } from './worktree/lineage-types'
 import type { WorktreeMeta } from './worktree/meta-types'
 import type { WorkspaceSessionState } from './workspace-session-state-types'
@@ -68,8 +69,10 @@ export type PersistedState = {
    *  that cwd. Grows monotonically within a repo — entries are never removed on workspace deletion
    *  — and is dropped wholesale when the repo is removed. Readers union across every repo that
    *  creates into the same cwd namespace, so the storage key stays the stable repo id while the
-   *  guarantee follows the path. */
-  retiredWorktreeNamesByRepo?: Record<string, string[]>
+   *  guarantee follows the path.
+   *
+   *  Stored compacted, not as a flat list: a fully spent tier collapses into the row's watermark. */
+  retiredWorktreeNamesByRepo?: Record<string, RetiredNameRegistry>
   /** Per paired device last tab selection by worktree; keeps mobile navigation across host restarts. */
   mobileClientTabSelectionsByDeviceId?: PersistedMobileClientTabSelections
   worktreeMeta: Record<string, WorktreeMeta>

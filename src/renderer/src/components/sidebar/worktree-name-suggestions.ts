@@ -3,6 +3,10 @@ import {
   selectSuggestedCreatureName,
   suggestionPathBasename
 } from '../../../../shared/worktree-name-suggestion'
+import {
+  EMPTY_RETIRED_NAME_REGISTRY,
+  type RetiredNameRegistry
+} from '../../../../shared/worktree/retired-name-registry'
 
 type WorktreePathLike = {
   path: string
@@ -22,10 +26,13 @@ function collectUsedNames(worktreesByRepo: Record<string, WorktreePathLike[]>): 
   return usedNames
 }
 
-/** `retiredNames` are names already spent in the active repo, including ones whose workspace was
+/** `retired` holds names already spent in the active repo, including ones whose workspace was
  *  deleted. Reissuing one would place the new workspace on the prior occupant's path, where agent
  *  CLIs would hand it that workspace's conversation history — so spent names are never offered
  *  again, and the pool degrades to suffixed variants instead of recycling.
+ *
+ *  Its `exhaustedTiers` watermark stands in for the tiers the registry has compacted away; those
+ *  names are absent from `names` because they are all spent, not because they are available.
  *
  *  Live dedup stays cross-repo while retirement is per-repo: two live workspaces sharing a name
  *  are confusing in a flat sidebar, but a name retired under one repo says nothing about the same
@@ -33,13 +40,13 @@ function collectUsedNames(worktreesByRepo: Record<string, WorktreePathLike[]>): 
 export function getSuggestedCreatureName(
   worktreesByRepo: Record<string, WorktreePathLike[]>,
   random: () => number = Math.random,
-  retiredNames: Iterable<string> = []
+  retired: RetiredNameRegistry = EMPTY_RETIRED_NAME_REGISTRY
 ): string {
   const usedNames = collectUsedNames(worktreesByRepo)
-  for (const retiredName of retiredNames) {
+  for (const retiredName of retired.names) {
     usedNames.add(normalizeSuggestedName(retiredName))
   }
-  return selectSuggestedCreatureName(usedNames, random)
+  return selectSuggestedCreatureName(usedNames, random, retired.exhaustedTiers)
 }
 
 export function shouldApplySuggestedName(name: string, previousSuggestedName: string): boolean {

@@ -6,6 +6,7 @@ import type { WorkspaceKey } from '../../shared/folder-workspace-types'
 import type { PersistedState } from '../../shared/persisted-state-types'
 import type { Repo } from '../../shared/repo-types'
 import type { SparsePreset } from '../../shared/worktree/create-types'
+import type { RetiredNameRegistry } from '../../shared/worktree/retired-name-registry'
 import { parseWorkspaceKey } from '../../shared/workspace-scope'
 import type { TransferProfileState } from './profile-project-state-file'
 import { rebuildRepoBackedProjectState } from './profile-project-state-file'
@@ -23,9 +24,9 @@ import {
 export type TransferPayload = {
   repo: Repo
   sparsePresets: SparsePreset[]
-  /** Generated names already spent for this repo. Carried so the destination profile does not
-   *  reissue a name whose old directory still holds agent state. */
-  retiredWorktreeNames: string[]
+  /** Generated names already spent for this repo, compacted. Carried so the destination profile
+   *  does not reissue a name whose old directory still holds agent state. */
+  retiredNameRegistry: RetiredNameRegistry | undefined
   worktreeMeta: PersistedState['worktreeMeta']
   worktreeLineageById: PersistedState['worktreeLineageById']
   workspaceLineageByChildKey: PersistedState['workspaceLineageByChildKey']
@@ -220,7 +221,7 @@ export function createTransferPayload(args: {
       ...structuredClone(preset),
       repoId: newRepoId
     })),
-    retiredWorktreeNames: [...(sourceState.retiredWorktreeNamesByRepo?.[oldRepoId] ?? [])],
+    retiredNameRegistry: sourceState.retiredWorktreeNamesByRepo?.[oldRepoId],
     worktreeMeta: rekeyWorktreeIdRecord(
       sourceState.worktreeMeta,
       worktreeIds,
@@ -278,9 +279,7 @@ export function applyPayloadToTarget(
     },
     retiredWorktreeNamesByRepo: {
       ...targetState.retiredWorktreeNamesByRepo,
-      ...(payload.retiredWorktreeNames.length > 0
-        ? { [payload.repo.id]: payload.retiredWorktreeNames }
-        : {})
+      ...(payload.retiredNameRegistry ? { [payload.repo.id]: payload.retiredNameRegistry } : {})
     },
 
     worktreeMeta: { ...targetState.worktreeMeta, ...payload.worktreeMeta },

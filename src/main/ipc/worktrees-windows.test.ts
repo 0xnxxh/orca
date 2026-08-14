@@ -162,7 +162,7 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
     setWorktreeMeta: vi.fn(),
     removeWorktreeMeta: vi.fn(),
     addRetiredWorktreeName: vi.fn(),
-    getRetiredWorktreeNames: vi.fn(),
+    getRetiredWorktreeNameRegistry: vi.fn(),
     mergeRetiredWorktreeNames: vi.fn()
   }
 
@@ -206,7 +206,7 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
     store.setWorktreeMeta.mockReset()
     store.removeWorktreeMeta.mockReset()
     store.addRetiredWorktreeName.mockReset()
-    store.getRetiredWorktreeNames.mockReset()
+    store.getRetiredWorktreeNameRegistry.mockReset()
     store.mergeRetiredWorktreeNames.mockReset()
     resetRetirementCollisionKeyCacheForTests()
 
@@ -245,7 +245,7 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
     })
     resolveSetupRunnerShellMock.mockReturnValue(undefined)
     store.getWorktreeMeta.mockReturnValue(undefined)
-    store.getRetiredWorktreeNames.mockReturnValue([])
+    store.getRetiredWorktreeNameRegistry.mockReturnValue({ exhaustedTiers: 0, names: [] })
     store.setWorktreeMeta.mockReturnValue({})
     resolveLocalGitUsernameMock.mockResolvedValue('')
     getDefaultBaseRefMock.mockReturnValue('origin/main')
@@ -330,7 +330,7 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
   })
 
   it('skips a retired generated name when the physical leaf is decorated', async () => {
-    store.getRetiredWorktreeNames.mockReturnValue(['nautilus'])
+    store.getRetiredWorktreeNameRegistry.mockReturnValue({ exhaustedTiers: 0, names: ['nautilus'] })
     computeWorktreePathMock.mockReturnValue('C:\\workspaces\\repo-nautilus-2')
     ensurePathWithinWorkspaceMock.mockReturnValue('C:\\workspaces\\repo-nautilus-2')
     listWorktreesMock.mockResolvedValue([
@@ -355,7 +355,7 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
   it('leaves a user-typed name reusable even when the same name is retired', async () => {
     // Why: the creature pool contains ordinary words ("orca", "runner", "molly"). Silently
     // renaming a deliberate `nautilus` to `nautilus-2` — and burning it — is the wrong trade.
-    store.getRetiredWorktreeNames.mockReturnValue(['nautilus'])
+    store.getRetiredWorktreeNameRegistry.mockReturnValue({ exhaustedTiers: 0, names: ['nautilus'] })
     computeWorktreePathMock.mockReturnValue('C:\\workspaces\\nautilus')
     ensurePathWithinWorkspaceMock.mockReturnValue('C:\\workspaces\\nautilus')
     listWorktreesMock.mockResolvedValue([

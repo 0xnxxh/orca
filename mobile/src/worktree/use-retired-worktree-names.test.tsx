@@ -2,6 +2,10 @@ import { createElement } from 'react'
 import { act, create } from 'react-test-renderer'
 import { describe, expect, it } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
+import {
+  EMPTY_RETIRED_NAME_REGISTRY,
+  type RetiredNameRegistry
+} from '../../../src/shared/worktree/retired-name-registry'
 import { useRetiredWorktreeNames } from './use-retired-worktree-names'
 
 type Pending = { resolve: (response: unknown) => void; reject: (err: Error) => void }
@@ -11,7 +15,7 @@ type Pending = { resolve: (response: unknown) => void; reject: (err: Error) => v
 function mountNames() {
   const pending: Pending[] = []
   const requests: { method: string; params: unknown }[] = []
-  let latest: readonly string[] = []
+  let latest: RetiredNameRegistry = EMPTY_RETIRED_NAME_REGISTRY
 
   const client = {
     sendRequest: (method: string, params: unknown) => {
@@ -30,8 +34,11 @@ function mountNames() {
     renderer = create(createElement(Probe, { repoId: 'repo-1', refreshKey: 'a' }))
   })
   return {
-    get names(): readonly string[] {
+    get registry(): RetiredNameRegistry {
       return latest
+    },
+    get names(): readonly string[] {
+      return latest.names
     },
     requests,
     rerender(props: { repoId: string | null; refreshKey: string }) {
@@ -39,9 +46,13 @@ function mountNames() {
         renderer.update(createElement(Probe, props))
       })
     },
-    async settle(index: number, retiredNamesByRepo: Record<string, unknown>) {
+    async settle(
+      index: number,
+      retiredNamesByRepo: Record<string, unknown>,
+      retiredNameTiersByRepo: Record<string, unknown> = {}
+    ) {
       await act(async () => {
-        pending[index]!.resolve({ result: { retiredNamesByRepo } })
+        pending[index]!.resolve({ result: { retiredNamesByRepo, retiredNameTiersByRepo } })
         await Promise.resolve()
       })
     },
@@ -68,7 +79,23 @@ describe('useRetiredWorktreeNames', () => {
   it('answers empty for a host that omits the field', async () => {
     const probe = mountNames()
     await probe.settle(0, {})
-    expect(probe.names).toEqual([])
+    expect(probe.registry).toEqual(EMPTY_RETIRED_NAME_REGISTRY)
+  })
+
+  it('carries the compaction watermark through, so spent tiers are not suggested back', async () => {
+    const probe = mountNames()
+    await probe.settle(0, { 'repo-1': ['nautilus-2'] }, { 'repo-1': 1 })
+    expect(probe.registry).toEqual({ exhaustedTiers: 1, names: ['nautilus-2'] })
+  })
+
+  it('holds the watermark too when a refresh fails', async () => {
+    const probe = mountNames()
+    await probe.settle(0, { 'repo-1': [] }, { 'repo-1': 3 })
+
+    probe.rerender({ repoId: 'repo-1', refreshKey: 'b' })
+    await probe.fail(1)
+
+    expect(probe.registry.exhaustedTiers).toBe(3)
   })
 
   // Regression: this hook used to reset to [] on any error, un-retiring every name for the rest of

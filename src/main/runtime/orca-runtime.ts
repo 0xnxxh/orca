@@ -967,8 +967,12 @@ import {
 } from '../worktree-create-candidates'
 import {
   ensureRetiredWorktreeNamesBackfilled,
-  getRetiredWorktreeNamesForRepo
+  getRetiredNameRegistryForRepo
 } from '../worktree-name-retirement'
+import {
+  createRetiredNameLookup,
+  type RetiredNameRegistry
+} from '../../shared/worktree/retired-name-registry'
 import { normalizeSparseDirectories } from '../ipc/sparse-checkout-directories'
 import type { PtyBindingSourceExpectation, Store } from '../persistence'
 import type { StatsCollector } from '../stats/collector'
@@ -1146,7 +1150,7 @@ type RuntimeStore = {
   getRepos: Store['getRepos']
   getRepo: Store['getRepo']
   addRetiredWorktreeName: Store['addRetiredWorktreeName']
-  getRetiredWorktreeNames: Store['getRetiredWorktreeNames']
+  getRetiredWorktreeNameRegistry: Store['getRetiredWorktreeNameRegistry']
   mergeRetiredWorktreeNames: Store['mergeRetiredWorktreeNames']
   addRepo: Store['addRepo']
   updateRepo: Store['updateRepo']
@@ -21328,11 +21332,19 @@ export class OrcaRuntimeService {
   }
 
   /** Keyed by repo id on the wire even though one repo is requested: the caller asked by selector
-   *  and needs to know which repo answered. */
-  async listRetiredWorktreeNames(repoSelector: string): Promise<Record<string, string[]>> {
+   *  and needs to know which repo answered.
+   *
+   *  The tier watermark rides alongside the names rather than being expanded into them — expanding
+   *  it would put 552 strings per spent tier on the wire, which is what compaction exists to
+   *  avoid. A client predating the field reads the names only and under-retires, degrading to the
+   *  pre-retirement behavior for compacted tiers instead of breaking. */
+  async listRetiredWorktreeNames(repoSelector: string): Promise<{
+    retiredNamesByRepo: Record<string, readonly string[]>
+    retiredNameTiersByRepo: Record<string, number>
+  }> {
     const store = this.store
     if (!store) {
-      return {}
+      return { retiredNamesByRepo: {}, retiredNameTiersByRepo: {} }
     }
     const repo = await this.resolveRepoSelector(repoSelector)
     const settings = store.getSettings()
@@ -21341,7 +21353,16 @@ export class OrcaRuntimeService {
     } catch (error) {
       console.warn(`[runtime] retirement backfill failed for repo ${repo.id}:`, error)
     }
-    return { [repo.id]: getRetiredWorktreeNamesForRepo(store, repo, store.getRepos(), settings) }
+    const registry: RetiredNameRegistry = getRetiredNameRegistryForRepo(
+      store,
+      repo,
+      store.getRepos(),
+      settings
+    )
+    return {
+      retiredNamesByRepo: { [repo.id]: registry.names },
+      retiredNameTiersByRepo: { [repo.id]: registry.exhaustedTiers }
+    }
   }
 
   async listDetectedManagedWorktrees(
@@ -22549,8 +22570,10 @@ export class OrcaRuntimeService {
     let branchConflictKind: 'local' | 'remote' | null = null
     let worktreePath = ''
     let worktreePathResolved = false
-    const retiredNames = args.nameWasGenerated
-      ? new Set(getRetiredWorktreeNamesForRepo(this.store, repo, this.store.getRepos(), settings))
+    const isRetiredName = args.nameWasGenerated
+      ? createRetiredNameLookup(
+          getRetiredNameRegistryForRepo(this.store, repo, this.store.getRepos(), settings)
+        )
       : null
     // Why: runtime/mobile create-from-review callers should get a new workspace
     // even when the PR branch or review branch name is already in use.
@@ -22559,7 +22582,7 @@ export class OrcaRuntimeService {
       effectiveRequestedName = args.name.trim()
         ? getWorktreeCreateCandidate(args.name, suffix)
         : effectiveSanitizedName
-      if (retiredNames?.has(effectiveSanitizedName)) {
+      if (isRetiredName?.(effectiveSanitizedName)) {
         continue
       }
       branchName = await resolveCreateBranchName(

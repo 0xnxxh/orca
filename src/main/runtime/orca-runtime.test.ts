@@ -1330,7 +1330,7 @@ const store = {
     }
   ],
   addRetiredWorktreeName: () => {},
-  getRetiredWorktreeNames: () => [],
+  getRetiredWorktreeNameRegistry: () => ({ exhaustedTiers: 0, names: [] }),
   mergeRetiredWorktreeNames: () => false,
   addRepo: () => {},
   updateRepo: (id: string, updates: Record<string, unknown>) =>
@@ -4297,7 +4297,7 @@ describe('OrcaRuntimeService', () => {
     const runtime = new OrcaRuntimeService({
       ...store,
       addRetiredWorktreeName,
-      getRetiredWorktreeNames: () => ['nautilus']
+      getRetiredWorktreeNameRegistry: () => ({ exhaustedTiers: 0, names: ['nautilus'] })
     })
     const staleScan = deferred<typeof MOCK_GIT_WORKTREES>()
     const createdWorktree = {
@@ -4343,7 +4343,7 @@ describe('OrcaRuntimeService', () => {
     const runtime = new OrcaRuntimeService({
       ...store,
       addRetiredWorktreeName,
-      getRetiredWorktreeNames: () => ['nautilus']
+      getRetiredWorktreeNameRegistry: () => ({ exhaustedTiers: 0, names: ['nautilus'] })
     })
     const createdWorktree = {
       path: '/tmp/workspaces/nautilus',
@@ -48816,7 +48816,7 @@ describe('OrcaRuntimeService', () => {
         return nextMeta
       },
       removeWorktreeMeta: () => {},
-      getRetiredWorktreeNames: () => [],
+      getRetiredWorktreeNameRegistry: () => ({ exhaustedTiers: 0, names: [] }),
       addRetiredWorktreeName: () => {},
       mergeRetiredWorktreeNames: () => false,
       getGitHubCache: () => undefined as never,

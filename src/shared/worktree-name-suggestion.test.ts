@@ -54,6 +54,20 @@ describe('selectSuggestedCreatureName', () => {
     expect(selectSuggestedCreatureName(allUsed, pickFirst)).toBe(`${lower(0)}-3`)
   })
 
+  it('starts above the exhausted-tier watermark instead of looking those names up', () => {
+    // The registry compacts a fully spent tier away, so its names are absent from the used set
+    // precisely because they are all taken. Starting at tier 1 would hand one straight back.
+    expect(selectSuggestedCreatureName([], pickFirst, 2)).toBe(`${lower(0)}-3`)
+  })
+
+  it('keeps the watermark and the used set both in force', () => {
+    expect(selectSuggestedCreatureName([`${lower(0)}-3`], pickFirst, 2)).toBe(`${lower(1)}-3`)
+  })
+
+  it('ignores a nonsense watermark rather than skipping the pool', () => {
+    expect(selectSuggestedCreatureName([], pickFirst, -4)).toBe(lower(0))
+  })
+
   it('returns a lowercase name to match branch convention', () => {
     // Pool entries are capitalized; branch names are conventionally lowercase.
     const suggested = selectSuggestedCreatureName([], pickFirst)

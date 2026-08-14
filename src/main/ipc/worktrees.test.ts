@@ -352,7 +352,7 @@ describe('registerWorktreeHandlers', () => {
     getFolderWorkspaces: vi.fn(),
     getProjectGroups: vi.fn(),
     addRetiredWorktreeName: vi.fn(),
-    getRetiredWorktreeNames: vi.fn(),
+    getRetiredWorktreeNameRegistry: vi.fn(),
     mergeRetiredWorktreeNames: vi.fn()
   }
   let runtimeStub: {
@@ -438,7 +438,7 @@ describe('registerWorktreeHandlers', () => {
       store.getFolderWorkspaces,
       store.getProjectGroups,
       store.addRetiredWorktreeName,
-      store.getRetiredWorktreeNames,
+      store.getRetiredWorktreeNameRegistry,
       store.mergeRetiredWorktreeNames,
       killAllProcessesForWorktreeMock,
       clearProviderPtyStateMock,
@@ -493,7 +493,7 @@ describe('registerWorktreeHandlers', () => {
     })
     store.getWorktreeMeta.mockReturnValue(undefined)
     store.getAllWorktreeMeta.mockReturnValue({})
-    store.getRetiredWorktreeNames.mockReturnValue([])
+    store.getRetiredWorktreeNameRegistry.mockReturnValue({ exhaustedTiers: 0, names: [] })
     resetRetirementCollisionKeyCacheForTests()
     store.setWorktreeMeta.mockReturnValue({})
     store.getProjectHostSetups.mockReturnValue([
@@ -4748,7 +4748,7 @@ describe('registerWorktreeHandlers', () => {
     store.getRepo.mockReturnValue(repo)
     getSshGitProviderMock.mockReturnValue(provider)
     getActiveMultiplexerMock.mockReturnValue(mux)
-    store.getRetiredWorktreeNames.mockReturnValue(['nautilus'])
+    store.getRetiredWorktreeNameRegistry.mockReturnValue({ exhaustedTiers: 0, names: ['nautilus'] })
     store.setWorktreeMeta.mockImplementation((_worktreeId, meta) => meta)
 
     const result = await handlers['worktrees:create'](null, {
@@ -4839,7 +4839,7 @@ describe('registerWorktreeHandlers', () => {
       request: vi.fn().mockResolvedValue(undefined),
       notify: vi.fn()
     })
-    store.getRetiredWorktreeNames.mockReturnValue(['nautilus'])
+    store.getRetiredWorktreeNameRegistry.mockReturnValue({ exhaustedTiers: 0, names: ['nautilus'] })
     store.setWorktreeMeta.mockImplementation((_worktreeId, meta) => meta)
 
     const result = await handlers['worktrees:create'](null, {

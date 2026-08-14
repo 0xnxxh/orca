@@ -1,8 +1,14 @@
 import { readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MARINE_CREATURES } from '../shared/marine-creatures'
 import { getRepoExecutionHostId } from '../shared/execution-host'
+import {
+  CREATURE_POOL_NAMES,
+  EMPTY_RETIRED_NAME_REGISTRY,
+  isEmptyRetiredNameRegistry,
+  mergeRetiredNameRegistries,
+  type RetiredNameRegistry
+} from '../shared/worktree/retired-name-registry'
 import { isFolderRepo } from '../shared/repo-kind'
 import type { GlobalSettings } from '../shared/global-settings-types'
 import type { Repo } from '../shared/repo-types'
@@ -20,12 +26,11 @@ import {
 import { worktreePathComparisonKey } from './ipc/worktree-path-comparison'
 import { hasCachedWslHome, parseWslPath } from './wsl'
 
-const POOL_NAMES: ReadonlySet<string> = new Set(MARINE_CREATURES.map((name) => name.toLowerCase()))
 const RETIREMENT_PROBE_NAME = 'orca-retirement-probe'
 const scansByStore = new WeakMap<object, Map<string, Promise<Set<string>>>>()
 
 type RetirementReadStore = {
-  getRetiredWorktreeNames(repoId: string): string[]
+  getRetiredWorktreeNameRegistry(repoId: string): RetiredNameRegistry
 }
 type RetirementBackfillStore = {
   mergeRetiredWorktreeNames(repoId: string, names: Iterable<string>): boolean
@@ -48,7 +53,7 @@ export function normalizeRetirableGeneratedName(name: string): string | null {
     base = stripped
     stripped = base.replace(/-\d+$/, '')
   }
-  return base && POOL_NAMES.has(base) ? normalized : null
+  return base && CREATURE_POOL_NAMES.has(base) ? normalized : null
 }
 
 /** Why: over-retiring costs one name from a 552-entry pool; under-retiring reissues a path whose
@@ -143,34 +148,32 @@ export function getRetirementCollisionKey(repo: Repo, settings: RetirementPathSe
  *  The peer scan is deliberately lazy: a repo's own retirements never touch a path, and a peer's
  *  namespace is derived only once that peer is known to hold retirements. Deriving one costs a
  *  blocking `wsl.exe` call for a WSL repo, so it must not be paid per repo on every create. */
-export function getRetiredWorktreeNamesForRepo(
+export function getRetiredNameRegistryForRepo(
   store: RetirementReadStore,
   repo: Repo,
   repos: readonly Repo[],
   settings: RetirementPathSettings
-): string[] {
+): RetiredNameRegistry {
   if (isFolderRepo(repo)) {
-    return []
+    return EMPTY_RETIRED_NAME_REGISTRY
   }
-  const names = new Set(store.getRetiredWorktreeNames(repo.id))
+  let registry = store.getRetiredWorktreeNameRegistry(repo.id)
   let collisionKey: string | null = null
   for (const candidate of repos) {
     if (candidate.id === repo.id || isFolderRepo(candidate)) {
       continue
     }
-    const candidateNames = store.getRetiredWorktreeNames(candidate.id)
-    if (candidateNames.length === 0) {
+    const candidateRegistry = store.getRetiredWorktreeNameRegistry(candidate.id)
+    if (isEmptyRetiredNameRegistry(candidateRegistry)) {
       continue
     }
     collisionKey ??= getRetirementCollisionKey(repo, settings)
     if (getRetirementCollisionKey(candidate, settings) !== collisionKey) {
       continue
     }
-    for (const name of candidateNames) {
-      names.add(name)
-    }
+    registry = mergeRetiredNameRegistries(registry, candidateRegistry)
   }
-  return [...names]
+  return registry
 }
 
 function parentPath(path: string): string {

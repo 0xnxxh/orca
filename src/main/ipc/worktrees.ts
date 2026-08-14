@@ -123,8 +123,9 @@ import {
 } from './worktree-logic'
 import {
   ensureRetiredWorktreeNamesBackfilled,
-  getRetiredWorktreeNamesForRepo
+  getRetiredNameRegistryForRepo
 } from '../worktree-name-retirement'
+import { EMPTY_RETIRED_NAME_REGISTRY } from '../../shared/worktree/retired-name-registry'
 import { dedupeWorktreesByPath } from './worktree-path-comparison'
 import { joinWorktreeRelativePath } from '../runtime/runtime-relative-paths'
 import {
@@ -1941,7 +1942,7 @@ export function registerWorktreeHandlers(
   ipcMain.handle('worktrees:listRetiredNames', async (_event, args: { repoId: string }) => {
     const repo = store.getRepo(args.repoId)
     if (!repo) {
-      return []
+      return EMPTY_RETIRED_NAME_REGISTRY
     }
     try {
       await ensureRetiredWorktreeNamesBackfilled(store, repo, store.getSettings())
@@ -1949,7 +1950,7 @@ export function registerWorktreeHandlers(
       // Best effort: without the seed we only under-retire, which is the pre-existing behavior.
       console.warn(`[worktrees] retirement backfill failed for repo ${args.repoId}:`, err)
     }
-    return getRetiredWorktreeNamesForRepo(store, repo, store.getRepos(), store.getSettings())
+    return getRetiredNameRegistryForRepo(store, repo, store.getRepos(), store.getSettings())
   })
 
   ipcMain.handle('worktrees:list', async (_event, args: { repoId: string }) => {

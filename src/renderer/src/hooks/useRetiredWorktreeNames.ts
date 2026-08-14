@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
   retiredNamesAfterRefresh,
-  selectRetiredNames,
+  selectRetiredNameRegistry,
   type RetiredNamesLoad
 } from '../../../shared/worktree/retired-name-cache'
+import type { RetiredNameRegistry } from '../../../shared/worktree/retired-name-registry'
 
 /** Names already spent in a repo, including workspaces that have since been deleted.
  *
@@ -20,7 +21,7 @@ import {
 export function useRetiredWorktreeNames(
   repoId: string | null | undefined,
   refreshKey: unknown
-): readonly string[] {
+): RetiredNameRegistry {
   const [loaded, setLoaded] = useState<RetiredNamesLoad | null>(null)
 
   useEffect(() => {
@@ -29,9 +30,9 @@ export function useRetiredWorktreeNames(
       return
     }
     let cancelled = false
-    const settle = (names: readonly string[] | null): void => {
+    const settle = (registry: RetiredNameRegistry | null): void => {
       if (!cancelled) {
-        setLoaded((previous) => retiredNamesAfterRefresh(previous, repoId, names))
+        setLoaded((previous) => retiredNamesAfterRefresh(previous, repoId, registry))
       }
     }
     void window.api.worktrees
@@ -46,5 +47,5 @@ export function useRetiredWorktreeNames(
     }
   }, [refreshKey, repoId])
 
-  return selectRetiredNames(loaded, repoId)
+  return selectRetiredNameRegistry(loaded, repoId)
 }

@@ -1,4 +1,5 @@
 import { MARINE_CREATURES } from './marine-creatures'
+import { clampExhaustedTiers, creatureNameAtTier } from './worktree/retired-name-registry'
 
 /** Shared selection core for generated workspace names.
  *
@@ -36,29 +37,29 @@ function pickRandom<T>(items: readonly T[], random: () => number): T {
  *  `usedNames` must include retired names as well as live ones. A name whose workspace was deleted
  *  still owns its old directory path in any agent CLI that keys conversation state by cwd, so
  *  reissuing it hands the next occupant someone else's history. Once every base name is spent the
- *  pool degrades to `name-2`, `name-3`, and those variants are equally subject to retirement. */
+ *  pool degrades to `name-2`, `name-3`, and those variants are equally subject to retirement.
+ *
+ *  `exhaustedTiers` is the retirement registry's compaction watermark. The registry stops listing
+ *  a tier's names individually once every one of them is spent, so those tiers must be skipped
+ *  here rather than looked up — they are absent from `usedNames` precisely because they are gone. */
 export function selectSuggestedCreatureName(
   usedNames: Iterable<string>,
-  random: () => number = Math.random
+  random: () => number = Math.random,
+  exhaustedTiers = 0
 ): string {
   const used = new Set<string>()
   for (const name of usedNames) {
     used.add(normalizeSuggestedName(name))
   }
 
-  const available = MARINE_CREATURES.map(normalizeSuggestedName).filter((name) => !used.has(name))
-  if (available.length > 0) {
-    return pickRandom(available, random)
-  }
-
-  let suffix = 2
+  let tier = clampExhaustedTiers(exhaustedTiers) + 1
   while (true) {
-    const numbered = MARINE_CREATURES.map(
-      (name) => `${normalizeSuggestedName(name)}-${suffix}`
+    const available = MARINE_CREATURES.map((name) =>
+      creatureNameAtTier(normalizeSuggestedName(name), tier)
     ).filter((name) => !used.has(name))
-    if (numbered.length > 0) {
-      return pickRandom(numbered, random)
+    if (available.length > 0) {
+      return pickRandom(available, random)
     }
-    suffix += 1
+    tier += 1
   }
 }

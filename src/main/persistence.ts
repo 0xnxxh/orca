@@ -176,6 +176,14 @@ import {
 import { pruneWorkspaceSessionBrowserHistory } from '../shared/workspace-session-browser-history'
 import { normalizeRetirableGeneratedName } from './worktree-name-retirement'
 import {
+  addRetiredNames,
+  clampExhaustedTiers,
+  compactRetiredNames,
+  EMPTY_RETIRED_NAME_REGISTRY,
+  isEmptyRetiredNameRegistry,
+  type RetiredNameRegistry
+} from '../shared/worktree/retired-name-registry'
+import {
   FOLDER_WORKSPACE_INSTANCE_SEPARATOR,
   getRepoIdFromWorktreeId,
   getWorktreePathBasenameFromId
@@ -2324,46 +2332,44 @@ const MAX_CLAUDE_LIVE_PTY_SESSION_IDS = 200
 // Why: bound removed-SSH-target history so remove/re-add churn can't grow the file unbounded.
 const MAX_REMOVED_SSH_TARGET_TOMBSTONES = 50
 
-// Bounds per-repo retirement so a long-lived repo can't grow the state file unbounded.
-//
-// DO NOT lower this to match the two bounds above. Those cap histories, where evicting the oldest
-// entry is harmless. This set is a correctness guarantee, so any cap below the 552-name pool hands
-// back a name whose agent conversation is still on disk — the exact bug this registry exists to
-// prevent. Only `-2`/`-3` tier accumulation can reach 2000, at roughly 21KB per repo.
-const MAX_RETIRED_WORKTREE_NAMES_PER_REPO = 2000
-
-/** Oldest-first once the bound bites — a deliberate least-bad degradation rather than a neutral
- *  policy. Something must be dropped, and the oldest directories are the likeliest to have been
- *  reclaimed since, so their names are the safest of a bad set to reissue. */
-function boundRetiredWorktreeNames(names: readonly string[]): string[] {
-  return names.length > MAX_RETIRED_WORKTREE_NAMES_PER_REPO
-    ? names.slice(names.length - MAX_RETIRED_WORKTREE_NAMES_PER_REPO)
-    : [...names]
+/** Why: retirement never evicts — dropping an entry hands back a name whose agent conversation is
+ *  still on disk — so the row is bounded by compaction instead, and a persisted row is a watermark
+ *  plus whatever sits above it. Accepts the pre-compaction plain-array row too: the feature is
+ *  unreleased, but a developer profile or a fixture can still hold one. */
+function normalizeRetiredNameRegistry(row: unknown): RetiredNameRegistry {
+  const isPlainArray = Array.isArray(row)
+  const rawRow = row as { exhaustedTiers?: unknown; names?: unknown } | null | undefined
+  const rawNames = isPlainArray ? row : Array.isArray(rawRow?.names) ? rawRow.names : []
+  const names = new Set<string>()
+  for (const entry of rawNames) {
+    if (typeof entry !== 'string') {
+      continue
+    }
+    const normalized = normalizeRetirableGeneratedName(entry)
+    if (normalized) {
+      names.add(normalized)
+    }
+  }
+  return compactRetiredNames({
+    exhaustedTiers: isPlainArray ? 0 : clampExhaustedTiers(rawRow?.exhaustedTiers),
+    names: [...names]
+  })
 }
 
 /** Why: a corrupt or hand-edited map must degrade to "nothing retired" rather than throw during
  *  load — over-retiring costs one name from a 552-entry pool, but a load failure costs the app. */
-function normalizeRetiredWorktreeNamesByRepo(value: unknown): Record<string, string[]> {
+function normalizeRetiredWorktreeNamesByRepo(value: unknown): Record<string, RetiredNameRegistry> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {}
   }
-  const byRepo: Record<string, string[]> = {}
-  for (const [repoId, names] of Object.entries(value as Record<string, unknown>)) {
-    if (!repoId || !Array.isArray(names)) {
+  const byRepo: Record<string, RetiredNameRegistry> = {}
+  for (const [repoId, row] of Object.entries(value as Record<string, unknown>)) {
+    if (!repoId) {
       continue
     }
-    const seen = new Set<string>()
-    for (const entry of names) {
-      if (typeof entry !== 'string') {
-        continue
-      }
-      const normalized = normalizeRetirableGeneratedName(entry)
-      if (normalized) {
-        seen.add(normalized)
-      }
-    }
-    if (seen.size > 0) {
-      byRepo[repoId] = boundRetiredWorktreeNames([...seen])
+    const registry = normalizeRetiredNameRegistry(row)
+    if (!isEmptyRetiredNameRegistry(registry)) {
+      byRepo[repoId] = registry
     }
   }
   return byRepo
@@ -7250,8 +7256,13 @@ export class Store {
     this.scheduleSave()
   }
 
-  getRetiredWorktreeNames(repoId: string): string[] {
-    return [...(this.state.retiredWorktreeNamesByRepo?.[repoId] ?? [])]
+  /** Compacted, so callers get a watermark plus the names above it rather than every spent name.
+   *  Copied because the array is stored state. */
+  getRetiredWorktreeNameRegistry(repoId: string): RetiredNameRegistry {
+    const stored = this.state.retiredWorktreeNamesByRepo?.[repoId]
+    return stored
+      ? { exhaustedTiers: stored.exhaustedTiers, names: [...stored.names] }
+      : EMPTY_RETIRED_NAME_REGISTRY
   }
 
   /** Records a generated workspace name as spent for this repo. Called with the name main actually
@@ -7261,15 +7272,7 @@ export class Store {
     if (!repoId || !normalized) {
       return
     }
-    this.state.retiredWorktreeNamesByRepo ??= {}
-    const existing = this.state.retiredWorktreeNamesByRepo[repoId]
-    if (existing?.includes(normalized)) {
-      return
-    }
-    this.state.retiredWorktreeNamesByRepo[repoId] = boundRetiredWorktreeNames(
-      existing ? [...existing, normalized] : [normalized]
-    )
-    this.scheduleSave()
+    this.applyRetiredWorktreeNames(repoId, [normalized])
   }
 
   /** Seeds retirements discovered by the one-time backfill. Merges rather than replaces so a
@@ -7285,19 +7288,16 @@ export class Store {
         incoming.add(normalized)
       }
     }
-    if (incoming.size === 0) {
+    return incoming.size > 0 && this.applyRetiredWorktreeNames(repoId, incoming)
+  }
+
+  private applyRetiredWorktreeNames(repoId: string, names: Iterable<string>): boolean {
+    const next = addRetiredNames(this.getRetiredWorktreeNameRegistry(repoId), names)
+    if (!next) {
       return false
     }
     this.state.retiredWorktreeNamesByRepo ??= {}
-    const existing = this.state.retiredWorktreeNamesByRepo[repoId] ?? []
-    const merged = new Set(existing)
-    for (const name of incoming) {
-      merged.add(name)
-    }
-    if (merged.size === existing.length) {
-      return false
-    }
-    this.state.retiredWorktreeNamesByRepo[repoId] = boundRetiredWorktreeNames([...merged])
+    this.state.retiredWorktreeNamesByRepo[repoId] = next
     this.scheduleSave()
     return true
   }
