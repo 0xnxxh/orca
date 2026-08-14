@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- Why: PTY IPC is centralized in one main-process module so spawn env scoping, lifecycle cleanup, process inspection, and renderer IPC stay behind one audited boundary. */
 import { parsePtyExitedError } from '../../shared/ssh-pty-failure-tokens'
+import type { PtyBindingRefusalReason } from '../persistence'
 import { join, delimiter } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
@@ -581,9 +582,11 @@ export function bindPaneShell(args: {
   mayCreate?: boolean
   expectedBinding?: { ptyId: string; incarnationId?: string }
   expectedSourceBinding?: PtyBindingSourceExpectation
-}): { bound: boolean; tabId: string } {
+}): { bound: boolean; tabId: string; refusalReason?: PtyBindingRefusalReason } {
   const tabId = args.tabId
+  const refusal: { reason?: PtyBindingRefusalReason } = {}
   const bound = args.store?.persistPtyBinding({
+    refusal,
     worktreeId: args.worktreeId,
     tabId,
     leafId: args.leafId,
@@ -595,7 +598,13 @@ export function bindPaneShell(args: {
     ...(args.expectedSourceBinding ? { expectedSourceBinding: args.expectedSourceBinding } : {})
   })
   if (bound === false) {
-    return { bound: false, tabId }
+    // Why route the pane key even on refusal, unless the tab is gone: a refusal for stale
+    // membership leaves a LIVE tab whose pane is already listed. Dropping its routing on top of
+    // its binding orphans the shell from the surfaces that can still show it.
+    if (refusal.reason !== 'noTab') {
+      rememberPaneKeyForPty(args.ptyId, makePaneKey(tabId, args.leafId))
+    }
+    return { bound: false, tabId, ...(refusal.reason ? { refusalReason: refusal.reason } : {}) }
   }
   rememberPaneKeyForPty(args.ptyId, makePaneKey(tabId, args.leafId))
   return { bound: true, tabId }

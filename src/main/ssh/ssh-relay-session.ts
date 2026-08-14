@@ -1,6 +1,7 @@
 /* oxlint-disable max-lines */
 // Why: single authority for all relay lifecycle state per SSH target (previously scattered across module Maps/Sets with duplicated paths).
 
+import type { PtyBindingRefusalReason } from '../persistence'
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow } from 'electron'
 import { deployAndLaunchRelay } from './ssh-relay-deploy'
@@ -2602,7 +2603,8 @@ export class SshRelaySession {
       // live layout outranks it. Resolved before the write, so a throw cannot lose it and leave the
       // graph registered under the tab the pane left.
       const tabId = resolvePaneShellTabId(this.store, lease.leafId) ?? lease.tabId
-      let bind: { bound: boolean; tabId: string } | null = null
+      let bind: { bound: boolean; tabId: string; refusalReason?: PtyBindingRefusalReason } | null =
+        null
       try {
         bind = bindPaneShell({
           store: this.store,
@@ -2616,13 +2618,22 @@ export class SshRelaySession {
       } catch (error) {
         console.error('[ssh-relay-session] Failed to persist reconnect incarnation:', error)
       }
-      if (bind?.bound === false) {
-        // Unresolved, not dead: the remote shell keeps running and stays
-        // reattachable once a durable pane names it again.
+      if (bind?.bound === false && bind.refusalReason === 'noTab') {
+        // No durable tab owns this leaf, so there is nothing to publish it against — registering
+        // would announce a pane that does not exist. Unresolved, not dead: the shell keeps running
+        // and stays reattachable once a durable pane names it again.
         console.info(
           `[ssh-relay-session] No durable pane owns ${appPtyId} on ${this.targetId}; left running unbound.`
         )
         return
+      }
+      if (bind?.bound === false) {
+        // The tab IS live — only its membership record is stale, and the mobile/CLI listing already
+        // publishes that tab. Returning here left a visible pane wired to a stale pty while its
+        // shell ran on unreachable, recoverable only by editing state by hand.
+        console.info(
+          `[ssh-relay-session] Stale membership for ${appPtyId} on ${this.targetId}; registering against its live tab.`
+        )
       }
       // The tab the bind resolved, not the lease's frozen one — a moved pane must not be recorded
       // in the graph under the tab it left while its record and fence name the tab it is in.

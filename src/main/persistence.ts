@@ -2853,6 +2853,10 @@ export type PtyBindingSourceExpectation = {
 /** Caps the hoist ledger. Far above any realistic open-tab count, so a live tab is never evicted. */
 const MAX_HOISTED_TAB_IDS = 512
 
+/** Why a `mayCreate: false` binding write was refused. `noTab` means the pane has no durable tab,
+ *  so publishing it anywhere would be publishing something that does not exist. */
+export type PtyBindingRefusalReason = 'noTab' | 'noMembership'
+
 /** Expired leases are unreachable from reattach; kept only long enough to outlive any in-flight
  *  recovery window by orders of magnitude. */
 const EXPIRED_SSH_LEASE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
@@ -7055,11 +7059,15 @@ export class Store {
       /** Reattach passes false: an absent durable pane never authorizes creating UI.
        *  Defaults true so the spawn path keeps its force-quit-race branches. */
       mayCreate?: boolean
+      /** Filled in when the write is refused, so a caller can tell "no such tab" — where anything
+       *  it publishes would be a ghost — from "the tab is live but its membership is stale". */
+      refusal?: { reason?: PtyBindingRefusalReason }
       expectedSourceBinding?: PtyBindingSourceExpectation
     },
     hostId?: string | null
   ): boolean {
     const mayCreate = args.mayCreate ?? true
+    let refusalReason: PtyBindingRefusalReason | undefined
     const resolvedHostId = this.resolveHostId(hostId)
     const session = this.getWorkspaceSession(resolvedHostId)
     const paneKey = `${args.tabId}:${args.leafId}`
@@ -7152,6 +7160,7 @@ export class Store {
       tab.ptyId = args.ptyId
     } else {
       terminalMembershipChanged = true
+      refusalReason = 'noTab'
       // Why: pty:spawn can beat the debounced writer; persist a minimal tab so hydration won't prune the binding as orphaned.
       const nextTabs = [
         ...(tabs ?? []),
@@ -7174,6 +7183,9 @@ export class Store {
     }
     if (!mayCreate && terminalMembershipChanged) {
       restoreSession()
+      if (args.refusal) {
+        args.refusal.reason = refusalReason ?? 'noMembership'
+      }
       return false
     }
     if (!isTerminalLeafId(args.leafId)) {
@@ -7191,12 +7203,14 @@ export class Store {
     if (layout) {
       if (!layout.root) {
         terminalMembershipChanged = true
+        refusalReason ??= 'noMembership'
         // Why: createTab can persist an empty layout before TerminalPane mounts; the sync binding still needs a durable root.
         layout.root = { type: 'leaf', leafId: args.leafId }
         layout.activeLeafId = args.leafId
         layout.expandedLeafId = null
       } else if (!layoutContainsLeafId(layout.root, args.leafId)) {
         terminalMembershipChanged = true
+        refusalReason ??= 'noMembership'
         // Why: splitPane spawns before its snapshot reaches main; add a minimal leaf so a crash can't strand the pane's binding.
         layout.root = {
           type: 'split',
@@ -7215,6 +7229,7 @@ export class Store {
       }
     } else {
       terminalMembershipChanged = true
+        refusalReason ??= 'noMembership'
       // Why: first tab spawn — persist a minimal layout so a SIGKILL before the renderer snapshot can't lose ptyIdsByLeafId.
       session.terminalLayoutsByTabId = {
         ...session.terminalLayoutsByTabId,
@@ -7228,6 +7243,9 @@ export class Store {
     }
     if (!mayCreate && terminalMembershipChanged) {
       restoreSession()
+      if (args.refusal) {
+        args.refusal.reason = refusalReason ?? 'noMembership'
+      }
       return false
     }
     advanceTopologyFence()

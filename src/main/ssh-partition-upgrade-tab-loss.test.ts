@@ -275,4 +275,49 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       'a tab whose pane had not mounted yet was stranded in the partition'
     ).toHaveLength(1)
   })
+
+  // The refusal reason decides whether a still-live pane keeps its routing and its mobile/CLI
+  // surface. Getting it wrong in either direction is a real failure: 'noTab' on a live tab
+  // orphans a running shell, and 'noMembership' on a missing tab publishes something that does
+  // not exist.
+  describe('why a mayCreate:false write was refused', () => {
+    it('reports noTab when the pane has no durable tab at all', async () => {
+      const store = await createStore()
+      const refusal: { reason?: string } = {}
+
+      const bound = store.persistPtyBinding({
+        worktreeId: WORKTREE,
+        tabId: TAB,
+        leafId: LEAF,
+        ptyId: PTY,
+        mayCreate: false,
+        refusal
+      } as never)
+
+      expect(bound).toBe(false)
+      expect(refusal.reason).toBe('noTab')
+    })
+
+    it('reports noMembership when the tab is live but the leaf is not in its layout', async () => {
+      const store = await createStore()
+      // A live tab with a layout that does not contain the leaf being bound.
+      store.setWorkspaceSession(paneSession() as never)
+      const refusal: { reason?: string } = {}
+
+      const bound = store.persistPtyBinding({
+        worktreeId: WORKTREE,
+        tabId: TAB,
+        leafId: LEAF_TWO,
+        ptyId: PTY,
+        mayCreate: false,
+        refusal
+      } as never)
+
+      expect(bound).toBe(false)
+      expect(
+        refusal.reason,
+        'a live tab was reported as missing, which orphans its running shell'
+      ).toBe('noMembership')
+    })
+  })
 })
