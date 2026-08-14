@@ -1,6 +1,7 @@
 /* oxlint-disable max-lines */
 import type { IPty } from 'node-pty'
 import type * as NodePty from 'node-pty'
+import { isEquivalentPaneKey } from '../shared/stable-pane-id'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -354,10 +355,18 @@ type PtyIdentity = { paneKey?: string; tabId?: string }
  *  shell is fenced on that instead. Not deleted, because the relay is shared: an upgraded host
  *  would otherwise leave every not-yet-updated client attaching a recycled id unchecked. */
 function attachIdentityMismatches(expected: PtyIdentity, managed: PtyIdentity): boolean {
-  // Pane key only. The tab is a location a pane can be moved to, and this identity was frozen at
-  // spawn, so comparing it refused panes that had merely moved — a live shell the client could
-  // then never reach, and an identity mismatch never grounds a respawn.
-  return Boolean(expected.paneKey && managed.paneKey && expected.paneKey !== managed.paneKey)
+  // Compare on the LEAF, not the location. A paneKey is `tabId:leafId`, so comparing keys whole
+  // still compares the tab — which was frozen at spawn and is not updated when a pane moves. That
+  // refused a moved pane, and an identity mismatch never grounds a respawn, so the pane kept a
+  // live shell it could no longer reach. `isEquivalentPaneKey` is exactly this comparison, and
+  // falls back to exact equality for legacy keys it cannot parse.
+  if (expected.paneKey && managed.paneKey) {
+    return !isEquivalentPaneKey(expected.paneKey, managed.paneKey)
+  }
+  // Why keep the tab compare for the no-paneKey case: both identities are optional at spawn, and
+  // dropping this left a lease with only a tabId unfenced. Relay ids restart at pty-1 after a
+  // replacement, so an unfenced attach can bind a pane to a different live shell.
+  return Boolean(expected.tabId && managed.tabId && expected.tabId !== managed.tabId)
 }
 /** Returns env to merge into the PTY's spawn env. Receives spawn context so augmenters can derive per-PTY identity from paneKey.
  *  `command` is the renderer-chosen agent launch command (`pi`, `omp`, …); undefined for CLI-launched bare shells. */

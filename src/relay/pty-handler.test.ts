@@ -1655,25 +1655,34 @@ describe('PtyHandler', () => {
     ).not.toMatch(/not found/i)
   })
 
-  // The same correction, applied to the FALLBACK fence a client too old to send an incarnation
-  // falls into. That path still compared the tab frozen at spawn, so it refused a moved pane and
-  // stranded a live shell the client could never reach again — and an identity mismatch never
-  // grounds a respawn, so the pane just stayed blank.
+  // Uses REAL pane keys (`tabId:leafUuid`). The previous version of these tests passed
+  // 'pane-a', which `makePaneKey` cannot produce, so they proved nothing about production inputs.
+  const LEAF_A = '3f1c9a2e-7b4d-4e1a-9c8f-2d5e6a7b8c90'
+  const LEAF_B = '9a8b7c6d-5e4f-4a3b-8c9d-0e1f2a3b4c5d'
+
   it('lets a pane that moved tabs attach when the client sends no incarnation', async () => {
-    const first = await spawnPty({ paneKey: 'pane-a', tabId: 'tab-1' })
+    const first = await spawnPty({ paneKey: `tab-1:${LEAF_A}`, tabId: 'tab-1' })
 
     await expect(
-      attachPty({ id: first.id, expectedPaneKey: 'pane-a', expectedTabId: 'tab-2' })
+      attachPty({ id: first.id, expectedPaneKey: `tab-2:${LEAF_A}`, expectedTabId: 'tab-2' })
     ).resolves.toMatchObject({ incarnationId: first.incarnationId })
   })
 
-  // The property that had to survive the narrowing: a recycled id belonging to another pane is
-  // still refused, even with no incarnation to check it against.
   it('still refuses an incarnation-less attach naming a different pane', async () => {
-    const first = await spawnPty({ paneKey: 'pane-a', tabId: 'tab-1' })
+    const first = await spawnPty({ paneKey: `tab-1:${LEAF_A}`, tabId: 'tab-1' })
 
     await expect(
-      attachPty({ id: first.id, expectedPaneKey: 'pane-b', expectedTabId: 'tab-1' })
+      attachPty({ id: first.id, expectedPaneKey: `tab-1:${LEAF_B}`, expectedTabId: 'tab-1' })
+    ).rejects.toThrow(/identity mismatch/i)
+  })
+
+  // Both identities are optional at spawn. A shell recorded with only a tabId must still be
+  // fenced, or a reset relay reissuing pty-1 can hand a pane somebody else's live shell.
+  it('still refuses a tab mismatch when neither side carries a pane key', async () => {
+    const first = await spawnPty({ tabId: 'tab-1' })
+
+    await expect(
+      attachPty({ id: first.id, expectedTabId: 'tab-2' })
     ).rejects.toThrow(/identity mismatch/i)
   })
 
