@@ -219,6 +219,7 @@ describe('SkillShareDialog', () => {
     await screen.findByRole('heading', { name: 'Share skill' })
     expect(screen.getByText('No scripts or executables')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Review files that can run' })).toBeNull()
+    expect(document.querySelector('.lucide-file-code-2')).toBeNull()
   })
 
   it('publishes a new immutable version for one exact managed-install match', async () => {

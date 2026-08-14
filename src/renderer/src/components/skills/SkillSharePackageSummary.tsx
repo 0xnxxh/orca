@@ -1,4 +1,4 @@
-import { AlertTriangle, FileCode2 } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
@@ -55,28 +55,23 @@ export function SkillSharePackageSummary({
   const risk = summarizeShareRisk(preview)
   return (
     <section className="space-y-2">
-      <div className="flex items-start gap-3">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-background">
-          <FileCode2 className="size-4 text-muted-foreground" />
-        </div>
-        <div className="min-w-0 flex-1">
-          {/* Why: a bundle's package name is synthesized ("shared-skills"), so the
-              count is the only honest heading; the list below names the members. */}
-          <h3 className="truncate text-sm font-semibold">
-            {bundle ? skillCountLabel(skillCount) : preview.name}
-          </h3>
-          {bundle ? null : <SkillDescriptionDisclosure description={preview.description} />}
-          <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-            <span>{fileCountLabel(preview.fileCount)}</span>
-            <span aria-hidden>·</span>
-            <span>{byteLabel(preview.totalBytes)}</span>
-            <span aria-hidden>·</span>
-            <span className={cn('inline-flex items-center gap-1', risk.risky && 'text-foreground')}>
-              {risk.risky ? <AlertTriangle className="size-3.5" /> : null}
-              {risk.label}
-            </span>
-          </p>
-        </div>
+      <div className="min-w-0">
+        {/* Why: a bundle's package name is synthesized ("shared-skills"), so the
+            count is the only honest heading; the list below names the members. */}
+        <h3 className="truncate text-sm font-semibold">
+          {bundle ? skillCountLabel(skillCount) : preview.name}
+        </h3>
+        {bundle ? null : <SkillDescriptionDisclosure description={preview.description} />}
+        <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+          <span>{fileCountLabel(preview.fileCount)}</span>
+          <span aria-hidden>·</span>
+          <span>{byteLabel(preview.totalBytes)}</span>
+          <span aria-hidden>·</span>
+          <span className={cn('inline-flex items-center gap-1', risk.risky && 'text-foreground')}>
+            {risk.risky ? <AlertTriangle className="size-3.5" /> : null}
+            {risk.label}
+          </span>
+        </p>
       </div>
 
       {risk.risky ? (
