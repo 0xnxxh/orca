@@ -35,7 +35,7 @@ import { normalizeNotificationSettings } from './persistence-onboarding-normaliz
 import { retireLegacyInstructionsForClearedTextActionRecipes } from './persistence-source-control-settings'
 import {
   buildWorkspaceDirHistoryForUpdate,
-  stripLegacyTerminalScrollbackBytes
+  stripRetiredGlobalSettings
 } from './persistence-terminal-settings-migrations'
 
 export type SettingsMutationOperations = {
@@ -52,7 +52,7 @@ export function updateSettings(
   updates: Partial<GlobalSettings>,
   options: { notifyListeners?: boolean; originWebContentsId?: number } = {}
 ): GlobalSettings {
-  const sanitizedUpdates = stripLegacyTerminalScrollbackBytes(updates)
+  const sanitizedUpdates = stripRetiredGlobalSettings(updates)
   if ('opencodeSessionCookie' in updates && !updates.opencodeSessionCookie) {
     operations.removeRetainedBlob(PROTECTED_SECRET_SLOT.opencodeSessionCookie)
   }

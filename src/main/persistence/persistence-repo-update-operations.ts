@@ -1,7 +1,7 @@
 import type { PersistedState, Repo } from '../../shared/types'
 import type { ExecutionHostId } from '../../shared/execution-host'
 import { getRepoExecutionHostId } from '../../shared/execution-host'
-import { isLegacyRepoForExternalWorktreeVisibility } from '../../shared/worktree-ownership'
+import { isLegacyRepoForExternalWorktreeVisibility } from '../../shared/external-worktree-visibility'
 import { normalizeRepoSourceControlAiOverrides } from '../../shared/source-control-ai'
 import type { StoreOwnedPersistedState } from './persistence-store-owned-state'
 import { sanitizeRepoUpdatesForPersistence } from './persistence-repo-sanitization'

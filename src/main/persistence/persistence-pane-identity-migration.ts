@@ -93,8 +93,15 @@ export function collectMigrationUnsupportedPtyEntries(args: {
   if (tab?.ptyId && !hasLeafPtyBindings) {
     const fallbackLeafId =
       args.normalizedLayout.activeLeafId ?? firstLayoutLeafId(args.normalizedLayout.root)
+    let paneKey: string | undefined
     if (fallbackLeafId && isTerminalLeafId(fallbackLeafId)) {
-      const paneKey = makePaneKey(args.tabId, fallbackLeafId)
+      try {
+        paneKey = makePaneKey(args.tabId, fallbackLeafId)
+      } catch {
+        // Why: a persisted tabId can be malformed; skip the alias instead of aborting the whole load-time normalization.
+      }
+    }
+    if (paneKey) {
       for (const legacyPaneKey of [`${args.tabId}:0`, `${args.tabId}:1`]) {
         if (registeredLegacyPaneKeys.has(legacyPaneKey)) {
           continue

@@ -41,13 +41,14 @@ export function updateSshTarget(
     return null
   }
   const normalized = normalizeSshTarget({ ...target, ...updates })
-  Object.assign(target, updates, normalized)
-  if (!Object.hasOwn(normalized, 'relayGracePeriodSeconds')) {
-    delete target.relayGracePeriodSeconds
+  // Why: Object.assign only adds keys, so anything normalization stripped (retired sync fields, implicit defaults) must be deleted off the live target.
+  const mutableTarget = target as Record<string, unknown>
+  for (const key of Object.keys(mutableTarget)) {
+    if (!Object.hasOwn(normalized, key)) {
+      delete mutableTarget[key]
+    }
   }
-  if (!Object.hasOwn(normalized, 'systemSshConnectionReuse')) {
-    delete target.systemSshConnectionReuse
-  }
+  Object.assign(target, normalized)
   operations.scheduleSave()
   return { ...target }
 }

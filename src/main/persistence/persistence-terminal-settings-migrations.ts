@@ -56,12 +56,21 @@ export function readLegacyTerminalScrollbackSettings(
     : {}
 }
 
-export function stripLegacyTerminalScrollbackBytes(
+type RetiredGlobalSettings = {
+  terminalScrollbackBytes?: unknown
+  enableGitHubAttribution?: unknown
+}
+
+export function stripRetiredGlobalSettings(
   settings: Partial<GlobalSettings> | undefined
 ): Partial<GlobalSettings> {
-  const { terminalScrollbackBytes: _legacyScrollbackBytes, ...rest } = (settings ??
-    {}) as Partial<GlobalSettings> & { terminalScrollbackBytes?: unknown }
+  const {
+    terminalScrollbackBytes: _legacyScrollbackBytes,
+    enableGitHubAttribution: _legacyGitHubAttribution,
+    ...rest
+  } = (settings ?? {}) as Partial<GlobalSettings> & RetiredGlobalSettings
   void _legacyScrollbackBytes
+  void _legacyGitHubAttribution
   return rest
 }
 

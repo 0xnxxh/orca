@@ -1,5 +1,5 @@
 import type { TerminalTab, WorkspaceSessionState } from '../../shared/types'
-import { getRepoIdFromWorktreeId } from '../../shared/worktree-id'
+import { getRepoIdFromWorktreeId } from '../../shared/worktree/id'
 
 export function createMinimalPersistedTerminalTab(args: {
   worktreeId: string
@@ -29,11 +29,7 @@ export function cloneWorkspaceSessionState(session: WorkspaceSessionState): Work
   return structuredClone(session)
 }
 
-// Deletes the O(1) owner-keyed fields for `ownerKey` from an already-cloned
-// session in place, recording removed tab ids into `removedTabIds`. The
-// pane-key-scanned maps (pty incarnations, surface tombstones, sleeping agents)
-// and the shutdown list are handled by deleteScannedSessionFieldsForOwners so a
-// batch prune scans each collection once instead of once per owner.
+// Owner-keyed deletes only; pane-key-scanned collections live in deleteScannedSessionFieldsForOwners so a batch prune scans each once.
 export function deleteOwnerKeyedSessionFields(
   next: WorkspaceSessionState,
   ownerKey: string,

@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import type { PersistedState } from '../../shared/types'
 import { hardenExistingSecureFile } from '../../shared/secure-file'
@@ -86,9 +86,23 @@ export function migrateMobilePairingDataToCanonicalUserDataPath(sourceUserDataDi
   }
 
   mkdirSync(targetUserDataDir, { recursive: true })
-  for (const { sourcePath, targetPath } of migrations) {
-    copyFileSync(sourcePath, targetPath)
-    // Why: copyFileSync drops Windows ACLs, so re-assert current-user-only on these credential copies (device tokens, E2EE key).
-    hardenExistingSecureFile(targetPath)
+  const copied: string[] = []
+  try {
+    for (const { sourcePath, targetPath } of migrations) {
+      copyFileSync(sourcePath, targetPath)
+      copied.push(targetPath)
+      // Why: copyFileSync drops Windows ACLs, so re-assert current-user-only on these credential copies (device tokens, E2EE key).
+      hardenExistingSecureFile(targetPath)
+    }
+  } catch (error) {
+    // Why: a half-copied pair mixes devices with the wrong key, and the existing-target guard above would block the retry.
+    for (const targetPath of copied) {
+      try {
+        rmSync(targetPath, { force: true })
+      } catch {
+        // Best effort — leave the retry guard to the next launch.
+      }
+    }
+    console.error('[persistence] Failed to migrate mobile pairing files forward:', error)
   }
 }
