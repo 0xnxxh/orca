@@ -35,8 +35,9 @@ function repoMatchesGitLabSlug(repo: Repo | undefined, slug: ProjectSlug): boole
   if (identity.canonicalKey.replace(/\/+$/, '').toLowerCase() === gitLabProjectKey(slug)) {
     return true
   }
-  // Why not false: identity keeps one remote and prefers `upstream`, so a fork's own `origin` is
-  // invisible here. Rejecting would drop MR URLs from the fork the user actually checked out.
+  // Why not false: identity keeps one remote, chosen when the repo was added and never re-probed.
+  // An `upstream` pick means a fork's `origin` existed and is invisible here, so rejecting would
+  // drop MR URLs from the fork itself. A stale snapshot can still misjudge a renamed project.
   return identity.remoteName === 'upstream' ? 'unknown' : false
 }
 
