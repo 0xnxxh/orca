@@ -28852,6 +28852,15 @@ export class OrcaRuntimeService {
 
   private async resolveWorktreeSelector(selector: string): Promise<ResolvedWorktree> {
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(selector)
+    // Why only `id:`: every other selector kind is matched across the whole fleet, and their
+    // `selector_ambiguous` contract is defined over all repos. Scoping those would silently pick a
+    // winner where today they correctly refuse. An `id:` selector already names its repo.
+    if (explicitWorktreeId && !this.hasFreshResolvedWorktreeCache()) {
+      const scoped = await this.resolveExplicitWorktreeIdScoped(explicitWorktreeId)
+      if (scoped) {
+        return scoped
+      }
+    }
     const worktrees = await this.listResolvedWorktrees()
     let candidates: ResolvedWorktree[]
 
@@ -29439,6 +29448,11 @@ export class OrcaRuntimeService {
     return resolved
   }
 
+  /** A warm fleet snapshot already answers any selector for free, so scoped scanning must yield to it. */
+  private hasFreshResolvedWorktreeCache(): boolean {
+    return Boolean(this.resolvedWorktreeCache && this.resolvedWorktreeCache.expiresAt > Date.now())
+  }
+
   private async listResolvedWorktrees(): Promise<ResolvedWorktree[]> {
     return (await this.listResolvedWorktreeSnapshot()).worktrees
   }
@@ -29481,70 +29495,9 @@ export class OrcaRuntimeService {
       ])
     )
     const perRepoWorktrees = await Promise.all(
-      repos.map(async (repo) => {
-        if (isFolderRepo(repo)) {
-          return listRuntimeFolderWorkspaces(this.requireStore(), repo).map((worktree) => ({
-            ...worktree,
-            hostId: worktree.hostId ?? getRepoExecutionHostId(repo),
-            parentWorktreeId: null,
-            childWorktreeIds: [],
-            lineage: null,
-            git: {
-              path: worktree.path,
-              head: worktree.head,
-              branch: worktree.branch,
-              isBare: worktree.isBare,
-              isMainWorktree: worktree.isMainWorktree
-            },
-            displayName: worktree.displayName,
-            comment: worktree.comment
-          }))
-        }
-        // Why: mobile startup shares this path, so a slow repo scan degrades one repo's metadata instead of blocking all session loading.
-        // Why the catch: `withTimeout` resolves its fallback on rejection too, so the rejection must be absorbed first for `null` to mean
-        // "timed out" only. A stall never reached a verdict, so restore persisted rows instead of publishing a healthy-looking empty catalog;
-        // a rejection is a real answer and keeps its shipped zero-row semantics.
-        const scan: RuntimeWorktreeScanResult =
-          (await withTimeout<RuntimeWorktreeScanResult | null>(
-            this.listRepoWorktreesForResolution(repo, projectRuntimeByRepoId).catch(
-              () => ({ ok: false, worktrees: [] }) satisfies RuntimeWorktreeScanResult
-            ),
-            RESOLVED_WORKTREE_REPO_TIMEOUT_MS,
-            null
-          )) ?? { ok: false, worktrees: this.listStoredWorktreesForResolution(repo) }
-        const gitWorktrees = scan.worktrees
-        if (scan.ok) {
-          pruneLineageForMissingRepoWorktrees(this.requireStore(), repo, gitWorktrees)
-        }
-        return gitWorktrees.map((gitWorktree) => {
-          const worktreeId = `${repo.id}::${gitWorktree.path}`
-          // Why: lineage validation needs a durable instance ID even when the runtime sees a workspace before renderer discovery-stamp.
-          const existingMeta = metaById[worktreeId]
-          const meta =
-            existingMeta && existingMeta.instanceId
-              ? existingMeta
-              : this.store?.setWorktreeMeta(worktreeId, {})
-          const merged = {
-            ...mergeWorktree(repo.id, gitWorktree, meta, repo.displayName),
-            hostId: existingMeta?.hostId ?? meta?.hostId ?? getRepoExecutionHostId(repo)
-          }
-          return {
-            ...merged,
-            parentWorktreeId: null,
-            childWorktreeIds: [],
-            lineage: null,
-            git: {
-              path: gitWorktree.path,
-              head: gitWorktree.head,
-              branch: gitWorktree.branch,
-              isBare: gitWorktree.isBare,
-              isMainWorktree: gitWorktree.isMainWorktree
-            },
-            displayName: merged.displayName,
-            comment: merged.comment
-          }
-        })
-      })
+      repos.map(
+        async (repo) => await this.resolveRepoWorktreeRows(repo, metaById, projectRuntimeByRepoId)
+      )
     )
     const worktrees = projectResolvedWorktreeLineage(
       perRepoWorktrees.flat(),
@@ -29561,6 +29514,109 @@ export class OrcaRuntimeService {
       }
     }
     return { worktrees, platformByRepoId }
+  }
+
+  /** One repo's worktree rows before lineage projection. Shared by the fleet scan and scoped lookups. */
+  private async resolveRepoWorktreeRows(
+    repo: Repo,
+    metaById: Record<string, ReturnType<NonNullable<Store['getWorktreeMeta']>>>,
+    projectRuntimeByRepoId: ReadonlyMap<string, ProjectExecutionRuntimeResolution>
+  ): Promise<ResolvedWorktree[]> {
+    if (isFolderRepo(repo)) {
+      return listRuntimeFolderWorkspaces(this.requireStore(), repo).map((worktree) => ({
+        ...worktree,
+        hostId: worktree.hostId ?? getRepoExecutionHostId(repo),
+        parentWorktreeId: null,
+        childWorktreeIds: [],
+        lineage: null,
+        git: {
+          path: worktree.path,
+          head: worktree.head,
+          branch: worktree.branch,
+          isBare: worktree.isBare,
+          isMainWorktree: worktree.isMainWorktree
+        },
+        displayName: worktree.displayName,
+        comment: worktree.comment
+      }))
+    }
+    // Why: mobile startup shares this path, so a slow repo scan degrades one repo's metadata instead of blocking all session loading.
+    // Why the catch: `withTimeout` resolves its fallback on rejection too, so the rejection must be absorbed first for `null` to mean
+    // "timed out" only. A stall never reached a verdict, so restore persisted rows instead of publishing a healthy-looking empty catalog;
+    // a rejection is a real answer and keeps its shipped zero-row semantics.
+    const scan: RuntimeWorktreeScanResult = (await withTimeout<RuntimeWorktreeScanResult | null>(
+      this.listRepoWorktreesForResolution(repo, projectRuntimeByRepoId).catch(
+        () => ({ ok: false, worktrees: [] }) satisfies RuntimeWorktreeScanResult
+      ),
+      RESOLVED_WORKTREE_REPO_TIMEOUT_MS,
+      null
+    )) ?? { ok: false, worktrees: this.listStoredWorktreesForResolution(repo) }
+    const gitWorktrees = scan.worktrees
+    if (scan.ok) {
+      pruneLineageForMissingRepoWorktrees(this.requireStore(), repo, gitWorktrees)
+    }
+    return gitWorktrees.map((gitWorktree) => {
+      const worktreeId = `${repo.id}::${gitWorktree.path}`
+      // Why: lineage validation needs a durable instance ID even when the runtime sees a workspace before renderer discovery-stamp.
+      const existingMeta = metaById[worktreeId]
+      const meta =
+        existingMeta && existingMeta.instanceId
+          ? existingMeta
+          : this.store?.setWorktreeMeta(worktreeId, {})
+      const merged = {
+        ...mergeWorktree(repo.id, gitWorktree, meta, repo.displayName),
+        hostId: existingMeta?.hostId ?? meta?.hostId ?? getRepoExecutionHostId(repo)
+      }
+      return {
+        ...merged,
+        parentWorktreeId: null,
+        childWorktreeIds: [],
+        lineage: null,
+        git: {
+          path: gitWorktree.path,
+          head: gitWorktree.head,
+          branch: gitWorktree.branch,
+          isBare: gitWorktree.isBare,
+          isMainWorktree: gitWorktree.isMainWorktree
+        },
+        displayName: merged.displayName,
+        comment: merged.comment
+      }
+    })
+  }
+
+  /**
+   * Resolve one `<repoId>::<path>` worktree id by scanning only its owning repo.
+   *
+   * Lineage edges are intra-repo by construction (`sharesResolvedWorktreeLineageBoundary` requires a
+   * matching repoId), so projecting over one repo's rows yields the same parent and child ids the
+   * fleet scan would. Returns `null` whenever that does not hold, and the caller falls back.
+   */
+  private async resolveExplicitWorktreeIdScoped(
+    worktreeId: string
+  ): Promise<ResolvedWorktree | null> {
+    const store = this.store
+    if (!store) {
+      return null
+    }
+    const parsed = splitWorktreeIdForFilesystem(worktreeId)
+    if (!parsed?.repoId || !parsed.worktreePath) {
+      return null
+    }
+    const owners = store.getRepos().filter((repo) => repo.id === parsed.repoId)
+    // Why: one repo id can be registered on several execution hosts, and only the fleet scan
+    // decides between their rows. Hand those back to the unscoped path rather than guessing.
+    if (owners.length !== 1) {
+      return null
+    }
+    const repo = owners[0]
+    const rows = await this.resolveRepoWorktreeRows(
+      repo,
+      store.getAllWorktreeMeta() ?? {},
+      resolveLocalProjectRuntimesForRepos(this.requireStore(), [repo])
+    )
+    const projected = projectResolvedWorktreeLineage(rows, store.getAllWorktreeLineage?.() ?? {})
+    return projected.find((worktree) => worktree.id === worktreeId) ?? null
   }
 
   private async listRepoWorktreesForResolution(
