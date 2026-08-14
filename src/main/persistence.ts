@@ -2868,9 +2868,11 @@ export function hoistSshPartitionsIntoLocalSession(
   /** Passed explicitly: pane-identity normalization prunes partitions before this runs. */
   sourcePartitions?: PersistedState['workspaceSessionsByHostId']
 ): boolean {
-  if (state.settings?.sshPartitionHoistSeed === 'done') {
-    return false
-  }
+  // Per-tab, because `ssh:<target>` is a LIVE plane, not a legacy one — the headless and CLI
+  // surfaces still write it. A one-shot flag would snapshot it once and strand everything added
+  // afterwards. Recording tabs instead keeps the hoist repeatable while never re-adding a tab the
+  // user has closed, which is the resurrection this guard exists to prevent.
+  const alreadyHoisted = new Set(state.settings?.sshHoistedTabIds ?? [])
   const partitions = sourcePartitions ?? state.workspaceSessionsByHostId
   if (!partitions) {
     return false
@@ -2887,11 +2889,14 @@ export function hoistSshPartitionsIntoLocalSession(
     for (const [worktreeId, tabs] of Object.entries(partition.tabsByWorktree ?? {})) {
       const existing = local.tabsByWorktree?.[worktreeId] ?? []
       const known = new Set(existing.map((tab) => tab.id))
-      const missing = (tabs ?? []).filter((tab) => !known.has(tab.id))
+      const missing = (tabs ?? []).filter((tab) => !known.has(tab.id) && !alreadyHoisted.has(tab.id))
       if (missing.length === 0) {
         continue
       }
       local.tabsByWorktree = { ...local.tabsByWorktree, [worktreeId]: [...existing, ...missing] }
+      for (const tab of missing) {
+        alreadyHoisted.add(tab.id)
+      }
       changed = true
     }
     for (const [tabId, layout] of Object.entries(partition.terminalLayoutsByTabId ?? {})) {
@@ -2921,11 +2926,9 @@ export function hoistSshPartitionsIntoLocalSession(
       changed = true
     }
   }
-  // Mark it done even when nothing moved. The partition itself must SURVIVE — headless and CLI
-  // own panes in that plane — so the only way to stop re-hoisting is to record that we have run.
-  // Without this, "local has no such tab" is both the hoist condition and the state produced by
-  // the user closing a tab, so closed panes came back on the next launch.
-  state.settings = { ...state.settings, sshPartitionHoistSeed: 'done' }
+  if (changed) {
+    state.settings = { ...state.settings, sshHoistedTabIds: [...alreadyHoisted] }
+  }
   return changed
 }
 

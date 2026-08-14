@@ -49,9 +49,9 @@ async function createStore(state: Record<string, unknown> = {}) {
 function stripHoistMarker(): void {
   const file = join(testState.dir, 'orca-data.json')
   const state = JSON.parse(readFileSync(file, 'utf-8')) as {
-    settings?: { sshPartitionHoistSeed?: string }
+    settings?: { sshHoistedTabIds?: string[] }
   }
-  delete state.settings?.sshPartitionHoistSeed
+  delete state.settings?.sshHoistedTabIds
   writeFileSync(file, JSON.stringify(state), 'utf-8')
 }
 
@@ -194,5 +194,33 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       relaunched.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? [],
       'the migration re-added a tab the user had closed'
     ).toHaveLength(0)
+  })
+
+  // The ssh:<target> plane is still written by the headless and CLI surfaces, so the hoist has to
+  // stay repeatable. A one-shot flag would snapshot the plane once and strand every pane added
+  // after it — the same tab loss, made permanent instead of lasting one launch.
+  it('still hoists a tab the partition gains after an earlier hoist', async () => {
+    const before = await createStore()
+    before.setWorkspaceSession(paneSession() as never, SSH_PARTITION)
+    before.flushOrThrow()
+    stripHoistMarker()
+
+    const upgraded = await reopenStore()
+    expect(upgraded.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? []).toHaveLength(1)
+
+    // The live plane gains a SECOND pane after the first hoist has already run.
+    const second = paneSession()
+    second.tabsByWorktree[WORKTREE] = [
+      ...second.tabsByWorktree[WORKTREE],
+      { ...second.tabsByWorktree[WORKTREE][0], id: 'tab-2' }
+    ]
+    upgraded.setWorkspaceSession(second as never, SSH_PARTITION)
+    upgraded.flushOrThrow()
+
+    const relaunched = await reopenStore()
+    expect(
+      (relaunched.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? []).map((tab) => tab.id).sort(),
+      'a pane the partition gained after the first hoist was stranded'
+    ).toEqual(['tab-1', 'tab-2'])
   })
 })

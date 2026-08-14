@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- Why: PTY IPC is centralized in one main-process module so spawn env scoping, lifecycle cleanup, process inspection, and renderer IPC stay behind one audited boundary. */
+import { parsePtyExitedError } from '../../shared/ssh-pty-failure-tokens'
 import { join, delimiter } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
@@ -1121,12 +1122,19 @@ function isPtyProvenGoneForReplacement(err: unknown, ptyId: string): boolean {
   if (!parseAppSshPtyId(ptyId)) {
     return isPtyAlreadyGoneError(err)
   }
-  // The ONLY proving answer is the expiry the reattach mints after verifying the relay's proof
-  // names this shell and this incarnation. Accepting a bare SSH_PTY_EXITED too was over-acceptance:
-  // the reattach deliberately rethrows one it could NOT tie to us, and honouring that here retires
-  // the owner and respawns onto a shell somebody else is still using.
   const message = err instanceof Error ? err.message : String(err)
-  return message.includes(SSH_SESSION_EXPIRED_ERROR)
+  if (message.includes(SSH_SESSION_EXPIRED_ERROR)) {
+    // The reattach mints this only after verifying the relay's proof names this shell AND a
+    // relay-attested incarnation. Strongest available evidence.
+    return true
+  }
+  // A raw SSH_PTY_EXITED is one the reattach could not tie to an attested incarnation — either
+  // because the host is too old to attest one, or the lease's was synthesized. Accepting it
+  // blindly retired owners on a proof about somebody else's shell; refusing it outright stranded
+  // panes whose exit really was proven and for which no incarnation exists to check. Require the
+  // proof to name THIS pty: without an incarnation that is the only evidence there is, and an id
+  // mismatch is exactly the case that must not authorize a respawn.
+  return parsePtyExitedError(message)?.id === ptyId
 }
 
 function isPtyAlreadyGoneError(err: unknown): boolean {
