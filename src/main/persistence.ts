@@ -2849,11 +2849,6 @@ export type PtyBindingSourceExpectation = {
   incarnationId?: string
 }
 
-/** Caps the hoist ledger. A live tab is protected by the local-session check, not by this cap, so
- *  eviction is safe for open tabs; the cost of evicting an id is that its tab could be re-hoisted
- *  once if it is later closed while the partition still lists it. */
-const MAX_HOISTED_TAB_IDS = 512
-
 /** Why a `mayCreate: false` binding write was refused. `noTab` means the pane has no durable tab,
  *  so publishing it anywhere would be publishing something that does not exist. */
 export type PtyBindingRefusalReason = 'noTab' | 'noMembership'
@@ -3021,16 +3016,34 @@ export function hoistSshPartitionsIntoLocalSession(
     }
   }
   if (changed) {
-    // Bounded, newest-last. A tab id can be reused by the CLI after its tab closes, and an
-    // unbounded list would both grow for the life of the profile and strand such a pane forever.
-    // KNOWN COST, and it is worse than it reads: an evicted id can be re-hoisted once, and since
-    // the unified ledger gates the plane the tab bar renders from, that means a long-closed tab
-    // reappearing ON SCREEN. Needs >512 hoisted tabs. Tracked, not fixed here.
-    const bounded = [...alreadyHoisted].slice(-MAX_HOISTED_TAB_IDS)
+    // Pruned by RELEVANCE, not recency. A ledger entry only has a job while the partition still
+    // offers that tab: it is what stops a tab the user closed being folded back in. Slicing to the
+    // newest N evicted exactly the entries a long-lived profile needs most, and a re-hoisted id
+    // returns a closed tab to the plane the tab bar renders from — on screen. Dropping ids no
+    // partition mentions any more bounds growth by what the host actually offers, and can never
+    // evict an entry that is still load-bearing.
+    const offeredTabIds = new Set<string>()
+    for (const [hostId, hostSession] of Object.entries(partitions)) {
+      if (!hostId.startsWith('ssh:') || !hostSession) {
+        continue
+      }
+      for (const tabs of Object.values(hostSession.tabsByWorktree ?? {})) {
+        for (const tab of tabs ?? []) {
+          offeredTabIds.add(tab.id)
+        }
+      }
+      for (const tabs of Object.values(hostSession.unifiedTabs ?? {})) {
+        for (const tab of tabs ?? []) {
+          offeredTabIds.add(tab.id)
+        }
+      }
+    }
     state.settings = {
       ...state.settings,
-      sshHoistedTabIds: bounded,
-      sshHoistedUnifiedTabIds: [...alreadyHoistedUnified].slice(-MAX_HOISTED_TAB_IDS)
+      sshHoistedTabIds: [...alreadyHoisted].filter((tabId) => offeredTabIds.has(tabId)),
+      sshHoistedUnifiedTabIds: [...alreadyHoistedUnified].filter((tabId) =>
+        offeredTabIds.has(tabId)
+      )
     }
   }
   return changed

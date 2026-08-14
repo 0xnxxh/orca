@@ -592,4 +592,43 @@ describe('an SSH pane whose membership was persisted into the ssh partition', ()
       'a tab the user closed came back in the tab bar'
     ).toHaveLength(0)
   })
+
+  // The ledger is what stops a closed tab being folded back in, so an entry must survive exactly
+  // as long as the partition still offers that tab. Capping by recency evicted the entries a
+  // long-lived profile needs most, and a re-hoisted id returns a closed tab to the plane the tab
+  // bar renders from — on screen.
+  it('keeps ledger entries for every tab the partition still offers, however many there are', async () => {
+    const before = await createStore()
+    const many = paneSession()
+    const ids = Array.from({ length: 600 }, (_, index) => `tab-${index}`)
+    many.tabsByWorktree[WORKTREE] = ids.map((id) => ({
+      ...many.tabsByWorktree[WORKTREE]![0]!,
+      id
+    }))
+    many.unifiedTabs = { [WORKTREE]: ids.map((id) => unifiedTab(id)) } as typeof many.unifiedTabs
+    before.setWorkspaceSession(many as never, SSH_PARTITION)
+    before.flushOrThrow()
+    stripHoistMarker()
+
+    const upgraded = await reopenStore()
+    expect(
+      upgraded.getWorkspaceSession().tabsByWorktree?.[WORKTREE] ?? [],
+      'the tabs never hoisted, so eviction cannot be observed'
+    ).toHaveLength(ids.length)
+
+    // The user closes them all.
+    upgraded.setWorkspaceSession({
+      ...upgraded.getWorkspaceSession(),
+      tabsByWorktree: { [WORKTREE]: [] },
+      unifiedTabs: { [WORKTREE]: [] }
+    } as never)
+    upgraded.flushOrThrow()
+
+    const relaunched = await reopenStore()
+
+    expect(
+      relaunched.getWorkspaceSession().unifiedTabs?.[WORKTREE] ?? [],
+      'an evicted ledger entry let a closed tab reappear in the tab bar'
+    ).toHaveLength(0)
+  })
 })
