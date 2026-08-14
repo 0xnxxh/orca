@@ -3455,10 +3455,7 @@ export function applyWebSessionTabsStorePatch(
             surface.turnCompletedAt,
             accepted.state
           )
-          if (
-            !allowCompletionNotification &&
-            (accepted.state !== 'working' || turnCompletedAt !== undefined)
-          ) {
+          if (!allowCompletionNotification && accepted.state !== 'working') {
             continue
           }
           acceptedNotificationStatuses.push({

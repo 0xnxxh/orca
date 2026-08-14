@@ -37,6 +37,8 @@ type LastCompletionIdentity = {
 
 // Why: worktree switches remount a pane while the PTY/hook stream stays live, so stale completion replays must outlive one coordinator.
 const lastCompletionIdentityByPaneKey = new Map<string, LastCompletionIdentity>()
+// Why: a late-pair stamped tail must suppress its replayed all-clear even though no banner was eligible.
+const handledTurnCompletedAtByPaneKey = new Map<string, number>()
 
 const IDLE_POLL_INTERVAL_MS = 2_000
 const ACTIVE_POLL_INTERVAL_MS = 750
@@ -194,10 +196,11 @@ export function createAgentCompletionCoordinator(
     return completionIdentityFor(payload.state, payload.agentType, timestamp)
   }
 
-  function turnCompletedAtAlreadyNotified(turnCompletedAt: number): boolean {
+  function turnCompletedAtAlreadyHandled(turnCompletedAt: number): boolean {
     return (
+      handledTurnCompletedAtByPaneKey.get(options.paneKey) === turnCompletedAt ||
       lastCompletionIdentityByPaneKey.get(options.paneKey)?.lastTurnCompletedAtNotified ===
-      turnCompletedAt
+        turnCompletedAt
     )
   }
 
@@ -320,6 +323,12 @@ export function createAgentCompletionCoordinator(
     clearPendingCodexAttention()
     if (optionsOverride.completionIdentity) {
       lastCompletionIdentityByPaneKey.set(options.paneKey, optionsOverride.completionIdentity)
+      if (optionsOverride.completionIdentity.lastTurnCompletedAtNotified !== undefined) {
+        handledTurnCompletedAtByPaneKey.set(
+          options.paneKey,
+          optionsOverride.completionIdentity.lastTurnCompletedAtNotified
+        )
+      }
     }
     if (
       source === 'hook' &&
@@ -834,7 +843,7 @@ export function createAgentCompletionCoordinator(
         // Why: Claude's lead Stop already ended the turn; the pane stays `working` only for background inventory. Announce now, keep lifecycle on the reported working row.
         if (
           workingStatusObserved &&
-          !turnCompletedAtAlreadyNotified(turnCompletedAt) &&
+          !turnCompletedAtAlreadyHandled(turnCompletedAt) &&
           lastCompletionIdentity?.lastTurnCompletedAtNotified !== turnCompletedAt
         ) {
           const completionSnapshot: AgentCompletionStatusSnapshot = {
@@ -857,6 +866,8 @@ export function createAgentCompletionCoordinator(
           if (committed) {
             lastCompletionIdentity = completionIdentity
           }
+        } else if (!workingStatusObserved) {
+          handledTurnCompletedAtByPaneKey.set(options.paneKey, turnCompletedAt)
         }
         options.dispatchHookLifecycle?.(payload)
         return
@@ -898,7 +909,7 @@ export function createAgentCompletionCoordinator(
         : undefined
       if (
         turnCompletedAt !== undefined &&
-        (turnCompletedAtAlreadyNotified(turnCompletedAt) ||
+        (turnCompletedAtAlreadyHandled(turnCompletedAt) ||
           lastCompletionIdentity?.lastTurnCompletedAtNotified === turnCompletedAt ||
           lastCompletedTurn === currentTurn)
       ) {
@@ -996,6 +1007,7 @@ export function createAgentCompletionCoordinator(
     // Why: module-scoped identity survives a live-stream remount; evict only on genuine teardown (isLive() false) so it can't leak per closed pane.
     if (!options.isLive()) {
       lastCompletionIdentityByPaneKey.delete(options.paneKey)
+      handledTurnCompletedAtByPaneKey.delete(options.paneKey)
     }
   }
 
@@ -1014,8 +1026,12 @@ export function createAgentCompletionCoordinator(
 
 export function resetAgentCompletionCoordinatorIdentitiesForTest(): void {
   lastCompletionIdentityByPaneKey.clear()
+  handledTurnCompletedAtByPaneKey.clear()
 }
 
 export function getAgentCompletionCoordinatorIdentityCountForTest(): number {
-  return lastCompletionIdentityByPaneKey.size
+  return new Set([
+    ...lastCompletionIdentityByPaneKey.keys(),
+    ...handledTurnCompletedAtByPaneKey.keys()
+  ]).size
 }

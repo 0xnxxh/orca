@@ -1215,6 +1215,46 @@ describe('agent completion coordinator', () => {
     expect(dispatchCompletion).not.toHaveBeenCalled()
   })
 
+  it('does not announce the all-clear after first seeing a stamped turn tail', () => {
+    const dispatchCompletion = vi.fn()
+    const firstCoordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+
+    firstCoordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    firstCoordinator.dispose()
+
+    const remounted = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+    remounted.observeHookStatus({
+      state: 'done',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_055_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    vi.advanceTimersByTime(HOOK_DONE_QUIET_MS)
+
+    expect(dispatchCompletion).not.toHaveBeenCalled()
+  })
+
   it('announces a gated Stop immediately and treats the later all-clear as the same turn', () => {
     const dispatchCompletion = vi.fn()
     const dispatchHookLifecycle = vi.fn()
@@ -1357,6 +1397,56 @@ describe('agent completion coordinator', () => {
       turnCompletedAt: 1_700_000_005_000
     })
     expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+    firstCoordinator.dispose()
+
+    const remounted = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+    remounted.observeHookStatus({
+      state: 'done',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_055_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    vi.advanceTimersByTime(HOOK_DONE_QUIET_MS)
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps stamped replay suppression through a working title and live remount', () => {
+    const dispatchCompletion = vi.fn()
+    const firstCoordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+
+    firstCoordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000
+    })
+    firstCoordinator.observeHookStatus({
+      state: 'working',
+      prompt: 'review the PR',
+      agentType: 'claude',
+      stateStartedAt: 1_700_000_000_000,
+      turnCompletedAt: 1_700_000_005_000
+    })
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(2_000)
+    firstCoordinator.observeTitleWorking()
     firstCoordinator.dispose()
 
     const remounted = createAgentCompletionCoordinator({

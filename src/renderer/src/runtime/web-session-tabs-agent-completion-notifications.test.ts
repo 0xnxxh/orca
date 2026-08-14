@@ -29,7 +29,8 @@ const initialState = useAppStore.getInitialState()
 function makeAgentSnapshot(
   snapshotVersion: number,
   updatedAt: number,
-  turnCompletedAt?: number
+  turnCompletedAt?: number,
+  state: 'working' | 'done' = 'working'
 ): RuntimeMobileSessionTabsResult {
   return {
     worktree: WORKTREE_ID,
@@ -50,7 +51,7 @@ function makeAgentSnapshot(
         terminal: 'terminal-1',
         ...(turnCompletedAt !== undefined ? { turnCompletedAt } : {}),
         agentStatus: {
-          state: 'working',
+          state,
           prompt: 'review the PR',
           updatedAt,
           stateStartedAt: NOW,
@@ -87,7 +88,7 @@ describe('paired session-tab agent completion notifications', () => {
     vi.useRealTimers()
   })
 
-  it('seeds accepted working snapshots and excludes completed replays', () => {
+  it('forwards accepted working snapshots and live statuses', () => {
     applySnapshot(makeAgentSnapshot(1, NOW), false)
     expect(mocks.observeAgentHookCompletionForNotification).toHaveBeenCalledTimes(1)
 
@@ -107,7 +108,7 @@ describe('paired session-tab agent completion notifications', () => {
     })
 
     applySnapshot(makeAgentSnapshot(4, NOW + 3_000, turnCompletedAt + 1_000), false)
-    expect(mocks.observeAgentHookCompletionForNotification).toHaveBeenCalledTimes(3)
+    expect(mocks.observeAgentHookCompletionForNotification).toHaveBeenCalledTimes(4)
   })
 
   it('announces one live stamped completion after a late-pair working seed', () => {
@@ -130,9 +131,24 @@ describe('paired session-tab agent completion notifications', () => {
     expect(dispatchCompletion).toHaveBeenCalledTimes(1)
   })
 
-  it('does not seed a stamped reconnect replay', () => {
-    applySnapshot(makeAgentSnapshot(1, NOW, NOW), false)
+  it('suppresses a stamped reconnect tail and its live all-clear', () => {
+    const dispatchCompletion = vi.fn()
+    const coordinator = createAgentCompletionCoordinator({
+      paneKey: makePaneKey(toWebTerminalSurfaceTabId(HOST_TAB_ID), LEAF_ID),
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+    mocks.observeAgentHookCompletionForNotification.mockImplementation(({ payload }) =>
+      coordinator.observeHookStatus(payload)
+    )
 
-    expect(mocks.observeAgentHookCompletionForNotification).not.toHaveBeenCalled()
+    applySnapshot(makeAgentSnapshot(1, NOW, NOW), false)
+    applySnapshot(makeAgentSnapshot(2, NOW + 1_000, NOW, 'done'), true)
+
+    expect(mocks.observeAgentHookCompletionForNotification).toHaveBeenCalledTimes(2)
+    expect(dispatchCompletion).not.toHaveBeenCalled()
   })
 })
