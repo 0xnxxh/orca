@@ -37,6 +37,7 @@ export type StructuredAgentSessionHandoffTransport = {
     owner: StructuredTuiOwner
   }): Promise<StructuredTuiOwner>
   recoverTuiOwner(record: AgentSessionRecord): Promise<StructuredTuiOwner>
+  probeRecoveredOwner?(record: AgentSessionRecord): Promise<'live' | 'dead' | 'unknown'>
   stopRecoveredOwner(record: AgentSessionRecord): Promise<void>
   closeTuiOwner?(owner: StructuredTuiOwner): Promise<{ transcriptPath?: string }>
   revealNativeSession?(input: { workspaceId: string; sessionId: string }): void

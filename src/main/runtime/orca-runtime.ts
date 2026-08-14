@@ -9403,6 +9403,20 @@ export class OrcaRuntimeService {
           transcriptPath: proof.transcriptPath
         }
       },
+      probeRecoveredOwner: async (record) => {
+        const identity = record.lease.ownerProcess
+        if (!identity) {
+          return 'dead'
+        }
+        const proof = await probeAgentSessionProcessIdentity({ identity })
+        if (proof.outcome === 'identity-matched' && proof.matchedOn.length > 0) {
+          return 'live'
+        }
+        if (proof.outcome === 'pid-absent' || proof.outcome === 'identity-mismatch') {
+          return 'dead'
+        }
+        return 'unknown'
+      },
       stopRecoveredOwner: (record) => this.stopStructuredSessionProcess(record),
       tuiStatus: (owner) => this.structuredTuiStatus(owner),
       closeTuiOwner: (owner) => this.closeStructuredTuiOwner(owner),

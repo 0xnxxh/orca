@@ -8096,20 +8096,6 @@ export function connectPanePty(
         coldRestoreStartup.sleepingRecordEntry &&
         isPassiveCompletedHibernationEvidence(coldRestoreStartup.sleepingRecordEntry.record)
       )
-      // Why: reattach drops startup commands; only passive hibernation is authority to retire an empty adopted shell and resume its provider session.
-      if (!hasStructuralReplay && connectResult?.isReattach && resumeComesFromPassiveHibernation) {
-        transport.disconnect()
-        if (staleSessionId) {
-          deps.clearExitedPanePtyLayoutBinding(pane.id, staleSessionId)
-          deps.clearTabPtyId(deps.tabId, staleSessionId)
-        } else {
-          deps.syncPanePtyLayoutBinding(pane.id, null)
-        }
-        startFreshColdRestoreAgentResume(coldRestoreStartup, {
-          forceBlankRestoredViewport: true
-        })
-        return false
-      }
       setPanePtyFitBinding(ptyId)
       reportPanePtyVisibility(ptyId, deps.isVisibleRef.current)
       registerSideEffectFactConsumerForPty(ptyId)
@@ -8442,6 +8428,15 @@ export function connectPanePty(
       }
       if (!isCurrentReattachPayload() || !reattachPayloadApplied) {
         return false
+      }
+      if (connectResult?.isReattach && resumeComesFromPassiveHibernation && coldRestoreStartup) {
+        applyColdRestoreAgentResumeStartup(coldRestoreStartup)
+        await waitForTerminalOutputParsed(pane.terminal)
+        if (!(await runTerminalPasteStartupCommand(coldRestoreStartup.command))) {
+          return false
+        }
+        showSessionRestoredBanner()
+        clearSleepingRecordAfterColdRestoreSpawn(coldRestoreStartup)
       }
       scheduleReattachIdleAgentCursorReset()
 

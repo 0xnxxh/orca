@@ -210,6 +210,7 @@ function createCoordinator(): StructuredAgentSessionHandoffCoordinator {
         )
         return { ...owner, process: record.lease.ownerProcess ?? owner.process }
       },
+      probeRecoveredOwner: async () => 'dead',
       stopRecoveredOwner,
       closeTuiOwner,
       waitForTuiExit,
@@ -554,7 +555,7 @@ describe('structured session ownership handoff', () => {
       handoffOperationId: null,
       now: NOW
     })
-    reproveTuiOwner.mockRejectedValueOnce(new Error('The owning terminal was killed.'))
+    reproveTuiOwner.mockRejectedValue(new Error('The owning terminal was killed.'))
     coordinator = createCoordinator()
 
     await coordinator.restore(SESSION)
