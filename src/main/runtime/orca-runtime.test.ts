@@ -19258,13 +19258,25 @@ describe('OrcaRuntimeService', () => {
 
     runtime.onPtyData(
       'hook-only-pty',
-      '\x1b]9999;{"state":"waiting","prompt":"fix the tests","agentType":"opencode"}\x07',
+      '\x1b]9999;{"state":"working","prompt":"fix the tests","agentType":"opencode","backgroundOnly":true}\x07',
       101
     )
 
     await waitForMobileSessionTabsEvents(events, 2)
     expect(events).toHaveLength(2)
     expect(events[1]?.tabs[0]?.type === 'terminal' && events[1].tabs[0].agentStatus).toEqual(
+      expect.objectContaining({ state: 'working', backgroundOnly: true })
+    )
+
+    runtime.onPtyData(
+      'hook-only-pty',
+      '\x1b]9999;{"state":"waiting","prompt":"fix the tests","agentType":"opencode"}\x07',
+      102
+    )
+
+    await waitForMobileSessionTabsEvents(events, 3)
+    expect(events).toHaveLength(3)
+    expect(events[2]?.tabs[0]?.type === 'terminal' && events[2].tabs[0].agentStatus).toEqual(
       expect.objectContaining({ state: 'waiting' })
     )
 
@@ -36714,7 +36726,8 @@ describe('OrcaRuntimeService', () => {
           lastAssistantMessage: 'on it',
           connectionId: null,
           receivedAt: now,
-          stateStartedAt: now - 100
+          stateStartedAt: now - 100,
+          backgroundOnly: true
         }
       ]
     })
@@ -36772,6 +36785,7 @@ describe('OrcaRuntimeService', () => {
         taskTitle: 'Dispatch prompt work',
         displayName: 'Review dispatch prompts and make worker labels distinct',
         lastAssistantMessage: 'on it',
+        backgroundOnly: true,
         stateStartedAt: now - 100,
         updatedAt: now
       })

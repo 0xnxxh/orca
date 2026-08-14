@@ -1293,9 +1293,11 @@ function buildMirroredAgentStatusPatch(
       existing?.state === 'done' &&
       entry.state === 'done' &&
       agentEntryCompletionAt(existing) !== agentEntryCompletionAt(entry)
+    const backgroundOnlyChanged = existing?.backgroundOnly !== entry.backgroundOnly
     const entrySortRelevantChange =
       !existing ||
       existing.state !== entry.state ||
+      backgroundOnlyChanged ||
       !isAgentStatusFresh(existing, now) ||
       entryFreshnessChanged ||
       entryAttributionChanged ||

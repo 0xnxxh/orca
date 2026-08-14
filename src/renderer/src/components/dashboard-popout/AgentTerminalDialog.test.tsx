@@ -118,6 +118,19 @@ describe('AgentTerminalDialog', () => {
     expect(screen.getByText(/Claude · Done/)).toBeInTheDocument()
   })
 
+  it('labels background-only work without claiming the foreground turn is working', () => {
+    render(
+      <AgentTerminalDialog
+        card={card({ backgroundOnly: true })}
+        onOpenChange={() => {}}
+        onReveal={() => {}}
+      />
+    )
+
+    expect(screen.getByText(/Claude · Background work/)).toBeInTheDocument()
+    expect(screen.queryByText(/Claude · Working/)).not.toBeInTheDocument()
+  })
+
   it('preserves the execution host when revealing a colliding worktree ID', () => {
     const onReveal = vi.fn()
     render(

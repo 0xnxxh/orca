@@ -35,7 +35,8 @@ describe('createHookStatusSessionTabsInvalidator', () => {
     ['agentType', { agentType: 'codex' }],
     ['toolName', { toolName: 'Bash' }],
     ['interactivePrompt', { interactivePrompt: '{"questions":[]}' }],
-    ['interrupted', { interrupted: true }]
+    ['interrupted', { interrupted: true }],
+    ['backgroundOnly', { backgroundOnly: true }]
   ])('invalidates when %s changes', (_field, payload) => {
     const changed = createHookStatusSessionTabsInvalidator()
     changed(working())

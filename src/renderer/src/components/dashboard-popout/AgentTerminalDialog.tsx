@@ -39,6 +39,9 @@ function AgentTerminalFrame({
   onOpenChange,
   onReveal
 }: AgentTerminalFrameProps): React.JSX.Element {
+  const displayState = dashboardCardDisplayState(card)
+  const foregroundState =
+    card.backgroundOnly === true && displayState === 'working' ? 'background' : displayState
   const reveal = (): void => {
     onReveal({
       repoId: card.repoId,
@@ -58,8 +61,7 @@ function AgentTerminalFrame({
         </span>
         {title}
         <span className="text-[11px] text-muted-foreground">
-          {formatAgentTypeLabel(card.agentType)} ·{' '}
-          {agentStateLabel(dashboardCardDisplayState(card))}
+          {formatAgentTypeLabel(card.agentType)} · {agentStateLabel(foregroundState)}
         </span>
         <Button
           type="button"
