@@ -33,7 +33,8 @@ import type {
   AgentStatusClearIpcPayload,
   MigrationUnsupportedPtyEntry
 } from '../../../shared/agent-status-types'
-import type { TerminalPaneLayoutNode, TuiAgent } from '../../../shared/types'
+import type { TerminalPaneLayoutNode } from '../../../shared/terminal-tab-types'
+import type { TuiAgent } from '../../../shared/tui-agent'
 import type * as CmdJRowIndexJump from '@/lib/cmd-j-row-index-jump'
 import { makePaneKey } from '../../../shared/stable-pane-id'
 import { folderWorkspaceKey } from '../../../shared/workspace-scope'

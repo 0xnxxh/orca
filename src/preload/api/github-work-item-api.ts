@@ -27,17 +27,18 @@ import type {
   UpdatePullRequestBySlugArgs
 } from '../../shared/github/project-types'
 import type { TaskSourceContext } from '../../shared/task-source-context'
+import type { GitHubCommentResult } from '../../shared/github/comment-types'
 import type {
   GitHubAssignableUser,
-  GitHubCommentResult,
-  GitHubCreateIssueResult,
-  GitHubIssueUpdate,
   GitHubOwnerRepo,
+  IssueInfo
+} from '../../shared/github/pull-request-types'
+import type {
   GitHubWorkItem,
   GitHubWorkItemDetails,
-  IssueInfo,
   ListWorkItemsResult
-} from '../../shared/types'
+} from '../../shared/github/work-item-types'
+import type { GitHubCreateIssueResult, GitHubIssueUpdate } from '../../shared/issue-mutation-types'
 
 export type GitHubRepoSelectorArgs = {
   repoPath: string

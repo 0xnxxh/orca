@@ -1,26 +1,29 @@
+import type { WorkspaceKey } from '../../../../shared/folder-workspace-types'
+import type { TuiAgent } from '../../../../shared/tui-agent'
+import type { WorkspaceSource as WorkspaceCreateTelemetrySource } from '../../../../shared/workspace-source'
 import type {
-  CreateWorktreeResult,
-  CreateWorktreeArgs,
+  WorktreeBaseStatusEvent,
+  WorktreeRemoteBranchConflictEvent
+} from '../../../../shared/worktree/base-ref-drift-types'
+import type {
   CreateSparseCheckoutRequest,
+  CreateWorktreeArgs,
+  CreateWorktreeResult,
+  ForceDeleteWorktreeBranchResult,
+  RemoveWorktreeResult,
+  SetupDecision
+} from '../../../../shared/worktree/create-types'
+import type { WorktreeStartupLaunch } from '../../../../shared/worktree/launch-types'
+import type { WorkspaceLineage, WorktreeLineage } from '../../../../shared/worktree/lineage-types'
+import type { WorktreeMeta } from '../../../../shared/worktree/meta-types'
+import type {
   DetectedWorktree,
   DetectedWorktreeListResult,
-  ForceDeleteWorktreeBranchResult,
   GitPushTarget,
-  RemoveWorktreeResult,
-  SetupDecision,
-  TuiAgent,
-  WorkspaceCreateTelemetrySource,
   WorkspaceLinkedItem,
   WorkspaceStatus,
-  WorkspaceLineage,
-  WorktreeStartupLaunch,
-  Worktree,
-  WorktreeBaseStatusEvent,
-  WorktreeLineage,
-  WorktreeRemoteBranchConflictEvent,
-  WorktreeMeta,
-  WorkspaceKey
-} from '../../../../shared/types'
+  Worktree
+} from '../../../../shared/worktree/types'
 import type { TaskSourceContext } from '../../../../shared/task-source-context'
 import type { WorktreeForceDeleteReason } from '../../../../shared/worktree/removal'
 import type { TerminalGitHubPRLink } from '../../../../shared/terminal-github-pr-link-detector'

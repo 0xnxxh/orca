@@ -152,7 +152,10 @@ import {
   isHostAuthoritativeLayout,
   planTerminalLiveLayoutInsertions
 } from './terminal-live-layout-reconciliation'
-import type { TerminalQuickCommand, TerminalQuickCommandScope } from '../../../../shared/types'
+import type {
+  TerminalQuickCommand,
+  TerminalQuickCommandScope
+} from '../../../../shared/terminal-quick-command-types'
 import {
   createRemotePaneLayoutPusher,
   type RemotePaneLayoutPusher

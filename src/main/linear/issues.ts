@@ -1,14 +1,13 @@
 /* eslint-disable max-lines -- Why: Linear issue reads and mutations share the
    same workspace fan-out/error handling, so keeping them together avoids
    drifting auth-clearing behavior between operations. */
+import type { LinearIssueUpdate } from '../../shared/issue-mutation-types'
+import type { LinearComment, LinearIssue } from '../../shared/linear/issue-types'
 import type {
-  LinearIssue,
-  LinearIssueUpdate,
-  LinearComment,
   LinearCollectionResult,
   LinearWorkspaceError,
   LinearWorkspaceSelection
-} from '../../shared/types'
+} from '../../shared/linear/workspace-types'
 import type { LinearClient } from '@linear/sdk'
 import { loadLinearSdk } from './linear-sdk'
 import {
