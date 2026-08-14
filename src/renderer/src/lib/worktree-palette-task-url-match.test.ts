@@ -235,6 +235,33 @@ describe('matchWorktreePaletteTaskUrl', () => {
     ).toMatchObject({ matchedField: 'pr' })
   })
 
+  it('matches GitHub remotes whose host is an SSH alias or www form of github.com', () => {
+    const intent = parseCmdJTaskSourceUrl('https://github.com/stablyai/orca/pull/12789')
+    for (const canonicalKey of [
+      // ssh://git@ssh.github.com:443/... — GitHub's port-443 workaround.
+      'ssh.github.com/stablyai/orca',
+      // git@github-work:... — an OpenSSH `Host` alias `git remote -v` cannot expand.
+      'github-work/stablyai/orca',
+      'www.github.com/stablyai/orca'
+    ]) {
+      expect(
+        matchWorktreePaletteTaskUrl({
+          worktree: makeWorktree({ linkedPR: 12789 }),
+          intent: intent!,
+          repo: gitHubRepo(canonicalKey)
+        })
+      ).toMatchObject({ matchedField: 'pr' })
+    }
+    // A real, resolvable host is evidence of a different forge, not an alias.
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedPR: 12789 }),
+        intent: intent!,
+        repo: gitHubRepo('ghe.example.com/stablyai/orca')
+      })
+    ).toBeNull()
+  })
+
   it('normalizes host case, port, and owner case before comparing GitHub identities', () => {
     const intent = parseCmdJTaskSourceUrl('https://GHE.Example.com:8443/StablyAI/Orca/pull/12789')
     expect(
@@ -451,6 +478,31 @@ describe('matchWorktreePaletteTaskUrl', () => {
         repo: gitLabRepo('gitlab.com/acme/orca')
       })
     ).toMatchObject({ matchedField: 'pr' })
+  })
+
+  it('matches GitLab remotes whose host is an SSH alias or www form of gitlab.com', () => {
+    const intent = parseCmdJTaskSourceUrl('https://gitlab.com/acme/orca/-/merge_requests/17')
+    for (const canonicalKey of [
+      // altssh.gitlab.com is GitLab's port-443 SSH endpoint; `gitlab-work` is an ssh-config alias.
+      'altssh.gitlab.com/acme/orca',
+      'gitlab-work/acme/orca',
+      'www.gitlab.com/acme/orca'
+    ]) {
+      expect(
+        matchWorktreePaletteTaskUrl({
+          worktree: makeWorktree({ linkedGitLabMR: 17 }),
+          intent: intent!,
+          repo: gitLabRepo(canonicalKey)
+        })
+      ).toMatchObject({ matchedField: 'pr' })
+    }
+    expect(
+      matchWorktreePaletteTaskUrl({
+        worktree: makeWorktree({ linkedGitLabMR: 17 }),
+        intent: intent!,
+        repo: gitLabRepo('gitlab.example.com/acme/orca')
+      })
+    ).toBeNull()
   })
 
   it('stays permissive for GitLab numbers when the repo remote identity is unknown', () => {

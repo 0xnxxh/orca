@@ -1,3 +1,9 @@
+import { normalizeGitHubRemoteHost } from '../../../shared/git-remote-host-alias'
+import {
+  matchGitRemoteKeyParts,
+  splitGitRemoteKey,
+  type GitRemoteKeyParts
+} from '../../../shared/git-remote-identity'
 import type { HostedReviewInfo } from '../../../shared/hosted-review'
 import {
   parseGitHubIssueOrPRLink,
@@ -75,27 +81,28 @@ function parseOwnerRepoDisplayName(value: string | null | undefined): RepoSlug |
   return { owner: match[1], repo: match[2] }
 }
 
-/** Same shape as `GitRemoteIdentity.canonicalKey`: lowercased host (no port) + `owner/repo`. */
-function githubRemoteKey(slug: RepoSlug): string {
-  const host = (slug.host || 'github.com')
-    .replace(/:\d+$/, '')
-    .replace(/^www\./i, '')
-    .toLowerCase()
-  return `${host}/${slug.owner.toLowerCase()}/${slug.repo.replace(/\.git$/i, '').toLowerCase()}`
+/** Host + `owner/repo` tail, matching how `GitRemoteIdentity.canonicalKey` is built. */
+function githubRemoteKeyParts(slug: RepoSlug): GitRemoteKeyParts {
+  return {
+    host: normalizeGitHubRemoteHost((slug.host || 'github.com').replace(/:\d+$/, '')),
+    tail: `${slug.owner.toLowerCase()}/${slug.repo.replace(/\.git$/i, '').toLowerCase()}`
+  }
 }
 
 function remoteIdentityMatchesGitHubSlug(repo: Repo, slug: RepoSlug): boolean | 'unknown' {
   const identity = repo.gitRemoteIdentity
-  if (!identity?.canonicalKey) {
+  const identityParts = splitGitRemoteKey(identity?.canonicalKey, normalizeGitHubRemoteHost)
+  if (!identityParts) {
     return 'unknown'
   }
-  if (identity.canonicalKey.replace(/\/+$/, '').toLowerCase() === githubRemoteKey(slug)) {
-    return true
+  const verdict = matchGitRemoteKeyParts(identityParts, githubRemoteKeyParts(slug))
+  if (verdict !== false) {
+    return verdict
   }
   // Why not false: identity keeps one remote, chosen when the repo was added and never re-probed.
   // An `upstream` pick means a fork's `origin` existed and is invisible here, so rejecting would
   // drop URLs from the fork itself. A stale snapshot can still misjudge a renamed repo.
-  return identity.remoteName === 'upstream' ? 'unknown' : false
+  return identity?.remoteName === 'upstream' ? 'unknown' : false
 }
 
 /** Tri-state: `'unknown'` stays permissive for forks and host aliases. */
