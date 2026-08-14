@@ -109,6 +109,15 @@ const SNAPSHOT: DashboardSnapshot = {
 /** Stops the max thumb passes through on one drag: ∞ → 12h. */
 const DRAG_STOPS = [13, 12, 11, 10, 9, 8]
 const EXPECTED_DRAG_REPACKS = 1
+const DRAFT_CANCELLATIONS = [
+  { name: 'pointer cancellation', finish: (thumb: HTMLElement) => fireEvent.pointerCancel(thumb) },
+  {
+    name: 'pointer capture loss',
+    finish: (thumb: HTMLElement) => fireEvent.lostPointerCapture(thumb, { pointerId: 1 })
+  },
+  { name: 'focus loss', finish: (thumb: HTMLElement) => fireEvent.blur(thumb) },
+  { name: 'Escape', finish: (thumb: HTMLElement) => fireEvent.keyDown(thumb, { key: 'Escape' }) }
+]
 
 function renderMapView(): ReturnType<typeof render> {
   return render(
@@ -263,6 +272,21 @@ describe('AgentMapTimeRangeField', () => {
     expect(thumbValues).toEqual(DRAG_STOPS.map(String))
   })
 
+  it('keeps the readout, chip, and map aligned after a full-range collapse', async () => {
+    renderMapView()
+    await waitFor(() => expect(document.querySelector('.agent-map-canvas')).toBeTruthy())
+
+    const thumb = await openTimeSection()
+    dragThumb(thumb, [0])
+
+    expect(screen.getByText('0 – 0')).toBeInTheDocument()
+    expect(screen.getByText('Session lifespan: 0–0')).toBeInTheDocument()
+    expect(screen.getByText('of 7 agents shown').parentElement).toHaveTextContent(
+      '0 of 7 agents shown'
+    )
+    await waitFor(() => expect(document.querySelectorAll('[data-agent-map-agent]')).toHaveLength(0))
+  })
+
   it('publishes only the final range for a multi-stop drag', () => {
     const onChange = vi.fn()
     render(
@@ -276,6 +300,21 @@ describe('AgentMapTimeRangeField', () => {
     dragThumb(screen.getByRole('slider', { name: 'Session lifespan maximum' }), DRAG_STOPS)
 
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ min: 0, max: DRAG_STOPS.at(-1) })
+  })
+
+  it.each([
+    { name: 'a narrowed range', initial: { min: 5, max: AGENT_MAP_TIME_MAX_INDEX }, stop: 5 },
+    { name: 'the full range', initial: { min: 0, max: AGENT_MAP_TIME_MAX_INDEX }, stop: 0 }
+  ])('commits max-thumb collapse from $name', ({ initial, stop }) => {
+    const onChange = vi.fn()
+    render(<ControlledField label="Session lifespan" initial={initial} onChange={onChange} />)
+
+    dragThumb(screen.getByRole('slider', { name: 'Session lifespan maximum' }), [stop])
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ min: stop, max: stop })
+    expect(
+      screen.getByText(`${stop === 0 ? '0' : '1h'} – ${stop === 0 ? '0' : '1h'}`)
+    ).toBeInTheDocument()
   })
 
   it('follows an external range change while a draft is active', () => {
@@ -335,7 +374,7 @@ describe('AgentMapTimeRangeField', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
-  it('discards a pointer draft when the interaction is canceled', () => {
+  it.each(DRAFT_CANCELLATIONS)('discards a pointer draft on $name', ({ finish }) => {
     const onChange = vi.fn()
     render(
       <AgentMapTimeRangeField
@@ -351,7 +390,7 @@ describe('AgentMapTimeRangeField', () => {
       fireEvent.pointerMove(thumb, { pointerId: 1, clientX: clientXForStop(8) })
     })
     expect(screen.getByText('0 – 12h')).toBeInTheDocument()
-    fireEvent.pointerCancel(thumb, { pointerId: 1 })
+    finish(thumb)
 
     expect(screen.getByText('any')).toBeInTheDocument()
     expect(onChange).not.toHaveBeenCalled()
