@@ -132,7 +132,9 @@ describe('host key algorithm ordering', () => {
   it('leads with the types already known for the host', () => {
     const entries = parseKnownHosts(`example.com ssh-rsa ${RSA_A}`)
     const ordered = orderServerHostKeyAlgorithms(entries, 'example.com', 22, supported)
-    expect(ordered?.[0]).toBe('ssh-rsa')
+    // Any RSA algorithm leading is the property that matters; which one is ssh2 preference order.
+    expect(ordered?.[0]).toMatch(/rsa/)
+    expect(ordered?.indexOf('ssh-ed25519')).toBeGreaterThan(0)
   })
 
   it('keeps every supported algorithm, only reordered', () => {
@@ -149,6 +151,15 @@ describe('host key algorithm ordering', () => {
   it('ignores a revoked entry when choosing what to lead with', () => {
     const entries = parseKnownHosts(`@revoked example.com ssh-rsa ${RSA_A}`)
     expect(orderServerHostKeyAlgorithms(entries, 'example.com', 22, supported)).toBeUndefined()
+  })
+
+  // One ssh-rsa key is negotiated as rsa-sha2-512/256 or ssh-rsa, so promoting only the literal
+  // name would leave a known RSA host ordered behind ed25519 — the exact gap this closes.
+  it('promotes every RSA signature algorithm for a known ssh-rsa key', () => {
+    const entries = parseKnownHosts(`example.com ssh-rsa ${RSA_A}`)
+    const ordered = orderServerHostKeyAlgorithms(entries, 'example.com', 22, supported)
+    expect(ordered?.slice(0, 2).sort()).toEqual(['rsa-sha2-512', 'ssh-rsa'])
+    expect(ordered?.indexOf('ssh-ed25519')).toBeGreaterThan(1)
   })
 
   it('does not propose a type the transport does not support', () => {

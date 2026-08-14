@@ -83,11 +83,19 @@ export function orderServerHostKeyAlgorithms(
   if (known.size === 0) {
     return undefined
   }
-  const preferred = supported.filter((algorithm) => known.has(algorithm))
+  // A known_hosts entry names the KEY type, which is not always the negotiated ALGORITHM name: one
+  // `ssh-rsa` key is offered as rsa-sha2-512, rsa-sha2-256 or ssh-rsa depending on the signature
+  // algorithm. Promoting only the literal name would leave the RSA host we know behind ed25519,
+  // which is the ordering this function exists to prevent.
+  const preferred = supported.filter(
+    (algorithm) =>
+      known.has(algorithm) || (known.has('ssh-rsa') && algorithm.startsWith('rsa-sha2-'))
+  )
   if (preferred.length === 0) {
     return undefined
   }
-  return [...preferred, ...supported.filter((algorithm) => !known.has(algorithm))]
+  const preferredSet = new Set(preferred)
+  return [...preferred, ...supported.filter((algorithm) => !preferredSet.has(algorithm))]
 }
 
 export type VerifyCallback = (accept: boolean) => void
