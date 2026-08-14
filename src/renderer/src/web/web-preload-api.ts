@@ -1627,6 +1627,7 @@ function createAiVaultApi(): NonNullable<Partial<PreloadApi>['aiVault']> {
       // the paired runtime. `all` also asks that runtime for SSH hosts it owns.
       return callRuntimeResult<AiVaultListResult>('aiVault.listSessions', {
         limit: args?.limit,
+        unlimited: args?.unlimited,
         force: args?.force,
         scopePaths: args?.scopePaths,
         executionHostId,

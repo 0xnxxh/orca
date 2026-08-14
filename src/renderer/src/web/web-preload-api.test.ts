@@ -1853,7 +1853,7 @@ describe('web AI Vault preload API', () => {
     await expect(
       globals.window.api.aiVault.listSessions({
         executionHostScope: 'all',
-        limit: 25,
+        unlimited: true,
         force: true,
         scopePaths: ['/srv/app']
       })
@@ -1862,7 +1862,7 @@ describe('web AI Vault preload API', () => {
       {
         method: 'aiVault.listSessions',
         params: {
-          limit: 25,
+          unlimited: true,
           force: true,
           scopePaths: ['/srv/app'],
           executionHostId: 'runtime:web-env-1',
