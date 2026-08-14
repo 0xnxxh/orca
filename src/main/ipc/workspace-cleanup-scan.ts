@@ -1,7 +1,8 @@
 import type { Store } from '../persistence'
 import type { IGitProvider } from '../providers/types'
 import { isFolderRepo } from '../../shared/repo-kind'
-import type { GitWorktreeInfo, Repo, Worktree } from '../../shared/types'
+import type { Repo } from '../../shared/repo-types'
+import type { GitWorktreeInfo, Worktree } from '../../shared/worktree/types'
 import { mergeWorktree } from './worktree-logic'
 import type {
   WorkspaceCleanupCandidate,

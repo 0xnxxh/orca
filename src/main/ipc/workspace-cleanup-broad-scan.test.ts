@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import path from 'node:path'
 import type { Store } from '../persistence'
 import type * as RepoWorktreesModule from '../repo-worktrees'
-import type { GitStatusResult, GitWorktreeInfo, Repo, WorktreeMeta } from '../../shared/types'
+import type { GitStatusResult } from '../../shared/git-status-types'
+import type { Repo } from '../../shared/repo-types'
+import type { GitWorktreeInfo } from '../../shared/worktree/types'
+import type { WorktreeMeta } from '../../shared/worktree/meta-types'
 import { WORKSPACE_CLEANUP_TARGET_BATCH_LIMIT } from '../../shared/workspace-cleanup'
 
 const {

@@ -1,6 +1,6 @@
 import type { LiveAgentWorktreeStatus } from '@/lib/worktree-activity-state'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
-import type { WorkspaceStatusDefinition } from '../../../../shared/types'
+import type { WorkspaceStatusDefinition } from '../../../../shared/worktree/types'
 import { getWorkspaceStatus } from '../../../../shared/workspace-statuses'
 import {
   canSelectWorkspaceCleanupCandidate,

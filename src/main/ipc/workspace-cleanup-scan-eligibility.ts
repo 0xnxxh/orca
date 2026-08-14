@@ -1,4 +1,4 @@
-import type { Worktree } from '../../shared/types'
+import type { Worktree } from '../../shared/worktree/types'
 import { getPersistedWorkspaceCleanupActivityAt } from '../../shared/workspace-cleanup'
 import { isWorkspaceInactiveForCleanup } from './workspace-cleanup-candidate'
 

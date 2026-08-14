@@ -15,11 +15,11 @@ import {
 } from '../worktree-trash'
 import { parseWslPath } from '../wsl'
 import type {
-  GitWorktreeInfo,
   LocalBaseRefRefreshResult,
-  LocalBaseRefUpdateSuggestion,
-  RemoveWorktreeResult
-} from '../../shared/types'
+  LocalBaseRefUpdateSuggestion
+} from '../../shared/worktree/base-ref-drift-types'
+import type { RemoveWorktreeResult } from '../../shared/worktree/create-types'
+import type { GitWorktreeInfo } from '../../shared/worktree/types'
 import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree/removal'
 import { isSubmoduleWorktreeRemovalRefusal } from '../../shared/worktree/submodule-removal'
 import { decodeGitCQuotedPath } from '../../shared/git-cquoted-path'

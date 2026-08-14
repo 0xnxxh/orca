@@ -2,7 +2,8 @@ import type { Store } from '../persistence'
 import { listRepoWorktrees, createFolderWorktree } from '../repo-worktrees'
 import { getSshGitProvider } from '../providers/ssh-git-dispatch'
 import type { IGitProvider } from '../providers/types'
-import type { GitWorktreeInfo, Repo } from '../../shared/types'
+import type { Repo } from '../../shared/repo-types'
+import type { GitWorktreeInfo } from '../../shared/worktree/types'
 import type {
   WorkspaceCleanupScanError,
   WorkspaceCleanupScanResult

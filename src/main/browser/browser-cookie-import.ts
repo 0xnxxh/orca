@@ -72,7 +72,7 @@ import type {
   BrowserCookieImportResult,
   BrowserCookieImportSummary,
   BrowserSessionProfileSource
-} from '../../shared/types'
+} from '../../shared/browser-workspace-types'
 import { browserSessionRegistry } from './browser-session-registry'
 import {
   isGoogleSourceBoundCookie,

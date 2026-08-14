@@ -1,7 +1,8 @@
 import { basename } from 'node:path'
 import { getRepoExecutionHostId, normalizeExecutionHostId } from '../../shared/execution-host'
 import type { Store } from '../persistence'
-import type { Repo, WorktreeMeta } from '../../shared/types'
+import type { Repo } from '../../shared/repo-types'
+import type { WorktreeMeta } from '../../shared/worktree/meta-types'
 import {
   applyWorkspaceCleanupPolicy,
   createWorkspaceCleanupFingerprint,

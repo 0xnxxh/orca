@@ -16,7 +16,7 @@ import {
   makeReview,
   makeState
 } from './workspace-cleanup-presentation-fixtures'
-import type { Repo } from '../../../../shared/types'
+import type { Repo } from '../../../../shared/repo-types'
 
 describe('workspace cleanup presentation', () => {
   it('finds hosted review details from renderer state', () => {

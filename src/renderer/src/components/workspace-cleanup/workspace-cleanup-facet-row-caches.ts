@@ -1,5 +1,5 @@
 import type { LiveAgentWorktreeStatus } from '@/lib/worktree-activity-state'
-import type { WorkspaceStatusDefinition } from '../../../../shared/types'
+import type { WorkspaceStatusDefinition } from '../../../../shared/worktree/types'
 import type { WorkspaceCleanupCandidate } from '../../../../shared/workspace-cleanup'
 import {
   buildWorkspaceCleanupFacets,
