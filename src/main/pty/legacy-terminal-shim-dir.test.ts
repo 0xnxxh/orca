@@ -108,6 +108,27 @@ describe('legacy terminal shim neutralization', () => {
     )
   })
 
+  it('emits no percent expression inside a cmd rem comment', () => {
+    // Why: cmd expands variables inside rem, so a comment mentioning the working directory
+    // substitutes it into the comment text. Harmless at top level -- verified on Windows 11 that
+    // rem does not re-parse the result, so a cwd of `C:\\x&pwned&rem` executed nothing -- but rem
+    // treats separators differently inside a parenthesized block, and this script now has some.
+    const userData = makeUserDataDir()
+    const win32Dir = join(userData, 'orca-terminal-attribution', 'win32')
+    mkdirSync(win32Dir, { recursive: true })
+
+    neutralizeLegacyTerminalShimDir(userData)
+
+    for (const command of ['git', 'gh'] as const) {
+      const offending = readFileSync(join(win32Dir, `${command}.cmd`), 'utf8')
+        .split('\r\n')
+        .filter((line) => /^\s*rem\b/i.test(line) && line.includes('%'))
+      expect(offending, `rem comments with percent expressions: ${offending.join(' | ')}`).toEqual(
+        []
+      )
+    }
+  })
+
   it('keeps the Windows wrappers ASCII-only', () => {
     // Why: cmd.exe seeks through a batch file in bytes but advances by decoded character count,
     // so a single multi-byte character shifts every following line. Two em dashes in comments

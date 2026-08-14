@@ -1,6 +1,12 @@
 // Why: kept beside the POSIX tombstone so the generated wrapper text for every platform lives
 // in one place, and so the shim-dir module stays under the max-lines limit.
 //
+// Keep percent signs out of every emitted `rem` line. cmd expands variables inside rem, so a
+// comment mentioning %CD% substitutes the working directory into itself. That is harmless at top
+// level -- verified on Windows 11 that rem does not re-parse the result, so a cwd of
+// `C:\x&pwned&rem` did not execute anything -- but rem handles separators differently inside a
+// parenthesized block, and this script now has some.
+//
 // Keep both templates ASCII-only, comments included. cmd.exe tracks its position in a batch file
 // in bytes but advances by decoded character count, so every extra UTF-8 byte shifts the whole
 // file: two em dashes in comments made cmd drop the first four characters of every line and the
@@ -26,9 +32,11 @@ if defined orca_legacy_wrapper_dir call :orca_normalize_legacy_dir
 rem Why: an empty PATH leaves the substitution below with an unbalanced quote, which
 rem desynchronizes cmd parsing for the rest of the file. Skip the line entirely instead.
 if not defined PATH goto :orca_path_walked
-rem Why the variable: CALL re-expands its own command line, so a PATH entry holding a literal
-rem %CD% would be turned into the current directory before the rooted check below ever sees it,
-rem and the cwd would then be searched for __ORCA_COMMAND__. Proven on Windows 11.
+rem Why the variable: CALL re-expands its own command line, so a PATH entry naming the current
+rem directory through a percent expression would become that directory before the rooted check
+rem below ever saw it, and the cwd would then be searched for __ORCA_COMMAND__. Proven on
+rem Windows 11. The expression is spelled out only in the TypeScript comment above: cmd expands
+rem percent signs inside rem, so writing one here would substitute a path into the comment.
 for %%P in ("%PATH:;=" "%") do (
   set "orca_entry=%%~P"
   call :orca_append_path
