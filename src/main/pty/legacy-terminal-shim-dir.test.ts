@@ -108,6 +108,25 @@ describe('legacy terminal shim neutralization', () => {
     )
   })
 
+  it('keeps the Windows wrappers ASCII-only', () => {
+    // Why: cmd.exe seeks through a batch file in bytes but advances by decoded character count,
+    // so a single multi-byte character shifts every following line. Two em dashes in comments
+    // made it drop the first four characters of every line and the wrapper died with "The
+    // syntax of the command is incorrect." Proven on Windows 11; no test caught it.
+    const userData = makeUserDataDir()
+    const win32Dir = join(userData, 'orca-terminal-attribution', 'win32')
+    mkdirSync(win32Dir, { recursive: true })
+
+    neutralizeLegacyTerminalShimDir(userData)
+
+    for (const name of ['git.cmd', 'gh.cmd', 'git-wrapper.ps1', 'gh-wrapper.ps1']) {
+      const contents = readFileSync(join(win32Dir, name), 'utf8')
+      const offending = [...contents].find((character) => character.charCodeAt(0) > 0x7f)
+      expect(offending, `${name} contains non-ASCII ${JSON.stringify(offending)}`).toBeUndefined()
+      expect(Buffer.byteLength(contents, 'utf8')).toBe(contents.length)
+    }
+  })
+
   it('resolves Windows fallbacks against PATH only, never the current directory', () => {
     // Why (STA-4169): bare `where.exe git.exe` searches cwd before PATH, so a repository-local
     // git.exe/gh.exe could be executed with the user's arguments.
@@ -124,17 +143,28 @@ describe('legacy terminal shim neutralization', () => {
       expect(cmd).toContain('for %%P in ("%orca_clean_path:;=" "%") do call :orca_try_candidate')
       expect(cmd).toContain(`if exist "%orca_candidate_dir%\\${command}.exe"`)
       // Why: %~f preserves a trailing separator; without normalizing, a wrapper-dir entry
-      // spelled with one escapes self-exclusion and the wrapper tail-loops on itself.
-      // Why: `if "%var:~-1%"=="\\"` breaks cmd's parser, so the trailing separator is stripped
-      // with a sentinel instead. Verified on Windows.
-      // Why: compared against a variable holding the separator — a literal backslash before the
-      // closing quote breaks cmd's parser, and a sentinel would corrupt paths containing it.
-      // The value matters: any other character silently un-pins the trailing-separator fix.
+      // spelled with one escapes self-exclusion and the wrapper tail-loops on itself. The
+      // separator lives in a variable because a literal backslash before the closing quote
+      // breaks cmd's parser, and a sentinel character would corrupt paths containing it.
       expect(cmd).toContain('set "orca_sep=\\"')
+      // Why: a captured ORCA_REAL_* may be relative, and both the existence test and the
+      // invocation resolve it against the cwd.
+      expect(cmd).toContain('if defined orca_real call :orca_check_rooted "%orca_real%"')
+      expect(cmd).toContain('if defined orca_real if not defined orca_rooted set "orca_real="')
+      // Why: the exported PATH is inherited by the real command; a relative entry left in it lets
+      // the cwd select the tools that command spawns.
+      expectOrdered(cmd, ':orca_append_path', 'if not defined orca_rooted exit /b')
+      // Why: orca_sep is compared against before the legacy dir is normalized; defining it later
+      // made that strip silently no-op and left the legacy dir on PATH.
+      expectOrdered(cmd, 'set "orca_sep=', 'if "%orca_legacy_norm:~-1%."')
+      // Why: %orca_sep% expands before the line is parsed, so `=="%orca_sep%"` becomes `=="\"` —
+      // the literal trap the variable exists to avoid. Both sides must carry the trailing dot.
+      expect(cmd).not.toContain('=="%orca_sep%"')
       // Why: nothing else asserts the *reject* path, so deleting it would reopen the cwd hijack
       // while every accept-path assertion stayed green.
-      expect(cmd).toMatch(/goto orca_candidate_rooted\r?\nexit \/b/)
-      expect(cmd).toContain('if "%orca_candidate_dir:~-1%"=="%orca_sep%"')
+      expectOrdered(cmd, ':orca_try_candidate', 'call :orca_check_rooted "%~1"')
+      expect(cmd).toContain('if not defined orca_rooted exit /b')
+      expect(cmd).toContain('if "%orca_candidate_dir:~-1%."=="%orca_sep%."')
       expect(cmd).not.toContain(':\\#=#%')
       // A candidate inside the wrapper directory must still be rejected, compared against the
       // cached wrapper dir because %~dp0 is rebound inside a CALL.
@@ -143,8 +173,8 @@ describe('legacy terminal shim neutralization', () => {
       // Why: the rooted-path test must not shell out — an external tool would itself be
       // resolved from the cwd, reintroducing the hijack.
       expect(cmd).not.toContain('findstr')
-      expect(cmd).toContain('if "%orca_candidate:~1,2%"==":\\" goto orca_candidate_rooted')
-      expect(cmd).toContain('if "%orca_candidate:~0,2%"=="\\\\" goto orca_candidate_rooted')
+      expect(cmd).toContain('if "%orca_probe:~1,2%"==":\\" set "orca_rooted=1"')
+      expect(cmd).toContain('if "%orca_probe:~0,2%"=="\\\\" set "orca_rooted=1"')
       // Why: these two guards are the only thing stopping an empty element reaching the cwd on
       // Windows; deleting either left every other assertion green.
       expect(cmd).toContain('if "%~1"=="" exit /b')
@@ -155,6 +185,8 @@ describe('legacy terminal shim neutralization', () => {
       // Why: the rooted check must reject drive-relative 'C:foo', which still resolves against
       // the cwd — so the IsPathRooted call must be gone, replaced by an explicit prefix match.
       expect(powershell).not.toContain('[IO.Path]::IsPathRooted(')
+      expect(powershell).toContain("$pathEntry -match '^([A-Za-z]:[\\\\/]|\\\\\\\\)'")
+      expect(powershell).toContain("$realCommand -notmatch '^([A-Za-z]:[\\\\/]|\\\\\\\\)'")
       // Why the full pattern, not a prefix: `^([A-Za-z]:|\\\\)` also starts with this and would
       // accept drive-relative `C:foo`, which still resolves against the cwd on that drive.
       expect(powershell).toContain("-notmatch '^([A-Za-z]:[\\\\/]|\\\\\\\\)'")
@@ -169,9 +201,14 @@ describe('legacy terminal shim neutralization', () => {
         "$dir.TrimEnd('\\'), [StringComparison]::OrdinalIgnoreCase) }) { continue }"
       )
       // Why: `C:/Program Files/Git/cmd` style entries are legitimate and must stay accepted.
-      expect(cmd).toContain('if "%orca_candidate:~1,2%"==":/" goto orca_candidate_rooted')
+      expect(cmd).toContain('if "%orca_probe:~1,2%"==":/" set "orca_rooted=1"')
       // Why: the legacy-dir compare needs the same trailing-separator strip as its twins.
-      expect(cmd).toContain('if "%orca_legacy_norm:~-1%"=="%orca_sep%"')
+      expect(cmd).toContain('if "%orca_legacy_norm:~-1%."=="%orca_sep%."')
+      // Why: cmd expands a whole line before evaluating `if defined`, so this strip must live in
+      // a CALL body. Inline, it ran its substring syntax against an unset variable and mangled
+      // the line into a syntax error. Proven on Windows 11.
+      expect(cmd).toContain('if defined orca_legacy_wrapper_dir call :orca_normalize_legacy_dir')
+      expect(cmd).not.toContain('if defined orca_legacy_wrapper_dir for ')
       expect(powershell).toContain('if (-not $dir) { continue }')
       expect(powershell).toContain('Test-Path -LiteralPath $candidate -PathType Leaf')
     }
@@ -239,9 +276,9 @@ describe('legacy terminal shim neutralization', () => {
     writeFileSync(join(spaced, 'bash'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
 
     // A shebang cannot quote, so a path containing whitespace is unusable.
-    expect(resolvePosixTombstoneInterpreter(spaced, [], 'linux')).toBe('/usr/bin/env bash')
+    expect(resolvePosixTombstoneInterpreter(spaced, [], 'linux')).toBeNull()
     // X_OK is true for a directory; it still cannot be exec'd.
-    expect(resolvePosixTombstoneInterpreter(dirNamedBash, [], 'linux')).toBe('/usr/bin/env bash')
+    expect(resolvePosixTombstoneInterpreter(dirNamedBash, [], 'linux')).toBeNull()
   })
 
   itOnPosix('resolves the interpreter from absolute PATH entries only', () => {
@@ -267,7 +304,7 @@ describe('legacy terminal shim neutralization', () => {
     mkdirSync(cwdRelDir, { recursive: true })
     try {
       writeFileSync(join(cwdRelDir, 'bash'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
-      expect(resolvePosixTombstoneInterpreter(`.:${cwdRelName}`, [])).toBe('/usr/bin/env bash')
+      expect(resolvePosixTombstoneInterpreter(`.:${cwdRelName}`, [])).toBeNull()
     } finally {
       rmSync(cwdRelDir, { recursive: true, force: true })
     }
@@ -540,7 +577,7 @@ describe('legacy terminal shim neutralization', () => {
     // Why: `call :label && ...` is not valid cmd; the flag variable is what makes it work.
     expect(cmd).toContain('if defined orca_skip_entry exit /b')
     expect(cmd).not.toContain('call :orca_reject_legacy_dir &&')
-    expect(cmd).toContain('if "%orca_path_entry_dir:~-1%"=="%orca_sep%"')
+    expect(cmd).toContain('if "%orca_path_entry_dir:~-1%."=="%orca_sep%."')
 
     const powershell = readFileSync(join(win32Dir, 'git-wrapper.ps1'), 'utf8')
     expectOrdered(

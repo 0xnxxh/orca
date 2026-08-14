@@ -36,13 +36,14 @@ function isExecutable(candidate: string): boolean {
 // directly rather than falling through to an ambient lookup.
 const WINDOWS_POSIX_INTERPRETER = '/bin/bash'
 
+/** Returns null when no absolute interpreter can be verified; see the caller for what that means. */
 export function resolvePosixTombstoneInterpreter(
   pathValue: string | undefined = process.env.PATH,
   // Why: injectable so the PATH-search branch below is reachable in tests on hosts that do have
   // a well-known bash.
   candidates: readonly string[] = POSIX_INTERPRETER_CANDIDATES,
   platform: NodeJS.Platform = process.platform
-): string {
+): string | null {
   if (platform === 'win32') {
     return WINDOWS_POSIX_INTERPRETER
   }
@@ -64,9 +65,9 @@ export function resolvePosixTombstoneInterpreter(
       return candidate
     }
   }
-  // Why: last resort. Leaves the ambient lookup in place, but only when no absolute bash exists
-  // anywhere, in which case the wrapper would not run at all otherwise.
-  return '/usr/bin/env bash'
+  // Why: no absolute interpreter anywhere. Callers must delete the legacy wrapper rather than
+  // write one with an ambient shebang, which would resolve bash from the cwd.
+  return null
 }
 
 const POSIX_TOMBSTONE = String.raw`#!__ORCA_INTERPRETER__
@@ -149,7 +150,7 @@ PATH="$cleaned_path" exec "$real_command" "$@"
 
 export function renderLegacyTerminalPosixTombstone(
   command: 'git' | 'gh',
-  interpreter = resolvePosixTombstoneInterpreter()
+  interpreter: string = resolvePosixTombstoneInterpreter() ?? WINDOWS_POSIX_INTERPRETER
 ): string {
   return POSIX_TOMBSTONE.replaceAll('__ORCA_INTERPRETER__', interpreter).replaceAll(
     '__ORCA_COMMAND__',

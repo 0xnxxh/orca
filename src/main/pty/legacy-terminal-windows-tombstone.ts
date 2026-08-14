@@ -1,20 +1,28 @@
 // Why: kept beside the POSIX tombstone so the generated wrapper text for every platform lives
 // in one place, and so the shim-dir module stays under the max-lines limit.
+//
+// Keep both templates ASCII-only, comments included. cmd.exe tracks its position in a batch file
+// in bytes but advances by decoded character count, so every extra UTF-8 byte shifts the whole
+// file: two em dashes in comments made cmd drop the first four characters of every line and the
+// script died with "The syntax of the command is incorrect."
 
 const WIN32_PASSTHROUGH_WRAPPER = String.raw`@echo off
 setlocal
 set "orca_real=%ORCA_REAL___ORCA_UPPER_COMMAND__%"
 set "orca_wrapper_dir=%~dp0"
 set "orca_legacy_wrapper_dir=%ORCA_ATTRIBUTION_SHIM_DIR%"
-rem Why: normalize once here rather than per PATH entry; the value cannot change mid-run.
-set "orca_legacy_norm="
-if defined orca_legacy_wrapper_dir for %%G in ("%orca_legacy_wrapper_dir%") do set "orca_legacy_norm=%%~fG"
-if defined orca_legacy_norm if "%orca_legacy_norm:~-1%"=="%orca_sep%" set "orca_legacy_norm=%orca_legacy_norm:~0,-1%"
 set "orca_clean_path="
 rem Why: holds a single separator so the trailing-separator tests below need neither a literal
 rem backslash before a quote (which breaks cmd parsing) nor a sentinel character (which would
-rem corrupt any path containing it).
+rem corrupt any path containing it). Comparisons append a dot so the separator is never
+rem adjacent to a closing quote, which would break the parser exactly as a literal would.
 set "orca_sep=\"
+rem Why a subroutine, not an "if defined ... " one-liner: cmd expands a whole line before it
+rem evaluates the condition, so the substring syntax below still runs against an unset variable
+rem and leaves the line mangled. A CALL body is only parsed once it is reached.
+rem Why here: the value cannot change mid-run, so normalize once rather than per PATH entry.
+set "orca_legacy_norm="
+if defined orca_legacy_wrapper_dir call :orca_normalize_legacy_dir
 rem Why: an empty PATH leaves the substitution below with an unbalanced quote, which
 rem desynchronizes cmd parsing for the rest of the file. Skip the line entirely instead.
 if not defined PATH goto :orca_path_walked
@@ -30,6 +38,10 @@ set "ORCA_ATTRIBUTION_BYPASS="
 set "ORCA_REAL_GIT="
 set "ORCA_REAL_GH="
 if defined orca_real for %%G in ("%orca_real%") do if /I "%%~dpG"=="%~dp0" set "orca_real="
+rem Why: a captured path may be relative, and both "if exist" and the invocation resolve it
+rem against the current directory, so an inherited .\__ORCA_COMMAND__.exe would run from the repo.
+if defined orca_real call :orca_check_rooted "%orca_real%"
+if defined orca_real if not defined orca_rooted set "orca_real="
 rem Why: clear a captured path that no longer exists, or the PATH walk below is skipped.
 if defined orca_real if not exist "%orca_real%" set "orca_real="
 if defined orca_real goto run
@@ -46,23 +58,33 @@ if not defined orca_real (
 "%orca_real%" %*
 exit /b %ERRORLEVEL%
 
+:orca_normalize_legacy_dir
+for %%G in ("%orca_legacy_wrapper_dir%") do set "orca_legacy_norm=%%~fG"
+rem Why: full-path expansion preserves a trailing separator; normalize before comparing.
+if "%orca_legacy_norm:~-1%."=="%orca_sep%." set "orca_legacy_norm=%orca_legacy_norm:~0,-1%"
+exit /b
+
+:orca_check_rooted
+rem Why: tested in pure batch on purpose. An external tool invoked here would itself be resolved
+rem from the current directory, reintroducing the very hijack this guard exists to prevent.
+set "orca_rooted="
+set "orca_probe=%~1"
+if "%orca_probe:~0,2%"=="\\" set "orca_rooted=1"
+if "%orca_probe:~1,2%"==":\" set "orca_rooted=1"
+if "%orca_probe:~1,2%"==":/" set "orca_rooted=1"
+exit /b
+
 :orca_try_candidate
 if defined orca_real exit /b
 if "%~1"=="" exit /b
 rem Why: a relative entry resolves against the current directory, same exposure as an empty one.
-rem Tested in pure batch on purpose: an external tool invoked here would itself be resolved from
-rem the current directory, reintroducing the very hijack this guard exists to prevent.
-set "orca_candidate=%~1"
-if "%orca_candidate:~0,2%"=="\\" goto orca_candidate_rooted
-if "%orca_candidate:~1,2%"==":\" goto orca_candidate_rooted
-if "%orca_candidate:~1,2%"==":/" goto orca_candidate_rooted
-exit /b
-:orca_candidate_rooted
+call :orca_check_rooted "%~1"
+if not defined orca_rooted exit /b
 for %%G in ("%~1") do set "orca_candidate_dir=%%~fG"
 rem Why: full-path expansion preserves a trailing separator, so without normalizing, the
 rem self-exclusion below misses a wrapper-dir entry spelled with one and the wrapper resolves
 rem to itself, looping forever.
-if "%orca_candidate_dir:~-1%"=="%orca_sep%" set "orca_candidate_dir=%orca_candidate_dir:~0,-1%"
+if "%orca_candidate_dir:~-1%."=="%orca_sep%." set "orca_candidate_dir=%orca_candidate_dir:~0,-1%"
 rem Why: the script-dir operator is rebound to this label inside CALL, so compare against the
 rem cached wrapper dir captured at top level.
 if /I "%orca_candidate_dir%\"=="%orca_wrapper_dir%" exit /b
@@ -72,9 +94,14 @@ if not defined orca_real if exist "%orca_candidate_dir%\__ORCA_COMMAND__.bat" se
 exit /b
 
 :orca_append_path
+if "%~1"=="" exit /b
+rem Why: the exported PATH is inherited by the real git and anything it spawns, so a relative
+rem entry left here lets the current directory select those tools instead.
+call :orca_check_rooted "%~1"
+if not defined orca_rooted exit /b
 for %%G in ("%~1") do set "orca_path_entry_dir=%%~fG"
 rem Why: full-path expansion preserves a trailing separator; normalize before comparing.
-if "%orca_path_entry_dir:~-1%"=="%orca_sep%" set "orca_path_entry_dir=%orca_path_entry_dir:~0,-1%"
+if "%orca_path_entry_dir:~-1%."=="%orca_sep%." set "orca_path_entry_dir=%orca_path_entry_dir:~0,-1%"
 set "orca_path_entry_dir=%orca_path_entry_dir%\"
 if /I "%orca_path_entry_dir%"=="%orca_wrapper_dir%" exit /b
 set "orca_skip_entry="
@@ -96,11 +123,14 @@ $legacyWrapperDir = $env:ORCA_ATTRIBUTION_SHIM_DIR
 $wrapperDirs = @($wrapperDir, $legacyWrapperDir) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') }
 $env:PATH = (($env:PATH -split ';') | Where-Object {
   $pathEntry = $_
-  $pathEntry -and -not ($wrapperDirs | Where-Object {
+  # Why: the exported PATH is inherited by the real command and anything it spawns.
+  $pathEntry -and ($pathEntry -match '^([A-Za-z]:[\\/]|\\\\)') -and -not ($wrapperDirs | Where-Object {
     [string]::Equals($_, $pathEntry.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
   })
 }) -join ';'
 'ORCA_ENABLE_GIT_ATTRIBUTION', 'ORCA_GIT_COMMIT_TRAILER', 'ORCA_GH_PR_FOOTER', 'ORCA_GH_ISSUE_FOOTER', 'ORCA_ATTRIBUTION_SHIM_DIR', 'ORCA_REAL_GIT', 'ORCA_REAL_GH', 'ORCA_ATTRIBUTION_BYPASS' | ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
+# Why: a captured value may be relative, and Test-Path plus invocation resolve it against the cwd.
+if ($realCommand -and $realCommand -notmatch '^([A-Za-z]:[\\/]|\\\\)') { $realCommand = $null }
 if ($realCommand) {
   try {
     $capturedDir = Split-Path -Parent ([IO.Path]::GetFullPath($realCommand))

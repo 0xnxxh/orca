@@ -1,6 +1,9 @@
 import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { renderLegacyTerminalPosixTombstone } from './legacy-terminal-posix-tombstone'
+import {
+  renderLegacyTerminalPosixTombstone,
+  resolvePosixTombstoneInterpreter
+} from './legacy-terminal-posix-tombstone'
 import {
   renderLegacyTerminalWindowsCmdTombstone,
   renderLegacyTerminalWindowsPowerShellTombstone
@@ -95,8 +98,20 @@ function writeNeutralWrappers(rootDir: string): void {
   const win32Dir = join(rootDir, 'win32')
   mkdirSync(posixDir, { recursive: true })
   mkdirSync(win32Dir, { recursive: true })
+  // Why: with no absolute interpreter verifiable, a tombstone would need an ambient shebang and
+  // could take bash from the current directory. Deleting the legacy wrapper is the safe outcome:
+  // the command simply falls through to the real one on PATH.
+  const interpreter = resolvePosixTombstoneInterpreter()
   for (const command of ['git', 'gh'] as const) {
-    writeFileAtomically(join(posixDir, command), renderLegacyTerminalPosixTombstone(command), 0o755)
+    if (interpreter === null) {
+      rmSync(join(posixDir, command), { force: true })
+    } else {
+      writeFileAtomically(
+        join(posixDir, command),
+        renderLegacyTerminalPosixTombstone(command, interpreter),
+        0o755
+      )
+    }
     writeFileAtomically(
       join(win32Dir, `${command}.cmd`),
       renderLegacyTerminalWindowsCmdTombstone(command),
