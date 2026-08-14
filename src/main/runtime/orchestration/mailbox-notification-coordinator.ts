@@ -14,6 +14,7 @@ type NotificationCoordinatorDependencies<TWaiter extends OrchestrationMessageWai
   pointerDelivery: OrchestrationMailboxPointerDelivery<TWaiter>
   getDb: () => OrchestrationDb | null
   getLiveLeafForHandle: (handle: string) => OrchestrationMailboxLeaf
+  getPaneKeyForHandle: (handle: string) => string | undefined
   getMessageWaiters: (mailboxHandle: string) => ReadonlySet<TWaiter> | undefined
   hasTerminalHandle: (handle: string) => boolean
   deliverForHandle: (handle: string, reservedTypes?: ReadonlySet<string>) => void
@@ -39,15 +40,19 @@ export class OrchestrationMailboxNotificationCoordinator<
   }
 
   notifyMessageArrived(handle: string, messageType?: string): void {
-    const { mailboxHandle, forwarded } = this.resolveArrivedMailboxes(handle)
+    const { mailboxHandle, forwarded, directTypes } = this.resolveArrivedMailboxes(handle)
     this.notifyForwarded(forwarded)
     if (!mailboxHandle) {
       return
     }
     const waiters = this.deps.getMessageWaiters(mailboxHandle)
+    const arrivedTypes = directTypes ?? (messageType ? [messageType] : undefined)
     const consumers = waiters
       ? [...waiters].filter(
-          (waiter) => !messageType || !waiter.typeFilter || waiter.typeFilter.includes(messageType)
+          (waiter) =>
+            !arrivedTypes ||
+            !waiter.typeFilter ||
+            arrivedTypes.some((type) => waiter.typeFilter?.includes(type))
         )
       : []
     if (consumers.length === 0) {
@@ -89,9 +94,16 @@ export class OrchestrationMailboxNotificationCoordinator<
   private resolveArrivedMailboxes(handle: string): {
     mailboxHandle: string | null
     forwarded: RoutedOrchestrationMailbox[]
+    directTypes?: string[]
   } {
-    if (!this.deps.hasTerminalHandle(handle) || !this.deps.getDb()) {
+    if (handle.startsWith('run:') || handle.startsWith('dispatch:')) {
       return { mailboxHandle: handle, forwarded: [] }
+    }
+    if (!this.deps.getDb()) {
+      return { mailboxHandle: handle, forwarded: [] }
+    }
+    if (!this.deps.hasTerminalHandle(handle)) {
+      return this.resolveDetachedMailbox(handle)
     }
     try {
       const leaf = this.deps.getLiveLeafForHandle(handle)
@@ -102,7 +114,26 @@ export class OrchestrationMailboxNotificationCoordinator<
         forwarded: this.deps.mailboxOwner.routeForeignDirectMessages(leaf)
       }
     } catch {
-      return { mailboxHandle: null, forwarded: [] }
+      return this.resolveDetachedMailbox(handle)
+    }
+  }
+
+  private resolveDetachedMailbox(handle: string): {
+    mailboxHandle: string | null
+    forwarded: RoutedOrchestrationMailbox[]
+    directTypes?: string[]
+  } {
+    const routed = this.deps.mailboxOwner.routeDetachedDirectMessages(
+      handle,
+      this.deps.getPaneKeyForHandle(handle)
+    )
+    const directTypes = routed.hasMore
+      ? []
+      : (this.deps.getDb()?.getUnreadDirectMessageTypes(handle) ?? [])
+    return {
+      mailboxHandle: directTypes.length > 0 ? handle : null,
+      forwarded: routed.mailboxes,
+      directTypes
     }
   }
 

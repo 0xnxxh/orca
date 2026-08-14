@@ -43,7 +43,7 @@ export function createBoundRun(db: OrchestrationDb, objective: string) {
 }
 
 export function insertDirectRunMessage(db: OrchestrationDb, runId: string, subject: string) {
-  return db.insertMessage({
+  const message = db.insertMessage({
     from: 'term_worker',
     to: TERMINAL_HANDLE,
     subject,
@@ -51,6 +51,10 @@ export function insertDirectRunMessage(db: OrchestrationDb, runId: string, subje
     runId,
     deliveryContract: 'current_delivery'
   })
+  sqliteFor(db)
+    .prepare('UPDATE messages SET to_handle = ? WHERE id = ?')
+    .run(TERMINAL_HANDLE, message.id)
+  return db.getMessageById(message.id)!
 }
 
 export type MailboxNotificationHarness = {

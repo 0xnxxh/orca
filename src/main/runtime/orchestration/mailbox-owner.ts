@@ -17,6 +17,11 @@ export type RoutedOrchestrationMailbox = {
   types: string[]
 }
 
+export type DetachedMailboxRoutingPage = {
+  mailboxes: RoutedOrchestrationMailbox[]
+  hasMore: boolean
+}
+
 type OrchestrationMailboxOwnerDependencies = {
   getDb: () => OrchestrationDb | null
   getLeaf: (leafKey: string) => OrchestrationMailboxLeaf | undefined
@@ -29,6 +34,7 @@ type OrchestrationMailboxOwnerDependencies = {
 
 export class OrchestrationMailboxOwner {
   private readonly pendingDirectReconciliations = new Set<string>()
+  private readonly pendingDetachedDirectReconciliations = new Set<string>()
 
   constructor(private readonly deps: OrchestrationMailboxOwnerDependencies) {}
 
@@ -111,6 +117,16 @@ export class OrchestrationMailboxOwner {
       this.scheduleDirectReconciliation(leaf)
     }
     return routed?.mailboxes ?? []
+  }
+
+  routeDetachedDirectMessages(directHandle: string, paneKey?: string): DetachedMailboxRoutingPage {
+    const routed = this.deps
+      .getDb()
+      ?.routeForeignDirectMessagesToOwnedMailboxes?.(directHandle, undefined, paneKey)
+    if (routed?.hasMore) {
+      this.scheduleDetachedDirectReconciliation(directHandle, paneKey)
+    }
+    return { mailboxes: routed?.mailboxes ?? [], hasMore: routed?.hasMore ?? false }
   }
 
   private resolveRunMailbox(
@@ -202,6 +218,28 @@ export class OrchestrationMailboxOwner {
         }
       }
       this.resolve(currentLeaf)
+    })
+  }
+
+  private scheduleDetachedDirectReconciliation(directHandle: string, paneKey?: string): void {
+    if (this.pendingDetachedDirectReconciliations.has(directHandle)) {
+      return
+    }
+    this.pendingDetachedDirectReconciliations.add(directHandle)
+    setImmediate(() => {
+      this.pendingDetachedDirectReconciliations.delete(directHandle)
+      const routed = this.routeDetachedDirectMessages(directHandle, paneKey)
+      for (const mailbox of routed.mailboxes) {
+        for (const messageType of mailbox.types) {
+          this.deps.onForeignMailboxRouted(mailbox.mailboxHandle, messageType)
+        }
+      }
+      if (!routed.hasMore) {
+        for (const messageType of this.deps.getDb()?.getUnreadDirectMessageTypes(directHandle) ??
+          []) {
+          this.deps.onForeignMailboxRouted(directHandle, messageType)
+        }
+      }
     })
   }
 }

@@ -310,8 +310,8 @@ type RunListCursor = {
   id: string
 }
 
-// Schema versions: v2 'heartbeat'+last_heartbeat_at, v3 delivered_at, v4 task-creator terminal, v5 task_title/display_name, v6 pane identity, v7 lightweight Runs, v8 crash-safe Run deliveries, v9 durable question threads, v10 Dispatch capabilities, v11 durable mutation receipts, v12 composed worker state, v18 post-v6 version-skew repair, v19 adopted legacy Runs and compatibility receipts, v20 legacy question backfill, v21 legacy scheduler-loss provenance, v22 dispatch assignee lookup, v23 worker terminal resource ownership, v24 creator-incarnation authority, v25 active Dispatch handle lookup, v26 indexed mutation receipt capacity, v27 durable federation acknowledgments.
-const SCHEMA_VERSION = 27
+// Schema versions: v2 'heartbeat'+last_heartbeat_at, v3 delivered_at, v4 task-creator terminal, v5 task_title/display_name, v6 pane identity, v7 lightweight Runs, v8 crash-safe Run deliveries, v9 durable question threads, v10 Dispatch capabilities, v11 durable mutation receipts, v12 composed worker state, v18 post-v6 version-skew repair, v19 adopted legacy Runs and compatibility receipts, v20 legacy question backfill, v21 legacy scheduler-loss provenance, v22 dispatch assignee lookup, v23 worker terminal resource ownership, v24 creator-incarnation authority, v25 active Dispatch handle lookup, v26 indexed mutation receipt capacity, v27 durable federation acknowledgments, v28 Run coordinator handle history.
+const SCHEMA_VERSION = 28
 
 function hardenOrchestrationDatabaseFiles(dbPath: (string & {}) | ':memory:'): void {
   if (dbPath === ':memory:' || process.platform === 'win32') {
@@ -343,6 +343,8 @@ export class OrchestrationDb {
     this.db.pragma('busy_timeout = 5000')
     this.createTables()
     this.migrate()
+    this.createCoordinatorMailRoutingTrigger()
+    this.rememberCurrentRunCoordinatorHandles()
     hardenOrchestrationDatabaseFiles(dbPath)
   }
 
@@ -388,6 +390,38 @@ export class OrchestrationDb {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_id ON messages(id);
       CREATE INDEX IF NOT EXISTS idx_inbox ON messages(to_handle, read);
       CREATE INDEX IF NOT EXISTS idx_thread ON messages(thread_id);
+
+      CREATE TABLE IF NOT EXISTS run_coordinator_handles (
+        run_id          TEXT NOT NULL,
+        terminal_handle TEXT NOT NULL,
+        first_bound_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (run_id, terminal_handle)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_run_coordinator_handles_handle
+        ON run_coordinator_handles(terminal_handle, run_id);
+
+      CREATE TRIGGER IF NOT EXISTS trg_runs_remember_coordinator_insert
+      AFTER INSERT ON runs
+      WHEN NEW.legacy = 0 AND NEW.coordinator_handle IS NOT NULL
+      BEGIN
+        INSERT OR IGNORE INTO run_coordinator_handles (run_id, terminal_handle)
+        VALUES (NEW.id, NEW.coordinator_handle);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_runs_remember_coordinator_update
+      AFTER UPDATE OF coordinator_handle ON runs
+      WHEN NEW.legacy = 0 AND NEW.coordinator_handle IS NOT NULL
+      BEGIN
+        INSERT OR IGNORE INTO run_coordinator_handles (run_id, terminal_handle)
+        VALUES (NEW.id, NEW.coordinator_handle);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_runs_forget_coordinator_handles
+      AFTER DELETE ON runs
+      BEGIN
+        DELETE FROM run_coordinator_handles WHERE run_id = OLD.id;
+      END;
 
       CREATE TABLE IF NOT EXISTS deliveries (
         id                    TEXT PRIMARY KEY,
@@ -1031,6 +1065,13 @@ export class OrchestrationDb {
           'ALTER TABLE federated_dispatches ADD COLUMN to_home_acknowledged_sequence INTEGER NOT NULL DEFAULT 0'
         )
       }
+      if (current < 28) {
+        this.db.exec(`
+          INSERT OR IGNORE INTO run_coordinator_handles (run_id, terminal_handle)
+          SELECT id, coordinator_handle FROM runs
+          WHERE legacy = 0 AND coordinator_handle IS NOT NULL
+        `)
+      }
       this.db.exec(`
         CREATE INDEX IF NOT EXISTS idx_dispatch_assignee_pane_leaf
           ON dispatch_contexts(${DISPATCH_PANE_KEY_MATCH_SUFFIX_SQL})
@@ -1451,6 +1492,12 @@ export class OrchestrationDb {
           AND delivery_contract = 'current_delivery';
       CREATE INDEX IF NOT EXISTS idx_messages_unread_current_inbox
         ON messages(to_handle, sequence)
+        WHERE read = 0 AND delivery_contract = 'current_delivery';
+      CREATE INDEX IF NOT EXISTS idx_messages_unread_current_inbox_type
+        ON messages(to_handle, type, sequence)
+        WHERE read = 0 AND delivery_contract = 'current_delivery';
+      CREATE INDEX IF NOT EXISTS idx_messages_unread_current_run_type
+        ON messages(run_id, to_handle, type, sequence)
         WHERE read = 0 AND delivery_contract = 'current_delivery';
     `)
   }
@@ -2296,6 +2343,7 @@ export class OrchestrationDb {
            ) VALUES (?, ?, ?, ?, 1, 0)`
         )
         .run(id, params.objective, params.coordinatorHandle, params.coordinatorPaneKey)
+      this.rememberRunCoordinatorHandle(id, params.coordinatorHandle)
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')
@@ -2417,7 +2465,8 @@ export class OrchestrationDb {
           Boolean(value)
         )
       )) {
-        this.routeUnreadDirectMessagesToRunMailbox(params.runId, handle)
+        this.rememberRunCoordinatorHandle(params.runId, handle)
+        this.routeAllUnreadDirectMessagesToRunMailbox(params.runId, handle)
       }
       if (
         (params.takeoverLegacy && !takeoverAlreadyApplied) ||
@@ -2526,7 +2575,7 @@ export class OrchestrationDb {
     for (const run of this.runsBoundToPane(paneKey)) {
       if (run.id !== exceptRunId) {
         if (run.coordinator_handle) {
-          this.routeUnreadDirectMessagesToRunMailbox(run.id, run.coordinator_handle)
+          this.routeAllUnreadDirectMessagesToRunMailbox(run.id, run.coordinator_handle)
         }
         this.db
           .prepare(
@@ -2546,6 +2595,47 @@ export class OrchestrationDb {
     if (!this.getRunRaw(runId)) {
       throw new Error(`Run not found: ${runId}`)
     }
+  }
+
+  private rememberRunCoordinatorHandle(runId: string, terminalHandle: string): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO run_coordinator_handles (run_id, terminal_handle) VALUES (?, ?)`
+      )
+      .run(runId, terminalHandle)
+  }
+
+  private rememberCurrentRunCoordinatorHandles(): void {
+    this.db.exec(`
+      INSERT OR IGNORE INTO run_coordinator_handles (run_id, terminal_handle)
+      SELECT id, coordinator_handle FROM runs
+      WHERE legacy = 0 AND coordinator_handle IS NOT NULL
+    `)
+  }
+
+  private createCoordinatorMailRoutingTrigger(): void {
+    this.db.exec(`
+      DROP TRIGGER IF EXISTS trg_messages_route_coordinator_mail;
+      CREATE TRIGGER trg_messages_route_coordinator_mail
+      AFTER INSERT ON messages
+      WHEN NEW.read = 0 AND NEW.delivery_contract = 'current_delivery'
+        AND EXISTS (
+          SELECT 1 FROM runs
+          WHERE runs.id = NEW.run_id AND runs.legacy = 0
+        )
+        AND EXISTS (
+          SELECT 1 FROM run_coordinator_handles
+          WHERE run_id = NEW.run_id AND terminal_handle = NEW.to_handle
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM dispatch_contexts
+          WHERE run_id = NEW.run_id AND assignee_handle = NEW.to_handle
+            AND status IN ('pending', 'dispatched')
+        )
+      BEGIN
+        UPDATE messages SET to_handle = 'run:' || NEW.run_id WHERE sequence = NEW.sequence;
+      END;
+    `)
   }
 
   private fenceOutstandingDelivery(runId: string): void {
@@ -2890,6 +2980,31 @@ export class OrchestrationDb {
            ORDER BY sequence DESC LIMIT ?`
         )
         .all(runId, address, limit) as MessageRow[]
+    )
+  }
+
+  getUnreadRunMailbox(runId: string, limit = 100, types?: MessageType[]): MessageRow[] {
+    const address = `run:${runId}`
+    const conditions = [
+      'run_id = ?',
+      'to_handle = ?',
+      'read = 0',
+      "delivery_contract = 'current_delivery'"
+    ]
+    const params: (string | number)[] = [runId, address]
+    if (types?.length) {
+      conditions.push(`type IN (${types.map(() => '?').join(',')})`)
+      params.push(...types)
+    }
+    const indexClause = types?.length ? ' INDEXED BY idx_messages_unread_current_run_type' : ''
+    params.push(Math.max(1, Math.floor(limit)))
+    return exposeMessageListTimestamps(
+      this.db
+        .prepare(
+          `SELECT * FROM messages${indexClause} WHERE ${conditions.join(' AND ')}
+           ORDER BY sequence ASC LIMIT ?`
+        )
+        .all(...params) as MessageRow[]
     )
   }
 
@@ -3645,36 +3760,58 @@ export class OrchestrationDb {
     directHandle: string,
     throughSequence?: number
   ): MailboxRoutingPage {
-    const throughClause = throughSequence === undefined ? '' : ' AND sequence <= ?'
-    const params: (string | number)[] = [runId, directHandle]
-    if (throughSequence !== undefined) {
-      params.push(throughSequence)
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const throughClause = throughSequence === undefined ? '' : ' AND sequence <= ?'
+      const params: (string | number)[] = [runId, directHandle]
+      if (throughSequence !== undefined) {
+        params.push(throughSequence)
+      }
+      params.push(ORCHESTRATION_DELIVERY_BATCH_LIMIT + 1)
+      const rows = this.db
+        .prepare(
+          `SELECT id, type FROM messages
+           WHERE run_id = ? AND to_handle = ? AND read = 0
+             AND delivery_contract = 'current_delivery'${throughClause}
+           ORDER BY sequence LIMIT ?`
+        )
+        .all(...params) as {
+        id: string
+        type: MessageType
+      }[]
+      const page = rows.slice(0, ORCHESTRATION_DELIVERY_BATCH_LIMIT)
+      if (page.length === 0) {
+        this.db.exec('COMMIT')
+        return { routedCount: 0, hasMore: false, types: [] }
+      }
+      const placeholders = page.map(() => '?').join(',')
+      const result = this.db
+        .prepare(
+          `UPDATE messages SET to_handle = ?
+           WHERE run_id = ? AND to_handle = ? AND read = 0
+             AND delivery_contract = 'current_delivery' AND id IN (${placeholders})`
+        )
+        .run(mailboxHandle, runId, directHandle, ...page.map((row) => row.id))
+      this.db.exec('COMMIT')
+      return {
+        routedCount: Number(result.changes),
+        hasMore: rows.length > ORCHESTRATION_DELIVERY_BATCH_LIMIT,
+        types: [...new Set(page.map((row) => row.type))]
+      }
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
     }
-    params.push(ORCHESTRATION_DELIVERY_BATCH_LIMIT + 1)
-    const rows = this.db
+  }
+
+  private routeAllUnreadDirectMessagesToRunMailbox(runId: string, directHandle: string): void {
+    this.db
       .prepare(
-        `SELECT id, type FROM messages
+        `UPDATE messages SET to_handle = ?
          WHERE run_id = ? AND to_handle = ? AND read = 0
-           AND delivery_contract = 'current_delivery'${throughClause}
-         ORDER BY sequence LIMIT ?`
+           AND delivery_contract = 'current_delivery'`
       )
-      .all(...params) as {
-      id: string
-      type: MessageType
-    }[]
-    const page = rows.slice(0, ORCHESTRATION_DELIVERY_BATCH_LIMIT)
-    if (page.length === 0) {
-      return { routedCount: 0, hasMore: false, types: [] }
-    }
-    const placeholders = page.map(() => '?').join(',')
-    const result = this.db
-      .prepare(`UPDATE messages SET to_handle = ? WHERE id IN (${placeholders})`)
-      .run(mailboxHandle, ...page.map((row) => row.id))
-    return {
-      routedCount: Number(result.changes),
-      hasMore: rows.length > ORCHESTRATION_DELIVERY_BATCH_LIMIT,
-      types: [...new Set(page.map((row) => row.type))]
-    }
+      .run(`run:${runId}`, runId, directHandle)
   }
 
   routeUnreadDirectMessagesToRunMailbox(
@@ -3705,34 +3842,48 @@ export class OrchestrationDb {
     throughSequence?: number
   ): MailboxRoutingPage {
     const dispatchMailbox = `dispatch:${dispatchId}`
-    const throughClause = throughSequence === undefined ? '' : ' AND sequence <= ?'
-    const params: (string | number)[] = [dispatchMailbox]
-    if (throughSequence !== undefined) {
-      params.push(throughSequence)
-    }
-    params.push(ORCHESTRATION_DELIVERY_BATCH_LIMIT + 1)
-    const rows = this.db
-      .prepare(
-        `SELECT id, type FROM messages INDEXED BY idx_messages_unread_current_inbox
-         WHERE to_handle = ? AND read = 0 AND delivery_contract = 'current_delivery'${throughClause}
-         ORDER BY sequence LIMIT ?`
-      )
-      .all(...params) as {
-      id: string
-      type: MessageType
-    }[]
-    const page = rows.slice(0, ORCHESTRATION_DELIVERY_BATCH_LIMIT)
-    if (page.length === 0) {
-      return { routedCount: 0, hasMore: false, types: [] }
-    }
-    const placeholders = page.map(() => '?').join(',')
-    const result = this.db
-      .prepare(`UPDATE messages SET to_handle = ? WHERE id IN (${placeholders})`)
-      .run(`run:${runId}`, ...page.map((row) => row.id))
-    return {
-      routedCount: Number(result.changes),
-      hasMore: rows.length > ORCHESTRATION_DELIVERY_BATCH_LIMIT,
-      types: [...new Set(page.map((row) => row.type))]
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const throughClause = throughSequence === undefined ? '' : ' AND sequence <= ?'
+      const params: (string | number)[] = [runId, dispatchMailbox]
+      if (throughSequence !== undefined) {
+        params.push(throughSequence)
+      }
+      params.push(ORCHESTRATION_DELIVERY_BATCH_LIMIT + 1)
+      const rows = this.db
+        .prepare(
+          `SELECT id, type FROM messages INDEXED BY idx_messages_unread_current_inbox
+           WHERE run_id = ? AND to_handle = ? AND read = 0
+             AND delivery_contract = 'current_delivery'${throughClause}
+           ORDER BY sequence LIMIT ?`
+        )
+        .all(...params) as {
+        id: string
+        type: MessageType
+      }[]
+      const page = rows.slice(0, ORCHESTRATION_DELIVERY_BATCH_LIMIT)
+      if (page.length === 0) {
+        this.db.exec('COMMIT')
+        return { routedCount: 0, hasMore: false, types: [] }
+      }
+      const placeholders = page.map(() => '?').join(',')
+      const result = this.db
+        .prepare(
+          `UPDATE messages SET to_handle = ?
+           WHERE run_id = ? AND to_handle = ? AND read = 0
+             AND delivery_contract = 'current_delivery'
+             AND id IN (${placeholders})`
+        )
+        .run(`run:${runId}`, runId, dispatchMailbox, ...page.map((row) => row.id))
+      this.db.exec('COMMIT')
+      return {
+        routedCount: Number(result.changes),
+        hasMore: rows.length > ORCHESTRATION_DELIVERY_BATCH_LIMIT,
+        types: [...new Set(page.map((row) => row.type))]
+      }
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
     }
   }
 
@@ -3775,68 +3926,146 @@ export class OrchestrationDb {
 
   routeForeignDirectMessagesToOwnedMailboxes(
     directHandle: string,
-    currentRunId: string,
+    currentRunId?: string,
     paneKey?: string
   ): ForeignDirectMailboxRoutingPage {
-    const rows = this.db
-      .prepare(
-        `SELECT id, run_id, type FROM messages
-         WHERE to_handle = ? AND run_id <> ? AND read = 0 AND delivered_at IS NULL
-           AND delivery_contract = 'current_delivery'
-           AND EXISTS (SELECT 1 FROM runs WHERE runs.id = messages.run_id AND runs.legacy = 0)
-         ORDER BY sequence LIMIT ?`
-      )
-      .all(directHandle, currentRunId, ORCHESTRATION_DELIVERY_BATCH_LIMIT + 1) as {
-      id: string
-      run_id: string
-      type: MessageType
-    }[]
-    const page = rows.slice(0, ORCHESTRATION_DELIVERY_BATCH_LIMIT)
-    if (page.length === 0) {
-      return { routedCount: 0, hasMore: false, types: [], mailboxes: [] }
-    }
-    const runIds = [...new Set(page.map((row) => row.run_id))]
-    const dispatchByRun = new Map<string, DispatchContextRow>()
-    for (const runId of runIds) {
-      const dispatch = this.findActiveDispatchForDirectMessageOwner(runId, directHandle, paneKey)
-      if (dispatch) {
-        dispatchByRun.set(runId, dispatch)
-      }
-    }
-    const idsByMailbox = new Map<string, string[]>()
-    const byMailbox = new Map<string, Set<MessageType>>()
-    for (const row of page) {
-      const dispatch = dispatchByRun.get(row.run_id)
-      const mailboxHandle = dispatch ? `dispatch:${dispatch.id}` : `run:${row.run_id}`
-      const ids = idsByMailbox.get(mailboxHandle) ?? []
-      ids.push(row.id)
-      idsByMailbox.set(mailboxHandle, ids)
-      const types = byMailbox.get(mailboxHandle) ?? new Set<MessageType>()
-      types.add(row.type)
-      byMailbox.set(mailboxHandle, types)
-    }
     this.db.exec('BEGIN IMMEDIATE')
     try {
+      const runExclusion = currentRunId === undefined ? '' : ' AND candidate.run_id <> ?'
+      const paneSuffix = paneKey && parsePaneKey(paneKey) ? paneKeyMatchSuffix(paneKey) : undefined
+      const exclusionParams = currentRunId === undefined ? [] : [currentRunId]
+      const branches = [
+        `SELECT candidate.id, candidate.run_id, candidate.type, candidate.sequence
+         FROM run_coordinator_handles AS coordinator
+         JOIN runs AS owner_run ON owner_run.id = coordinator.run_id AND owner_run.legacy = 0
+         JOIN messages AS candidate INDEXED BY idx_messages_undelivered_direct_run
+           ON candidate.run_id = coordinator.run_id
+          AND candidate.to_handle = coordinator.terminal_handle
+         WHERE coordinator.terminal_handle = ?${runExclusion}
+           AND candidate.read = 0 AND candidate.delivered_at IS NULL
+           AND candidate.delivery_contract = 'current_delivery'`,
+        `SELECT candidate.id, candidate.run_id, candidate.type, candidate.sequence
+         FROM (
+           SELECT direct_dispatch.run_id
+           FROM dispatch_contexts AS direct_dispatch
+             INDEXED BY idx_dispatch_active_assignee_handle
+           JOIN runs AS owner_run
+             ON owner_run.id = direct_dispatch.run_id AND owner_run.legacy = 0
+           WHERE direct_dispatch.assignee_handle = ?
+             AND direct_dispatch.status IN ('pending', 'dispatched')
+           GROUP BY direct_dispatch.run_id
+         ) AS dispatch_owner
+         JOIN messages AS candidate INDEXED BY idx_messages_undelivered_direct_run
+           ON candidate.run_id = dispatch_owner.run_id AND candidate.to_handle = ?
+         WHERE 1 = 1${runExclusion}
+           AND candidate.read = 0 AND candidate.delivered_at IS NULL
+           AND candidate.delivery_contract = 'current_delivery'`
+      ]
+      const branchParams: (string | number)[][] = [
+        [directHandle, ...exclusionParams, ORCHESTRATION_DELIVERY_BATCH_LIMIT + 1],
+        [directHandle, directHandle, ...exclusionParams, ORCHESTRATION_DELIVERY_BATCH_LIMIT + 1]
+      ]
+      if (paneSuffix !== undefined) {
+        branches.push(
+          `SELECT candidate.id, candidate.run_id, candidate.type, candidate.sequence
+           FROM (
+             SELECT pane_dispatch.run_id
+             FROM dispatch_contexts AS pane_dispatch INDEXED BY idx_dispatch_assignee_pane_leaf
+             JOIN runs AS owner_run
+               ON owner_run.id = pane_dispatch.run_id AND owner_run.legacy = 0
+             WHERE pane_dispatch.assignee_pane_key IS NOT NULL
+               AND pane_dispatch.status IN ('pending', 'dispatched')
+               AND instr(pane_dispatch.assignee_pane_key, ':') > 1
+               AND ${DISPATCH_PANE_KEY_MATCH_SUFFIX_SQL} = ?
+             GROUP BY pane_dispatch.run_id
+           ) AS pane_owner
+           JOIN messages AS candidate INDEXED BY idx_messages_undelivered_direct_run
+             ON candidate.run_id = pane_owner.run_id AND candidate.to_handle = ?
+           WHERE 1 = 1${runExclusion}
+             AND candidate.read = 0 AND candidate.delivered_at IS NULL
+             AND candidate.delivery_contract = 'current_delivery'`
+        )
+        branchParams.push([
+          paneSuffix,
+          directHandle,
+          ...exclusionParams,
+          ORCHESTRATION_DELIVERY_BATCH_LIMIT + 1
+        ])
+      }
+      const limitedBranches = branches.map(
+        (branch) => `SELECT * FROM (${branch} ORDER BY candidate.sequence LIMIT ?)`
+      )
+      const rows = this.db
+        .prepare(
+          `SELECT id, run_id, type FROM (${limitedBranches.join(' UNION ')})
+           ORDER BY sequence LIMIT ?`
+        )
+        .all(...branchParams.flat(), ORCHESTRATION_DELIVERY_BATCH_LIMIT + 1) as {
+        id: string
+        run_id: string
+        type: MessageType
+      }[]
+      const page = rows.slice(0, ORCHESTRATION_DELIVERY_BATCH_LIMIT)
+      if (page.length === 0) {
+        this.db.exec('COMMIT')
+        return { routedCount: 0, hasMore: false, types: [], mailboxes: [] }
+      }
+      const runIds = [...new Set(page.map((row) => row.run_id))]
+      const dispatchByRun = new Map<string, DispatchContextRow>()
+      for (const runId of runIds) {
+        const dispatch = this.findActiveDispatchForDirectMessageOwner(runId, directHandle, paneKey)
+        if (dispatch) {
+          dispatchByRun.set(runId, dispatch)
+        }
+      }
+      const idsByMailbox = new Map<string, string[]>()
+      const byMailbox = new Map<string, Set<MessageType>>()
+      for (const row of page) {
+        const dispatch = dispatchByRun.get(row.run_id)
+        const mailboxHandle = dispatch ? `dispatch:${dispatch.id}` : `run:${row.run_id}`
+        const ids = idsByMailbox.get(mailboxHandle) ?? []
+        ids.push(row.id)
+        idsByMailbox.set(mailboxHandle, ids)
+        const types = byMailbox.get(mailboxHandle) ?? new Set<MessageType>()
+        types.add(row.type)
+        byMailbox.set(mailboxHandle, types)
+      }
       for (const [mailboxHandle, ids] of idsByMailbox) {
         const placeholders = ids.map(() => '?').join(',')
         this.db
-          .prepare(`UPDATE messages SET to_handle = ? WHERE id IN (${placeholders})`)
-          .run(mailboxHandle, ...ids)
+          .prepare(
+            `UPDATE messages SET to_handle = ?
+             WHERE to_handle = ? AND read = 0 AND delivered_at IS NULL
+               AND delivery_contract = 'current_delivery' AND id IN (${placeholders})`
+          )
+          .run(mailboxHandle, directHandle, ...ids)
       }
       this.db.exec('COMMIT')
+      return {
+        routedCount: page.length,
+        hasMore: rows.length > ORCHESTRATION_DELIVERY_BATCH_LIMIT,
+        types: [...new Set(page.map((row) => row.type))],
+        mailboxes: [...byMailbox].map(([mailboxHandle, types]) => ({
+          mailboxHandle,
+          types: [...types]
+        }))
+      }
     } catch (error) {
       this.db.exec('ROLLBACK')
       throw error
     }
-    return {
-      routedCount: page.length,
-      hasMore: rows.length > ORCHESTRATION_DELIVERY_BATCH_LIMIT,
-      types: [...new Set(page.map((row) => row.type))],
-      mailboxes: [...byMailbox].map(([mailboxHandle, types]) => ({
-        mailboxHandle,
-        types: [...types]
-      }))
-    }
+  }
+
+  getUnreadDirectMessageTypes(directHandle: string): MessageType[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT DISTINCT type FROM messages INDEXED BY idx_messages_unread_current_inbox_type
+           WHERE to_handle = ? AND read = 0 AND delivery_contract = 'current_delivery'
+           ORDER BY type`
+        )
+        .all(directHandle) as { type: MessageType }[]
+    ).map((row) => row.type)
   }
 
   areUndeliveredUnreadMessages(toHandle: string, ids: string[]): boolean {
@@ -7433,6 +7662,7 @@ export class OrchestrationDb {
       DELETE FROM dispatch_contexts;
       DELETE FROM tasks;
       DELETE FROM messages;
+      DELETE FROM run_coordinator_handles;
       DELETE FROM runs;
       INSERT INTO runs (id, objective, home_database, consumer_generation, legacy)
         VALUES ('${LEGACY_RUN_ID}', 'Legacy orchestration state (inspect only)', 'this_database', 0, 1);

@@ -22,6 +22,7 @@ const LEAF_ID = '22222222-2222-4222-8222-222222222222'
 const PANE_KEY = `${TAB_ID}:${LEAF_ID}`
 const PTY_ID = 'pty-sta-4325'
 const TERMINAL_HANDLE = 'term_sta_4325'
+const REMINTED_TERMINAL_HANDLE = 'term_sta_4325_reminted'
 const WORKTREE_ID = 'repo-sta-4325::/tmp/sta-4325'
 const LAUNCH_TOKEN = 'sta-4325-launch'
 const temporaryDirectories: string[] = []
@@ -40,6 +41,7 @@ type CheckResult = {
 type Sqlite = {
   prepare: (sql: string) => {
     all: (...params: unknown[]) => unknown[]
+    run: (...params: unknown[]) => unknown
   }
 }
 
@@ -54,7 +56,10 @@ function createDatabase(prefix: string): { db: OrchestrationDb; path: string } {
   return { db: new OrchestrationDb(path), path }
 }
 
-function createRuntime(db: OrchestrationDb): {
+function createRuntime(
+  db: OrchestrationDb,
+  terminalHandle = TERMINAL_HANDLE
+): {
   runtime: OrcaRuntimeService
   write: ReturnType<typeof vi.fn>
 } {
@@ -71,7 +76,7 @@ function createRuntime(db: OrchestrationDb): {
     incarnationId: 'sta-4325-incarnation',
     agentLaunchAuthority: { launchToken: LAUNCH_TOKEN, launchAgent: 'codex' }
   })
-  runtime.registerPreAllocatedHandleForPty(PTY_ID, TERMINAL_HANDLE)
+  runtime.registerPreAllocatedHandleForPty(PTY_ID, terminalHandle)
   runtime.attachWindow(1)
   runtime.syncWindowGraph(1, {
     tabs: [
@@ -107,17 +112,18 @@ async function check(
   runtime: OrcaRuntimeService,
   params: Record<string, unknown> = {}
 ): Promise<CheckResult> {
+  const terminal = typeof params.terminal === 'string' ? params.terminal : TERMINAL_HANDLE
   const response = await new RpcDispatcher({ runtime, methods: ORCHESTRATION_METHODS }).dispatch({
     id: `req-sta-4325-${Math.random()}`,
     authToken: 'test-auth-token',
     method: 'orchestration.check',
     orchestrationContractVersion: ORCHESTRATION_CONTRACT_VERSION,
     orchestrationCompatibilityEvidence: {
-      terminalHandle: TERMINAL_HANDLE,
+      terminalHandle: terminal,
       paneKey: PANE_KEY,
       launchToken: LAUNCH_TOKEN
     },
-    params: { terminal: TERMINAL_HANDLE, ...params }
+    params: { terminal, ...params }
   })
   expect(response.ok).toBe(true)
   if (!response.ok) {
@@ -277,17 +283,25 @@ describe('STA-4325 message and delivery identity', () => {
     fixture.db.close()
 
     const reopened = new OrchestrationDb(fixture.path)
-    const restarted = createRuntime(reopened)
+    const restarted = createRuntime(reopened, REMINTED_TERMINAL_HANDLE)
     await driveToLiveIdle(restarted.runtime)
-    const afterRestart = await check(restarted.runtime)
+    const afterRestart = await check(restarted.runtime, { terminal: REMINTED_TERMINAL_HANDLE })
     expect(afterRestart).toMatchObject({ deliveryId: beforeRestart.deliveryId, replayed: true })
     expect(afterRestart.messages.map((message) => message.id)).toEqual([status.id])
     expect(sqliteFor(reopened).prepare('SELECT id FROM deliveries').all()).toEqual([
       { id: beforeRestart.deliveryId }
     ])
 
-    await check(restarted.runtime, { ack: afterRestart.deliveryId })
-    const waiting = check(restarted.runtime, { wait: true, types: 'worker_done', timeoutMs: 5_000 })
+    await check(restarted.runtime, {
+      terminal: REMINTED_TERMINAL_HANDLE,
+      ack: afterRestart.deliveryId
+    })
+    const waiting = check(restarted.runtime, {
+      terminal: REMINTED_TERMINAL_HANDLE,
+      wait: true,
+      types: 'worker_done',
+      timeoutMs: 5_000
+    })
     const internals = restarted.runtime as unknown as {
       messageWaitersByHandle: Map<string, Set<unknown>>
     }
@@ -307,7 +321,7 @@ describe('STA-4325 message and delivery identity', () => {
       runId: run.id,
       deliveryContract: 'current_delivery'
     })
-    restarted.runtime.notifyMessageArrived(TERMINAL_HANDLE, done.type)
+    restarted.runtime.notifyMessageArrived(done.to_handle, done.type)
     await vi.advanceTimersByTimeAsync(5_000)
 
     await expect(waiting).resolves.toMatchObject({
@@ -316,6 +330,101 @@ describe('STA-4325 message and delivery identity', () => {
       messages: [expect.objectContaining({ id: done.id })]
     })
     expect(pointerPayloads(restarted.write)).toHaveLength(0)
+    reopened.close()
+  })
+
+  it('routes the complete direct backlog before rebinding forgets its old handle', () => {
+    const fixture = createDatabase('orca-sta-4325-rebind-backlog-')
+    const first = fixture.db.createRun({
+      objective: 'Old coordinator',
+      coordinatorHandle: TERMINAL_HANDLE,
+      coordinatorPaneKey: PANE_KEY
+    })
+    for (let index = 0; index < 125; index += 1) {
+      const message = fixture.db.insertMessage({
+        from: 'term_worker',
+        to: TERMINAL_HANDLE,
+        subject: `backlog ${index}`,
+        type: 'status',
+        runId: first.id,
+        deliveryContract: 'current_delivery'
+      })
+      sqliteFor(fixture.db)
+        .prepare('UPDATE messages SET to_handle = ? WHERE id = ?')
+        .run(TERMINAL_HANDLE, message.id)
+    }
+    const plan = sqliteFor(fixture.db)
+      .prepare(
+        `EXPLAIN QUERY PLAN UPDATE messages SET to_handle = ?
+         WHERE run_id = ? AND to_handle = ? AND read = 0
+           AND delivery_contract = 'current_delivery'`
+      )
+      .all(`run:${first.id}`, first.id, TERMINAL_HANDLE) as { detail: string }[]
+    expect(plan.map((row) => row.detail).join(' ')).toMatch(
+      /SEARCH messages USING INDEX (idx_messages_delivery_contract|idx_messages_unread_current_inbox)/
+    )
+    fixture.db.createRun({
+      objective: 'Replacement coordinator',
+      coordinatorHandle: TERMINAL_HANDLE,
+      coordinatorPaneKey: PANE_KEY
+    })
+    expect(fixture.db.getRun(first.id)?.coordinator_handle).toBeNull()
+    fixture.db.close()
+
+    const reopened = new OrchestrationDb(fixture.path)
+    expect(
+      sqliteFor(reopened)
+        .prepare(
+          `SELECT to_handle, COUNT(*) AS count FROM messages
+           WHERE run_id = ? GROUP BY to_handle ORDER BY to_handle`
+        )
+        .all(first.id)
+    ).toEqual([{ to_handle: `run:${first.id}`, count: 125 }])
+    reopened.close()
+  })
+
+  it('repairs committed mail sent to a forgotten handle after restart', async () => {
+    const fixture = createDatabase('orca-sta-4325-late-old-handle-')
+    const run = fixture.db.createRun({
+      objective: 'Late old-handle arrival',
+      coordinatorHandle: TERMINAL_HANDLE,
+      coordinatorPaneKey: PANE_KEY
+    })
+    fixture.db.bindRun({
+      runId: run.id,
+      coordinatorHandle: REMINTED_TERMINAL_HANDLE,
+      coordinatorPaneKey: PANE_KEY
+    })
+    const done = fixture.db.insertMessage({
+      from: 'term_worker',
+      to: TERMINAL_HANDLE,
+      subject: 'arrived after rebind',
+      type: 'worker_done',
+      runId: run.id,
+      deliveryContract: 'current_delivery'
+    })
+    expect(fixture.db.getMessageById(done.id)?.to_handle).toBe(`run:${run.id}`)
+    expect(
+      fixture.db
+        .getOrCreateRunDelivery({
+          runId: run.id,
+          consumerGeneration: fixture.db.getRun(run.id)!.consumer_generation
+        })
+        ?.messages.map((message) => message.id)
+    ).toEqual([done.id])
+    fixture.db.close()
+
+    const reopened = new OrchestrationDb(fixture.path)
+    const restarted = createRuntime(reopened, REMINTED_TERMINAL_HANDLE)
+    await driveToLiveIdle(restarted.runtime)
+    const checked = await check(restarted.runtime, { terminal: REMINTED_TERMINAL_HANDLE })
+
+    expect(checked).toMatchObject({
+      runId: run.id,
+      count: 1,
+      messages: [expect.objectContaining({ id: done.id })]
+    })
+    expect(reopened.getMessageById(done.id)?.to_handle).toBe(`run:${run.id}`)
     reopened.close()
   })
 

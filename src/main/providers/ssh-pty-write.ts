@@ -1,4 +1,8 @@
 import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
+import { TIMEOUT_MS } from '../ssh/relay-protocol'
+
+// Allow ordinary-lane backpressure to clear well beyond the mux health window.
+export const SSH_PTY_WRITE_SETTLEMENT_TIMEOUT_MS = TIMEOUT_MS * 3
 
 export function writeToSshPty(
   mux: SshChannelMultiplexer,
@@ -18,6 +22,20 @@ export function writeToSshPtyWithSettlement(
   data: string
 ): Promise<boolean> {
   return new Promise((resolve) => {
-    mux.notifyWithSettlement('pty.data', { id: relayPtyId, data }, (result) => resolve(result.ok))
+    let settled = false
+    const finish = (accepted: boolean): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timer)
+      resolve(accepted)
+    }
+    const timer = setTimeout(() => {
+      mux.dispose('connection_lost')
+      finish(false)
+    }, SSH_PTY_WRITE_SETTLEMENT_TIMEOUT_MS)
+    timer.unref?.()
+    mux.notifyWithSettlement('pty.data', { id: relayPtyId, data }, (result) => finish(result.ok))
   })
 }

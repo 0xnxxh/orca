@@ -2962,6 +2962,10 @@ export class OrcaRuntimeService {
       pointerDelivery: this.orchestrationMailboxPointerDelivery,
       getDb: () => this._orchestrationDb,
       getLiveLeafForHandle: (handle) => this.getLiveLeafForHandle(handle).leaf,
+      getPaneKeyForHandle: (handle) => {
+        const record = this.handles.get(handle)
+        return record ? `${record.tabId}:${record.leafId}` : undefined
+      },
       getMessageWaiters: (mailboxHandle) => this.messageWaitersByHandle.get(mailboxHandle),
       hasTerminalHandle: (handle) => this.handles.has(handle),
       deliverForHandle: (handle, reservedTypes) =>
@@ -32402,7 +32406,18 @@ export class OrcaRuntimeService {
   private scheduleRestoredMessageRepoints(): void {
     const handles = this._orchestrationDb?.getUndeliveredUnreadMailboxHandles?.() ?? []
     for (const handle of handles) {
-      if (!handle.startsWith('dispatch:')) {
+      if (handle.startsWith('dispatch:')) {
+        continue
+      }
+      if (handle.startsWith('run:')) {
+        this.mailPointerRepointScheduler.schedule(handle)
+        continue
+      }
+      const routed = this.orchestrationMailboxOwner.routeDetachedDirectMessages(handle)
+      for (const mailbox of routed.mailboxes) {
+        this.mailPointerRepointScheduler.schedule(mailbox.mailboxHandle)
+      }
+      if (!routed.hasMore) {
         this.mailPointerRepointScheduler.schedule(handle)
       }
     }

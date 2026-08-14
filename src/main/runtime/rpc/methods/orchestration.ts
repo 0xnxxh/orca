@@ -5,6 +5,7 @@ import { defineMethod, type RpcMethod } from '../core'
 import { OptionalFiniteNumber, OptionalString, OptionalBoolean, requiredString } from '../schemas'
 import {
   LEGACY_CONTRACT_VERSION,
+  type MessageRow,
   type MessageType,
   type MessagePriority,
   type TaskStatus
@@ -655,7 +656,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
                 'dispatch_capability_invalid',
                 authority.reason
               ) ?? msg
-            runtime.notifyMessageArrived(to, rejection.type)
+            runtime.notifyMessageArrived(rejection.to_handle, rejection.type)
             return {
               message: rejection,
               lifecycle: {
@@ -675,15 +676,15 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           }
           if (reconciled.action === 'rejected') {
             const rejection = db.getMessageById(msg.id) ?? msg
-            runtime.notifyMessageArrived(to, rejection.type)
+            runtime.notifyMessageArrived(rejection.to_handle, rejection.type)
             return { message: rejection, lifecycle: reconciled }
           }
-          runtime.notifyMessageArrived(to, msg.type)
+          runtime.notifyMessageArrived(msg.to_handle, msg.type)
           return msg.type === 'worker_done'
             ? { message: msg, lifecycle: reconciled }
             : { message: msg }
         }
-        runtime.notifyMessageArrived(to, msg.type)
+        runtime.notifyMessageArrived(msg.to_handle, msg.type)
         return { message: msg }
       }
 
@@ -808,12 +809,9 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
             interruptedAcknowledgedCheck(run.id, acknowledged.delivery.id, 'outcome_unknown')
           )
         }
-        if (params.peek || params.all || params.unread === false) {
+        if (params.all || (params.unread === false && !params.peek)) {
           const history = db.getRunMailboxHistory(run.id, 100, typeFilter)
-          const messages =
-            params.all || (params.unread === false && !params.peek)
-              ? history
-              : history.filter((message) => message.read === 0)
+          const messages = history
           const result = {
             messages,
             count: messages.length,
@@ -829,13 +827,27 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           return { ...result, runId: run.id }
         }
 
+        const peekResult = (messages: MessageRow[]) => ({
+          runId: run.id,
+          messages,
+          count: messages.length,
+          acknowledged: acknowledged?.delivery.id ?? null,
+          ...(params.format || params.inject
+            ? { formatted: messages.map(formatMessageBanner).join('\n\n') }
+            : {})
+        })
+        const readPeek = () => db.getUnreadRunMailbox(run.id, 100, typeFilter)
         const readDelivery = (wakeTypes?: MessageType[]) =>
           db.getOrCreateRunDelivery({
             runId: run.id,
             consumerGeneration: generation,
             wakeTypes
           })
-        let current = readDelivery(params.wait ? typeFilter : undefined)
+        let peeked = params.peek ? readPeek() : []
+        if (params.peek && peeked.length > 0) {
+          return peekResult(peeked)
+        }
+        let current = params.peek ? undefined : readDelivery(params.wait ? typeFilter : undefined)
         if (current) {
           return {
             runId: run.id,
@@ -853,6 +865,9 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           }
         }
         if (!params.wait) {
+          if (params.peek) {
+            return peekResult([])
+          }
           return {
             runId: run.id,
             deliveryId: null,
@@ -899,6 +914,9 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           )
         }
         if (waitResult === 'timed_out') {
+          if (params.peek) {
+            return { ...peekResult([]), timedOut: true, cancelled: false, connectionLost: false }
+          }
           return {
             runId: run.id,
             deliveryId: null,
@@ -911,6 +929,14 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           }
         }
         if (waitResult === 'cancelled') {
+          if (params.peek) {
+            return {
+              ...peekResult([]),
+              timedOut: false,
+              cancelled: true,
+              connectionLost: signal?.aborted === true
+            }
+          }
           return {
             runId: run.id,
             deliveryId: null,
@@ -923,6 +949,15 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           }
         }
 
+        if (params.peek) {
+          peeked = readPeek()
+          return {
+            ...peekResult(peeked),
+            timedOut: false,
+            cancelled: false,
+            connectionLost: false
+          }
+        }
         current = readDelivery(typeFilter)
         return {
           runId: run.id,
@@ -1150,13 +1185,19 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       }
 
       // Why: signal aborts this waiter when the client socket closes, freeing the long-poll slot immediately rather than after timeoutMs (design doc §3.1).
-      await runtime.waitForMessage(handle, {
+      const waitResult = await runtime.waitForMessage(handle, {
         typeFilter: typeFilter as string[] | undefined,
         timeoutMs: params.timeoutMs ?? undefined,
         signal
       })
       if (signal?.aborted) {
         return { messages: [], count: 0 }
+      }
+      if (waitResult === 'cancelled') {
+        throw new OrchestrationError(
+          'consumer_fenced',
+          'This direct mailbox became owned by a Run while the check was waiting.'
+        )
       }
       return readAndReturn()
     }
@@ -1246,7 +1287,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         runId: original.run_id
       })
 
-      runtime.notifyMessageArrived(original.from_handle, reply.type)
+      runtime.notifyMessageArrived(reply.to_handle, reply.type)
       return { message: reply }
     }
   }),
