@@ -90,9 +90,11 @@ export function readVerifiedShebangInterpreter(filePath: string): string | null 
   if (!interpreter?.startsWith('/')) {
     return null
   }
-  // Why: `#!/usr/bin/env bash` is absolute but defers the real lookup to PATH, which is the
-  // current-directory exposure this whole path exists to avoid.
-  if (basename(interpreter) === 'env') {
+  // Why exactly bash: the body below uses BASH_SOURCE, [[, and local, so any other shell fails at
+  // runtime -- a #!/bin/zsh wrapper was accepted and then exited 1 on `BASH_SOURCE[0]: parameter
+  // not set`. This also rejects `#!/usr/bin/env bash`, which is absolute but defers the real
+  // lookup to PATH, the current-directory exposure this whole path exists to avoid.
+  if (basename(interpreter) !== 'bash') {
     return null
   }
   return isExecutable(interpreter) ? interpreter : null

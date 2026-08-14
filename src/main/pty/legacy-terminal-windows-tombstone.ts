@@ -147,12 +147,14 @@ $commandName = '__ORCA_COMMAND__'
 $realCommand = [Environment]::GetEnvironmentVariable('ORCA_REAL___ORCA_UPPER_COMMAND__')
 $wrapperDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $legacyWrapperDir = $env:ORCA_ATTRIBUTION_SHIM_DIR
-$wrapperDirs = @($wrapperDir, $legacyWrapperDir) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') }
+# Why both separators: the rooted-path test below accepts forward slashes, so a directory
+# spelled with a trailing / would miss this lexical exclusion and the wrapper could recurse.
+$wrapperDirs = @($wrapperDir, $legacyWrapperDir) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') }
 $env:PATH = (($env:PATH -split ';') | Where-Object {
   $pathEntry = $_
   # Why: the exported PATH is inherited by the real command and anything it spawns.
   $pathEntry -and ($pathEntry -match '^([A-Za-z]:[\\/]|\\\\)') -and -not ($wrapperDirs | Where-Object {
-    [string]::Equals($_, $pathEntry.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+    [string]::Equals($_, $pathEntry.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)
   })
 }) -join ';'
 'ORCA_ENABLE_GIT_ATTRIBUTION', 'ORCA_GIT_COMMIT_TRAILER', 'ORCA_GH_PR_FOOTER', 'ORCA_GH_ISSUE_FOOTER', 'ORCA_ATTRIBUTION_SHIM_DIR', 'ORCA_REAL_GIT', 'ORCA_REAL_GH', 'ORCA_ATTRIBUTION_BYPASS' | ForEach-Object { Remove-Item "Env:$_" -ErrorAction SilentlyContinue }
@@ -161,7 +163,7 @@ if ($realCommand -and $realCommand -notmatch '^([A-Za-z]:[\\/]|\\\\)') { $realCo
 if ($realCommand) {
   try {
     $capturedDir = Split-Path -Parent ([IO.Path]::GetFullPath($realCommand))
-    if ([string]::Equals($capturedDir.TrimEnd('\'), $wrapperDir.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+    if ([string]::Equals($capturedDir.TrimEnd('\', '/'), $wrapperDir.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
       $realCommand = $null
     }
   } catch {
@@ -179,7 +181,7 @@ if (-not $realCommand -or -not (Test-Path -LiteralPath $realCommand)) {
     # current directory on that drive. IsPathFullyQualified is absent on Windows PowerShell 5.1,
     # so match the same prefixes the cmd wrapper accepts.
     if ($dir -notmatch '^([A-Za-z]:[\\/]|\\\\)') { continue }
-    if ($wrapperDirs | Where-Object { [string]::Equals($_, $dir.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) }) { continue }
+    if ($wrapperDirs | Where-Object { [string]::Equals($_, $dir.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase) }) { continue }
     foreach ($ext in @('.exe', '.cmd', '.bat')) {
       $candidate = Join-Path $dir "$commandName$ext"
       if (Test-Path -LiteralPath $candidate -PathType Leaf) { $realCommand = $candidate; break }
