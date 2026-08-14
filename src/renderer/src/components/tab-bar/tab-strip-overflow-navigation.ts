@@ -57,7 +57,9 @@ export function useTabStripOverflowNavigation({
   const prevStripLenRef = useRef<{ worktreeId: string; len: number } | null>(null)
   const stickToEndRef = useRef(false)
   const activeVisibleTabIdRef = useRef(activeVisibleTabId)
-  activeVisibleTabIdRef.current = activeVisibleTabId
+  useLayoutEffect(() => {
+    activeVisibleTabIdRef.current = activeVisibleTabId
+  })
   const [tabStripOverflowState, setTabStripOverflowState] = useState<TabStripScrollMetrics>(
     EMPTY_TAB_STRIP_OVERFLOW_STATE
   )
