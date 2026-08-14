@@ -78,7 +78,8 @@ import { normalizeGitHubPRForBranchOutcome } from '../../../../shared/github/pul
 import { restoreReactionOnSubject, setReactionOnSubject } from '@/lib/pr-comment-reactions'
 import { withGitHubCheckDetailsTimeout } from '@/runtime/github-check-details-timeout'
 import { getGitHubRepoLookupIndex } from './github-repo-lookup-index'
-import { areValuesEqual, reconcileCatalogRows } from './repo-identity-reconcile'
+import { reconcileCatalogRows } from './repo-identity-reconcile'
+import { structuralValuesEqual } from '../../../../shared/structural-value-equality'
 
 // ─── ProjectV2 cache types ────────────────────────────────────────────
 // Why: separate from CacheEntry<T> — project-view has a single GraphQL source (no issue/PR fallback) and a distinct error union.
@@ -2759,8 +2760,8 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
             (row) => `${row.repoId}\0${row.id}`
           )
           const nextFellBack = envelope.issueSourceFellBack ? true : undefined
-          const sourcesUnchanged = areValuesEqual(previousEntry?.sources, envelope.sources)
-          const errorUnchanged = areValuesEqual(previousEntry?.error, errorForCache)
+          const sourcesUnchanged = structuralValuesEqual(previousEntry?.sources, envelope.sources)
+          const errorUnchanged = structuralValuesEqual(previousEntry?.error, errorForCache)
           const fellBackUnchanged = previousEntry?.issueSourceFellBack === nextFellBack
           if (
             previousEntry &&

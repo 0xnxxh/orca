@@ -61,7 +61,7 @@ export function reuseEqualRecordMap<T>(
   const reconciled: Record<string, T> = {}
   for (const key of nextKeys) {
     const existing = Object.hasOwn(previous, key) ? previous[key] : undefined
-    if (existing !== undefined && areValuesEqual(existing, next[key])) {
+    if (existing !== undefined && structuralValuesEqual(existing, next[key])) {
       reconciled[key] = existing
       continue
     }
