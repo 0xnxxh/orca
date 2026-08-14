@@ -33,7 +33,7 @@ import {
   claudeTeammateIdMatchesName,
   foldClaudeBackgroundTasksIntoRoster,
   idleClaudeTeammateByName,
-  reapRestoredClaudeSubagentsWithoutLiveAgent,
+  reapUnconfirmedRestoredClaudeSubagents,
   stopClaudeSubagent,
   upsertWorkingClaudeSubagent,
   type ClaudeSubagentRoster
@@ -2600,6 +2600,15 @@ function normalizeClaudeSubagentLifecycleEvent(
   if (!lifecycleId) {
     return null
   }
+  const cachedLead = state.claudeLeadStateByPaneKey.get(paneKey)
+  const ownsUnbackedWait =
+    cachedLead?.state === 'waiting' &&
+    cachedLead.stateBeforeWait === undefined &&
+    cachedLead.waitingAgentId !== undefined &&
+    (eventName === 'TeammateIdle'
+      ? claudeTeammateIdMatchesName(cachedLead.waitingAgentId, lifecycleId)
+      : cachedLead.waitingAgentId === lifecycleId)
+  const hasCachedLeadEvidence = cachedLead !== undefined && !ownsUnbackedWait
   let roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
   let endedChildWork = false
   if (eventName === 'TeammateIdle') {
@@ -2640,12 +2649,15 @@ function normalizeClaudeSubagentLifecycleEvent(
       clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) => waitingAgentId === agentId)
     }
   }
+  const workingChildEvidence = claudeRosterHasRuntimeWorkingSubagent(roster)
+  if (!hasCachedLeadEvidence && endedChildWork && !workingChildEvidence && roster) {
+    reapUnconfirmedRestoredClaudeSubagents(roster)
+  }
   if (roster?.size === 0) {
     state.claudeSubagentRosterByPaneKey.delete(paneKey)
   }
   return buildClaudeCachedLeadStatusPayload(state, eventName, paneKey, hookPayload, {
-    workingChildEvidence:
-      eventName === 'SubagentStart' || claudeRosterHasRuntimeWorkingSubagent(roster),
+    workingChildEvidence,
     endedChildWork
   })
 }
@@ -2695,7 +2707,7 @@ export function reapRestoredClaudeSubagentsForDeadPane(
   paneKey: string
 ): boolean {
   const roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
-  if (!roster || !reapRestoredClaudeSubagentsWithoutLiveAgent(roster)) {
+  if (!roster || !reapUnconfirmedRestoredClaudeSubagents(roster)) {
     return false
   }
   if (roster.size === 0) {

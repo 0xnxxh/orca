@@ -247,13 +247,8 @@ export function foldClaudeBackgroundTasksIntoRoster(
   }
 }
 
-/** Second reap path for restored rows, used when the agent process that wrote
- *  the snapshot is gone. The inventory reap needs the parent to emit a complete
- *  `background_tasks` list; a parent that went idle before Orca restarted never
- *  emits one, so an unconfirmed row would gate the pane 'working' forever and
- *  keep it out of hibernation. Rows confirmed by live activity are untouched.
- *  Returns whether anything was dropped. */
-export function reapRestoredClaudeSubagentsWithoutLiveAgent(roster: ClaudeSubagentRoster): boolean {
+/** Drop restored rows that no current-runtime child activity has confirmed. */
+export function reapUnconfirmedRestoredClaudeSubagents(roster: ClaudeSubagentRoster): boolean {
   let changed = false
   for (const [id, tracked] of roster) {
     if (tracked.restoredFromSnapshot === true) {

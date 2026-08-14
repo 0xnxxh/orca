@@ -176,6 +176,59 @@ describe('Claude child lifecycle events with no cached lead state', () => {
     ])
   })
 
+  it('does not reconfirm an unrelated restored child after runtime work drains', () => {
+    const state = createHookListenerState()
+    const paneKey = makePaneKey('restored-sibling-after-runtime-drain', LEAF_ID)
+    seedClaudeSubagentRosterFromSnapshots(state, paneKey, [
+      {
+        id: 'a0000000000000008',
+        state: 'working',
+        startedAt: 100,
+        agentType: 'reviewer'
+      }
+    ])
+
+    expect(
+      claudeEvent(state, paneKey, {
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a0000000000000009',
+        agent_type: 'reviewer'
+      })?.payload.state
+    ).toBe('working')
+
+    const stopped = claudeEvent(state, paneKey, {
+      hook_event_name: 'SubagentStop',
+      agent_id: 'a0000000000000009'
+    })
+
+    expect(stopped?.payload.state).toBe('done')
+    expect(stopped?.payload.subagents).toBeUndefined()
+    expect(state.claudeSubagentRosterByPaneKey.size).toBe(0)
+  })
+
+  it('keeps a restored sibling gated when a current lead is still working', () => {
+    const state = createHookListenerState()
+    const paneKey = makePaneKey('restored-sibling-with-live-lead', LEAF_ID)
+    seedClaudeSubagentRosterFromSnapshots(state, paneKey, [
+      { id: 'a0000000000000010', state: 'working', startedAt: 100 }
+    ])
+    claudeEvent(state, paneKey, { hook_event_name: 'UserPromptSubmit', prompt: 'continue' })
+    claudeEvent(state, paneKey, {
+      hook_event_name: 'SubagentStart',
+      agent_id: 'a0000000000000011'
+    })
+
+    const stopped = claudeEvent(state, paneKey, {
+      hook_event_name: 'SubagentStop',
+      agent_id: 'a0000000000000011'
+    })
+
+    expect(stopped?.payload.state).toBe('working')
+    expect(stopped?.payload.subagents).toEqual([
+      expect.objectContaining({ id: 'a0000000000000010', state: 'working' })
+    ])
+  })
+
   it('resolves a first-event child wait when that child stops', () => {
     const state = createHookListenerState()
     const paneKey = makePaneKey('startless-wait-stop', LEAF_ID)
