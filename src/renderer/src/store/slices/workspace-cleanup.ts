@@ -821,7 +821,8 @@ async function enrichWorkspaceCleanupCandidatesWithCache(
     candidates,
     WORKSPACE_CLEANUP_ENRICHMENT_CONCURRENCY,
     async (candidate) => {
-      const cached = cache.get(candidate.worktreeId)
+      const identity = getWorkspaceCleanupCandidateIdentity(candidate)
+      const cached = cache.get(identity)
       if (options.localStateUnchanged === true && cached?.candidateRef === candidate) {
         return cached.candidate
       }
@@ -838,7 +839,7 @@ async function enrichWorkspaceCleanupCandidatesWithCache(
       }
 
       const enriched = await enrichWorkspaceCleanupCandidate(candidate, state, projection, options)
-      cache.set(candidate.worktreeId, {
+      cache.set(identity, {
         candidateRef: candidate,
         inputSignature,
         localSignature,
