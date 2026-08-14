@@ -132,6 +132,21 @@ describe('unhandled provider frame journal fallback', () => {
     ).not.toBeNull()
   })
 
+  it('surfaces a failed hook completion while suppressing successful hook lifecycle', () => {
+    const kind = 'notification:hook/completed'
+
+    expect(
+      unhandledProviderFrameJournalItem('codex', kind, {
+        run: { id: 'hook-1', status: 'completed' }
+      })
+    ).toBeNull()
+    expect(
+      unhandledProviderFrameJournalItem('codex', kind, {
+        run: { id: 'hook-1', status: 'failed' }
+      })
+    ).not.toBeNull()
+  })
+
   it('keeps unknown substantive frames visible for both providers', () => {
     expect(
       unhandledProviderFrameJournalItem('codex', 'notification:future/event', {})

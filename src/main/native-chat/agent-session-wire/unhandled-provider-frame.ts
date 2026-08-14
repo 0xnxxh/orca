@@ -27,7 +27,8 @@ export function unhandledProviderFrameJournalItem(
   payload: unknown,
   limits: JournalPayloadLimits = DEFAULT_JOURNAL_PAYLOAD_LIMITS
 ): UnhandledProviderFrameJournalItem | null {
-  if (classifyProviderFrame(provider, kind, payload) === 'debug-only') {
+  const classification = classifyProviderFrame(provider, kind, payload)
+  if (classification === 'status-chrome' || classification === 'suppressed-benign') {
     return null
   }
   const serialized = serializeProviderPayload(payload)

@@ -469,6 +469,43 @@ describe('codex journal translation', () => {
     expect(timeline).toEqual([])
   })
 
+  it('projects only user and assistant content for a complete turn with hooks', () => {
+    const { translator, tap } = translatorWith()
+
+    translator.handle(notification('thread/started', { thread: { id: THREAD_ID } }))
+    translator.handle(notification('hook/started', { run: { id: 'hook-1', status: 'running' } }))
+    translator.handle(notification('account/rateLimits/updated', { rateLimits: { primary: null } }))
+    translator.handle(TURN_STARTED)
+    translator.handle(
+      notification('item/completed', {
+        item: { type: 'userMessage', id: 'item-0', text: 'hi' }
+      })
+    )
+    translator.handle(
+      notification('hook/completed', { run: { id: 'hook-1', status: 'completed' } })
+    )
+    translator.handle(
+      notification('item/completed', {
+        item: { type: 'agentMessage', id: 'item-1', text: 'hello' }
+      })
+    )
+    translator.handle(notification('turn/completed', { turn: { id: TURN_ID } }))
+
+    const timeline = projectStructuredItemsToNativeChat(
+      tap.rows.map((row, index) => ({
+        itemId: row.key,
+        revision: 1,
+        sequence: index + 1,
+        observedAt: index + 1,
+        body: row.body
+      }))
+    )
+    expect(timeline.map(({ role, blocks }) => ({ role, blocks }))).toEqual([
+      { role: 'user', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', blocks: [{ type: 'text', text: 'hello' }] }
+    ])
+  })
+
   it('renders a system error carried by a suppressed status kind', () => {
     const { translator, tap } = translatorWith()
 
