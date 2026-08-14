@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { getLocalExecutionHostLabel } from '../../../src/shared/execution-host'
 import {
   buildNewWorkspaceProjectOptions,
   buildNewWorkspaceRunTargetOptions,
   getNewWorkspaceRunTarget
 } from './new-workspace-project-targets'
+
+const LOCAL_HOST_LABEL = getLocalExecutionHostLabel('darwin')
 
 describe('new workspace project targets', () => {
   it('groups local and SSH checkouts of the same project', () => {
@@ -42,8 +45,14 @@ describe('new workspace project targets', () => {
 
   it('labels local, SSH, and paired runtime targets', () => {
     expect(
-      getNewWorkspaceRunTarget({ id: 'local', displayName: 'orca', path: '/src/orca' })
-    ).toEqual({ label: 'Local Mac', detail: '/src/orca' })
+      getNewWorkspaceRunTarget({ id: 'local', displayName: 'orca', path: '/src/orca' }, 'darwin')
+    ).toEqual({ label: LOCAL_HOST_LABEL, detail: '/src/orca' })
+    expect(
+      getNewWorkspaceRunTarget({ id: 'local', displayName: 'orca', path: 'C:\\src\\orca' })
+    ).toEqual({ label: 'This computer', detail: 'C:\\src\\orca' })
+    expect(
+      getNewWorkspaceRunTarget({ id: 'local', displayName: 'orca', path: 'C:\\src\\orca' }, 'win32')
+    ).toEqual({ label: 'Local Windows', detail: 'C:\\src\\orca' })
     expect(
       getNewWorkspaceRunTarget({
         id: 'ssh',
@@ -77,8 +86,8 @@ describe('new workspace project targets', () => {
     ]
     const projectId = buildNewWorkspaceProjectOptions(repos)[0]?.id ?? null
 
-    expect(buildNewWorkspaceRunTargetOptions(repos, projectId)).toEqual([
-      expect.objectContaining({ id: 'local-a', label: 'Local Mac', detail: '/src/orca-a' }),
+    expect(buildNewWorkspaceRunTargetOptions(repos, projectId, 'darwin')).toEqual([
+      expect.objectContaining({ id: 'local-a', label: LOCAL_HOST_LABEL, detail: '/src/orca-a' }),
       expect.objectContaining({ id: 'ssh', label: 'SSH · build-server', detail: '/home/dev/orca' })
     ])
   })

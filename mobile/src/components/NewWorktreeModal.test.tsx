@@ -44,7 +44,10 @@ vi.mock('./MobileAgentIcon', () => ({ MobileAgentIcon: 'MobileAgentIcon' }))
 vi.mock('./TaskProviderLogo', () => ({ TaskProviderLogo: 'TaskProviderLogo' }))
 
 import { setCachedRepos } from '../cache/repo-cache'
+import { getLocalExecutionHostLabel } from '../../../src/shared/execution-host'
 import { NewWorktreeModal } from './NewWorktreeModal'
+
+const LOCAL_HOST_LABEL = getLocalExecutionHostLabel('darwin')
 
 const repos = [
   {
@@ -81,6 +84,9 @@ describe('NewWorktreeModal project targets', () => {
       if (method === 'repo.list') {
         return Promise.reject(new Error('connection closed'))
       }
+      if (method === 'status.get') {
+        return Promise.resolve({ ok: true, result: { hostPlatform: 'darwin' } })
+      }
       return new Promise(() => {})
     })
     const client = { sendRequest } as unknown as RpcClient
@@ -106,7 +112,7 @@ describe('NewWorktreeModal project targets', () => {
       expect.objectContaining({ label: 'orca', detail: 'stablyai/orca' })
     ])
     expect(pickerItems(renderer, 'Run on')).toEqual([
-      expect.objectContaining({ label: 'Local Mac', detail: '/src/orca' })
+      expect.objectContaining({ label: LOCAL_HOST_LABEL, detail: '/src/orca' })
     ])
   })
 
@@ -123,13 +129,15 @@ describe('NewWorktreeModal project targets', () => {
       }
     ]
     const client = {
-      sendRequest: vi
-        .fn()
-        .mockImplementation((method: string) =>
-          method === 'repo.list'
-            ? Promise.resolve({ ok: true, result: { repos: listedRepos } })
-            : new Promise(() => {})
-        )
+      sendRequest: vi.fn().mockImplementation((method: string) => {
+        if (method === 'repo.list') {
+          return Promise.resolve({ ok: true, result: { repos: listedRepos } })
+        }
+        if (method === 'status.get') {
+          return Promise.resolve({ ok: true, result: { hostPlatform: 'darwin' } })
+        }
+        return new Promise(() => {})
+      })
     } as unknown as RpcClient
 
     await act(async () => {
@@ -149,7 +157,7 @@ describe('NewWorktreeModal project targets', () => {
       expect.objectContaining({ label: 'orca', detail: 'stablyai/orca' })
     ])
     expect(pickerItems(renderer, 'Run on')).toEqual([
-      expect.objectContaining({ label: 'Local Mac', detail: '/src/orca' }),
+      expect.objectContaining({ label: LOCAL_HOST_LABEL, detail: '/src/orca' }),
       expect.objectContaining({
         label: 'SSH · build-server',
         detail: '/home/dev/orca'

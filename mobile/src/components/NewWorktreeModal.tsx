@@ -29,12 +29,11 @@ import {
   type SetupHookTrust
 } from '../tasks/setup-hook-trust'
 import { isMobileTuiAgentEnabled } from '../tasks/mobile-tui-agents'
-import type {
-  PersistedTrustedOrcaHooks,
-  Repo as SharedRepo,
-  TuiAgent
-} from '../../../src/shared/types'
+import type { PersistedTrustedOrcaHooks } from '../../../src/shared/orca-yaml-hook-types'
+import type { Repo as SharedRepo } from '../../../src/shared/repo-types'
+import type { TuiAgent } from '../../../src/shared/tui-agent'
 import type { SshConnectionState } from '../../../src/shared/ssh-types'
+import { getProjectIdentityKey } from '../../../src/shared/project-host-setup-projection'
 import {
   NEW_WORKTREE_AGENT_OPTIONS as AGENT_OPTIONS,
   NEW_WORKTREE_BLANK_AGENT as BLANK_TERMINAL,
@@ -71,7 +70,6 @@ import { NewWorktreeProjectTargetFields } from './NewWorktreeProjectTargetFields
 import {
   buildNewWorkspaceProjectOptions,
   buildNewWorkspaceRunTargetOptions,
-  getNewWorkspaceProjectId,
   getNewWorkspaceRunTarget
 } from './new-workspace-project-targets'
 
@@ -214,10 +212,8 @@ function NewWorktreeModalContent({
   const [sshConnectingTargetId, setSshConnectingTargetId] = useState<string | null>(null)
   const [note, setNote] = useState('')
   const [availableProviders, setAvailableProviders] = useState<TaskProvider[]>([])
-  const { tasksSupported, getWorktreeCreateCutoverSupport } = useNewWorktreeRuntimeCapabilities(
-    client,
-    visible
-  )
+  const { tasksSupported, hostPlatform, getWorktreeCreateCutoverSupport } =
+    useNewWorktreeRuntimeCapabilities(client, visible)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [setupHookDetails, setSetupHookDetails] = useState<SetupHookDetails | null>(null)
   const [trustedOrcaHooks, setTrustedOrcaHooks] = useState<PersistedTrustedOrcaHooks>({})
@@ -709,14 +705,16 @@ function NewWorktreeModalContent({
         )
   const pickerAgentOptions = [...visibleAgentOptions, BLANK_TERMINAL]
   const projectPickerItems = useMemo(() => buildNewWorkspaceProjectOptions(repos), [repos])
-  const selectedProjectId = selectedRepo ? getNewWorkspaceProjectId(selectedRepo) : null
+  const selectedProjectId = selectedRepo ? getProjectIdentityKey(selectedRepo) : null
   const selectedProject =
     projectPickerItems.find((project) => project.id === selectedProjectId) ?? null
   const runTargetPickerItems = useMemo(
-    () => buildNewWorkspaceRunTargetOptions(repos, selectedProjectId),
-    [repos, selectedProjectId]
+    () => buildNewWorkspaceRunTargetOptions(repos, selectedProjectId, hostPlatform),
+    [hostPlatform, repos, selectedProjectId]
   )
-  const selectedRunTarget = selectedRepo ? getNewWorkspaceRunTarget(selectedRepo) : null
+  const selectedRunTarget = selectedRepo
+    ? getNewWorkspaceRunTarget(selectedRepo, hostPlatform)
+    : null
 
   function prepareSelectionPickerOpen(): void {
     // Why: picker taps can beat an open soft keyboard; dismissing it prevents the

@@ -13,19 +13,14 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import type {
-  PersistedState,
-  Project,
-  ProjectGroup,
-  ProjectHostSetup,
-  Repo,
-  GlobalSettings,
-  TerminalPaneLayoutNode,
-  TerminalTab,
-  WorktreeLineage,
-  WorkspaceLineage,
-  WorkspaceSessionState
-} from '../shared/types'
+import type { GlobalSettings } from '../shared/global-settings-types'
+import type { PersistedState } from '../shared/persisted-state-types'
+import type { ProjectGroup } from '../shared/project-group-types'
+import type { Project, ProjectHostSetup } from '../shared/project-types'
+import type { Repo } from '../shared/repo-types'
+import type { TerminalPaneLayoutNode, TerminalTab } from '../shared/terminal-tab-types'
+import type { WorkspaceSessionState } from '../shared/workspace-session-state-types'
+import type { WorkspaceLineage, WorktreeLineage } from '../shared/worktree/lineage-types'
 import { isTerminalLeafId, makePaneKey } from '../shared/stable-pane-id'
 import { TERMINAL_SCROLLBACK_REPLAY_BYTE_LIMIT } from '../shared/terminal-scrollback-limits'
 import { MAX_BROWSER_HISTORY_ENTRIES } from '../shared/workspace-session-browser-history'
@@ -42,6 +37,7 @@ import { SshConnectionStore } from './ssh/ssh-connection-store'
 import { setSourceControlActionDefault } from '../shared/source-control-ai-actions'
 import { LEGACY_DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS } from '../shared/ssh-types'
 import { closeTerminalTabInWorkspaceSession } from '../shared/workspace-session-terminal-tab-close'
+import { createDefaultWorkspaceCleanupBrowseState } from '../shared/workspace-cleanup-browse-state'
 
 // Shared mutable state so the electron mock can reference a per-test directory
 const testState = { dir: '' }
@@ -7132,6 +7128,29 @@ describe('Store', () => {
       'agent-browser-use': { firstInteractedAt: 100, interactionCount: 1 },
       tasks: { firstInteractedAt: 200, interactionCount: 1 }
     })
+  })
+
+  it('updateUI preserves browse state when a legacy peer publishes dismissals only', async () => {
+    const store = await createStore()
+    const browse = createDefaultWorkspaceCleanupBrowseState()
+    browse.filters.query = 'stale'
+
+    store.updateUI({ workspaceCleanup: { dismissals: {}, browse } })
+    store.updateUI({
+      workspaceCleanup: {
+        dismissals: {
+          'wt-1': {
+            worktreeId: 'wt-1',
+            dismissedAt: 1700000000000,
+            fingerprint: 'fp-1',
+            classifierVersion: 2
+          }
+        }
+      }
+    })
+
+    expect(store.getUI().workspaceCleanup?.browse).toEqual(browse)
+    expect(store.getUI().workspaceCleanup?.dismissals).toHaveProperty('wt-1')
   })
 
   it('updateUI merges contextual tour seen ids instead of replacing stale snapshots', async () => {

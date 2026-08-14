@@ -1,6 +1,14 @@
-import type { Repo } from '../../../src/shared/types'
-import { getRepoExecutionHostId } from '../../../src/shared/execution-host'
-import { getProjectIdentityKey } from '../../../src/shared/project-host-setup-projection'
+import type { Repo } from '../../../src/shared/repo-types'
+import {
+  getExecutionHostLabel,
+  getLocalExecutionHostLabel,
+  getRepoExecutionHostId,
+  parseExecutionHostId
+} from '../../../src/shared/execution-host'
+import {
+  getProjectIdentityKey,
+  getProjectProviderIdentity
+} from '../../../src/shared/project-host-setup-projection'
 
 type WorkspaceRepo = Pick<Repo, 'id' | 'displayName' | 'path'> &
   Partial<
@@ -21,26 +29,13 @@ export type NewWorkspaceRunTargetOption<TRepo extends WorkspaceRepo> = {
   repo: TRepo
 }
 
-function executionHostName(executionHostId: string): string {
-  const encodedName = executionHostId.slice(executionHostId.indexOf(':') + 1)
-  try {
-    return decodeURIComponent(encodedName)
-  } catch {
-    return encodedName
-  }
-}
-
-export function getNewWorkspaceProjectId(repo: WorkspaceRepo): string {
-  return getProjectIdentityKey(repo)
-}
-
 export function buildNewWorkspaceProjectOptions<TRepo extends WorkspaceRepo>(
   repos: readonly TRepo[]
 ): NewWorkspaceProjectOption<TRepo>[] {
   const options = new Map<string, NewWorkspaceProjectOption<TRepo>>()
   const hostIdsByProject = new Map<string, Set<string>>()
   for (const repo of repos) {
-    const id = getNewWorkspaceProjectId(repo)
+    const id = getProjectIdentityKey(repo)
     const hostIds = hostIdsByProject.get(id) ?? new Set<string>()
     hostIds.add(getRepoExecutionHostId(repo))
     hostIdsByProject.set(id, hostIds)
@@ -53,48 +48,58 @@ export function buildNewWorkspaceProjectOptions<TRepo extends WorkspaceRepo>(
     }
   }
   return [...options.values()].map((option) => {
-    const providerParts = option.id.startsWith('github:')
-      ? option.id.slice('github:'.length).split('/')
-      : []
-    const providerDetail = providerParts.slice(-2).join('/')
+    const providerIdentity = getProjectProviderIdentity(option.repo)
+    const providerDetail = providerIdentity
+      ? `${providerIdentity.owner}/${providerIdentity.repo}`
+      : ''
     const hostCount = hostIdsByProject.get(option.id)?.size ?? 0
     const detail = providerDetail || (hostCount > 1 ? `${hostCount} hosts configured` : '')
     return detail ? { ...option, detail } : option
   })
 }
 
-export function getNewWorkspaceRunTarget(repo: WorkspaceRepo): {
+export function getNewWorkspaceRunTarget(
+  repo: WorkspaceRepo,
+  localPlatform: NodeJS.Platform | null = null
+): {
   label: string
   detail: string
 } {
-  const connectionId = repo.connectionId?.trim()
-  if (connectionId) {
-    return { label: `SSH · ${connectionId}`, detail: repo.path }
+  const hostId = getRepoExecutionHostId(repo)
+  const host = parseExecutionHostId(hostId)
+  const hostLabel = getExecutionHostLabel(hostId)
+  if (host?.kind === 'ssh') {
+    return { label: `SSH · ${hostLabel}`, detail: repo.path }
   }
-  if (repo.executionHostId?.startsWith('ssh:')) {
-    return { label: `SSH · ${executionHostName(repo.executionHostId)}`, detail: repo.path }
+  if (host?.kind === 'runtime') {
+    return { label: `Remote · ${hostLabel}`, detail: repo.path }
   }
-  if (repo.executionHostId?.startsWith('runtime:')) {
-    return { label: `Remote · ${executionHostName(repo.executionHostId)}`, detail: repo.path }
+  return {
+    label: localPlatform ? getLocalExecutionHostLabel(localPlatform) : 'This computer',
+    detail: repo.path
   }
-  return { label: 'Local Mac', detail: repo.path }
 }
 
 export function buildNewWorkspaceRunTargetOptions<TRepo extends WorkspaceRepo>(
   repos: readonly TRepo[],
-  projectId: string | null
+  projectId: string | null,
+  localPlatform: NodeJS.Platform | null = null
 ): NewWorkspaceRunTargetOption<TRepo>[] {
   if (!projectId) {
     return []
   }
   const options = new Map<string, NewWorkspaceRunTargetOption<TRepo>>()
   for (const repo of repos) {
-    if (getNewWorkspaceProjectId(repo) !== projectId) {
+    if (getProjectIdentityKey(repo) !== projectId) {
       continue
     }
     const hostId = getRepoExecutionHostId(repo)
     if (!options.has(hostId)) {
-      options.set(hostId, { id: repo.id, ...getNewWorkspaceRunTarget(repo), repo })
+      options.set(hostId, {
+        id: repo.id,
+        ...getNewWorkspaceRunTarget(repo, localPlatform),
+        repo
+      })
     }
   }
   return [...options.values()]
