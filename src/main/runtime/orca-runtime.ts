@@ -27759,9 +27759,17 @@ export class OrcaRuntimeService {
         // Best-effort fallback below preserves the original split authority error.
       }
       if (!stopped) {
-        this.ptyController.kill(result.id)
+        try {
+          this.ptyController.kill(result.id)
+        } catch {
+          // Best-effort cleanup; retirement below still runs and the original error still throws.
+        }
       }
-      this.ptyController.retireRejectedPty?.(result.id)
+      try {
+        this.ptyController.retireRejectedPty?.(result.id)
+      } catch {
+        // Best-effort cleanup; preserve the original split authority error.
+      }
       throw error
     }
     const committedSourceAuthority = sourceAuthority.persisted
