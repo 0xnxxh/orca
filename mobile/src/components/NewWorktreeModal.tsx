@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
   Keyboard
 } from 'react-native'
-import { ChevronDown, ChevronUp } from 'lucide-react-native'
+import { ChevronDown, ChevronUp, Monitor } from 'lucide-react-native'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcResponse, RpcSuccess } from '../transport/types'
 import { colors, spacing, radii, typography } from '../theme/mobile-theme'
@@ -29,7 +29,11 @@ import {
   type SetupHookTrust
 } from '../tasks/setup-hook-trust'
 import { isMobileTuiAgentEnabled } from '../tasks/mobile-tui-agents'
-import type { PersistedTrustedOrcaHooks, TuiAgent } from '../../../src/shared/types'
+import type {
+  PersistedTrustedOrcaHooks,
+  Repo as SharedRepo,
+  TuiAgent
+} from '../../../src/shared/types'
 import type { SshConnectionState } from '../../../src/shared/ssh-types'
 import {
   NEW_WORKTREE_AGENT_OPTIONS as AGENT_OPTIONS,
@@ -63,19 +67,27 @@ import { SmartWorkspaceSourceField } from './SmartWorkspaceSourceField'
 import { SmartWorkspaceSourceDrawer } from './SmartWorkspaceSourceDrawer'
 import { SmartWorkspaceAdvancedFields } from './SmartWorkspaceAdvancedFields'
 import { SetupHookTrustDrawer, type SetupTrustPrompt } from './SetupHookTrustDrawer'
-import { getNewWorkspaceRepoDetail } from './new-workspace-repo-detail'
+import { NewWorktreeProjectTargetFields } from './NewWorktreeProjectTargetFields'
+import {
+  buildNewWorkspaceProjectOptions,
+  buildNewWorkspaceRunTargetOptions,
+  getNewWorkspaceProjectId,
+  getNewWorkspaceRunTarget
+} from './new-workspace-project-targets'
 
-type Repo = {
-  id: string
-  displayName: string
-  path: string
-  badgeColor?: string
-  connectionId?: string | null
-  executionHostId?: 'local' | `ssh:${string}` | `runtime:${string}` | null
-  kind?: 'git' | 'folder'
-  upstream?: { owner: string; repo: string } | null
-  gitRemoteIdentity?: { remoteUrl?: string; canonicalKey?: string } | null
-}
+type Repo = Pick<SharedRepo, 'id' | 'displayName' | 'path'> &
+  Partial<
+    Pick<
+      SharedRepo,
+      | 'badgeColor'
+      | 'connectionId'
+      | 'executionHostId'
+      | 'kind'
+      | 'upstream'
+      | 'repoIcon'
+      | 'gitRemoteIdentity'
+    >
+  >
 
 type SetupDecision = 'inherit' | 'run' | 'skip'
 type SetupRunPolicy = 'ask' | 'run-by-default' | 'skip-by-default'
@@ -696,16 +708,15 @@ function NewWorktreeModalContent({
             isMobileTuiAgentEnabled(agent.id, runtimeSettings?.disabledTuiAgents)
         )
   const pickerAgentOptions = [...visibleAgentOptions, BLANK_TERMINAL]
-  const repoPickerItems = useMemo(
-    () =>
-      repos.map((repo) => ({
-        id: repo.id,
-        label: repo.displayName,
-        detail: getNewWorkspaceRepoDetail(repo),
-        repo
-      })),
-    [repos]
+  const projectPickerItems = useMemo(() => buildNewWorkspaceProjectOptions(repos), [repos])
+  const selectedProjectId = selectedRepo ? getNewWorkspaceProjectId(selectedRepo) : null
+  const selectedProject =
+    projectPickerItems.find((project) => project.id === selectedProjectId) ?? null
+  const runTargetPickerItems = useMemo(
+    () => buildNewWorkspaceRunTargetOptions(repos, selectedProjectId),
+    [repos, selectedProjectId]
   )
+  const selectedRunTarget = selectedRepo ? getNewWorkspaceRunTarget(selectedRepo) : null
 
   function prepareSelectionPickerOpen(): void {
     // Why: picker taps can beat an open soft keyboard; dismissing it prevents the
@@ -793,10 +804,7 @@ function NewWorktreeModalContent({
     >
       <BottomDrawer visible={formSheetVisible} interactive={formSheetInteractive} onClose={onClose}>
         <View style={styles.header}>
-          <Text style={styles.title}>Create Workspace</Text>
-          <Text style={styles.subtitle}>
-            Pick a repository and agent to spin up a new workspace.
-          </Text>
+          <Text style={styles.title}>Create worktree</Text>
         </View>
 
         {loading ? (
@@ -805,40 +813,23 @@ function NewWorktreeModalContent({
           </View>
         ) : repos.length === 0 ? (
           <View style={styles.loadingContainer}>
-            <Text style={styles.emptyText}>No repositories found</Text>
+            <Text style={styles.emptyText}>No projects found</Text>
           </View>
         ) : (
           <>
-            <View style={styles.field}>
-              <Text style={styles.label}>Repository</Text>
-              <Pressable
-                style={styles.fieldButton}
-                onPress={() => {
-                  prepareSelectionPickerOpen()
-                  transitionDrawer('repo')
-                }}
-              >
-                {selectedRepo ? (
-                  <View
-                    style={[styles.repoDot, { backgroundColor: repoBadgeColor(selectedRepo) }]}
-                  />
-                ) : null}
-                <View style={styles.fieldButtonCopy}>
-                  <Text
-                    style={[styles.fieldButtonText, !selectedRepo && styles.fieldButtonPlaceholder]}
-                    numberOfLines={1}
-                  >
-                    {selectedRepo?.displayName ?? 'Select a repository'}
-                  </Text>
-                  {selectedRepo ? (
-                    <Text style={styles.fieldButtonDetail} numberOfLines={1}>
-                      {getNewWorkspaceRepoDetail(selectedRepo)}
-                    </Text>
-                  ) : null}
-                </View>
-                <ChevronDown size={14} color={colors.textMuted} />
-              </Pressable>
-            </View>
+            <NewWorktreeProjectTargetFields
+              project={selectedProject}
+              runTarget={selectedRunTarget}
+              projectBadgeColor={selectedRepo ? repoBadgeColor(selectedRepo) : null}
+              onOpenProject={() => {
+                prepareSelectionPickerOpen()
+                transitionDrawer('project')
+              }}
+              onOpenRunTarget={() => {
+                prepareSelectionPickerOpen()
+                transitionDrawer('runTarget')
+              }}
+            />
 
             <SmartWorkspaceSourceField
               composer={composer}
@@ -908,7 +899,7 @@ function NewWorktreeModalContent({
               >
                 <MobileAgentIcon agentId={selectedAgent.id} size={16} />
                 <Text style={styles.fieldButtonText} numberOfLines={1}>
-                  {sshGate.requiresConnection ? 'Connect repository first' : selectedAgent.label}
+                  {sshGate.requiresConnection ? 'Connect target first' : selectedAgent.label}
                 </Text>
                 <ChevronDown size={14} color={colors.textMuted} />
               </Pressable>
@@ -1010,7 +1001,7 @@ function NewWorktreeModalContent({
                   <ActivityIndicator size="small" color={colors.bgBase} />
                 ) : (
                   <Text style={styles.createText}>
-                    {sshGate.requiresConnection ? 'Connect Repository' : 'Create Workspace'}
+                    {sshGate.requiresConnection ? 'Connect target' : 'Create worktree'}
                   </Text>
                 )}
               </Pressable>
@@ -1039,15 +1030,25 @@ function NewWorktreeModalContent({
       />
 
       <PickerListDrawer
-        visible={visible && drawerView === 'repo'}
-        title="Repository"
-        items={repoPickerItems}
-        selectedId={selectedRepo?.id ?? ''}
+        visible={visible && drawerView === 'project'}
+        title="Project"
+        items={projectPickerItems}
+        selectedId={selectedProjectId ?? ''}
         onSelect={(item) => handleRepoSelected(item.repo)}
         onClose={() => transitionDrawer('form')}
         renderIcon={(item) => {
           return <View style={[styles.repoDot, { backgroundColor: repoBadgeColor(item.repo) }]} />
         }}
+      />
+
+      <PickerListDrawer
+        visible={visible && drawerView === 'runTarget'}
+        title="Run on"
+        items={runTargetPickerItems}
+        selectedId={selectedRepo?.id ?? ''}
+        onSelect={(item) => handleRepoSelected(item.repo)}
+        onClose={() => transitionDrawer('form')}
+        renderIcon={() => <Monitor size={16} color={colors.textMuted} />}
       />
 
       <PickerListDrawer
@@ -1086,11 +1087,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textPrimary
   },
-  subtitle: {
-    fontSize: 13,
-    color: colors.textMuted,
-    marginTop: 2
-  },
   loadingContainer: {
     paddingVertical: spacing.xl,
     alignItems: 'center'
@@ -1126,15 +1122,6 @@ const styles = StyleSheet.create({
   fieldButtonText: {
     fontSize: typography.bodySize,
     color: colors.textPrimary
-  },
-  fieldButtonCopy: {
-    flex: 1,
-    minWidth: 0
-  },
-  fieldButtonDetail: {
-    fontSize: typography.metaSize,
-    color: colors.textMuted,
-    marginTop: 1
   },
   fieldButtonPlaceholder: {
     color: colors.textMuted

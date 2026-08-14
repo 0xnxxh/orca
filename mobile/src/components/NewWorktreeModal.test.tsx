@@ -46,15 +46,26 @@ vi.mock('./TaskProviderLogo', () => ({ TaskProviderLogo: 'TaskProviderLogo' }))
 import { setCachedRepos } from '../cache/repo-cache'
 import { NewWorktreeModal } from './NewWorktreeModal'
 
-const repos = [{ id: 'repo-1', displayName: 'orca', path: '/src/orca', kind: 'git' }]
+const repos = [
+  {
+    id: 'repo-1',
+    displayName: 'orca',
+    path: '/src/orca',
+    kind: 'git',
+    upstream: { owner: 'stablyai', repo: 'orca' }
+  }
+]
 
-function repoPickerItems(renderer: ReactTestRenderer): { label: string; detail: string }[] {
+function pickerItems(
+  renderer: ReactTestRenderer,
+  title: string
+): { label: string; detail: string }[] {
   const pickers = renderer.root.findAll((node) => node.type === 'PickerListDrawer')
-  const repoPicker = pickers.find((node) => node.props.title === 'Repository')
-  return repoPicker?.props.items ?? []
+  const picker = pickers.find((node) => node.props.title === title)
+  return picker?.props.items ?? []
 }
 
-describe('NewWorktreeModal repo list', () => {
+describe('NewWorktreeModal project targets', () => {
   let renderer: ReactTestRenderer
 
   beforeEach(() => {
@@ -91,12 +102,15 @@ describe('NewWorktreeModal repo list', () => {
     })
 
     expect(sendRequest).toHaveBeenCalledWith('repo.list')
-    expect(repoPickerItems(renderer)).toEqual([
-      expect.objectContaining({ label: 'orca', detail: 'Local · /src/orca' })
+    expect(pickerItems(renderer, 'Project')).toEqual([
+      expect.objectContaining({ label: 'orca', detail: 'stablyai/orca' })
+    ])
+    expect(pickerItems(renderer, 'Run on')).toEqual([
+      expect.objectContaining({ label: 'Local Mac', detail: '/src/orca' })
     ])
   })
 
-  it('labels same-name local and SSH repositories with their locations', async () => {
+  it('groups same-name checkouts under one project with separate run targets', async () => {
     const listedRepos = [
       ...repos,
       {
@@ -104,7 +118,8 @@ describe('NewWorktreeModal repo list', () => {
         displayName: 'orca',
         path: '/home/dev/orca',
         connectionId: 'build-server',
-        kind: 'git'
+        kind: 'git',
+        upstream: { owner: 'stablyai', repo: 'orca' }
       }
     ]
     const client = {
@@ -130,11 +145,14 @@ describe('NewWorktreeModal repo list', () => {
       await Promise.resolve()
     })
 
-    expect(repoPickerItems(renderer)).toEqual([
-      expect.objectContaining({ label: 'orca', detail: 'Local · /src/orca' }),
+    expect(pickerItems(renderer, 'Project')).toEqual([
+      expect.objectContaining({ label: 'orca', detail: 'stablyai/orca' })
+    ])
+    expect(pickerItems(renderer, 'Run on')).toEqual([
+      expect.objectContaining({ label: 'Local Mac', detail: '/src/orca' }),
       expect.objectContaining({
-        label: 'orca',
-        detail: 'SSH · build-server · /home/dev/orca'
+        label: 'SSH · build-server',
+        detail: '/home/dev/orca'
       })
     ])
   })
