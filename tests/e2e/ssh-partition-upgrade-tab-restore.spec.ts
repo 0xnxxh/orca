@@ -66,16 +66,24 @@ test.describe('an upgrading profile keeps the tabs its old build left in the ssh
   test.skip(process.platform === 'win32', 'Docker SSH E2E uses POSIX ssh tooling.')
 
   // FIXME: RED ON THE CURRENT FIX, and correctly so — this is the reproduction, not a flake.
-  // Result: 1 tab restored out of 3, which is the reporter's exact symptom.
+  // Result: 1 tab restored out of 3, the reporter's exact symptom.
   //
-  // Cause: `hoistSshPartitionsIntoLocalSession` folds `tabsByWorktree`, `terminalLayoutsByTabId`,
-  // `terminalPtyIncarnationsByPaneKey` and `activeTabIdByWorktree` — but NOT `groupsByWorktree`.
-  // The tab bar renders from the active group's `tabOrder` (helpers/store.ts `getTabBarOrder`, and
-  // `groupsByWorktree[].tabOrder` in shared/types.ts), so a hoisted tab exists in the session and
-  // is still invisible. The Store-level oracle passes because `persistPtyBinding` only consults
-  // `tabsByWorktree`; it cannot see this.
+  // Narrowed so far. The hoist now folds `tabsByWorktree`, `terminalLayoutsByTabId`,
+  // `terminalPtyIncarnationsByPaneKey`, `activeTabIdByWorktree`, and — added while chasing this —
+  // `tabGroups`, `tabGroupLayouts`, `unifiedTabs` and `activeGroupIdByWorktree`. The tab bar
+  // renders from the active group's `tabOrder`, so groups were a necessary part; they were not
+  // sufficient. The staging helper moves all of them (asserted before launch 2, so the fixture is
+  // not the problem), and the result is unchanged at 1 tab.
   //
-  // Un-fixme once the hoist also folds group membership.
+  // Leading remaining hypothesis, UNVERIFIED: the hoist is local-wins per worktree, and launch 2
+  // appears to reach the hoist with a group already present for the SSH worktree — so the
+  // `if (local.tabGroups?.[worktreeId]) continue` guard skips the partition's real group and the
+  // freshly-minted one-tab group wins. If that holds, local-wins is the wrong arbitration for a
+  // worktree whose panes came entirely from the partition. Verify before changing it: making the
+  // hoist partition-wins would be a data-loss risk in the other direction.
+  //
+  // The Store-level oracle cannot see any of this — `persistPtyBinding` only consults
+  // `tabsByWorktree`. This spec is the only thing that can.
   test.fixme('restores every tab on the first launch after the upgrade, with panes attached', async (// oxlint-disable-next-line no-empty-pattern -- this test owns both Electron launches
   {}, testInfo: TestInfo) => {
     test.setTimeout(600_000)
@@ -107,9 +115,13 @@ test.describe('an upgrading profile keeps the tabs its old build left in the ssh
       await waitForActivePanePtyId(first.page, 60_000)
 
       const tabsBefore = await getTabBarOrder(first.page, remote.worktreeId)
-      expect(tabsBefore.length, 'the test never opened the tabs it checks').toBeGreaterThanOrEqual(3)
+      expect(tabsBefore.length, 'the test never opened the tabs it checks').toBeGreaterThanOrEqual(
+        3
+      )
       const shellsBefore = countRemoteShells(relayTarget)
-      expect(shellsBefore, 'the host runs no shells, so the count proves nothing').toBeGreaterThan(0)
+      expect(shellsBefore, 'the host runs no shells, so the count proves nothing').toBeGreaterThan(
+        0
+      )
 
       // Resolved while the app is up: the helper asks the live app for its profile path.
       const stateFile = await resolveOrcaProfileStateFile(firstApp)
@@ -122,6 +134,10 @@ test.describe('an upgrading profile keeps the tabs its old build left in the ssh
         moved.movedTabIds.length,
         `no tabs were moved into the partition — ${moved.diagnostics}`
       ).toBeGreaterThanOrEqual(3)
+      expect(
+        moved.movedGroups,
+        `no tab group was moved, so the tab bar had nothing to restore — ${moved.diagnostics}`
+      ).toBe(true)
       expect(
         moved.movedLayouts,
         `no layouts were moved, so the panes could not come back attached — ${moved.diagnostics}`

@@ -2951,6 +2951,39 @@ export function hoistSshPartitionsIntoLocalSession(
       }
       changed = true
     }
+    // The tab bar renders from the active GROUP's tabOrder, not from tabsByWorktree, so a tab
+    // folded in without its group exists in the session and is still invisible. That is the whole
+    // reported symptom, and the Store-level oracle cannot see it because persistPtyBinding only
+    // consults tabsByWorktree. Groups, their split layout, the unified tab records and the focused
+    // group all have to travel with the panes.
+    for (const [worktreeId, groups] of Object.entries(partition.tabGroups ?? {})) {
+      if (local.tabGroups?.[worktreeId]) {
+        continue
+      }
+      local.tabGroups = { ...local.tabGroups, [worktreeId]: structuredClone(groups) }
+      changed = true
+    }
+    for (const [worktreeId, layout] of Object.entries(partition.tabGroupLayouts ?? {})) {
+      if (!layout || local.tabGroupLayouts?.[worktreeId]) {
+        continue
+      }
+      local.tabGroupLayouts = { ...local.tabGroupLayouts, [worktreeId]: structuredClone(layout) }
+      changed = true
+    }
+    for (const [worktreeId, tabs] of Object.entries(partition.unifiedTabs ?? {})) {
+      if (local.unifiedTabs?.[worktreeId]) {
+        continue
+      }
+      local.unifiedTabs = { ...local.unifiedTabs, [worktreeId]: structuredClone(tabs) }
+      changed = true
+    }
+    for (const [worktreeId, groupId] of Object.entries(partition.activeGroupIdByWorktree ?? {})) {
+      if (local.activeGroupIdByWorktree?.[worktreeId] !== undefined) {
+        continue
+      }
+      local.activeGroupIdByWorktree = { ...local.activeGroupIdByWorktree, [worktreeId]: groupId }
+      changed = true
+    }
     for (const [worktreeId, tabId] of Object.entries(partition.activeTabIdByWorktree ?? {})) {
       if (local.activeTabIdByWorktree?.[worktreeId] !== undefined) {
         continue
