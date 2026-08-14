@@ -225,6 +225,64 @@ describe('dispatchTerminalNotification', () => {
     )
   })
 
+  it.each([
+    { clientStateStartedAt: 5_000, hostTurnCompletedAt: 2_000 },
+    { clientStateStartedAt: 2_000, hostTurnCompletedAt: 5_000 }
+  ])(
+    'accepts a host-stamped completion across client/host clock skew %#',
+    ({ clientStateStartedAt, hostTurnCompletedAt }) => {
+      mockState.agentStatusByPaneKey[paneKey] = makeAgentStatus(paneKey, {
+        state: 'working',
+        stateStartedAt: clientStateStartedAt,
+        agentType: 'claude',
+        terminalTitle: 'claude'
+      })
+
+      dispatchTerminalNotification('wt-primary', {
+        source: 'agent-task-complete',
+        terminalTitle: 'claude',
+        paneKey,
+        agentStatusSnapshot: {
+          state: 'done',
+          prompt: 'review the PR',
+          agentType: 'claude',
+          stateStartedAt: hostTurnCompletedAt,
+          localStateStartedAt: clientStateStartedAt,
+          turnCompletedAt: hostTurnCompletedAt
+        }
+      })
+
+      expect(window.api.notifications.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'agent-task-complete' })
+      )
+    }
+  )
+
+  it('drops a host-stamped completion after a newer client turn starts', () => {
+    mockState.agentStatusByPaneKey[paneKey] = makeAgentStatus(paneKey, {
+      state: 'working',
+      stateStartedAt: 6_000,
+      agentType: 'claude',
+      terminalTitle: 'claude'
+    })
+
+    dispatchTerminalNotification('wt-primary', {
+      source: 'agent-task-complete',
+      terminalTitle: 'claude',
+      paneKey,
+      agentStatusSnapshot: {
+        state: 'done',
+        prompt: 'previous turn',
+        agentType: 'claude',
+        stateStartedAt: 2_000,
+        localStateStartedAt: 5_000,
+        turnCompletedAt: 2_000
+      }
+    })
+
+    expect(window.api.notifications.dispatch).not.toHaveBeenCalled()
+  })
+
   it('uses a live pane key when inactive worktree tab membership is not hydrated', () => {
     mockState.tabsByWorktree = {}
 

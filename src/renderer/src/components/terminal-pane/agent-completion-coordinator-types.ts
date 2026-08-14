@@ -5,6 +5,8 @@ import type { RuntimeTerminalProcessInspection } from '@/runtime/runtime-termina
 
 export type AgentCompletionStatusSnapshot = ParsedAgentStatusPayload & {
   stateStartedAt?: number
+  /** Renderer-local boundary used only to reject a delayed cross-host completion. */
+  localStateStartedAt?: number
 }
 
 export type AgentCompletionDispatchMeta = {

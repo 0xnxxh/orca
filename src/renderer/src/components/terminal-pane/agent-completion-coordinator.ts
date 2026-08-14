@@ -211,6 +211,21 @@ export function createAgentCompletionCoordinator(
     )
   }
 
+  function consumePendingStampedTailForAgent(agentIdentity: string | null): boolean {
+    const pendingStampedTail = pendingStampedTailByPaneKey.get(options.paneKey)
+    const stampedCompletion = lastCompletionIdentityByPaneKey.get(options.paneKey)
+    if (
+      pendingStampedTail === undefined ||
+      stampedCompletion?.lastTurnCompletedAtNotified !== pendingStampedTail ||
+      agentIdentity === null ||
+      stampedCompletion.agentIdentity !== agentIdentity
+    ) {
+      return false
+    }
+    pendingStampedTailByPaneKey.delete(options.paneKey)
+    return true
+  }
+
   function hookCompletionAgentIdentity(payload: AgentCompletionStatusSnapshot): string | null {
     return payload.agentType?.trim().toLowerCase() || null
   }
@@ -283,7 +298,11 @@ export function createAgentCompletionCoordinator(
       return false
     }
     if (previous.source === completionIdentity.source) {
-      return previous.identity === completionIdentity.identity
+      return (
+        previous.identity === completionIdentity.identity ||
+        (completionIdentity.source === 'hook' &&
+          consumePendingStampedTailForAgent(completionIdentity.agentIdentity))
+      )
     }
     return (
       previous.agentIdentity !== null &&
@@ -943,6 +962,14 @@ export function createAgentCompletionCoordinator(
       const turnCompletedAt = isFiniteTurnCompletedAt(payload.turnCompletedAt)
         ? payload.turnCompletedAt
         : undefined
+      if (
+        turnCompletedAt === undefined &&
+        consumePendingStampedTailForAgent(hookCompletionAgentIdentity(payload))
+      ) {
+        // Why: paired host hooks carry the stamp while the sibling OSC coordinator sees only the matching all-clear.
+        options.dispatchHookLifecycle?.(payload)
+        return
+      }
       if (
         turnCompletedAt !== undefined &&
         (turnCompletedAtAlreadyHandled(turnCompletedAt) ||

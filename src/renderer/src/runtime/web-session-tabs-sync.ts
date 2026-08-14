@@ -3426,7 +3426,10 @@ export function applyWebSessionTabsStorePatch(
   const acceptedNotificationStatuses: {
     paneKey: string
     worktreeId: string
-    payload: ReturnType<typeof pickParsedAgentStatusPayload> & { stateStartedAt: number }
+    payload: ReturnType<typeof pickParsedAgentStatusPayload> & {
+      stateStartedAt: number
+      localStateStartedAt?: number
+    }
   }[] = []
   useAppStore.setState((state) => {
     const patch = buildPatch(state)
@@ -3476,7 +3479,13 @@ export function applyWebSessionTabsStorePatch(
                 ...notificationStatus,
                 ...(turnCompletedAt !== undefined ? { turnCompletedAt } : {})
               }),
-              stateStartedAt: notificationStatus.stateStartedAt
+              stateStartedAt: notificationStatus.stateStartedAt,
+              ...(clientOwnedNotification
+                ? {
+                    localStateStartedAt:
+                      state.agentStatusByPaneKey[notificationStatus.paneKey]?.stateStartedAt
+                  }
+                : {})
             }
           })
         }
