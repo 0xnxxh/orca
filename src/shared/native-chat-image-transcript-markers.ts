@@ -81,6 +81,15 @@ function stripImagePromptMarkersFromTextBlocks(
   return next ?? (blocks as NativeChatBlock[])
 }
 
+function removeEmptyFirstTextBlock(blocks: readonly NativeChatBlock[]): NativeChatBlock[] {
+  const index = blocks.findIndex(isTextBlock)
+  const block = blocks[index]
+  if (index === -1 || !block || !isTextBlock(block) || block.text.trim()) {
+    return blocks as NativeChatBlock[]
+  }
+  return [...blocks.slice(0, index), ...blocks.slice(index + 1)]
+}
+
 export function hasImagePromptMarker(message: NativeChatMessage): boolean {
   return message.blocks.some((block) => isTextBlock(block) && IMAGE_PROMPT_MARKER.test(block.text))
 }
@@ -133,7 +142,7 @@ export function normalizeImageTranscriptMessages(
       })
       continue
     }
-    const blocks = stripImagePromptMarkersFromTextBlocks(message.blocks)
+    const blocks = removeEmptyFirstTextBlock(message.blocks)
     if (blocks === message.blocks) {
       normalized?.push(message)
     } else {

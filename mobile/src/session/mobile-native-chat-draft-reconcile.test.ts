@@ -84,6 +84,15 @@ describe('mobile native chat image preview reconciliation', () => {
     ])
   })
 
+  it('hands a local preview to a marker-only transcript echo', () => {
+    expect(
+      findLandedImagePreviewEchoes(
+        [userText('prompt', '[Image #1]')],
+        [pending('pending', ['file:///a.jpg'])]
+      )
+    ).toEqual([{ pendingId: 'pending', messageId: 'prompt', images: ['file:///a.jpg'] }])
+  })
+
   it('keeps separate adjacent image-only sends independently reconcilable', () => {
     const landed = findLandedImagePreviewEchoes(
       [

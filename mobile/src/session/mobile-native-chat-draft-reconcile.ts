@@ -169,7 +169,11 @@ export function findLandedImagePreviewEchoes(
         return normalizedUserText(message) === targetText
       }
       const imageCount = message.blocks.filter(isImageRefBlock).length
-      return message.blocks.length === 0 || imageCount >= entry.images!.length
+      return (
+        message.blocks.length === 0 ||
+        imageCount >= entry.images!.length ||
+        (hasImagePromptMarker(message) && normalizedUserText(message) === null)
+      )
     })
     const tailIndex = entry.baselineTailMessageId
       ? messageIndexById.get(entry.baselineTailMessageId)
