@@ -7,26 +7,24 @@ import type {
 } from './agent-status-types'
 import type { AgentSessionPtyWriteRefusal } from './agent-session-pty-write-admission'
 import type {
-  BaseRefSearchResult,
-  BrowserCookieImportResult,
   BrowserCertificateFailure,
+  BrowserCookieImportResult,
   BrowserLoadError,
   BrowserSessionProfile,
-  BrowserSessionProfileSource,
-  CreateWorktreeResult,
-  GitWorktreeInfo,
-  RemoveWorktreeResult,
-  Repo,
-  TabGroupLayoutNode,
-  TerminalColorOverrides,
-  TerminalLayoutSnapshot,
-  TuiAgent,
-  Worktree,
-  WorktreeLineage,
+  BrowserSessionProfileSource
+} from './browser-workspace-types'
+import type { BaseRefSearchResult, Repo } from './repo-types'
+import type { TabGroupLayoutNode } from './tab-types'
+import type { TerminalColorOverrides } from './terminal-color-overrides'
+import type { TerminalLayoutSnapshot, TerminalPaneLayoutNode } from './terminal-tab-types'
+import type { TuiAgent } from './tui-agent'
+import type { CreateWorktreeResult, RemoveWorktreeResult } from './worktree/create-types'
+import type {
   WorkspaceLineage,
-  WorktreeLineageWarning,
-  TerminalPaneLayoutNode
-} from './types'
+  WorktreeLineage,
+  WorktreeLineageWarning
+} from './worktree/lineage-types'
+import type { GitWorktreeInfo, Worktree } from './worktree/types'
 import type {
   RuntimeMarkdownReadTabResult,
   RuntimeMarkdownSaveTabResult
@@ -418,11 +416,18 @@ export type RuntimeTerminalPathOpenTarget =
       provider: 'local' | 'ssh'
       absolutePath: string
       grantId: string
+      /** Present when the exact-path grant permits preview/read but not mutation. */
+      readOnly?: true
     }
   | {
       kind: 'unsupported'
       reason: string
     }
+
+export type RuntimeNativeChatFileContext = {
+  tabId: string
+  sessionId: string
+}
 
 /** Result of resolving a file path tapped in the mobile terminal against the
  *  selected or sibling workspace root (+ optional cwd). relativePath is null

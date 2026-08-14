@@ -14,7 +14,7 @@ import {
   shouldAdvanceStructuredResumeCursor,
   type StructuredAgentSessionState
 } from '../../../../shared/structured-agent-session-reducer'
-import type { Tab } from '../../../../shared/types'
+import type { Tab } from '../../../../shared/tab-types'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import { useAppStore } from '@/store'
 import { getActiveRuntimeTarget, type RuntimeClientTarget } from '@/runtime/runtime-rpc-client'

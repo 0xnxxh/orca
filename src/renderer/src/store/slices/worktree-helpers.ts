@@ -1,28 +1,31 @@
+import type { WorkspaceKey } from '../../../../shared/folder-workspace-types'
+import type { TuiAgent } from '../../../../shared/tui-agent'
+import type { WorkspaceSource as WorkspaceCreateTelemetrySource } from '../../../../shared/workspace-source'
 import type {
-  CreateWorktreeResult,
-  CreateWorktreeArgs,
+  WorktreeBaseStatusEvent,
+  WorktreeRemoteBranchConflictEvent
+} from '../../../../shared/worktree/base-ref-drift-types'
+import type {
   CreateSparseCheckoutRequest,
+  CreateWorktreeArgs,
+  CreateWorktreeResult,
+  ForceDeleteWorktreeBranchResult,
+  RemoveWorktreeResult,
+  SetupDecision
+} from '../../../../shared/worktree/create-types'
+import type { WorktreeStartupLaunch } from '../../../../shared/worktree/launch-types'
+import type { WorkspaceLineage, WorktreeLineage } from '../../../../shared/worktree/lineage-types'
+import type { WorktreeMeta } from '../../../../shared/worktree/meta-types'
+import type {
   DetectedWorktree,
   DetectedWorktreeListResult,
-  ForceDeleteWorktreeBranchResult,
   GitPushTarget,
-  RemoveWorktreeResult,
-  SetupDecision,
-  TuiAgent,
-  WorkspaceCreateTelemetrySource,
   WorkspaceLinkedItem,
   WorkspaceStatus,
-  WorkspaceLineage,
-  WorktreeStartupLaunch,
-  Worktree,
-  WorktreeBaseStatusEvent,
-  WorktreeLineage,
-  WorktreeRemoteBranchConflictEvent,
-  WorktreeMeta,
-  WorkspaceKey
-} from '../../../../shared/types'
+  Worktree
+} from '../../../../shared/worktree/types'
 import type { TaskSourceContext } from '../../../../shared/task-source-context'
-import type { WorktreeForceDeleteReason } from '../../../../shared/worktree-removal'
+import type { WorktreeForceDeleteReason } from '../../../../shared/worktree/removal'
 import type { TerminalGitHubPRLink } from '../../../../shared/terminal-github-pr-link-detector'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import type {
@@ -34,9 +37,9 @@ import type {
   PendingWorktreeCreation,
   WorktreeCreationPhase
 } from '@/lib/pending-worktree-creation'
-import { getRepoIdFromWorktreeId } from '../../../../shared/worktree-id'
+import { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 import type { AppState } from '../types'
-export { getRepoIdFromWorktreeId } from '../../../../shared/worktree-id'
+export { getRepoIdFromWorktreeId } from '../../../../shared/worktree/id'
 
 export type WorktreeDeleteState = {
   isDeleting: boolean
@@ -89,8 +92,8 @@ export type ActiveWorktreeStateTransition = (state: AppState) => {
 export type WorktreeSlice = {
   worktreesByRepo: Record<string, Worktree[]>
   detectedWorktreesByRepo: Record<string, DetectedWorktreeListResult>
-  worktreeLineageById: Record<string, WorktreeLineage>
-  workspaceLineageByChildKey: Record<WorkspaceKey, WorkspaceLineage>
+  worktreeLineageById: Readonly<Record<string, WorktreeLineage>>
+  workspaceLineageByChildKey: Readonly<Record<WorkspaceKey, WorkspaceLineage>>
   activeWorktreeId: string | null
   activeWorkspaceKey: WorkspaceKey | null
   activeWorkspaceExecutionHostId: ExecutionHostId | null
@@ -209,6 +212,11 @@ export type WorktreeSlice = {
       linkedTaskSourceContext?: TaskSourceContext | null
       /** Lets the owning runtime launch and prefill a task agent without first creating an idle shell. */
       startupDraft?: string
+      provisionedRoot?: {
+        runtimeId: string
+        executionHostId: ExecutionHostId
+        expectedPath: string
+      }
     }
   ) => Promise<CreateWorktreeResult>
   /** Register an in-flight background creation and make it the active surface. */
@@ -393,9 +401,7 @@ export function withoutErasedRequiredWorktreeFields(
   updates: Partial<WorktreeMeta>
 ): Partial<WorktreeMeta> {
   const erased = Object.keys(ERASURE_PROTECTED_KEYS).filter(
-    (key) =>
-      updates[key as keyof WorktreeMeta] === undefined &&
-      Object.prototype.hasOwnProperty.call(updates, key)
+    (key) => updates[key as keyof WorktreeMeta] === undefined && Object.hasOwn(updates, key)
   )
   if (erased.length === 0) {
     return updates

@@ -115,7 +115,7 @@ export function createDeferredStructuredAgentSessionEventSink(
         return
       }
       target = next
-      const pending = buffered.splice(0, buffered.length)
+      const pending = buffered.splice(0)
       for (const operation of pending) {
         enqueue(operation)
       }

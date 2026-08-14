@@ -6,31 +6,30 @@ import {
   findPrevLiveNonTaskStackHistoryIndex,
   findPrevLiveWorktreeHistoryIndex
 } from './worktree-nav-history'
+import type { GitHubWorkItem } from '../../../../shared/github/work-item-types'
+import type { JiraIssue } from '../../../../shared/jira-types'
+import type { LinearIssue } from '../../../../shared/linear/issue-types'
+import type { PersistedTrustedOrcaHooks } from '../../../../shared/orca-yaml-hook-types'
+import type { PersistedUIState } from '../../../../shared/persisted-ui-state-types'
+import type { CustomPet } from '../../../../shared/pet-types'
+import type { TaskProvider } from '../../../../shared/task-providers'
+import type { TuiAgent } from '../../../../shared/tui-agent'
 import type {
-  ChangelogData,
-  CustomPet,
-  GitHubWorkItem,
-  JiraIssue,
-  LinearIssue,
+  AgentActivityDisplayMode,
   ManualRepoOrderEntry,
-  PersistedTrustedOrcaHooks,
-  PersistedUIState,
+  ProjectOrderBy,
   StatusBarItem,
-  TaskProvider,
   TaskResumeState,
   TaskViewPresetId,
-  TuiAgent,
-  UpdateStatus,
-  WorkspaceStatusDefinition,
-  AgentActivityDisplayMode,
-  ProjectOrderBy,
-  WorktreeCardProperty,
-  WorktreeCardMode,
+  TopLevelView,
+  VisibleWorkspaceHostIds,
   WorkspaceHostOrder,
   WorkspaceHostScope,
-  VisibleWorkspaceHostIds,
-  TopLevelView
-} from '../../../../shared/types'
+  WorktreeCardMode,
+  WorktreeCardProperty
+} from '../../../../shared/ui-chrome-types'
+import type { ChangelogData, UpdateStatus } from '../../../../shared/update-status-types'
+import type { WorkspaceStatusDefinition } from '../../../../shared/worktree/types'
 import {
   applyManualRepoOrder,
   normalizeManualRepoOrder
@@ -50,7 +49,7 @@ import {
 import type { GitLabWorkItem } from '../../../../shared/gitlab-types'
 import type { LaunchSource } from '../../../../shared/telemetry-events'
 import type { TaskSourceContext } from '../../../../shared/task-source-context'
-import { PET_SIZE_DEFAULT, PET_SIZE_MAX, PET_SIZE_MIN } from '../../../../shared/types'
+import { PET_SIZE_DEFAULT, PET_SIZE_MAX, PET_SIZE_MIN } from '../../../../shared/pet-types'
 import {
   WORKSPACE_CLEANUP_CLASSIFIER_VERSION,
   type WorkspaceCleanupDismissal
@@ -616,7 +615,6 @@ export type UISlice = {
     | 'activity'
     | 'automations'
     | 'space'
-    | 'skills'
     | 'artifacts'
     | 'mobile'
   previousViewBeforeSettings:
@@ -625,7 +623,6 @@ export type UISlice = {
     | 'activity'
     | 'automations'
     | 'space'
-    | 'skills'
     | 'artifacts'
     | 'mobile'
   previousViewBeforeActivity:
@@ -634,7 +631,6 @@ export type UISlice = {
     | 'tasks'
     | 'automations'
     | 'space'
-    | 'skills'
     | 'artifacts'
     | 'mobile'
   previousViewBeforeAutomations:
@@ -643,7 +639,6 @@ export type UISlice = {
     | 'tasks'
     | 'activity'
     | 'space'
-    | 'skills'
     | 'artifacts'
     | 'mobile'
   previousViewBeforeSpace:
@@ -652,16 +647,6 @@ export type UISlice = {
     | 'tasks'
     | 'activity'
     | 'automations'
-    | 'skills'
-    | 'artifacts'
-    | 'mobile'
-  previousViewBeforeSkills:
-    | 'terminal'
-    | 'settings'
-    | 'tasks'
-    | 'activity'
-    | 'automations'
-    | 'space'
     | 'artifacts'
     | 'mobile'
   previousViewBeforeMobile:
@@ -671,7 +656,6 @@ export type UISlice = {
     | 'activity'
     | 'automations'
     | 'space'
-    | 'skills'
     | 'artifacts'
   previousViewBeforeArtifacts:
     | 'terminal'
@@ -680,7 +664,6 @@ export type UISlice = {
     | 'activity'
     | 'automations'
     | 'space'
-    | 'skills'
     | 'mobile'
   setActiveView: (view: UISlice['activeView']) => void
   taskPageData: {
@@ -760,8 +743,6 @@ export type UISlice = {
   closeAutomationsPage: () => void
   openSpacePage: () => void
   closeSpacePage: () => void
-  openSkillsPage: () => void
-  closeSkillsPage: () => void
   openArtifactsPage: () => void
   closeArtifactsPage: () => void
   openMobilePage: () => void
@@ -853,7 +834,7 @@ export type UISlice = {
   ) => void
   markOrcaHookRepoAlwaysTrusted: (repoId: string) => void
   clearOrcaHookTrustForRepo: (repoId: string) => void
-  setupScriptPromptDismissedRepoIds: string[]
+  setupScriptPromptDismissedRepoIds: readonly string[]
   dismissSetupScriptPrompt: (repoHostIdentity: string) => void
   setupGuideSidebarDismissed: boolean
   setSetupGuideSidebarDismissed: (dismissed: boolean) => void
@@ -904,8 +885,8 @@ export type UISlice = {
   showDotfilesByWorktree: Record<string, boolean>
   setShowDotfilesForWorktree: (worktreeId: string, showDotfiles: boolean) => void
   toggleShowDotfilesForWorktree: (worktreeId: string) => void
-  filterRepoIds: string[]
-  setFilterRepoIds: (ids: string[]) => void
+  filterRepoIds: readonly string[]
+  setFilterRepoIds: (ids: readonly string[]) => void
   collapsedGroups: Set<string>
   toggleCollapsedGroup: (key: string) => void
   worktreeCardProperties: WorktreeCardProperty[]
@@ -1257,7 +1238,6 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
   previousViewBeforeActivity: 'terminal',
   previousViewBeforeAutomations: 'terminal',
   previousViewBeforeSpace: 'terminal',
-  previousViewBeforeSkills: 'terminal',
   previousViewBeforeMobile: 'terminal',
   previousViewBeforeArtifacts: 'terminal',
   setActiveView: (view) => set({ activeView: view }),
@@ -1496,16 +1476,6 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
   closeSpacePage: () =>
     set((state) => ({
       activeView: state.previousViewBeforeSpace
-    })),
-  openSkillsPage: () =>
-    set((state) => ({
-      activeView: 'skills',
-      previousViewBeforeSkills:
-        state.activeView === 'skills' ? state.previousViewBeforeSkills : state.activeView
-    })),
-  closeSkillsPage: () =>
-    set((state) => ({
-      activeView: state.previousViewBeforeSkills
     })),
   openArtifactsPage: () =>
     set((state) => ({

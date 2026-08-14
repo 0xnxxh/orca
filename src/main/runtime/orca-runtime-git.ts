@@ -2,20 +2,19 @@
 import type {
   GitBranchCompareResult,
   GitCommitCompareResult,
+  GitDiffResult
+} from '../../shared/git-diff-compare-types'
+import type { GitForkSyncExpectedUpstream, GitForkSyncResult } from '../../shared/git-fork-sync'
+import type {
   GitConflictOperation,
-  GitDiffResult,
-  GitForkSyncExpectedUpstream,
-  GitForkSyncResult,
-  GitPushTarget,
   GitStagingArea,
   GitStatusResult,
-  GitUpstreamStatus,
-  GitWorktreeInfo,
-  GlobalSettings,
-  Repo,
-  TuiAgent,
-  Worktree
-} from '../../shared/types'
+  GitUpstreamStatus
+} from '../../shared/git-status-types'
+import type { GlobalSettings } from '../../shared/global-settings-types'
+import type { Repo } from '../../shared/repo-types'
+import type { TuiAgent } from '../../shared/tui-agent'
+import type { GitPushTarget, GitWorktreeInfo, Worktree } from '../../shared/worktree/types'
 import type { CommitMessageDraftContext } from '../../shared/commit-message-generation'
 import { getCommitMessageModelDiscoveryHostKey } from '../../shared/commit-message-host-key'
 import type { GitHistoryOptions, GitHistoryResult } from '../../shared/git-history'
@@ -90,10 +89,7 @@ import type { HostedReviewProvider } from '../../shared/hosted-review'
 
 export type ResolvedRuntimeGitWorktree = Worktree & { git: GitWorktreeInfo }
 type RuntimeCommitMessageSettingsOverride = Partial<
-  Pick<
-    GlobalSettings,
-    'commitMessageAi' | 'sourceControlAi' | 'agentCmdOverrides' | 'enableGitHubAttribution'
-  >
+  Pick<GlobalSettings, 'commitMessageAi' | 'sourceControlAi' | 'agentCmdOverrides'>
 > & {
   commitMessageDiscoveryHostKey?: string
   sourceControlAiResolvedParams?: ResolvedSourceControlAiGenerationParams

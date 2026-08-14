@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- Why: this table is the runtime git RPC contract; splitting it would make method coverage harder to audit. */
 import { defineMethod, type RpcMethod } from '../core'
-import type { GlobalSettings } from '../../../../shared/types'
+import type { GlobalSettings } from '../../../../shared/global-settings-types'
 import type { ResolvedSourceControlAiGenerationParams } from '../../../../shared/source-control-ai'
 import {
   GitBranchCompare,
@@ -33,7 +33,6 @@ type CommitMessageGenerationOverride = {
   sourceControlAi?: GlobalSettings['sourceControlAi']
   sourceControlAiResolvedParams?: ResolvedSourceControlAiGenerationParams
   agentCmdOverrides?: GlobalSettings['agentCmdOverrides']
-  enableGitHubAttribution?: boolean
   commitMessageDiscoveryHostKey?: string
 }
 
@@ -44,7 +43,6 @@ function buildCommitMessageGenerationOverride(params: {
   sourceControlAi?: unknown
   sourceControlAiResolvedParams?: unknown
   agentCmdOverrides?: unknown
-  enableGitHubAttribution?: boolean
   commitMessageDiscoveryHostKey?: string
 }): CommitMessageGenerationOverride | undefined {
   if (
@@ -52,7 +50,6 @@ function buildCommitMessageGenerationOverride(params: {
     params.sourceControlAi === undefined &&
     params.sourceControlAiResolvedParams === undefined &&
     params.agentCmdOverrides === undefined &&
-    params.enableGitHubAttribution === undefined &&
     params.commitMessageDiscoveryHostKey === undefined
   ) {
     return undefined
@@ -74,9 +71,6 @@ function buildCommitMessageGenerationOverride(params: {
       ? {
           agentCmdOverrides: params.agentCmdOverrides as GlobalSettings['agentCmdOverrides']
         }
-      : {}),
-    ...(params.enableGitHubAttribution !== undefined
-      ? { enableGitHubAttribution: params.enableGitHubAttribution }
       : {}),
     ...(params.commitMessageDiscoveryHostKey !== undefined
       ? { commitMessageDiscoveryHostKey: params.commitMessageDiscoveryHostKey }

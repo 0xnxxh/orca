@@ -42,7 +42,7 @@ function shellProbe(shell: string): string[] | null {
 function parsePosixEnvironment(output: Buffer): NodeJS.ProcessEnv | null {
   const start = output.indexOf(Buffer.from(`\0${START_MARKER}\0`))
   const end = output.indexOf(Buffer.from(`\0${END_MARKER}\0`), start + START_MARKER.length + 2)
-  if (start < 0 || end < 0) {
+  if (start === -1 || end === -1) {
     return null
   }
   const bodyStart = start + START_MARKER.length + 2
@@ -61,7 +61,7 @@ function parsePowerShellEnvironment(output: Buffer): NodeJS.ProcessEnv | null {
   const text = output.toString('utf8')
   const start = text.indexOf(START_MARKER)
   const end = text.indexOf(END_MARKER, start + START_MARKER.length)
-  if (start < 0 || end < 0) {
+  if (start === -1 || end === -1) {
     return null
   }
   try {

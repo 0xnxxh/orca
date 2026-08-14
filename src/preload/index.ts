@@ -62,54 +62,55 @@ import type {
 } from '../shared/plugins/plugin-panel-bridge'
 import type { PluginConsentRequest } from '../shared/plugins/plugin-consent-request'
 import type { PluginChangeEvent } from '../shared/plugins/plugin-change-event'
+import type { BrowserViewportOverride } from '../shared/browser-workspace-types'
+import type { SearchResult } from '../shared/code-search-types'
 import type {
-  BaseRefSearchResult,
-  BaseRefDefaultResult,
-  BrowserViewportOverride,
-  CustomPet,
-  FsChangedPayload,
   FilesystemPathFlavor,
-  GetRateLimitResult,
+  FsChangedPayload,
+  MarkdownDocument
+} from '../shared/filesystem-entry-types'
+import type { GitForkSyncExpectedUpstream, GitForkSyncResult } from '../shared/git-fork-sync'
+import type { GitStagingArea, GitUpstreamStatus } from '../shared/git-status-types'
+import type { GitHubCommentResult, GitHubReactionContent } from '../shared/github/comment-types'
+import type {
   GitHubPRRefreshCandidate,
   GitHubPRRefreshEvent,
-  GitHubPRRefreshReason,
-  GitHubAssignableUser,
-  GitHubCommentResult,
-  GitHubCreateIssueResult,
-  GitHubOwnerRepo,
-  GitHubReactionContent,
-  GitHubWorkItem,
-  JiraProjectStatusOrder,
-  GitPushTarget,
-  GitStagingArea,
-  GitForkSyncExpectedUpstream,
-  GitForkSyncResult,
-  GitUpstreamStatus,
-  GhosttyImportPreview,
-  ListWorkItemsResult,
-  LinearProjectDetail,
-  MemorySnapshot,
+  GitHubPRRefreshReason
+} from '../shared/github/pull-request-refresh-types'
+import type { GitHubAssignableUser, GitHubOwnerRepo } from '../shared/github/pull-request-types'
+import type { GetRateLimitResult } from '../shared/github/rate-limit-types'
+import type { GitHubWorkItem, ListWorkItemsResult } from '../shared/github/work-item-types'
+import type { GhosttyImportPreview } from '../shared/global-settings-types'
+import type { GitHubCreateIssueResult } from '../shared/issue-mutation-types'
+import type { JiraProjectStatusOrder } from '../shared/jira-types'
+import type { LinearProjectDetail } from '../shared/linear/project-types'
+import type {
+  NotificationDeliveryProbeResult,
   NotificationDismissResult,
   NotificationDispatchResult,
-  NotificationDeliveryProbeResult,
   NotificationPermissionStatusResult,
   NotificationSoundDataResult,
   NotificationSoundPathResult,
-  NotificationSoundResult,
-  NestedRepoScanResult,
-  OnboardingState,
-  PersistedUIState,
-  FloatingTerminalCwdRequest,
-  MarkdownDocument,
-  SearchResult,
-  TuiAgent,
-  UpdateStatus,
+  NotificationSoundResult
+} from '../shared/notification-settings-types'
+import type { OnboardingState } from '../shared/onboarding-state-types'
+import type { PersistedUIState } from '../shared/persisted-ui-state-types'
+import type { CustomPet } from '../shared/pet-types'
+import type { MemorySnapshot } from '../shared/process-stats-types'
+import type { NestedRepoScanResult } from '../shared/project-group-types'
+import type { BaseRefDefaultResult, BaseRefSearchResult } from '../shared/repo-types'
+import type { TuiAgent } from '../shared/tui-agent'
+import type { FloatingTerminalCwdRequest } from '../shared/ui-chrome-types'
+import type { UpdateStatus } from '../shared/update-status-types'
+import type {
   WorktreeBaseStatusEvent,
+  WorktreeRemoteBranchConflictEvent
+} from '../shared/worktree/base-ref-drift-types'
+import type {
   WorktreeDefaultTabsLaunch,
-  WorktreeHeadIdentity,
-  WorktreeRemoteBranchConflictEvent,
   WorktreeSetupLaunch
-} from '../shared/types'
+} from '../shared/worktree/launch-types'
+import type { GitPushTarget, WorktreeHeadIdentity } from '../shared/worktree/types'
 import type { PtyModelRestoreNeededEvent } from '../shared/pty-model-restore-marker'
 import type { PtyListedSession } from '../shared/pty-listed-session'
 import type {
@@ -161,7 +162,7 @@ import type {
 import type { WorkspaceSpaceScanProgress } from '../shared/workspace-space-types'
 import type { WorkspaceCleanupScanProgress } from '../shared/workspace-cleanup'
 import type { WorkspacePortAdvertisedUrlChangedEvent } from '../shared/workspace-ports'
-import type { GhAuthDiagnostic } from '../shared/github-auth-types'
+import type { GhAuthDiagnostic } from '../shared/github/auth-types'
 import type { TaskSourceContext } from '../shared/task-source-context'
 import type {
   AddIssueCommentBySlugArgs,
@@ -190,7 +191,7 @@ import type {
   UpdateIssueTypeBySlugArgs,
   UpdatePullRequestBySlugArgs,
   UpdateProjectItemFieldArgs
-} from '../shared/github-project-types'
+} from '../shared/github/project-types'
 import {
   richMarkdownContextMenuCommandChannel,
   richMarkdownContextMenuTargetChannel,
@@ -800,6 +801,8 @@ const api = {
 
     create: (args) => ipcRenderer.invoke('worktrees:create', args),
 
+    adoptProvisionedRoot: (args) => ipcRenderer.invoke('worktrees:adoptProvisionedRoot', args),
+
     onCreateProgress: (
       callback: (data: { creationId?: string; phase: 'fetching' | 'creating' }) => void
     ): (() => void) => {
@@ -949,6 +952,7 @@ const api = {
       env?: Record<string, string>
       envToDelete?: string[]
       command?: string
+      commandDelivery?: 'renderer' | 'provider'
       launchConfig?: SleepingAgentLaunchConfig
       resumeProviderSession?: AgentProviderSessionMetadata
       launchToken?: string
@@ -976,6 +980,8 @@ const api = {
       snapshotPrefixAnsi?: string
       snapshotFrameAnsi?: string
       snapshotFrameRestoreAnsi?: string
+      snapshotKittyKeyboardFlags?: number
+      snapshotSeq?: number
       isReattach?: boolean
       isAlternateScreen?: boolean
       replay?: string
@@ -1104,6 +1110,7 @@ const api = {
       alternateScreen?: boolean
       scrollbackAnsi?: string
       pendingEscapeTailAnsi?: string
+      kittyKeyboardFlags?: number
     } | null> => ipcRenderer.invoke('pty:getMainBufferSnapshot', { id, opts }),
 
     getRendererDeliveryDebugSnapshot: (): Promise<{
@@ -1266,6 +1273,7 @@ const api = {
         rows: number
         seq?: number
         lastTitle?: string
+        kittyKeyboardFlags?: number
       } | null
     ): void => {
       ipcRenderer.send('pty:serializeBuffer:response', { requestId, snapshot })
@@ -1472,7 +1480,7 @@ const api = {
       checkName?: string
       url?: string | null
       prRepo?: GitHubOwnerRepo | null
-    }): Promise<unknown | null> => ipcRenderer.invoke('gh:prCheckDetails', args),
+    }): Promise<unknown> => ipcRenderer.invoke('gh:prCheckDetails', args),
 
     rerunPRChecks: (args: {
       repoPath: string
@@ -1726,11 +1734,28 @@ const api = {
       ipcRenderer.invoke('hostedReview:forBranch', args),
     getCreationEligibility: (args: unknown): Promise<unknown> =>
       ipcRenderer.invoke('hostedReview:getCreationEligibility', args),
-    create: (args: unknown): Promise<unknown> => ipcRenderer.invoke('hostedReview:create', args)
+    create: (args: unknown): Promise<unknown> => ipcRenderer.invoke('hostedReview:create', args),
+    createStacked: (args: unknown): Promise<unknown> =>
+      ipcRenderer.invoke('hostedReview:createStacked', args)
   },
 
   // Why: GitLab bindings live in `./gitlab` so `gl.*` changes don't conflict on every upstream sync of this central file.
   gl: glApi,
+
+  bitbucket: {
+    connect: (args: {
+      authMode: 'token' | 'basic'
+      accessToken?: string | null
+      email?: string | null
+      apiToken?: string | null
+      baseUrl?: string | null
+    }): Promise<{ ok: true; account: string | null } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('bitbucket:connect', args),
+
+    disconnect: (): Promise<void> => ipcRenderer.invoke('bitbucket:disconnect'),
+
+    status: (): Promise<unknown> => ipcRenderer.invoke('bitbucket:status')
+  },
 
   linear: {
     connect: (args: {
@@ -3639,6 +3664,7 @@ const api = {
         requestId: string
         url: string
         worktreeId?: string
+        browserPageId?: string
         sessionProfileId?: string | null
         sessionPartition?: string
         activate?: boolean
@@ -3650,6 +3676,7 @@ const api = {
           requestId: string
           url: string
           worktreeId?: string
+          browserPageId?: string
           sessionProfileId?: string | null
           sessionPartition?: string
           activate?: boolean
@@ -3698,7 +3725,11 @@ const api = {
       ipcRenderer.on('browser:requestTabClose', listener)
       return () => ipcRenderer.removeListener('browser:requestTabClose', listener)
     },
-    replyTabClose: (reply: { requestId: string; error?: string }): void => {
+    replyTabClose: (reply: {
+      requestId: string
+      error?: string
+      code?: 'browser_tab_not_found'
+    }): void => {
       ipcRenderer.send('browser:tabCloseReply', reply)
     },
     onNewTerminalTab: (callback: () => void): (() => void) => {
@@ -4952,8 +4983,7 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-ignore (define in dts)
   window.electron = electronAPI
-  // @ts-ignore (define in dts)
+  // @ts-expect-error (define in dts)
   window.api = api
 }

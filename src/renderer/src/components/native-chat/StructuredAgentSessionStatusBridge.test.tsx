@@ -2,7 +2,7 @@
 
 import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Tab } from '../../../../shared/types'
+import type { Tab } from '../../../../shared/tab-types'
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),

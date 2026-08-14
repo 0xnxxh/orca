@@ -98,6 +98,6 @@ function retainTail(
   const floor = now - policy.retainTailMs
   const byAge = rows.findIndex((row) => row.ts >= floor)
   const byCount = rows.length - policy.minTailRows
-  const start = byAge < 0 ? byCount : Math.min(byAge, byCount)
+  const start = byAge === -1 ? byCount : Math.min(byAge, byCount)
   return rows.slice(start)
 }

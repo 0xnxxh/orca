@@ -8,7 +8,7 @@ import {
 } from '../../shared/agent-session-record.test-fixture'
 import { TERMINAL_INPUT_CHUNK_MAX_BYTES } from '../../shared/terminal-input'
 import type { AgentSessionLease, AgentSessionRecord } from '../../shared/agent-session-record'
-import type { WorkspaceSessionState } from '../../shared/types'
+import type { WorkspaceSessionState } from '../../shared/workspace-session-state-types'
 
 // The runtime send paths are the choke point every RPC, plugin, and orchestration write funnels
 // through, so each one is proved to consult the lease and to leave unbound PTYs untouched.
