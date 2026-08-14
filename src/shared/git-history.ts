@@ -194,9 +194,14 @@ export async function loadGitHistoryFromExecutor(
   }
 
   const { currentRef, branchName } = await resolveCurrentRef(git, cwd, headOid)
-  const [remoteRef, rawBaseRef] = await Promise.all([
+  // Why: an anchor can go stale (rebase, amend, prune, branch switch). Resolving it first means a
+  // dead anchor degrades to a fresh first page instead of failing the whole panel on a bad
+  // revision — and it rides the existing batch so paging costs no extra round trip.
+  const requestedAnchor = options.cursor?.anchor?.trim() || undefined
+  const [remoteRef, rawBaseRef, anchor] = await Promise.all([
     resolveUpstreamRef(git, cwd, branchName),
-    resolveNamedRef(git, cwd, options.baseRef)
+    resolveNamedRef(git, cwd, options.baseRef),
+    requestedAnchor ? resolveCommit(git, cwd, requestedAnchor) : Promise.resolve(null)
   ])
 
   const baseRef =
@@ -208,10 +213,6 @@ export async function loadGitHistoryFromExecutor(
   // stay as comparison metadata so old workspaces do not list newly fetched upstream/base commits.
   // Why: page by offset into a walk pinned to the cursor's anchor, so page N costs one page of
   // output rather than N pages and stays a continuation of page 1 even if HEAD moves mid-paging.
-  // Why: an anchor can go stale (rebase, amend, prune, branch switch). Resolving it first means a
-  // dead anchor degrades to a fresh first page instead of failing the whole panel on a bad revision.
-  const requestedAnchor = options.cursor?.anchor?.trim() || undefined
-  const anchor = requestedAnchor ? await resolveCommit(git, cwd, requestedAnchor) : null
   // Why: an unresolved anchor restarts at page 1, so its offset goes with it. `loaded` counts the
   // rows already shown, and the last of those is re-read as the seam, hence -1.
   const resume =
