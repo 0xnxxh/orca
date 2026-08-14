@@ -3483,6 +3483,64 @@ describe('OrcaRuntimeRpcServer', () => {
     )
   })
 
+  it('isolates mutation replay by the authenticated paired device across reconnects', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
+    const runtime = new OrcaRuntimeService()
+    const db = new OrchestrationDb(':memory:')
+    runtime.setOrchestrationDb(db)
+    const server = new OrcaRuntimeRpcServer({ runtime, userDataPath, enableWebSocket: false })
+    server['deviceRegistry'] = new DeviceRegistry(userDataPath)
+    const firstDevice = server['deviceRegistry']!.addDevice('first-cli', 'runtime')
+    const secondDevice = server['deviceRegistry']!.addDevice('second-cli', 'runtime')
+
+    const resetMessages = async (id: string, authenticatedToken: string) => {
+      const replies: Record<string, unknown>[] = []
+      await server['handleWebSocketMessage'](
+        JSON.stringify(
+          withCurrentOrchestrationContract({
+            id,
+            method: 'orchestration.reset',
+            orchestrationRequestId: 'paired-reset-request',
+            params: { messages: true }
+          })
+        ),
+        (response) => replies.push(JSON.parse(response) as Record<string, unknown>),
+        () => {},
+        undefined,
+        undefined,
+        authenticatedToken
+      )
+      return replies[0]
+    }
+
+    try {
+      db.insertMessage({ from: 'worker', to: 'coordinator', subject: 'before reset' })
+      const first = await resetMessages('reset-first', firstDevice.token)
+      db.insertMessage({ from: 'worker', to: 'coordinator', subject: 'after reset' })
+      const replay = await resetMessages('reset-replay', firstDevice.token)
+
+      expect(first).toMatchObject({
+        ok: true,
+        result: { reset: 'messages', mutation: { replayed: false } }
+      })
+      expect(replay).toMatchObject({
+        ok: true,
+        result: { reset: 'messages', mutation: { replayed: true } }
+      })
+      expect(db.getInbox()).toEqual([expect.objectContaining({ subject: 'after reset' })])
+
+      const isolated = await resetMessages('reset-second-device', secondDevice.token)
+      expect(isolated).toMatchObject({
+        ok: true,
+        result: { reset: 'messages', mutation: { replayed: false } }
+      })
+      expect(db.getInbox()).toEqual([])
+    } finally {
+      db.close()
+      await server.stop()
+    }
+  })
+
   it('rejects unpaired terminal creates before runtime dispatch', async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
     const createMobileSessionTerminal = vi.fn()

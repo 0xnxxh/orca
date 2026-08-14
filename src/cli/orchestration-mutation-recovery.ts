@@ -11,7 +11,7 @@ export function orchestrationMutationRecoveryError(error: unknown): unknown {
   }
   const message = [
     stripUnsafeRetryAdvice(error.message, requestId),
-    'The orchestration mutation may already have taken effect; a worktree, terminal, or dispatch may already exist.',
+    'The orchestration mutation may already have taken effect; do not assume it failed.',
     `Re-issue the same command with --retry-request ${requestId} to recover idempotently. Do not retry this mutation without --retry-request.`,
     typeof data?.failedStage === 'string' ? `Failed stage: ${data.failedStage}.` : undefined,
     Array.isArray(data?.residualResources)

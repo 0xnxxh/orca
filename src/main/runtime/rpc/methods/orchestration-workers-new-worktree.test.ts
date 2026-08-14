@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ORCHESTRATION_CONTRACT_VERSION } from '../../../../shared/protocol-version'
 import { OrcaRuntimeService } from '../../orca-runtime'
@@ -13,6 +15,7 @@ describe('orchestration new-worktree workers', () => {
   let db: OrchestrationDb
   let runtime: OrcaRuntimeService
   let runId: string
+  const paths: string[] = []
 
   beforeEach(() => {
     db = new OrchestrationDb(':memory:')
@@ -71,7 +74,12 @@ describe('orchestration new-worktree workers', () => {
     })
   })
 
-  afterEach(() => db.close())
+  afterEach(() => {
+    db.close()
+    for (const path of paths.splice(0)) {
+      rmSync(path, { recursive: true, force: true })
+    }
+  })
 
   async function startWorker(overrides: Record<string, unknown> = {}) {
     const task = db.createTask({ spec: 'new-worktree task', runId })
@@ -542,7 +550,7 @@ describe('orchestration new-worktree workers', () => {
     const pending = dispatcher.dispatch(request)
     await vi.waitFor(() => expect(db.getDispatchContext(task.id)).toBeDefined())
     const acceptedDispatch = db.getDispatchContext(task.id)!
-    const callerFingerprint = createHash('sha256').update('caller-token').digest('hex')
+    const callerFingerprint = db.getOrCreateLocalMutationCallerFingerprint()
     const receipt = db.getMutationReceipt(callerFingerprint, 'worker_start_request')
 
     expect(receipt).toMatchObject({
@@ -574,7 +582,17 @@ describe('orchestration new-worktree workers', () => {
     })
   })
 
-  it('replays a dispatch-input failure without creating another worker', async () => {
+  it('replays a dispatch-input failure after restart without creating another worker', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'orca-worker-start-replay-'))
+    paths.push(dir)
+    db.close()
+    db = new OrchestrationDb(join(dir, 'orchestration.db'))
+    runtime.setOrchestrationDb(db)
+    runId = db.createRun({
+      objective: 'Recover dispatch input',
+      coordinatorHandle: 'term_coord',
+      coordinatorPaneKey
+    }).id
     mockCreatedWorktree({ hookFound: false })
     vi.mocked(runtime.sendTerminalAgentPrompt).mockRejectedValueOnce(
       new Error('connection closed before dispatch input was accepted')
@@ -597,7 +615,33 @@ describe('orchestration new-worktree workers', () => {
     }
 
     const first = await dispatcher.dispatch(request)
-    const replay = await dispatcher.dispatch({ ...request, id: 'rpc_worker_start_retry' })
+    if (!first.ok) {
+      throw new Error(`Initial worker start failed: ${first.error.code}`)
+    }
+    const firstReceipt = first.result as {
+      dispatchId: string
+      residualResources: unknown[]
+    }
+    db.close()
+
+    db = new OrchestrationDb(join(dir, 'orchestration.db'))
+    const restartedRuntime = new OrcaRuntimeService()
+    restartedRuntime.setOrchestrationDb(db)
+    const recreateWorktree = vi
+      .spyOn(restartedRuntime, 'createManagedWorktree')
+      .mockRejectedValue(new Error('replay recreated the worktree'))
+    const reinjectPrompt = vi
+      .spyOn(restartedRuntime, 'sendTerminalAgentPrompt')
+      .mockRejectedValue(new Error('replay reinjected the prompt'))
+    const restartedDispatcher = new RpcDispatcher({
+      runtime: restartedRuntime,
+      methods: ORCHESTRATION_METHODS
+    })
+    const replay = await restartedDispatcher.dispatch({
+      ...request,
+      id: 'rpc_worker_start_retry',
+      authToken: 'caller-token-after-restart'
+    })
 
     expect(first).toMatchObject({
       ok: true,
@@ -614,13 +658,17 @@ describe('orchestration new-worktree workers', () => {
     expect(replay).toMatchObject({
       ok: true,
       result: {
+        dispatchId: firstReceipt.dispatchId,
         state: 'failed',
         failedStage: 'dispatch_input',
+        residualResources: firstReceipt.residualResources,
         mutation: { requestId: 'worker_start_request', replayed: true }
       }
     })
     expect(runtime.createManagedWorktree).toHaveBeenCalledOnce()
     expect(runtime.sendTerminalAgentPrompt).toHaveBeenCalledOnce()
+    expect(recreateWorktree).not.toHaveBeenCalled()
+    expect(reinjectPrompt).not.toHaveBeenCalled()
   })
 
   it('persists pre-effect, post-effect, and post-input stages in order', async () => {

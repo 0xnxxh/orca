@@ -29,7 +29,8 @@ export class OrchestrationMutationExecutor {
     if (!requestId || !isOrchestrationMutation(request.method, params)) {
       return await invoke()
     }
-    const callerFingerprint = callerFingerprintOverride ?? authenticatedCallerFingerprint(request)
+    const callerFingerprint =
+      callerFingerprintOverride ?? this.getLocalAuthenticatedCallerFingerprint()
     const payloadHash = createHash('sha256')
       .update(JSON.stringify(canonicalize({ method: request.method, params })))
       .digest('hex')
@@ -109,6 +110,10 @@ export class OrchestrationMutationExecutor {
       this.inFlight.delete(key)
     }
   }
+
+  getLocalAuthenticatedCallerFingerprint(): string {
+    return this.runtime.getOrchestrationDb().getOrCreateLocalMutationCallerFingerprint()
+  }
 }
 
 const executorsByRuntime = new WeakMap<OrcaRuntimeService, OrchestrationMutationExecutor>()
@@ -125,12 +130,8 @@ export function getOrchestrationMutationExecutor(
   return executor
 }
 
-export function authenticatedCallerFingerprint(request: RpcRequest): string {
-  const callerToken =
-    request.authToken ||
-    (request as RpcRequest & { deviceToken?: string }).deviceToken ||
-    'authenticated_transport'
-  return createHash('sha256').update(callerToken).digest('hex')
+export function fingerprintAuthenticatedPairingDevice(deviceId: string): string {
+  return createHash('sha256').update(`paired_device\0${deviceId}`).digest('hex')
 }
 
 function canonicalize(value: unknown): unknown {
