@@ -1988,6 +1988,42 @@ describe('AgentHookServer listener replay', () => {
     expect(listener).toHaveBeenNthCalledWith(4, [])
   })
 
+  // Why: a user dismissal never routes through the pane-status-clear fan-out, so pane-owned
+  // cleanup (the synthetic title spinner) needs its own seam or it outlives the row (#13890).
+  it('notifies status-drop subscribers only when a live row is dropped', () => {
+    const server = new AgentHookServer()
+    const listener = vi.fn()
+    const unsubscribe = server.subscribeStatusDrop(listener)
+
+    server.dropStatusEntry(PANE)
+    expect(listener).not.toHaveBeenCalled()
+
+    server.ingestRemote(
+      {
+        paneKey: PANE,
+        tabId: 'tab-1',
+        worktreeId: 'wt-1',
+        payload: { state: 'working', agentType: 'claude' }
+      },
+      'conn-1'
+    )
+    server.dropStatusEntry(PANE)
+    expect(listener).toHaveBeenCalledExactlyOnceWith(PANE)
+
+    unsubscribe()
+    server.ingestRemote(
+      {
+        paneKey: PANE,
+        tabId: 'tab-1',
+        worktreeId: 'wt-1',
+        payload: { state: 'working', agentType: 'claude' }
+      },
+      'conn-1'
+    )
+    server.dropStatusEntry(PANE)
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
   it('notifies pane-status-clear listener when pane teardown evicts a cached status', () => {
     const server = new AgentHookServer()
     const listener = vi.fn()
