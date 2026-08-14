@@ -57,6 +57,7 @@ type Props = {
   onAdd: (rootPath: string) => Promise<WorktreeVisibilitySourceAddResult>
   onRemove: (source: CustomWorktreeVisibilitySource) => Promise<void>
   onToggle: (source: WorktreeVisibilitySourceRow, enabled: boolean) => Promise<void>
+  onUseDefault?: (source: WorktreeVisibilitySourceRow) => Promise<void>
 }
 
 const EMPTY_VISIBILITY_DEFAULTS: WorktreeVisibilityDefaults = {}
@@ -151,7 +152,8 @@ export default function WorktreeVisibilitySourceList({
   sourceDefaultsDisabled = false,
   onAdd,
   onRemove,
-  onToggle
+  onToggle,
+  onUseDefault
 }: Props): React.JSX.Element {
   const customSources = useMemo(
     () =>
@@ -230,6 +232,8 @@ export default function WorktreeVisibilitySourceList({
           const visibility = sourceVisibility(repo, source, visibilityDefaults, repoCustomSourceIds)
           const note = getWorktreeVisibilitySourceNote(provenance)
           const overrideNotice = getWorktreeVisibilityOverrideNotice(provenance, visibility)
+          const matchingOverride =
+            provenance?.kind === 'project-override' && provenance.globalVisibility === visibility
           return (
             <div
               key={key}
@@ -284,6 +288,26 @@ export default function WorktreeVisibilitySourceList({
                       )}
                     </TooltipContent>
                   </Tooltip>
+                ) : null}
+                {matchingOverride && onUseDefault ? (
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="xs"
+                    className="h-auto px-1"
+                    disabled={sourceDisabled}
+                    aria-label={translate(
+                      'auto.components.sidebar.WorktreeVisibilitySourceList.useGlobalFor',
+                      'Use global for {{value0}}',
+                      { value0: accessibleLabel }
+                    )}
+                    onClick={() => void onUseDefault(source)}
+                  >
+                    {translate(
+                      'auto.components.sidebar.WorktreeVisibilitySourceList.useGlobal',
+                      'Use global'
+                    )}
+                  </Button>
                 ) : null}
                 <ToggleGroup
                   type="single"

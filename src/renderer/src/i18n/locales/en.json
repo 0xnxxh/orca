@@ -5452,7 +5452,9 @@
           "show": "Show",
           "hide": "Hide",
           "overridingGlobal": "Overriding global setting: {{value0}}",
-          "projectOnly": "Added in this project only."
+          "projectOnly": "Added in this project only.",
+          "useGlobalFor": "Use global for {{value0}}",
+          "useGlobal": "Use global"
         }
       },
       "shared": {

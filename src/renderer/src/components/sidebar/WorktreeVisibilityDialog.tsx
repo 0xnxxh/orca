@@ -363,6 +363,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
           onAdd={handleAddSource}
           onRemove={handleRemoveSource}
           onToggle={handleSourceToggle}
+          onUseDefault={handleUseDefault}
         />
 
         <WorktreeVisibilityGlobalSettingsLink repo={repo} visibilityDefaults={visibilityDefaults} />

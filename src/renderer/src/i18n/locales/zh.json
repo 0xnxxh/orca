@@ -4721,7 +4721,9 @@
           "show": "显示",
           "hide": "隐藏",
           "overridingGlobal": "正在覆盖全局设置：{{value0}}",
-          "projectOnly": "仅在此项目中添加。"
+          "projectOnly": "仅在此项目中添加。",
+          "useGlobalFor": "为 {{value0}} 使用全局设置",
+          "useGlobal": "使用全局设置"
         },
         "add": {
           "repo": {

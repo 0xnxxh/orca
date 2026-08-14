@@ -4728,7 +4728,9 @@
           "show": "Mostrar",
           "hide": "Ocultar",
           "overridingGlobal": "Anulando la configuración global: {{value0}}",
-          "projectOnly": "Añadida solo en este proyecto."
+          "projectOnly": "Añadida solo en este proyecto.",
+          "useGlobalFor": "Usar la configuración global para {{value0}}",
+          "useGlobal": "Usar global"
         },
         "add": {
           "repo": {
