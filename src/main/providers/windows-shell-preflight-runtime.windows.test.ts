@@ -66,6 +66,7 @@ async function runPty(options: {
   cwd: string
   env: NodeJS.ProcessEnv
   input?: string
+  timeoutMs?: number
 }): Promise<string> {
   const proc = pty.spawn(options.shellPath, options.shellArgs, {
     name: 'xterm-256color',
@@ -85,7 +86,7 @@ async function runPty(options: {
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timeout = setTimeout(
       () => reject(new Error(`timed out waiting for Windows shell PTY:\n${output}`)),
-      10_000
+      options.timeoutMs ?? 10_000
     )
   })
 
@@ -184,7 +185,11 @@ describeWindows('Windows Codex shell preflight runtime', () => {
           TERM: 'xterm-256color'
         },
         input:
-          "codex -e \"require('node:fs').writeFileSync(process.env.ORCA_CODEX_MARKER,'ran')\"\nexit\n"
+          "codex -e \"require('node:fs').writeFileSync(process.env.ORCA_CODEX_MARKER,'ran')\"\nexit\n",
+        // Paired "Windows low spec" QA measured 12.7–15.8s across four runs: Git Bash
+        // cold-starts two large Node executables for AV scanning, so allow 25s without
+        // inflating the faster cmd.exe budget.
+        timeoutMs: 25_000
       })
     } finally {
       if (previousUserDataPath === undefined) {
