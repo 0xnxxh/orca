@@ -14,6 +14,11 @@ vi.mock('@/hooks/agent-hook-completion-notifications', () => ({
 import { useAppStore } from '@/store'
 import { createAgentCompletionCoordinator } from '@/components/terminal-pane/agent-completion-coordinator'
 import {
+  markRendererOwnedAgentStatusWrite,
+  registerRendererOwnedAgentStatusPane,
+  resetRendererOwnedAgentStatusPanesForTests
+} from '@/components/terminal-pane/renderer-owned-agent-status-registry'
+import {
   applyWebSessionTabsSnapshot,
   applyWebSessionTabsStorePatch,
   resetWebSessionTabsSnapshotFreshnessForTests
@@ -79,12 +84,14 @@ describe('paired session-tab agent completion notifications', () => {
     vi.useFakeTimers()
     mocks.observeAgentHookCompletionForNotification.mockReset()
     resetWebSessionTabsSnapshotFreshnessForTests()
+    resetRendererOwnedAgentStatusPanesForTests()
     useAppStore.setState(initialState, true)
   })
 
   afterEach(() => {
     useAppStore.setState(initialState, true)
     resetWebSessionTabsSnapshotFreshnessForTests()
+    resetRendererOwnedAgentStatusPanesForTests()
     vi.useRealTimers()
   })
 
@@ -129,6 +136,60 @@ describe('paired session-tab agent completion notifications', () => {
     applySnapshot(makeAgentSnapshot(2, NOW + 1_000, NOW + 1_000), true)
 
     expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+  })
+
+  it('announces a host-stamped turn while client OSC status owns the pane', () => {
+    const paneKey = makePaneKey(toWebTerminalSurfaceTabId(HOST_TAB_ID), LEAF_ID)
+    registerRendererOwnedAgentStatusPane(paneKey, ENVIRONMENT_ID)
+    markRendererOwnedAgentStatusWrite(paneKey)
+    useAppStore.setState({
+      agentStatusByPaneKey: {
+        [paneKey]: {
+          state: 'working',
+          prompt: 'review the PR',
+          updatedAt: NOW,
+          stateStartedAt: NOW,
+          agentType: 'claude',
+          paneKey,
+          tabId: toWebTerminalSurfaceTabId(HOST_TAB_ID),
+          worktreeId: WORKTREE_ID,
+          stateHistory: []
+        }
+      }
+    })
+    const dispatchCompletion = vi.fn()
+    const coordinator = createAgentCompletionCoordinator({
+      paneKey,
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+    mocks.observeAgentHookCompletionForNotification.mockImplementation(({ payload }) =>
+      coordinator.observeHookStatus(payload)
+    )
+
+    applySnapshot(makeAgentSnapshot(1, NOW - 2_000), true)
+    const turnCompletedAt = NOW + 20_000
+    applySnapshot(makeAgentSnapshot(2, NOW - 1_000, turnCompletedAt), true)
+    applySnapshot(makeAgentSnapshot(3, NOW, turnCompletedAt, 'done'), true)
+
+    expect(useAppStore.getState().agentStatusByPaneKey[paneKey]?.state).toBe('working')
+    expect(mocks.observeAgentHookCompletionForNotification).toHaveBeenCalledTimes(3)
+    expect(dispatchCompletion).toHaveBeenCalledTimes(1)
+    expect(dispatchCompletion).toHaveBeenCalledWith(
+      'claude',
+      expect.objectContaining({
+        source: 'hook',
+        quietedHookDone: false,
+        agentStatus: expect.objectContaining({
+          state: 'done',
+          prompt: 'review the PR',
+          turnCompletedAt
+        })
+      })
+    )
   })
 
   it('suppresses a stamped reconnect tail and its live all-clear', () => {

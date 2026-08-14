@@ -3431,7 +3431,7 @@ export function applyWebSessionTabsStorePatch(
   useAppStore.setState((state) => {
     const patch = buildPatch(state)
     mirroredAgentStatusChanged = patch !== state && Object.hasOwn(patch, 'agentStatusByPaneKey')
-    if (mirroredAgentStatusChanged && agentStatusSnapshots) {
+    if (agentStatusSnapshots) {
       const nextAgentStatuses = patch.agentStatusByPaneKey ?? state.agentStatusByPaneKey
       const snapshots = Array.isArray(agentStatusSnapshots)
         ? agentStatusSnapshots
@@ -3443,30 +3443,40 @@ export function applyWebSessionTabsStorePatch(
           }
           const remapped = remapHostAgentStatus(surface)
           const accepted = remapped ? nextAgentStatuses[remapped.paneKey] : undefined
+          const turnCompletedAt = remapped
+            ? normalizeTurnCompletedAtField(surface.turnCompletedAt, remapped.state)
+            : undefined
+          // Why: client OSC owns display state, but only the host hook stream carries background-turn stamps.
+          const clientOwnedNotification = Boolean(
+            remapped &&
+            isClientAuthoritativeAgentStatusPane(remapped.paneKey) &&
+            (remapped.state === 'working' || turnCompletedAt !== undefined)
+          )
           if (
             !remapped ||
-            !accepted ||
-            accepted === state.agentStatusByPaneKey[remapped.paneKey] ||
-            !agentStatusEntryEqual(accepted, remapped)
+            (!clientOwnedNotification &&
+              (!accepted ||
+                accepted === state.agentStatusByPaneKey[remapped.paneKey] ||
+                !agentStatusEntryEqual(accepted, remapped)))
           ) {
             continue
           }
-          const turnCompletedAt = normalizeTurnCompletedAtField(
-            surface.turnCompletedAt,
-            accepted.state
-          )
-          if (!allowCompletionNotification && accepted.state !== 'working') {
+          const notificationStatus = clientOwnedNotification ? remapped : accepted
+          if (!notificationStatus) {
+            continue
+          }
+          if (!allowCompletionNotification && notificationStatus.state !== 'working') {
             continue
           }
           acceptedNotificationStatuses.push({
-            paneKey: accepted.paneKey,
-            worktreeId: accepted.worktreeId ?? snapshot.worktree,
+            paneKey: notificationStatus.paneKey,
+            worktreeId: notificationStatus.worktreeId ?? snapshot.worktree,
             payload: {
               ...pickParsedAgentStatusPayload({
-                ...accepted,
+                ...notificationStatus,
                 ...(turnCompletedAt !== undefined ? { turnCompletedAt } : {})
               }),
-              stateStartedAt: accepted.stateStartedAt
+              stateStartedAt: notificationStatus.stateStartedAt
             }
           })
         }
