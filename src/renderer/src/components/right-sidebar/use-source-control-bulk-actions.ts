@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { getConnectionId } from '@/lib/connection-context'
 import { translate } from '@/i18n/i18n'
@@ -31,7 +31,12 @@ export function useSourceControlBulkActions({
   refreshActiveGitStatusAfterMutation: () => Promise<void>
 }) {
   const [isExecutingBulk, setIsExecutingBulk] = useState(false)
-  useEffect(() => setIsExecutingBulk(false), [activeWorktreeId])
+  // Why: reset during render so a worktree switch never paints the previous bulk-busy state.
+  const [bulkActionsWorktreeId, setBulkActionsWorktreeId] = useState(activeWorktreeId)
+  if (bulkActionsWorktreeId !== activeWorktreeId) {
+    setBulkActionsWorktreeId(activeWorktreeId)
+    setIsExecutingBulk(false)
+  }
   const selectedEntries = useMemo(
     () =>
       Array.from(selectedKeys)

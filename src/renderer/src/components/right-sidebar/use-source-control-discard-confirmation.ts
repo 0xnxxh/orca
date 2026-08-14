@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
 import { getConnectionId } from '@/lib/connection-context'
 import { bulkUnstageRuntimeGitPaths, type RuntimeGitContext } from '@/runtime/runtime-git-client'
@@ -36,7 +36,12 @@ export function useSourceControlDiscardConfirmation({
   refreshActiveGitStatusAfterMutation: () => Promise<void>
 }) {
   const [pendingDiscard, setPendingDiscard] = useState<PendingDiscardConfirmation | null>(null)
-  useEffect(() => setPendingDiscard(null), [activeWorktreeId])
+  // Why: reset during render so a worktree switch never paints the previous confirmation.
+  const [pendingDiscardWorktreeId, setPendingDiscardWorktreeId] = useState(activeWorktreeId)
+  if (pendingDiscardWorktreeId !== activeWorktreeId) {
+    setPendingDiscardWorktreeId(activeWorktreeId)
+    setPendingDiscard(null)
+  }
 
   const handleDiscard = useCallback(
     async (filePath: string) => {

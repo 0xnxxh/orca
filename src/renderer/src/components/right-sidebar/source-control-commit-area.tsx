@@ -171,9 +171,9 @@ export function CommitArea({
   )
   const dropdownMenuContent = (
     <DropdownMenuContent align="end" className="min-w-[14rem]">
-      {dropdownItems.map((entry, index) =>
+      {dropdownItems.map((entry) =>
         entry.kind === 'separator' ? (
-          <DropdownMenuSeparator key={`sep-${index}`} />
+          <DropdownMenuSeparator key={entry.id} />
         ) : (
           <Tooltip key={entry.kind}>
             <TooltipTrigger asChild>
