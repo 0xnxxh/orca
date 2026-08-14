@@ -148,4 +148,31 @@ describe('useStructuredAgentSessionOutbox', () => {
         .clientOperationId
     ).toBe(firstId)
   })
+
+  it('persists and dispatches an attachment-only structured send', async () => {
+    mocks.call.mockResolvedValue(acceptedResult(1))
+    const { result } = renderHook(() =>
+      useStructuredAgentSessionOutbox({
+        sessionId: 'session-1',
+        target: LOCAL_TARGET,
+        fence: 1,
+        submissions: []
+      })
+    )
+
+    act(() =>
+      expect(
+        result.current.send('', [{ path: '/tmp/image.png', previewUri: 'file:///tmp/image.png' }])
+      ).toBe(true)
+    )
+    await waitFor(() => expect(mocks.call).toHaveBeenCalledOnce())
+
+    expect(mocks.call.mock.calls[0]?.[2]).toMatchObject({
+      body: {
+        kind: 'message',
+        role: 'user',
+        blocks: [{ type: 'image-ref', path: '/tmp/image.png' }]
+      }
+    })
+  })
 })

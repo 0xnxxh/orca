@@ -8163,6 +8163,9 @@ export class OrcaRuntimeService {
       // route closeSessionTab to. Close the page directly and drop it from the
       // snapshot so paired clients stop showing it.
       await this.closeHeadlessMobileBrowserTab(worktreeId, snapshot!, tab)
+    } else if (tab.type === 'agent-session') {
+      this.notifier?.closeSessionTab?.(tab.id, worktreeId)
+      this.closeStructuredAgentSessionTab(worktreeId, snapshot!, tab)
     } else {
       this.notifier?.closeSessionTab?.(tab.id, worktreeId)
     }
@@ -8227,6 +8230,30 @@ export class OrcaRuntimeService {
         ...group,
         tabOrder: group.tabOrder.filter((id) => id !== tab.id),
         activeTabId: group.activeTabId === tab.id ? null : group.activeTabId
+      })),
+      tabs: nextTabs
+    }
+    this.mobileSessionTabsByWorktree.set(worktreeId, nextSnapshot)
+    this.emitMobileSessionTabsSnapshot(nextSnapshot)
+  }
+
+  private closeStructuredAgentSessionTab(
+    worktreeId: string,
+    snapshot: RuntimeMobileSessionTabsSnapshot,
+    tab: RuntimeMobileSessionAgentTab
+  ): void {
+    const nextTabs = snapshot.tabs.filter((candidate) => candidate.id !== tab.id)
+    const active = nextTabs.find((candidate) => candidate.isActive) ?? nextTabs[0] ?? null
+    const nextSnapshot: RuntimeMobileSessionTabsSnapshot = {
+      ...snapshot,
+      snapshotVersion: snapshot.snapshotVersion + 1,
+      activeTabId: active?.id ?? null,
+      activeTabType: active?.type ?? null,
+      tabGroups: (snapshot.tabGroups ?? []).map((group) => ({
+        ...group,
+        tabOrder: group.tabOrder.filter((id) => id !== tab.id),
+        activeTabId: group.activeTabId === tab.id ? null : group.activeTabId,
+        recentTabIds: group.recentTabIds?.filter((id) => id !== tab.id)
       })),
       tabs: nextTabs
     }
@@ -9999,7 +10026,16 @@ export class OrcaRuntimeService {
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession()
     const host = getStructuredAgentSessionHost()
     for (const session of host?.listSessionTabs() ?? []) {
-      this.publishStructuredAgentSessionTab({ ...session, activate: false, notify: false })
+      let sessionId = session.sessionId
+      while (sessionId.startsWith('agent-session:')) {
+        sessionId = sessionId.slice('agent-session:'.length)
+      }
+      this.publishStructuredAgentSessionTab({
+        ...session,
+        sessionId,
+        activate: false,
+        notify: false
+      })
     }
   }
 

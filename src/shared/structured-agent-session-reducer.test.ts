@@ -15,6 +15,19 @@ function item(id: string, sequence: number): AgentJournalRenderItem {
   }
 }
 
+function submission(index: number) {
+  return {
+    clientMessageId: `client-${index}`,
+    fence: 1,
+    payloadFingerprint: `fingerprint-${index}`,
+    dispatchState: 'accepted' as const,
+    providerItemId: `provider-${index}`,
+    reason: null,
+    submittedAt: index,
+    resolvedAt: index
+  }
+}
+
 describe('structured agent session reducer', () => {
   it('does not let a stale focus refresh replace newer streamed state', () => {
     const streamed = reduceStructuredAgentSession(EMPTY_STRUCTURED_AGENT_SESSION, {
@@ -52,5 +65,88 @@ describe('structured agent session reducer', () => {
     })
 
     expect(afterRefresh).toBe(streamed)
+  })
+
+  it('keeps rapid-send submissions when a newer tail refresh contains only the last one', () => {
+    const initial = reduceStructuredAgentSession(EMPTY_STRUCTURED_AGENT_SESSION, {
+      type: 'event',
+      event: {
+        type: 'snapshot',
+        sessionId: 'session-a',
+        fence: 1,
+        snapshot: {
+          sessionId: 'session-a',
+          cursor: { epoch: 'epoch-a', sequence: 10 },
+          items: [item('first', 10)],
+          submissions: Array.from({ length: 8 }, (_, index) => submission(index))
+        }
+      }
+    })
+    const refreshed = reduceStructuredAgentSession(initial, {
+      type: 'tail-page',
+      page: {
+        sessionId: 'session-a',
+        epoch: 'epoch-a',
+        direction: 'tail',
+        items: [item('latest', 11)],
+        removedItemIds: [],
+        submissions: [submission(7)],
+        window: {
+          oldest: { epoch: 'epoch-a', sequence: 11 },
+          newest: { epoch: 'epoch-a', sequence: 11 },
+          nextCursor: { epoch: 'epoch-a', sequence: 11 }
+        },
+        liveCursor: { epoch: 'epoch-a', sequence: 11 },
+        hasOlder: true,
+        hasNewer: false
+      }
+    })
+
+    expect(refreshed.submissions.map((entry) => entry.clientMessageId)).toEqual(
+      Array.from({ length: 8 }, (_, index) => `client-${index}`)
+    )
+  })
+
+  it('bounds retained submission identities across repeated tail refreshes', () => {
+    let state = reduceStructuredAgentSession(EMPTY_STRUCTURED_AGENT_SESSION, {
+      type: 'event',
+      event: {
+        type: 'snapshot',
+        sessionId: 'session-a',
+        fence: 1,
+        snapshot: {
+          sessionId: 'session-a',
+          cursor: { epoch: 'epoch-a', sequence: 1 },
+          items: [item('first', 1)],
+          submissions: []
+        }
+      }
+    })
+
+    for (let index = 0; index < 300; index += 1) {
+      state = reduceStructuredAgentSession(state, {
+        type: 'tail-page',
+        page: {
+          sessionId: 'session-a',
+          epoch: 'epoch-a',
+          direction: 'tail',
+          items: [item(`item-${index}`, index + 2)],
+          removedItemIds: [],
+          submissions: [submission(index)],
+          window: {
+            oldest: { epoch: 'epoch-a', sequence: index + 2 },
+            newest: { epoch: 'epoch-a', sequence: index + 2 },
+            nextCursor: { epoch: 'epoch-a', sequence: index + 2 }
+          },
+          liveCursor: { epoch: 'epoch-a', sequence: index + 2 },
+          hasOlder: true,
+          hasNewer: false
+        }
+      })
+    }
+
+    expect(state.submissions).toHaveLength(256)
+    expect(state.submissions[0]?.clientMessageId).toBe('client-44')
+    expect(state.submissions.at(-1)?.clientMessageId).toBe('client-299')
   })
 })

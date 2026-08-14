@@ -32,6 +32,10 @@ export function NativeChatStructuredSession(props: {
 }): React.JSX.Element {
   const controller = useStructuredAgentSession(props)
   const [composerError, setComposerError] = useState<string | null>(null)
+  const [optionPickerRequest, setOptionPickerRequest] = useState<{
+    id: string
+    sequence: number
+  } | null>(null)
   const paneKey = useMemo(
     () => structuredAgentSessionPaneKey(props.tabId, props.sessionId),
     [props.sessionId, props.tabId]
@@ -78,20 +82,32 @@ export function NativeChatStructuredSession(props: {
     null
   const structuredTransport = useMemo(
     () => ({
-      send: controller.send,
+      send: (text: string, attachments: readonly { id: string; path: string }[]): boolean =>
+        controller.send(
+          text,
+          attachments.map((attachment) => ({
+            path: attachment.path,
+            previewUri: attachment.path
+          }))
+        ),
       dispatchCommand: (text: string) =>
         dispatchStructuredAgentSessionComposerCommand(text, {
           agent: props.agent,
           snapshot: controller.optionSnapshot,
-          invokeAction: async () => false,
+          invokeAction: async (id) => {
+            setOptionPickerRequest((current) => ({ id, sequence: (current?.sequence ?? 0) + 1 }))
+            return true
+          },
           setOption: controller.setStructuredOption
         }),
       optionsSurface: controller.optionSurface,
       optionSnapshot: controller.optionSnapshot,
+      optionPickerRequest,
+      worktreeId: fileLinkContext?.worktreeId,
       onError: setComposerError,
       runtime: (props.target.kind === 'local' ? 'local' : 'remote') as 'local' | 'remote'
     }),
-    [controller, props.agent, props.target.kind]
+    [controller, fileLinkContext?.worktreeId, optionPickerRequest, props.agent, props.target.kind]
   )
 
   return (
