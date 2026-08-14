@@ -136,8 +136,6 @@ export function usePendingSidebarReveal(args: PendingSidebarRevealArgs): void {
       cancelled = true
       cancelPendingRevealFrames()
     }
-    // Why: the effect re-reads live inputs through argsRef; only reveal-relevant identities should retrigger it.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [
     pendingRevealWorktree,
     args.agentSendTargetWorktreeId,
@@ -265,8 +263,6 @@ export function usePendingSidebarReveal(args: PendingSidebarRevealArgs): void {
       cancelled = true
       cancelPendingRevealFrames()
     }
-    // Why: the effect re-reads live inputs through argsRef; only reveal-relevant identities should retrigger it.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [
     pendingRevealSidebarRow,
     args.repoMap,

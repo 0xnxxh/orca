@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useLayoutEffect, useState } from 'react'
 import type { ActiveSurfaceVariant } from '../WorktreeCard'
 import type { HostSectionRow } from '../host-section-rows'
 import type { PinnedWorktreeDisplayPolicy } from '../worktree-list-groups'
@@ -18,7 +18,7 @@ export function usePrimaryActiveWorktreeRow(args: {
     rowKey: string
   } | null>(null)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (activeWorktreeId === null) {
       setPrimaryActiveWorktreeRow(null)
       return
