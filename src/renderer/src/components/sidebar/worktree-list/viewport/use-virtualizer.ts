@@ -10,11 +10,11 @@ import {
   extractWorktreeVirtualRowIndexes,
   getRenderRowKey,
   getStickyHeaderIndexes,
+  getVirtualRowIndex,
   WORKTREE_SIDEBAR_VIRTUAL_ROW_GAP,
   type RenderRow
 } from './virtual-rows'
 import { WORKTREE_SIDEBAR_REVEAL_TOP_INSET } from '../../worktree-sidebar-reveal'
-import { getVirtualRowIndex } from './virtual-rows'
 import {
   shouldAdjustWorktreeSidebarMeasuredRowScroll,
   USER_SCROLL_MEASUREMENT_ADJUSTMENT_SUPPRESS_MS

@@ -9,10 +9,10 @@ import {
   buildLineageRowRekeyMap,
   getActiveStickyIndexesForScroll,
   getRenderRowKey,
+  getVirtualRowKey,
   pruneStaleVirtualRowElementCache,
   type RenderRow
 } from './virtual-rows'
-import { getVirtualRowKey } from './virtual-rows'
 import { countRecordKeysByReference } from '../scroll/tuning'
 import type { WorktreeListVirtualizer } from './use-virtualizer'
 

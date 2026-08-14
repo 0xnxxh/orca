@@ -9,6 +9,7 @@ import { getWorkspaceStatus } from '../../workspace-status'
 import type { WorktreeGroupBy } from './groups'
 import {
   getVirtualRowTransform,
+  getWorktreeVirtualRowTransform,
   shouldUseHeaderTopSpacing,
   type RenderRow
 } from '../viewport/virtual-rows'
@@ -31,7 +32,6 @@ import {
   renderWorktreeSectionHeaderRow,
   type SectionHeaderRowContext
 } from '../headers/SectionHeader'
-import { getWorktreeVirtualRowTransform } from '../viewport/virtual-rows'
 import type { WorktreeRowDragState } from '../drag/row-state'
 
 export type WorktreeVirtualRowContext = {
