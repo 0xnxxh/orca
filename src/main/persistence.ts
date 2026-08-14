@@ -2950,11 +2950,18 @@ export function hoistSshPartitionsIntoLocalSession(
       }
       changed = true
     }
-    // The tab bar renders from the active GROUP's tabOrder, not from tabsByWorktree, so a tab
-    // folded in without its group exists in the session and is still invisible. That is the whole
-    // reported symptom, and the Store-level oracle cannot see it because persistPtyBinding only
-    // consults tabsByWorktree. Groups, their split layout, the unified tab records and the focused
-    // group all have to travel with the panes.
+    // NOT redundant with `adoptGrouplessTabs`, which mints ONE group and a single leaf. These
+    // carry what it cannot reconstruct: the multi-group split arrangement (direction and ratio),
+    // the user's tabOrder (it degrades to sortOrder), which group and tab were focused, and the
+    // Ctrl+Tab MRU. And `buildHydratedTabState` takes the unified path only when `tabGroups` is
+    // present at all (tabs-hydration.ts) — without this fold, a profile whose tab state came
+    // entirely from the partition drops into the legacy hydration path, which is a different code
+    // path for exactly the upgrade cohort.
+    //
+    // Known asymmetry, follow-up rather than blocker: `tabGroups` is whole-record local-wins while
+    // `unifiedTabs` is per-tab. A partition group arriving after local has any group for that
+    // worktree never travels, and its tabs are adopted into local's first group — visible, but in
+    // the wrong group, order and split. Same shape as the unified-ledger defect, softer landing.
     for (const [worktreeId, groups] of Object.entries(partition.tabGroups ?? {})) {
       if (local.tabGroups?.[worktreeId]) {
         continue

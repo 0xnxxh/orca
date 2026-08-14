@@ -148,6 +148,14 @@ test.describe('an upgrading profile keeps the tabs its old build left in the ssh
       ).toEqual(tabsBefore.slice().sort())
 
       // 2. The panes came back ATTACHED, not blank — the other half of the report.
+      //
+      // KNOWN WEAKNESS: readPaneIdentitySnapshot resolves the ACTIVE tab and returns only its
+      // panes, so this covers one of the three tabs — two could restore blank and this still
+      // passes. Assertion 3 is weaker still: a bare shell count is satisfied by N killed and N
+      // respawned, so it cannot show the panes reattached to the SAME shells. A verified patch
+      // exists that clicks each tab and compares ptyIds captured before quit; it did not apply
+      // cleanly here (its [data-tab-id] locator does not resolve in this tree) and is left for a
+      // follow-up rather than landed red.
       await expect
         .poll(
           async () => {
