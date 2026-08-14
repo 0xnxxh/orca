@@ -49,12 +49,25 @@ export function resolveProtectedMultilinePasteOptionsForPane({
     // the paste would be a silent no-op with no error surface.
     return isWindowsClient ? { forceBracketedPasteForMultiline: true } : undefined
   }
-  // Why: a process-table confirmed agent is the strongest evidence there is.
-  // Note this branch is dead for remote-runtime and SSH panes: isForegroundTrackingAllowed
-  // (pty-connection) returns false for them, so paneForegroundAgentByPaneKey stays empty
-  // and the status row below is the only evidence a remote pane ever has.
-  const foregroundAgent = paneForegroundAgentByPaneKey[paneKey]?.agent
-  const entry = agentStatusByPaneKey[paneKey]
+  return resolveProtectedMultilinePasteOptionsForAgentEvidence({
+    isWindowsClient,
+    hostPlatform,
+    foregroundAgent: paneForegroundAgentByPaneKey[paneKey]?.agent,
+    entry: agentStatusByPaneKey[paneKey]
+  })
+}
+
+export function resolveProtectedMultilinePasteOptionsForAgentEvidence({
+  isWindowsClient,
+  hostPlatform,
+  foregroundAgent,
+  entry
+}: {
+  isWindowsClient: boolean
+  hostPlatform: NodeJS.Platform
+  foregroundAgent: unknown
+  entry: AgentStatusEntry | undefined
+}): TerminalPasteTextOptions | undefined {
   // Why: a row rehydrated from disk across a restart describes the previous process,
   // not the shell now attached to this pane.
   const agent = isTuiAgent(foregroundAgent)

@@ -74,7 +74,8 @@ export function createTerminalPastePayload({
     byteLength: metadata.byteLength,
     lineCount: metadata.lineCount,
     hasRichText,
-    hasControlSequences: metadata.hasControlSequences
+    hasControlSequences: metadata.hasControlSequences,
+    lineEndingByteLength: metadata.lineEndingByteLength
   }
 }
 
@@ -131,7 +132,8 @@ export async function planTerminalPasteWithYield({
     byteLength: metadata.byteLength,
     lineCount: metadata.lineCount,
     hasRichText,
-    hasControlSequences: metadata.hasControlSequences
+    hasControlSequences: metadata.hasControlSequences,
+    lineEndingByteLength: metadata.lineEndingByteLength
   }
   return buildTerminalPastePlan({
     forceBracketedPaste,
@@ -170,8 +172,9 @@ function buildTerminalPastePlan({
   const effectiveWindowsInputRecordNewline =
     !forceBracketedPaste && payload.lineCount > 1 ? windowsInputRecordNewline : undefined
   const plannedByteLength = effectiveWindowsInputRecordNewline
-    ? payload.byteLength +
-      (payload.lineCount - 1) * (effectiveWindowsInputRecordNewline === 'csi-u' ? 6 : 1)
+    ? payload.byteLength -
+      payload.lineEndingByteLength +
+      (payload.lineCount - 1) * (effectiveWindowsInputRecordNewline === 'csi-u' ? 7 : 2)
     : payload.byteLength
   const shouldChunk = plannedByteLength > maxDirectBytes
   const effectiveForceBracketedPaste =

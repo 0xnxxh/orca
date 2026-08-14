@@ -29,6 +29,7 @@ export type TerminalPastePayload = {
   lineCount: number
   hasRichText: boolean
   hasControlSequences: boolean
+  lineEndingByteLength: number
 }
 
 export type TerminalPastePlan = {
