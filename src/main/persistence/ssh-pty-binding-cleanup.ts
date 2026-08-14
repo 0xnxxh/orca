@@ -76,14 +76,20 @@ export function clearSshRemotePtyBindingsForLeases(
         }
       }
     }
+    const worktreeIdByTabId = new Map<string, string>()
+    for (const [worktreeId, tabs] of Object.entries(session.tabsByWorktree ?? {})) {
+      for (const tab of tabs) {
+        if (!worktreeIdByTabId.has(tab.id)) {
+          worktreeIdByTabId.set(tab.id, worktreeId)
+        }
+      }
+    }
     for (const [tabId, layout] of Object.entries(session.terminalLayoutsByTabId ?? {})) {
       const bindings = layout.ptyIdsByLeafId
       if (!bindings) {
         continue
       }
-      const worktreeId = Object.entries(session.tabsByWorktree ?? {}).find(([, tabs]) =>
-        tabs.some((tab) => tab.id === tabId)
-      )?.[0]
+      const worktreeId = worktreeIdByTabId.get(tabId)
       const nextBindings = Object.fromEntries(
         Object.entries(bindings).filter(
           ([leafId, ptyId]) =>

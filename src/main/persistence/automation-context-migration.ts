@@ -175,9 +175,10 @@ export function backfillLegacyAutomationContexts(
 } {
   let changed = false
   const contextsByAutomationId = new Map<string, Pick<Automation, 'runContext' | 'sourceContext'>>()
+  const reposById = new Map((state.repos ?? []).map((repo) => [repo.id, repo]))
   const automations = (state.automations ?? []).map((automation) => {
     const contexts = getAutomationContextsForRepo(
-      state.repos.find((repo) => repo.id === getAutomationLegacyRepoId(automation)),
+      reposById.get(getAutomationLegacyRepoId(automation)),
       state.projectHostSetups ?? []
     )
     const next: Automation = { ...automation }

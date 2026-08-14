@@ -42,7 +42,7 @@ export function normalizeSshTarget(t: SshTarget): SshTarget {
   return normalized
 }
 
-// Why: strict whitelist rejects unknown/bad-typed keys; returns Partial so partial updates don't clobber valid persisted state.
+// Why: strict whitelist — a record missing or mistyping a required field is dropped rather than partially trusted.
 export function normalizeSshRemotePtyLease(value: unknown): SshRemotePtyLease | null {
   if (!value || typeof value !== 'object') {
     return null

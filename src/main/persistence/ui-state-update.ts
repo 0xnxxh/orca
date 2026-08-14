@@ -109,8 +109,8 @@ export function updatePersistedUI(
     sortBy: durableUpdates.sortBy
       ? normalizeSortBy(durableUpdates.sortBy)
       : normalizeSortBy(operations.state.ui?.sortBy),
-    projectOrderBy: updates.projectOrderBy
-      ? normalizeProjectOrderBy(updates.projectOrderBy)
+    projectOrderBy: sanitizedUpdates.projectOrderBy
+      ? normalizeProjectOrderBy(sanitizedUpdates.projectOrderBy)
       : normalizeProjectOrderBy(operations.state.ui?.projectOrderBy),
     activeView: currentUI.activeView,
     rightSidebarTab: nextRightSidebarTab,
@@ -120,8 +120,8 @@ export function updatePersistedUI(
         ? normalizeWorktreeCardProperties(sanitizedUpdates.worktreeCardProperties)
         : normalizeWorktreeCardProperties(operations.state.ui?.worktreeCardProperties),
     agentActivityDisplayMode:
-      updates.agentActivityDisplayMode !== undefined
-        ? normalizeAgentActivityDisplayMode(updates.agentActivityDisplayMode)
+      sanitizedUpdates.agentActivityDisplayMode !== undefined
+        ? normalizeAgentActivityDisplayMode(sanitizedUpdates.agentActivityDisplayMode)
         : normalizeAgentActivityDisplayMode(operations.state.ui?.agentActivityDisplayMode),
     workspaceStatuses:
       sanitizedUpdates.workspaceStatuses !== undefined
@@ -150,23 +150,23 @@ export function updatePersistedUI(
       sanitizedUpdates.combinedDiffFileTreeWidth ?? operations.state.ui?.combinedDiffFileTreeWidth
     ),
     visibleWorkspaceHostIds:
-      updates.visibleWorkspaceHostIds !== undefined
-        ? normalizeVisibleExecutionHostIds(updates.visibleWorkspaceHostIds)
+      sanitizedUpdates.visibleWorkspaceHostIds !== undefined
+        ? normalizeVisibleExecutionHostIds(sanitizedUpdates.visibleWorkspaceHostIds)
         : normalizeVisibleExecutionHostIds(operations.state.ui?.visibleWorkspaceHostIds),
     workspaceHostOrder:
-      updates.workspaceHostOrder !== undefined
-        ? normalizeExecutionHostOrder(updates.workspaceHostOrder)
+      sanitizedUpdates.workspaceHostOrder !== undefined
+        ? normalizeExecutionHostOrder(sanitizedUpdates.workspaceHostOrder)
         : normalizeExecutionHostOrder(operations.state.ui?.workspaceHostOrder),
     manualRepoOrder:
-      updates.manualRepoOrder !== undefined
-        ? normalizeManualRepoOrder(updates.manualRepoOrder)
+      sanitizedUpdates.manualRepoOrder !== undefined
+        ? normalizeManualRepoOrder(sanitizedUpdates.manualRepoOrder)
         : normalizeManualRepoOrder(operations.state.ui?.manualRepoOrder),
     browserDefaultZoomLevel: normalizeBrowserPageZoomLevel(
-      updates.browserDefaultZoomLevel ?? operations.state.ui?.browserDefaultZoomLevel
+      sanitizedUpdates.browserDefaultZoomLevel ?? operations.state.ui?.browserDefaultZoomLevel
     ),
     showDotfilesByWorktree:
-      updates.showDotfilesByWorktree !== undefined
-        ? normalizeShowDotfilesByWorktree(updates.showDotfilesByWorktree)
+      sanitizedUpdates.showDotfilesByWorktree !== undefined
+        ? normalizeShowDotfilesByWorktree(sanitizedUpdates.showDotfilesByWorktree)
         : normalizeShowDotfilesByWorktree(operations.state.ui?.showDotfilesByWorktree),
     featureTipsSeenIds:
       sanitizedUpdates.featureTipsSeenIds !== undefined
@@ -174,10 +174,10 @@ export function updatePersistedUI(
         : normalizeFeatureTipIds(operations.state.ui?.featureTipsSeenIds),
     // Why: renderer and paired clients can mark different tours seen from stale snapshots; union so completed tours stay suppressed.
     contextualToursSeenIds:
-      updates.contextualToursSeenIds !== undefined
+      sanitizedUpdates.contextualToursSeenIds !== undefined
         ? mergeContextualTourSeenIds(
             operations.state.ui?.contextualToursSeenIds,
-            updates.contextualToursSeenIds
+            sanitizedUpdates.contextualToursSeenIds
           )
         : normalizeContextualTourIds(operations.state.ui?.contextualToursSeenIds),
     // Why: runtime RPCs and the renderer both record education state; merge so a stale renderer snapshot can't erase runtime-only interactions.

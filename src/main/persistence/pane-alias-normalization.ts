@@ -162,9 +162,15 @@ export function legacyPaneKeyAliasEntriesEqual(
     return false
   }
   const rightByLegacyPaneKey = new Map(right.map((entry) => [entry.legacyPaneKey, entry]))
+  // Why: field-wise, not JSON.stringify — persisted key order differs from freshly built entries and would fake a dirty state.
   return left.every((entry) => {
     const other = rightByLegacyPaneKey.get(entry.legacyPaneKey)
-    return other ? JSON.stringify(entry) === JSON.stringify(other) : false
+    return (
+      other !== undefined &&
+      entry.ptyId === other.ptyId &&
+      entry.stablePaneKey === other.stablePaneKey &&
+      entry.updatedAt === other.updatedAt
+    )
   })
 }
 
@@ -178,6 +184,15 @@ export function migrationUnsupportedEntriesEqual(
   const rightByPtyId = new Map(right.map((entry) => [entry.ptyId, entry]))
   return left.every((entry) => {
     const other = rightByPtyId.get(entry.ptyId)
-    return other ? JSON.stringify(entry) === JSON.stringify(other) : false
+    return (
+      other !== undefined &&
+      entry.worktreeId === other.worktreeId &&
+      entry.tabId === other.tabId &&
+      entry.leafId === other.leafId &&
+      entry.paneKey === other.paneKey &&
+      entry.reason === other.reason &&
+      entry.source === other.source &&
+      entry.updatedAt === other.updatedAt
+    )
   })
 }
