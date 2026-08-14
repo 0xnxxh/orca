@@ -250,10 +250,10 @@ export const WORKTREE_METHODS: RpcMethod[] = [
     name: 'worktree.rm',
     params: WorktreeRemove,
     handler: async (params, { runtime }) => {
-      // An old client cannot prove which same-id host row the user confirmed.
-      // Keep the field optional on the wire, but reject omission at this destructive boundary.
-      if (!params.hostId) {
-        throw new Error('worktree.rm requires an explicit hostId')
+      // Older mobile clients omit hostId, so resolve through the ambiguity gate before pinning removal.
+      const hostId = params.hostId ?? (await runtime.showManagedWorktree(params.worktree)).hostId
+      if (!hostId) {
+        throw new Error('worktree.rm could not resolve the workspace host')
       }
       const removalArgs = [
         params.worktree,
@@ -261,7 +261,7 @@ export const WORKTREE_METHODS: RpcMethod[] = [
         params.runHooks === true,
         params.allowUnverifiedPtyStop === true
       ] as const
-      const result = await runtime.removeManagedWorktree(...removalArgs, params.hostId)
+      const result = await runtime.removeManagedWorktree(...removalArgs, hostId)
       return { removed: true, ...result }
     }
   }),
