@@ -9,6 +9,7 @@ import {
   type ClaudeAgentTeamsMode
 } from '../../shared/claude-agent-teams-tmux-compat'
 import { getOrcaCliCommandNameForPlatform } from '../../shared/orca-cli-command-name'
+import { resolvePathEnvKey } from '../pty/windows-path-segment-merge'
 
 export type ClaudeAgentTeamsLaunchPlan = {
   command: string
@@ -62,10 +63,12 @@ export async function buildClaudeAgentTeamsLaunchPlan(args: {
 export function resolveClaudeAgentTeamsShimBin(
   env: Record<string, string | undefined> = process.env
 ): string | null {
+  // Why: Windows callers pass an env spelt `Path`; reading only `PATH` there would find no CLI at all.
+  const pathValue = env[resolvePathEnvKey(env, process.platform)]
   const override = env.ORCA_AGENT_TEAMS_SHIM_BIN
   if (override) {
     // Why: a bare override name would be resolved by the shim's shell against its cwd, so qualify it or ignore it.
-    const qualified = isAbsolute(override) ? override : findExecutableOnPath(override, env.PATH)
+    const qualified = isAbsolute(override) ? override : findExecutableOnPath(override, pathValue)
     if (qualified) {
       return qualified
     }
@@ -75,8 +78,8 @@ export function resolveClaudeAgentTeamsShimBin(
     return bundled
   }
   return (
-    findExecutableOnPath(process.platform === 'win32' ? 'orca-dev.cmd' : 'orca-dev', env.PATH) ??
-    findExecutableOnPath(getOrcaCliCommandNameForPlatform(process.platform), env.PATH)
+    findExecutableOnPath(process.platform === 'win32' ? 'orca-dev.cmd' : 'orca-dev', pathValue) ??
+    findExecutableOnPath(getOrcaCliCommandNameForPlatform(process.platform), pathValue)
   )
 }
 

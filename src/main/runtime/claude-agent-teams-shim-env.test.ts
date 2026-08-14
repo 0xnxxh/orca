@@ -114,6 +114,18 @@ describe('claude agent teams shim env', () => {
     )
   })
 
+  it.skipIf(process.platform !== 'win32')(
+    'resolves through the Windows `Path` env spelling',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'orca-agent-teams-cli-'))
+      roots.push(root)
+      const cliPath = join(root, 'orca.cmd')
+      await writeFile(cliPath, '@echo off\r\n', 'utf8')
+
+      expect(resolveClaudeAgentTeamsShimBin({ Path: root })).toBe(cliPath)
+    }
+  )
+
   it('falls back to in-process teammates when no absolute CLI can be qualified', async () => {
     const createTeamEnv = (): Record<string, string> => {
       throw new Error('native shim env must not be built without a qualified CLI')
