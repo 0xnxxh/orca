@@ -82,6 +82,25 @@ describe('runtime-owned SSH AI Vault inventory', () => {
     expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(1)
   })
 
+  it('deduplicates concurrent owner lookups', async () => {
+    let resolveInventory!: (value: { ok: true; result: { targets: { id: string }[] } }) => void
+    mocks.callRuntimeEnvironment.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveInventory = resolve
+      })
+    )
+
+    const first = findRuntimeOwningSshAiVaultHost('/user-data', 'hub-owned-host')
+    const second = findRuntimeOwningSshAiVaultHost('/user-data', 'hub-owned-host')
+    expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(1)
+    resolveInventory({ ok: true, result: { targets: [{ id: 'hub-owned-host' }] } })
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ environmentId: 'hub-runtime' }),
+      expect.objectContaining({ environmentId: 'hub-runtime' })
+    ])
+  })
+
   it('expires cached owner lookups after one minute', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-14T00:00:00.000Z') })
     try {
@@ -103,6 +122,20 @@ describe('runtime-owned SSH AI Vault inventory', () => {
     await expect(
       findRuntimeOwningSshAiVaultHost('/user-data', 'hub-owned-host')
     ).resolves.toBeNull()
+    expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not share owner lookups across a re-pair of the same environment id', async () => {
+    mocks.listEnvironments.mockReturnValue([
+      { id: 'hub-runtime', createdAt: 1, pairingRevision: 1, runtimeId: 'runtime-a' }
+    ])
+    await findRuntimeOwningSshAiVaultHost('/user-data', 'hub-owned-host')
+    mocks.listEnvironments.mockReturnValue([
+      { id: 'hub-runtime', createdAt: 1, pairingRevision: 2, runtimeId: 'runtime-b' }
+    ])
+
+    await findRuntimeOwningSshAiVaultHost('/user-data', 'hub-owned-host')
+
     expect(mocks.callRuntimeEnvironment).toHaveBeenCalledTimes(2)
   })
 
