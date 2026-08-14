@@ -164,9 +164,8 @@ function keepFirstOptionOccurrence(tokens: string[], aliases: readonly string[])
   }
 }
 
-/** Folds every user-supplied singleton option into the generated argv slot so the
- *  spawned CLI never sees the same flag twice. Precedence: recipe args (per-action)
- *  beat a command-override prefix (per-agent), which beats Orca's generated value. */
+/** Removes generated singleton options shadowed by user input. Recipe args
+ *  outrank a command-override prefix, which outranks Orca's generated value. */
 function applySingletonOptionOverrides(args: {
   generatedArgs: string[]
   prefixArgs: string[]
@@ -179,14 +178,22 @@ function applySingletonOptionOverrides(args: {
 
   for (const aliases of args.singletonOptions) {
     recipeArgs = keepFirstOptionOccurrence(recipeArgs, aliases)
-    prefixArgs = findOptionOccurrence(recipeArgs, aliases, true)
-      ? removeAllOptionOccurrences(prefixArgs, aliases)
-      : keepFirstOptionOccurrence(prefixArgs, aliases)
-    // Why: applying the prefix first and the recipe second leaves the recipe's value
-    // in the slot, since each pass overwrites the same generated position.
-    const withPrefix = applyRecipeOptionOverride({ generatedArgs, recipeArgs: prefixArgs, aliases })
-    generatedArgs = withPrefix.generatedArgs
-    prefixArgs = withPrefix.recipeArgs
+    prefixArgs = keepFirstOptionOccurrence(prefixArgs, aliases)
+    const recipeOption = findOptionOccurrence(recipeArgs, aliases, true)
+    const prefixOption = findOptionOccurrence(prefixArgs, aliases, true)
+    const prefixHasTerminator = prefixArgs.includes('--')
+    if (recipeOption && !prefixHasTerminator) {
+      prefixArgs = removeAllOptionOccurrences(prefixArgs, aliases)
+    } else if (prefixOption && !prefixHasTerminator) {
+      const generatedOption = findOptionOccurrence(generatedArgs, aliases, false)
+      if (generatedOption) {
+        generatedArgs = [
+          ...generatedArgs.slice(0, generatedOption.index),
+          ...generatedArgs.slice(generatedOption.index + generatedOption.consumed)
+        ]
+      }
+      continue
+    }
     const withRecipe = applyRecipeOptionOverride({ generatedArgs, recipeArgs, aliases })
     generatedArgs = withRecipe.generatedArgs
     recipeArgs = withRecipe.recipeArgs

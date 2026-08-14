@@ -429,12 +429,12 @@ describe('planCommitMessageGeneration', () => {
     })
   })
 
-  it('folds a model flag from an agent command override into the generated slot', () => {
+  it('keeps a model flag in the agent command override and removes the generated duplicate', () => {
     const result = planCommitMessageGeneration(
       {
         agentId: 'opencode',
         model: 'opencode/gpt-5.4-mini',
-        agentCommandOverride: 'npx opencode --model opencode/gpt-5.5'
+        agentCommandOverride: 'npx opencode --model opencode/gpt-5.5 --log-level DEBUG'
       },
       'PROMPT'
     )
@@ -445,9 +445,42 @@ describe('planCommitMessageGeneration', () => {
         binary: 'npx',
         args: [
           'opencode',
-          'run',
           '--model',
           'opencode/gpt-5.5',
+          '--log-level',
+          'DEBUG',
+          'run',
+          '--agent',
+          'build',
+          '--format',
+          'default'
+        ]
+      }
+    })
+  })
+
+  it('does not move command override options across an option terminator', () => {
+    const result = planCommitMessageGeneration(
+      {
+        agentId: 'opencode',
+        model: 'opencode/gpt-5.4-mini',
+        agentCommandOverride: 'opencode --model opencode/from-override -- --model literal'
+      },
+      'PROMPT'
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      plan: {
+        args: [
+          '--model',
+          'opencode/from-override',
+          '--',
+          '--model',
+          'literal',
+          'run',
+          '--model',
+          'opencode/gpt-5.4-mini',
           '--agent',
           'build',
           '--format',
