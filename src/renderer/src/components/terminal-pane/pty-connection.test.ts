@@ -8444,6 +8444,7 @@ describe('connectPanePty', () => {
         expect.objectContaining({
           sessionId: 'restored-session',
           command: "codex '--dangerously-bypass-approvals-and-sandbox' 'resume' 'codex-session-1'",
+          startupCommandDelivery: 'shell-ready',
           env: expect.objectContaining({
             ORCA_PANE_KEY: paneKey,
             ORCA_AGENT_LAUNCH_TOKEN: expect.stringMatching(new RegExp(`^${UUID_RE}$`))

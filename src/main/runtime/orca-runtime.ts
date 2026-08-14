@@ -26449,6 +26449,7 @@ export class OrcaRuntimeService {
       env: startup.env,
       launchConfig: startup.launchConfig,
       launchAgent: request.agent,
+      startupCommandDelivery: startup.startupCommandDelivery,
       presentation: request.presentation ?? 'background',
       tabId: request.placement?.tabId,
       leafId: request.placement?.leafId,

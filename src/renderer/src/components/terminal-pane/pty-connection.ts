@@ -556,6 +556,9 @@ type ColdRestoreAgentResumeStartup = PendingStartupCommand & {
   agent: ResumableTuiAgent
   resumeProviderSession: AgentProviderSessionMetadata
   launchConfig: NonNullable<ReturnType<typeof buildAgentResumeStartupPlan>>['launchConfig']
+  startupCommandDelivery: NonNullable<
+    ReturnType<typeof buildAgentResumeStartupPlan>
+  >['startupCommandDelivery']
   launchToken: string
   useLiveEntry: boolean
   hasSleepingRecord: boolean
@@ -5067,6 +5070,7 @@ export function connectPanePty(
           ORCA_AGENT_LAUNCH_TOKEN: coldRestoreLaunchToken
         },
         launchConfig: startupPlan.launchConfig,
+        startupCommandDelivery: startupPlan.startupCommandDelivery,
         resumeProviderSession: providerSession,
         launchToken: coldRestoreLaunchToken,
         useLiveEntry: Boolean(useLiveEntry),
@@ -5274,9 +5278,11 @@ export function connectPanePty(
         ...(connectionId && startupOverride?.command && !shouldDeliverStartupViaTerminalPaste
           ? { commandDelivery: 'provider' as const }
           : {}),
-        ...(connectionId && startupOverride?.command
-          ? { startupCommandDelivery: 'shell-ready' as const }
-          : {}),
+        ...(coldRestoreOverride?.startupCommandDelivery
+          ? { startupCommandDelivery: coldRestoreOverride.startupCommandDelivery }
+          : connectionId && startupOverride?.command
+            ? { startupCommandDelivery: 'shell-ready' as const }
+            : {}),
         ...(startupOverride?.env
           ? { env: mergeStartupEnvWithPaneIdentity(startupOverride.env) }
           : {}),
@@ -8718,6 +8724,9 @@ export function connectPanePty(
                 ? { launchToken: coldRestoreStartup.launchToken }
                 : {}),
               ...(coldRestoreStartup?.agent ? { launchAgent: coldRestoreStartup.agent } : {}),
+              ...(coldRestoreStartup?.startupCommandDelivery
+                ? { startupCommandDelivery: coldRestoreStartup.startupCommandDelivery }
+                : {}),
               ...(shouldDeclareHiddenAtSpawn() ? { initiallyHidden: true } : {}),
               ...(directSshRetryAttempt ? { admitPtyId: claimCapturedDirectSshRetryPty } : {}),
               callbacks: outputCallbacks.callbacks
@@ -8963,6 +8972,9 @@ export function connectPanePty(
           : {}),
         ...(coldRestoreStartup?.launchToken ? { launchToken: coldRestoreStartup.launchToken } : {}),
         ...(coldRestoreStartup?.agent ? { launchAgent: coldRestoreStartup.agent } : {}),
+        ...(coldRestoreStartup?.startupCommandDelivery
+          ? { startupCommandDelivery: coldRestoreStartup.startupCommandDelivery }
+          : {}),
         ...(shouldDeclareHiddenAtSpawn() ? { initiallyHidden: true } : {}),
         ...(directSshRetryAttempt ? { admitPtyId: claimCapturedDirectSshRetryPty } : {}),
         callbacks: outputCallbacks.callbacks
