@@ -192,9 +192,13 @@ describe('dispatchTerminalNotification', () => {
 
   it('builds the notification id from a completion snapshot, not the pinned working row', () => {
     const pinnedWorkingStartedAt = Date.now() - 60_000
+    // Why: the stored row must name the event's agent, or it is dropped for identity mismatch
+    // and the assertion would hold whichever side of the `??` wins.
     mockState.agentStatusByPaneKey[paneKey] = makeAgentStatus(paneKey, {
       state: 'working',
-      stateStartedAt: pinnedWorkingStartedAt
+      stateStartedAt: pinnedWorkingStartedAt,
+      agentType: 'claude',
+      terminalTitle: 'claude'
     })
     const turnCompletedAt = Date.now()
 
