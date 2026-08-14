@@ -253,6 +253,50 @@ describe('matching a presented key', () => {
  * client's verdict recorded from its own output. Everything else in this file states what we believe
  * ssh does; these state what it did.
  */
+// HostKeyAlias is the one case where the port is not part of the key. Verified live on port 2225:
+// with HostKeyAlias=myalias, ssh finds an entry keyed `myalias` and reports "No ED25519 host key is
+// known for myalias" for one keyed `[myalias]:2225`.
+describe('a lookup keyed on HostKeyAlias', () => {
+  it('never brackets the alias, whatever the port', () => {
+    expect(hostCandidatePasses('myalias', 2225, true)).toEqual([['myalias']])
+  })
+
+  it('still brackets an ordinary host on a non-default port', () => {
+    expect(hostCandidatePasses('h', 2225, false)).toEqual([['[h]:2225'], ['h']])
+  })
+
+  it('matches a bare alias entry on a non-default port', () => {
+    const ED = 'AAAAC3NzaC1lZDI1NTE5AAAAIKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq'
+    const entries = parseKnownHosts(line('myalias', ED))
+    expect(
+      matchKnownHosts(entries, {
+        host: 'myalias',
+        port: 2225,
+        keyType: 'ssh-ed25519',
+        key: blob(ED),
+        isHostKeyAlias: true
+      })
+    ).toBe('match')
+  })
+
+  // The regression the flag prevents: pass 0 finding a bracketed entry now stops the fallback, so
+  // without it this stale line turns a working bastion into a hard failure.
+  it('ignores a stale bracketed entry that ssh would never consult', () => {
+    const ED = 'AAAAC3NzaC1lZDI1NTE5AAAAIKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq'
+    const ED_OTHER = 'AAAAC3NzaC1lZDI1NTE5AAAAILu7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7'
+    const entries = parseKnownHosts(`${line('[myalias]:2225', ED_OTHER)}\n${line('myalias', ED)}`)
+    expect(
+      matchKnownHosts(entries, {
+        host: 'myalias',
+        port: 2225,
+        keyType: 'ssh-ed25519',
+        key: blob(ED),
+        isHostKeyAlias: true
+      })
+    ).toBe('match')
+  })
+})
+
 describe('lines ssh itself refuses to parse', () => {
   const ED = 'AAAAC3NzaC1lZDI1NTE5AAAAIKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq'
 

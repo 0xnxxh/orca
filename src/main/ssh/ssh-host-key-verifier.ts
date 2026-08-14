@@ -28,6 +28,8 @@ export type HostKeyVerifierDeps = {
   host: string
   port: number
   displayHost: string
+  /** True when `host` came from HostKeyAlias; ssh looks those up without the port. */
+  isHostKeyAlias?: boolean
   strictHostKeyChecking: string
   isEphemeralRuntimeTarget: boolean
   verificationSourcesIncomplete: boolean
@@ -123,7 +125,8 @@ export function orderServerHostKeyAlgorithms(
   /** Types we recorded ourselves. Without these, a host known only to us is never promoted, and
    *  type scoping degrades into the downgrade it exists to prevent for exactly the hosts we
    *  learned on first contact. */
-  storedKeyTypes: readonly string[] = []
+  storedKeyTypes: readonly string[] = [],
+  isHostKeyAlias = false
 ): string[] | undefined {
   const known = new Set<string>(storedKeyTypes)
   for (const entry of entries) {
@@ -135,7 +138,8 @@ export function orderServerHostKeyAlgorithms(
       host,
       port,
       keyType: entry.keyType,
-      key: entry.key
+      key: entry.key,
+      isHostKeyAlias
     })
     if (outcome === 'match') {
       known.add(entry.keyType)
@@ -219,7 +223,8 @@ export function createHostKeyVerifier(
           host: deps.host,
           port: deps.port,
           keyType,
-          key
+          key,
+          isHostKeyAlias: deps.isHostKeyAlias
         }),
         storeOutcome: deps.isTrusted({ host: deps.host, port: deps.port, keyType, key }),
         strictHostKeyChecking: deps.strictHostKeyChecking,

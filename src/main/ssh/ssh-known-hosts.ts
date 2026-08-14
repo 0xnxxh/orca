@@ -221,10 +221,21 @@ function entryMatchesCandidate(entry: KnownHostsEntry, candidate: string): boole
  * A non-default port looks up `[host]:port` first and, finding nothing, retries the bare host —
  * "checking without port identifier" in `ssh -v`. Collapsing these into one set would give a
  * spurious first-contact result to anyone holding a bare line who connects on a non-default port.
+ *
+ * `HostKeyAlias` suppresses the port ENTIRELY: ssh looks the alias up bare and never brackets it.
+ * Verified against OpenSSH 10.2p1 on port 2225 with HostKeyAlias=myalias — an entry keyed `myalias`
+ * authenticates, and one keyed `[myalias]:2225` gives "No ED25519 host key is known for myalias".
+ * Bracketing an alias is not merely a stale-entry false alarm: because the first pass now decides
+ * as soon as it finds any entry, a leftover `[alias]:port` line would BLOCK the bare lookup that
+ * ssh actually performs, turning a working bastion into a hard failure.
  */
-export function hostCandidatePasses(host: string, port: number): string[][] {
+export function hostCandidatePasses(
+  host: string,
+  port: number,
+  isHostKeyAlias = false
+): string[][] {
   const lower = host.toLowerCase()
-  return port === 22 ? [[lower]] : [[`[${lower}]:${port}`], [lower]]
+  return port === 22 || isHostKeyAlias ? [[lower]] : [[`[${lower}]:${port}`], [lower]]
 }
 
 export type KnownHostsQuery = {
@@ -232,6 +243,8 @@ export type KnownHostsQuery = {
   port: number
   keyType: string
   key: Buffer
+  /** True when `host` came from `HostKeyAlias`, which ssh looks up without the port. */
+  isHostKeyAlias?: boolean
 }
 
 /**
@@ -244,7 +257,7 @@ export function matchKnownHosts(
   entries: readonly KnownHostsEntry[],
   query: KnownHostsQuery
 ): KnownHostsOutcome {
-  const passes = hostCandidatePasses(query.host, query.port)
+  const passes = hostCandidatePasses(query.host, query.port, query.isHostKeyAlias)
   const matchesHost = (entry: KnownHostsEntry, candidates: string[]): boolean =>
     candidates.some((candidate) => entryMatchesCandidate(entry, candidate))
 

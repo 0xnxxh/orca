@@ -1216,7 +1216,10 @@ export class SshConnection {
 
   private async doSsh2Connect(config: ConnectConfig, connectGeneration: number): Promise<void> {
     const hostKeyResolved = this.hostKeyResolvedConfig
-    const hostKeyLookupHost = resolveKnownHostsLookupHost(hostKeyResolved, config.host ?? '')
+    const { host: hostKeyLookupHost, isHostKeyAlias } = resolveKnownHostsLookupHost(
+      hostKeyResolved,
+      config.host ?? ''
+    )
     // `-F` suppresses /etc/ssh/ssh_config, so a site-wide StrictHostKeyChecking is invisible to us
     // on that path. Joined below with the other way a source can go silent: an unreadable file.
     const siteConfigSuppressed = sshGArgsForHost(
@@ -1238,7 +1241,8 @@ export class SshConnection {
       hostKeyLookupHost,
       config.port ?? 22,
       DEFAULT_SERVER_HOST_KEY_ALGORITHMS,
-      storedKeyTypesForEndpoint(trustedHostKeys, hostKeyLookupHost, config.port ?? 22)
+      storedKeyTypesForEndpoint(trustedHostKeys, hostKeyLookupHost, config.port ?? 22),
+      isHostKeyAlias
     )
     return new Promise<void>((resolve, reject) => {
       const client = new SshClient()
@@ -1258,6 +1262,7 @@ export class SshConnection {
         // and a label removes nothing from known_hosts.
         displayHost: hostKeyLookupHost,
         strictHostKeyChecking: hostKeyResolved?.strictHostKeyChecking ?? 'ask',
+        isHostKeyAlias,
         isEphemeralRuntimeTarget: this.target.owner?.type === 'on-demand-runtime',
         // A source that exists but will not open is the absence of evidence, not evidence of a new
         // host: the entry that would have said "this key changed" may be in the file we could not

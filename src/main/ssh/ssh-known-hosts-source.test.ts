@@ -182,11 +182,23 @@ describe('parsing real ssh -G output', () => {
   // on it, and it is the only field allowed to override what we key the lookup on.
   it('reads HostKeyAlias and prefers it for the lookup', () => {
     expect(resolved.hostKeyAlias).toBe('alias-host')
-    expect(resolveKnownHostsLookupHost(resolved, '127.0.0.1')).toBe('alias-host')
+    expect(resolveKnownHostsLookupHost(resolved, '127.0.0.1').host).toBe('alias-host')
   })
 
   it('reads the non-default port', () => {
     expect(resolved.port).toBe(2222)
+  })
+
+  // Verified against OpenSSH 10.2p1 on port 2225 with HostKeyAlias=myalias: an entry keyed
+  // `myalias` authenticates, one keyed `[myalias]:2225` gives "No ED25519 host key is known for
+  // myalias". Since the first pass now decides as soon as it finds any entry, a leftover bracketed
+  // line would BLOCK the bare lookup ssh actually performs.
+  it('reports that the lookup came from an alias, so the port is not appended', () => {
+    expect(resolveKnownHostsLookupHost(resolved, '127.0.0.1').isHostKeyAlias).toBe(true)
+  })
+
+  it('reports no alias when the dialed host is used', () => {
+    expect(resolveKnownHostsLookupHost(null, '127.0.0.1').isHostKeyAlias).toBe(false)
   })
 })
 
@@ -335,7 +347,7 @@ describe('resolveKnownHostsLookupHost', () => {
     // A bastion tunnelled through localhost:2200 would otherwise mismatch on every target.
     const resolved = resolvedConfig({ hostname: '127.0.0.1', hostKeyAlias: 'bastion' })
 
-    expect(resolveKnownHostsLookupHost(resolved, '127.0.0.1')).toBe('bastion')
+    expect(resolveKnownHostsLookupHost(resolved, '127.0.0.1').host).toBe('bastion')
   })
 
   // INVERTED from 'uses the resolved hostname, never the Orca label'. That test encoded an
@@ -349,19 +361,19 @@ describe('resolveKnownHostsLookupHost', () => {
   it('uses the dialed host, because a resolved hostname can just echo the label', () => {
     const resolved = resolvedConfig({ hostname: 'my-orca-label' })
 
-    expect(resolveKnownHostsLookupHost(resolved, '10.0.0.5')).toBe('10.0.0.5')
+    expect(resolveKnownHostsLookupHost(resolved, '10.0.0.5').host).toBe('10.0.0.5')
   })
 
   it('still prefers an explicit HostKeyAlias over the dialed host', () => {
     const resolved = resolvedConfig({ hostname: 'my-orca-label', hostKeyAlias: 'bastion' })
 
-    expect(resolveKnownHostsLookupHost(resolved, '10.0.0.5')).toBe('bastion')
+    expect(resolveKnownHostsLookupHost(resolved, '10.0.0.5').host).toBe('bastion')
   })
 
   it('falls back to the dialed host when nothing was resolved', () => {
-    expect(resolveKnownHostsLookupHost(null, 'direct.example')).toBe('direct.example')
-    expect(resolveKnownHostsLookupHost(resolvedConfig({ hostname: '' }), 'direct.example')).toBe(
-      'direct.example'
-    )
+    expect(resolveKnownHostsLookupHost(null, 'direct.example').host).toBe('direct.example')
+    expect(
+      resolveKnownHostsLookupHost(resolvedConfig({ hostname: '' }), 'direct.example').host
+    ).toBe('direct.example')
   })
 })

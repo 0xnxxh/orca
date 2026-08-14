@@ -81,11 +81,15 @@ export async function loadKnownHostsEvidence(
 export function resolveKnownHostsLookupHost(
   resolved: SshResolvedConfig | null,
   dialedHost: string
-): string {
+): { host: string; isHostKeyAlias: boolean } {
   // Deliberately NOT `resolved.hostname`: `ssh -G` echoes its own argument back as `hostname` when
   // no Host block matches, which for a manual target is the Orca label. Keying on that consults a
   // name `ssh` never wrote, so the real host's entries are missed entirely and an impersonated
   // host reads as first contact. `dialedHost` is what ssh2 actually connects to, with HostName
   // resolution already applied by buildConnectConfig.
-  return resolved?.hostKeyAlias || dialedHost
+  const alias = resolved?.hostKeyAlias
+  // The flag matters as much as the name: ssh looks an alias up WITHOUT the port, so bracketing it
+  // would consult a form ssh never writes and, worse, let a stale `[alias]:port` line stop the bare
+  // lookup that ssh actually performs.
+  return alias ? { host: alias, isHostKeyAlias: true } : { host: dialedHost, isHostKeyAlias: false }
 }
