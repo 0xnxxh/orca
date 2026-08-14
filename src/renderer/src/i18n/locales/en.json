@@ -1361,6 +1361,7 @@
         "519c3587f3": "Add to project",
         "openAttachedWorkspace": "Open workspace attached to issue",
         "openWorkspace": "Open workspace",
+        "openOnLinear": "Open on Linear",
         "moreWorkspaceActions": "More issue workspace actions",
         "startNewWorkspace": "Start new workspace",
         "workspaceSection": "Workspace",
